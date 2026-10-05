@@ -69,16 +69,20 @@ export abstract class PricingTabBase extends PanelBase {
   /** What a straight save said afterwards about products already under their floor and no worse. */
   @state() protected settled = "";
   private returnFocus: HTMLElement | null = null;
+  /** The confirmed save while it is out, so sign out's wait can await it and send the confirmation it owes. */
+  private saveOut: Promise<Result<string>> | null = null;
+  /** The confirmation write while it is out, so sign out's wait can await it. */
+  private confirmOut: Promise<Result<true>> | null = null;
 
   /** Close the tab's own top dialog; true when one was open. */
   protected abstract closeTopDialog(): boolean;
 
   /**
    * HOOK for the app's leaving paths (the panel's tab switch, the desk's Quotes toggle, and
-   * the sign out): true while a price is saved and its floor confirmation is not yet in the
-   * pricing log, so leaving would lose the row. quote/qd-3b-app's SIGN_OUT_EVENT wait should
-   * register this (through QdPricingPanel.holdLeave) when that branch is merged; until then
-   * the desk's own sign out button asks the panel the same question.
+   * the first press of the sign out): true while a price is saved and its floor confirmation
+   * is not yet in the pricing log, so leaving would lose the row. The panel asks this before
+   * a leave; sign out itself also waits for the floor work still out and sends the owed
+   * confirmation (see flushForSignOut, registered in the SIGN_OUT_EVENT waits).
    */
   unloggedConfirmationPending(): boolean {
     return this.floorPrompt?.unlogged != null;
@@ -206,16 +210,21 @@ export abstract class PricingTabBase extends PanelBase {
    * Save a price with the editors' floor warning in front of it. The check runs first and
    * the save never starts unless the check answered: a check that could not run is said,
    * and nothing is saved. A clean answer saves straight away; an answer that names
-   * products opens the warning, and the save runs only on the editor's confirm.
+   * products opens the warning, and the save runs only on the editor's confirm. The check
+   * and the save are each held in the tab's context (see panel-base.ts): a panel that the
+   * Pricing swap took off the page, or a sign out, while either was out saves nothing from
+   * the dead panel and says nothing on it.
    */
   protected async saveWithFloor(change: FloorChange, save: () => Promise<Result<string>>, onSaved: () => void): Promise<void> {
     const pricing = this.pricing;
     if (pricing === null || this.saving) return;
+    const ctx = this.ctx;
     this.saving = true;
     this.formError = "";
     this.settled = "";
     const asked = PricingTabBase.deepActive();
-    const checked = await pricing.previewFloor(previewBody(change));
+    const checked = await ctx.guarded(pricing.previewFloor(previewBody(change)));
+    if (checked === undefined) return;
     if (!checked.ok) {
       this.saving = false;
       if (this.noteRefusal(checked, true)) return;
@@ -227,7 +236,8 @@ export abstract class PricingTabBase extends PanelBase {
       return;
     }
     if (!needsConfirm(checked.value)) {
-      const saved = await save();
+      const saved = await ctx.guarded(save());
+      if (saved === undefined) return;
       this.saving = false;
       if (!saved.ok) {
         if (!this.noteRefusal(saved, true)) this.formError = spokenRefusal(saved.error);
@@ -265,10 +275,17 @@ export abstract class PricingTabBase extends PanelBase {
   private async confirmFloor(): Promise<void> {
     const prompt = this.floorPrompt;
     if (prompt === null || prompt.busy || prompt.savedId !== "") return;
+    const ctx = this.ctx;
     prompt.busy = true;
     prompt.error = "";
     this.requestUpdate();
-    const saved = await prompt.save();
+    const out = prompt.save();
+    this.saveOut = out;
+    const saved = await ctx.guarded(out);
+    this.saveOut = null;
+    // The panel closed while the confirmed save was out: nothing is applied to the dead panel and the
+    // confirmation it owes is sign out's flush to send, or the person's warned choice to drop.
+    if (saved === undefined) return;
     if (!saved.ok) {
       prompt.busy = false;
       if (!this.noteRefusal(saved, true)) prompt.error = spokenRefusal(saved.error);
@@ -290,9 +307,14 @@ export abstract class PricingTabBase extends PanelBase {
   private async logConfirmation(prompt: FloorPrompt, body: PricingFloorConfirmation): Promise<void> {
     const pricing = this.pricing;
     if (pricing === null) return;
+    const ctx = this.ctx;
     prompt.busy = true;
     this.requestUpdate();
-    const logged = await pricing.confirmFloor(body);
+    const out = pricing.confirmFloor(body);
+    this.confirmOut = out;
+    const logged = await ctx.guarded(out);
+    this.confirmOut = null;
+    if (logged === undefined) return;
     prompt.busy = false;
     if (!logged.ok) {
       prompt.unlogged = body;
@@ -310,6 +332,36 @@ export abstract class PricingTabBase extends PanelBase {
     if (prompt === null || prompt.busy || prompt.unlogged === null) return;
     prompt.error = "";
     await this.logConfirmation(prompt, prompt.unlogged);
+  }
+
+  /**
+   * Sign out's wait for this tab (the panel registers it in the SIGN_OUT_EVENT waits, as the work area
+   * does for a terms flush): the confirmed save still out is awaited and, when the live panel could not
+   * send it, the confirmation it owes is sent while the session still stands; the confirmation write
+   * still out is awaited; and one the log write refused is sent once. The host bounds the whole wait.
+   * The straight saves, the retires and the deletes are already out: the server holds them, and their
+   * follow-up reads are the context's to drop.
+   */
+  async flushForSignOut(): Promise<void> {
+    const pricing = this.pricing;
+    if (pricing === null) return;
+    const prompt = this.floorPrompt;
+    if (prompt === null) return;
+    const save = this.saveOut;
+    if (save !== null) {
+      const saved = await save;
+      // The live panel sends the confirmation itself; one that was dropped (the panel closed while the
+      // save was out) is sent here, with the session the save was made under.
+      if (saved.ok && prompt.savedId === "") {
+        const body = confirmationBody(prompt.change, saved.value, prompt.preview);
+        if (body !== null) await pricing.confirmFloor(body);
+      }
+    }
+    if (this.confirmOut !== null) {
+      await this.confirmOut;
+      return;
+    }
+    if (save === null && prompt.unlogged !== null) await pricing.confirmFloor(prompt.unlogged);
   }
 
   protected onFloorAction(action: string): boolean {

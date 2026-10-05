@@ -1248,5 +1248,145 @@
     "find": "      this.notice = late;\n    }\n    // Drafts return",
     "replace": "    }\n    // Drafts return",
     "test": "P3 a link made for the quote left by the work area is said"
+  },
+  {
+    "id": "pm-load-stale-start",
+    "file": "src/pricing-margin.ts",
+    "find": "    const ctx = this.ctx; // the tab's own context: cancelled when the panel closes (the Pricing swap, a tab switch) or the person signs out\n    if (pricing === null || ctx.stale) return;",
+    "replace": "    const ctx = this.ctx; // the tab's own context: cancelled when the panel closes (the Pricing swap, a tab switch) or the person signs out\n    if (pricing === null) return;",
+    "test": "P3-1 a pricing tab that has left the page reads nothing"
+  },
+  {
+    "id": "pr-load-stale-start",
+    "file": "src/pricing-rules.ts",
+    "find": "    const ctx = this.ctx; // the tab's own context: cancelled when the panel closes (the Pricing swap, a tab switch) or the person signs out\n    if (pricing === null || ctx.stale) return;",
+    "replace": "    const ctx = this.ctx; // the tab's own context: cancelled when the panel closes (the Pricing swap, a tab switch) or the person signs out\n    if (pricing === null) return;",
+    "test": "P3-1 a pricing tab that has left the page reads nothing"
+  },
+  {
+    "id": "pc-load-stale-start",
+    "file": "src/pricing-customers.ts",
+    "find": "    const ctx = this.ctx; // the tab's own context: cancelled when the panel closes (the Pricing swap, a tab switch) or the person signs out\n    if (pricing === null || ctx.stale) return;",
+    "replace": "    const ctx = this.ctx; // the tab's own context: cancelled when the panel closes (the Pricing swap, a tab switch) or the person signs out\n    if (pricing === null) return;",
+    "test": "P3-1 a pricing tab that has left the page reads nothing"
+  },
+  {
+    "id": "pb-load-stale-start",
+    "file": "src/pricing-breaks.ts",
+    "find": "    const ctx = this.ctx; // the tab's own context: cancelled when the panel closes (the Pricing swap, a tab switch) or the person signs out\n    if (pricing === null || ctx.stale) return;",
+    "replace": "    const ctx = this.ctx; // the tab's own context: cancelled when the panel closes (the Pricing swap, a tab switch) or the person signs out\n    if (pricing === null) return;",
+    "test": "P3-1 a pricing tab that has left the page reads nothing"
+  },
+  {
+    "id": "pa-load-stale-start",
+    "file": "src/pricing-audit.ts",
+    "find": "    const ctx = this.ctx; // the tab's own context: cancelled when the panel closes (the Pricing swap, a tab switch) or the person signs out\n    if (pricing === null || ctx.stale) return;",
+    "replace": "    const ctx = this.ctx; // the tab's own context: cancelled when the panel closes (the Pricing swap, a tab switch) or the person signs out\n    if (pricing === null) return;",
+    "test": "P3-1 a pricing tab that has left the page reads nothing"
+  },
+  {
+    "id": "pm-load-order",
+    "file": "src/pricing-margin.ts",
+    "find": "    if (result === undefined || seq !== this.loadSeq) return;",
+    "replace": "    if (result === undefined) return;",
+    "test": "P3-1 an older refused pricing read answered late: margin policy"
+  },
+  {
+    "id": "pr-load-order",
+    "file": "src/pricing-rules.ts",
+    "find": "    if (result === undefined || seq !== this.loadSeq) return;",
+    "replace": "    if (result === undefined) return;",
+    "test": "P3-1 an older refused pricing read answered late: rules"
+  },
+  {
+    "id": "pc-load-order",
+    "file": "src/pricing-customers.ts",
+    "find": "    if (result === undefined || seq !== this.loadSeq || customerId !== this.customerId) return;",
+    "replace": "    if (result === undefined || customerId !== this.customerId) return;",
+    "test": "P3-1 an older refused pricing read answered late: customer prices"
+  },
+  {
+    "id": "pb-load-order",
+    "file": "src/pricing-breaks.ts",
+    "find": "    if (result === undefined || seq !== this.loadSeq) return;",
+    "replace": "    if (result === undefined) return;",
+    "test": "P3-1 an older refused pricing read answered late: quantity breaks"
+  },
+  {
+    "id": "pa-load-order",
+    "file": "src/pricing-audit.ts",
+    "find": "    if (result === undefined || seq !== this.loadSeq) return;",
+    "replace": "    if (result === undefined) return;",
+    "test": "P3-1 an older refused pricing read answered late: the pricing log"
+  },
+  {
+    "id": "pb-load-answer",
+    "file": "src/pricing-breaks.ts",
+    "find": "    const result = await ctx.guarded(pricing.listBreaks());",
+    "replace": "    const result = await pricing.listBreaks();",
+    "test": "P3-1 a pricing read that answers after the panel closed sends no name or roster lookup"
+  },
+  {
+    "id": "pa-load-answer",
+    "file": "src/pricing-audit.ts",
+    "find": "    const result = await ctx.guarded(pricing.listAudit({ entityType: this.fEntity, action: this.fAction }, AUDIT_FETCH_LIMIT));",
+    "replace": "    const result = await pricing.listAudit({ entityType: this.fEntity, action: this.fAction }, AUDIT_FETCH_LIMIT);",
+    "test": "P3-1 a pricing read that answers after the panel closed sends no name or roster lookup"
+  },
+  {
+    "id": "ptb-preview-guard",
+    "file": "src/pricing-tab-base.ts",
+    "find": "    const checked = await ctx.guarded(pricing.previewFloor(previewBody(change)));\n    if (checked === undefined) return;",
+    "replace": "    const checked = await pricing.previewFloor(previewBody(change));",
+    "test": "P3-1 a floor check that answers after the panel closed saves nothing"
+  },
+  {
+    "id": "ptb-confirm-save-guard",
+    "file": "src/pricing-tab-base.ts",
+    "find": "    const saved = await ctx.guarded(out);",
+    "replace": "    const saved = await out;",
+    "test": "P3-1 a confirmed save that lands after the panel closed logs no confirmation from the dead panel"
+  },
+  {
+    "id": "ptb-signout-waits-save",
+    "file": "src/pricing-tab-base.ts",
+    "find": "    const save = this.saveOut;",
+    "replace": "    const save = null;",
+    "test": "P2-2 sign out waits for a confirmed pricing save still out"
+  },
+  {
+    "id": "ptb-signout-registered",
+    "file": "src/pricing-panel.ts",
+    "find": "    if (flush !== undefined) detail.waits.push(flush);",
+    "replace": "    void flush;",
+    "test": "P2-2 sign out waits for a confirmed pricing save still out"
+  },
+  {
+    "id": "ptb-signout-sends-unlogged",
+    "file": "src/pricing-tab-base.ts",
+    "find": "    if (save === null && prompt.unlogged !== null) await pricing.confirmFloor(prompt.unlogged);",
+    "replace": "    void prompt;",
+    "test": "P2-2 sign out sends a floor confirmation the log write refused"
+  },
+  {
+    "id": "pr-edit-order",
+    "file": "src/pricing-rules.ts",
+    "find": "    if (fresh === undefined || seq !== this.editSeq) return;",
+    "replace": "    if (fresh === undefined) return;",
+    "test": "two quick Edit clicks open the later one, not the slower earlier answer"
+  },
+  {
+    "id": "pc-edit-order",
+    "file": "src/pricing-customers.ts",
+    "find": "    if (fresh === undefined || customerId !== this.customerId || seq !== this.editSeq) return;",
+    "replace": "    if (fresh === undefined || customerId !== this.customerId) return;",
+    "test": "two quick Edit clicks on the customer prices tab open the later one"
+  },
+  {
+    "id": "pb-edit-order",
+    "file": "src/pricing-breaks.ts",
+    "find": "    if (fresh === undefined || seq !== this.editSeq) return;",
+    "replace": "    if (fresh === undefined) return;",
+    "test": "two quick Edit clicks on the quantity breaks tab open the later one"
   }
 ]

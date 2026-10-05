@@ -16,6 +16,7 @@
 import { css, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { PanelBase } from "./panel-base.js";
+import { SIGN_OUT_EVENT, type SignOutDetail } from "./quote-context.js";
 import { pricingStyles } from "./pricing-styles.js";
 import type { PricingClient } from "./pricing-client.js";
 import { PRICING_REFUSED_EVENT, type PricingRefusalDetail } from "./pricing-tab-base.js";
@@ -96,6 +97,8 @@ export class QdPricingPanel extends PanelBase {
     this.renderRoot.addEventListener(PRICING_DRILL_EVENT, this.onDrill as EventListener);
     this.renderRoot.addEventListener(PRICING_CUSTOMER_KNOWN_EVENT, this.onCustomerKnown as EventListener);
     this.renderRoot.addEventListener("keydown", this.onTabKey as EventListener);
+    // Sign out asks for the panel's unsent work (a floor confirmation still owed) while the session stands.
+    window.addEventListener(SIGN_OUT_EVENT, this.onSignOut);
   }
 
   override disconnectedCallback(): void {
@@ -103,8 +106,17 @@ export class QdPricingPanel extends PanelBase {
     this.renderRoot.removeEventListener(PRICING_DRILL_EVENT, this.onDrill as EventListener);
     this.renderRoot.removeEventListener(PRICING_CUSTOMER_KNOWN_EVENT, this.onCustomerKnown as EventListener);
     this.renderRoot.removeEventListener("keydown", this.onTabKey as EventListener);
+    window.removeEventListener(SIGN_OUT_EVENT, this.onSignOut);
     super.disconnectedCallback();
   }
+
+  /** The panel's one seat in the sign out's waits: the active tab's floor flush (the work area's terms flush sits beside it). */
+  private readonly onSignOut = (event: Event): void => {
+    const detail = (event as CustomEvent<SignOutDetail>).detail;
+    const child = this.renderRoot.querySelector<HTMLElement & { flushForSignOut?: () => Promise<void> }>(TAG[this.tab]);
+    const flush = child?.flushForSignOut?.();
+    if (flush !== undefined) detail.waits.push(flush);
+  };
 
   private readonly onRefused = (event: CustomEvent<PricingRefusalDetail>): void => {
     const detail = event.detail;
@@ -132,10 +144,11 @@ export class QdPricingPanel extends PanelBase {
 
   /**
    * HOOK for every path that leaves the pricing screen or its tab (the tab switch here, the
-   * desk's Quotes toggle and its sign out): true when the leave must wait, because a price
-   * is saved and its floor confirmation is not yet in the pricing log. The first call says
-   * so on screen and holds; the next goes through. quote/qd-3b-app's SIGN_OUT_EVENT wait
-   * registers this when that branch is merged.
+   * desk's Quotes toggle and the first press of its sign out): true when the leave must wait,
+   * because a price is saved and its floor confirmation is not yet in the pricing log. The
+   * first call says so on screen and holds; the next goes through. Sign out itself waits for
+   * the floor work still out and sends the owed confirmation: onSignOut registers the active
+   * tab's flushForSignOut in the SIGN_OUT_EVENT waits.
    */
   holdLeave(): boolean {
     const child = this.renderRoot.querySelector<HTMLElement & { unloggedConfirmationPending?: () => boolean }>(TAG[this.tab]);

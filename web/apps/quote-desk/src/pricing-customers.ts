@@ -90,13 +90,14 @@ export class QdPricingCustomers extends PricingTabBase {
 
   private async load(customerId: string): Promise<void> {
     const pricing = this.pricing;
-    if (pricing === null) return;
+    const ctx = this.ctx; // the tab's own context: cancelled when the panel closes (the Pricing swap, a tab switch) or the person signs out
+    if (pricing === null || ctx.stale) return;
     const seq = (this.loadSeq += 1);
     this.loading = true;
     this.listError = "";
-    const result = await pricing.listOverrides(customerId);
+    const result = await ctx.guarded(pricing.listOverrides(customerId));
     // An answer for a customer the picker has since left is dropped.
-    if (seq !== this.loadSeq || customerId !== this.customerId) return;
+    if (result === undefined || seq !== this.loadSeq || customerId !== this.customerId) return;
     this.loading = false;
     if (!result.ok) {
       this.overrides = [];
@@ -189,11 +190,13 @@ export class QdPricingCustomers extends PricingTabBase {
   private async openEdit(id: string): Promise<void> {
     const pricing = this.pricing;
     const customerId = this.customerId;
-    if (pricing === null || customerId === "" || id === "") return;
+    const ctx = this.ctx;
+    if (pricing === null || customerId === "" || id === "" || ctx.stale) return;
     this.captureFocus();
+    // Two quick Edit clicks: only the latest answer opens, a slower earlier one is dropped.
     const seq = (this.editSeq += 1);
-    const fresh = await pricing.listOverrides(customerId);
-    if (customerId !== this.customerId || seq !== this.editSeq) return;
+    const fresh = await ctx.guarded(pricing.listOverrides(customerId));
+    if (fresh === undefined || customerId !== this.customerId || seq !== this.editSeq) return;
     if (!fresh.ok) {
       if (this.noteRefusal(fresh, false)) return;
       this.listError = `That price could not be opened. ${spokenRefusal(fresh.error)}`;
@@ -247,10 +250,14 @@ export class QdPricingCustomers extends PricingTabBase {
     const pricing = this.pricing;
     const row = this.confirmDelete;
     const customerId = this.customerId;
-    if (pricing === null || row === null || this.saving) return;
+    const ctx = this.ctx;
+    if (pricing === null || row === null || this.saving || ctx.stale) return;
     this.saving = true;
     this.formError = "";
-    const result = await pricing.deleteOverride(row.id, row.version);
+    // The delete is bound to the row's id and version captured here, and its answer is the tab's
+    // context's: a panel that closed while it was out reads nothing again from the dead panel.
+    const result = await ctx.guarded(pricing.deleteOverride(row.id, row.version));
+    if (result === undefined) return;
     this.saving = false;
     if (!result.ok) {
       if (!this.noteRefusal(result, true)) this.formError = spokenRefusal(result.error);

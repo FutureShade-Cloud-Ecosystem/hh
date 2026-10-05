@@ -82,19 +82,22 @@ export class QdPricingRules extends PricingTabBase {
 
   private async load(): Promise<void> {
     const pricing = this.pricing;
-    if (pricing === null) return;
+    const ctx = this.ctx; // the tab's own context: cancelled when the panel closes (the Pricing swap, a tab switch) or the person signs out
+    if (pricing === null || ctx.stale) return;
     const seq = (this.loadSeq += 1);
     this.loading = true;
     this.listError = "";
     if (!this.branchesAsked) {
       this.branchesAsked = true;
-      void pricing.branches().then((b) => {
-        if (b.ok) this.branchNames = b.value;
-      });
+      void ctx
+        .guarded(pricing.branches())
+        .then((b) => {
+          if (b !== undefined && b.ok) this.branchNames = b.value;
+        });
     }
     // The filters are read at the start: an answer for old filters never lands over newer ones.
-    const result = await pricing.listRules({ scope: this.fScope, customerType: this.fType, categoryId: this.fCategory });
-    if (seq !== this.loadSeq) return;
+    const result = await ctx.guarded(pricing.listRules({ scope: this.fScope, customerType: this.fType, categoryId: this.fCategory }));
+    if (result === undefined || seq !== this.loadSeq) return;
     this.loading = false;
     if (!result.ok) {
       this.rules = [];
@@ -245,12 +248,13 @@ export class QdPricingRules extends PricingTabBase {
   /** Edit reads the one rule fresh, so the form carries the version the server holds now. */
   private async openEdit(id: string): Promise<void> {
     const pricing = this.pricing;
-    if (pricing === null || id === "") return;
+    const ctx = this.ctx;
+    if (pricing === null || id === "" || ctx.stale) return;
     this.captureFocus();
     // Two quick Edit clicks: only the latest answer opens, a slower earlier one is dropped.
     const seq = (this.editSeq += 1);
-    const fresh = await pricing.getRule(id);
-    if (seq !== this.editSeq) return;
+    const fresh = await ctx.guarded(pricing.getRule(id));
+    if (fresh === undefined || seq !== this.editSeq) return;
     if (!fresh.ok) {
       if (this.noteRefusal(fresh, false)) return;
       this.listError = `That rule could not be opened. ${spokenRefusal(fresh.error)}`;
@@ -297,10 +301,14 @@ export class QdPricingRules extends PricingTabBase {
   private async retire(): Promise<void> {
     const pricing = this.pricing;
     const row = this.confirmRetire;
-    if (pricing === null || row === null || this.saving) return;
+    const ctx = this.ctx;
+    if (pricing === null || row === null || this.saving || ctx.stale) return;
     this.saving = true;
     this.formError = "";
-    const result = await pricing.retireRule(row.id, row.version);
+    // The retire is bound to the row's id and version captured here, and its answer is the tab's
+    // context's: a panel that closed while it was out reads nothing again from the dead panel.
+    const result = await ctx.guarded(pricing.retireRule(row.id, row.version));
+    if (result === undefined) return;
     this.saving = false;
     if (!result.ok) {
       if (!this.noteRefusal(result, true)) this.formError = spokenRefusal(result.error);

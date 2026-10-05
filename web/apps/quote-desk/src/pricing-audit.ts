@@ -61,12 +61,13 @@ export class QdPricingAudit extends PricingTabBase {
 
   private async load(): Promise<void> {
     const pricing = this.pricing;
-    if (pricing === null) return;
+    const ctx = this.ctx; // the tab's own context: cancelled when the panel closes (the Pricing swap, a tab switch) or the person signs out
+    if (pricing === null || ctx.stale) return;
     const seq = (this.loadSeq += 1);
     this.loading = true;
     this.listError = "";
-    const result = await pricing.listAudit({ entityType: this.fEntity, action: this.fAction }, AUDIT_FETCH_LIMIT);
-    if (seq !== this.loadSeq) return;
+    const result = await ctx.guarded(pricing.listAudit({ entityType: this.fEntity, action: this.fAction }, AUDIT_FETCH_LIMIT));
+    if (result === undefined || seq !== this.loadSeq) return;
     this.loading = false;
     if (!result.ok) {
       this.rows = [];
@@ -79,19 +80,25 @@ export class QdPricingAudit extends PricingTabBase {
     void this.nameProducts(pricing, result.value);
     if (!this.actorsAsked) {
       this.actorsAsked = true;
-      void pricing.actorNames().then((names) => {
-        if (names.ok) this.actors = names.value;
-      });
+      void ctx
+        .guarded(pricing.actorNames())
+        .then((names) => {
+          if (names !== undefined && names.ok) this.actors = names.value;
+        });
     }
   }
 
   /** The floor confirmations name products by id; ask for the names (best effort, a bounded number). */
   private async nameProducts(pricing: NonNullable<typeof this.pricing>, rows: readonly AuditRow[]): Promise<void> {
+    const ctx = this.ctx;
+    if (ctx.stale) return;
     const wanted = [...new Set(rows.filter((r) => r.fieldName === "floor_warning_confirmed").flatMap((r) => floorProductIds(r.newValue)))]
       .filter((id) => !this.namesAsked.has(id))
       .slice(0, 40);
     for (const id of wanted) this.namesAsked.add(id);
-    const found = await Promise.all(wanted.map(async (id) => [id, await pricing.productLabel(id)] as const));
+    // The lookups are the tab's context's: names for a panel that closed meanwhile paint nothing on it.
+    const found = await ctx.guarded(Promise.all(wanted.map(async (id) => [id, await pricing.productLabel(id)] as const)));
+    if (found === undefined) return;
     const next = new Map(this.productNames);
     for (const [id, label] of found) if (label.ok) next.set(id, label.value);
     if (next.size !== this.productNames.size) this.productNames = next;

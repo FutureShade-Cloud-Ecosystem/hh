@@ -46,12 +46,13 @@ export class QdPricingMargin extends PricingTabBase {
 
   private async load(): Promise<void> {
     const pricing = this.pricing;
-    if (pricing === null) return;
+    const ctx = this.ctx; // the tab's own context: cancelled when the panel closes (the Pricing swap, a tab switch) or the person signs out
+    if (pricing === null || ctx.stale) return;
     const seq = (this.loadSeq += 1);
     this.loading = true;
     this.loadError = "";
-    const result = await pricing.listPolicies();
-    if (seq !== this.loadSeq) return;
+    const result = await ctx.guarded(pricing.listPolicies());
+    if (result === undefined || seq !== this.loadSeq) return;
     this.loading = false;
     if (!result.ok) {
       this.rows = [];

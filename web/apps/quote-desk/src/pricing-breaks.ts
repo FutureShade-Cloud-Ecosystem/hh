@@ -69,12 +69,13 @@ export class QdPricingBreaks extends PricingTabBase {
 
   private async load(): Promise<void> {
     const pricing = this.pricing;
-    if (pricing === null) return;
+    const ctx = this.ctx; // the tab's own context: cancelled when the panel closes (the Pricing swap, a tab switch) or the person signs out
+    if (pricing === null || ctx.stale) return;
     const seq = (this.loadSeq += 1);
     this.loading = true;
     this.listError = "";
-    const result = await pricing.listBreaks();
-    if (seq !== this.loadSeq) return;
+    const result = await ctx.guarded(pricing.listBreaks());
+    if (result === undefined || seq !== this.loadSeq) return;
     this.loading = false;
     if (!result.ok) {
       this.breaks = [];
@@ -89,9 +90,12 @@ export class QdPricingBreaks extends PricingTabBase {
   /** A product scoped schedule shows "SKU, name" when the catalogue answers; the short id stands in until then. */
   private async nameProducts(rows: BreakRow[]): Promise<void> {
     const pricing = this.pricing;
-    if (pricing === null) return;
+    const ctx = this.ctx;
+    if (pricing === null || ctx.stale) return;
     const missing = [...new Set(rows.map((b) => b.productId).filter((id): id is string => id !== undefined))].filter((id) => !(id in this.productNames));
-    const labels = await Promise.all(missing.map(async (id) => [id, await pricing.productLabel(id)] as const));
+    // The lookups are the tab's context's: names for a panel that closed meanwhile paint nothing on it.
+    const labels = await ctx.guarded(Promise.all(missing.map(async (id) => [id, await pricing.productLabel(id)] as const)));
+    if (labels === undefined) return;
     const next = { ...this.productNames };
     for (const [id, label] of labels) if (label.ok) next[id] = label.value;
     this.productNames = next;
@@ -190,12 +194,13 @@ export class QdPricingBreaks extends PricingTabBase {
   /** Edit reads the one schedule fresh, so the form carries the version the server holds now. */
   private async openEdit(id: string): Promise<void> {
     const pricing = this.pricing;
-    if (pricing === null || id === "") return;
+    const ctx = this.ctx;
+    if (pricing === null || id === "" || ctx.stale) return;
     this.captureFocus();
     // Two quick Edit clicks: only the latest answer opens.
     const seq = (this.editSeq += 1);
-    const fresh = await pricing.getBreak(id);
-    if (seq !== this.editSeq) return;
+    const fresh = await ctx.guarded(pricing.getBreak(id));
+    if (fresh === undefined || seq !== this.editSeq) return;
     if (!fresh.ok) {
       if (this.noteRefusal(fresh, false)) return;
       this.listError = `That quantity break could not be opened. ${spokenRefusal(fresh.error)}`;
@@ -241,10 +246,14 @@ export class QdPricingBreaks extends PricingTabBase {
   private async retire(): Promise<void> {
     const pricing = this.pricing;
     const row = this.confirmRetire;
-    if (pricing === null || row === null || this.saving) return;
+    const ctx = this.ctx;
+    if (pricing === null || row === null || this.saving || ctx.stale) return;
     this.saving = true;
     this.formError = "";
-    const result = await pricing.retireBreak(row.id, row.version);
+    // The retire is bound to the row's id and version captured here, and its answer is the tab's
+    // context's: a panel that closed while it was out reads nothing again from the dead panel.
+    const result = await ctx.guarded(pricing.retireBreak(row.id, row.version));
+    if (result === undefined) return;
     this.saving = false;
     if (!result.ok) {
       if (!this.noteRefusal(result, true)) this.formError = spokenRefusal(result.error);
