@@ -27,9 +27,10 @@ type FloorChange struct {
 	Break    *QuantityBreakHeader
 }
 
-// FloorPreviewItem is one product the new price leaves under the floor. BranchID and
-// BranchName name the branch the worst grading happened at, so an editor who named no branch
-// still sees which yard breaches; both are empty when the seam could not name it.
+// FloorPreviewItem is one product the new price leaves under the floor. BranchID, BranchCode
+// and BranchName name the branch the worst grading happened at, so an editor who named no branch
+// still sees which yard breaches; all three are empty when the seam could not name it. The code
+// keeps a warning line short while the name carries the yard in full.
 type FloorPreviewItem struct {
 	ProductID          string
 	SKU                string
@@ -37,6 +38,7 @@ type FloorPreviewItem struct {
 	CategoryID         string
 	CustomerType       string
 	BranchID           string
+	BranchCode         string
 	BranchName         string
 	FinalCents         int64
 	MarginBps          int64
@@ -55,6 +57,23 @@ type FloorPreview struct {
 	NotGraded int
 	NoCost    int
 	Truncated bool
+	// NoCostBranches names the yards a branch-less check found no cost on file at, with how
+	// many products: the products were graded at the branches that carry a cost, and a quote
+	// at a yard with no cost row would never be blocked by the gate, so this is said, not
+	// insisted on; it never opens the warning on its own.
+	NoCostBranches []FloorNoCostBranch
+	// NotGradedBranches counts the branch gradings the work cap left out after the dearest
+	// branches were graded first; zero unless Truncated is true.
+	NotGradedBranches int
+}
+
+// FloorNoCostBranch is one branch location with no cost row for at least one product the
+// branch-less check graded elsewhere.
+type FloorNoCostBranch struct {
+	BranchID   string
+	BranchCode string
+	BranchName string
+	Products   int
 }
 
 // CandidateBranchCost is one branch location's own cost row for a product, with the branch's
@@ -111,7 +130,8 @@ const MaxBreakTiers = 20
 // MaxPreviewGrades bounds the product, customer type, quantity and BRANCH combinations one
 // preview grades: a combination is one resolve at one branch's own cost, so a change that
 // names no branch spends the cap across every branch location it grades. Past it the
-// preview stops and says it was truncated.
+// preview grades the dearest branches that fit, marks itself truncated and says how many
+// branch gradings were left out.
 const MaxPreviewGrades = 4000
 
 // FloorConfirmation is the editor's confirmation of a floor warning.
@@ -258,15 +278,20 @@ type previewQty struct {
 // branch would meet once the change is saved.
 type previewSite struct {
 	branchID   string
+	branchCode string
 	branchName string
 	costCents  int64
 }
 
 // sitesFor names the branches one product is graded at: the change's own branch when it
-// names one, else every branch carrying a cost. No site at all means no cost on file
-// anywhere, which the preview counts rather than guessing a margin.
+// names one, else every branch carrying a cost, the dearest first so a cap hit leaves the
+// worst yards graded. No site at all means no cost on file (at the named branch, or at any
+// branch when the change named none), which the preview counts rather than guessing a margin.
 func sitesFor(p CandidateProduct, branchID string) []previewSite {
 	if branchID != "" {
+		if p.CostCents <= 0 {
+			return nil
+		}
 		return []previewSite{{branchID: branchID, costCents: p.CostCents}}
 	}
 	var sites []previewSite
@@ -274,8 +299,9 @@ func sitesFor(p CandidateProduct, branchID string) []previewSite {
 		if b.CostCents <= 0 {
 			continue
 		}
-		sites = append(sites, previewSite{branchID: b.BranchID, branchName: b.BranchName, costCents: b.CostCents})
+		sites = append(sites, previewSite{branchID: b.BranchID, branchCode: b.BranchCode, branchName: b.BranchName, costCents: b.CostCents})
 	}
+	sort.SliceStable(sites, func(i, j int) bool { return sites[i].costCents > sites[j].costCents })
 	return sites
 }
 
@@ -284,7 +310,11 @@ func sitesFor(p CandidateProduct, branchID string) []previewSite {
 // resolver and its margin gate. A change that names no branch is graded at every branch
 // location, with that branch's own cost and that branch's own branch-limited rules, keeping
 // the worst per product and naming the branch it happened at; that is what a resolve at each
-// branch meets once the change is saved, so a breach only one yard makes is named.
+// branch meets once the change is saved, so a breach only one yard makes is named. The
+// branches are graded dearest cost first, so when the work cap bites it is the cheapest
+// yards that go ungraded and the answer says how many did. A branch the change names that
+// carries no cost row counts its products as no cost, exactly as a product with no cost row
+// anywhere does.
 // A refusal here is the refusal the write itself would give (the same validators), and
 // nothing is written, not even the BYPASS row a live resolve leaves.
 func (s *Service) PreviewFloor(ctx context.Context, ch FloorChange) (FloorPreview, error) {
@@ -415,20 +445,45 @@ func (s *Service) PreviewFloor(ctx context.Context, ch FloorChange) (FloorPrevie
 	overlay := *s
 	overlay.store = ov
 	grades := 0
+	noCostAt := map[string]int{}
+	noCostWho := map[string]FloorNoCostBranch{}
 	for _, p := range products {
 		sites := sitesFor(p, branchID)
 		if len(sites) == 0 {
-			// No cost on file at any branch: a margin cannot be told, and a zero would read
-			// as a clean 100 percent.
+			// No cost on file at any branch the change reaches: a margin cannot be told, and a
+			// zero would read as a clean 100 percent.
 			out.NoCost++
 			continue
 		}
-		perProduct := len(contexts) * len(qtys) * len(sites)
-		if grades+perProduct > MaxPreviewGrades {
-			out.Truncated = true
-			break
+		if branchID == "" {
+			// A branch whose own cost row is missing was skipped, never guessed at: say which
+			// yard afterwards, once per branch with the count. The product is still graded at
+			// the branches that carry a cost, and this never opens the warning on its own.
+			for _, b := range p.BranchCosts {
+				if b.CostCents > 0 {
+					continue
+				}
+				if _, seen := noCostWho[b.BranchID]; !seen {
+					noCostWho[b.BranchID] = FloorNoCostBranch{BranchID: b.BranchID, BranchCode: b.BranchCode, BranchName: b.BranchName}
+				}
+				noCostAt[b.BranchID]++
+			}
 		}
-		grades += perProduct
+		// One combination is one resolve at one branch, and the sites arrive dearest first, so
+		// when the cap bites the branches already graded are the worst ones; the answer says
+		// how many branch gradings were left out.
+		combo := len(contexts) * len(qtys)
+		if grades+combo*len(sites) > MaxPreviewGrades {
+			fits := (MaxPreviewGrades - grades) / combo
+			if fits <= 0 {
+				out.Truncated = true
+				break
+			}
+			out.Truncated = true
+			out.NotGradedBranches += len(sites) - fits
+			sites = sites[:fits]
+		}
+		grades += combo * len(sites)
 		var worst *FloorPreviewItem
 		skipped, graded := false, false
 		for _, c := range contexts {
@@ -464,7 +519,7 @@ func (s *Service) PreviewFloor(ctx context.Context, ch FloorChange) (FloorPrevie
 					}
 					it := FloorPreviewItem{
 						ProductID: p.ProductID, SKU: p.SKU, Name: p.Name, CategoryID: p.CategoryID, CustomerType: c.customerType,
-						BranchID: site.branchID, BranchName: site.branchName,
+						BranchID: site.branchID, BranchCode: site.branchCode, BranchName: site.branchName,
 						FinalCents: after.FinalCents, MarginBps: after.MarginBps, FloorBps: after.FloorBps,
 						PriceUOM: after.PriceUOM, Source: after.Source,
 						PreviousFinalCents: before.FinalCents, PreviousMarginBps: before.MarginBps, AlreadyUnderFloor: before.Blocked,
@@ -487,6 +542,18 @@ func (s *Service) PreviewFloor(ctx context.Context, ch FloorChange) (FloorPrevie
 			out.Items = append(out.Items, *worst)
 		}
 	}
+	// The yards with no cost on file, worst count first, said once per branch.
+	for id, n := range noCostAt {
+		b := noCostWho[id]
+		b.Products = n
+		out.NoCostBranches = append(out.NoCostBranches, b)
+	}
+	sort.SliceStable(out.NoCostBranches, func(i, j int) bool {
+		if out.NoCostBranches[i].Products != out.NoCostBranches[j].Products {
+			return out.NoCostBranches[i].Products > out.NoCostBranches[j].Products
+		}
+		return out.NoCostBranches[i].BranchID < out.NoCostBranches[j].BranchID
+	})
 	sort.SliceStable(out.Items, func(i, j int) bool { return out.Items[i].MarginBps < out.Items[j].MarginBps })
 	return out, nil
 }

@@ -670,6 +670,7 @@ export const SCHEMA_NAMES: readonly string[] = [
   "PricingFloorPreviewRequest",
   "PricingFloorPreviewItem",
   "PricingFloorPreview",
+  "PricingFloorNoCostBranch",
   "PricingFloorConfirmation",
   "PricingLowMarginRequest",
   "PricingLowMarginEntry",

@@ -469,13 +469,18 @@ paths:
         surcharge tier never changes a price under the replace rule, so a
         break of surcharge tiers names nothing. A change that names a customer
         is graded at that customer's own pricing type, so the price today is
-        what the customer pays. Products with no cost on file at any branch
-        are counted in no_cost, and products the resolver has no price to
-        grade (no list price, no unit conversion) in not_graded; any other
-        failure of the grading is an error answer, never a count. At most 200
-        products and a bounded number of product, customer type, quantity and
-        branch combinations are graded (a combination is one resolve at one
-        branch), and truncated says when more existed. A quantity break has
+        what the customer pays. Products with no cost on file (at the named
+        branch when the change names one, else at any branch) are counted in
+        no_cost, and products the resolver has no price to grade (no list
+        price, no unit conversion) in not_graded; any other failure of the
+        grading is an error answer, never a count. no_cost_branches names the
+        yards a branch-less check found no cost on file at, with the product
+        count: informational, it never opens the warning on its own. At most
+        200 products and a bounded number of product, customer type, quantity
+        and branch combinations are graded (a combination is one resolve at
+        one branch); the branches are graded dearest cost first, and truncated
+        says when more existed, with not_graded_branches counting the branch
+        gradings the cap left out. A quantity break has
         at most 20 tiers, and a tier starting at zero is graded at one base
         unit. Writes nothing: no price changes and no row in the pricing
         log. The request trail the server keeps of every POST still records
@@ -2177,6 +2182,7 @@ components:
         category_id: { type: string }
         customer_type: { type: string, description: "The customer type this was worst for; the customer's own type when the change names a customer" }
         branch_id: { type: string, description: "The branch this worst grading happened at: the change's own branch when it named one, else the worst branch of those graded" }
+        branch_code: { type: string, description: "That branch's code, so a warning line stays short; the full name is in branch_name" }
         branch_name: { type: string, description: "That branch's name, so an editor who named no branch still sees which yard breaches; empty when the change named its branch" }
         final_cents: { type: integer, format: int64, description: "The unit price with the change" }
         margin_bps: { type: integer, format: int64 }
@@ -2196,10 +2202,29 @@ components:
         items:
           type: array
           items: { $ref: "#/components/schemas/PricingFloorPreviewItem" }
-        evaluated: { type: integer, description: "Products graded in full" }
+        evaluated: { type: integer, description: "Products graded in full at the branches the cap allowed" }
         not_graded: { type: integer, description: "Products the resolver had no price to grade in full (no list price, no unit conversion)" }
-        no_cost: { type: integer, description: "Products with no cost on file, whose margin cannot be told" }
-        truncated: { type: boolean, description: "More products or combinations were reachable than one preview grades (200 products, a bounded number of product, customer type, quantity and branch combinations); the rest were not graded" }
+        no_cost: { type: integer, description: "Products with no cost on file (at the named branch when the change names one, else at any branch), whose margin cannot be told" }
+        truncated: { type: boolean, description: "More products or combinations were reachable than one preview grades (200 products, a bounded number of product, customer type, quantity and branch combinations); the branches were graded dearest cost first and the rest were not graded" }
+        no_cost_branches:
+          type: array
+          description: >-
+            The yards a branch-less check found no cost on file at, with how
+            many products; those products were graded at the branches that
+            carry a cost, and a quote at a yard with no cost row would never
+            be blocked by the gate, so this is said and never a stop.
+          items: { $ref: "#/components/schemas/PricingFloorNoCostBranch" }
+        not_graded_branches: { type: integer, description: "Branch gradings the work cap left out after the dearest branches were graded first; zero unless truncated is true" }
+
+    PricingFloorNoCostBranch:
+      type: object
+      description: One branch location the branch-less check found no cost on file at, with how many products
+      required: [branch_id, products]
+      properties:
+        branch_id: { type: string }
+        branch_code: { type: string }
+        branch_name: { type: string }
+        products: { type: integer, description: "Products the check graded with no cost row at this branch" }
 
     PricingFloorConfirmation:
       type: object

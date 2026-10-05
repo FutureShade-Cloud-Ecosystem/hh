@@ -34,6 +34,7 @@ type floorPreviewItemJSON struct {
 	CategoryID         string `json:"category_id,omitempty"`
 	CustomerType       string `json:"customer_type,omitempty"`
 	BranchID           string `json:"branch_id,omitempty"`
+	BranchCode         string `json:"branch_code,omitempty"`
 	BranchName         string `json:"branch_name,omitempty"`
 	FinalCents         int64  `json:"final_cents"`
 	MarginBps          int64  `json:"margin_bps"`
@@ -43,6 +44,13 @@ type floorPreviewItemJSON struct {
 	PreviousFinalCents int64  `json:"previous_final_cents"`
 	PreviousMarginBps  int64  `json:"previous_margin_bps"`
 	AlreadyUnderFloor  bool   `json:"already_under_floor"`
+}
+
+type floorNoCostBranchJSON struct {
+	BranchID   string `json:"branch_id"`
+	BranchCode string `json:"branch_code,omitempty"`
+	BranchName string `json:"branch_name,omitempty"`
+	Products   int    `json:"products"`
 }
 
 func (h *Handler) floorPreview(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
@@ -103,14 +111,21 @@ func (h *Handler) floorPreview(w http.ResponseWriter, r *http.Request, _ guards.
 	for _, it := range out.Items {
 		items = append(items, floorPreviewItemJSON{
 			ProductID: it.ProductID, SKU: it.SKU, Name: it.Name, CategoryID: it.CategoryID, CustomerType: it.CustomerType,
-			BranchID: it.BranchID, BranchName: it.BranchName,
+			BranchID: it.BranchID, BranchCode: it.BranchCode, BranchName: it.BranchName,
 			FinalCents: it.FinalCents, MarginBps: it.MarginBps, FloorBps: it.FloorBps, PriceUOM: it.PriceUOM,
 			Source: it.Source, PreviousFinalCents: it.PreviousFinalCents, PreviousMarginBps: it.PreviousMarginBps,
 			AlreadyUnderFloor: it.AlreadyUnderFloor,
 		})
 	}
+	noCostBranches := make([]floorNoCostBranchJSON, 0, len(out.NoCostBranches))
+	for _, b := range out.NoCostBranches {
+		noCostBranches = append(noCostBranches, floorNoCostBranchJSON{
+			BranchID: b.BranchID, BranchCode: b.BranchCode, BranchName: b.BranchName, Products: b.Products,
+		})
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"items": items, "evaluated": out.Evaluated, "not_graded": out.NotGraded, "no_cost": out.NoCost, "truncated": out.Truncated,
+		"no_cost_branches": noCostBranches, "not_graded_branches": out.NotGradedBranches,
 	})
 }
 

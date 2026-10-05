@@ -5456,6 +5456,7 @@ type PricingFloorPreviewItem struct {
 	CategoryId         *string `json:"category_id,omitempty"`
 	CustomerType       *string `json:"customer_type,omitempty"`
 	BranchId           *string `json:"branch_id,omitempty"`
+	BranchCode         *string `json:"branch_code,omitempty"`
 	BranchName         *string `json:"branch_name,omitempty"`
 	FinalCents         int64   `json:"final_cents"`
 	MarginBps          int64   `json:"margin_bps"`
@@ -5468,11 +5469,20 @@ type PricingFloorPreviewItem struct {
 }
 
 type PricingFloorPreview struct {
-	Items     []PricingFloorPreviewItem `json:"items"`
-	Evaluated int                       `json:"evaluated"`
-	NotGraded int                       `json:"not_graded"`
-	NoCost    int                       `json:"no_cost"`
-	Truncated bool                      `json:"truncated"`
+	Items             []PricingFloorPreviewItem   `json:"items"`
+	Evaluated         int                         `json:"evaluated"`
+	NotGraded         int                         `json:"not_graded"`
+	NoCost            int                         `json:"no_cost"`
+	Truncated         bool                        `json:"truncated"`
+	NoCostBranches    *[]PricingFloorNoCostBranch `json:"no_cost_branches,omitempty"`
+	NotGradedBranches *int                        `json:"not_graded_branches,omitempty"`
+}
+
+type PricingFloorNoCostBranch struct {
+	BranchId   string  `json:"branch_id"`
+	BranchCode *string `json:"branch_code,omitempty"`
+	BranchName *string `json:"branch_name,omitempty"`
+	Products   int     `json:"products"`
 }
 
 type PricingFloorConfirmation struct {

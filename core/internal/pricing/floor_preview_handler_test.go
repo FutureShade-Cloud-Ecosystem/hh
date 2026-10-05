@@ -51,6 +51,56 @@ func TestFloorPreviewHandler_AnswersTheWireShape(t *testing.T) {
 	}
 }
 
+// The round 4 wire additions: the item carries the branch's code beside its name, and the
+// answer names the yards with no cost on file, with the product count, beside the count of
+// branch gradings the cap left out.
+func TestFloorPreviewHandler_AnswersTheBranchesInTheWireShape(t *testing.T) {
+	st := &fakeStore{}
+	st.listPrice = &ListPrice{ProductID: hProduct, ListPriceCents: 10000, PriceUOM: "SF"}
+	svc := newSvc(st, hCat).WithCandidateSource(fakeCands{[]CandidateProduct{{
+		ProductID: hProduct, CategoryID: hCat, SKU: "BLU-60", Name: "Blu 60", BaseUOM: "SF", CostCents: 7000,
+		BranchCosts: []CandidateBranchCost{
+			{BranchID: "br-kingston", BranchCode: "KGN", BranchName: "Kingston"},
+			{BranchID: "br-trenton", BranchCode: "TRT", BranchName: "Trenton", CostCents: 7000},
+		},
+	}}})
+	h := NewHandler(svc, nil)
+	body := `{"kind":"rule","rule":{"scope":"TIER_CATEGORY","customer_type":"CONTRACTOR","category_id":"` + hCat +
+		`","calc_type":"PCT_OFF_LIST","discount_bps":4000,"price_uom":"SF","priority":10,"detail_text":"","version":0}}`
+	rec := httptest.NewRecorder()
+	h.floorPreview(rec, httptest.NewRequest(http.MethodPost, "/api/v1/pricing/floor-preview", strings.NewReader(body)), guards.StaffCaller{})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Items []struct {
+			BranchID   string `json:"branch_id"`
+			BranchCode string `json:"branch_code"`
+			BranchName string `json:"branch_name"`
+		} `json:"items"`
+		NoCostBranches []struct {
+			BranchID   string `json:"branch_id"`
+			BranchCode string `json:"branch_code"`
+			BranchName string `json:"branch_name"`
+			Products   int    `json:"products"`
+		} `json:"no_cost_branches"`
+		NotGradedBranches int `json:"not_graded_branches"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Items) != 1 || got.Items[0].BranchID != "br-trenton" || got.Items[0].BranchCode != "TRT" || got.Items[0].BranchName != "Trenton" {
+		t.Fatalf("the item carries the branch's code beside its name: %s", rec.Body.String())
+	}
+	if len(got.NoCostBranches) != 1 || got.NoCostBranches[0].BranchID != "br-kingston" ||
+		got.NoCostBranches[0].BranchCode != "KGN" || got.NoCostBranches[0].BranchName != "Kingston" || got.NoCostBranches[0].Products != 1 {
+		t.Fatalf("the yard with no cost on file is named with its count: %s", rec.Body.String())
+	}
+	if got.NotGradedBranches != 0 {
+		t.Fatalf("nothing was left out at the cap: %s", rec.Body.String())
+	}
+}
+
 func TestFloorPreviewHandler_RefusesBadInput(t *testing.T) {
 	h := floorHandler(&fakeStore{})
 	for name, tc := range map[string]struct {

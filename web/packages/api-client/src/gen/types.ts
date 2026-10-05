@@ -4678,6 +4678,7 @@ export type PricingFloorPreviewItem = {
   category_id?: string;
   customer_type?: string;
   branch_id?: string;
+  branch_code?: string;
   branch_name?: string;
   final_cents: number;
   margin_bps: number;
@@ -4694,6 +4695,14 @@ export type PricingFloorPreview = {
   not_graded: number;
   no_cost: number;
   truncated: boolean;
+  no_cost_branches?: PricingFloorNoCostBranch[];
+  not_graded_branches?: number;
+};
+export type PricingFloorNoCostBranch = {
+  branch_id: string;
+  branch_code?: string;
+  branch_name?: string;
+  products: number;
 };
 export type PricingFloorConfirmation = {
   entity_type: "pricing_rule" | "customer_override" | "category_policy" | "quantity_break";
