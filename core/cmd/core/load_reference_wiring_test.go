@@ -192,9 +192,9 @@ func TestSubmitDoorsServeEachDoorEndToEndThroughTheGate(t *testing.T) {
 		BatchID string `json:"batch_id"`
 		Counts  map[string]int
 		Items   []struct {
-			LegacyID string `json:"legacy_id"`
-			Status   string `json:"status"`
-			HHID     string `json:"hh_id"`
+			LegacyID string  `json:"legacy_id"`
+			Status   string  `json:"status"`
+			HHID     string  `json:"hh_id"`
 			Reason   *string `json:"reason"`
 			Field    *string `json:"field"`
 		}
