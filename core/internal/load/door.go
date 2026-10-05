@@ -13,12 +13,15 @@ import (
 // registry kind (the batch record's kind too); the writer is the owning
 // module's, and the audit sink the platform's write path, both taken by
 // constructor, and every row write they make joins a transaction this
-// door opens.
+// door opens. An attach door (NewAttachDoor) answers the create arm
+// with the attached word instead of created: the maps record names
+// against rows that already exist and create nothing.
 type Door struct {
 	store  *Store
 	kind   string
 	writer Writer
 	audit  BatchAuditSink
+	attach bool
 }
 
 // NewDoor binds the helper to one door's kind, writer and audit sink. A
@@ -26,6 +29,17 @@ type Door struct {
 // batch is audited, one row per batch, or the batch does not land.
 func NewDoor(store *Store, kind string, w Writer, a BatchAuditSink) *Door {
 	return &Door{store: store, kind: kind, writer: w, audit: a}
+}
+
+// NewAttachDoor is NewDoor for the map doors: the create arm answers
+// attached, the word an item whose name now binds to a pre existing row
+// carries. The writer is still the door's write path; for the maps it
+// writes nothing, it resolves the row the record names and refuses when
+// no row answers.
+func NewAttachDoor(store *Store, kind string, w Writer, a BatchAuditSink) *Door {
+	d := NewDoor(store, kind, w, a)
+	d.attach = true
+	return d
 }
 
 // maxNameRetries bounds the race retry: the registry insert is the lock,
@@ -74,7 +88,7 @@ func (d *Door) UpsertBatch(ctx context.Context, in Batch) (BatchResult, error) {
 	// outlive its record and audit row, and the caller resubmits into a
 	// clean state (the resubmission replays or re-runs to convergence).
 	result := BatchResult{BatchID: in.BatchID, Counts: map[string]int{
-		OutcomeCreated: 0, OutcomeUpdated: 0, OutcomeUnchanged: 0, OutcomeRefused: 0,
+		OutcomeCreated: 0, OutcomeAttached: 0, OutcomeUpdated: 0, OutcomeUnchanged: 0, OutcomeRefused: 0,
 	}, Items: make([]Outcome, 0, len(in.Items))}
 	for _, item := range in.Items {
 		o, err := d.processItem(ctx, claim.tx, in, item)
@@ -217,7 +231,8 @@ func (d *Door) tryItem(ctx context.Context, tx pgx.Tx, in Batch, item Item, hash
 			return Outcome{LegacyID: item.LegacyID, Status: OutcomeUnchanged, HHID: hhID}, false, nil
 		}
 		wrote, refused, err := writerApply(ctx, tx, d.writer, Write{
-			OrgID: in.OrgID, RowID: hhID, DerivedKey: item.DerivedKey, Record: item.Record, Refs: refs,
+			OrgID: in.OrgID, LegacyID: item.LegacyID, RowID: hhID, DerivedKey: item.DerivedKey,
+			Record: item.Record, Refs: refs,
 		})
 		if err != nil {
 			return Outcome{}, false, err
@@ -251,7 +266,8 @@ func (d *Door) tryItem(ctx context.Context, tx pgx.Tx, in Batch, item Item, hash
 	// the race's winner may have committed while this transaction stood
 	// in line, and the registry insert is the lock both contend on.
 	rowID, refused, err := writerApply(ctx, tx, d.writer, Write{
-		OrgID: in.OrgID, DerivedKey: item.DerivedKey, Record: item.Record, Refs: refs,
+		OrgID: in.OrgID, LegacyID: item.LegacyID, DerivedKey: item.DerivedKey,
+		Record: item.Record, Refs: refs,
 	})
 	if err != nil {
 		return Outcome{}, false, err
@@ -311,7 +327,14 @@ func (d *Door) tryItem(ctx context.Context, tx pgx.Tx, in Batch, item Item, hash
 	if err := tx.Commit(ctx); err != nil {
 		return Outcome{}, false, fmt.Errorf("load: commit: %w", err)
 	}
-	return Outcome{LegacyID: item.LegacyID, Status: OutcomeCreated, HHID: rowID}, false, nil
+	// The create arm's word: a map door's item whose name now binds to a
+	// pre existing row answers attached; every other door answers
+	// created.
+	status := OutcomeCreated
+	if d.attach {
+		status = OutcomeAttached
+	}
+	return Outcome{LegacyID: item.LegacyID, Status: status, HHID: rowID}, false, nil
 }
 
 // resolveRefs resolves the item's references against the registry inside

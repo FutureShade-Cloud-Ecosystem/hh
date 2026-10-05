@@ -123,9 +123,10 @@ func receivablesErrorAnswer(err error) (int, string) {
 	}
 	switch {
 	case errors.Is(err, ErrBatchContended):
-		return http.StatusServiceUnavailable, "the batch contended with another in flight batch and rolled back whole; resubmit the batch"
+		// LD-4's mapping, one place for the retryable answer's words.
+		return submitErrorStatus(err)
 	case errors.Is(err, ErrBatchDoorMismatch):
-		return http.StatusConflict, "the batch id is recorded under another door"
+		return submitErrorStatus(err)
 	case errors.Is(err, ErrMissingField), errors.Is(err, ErrBatchBound), errors.Is(err, ErrBatchActor):
 		return http.StatusBadRequest, err.Error()
 	default:

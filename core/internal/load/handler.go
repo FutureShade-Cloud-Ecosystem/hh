@@ -177,24 +177,7 @@ func resolveResultWire(out ResolveResult) apigen.LoadKeysResolveResult {
 func batchViewWire(v BatchView) apigen.LoadBatchView {
 	items := make([]apigen.LoadBatchItemOutcome, 0, len(v.Items))
 	for _, o := range v.Items {
-		item := apigen.LoadBatchItemOutcome{LegacyId: o.LegacyID, Status: o.Status}
-		if o.HHID != "" {
-			id := o.HHID
-			item.HhId = &id
-		}
-		if o.Reason != "" {
-			reason := o.Reason
-			item.Reason = &reason
-		}
-		if o.Field != "" {
-			field := o.Field
-			item.Field = &field
-		}
-		if o.Detail != "" {
-			detail := o.Detail
-			item.Detail = &detail
-		}
-		items = append(items, item)
+		items = append(items, outcomeWire(o))
 	}
 	return apigen.LoadBatchView{
 		BatchId:      v.BatchID,
@@ -202,13 +185,8 @@ func batchViewWire(v BatchView) apigen.LoadBatchView {
 		Kind:         v.Kind,
 		Caller:       v.Caller,
 		State:        v.State,
-		Counts: apigen.LoadBatchCounts{
-			Created:   int32(v.Counts[OutcomeCreated]),
-			Updated:   int32(v.Counts[OutcomeUpdated]),
-			Unchanged: int32(v.Counts[OutcomeUnchanged]),
-			Refused:   int32(v.Counts[OutcomeRefused]),
-		},
-		Items:     items,
-		CreatedAt: v.CreatedAt,
+		Counts:       countsWire(v.Counts),
+		Items:        items,
+		CreatedAt:    v.CreatedAt,
 	}
 }

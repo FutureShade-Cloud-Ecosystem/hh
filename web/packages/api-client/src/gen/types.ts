@@ -3111,7 +3111,7 @@ export type LoadKeysResolveResult = {
 };
 export type LoadBatchItemOutcome = {
   legacy_id: string;
-  status: "created" | "updated" | "unchanged" | "refused";
+  status: "created" | "attached" | "updated" | "unchanged" | "refused";
   hh_id?: string | null;
   reason?: string | null;
   field?: string | null;
@@ -3119,9 +3119,26 @@ export type LoadBatchItemOutcome = {
 };
 export type LoadBatchCounts = {
   created: number;
+  attached: number;
   updated: number;
   unchanged: number;
   refused: number;
+};
+export type LoadSubmitItem = {
+  legacy_id: string;
+  derived_key?: string | null;
+  record: { [key: string]: unknown };
+  requires?: LoadKeyRef[];
+};
+export type LoadSubmitRequest = {
+  source_system: string;
+  batch_id: string;
+  items: LoadSubmitItem[];
+};
+export type LoadSubmitResult = {
+  batch_id: string;
+  counts: LoadBatchCounts;
+  items: LoadBatchItemOutcome[];
 };
 export type LoadBatchView = {
   batch_id: string;

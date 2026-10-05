@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { LoadBatchView, LoadKeysResolveRequest, LoadKeysResolveResult, LoadReceivablesResult, LoadReceivablesUpsertRequest } from "./types.js";
+import type { LoadBatchView, LoadKeysResolveRequest, LoadKeysResolveResult, LoadReceivablesResult, LoadReceivablesUpsertRequest, LoadSubmitRequest, LoadSubmitResult } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -19,6 +19,36 @@ export async function loadGetBatch(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "loadGetBatch",
+  });
+}
+
+export async function loadMapBranches(
+  client: ApiClient,
+  body: LoadSubmitRequest,
+  call?: ApiCallOptions
+): Promise<Result<LoadSubmitResult>> {
+  return client.request<LoadSubmitResult>({
+    method: "PUT",
+    path: "/api/v1/load/branches",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "loadMapBranches",
+  });
+}
+
+export async function loadUpsertCategories(
+  client: ApiClient,
+  body: LoadSubmitRequest,
+  call?: ApiCallOptions
+): Promise<Result<LoadSubmitResult>> {
+  return client.request<LoadSubmitResult>({
+    method: "PUT",
+    path: "/api/v1/load/categories",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "loadUpsertCategories",
   });
 }
 
@@ -49,5 +79,35 @@ export async function loadUpsertReceivables(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "loadUpsertReceivables",
+  });
+}
+
+export async function loadUpsertSuppliers(
+  client: ApiClient,
+  body: LoadSubmitRequest,
+  call?: ApiCallOptions
+): Promise<Result<LoadSubmitResult>> {
+  return client.request<LoadSubmitResult>({
+    method: "PUT",
+    path: "/api/v1/load/suppliers",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "loadUpsertSuppliers",
+  });
+}
+
+export async function loadMapUsers(
+  client: ApiClient,
+  body: LoadSubmitRequest,
+  call?: ApiCallOptions
+): Promise<Result<LoadSubmitResult>> {
+  return client.request<LoadSubmitResult>({
+    method: "PUT",
+    path: "/api/v1/load/users",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "loadMapUsers",
   });
 }
