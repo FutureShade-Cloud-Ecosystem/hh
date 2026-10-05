@@ -4,19 +4,22 @@
 // The defect: Create opens a transaction on the pool, inserts with ON CONFLICT (id) DO NOTHING, and
 // when the client chosen id is taken (the insert answers no row) it called the public Load, which
 // read through the POOL while the transaction still held its own connection. That is a second
-// acquisition before the first is released. The pool the deploy runs is small (pgx sets max(4, CPUs)
-// and nothing overrides it), so when pool-size creates reach that arm together each holds one
-// connection and waits for a fifth that never comes. Postgres sees nothing wrong (no row lock is
-// waited on by the starved caller), the process stalls to each action timeout, and nothing is lost
-// because everything rolls back; availability is what goes.
+// acquisition before the first is released. The pool the deploy runs is small (pgx sets max(4,
+// CPUs) and nothing overrides it), so once pool-size creates are in flight on taken ids, the
+// callers that reach the arm each hold their connection and wait for one more, and the rest queue
+// in Postgres on row locks those callers hold (the sequence draw or a parent row). Nothing in the
+// database can break the cycle because it closes through the client-side pool: the process stalls
+// to each action timeout, nothing is lost because everything rolls back, and availability is what
+// goes.
 //
 // The leg forces the overlap instead of hoping for it: a blocker transaction on a SEPARATE
 // single-connection pool inserts the row with id X and holds it uncommitted. Pool-size creates, all
 // pushing id X over the real store at pool size 4, each open a transaction and queue inside it
 // (behind the blocker's row or behind the seq draw). Once the probe sees pool-size sessions waiting
-// on a lock, the blocker commits, and the callers proceed (at least one reaches the conflict arm holding its
-// transaction; the rest may queue on that caller\'s row locks). Unfixed they starve and the shared bound fires (a STALL banner); fixed they all
-// answer ErrRowExists within milliseconds.
+// on a lock, the blocker commits and the callers proceed: at least one reaches the conflict arm
+// holding its transaction, and the rest may queue on that caller's row locks. Unfixed the callers
+// starve and the shared bound fires (a STALL banner); fixed they all answer ErrRowExists within
+// milliseconds.
 //
 // The test's own helper connections come from separate pools so they never take one of the scenario
 // connections. The leg runs against whatever DATABASE_URL it is given and skips without one.
