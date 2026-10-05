@@ -9,7 +9,7 @@
 //   - a recording store proving the provider's tx path persists through store.InsertSignatureTx and
 //     never through the pool method;
 //   - an AST pass over the package's production files proving exactly one INSERT INTO pos_signature
-//     literal exists in the whole module and that it lives in Repository.InsertSignatureTx, with the
+//     statement exists in the whole module and that it lives in Repository.InsertSignatureTx, with the
 //     tx capture path calling the seam instead of running statements on the transaction handle;
 //   - the integration twin (signature_statement_drift_integration_test.go) capturing the same
 //     attestation through both paths and comparing the stored rows column by column.
@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 
@@ -88,7 +89,7 @@ func TestCaptureTypedTx_InsertsThroughTheStoreSeam(t *testing.T) {
 	}
 }
 
-// signatureSourceScan is one production file's statements, grouped by the function holding them.
+// signatureSourceScan is one source file's statements, grouped by the function holding them.
 // freeLiterals holds the string literals declared OUTSIDE any function body (package level consts).
 type signatureSourceScan struct {
 	funcLiterals map[string][]string
@@ -96,9 +97,60 @@ type signatureSourceScan struct {
 	freeLiterals []string
 }
 
-// scanSignatureStatementSources parses the package's own non-test .go files (the test lives beside
-// them, so runtime.Caller finds the directory both under go test and under the integration tag) and
-// records, per function, its string literals and the selector names it calls.
+func newSignatureSourceScan() signatureSourceScan {
+	return signatureSourceScan{
+		funcLiterals: map[string][]string{},
+		funcCalls:    map[string][]string{},
+	}
+}
+
+// scanSignatureSourceText parses ONE source file given as text and records, per function, its string
+// literals and the selector names it calls. Taking text instead of a path is what lets the variant
+// table below feed the pass an in-memory file: a planted statement is proven caught without editing
+// the tree.
+func scanSignatureSourceText(t *testing.T, name, src string) signatureSourceScan {
+	t.Helper()
+	scan := newSignatureSourceScan()
+	// The pass reads the package's non-test files only, the gate PR 174 gave it.
+	if strings.HasSuffix(name, "_test.go") {
+		return scan
+	}
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, name, src, 0)
+	if err != nil {
+		t.Fatalf("parse %s: %v", name, err)
+	}
+	for _, d := range f.Decls {
+		fd, isFunc := d.(*ast.FuncDecl)
+		if !isFunc || fd.Body == nil {
+			ast.Inspect(d, func(n ast.Node) bool {
+				if lit, isLit := n.(*ast.BasicLit); isLit && lit.Kind == token.STRING {
+					scan.freeLiterals = append(scan.freeLiterals, lit.Value)
+				}
+				return true
+			})
+			continue
+		}
+		ast.Inspect(fd.Body, func(n ast.Node) bool {
+			switch v := n.(type) {
+			case *ast.BasicLit:
+				if v.Kind == token.STRING {
+					scan.funcLiterals[fd.Name.Name] = append(scan.funcLiterals[fd.Name.Name], v.Value)
+				}
+			case *ast.CallExpr:
+				if sel, isSel := v.Fun.(*ast.SelectorExpr); isSel {
+					scan.funcCalls[fd.Name.Name] = append(scan.funcCalls[fd.Name.Name], sel.Sel.Name)
+				}
+			}
+			return true
+		})
+	}
+	return scan
+}
+
+// scanSignatureStatementSources walks the package's own .go files (the test lives beside them, so
+// runtime.Caller finds the directory both under go test and under the integration tag) and scans
+// each one's source text.
 func scanSignatureStatementSources(t *testing.T) signatureSourceScan {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
@@ -110,47 +162,47 @@ func scanSignatureStatementSources(t *testing.T) signatureSourceScan {
 	if err != nil {
 		t.Fatalf("read package directory: %v", err)
 	}
-	scan := signatureSourceScan{
-		funcLiterals: map[string][]string{},
-		funcCalls:    map[string][]string{},
-	}
+	scan := newSignatureSourceScan()
 	for _, e := range entries {
 		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+		if e.IsDir() || !strings.HasSuffix(name, ".go") {
 			continue
 		}
-		fset := token.NewFileSet()
-		f, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, 0)
+		src, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
-			t.Fatalf("parse %s: %v", name, err)
+			t.Fatalf("read %s: %v", name, err)
 		}
-		for _, d := range f.Decls {
-			fd, isFunc := d.(*ast.FuncDecl)
-			if !isFunc || fd.Body == nil {
-				ast.Inspect(d, func(n ast.Node) bool {
-					if lit, isLit := n.(*ast.BasicLit); isLit && lit.Kind == token.STRING {
-						scan.freeLiterals = append(scan.freeLiterals, lit.Value)
-					}
-					return true
-				})
-				continue
-			}
-			ast.Inspect(fd.Body, func(n ast.Node) bool {
-				switch v := n.(type) {
-				case *ast.BasicLit:
-					if v.Kind == token.STRING {
-						scan.funcLiterals[fd.Name.Name] = append(scan.funcLiterals[fd.Name.Name], v.Value)
-					}
-				case *ast.CallExpr:
-					if sel, isSel := v.Fun.(*ast.SelectorExpr); isSel {
-						scan.funcCalls[fd.Name.Name] = append(scan.funcCalls[fd.Name.Name], sel.Sel.Name)
-					}
-				}
-				return true
-			})
+		fileScan := scanSignatureSourceText(t, name, string(src))
+		for fn, lits := range fileScan.funcLiterals {
+			scan.funcLiterals[fn] = append(scan.funcLiterals[fn], lits...)
 		}
+		for fn, calls := range fileScan.funcCalls {
+			scan.funcCalls[fn] = append(scan.funcCalls[fn], calls...)
+		}
+		scan.freeLiterals = append(scan.freeLiterals, fileScan.freeLiterals...)
 	}
 	return scan
+}
+
+// signatureInsertMatches locates the module's INSERT INTO pos_signature statements in the scan: one
+// entry per matching literal, naming the function that holds it, or "package scope" for a literal
+// declared outside any function body. Sorted, so a failure message is deterministic.
+func signatureInsertMatches(scan signatureSourceScan) []string {
+	var where []string
+	for name, lits := range scan.funcLiterals {
+		for _, lit := range lits {
+			if strings.Contains(lit, "INSERT INTO pos_signature") {
+				where = append(where, name)
+			}
+		}
+	}
+	for _, lit := range scan.freeLiterals {
+		if strings.Contains(lit, "INSERT INTO pos_signature") {
+			where = append(where, "package scope")
+		}
+	}
+	sort.Strings(where)
+	return where
 }
 
 // TestSignatureInsertStatementIsShared is the drift pin: one INSERT INTO pos_signature statement in
@@ -159,28 +211,21 @@ func scanSignatureStatementSources(t *testing.T) signatureSourceScan {
 func TestSignatureInsertStatementIsShared(t *testing.T) {
 	scan := scanSignatureStatementSources(t)
 	var drift []string
-	shared := 0
-	for name, lits := range scan.funcLiterals {
-		for _, lit := range lits {
-			if !strings.Contains(lit, "INSERT INTO pos_signature") {
-				continue
-			}
-			shared++
-			if name != "InsertSignatureTx" {
-				drift = append(drift, fmt.Sprintf(
-					"an INSERT INTO pos_signature statement lives in %s, outside the shared Repository.InsertSignatureTx", name))
-			}
-		}
-	}
-	for _, lit := range scan.freeLiterals {
-		if strings.Contains(lit, "INSERT INTO pos_signature") {
-			shared++
+	matches := signatureInsertMatches(scan)
+	for _, where := range matches {
+		switch where {
+		case "InsertSignatureTx":
+			// the one sanctioned home of the statement
+		case "package scope":
 			drift = append(drift, "an INSERT INTO pos_signature statement lives at package scope, outside the shared Repository.InsertSignatureTx")
+		default:
+			drift = append(drift, fmt.Sprintf(
+				"an INSERT INTO pos_signature statement lives in %s, outside the shared Repository.InsertSignatureTx", where))
 		}
 	}
-	if shared != 1 {
+	if len(matches) != 1 {
 		drift = append(drift, fmt.Sprintf(
-			"the module must carry exactly one INSERT INTO pos_signature statement, found %d: a second copy drifts from the first and a signature row reads differently however it was captured", shared))
+			"the module must carry exactly one INSERT INTO pos_signature statement, found %d: a second copy drifts from the first and a signature row reads differently however it was captured", len(matches)))
 	}
 	calls := scan.funcCalls["CaptureTypedTx"]
 	foundSeamCall := false
@@ -197,5 +242,70 @@ func TestSignatureInsertStatementIsShared(t *testing.T) {
 	}
 	if len(drift) > 0 {
 		t.Fatalf("the signature insert statement has drifted off the one shared copy: %s", strings.Join(drift, "; "))
+	}
+}
+
+// TestSignatureInsertDriftVariantsAreCaught feeds the AST pass one planted statement per evading
+// variant the PR 174 review listed, each variant a whole source file built in memory: a raw string
+// literal parked in a _test.go helper, a fmt.Sprintf built statement, lowercase SQL, a double space,
+// a line break between INTO and the table name, adjacent literal concatenation, a schema qualified
+// table name, and a quoted table name. A disguise the pass sees through nothing is a second copy of
+// the statement drifting under the pin, so every variant must come back as exactly one match in the
+// function that plants it.
+func TestSignatureInsertDriftVariantsAreCaught(t *testing.T) {
+	tests := []struct {
+		name     string
+		filename string
+		source   string
+	}{
+		{
+			name:     "a raw string literal in a _test.go helper file",
+			filename: "sig_plant_helper_test.go",
+			source:   "package pos\n\nfunc plantSignatureRow() string {\n\treturn `INSERT INTO pos_signature (purpose, ref_type) VALUES ('x', 'order')`\n}\n",
+		},
+		{
+			name:     "a fmt.Sprintf built statement",
+			filename: "sig_plant_variant.go",
+			source:   "package pos\n\nimport \"fmt\"\n\nfunc plantSignatureRow() string {\n\treturn fmt.Sprintf(\"INSERT INTO %s (purpose, ref_type) VALUES ('x', 'order')\", \"pos_signature\")\n}\n",
+		},
+		{
+			name:     "lowercase SQL",
+			filename: "sig_plant_variant.go",
+			source:   "package pos\n\nfunc plantSignatureRow() string {\n\treturn \"insert into pos_signature (purpose, ref_type) values ('x', 'order')\"\n}\n",
+		},
+		{
+			name:     "a double space between INTO and the table name",
+			filename: "sig_plant_variant.go",
+			source:   "package pos\n\nfunc plantSignatureRow() string {\n\treturn \"INSERT INTO  pos_signature (purpose, ref_type) VALUES ('x', 'order')\"\n}\n",
+		},
+		{
+			name:     "a line break between INTO and the table name",
+			filename: "sig_plant_variant.go",
+			source:   "package pos\n\nfunc plantSignatureRow() string {\n\treturn \"INSERT INTO\\n\\tpos_signature (purpose, ref_type) VALUES ('x', 'order')\"\n}\n",
+		},
+		{
+			name:     "adjacent literal concatenation splitting the table name",
+			filename: "sig_plant_variant.go",
+			source:   "package pos\n\nfunc plantSignatureRow() string {\n\treturn \"INSERT INTO pos_\" + \"signature (purpose, ref_type) VALUES ('x', 'order')\"\n}\n",
+		},
+		{
+			name:     "a schema qualified table name",
+			filename: "sig_plant_variant.go",
+			source:   "package pos\n\nfunc plantSignatureRow() string {\n\treturn \"INSERT INTO public.pos_signature (purpose, ref_type) VALUES ('x', 'order')\"\n}\n",
+		},
+		{
+			name:     "a quoted table name",
+			filename: "sig_plant_variant.go",
+			source:   "package pos\n\nfunc plantSignatureRow() string {\n\treturn \"INSERT INTO \\\"pos_signature\\\" (purpose, ref_type) VALUES ('x', 'order')\"\n}\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scan := scanSignatureSourceText(t, tt.filename, tt.source)
+			matches := signatureInsertMatches(scan)
+			if len(matches) != 1 || matches[0] != "plantSignatureRow" {
+				t.Fatalf("the pass must see the planted statement through this disguise, saw %d matches: %v", len(matches), matches)
+			}
+		})
 	}
 }
