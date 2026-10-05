@@ -56,7 +56,7 @@ func TestClaimHouseConversation_LostRaceProbeJoinsTx_NoPoolCycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse DATABASE_URL: %v", err)
 	}
-	// 4 is the deploy default the defect stalls at, pinned explicitly rather than left to
+	// 4 is pgx's default on a host with four or fewer CPUs (max(4, CPUs)), pinned explicitly rather than left to
 	// max(4, CPUs) so the starvation reproduces identically on any machine.
 	cfg.MaxConns = int32(poolSize)
 	cfg.MinConns = 0
