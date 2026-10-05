@@ -5,9 +5,11 @@
 // it, and on zero rows probes "vanished or already claimed" through the SHARED POOL while the
 // transaction still holds its own connection. That is a second acquisition before the first is
 // released. Pool-size claimers of one conversation (the losers of a race, exactly the callers that
-// reach the zero-row arm) each hold one connection and wait for one more: the sessions sit idle in
-// transaction, no lock is waited on, the database's deadlock detector is blind to the client-side
-// half, and the process stalls to the action timeout.
+// reach the zero-row arm) each hold one connection and wait for one more. The starved claimer sits idle in
+// transaction waiting for a pool connection, and the others queue behind it in Postgres on the
+// claim row (a lock wait on its open transaction), but the cycle closes through the client-side
+// pool, which the database's deadlock detector cannot see, so the process stalls to the action
+// timeout. The root cause is the second acquisition; the lock queue is its consequence here.
 //
 // The overlap is forced rather than left to scheduling. A blocker transaction on a SEPARATE pool
 // claims the conversation and stays open, so every claimer's UPDATE waits on that row inside its own
@@ -195,8 +197,8 @@ func TestClaimHouseConversation_LostRaceProbeJoinsTx_NoPoolCycle(t *testing.T) {
 	if bad > 0 && boundFired {
 		t.Fatalf("THE STALL REPRODUCED: %d of %d claimers did not return ErrAlreadyClaimed within the %s bound. "+
 			"Each claimer held one pool connection in its open transaction and asked the shared pool for a "+
-			"second to probe the lost race, so the pool-size claimers pinned every connection with no lock "+
-			"waited on anywhere; per-claimer timings are logged above.", bad, claimers, stallBound)
+			"second to probe the lost race, so the pool-size claimers pinned every connection; the cycle "+
+			"closes through the client-side pool, so the database cannot detect it; per-claimer timings are logged above.", bad, claimers, stallBound)
 	}
 	for _, o := range outcomes {
 		if !errors.Is(o.err, ErrAlreadyClaimed) {
