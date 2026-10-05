@@ -463,8 +463,12 @@ func (a pricingCatalogSKUs) LookupSKUs(ctx context.Context, skus []string) (map[
 // (plan CP0-6): the active products a pricing change may reach, each with the cost the floor is
 // graded against. Products come from the catalogue's own list (the product module owns the
 // table) and the cost from inventory's cost basis (it owns the branch costs), so pricing reads
-// neither table. With a branch the cost is that branch's; with none it is the product's
-// engagement-wide weighted cost. A product with no cost row comes back at 0 and the preview
+// neither table. With a branch the cost is that branch's; with none it is the HIGHEST branch
+// cost, the basis the warning errs toward naming a product on (a breach the dearer branch
+// makes must not hide behind the engagement-wide weighted cost; the panel names a branch only
+// for a branched rule, so policies, breaks, overrides and unbranched rules all arrive here
+// with none). The per-branch costs come from inventory's cross-branch availability read, one
+// row per branch with its cost. A product with no cost row comes back at 0 and the preview
 // counts it as no cost on file.
 type pricingFloorCandidates struct {
 	products  *product.Service
@@ -518,7 +522,7 @@ func (a pricingFloorCandidates) CandidateProducts(ctx context.Context, categoryI
 		if categoryID != "" && cat != categoryID {
 			continue
 		}
-		cost, _, err := a.inventory.CurrentCostCents(ctx, p.ID, branchID)
+		cost, err := a.candidateCost(ctx, p.ID, branchID)
 		if err != nil {
 			return nil, err
 		}
@@ -527,6 +531,27 @@ func (a pricingFloorCandidates) CandidateProducts(ctx context.Context, categoryI
 		})
 	}
 	return out, nil
+}
+
+// candidateCost is the cost the floor is graded against: the named branch's own cost, or with
+// no branch the highest any branch carries, read from inventory's one-row-per-branch
+// availability answer (it left-joins the branch cost, so a branch with no cost row reports 0).
+func (a pricingFloorCandidates) candidateCost(ctx context.Context, productID, branchID string) (int64, error) {
+	if branchID != "" {
+		cost, _, err := a.inventory.CurrentCostCents(ctx, productID, branchID)
+		return cost, err
+	}
+	branches, err := a.inventory.AvailabilityAllBranches(ctx, productID)
+	if err != nil {
+		return 0, err
+	}
+	var highest int64
+	for _, b := range branches {
+		if b.AvgCostCents > highest {
+			highest = b.AvgCostCents
+		}
+	}
+	return highest, nil
 }
 
 // pricingFloorCustomers satisfies pricing.FloorCustomers over customer.Service.ResolveAccount, so

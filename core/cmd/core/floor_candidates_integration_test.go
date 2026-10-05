@@ -50,8 +50,13 @@ func TestFloorCandidates_TheSeamsReadThroughTheOwningServices(t *testing.T) {
 	if one[0].CostCents != branchCost {
 		t.Errorf("with a branch the cost is that branch's: %d, want %d", one[0].CostCents, branchCost)
 	}
-	if def, err := cands.CandidateProducts(ctx, "", productID, "", 10); err != nil || len(def) != 1 || def[0].CostCents <= 0 {
-		t.Errorf("with no branch the engagement-wide cost applies: %+v, %v", def, err)
+	var maxCost int64
+	if err := pool.QueryRow(ctx, `
+		SELECT COALESCE(MAX(avg_unit_cost_cents), 0) FROM product_branch_costs WHERE product_id = $1`, productID).Scan(&maxCost); err != nil {
+		t.Fatalf("max branch cost: %v", err)
+	}
+	if def, err := cands.CandidateProducts(ctx, "", productID, "", 10); err != nil || len(def) != 1 || def[0].CostCents != maxCost {
+		t.Errorf("with no branch the highest branch cost applies: %+v, %v", def, err)
 	}
 	if none, err := cands.CandidateProducts(ctx, "", "00000000-0000-4000-8000-000000000000", "", 10); err != nil || len(none) != 0 {
 		t.Errorf("an unknown product is no candidate, not an error: %+v, %v", none, err)
@@ -85,6 +90,88 @@ func TestFloorCandidates_TheSeamsReadThroughTheOwningServices(t *testing.T) {
 	if err != nil || len(wide) != min(active, pricing.PreviewProductCap+1) {
 		t.Errorf("a wide read returns %d, got %d, %v", min(active, pricing.PreviewProductCap+1), len(wide), err)
 	}
+
+	// The reviewer's P2-A case, pinned on the seam: with no branch the cost is the HIGHEST branch
+	// cost (the removed repository read's MAX), never the engagement-wide weighted cost, so a
+	// breach that only the dearer branch makes is named even when the editor named no branch.
+	t.Run("no branch grades at the highest branch cost", func(t *testing.T) {
+		var productID, categoryID, baseUOM string
+		if err := pool.QueryRow(ctx, `
+			SELECT p.id::text, p.category_id::text, p.base_uom::text
+			  FROM products p
+			  JOIN pricing_list_prices plp ON plp.product_id = p.id AND plp.price_uom = p.base_uom
+			 WHERE p.is_active AND p.category_id IS NOT NULL AND p.sku LIKE 'DBS-%'
+			 ORDER BY p.sku LIMIT 1`).Scan(&productID, &categoryID, &baseUOM); err != nil {
+			t.Fatalf("no seeded product with a base-unit anchor: %v", err)
+		}
+		branches := []string{"", ""}
+		brows, err := pool.Query(ctx, `SELECT id::text FROM locations WHERE loc_type = 'BRANCH' ORDER BY code LIMIT 2`)
+		if err != nil {
+			t.Fatalf("branches: %v", err)
+		}
+		defer brows.Close()
+		for i := 0; brows.Next(); i++ {
+			if err := brows.Scan(&branches[i]); err != nil {
+				t.Fatalf("branch: %v", err)
+			}
+		}
+		if branches[0] == "" || branches[1] == "" {
+			t.Fatalf("the seed must hold two branches")
+		}
+		// List 2200 in the base unit, branch costs 1518 and 1540 (the weighted cost would be 1529),
+		// and a 20 percent floor on the category. Every stored price the product could resolve
+		// through is cleared so before/after speak only the list price and the proposed rule.
+		mustExec(t, ctx, pool, `UPDATE pricing_list_prices SET list_price_cents = 2200 WHERE product_id = $1`, productID)
+		mustExec(t, ctx, pool, `DELETE FROM product_branch_costs WHERE product_id = $1`, productID)
+		mustExec(t, ctx, pool, `INSERT INTO product_branch_costs (product_id, branch_id, avg_unit_cost_cents)
+			VALUES ($1, $2, 1518), ($1, $3, 1540)`, productID, branches[0], branches[1])
+		mustExec(t, ctx, pool, `DELETE FROM stock_balances WHERE product_id = $1`, productID)
+		mustExec(t, ctx, pool, `DELETE FROM pricing_rules WHERE customer_type = 'RETAIL' OR category_id = $1`, categoryID)
+		mustExec(t, ctx, pool, `DELETE FROM quantity_break_items WHERE header_id IN
+			(SELECT id FROM quantity_break_headers WHERE product_id = $1 OR category_id = $2)`, productID, categoryID)
+		mustExec(t, ctx, pool, `DELETE FROM quantity_break_headers WHERE product_id = $1 OR category_id = $2`, productID, categoryID)
+		mustExec(t, ctx, pool, `INSERT INTO pricing_category_policy (category_id, margin_target_bps, margin_floor_bps, margin_enforcement_disabled)
+			VALUES ($1, 3000, 2000, false)
+			ON CONFLICT (category_id) DO UPDATE SET margin_target_bps = 3000, margin_floor_bps = 2000, margin_enforcement_disabled = false`, categoryID)
+
+		if one, err := cands.CandidateProducts(ctx, categoryID, productID, branches[0], 10); err != nil || len(one) != 1 || one[0].CostCents != 1518 {
+			t.Errorf("the cheaper branch's cost: %+v, %v", one, err)
+		}
+		if one, err := cands.CandidateProducts(ctx, categoryID, productID, branches[1], 10); err != nil || len(one) != 1 || one[0].CostCents != 1540 {
+			t.Errorf("the dearer branch's cost: %+v, %v", one, err)
+		}
+		noBranch, err := cands.CandidateProducts(ctx, categoryID, productID, "", 10)
+		if err != nil || len(noBranch) != 1 || noBranch[0].CostCents != 1540 {
+			t.Errorf("with no branch the HIGHEST branch cost applies (1540, not the weighted 1529): %+v, %v", noBranch, err)
+		}
+
+		pricingSvc := pricing.NewService(pricing.NewRepository(pool)).
+			WithCategoryResolver(productSvc).WithUOMConverter(productSvc).WithMarginGate(pricing.NewIdentityMarginGate()).
+			WithCandidateSource(cands)
+		thirteen := int64(1300)
+		out, err := pricingSvc.PreviewFloor(ctx, pricing.FloorChange{Kind: "rule", Rule: &pricing.Rule{
+			Scope: pricing.ScopeTierCategory, CustomerType: "RETAIL", CategoryID: categoryID,
+			CalcType: pricing.CalcPctOffList, DiscountBps: &thirteen, PriceUOM: baseUOM, Priority: 10}})
+		if err != nil {
+			t.Fatalf("PreviewFloor: %v", err)
+		}
+		if len(out.Items) == 0 {
+			t.Fatalf("13 percent off at the highest branch cost must name the product (margin 19.54 percent against a 20 percent floor): %+v", out)
+		}
+		var it *pricing.FloorPreviewItem
+		for i := range out.Items {
+			if out.Items[i].ProductID == productID {
+				it = &out.Items[i]
+			}
+		}
+		if it == nil {
+			t.Fatalf("the 2200 list, 1540 highest cost product is not named (the weighted 1529 cost hides the breach): %+v", out.Items)
+		}
+		if it.FinalCents != 1914 || it.PreviousFinalCents != 2200 ||
+			it.MarginBps != 1954 || it.FloorBps != 2000 || it.AlreadyUnderFloor {
+			t.Errorf("the reviewer's figures: %+v", *it)
+		}
+	})
 
 	custSvc := pricingFloorCustomers{svc: customer.NewService(customer.NewRepository(pool))}
 	var custID, custType string
