@@ -1541,3 +1541,19 @@ said "legs". The test now refuses the frontline authority on all four routes (th
 the review-status upsert, which also proves the refused upsert wrote nothing) and asserts a call with no bearer is refused 401.
 Moving any one of the four routes from the manager guard to the staff guard turns the test red (three production bites run, each
 restored byte identical).
+
+## internal/sync is back in the integration job (decision log row 804, appended; the entries above are never edited)
+
+The sync gap legs were red only in the job's order, and the polluter is internal/pos. The cause, observed on a real gate: the gap
+fixture's cleanup swept every invoice whose number starts `#INV-`, which on a gate the POS package had run on includes POS's own
+invoices, and `pos_returns.invoice_id ON DELETE RESTRICT` blocked the whole statement. The cleanup helper ignored the error, so the
+fixture's writer document survived its own cleanup; the fixture then deleted its order, which set that document's `order_id` to
+NULL (migration 0009's ON DELETE SET NULL); the walkthrough's push converged on the stranded document by its writer key and the
+test's read of (order, seq) found nothing. Separately the payments leg counted every keyed payment on the gate. Both were fixture
+assumptions about a shared gate (test only, no production change): the cleanup now names only the fixture's own documents (the
+seeded payables by id and the writer document by its convergence key) and the payments count is scoped to the invoice under test.
+Run alone the package was already green on a fresh gate (and green twice on one gate, which the older note here doubted). The
+integration job's own command with sync included, after every package that precedes it, passes; the `sync` word leaves `red=` in
+`.github/workflows/ci.yml`. One corner recorded by the coder: if a production path ever deleted an order that already has a
+document, the writer would converge on the old document with its link NULL (0009's own choice); nothing in the job order
+exercises that.
