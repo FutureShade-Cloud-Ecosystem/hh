@@ -101,9 +101,15 @@ type TypedNameSignatureProvider struct {
 }
 
 // NewTypedNameSignatureProvider wires the shared sealer (the SimulatedSignatureProvider constructor
-// shape, so main.go swaps one call).
+// shape, so main.go swaps one call). The clock is deliberately NOT set here: the provider is
+// constructed with the vault only, and the clock is a service dependency the lazy bind delivers at
+// first capture (WithClock's clock, or NewService's wall-clock default). Setting time.Now here made
+// the bind's fill-only-nil check a no-op, so the service clock never reached either capture path and
+// every sealed attestation was stamped with the wall clock however the service was clocked. A
+// provider captured with no service behind it stays on the wall clock through the sealTypedAttestation
+// fallback.
 func NewTypedNameSignatureProvider(vault Sealer) *TypedNameSignatureProvider {
-	return &TypedNameSignatureProvider{vault: vault, now: time.Now}
+	return &TypedNameSignatureProvider{vault: vault}
 }
 
 func (p *TypedNameSignatureProvider) bind(store posStore, rec audit.Recorder, now func() time.Time) {
