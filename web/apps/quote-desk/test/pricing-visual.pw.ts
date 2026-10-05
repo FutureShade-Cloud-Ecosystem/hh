@@ -126,6 +126,7 @@ test("the margin boxes are filled boxes, and the code and id inputs sit left", a
   await signIn(page);
   await openPricing(page);
   await openTab(page, "margin");
+  await expect(page.getByTestId("pm-row")).toHaveCount(6);
   const cell = page.locator('input[data-field^="target-"]').first();
   const look = await cell.evaluate((el) => {
     const cs = getComputedStyle(el);
@@ -135,24 +136,33 @@ test("the margin boxes are filled boxes, and the code and id inputs sit left", a
   expect(look.radius).toBeLessThan(12);
   expect(look.width).toBeGreaterThanOrEqual(96);
   expect(look.back).not.toBe("rgba(0, 0, 0, 0)");
-  // a filled box at the reference's weight, in both themes: the box's fill must equal the
-  // exact few percent tint the style names (3 percent of the text colour over the row alt
-  // colour). A probe div carrying the same declaration is computed beside the input, inside
-  // the same shadow tree so the custom properties resolve identically, and the two computed
-  // values are compared as strings: the same expression serialises to the same string, so a
-  // heavier tint, a lighter one or a revert to outlined pills all read as a difference.
+  // The reference (shots/pricing/margin-policy.png, measured) is a light border and a steady
+  // fill: rgb(219,227,234) around rgb(245,247,250), the same fill on the striped row and the
+  // plain one. Those are the light theme's line and page tokens exactly, and the dark theme
+  // answers with the same two tokens' dark halves, so the check compares the box to the
+  // reference's own numbers in light and to the tokens in dark, never to a formula the box
+  // itself feeds back (round 3 P3: the old check could not see this difference).
+  const plain = page.locator("qd-pricing-margin tbody tr:nth-child(1) input[data-field^='target-']");
   const striped = page.locator("qd-pricing-margin tbody tr:nth-child(2) input[data-field^='target-']");
-  for (const word of ["Light", "Dark"] as const) {
-    await setTheme(page, word);
-    const fills = await striped.evaluate((el) => {
+  await setTheme(page, "Light");
+  for (const box of [plain, striped]) {
+    const got = await box.evaluate((el) => ({ border: getComputedStyle(el).borderTopColor, fill: getComputedStyle(el).backgroundColor }));
+    expect(got.border, "the reference's light border").toBe("rgb(219, 227, 234)");
+    expect(got.fill, "the reference's steady fill").toBe("rgb(245, 247, 250)");
+  }
+  await setTheme(page, "Dark");
+  for (const box of [plain, striped]) {
+    const got = await box.evaluate((el) => {
       const probe = document.createElement("div");
-      probe.style.background = "color-mix(in srgb, var(--hos-text, var(--hh-text)) 3%, var(--hos-row-alt, var(--hh-row-alt)))";
+      probe.style.border = "1px solid var(--hos-line, var(--hh-line))";
+      probe.style.background = "var(--hos-deep-earth, var(--hh-page))";
       el.parentElement?.append(probe);
-      const want = getComputedStyle(probe).backgroundColor;
+      const want = { border: getComputedStyle(probe).borderTopColor, fill: getComputedStyle(probe).backgroundColor };
       probe.remove();
-      return { fill: getComputedStyle(el).backgroundColor, want };
+      return { got: { border: getComputedStyle(el).borderTopColor, fill: getComputedStyle(el).backgroundColor }, want };
     });
-    expect(fills.fill, `the ${word} margin box fill is the 3 percent text tint`).toBe(fills.want);
+    expect(got.got.border, "the dark theme's line token").toBe(got.want.border);
+    expect(got.got.fill, "the dark theme's page token, steady over the stripe").toBe(got.want.fill);
   }
   await openTab(page, "breaks");
   await page.getByTestId("pb-new").click();

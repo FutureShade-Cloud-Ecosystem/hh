@@ -158,6 +158,15 @@ export const pricingStyles = [
       border-radius: 6px;
       background: color-mix(in srgb, var(--hos-text, var(--hh-text)) 3%, var(--hos-row-alt, var(--hh-row-alt)));
     }
+    /* The margin boxes carry the reference's own weight (shots/pricing/margin-policy.png,
+       measured): the panel's light line around a steady near-white fill that ignores the row
+       stripe. Both are the light theme's line and page tokens exactly (rgb 219,227,234 over
+       rgb 245,247,250), so the dark theme answers with the same tokens' dark halves rather
+       than a formula of its own. */
+    .panel td input.cell {
+      border-color: var(--hos-line, var(--hh-line));
+      background: var(--hos-deep-earth, var(--hh-page));
+    }
     input.mono,
     td input.mono {
       font-family: var(--pr-mono);
