@@ -316,6 +316,43 @@ func TestAttempts_TillGuard(t *testing.T) {
 			t.Fatalf("leg 2 of the same sale: created=%v err=%v", created, err)
 		}
 	})
+	t.Run("same_sale_key_past_an_answer_blocks_a_new_shape", func(t *testing.T) {
+		// The round 1 review's re-shaped ring: a single tender's leg key IS the sale key, it loses
+		// its answer (or sits mid reversal), the cashier re-shapes the ring (a split, or reordered
+		// legs), the client mints a new leg key under the SAME sale key, and that new key must not
+		// reach the processor over the open outcome.
+		for _, status := range []string{AttemptUnknown, AttemptVoiding, AttemptVoidUnknown, AttemptVoidDeclined} {
+			t.Run(status, func(t *testing.T) {
+				fx := newAttemptFx(t)
+				ctx := context.Background()
+				first := fx.claim(fx.in(5000))
+				driveViaStore(t, fx, first, status)
+				reshaped := fx.in(5000)
+				reshaped.SaleKey = first.SaleKey
+				_, created, err := fx.store.Claim(ctx, reshaped)
+				if !errors.Is(err, ErrTillUnresolved) || created {
+					t.Fatalf("re-shaped ring over a same-sale %s row: created=%v err=%v, want ErrTillUnresolved", status, created, err)
+				}
+			})
+		}
+	})
+	t.Run("same_sale_key_in_flight_sibling_still_claims", func(t *testing.T) {
+		// A live sibling leg is only ever CHARGING or CAPTURED (a ring stops at the first leg that
+		// ends anything else), and a split's next leg must claim over it.
+		for _, status := range []string{AttemptCharging, AttemptCaptured} {
+			t.Run(status, func(t *testing.T) {
+				fx := newAttemptFx(t)
+				ctx := context.Background()
+				first := fx.claim(fx.in(5000))
+				driveViaStore(t, fx, first, status)
+				sibling := fx.in(5000)
+				sibling.SaleKey, sibling.LegSeq = first.SaleKey, 2
+				if _, created, err := fx.store.Claim(ctx, sibling); err != nil || !created {
+					t.Fatalf("sibling leg over a same-sale %s row: created=%v err=%v", status, created, err)
+				}
+			})
+		}
+	})
 	t.Run("different_amount_is_allowed", func(t *testing.T) {
 		fx := newAttemptFx(t)
 		fx.claim(fx.in(5000))
@@ -336,6 +373,43 @@ func TestAttempts_TillGuard(t *testing.T) {
 			t.Fatalf("different session: created=%v err=%v", created, err)
 		}
 	})
+}
+
+// driveViaStore moves a row to a status through the store's own guarded transitions, so the guard
+// legs see exactly what production writes and nothing a forced UPDATE could fake.
+func driveViaStore(t *testing.T, fx *attemptFx, a Attempt, status string) {
+	t.Helper()
+	ctx := context.Background()
+	switch status {
+	case AttemptCharging:
+		return
+	case AttemptUnknown:
+		if _, ok, err := fx.store.StampUnknown(ctx, a.ID, "no usable answer"); err != nil || !ok {
+			t.Fatalf("StampUnknown: ok=%v err=%v", ok, err)
+		}
+	case AttemptCaptured, AttemptVoiding, AttemptVoidUnknown, AttemptVoidDeclined:
+		if _, ok, err := fx.store.StampCaptured(ctx, a.ID, "trans-"+a.ID, "A"); err != nil || !ok {
+			t.Fatalf("StampCaptured: ok=%v err=%v", ok, err)
+		}
+		if status == AttemptCaptured {
+			return
+		}
+		if _, ok, err := fx.store.BeginVoiding(ctx, a.ID); err != nil || !ok {
+			t.Fatalf("BeginVoiding: ok=%v err=%v", ok, err)
+		}
+		switch status {
+		case AttemptVoidUnknown:
+			if _, ok, err := fx.store.StampVoidUnknown(ctx, a.ID, "answer lost"); err != nil || !ok {
+				t.Fatalf("StampVoidUnknown: ok=%v err=%v", ok, err)
+			}
+		case AttemptVoidDeclined:
+			if _, ok, err := fx.store.StampVoidDeclined(ctx, a.ID, "reversal refused"); err != nil || !ok {
+				t.Fatalf("StampVoidDeclined: ok=%v err=%v", ok, err)
+			}
+		}
+	default:
+		t.Fatalf("driveViaStore cannot reach %s", status)
+	}
 }
 
 type transitionCase struct {
