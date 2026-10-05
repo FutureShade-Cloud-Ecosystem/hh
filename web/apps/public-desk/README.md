@@ -59,6 +59,12 @@ key); it unlocks when the outcome becomes known or the page is reloaded. Without
 `crypto.subtle` (an insecure context) the key is a random UUID kept in memory, so a
 reload loses it; that is accepted because the page is served over HTTPS only.
 
+Only the core's own refusals are definite (a 400, a 404 saying "not found", a 409, each
+with the JSON error envelope, and a 410 envelope for a dead link). Any other answer,
+including a proxy's JSON 4xx such as a 429 or a 413, is an unknown outcome: the page says
+it could not confirm, and a dead link re-send that fails without the core's 410 says the
+same instead of showing the dead link card.
+
 ## Testing
 
 - `test/unit.test.mjs`: the pure logic in Node, against the workspace's
