@@ -106,6 +106,8 @@ func prItem(legacyID, sku, name string, extra map[string]any, requires ...load.R
 		"PR-I1": "00000000020b",
 		"PR-I2": "00000000020c",
 		"PR-I3": "00000000020d",
+		"PR-G1": "00000000020e",
+		"PR-OV": "00000000020f",
 	}[legacyID]
 	return load.Item{
 		LegacyID:   legacyID,
@@ -515,6 +517,43 @@ func TestProductLoadRefusesARowOwnedByAnotherOrg(t *testing.T) {
 	}
 	if org != fxProdOtherOrg || name != "Other Org Row" {
 		t.Fatalf("the row now carries org %q name %q, want it untouched", org, name)
+	}
+}
+
+// A whole number field too big for its INTEGER column refuses its own
+// item as a record shape naming the field, never the batch (the
+// review's P2d, red first): the writer bounds the field to what the
+// column holds before the insert stands, and the batch's good item
+// still lands.
+func TestProductLoadRefusesAWholeNumberTooBigForItsColumn(t *testing.T) {
+	e := productLoadSetup(t)
+	ctx := context.Background()
+	e.prSeedUnit(t, "EA", "Each", "count")
+	r, err := e.door.UpsertBatch(ctx, load.Batch{OrgID: fxProdOrgID, SourceSystem: fxProdSource,
+		BatchID: "b-pr-v1", Caller: fxProdActorID,
+		Items: []load.Item{
+			prItem("PR-1", "FXPR-0501", "Fixture Whole Count", nil),
+			prItem("PR-OV", "FXPR-0502", "Fixture Overflow Count", map[string]any{
+				"pallet_count": 3000000000,
+			}),
+		}})
+	if err != nil {
+		t.Fatalf("the batch answered an error %v, want the bad item refused on its own", err)
+	}
+	if o := prOutcome(t, r, "PR-1"); o.Status != load.OutcomeCreated {
+		t.Fatalf("the batch's good item answered %+v, want created", o)
+	}
+	if o := prOutcome(t, r, "PR-OV"); o.Status != load.OutcomeRefused ||
+		o.Reason != "record_shape" || o.Field != "pallet_count" {
+		t.Fatalf("the over wide count answered %+v, want refused as record_shape on pallet_count", o)
+	}
+	var n int
+	if err := e.pool.QueryRow(ctx,
+		`SELECT count(*) FROM products WHERE sku = 'FXPR-0502'`).Scan(&n); err != nil {
+		t.Fatalf("overflow row read: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("the refused item wrote %d rows, want none", n)
 	}
 }
 

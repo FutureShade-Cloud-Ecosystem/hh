@@ -42,6 +42,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -105,6 +106,15 @@ type SupplierSKULoadWriter struct {
 // record is the whole truth, the pair's columns nullable). Both arms
 // resolve the row by the vendor and product pair the references name.
 func (w SupplierSKULoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (string, error) {
+	// The table carries no cost column, and a cost field a caller sends
+	// is refused naming the field rather than dropped: a silent drop
+	// would let the caller believe a cost landed (the plan's risk 9).
+	for _, key := range sortedRecordKeys(in.Record) {
+		if strings.Contains(strings.ToLower(key), "cost") {
+			return "", &load.Refusal{Code: "record_shape", Field: key,
+				Detail: fmt.Sprintf("supplier sku legacy key %s names a cost field; the table carries no cost column and the field is refused rather than dropped", in.LegacyID)}
+		}
+	}
 	vendorID, productID, refused := supplierSkuRefs(in)
 	if refused != nil {
 		return "", refused
@@ -170,6 +180,17 @@ func (w SupplierSKULoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Wri
 		return "", fmt.Errorf("purchasing: vendor sku load write: %w", err)
 	}
 	return SupplierSKURowID(vendorID, productID), nil
+}
+
+// sortedRecordKeys is the record's keys in sorted order, so the cost
+// refusal names the same field regardless of the map's walk order.
+func sortedRecordKeys(rec map[string]any) []string {
+	keys := make([]string, 0, len(rec))
+	for k := range rec {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // supplierLegacyID names the item's supplier reference in a refusal, or
@@ -245,6 +266,14 @@ func vendorSkuPack(in load.Write) (uom, qty string, refused *load.Refusal) {
 	}
 	if qty == "" {
 		return uom, "", nil
+	}
+	// The column carries factors above zero only (0197's CHECK), and a
+	// negative sign refuses here, before the insert reaches it: a
+	// batch wide constraint error would roll the batch's other items
+	// back with it.
+	if strings.HasPrefix(qty, "-") {
+		return "", "", &load.Refusal{Code: "record_shape", Field: "qty_per_vendor_uom",
+			Detail: fmt.Sprintf("supplier sku legacy key %s names a negative factor; the column carries factors above zero", in.LegacyID)}
 	}
 	body := strings.TrimPrefix(strings.TrimPrefix(qty, "-"), "+")
 	intPart, fracPart, _ := strings.Cut(body, ".")

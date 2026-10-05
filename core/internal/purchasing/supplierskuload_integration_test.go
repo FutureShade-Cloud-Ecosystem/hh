@@ -108,6 +108,9 @@ func skuSuffix(legacyID string) string {
 		"SK-3":  "000000000303",
 		"SK-X":  "000000000304",
 		"SK-DL": "000000000305",
+		"SK-4":  "000000000306",
+		"SK-5":  "000000000307",
+		"SK-6":  "000000000308",
 	}[legacyID]
 }
 
@@ -337,5 +340,76 @@ func TestSupplierSKULoadRefusesAnotherOrgsSupplier(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatalf("the refused item wrote %d rows, want none", n)
+	}
+}
+
+// A per item defect refuses its own item and never the batch (the
+// review's P2d and P2e, red first): a negative pack factor, and a cost
+// field the table does not carry, are record shape refusals naming the
+// field, and the batch's good items still land.
+func TestSupplierSKULoadRefusesABadRecordOnItsOwnItemAlone(t *testing.T) {
+	e := supplierSkuSetup(t)
+	ctx := context.Background()
+	vendorID, _ := e.plantSupplierSkuRefs(t)
+	refs := []load.Ref{{Kind: "supplier", LegacyID: "SUP-1"}, {Kind: "product", LegacyID: "PROD-1"}}
+
+	// The negative factor: the table's own CHECK carries factors above
+	// zero only, and the writer refuses the negative sign before any
+	// insert stands, naming the field.
+	r, err := e.door.UpsertBatch(ctx, load.Batch{OrgID: fxSkuOrgID, SourceSystem: fxSkuSource,
+		BatchID: "b-sk-d1", Caller: fxSkuActorID,
+		Items: []load.Item{
+			skuItem("SK-1", "FXV-SKU-11", map[string]any{"vendor_uom": "PLT", "qty_per_vendor_uom": "60"}, refs...),
+			skuItem("SK-4", "FXV-SKU-12", map[string]any{"vendor_uom": "PLT", "qty_per_vendor_uom": "-5"}, refs...),
+		}})
+	if err != nil {
+		t.Fatalf("the batch answered an error %v, want the bad item refused on its own", err)
+	}
+	if o := skuOutcome(t, r, "SK-1"); o.Status != load.OutcomeCreated {
+		t.Fatalf("the batch's good item answered %+v, want created", o)
+	}
+	if o := skuOutcome(t, r, "SK-4"); o.Status != load.OutcomeRefused ||
+		o.Reason != "record_shape" || o.Field != "qty_per_vendor_uom" {
+		t.Fatalf("the negative factor answered %+v, want refused as record_shape on qty_per_vendor_uom", o)
+	}
+	var n int
+	if err := e.pool.QueryRow(ctx,
+		`SELECT count(*) FROM purchasing_vendor_skus WHERE vendor_id = $1::uuid`, vendorID).Scan(&n); err != nil {
+		t.Fatalf("row count: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("%d rows stand after the batch, want the good item's row alone", n)
+	}
+
+	// A cost field is refused naming the field, not dropped: the table
+	// carries no cost column, and a silent drop would let the caller
+	// believe a cost landed.
+	r, err = e.door.UpsertBatch(ctx, load.Batch{OrgID: fxSkuOrgID, SourceSystem: fxSkuSource,
+		BatchID: "b-sk-d2", Caller: fxSkuActorID,
+		Items: []load.Item{skuItem("SK-5", "FXV-SKU-13", map[string]any{"cost": "100"}, refs...)}})
+	if err != nil {
+		t.Fatalf("the cost batch answered an error %v, want the item refused", err)
+	}
+	if o := skuOutcome(t, r, "SK-5"); o.Status != load.OutcomeRefused ||
+		o.Reason != "record_shape" || o.Field != "cost" {
+		t.Fatalf("the cost field answered %+v, want refused as record_shape naming cost", o)
+	}
+	r, err = e.door.UpsertBatch(ctx, load.Batch{OrgID: fxSkuOrgID, SourceSystem: fxSkuSource,
+		BatchID: "b-sk-d3", Caller: fxSkuActorID,
+		Items: []load.Item{skuItem("SK-6", "FXV-SKU-14", map[string]any{"unit_cost_cents": 10000}, refs...)}})
+	if err != nil {
+		t.Fatalf("the unit cost batch answered an error %v, want the item refused", err)
+	}
+	if o := skuOutcome(t, r, "SK-6"); o.Status != load.OutcomeRefused ||
+		o.Reason != "record_shape" || o.Field != "unit_cost_cents" {
+		t.Fatalf("the unit cost field answered %+v, want refused as record_shape naming unit_cost_cents", o)
+	}
+	var m int
+	if err := e.pool.QueryRow(ctx,
+		`SELECT count(*) FROM purchasing_vendor_skus WHERE vendor_id = $1::uuid`, vendorID).Scan(&m); err != nil {
+		t.Fatalf("final row count: %v", err)
+	}
+	if m != 1 {
+		t.Fatalf("%d rows stand at the end, want the first batch's good row alone", m)
 	}
 }
