@@ -2683,6 +2683,35 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/uoms:
+    get:
+      operationId: productListUnits
+      tags:
+        - staff-product
+      summary: Read the unit catalogue
+      description: "The staff read of the load doors' catalogue (HH-LOAD-1 LD-3): one cursor page of the unit rows in code order, the code the stable ordering key. Dealer Admin at read: the route serves the dealer admin surface, a named exception to this tag's default. The catalogue is the deployment wide vocabulary, so the read carries the X-Org the staff surface takes and no per row org."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - dealer-admin
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: One cursor page of the catalogue
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UomViewPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/products:
     get:
       operationId: productList
@@ -11070,6 +11099,94 @@ paths:
         - load
       summary: Upsert the supplier record with its terms, remit address and ordering contact
       description: "One item per supplier. The legacy id is the vendor number, the source's natural key; the record names the supplier name and, named, the payment terms in days, the EDI flag, the remit address, the active flag, the metadata, and the ordering contact (contact name, email, phone) through the purchasing module's own contact store. A contact that names neither an email nor a phone refuses naming the field, as do negative payment terms. A reload whose record names no contact removes the loaded contact: the record is the whole truth. A row another org owns refuses naming the kind and the key; its org is never overwritten."
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: HH-LOAD-1 load doors; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadSubmitRequest"
+      responses:
+        "200":
+          description: One outcome per item and the batch's counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadSubmitResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The batch id is recorded under another door; the submission is a collision of two doors' batch namespaces, not a replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "The batch contended with another in flight batch on shared names and Postgres rolled it back whole: nothing of it stands, and resubmitting the whole batch is safe. The one answer a caller may retry the batch on, never a per item outcome."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/load/units:
+    put:
+      operationId: loadUpsertUnits
+      tags:
+        - load
+      summary: Upsert the unit catalogue, a unit that already stands attached
+      description: "One item per unit. The record names the code, the name and the dimension, one of count, area, weight, volume and length. A code the catalogue does not carry answers created; a unit already standing with the same code and dimension answers attached and takes the load's stamps, a seeded row included (the plan's section 2: records that already exist are attached, never created twice); the same code under another dimension refuses naming the field, and the caller's pack maps repeat or clashing source codes to unique HH codes (the plan's reading 4); a dimension the catalogue does not carry refuses naming the field; a row another org owns refuses naming the kind and the key, its org never overwritten. No unit is ever deleted. The catalogue is the deployment wide vocabulary (the plan's reading 3): the unit's identity is its code, the catalogue carries no uuid column, and the registry names a unit by the code's derived row id, stable across deployments. The read assumes one deployment per dealer: it carries no org predicate on the catalogue rows."
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: HH-LOAD-1 load doors; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadSubmitRequest"
+      responses:
+        "200":
+          description: One outcome per item and the batch's counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadSubmitResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The batch id is recorded under another door; the submission is a collision of two doors' batch namespaces, not a replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "The batch contended with another in flight batch on shared names and Postgres rolled it back whole: nothing of it stands, and resubmitting the whole batch is safe. The one answer a caller may retry the batch on, never a per item outcome."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/load/products/unit-sets:
+    put:
+      operationId: loadPutUnitSets
+      tags:
+        - load
+      summary: Replace a product's unit set atomically, the product named by legacy key
+      description: "One item per product's unit set. The product arrives as a reference of kind product and resolves against the registry before any write, so a name not yet loaded refuses as a missing reference naming the kind and the key; the product door itself is a later item, so until it lands the registry is the only way a product name stands. The record's rows are the set, each naming the code, the factor as decimal text or a number, the base flag and, if named, the role hints. The set REPLACES the product's rows atomically, the old set deleted and the new inserted inside the item's transaction: exactly one base row at factor one; every factor positive and at scale eight or under, a factor beyond that refused naming the legacy key and the field, never a value, never rounded (the plan's section 8 point 3); every code naming a catalogue unit; the product's base and price units inside the set; no unit removed while a price, break, rule or stock row still names it (the list price, the pricing rules, the quantity break headers and items, the product's rounding rule, the stock moves and the pricing conversion edges); and the decimal round trip holding on every conversion, one sell unit to base and back, in exact decimal. Nothing of a refused replace stands."
       x-role: machine
       security:
         - MachineBearer: []
@@ -28126,6 +28243,45 @@ components:
         list_price_uom:
           type: string
           description: The unit list_price_cents is denominated in, carried only with it
+    UomView:
+      type: object
+      description: One row of the unit catalogue
+      required:
+        - code
+        - name
+        - dimension
+        - is_active
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        dimension:
+          type: string
+          enum:
+            - count
+            - area
+            - weight
+            - volume
+            - length
+        is_active:
+          type: boolean
+    UomViewPage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/UomView"
+        next_cursor:
+          type:
+            - string
+            - "null"
+        limit:
+          type: integer
+          format: int32
     ProductPage:
       type: object
       required:
