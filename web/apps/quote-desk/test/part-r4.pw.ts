@@ -572,3 +572,28 @@ test("P3 no empty lock box shows while a policy save is out", async ({ page }) =
     await page.request.put("/_stub/general-manager", { data: { member: false } });
   }
 });
+
+test("P3 layout saves reach the server one at a time, so the resume reference is the last quote opened", async ({ page }) => {
+  await signIn(page);
+  await open(page, "Q-1001");
+  await quiet(page);
+  const sent: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "PUT" && request.url().endsWith("/my-workspace")) sent.push(request.postData() ?? "");
+  });
+  const first = await hold(page, /\/surfaces\/quotes\.builder\/my-workspace$/, { method: "PUT", times: 1 });
+  await open(page, "Q-1003");
+  await first.asked;
+  await open(page, "Q-1001");
+  await open(page, "Q-1003");
+  // The first save is still out: no second one is sent beside it.
+  await settle(page);
+  expect(sent).toHaveLength(1);
+  await first.release();
+  await expect.poll(() => sent.length).toBeGreaterThan(1);
+  await quiet(page);
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Sales", exact: true }).click();
+  await expect(page.getByTestId("qb-context")).toContainText("Q-1003");
+});

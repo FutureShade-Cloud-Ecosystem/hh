@@ -45,7 +45,9 @@ export class WorkspaceStore {
   readonly state: WorkspaceState;
   #client: QdClient;
   #timer: ReturnType<typeof setTimeout> | undefined;
-  #saveNow: Promise<void> = Promise.resolve();
+  /** The saves in progress: one request is out at a time, and what is asked while it is out goes after it. */
+  #inFlight: Promise<void> | null = null;
+  #again = false;
   /** Told the words of the last save or reset outcome: a refusal in words, "" when it landed. */
   onError: (line: string) => void = () => undefined;
 
@@ -74,32 +76,48 @@ export class WorkspaceStore {
     }, 400);
   }
 
-  /** The save itself: best effort, the person's row written whole. */
+  /**
+   * The save itself: best effort, the person's row written whole. One request is out at a time: a save asked for
+   * while another is out is sent after it with the state as it is then, so two saves never reach the server in
+   * the wrong order and the row it holds is the last one the person made (the quote a refresh resumes).
+   */
   async save(): Promise<void> {
     if (this.#timer !== undefined) {
       clearTimeout(this.#timer);
       this.#timer = undefined;
     }
     this.state.source = "user";
-    this.#saveNow = this.#client
-      .putMyWorkspace({
-        splitPct: this.state.splitPct,
-        arrangement: this.state.arrangement,
-        primaryCollapsed: this.state.primaryCollapsed,
-        secondaryCollapsed: this.state.secondaryCollapsed,
-        costHidden: this.state.costHidden,
-        openRef: this.state.openRef,
-      })
-      .then((result) => {
+    if (this.#inFlight !== null) {
+      this.#again = true;
+      return this.#inFlight;
+    }
+    this.#inFlight = this.#drain();
+    return this.#inFlight;
+  }
+
+  async #drain(): Promise<void> {
+    try {
+      do {
+        this.#again = false;
+        const result = await this.#client.putMyWorkspace({
+          splitPct: this.state.splitPct,
+          arrangement: this.state.arrangement,
+          primaryCollapsed: this.state.primaryCollapsed,
+          secondaryCollapsed: this.state.secondaryCollapsed,
+          costHidden: this.state.costHidden,
+          openRef: this.state.openRef,
+        });
         this.onError(result.ok ? "" : `The layout was not saved: ${spokenRefusal(quoteErrorMessage(result.status, result.error, "save the layout"))}`);
-      });
-    await this.#saveNow;
+      } while (this.#again);
+    } finally {
+      this.#inFlight = null;
+    }
   }
 
   /** The flush a sign-out or a hand-run check waits on. */
   async flush(): Promise<void> {
     if (this.#timer !== undefined) await this.save();
-    await this.#saveNow;
+    await this.#inFlight;
   }
 
   /**

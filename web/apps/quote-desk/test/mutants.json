@@ -1157,5 +1157,19 @@
     "find": "this.scope === \"dealer\" ? \"this branch\" : \"the branch you left\"",
     "replace": "\"the branch you left\"",
     "test": "P3 a policy save refused after the scope moved on says which settings"
+  },
+  {
+    "id": "ws-serialize",
+    "file": "src/workspace-store.ts",
+    "find": "    if (this.#inFlight !== null) {\n      this.#again = true;\n      return this.#inFlight;\n    }\n",
+    "replace": "",
+    "test": "P3 layout saves reach the server one at a time"
+  },
+  {
+    "id": "ws-latest-after",
+    "file": "src/workspace-store.ts",
+    "find": "      } while (this.#again);",
+    "replace": "      } while (false);",
+    "test": "P3 layout saves reach the server one at a time"
   }
 ]
