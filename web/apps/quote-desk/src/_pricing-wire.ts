@@ -350,6 +350,10 @@ export interface FloorItem {
   sku: string;
   name: string;
   customerType: string;
+  /** The branch the worst grading happened at; "" when the answer named none. */
+  branchId: string;
+  /** That branch's name, when the answer named it (a branch-less preview names the yard). */
+  branchName: string;
   finalCents: number;
   marginBps: number;
   floorBps: number;
@@ -387,7 +391,21 @@ function readFloorItem(value: unknown): FloorItem | null {
   ) {
     return null;
   }
-  return { productId, sku, name, customerType: optStr(value, "customer_type") ?? "", finalCents, marginBps, floorBps, priceUom, previousFinalCents, previousMarginBps, alreadyUnderFloor };
+  return {
+    productId,
+    sku,
+    name,
+    customerType: optStr(value, "customer_type") ?? "",
+    branchId: optStr(value, "branch_id") ?? "",
+    branchName: optStr(value, "branch_name") ?? "",
+    finalCents,
+    marginBps,
+    floorBps,
+    priceUom,
+    previousFinalCents,
+    previousMarginBps,
+    alreadyUnderFloor,
+  };
 }
 
 export function readFloorPreview(value: unknown): FloorPreview | null {

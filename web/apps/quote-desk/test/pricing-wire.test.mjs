@@ -105,6 +105,13 @@ test("a floor preview reads its items and counts, and refuses a half answer", ()
   assert.equal(p?.evaluated, 12);
   assert.equal(p?.notGraded, 1);
   assert.equal(p?.noCost, 2);
+  // The branch the worst grading happened at is optional: an item may carry both its id and
+  // its name (a branch-less preview names the yard), either alone, or neither (a change that
+  // named its own branch).
+  const atYard = readFloorPreview({ ...good, items: [{ ...good.items[0], branch_id: "b1", branch_name: "Kingston" }] });
+  assert.equal(atYard?.items[0]?.branchId, "b1");
+  assert.equal(atYard?.items[0]?.branchName, "Kingston");
+  assert.equal(p?.items[0]?.branchId, "");
   assert.equal(readFloorPreview({ ...good, no_cost: undefined }), null, "the count of products with no cost is part of the contract");
   assert.equal(readFloorPreview({ ...good, truncated: undefined }), null);
   assert.equal(readFloorPreview({ ...good, items: [{ ...good.items[0], margin_bps: "8" }] }), null);

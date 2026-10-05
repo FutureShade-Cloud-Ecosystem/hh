@@ -60,6 +60,9 @@ test("raising the floor shows the products it would put under it, and declining 
   await expect(page.getByTestId("floor-headline")).toHaveText("This price puts 2 products under their margin floor.");
   await expect(page.getByTestId("floor-item")).toHaveCount(2);
   await expect(page.getByTestId("floor-item").first()).toContainText("HPV-80");
+  // The change named no branch, so the check graded every yard: the worst item names the yard
+  // it happened at (Kingston runs the dearer pavers cost), never a yard-less figure.
+  await expect(page.getByTestId("floor-item").first()).toContainText("for Retail at Kingston");
   await shot(dialog, "pricing-floor-warning");
   await page.getByTestId("floor-decline").click();
   await expect(dialog).toHaveCount(0);
@@ -67,6 +70,23 @@ test("raising the floor shows the products it would put under it, and declining 
   expect(state.policies.find((p) => p.category_id === PAVERS)).toMatchObject({ margin_floor_bps: 2000 });
   expect(state.confirmations).toHaveLength(0);
   expect(state.writes).toHaveLength(0);
+});
+
+test("a floor raised with no branch named still meets a rule limited to one branch", async ({ page }) => {
+  await signIn(page);
+  await openPricing(page);
+  // The seeded contractor default rule is limited to Trenton (15 percent off), so a
+  // branch-less check that ignores branch rules would grade the wall block at its list
+  // price and name nothing at a 25 percent floor. Graded per branch, Trenton's own rule
+  // prices it at 765 (20.26 percent) and the item names the yard.
+  const walls = "ca700000-0000-4000-9000-000000000002";
+  await page.locator('input[data-field="floor-' + walls + '"]').fill("25");
+  await page.locator('tr[data-category-id="' + walls + '"]').getByTestId("pm-save").click();
+  await expect(page.getByTestId("floor-dialog")).toBeVisible();
+  await expect(page.getByTestId("floor-item")).toHaveCount(1);
+  await expect(page.getByTestId("floor-item").first()).toContainText("WALL-12");
+  await expect(page.getByTestId("floor-item").first()).toContainText("for Contractor at Trenton");
+  await expect(page.getByTestId("floor-item").first()).toContainText("price CA$7.65 per ea, unchanged");
 });
 
 test("confirming saves the policy and logs the confirmation against it", async ({ page }) => {

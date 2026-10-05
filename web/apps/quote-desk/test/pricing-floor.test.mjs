@@ -22,8 +22,9 @@ const CUST = "c0000000-0000-4000-9000-000000000001";
 const PROD = "a7000000-0000-4000-9000-000000000001";
 
 const item = (over = {}) => ({
-  productId: PROD, sku: "HPV-60", name: "Holland Stone 60 mm", customerType: "CONTRACTOR", finalCents: 300, marginBps: 800, floorBps: 2500,
-  priceUom: "sf", previousFinalCents: 400, previousMarginBps: 3100, alreadyUnderFloor: false, ...over,
+  productId: PROD, sku: "HPV-60", name: "Holland Stone 60 mm", customerType: "CONTRACTOR", branchId: "", branchName: "",
+  finalCents: 300, marginBps: 800, floorBps: 2500, priceUom: "sf", previousFinalCents: 400, previousMarginBps: 3100,
+  alreadyUnderFloor: false, ...over,
 });
 const preview = (items, over = {}) => ({ items, evaluated: 12, notGraded: 0, noCost: 0, truncated: false, ...over });
 
@@ -108,6 +109,17 @@ test("a product's line gives the figures the server graded, in words", () => {
     "HPV-60, Holland Stone 60 mm: margin 31.00% against a floor of 40.00% for Retail, price CA$4.00 per sf, unchanged",
   );
   assert.match(itemLine(item({ customerType: "RETAIL" })), /for Retail/);
+});
+
+test("a line names the branch the worst grading happened at when the server names one", () => {
+  // A change that named no branch is graded at every branch, worst kept: the editor must see
+  // which yard breaches, or a breach at one yard reads like every yard's problem.
+  assert.equal(
+    itemLine(item({ branchId: "b0000000-0000-4000-9000-000000000002", branchName: "Kingston" })),
+    "HPV-60, Holland Stone 60 mm: margin 8.00% against a floor of 25.00% for Contractor at Kingston, price CA$3.00 per sf (was CA$4.00)",
+  );
+  // A change that named its branch already told the editor which yard: no name, no suffix.
+  assert.equal(itemLine(item({ branchId: "b0000000-0000-4000-9000-000000000002" })).includes(" at "), false);
 });
 
 test("the notes say what the grading did not cover", () => {

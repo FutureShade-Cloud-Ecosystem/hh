@@ -29,7 +29,20 @@ const CAT = {
   bulk: "ca700000-0000-4000-9000-000000000006",
 };
 
-// The stub's catalogue: list and cost per base unit, in integer cents.
+// The stub's catalogue: list and cost per base unit, in integer cents. The cost is
+// Trenton's; Kingston's own cost sits beside it (dearer on the pavers), because a change
+// that names no branch is graded at every yard at its own cost, and the worst branch must
+// be a real choice rather than the same yard every time.
+const KINGSTON_ID = "6f1c2b3a-0000-4000-8000-000000000002";
+const YARDS = [
+  { id: "6f1c2b3a-0000-4000-8000-000000000001", name: "Trenton" },
+  { id: KINGSTON_ID, name: "Kingston" },
+];
+const KINGSTON_COST = new Map([
+  ["a7000000-0000-4000-9000-000000000001", 300], // HPV-60: 276 at Trenton
+  ["a7000000-0000-4000-9000-000000000002", 395], // HPV-80: 360 at Trenton
+]);
+const yardCost = (product, yard) => (yard.id === KINGSTON_ID ? KINGSTON_COST.get(product.id) ?? product.cost : product.cost);
 const PRODUCTS = [
   { id: "a7000000-0000-4000-9000-000000000001", sku: "HPV-60", name: "Holland Stone 60 mm", category: CAT.pavers, uom: "SF", list: 400, cost: 276 },
   { id: "a7000000-0000-4000-9000-000000000002", sku: "HPV-80", name: "Holland Stone 80 mm", category: CAT.pavers, uom: "SF", list: 520, cost: 360 },
@@ -132,9 +145,14 @@ function forbidden(respondJson, response) {
 const applyPct = (base, bps) => Math.floor((base * (10000 - bps)) / 10000);
 const marginOf = (price, cost) => (price <= 0 ? 0 : Math.floor(((price - cost) * 10000) / price));
 
-function priceFor(product, ctx, qty, uom, w) {
+function priceFor(product, ctx, qty, uom, w, yard) {
+  const branchId = yard === null ? "" : yard.id;
+  const cost = yard === null ? product.cost : yardCost(product, yard);
   const matchRule = (r) => {
     if (!r.is_active) return false;
+    // A rule limited to one branch reaches a resolve at that branch alone (the core's rules
+    // read drops it everywhere else), so a branch-less change still meets it at its own yard.
+    if ((r.branch_id ?? "") !== "" && r.branch_id !== branchId) return false;
     if (r.scope === "CUSTOMER_PRODUCT") return ctx.customerId !== "" && r.customer_id === ctx.customerId && r.product_id === product.id;
     if (r.scope === "CUSTOMER_CATEGORY") return ctx.customerId !== "" && r.customer_id === ctx.customerId && r.category_id === product.category;
     if (r.scope === "TIER_CATEGORY") return r.customer_type === ctx.customerType && r.category_id === product.category;
@@ -142,7 +160,7 @@ function priceFor(product, ctx, qty, uom, w) {
   };
   const calc = (r) => {
     if (r.calc_type === "ABSOLUTE") return r.price_cents;
-    if (r.calc_type === "MARKUP_ON_COST") return Math.floor((product.cost * (10000 + r.markup_bps)) / 10000);
+    if (r.calc_type === "MARKUP_ON_COST") return Math.floor((cost * (10000 + r.markup_bps)) / 10000);
     return applyPct(product.list, r.discount_bps);
   };
   const best = (scope) => w.rules.filter((r) => r.scope === scope && matchRule(r)).sort((a, b) => b.priority - a.priority)[0];
@@ -177,7 +195,7 @@ function priceFor(product, ctx, qty, uom, w) {
   }
   const policy = w.policies.get(product.category);
   const floor = policy === undefined ? DEFAULT_FLOOR_BPS : policy.margin_floor_bps;
-  const margin = marginOf(price, product.cost);
+  const margin = marginOf(price, cost);
   const gated = policy === undefined || !policy.margin_enforcement_disabled;
   return { price, source, margin, floor, blocked: gated && margin < floor };
 }
@@ -234,30 +252,39 @@ function floorPreview(body) {
   let evaluated = 0;
   const truncated = products.length > 200;
   if (qtys.length === 0) return { items, evaluated: 0, not_graded: 0, no_cost: 0, truncated };
+  // A change that names a branch (the request's own or the rule's) is graded at that branch
+  // alone, its id in each item and no name; one that names none is graded at every yard, each
+  // at its own cost with its own branch-limited rules, and the worst item names its yard (the
+  // core's round 3 fix, mirrored).
+  const namedBranch = body.branch_id ?? (body.kind === "rule" ? body.rule?.branch_id ?? "" : "");
+  const sites = namedBranch === "" ? YARDS.map((yard) => ({ yard, branch_id: yard.id, branch_name: yard.name })) : [{ yard: null, branch_id: namedBranch, branch_name: "" }];
   for (const product of products.slice(0, 200)) {
     evaluated += 1;
     let worst = null;
     for (const ctx of contexts) {
       for (const q of qtys) {
-        const uom = q.uom ?? product.uom;
-        const a = priceFor(product, ctx, q.qty, uom, after);
-        if (!a.blocked) continue;
-        const b = priceFor(product, ctx, q.qty, uom, before);
-        const item = {
-          product_id: product.id, sku: product.sku, name: product.name, category_id: product.category,
-          ...(ctx.customerType === "" ? {} : { customer_type: ctx.customerType }),
-          final_cents: a.price, margin_bps: a.margin, floor_bps: a.floor, price_uom: product.uom.toLowerCase(), source: a.source,
-          previous_final_cents: b.price, previous_margin_bps: b.margin, already_under_floor: b.blocked,
-        };
-        // A newly under case outranks one that was under already; among the already-under ones a
-        // price the change DROPPED outranks one it left standing; then the lower margin. The
-        // core's worseBreach, mirrored (round 2 P2-B).
-        const dropped = (x) => x.final_cents < x.previous_final_cents;
-        if (worst === null || (item.already_under_floor !== worst.already_under_floor
-          ? !item.already_under_floor
-          : dropped(item) !== dropped(worst)
-            ? dropped(item)
-            : item.margin_bps < worst.margin_bps)) worst = item;
+        for (const site of sites) {
+          const uom = q.uom ?? product.uom;
+          const a = priceFor(product, ctx, q.qty, uom, after, site.yard);
+          if (!a.blocked) continue;
+          const b = priceFor(product, ctx, q.qty, uom, before, site.yard);
+          const item = {
+            product_id: product.id, sku: product.sku, name: product.name, category_id: product.category,
+            ...(ctx.customerType === "" ? {} : { customer_type: ctx.customerType }),
+            branch_id: site.branch_id, ...(site.branch_name === "" ? {} : { branch_name: site.branch_name }),
+            final_cents: a.price, margin_bps: a.margin, floor_bps: a.floor, price_uom: product.uom.toLowerCase(), source: a.source,
+            previous_final_cents: b.price, previous_margin_bps: b.margin, already_under_floor: b.blocked,
+          };
+          // A newly under case outranks one that was under already; among the already-under ones a
+          // price the change DROPPED outranks one it left standing; then the lower margin. The
+          // core's worseBreach, mirrored (round 2 P2-B).
+          const dropped = (x) => x.final_cents < x.previous_final_cents;
+          if (worst === null || (item.already_under_floor !== worst.already_under_floor
+            ? !item.already_under_floor
+            : dropped(item) !== dropped(worst)
+              ? dropped(item)
+              : item.margin_bps < worst.margin_bps)) worst = item;
+        }
       }
     }
     if (worst !== null) items.push(worst);

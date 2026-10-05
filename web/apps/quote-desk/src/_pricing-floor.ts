@@ -94,8 +94,11 @@ const TYPE_WORDS: Readonly<Record<string, string>> = {
 /** One product, with the figures the server graded. */
 export function itemLine(i: FloorItem): string {
   const who = i.customerType === "" ? "" : ` for ${TYPE_WORDS[i.customerType] ?? i.customerType}`;
+  // A branch-less change is graded at every branch and the worst kept: naming the yard tells
+  // the editor whose problem it is, and a change that named its branch already did.
+  const at = i.branchName === "" ? "" : ` at ${i.branchName}`;
   return (
-    `${i.sku}, ${i.name}: margin ${formatPct(i.marginBps)} against a floor of ${formatPct(i.floorBps)}${who}, ` +
+    `${i.sku}, ${i.name}: margin ${formatPct(i.marginBps)} against a floor of ${formatPct(i.floorBps)}${who}${at}, ` +
     `price ${formatMoney(i.finalCents)} per ${i.priceUom}${i.finalCents === i.previousFinalCents ? ", unchanged" : ` (was ${formatMoney(i.previousFinalCents)})`}`
   );
 }
