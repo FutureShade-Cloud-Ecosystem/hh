@@ -2,13 +2,15 @@
 
 package pos
 
-// The SALE_COMPLETED record carries the order facts as IDS AND REFERENCES
-// through the audit chokepoint into the stored audit_log row: po_job_ref,
-// salesperson_id and job_reference survive, while salesperson_name and
-// job_address (a person's name and an address) stay dropped. The tax relief
-// assessment record carries declared_use and fulfilment. A key the
-// chokepoint's deny-by-default allowlist lacks is dropped, leaving a trail
-// that cannot say against what a sale was rung or by whom.
+// The SALE_COMPLETED record carries the order facts as IDS through the audit
+// chokepoint into the stored audit_log row: salesperson_id survives, while
+// po_job_ref and job_reference stay dropped. Those two are free text a staff
+// member types at the counter, so a value can hold a customer's name or a site
+// address, and the reference is read from the sale record when shown.
+// salesperson_name and job_address (a person's name and an address) stay
+// dropped too. The tax relief assessment record carries declared_use and
+// fulfilment. A key the chokepoint's deny-by-default allowlist lacks is
+// dropped, so free text a caller sends cannot reach the stored row.
 //
 // Run (a throwaway local Postgres, this lane's container, removed after;
 // angle brackets are placeholders, never a pinned port or database; migrate
@@ -23,7 +25,7 @@ import (
 	"testing"
 )
 
-func TestIntegration_SaleCompletedAuditCarriesIdsAndReferencesNotNamesOrAddresses(t *testing.T) {
+func TestIntegration_SaleCompletedAuditCarriesIdsNotFreeTextNamesOrAddresses(t *testing.T) {
 	s := newTrentonStack(t)
 	var staffID string
 	if err := s.pool.QueryRow(context.Background(),
@@ -55,18 +57,12 @@ func TestIntegration_SaleCompletedAuditCarriesIdsAndReferencesNotNamesOrAddresse
 		t.Fatalf("want exactly one SALE_COMPLETED row under the order, got %d", len(rows))
 	}
 	row := rows[0]
-	if row["po_job_ref"] != "PO 4471 / JOB 12" {
-		t.Fatalf("the stored sale row must carry po_job_ref: %v", row)
-	}
 	if row["salesperson_id"] != staffID {
 		t.Fatalf("the stored sale row must carry salesperson_id %q: %v", staffID, row)
 	}
-	if row["job_reference"] != "JOB-12" {
-		t.Fatalf("the stored sale row must carry job_reference: %v", row)
-	}
-	for _, k := range []string{"salesperson_name", "job_address"} {
+	for _, k := range []string{"po_job_ref", "job_reference", "salesperson_name", "job_address"} {
 		if _, ok := row[k]; ok {
-			t.Fatalf("the stored sale row must not carry %s (a name or an address): %v", k, row)
+			t.Fatalf("the stored sale row must not carry %s (free text, a name or an address): %v", k, row)
 		}
 	}
 }

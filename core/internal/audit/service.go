@@ -440,14 +440,13 @@ var allowedExtraKeys = map[string]bool{
 	// "which return, how much" with.
 	"return_no":   true, // the return's number, '#RET-' plus a return_no_seq value (repository_w7.go), a sequence count whose digit run stays under the redaction threshold like payment_no
 	"total_cents": true, // the committed total in cents, an int money fact like amount_cents: non-string Extra values pass the chokepoint unchanged, so the digits never reach the string redactor
-	// The pos SALE_COMPLETED completion record (service.go): the order facts as IDS AND REFERENCES
-	// only. A person's name or an address never rides the trail (salesperson_name and job_address
-	// stay dropped here; a name is read from its id when shown). po_job_ref and job_reference are
-	// free text references: a value with a run of seven or more digits redacts to [redacted] like
-	// any string. All three stay admin only, NOT in operatorSafeKeys.
-	"po_job_ref":     true, // the PO or job reference typed at the counter (FREE TEXT a staff member types, at most 64 characters: nothing but the seven digit rule stops a name riding in it; admin only; ruled in, decision log row 814)
+	// The pos SALE_COMPLETED completion record (service.go): the order facts as IDS only. A
+	// person's name or an address never rides the trail (salesperson_name and job_address stay
+	// dropped here; a name is read from its id when shown). po_job_ref and job_reference stay
+	// dropped too, deliberately: they are FREE TEXT a staff member types at the counter, so a
+	// value can hold a customer's name or a site address, and the reference is read from the
+	// sale record when shown. salesperson_id stays admin only, NOT in operatorSafeKeys.
 	"salesperson_id": true, // the credited salesperson's staff id (uuid)
-	"job_reference":  true, // the job reference typed at the counter (FREE TEXT a staff member types, at most 64 characters: nothing but the seven digit rule stops a name riding in it; admin only; ruled in, decision log row 814)
 	// The pos TAX_RELIEF_ASSESS record: the declared use and fulfilment vocabulary codes (personal,
 	// commercial, pickup, dibbits_truck and the like), codes, never identifiers. Admin only.
 	"declared_use":    true, // the purchaser's declared use code
