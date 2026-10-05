@@ -32,6 +32,16 @@
 // if the module grows one; until then the fence follows the module's
 // own established posture on the same table, fail closed on a NULL or
 // foreign org.
+//
+// THE UNIT SET READ, added with the anchor's own unit (LD-3 part B) and
+// disclosed the same way: when the caller names the anchor's unit, the
+// write path checks it against product_uoms, the product's own unit
+// set, in one EXISTS beside the statement's products reads, on the
+// caller's transaction (row 786); a unit outside the set refuses
+// before anything is drawn. The sync door names no unit, so its
+// clients' payloads and the sync projection are unchanged; the check
+// exists for the list price door the load cycle assembles, which sends
+// a fixture price per the unit its fixture names.
 package pricing
 
 import (
@@ -65,24 +75,37 @@ const priceSeqCTE = `WITH pseq AS (
 ) `
 
 // matrixExec is the executor the one list-price write path runs on:
-// the pool, a transaction, anything pgx-shaped that can Exec.
+// the pool, a transaction, anything pgx-shaped that can Exec. The
+// caller named unit's set check reads beside the write, so the
+// executor reads rows too; row 786: every caller passes its own
+// transaction and the check rides it, never a stray pool read.
 type matrixExec interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
 // matrixPriceWrite is the one shape every list-price write carries:
 // the anchor's cents, the trail's legs, and (sync only) the client
 // idempotency key. BatchID nil and Effective nil mark a sync write;
-// Key empty marks the batch path.
+// Key empty marks the batch path. PriceUOM is the anchor's own unit
+// from the caller (LD-3 part B): empty keeps the shipped derivation
+// from products.price_uom, a named unit must sit in the product's own
+// unit set and denominates the cents the caller sent.
 type matrixPriceWrite struct {
 	ProductID string
 	Cents     int64
+	PriceUOM  string
 	Before    *int64
 	BatchID   *string
 	Effective *time.Time
 	Actor     string
 	Key       string
 }
+
+// errPriceUOMNotInSet is the typed refusal for a caller named unit the
+// product's own unit set does not carry: the field is named, never the
+// value, and a caller answers errors.Is against it.
+var errPriceUOMNotInSet = errors.New("pricing: price_uom is not in the product's own unit set")
 
 // applyMatrixPrice is THE list-price write path, the statement the
 // batch apply ran before the sync door existed, extracted so every
@@ -93,18 +116,40 @@ type matrixPriceWrite struct {
 // from the price_matrix scope's allocator, so a desk publish is
 // visible to a device's pull the moment it lands. The D30 key column
 // carries the latest live key applied (the drive-run design note).
+//
+// The anchor's own unit (LD-3 part B) comes from the caller: a named
+// unit is checked against the product's own unit set FIRST (the read
+// rides the caller's transaction, row 786), refuses as
+// errPriceUOMNotInSet naming the field and never the value, and draws
+// nothing (no seq, no row, no trail) behind the refusal; it
+// denominates the cents the caller sent and lands on create and on
+// conflict, never half moved. An absent unit keeps the shipped
+// derivation from products.price_uom, so every existing caller and
+// the existing pricing operations keep their shapes and results.
 func applyMatrixPrice(ctx context.Context, q matrixExec, in matrixPriceWrite) error {
+	if in.PriceUOM != "" {
+		var inSet bool
+		if err := q.QueryRow(ctx,
+			`SELECT EXISTS (SELECT 1 FROM product_uoms WHERE product_id = $1::uuid AND uom_code = $2)`,
+			in.ProductID, in.PriceUOM).Scan(&inSet); err != nil {
+			return fmt.Errorf("pricing: matrix unit set read: %w", err)
+		}
+		if !inSet {
+			return fmt.Errorf("pricing: matrix write refused: %w", errPriceUOMNotInSet)
+		}
+	}
 	if _, err := q.Exec(ctx, priceSeqCTE+`
 		INSERT INTO pricing_list_prices (product_id, list_price_cents, price_uom, org_id, seq, idempotency_key)
-		VALUES ($1::uuid, $2, (SELECT price_uom FROM products WHERE id = $1::uuid),
+		VALUES ($1::uuid, $2, COALESCE(NULLIF($4,'')::citext, (SELECT price_uom FROM products WHERE id = $1::uuid)),
 		        (SELECT org_id FROM products WHERE id = $1::uuid),
 		        (SELECT next_value FROM pseq), NULLIF($3,'')::uuid)
 		ON CONFLICT (product_id) DO UPDATE SET
 			list_price_cents = EXCLUDED.list_price_cents,
+			price_uom        = COALESCE(NULLIF($4,'')::citext, pricing_list_prices.price_uom),
 			updated_at       = now(),
 			seq              = EXCLUDED.seq,
 			idempotency_key  = EXCLUDED.idempotency_key`,
-		in.ProductID, in.Cents, in.Key); err != nil {
+		in.ProductID, in.Cents, in.Key, in.PriceUOM); err != nil {
 		return fmt.Errorf("pricing: matrix upsert: %w", err)
 	}
 	if _, err := q.Exec(ctx,
