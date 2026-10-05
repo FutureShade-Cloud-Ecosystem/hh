@@ -92,6 +92,9 @@ export class QdOrderPayment extends PanelBase {
         display: block;
         margin-top: 8px;
       }
+      legend {
+        font-weight: 600;
+      }
       .sub {
         margin: 0 0 6px;
       }
@@ -101,19 +104,22 @@ export class QdOrderPayment extends PanelBase {
         gap: 8px;
         margin-top: 8px;
       }
+      /* The till's own tile language: an unselected tile is the card itself with a grey
+         border; the selected tile takes the warm cream fill and the amber edge and keeps
+         the normal ink (colour is the state, never a fade and never a second accent). */
       .tenders button {
         border: 1px solid var(--hos-line, var(--hh-line));
         border-radius: var(--hos-radius-control, var(--hh-radius-control));
         padding: 10px 6px;
         font-size: var(--qp-body);
         font-weight: 600;
-        background: var(--hos-deep-earth, var(--hh-page));
+        background: var(--hos-slate-warm, var(--hh-card));
         color: var(--hos-text, var(--hh-text));
       }
       .tenders button.active {
         background: color-mix(in srgb, var(--hos-stone-amber, var(--hh-accent)) 16%, transparent);
         border-color: var(--hos-stone-amber, var(--hh-accent));
-        color: var(--hos-stone-amber-text, var(--hh-accent-text));
+        color: var(--hos-text, var(--hh-text));
       }
       .tenders button:disabled {
         background: transparent;
@@ -154,8 +160,11 @@ export class QdOrderPayment extends PanelBase {
         margin: 0;
         display: grid;
         grid-template-columns: auto 1fr;
-        gap: 2px 12px;
+        gap: 3px 16px;
         font-size: var(--qp-body);
+        /* A receipt reads down a column, not across the whole panel: the rows keep a
+           measure, so a value sits beside its label instead of 1100px away from it. */
+        max-width: 24rem;
       }
       .receipt dt {
         color: var(--hos-text-dim, var(--hh-text-dim));

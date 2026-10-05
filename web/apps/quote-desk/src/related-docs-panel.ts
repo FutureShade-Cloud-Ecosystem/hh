@@ -56,6 +56,10 @@ export class QdRelatedDocs extends PanelBase {
         display: block;
         margin-top: 8px;
       }
+      /* The ERP reference's legend is semi bold; the shared sheet's is regular. */
+      legend {
+        font-weight: 600;
+      }
       ul {
         list-style: none;
         margin: 0;
