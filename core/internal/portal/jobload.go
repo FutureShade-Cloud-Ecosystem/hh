@@ -39,15 +39,26 @@ const projectSeqCTE = `WITH pseq AS (
 	RETURNING next_value
 ) `
 
+// CustomerOrgSource is the customer module's read the job writer asks
+// whether a customer belongs to the machine principal's org through,
+// inside the frame's transaction. The consumer declares the narrow
+// interface it needs; the concrete reader is the customer package's
+// OrgReader.
+type CustomerOrgSource interface {
+	CustomerInOrgTx(ctx context.Context, tx pgx.Tx, customerID, orgID string) (bool, error)
+}
+
 // JobLoadWriter is the load doors' job writer.
-type JobLoadWriter struct{}
+type JobLoadWriter struct {
+	Customers CustomerOrgSource
+}
 
 // Apply answers one job item. The record names the job's name
 // (required) and, named, the job address; the one reference of kind
 // customer names the customer the job belongs to. A project has no
 // natural key of its own, so the registry's name is its identity: the
 // create arm inserts, the update arm updates the named row.
-func (JobLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (string, error) {
+func (w JobLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (string, error) {
 	name, _ := in.Record["name"].(string)
 	if name == "" {
 		return "", &load.Refusal{Code: "field_required", Field: "name",
@@ -66,10 +77,8 @@ func (JobLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (strin
 		return "", &load.Refusal{Code: "field_required", Field: load.KindCustomer,
 			Detail: "the item names no customer reference; a job lands under its customer"}
 	}
-	var inOrg bool
-	if err := tx.QueryRow(ctx,
-		`SELECT EXISTS (SELECT 1 FROM customers WHERE id = $1::uuid AND org_id = $2::uuid)`,
-		customerID, in.OrgID).Scan(&inOrg); err != nil {
+	inOrg, err := w.Customers.CustomerInOrgTx(ctx, tx, customerID, in.OrgID)
+	if err != nil {
 		return "", fmt.Errorf("portal: job customer read: %w", err)
 	}
 	if !inOrg {
@@ -87,7 +96,7 @@ func (JobLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (strin
 		}
 		return id, nil
 	}
-	err := tx.QueryRow(ctx, projectSeqCTE+`
+	err = tx.QueryRow(ctx, projectSeqCTE+`
 		UPDATE projects SET customer_id = $2::uuid, name = $3, job_address = $4, tenant_id = $2::uuid,
 		       seq = (SELECT next_value FROM pseq), idempotency_key = NULLIF($5, '')::uuid, updated_at = now()
 		WHERE id = $1::uuid

@@ -66,7 +66,7 @@ func wireLoad(r httpx.Registrar, pool *pgxpool.Pool, log *slog.Logger, doors boo
 		"PUT /api/v1/load/contacts": newLoadDoor(store, load.KindContact,
 			customer.ContactLoadWriter{}, auditSvc),
 		"PUT /api/v1/load/jobs": newLoadDoor(store, load.KindJob,
-			portal.JobLoadWriter{}, auditSvc),
+			portal.JobLoadWriter{Customers: customer.OrgReader{}}, auditSvc),
 	})
 	submits.RegisterRoutes(r)
 	log.Info("load: the load doors serve behind the machine gate")

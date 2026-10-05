@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/load"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -83,7 +84,7 @@ func jobLoadSetup(t *testing.T) *jobLoadEnv {
 			t.Fatalf("plant name: %v", err)
 		}
 	}
-	e.door = load.NewDoor(load.NewStore(pool), load.KindJob, JobLoadWriter{}, jobAuditSpy{})
+	e.door = load.NewDoor(load.NewStore(pool), load.KindJob, JobLoadWriter{Customers: customer.OrgReader{}}, jobAuditSpy{})
 	return e
 }
 
@@ -236,7 +237,7 @@ func TestJobLoadPoolFourThreeContendersEveryCallOnTheBatchTransaction(t *testing
 		t.Fatalf("hold one connection: %v", err)
 	}
 	defer held.Release()
-	door := load.NewDoor(load.NewStore(pool), load.KindJob, JobLoadWriter{}, jobAuditSpy{})
+	door := load.NewDoor(load.NewStore(pool), load.KindJob, JobLoadWriter{Customers: customer.OrgReader{}}, jobAuditSpy{})
 	var wg sync.WaitGroup
 	errs := make([]error, 3)
 	for k := 0; k < 3; k++ {
@@ -282,7 +283,7 @@ func TestJobLoadPoolFourBitesAWriterThatUsesThePool(t *testing.T) {
 		t.Fatalf("hold one connection: %v", err)
 	}
 	defer held.Release()
-	door := load.NewDoor(load.NewStore(pool), load.KindJob, strayJobPoolWriter{pool: pool, inner: JobLoadWriter{}}, jobAuditSpy{})
+	door := load.NewDoor(load.NewStore(pool), load.KindJob, strayJobPoolWriter{pool: pool, inner: JobLoadWriter{Customers: customer.OrgReader{}}}, jobAuditSpy{})
 	var wg sync.WaitGroup
 	errs := make([]error, 3)
 	for k := 0; k < 3; k++ {
