@@ -338,3 +338,19 @@ test("editing a branch limited tier default rule keeps its branch", async ({ pag
   const rule = (await pricingState(page)).rules.find((r) => r.detail_text === "Contractor, default: 15% off, reviewed");
   expect(rule?.branch_id).toBe("6f1c2b3a-0000-4000-8000-000000000001");
 });
+
+// ── round 2 P3: the start date holds through an edit on a core not hosted in UTC ─────────────────────
+
+test("a rule's start date is the day typed when the core serves it in a non UTC offset", async ({ page }) => {
+  await openRules(page);
+  const edit = page.getByTestId("pr-row").filter({ hasText: "Contractor, default" }).getByTestId("pr-edit");
+  await edit.click();
+  await page.getByTestId("pr-valid-from").fill("2026-11-15");
+  await page.getByTestId("pr-save").click();
+  await expect(page.getByTestId("pr-dialog")).toHaveCount(0);
+  // the stub stores the typed day as its UTC midnight and serves it at a UTC-8 offset
+  const rule = async () => (await pricingState(page)).rules.find((r) => r.detail_text === "Contractor, default: 15% off");
+  expect((await rule())?.valid_from).toBe("2026-11-15T00:00:00Z");
+  await edit.click();
+  await expect(page.getByTestId("pr-valid-from")).toHaveValue("2026-11-15");
+});

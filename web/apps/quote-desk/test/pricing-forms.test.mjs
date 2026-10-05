@@ -271,3 +271,15 @@ test("a rule's branch is carried through for every scope", () => {
   const none = ruleSave(ruleFormFromRow({ ...ruleRow, branchId: undefined }));
   assert.equal(none.value.write.branch_id, "");
 });
+
+// The reviewer's round 2 note: a core not hosted in UTC serves the stored instant with its own
+// offset (a typed 15th shows as 2026-11-14T16:00:00-08:00), and slicing that string moved the
+// shown day one day earlier on every edit. The day is the UTC date part of the instant, the
+// way the core wrote it; the end date already reads it that way.
+test("a rule's start date is read as the day the core wrote, whatever offset it is served in", () => {
+  assert.equal(ruleFormFromRow({ ...ruleRow, validFrom: "2026-11-14T16:00:00-08:00" }).validFrom, "2026-11-15");
+  assert.equal(ruleFormFromRow({ ...ruleRow, validFrom: "2026-11-15T00:00:00Z" }).validFrom, "2026-11-15");
+  assert.equal(ruleFormFromRow({ ...ruleRow, validFrom: "2026-11-15T05:30:00+05:30" }).validFrom, "2026-11-15");
+  assert.equal(ruleFormFromRow({ ...ruleRow, validFrom: null }).validFrom, "");
+  assert.equal(ruleFormFromRow({ ...ruleRow, validFrom: "not a date" }).validFrom, "not a date");
+});

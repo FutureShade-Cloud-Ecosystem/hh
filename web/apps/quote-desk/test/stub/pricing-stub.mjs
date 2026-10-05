@@ -104,6 +104,10 @@ function seedWorld() {
   };
 }
 
+function serveRule(r) {
+  return { ...r, valid_from: servedDate(r.valid_from ?? null), valid_to: servedDate(r.valid_to ?? null) };
+}
+
 function rule(scope, dims, calc, value, uom, priority, detail) {
   return {
     id: newId("b"), scope, customer_id: "", customer_type: "", category_id: "", product_id: "", branch_id: "",
@@ -283,6 +287,16 @@ const asList = (rows) => (switches.shape === "page" ? { items: rows, next_cursor
 // The core stores a typed date as an instant: a valid_from day at its midnight, a valid_to day as
 // the midnight of the NEXT day (the upper bound is exclusive, so the typed day is inclusive), and
 // an RFC3339 value as it came. An empty string clears the bound.
+// A core not hosted in UTC serves the stored instants with its own offset: render the stored
+// UTC instant at a fixed UTC-8 offset, the way such a core's rule reads read. The panel must
+// take the date part in UTC whatever offset the string carries.
+function servedDate(value) {
+  if (typeof value !== "string" || value === "") return value;
+  const at = new Date(value);
+  if (Number.isNaN(at.getTime())) return value;
+  return `${new Date(at.getTime() - 8 * 3600000).toISOString().slice(0, 19)}-08:00`;
+}
+
 function storedDate(value, endOfDay) {
   if (value === "") return null;
   if (typeof value !== "string") return undefined;
@@ -439,7 +453,7 @@ export function handlePricing({ request, response, path, url, callerOf, readBody
     const type = url.searchParams.get("customer_type");
     const cat = url.searchParams.get("category_id");
     const rows = world.rules.filter((r) => (scope === null || r.scope === scope) && (type === null || r.customer_type === type) && (cat === null || r.category_id === cat));
-    respondJson(response, 200, asList(rows.sort((a, b) => b.priority - a.priority)));
+    respondJson(response, 200, asList(rows.sort((a, b) => b.priority - a.priority).map(serveRule)));
     return true;
   }
   if (path === "/api/v1/pricing/rules" && request.method === "POST") {
@@ -459,7 +473,7 @@ export function handlePricing({ request, response, path, url, callerOf, readBody
     const r = world.rules.find((x) => x.id === m[1]);
     if (isRead) {
       if (r === undefined) return respondJson(response, 404, { error: "not found" }), true;
-      respondJson(response, 200, r);
+      respondJson(response, 200, serveRule(r));
       return true;
     }
     if (request.method === "PUT") {

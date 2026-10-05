@@ -99,6 +99,20 @@ export function validToDay(stored: string | null | undefined): string {
   return atMidnight ? new Date(at.getTime() - 86400000).toISOString().slice(0, 10) : day;
 }
 
+/**
+ * A rule's start date, read back from what the core stored. The core keeps a typed start day
+ * as that day's midnight UTC, so the day is the UTC date part of the served instant; a core
+ * not hosted in UTC serves the same instant with its own offset (a typed 15th as
+ * 2026-11-14T16:00:00-08:00) and slicing that string would move the shown day one day
+ * earlier on every edit.
+ */
+export function validFromDay(stored: string | null | undefined): string {
+  if (stored === null || stored === undefined || stored === "") return "";
+  const at = new Date(stored);
+  if (Number.isNaN(at.getTime())) return stored.slice(0, 10);
+  return at.toISOString().slice(0, 10);
+}
+
 export function ruleFormFromRow(r: RuleRow): RuleForm {
   const base = emptyRuleForm();
   return {
@@ -114,7 +128,7 @@ export function ruleFormFromRow(r: RuleRow): RuleForm {
     priceDollars: r.calcType === "ABSOLUTE" ? centsText(r.priceCents ?? 0) : "",
     priceUom: r.priceUom,
     priority: String(r.priority),
-    validFrom: (r.validFrom ?? "").slice(0, 10),
+    validFrom: validFromDay(r.validFrom),
     validTo: validToDay(r.validTo),
     detailText: r.detailText,
     version: r.version,
