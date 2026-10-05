@@ -141,7 +141,7 @@ func TestHasActiveHold_GateReadJoinsCallerTx_NoPoolCycle(t *testing.T) {
 		lockWait time.Duration
 		lockErr  error
 		begunErr error // non nil when the transaction never opened
-		begun    bool // the participant's transaction opened (its pool connection is held)
+		begun    bool  // the participant's transaction opened (its pool connection is held)
 	}
 
 	// One deadline for the whole scenario, started when the participants are released together: on the
