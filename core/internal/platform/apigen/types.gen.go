@@ -5648,11 +5648,13 @@ type PricingChangeLogRow struct {
 	Id            string     `json:"id"`
 	ProductId     *string    `json:"product_id,omitempty"`
 	BatchId       *string    `json:"batch_id,omitempty"`
+	BranchId      *string    `json:"branch_id,omitempty"`
 	Field         string     `json:"field"`
 	BeforeCents   *int64     `json:"before_cents,omitempty"`
 	AfterCents    *int64     `json:"after_cents,omitempty"`
 	EffectiveDate *time.Time `json:"effective_date,omitempty"`
 	ChangedBy     *string    `json:"changed_by,omitempty"`
+	PriceUom      *string    `json:"price_uom,omitempty"`
 	CreatedAt     time.Time  `json:"created_at"`
 }
 
