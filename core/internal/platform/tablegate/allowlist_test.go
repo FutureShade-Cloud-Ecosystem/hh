@@ -575,6 +575,20 @@ var allowlist = []allowlistEntry{
 		reason: "reversals post the reversing rows into the AR subledger projection and un-apply the invoice balances, per the file header's pre-ratified ruling; events through the outbox, org and seq stamped",
 	},
 	{
+		module: "product",
+		file:   "core/internal/product/loadwriter.go",
+		tables: []string{},
+		writes: []string{"scope_sequences"},
+		reason: "the load doors' category writer stamps its rows through the 0213 seq stream (HH-LOAD-1 LD-4); the allocator write is part of the frozen 0213 shape",
+	},
+	{
+		module: "purchasing",
+		file:   "core/internal/purchasing/vendorload.go",
+		tables: []string{},
+		writes: []string{"scope_sequences"},
+		reason: "the load doors' supplier writer stamps its vendor rows through the 0213 seq stream (HH-LOAD-1 LD-4); the allocator write is part of the frozen 0213 shape",
+	},
+	{
 		module: "planflow",
 		file:   "core/internal/planflow/syncscope.go",
 		tables: []string{},

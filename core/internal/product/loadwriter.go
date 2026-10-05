@@ -17,6 +17,7 @@ package product
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/load"
@@ -120,21 +121,28 @@ func categoryParent(in load.Write) (string, *load.Refusal) {
 }
 
 // categoryCycleTx reports whether the parent chain from parentID
-// returns to rowID inside the caller's transaction: the bounded walk
-// from the new parent upward, self parenthood included.
+// returns to rowID inside the caller's transaction: a bounded walk
+// from the new parent upward, one read of the module's own table per
+// step, self parenthood included.
 func categoryCycleTx(ctx context.Context, tx pgx.Tx, rowID, parentID string) (bool, error) {
-	var cycle bool
-	err := tx.QueryRow(ctx, `
-		WITH RECURSIVE up AS (
-			SELECT id, parent_id, 0 AS depth FROM product_categories WHERE id = $2::uuid
-			UNION ALL
-			SELECT c.id, c.parent_id, up.depth + 1
-			FROM product_categories c JOIN up ON c.id = up.parent_id
-			WHERE up.depth < $3
-		) SELECT EXISTS (SELECT 1 FROM up WHERE id = $1::uuid)`,
-		rowID, parentID, categoryCycleDepth).Scan(&cycle)
-	if err != nil {
-		return false, fmt.Errorf("product: category cycle walk: %w", err)
+	cur := parentID
+	for depth := 0; depth < categoryCycleDepth; depth++ {
+		if cur == rowID {
+			return true, nil
+		}
+		var next *string
+		err := tx.QueryRow(ctx,
+			`SELECT parent_id::text FROM product_categories WHERE id = $1::uuid`, cur).Scan(&next)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		if err != nil {
+			return false, fmt.Errorf("product: category cycle walk: %w", err)
+		}
+		if next == nil {
+			return false, nil
+		}
+		cur = *next
 	}
-	return cycle, nil
+	return false, nil
 }
