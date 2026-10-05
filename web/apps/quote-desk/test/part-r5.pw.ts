@@ -10,10 +10,11 @@ test.afterAll(async ({ request }) => {
   await request.post("/_stub/reset");
 });
 
-async function openDetail(page: Page): Promise<void> {
+async function openQuoteDetail(page: Page, quoteNo: string): Promise<void> {
+  await row(page, quoteNo).click();
   const detail = page.getByTestId("qb-detail");
   if ((await detail.getAttribute("open")) === null) await page.getByText("Quote detail &amp; admin").click();
-  await expect(page.getByTestId("qe-box")).toBeVisible();
+  await expect(page.getByTestId("qe-title")).toContainText(quoteNo);
 }
 
 async function newQuote(page: Page): Promise<void> {
@@ -81,4 +82,52 @@ test("P3-1 one terms PUT per quote at a time: a whole row PUT from an older edit
   await expect(page.getByTestId("qb-po")).toHaveValue("PO-FIRST");
   await expect(page.getByTestId("qb-contact")).toHaveValue("Site contact");
 });
+
+const followups = (page: Page) => page.locator("qd-quote-followups");
+
+test("P2-2 leaving through New Quote: a follow-ups stop that lands while its panel is gone shows OFF on return", async ({ page }) => {
+  await signIn(page, "Sales manager");
+  await openQuoteDetail(page, "Q-1002");
+  await expect(followups(page).getByTestId("fu-summary")).toContainText("Follow-ups are on");
+  const disable = await hold(page, /\/quotes\/q-1002\/followups\/disable$/, { method: "POST", times: 1 });
+  await followups(page).getByRole("button", { name: "Stop follow-ups" }).click();
+  await disable.asked;
+  await newQuote(page);
+  // The quote is opened again while the stop is still out: the panel on screen is not the one that made the stop.
+  await openQuoteDetail(page, "Q-1002");
+  await expect(followups(page).getByTestId("fu-summary")).toContainText("Follow-ups are on");
+  await disable.release();
+  await expect(followups(page).getByTestId("fu-summary")).toContainText("Follow-ups are OFF");
+});
+
+test("P2-2 leaving through New Quote: a quantity that lands while its panel is gone shows the server's value and says the discount half", async ({ page }) => {
+  await signIn(page, "Sales manager");
+  await openQuoteDetail(page, "Q-1001");
+  const line = page.locator("qd-quote-edit").getByTestId("qe-line").first();
+  await line.locator('[data-field="qty"]').fill("3");
+  await line.locator('[data-field="disc"]').fill("4");
+  const patch = await hold(page, /\/quotes\/q-1001\/lines\/1$/, { method: "PATCH", times: 1, snapshot: true });
+  await line.getByRole("button", { name: "Save" }).click();
+  await patch.asked;
+  await newQuote(page);
+  await patch.release();
+  await settle(page);
+  await openQuoteDetail(page, "Q-1001");
+  await expect(page.locator("qd-quote-edit").getByTestId("qe-line").first().locator('[data-field="qty"]')).toHaveValue("3");
+  await expect(page.getByTestId("qe-notice")).toContainText("the discount you also changed was not sent");
+});
+
+test("P2-2 leaving through New Quote: a link minted while its panel was gone is said on return", async ({ page }) => {
+  await signIn(page, "Sales manager");
+  await openQuoteDetail(page, "Q-1001");
+  const mint = await hold(page, /\/quotes\/q-1001\/share-links$/, { method: "POST", times: 1 });
+  await page.locator("qd-quote-edit").getByRole("button", { name: "Create link to copy" }).click();
+  await mint.asked;
+  await newQuote(page);
+  await mint.release();
+  await settle(page);
+  await openQuoteDetail(page, "Q-1001");
+  await expect(page.getByTestId("qe-notice")).toContainText("A share link was made on this quote while you were away");
+});
+
 
