@@ -256,7 +256,13 @@ func (r *Repository) InsertJournal(ctx context.Context, d journalDraft) (string,
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	id, created, err := r.insertJournalIn(ctx, tx, d, func() (string, bool) {
-		// A concurrent insert won the idempotency race, return the winner.
+		// A concurrent insert won the idempotency race, return the winner. The violation has
+		// already aborted this transaction, so nothing more can be read through it; roll it back
+		// FIRST to hand its connection back, then read on the pool. Reading the pool while the
+		// transaction still held its connection let pool-size callers each pin one connection
+		// and wait for another (connection starvation by second acquisition, no lock involved).
+		// The deferred Rollback above becomes a no-op on the closed transaction.
+		_ = tx.Rollback(ctx)
 		existing, found, ferr := r.journalIDByKey(ctx, d.IdempotencyKey)
 		return existing, ferr == nil && found
 	})

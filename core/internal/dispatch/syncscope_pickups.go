@@ -213,10 +213,28 @@ func (s *PickupsSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, 
 // the same as an absent one.
 func (s *PickupsSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
 	ids, ok := s.tenantIDs(ctx, f)
+	return s.load(ctx, s.pool, ids, ok, id)
+}
+
+// pickupsQuerier is the read surface a pool and a transaction share, so
+// one loader body serves the public Load (the pool) and the callers
+// that already hold a transaction (their own connection).
+type pickupsQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// load is Load over a querier and an already resolved tenant order id
+// set (ids, ok as tenantIDs answers). The id set comes from the order
+// seam, which reads through the shared pool, so a caller that holds a
+// transaction resolves it BEFORE the transaction opens and passes it in:
+// neither the row read nor the set resolution then asks the pool for a
+// second connection (connection starvation by second acquisition when
+// pool-size callers do this together).
+func (s *PickupsSyncStore) load(ctx context.Context, db pickupsQuerier, ids []string, ok bool, id string) (sync.RowState, bool, error) {
 	if !ok || !looksLikeUUID(id) || len(ids) == 0 {
 		return sync.RowState{}, false, nil
 	}
-	r, err := scanPickupSync(s.pool.QueryRow(ctx, fmt.Sprintf(`
+	r, err := scanPickupSync(db.QueryRow(ctx, fmt.Sprintf(`
 		SELECT %s FROM will_call_pickups
 		WHERE id = $2::uuid AND order_id = ANY($1::uuid[])`,
 		pickupsColumns), ids, id))
@@ -259,7 +277,11 @@ var pickupsWritable = map[string]bool{"id": true, "status": true, "collected_by"
 // path never prints a tag; the desk can mint a printable one beside
 // it), and the row stamps a fresh pickups seq and the idempotency key.
 func (s *PickupsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, fields map[string]any) (sync.RowState, error) {
-	if _, ok := s.tenantIDs(ctx, f); !ok {
+	// The tenant's order id set resolves here, before the transaction
+	// opens: the conflict arm reads with it from inside the transaction
+	// and must not ask the order seam (a pool read) for it there.
+	tenantOrderIDs, idsOK := s.tenantIDs(ctx, f)
+	if !idsOK {
 		return sync.RowState{}, sync.ErrOpRefused
 	}
 	for k := range fields {
@@ -313,7 +335,7 @@ func (s *PickupsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key s
 		RETURNING `+pickupsColumns,
 		id, orderID, brief.BranchID, tokenHash, defaultPickupTTL.String(), seq, key))
 	if errors.Is(err, pgx.ErrNoRows) {
-		if _, own, _ := s.Load(ctx, f, id); own {
+		if _, own, _ := s.load(ctx, tx, tenantOrderIDs, idsOK, id); own {
 			return sync.RowState{}, sync.ErrRowExists
 		}
 		return sync.RowState{}, sync.ErrRowNotFound
@@ -345,7 +367,16 @@ func (s *PickupsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key s
 // path uses, and the row moves ACTIVE to CONFIRMED with a fresh seq
 // and the idempotency key.
 func (s *PickupsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key string, fields map[string]any) (sync.RowState, error) {
-	if _, ok := s.tenantIDs(ctx, f); !ok {
+	// The tenant's order id set resolves here, before the transaction
+	// opens: the order seam reads through the shared pool, so asking it
+	// again from inside the transaction would take a second connection
+	// while the first is held (connection starvation when pool-size
+	// confirms do this together). The set is the one the refusal check
+	// already used. One difference from reading it again inside the
+	// transaction: an order the tenant created in between is not in the
+	// set, and a failed lookup always refuses (see the pull request).
+	tenantOrderIDs, idsOK := s.tenantIDs(ctx, f)
+	if !idsOK {
 		return sync.RowState{}, sync.ErrOpRefused
 	}
 	for k := range fields {
@@ -377,11 +408,10 @@ func (s *PickupsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, ke
 		return sync.RowState{}, fmt.Errorf("dispatch: begin pickups write: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	ids, _ := s.tenantIDs(ctx, f)
 	before, err := scanPickupSync(tx.QueryRow(ctx, fmt.Sprintf(`
 		SELECT %s FROM will_call_pickups
 		WHERE id = $1::uuid AND order_id = ANY($2::uuid[]) AND deleted_at IS NULL FOR UPDATE`,
-		pickupsColumns), id, ids))
+		pickupsColumns), id, tenantOrderIDs))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, sync.ErrRowNotFound
 	}

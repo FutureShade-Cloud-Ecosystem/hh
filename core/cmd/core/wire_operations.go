@@ -1048,7 +1048,11 @@ func (a taskOrderAdvanceAdapter) AdvanceOrder(ctx context.Context, orderID, targ
 type invCountAdapter struct{ svc *inventory.Service }
 
 func (a invCountAdapter) SnapshotOnHand(ctx context.Context, branchID string) ([]invcount.Snapshot, error) {
-	snaps, err := a.svc.SnapshotOnHand(ctx, branchID)
+	return a.SnapshotOnHandTx(ctx, nil, branchID)
+}
+
+func (a invCountAdapter) SnapshotOnHandTx(ctx context.Context, tx pgx.Tx, branchID string) ([]invcount.Snapshot, error) {
+	snaps, err := a.svc.SnapshotOnHandTx(ctx, tx, branchID)
 	if err != nil {
 		return nil, err
 	}
@@ -1060,7 +1064,11 @@ func (a invCountAdapter) SnapshotOnHand(ctx context.Context, branchID string) ([
 }
 
 func (a invCountAdapter) WeightedAvgCostCents(ctx context.Context, productID, branchID string) (int64, error) {
-	return a.svc.WeightedAvgCostCents(ctx, productID, branchID)
+	return a.WeightedAvgCostCentsTx(ctx, nil, productID, branchID)
+}
+
+func (a invCountAdapter) WeightedAvgCostCentsTx(ctx context.Context, tx pgx.Tx, productID, branchID string) (int64, error) {
+	return a.svc.WeightedAvgCostCentsTx(ctx, tx, productID, branchID)
 }
 
 func (a invCountAdapter) PostCountAdjustmentTx(ctx context.Context, tx pgx.Tx, productID, locationID, branchID string, qtyDelta float64, unitCostCents int64, reason string) (string, error) {
