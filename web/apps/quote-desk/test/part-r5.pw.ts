@@ -55,3 +55,30 @@ test("P2-1 a queued layout save is never sent under the next person's session, a
   await expect(page.getByTestId("qb-list")).toBeVisible();
   await expect(page.getByTestId("qb-context")).not.toContainText("Q-10");
 });
+
+test("P3-1 one terms PUT per quote at a time: a whole row PUT from an older edit cannot erase a later edit", async ({ page }) => {
+  await seed(page, { customer_id: "c-fenwick" });
+  await signIn(page);
+  await open(page, "Q-1004");
+  await expect(page.getByTestId("qb-po")).toBeVisible();
+  const put1 = await hold(page, /\/quotes\/q-1004\/terms$/, { method: "PUT", times: 1 });
+  await page.getByTestId("qb-po").fill("PO-FIRST");
+  await put1.asked;
+  // A second edit of the same row is made while the first save is still out.
+  const put2 = await hold(page, /\/quotes\/q-1004\/terms$/, { method: "PUT", times: 1 });
+  await page.getByTestId("qb-contact").fill("Site contact");
+  // The edit's own save has now been asked for by the debounce, whether it went out beside the first (unguarded) or
+  // waits behind it (the queue): past the debounce with nothing asked, it is waiting its turn.
+  await Promise.race([put2.asked, page.waitForTimeout(1500)]);
+  // The later save's gate is opened first, so if it were out beside the older one the older row would land last and
+  // erase the later edit; sent in order, the later row is the one that lands last.
+  await put2.release();
+  await put1.release();
+  await settle(page);
+  // Reopening the quote shows what the server holds: both edits stand.
+  await open(page, "Q-1001");
+  await open(page, "Q-1004");
+  await expect(page.getByTestId("qb-po")).toHaveValue("PO-FIRST");
+  await expect(page.getByTestId("qb-contact")).toHaveValue("Site contact");
+});
+
