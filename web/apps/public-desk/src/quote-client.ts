@@ -251,12 +251,19 @@ export function isKeyReuseRefusal(failure: { error: string; status?: number }): 
 }
 
 /**
- * The server's own definite refusal of an acceptance: a 4xx that carried the
- * JSON error envelope. Only this proves the acceptance was not recorded. No
- * status, a 5xx, a proxy's page, an unreadable answer: all unknown outcomes.
+ * The core's own definite refusal of an acceptance, and only that: a status the
+ * core's accept route answers itself (400 for a bad request, 404 for a link or
+ * quote that is not found, 409 for a quote that is not awaiting acceptance)
+ * carrying the contract's JSON error envelope. A 404 must also say "not found",
+ * the core's words for it. Only this proves the acceptance was not recorded.
+ * Every other answer is an unknown outcome: no status, a 5xx, a proxy's page,
+ * and a proxy's own JSON 4xx (a 429, a 413, a 408) whatever its body looks like.
  */
 export function isDefiniteRefusal(failure: { error: string; status?: number }): boolean {
-  return failure.status !== undefined && failure.status >= 400 && failure.status < 500 && serverWords(failure) !== null;
+  const words = serverWords(failure);
+  if (words === null) return false;
+  if (failure.status === 404) return /not found$/.test(words);
+  return failure.status === 400 || failure.status === 409;
 }
 
 /** The server's own answer that a link is dead: a 410 carrying the error envelope. */

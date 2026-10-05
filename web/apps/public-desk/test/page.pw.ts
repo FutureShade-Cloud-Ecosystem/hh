@@ -389,11 +389,11 @@ test("an accept answered by a proxy's HTML page shows neither the page nor its h
   await expectFormKept(page);
 });
 
-test("a 4xx refusal that carries the JSON error envelope is said in the page's own words, never the core's", async ({ page }) => {
+test("a 422 that carries the JSON error envelope is not one of the core's own refusals: unknown, never the core's words", async ({ page }) => {
   await readyToAccept(page, "q-terms-28");
   await page.route("**/accept", (route) => route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify({ error: "quote: staff only wording about the contact on the quote" }) }));
   await page.getByRole("button", { name: "Accept quote" }).click();
-  await expect(page.getByRole("alert")).toHaveText(`${REFUSED_GENERIC} ${NOT_RECORDED_SUFFIX}`);
+  await expect(page.getByRole("alert")).toHaveText(UNCONFIRMED);
   await expect(page.locator("body")).not.toContainText("staff only wording");
 });
 
@@ -1218,6 +1218,25 @@ for (const [token, how] of [
     await expect(page.getByText(/no longer valid/)).toHaveCount(0);
     await expect(page.locator("body")).not.toContainText("edge.internal.example");
     expect(sent[1]?.key).toBe(sent[0]?.key);
+    await expect(page.locator("#name")).toHaveJSProperty("readOnly", true);
+  });
+}
+
+for (const [token, status, error] of [
+  ["q-proxy-json-429", 429, "rate limit exceeded"],
+  ["q-proxy-json-413", 413, "request entity too large"],
+  ["q-proxy-json-408", 408, "request timeout"],
+  ["q-proxy-json-404", 404, "upstream route missing"],
+] as const) {
+  test(`a proxy's JSON ${status} that looks like the envelope is an unknown outcome, not a definite refusal`, async ({ page }) => {
+    await readyToAccept(page, token);
+    await page.route("**/accept", (route) =>
+      route.fulfill({ status, contentType: "application/json", body: JSON.stringify({ error }) }),
+    );
+    await page.getByRole("button", { name: "Accept quote" }).click();
+    await expect(page.getByRole("alert")).toHaveText(UNCONFIRMED);
+    await expect(page.getByRole("alert")).not.toContainText(/not recorded/i);
+    await expect(page.locator("body")).not.toContainText(error);
     await expect(page.locator("#name")).toHaveJSProperty("readOnly", true);
   });
 }
