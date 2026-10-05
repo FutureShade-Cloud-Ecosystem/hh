@@ -18,6 +18,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -468,6 +469,53 @@ func TestAttempts_LastErrorIsSanitisedOnWrite(t *testing.T) {
 		if strings.Contains(got, bad) {
 			t.Fatalf("last_error = %q, still holds %q", got, bad)
 		}
+	}
+}
+
+// A diagnostic carrying bytes that are not UTF-8 must stamp, not strand: Postgres refuses the write
+// otherwise (SQLSTATE 22021) and the row would sit in its old status until the sweep moves it, so a
+// plain decline pages a manager. The sanitiser replaces the bad bytes and every stamp lands.
+func TestAttempts_NonUTF8DiagnosticStillStamps(t *testing.T) {
+	fx := newAttemptFx(t)
+	ctx := context.Background()
+	bad := "declined \xff\xfe body"
+
+	d := fx.claim(fx.in(3400))
+	if _, ok, err := fx.store.StampDeclined(ctx, d.ID, "C", bad); err != nil || !ok {
+		t.Fatalf("StampDeclined: ok=%v err=%v", ok, err)
+	}
+	if got := fx.get(d.LegKey); got.Status != AttemptDeclined || !utf8.ValidString(got.LastError) {
+		t.Fatalf("declined row = %+v", got)
+	}
+
+	u := fx.claim(fx.in(3500))
+	if _, ok, err := fx.store.StampUnknown(ctx, u.ID, bad); err != nil || !ok {
+		t.Fatalf("StampUnknown: ok=%v err=%v", ok, err)
+	}
+	if got := fx.get(u.LegKey); got.Status != AttemptUnknown || !utf8.ValidString(got.LastError) {
+		t.Fatalf("unknown row = %+v", got)
+	}
+
+	vu := capturedAttempt(t, fx, 3600)
+	if _, ok, err := fx.store.BeginVoiding(ctx, vu.ID); err != nil || !ok {
+		t.Fatalf("BeginVoiding: ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := fx.store.StampVoidUnknown(ctx, vu.ID, bad); err != nil || !ok {
+		t.Fatalf("StampVoidUnknown: ok=%v err=%v", ok, err)
+	}
+	if got := fx.get(vu.LegKey); got.Status != AttemptVoidUnknown || !utf8.ValidString(got.LastError) {
+		t.Fatalf("void unknown row = %+v", got)
+	}
+
+	vd := capturedAttempt(t, fx, 3700)
+	if _, ok, err := fx.store.BeginVoiding(ctx, vd.ID); err != nil || !ok {
+		t.Fatalf("BeginVoiding: ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := fx.store.StampVoidDeclined(ctx, vd.ID, bad); err != nil || !ok {
+		t.Fatalf("StampVoidDeclined: ok=%v err=%v", ok, err)
+	}
+	if got := fx.get(vd.LegKey); got.Status != AttemptVoidDeclined || !utf8.ValidString(got.LastError) {
+		t.Fatalf("void declined row = %+v", got)
 	}
 }
 
