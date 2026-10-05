@@ -343,11 +343,24 @@ func (s *Store) ListOpen(ctx context.Context, q ListQuery) ([]Attempt, error) {
 
 var (
 	uuidShieldRe = regexp.MustCompile(`(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`)
-	bearerRe     = regexp.MustCompile(`(?i)\bbearer\s+[^\s"',;]+`)
-	// A secret-looking key, then its value. The key may be a JSON key (quoted) or a form or log key.
-	secretKVRe = regexp.MustCompile(`(?i)([a-z0-9_]*(?:token|secret|password|passwd|pwd|api_?key|authorization|credential|cvv|cvc|card_?number)[a-z0-9_]*["']?\s*[:=]\s*)(["']?)([^\s"',;&}]+)`)
-	// A card number: thirteen to nineteen digits, with single spaces or hyphens between them.
-	panRe = regexp.MustCompile(`\b\d(?:[ -]?\d){12,18}\b`)
+	// An Authorization style key and its whole value, under ANY scheme: the scheme word and the
+	// credential go together, so Basic and Bearer need no list of their own.
+	authValueRe = regexp.MustCompile(`(?i)\b((?:proxy-)?auth[a-z0-9-]*["']?\s*[:=]\s*)(?:\S+\s+)?\S+`)
+	bearerRe    = regexp.MustCompile(`(?i)\bbearer\s+[^\s"',;]+`)
+	// A JSON key whose name is secret looking, then its quoted value, spaces included: a JSON body
+	// excerpt must not keep the tail of a value the key already gave away.
+	secretJSONRe = regexp.MustCompile(`(?i)("[a-z0-9_-]*(?:token|secret|password|passwd|pwd|api[-_]?key|private[-_]?key|signature|authorization|credential|cvv|cvc|card[-_]?number)[a-z0-9_-]*"\s*:\s*)"[^"]*"`)
+	// A secret-looking key, then its value. The key may be a JSON key (quoted) or a form or log
+	// key, and hyphens count in the key so header names like x-api-key and api-key match, as do
+	// auth, private_key and signature. A value with spaces only travels under the JSON rule.
+	secretKVRe = regexp.MustCompile(`(?i)([a-z0-9_-]*(?:token|secret|password|passwd|pwd|api[-_]?key|private[-_]?key|signature|authorization|credential|cvv|cvc|card[-_]?number)[a-z0-9_-]*["']?\s*[:=]\s*)(["']?)([^\s"',;&}]+)`)
+	// A card number: thirteen to nineteen digits, with any run of spaces, dots or hyphens between
+	// the groups (the text is flattened before this runs, so whitespace is single spaces here).
+	// The boundaries are non digit characters, not \b: a PAN glued to word characters
+	// (cardno4111...) has no word boundary to match. A bare run of twenty or more digits is left
+	// alone on purpose: thirteen to nineteen already covers every card length, and redacting every
+	// long digit run would take order numbers and settlement reference ids with it.
+	panRe = regexp.MustCompile(`(^|[^0-9])(\d(?:[ .-]*\d){12,18})([^0-9]|$)`)
 	// Any long opaque run (a token, a key, a signature). Hyphens count so a hyphenated token is one
 	// run, and a uuid (shielded above anyway) stays shorter than the floor.
 	opaqueRe = regexp.MustCompile(`[A-Za-z0-9_+/=-]{40,}`)
@@ -355,25 +368,30 @@ var (
 
 // SanitizeLastError returns text safe to keep in last_error: a bounded single line with no token,
 // credential or card number in it. It runs on every write of the column, whatever the caller passed
-// (a processor's error text, a transport error, a response body excerpt). It redacts rather than
-// rejects, so the diagnostic survives; uuids are kept (a sale key or an attempt id is not a secret).
+// (a processor's error text, a transport error, a response body excerpt). Order matters: whitespace
+// and control characters flatten FIRST, because a PAN whose groups ride doubled spaces, a tab or a
+// newline past the number rule normalises into the exact readable form afterwards; then uuids are
+// shielded and kept (a sale key or an attempt id is not a secret); then the value rules redact. It
+// redacts rather than rejects, so the diagnostic survives.
 func SanitizeLastError(s string) string {
 	if s == "" {
 		return ""
 	}
+	s = strings.Join(strings.FieldsFunc(s, func(r rune) bool { return unicode.IsControl(r) || unicode.IsSpace(r) }), " ")
 	var ids []string
 	s = uuidShieldRe.ReplaceAllStringFunc(s, func(m string) string {
 		ids = append(ids, m)
 		return "\x00" + strconv.Itoa(len(ids)-1) + "\x00"
 	})
+	s = authValueRe.ReplaceAllString(s, "${1}[redacted]")
 	s = bearerRe.ReplaceAllString(s, "Bearer [redacted]")
+	s = secretJSONRe.ReplaceAllString(s, `${1}"[redacted]"`)
 	s = secretKVRe.ReplaceAllString(s, "${1}${2}[redacted]")
-	s = panRe.ReplaceAllString(s, "[redacted number]")
+	s = panRe.ReplaceAllString(s, "${1}[redacted number]${3}")
 	s = opaqueRe.ReplaceAllString(s, "[redacted token]")
 	for i, id := range ids {
 		s = strings.Replace(s, "\x00"+strconv.Itoa(i)+"\x00", id, 1)
 	}
-	s = strings.Join(strings.FieldsFunc(s, func(r rune) bool { return unicode.IsControl(r) || unicode.IsSpace(r) }), " ")
 	if utf8.RuneCountInString(s) > maxLastErrorRunes {
 		s = string([]rune(s)[:maxLastErrorRunes])
 	}
