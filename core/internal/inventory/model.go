@@ -121,8 +121,9 @@ type store interface {
 	//
 	// AllocationPolicy is consulted on the reserve path, so it takes the caller's transaction like
 	// its reserve-path siblings (nil tx = the pool, the convention above): a policy read on the pool
-	// while the reserve holds row locks asks the pool for a SECOND connection and, at the deploy
-	// default of 4, forms the connection cycle the seam shape exists to prevent. The HTTP policy read
+	// asks for a SECOND connection while the caller keeps its first, and pool-size in-flight
+	// reservations each doing that pin the whole pool, the connection starvation the seam shape
+	// exists to prevent. The HTTP policy read
 	// passes nil and keeps the pool; a unit test that cannot fake it would have to reach a database
 	// to prove a policy decision, which is exactly the dependency the store seam exists to remove.
 	AllocationPolicy(ctx context.Context, tx pgx.Tx, branchID string) (AllocationPolicy, bool, error)

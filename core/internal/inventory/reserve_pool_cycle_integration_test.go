@@ -1,12 +1,14 @@
 //go:build integration
 
-// reserve_pool_cycle_integration_test.go, the money-class pool-cycle regression for the reservation
-// flow. The defect: ReserveTx runs in the CALLER's transaction, but its allocation-policy read went
-// through the POOL, so a confirm transaction that already holds row locks asked the pool for a
-// SECOND connection. At the deploy default pool of 4 (pgx sets max(4, CPUs) and nothing in the
-// deploy overrides it) that forms a cycle Postgres cannot see: the caller waits for a free
-// connection, every other connection in the pool waits on the caller's row locks, and the database's
-// deadlock detector is blind to the client-side half. The process stalls to the action timeout.
+// reserve_pool_cycle_integration_test.go, the money-class connection-starvation regression for the
+// reservation flow. The defect: ReserveTx runs in the CALLER's transaction, but its allocation-policy
+// read went through the POOL, so every in-flight reservation held one connection and asked for a
+// SECOND. Pool-size reservations in flight together (a burst of confirms or quote holds on ANY
+// products, no shared row needed) pin every connection of the pool and each waits for one more: the
+// sessions sit idle in transaction (no lock is waited on; the red run's pg_locks snapshot shows zero
+// ungranted waits) and the database's deadlock detector is blind to the client-side half. The
+// process stalls to the action timeout. The held confirm's row lock below is not needed for the
+// stall; it makes the scenario realistic and orders the green path's projections.
 //
 // The required shape, fail first: a pool built at 4 EXPLICITLY (so the leg measures the deploy
 // default on any machine), one held confirm (a transaction that has locked the product's
@@ -40,6 +42,10 @@ import (
 )
 
 func TestReserveTx_PolicyReadJoinsCallerTx_NoPoolCycle(t *testing.T) {
+	// poolSize is the ONE constant the scenario's connection accounting hangs on: the pool is
+	// built at it below and the contender count is derived from it (pool-size-minus-one).
+	const poolSize = 4
+
 	url := os.Getenv("DATABASE_URL")
 	if url == "" {
 		t.Skip("reserve pool-cycle leg: DATABASE_URL not set (the leg needs its own throwaway database and skips politely without it)")
@@ -49,8 +55,10 @@ func TestReserveTx_PolicyReadJoinsCallerTx_NoPoolCycle(t *testing.T) {
 		t.Fatalf("parse DATABASE_URL: %v", err)
 	}
 	// THE POOL SIZE IS THE POINT: 4 is the deploy default the defect stalls at, and it is pinned
-	// explicitly rather than left to max(4, CPUs) so the cycle reproduces identically everywhere.
-	cfg.MaxConns = 4
+	// explicitly rather than left to max(4, CPUs) so the starvation reproduces identically
+	// everywhere. Both the pool and the contender count derive from the one poolSize constant, so
+	// they can never disagree (a disagreement would hang the leg instead of failing it).
+	cfg.MaxConns = int32(poolSize)
 	cfg.MinConns = 0
 	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
 	if err != nil {
@@ -92,7 +100,6 @@ func TestReserveTx_PolicyReadJoinsCallerTx_NoPoolCycle(t *testing.T) {
 	})
 
 	const (
-		poolSize = 4
 		// The bound the red run fails at: seconds, not minutes. The green path completes in
 		// milliseconds, so the bound has room to spare on a loaded machine and still caps the stall.
 		stallBound = 10 * time.Second

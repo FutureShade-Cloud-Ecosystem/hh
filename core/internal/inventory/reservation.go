@@ -190,10 +190,11 @@ func (s *Service) ResolveAllocationPolicy(ctx context.Context, branchID string) 
 
 // resolveAllocationPolicyTx is the transaction-aware core of the policy read; nil tx means the pool,
 // the seam's stated convention. The reserve path passes ITS transaction so the policy read joins the
-// connection already holding the caller's row locks: on the pool it would ask for a second
-// connection, and at the deploy default pool of 4 that forms the connection cycle Postgres cannot
-// see (the caller waits for a connection, every connection waits on the caller's locks) and the
-// confirm stalls to the action timeout.
+// connection the caller already holds: on the pool it would ask for a SECOND connection while the
+// caller keeps its first, and pool-size in-flight reservations each doing that pin every connection
+// of the pool and wait for one more, a client-side hold Postgres cannot see (no lock is waited on
+// at all; the sessions sit idle in transaction) while the process stalls to the action timeout. The
+// row locks a reservation holds play no part in the stall; they only make the scenario realistic.
 func (s *Service) resolveAllocationPolicyTx(ctx context.Context, tx pgx.Tx, branchID string) (AllocationPolicy, error) {
 	def := DefaultAllocationPolicy()
 	def.BranchID = branchID
@@ -232,9 +233,10 @@ func (s *Service) ReserveTx(ctx context.Context, tx pgx.Tx, in ReserveInput) (Re
 		in.LocationID = in.BranchID
 	}
 
-	// The policy read runs INSIDE the caller's tx, on the connection already holding the caller's row
-	// locks, for the same reason the overdraft guard below does: a pool read here asks for a second
-	// connection while the caller's locks hold the rest of the pool.
+	// The policy read runs INSIDE the caller's tx, for the same reason the overdraft guard below
+	// does: a pool read here asks for a SECOND connection while the caller keeps its first, and
+	// pool-size in-flight reservations doing that together pin the whole pool with no connection
+	// left to answer any of them.
 	policy, err := s.resolveAllocationPolicyTx(ctx, tx, in.BranchID)
 	if err != nil {
 		return ReserveResult{}, err

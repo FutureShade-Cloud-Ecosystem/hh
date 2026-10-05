@@ -29,7 +29,8 @@ const tsFmt = `'YYYY-MM-DD"T"HH24:MI:SSOF'`
 
 // AllocationPolicy reads a branch's configured policy. found=false → caller uses the system default.
 // tx joins the caller's transaction (nil tx = the pool, the seam's convention): the reserve path
-// passes its tx so the read runs on the connection already holding the caller's row locks.
+// passes its tx so the read runs on the connection the caller already holds and never asks the
+// pool for a second one mid transaction.
 func (r *Repository) AllocationPolicy(ctx context.Context, tx pgx.Tx, branchID string) (AllocationPolicy, bool, error) {
 	if r.pool == nil && tx == nil {
 		return AllocationPolicy{}, false, errNoDB
