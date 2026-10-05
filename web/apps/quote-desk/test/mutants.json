@@ -1175,8 +1175,8 @@
   {
     "id": "wa-scan-handoff-wait",
     "file": "src/quote-workarea.ts",
-    "find": "if (end === \"gave-up\") {",
-    "replace": "if (false) {",
+    "find": "const end = await this.handedDown();",
+    "replace": "const end = \"gave-up\" as HandoffEnd;",
     "test": "P3 a scan made in compose waits for the host"
   },
   {
