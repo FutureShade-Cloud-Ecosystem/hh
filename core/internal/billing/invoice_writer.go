@@ -506,6 +506,23 @@ func (w *InvoiceWriter) writeCore(ctx context.Context, ctxTx pgx.Tx, f OrderInvo
 					covered = &whole
 					return nil
 				}
+				// The group set was read before this lock was held, so it may overlap a group that a
+				// call ahead of this one billed while this one waited. Decide against what committed:
+				// the same set under the same key is that call's document (the double click), and a set
+				// that shares a group with a different document is refused whole, so no group is billed
+				// twice and the invoices of the order never total more than the order.
+				if same, ok, err := findByKeyOn(ctx, tx, idemKey); err != nil {
+					return err
+				} else if ok {
+					same.Reused = true
+					covered = &same
+					return nil
+				}
+				if no, err := overlappingGroupInvoice(ctx, tx, f.OrderID, f.GroupIDs); err != nil {
+					return err
+				} else if no != "" {
+					return httpx.BadRequestf("a shipment group in this request was invoiced as %s while the request was waiting; read the shipment plan again and invoice what is left", no)
+				}
 			}
 		}
 		var invoiceID, invoiceNo string
@@ -732,6 +749,39 @@ func lockOrder(ctx context.Context, q keyQuerier, orderID string) error {
 		return fmt.Errorf("billing: lock the order: %w", err)
 	}
 	return nil
+}
+
+// overlappingGroupInvoice names a live group invoice of the order that already bills any of the given
+// shipment groups ("" when none does). The set a group invoice bills is carried in its idempotency key
+// (multiShipKey), which is how a later request finds the groups an earlier one took without reading the
+// order module's tables. Run on the order's locked transaction, it sees every document committed ahead.
+func overlappingGroupInvoice(ctx context.Context, tx pgx.Tx, orderID string, groupIDs []string) (string, error) {
+	prefix := "multiship-invoice:" + orderID + ":"
+	rows, err := tx.Query(ctx, `
+SELECT invoice_no::text, idempotency_key FROM invoices
+ WHERE order_id = $1::uuid AND doc_type = 'INVOICE' AND status <> 'VOID'
+   AND idempotency_key LIKE $2
+ ORDER BY created_at`, orderID, prefix+"%")
+	if err != nil {
+		return "", fmt.Errorf("billing: look up the order's group invoices: %w", err)
+	}
+	defer rows.Close()
+	want := make(map[string]bool, len(groupIDs))
+	for _, g := range groupIDs {
+		want[g] = true
+	}
+	for rows.Next() {
+		var no, key string
+		if err := rows.Scan(&no, &key); err != nil {
+			return "", fmt.Errorf("billing: read the order's group invoices: %w", err)
+		}
+		for _, g := range strings.Split(strings.TrimPrefix(key, prefix), ",") {
+			if want[g] {
+				return no, nil
+			}
+		}
+	}
+	return "", rows.Err()
 }
 
 // otherLiveInvoice names an invoice of the order that is not the counter's whole order document: any

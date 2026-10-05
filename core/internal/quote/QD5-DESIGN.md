@@ -131,6 +131,12 @@ The counter's invoice header carries a source marker (`metadata.source = COUNTER
   and visible to no one else, so no other session can be waiting on it. No path takes an invoice or a
   payment row and then waits for an order row, so there is no cycle with the advisory lock or the
   conversion's locks.
+- The manager's group invoice route reads the plan before the writer takes the order lock, so its group
+  set can overlap a group a call ahead of it billed while it waited. After the lock the writer therefore
+  decides against what committed: the same set under the same key answers that call's document, and a
+  set that shares a group with another live group document is refused (a 400 that says to read the plan
+  again), so no group is billed twice. The proof is `cmd/core/qd5_groupinvoice_integration_test.go`,
+  through the served route at a pool of four and at a larger one.
 - A shipment plan's group billing treats only the counter's own document (the marker) as covering its
   groups. Any other whole order document (the sync door's, which may bill only the fulfilled lines)
   covers nothing, so a later group is billed exactly as it was before QD-5.
