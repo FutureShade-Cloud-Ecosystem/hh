@@ -436,7 +436,11 @@ func (s *SyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, 
 	if errors.Is(err, pgx.ErrNoRows) {
 		// The ON CONFLICT arm answered no row: the client-chosen id is
 		// taken, answered as the caller's own fact inside the org and
-		// not-found outside it (existence never leaks).
+		// not-found outside it (existence never leaks). Nothing was
+		// written, so the transaction ends first: the read-back goes
+		// through the pool, and asking it for a second connection while
+		// this one is held starves the pool once pool-size creates collide.
+		_ = tx.Rollback(ctx)
 		if _, own, _ := s.Load(ctx, f, id); own {
 			return sync.RowState{}, sync.ErrRowExists
 		}

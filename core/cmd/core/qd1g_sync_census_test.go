@@ -31,6 +31,7 @@ import (
 	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -1021,6 +1022,7 @@ func TestQD1G_SyncDoorCensus(t *testing.T) {
 	}
 	qd1gNotVacuous(t)
 	qd1gMatchMatrices(t)
+	qd1gMatrixMutants(t)
 	qd1gScopesGuard(t)
 }
 
@@ -1082,30 +1084,52 @@ func qd1gNotVacuous(t *testing.T) {
 
 // ---- the document's matrices ---------------------------------------------
 
-// qd1gDocCells reads section 3 of the census document: every matrix row of a
-// `### door` block is a role and its A or R cells, cell n answering leg n.
-func qd1gDocCells(t *testing.T) map[string]string {
+// qd1gReadDoc reads the census document.
+func qd1gReadDoc(t *testing.T) string {
 	t.Helper()
 	raw, err := os.ReadFile("../../internal/quote/SYNC-DOOR-CENSUS.md")
 	if err != nil {
 		t.Fatalf("read the census document: %v", err)
 	}
-	section := string(raw)
+	return string(raw)
+}
+
+// qd1gDocCells reads section 3 of the census document: every matrix row of a
+// `### door` block is a role and its A or R cells, cell n answering leg n; the
+// numbered lines under a matrix are its column legend, leg n named by line n.
+// A problem found while reading (a bad cell, a repeated role row, a repeated
+// legend number) is returned, never folded away.
+func qd1gDocCells(raw string) (cells, legends map[string]string, problems []string) {
+	section := raw
 	if i := strings.Index(section, "\n## 3. "); i >= 0 {
 		section = section[i:]
 	}
 	if i := strings.Index(section, "\n## 4. "); i >= 0 {
 		section = section[:i]
 	}
-	cells := map[string]string{}
+	cells = map[string]string{}
+	legends = map[string]string{}
+	rows := map[string]bool{}
 	door := ""
 	heading := regexp.MustCompile("^### `([a-z]+\\.[A-Za-z]+)`")
+	legend := regexp.MustCompile("^([0-9]+)\\. (.+)$")
 	for _, line := range strings.Split(section, "\n") {
 		if m := heading.FindStringSubmatch(line); m != nil {
 			door = m[1]
 			continue
 		}
-		if door == "" || !strings.HasPrefix(line, "| ") {
+		if door == "" {
+			continue
+		}
+		if m := legend.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
+			key := door + "|" + m[1]
+			if _, dup := legends[key]; dup {
+				problems = append(problems, fmt.Sprintf("census document: %s legend number %s appears twice", door, m[1]))
+			}
+			legends[key] = strings.TrimSpace(m[2])
+			continue
+		}
+		if !strings.HasPrefix(line, "| ") {
 			continue
 		}
 		parts := strings.Split(strings.Trim(strings.TrimSpace(line), "|"), "|")
@@ -1117,47 +1141,145 @@ func qd1gDocCells(t *testing.T) map[string]string {
 		if !isRole {
 			continue
 		}
+		if rows[door+"|"+role] {
+			problems = append(problems, fmt.Sprintf("census document: %s has the %s row twice", door, role))
+			continue
+		}
+		rows[door+"|"+role] = true
 		for i, cell := range parts[1:] {
 			cell = strings.TrimSpace(cell)
 			if cell != "A" && cell != "R" {
-				t.Errorf("census document: %s %s leg %d holds %q, want A or R", door, role, i+1, cell)
+				problems = append(problems, fmt.Sprintf("census document: %s %s leg %d holds %q, want A or R", door, role, i+1, cell))
 				continue
 			}
 			cells[fmt.Sprintf("%s|%s|%d", door, role, i+1)] = cell
 		}
 	}
-	return cells
+	return cells, legends, problems
 }
 
-// qd1gMatchMatrices requires the document's section 3 to equal what the census
-// observed, cell for cell and in both directions. The observed answer is the
-// sync door's own (the REST answer, or the stated rule, equals it whenever the
+// qd1gRuleNote is the tag the document's legend adds to a leg the census
+// asserts by rule; it is not part of the leg's name.
+const qd1gRuleNote = " (stated rule, no REST twin)"
+
+// qd1gCheckMatrices requires the document's section 3 to equal what the census
+// observed, cell for cell and in both directions, and each matrix's column
+// legend to name the leg its column answers. The observed answer is the sync
+// door's own (the REST answer, or the stated rule, equals it whenever the
 // census is otherwise green), so a rule changed on both sides at once, which
 // leaves REST equal to sync, still turns the document stale and fails here.
-func qd1gMatchMatrices(t *testing.T) {
-	t.Helper()
+func qd1gCheckMatrices(raw string, answers []qd1gAnswer) []string {
 	verb := map[bool]string{true: "A", false: "R"}
-	doc := qd1gDocCells(t)
+	doc, legends, problems := qd1gDocCells(raw)
 	leg := map[string]int{}
 	seen := map[string]bool{}
-	for _, a := range qd1gAnswers {
+	named := map[string]bool{}
+	longest := map[string]int{}
+	for _, a := range answers {
 		leg[a.Door+"|"+a.Role]++
-		key := fmt.Sprintf("%s|%s|%d", a.Door, a.Role, leg[a.Door+"|"+a.Role])
+		n := leg[a.Door+"|"+a.Role]
+		if n > longest[a.Door] {
+			longest[a.Door] = n
+		}
+		key := fmt.Sprintf("%s|%s|%d", a.Door, a.Role, n)
 		seen[key] = true
 		documented, ok := doc[key]
 		switch {
 		case !ok:
-			t.Errorf("CENSUS DOCUMENT %s as %s, leg %d (%s): the census observed %s and the document has no cell",
-				a.Door, a.Role, leg[a.Door+"|"+a.Role], a.Leg, verb[a.Sync])
+			problems = append(problems, fmt.Sprintf("CENSUS DOCUMENT %s as %s, leg %d (%s): the census observed %s and the document has no cell",
+				a.Door, a.Role, n, a.Leg, verb[a.Sync]))
 		case documented != verb[a.Sync]:
-			t.Errorf("CENSUS DOCUMENT %s as %s, leg %d (%s): the document says %s, the census observed %s",
-				a.Door, a.Role, leg[a.Door+"|"+a.Role], a.Leg, documented, verb[a.Sync])
+			problems = append(problems, fmt.Sprintf("CENSUS DOCUMENT %s as %s, leg %d (%s): the document says %s, the census observed %s",
+				a.Door, a.Role, n, a.Leg, documented, verb[a.Sync]))
+		}
+		lkey := fmt.Sprintf("%s|%d", a.Door, n)
+		text, ok := legends[lkey]
+		text = strings.TrimSuffix(text, qd1gRuleNote)
+		if msg := fmt.Sprintf("CENSUS DOCUMENT %s legend %d: the document names %q, the census observed leg %q", a.Door, n, text, a.Leg); (!ok || text != a.Leg) && !named[msg] {
+			named[msg] = true
+			problems = append(problems, msg)
 		}
 	}
 	for key, cell := range doc {
 		if !seen[key] {
 			p := strings.Split(key, "|")
-			t.Errorf("CENSUS DOCUMENT %s as %s, leg %s: the document says %s and the census observed no such cell", p[0], p[1], p[2], cell)
+			problems = append(problems, fmt.Sprintf("CENSUS DOCUMENT %s as %s, leg %s: the document says %s and the census observed no such cell", p[0], p[1], p[2], cell))
+		}
+	}
+	for key, text := range legends {
+		p := strings.Split(key, "|")
+		if n, _ := strconv.Atoi(p[1]); n > longest[p[0]] {
+			problems = append(problems, fmt.Sprintf("CENSUS DOCUMENT %s legend %s names %q and the census observed no such leg", p[0], p[1], text))
+		}
+	}
+	sort.Strings(problems)
+	return problems
+}
+
+// qd1gMatchMatrices holds the document to the answers the census observed.
+func qd1gMatchMatrices(t *testing.T) {
+	t.Helper()
+	for _, p := range qd1gCheckMatrices(qd1gReadDoc(t), qd1gAnswers) {
+		t.Error(p)
+	}
+}
+
+// qd1gMatrixMutants proves the document check by mutation: each mutant is a
+// copy of the document with one defect the check must name. A legend that
+// names another leg than its column answers, a legend line missing or extra,
+// and a role row repeated in one matrix (so that the last row would win) each
+// stay green against a check that reads the cells alone.
+func qd1gMatrixMutants(t *testing.T) {
+	t.Helper()
+	if t.Failed() {
+		return
+	}
+	raw := qd1gReadDoc(t)
+	mutate := func(heading, old, repl string) string {
+		i := strings.Index(raw, "### `"+heading+"`")
+		if i < 0 {
+			t.Fatalf("mutant: the document has no block for %s", heading)
+		}
+		tail := raw[i:]
+		if !strings.Contains(tail, old) {
+			t.Fatalf("mutant: %s has no %q to change", heading, old)
+		}
+		return raw[:i] + strings.Replace(tail, old, repl, 1)
+	}
+	mutants := []struct{ name, doc, want string }{
+		{"two legends swapped",
+			mutate("quotes.Create", "1. create in branch A\n2. create in branch B", "1. create in branch B\n2. create in branch A"),
+			"legend 1"},
+		{"a legend names another leg",
+			mutate("approvals.Pull", "1. read a plain request of branch A", "1. read a plain request of branch C"),
+			"legend 1"},
+		{"a legend line missing",
+			mutate("quotes.Write", "\n4. edit another seller's quote in branch B", ""),
+			"legend 4"},
+		{"a legend line extra",
+			mutate("quotes.Write", "4. edit another seller's quote in branch B", "4. edit another seller's quote in branch B\n5. edit a quote nobody asked about"),
+			"legend 5"},
+		{"a legend number repeated",
+			mutate("quotes.Create", "2. create in branch B", "1. create in branch B"),
+			"appears twice"},
+		{"a role row repeated with other cells first",
+			mutate("quotes.Create", "| inside_sales | A | R |", "| inside_sales | R | A |\n| inside_sales | A | R |"),
+			"inside_sales row twice"},
+		{"a role row repeated with other cells last",
+			mutate("quotes.Create", "| inside_sales | A | R |", "| inside_sales | A | R |\n| inside_sales | R | A |"),
+			"inside_sales row twice"},
+		{"a role row repeated unchanged",
+			mutate("approvals.Load", "| hr |", "| hr | R | R | R | R | R | R | R | R |\n| hr |"),
+			"hr row twice"},
+	}
+	for _, m := range mutants {
+		problems := qd1gCheckMatrices(m.doc, qd1gAnswers)
+		hit := false
+		for _, p := range problems {
+			hit = hit || strings.Contains(p, m.want)
+		}
+		if !hit {
+			t.Errorf("document mutant %q stayed green (want a problem naming %q, got %q)", m.name, m.want, problems)
 		}
 	}
 }
