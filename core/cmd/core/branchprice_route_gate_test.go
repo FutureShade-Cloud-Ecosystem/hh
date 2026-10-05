@@ -63,6 +63,13 @@ VALUES ($1::uuid, 'FXBP-GATE', 'branch price gate leg product', 'EA', 'EA', TRUE
 ON CONFLICT (id) DO NOTHING`, bpGateProduct, testkit.OrgNorthID); err != nil {
 		t.Fatalf("plant product: %v", err)
 	}
+	// The price set refuses a unit the product cannot convert, so the leg's
+	// product carries the base unit in its set, as every real product does.
+	if _, err := graph.pool.Exec(ctx, `
+INSERT INTO product_uoms (product_id, uom_code, qty_in_base, is_base)
+VALUES ($1::uuid, 'EA', 1, TRUE) ON CONFLICT (product_id, uom_code) DO NOTHING`, bpGateProduct); err != nil {
+		t.Fatalf("plant the product's base unit: %v", err)
+	}
 	t.Cleanup(func() {
 		c := context.Background()
 		_, _ = graph.pool.Exec(c, `DELETE FROM price_change_log WHERE product_id = $1::uuid`, bpGateProduct)
@@ -89,22 +96,26 @@ ON CONFLICT (id) DO NOTHING`, bpGateProduct, testkit.OrgNorthID); err != nil {
 	rgRefused(t, "row 11: hr is refused the branch price delete", code, bodyOut)
 
 	// Row 12: the sales manager and the general manager are accepted, and
-	// each set is logged in the pricing change log with its actor.
+	// EACH set files exactly one new branch-named trail row attributed to
+	// its caller. The two set DIFFERENT prices: an identical re-set is the
+	// value-equal arm and files nothing, so the second caller's price must
+	// differ or the leg proves nothing about the second caller's logging.
 	manager := bpHeaders(t, env, testkit.SubSalesManager)
 	code, bodyOut = bpProbe(t, reg, http.MethodPut, path, manager, body)
 	rgAdmitted(t, "row 12: the sales manager sets a branch price", code, bodyOut)
 	if code != http.StatusOK {
 		t.Fatalf("row 12: the sales manager's set answered %d (%s), want the stored 200", code, bodyOut)
 	}
-	bpGateAssertTrail(t, graph.pool, "the sales manager")
+	bpGateAssertTrail(t, graph.pool, "the sales manager", 1, testkit.UserSalesMgrID, 48000)
 
 	gm := bpHeaders(t, env, testkit.SubGeneralMgr)
-	code, bodyOut = bpProbe(t, reg, http.MethodPut, path, gm, body)
+	gmBody := []byte(`{"list_price_cents":53000,"price_uom":"EA"}`)
+	code, bodyOut = bpProbe(t, reg, http.MethodPut, path, gm, gmBody)
 	rgAdmitted(t, "row 12: the general manager sets a branch price", code, bodyOut)
 	if code != http.StatusOK {
 		t.Fatalf("row 12: the general manager's set answered %d (%s), want the stored 200", code, bodyOut)
 	}
-	bpGateAssertTrail(t, graph.pool, "the general manager")
+	bpGateAssertTrail(t, graph.pool, "the general manager", 2, testkit.UserGeneralMgrID, 53000)
 
 	code, bodyOut = bpProbe(t, reg, http.MethodDelete, path, manager, nil)
 	rgAdmitted(t, "row 12: the sales manager removes the branch price", code, bodyOut)
@@ -113,9 +124,10 @@ ON CONFLICT (id) DO NOTHING`, bpGateProduct, testkit.OrgNorthID); err != nil {
 	}
 }
 
-// bpGateAssertTrail reads the change log rows the row 12 legs owe: every
-// accepted set files a branch-named trail row attributed to its caller.
-func bpGateAssertTrail(t *testing.T, pool *pgxpool.Pool, who string) {
+// bpGateAssertTrail reads the change log rows the row 12 legs owe: exactly
+// wantRows branch-named trail rows for the product, the newest attributed to
+// wantChangedBy and carrying wantAfter as its after.
+func bpGateAssertTrail(t *testing.T, pool *pgxpool.Pool, who string, wantRows int, wantChangedBy string, wantAfter int64) {
 	t.Helper()
 	var n int
 	if err := pool.QueryRow(context.Background(),
@@ -123,7 +135,25 @@ func bpGateAssertTrail(t *testing.T, pool *pgxpool.Pool, who string) {
 		bpGateProduct).Scan(&n); err != nil {
 		t.Fatalf("read the change log: %v", err)
 	}
-	if n == 0 {
-		t.Fatalf("%s's accepted set filed no branch-named change log row", who)
+	if n != wantRows {
+		t.Fatalf("%s's accepted set left %d branch-named change log rows, want exactly %d: each caller's set must land its own trail row", who, n, wantRows)
+	}
+	var changedBy *string
+	var after *int64
+	if err := pool.QueryRow(context.Background(),
+		`SELECT changed_by::text, after_cents FROM price_change_log
+		  WHERE product_id = $1::uuid AND branch_id IS NOT NULL AND field = 'retail_cents'
+		  ORDER BY created_at DESC, id DESC LIMIT 1`, bpGateProduct).Scan(&changedBy, &after); err != nil {
+		t.Fatalf("read the newest trail row: %v", err)
+	}
+	if changedBy == nil || *changedBy != wantChangedBy {
+		got := "NULL"
+		if changedBy != nil {
+			got = *changedBy
+		}
+		t.Fatalf("%s's set filed its newest trail row as changed_by %s, want that caller's user id %s", who, got, wantChangedBy)
+	}
+	if after == nil || *after != wantAfter {
+		t.Fatalf("%s's set filed after %v, want %d", who, after, wantAfter)
 	}
 }
