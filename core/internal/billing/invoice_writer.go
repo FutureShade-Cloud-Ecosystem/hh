@@ -353,6 +353,25 @@ func (w *InvoiceWriter) InvoiceOrderGroups(ctx context.Context, orderID string, 
 	}
 	doc, err := w.write(ctx, facts, SourceMultiShip, multiShipKey(orderID, facts.GroupIDs), "")
 	if err != nil {
+		// An overlap refusal first heals the standing document and THEN refuses. The overlap was
+		// found against a document whose groups may never have been linked to it: the marking is a
+		// separate transaction (see the write-back below), and a fault after its document committed
+		// leaves the plan reading those groups as unbilled, so the plan the caller reads again keeps
+		// offering one of them and every later request is refused the same way: 400 for good. The
+		// marking here is the write-back's own, idempotent (a group already linked is left alone), so
+		// the refusal's advice, read the plan again and invoice what is left, names a plan that can
+		// actually be followed.
+		var overlap *groupOverlapError
+		if errors.As(err, &overlap) {
+			if standing, ok, ferr := w.findByKey(ctx, overlap.key); ferr != nil {
+				return InvoiceDoc{}, ferr
+			} else if ok && len(overlap.groups) > 0 {
+				if mErr := w.source.MarkGroupsInvoiced(ctx, overlap.groups, standing.InvoiceID, w.now()); mErr != nil {
+					return InvoiceDoc{}, fmt.Errorf("billing: invoice %s was found standing but its shipment groups could not be marked: %w",
+						standing.InvoiceNo, mErr)
+				}
+			}
+		}
 		return InvoiceDoc{}, err
 	}
 	// The write-back is a SEPARATE transaction, deliberately and with a stated consequence: the group
@@ -510,7 +529,9 @@ func (w *InvoiceWriter) writeCore(ctx context.Context, ctxTx pgx.Tx, f OrderInvo
 				// call ahead of this one billed while this one waited. Decide against what committed:
 				// the same set under the same key is that call's document (the double click), and a set
 				// that shares a group with a different document is refused whole, so no group is billed
-				// twice and the invoices of the order never total more than the order.
+				// twice and the invoices of the order never total more than the order. The refusal
+				// carries the standing document's key and group set (groupOverlapError) so the caller
+				// can link that document's groups to it before the refusal is answered.
 				if same, ok, err := findByKeyOn(ctx, tx, idemKey); err != nil {
 					return err
 				} else if ok {
@@ -518,10 +539,14 @@ func (w *InvoiceWriter) writeCore(ctx context.Context, ctxTx pgx.Tx, f OrderInvo
 					covered = &same
 					return nil
 				}
-				if no, err := overlappingGroupInvoice(ctx, tx, f.OrderID, f.GroupIDs); err != nil {
+				if no, key, err := overlappingGroupInvoice(ctx, tx, f.OrderID, f.GroupIDs); err != nil {
 					return err
 				} else if no != "" {
-					return httpx.BadRequestf("a shipment group in this request was invoiced as %s while the request was waiting; read the shipment plan again and invoice what is left", no)
+					return &groupOverlapError{
+						wrapped: httpx.BadRequestf("a shipment group in this request was invoiced as %s while the request was waiting; read the shipment plan again and invoice what is left", no),
+						key:     key,
+						groups:  groupsUnderKey(f.OrderID, key),
+					}
 				}
 			}
 		}
@@ -751,11 +776,42 @@ func lockOrder(ctx context.Context, q keyQuerier, orderID string) error {
 	return nil
 }
 
+// groupOverlapError is the overlap refusal carrying what its recovery needs: the standing document's
+// idempotency key and the group set that document bills. The refusal itself is unchanged (it wraps
+// the same 400 with the same words); the caller links the standing document's groups to it before
+// the refusal is answered, see InvoiceOrderGroups.
+type groupOverlapError struct {
+	wrapped error
+	key     string
+	groups  []string
+}
+
+func (e *groupOverlapError) Error() string { return e.wrapped.Error() }
+func (e *groupOverlapError) Unwrap() error { return e.wrapped }
+
+// groupsUnderKey reads the group set out of a group invoice's idempotency key (multiShipKey's
+// encoding: the order id, then the sorted group ids joined by commas). An empty answer means no
+// group is named, and the caller marks nothing.
+func groupsUnderKey(orderID, key string) []string {
+	if key == "" {
+		return nil
+	}
+	prefix := "multiship-invoice:" + orderID + ":"
+	var out []string
+	for _, g := range strings.Split(strings.TrimPrefix(key, prefix), ",") {
+		if g != "" {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
 // overlappingGroupInvoice names a live group invoice of the order that already bills any of the given
-// shipment groups ("" when none does). The set a group invoice bills is carried in its idempotency key
-// (multiShipKey), which is how a later request finds the groups an earlier one took without reading the
-// order module's tables. Run on the order's locked transaction, it sees every document committed ahead.
-func overlappingGroupInvoice(ctx context.Context, tx pgx.Tx, orderID string, groupIDs []string) (string, error) {
+// shipment groups ("" when none does), with its idempotency key beside the name. The set a group
+// invoice bills is carried in that key (multiShipKey), which is how a later request finds the groups
+// an earlier one took without reading the order module's tables. Run on the order's locked
+// transaction, it sees every document committed ahead.
+func overlappingGroupInvoice(ctx context.Context, tx pgx.Tx, orderID string, groupIDs []string) (no, key string, err error) {
 	prefix := "multiship-invoice:" + orderID + ":"
 	rows, err := tx.Query(ctx, `
 SELECT invoice_no::text, idempotency_key FROM invoices
@@ -763,7 +819,7 @@ SELECT invoice_no::text, idempotency_key FROM invoices
    AND idempotency_key LIKE $2
  ORDER BY created_at`, orderID, prefix+"%")
 	if err != nil {
-		return "", fmt.Errorf("billing: look up the order's group invoices: %w", err)
+		return "", "", fmt.Errorf("billing: look up the order's group invoices: %w", err)
 	}
 	defer rows.Close()
 	want := make(map[string]bool, len(groupIDs))
@@ -771,17 +827,16 @@ SELECT invoice_no::text, idempotency_key FROM invoices
 		want[g] = true
 	}
 	for rows.Next() {
-		var no, key string
 		if err := rows.Scan(&no, &key); err != nil {
-			return "", fmt.Errorf("billing: read the order's group invoices: %w", err)
+			return "", "", fmt.Errorf("billing: read the order's group invoices: %w", err)
 		}
 		for _, g := range strings.Split(strings.TrimPrefix(key, prefix), ",") {
 			if want[g] {
-				return no, nil
+				return no, key, nil
 			}
 		}
 	}
-	return "", rows.Err()
+	return "", "", rows.Err()
 }
 
 // otherLiveInvoice names an invoice of the order that is not the counter's whole order document: any
