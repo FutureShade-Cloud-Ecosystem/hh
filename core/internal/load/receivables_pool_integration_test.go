@@ -71,7 +71,7 @@ func TestReceivablesSmallPoolServesConcurrentBatchesToTheCent(t *testing.T) {
 		for i := 0; i < n; i++ {
 			day := startDay + i
 			items = append(items, ld11Item(fmt.Sprintf("%s-%d", prefix, i), customer, "BR-A", fmt.Sprintf("%s-DOC-%d", prefix, i),
-				fmt.Sprintf("2032-03-%02d", day), fmt.Sprintf("2032-04-%02d", day), cents+int64(i)*100, "", ""))
+				fmt.Sprintf("2022-03-%02d", day), fmt.Sprintf("2022-04-%02d", day), cents+int64(i)*100, "", ""))
 		}
 		return items
 	}

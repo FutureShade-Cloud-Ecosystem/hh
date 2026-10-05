@@ -67,13 +67,13 @@ func receivablesWireItem(legacyID, derivedKey, customerKey, branchKey string, re
 // goodReceivablesRecord is one fully valid record, the shape every
 // other case starts from.
 func goodReceivablesRecord() map[string]any {
-	return receivablesRecord("AR-1001", "2031-03-04", "2031-04-03", json.Number("125000"), "JOB-77", "ADDR-91")
+	return receivablesRecord("AR-1001", "2021-03-04", "2021-04-03", json.Number("125000"), "JOB-77", "ADDR-91")
 }
 
 func TestReceivablesRecordAcceptsExactCentsAndRefusesEveryOtherMoneySpelling(t *testing.T) {
 	ok := []json.Number{"125000", "-2500", "1", "9223372036854775807", "-9223372036854775808"}
 	for _, amount := range ok {
-		rec := receivablesRecord("AR-1001", "2031-03-04", "2031-04-03", amount, "", "")
+		rec := receivablesRecord("AR-1001", "2021-03-04", "2021-04-03", amount, "", "")
 		if err := ValidateReceivablesItems([]Item{receivablesWireItem("AR-L-1", "", "CUST-1", "BR-1", rec)}); err != nil {
 			t.Fatalf("exact cents %s refused: %v", amount, err)
 		}
@@ -94,7 +94,7 @@ func TestReceivablesRecordAcceptsExactCentsAndRefusesEveryOtherMoneySpelling(t *
 		{"absent", nil},
 	}
 	for _, tc := range bad {
-		rec := receivablesRecord("AR-1001", "2031-03-04", "2031-04-03", tc.amount, "", "")
+		rec := receivablesRecord("AR-1001", "2021-03-04", "2021-04-03", tc.amount, "", "")
 		err := ValidateReceivablesItems([]Item{receivablesWireItem("AR-L-1", "", "CUST-1", "BR-1", rec)})
 		var ie *ItemError
 		if err == nil || !errors.As(err, &ie) {
@@ -136,7 +136,7 @@ func TestReceivablesRecordRefusesShapesMoneyNeeds(t *testing.T) {
 			return r
 		}, "issue_date"},
 		{"a loosely padded issue date", func(r map[string]any) map[string]any {
-			r["issue_date"] = "2031-3-4"
+			r["issue_date"] = "2021-3-4"
 			return r
 		}, "issue_date"},
 		{"no due date", func(r map[string]any) map[string]any {
@@ -144,11 +144,11 @@ func TestReceivablesRecordRefusesShapesMoneyNeeds(t *testing.T) {
 			return r
 		}, "due_date"},
 		{"an impossible due date", func(r map[string]any) map[string]any {
-			r["due_date"] = "2031-02-30"
+			r["due_date"] = "2021-02-30"
 			return r
 		}, "due_date"},
 		{"a date with a time on it", func(r map[string]any) map[string]any {
-			r["due_date"] = "2031-04-03T00:00:00Z"
+			r["due_date"] = "2021-04-03T00:00:00Z"
 			return r
 		}, "due_date"},
 		{"an overlong job key", func(r map[string]any) map[string]any {
@@ -228,7 +228,7 @@ func TestReceivablesItemsRefuseADuplicateLegacyID(t *testing.T) {
 	items := []Item{
 		receivablesWireItem("AR-L-1", "", "CUST-1", "BR-1", goodReceivablesRecord()),
 		receivablesWireItem("AR-L-2", "", "CUST-2", "BR-1", goodReceivablesRecord()),
-		receivablesWireItem("AR-L-1", "", "CUST-1", "BR-1", receivablesRecord("AR-1009", "2031-03-09", "2031-04-08", json.Number("500"), "", "")),
+		receivablesWireItem("AR-L-1", "", "CUST-1", "BR-1", receivablesRecord("AR-1009", "2021-03-09", "2021-04-08", json.Number("500"), "", "")),
 	}
 	err := ValidateReceivablesItems(items)
 	var ie *ItemError
@@ -246,13 +246,13 @@ func TestReceivablesItemsRefuseADuplicateLegacyID(t *testing.T) {
 // order; the outcomes still answer in the wire's order.
 func TestReceivablesItemsOrderForTheLedger(t *testing.T) {
 	rec := func(docNo, issue string) map[string]any {
-		return receivablesRecord(docNo, issue, "2031-05-01", json.Number("1000"), "", "")
+		return receivablesRecord(docNo, issue, "2021-05-01", json.Number("1000"), "", "")
 	}
 	items := []Item{
-		receivablesWireItem("AR-L-B2", "", "CUST-B", "BR-1", rec("AR-B2", "2031-03-10")),
-		receivablesWireItem("AR-L-A2", "", "CUST-A", "BR-1", rec("AR-A2", "2031-03-08")),
-		receivablesWireItem("AR-L-B1", "", "CUST-B", "BR-1", rec("AR-B1", "2031-03-02")),
-		receivablesWireItem("AR-L-A1", "", "CUST-A", "BR-1", rec("AR-A1", "2031-03-05")),
+		receivablesWireItem("AR-L-B2", "", "CUST-B", "BR-1", rec("AR-B2", "2021-03-10")),
+		receivablesWireItem("AR-L-A2", "", "CUST-A", "BR-1", rec("AR-A2", "2021-03-08")),
+		receivablesWireItem("AR-L-B1", "", "CUST-B", "BR-1", rec("AR-B1", "2021-03-02")),
+		receivablesWireItem("AR-L-A1", "", "CUST-A", "BR-1", rec("AR-A1", "2021-03-05")),
 	}
 	ordered, wire := orderReceivablesItems(items)
 	want := []string{"AR-L-A1", "AR-L-A2", "AR-L-B1", "AR-L-B2"}
@@ -278,7 +278,7 @@ func receivablesBody(batchID, itemsJSON string) []byte {
 // open, so the money spellings vary.
 func oneItemJSON(amount string) string {
 	return `{"legacy_id":"AR-L-1","derived_key":"","requires":[{"kind":"customer","legacy_id":"CUST-1"},{"kind":"branch","legacy_id":"BR-1"}],` +
-		`"record":{"source_doc_no":"AR-1001","issue_date":"2031-03-04","due_date":"2031-04-03","open_amount_cents":` + amount + `}}`
+		`"record":{"source_doc_no":"AR-1001","issue_date":"2021-03-04","due_date":"2021-04-03","open_amount_cents":` + amount + `}}`
 }
 
 // putReceivablesBody drives the handler's PUT with a machine scope
@@ -405,12 +405,12 @@ func (noopAuditSink) RecordBatchTx(_ context.Context, _ pgx.Tx, _ BatchAuditRow)
 // The date rule's own shapes, pinned: a valid day parses, every other
 // spelling the cases above carry does not.
 func TestReceivablesDateRuleParsesStrictDayShapes(t *testing.T) {
-	for _, ok := range []string{"2031-01-01", "2031-12-31", "2024-02-29"} {
+	for _, ok := range []string{"2021-01-01", "2021-12-31", "2024-02-29"} {
 		if _, err := time.Parse("2006-01-02", ok); err != nil {
 			t.Fatalf("a valid date refused: %v", err)
 		}
 	}
-	for _, bad := range []string{"2031-02-29", "2031-00-01", "2031-01-00", "2031-1-01", "31-01-01", ""} {
+	for _, bad := range []string{"2021-02-29", "2021-00-01", "2021-01-00", "2021-1-01", "31-01-01", ""} {
 		if _, err := time.Parse("2006-01-02", bad); err == nil {
 			t.Fatalf("an invalid date accepted: %s", bad)
 		}

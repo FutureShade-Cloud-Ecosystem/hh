@@ -55,7 +55,7 @@ func TestReceivablesLoadWriterRefusesMoneyThatIsNotExactCents(t *testing.T) {
 		{"zero as json number", json.Number("0")},
 		{"absent", nil},
 	} {
-		_, err := w.Apply(context.Background(), nil, ldImportItem(tc.amount, "2031-06-01", "2031-07-01", "AR-1", ldImportRefs("CUST-1", "BR-1")...))
+		_, err := w.Apply(context.Background(), nil, ldImportItem(tc.amount, "2021-06-01", "2021-07-01", "AR-1", ldImportRefs("CUST-1", "BR-1")...))
 		var ref *load.Refusal
 		if err == nil || !errors.As(err, &ref) {
 			t.Fatalf("%s answered %v, want a refusal", tc.name, err)
@@ -78,7 +78,7 @@ func TestReceivablesLoadWriterAcceptsExactCents(t *testing.T) {
 			t.Fatal("an accepted record never reached the transaction: a guard refused it")
 		}
 	}()
-	_, _ = w.Apply(context.Background(), nil, ldImportItem(125000, "2031-06-01", "2031-07-01", "AR-1", ldImportRefs("CUST-1", "BR-1")...))
+	_, _ = w.Apply(context.Background(), nil, ldImportItem(125000, "2021-06-01", "2021-07-01", "AR-1", ldImportRefs("CUST-1", "BR-1")...))
 }
 
 func TestReceivablesLoadWriterRefusesBadShapes(t *testing.T) {
@@ -88,15 +88,15 @@ func TestReceivablesLoadWriterRefusesBadShapes(t *testing.T) {
 		write load.Write
 		field string
 	}{
-		{"no document number", ldImportItem(1000, "2031-06-01", "2031-07-01", "", ldImportRefs("CUST-1", "BR-1")...), "source_doc_no"},
-		{"no issue date", ldImportItem(1000, "", "2031-07-01", "AR-1", ldImportRefs("CUST-1", "BR-1")...), "issue_date"},
-		{"an unparseable issue date", ldImportItem(1000, "June", "2031-07-01", "AR-1", ldImportRefs("CUST-1", "BR-1")...), "issue_date"},
-		{"no due date", ldImportItem(1000, "2031-06-01", "", "AR-1", ldImportRefs("CUST-1", "BR-1")...), "due_date"},
-		{"an impossible due date", ldImportItem(1000, "2031-06-01", "2031-02-30", "AR-1", ldImportRefs("CUST-1", "BR-1")...), "due_date"},
-		{"no references", ldImportItem(1000, "2031-06-01", "2031-07-01", "AR-1"), "requires"},
-		{"a customer alone", ldImportItem(1000, "2031-06-01", "2031-07-01", "AR-1", ldImportRefs("CUST-1", "BR-1")[0]), "requires"},
-		{"a branch alone", ldImportItem(1000, "2031-06-01", "2031-07-01", "AR-1", ldImportRefs("CUST-1", "BR-1")[1]), "requires"},
-		{"a reference with no resolved row", ldImportItem(1000, "2031-06-01", "2031-07-01", "AR-1",
+		{"no document number", ldImportItem(1000, "2021-06-01", "2021-07-01", "", ldImportRefs("CUST-1", "BR-1")...), "source_doc_no"},
+		{"no issue date", ldImportItem(1000, "", "2021-07-01", "AR-1", ldImportRefs("CUST-1", "BR-1")...), "issue_date"},
+		{"an unparseable issue date", ldImportItem(1000, "June", "2021-07-01", "AR-1", ldImportRefs("CUST-1", "BR-1")...), "issue_date"},
+		{"no due date", ldImportItem(1000, "2021-06-01", "", "AR-1", ldImportRefs("CUST-1", "BR-1")...), "due_date"},
+		{"an impossible due date", ldImportItem(1000, "2021-06-01", "2021-02-30", "AR-1", ldImportRefs("CUST-1", "BR-1")...), "due_date"},
+		{"no references", ldImportItem(1000, "2021-06-01", "2021-07-01", "AR-1"), "requires"},
+		{"a customer alone", ldImportItem(1000, "2021-06-01", "2021-07-01", "AR-1", ldImportRefs("CUST-1", "BR-1")[0]), "requires"},
+		{"a branch alone", ldImportItem(1000, "2021-06-01", "2021-07-01", "AR-1", ldImportRefs("CUST-1", "BR-1")[1]), "requires"},
+		{"a reference with no resolved row", ldImportItem(1000, "2021-06-01", "2021-07-01", "AR-1",
 			load.RefMatch{Kind: load.RefKindCustomer, LegacyID: "CUST-1"}, load.RefMatch{Kind: load.RefKindBranch, LegacyID: "BR-1", HHID: "7b220000-0000-4000-8000-0000000000b1"}), "requires"},
 	} {
 		_, err := w.Apply(context.Background(), nil, tc.write)

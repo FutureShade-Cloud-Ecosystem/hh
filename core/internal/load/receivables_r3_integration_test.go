@@ -27,7 +27,7 @@ func TestReceivablesNightlyRepostNeverSweepsALoadedCreditMemo(t *testing.T) {
 	e := setupLD11(t)
 	ctx := context.Background()
 	if _, err := e.door.UpsertReceivables(ctx, ld11Batch("b-r3-repost",
-		ld11Item("RP-1", "CUST-ONE", "BR-A", "RP-DOC-1", "2032-06-01", "2032-07-01", -4321, "", ""))); err != nil {
+		ld11Item("RP-1", "CUST-ONE", "BR-A", "RP-DOC-1", "2022-06-01", "2022-07-01", -4321, "", ""))); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	poster := &ld11RecordingPoster{}
@@ -47,8 +47,8 @@ func TestReceivablesNightlyRepostNeverSweepsALoadedCreditMemo(t *testing.T) {
 func TestReceivablesReplayIsGradedAgainstWhatThatBatchRecorded(t *testing.T) {
 	e := setupLD11(t)
 	ctx := context.Background()
-	a := ld11Item("RV-A", "CUST-ONE", "BR-A", "RV-DOC-A", "2032-06-01", "2032-07-01", 1000, "", "")
-	b := ld11Item("RV-B", "CUST-ONE", "BR-A", "RV-DOC-B", "2032-06-02", "2032-07-02", 2000, "", "")
+	a := ld11Item("RV-A", "CUST-ONE", "BR-A", "RV-DOC-A", "2022-06-01", "2022-07-01", 1000, "", "")
+	b := ld11Item("RV-B", "CUST-ONE", "BR-A", "RV-DOC-B", "2022-06-02", "2022-07-02", 2000, "", "")
 	first, err := e.door.UpsertReceivables(ctx, ld11Batch("rv-r1", a))
 	if err != nil {
 		t.Fatalf("rv-r1: %v", err)
@@ -58,7 +58,7 @@ func TestReceivablesReplayIsGradedAgainstWhatThatBatchRecorded(t *testing.T) {
 	}
 	// Shape one: the replay carries an item another batch recorded,
 	// with its amount changed.
-	bChanged := ld11Item("RV-B", "CUST-ONE", "BR-A", "RV-DOC-B", "2032-06-02", "2032-07-02", 2500, "", "")
+	bChanged := ld11Item("RV-B", "CUST-ONE", "BR-A", "RV-DOC-B", "2022-06-02", "2022-07-02", 2500, "", "")
 	_, err = e.door.UpsertReceivables(ctx, ld11Batch("rv-r1", a, bChanged))
 	ref := ld11BatchRefused(t, err)
 	if ref.Refusing.Reason != load.ReasonReplayChanged || ref.Refusing.LegacyID != "RV-B" {
@@ -69,7 +69,7 @@ func TestReceivablesReplayIsGradedAgainstWhatThatBatchRecorded(t *testing.T) {
 	if _, err := e.door.UpsertReceivables(ctx, ld11Batch("rv-r3", a)); err != nil {
 		t.Fatalf("rv-r3: %v", err)
 	}
-	aChanged := ld11Item("RV-A", "CUST-ONE", "BR-A", "RV-DOC-A", "2032-06-01", "2032-07-01", 1500, "", "")
+	aChanged := ld11Item("RV-A", "CUST-ONE", "BR-A", "RV-DOC-A", "2022-06-01", "2022-07-01", 1500, "", "")
 	_, err = e.door.UpsertReceivables(ctx, ld11Batch("rv-r1", aChanged))
 	ref = ld11BatchRefused(t, err)
 	if ref.Refusing.Reason != load.ReasonReplayChanged || ref.Refusing.LegacyID != "RV-A" {
@@ -125,9 +125,9 @@ func TestReceivablesSameDayItemsShowTheOpenTotalToTheCustomerReaders(t *testing.
 	e := setupLD11(t)
 	ctx := context.Background()
 	if _, err := e.door.UpsertReceivables(ctx, ld11Batch("b-sd-1",
-		ld11Item("SD-1", "CUST-ONE", "BR-A", "SD-DOC-1", "2032-06-01", "2032-07-01", 5000, "", ""),
-		ld11Item("SD-2", "CUST-ONE", "BR-A", "SD-DOC-2", "2032-06-01", "2032-07-01", 7000, "", ""),
-		ld11Item("SD-3", "CUST-ONE", "BR-A", "SD-DOC-3", "2032-06-01", "2032-07-01", 9000, "", ""))); err != nil {
+		ld11Item("SD-1", "CUST-ONE", "BR-A", "SD-DOC-1", "2022-06-01", "2022-07-01", 5000, "", ""),
+		ld11Item("SD-2", "CUST-ONE", "BR-A", "SD-DOC-2", "2022-06-01", "2022-07-01", 7000, "", ""),
+		ld11Item("SD-3", "CUST-ONE", "BR-A", "SD-DOC-3", "2022-06-01", "2022-07-01", 9000, "", ""))); err != nil {
 		t.Fatalf("first batch: %v", err)
 	}
 	if got, want := e.shownBalance(t, ld11CustOneID), e.openTotal(t, ld11CustOneID); got != want || want != 21000 {
@@ -135,7 +135,7 @@ func TestReceivablesSameDayItemsShowTheOpenTotalToTheCustomerReaders(t *testing.
 	}
 	ledger := e.ledger(t, ld11CustOneID)
 	for i, r := range ledger {
-		if r.OccurredAt.UTC().Format("2006-01-02") != "2032-06-01" {
+		if r.OccurredAt.UTC().Format("2006-01-02") != "2022-06-01" {
 			t.Fatalf("row %d (%s) left its recorded issue day: %s", i, r.SourceDoc, r.OccurredAt)
 		}
 		if i > 0 && !r.OccurredAt.After(ledger[i-1].OccurredAt) {
@@ -152,13 +152,13 @@ func TestReceivablesSameDayItemsShowTheOpenTotalToTheCustomerReaders(t *testing.
 	// The restating batch shape: a later batch adds an older item and
 	// moves two items onto the tied day.
 	if _, err := e.door.UpsertReceivables(ctx, ld11Batch("b-sd-2",
-		ld11Item("SD-4", "CUST-ONE", "BR-A", "SD-DOC-4", "2032-05-20", "2032-06-20", 1000, "", ""),
-		ld11Item("SD-5", "CUST-ONE", "BR-A", "SD-DOC-5", "2032-06-15", "2032-07-15", 2000, "", ""),
-		ld11Item("SD-6", "CUST-ONE", "BR-A", "SD-DOC-6", "2032-06-15", "2032-07-15", 3000, "", ""))); err != nil {
+		ld11Item("SD-4", "CUST-ONE", "BR-A", "SD-DOC-4", "2022-05-20", "2022-06-20", 1000, "", ""),
+		ld11Item("SD-5", "CUST-ONE", "BR-A", "SD-DOC-5", "2022-06-15", "2022-07-15", 2000, "", ""),
+		ld11Item("SD-6", "CUST-ONE", "BR-A", "SD-DOC-6", "2022-06-15", "2022-07-15", 3000, "", ""))); err != nil {
 		t.Fatalf("second batch: %v", err)
 	}
-	moved := ld11Item("SD-5", "CUST-ONE", "BR-A", "SD-DOC-5", "2032-06-01", "2032-07-01", 2500, "", "")
-	moved2 := ld11Item("SD-6", "CUST-ONE", "BR-A", "SD-DOC-6", "2032-06-01", "2032-07-01", 3500, "", "")
+	moved := ld11Item("SD-5", "CUST-ONE", "BR-A", "SD-DOC-5", "2022-06-01", "2022-07-01", 2500, "", "")
+	moved2 := ld11Item("SD-6", "CUST-ONE", "BR-A", "SD-DOC-6", "2022-06-01", "2022-07-01", 3500, "", "")
 	if _, err := e.door.UpsertReceivables(ctx, ld11Batch("b-sd-3", moved, moved2)); err != nil {
 		t.Fatalf("restating batch: %v", err)
 	}
@@ -180,11 +180,11 @@ func TestReceivablesSignChangeOnUpdateRefusesWithItsOwnReason(t *testing.T) {
 	e := setupLD11(t)
 	ctx := context.Background()
 	if _, err := e.door.UpsertReceivables(ctx, ld11Batch("b-sg-1",
-		ld11Item("SG-1", "CUST-ONE", "BR-A", "SG-DOC-1", "2032-06-01", "2032-07-01", 5000, "", ""))); err != nil {
+		ld11Item("SG-1", "CUST-ONE", "BR-A", "SG-DOC-1", "2022-06-01", "2022-07-01", 5000, "", ""))); err != nil {
 		t.Fatalf("first batch: %v", err)
 	}
 	_, err := e.door.UpsertReceivables(ctx, ld11Batch("b-sg-2",
-		ld11Item("SG-1", "CUST-ONE", "BR-A", "SG-DOC-1", "2032-06-01", "2032-07-01", -2500, "", "")))
+		ld11Item("SG-1", "CUST-ONE", "BR-A", "SG-DOC-1", "2022-06-01", "2022-07-01", -2500, "", "")))
 	ref := ld11BatchRefused(t, err)
 	if ref.Refusing.Reason != load.ReasonSignChanged || ref.Refusing.Field != "open_amount_cents" || ref.Refusing.LegacyID != "SG-1" {
 		t.Fatalf("the sign change answered %+v, want %s naming open_amount_cents", ref.Refusing, load.ReasonSignChanged)
@@ -200,7 +200,7 @@ func TestReceivablesGoneTargetKeepsUpdateTargetMissing(t *testing.T) {
 	e := setupLD11(t)
 	ctx := context.Background()
 	if _, err := e.door.UpsertReceivables(ctx, ld11Batch("b-gn-1",
-		ld11Item("GN-1", "CUST-ONE", "BR-A", "GN-DOC-1", "2032-06-01", "2032-07-01", 5000, "", ""))); err != nil {
+		ld11Item("GN-1", "CUST-ONE", "BR-A", "GN-DOC-1", "2022-06-01", "2022-07-01", 5000, "", ""))); err != nil {
 		t.Fatalf("first batch: %v", err)
 	}
 	if _, err := e.pool.Exec(ctx, `DELETE FROM customer_transactions WHERE source_ref_id IN (SELECT id FROM invoices WHERE source_doc_no = 'GN-DOC-1' AND org_id = $1::uuid)`, ld11OrgID); err != nil {
@@ -210,7 +210,7 @@ func TestReceivablesGoneTargetKeepsUpdateTargetMissing(t *testing.T) {
 		t.Fatalf("remove the document: %v", err)
 	}
 	_, err := e.door.UpsertReceivables(ctx, ld11Batch("b-gn-2",
-		ld11Item("GN-1", "CUST-ONE", "BR-A", "GN-DOC-1", "2032-06-01", "2032-07-01", 6000, "", "")))
+		ld11Item("GN-1", "CUST-ONE", "BR-A", "GN-DOC-1", "2022-06-01", "2022-07-01", 6000, "", "")))
 	ref := ld11BatchRefused(t, err)
 	if ref.Refusing.Reason != load.ReasonUpdateTargetMissing {
 		t.Fatalf("a gone target answered %+v, want %s", ref.Refusing, load.ReasonUpdateTargetMissing)
@@ -227,7 +227,7 @@ func TestReceivablesOpenBalanceReadCarriesTheOrgPredicate(t *testing.T) {
 	for _, stmt := range []string{
 		`INSERT INTO org (id, slug, name) VALUES ('` + otherOrg + `', 'ld11-other-bal', 'LD11 Other Balance Yard') ON CONFLICT (id) DO NOTHING`,
 		`INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date, subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, org_id)
-		 VALUES ('#INV-LD11-X1', '` + ld11CustOneID + `', '` + ld11BranchAID + `', 'FINALIZED', '2032-01-01', '2032-02-01', 900, 0, 900, 900, now(), '` + otherOrg + `')`,
+		 VALUES ('#INV-LD11-X1', '` + ld11CustOneID + `', '` + ld11BranchAID + `', 'FINALIZED', '2022-01-01', '2022-02-01', 900, 0, 900, 900, now(), '` + otherOrg + `')`,
 	} {
 		if _, err := e.pool.Exec(ctx, stmt); err != nil {
 			t.Fatalf("setup: %v", err)
@@ -238,7 +238,7 @@ func TestReceivablesOpenBalanceReadCarriesTheOrgPredicate(t *testing.T) {
 		_, _ = e.pool.Exec(ctx, `DELETE FROM org WHERE id = '`+otherOrg+`'::uuid`)
 	})
 	if _, err := e.door.UpsertReceivables(ctx, ld11Batch("b-og-1",
-		ld11Item("OG-1", "CUST-ONE", "BR-A", "OG-DOC-1", "2032-06-01", "2032-07-01", 5000, "", ""))); err != nil {
+		ld11Item("OG-1", "CUST-ONE", "BR-A", "OG-DOC-1", "2022-06-01", "2022-07-01", 5000, "", ""))); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	ledger := e.ledger(t, ld11CustOneID)

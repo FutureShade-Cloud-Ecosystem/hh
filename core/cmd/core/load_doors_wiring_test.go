@@ -209,7 +209,7 @@ func TestLoadDoorsWrongCallerRow6ThroughTheRealWiring(t *testing.T) {
 	// refuses the whole batch as 422 naming the kind and the key.
 	const missingBody = `{"source_system":"fixture","batch_id":"b-wire-1","items":[{"legacy_id":"AR-W-1",` +
 		`"requires":[{"kind":"customer","legacy_id":"C-NONE"},{"kind":"branch","legacy_id":"B-NONE"}],` +
-		`"record":{"source_doc_no":"D-1","issue_date":"2032-06-01","due_date":"2032-07-01","open_amount_cents":1000}}]}`
+		`"record":{"source_doc_no":"D-1","issue_date":"2022-06-01","due_date":"2022-07-01","open_amount_cents":1000}}]}`
 	if rec := serveLoad(t, mux, http.MethodPut, "/api/v1/load/receivables", staff, testkit.OrgNorthSlug, missingBody); rec.Code != http.StatusForbidden || rec.Body.String() != string(authz.BodyForbidden) {
 		t.Fatalf("receivables, staff bearer: status %d body %q, want the one 403 body", rec.Code, rec.Body.String())
 	}

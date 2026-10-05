@@ -492,10 +492,10 @@ func TestReceivablesBatchLandsInDateOrderWithAgingSurviving(t *testing.T) {
 func TestReceivablesBatchIsAllOrNothing(t *testing.T) {
 	e := setupLD11(t)
 	ctx := context.Background()
-	good := ld11Item("AR-OK-1", "CUST-ONE", "BR-A", "AR-5001", "2031-06-01", "2031-07-01", 90000, "", "")
-	goodTwo := ld11Item("AR-OK-2", "CUST-TWO", "BR-A", "AR-5002", "2031-06-02", "2031-07-02", 6000, "", "")
+	good := ld11Item("AR-OK-1", "CUST-ONE", "BR-A", "AR-5001", "2021-06-01", "2021-07-01", 90000, "", "")
+	goodTwo := ld11Item("AR-OK-2", "CUST-TWO", "BR-A", "AR-5002", "2021-06-02", "2021-07-02", 6000, "", "")
 	// The refusing item: a customer name no load recorded.
-	bad := ld11Item("AR-BAD-1", "CUST-NONE", "BR-A", "AR-5003", "2031-06-03", "2031-07-03", 1000, "", "")
+	bad := ld11Item("AR-BAD-1", "CUST-NONE", "BR-A", "AR-5003", "2021-06-03", "2021-07-03", 1000, "", "")
 
 	_, err := e.door.UpsertReceivables(ctx, ld11Batch("b-atomic-1", good, bad, goodTwo))
 	ref := ld11BatchRefused(t, err)
@@ -544,8 +544,8 @@ func TestReceivablesReplayAnswersFirstOutcomes(t *testing.T) {
 	e := setupLD11(t)
 	ctx := context.Background()
 	items := []load.Item{
-		ld11Item("AR-R-1", "CUST-ONE", "BR-A", "AR-6001", "2031-06-01", "2031-07-01", 30000, "", ""),
-		ld11Item("AR-R-2", "CUST-TWO", "BR-A", "AR-6002", "2031-06-02", "2031-07-02", 5000, "", ""),
+		ld11Item("AR-R-1", "CUST-ONE", "BR-A", "AR-6001", "2021-06-01", "2021-07-01", 30000, "", ""),
+		ld11Item("AR-R-2", "CUST-TWO", "BR-A", "AR-6002", "2021-06-02", "2021-07-02", 5000, "", ""),
 	}
 	first, err := e.door.UpsertReceivables(ctx, ld11Batch("b-replay-1", items...))
 	if err != nil {
@@ -578,7 +578,7 @@ func TestReceivablesReplayAnswersFirstOutcomes(t *testing.T) {
 	}
 
 	// A changed item under the played id refuses and writes nothing.
-	changed := ld11Item("AR-R-1", "CUST-ONE", "BR-A", "AR-6001", "2031-06-01", "2031-07-01", 31000, "", "")
+	changed := ld11Item("AR-R-1", "CUST-ONE", "BR-A", "AR-6001", "2021-06-01", "2021-07-01", 31000, "", "")
 	_, err = e.door.UpsertReceivables(ctx, ld11Batch("b-replay-1", changed, items[1]))
 	ref := ld11BatchRefused(t, err)
 	if ref.Refusing.Reason != load.ReasonReplayChanged || ref.Refusing.LegacyID != "AR-R-1" {
@@ -588,7 +588,7 @@ func TestReceivablesReplayAnswersFirstOutcomes(t *testing.T) {
 		t.Fatalf("the changed replay wrote rows: %d, want %d", n, rowsBefore)
 	}
 	// An item the played batch never carried is the same refusal.
-	extra := ld11Item("AR-R-9", "CUST-ONE", "BR-A", "AR-6009", "2031-06-09", "2031-07-09", 900, "", "")
+	extra := ld11Item("AR-R-9", "CUST-ONE", "BR-A", "AR-6009", "2021-06-09", "2021-07-09", 900, "", "")
 	_, err = e.door.UpsertReceivables(ctx, ld11Batch("b-replay-1", items[0], items[1], extra))
 	ref = ld11BatchRefused(t, err)
 	if ref.Refusing.Reason != load.ReasonReplayChanged || ref.Refusing.LegacyID != "AR-R-9" {
@@ -612,8 +612,8 @@ func TestReceivablesUpdateArmMovesThatRowAlone(t *testing.T) {
 	e := setupLD11(t)
 	ctx := context.Background()
 	first := []load.Item{
-		ld11Item("AR-U-1", "CUST-ONE", "BR-A", "AR-7001", "2031-06-01", "2031-07-01", 50000, "", ""),
-		ld11Item("AR-U-2", "CUST-ONE", "BR-A", "AR-7002", "2031-06-05", "2031-07-05", 20000, "", ""),
+		ld11Item("AR-U-1", "CUST-ONE", "BR-A", "AR-7001", "2021-06-01", "2021-07-01", 50000, "", ""),
+		ld11Item("AR-U-2", "CUST-ONE", "BR-A", "AR-7002", "2021-06-05", "2021-07-05", 20000, "", ""),
 	}
 	if _, err := e.door.UpsertReceivables(ctx, ld11Batch("b-upd-1", first...)); err != nil {
 		t.Fatalf("first batch: %v", err)
@@ -632,7 +632,7 @@ func TestReceivablesUpdateArmMovesThatRowAlone(t *testing.T) {
 
 	// The open amount moved on one item: the source says the customer
 	// paid part of it between extracts.
-	changed := ld11Item("AR-U-1", "CUST-ONE", "BR-A", "AR-7001", "2031-06-01", "2031-07-01", 44000, "", "")
+	changed := ld11Item("AR-U-1", "CUST-ONE", "BR-A", "AR-7001", "2021-06-01", "2021-07-01", 44000, "", "")
 	r, err := e.door.UpsertReceivables(ctx, ld11Batch("b-upd-2", changed, first[1]))
 	if err != nil {
 		t.Fatalf("second batch: %v", err)
@@ -691,8 +691,8 @@ func TestReceivablesLoadTriggersNothingDownstream(t *testing.T) {
 	e := setupLD11(t)
 	ctx := context.Background()
 	items := []load.Item{
-		ld11Item("AR-Q-1", "CUST-ONE", "BR-A", "AR-8001", "2031-06-01", "2031-07-01", 22000, "", ""),
-		ld11Item("AR-Q-2", "CUST-TWO", "BR-B", "AR-8002", "2031-06-02", "2031-07-02", -1100, "", ""),
+		ld11Item("AR-Q-1", "CUST-ONE", "BR-A", "AR-8001", "2021-06-01", "2021-07-01", 22000, "", ""),
+		ld11Item("AR-Q-2", "CUST-TWO", "BR-B", "AR-8002", "2021-06-02", "2021-07-02", -1100, "", ""),
 	}
 	// A migrated database already carries the seeded sample rows the
 	// older migrations queued (the outbox among them), so the proof is
@@ -778,8 +778,8 @@ func TestReceivablesContendedBatchAnswersContendedAndResubmissionConverges(t *te
 	// The two names exist first, so the contending batches take the
 	// update arm and its row locks.
 	seed := []load.Item{
-		ld11Item("AR-D-1", "CUST-ONE", "BR-A", "AR-9001", "2031-06-01", "2031-07-01", 10000, "", ""),
-		ld11Item("AR-D-2", "CUST-ONE", "BR-A", "AR-9002", "2031-06-02", "2031-07-02", 20000, "", ""),
+		ld11Item("AR-D-1", "CUST-ONE", "BR-A", "AR-9001", "2021-06-01", "2021-07-01", 10000, "", ""),
+		ld11Item("AR-D-2", "CUST-ONE", "BR-A", "AR-9002", "2021-06-02", "2021-07-02", 20000, "", ""),
 	}
 	if _, err := e.door.UpsertReceivables(ctx, ld11Batch("b-dead-0", seed...)); err != nil {
 		t.Fatalf("seed batch: %v", err)
@@ -792,10 +792,10 @@ func TestReceivablesContendedBatchAnswersContendedAndResubmissionConverges(t *te
 	doorB := load.NewReceivablesDoor(e.store, gateB, e.audit)
 	// Batch A's dates order the first name before the second; batch B's
 	// dates order the second before the first. Every value is invented.
-	a1 := ld11Item("AR-D-1", "CUST-ONE", "BR-A", "AR-9001", "2031-06-01", "2031-07-01", 11000, "", "")
-	a2 := ld11Item("AR-D-2", "CUST-ONE", "BR-A", "AR-9002", "2031-06-02", "2031-07-02", 21000, "", "")
-	b1 := ld11Item("AR-D-1", "CUST-ONE", "BR-A", "AR-9001", "2031-06-03", "2031-07-03", 12000, "", "")
-	b2 := ld11Item("AR-D-2", "CUST-ONE", "BR-A", "AR-9002", "2031-05-31", "2031-06-30", 22000, "", "")
+	a1 := ld11Item("AR-D-1", "CUST-ONE", "BR-A", "AR-9001", "2021-06-01", "2021-07-01", 11000, "", "")
+	a2 := ld11Item("AR-D-2", "CUST-ONE", "BR-A", "AR-9002", "2021-06-02", "2021-07-02", 21000, "", "")
+	b1 := ld11Item("AR-D-1", "CUST-ONE", "BR-A", "AR-9001", "2021-06-03", "2021-07-03", 12000, "", "")
+	b2 := ld11Item("AR-D-2", "CUST-ONE", "BR-A", "AR-9002", "2021-05-31", "2021-06-30", 22000, "", "")
 
 	results := make([]load.BatchResult, 2)
 	errs := make([]error, 2)
@@ -883,8 +883,8 @@ func TestReceivablesWriterRefusesFloatMoneyItself(t *testing.T) {
 	w := billing.NewReceivablesLoadWriter()
 	rec := map[string]any{
 		"source_doc_no":     "AR-9501",
-		"issue_date":        "2031-06-01",
-		"due_date":          "2031-07-01",
+		"issue_date":        "2021-06-01",
+		"due_date":          "2021-07-01",
 		"open_amount_cents": float64(1000),
 	}
 	_, err = w.Apply(ctx, tx, load.Write{

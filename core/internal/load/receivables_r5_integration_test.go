@@ -75,3 +75,65 @@ func TestReceivablesReplayWithADifferentItemCountRefuses(t *testing.T) {
 }
 
 var _ = time.Now
+
+// P2: an issue date after the load day refuses the batch naming the
+// field issue_date and never a value, so the readers that take the
+// latest dated ledger row cannot understate a balance after HH's first
+// sale. The item dated the load day itself lands.
+func TestReceivablesFutureIssueDateRefusesAndTodayLands(t *testing.T) {
+	e := setupLD11(t)
+	ctx := context.Background()
+	future := time.Now().UTC().AddDate(0, 0, 40).Format("2006-01-02")
+	today := time.Now().UTC().Format("2006-01-02")
+	_, err := e.door.UpsertReceivables(ctx, ld11Batch("fd-1",
+		ld11Item("FD-1", "CUST-ONE", "BR-A", "FD-DOC-1", future, future, 3000, "", "")))
+	ref := ld11BatchRefused(t, err)
+	if ref.Refusing.Field != "issue_date" || ref.Refusing.LegacyID != "FD-1" {
+		t.Fatalf("the future dated item answered %+v, want a refusal naming issue_date", ref.Refusing)
+	}
+	for _, v := range []string{future} {
+		if containsStr(ref.Refusing.Detail, v) {
+			t.Fatalf("the refusal detail carries the value %q: %s", v, ref.Refusing.Detail)
+		}
+	}
+	if n := e.count(t, `SELECT count(*) FROM invoices WHERE org_id = $1::uuid AND source_kind = 'IMPORT'`, ld11OrgID); n != 0 {
+		t.Fatalf("the refused batch landed %d documents", n)
+	}
+
+	// The reviewer's probe shape: an item dated the load day, then an HH
+	// sale (a FINALIZED invoice and its ledger row at the statement
+	// clock, the invoice writer's shape), then the balance readers.
+	if _, err := e.door.UpsertReceivables(ctx, ld11Batch("fd-2",
+		ld11Item("FD-2", "CUST-ONE", "BR-A", "FD-DOC-2", today, today, 3000, "", ""))); err != nil {
+		t.Fatalf("the load day item refused: %v", err)
+	}
+	var saleID string
+	if err := e.pool.QueryRow(ctx, `
+		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date, subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, org_id)
+		VALUES ('#INV-LD11-SALE', $1::uuid, $2::uuid, 'FINALIZED', current_date, current_date, 700, 0, 700, 700, now(), $3::uuid) RETURNING id::text`,
+		ld11CustOneID, ld11BranchAID, ld11OrgID).Scan(&saleID); err != nil {
+		t.Fatalf("the HH sale: %v", err)
+	}
+	if _, err := e.pool.Exec(ctx, `
+		INSERT INTO customer_transactions (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo, occurred_at)
+		VALUES ($1::uuid, 'INVOICE', 700, $2, 'invoice', $3::uuid, $4::uuid, 'sale', clock_timestamp())`,
+		ld11CustOneID, e.openTotal(t, ld11CustOneID), saleID, ld11BranchAID); err != nil {
+		t.Fatalf("the HH sale ledger row: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = e.pool.Exec(ctx, `DELETE FROM customer_transactions WHERE source_ref_id = $1::uuid`, saleID)
+		_, _ = e.pool.Exec(ctx, `DELETE FROM invoices WHERE id = $1::uuid`, saleID)
+	})
+	if got, want := e.shownBalance(t, ld11CustOneID), e.openTotal(t, ld11CustOneID); got != want || want != 3700 {
+		t.Fatalf("after the load and one HH sale the readers show %d, open total %d, want 3700", got, want)
+	}
+}
+
+func containsStr(s, sub string) bool {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}

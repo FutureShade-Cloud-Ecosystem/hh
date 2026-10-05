@@ -224,6 +224,20 @@ func (ReceivablesLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write
 			Detail: "the named branch belongs to another org"}
 	}
 
+	// No postdated item: the balance readers of the till, the quote desk
+	// and the customer module take the ledger row with the latest date,
+	// so a row dated after the load day would sit above every HH sale
+	// until its day came and understate the balance. The load day is the
+	// day of this transaction, UTC, read in SQL because the writer holds
+	// no clock.
+	var loadDay time.Time
+	if err := tx.QueryRow(ctx, `SELECT (transaction_timestamp() AT TIME ZONE 'UTC')::date`).Scan(&loadDay); err != nil {
+		return "", fmt.Errorf("billing: read the load day: %w", err)
+	}
+	if rec.issueDate.After(loadDay) {
+		return "", &load.Refusal{Code: load.ReasonRecordShape, Field: loadFieldIssue,
+			Detail: "the issue date is after the load day: an open receivable carries no postdated item"}
+	}
 	docType := DocInvoice
 	txnType := "INVOICE"
 	if rec.amount < 0 {
