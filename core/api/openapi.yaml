@@ -11110,6 +11110,138 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /api/v1/load/customers:
+    put:
+      operationId: loadUpsertCustomers
+      tags:
+        - load
+      summary: Upsert customers by legacy key, through the customer module's own validation
+      description: "One item per customer. The legacy id is the account number unless the record names another; the record names the customer name and, named, the customer type, the payment terms in days, the credit limit in cents, the active flag and the billing address. The address runs the Canadian normalisation the staff write runs: one that fails is left out and the item still lands, its outcome carrying the reason address_left_out and the field billing_address, never a value. The home branch (a reference of kind branch) and the reps (references of kind user) are named by legacy key and resolve against the registry before any write, so a reference not yet loaded refuses naming the kind and the key. A credit hold or a tax exemption in the record refuses naming the field: both wait for the receivables load. A row the account number already names attaches and takes the load's org, sequence and key; a second legacy key claiming it, or a recorded key re-pointing at another customer's, refuses as a key conflict naming both legacy ids (the staff row, when no key names the holder). A first bind to a staff made row answers attached, and the row's existing metadata keys are kept. A reload that names no account number keeps the stored one; the legacy id serves only a first load that names none. A row another org owns refuses as org_mismatch naming the kind and the key; its org is never overwritten."
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: HH-LOAD-1 load doors; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadSubmitRequest"
+      responses:
+        "200":
+          description: One outcome per item and the batch's counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadSubmitResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The batch id is recorded under another door; the submission is a collision of two doors' batch namespaces, not a replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "The batch contended with another in flight batch on shared names and Postgres rolled it back whole: nothing of it stands, and resubmitting the whole batch is safe. The one answer a caller may retry the batch on, never a per item outcome."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/load/contacts:
+    put:
+      operationId: loadUpsertContacts
+      tags:
+        - load
+      summary: Upsert contacts under their customer by legacy key
+      description: "One item per contact. The record names the contact name and, named, the email, the phone, the role, the primary flag and the active flag; the one reference of kind customer names the customer the contact belongs under. A contact has no org column of its own: its org rides through its customer, so a customer another org owns refuses as org_mismatch naming the kind and the key."
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: HH-LOAD-1 load doors; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadSubmitRequest"
+      responses:
+        "200":
+          description: One outcome per item and the batch's counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadSubmitResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The batch id is recorded under another door; the submission is a collision of two doors' batch namespaces, not a replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "The batch contended with another in flight batch on shared names and Postgres rolled it back whole: nothing of it stands, and resubmitting the whole batch is safe. The one answer a caller may retry the batch on, never a per item outcome."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/load/jobs:
+    put:
+      operationId: loadUpsertJobs
+      tags:
+        - load
+      summary: Upsert jobs as project records under their customer by legacy key
+      description: "One item per job. The record names the job name and, named, the job address; the one reference of kind customer names the customer the job belongs to. The job is the record only: balances, statements and receivables attribution are not loaded here. The project row has no org column, so its org rides through its customer, and the writer stamps the tenant, the sync sequence and the derived key; a customer another org owns refuses as org_mismatch naming the kind and the key."
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: HH-LOAD-1 load doors; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadSubmitRequest"
+      responses:
+        "200":
+          description: One outcome per item and the batch's counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadSubmitResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The batch id is recorded under another door; the submission is a collision of two doors' batch namespaces, not a replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "The batch contended with another in flight batch on shared names and Postgres rolled it back whole: nothing of it stands, and resubmitting the whole batch is safe. The one answer a caller may retry the batch on, never a per item outcome."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/messaging/channels:
     get:
       operationId: messagingListChannels

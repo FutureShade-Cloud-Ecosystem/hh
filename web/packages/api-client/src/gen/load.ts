@@ -52,6 +52,51 @@ export async function loadUpsertCategories(
   });
 }
 
+export async function loadUpsertContacts(
+  client: ApiClient,
+  body: LoadSubmitRequest,
+  call?: ApiCallOptions
+): Promise<Result<LoadSubmitResult>> {
+  return client.request<LoadSubmitResult>({
+    method: "PUT",
+    path: "/api/v1/load/contacts",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "loadUpsertContacts",
+  });
+}
+
+export async function loadUpsertCustomers(
+  client: ApiClient,
+  body: LoadSubmitRequest,
+  call?: ApiCallOptions
+): Promise<Result<LoadSubmitResult>> {
+  return client.request<LoadSubmitResult>({
+    method: "PUT",
+    path: "/api/v1/load/customers",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "loadUpsertCustomers",
+  });
+}
+
+export async function loadUpsertJobs(
+  client: ApiClient,
+  body: LoadSubmitRequest,
+  call?: ApiCallOptions
+): Promise<Result<LoadSubmitResult>> {
+  return client.request<LoadSubmitResult>({
+    method: "PUT",
+    path: "/api/v1/load/jobs",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "loadUpsertJobs",
+  });
+}
+
 export async function loadResolveKeys(
   client: ApiClient,
   body: LoadKeysResolveRequest,
