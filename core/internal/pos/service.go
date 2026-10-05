@@ -986,8 +986,11 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 
 	// Audit the completed sale post-commit (the Recorder owns the audit_log table; zero-trust).
 	// DIB-488 rev 6 (item D): the PO / job reference and the credited salesperson ride the SAME
-	// record's Extra, the order's audit/activity trail carries who sold it and against what
-	// reference, per the existing Extra idiom (ActPaymentAllocated below). Absent when unused.
+	// record's Extra, the order's audit/activity trail carries the salesperson's ID and the
+	// reference it was sold against, per the existing Extra idiom (ActPaymentAllocated below).
+	// Absent when unused. The trail keeps ids and references only: salesperson_name and
+	// job_address are set here but dropped at the audit chokepoint, a name is read from the id
+	// when shown.
 	var saleExtra map[string]any
 	if poJobRef != "" || in.SalespersonID != "" || jobAddress != "" || jobReference != "" {
 		saleExtra = map[string]any{}
