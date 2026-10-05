@@ -16,7 +16,7 @@
   {
     "id": "wa-terms-save",
     "file": "src/quote-workarea.ts",
-    "find": "await ctx.guarded(client.putTerms(ctx.id, termsBody(t)), this.lateWrite(ctx, \"save the quote terms\"))",
+    "find": "await ctx.guarded(\n      this.queueTermsPut(ctx.id, () => client.putTerms(ctx.id, termsBody(t))),\n      this.lateWrite(ctx, \"save the quote terms\"),\n    )",
     "replace": "await client.putTerms(ctx.id, termsBody(t))",
     "test": "guard terms save answer:"
   },
@@ -1014,8 +1014,8 @@
   {
     "id": "wa-late-terms",
     "file": "src/quote-workarea.ts",
-    "find": ", this.lateWrite(ctx, \"save the quote terms\")",
-    "replace": "",
+    "find": "this.queueTermsPut(ctx.id, () => client.putTerms(ctx.id, termsBody(t))),\n      this.lateWrite(ctx, \"save the quote terms\"),",
+    "replace": "this.queueTermsPut(ctx.id, () => client.putTerms(ctx.id, termsBody(t))),",
     "test": "B P2-1 work area: a terms save answered after leaving"
   },
   {
