@@ -29,10 +29,10 @@ for (const mutant of mutants) {
   }
   try {
     writeFileSync(path, parts.join(mutant.replace));
-    // A mutant is caught by a browser test, or by a unit test when it names the node runner.
+    // A mutant is caught by a browser test, or by a unit test when it names the node runner (and its file).
     const run =
       mutant.runner === "node"
-        ? spawnSync(process.execPath, ["--import", "../../packages/api-client/src/_ts-js-loader.mjs", "--test", "--test-name-pattern", mutant.test, "test/quote-context.test.mjs"], {
+        ? spawnSync(process.execPath, ["--import", "../../packages/api-client/src/_ts-js-loader.mjs", "--test", "--test-name-pattern", mutant.test, mutant.testFile ?? "test/quote-context.test.mjs"], {
             cwd: appDir,
             encoding: "utf8",
             timeout: 240000,

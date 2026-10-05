@@ -1159,20 +1159,6 @@
     "test": "P3 a policy save refused after the scope moved on says which settings"
   },
   {
-    "id": "ws-serialize",
-    "file": "src/workspace-store.ts",
-    "find": "    if (this.#inFlight !== null) {\n      this.#again = true;\n      return this.#inFlight;\n    }\n",
-    "replace": "",
-    "test": "P3 layout saves reach the server one at a time"
-  },
-  {
-    "id": "ws-latest-after",
-    "file": "src/workspace-store.ts",
-    "find": "      } while (this.#again);",
-    "replace": "      } while (false);",
-    "test": "P3 layout saves reach the server one at a time"
-  },
-  {
     "id": "wa-restore-not-while-creating",
     "file": "src/quote-workarea.ts",
     "find": "    if (this.creating !== null || this.createdQuoteId !== \"\") return;\n",
@@ -1248,5 +1234,42 @@
     "find": "      this.notice = late;\n    }\n    // Drafts return",
     "replace": "    }\n    // Drafts return",
     "test": "P3 a link made for the quote left by the work area is said"
+  },
+  {
+    "id": "ws-serialize",
+    "file": "src/workspace-store.ts",
+    "find": "    this.#queued = send;\n    if (this.#inFlight !== null) return this.#inFlight;\n",
+    "replace": "    this.#queued = send;\n",
+    "test": "P3 layout saves reach the server one at a time"
+  },
+  {
+    "id": "ws-latest-after",
+    "file": "src/workspace-store.ts",
+    "find": "      } while (this.#queued !== null);",
+    "replace": "      } while (false);",
+    "test": "P3 layout saves reach the server one at a time"
+  },
+  {
+    "id": "ws-closed-drain",
+    "file": "src/workspace-store.ts",
+    "find": "        if (this.#closed) break;\n",
+    "replace": "",
+    "test": "P2-1 a queued layout save is never sent under the next person's session"
+  },
+  {
+    "id": "ws-reset-queued",
+    "file": "src/workspace-store.ts",
+    "find": "    await this.#enqueue(() => this.#deleteRow());",
+    "replace": "    await this.#deleteRow();",
+    "test": "the reset goes through the same queue as the saves",
+    "runner": "node",
+    "testFile": "test/workspace-store.test.mjs"
+  },
+  {
+    "id": "wa-store-close",
+    "file": "src/quote-workarea.ts",
+    "find": "    // layout is ever sent under the next person's.\n    this.store?.close();",
+    "replace": "    // layout is ever sent under the next person's.",
+    "test": "P2-1 a queued layout save is never sent under the next person's session"
   }
 ]

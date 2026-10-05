@@ -45,9 +45,14 @@ export class WorkspaceStore {
   readonly state: WorkspaceState;
   #client: QdClient;
   #timer: ReturnType<typeof setTimeout> | undefined;
-  /** The saves in progress: one request is out at a time, and what is asked while it is out goes after it. */
+  /** The write the drain will send next (a save of the whole row, or the reset's delete): one ask still waiting replaces an earlier one still waiting. */
+  #queued: (() => Promise<void>) | null = null;
+  /** The drain in progress: one request is out at a time, and what is asked while it is out goes after it. */
   #inFlight: Promise<void> | null = null;
-  #again = false;
+  /** True once sign out or the page leaving stopped the store: nothing more is sent, whatever is queued is dropped. */
+  #closed = false;
+  /** The reset's own outcome, handed back by reset() when its turn in the queue has run. */
+  #deleted = false;
   /** Told the words of the last save or reset outcome: a refusal in words, "" when it landed. */
   onError: (line: string) => void = () => undefined;
 
@@ -77,9 +82,9 @@ export class WorkspaceStore {
   }
 
   /**
-   * The save itself: best effort, the person's row written whole. One request is out at a time: a save asked for
-   * while another is out is sent after it with the state as it is then, so two saves never reach the server in
-   * the wrong order and the row it holds is the last one the person made (the quote a refresh resumes).
+   * The save itself: best effort, the person's row written whole, one request out at a time. A save asked for while
+   * another is out is sent after it with the state as it is then, so two saves never reach the server in the wrong
+   * order and the row it holds is the last one the person made (the quote a refresh resumes).
    */
   async save(): Promise<void> {
     if (this.#timer !== undefined) {
@@ -87,10 +92,26 @@ export class WorkspaceStore {
       this.#timer = undefined;
     }
     this.state.source = "user";
-    if (this.#inFlight !== null) {
-      this.#again = true;
-      return this.#inFlight;
-    }
+    return this.#enqueue(() => this.#sendRow());
+  }
+
+  /** The row as it stands, sent whole. */
+  async #sendRow(): Promise<void> {
+    const result = await this.#client.putMyWorkspace({
+      splitPct: this.state.splitPct,
+      arrangement: this.state.arrangement,
+      primaryCollapsed: this.state.primaryCollapsed,
+      secondaryCollapsed: this.state.secondaryCollapsed,
+      costHidden: this.state.costHidden,
+      openRef: this.state.openRef,
+    });
+    this.onError(result.ok ? "" : `The layout was not saved: ${spokenRefusal(quoteErrorMessage(result.status, result.error, "save the layout"))}`);
+  }
+
+  /** Put one write in the queue: it goes after the write before it, and the newest ask still waiting is the one that goes. */
+  #enqueue(send: () => Promise<void>): Promise<void> {
+    this.#queued = send;
+    if (this.#inFlight !== null) return this.#inFlight;
     this.#inFlight = this.#drain();
     return this.#inFlight;
   }
@@ -98,19 +119,30 @@ export class WorkspaceStore {
   async #drain(): Promise<void> {
     try {
       do {
-        this.#again = false;
-        const result = await this.#client.putMyWorkspace({
-          splitPct: this.state.splitPct,
-          arrangement: this.state.arrangement,
-          primaryCollapsed: this.state.primaryCollapsed,
-          secondaryCollapsed: this.state.secondaryCollapsed,
-          costHidden: this.state.costHidden,
-          openRef: this.state.openRef,
-        });
-        this.onError(result.ok ? "" : `The layout was not saved: ${spokenRefusal(quoteErrorMessage(result.status, result.error, "save the layout"))}`);
-      } while (this.#again);
+        // Before EVERY further send: a store stopped at sign out or at the page leaving sends nothing more, and
+        // what is queued is dropped with no word, because the only screen that could be told is gone or going and
+        // nothing may be sent or said under the next person's session.
+        if (this.#closed) break;
+        const send = this.#queued;
+        this.#queued = null;
+        if (send === null) break;
+        await send();
+      } while (this.#queued !== null);
     } finally {
       this.#inFlight = null;
+    }
+  }
+
+  /**
+   * Stop the store: sign out calls it once the unsent work has been sent or given up on, and the work area calls it
+   * when it leaves the page. Every send passes the drain, and the drain is what the closed flag stops, so a stopped
+   * store sends nothing more and drops what is queued whatever door the ask came through.
+   */
+  close(): void {
+    this.#closed = true;
+    if (this.#timer !== undefined) {
+      clearTimeout(this.#timer);
+      this.#timer = undefined;
     }
   }
 
@@ -121,8 +153,9 @@ export class WorkspaceStore {
   }
 
   /**
-   * Reset the person's row: the dealer default comes back. A refused delete
-   * changes nothing on screen (the saved row still stands, so the screen must
+   * Reset the person's row: the dealer default comes back. The delete goes through the same queue as a save,
+   * one write out at a time, so it can never jump a save still out and be overwritten by it when that save
+   * lands after it. A refused delete changes nothing on screen (the saved row still stands, so the screen must
    * not claim otherwise); it answers false and says why through onError.
    */
   async reset(): Promise<boolean> {
@@ -130,13 +163,19 @@ export class WorkspaceStore {
       clearTimeout(this.#timer);
       this.#timer = undefined;
     }
+    this.#deleted = false;
+    await this.#enqueue(() => this.#deleteRow());
+    return this.#deleted;
+  }
+
+  async #deleteRow(): Promise<void> {
     const result = await this.#client.deleteMyWorkspace();
     if (!result.ok) {
       this.onError(`The layout was not reset: ${spokenRefusal(quoteErrorMessage(result.status, result.error, "reset the layout"))}`);
-      return false;
+      return;
     }
     this.onError("");
     Object.assign(this.state, DEFAULT_WORKSPACE);
-    return true;
+    this.#deleted = true;
   }
 }

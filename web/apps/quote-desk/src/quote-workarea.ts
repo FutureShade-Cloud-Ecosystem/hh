@@ -1131,6 +1131,9 @@ export class QdQuoteWorkarea extends LitElement {
     this.detached = true;
     this.scope.open("");
     this.releaseHandoffWaiters();
+    // The layout store stops with the page: whatever it still has queued is dropped, and nothing of this session's
+    // layout is ever sent under the next person's.
+    this.store?.close();
   }
 
   /** True from the moment this work area leaves the page: its context is then cancelled for good. */
@@ -1274,6 +1277,9 @@ export class QdQuoteWorkarea extends LitElement {
     await this.store?.flush();
     // A terms save started by a switch is still the person's unsent work: sign out waits for it too (bounded by the host).
     await Promise.all([...this.flushes.values()]);
+    // The unsent work has been sent or given up on: the layout store stops here, so nothing still queued in it can
+    // be sent once this session has ended, under whoever signs in next.
+    this.store?.close();
   }
 
   private startLoads(): void {

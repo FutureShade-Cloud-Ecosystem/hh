@@ -49,7 +49,9 @@ test("P2-1 a queued layout save is never sent under the next person's session, a
   expect(after).toEqual(before);
   expect(after).toHaveLength(0);
   // The manager's own desk is what their own row says: Sales' last quote is not resumed for them.
-  await page.reload();
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible({ timeout: 10000 });
+  await page.getByRole("button", { name: "Sales manager", exact: true }).click();
   await expect(page.getByTestId("qb-list")).toBeVisible();
   await expect(page.getByTestId("qb-context")).not.toContainText("Q-10");
 });

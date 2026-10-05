@@ -111,11 +111,11 @@ test("the reset goes through the same queue as the saves: it is not sent while a
   assert.equal(client.calls.length, 1, "the save is still out: the reset does not jump the queue");
   assert.equal(client.calls[0].kind, "put");
   client.calls[0].open();
-  await save;
   await turns();
   assert.equal(client.calls.length, 2);
   assert.equal(client.calls[1].kind, "delete", "the reset is sent once the save before it has answered");
   client.calls[1].open();
+  await Promise.all([save, reset]);
   assert.equal(await reset, true);
   assert.deepEqual(store.state, { ...DEFAULT_WORKSPACE });
 });
@@ -131,12 +131,11 @@ test("a save queued behind a reset is sent after the reset, not beside it", asyn
   assert.equal(client.calls.length, 1);
   assert.equal(client.calls[0].kind, "delete");
   client.calls[0].open();
-  await reset;
   await turns();
   assert.equal(client.calls.length, 2);
   assert.equal(client.calls[1].kind, "put");
   client.calls[1].open();
-  await save;
+  await Promise.all([reset, save]);
 });
 
 test("flush waits for a queued save to be sent and answered, and a closed flush waits for nothing new", async () => {
