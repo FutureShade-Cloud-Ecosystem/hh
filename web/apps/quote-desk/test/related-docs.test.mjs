@@ -93,11 +93,14 @@ test("docDay is the local day wherever the desk runs, pinned at both ends of the
   const loader = new URL("../../../packages/api-client/src/_ts-js-loader.mjs", import.meta.url).href;
   const moduleUrl = new URL("../src/_related-docs.ts", import.meta.url).href;
   const script = 'import { docDay } from "' + moduleUrl + '";\nprocess.stdout.write(docDay(' + JSON.stringify(DAY_ISO) + '));';
+  // The probe is a NODE question (the browser and the desk both run on it), so when this file
+  // runs under another runner whose execPath is not node (bun test), node is taken from the PATH.
+  const node = process.execPath.includes("node") ? process.execPath : "node";
   for (const [zone, offsetMinutes] of [
     ["Pacific/Kiritimati", 14 * 60],
     ["Etc/GMT+12", -12 * 60],
   ]) {
-    const run = spawnSync(process.execPath, ["--import", loader, "--input-type=module"], {
+    const run = spawnSync(node, ["--import", loader, "--input-type=module"], {
       input: script,
       encoding: "utf8",
       env: { ...process.env, TZ: zone },
