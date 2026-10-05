@@ -12,7 +12,11 @@
 //   implementation the till's own tender boxes use, reached by deep path;
 // - the idempotency key's lifecycle: minted once per payment ATTEMPT, kept
 //   across retries of the same attempt (a refusal, an unknown outcome), new
-//   only for a new deliberate payment. PaymentKeyRing is the whole rule;
+//   only for a new deliberate payment. The attempt belongs to ITS QUOTE and
+//   is kept across quote switches within the session: a person who leaves
+//   mid payment and comes back finds the same key, the same figures and the
+//   same not-known note, so a retry replays the first result on the server
+//   and never posts a second payment. AttemptBook is the whole rule;
 // - the receipt's wording: the server's own figures, row by row, never a
 //   figure this side computes;
 // - the refusal and unknown outcome wording, in the app's spoken voice.
@@ -80,46 +84,115 @@ export function mintPaymentKey(): string {
 }
 
 /**
- * PaymentKeyRing holds the key of the payment now being attempted. The rule
- * is the ruling one: a key is minted ONCE per attempt and kept across retries
- * of that attempt, so a retry after a refusal, a timeout or a dropped answer
- * replays the first result on the server and posts nothing a second time.
- * Only a completed payment ends an attempt: the next deliberate payment mints
- * a fresh key. A different quote is a different payment, so a quote switch
- * resets the ring.
+ * What a kept attempt is doing right now.
+ *
+ * - "in-flight": the POST is out. No second attempt may be opened for the
+ *   quote (the button is held, the fields are locked).
+ * - "not-known": no answer the desk can read came back (no status, a 5xx).
+ *   The fields stay locked to the attempt's own figures and a retry sends
+ *   exactly them with the same key, so the server replays the first result.
+ * - "held": the server answered that THIS KEY took a different payment. The
+ *   attempt's figures stay visible and locked (a retry is still offered, for
+ *   the case the server state differs), and the way forward is a deliberate
+ *   new payment on a fresh key, offered only after the family is re-read.
+ * - "kept": a plain refusal (the amounts, a role, a frozen state). The key
+ *   stays so the corrected retry is the same attempt, and the fields stay
+ *   editable so the correction can be typed.
  */
-export class PaymentKeyRing {
-  private key = "";
+export type AttemptPhase = "in-flight" | "not-known" | "held" | "kept";
+
+/** One payment attempt, exactly as it was sent, kept for its quote. */
+export interface PaymentAttempt {
+  key: string;
+  /** The amount box's own text when the attempt was made, restored verbatim. */
+  amountRaw: string;
+  amountCents: number;
+  tender: TenderMethod;
+  reference: string;
+  /** The order the payment was aimed at, "" for the one action on an accepted quote. */
+  orderId: string;
+  phase: AttemptPhase;
+}
+
+/** The figures a new attempt is opened from. */
+export interface AttemptInput {
+  amountRaw: string;
+  amountCents: number;
+  tender: TenderMethod;
+  reference: string;
+  orderId: string;
+}
+
+/**
+ * AttemptBook holds one payment attempt per quote, keyed by the quote's id,
+ * and keeps it across quote switches: a payment belongs to the quote it was
+ * made on, so leaving and returning neither drops its key nor mints a second
+ * one. A key is minted ONCE per attempt and kept across its retries (a
+ * refusal, a dropped answer), so a retry replays the first result on the
+ * server and posts nothing a second time. Only a payment the server took (or
+ * a deliberate new payment after the re-read) ends an attempt. A different
+ * quote is a different payment and holds its own attempt. The book dies with
+ * the panel that owns it: sign out ends the session and nothing is carried.
+ */
+export class AttemptBook {
+  private readonly attempts = new Map<string, PaymentAttempt>();
   private readonly mint: () => string;
 
   constructor(mint: () => string = mintPaymentKey) {
     this.mint = mint;
   }
 
-  /** The key of the attempt now being made, minting it on first use. */
-  current(): string {
-    if (this.key === "") this.key = this.mint();
-    return this.key;
-  }
-
-  /** True when a key is already held (an attempt is under way or was refused). */
-  held(): boolean {
-    return this.key !== "";
+  /** The quote's kept attempt, whatever its phase, or null when it has none. */
+  attempt(quoteId: string): PaymentAttempt | null {
+    return this.attempts.get(quoteId) ?? null;
   }
 
   /**
-   * The attempt ended. tookPayment true means the server took the money: the
-   * attempt is complete and the next one mints a fresh key. A refusal or an
-   * unknown outcome keeps the key, so the retry is the same attempt.
+   * Begin (or re-arm) the quote's attempt. With no attempt held it mints a
+   * fresh key. Over a "kept" attempt (a plain refusal) it reuses the SAME key
+   * with the corrected figures: the corrected retry is the same attempt. An
+   * attempt still out is returned untouched: the panel's busy flag is what
+   * keeps a second POST from ever being opened, and the book never re-arms
+   * one behind its back.
    */
-  settled(tookPayment: boolean): void {
-    if (tookPayment) this.key = "";
+  open(quoteId: string, input: AttemptInput): PaymentAttempt {
+    const existing = this.attempts.get(quoteId);
+    if (existing !== undefined) {
+      if (existing.phase === "in-flight") return existing;
+      const rearmed: PaymentAttempt = { ...input, key: existing.key, phase: "in-flight" };
+      this.attempts.set(quoteId, rearmed);
+      return rearmed;
+    }
+    const attempt: PaymentAttempt = { ...input, key: this.mint(), phase: "in-flight" };
+    this.attempts.set(quoteId, attempt);
+    return attempt;
   }
 
-  /** A new quote is a new payment: the next attempt mints a fresh key. */
-  reset(): void {
-    this.key = "";
+  /** Move the quote's attempt to a new phase (a late answer, a refusal, a retry's outcome). */
+  mark(quoteId: string, phase: AttemptPhase): void {
+    const existing = this.attempts.get(quoteId);
+    if (existing !== undefined) this.attempts.set(quoteId, { ...existing, phase });
   }
+
+  /** The attempt ended in a payment the server took: the next deliberate payment mints a fresh key. */
+  clear(quoteId: string): void {
+    this.attempts.delete(quoteId);
+  }
+
+  /** The session ended (a new client, sign out): no attempt of one session is another's. */
+  clearAll(): void {
+    this.attempts.clear();
+  }
+}
+
+/**
+ * True when a refusal is the server saying THIS KEY took a different payment
+ * (the core's and the stub's own sentence). Such a key can never take another
+ * payment: retrying it any number of ways loops on the same refusal, so the
+ * panel holds the attempt and offers the deliberate way forward.
+ */
+export function isDifferentPaymentRefusal(error: string): boolean {
+  return error.includes("took a different payment");
 }
 
 // ── the receipt ─────────────────────────────────────────────────────────────

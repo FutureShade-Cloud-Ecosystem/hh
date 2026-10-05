@@ -12,8 +12,15 @@
 //   retries of the same attempt: a refusal, a dropped answer or a 5xx keeps
 //   the key, so a retry replays the first result on the server and posts
 //   nothing a second time. Only a payment the server took ends an attempt;
-//   the next deliberate payment mints a fresh key. The ring is
-//   _order-payment.ts's PaymentKeyRing, the whole rule in one place.
+//   the next deliberate payment mints a fresh key.
+// - THE ATTEMPT BELONGS TO ITS QUOTE and is kept across quote switches within
+//   the session (AttemptBook, keyed by quote id): a person who leaves a quote
+//   with a payment out, or with its outcome not known, and comes back finds
+//   the same attempt, the same figures and the same note, the button held
+//   while the payment is still out, and the SAME key on the retry. A late
+//   answer for a quote the person left is recorded against that quote's
+//   attempt and never shown on another quote. Sign out (or another login)
+//   ends the session and every kept attempt with it.
 // - The answer is shown as the receipt, every figure the SERVER answered:
 //   the invoice number, the payment number, the tender, the amount, the
 //   balance, who received it and the reference as stored. Never an invented
@@ -23,7 +30,9 @@
 //   wording names who can record the payment).
 // - An UNKNOWN outcome (no status, a 5xx, an unreadable body) says so
 //   plainly and tells the person that trying again with the same amount and
-//   method is safe: the same key replays the first result.
+//   method is safe: the same key replays the first result. While the outcome
+//   is not known the form's fields are locked to the attempt's own figures,
+//   so a retry cannot silently change what is sent.
 // - The cash customer's one action: the same door converts, invoices and
 //   takes the payment in full. The contract gives this desk no signal in the
 //   quote view or the family read that says a conversion is pending, so the
@@ -33,8 +42,8 @@
 //
 // Every read and write goes through the quote context: an answer that lands
 // after the person left the quote is never applied to the quote now open (a
-// late success is announced for ITS quote, so every view of it re-reads; a
-// late refusal is said only on the quote it belongs to).
+// late success is recorded for ITS quote and announced, so every view of it
+// re-reads; a late refusal is said only on the quote it belongs to).
 import { css, html, nothing, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { PanelBase } from "./panel-base.js";
@@ -42,15 +51,17 @@ import { panelStyles } from "./panel-styles.js";
 import { moneyWord, quoteErrorMessage } from "./_quote-edit.js";
 import { docStatusWord, kindLabel, type RelatedDoc } from "./_related-docs.js";
 import {
-  PaymentKeyRing,
+  AttemptBook,
   TENDER_METHODS,
   convertedNote,
+  isDifferentPaymentRefusal,
   isUnknownOutcome,
   paymentRefusalWords,
   receiptRows,
   replayedNote,
   typedCents,
   unknownOutcomeNote,
+  type PaymentAttempt,
   type TenderMethod,
 } from "./_order-payment.js";
 import type { OrderPaymentAnswer } from "./qd-client.js";
@@ -58,8 +69,21 @@ import type { QuoteContext } from "./quote-context.js";
 import type { Result } from "@hardscapehouse/api-client";
 import { spokenRefusal } from "./_quote-workarea.js";
 
-/** Said on return when a payment was taken on this quote while the person was away: its receipt went with the answer. */
-const LATE_PAYMENT_NOTE = "A payment was taken on this quote while you were away. Its receipt was shown only once; the documents panel now holds what the server recorded.";
+/** Said on return when a payment was taken on this quote while the person was away: its receipt is below, with the figures the server answered. */
+const LATE_PAYMENT_NOTE = "A payment was taken on this quote while you were away. Its receipt is below, with the figures the server answered.";
+
+/** What one quote's payment state is when the person is not on it: everything a return must find again. */
+interface QuotePayment {
+  tender: TenderMethod;
+  amountRaw: string;
+  reference: string;
+  /** The receipt of the payment the server took (or replayed) on this quote. */
+  receipt: OrderPaymentAnswer | null;
+  /** The server's words of the last definite refusal on this quote. */
+  refusal: string;
+  /** The quote's kept payment attempt, null when none is open. */
+  attempt: PaymentAttempt | null;
+}
 
 @customElement("qd-order-payment")
 export class QdOrderPayment extends PanelBase {
@@ -78,9 +102,14 @@ export class QdOrderPayment extends PanelBase {
   @state() private receipt: OrderPaymentAnswer | null = null;
   /** The unknown outcome note: set when no answer the desk can read came back; a retry keeps the same key. */
   @state() private unknown = "";
+  /** The kept attempt of the quote now open, mirrored from the book for render. */
+  @state() private attempt: PaymentAttempt | null = null;
 
-  /** The idempotency keys of this panel: one key per attempt, kept across retries. */
-  private readonly keys = new PaymentKeyRing();
+  /** One payment attempt per quote, kept across switches: the idempotency key's whole lifecycle. */
+  private readonly book = new AttemptBook();
+
+  /** Each quote's payment state as the person left it, so a return finds it again. */
+  private readonly byQuote = new Map<string, QuotePayment>();
 
   /** What a late write changed that the screen cannot show, said to the person who comes back, by quote. */
   private readonly lateNotes = new Map<string, string>();
@@ -182,25 +211,80 @@ export class QdOrderPayment extends PanelBase {
     `,
   ];
 
+  /** True while the form's figures must not change: a payment is out, or its outcome is not known, or its key is held. */
+  private get fieldsLocked(): boolean {
+    const phase = this.attempt?.phase;
+    return this.busy || phase === "not-known" || phase === "held";
+  }
+
   protected override willUpdate(changed: Map<string, unknown>): void {
+    if (changed.has("client")) {
+      // A new client is a new session: no payment, key or receipt of the last one is this one's.
+      this.book.clearAll();
+      this.byQuote.clear();
+      this.lateNotes.clear();
+    }
     if (changed.has("quoteId") || changed.has("client")) {
-      // Everything a person left on the last quote stays with that quote: the
-      // figures typed, the receipt, the unknown outcome, and the key (a
-      // different quote is a different payment).
+      const left = changed.has("quoteId") ? (changed.get("quoteId") as string | undefined) : undefined;
+      // What the person typed, the receipt, the refusal and the open attempt stay with the
+      // quote they belong to; the read state (status, family) is re-read for the quote now open.
+      if (left !== undefined && left !== "") this.keep(left);
       this.error = "";
       this.notice = "";
       this.status = "";
       this.family = [];
       this.loaded = false;
       this.readError = "";
-      this.amountRaw = "";
-      this.reference = "";
-      this.receipt = null;
       this.unknown = "";
-      this.tender = "CASH";
-      this.keys.reset();
+      this.restore(this.quoteId);
       this.reload();
     }
+  }
+
+  /** The quote's payment record, created empty on first touch. */
+  private record(id: string): QuotePayment {
+    let rec = this.byQuote.get(id);
+    if (rec === undefined) {
+      rec = { tender: "CASH", amountRaw: "", reference: "", receipt: null, refusal: "", attempt: null };
+      this.byQuote.set(id, rec);
+    }
+    return rec;
+  }
+
+  /** Fold the live mirrors into the quote's record, so a return finds them. */
+  private keep(id: string): void {
+    this.record(id).tender = this.tender;
+    this.record(id).amountRaw = this.amountRaw;
+    this.record(id).reference = this.reference;
+    this.record(id).receipt = this.receipt;
+    this.record(id).refusal = this.error;
+    this.record(id).attempt = this.attempt;
+  }
+
+  /** Put the quote's record on the screen, attempt first: a payment still out holds the button. */
+  private restore(id: string): void {
+    const rec = id === "" ? undefined : this.byQuote.get(id);
+    this.tender = rec?.tender ?? "CASH";
+    this.amountRaw = rec?.amountRaw ?? "";
+    this.reference = rec?.reference ?? "";
+    this.receipt = rec?.receipt ?? null;
+    this.error = rec?.refusal ?? "";
+    this.attempt = rec?.attempt ?? null;
+    this.busy = this.attempt?.phase === "in-flight";
+    this.unknown = this.attempt?.phase === "not-known" ? unknownOutcomeNote() : "";
+  }
+
+  /** Put a quote's record back on the screen after its late answer landed (the person is on it again). */
+  private refreshLive(id: string): void {
+    const rec = this.record(id);
+    this.attempt = rec.attempt;
+    this.receipt = rec.receipt;
+    this.error = rec.refusal;
+    this.amountRaw = rec.amountRaw;
+    this.reference = rec.reference;
+    this.tender = rec.tender;
+    this.unknown = rec.attempt?.phase === "not-known" ? unknownOutcomeNote() : "";
+    this.busy = rec.attempt?.phase === "in-flight";
   }
 
   reload(): void {
@@ -263,63 +347,141 @@ export class QdOrderPayment extends PanelBase {
     return this.status === "CONVERTED" || this.status === "ACCEPTED";
   }
 
+  /** The order the family read names as the quote's own, "" when there is none (or more than one). */
+  private get familyOrderId(): string {
+    const rows = this.orderRows;
+    return rows.length === 1 ? rows[0].id : "";
+  }
+
   private async take(): Promise<void> {
     const client = this.client;
     if (client === null || this.busy) return;
     const ctx = this.ctx;
-    const cents = typedCents(this.amountRaw);
-    if (cents === null) {
-      this.error = "The amount is not a number this desk can send: type dollars and cents, like 40.00.";
-      this.unknown = "";
-      return;
+    const kept = this.attempt;
+    let key: string;
+    let cents: number;
+    let tender: TenderMethod;
+    let reference: string;
+    if (kept !== null && (kept.phase === "not-known" || kept.phase === "held")) {
+      // The retry of an open attempt: exactly the figures it was made with, and its key, so
+      // the server replays the first result and nothing is posted a second time.
+      key = kept.key;
+      cents = kept.amountCents;
+      tender = kept.tender;
+      reference = kept.reference;
+    } else {
+      const parsed = typedCents(this.amountRaw);
+      if (parsed === null) {
+        this.error = "The amount is not a number this desk can send: type dollars and cents, like 40.00.";
+        this.unknown = "";
+        return;
+      }
+      cents = parsed;
+      const opened = this.book.open(ctx.id, {
+        amountRaw: this.amountRaw,
+        amountCents: cents,
+        tender: this.tender,
+        reference: this.reference.trim(),
+        orderId: this.familyOrderId,
+      });
+      key = opened.key;
+      this.attempt = opened;
+      this.record(ctx.id).attempt = opened;
+      tender = opened.tender;
+      reference = opened.reference;
     }
     this.busy = true;
     this.error = "";
     this.notice = "";
     this.unknown = "";
-    // The key of THIS attempt: minted once, kept across every retry of it.
-    const key = this.keys.current();
     const result = await ctx.guarded(
-      client.takeOrderPayment(ctx.id, { method: this.tender, amountCents: cents, reference: this.reference.trim(), idempotencyKey: key }),
+      client.takeOrderPayment(ctx.id, { method: tender, amountCents: cents, reference, idempotencyKey: key }),
       (late) => this.lateAnswer(ctx, late),
     );
     // The quote the person moved to meanwhile owns the screen now: this answer says nothing on it.
     if (result === undefined) return;
     this.busy = false;
-    if (!result.ok) {
-      if (isUnknownOutcome(result.status)) {
-        // No answer the desk can read: the attempt is still open, the key stays, a retry replays.
-        this.unknown = unknownOutcomeNote();
-        return;
-      }
-      this.keys.settled(false);
-      this.error = paymentRefusalWords(result.status, result.error);
+    if (result.ok) {
+      this.taken(ctx.id, result.value);
       return;
     }
-    this.keys.settled(true);
-    this.receipt = result.value;
+    if (isUnknownOutcome(result.status)) {
+      // No answer the desk can read: the attempt is still open, the key stays, a retry replays.
+      this.marked(ctx.id, "not-known", "");
+      return;
+    }
+    const words = paymentRefusalWords(result.status, result.error);
+    this.marked(ctx.id, isDifferentPaymentRefusal(result.error) ? "held" : "kept", words);
+  }
+
+  /** A payment the server took: the attempt is complete, the receipt is the answer, and the views re-read. */
+  private taken(id: string, value: OrderPaymentAnswer): void {
+    this.book.clear(id);
+    const rec = this.record(id);
+    rec.attempt = null;
+    rec.receipt = value;
+    rec.refusal = "";
+    rec.amountRaw = "";
+    rec.reference = "";
+    this.attempt = null;
+    this.receipt = value;
+    this.error = "";
+    this.unknown = "";
     this.amountRaw = "";
     this.reference = "";
     // The family changed (an order, an invoice, a payment): every view of this quote re-reads.
     this.announceChanged();
   }
 
+  /** A definite answer that was not a taken payment: the attempt's new phase and, when the server spoke, its words. */
+  private marked(id: string, phase: "not-known" | "held" | "kept", refusal: string): void {
+    this.book.mark(id, phase);
+    const rec = this.record(id);
+    rec.attempt = this.book.attempt(id);
+    if (refusal !== "") rec.refusal = refusal;
+    if (phase === "not-known") rec.refusal = "";
+    this.attempt = rec.attempt;
+    if (refusal !== "") this.error = refusal;
+    if (phase === "not-known") {
+      this.error = "";
+      this.unknown = unknownOutcomeNote();
+    } else {
+      this.unknown = "";
+    }
+  }
+
   /**
-   * A payment's answer that came back after the person had left the quote it was made on. It is never applied to the
-   * quote on screen, but a payment that succeeded did change its quote: the screens are told, so every view of it
-   * re-reads, and the person who comes back is told the receipt went with the answer. A refusal is said only on the
-   * quote it belongs to, when the person is on it again; on any other quote it says nothing.
+   * A payment's answer that came back after the person had left the quote it was made on. It is never
+   * applied to the quote on screen: it is recorded against ITS quote's attempt (the receipt, the
+   * refusal's words, the not-known note), the screens are told when a payment landed so every view of
+   * it re-reads, and the person who comes back finds the answer there. On any other quote it says
+   * nothing.
    */
   private lateAnswer(ctx: QuoteContext, late: Result<OrderPaymentAnswer>): void {
     if (late.ok) {
+      this.book.clear(ctx.id);
+      const rec = this.record(ctx.id);
+      rec.attempt = null;
+      rec.receipt = late.value;
+      rec.refusal = "";
+      rec.amountRaw = "";
+      rec.reference = "";
       this.lateNotes.set(ctx.id, LATE_PAYMENT_NOTE);
       this.announceChangedFor(ctx);
-      return;
+    } else if (isUnknownOutcome(late.status)) {
+      this.book.mark(ctx.id, "not-known");
+      const rec = this.record(ctx.id);
+      rec.attempt = this.book.attempt(ctx.id);
+      rec.refusal = "";
+    } else {
+      const phase = isDifferentPaymentRefusal(late.error ?? "") ? "held" : "kept";
+      this.book.mark(ctx.id, phase);
+      const rec = this.record(ctx.id);
+      rec.attempt = this.book.attempt(ctx.id);
+      rec.refusal = paymentRefusalWords(late.status, late.error ?? "");
     }
-    const now = this.ctx;
-    if (now.stale || now.id !== ctx.id) return;
-    if (isUnknownOutcome(late.status)) this.unknown = unknownOutcomeNote();
-    else this.error = paymentRefusalWords(late.status, late.error ?? "");
+    // When the quote the answer belongs to is the one open now, the screen says it at once.
+    if (this.quoteId === ctx.id) this.refreshLive(ctx.id);
   }
 
   // ── delegation ────────────────────────────────────────────────────────────
@@ -327,12 +489,14 @@ export class QdOrderPayment extends PanelBase {
   protected override onClickAction(action: string, control: HTMLElement): void {
     if (action === "take-payment") void this.take();
     if (action === "tender") {
+      if (this.fieldsLocked) return;
       const picked = control.getAttribute("data-tender");
       if (picked !== null && (TENDER_METHODS as readonly string[]).includes(picked)) this.tender = picked as TenderMethod;
     }
   }
 
   protected override onFieldInput(field: string, control: HTMLElement): void {
+    if (this.fieldsLocked) return;
     const value = (control as HTMLInputElement).value;
     if (field === "amount") this.amountRaw = value;
     if (field === "reference") this.reference = value;
@@ -416,7 +580,7 @@ export class QdOrderPayment extends PanelBase {
               aria-pressed=${this.tender === m ? "true" : "false"}
               data-action="tender"
               data-tender=${m}
-              ?disabled=${this.busy}
+              ?disabled=${this.fieldsLocked}
             >
               ${m}
             </button>`,
@@ -424,9 +588,9 @@ export class QdOrderPayment extends PanelBase {
         </div>
         <div class="row">
           <label class="flush" for="op-amount">Amount</label>
-          <input id="op-amount" class="amt" type="text" inputmode="decimal" placeholder="0.00" data-field="amount" ?disabled=${this.busy} />
+          <input id="op-amount" class="amt" type="text" inputmode="decimal" placeholder="0.00" data-field="amount" ?disabled=${this.fieldsLocked} />
           <label for="op-ref">Reference</label>
-          <input id="op-ref" class="ref" type="text" placeholder="Cheque number, EFT trace or terminal reference (may be empty for cash)" data-field="reference" ?disabled=${this.busy} />
+          <input id="op-ref" class="ref" type="text" placeholder="Cheque number, EFT trace or terminal reference (may be empty for cash)" data-field="reference" ?disabled=${this.fieldsLocked} />
           <button type="button" class="primary" data-action="take-payment" data-testid="op-take" ?disabled=${this.busy}>
             ${this.busy ? "Taking payment..." : "Take payment"}
           </button>

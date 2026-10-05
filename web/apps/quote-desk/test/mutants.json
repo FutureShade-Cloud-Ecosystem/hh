@@ -1322,8 +1322,8 @@
   {
     "id": "op-pay-answer",
     "file": "src/order-payment-panel.ts",
-    "find": "    const result = await ctx.guarded(\n      client.takeOrderPayment(ctx.id, { method: this.tender, amountCents: cents, reference: this.reference.trim(), idempotencyKey: key }),\n      (late) => this.lateAnswer(ctx, late),\n    );",
-    "replace": "    const result = await client.takeOrderPayment(ctx.id, { method: this.tender, amountCents: cents, reference: this.reference.trim(), idempotencyKey: key });",
+    "find": "    const result = await ctx.guarded(\n      client.takeOrderPayment(ctx.id, { method: tender, amountCents: cents, reference, idempotencyKey: key }),\n      (late) => this.lateAnswer(ctx, late),\n    );",
+    "replace": "    const result = await client.takeOrderPayment(ctx.id, { method: tender, amountCents: cents, reference, idempotencyKey: key });",
     "test": "a payment that lands after the person left"
   },
   {
@@ -1339,6 +1339,34 @@
     "find": "      this.lateNotes.set(ctx.id, LATE_PAYMENT_NOTE);\n      this.announceChangedFor(ctx);",
     "replace": "      this.announceChangedFor(ctx);",
     "test": "a payment that lands after the person left"
+  },
+  {
+    "id": "op-kept-restore",
+    "file": "src/order-payment-panel.ts",
+    "find": "    this.attempt = rec?.attempt ?? null;\n    this.busy = this.attempt?.phase === \"in-flight\";",
+    "replace": "    this.attempt = null;\n    this.busy = false;",
+    "test": "kept for its quote across switches"
+  },
+  {
+    "id": "op-kept-busy",
+    "file": "src/order-payment-panel.ts",
+    "find": "    this.busy = this.attempt?.phase === \"in-flight\";\n    this.unknown = this.attempt?.phase === \"not-known\" ? unknownOutcomeNote() : \"\";",
+    "replace": "    this.busy = false;\n    this.unknown = this.attempt?.phase === \"not-known\" ? unknownOutcomeNote() : \"\";",
+    "test": "keeps the controls held on return"
+  },
+  {
+    "id": "op-late-kept-record",
+    "file": "src/order-payment-panel.ts",
+    "find": "      rec.attempt = null;\n      rec.receipt = late.value;\n      rec.refusal = \"\";\n      rec.amountRaw = \"\";\n      rec.reference = \"\";\n      this.lateNotes.set(ctx.id, LATE_PAYMENT_NOTE);",
+    "replace": "      rec.attempt = null;\n      this.lateNotes.set(ctx.id, LATE_PAYMENT_NOTE);",
+    "test": "keeps the controls held on return"
+  },
+  {
+    "id": "op-late-kept-attempt",
+    "file": "src/order-payment-panel.ts",
+    "find": "    } else if (isUnknownOutcome(late.status)) {\n      this.book.mark(ctx.id, \"not-known\");\n      const rec = this.record(ctx.id);\n      rec.attempt = this.book.attempt(ctx.id);\n      rec.refusal = \"\";",
+    "replace": "    } else if (isUnknownOutcome(late.status)) {",
+    "test": "recorded for its own quote only"
   },
   {
     "id": "ws-serialize",

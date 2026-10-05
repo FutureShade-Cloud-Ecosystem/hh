@@ -6,9 +6,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  PaymentKeyRing,
+  AttemptBook,
   TENDER_METHODS,
   convertedNote,
+  isDifferentPaymentRefusal,
   isUnknownOutcome,
   mintPaymentKey,
   paymentRefusalWords,
@@ -61,40 +62,71 @@ test("when the platform offers no randomUUID the in memory fallback mints keys t
   }
 });
 
-test("the fallback minter works without crypto.randomUUID and never repeats", () => {
+test("the book reuses one minter without crypto.randomUUID and never repeats", () => {
   let calls = 0;
-  const ring = new PaymentKeyRing(() => `fallback-${(calls += 1)}`);
-  assert.equal(ring.current(), "fallback-1");
-  assert.equal(ring.current(), "fallback-1");
-  ring.settled(true);
-  assert.equal(ring.current(), "fallback-2");
+  const book = new AttemptBook(() => `fallback-${(calls += 1)}`);
+  const first = book.open("q-1", { amountRaw: "1.00", amountCents: 100, tender: "CASH", reference: "", orderId: "" });
+  assert.equal(first.key, "fallback-1");
+  book.clear("q-1");
+  const second = book.open("q-1", { amountRaw: "1.00", amountCents: 100, tender: "CASH", reference: "", orderId: "" });
+  assert.equal(second.key, "fallback-2");
 });
 
-test("the key is minted once per attempt and kept across its retries", () => {
+test("an attempt is minted once per quote and kept across its retries", () => {
   let mints = 0;
   const mint = () => `key-${(mints += 1)}`;
-  const ring = new PaymentKeyRing(mint);
-  const first = ring.current();
+  const book = new AttemptBook(mint);
+  const figures = { amountRaw: "10.00", amountCents: 1000, tender: "CARD", reference: "AUTH 9", orderId: "o-1" };
+  const first = book.open("q-1", figures);
   assert.equal(mints, 1);
-  // A refusal: the retry is the same attempt, the same key.
-  ring.settled(false);
-  assert.equal(ring.current(), first);
+  assert.equal(first.phase, "in-flight");
+  // A refusal: the corrected retry is the same attempt, the same key.
+  book.mark("q-1", "kept");
+  const corrected = book.open("q-1", { ...figures, amountRaw: "37.06", amountCents: 3706 });
+  assert.equal(corrected.key, first.key);
+  assert.equal(corrected.amountCents, 3706);
+  assert.equal(corrected.phase, "in-flight");
   assert.equal(mints, 1);
-  // An unknown outcome keeps the key too (settled(false) is the same answer).
-  ring.settled(false);
-  assert.equal(ring.current(), first);
+  // An unknown outcome keeps the attempt and the key too.
+  book.mark("q-1", "not-known");
+  const unknown = book.attempt("q-1");
+  assert.equal(unknown.key, first.key);
+  assert.equal(unknown.phase, "not-known");
+  // The key that took a different payment is held, not dropped.
+  book.mark("q-1", "held");
+  assert.equal(book.attempt("q-1").phase, "held");
   // A payment the server took ends the attempt: the next deliberate payment mints fresh.
-  ring.settled(true);
-  assert.equal(ring.current(), "key-2");
+  book.clear("q-1");
+  assert.equal(book.attempt("q-1"), null);
+  const next = book.open("q-1", figures);
+  assert.equal(next.key, "key-2");
   assert.equal(mints, 2);
-  assert.equal(ring.held(), true);
 });
 
-test("a different quote is a different payment: the ring resets", () => {
-  const ring = new PaymentKeyRing();
-  const first = ring.current();
-  ring.reset();
-  assert.notEqual(ring.current(), first);
+test("a different quote is a different payment: each quote holds its own attempt", () => {
+  const book = new AttemptBook();
+  const one = book.open("q-1", { amountRaw: "10.00", amountCents: 1000, tender: "CASH", reference: "", orderId: "" });
+  const two = book.open("q-2", { amountRaw: "5.00", amountCents: 500, tender: "EFT", reference: "TR 1", orderId: "" });
+  assert.notEqual(one.key, two.key);
+  book.clear("q-1");
+  assert.equal(book.attempt("q-1"), null);
+  assert.equal(book.attempt("q-2").key, two.key);
+  // The session ends: nothing of one session's payments is another's.
+  book.clearAll();
+  assert.equal(book.attempt("q-2"), null);
+});
+
+test("the book never re-arms an attempt that is still out", () => {
+  const book = new AttemptBook();
+  const first = book.open("q-1", { amountRaw: "10.00", amountCents: 1000, tender: "CASH", reference: "", orderId: "" });
+  const again = book.open("q-1", { amountRaw: "99.00", amountCents: 9900, tender: "EFT", reference: "X", orderId: "" });
+  assert.equal(again, first);
+});
+
+test("the server's own words tell a key that took a different payment apart from any other refusal", () => {
+  assert.equal(isDifferentPaymentRefusal("this idempotency key took a different payment; use a new key for a new payment"), true);
+  assert.equal(isDifferentPaymentRefusal("the payment is more than the balance of $37.06"), false);
+  assert.equal(isDifferentPaymentRefusal(""), false);
 });
 
 test("the receipt rows are the server's figures in the order a counter reads them", () => {

@@ -309,6 +309,77 @@ test("guard payment read order: an older read of the quote answered late never l
   await expect(docs(page).getByTestId("rd-error")).toHaveCount(0);
 });
 
+test("a payment whose outcome is not known is kept for its quote across switches: the note is there on return and the retry reuses the SAME key", async ({ page }) => {
+  await signIn(page);
+  await openWithPayment(page, "Q-2101");
+  await page.request.put("/_stub/payment-ghost", { data: { ghost: true } });
+  await take(page, "10.00", "AUTH 9", "CARD");
+  await expect(pay(page).getByTestId("op-unknown")).toContainText("not known");
+  // The person opens another quote and comes back.
+  await page.getByTestId("qb-list-row").filter({ hasText: "Q-1001" }).first().click();
+  await expect(page.getByTestId("qe-title")).toContainText("Q-1001");
+  await page.getByTestId("qb-list-row").filter({ hasText: "Q-2101" }).first().click();
+  await expect(pay(page).getByTestId("op-box")).toBeVisible();
+  // The not-known note survived the switch, the attempt's figures are still held, and the retry is the SAME attempt.
+  await expect(pay(page).getByTestId("op-unknown")).toContainText("not known");
+  await expect(pay(page).getByTestId("op-take")).toBeEnabled();
+  await pay(page).getByTestId("op-take").click();
+  const receipt = pay(page).getByTestId("op-receipt");
+  await expect(receipt.getByTestId("op-receipt-amount")).toHaveText("CA$10.00");
+  await expect(receipt.getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("CA$27.06");
+  await expect(pay(page).getByTestId("op-replayed-note")).toContainText("nothing was posted a second time");
+  const keys = await postedKeys(page);
+  expect(keys).toHaveLength(2);
+  expect(keys[0]).toBe(keys[1]);
+});
+
+test("a payment still out for its quote keeps the controls held on return, and lands once", async ({ page }) => {
+  await signIn(page);
+  await openWithPayment(page, "Q-2101");
+  const held = await hold(page, /\/api\/v1\/quotes\/q-2101\/order-payment$/, { method: "POST", snapshot: true });
+  await take(page, "10.00");
+  await held.asked;
+  await page.getByTestId("qb-list-row").filter({ hasText: "Q-1001" }).first().click();
+  await expect(page.getByTestId("qe-title")).toContainText("Q-1001");
+  await page.getByTestId("qb-list-row").filter({ hasText: "Q-2101" }).first().click();
+  await expect(pay(page).getByTestId("op-box")).toBeVisible();
+  // The attempt is still out for this quote: the button is held and the fields are locked to it, so no second key can leave.
+  await expect(pay(page).getByTestId("op-take")).toBeDisabled();
+  await expect(pay(page).locator('[data-field="amount"]')).toBeDisabled();
+  await held.release();
+  await settle(page);
+  const receipt = pay(page).getByTestId("op-receipt");
+  await expect(receipt.getByTestId("op-receipt-amount")).toHaveText("CA$10.00");
+  await expect(receipt.getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("CA$27.06");
+  const keys = await postedKeys(page);
+  expect(keys).toHaveLength(1);
+});
+
+test("a late answer with no readable outcome is recorded for its own quote only", async ({ page }) => {
+  await signIn(page);
+  await openWithPayment(page, "Q-2101");
+  const held = await hold(page, /\/api\/v1\/quotes\/q-2101\/order-payment$/, { method: "POST", times: 1, refuse: { status: 500, error: "internal" } });
+  await take(page, "10.00");
+  await held.asked;
+  // The other quote is one the payment panel is offered on, so an unknown note leaking there has somewhere to land.
+  await page.getByTestId("qb-list-row").filter({ hasText: "Q-2102" }).first().click();
+  await expect(page.getByTestId("qe-title")).toContainText("Q-2102");
+  await held.release();
+  await settle(page);
+  await expect(pay(page).getByTestId("op-unknown")).toHaveCount(0);
+  await expect(pay(page).getByTestId("op-error")).toHaveCount(0);
+  await expect(pay(page).getByTestId("op-receipt")).toHaveCount(0);
+  // Back on the quote the payment belongs to: the not-known note is there, the fields are held, and the retry is the same attempt.
+  await page.getByTestId("qb-list-row").filter({ hasText: "Q-2101" }).first().click();
+  await expect(pay(page).getByTestId("op-unknown")).toContainText("not known");
+  await expect(pay(page).locator('[data-field="amount"]')).toBeDisabled();
+  await pay(page).getByTestId("op-take").click();
+  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("CA$10.00");
+  const keys = await postedKeys(page);
+  expect(keys).toHaveLength(2);
+  expect(keys[0]).toBe(keys[1]);
+});
+
 test("an amount that is not a number this desk can send is refused before any post", async ({ page }) => {
   await signIn(page);
   await openWithPayment(page, "Q-2101");
