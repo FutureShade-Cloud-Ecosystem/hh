@@ -203,6 +203,7 @@ var migrationTopics = map[string]string{
 	"0037_inventory_core":                  "inventory",
 	"0038_lien_holdback_compliance":        "lien",
 	"0039_price_change_log":                "pricing",
+	"0323_pricing_branch_prices":           "pricing",
 	"0040_inventory_counts":                "invcount",
 	"0041_landed_cost":                     "landedcost",
 	"0042_tax_engine":                      "tax",
@@ -494,6 +495,7 @@ var ownedObjects = map[string]string{
 	"price_import_runs":               "pricing",           // 0198_price_file_import
 	"pricing_anchor_policy":           "pricing",           // 0039_price_change_log
 	"pricing_audit_log":               "pricing",           // 0023_pricing
+	"pricing_branch_prices":           "pricing",           // 0323_pricing_branch_prices
 	"pricing_category_policy":         "pricing",           // 0023_pricing
 	"pricing_clearance_items":         "pricing",           // 0111_pricing_promotions_clearance
 	"pricing_list_prices":             "pricing",           // 0023_pricing
