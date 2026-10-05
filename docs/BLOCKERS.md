@@ -1479,6 +1479,16 @@ defect; both were stale tests, repaired test only, zero production lines:
   retirement; the tie-out machinery stays proven by `bistrack_tieout_integration_test.go`.
 The packages still excluded after this change, and why, are in the stand-in's red list reading in the pull request body.
 
+## internal/billing is back in the integration job (decision log row 804, appended; the entries above are never edited)
+
+`TestIntegration_Billing_ListInvoices_TenantFenceFilterAndPaging` was red for a REAL production defect, not a stale test and not a
+tenant leak (the tenant fence assertions all passed). The invoice list orders `issue_date DESC, invoice_no ASC` but its cursor
+predicate was the row comparison `(issue_date, invoice_no) < (cursor date, cursor no)`, which is a descending comparison on both
+keys: after a page ending at one invoice, every other invoice of the SAME issue date with a greater invoice number was skipped,
+so a customer paging the portal's AR list lost those invoices. The predicate is now `issue_date < d OR (issue_date = d AND
+invoice_no > no)`, matching the ordering. The test (unchanged) is the red proof on main and green with the fix; the package is
+green alone and the `billing` word leaves `red=` in `.github/workflows/ci.yml`.
+
 ## internal/assist/adapters is back in the integration job (decision log row 804, appended; the entries above are never edited)
 
 `TestIntegration_AScopedUserCannotReachAnotherBranch` was red only on the stock lookup's branch row name: the test asserted a
@@ -1486,3 +1496,11 @@ display name with a comma, while migration 0003 plants the dealer name, an em da
 test passed on main (the order, raw id, customer and payment cases and the Kingston mirror), so this was a stale test and not a
 leak. The assertion now requires the row to be Trenton's and never Kingston's; a production bite (the adapter naming the wrong
 branch) turns it red. The package is green alone and the `assist/adapters` word leaves `red=` in `.github/workflows/ci.yml`.
+
+The billing entry above, a follow-up (decision log row 804, review round 1): the old predicate also RE-SERVED same-day invoices with a
+LOWER number whenever a page ended mid date beyond the first invoice of that date, as well as skipping those with a greater one. The
+same descending row comparison against an ascending tiebreak is written at three other sites that this change does not touch:
+`core/internal/order/repository.go` (about line 79), `core/internal/quote/repository.go` (about line 84) and
+`core/internal/quote/edit_repository.go` (about line 588). The quote files belong to the Quote Desk lane; each needs the same two-part
+predicate (`key < cursor OR (key = cursor AND tiebreak > cursor tiebreak)`) wherever its ORDER BY mixes directions. Not exercised
+against a database here; found by reading.
