@@ -250,7 +250,10 @@ type txRidingAudit interface {
 // writes run. Unlike the pool capture, whose audit row is best effort because its caller has
 // nothing to abort, a FAILED audit write here FAILS THE CAPTURE: the error propagates, the caller's
 // transaction rolls back, and nothing commits, because a SensitiveAccess row that cannot be written
-// must not be lost silently under a confirm that says the act happened. A wired recorder that
+// must not be lost silently under a confirm that says the act happened (the principal's ruling,
+// decision log row 804: a capture and its audit row commit together or not at all, a signature without
+// its audit row is the worse state, and best effort inside a transaction would need a savepoint to hide
+// a failure; the pool path is left as it is). A wired recorder that
 // cannot ride the transaction at all refuses for the same reason, and an unbound provider refuses
 // rather than answer success for a capture that persisted nothing, which on a transaction path
 // would commit the caller's mutation believing it carried evidence.
