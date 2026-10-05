@@ -1352,6 +1352,15 @@
     "testFile": "test/deferred-send.test.mjs"
   },
   {
+    "id": "sender-capture-in-closure",
+    "file": "src/quote-workarea.ts",
+    "find": "this.queueTermsPut(ctx.id, () => deferredSend(capture, () => client.putTerms(ctx.id, termsBody(t))))",
+    "replace": "this.queueTermsPut(ctx.id, () => deferredSend(captureSend(this.sendNow, { follows: true }), () => client.putTerms(ctx.id, termsBody(t))))",
+    "test": "no write of the src is sent from a deferred position",
+    "runner": "node",
+    "testFile": "test/write-census.test.mjs"
+  },
+  {
     "id": "wa-create-failed-keeps-reason",
     "file": "src/quote-workarea.ts",
     "find": "    if (reason !== \"\" && this.error === CREATE_FAILED_SCAN) this.error = `${reason.replace(/[.!?]?$/, \".\")} ${CREATE_FAILED_SCAN}`;\n",

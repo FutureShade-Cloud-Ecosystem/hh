@@ -5,7 +5,9 @@
 // a method that is itself called from such a position, is DEFERRED: it can outlive the person who asked for it and the
 // quote it was asked on. A deferred write is allowed one way only, as the closure handed to deferredSend
 // (src/deferred-send.ts), which captured the session and the quote when the person acted and checks them at send time.
-// Anything else deferred is a violation. test/write-census.test.mjs holds the src to it.
+// The capture belongs at the person's action too: a captureSend written inside the sender's own call is evaluated at
+// send time, so every check compares now with now, and a row sent that way is a violation like any other. Anything
+// else deferred is a violation. test/write-census.test.mjs holds the src to it.
 import { join, relative } from "node:path";
 import ts from "typescript";
 import { appDir, makeProgram, symbolOf, walk } from "./await-census.mjs";
@@ -16,6 +18,7 @@ const TIMERS = new Set(["setTimeout", "setInterval", "requestAnimationFrame", "q
 /** Callees that run an arrow synchronously, in place: the arrow sits where the call sits. */
 const IN_PLACE = new Set(["forEach", "map", "filter", "some", "every", "find", "findIndex", "reduce", "flatMap"]);
 const SENDER = "deferredSend";
+const CAPTURE = "captureSend";
 
 function isFunctionLike(n) {
   return ts.isArrowFunction(n) || ts.isFunctionExpression(n) || ts.isFunctionDeclaration(n) || ts.isMethodDeclaration(n) || ts.isConstructorDeclaration(n) || ts.isGetAccessor(n) || ts.isSetAccessor(n);
@@ -198,6 +201,25 @@ function insideSender(node, checker) {
   return false;
 }
 
+/** The call of the sender the node is written inside: the write's own send, or the send a captureSend sits in the arguments of. */
+function senderCallAbove(node, checker) {
+  for (let n = node.parent; n; n = n.parent) {
+    if (!ts.isCallExpression(n)) continue;
+    const decl = calleeDeclaration(checker, n);
+    if (decl !== undefined && decl.name?.getText() === SENDER && decl.getSourceFile().fileName.endsWith("/deferred-send.ts")) return n;
+  }
+  return undefined;
+}
+
+/**
+ * True when a captureSend call is itself taken inside the send: written within the sender's own call, in the closure
+ * handed to it or beside it among its arguments, so the session and the quote are read at send time and every check
+ * compares now with now.
+ */
+function captureInsideSender(node, checker) {
+  return senderCallAbove(node, checker) !== undefined;
+}
+
 /**
  * Every write of the given source files: file, symbol, client method, HTTP verb, line, and how it is sent: immediate,
  * sender (deferred, through deferredSend) or VIOLATION (deferred any other way, with the reason).
@@ -210,6 +232,14 @@ export function writeCensus(program, sourceFiles) {
   const rows = [];
   for (const sf of sourceFiles) {
     if (sf.fileName.endsWith("/qd-client.ts")) continue;
+    const captures = [];
+    (function find(n) {
+      if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === CAPTURE) {
+        const decl = calleeDeclaration(checker, n);
+        if (decl !== undefined && decl.name?.getText() === CAPTURE && decl.getSourceFile().fileName.endsWith("/deferred-send.ts")) captures.push(n);
+      }
+      ts.forEachChild(n, find);
+    })(sf);
     (function visit(n) {
       if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && methods.has(n.expression.name.text)) {
         const decl = calleeDeclaration(checker, n);
@@ -217,7 +247,16 @@ export function writeCensus(program, sourceFiles) {
         if (owner !== undefined && ts.isClassDeclaration(owner) && owner.name?.text === "QdClient") {
           const reason = deferredReason(n, env);
           const sender = insideSender(n, checker);
-          const way = sender ? "sender" : reason === null ? "immediate" : "VIOLATION";
+          let way = sender ? "sender" : reason === null ? "immediate" : "VIOLATION";
+          let why = reason ?? "";
+          if (way === "sender") {
+            const send = senderCallAbove(n, checker);
+            const takenInside = send !== undefined && captures.some((cs) => captureInsideSender(cs, checker) && cs.getStart() >= send.getStart() && cs.getEnd() <= send.getEnd());
+            if (takenInside) {
+              way = "VIOLATION";
+              why = "capture taken inside the sender closure";
+            }
+          }
           rows.push({
             file: relative(srcDir, sf.fileName),
             symbol: symbolOf(n, sf),
@@ -225,7 +264,7 @@ export function writeCensus(program, sourceFiles) {
             verb: methods.get(n.expression.name.text),
             line: sf.getLineAndCharacterOfPosition(n.getStart()).line + 1,
             way,
-            reason: way === "immediate" ? "" : reason ?? "",
+            reason: way === "immediate" ? "" : why,
           });
         }
       }

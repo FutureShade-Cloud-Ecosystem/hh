@@ -1,6 +1,7 @@
 // The write census: every write of the client that the src sends from a deferred position goes through the one sender
 // (src/deferred-send.ts). test/write-census.mjs decides by position; this holds the src to it, and holds the census to
-// the shapes it must flag (the fixtures include the shape queueTermsPut had before the sender existed).
+// the shapes it must flag (the fixtures include the shape queueTermsPut had before the sender existed, and the shape
+// that moves the capture itself inside the sender's call, so the capture is taken at send time).
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -84,6 +85,20 @@ for (const [name, source] of FLAGGED) {
     assert.ok(rows.some((row) => row.way === "VIOLATION"), `expected a violation, the census found: ${JSON.stringify(rows)}`);
   });
 }
+
+// The shape a tidy refactor could introduce (review PR 121 round 7, P2-1): the capture itself written inside the
+// sender's call, so it is taken at send time, the capture compares now with now, and every check of the sender
+// trivially passes. The row must come out a violation, not a sender.
+const NEW_BAD_CAPTURE = `${HEAD}class W { client: QdClient | null = null; private before: Promise<unknown> = Promise.resolve(); now = (): SendNow => ({ client: this.client, attached: true, quote: null }); putTerms(): void { const client = this.client; if (client === null) return; this.before.then(() => deferredSend(captureSend(this.now), () => client.putTerms("q", {} as never))); } }`;
+
+test("the write census rules a capture taken inside the sender closure a violation", () => {
+  const rows = writeCensusOfText(NEW_BAD_CAPTURE);
+  const row = rows.find((candidate) => candidate.call === "putTerms");
+  assert.ok(row !== undefined, `the census found no write in the fixture: ${JSON.stringify(rows)}`);
+  assert.notEqual(row.way, "sender");
+  assert.equal(row.way, "VIOLATION");
+  assert.match(row.reason, /capture taken inside the sender closure/);
+});
 
 const ALLOWED = [
   ["a write in the same tick as the person's action", `${HEAD}class A { client: QdClient | null = null; m(id: string) { return this.client?.putTerms(id, {} as never); } }`, "immediate"],
