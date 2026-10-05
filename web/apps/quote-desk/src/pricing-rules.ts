@@ -434,8 +434,8 @@ export class QdPricingRules extends PricingTabBase {
                   </div>`
               : f.branchId !== ""
                 ? html`<div class="field">
-                    <label>Branch</label>
-                    <div class="mono" data-testid="pr-branch-readonly">${this.branchName(f.branchId)}</div>
+                    <label id="pr-branch-ro-label">Branch</label>
+                    <div class="mono" aria-labelledby="pr-branch-ro-label" data-testid="pr-branch-readonly">${this.branchName(f.branchId)}</div>
                     <span class="hint">This rule is limited to one branch. Only a tier and category rule can change it here.</span>
                   </div>`
                 : nothing}

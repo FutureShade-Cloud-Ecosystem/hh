@@ -14,6 +14,7 @@ import {
   pageCount,
   clampPage,
   auditWindowNote,
+  entriesCountText,
   PAGE_SIZE,
   drillTarget,
   bypassWord,
@@ -192,6 +193,15 @@ test("a capped fetch says so, because the filter cannot see past it", () => {
 test("a short fetch means the window IS the whole log, and says nothing", () => {
   assert.equal(auditWindowNote(37, 200), null);
   assert.equal(auditWindowNote(0, 200), null);
+});
+
+test("the heading's entry count is said in the singular and the plural", () => {
+  // One row reads "1 entry"; the filtered shape names both counts and still agrees in number.
+  assert.equal(entriesCountText(2, 2), "2 entries");
+  assert.equal(entriesCountText(1, 1), "1 entry");
+  assert.equal(entriesCountText(0, 0), "0 entries");
+  assert.equal(entriesCountText(1, 2), "1 of 2 entries");
+  assert.equal(entriesCountText(1, 1), entriesCountText(1, 1).trim());
 });
 
 // ── the link from a row to its record ───────────────────────────────────────────────────────────────

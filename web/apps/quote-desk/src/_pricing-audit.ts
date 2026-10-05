@@ -122,6 +122,15 @@ export function auditWindowNote(fetched: number, limit: number): string | null {
   return `Filtering the most recent ${limit} entries: older entries are outside this window.`;
 }
 
+/**
+ * The heading's count of log entries, singular and plural: "2 entries", "1 entry", and the
+ * filtered shape "1 of 2 entries" when a date range hides some of what the server sent.
+ */
+export function entriesCountText(shown: number, total: number): string {
+  const word = (n: number) => (n === 1 ? "entry" : "entries");
+  return shown === total ? `${total} ${word(total)}` : `${shown} of ${total} ${word(total)}`;
+}
+
 // ── the link from a row to its record ────────────────────────────────────────
 
 /** The panel's tabs a log row can open. */

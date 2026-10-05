@@ -16,7 +16,7 @@ import { PricingTabBase } from "./pricing-tab-base.js";
 import { pricingStyles } from "./pricing-styles.js";
 import { spokenRefusal } from "./_quote-workarea.js";
 import { AUDIT_ACTIONS, ENTITY_TYPES, auditActionWord, auditFieldWord, categoryLabel, entityLabel } from "./_pricing-shared.js";
-import { EMPTY_RANGE, PAGE_SIZE, auditWindowNote, bypassWord, drillTarget, filterByDate, floorConfirmationText, floorProductIds, pageOf, type DateRange, type DrillTarget } from "./_pricing-audit.js";
+import { EMPTY_RANGE, PAGE_SIZE, auditWindowNote, bypassWord, drillTarget, entriesCountText, filterByDate, floorConfirmationText, floorProductIds, pageOf, type DateRange, type DrillTarget } from "./_pricing-audit.js";
 import type { AuditRow } from "./_pricing-wire.js";
 
 const AUDIT_FETCH_LIMIT = 200;
@@ -199,7 +199,7 @@ export class QdPricingAudit extends PricingTabBase {
       <div class="panel" data-testid="pa-panel">
         <div class="head">
           <h2>Pricing log</h2>
-          ${this.loading || this.listError !== "" ? nothing : html`<span class="count" data-testid="pa-count">${filtered.length === this.rows.length ? `${this.rows.length} entries` : `${filtered.length} of ${this.rows.length} entries`}</span>`}
+          ${this.loading || this.listError !== "" ? nothing : html`<span class="count" data-testid="pa-count">${entriesCountText(filtered.length, this.rows.length)}</span>`}
         </div>
         <div class="toolbar">
           <select aria-label="Filter by entity" data-field="entity" data-testid="pa-entity"></select>
@@ -215,7 +215,13 @@ export class QdPricingAudit extends PricingTabBase {
             : filtered.length === 0
               ? html`<p class="msg" data-testid="pa-empty">No log entries match.</p>`
               : html`
-                  <div class="table-scroll" data-testid="pa-table-scroll">
+                      <div
+                        class="table-scroll"
+                        tabindex="0"
+                        role="region"
+                        aria-label="Pricing log table, scrolls sideways"
+                        data-testid="pa-table-scroll"
+                      >
                     <table>
                       <thead>
                         <tr>

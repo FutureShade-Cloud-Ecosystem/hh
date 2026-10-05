@@ -42,6 +42,11 @@ test("the log shows what changed, who changed it, and links the record", async (
   await openTab(page, "audit");
   await expect(page.getByTestId("pa-row")).toHaveCount(2);
   await expect(page.getByTestId("pa-count")).toHaveText("2 entries");
+  // the scroller is a keyboard citizen too (round 3, a11y): focusable, named, a region
+  const scroller = page.getByTestId("pa-table-scroll");
+  await expect(scroller).toHaveAttribute("tabindex", "0");
+  await expect(scroller).toHaveAttribute("role", "region");
+  await expect(scroller).toHaveAccessibleName(/scrolls sideways/);
   const policy = page.getByTestId("pa-row").filter({ hasText: "Category policy" });
   await expect(policy).toContainText("Pavers");
   await expect(policy).toContainText("Updated");
