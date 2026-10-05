@@ -65,13 +65,13 @@ func (w JobLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (str
 			Detail: "the record names no job name"}
 	}
 	address, _ := in.Record["job_address"].(string)
-	customerID := ""
+	customerID, customerKey := "", ""
 	for _, r := range in.Refs {
 		if r.Kind != load.KindCustomer || customerID != "" {
 			return "", &load.Refusal{Code: load.ReasonWrongReference, Field: r.Kind,
 				Detail: "a job names one customer reference and no other"}
 		}
-		customerID = r.HHID
+		customerID, customerKey = r.HHID, r.LegacyID
 	}
 	if customerID == "" {
 		return "", &load.Refusal{Code: "field_required", Field: load.KindCustomer,
@@ -82,8 +82,8 @@ func (w JobLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (str
 		return "", fmt.Errorf("portal: job customer read: %w", err)
 	}
 	if !inOrg {
-		return "", &load.Refusal{Code: load.ReasonMissingReference, Field: load.KindCustomer,
-			Detail: "the referenced customer is not a customer of this org"}
+		return "", &load.Refusal{Code: "org_mismatch", Field: load.KindCustomer,
+			Detail: fmt.Sprintf("customer legacy key %s names a row another org owns", customerKey)}
 	}
 	var id string
 	if in.RowID == "" {
