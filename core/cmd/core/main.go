@@ -117,13 +117,29 @@ type serveConfig struct {
 	// on only where the deployment's configuration says so (the dealer's
 	// staging copy for the parallel run, production only for the cut over
 	// load). Switched on, the machine credential's audience and public
-	// key set are required with it; switched off, setting either is a
-	// contradiction the spawn refuses, never an unused credential. The
-	// private key stays in FB Move's vault: only the public key set URL
-	// ever arrives here.
-	loadDoors       bool
-	machineAudience string
-	machineJWKSURL  string
+	// key set are required with it; switched off, set machine credential
+	// names are ignored with one logged warning rather than refused, so a
+	// partial unset after the cut over load never stops a production boot
+	// (the ruled relaxation). The private key stays in FB Move's vault:
+	// only the public key set URL ever arrives here.
+	loadDoors           bool
+	machineAudience     string
+	machineJWKSURL      string
+	machineNamesIgnored bool
+}
+
+// machineCredentialIgnoredWarning is the one operational warning the
+// doors off configuration logs when the environment still carries any
+// machine credential name: it names all three variables so the operator
+// sees the whole set at once. To fully retire the credential, unset all
+// three together; this warning is the runbook line.
+func (c serveConfig) machineCredentialIgnoredWarning() string {
+	if !c.machineNamesIgnored {
+		return ""
+	}
+	return "load doors: CORE_MACHINE_AUDIENCE or CORE_MACHINE_JWKS_URL is set while CORE_LOAD_DOORS is not on; " +
+		"the machine credential is ignored, the doors stay off and nothing of the machine leg is wired. " +
+		"To retire the credential fully, unset CORE_LOAD_DOORS, CORE_MACHINE_AUDIENCE and CORE_MACHINE_JWKS_URL together."
 }
 
 // loadDoorsFrom reads CORE_LOAD_DOORS: unset and "off" switch the doors
@@ -216,7 +232,13 @@ func loadServeConfig(getenv func(string) string) (serveConfig, error) {
 		cfg.machineAudience = machineAud
 		cfg.machineJWKSURL = machineJWKS
 	} else if machineAud != "" || machineJWKS != "" {
-		return serveConfig{}, errors.New("machine credential configuration (CORE_MACHINE_AUDIENCE, CORE_MACHINE_JWKS_URL) is set while CORE_LOAD_DOORS is not on")
+		// The ruled relaxation: names set while the doors are off are
+		// ignored, never a spawn refusal, because the plan's end state
+		// after the cut over load is doors off and a partial unset must
+		// never stop a production boot. The caller logs the warning the
+		// flag carries; the machine fields stay empty, so nothing of the
+		// machine leg is wired.
+		cfg.machineNamesIgnored = true
 	}
 	return cfg, nil
 }
@@ -282,6 +304,12 @@ func registerRoutesWithRoleConfig(r httpx.Registrar, getenv func(string) string,
 	auth, err := loadServeConfig(getenv)
 	if err != nil {
 		return nil, err
+	}
+	// The doors off configuration's one operational warning: machine
+	// credential names still set are ignored, and the operator sees the
+	// whole set of three variables at once (the ruled relaxation).
+	if warning := auth.machineCredentialIgnoredWarning(); warning != "" {
+		log.Warn(warning)
 	}
 
 	// The verifier carries the machine leg only where the deployment
@@ -391,7 +419,7 @@ func registerRoutesWithRoleConfig(r httpx.Registrar, getenv func(string) string,
 			pool.Close()
 			return nil, err
 		}
-		log.Info("load doors: not switched on - no load route is wired")
+		log.Info("load doors: not switched on, no load route is wired")
 	}
 	// Every registration below lands through the wrapper, so each staff
 	// route is served only through its role gate, reading the annotation

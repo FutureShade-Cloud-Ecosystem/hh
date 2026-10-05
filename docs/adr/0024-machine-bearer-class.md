@@ -73,15 +73,25 @@ The gate (the machine leg, `core/internal/platform/authz/machinegate.go`):
   gate, and the role gate registrar stops the boot when a machine worded
   registration arrives without it, the same idiom an unannotated staff
   route carries. The door the gate checks is the route's own operation id
-  against the principal's door list.
+  against the principal's door list. The registrar's closed word set
+  carries the word beside the three staff tier words (wrapped, in this
+  gate), the pass-through families, and the unknown word refusal; the
+  census walk's classification ruling is that machine routes read wrapped
+  once they exist (LD-1's fragment), with the walk harness carrying a
+  machine gate to prove it, and no walk row lands before the routes do.
 - The doors register only where the deployment's configuration switches
   them on (`CORE_LOAD_DOORS=on`), off by default, following the feedback
   route's conditional registration idiom. Switched on, the machine
-  audience and public key set URL are required with it (`CORE_MACHINE_AUDIENCE`,
-  `CORE_MACHINE_JWKS_URL`); switched off, setting either is a contradiction
-  the spawn refuses, never an unused credential. The intended shape is the
-  dealer's staging copy for the parallel run and production only for the
-  cut over load, on Colton's go for that run, then off again.
+  audience and public key set URL are required with it
+  (`CORE_MACHINE_AUDIENCE`, `CORE_MACHINE_JWKS_URL`). Switched off, set
+  machine credential names are ignored with one logged operational
+  warning naming all three variables, never a spawn refusal (the ruled
+  relaxation): the plan's end state after the cut over load is doors off,
+  and a partial unset must never stop a production boot. The runbook line
+  the warning carries: to fully retire the credential, unset all three
+  together. The intended shape is the dealer's staging copy for the
+  parallel run and production only for the cut over load, on Colton's go
+  for that run, then off again.
 
 One audit row per batch, with the machine principal as actor and the counts
 by outcome (`audit_log.actor_id` carries no foreign key, so a system actor
@@ -112,7 +122,22 @@ a gate from serving.
 
 - ADR-0020's two legs: the staff and tenant routes resolve orgs exactly as
   they did, refuse every other class exactly as they did, and answer the
-  same bodies. The machine class adds a leg; it re-points none.
+  same bodies. The machine class adds a leg; it re-points none. A repeated
+  audience of one class verifies as it always did; only two different
+  classes claimed together are refused.
+- The issuer the machine class carries is the platform's own: the issuer
+  check is shared in the claims parse, so FB Move mints under the
+  platform's issuer name. The key set binding is the real wall between
+  the classes; a distinct machine issuer value would read more honestly
+  and stays possible later work (a configuration name beside the machine
+  audience), not a change this record makes.
+- No lifetime ceiling binds machine tokens this cycle. The verifier
+  enforces the platform's claim vocabulary unchanged (exp required, no
+  grace), and the plan's "short-lived" is FB Move's own minting
+  behaviour; a ceiling on exp minus iat for the machine class alone would
+  be cheap defence in depth, and the credential is already org scoped,
+  door scoped, switchable off and audited per batch, so it waits for a
+  need rather than landing unasked.
 - The staff gates stay a person's (D38, D3): no machine credential resolves
   a role, a tier or a branch, and no staff role reaches a door.
 - Loading a dealer's real data stays FB Move's own plan and its own go

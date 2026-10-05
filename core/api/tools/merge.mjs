@@ -200,12 +200,19 @@ for (const [path, item] of Object.entries(doc.paths)) {
     if (op["x-role"] === undefined) problems.push(`${where}: missing x-role`);
     if (!Array.isArray(op.tags) || op.tags.length !== 1) problems.push(`${where}: must carry exactly one tag`);
     else if (!tagNames.has(op.tags[0])) problems.push(`${where}: unknown tag ${op.tags[0]}`);
-    // The machine word and the MachineBearer scheme name each other
-    // (ADR-0024): an operation worded machine carries the machine
-    // credential alone, and an operation carrying MachineBearer is worded
-    // machine. Either without the other is a document fault.
-    if (MACHINE_ROLES.has(op["x-role"]) !== bearerSchemesOf(op).has("MachineBearer")) {
-      problems.push(`${where}: x-role machine and the MachineBearer security scheme must name each other`);
+    // The machine word and the MachineBearer scheme name each other, and
+    // the machine credential rides alone (ADR-0024): an operation worded
+    // machine carries MachineBearer and nothing beside it, and an
+    // operation carrying MachineBearer is worded machine. A mix of the
+    // machine scheme with a platform scheme is a document fault however
+    // it is spelled, because the machine class never dual lists.
+    const schemes = bearerSchemesOf(op);
+    if (MACHINE_ROLES.has(op["x-role"])) {
+      if (schemes.size !== 1 || !schemes.has("MachineBearer")) {
+        problems.push(`${where}: a machine operation carries MachineBearer alone, found ${[...schemes].sort().join("+") || "no scheme"}`);
+      }
+    } else if (schemes.has("MachineBearer")) {
+      problems.push(`${where}: the MachineBearer scheme belongs to machine operations alone, but the x-role is ${JSON.stringify(op["x-role"])}`);
     }
     if (op["x-role"] !== undefined && (!Array.isArray(op.tags) || op.tags.length === 1)) {
       const access = checkAccess(where, method, op);

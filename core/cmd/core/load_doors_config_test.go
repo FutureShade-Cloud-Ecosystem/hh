@@ -84,14 +84,60 @@ func TestLoadServeConfigDoorsOnCarriesTheMachineCredential(t *testing.T) {
 	}
 }
 
-// TestLoadServeConfigMachineCredentialNeedsTheSwitch: a machine key set
-// configured while the doors are switched off is a contradiction the
-// spawn refuses loudly, never a silent unused credential.
-func TestLoadServeConfigMachineCredentialNeedsTheSwitch(t *testing.T) {
+// TestLoadServeConfigMachineCredentialIgnoredWhenDoorsOff is the ruled
+// relaxation: with the doors off, machine credential names in the
+// environment are ignored, never a spawn refusal, because the plan's end
+// state after the cut over load is doors off and a partial unset must
+// never stop a production boot. The configuration carries a warning that
+// names all three variables, the caller logs it once, and nothing of the
+// machine leg is wired.
+func TestLoadServeConfigMachineCredentialIgnoredWhenDoorsOff(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+	}{
+		{"both names set", map[string]string{
+			"CORE_MACHINE_AUDIENCE": "hh-machine", "CORE_MACHINE_JWKS_URL": "https://mover.example.test/jwks",
+		}},
+		{"audience alone", map[string]string{
+			"CORE_MACHINE_AUDIENCE": "hh-machine",
+		}},
+		{"key set url alone", map[string]string{
+			"CORE_MACHINE_JWKS_URL": "https://mover.example.test/jwks",
+		}},
+	} {
+		env := fullEnv()
+		for k, v := range tc.env {
+			env[k] = v
+		}
+		cfg, err := loadServeConfig(func(k string) string { return env[k] })
+		if err != nil {
+			t.Fatalf("%s: the doors are off, so set names must not stop the boot: %v", tc.name, err)
+		}
+		if cfg.loadDoors {
+			t.Fatalf("%s: the doors read on with no switch", tc.name)
+		}
+		if cfg.machineAudience != "" || cfg.machineJWKSURL != "" {
+			t.Fatalf("%s: the ignored credential leaked into the configuration: %+v", tc.name, cfg)
+		}
+		warning := cfg.machineCredentialIgnoredWarning()
+		if warning == "" {
+			t.Fatalf("%s: the ignored credential must carry a warning", tc.name)
+		}
+		for _, name := range []string{"CORE_LOAD_DOORS", "CORE_MACHINE_AUDIENCE", "CORE_MACHINE_JWKS_URL"} {
+			if !strings.Contains(warning, name) {
+				t.Fatalf("%s: the warning must name %s: %s", tc.name, name, warning)
+			}
+		}
+	}
+
+	// Nothing set and the doors off: no warning at all.
 	env := fullEnv()
-	env["CORE_MACHINE_AUDIENCE"] = "hh-machine"
-	env["CORE_MACHINE_JWKS_URL"] = "https://mover.example.test/jwks"
-	if _, err := loadServeConfig(func(k string) string { return env[k] }); err == nil || !strings.Contains(err.Error(), "CORE_LOAD_DOORS") {
-		t.Fatalf("a machine credential with the doors off was accepted or unnamed: %v", err)
+	cfg, err := loadServeConfig(func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatalf("nothing set: %v", err)
+	}
+	if cfg.machineCredentialIgnoredWarning() != "" {
+		t.Fatalf("a warning with nothing set: %s", cfg.machineCredentialIgnoredWarning())
 	}
 }
