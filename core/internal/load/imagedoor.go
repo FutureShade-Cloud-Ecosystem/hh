@@ -27,6 +27,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
@@ -43,10 +44,14 @@ const imageReadHeadroom = 1 << 10
 // boundary: the declared content type against the raster allowlist, the
 // bytes against the declared type, and the size cap. MaxImageBytes
 // bounds the request body's read; a violation names the field and
-// carries no value.
+// carries no value. NormaliseContentType is the module's own media type
+// normalisation (the parameter strip and the case fold), the one
+// spelling the allowlist, the constraint and the replay decision all
+// read, so two spellings of one media type are one record.
 type ImageValidator interface {
 	MaxImageBytes() int
 	ValidateImage(contentType string, body []byte) (field, detail string, ok bool)
+	NormaliseContentType(contentType string) string
 }
 
 // ImageWrite is what the door hands the owning module's writer for one
@@ -140,8 +145,12 @@ func (d *ImageDoor) PutImage(ctx context.Context, in PutImageRequest) (Outcome, 
 	if d.store == nil || d.store.pool == nil {
 		return Outcome{}, errors.New("load: no database")
 	}
-	sum := sha256.Sum256(in.Bytes)
-	hash := hex.EncodeToString(sum[:])
+	// The record is the whole truth: the bytes, the normalised type and
+	// the alt text hash together, so a put whose bytes are identical but
+	// whose alt text differs answers updated and the stored alt text
+	// follows, and two spellings of one media type are one record.
+	hash := imageRecordHash(d.validator.NormaliseContentType(in.ContentType),
+		strings.TrimSpace(in.AltText), in.Bytes)
 
 	tx, err := d.store.pool.Begin(ctx)
 	if err != nil {
@@ -156,6 +165,22 @@ func (d *ImageDoor) PutImage(ctx context.Context, in PutImageRequest) (Outcome, 
 		return Outcome{}, err
 	}
 	return o, nil
+}
+
+// imageRecordHash frames the record's three fields with their lengths,
+// each field length prefixed and separated, so no spelling of one field
+// can masquerade as another, then hashes: the door's replay decision
+// reads this off the registry, the record the writer stores.
+func imageRecordHash(contentType, altText string, body []byte) string {
+	h := sha256.New()
+	for _, field := range []string{contentType, altText} {
+		fmt.Fprintf(h, "%d:", len(field))
+		h.Write([]byte(field))
+		h.Write([]byte{0})
+	}
+	fmt.Fprintf(h, "%d:", len(body))
+	h.Write(body)
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // tryImage is one attempt on the door's transaction: the product

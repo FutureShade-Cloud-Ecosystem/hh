@@ -33,6 +33,15 @@ type fakeImageRules struct {
 
 func (r fakeImageRules) MaxImageBytes() int { return r.cap }
 
+// NormaliseContentType is the double's own normalisation, the module's
+// rule mirrored: the parameter strip and the case fold.
+func (r fakeImageRules) NormaliseContentType(contentType string) string {
+	if i := strings.IndexByte(contentType, ';'); i >= 0 {
+		contentType = contentType[:i]
+	}
+	return strings.ToLower(strings.TrimSpace(contentType))
+}
+
 func (r fakeImageRules) ValidateImage(contentType string, body []byte) (string, string, bool) {
 	if contentType != r.allow {
 		return "content_type", "the declared type is outside the raster allowlist", false

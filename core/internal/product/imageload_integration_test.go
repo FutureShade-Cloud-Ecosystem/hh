@@ -20,8 +20,6 @@ package product
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"strings"
 	"sync"
@@ -94,7 +92,9 @@ func TestProductImageLoadLandsBytesThroughTheModuleStore(t *testing.T) {
 		t.Fatalf("the stored image carries %s of %d bytes, want the put's png of %d", ct, size, len(fxImagePNG))
 	}
 	// The image name rides the product's legacy key under its own kind,
-	// so the replay decision reads the bytes' hash off the registry.
+	// so the replay decision reads the record's hash off the registry
+	// (the bytes, the normalised type and the alt text together, the
+	// door's own framing; the whole record replay is what pins it).
 	var recorded string
 	if err := e.pool.QueryRow(ctx, `
 		SELECT content_hash FROM load_key_registry
@@ -102,18 +102,19 @@ func TestProductImageLoadLandsBytesThroughTheModuleStore(t *testing.T) {
 		fxProdOrgID, fxProdSource, load.KindProductImage, "PR-I1").Scan(&recorded); err != nil {
 		t.Fatalf("image name read: %v", err)
 	}
-	sum := sha256.Sum256(fxImagePNG)
-	if recorded != hex.EncodeToString(sum[:]) {
-		t.Fatalf("the recorded hash is %q, want the bytes' sha256", recorded)
+	if len(recorded) != 64 {
+		t.Fatalf("the recorded hash is %q, want a sha256 hex string", recorded)
 	}
 
-	// The identical replay answers unchanged and replaces nothing.
+	// The identical replay (the whole record: the bytes, the type and
+	// the alt text the first put carried) answers unchanged and replaces
+	// nothing.
 	e.spy.mu.Lock()
 	spyBefore := e.spy.rows
 	e.spy.mu.Unlock()
 	o, err = e.door.PutImage(ctx, load.PutImageRequest{
 		OrgID: fxProdOrgID, SourceSystem: fxProdSource, LegacyID: "PR-I1", Caller: fxProdActorID,
-		ContentType: "image/png", Bytes: fxImagePNG,
+		ContentType: "image/png", AltText: "Fixture Alt", Bytes: fxImagePNG,
 	})
 	if err != nil {
 		t.Fatalf("replay put: %v", err)
@@ -146,6 +147,160 @@ func TestProductImageLoadLandsBytesThroughTheModuleStore(t *testing.T) {
 	ct, size, _ = e.imageRow(t, id)
 	if ct != "image/png" || size != len(fxImageOtherPNG) {
 		t.Fatalf("the replaced image carries %s of %d bytes, want the new png of %d", ct, size, len(fxImageOtherPNG))
+	}
+}
+
+// The record is the whole truth (the review's P2a and P2b, red first):
+// a Content-Type in any case is normalised before the allowlist and the
+// constraint (never a 500), the normalised type and the alt text ride
+// the replay decision beside the bytes (the same bytes with changed alt
+// text answers updated and the stored alt text follows), and the
+// normalised type makes two spellings of one media type one record.
+func TestProductImageLoadReplaysOnTheWholeRecord(t *testing.T) {
+	e := imageDoorSetup(t)
+	ctx := context.Background()
+	e.prSeedUnit(t, "EA", "Each", "count")
+	if _, err := e.productLoadEnv.door.UpsertBatch(ctx, load.Batch{OrgID: fxProdOrgID, SourceSystem: fxProdSource,
+		BatchID: "b-img-r0", Caller: fxProdActorID,
+		Items: []load.Item{prItem("PR-I1", "FXPR-4001", "Fixture Record Product", nil)}}); err != nil {
+		t.Fatalf("product batch: %v", err)
+	}
+	id, _, _, _, _ := e.prRow(t, "FXPR-4001")
+	imageAlt := func(t *testing.T) string {
+		t.Helper()
+		var alt string
+		if err := e.pool.QueryRow(ctx,
+			`SELECT coalesce(alt_text, '') FROM product_images WHERE product_id = $1::uuid AND sort_order = 0`, id).Scan(&alt); err != nil {
+			t.Fatalf("alt read: %v", err)
+		}
+		return alt
+	}
+
+	// P2a: the declared type in upper case is the same raster type; the
+	// put lands and the row carries the normalised spelling, never the
+	// constraint's refusal.
+	o, err := e.door.PutImage(ctx, load.PutImageRequest{
+		OrgID: fxProdOrgID, SourceSystem: fxProdSource, LegacyID: "PR-I1", Caller: fxProdActorID,
+		ContentType: "IMAGE/PNG", AltText: "first", Bytes: fxImagePNG,
+	})
+	if err != nil {
+		t.Fatalf("the upper case type put answered %v, want the put landing", err)
+	}
+	if o.Status != load.OutcomeCreated {
+		t.Fatalf("the first put answered %+v, want created", o)
+	}
+	if ct, _, _ := e.imageRow(t, id); ct != "image/png" {
+		t.Fatalf("the row stores content type %q, want the normalised image/png", ct)
+	}
+	// P2b: the same bytes with changed alt text answer updated, and the
+	// stored alt text is the record's new one.
+	o, err = e.door.PutImage(ctx, load.PutImageRequest{
+		OrgID: fxProdOrgID, SourceSystem: fxProdSource, LegacyID: "PR-I1", Caller: fxProdActorID,
+		ContentType: "image/png", AltText: "second", Bytes: fxImagePNG,
+	})
+	if err != nil {
+		t.Fatalf("changed alt put: %v", err)
+	}
+	if o.Status != load.OutcomeUpdated {
+		t.Fatalf("the changed alt answered %+v, want updated", o)
+	}
+	if got := imageAlt(t); got != "second" {
+		t.Fatalf("the stored alt text is %q, want the record's second", got)
+	}
+	// The replay of the whole record answers unchanged, in either
+	// spelling of the type: the normalised type and the alt text ride
+	// the recorded hash beside the bytes.
+	o, err = e.door.PutImage(ctx, load.PutImageRequest{
+		OrgID: fxProdOrgID, SourceSystem: fxProdSource, LegacyID: "PR-I1", Caller: fxProdActorID,
+		ContentType: "image/png", AltText: "second", Bytes: fxImagePNG,
+	})
+	if err != nil {
+		t.Fatalf("replay put: %v", err)
+	}
+	if o.Status != load.OutcomeUnchanged {
+		t.Fatalf("the whole record replay answered %+v, want unchanged", o)
+	}
+	o, err = e.door.PutImage(ctx, load.PutImageRequest{
+		OrgID: fxProdOrgID, SourceSystem: fxProdSource, LegacyID: "PR-I1", Caller: fxProdActorID,
+		ContentType: "IMAGE/PNG", AltText: "second", Bytes: fxImagePNG,
+	})
+	if err != nil {
+		t.Fatalf("upper case replay put: %v", err)
+	}
+	if o.Status != load.OutcomeUnchanged {
+		t.Fatalf("the upper case replay answered %+v, want unchanged: two spellings of one type are one record", o)
+	}
+	if got := imageAlt(t); got != "second" {
+		t.Fatalf("the replay left alt text %q, want second", got)
+	}
+}
+
+// A loaded image that replaces a staff upload clears uploaded_by (the
+// review's P2c, red first): the row the load lands is the machine
+// principal's record, and the staff member the row carried before is
+// not the loader of the new bytes.
+func TestProductImageLoadReplacesAStaffUploadWhole(t *testing.T) {
+	e := imageDoorSetup(t)
+	ctx := context.Background()
+	e.prSeedUnit(t, "EA", "Each", "count")
+	if _, err := e.productLoadEnv.door.UpsertBatch(ctx, load.Batch{OrgID: fxProdOrgID, SourceSystem: fxProdSource,
+		BatchID: "b-img-s0", Caller: fxProdActorID,
+		Items: []load.Item{prItem("PR-I1", "FXPR-4001", "Fixture Staff Upload Product", nil)}}); err != nil {
+		t.Fatalf("product batch: %v", err)
+	}
+	id, _, _, _, _ := e.prRow(t, "FXPR-4001")
+	const staffUserID = "4642a800-0000-4000-8000-00000000f0b1"
+	if _, err := e.pool.Exec(ctx,
+		`INSERT INTO users (id, email, display_name, status) VALUES ($1::uuid, 'fixture.image.rep@example.invalid', 'Fixture Image Rep', 'ACTIVE')
+		 ON CONFLICT (id) DO NOTHING`, staffUserID); err != nil {
+		t.Fatalf("plant staff user: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = e.pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1::uuid`, staffUserID)
+	})
+	o, err := e.door.PutImage(ctx, load.PutImageRequest{
+		OrgID: fxProdOrgID, SourceSystem: fxProdSource, LegacyID: "PR-I1", Caller: fxProdActorID,
+		ContentType: "image/png", AltText: "first", Bytes: fxImagePNG,
+	})
+	if err != nil {
+		t.Fatalf("first put: %v", err)
+	}
+	if o.Status != load.OutcomeCreated {
+		t.Fatalf("the first put answered %+v, want created", o)
+	}
+	// A staff member's upload stands on the row, the shape the staff
+	// byte route lands.
+	if _, err := e.pool.Exec(ctx,
+		`UPDATE product_images SET uploaded_by = $1::uuid WHERE product_id = $2::uuid AND sort_order = 0`,
+		staffUserID, id); err != nil {
+		t.Fatalf("plant staff upload: %v", err)
+	}
+	var uploadedBy string
+	if err := e.pool.QueryRow(ctx,
+		`SELECT coalesce(uploaded_by::text, '') FROM product_images WHERE product_id = $1::uuid AND sort_order = 0`, id).Scan(&uploadedBy); err != nil {
+		t.Fatalf("uploaded_by read: %v", err)
+	}
+	if uploadedBy != staffUserID {
+		t.Fatalf("uploaded_by is %q before the load put, want the staff row", uploadedBy)
+	}
+	// The load put of new bytes replaces the row whole: the staff
+	// member's name does not survive it.
+	o, err = e.door.PutImage(ctx, load.PutImageRequest{
+		OrgID: fxProdOrgID, SourceSystem: fxProdSource, LegacyID: "PR-I1", Caller: fxProdActorID,
+		ContentType: "image/png", AltText: "second", Bytes: fxImageOtherPNG,
+	})
+	if err != nil {
+		t.Fatalf("replacing put: %v", err)
+	}
+	if o.Status != load.OutcomeUpdated {
+		t.Fatalf("the replacing put answered %+v, want updated", o)
+	}
+	if err := e.pool.QueryRow(ctx,
+		`SELECT coalesce(uploaded_by::text, '') FROM product_images WHERE product_id = $1::uuid AND sort_order = 0`, id).Scan(&uploadedBy); err != nil {
+		t.Fatalf("uploaded_by reread: %v", err)
+	}
+	if uploadedBy != "" {
+		t.Fatalf("uploaded_by is %q after the load put, want it cleared", uploadedBy)
 	}
 }
 
