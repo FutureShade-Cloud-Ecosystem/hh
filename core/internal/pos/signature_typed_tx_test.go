@@ -34,9 +34,14 @@ func (captureRow) Scan(dest ...any) error {
 	return nil
 }
 
-// txCaptureStore opens the bound-store gate; the tx path's insert runs on the caller's transaction
-// and never calls the store, so no method is overridden.
+// txCaptureStore opens the bound-store gate; the tx path's insert goes through the store seam now
+// (Repository.InsertSignatureTx's fake twin answers it without a database), so only that method is
+// overridden and every other posStore call would land on the embedded interface.
 type txCaptureStore struct{ posStore }
+
+func (s txCaptureStore) InsertSignatureTx(context.Context, pgx.Tx, signatureRow) (string, error) {
+	return "sig-row-1", nil
+}
 
 // poolCaptureStore takes the pool path's insert without a database.
 type poolCaptureStore struct {
