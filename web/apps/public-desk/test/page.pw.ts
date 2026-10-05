@@ -341,7 +341,7 @@ const CHECK_FIELDS = "Please check your full name and the confirmation, then try
 const REFUSED_GENERIC = "We could not accept this quote right now. Please contact us.";
 const NOT_FOUND_SENTENCE = "We could not find this quote. Please check the link you were sent.";
 const REPEAT_NOTE =
-  "This quote was already accepted. Accepting again with the same name confirms the earlier acceptance; a different name records another acceptance.";
+  "This quote was already accepted. Accepting again through this link with the same name confirms the earlier acceptance; a different name records another acceptance.";
 const STAFF_WORDS = /convert it at the counter|administrator|quote:|acceptance settings|order SO-1/i;
 
 async function readyToAccept(page: Page, token: string): Promise<void> {

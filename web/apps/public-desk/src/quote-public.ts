@@ -57,7 +57,7 @@ const CANNOT_ACCEPT = "This quote cannot be accepted right now. Please contact u
 const CHECK_FIELDS = "Please check your full name and the confirmation, then try again.";
 const REFUSED_GENERIC = "We could not accept this quote right now. Please contact us.";
 const REPEAT_NOTE =
-  "This quote was already accepted. Accepting again with the same name confirms the earlier acceptance; a different name records another acceptance.";
+  "This quote was already accepted. Accepting again through this link with the same name confirms the earlier acceptance; a different name records another acceptance.";
 const KEY_REUSED =
   "This quote was already accepted with a different name on this attempt, so nothing more was recorded.";
 
