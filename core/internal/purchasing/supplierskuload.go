@@ -109,6 +109,13 @@ func (w SupplierSKULoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Wri
 	// The table carries no cost column, and a cost field a caller sends
 	// is refused naming the field rather than dropped: a silent drop
 	// would let the caller believe a cost landed (the plan's risk 9).
+	// The scan matches any key carrying cost on purpose: the neighbours
+	// name their columns unit_cost_cents and cost_uom (po lines, stock
+	// moves), but a record's cost spelling is the sender's, and an exact
+	// list would silently drop every spelling it fails to name, the very
+	// harm the refusal exists to prevent. Over refusing costs one loud
+	// record_shape on a record the caller fixes; under refusing costs a
+	// number nobody sees was never landed.
 	for _, key := range sortedRecordKeys(in.Record) {
 		if strings.Contains(strings.ToLower(key), "cost") {
 			return "", &load.Refusal{Code: "record_shape", Field: key,

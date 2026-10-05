@@ -120,18 +120,33 @@ func skuSuffix(legacyID string) string {
 // ids.
 func (e *supplierSkuEnv) plantSupplierSkuRefs(t *testing.T) (vendorID, productID string) {
 	t.Helper()
+	return e.plantSupplierSkuPair(t, "FXV-SK1", "Fixture SKU Supplier", "FXSK-0001", "SUP-1", "PROD-1")
+}
+
+// plantSecondSupplierSkuRefs plants a second supplier and product pair
+// with its own registry names, so an item keyed on the pair stands or
+// falls on its own row and never on the first pair's.
+func (e *supplierSkuEnv) plantSecondSupplierSkuRefs(t *testing.T) (vendorID, productID string) {
+	t.Helper()
+	return e.plantSupplierSkuPair(t, "FXV-SK2", "Fixture SKU Supplier Two", "FXSK-0002", "SUP-2", "PROD-2")
+}
+
+// plantSupplierSkuPair plants one vendor row, one product row and their
+// registry names, answering the rows' ids.
+func (e *supplierSkuEnv) plantSupplierSkuPair(t *testing.T, vendorNo, vendorName, sku, supplierLegacy, productLegacy string) (vendorID, productID string) {
+	t.Helper()
 	ctx := context.Background()
 	if err := e.pool.QueryRow(ctx,
-		`INSERT INTO vendors (vendor_no, name) VALUES ('FXV-SK1', 'Fixture SKU Supplier') RETURNING id::text`).Scan(&vendorID); err != nil {
-		t.Fatalf("plant vendor: %v", err)
+		`INSERT INTO vendors (vendor_no, name) VALUES ($1, $2) RETURNING id::text`, vendorNo, vendorName).Scan(&vendorID); err != nil {
+		t.Fatalf("plant vendor %s: %v", vendorNo, err)
 	}
 	if err := e.pool.QueryRow(ctx,
-		`INSERT INTO products (sku, name, base_uom, price_uom) VALUES ('FXSK-0001', 'Fixture SKU Product', 'EA', 'EA') RETURNING id::text`).Scan(&productID); err != nil {
-		t.Fatalf("plant product: %v", err)
+		`INSERT INTO products (sku, name, base_uom, price_uom) VALUES ($1, $2, 'EA', 'EA') RETURNING id::text`, sku, "Fixture SKU Product for "+vendorNo).Scan(&productID); err != nil {
+		t.Fatalf("plant product %s: %v", sku, err)
 	}
 	for _, name := range []struct{ kind, legacy, id string }{
-		{"supplier", "SUP-1", vendorID},
-		{"product", "PROD-1", productID},
+		{"supplier", supplierLegacy, vendorID},
+		{"product", productLegacy, productID},
 	} {
 		if _, err := e.pool.Exec(ctx, `
 			INSERT INTO load_key_registry (org_id, source_system, kind, legacy_id, hh_id, content_hash)
@@ -383,10 +398,14 @@ func TestSupplierSKULoadRefusesABadRecordOnItsOwnItemAlone(t *testing.T) {
 
 	// A cost field is refused naming the field, not dropped: the table
 	// carries no cost column, and a silent drop would let the caller
-	// believe a cost landed.
+	// believe a cost landed. The cost items ride a supplier and product
+	// pair of their own, so the bite shows the drop itself (the item
+	// landing on its own pair) and never the pair's key conflict.
+	secondVendorID, _ := e.plantSecondSupplierSkuRefs(t)
+	secondRefs := []load.Ref{{Kind: "supplier", LegacyID: "SUP-2"}, {Kind: "product", LegacyID: "PROD-2"}}
 	r, err = e.door.UpsertBatch(ctx, load.Batch{OrgID: fxSkuOrgID, SourceSystem: fxSkuSource,
 		BatchID: "b-sk-d2", Caller: fxSkuActorID,
-		Items: []load.Item{skuItem("SK-5", "FXV-SKU-13", map[string]any{"cost": "100"}, refs...)}})
+		Items: []load.Item{skuItem("SK-5", "FXV-SKU-13", map[string]any{"cost": "100"}, secondRefs...)}})
 	if err != nil {
 		t.Fatalf("the cost batch answered an error %v, want the item refused", err)
 	}
@@ -396,7 +415,7 @@ func TestSupplierSKULoadRefusesABadRecordOnItsOwnItemAlone(t *testing.T) {
 	}
 	r, err = e.door.UpsertBatch(ctx, load.Batch{OrgID: fxSkuOrgID, SourceSystem: fxSkuSource,
 		BatchID: "b-sk-d3", Caller: fxSkuActorID,
-		Items: []load.Item{skuItem("SK-6", "FXV-SKU-14", map[string]any{"unit_cost_cents": 10000}, refs...)}})
+		Items: []load.Item{skuItem("SK-6", "FXV-SKU-14", map[string]any{"unit_cost_cents": 10000}, secondRefs...)}})
 	if err != nil {
 		t.Fatalf("the unit cost batch answered an error %v, want the item refused", err)
 	}
@@ -411,5 +430,13 @@ func TestSupplierSKULoadRefusesABadRecordOnItsOwnItemAlone(t *testing.T) {
 	}
 	if m != 1 {
 		t.Fatalf("%d rows stand at the end, want the first batch's good row alone", m)
+	}
+	var secondRows int
+	if err := e.pool.QueryRow(ctx,
+		`SELECT count(*) FROM purchasing_vendor_skus WHERE vendor_id = $1::uuid`, secondVendorID).Scan(&secondRows); err != nil {
+		t.Fatalf("second pair row count: %v", err)
+	}
+	if secondRows != 0 {
+		t.Fatalf("%d rows stand on the cost items' own pair, want none: both were refused", secondRows)
 	}
 }
