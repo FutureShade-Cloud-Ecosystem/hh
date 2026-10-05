@@ -1048,7 +1048,11 @@ func (a taskOrderAdvanceAdapter) AdvanceOrder(ctx context.Context, orderID, targ
 type invCountAdapter struct{ svc *inventory.Service }
 
 func (a invCountAdapter) SnapshotOnHand(ctx context.Context, branchID string) ([]invcount.Snapshot, error) {
-	snaps, err := a.svc.SnapshotOnHand(ctx, branchID)
+	return a.SnapshotOnHandTx(ctx, nil, branchID)
+}
+
+func (a invCountAdapter) SnapshotOnHandTx(ctx context.Context, tx pgx.Tx, branchID string) ([]invcount.Snapshot, error) {
+	snaps, err := a.svc.SnapshotOnHandTx(ctx, tx, branchID)
 	if err != nil {
 		return nil, err
 	}

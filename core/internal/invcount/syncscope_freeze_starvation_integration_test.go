@@ -71,6 +71,17 @@ func (s *freezeStarveStock) SnapshotOnHand(ctx context.Context, branchID string)
 	return s.snaps, nil
 }
 
+func (s *freezeStarveStock) SnapshotOnHandTx(ctx context.Context, tx pgx.Tx, branchID string) ([]Snapshot, error) {
+	if err := s.rendezvous(ctx); err != nil {
+		return nil, err
+	}
+	var one int
+	if err := tx.QueryRow(ctx, `SELECT 1`).Scan(&one); err != nil {
+		return nil, err
+	}
+	return s.snaps, nil
+}
+
 func (s *freezeStarveStock) WeightedAvgCostCents(ctx context.Context, productID, branchID string) (int64, error) {
 	return 500, nil
 }

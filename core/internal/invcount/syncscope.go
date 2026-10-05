@@ -474,7 +474,7 @@ func (s *SyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key strin
 		if s.stock == nil {
 			return sync.RowState{}, cycleRefused(errors.New("inventory snapshot seam not wired"))
 		}
-		snaps, err := s.stock.SnapshotOnHand(ctx, branchID)
+		snaps, err := s.stock.SnapshotOnHandTx(ctx, tx, branchID)
 		if err != nil {
 			return sync.RowState{}, fmt.Errorf("invcount: snapshot read: %w", err)
 		}

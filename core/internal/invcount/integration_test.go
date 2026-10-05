@@ -419,3 +419,7 @@ func TestI5_NegativeStockSurface(t *testing.T) {
 		t.Fatalf("negative-stock surface = %+v, want just p2 @ -5", rows)
 	}
 }
+
+func (s *fakeStockSeam) SnapshotOnHandTx(ctx context.Context, _ pgx.Tx, branchID string) ([]Snapshot, error) {
+	return s.SnapshotOnHand(ctx, branchID)
+}
