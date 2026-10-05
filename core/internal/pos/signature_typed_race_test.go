@@ -17,6 +17,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 )
 
@@ -40,6 +42,12 @@ func (s *raceStore) InsertSignature(ctx context.Context, sig signatureRow) (stri
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.fakeStore.InsertSignature(ctx, sig)
+}
+
+func (s *raceStore) InsertSignatureTx(ctx context.Context, tx pgx.Tx, sig signatureRow) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.fakeStore.InsertSignatureTx(ctx, tx, sig)
 }
 
 // raceRecorder is the audit recorder both capture paths can ride (Record for the pool capture,
@@ -115,8 +123,8 @@ func TestTypedNameProvider_FirstCapturesAreRaceFree(t *testing.T) {
 		}
 		seen[ref] = true
 	}
-	if got := len(store.signatures); got != raceContenders {
-		t.Fatalf("the pool captures must land one row each, got %d rows", got)
+	if got := len(store.signatures); got != 2*raceContenders {
+		t.Fatalf("every capture must land one row (pool and tx), got %d rows, want %d", got, 2*raceContenders)
 	}
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
@@ -124,4 +132,41 @@ func TestTypedNameProvider_FirstCapturesAreRaceFree(t *testing.T) {
 		t.Fatalf("the trail must carry %d pool rows and %d tx rows, got %d and %d",
 			raceContenders, raceContenders, rec.records, rec.txWrites)
 	}
+}
+
+// TestTypedNameProvider_ReadsRaceTheBindUnderRepeatedFills pins the READ side of the guard, which the
+// first-capture leg cannot see (there the service's locked bind orders every later read). A provider
+// bound with a nil audit recorder has bind rewrite that nil on every call (the fill is "only when
+// nil"), so a capture reading the audit field, or the clock, while another goroutine binds again is
+// a write racing a read. The leg drives the provider DIRECTLY: half the goroutines call bind with a
+// nil recorder, half capture on both paths. Red under -race when the capture paths read the provider's
+// fields without the lock (the snapshot read); green with the guard.
+func TestTypedNameProvider_ReadsRaceTheBindUnderRepeatedFills(t *testing.T) {
+	h := newHarness()
+	store := &raceStore{fakeStore: h.store}
+	p := NewTypedNameSignatureProvider(plainSealer{})
+	p.bind(store, nil, nil) // bound once with a nil recorder and no clock: bind keeps rewriting those nils
+	var wg sync.WaitGroup
+	for i := 0; i < raceContenders; i++ {
+		wg.Add(3)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 20; j++ {
+				p.bind(store, nil, nil)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 20; j++ {
+				_, _ = p.CaptureTyped(typedCtx(), okAttestation())
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 20; j++ {
+				_, _ = p.CaptureTypedTx(typedCtx(), &sealedCaptureTx{}, okAttestation())
+			}
+		}()
+	}
+	wg.Wait()
 }

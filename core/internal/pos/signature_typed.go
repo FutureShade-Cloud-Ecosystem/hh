@@ -319,7 +319,7 @@ func (p *TypedNameSignatureProvider) CaptureTypedTx(ctx context.Context, tx pgx.
 	// the module's ONE pos_signature insert), the same statement the pool capture persists through,
 	// so the row commits or rolls back with the caller's write and the two capture paths cannot
 	// carry statements that drift apart.
-	if _, err := p.store.InsertSignatureTx(ctx, tx, row); err != nil {
+	if _, err := store.InsertSignatureTx(ctx, tx, row); err != nil {
 		return "", err
 	}
 	if ride != nil {
