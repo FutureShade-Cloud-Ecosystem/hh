@@ -1478,3 +1478,13 @@ defect; both were stale tests, repaired test only, zero production lines:
   the static fixture cannot tie. The test is now `TestIntegration_M2C1_DemoSeed_RetiredSeedNetsZero` and pins the
   retirement; the tie-out machinery stays proven by `bistrack_tieout_integration_test.go`.
 The packages still excluded after this change, and why, are in the stand-in's red list reading in the pull request body.
+
+## internal/billing is back in the integration job (decision log row 804, appended; the entries above are never edited)
+
+`TestIntegration_Billing_ListInvoices_TenantFenceFilterAndPaging` was red for a REAL production defect, not a stale test and not a
+tenant leak (the tenant fence assertions all passed). The invoice list orders `issue_date DESC, invoice_no ASC` but its cursor
+predicate was the row comparison `(issue_date, invoice_no) < (cursor date, cursor no)`, which is a descending comparison on both
+keys: after a page ending at one invoice, every other invoice of the SAME issue date with a greater invoice number was skipped,
+so a customer paging the portal's AR list lost those invoices. The predicate is now `issue_date < d OR (issue_date = d AND
+invoice_no > no)`, matching the ordering. The test (unchanged) is the red proof on main and green with the fix; the package is
+green alone and the `billing` word leaves `red=` in `.github/workflows/ci.yml`.
