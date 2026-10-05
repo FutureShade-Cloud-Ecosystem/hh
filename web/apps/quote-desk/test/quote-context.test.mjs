@@ -71,3 +71,21 @@ test("waitUpTo says whether the work finished inside the bound", async () => {
   assert.equal(await waitUpTo(500, later("done")), true);
   assert.equal(await waitUpTo(20, new Promise(() => undefined)), false);
 });
+
+test("a read cancelled while it was out is dropped even when it is the newest read", async () => {
+  const ctx = new QuoteContext("q-1", 1);
+  const seq = ctx.startRead();
+  const call = ctx.guardedRead(seq, later("late"));
+  ctx.cancel();
+  assert.equal(await call, undefined);
+});
+
+test("guarded hands the dropped answer to onLate, and only a dropped one", async () => {
+  const ctx = new QuoteContext("q-1", 1);
+  const late = [];
+  assert.equal(await ctx.guarded(Promise.resolve("kept"), (answer) => late.push(answer)), "kept");
+  const call = ctx.guarded(later("dropped"), (answer) => late.push(answer));
+  ctx.cancel();
+  assert.equal(await call, undefined);
+  assert.deepEqual(late, ["dropped"]);
+});

@@ -179,7 +179,8 @@
     "file": "src/quote-context.ts",
     "find": "return this.aborted || seq !== this.reads ? undefined : answer;",
     "replace": "return this.aborted ? undefined : answer;",
-    "test": "P3 reads of one quote land in the order"
+    "test": "a newer read of the same quote supersedes an older one still out",
+    "runner": "node"
   },
   {
     "id": "wa-superseded-waits",
@@ -744,8 +745,8 @@
   {
     "id": "pk-search-order",
     "file": "src/customer-picker.ts",
-    "find": "      if (mine !== this.seq) return;\n      if (!res.ok) {",
-    "replace": "      if (!res.ok) {",
+    "find": "    if (mine !== this.seq) return;\n    this.loading = false;",
+    "replace": "    this.loading = false;",
     "test": "guard picker search:"
   },
   {
@@ -810,5 +811,50 @@
     "find": "    if (profile !== this.profile) {\n      if (result.ok) this.announceChanged();\n      return;\n    }",
     "replace": "",
     "test": "guard items save answer:"
+  },
+  {
+    "id": "wa-disc-edit",
+    "file": "src/quote-workarea.ts",
+    "find": "const result = await ctx.guarded(client.editLine(ctx.id, line.line_no, { discPct: n }));",
+    "replace": "const result = await client.editLine(ctx.id, line.line_no, { discPct: n });",
+    "test": "guard discount edit:"
+  },
+  {
+    "id": "wa-terms-timer-cleared",
+    "file": "src/quote-workarea.ts",
+    "find": "    if (this.termsTimer !== undefined) {\n      clearTimeout(this.termsTimer);\n      this.termsTimer = undefined;\n    }\n    this.termsPending = {};\n    this.termsUnsaved = false;\n    this.termsEditSeq += 1;\n    if (!dirty",
+    "replace": "    this.termsPending = {};\n    this.termsUnsaved = false;\n    this.termsEditSeq += 1;\n    if (!dirty",
+    "test": "a terms edit typed on one quote is saved to that quote"
+  },
+  {
+    "id": "ctx-guarded-stale",
+    "file": "src/quote-context.ts",
+    "find": "    if (!this.aborted) return answer;",
+    "replace": "    return answer;",
+    "test": "an answer is dropped when the context is cancelled while the call is out",
+    "runner": "node"
+  },
+  {
+    "id": "ctx-read-aborted",
+    "file": "src/quote-context.ts",
+    "find": "return this.aborted || seq !== this.reads ? undefined : answer;",
+    "replace": "return seq !== this.reads ? undefined : answer;",
+    "test": "a read cancelled while it was out is dropped",
+    "runner": "node"
+  },
+  {
+    "id": "ctx-wait-bound",
+    "file": "src/quote-context.ts",
+    "find": "    timer = setTimeout(() => resolve(false), ms);",
+    "replace": "    timer = setTimeout(() => resolve(true), ms);",
+    "test": "waitUpTo says whether the work finished inside the bound",
+    "runner": "node"
+  },
+  {
+    "id": "wa-read-order",
+    "file": "src/quote-context.ts",
+    "find": "return this.aborted || seq !== this.reads ? undefined : answer;",
+    "replace": "return this.aborted ? undefined : answer;",
+    "test": "P3 reads of one quote land in the order"
   }
 ]

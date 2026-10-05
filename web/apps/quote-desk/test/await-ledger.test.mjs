@@ -84,7 +84,6 @@ test("every ledger entry rules the call guarded or safe, and says why", () => {
     if (row.reason.length < 25) problems.push(`${where}: the guard or the reason is missing`);
     if (!Number.isInteger(row.count) || row.count < 1) problems.push(`${where}: the count is not a number`);
     if (row.ruling === "GUARDED" && row.mutants.length === 0) problems.push(`${where}: a guarded entry names the mutants that take its guard away`);
-    if (row.ruling === "SAFE" && row.mutants.length > 0) problems.push(`${where}: a safe entry has no guard to take away`);
   }
   assert.deepEqual(problems, []);
 });

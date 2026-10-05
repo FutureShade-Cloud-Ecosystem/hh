@@ -100,6 +100,23 @@ test("guard quantity edit: a refused quantity edit that answers after another qu
   await expect(page.getByTestId("qb-error")).toHaveText("");
 });
 
+test("guard discount edit: a refused discount edit that answers after another quote opened shows no error there", async ({ page }) => {
+  await seed(page, { customer_id: "c-fenwick" });
+  await signIn(page);
+  await open(page, "Q-1004");
+  await expect(page.getByTestId("qb-line")).toHaveCount(1);
+  const held = await hold(page, /\/api\/v1\/quotes\/q-1004\/lines\/1$/, { method: "PATCH", refuse: { status: 500, error: "quote: the line store is down" } });
+  const disc = page.getByTestId("qb-line-disc");
+  await disc.fill("5");
+  await disc.blur();
+  await held.asked;
+  await open(page, "Q-1001");
+  await expect(page.getByTestId("qb-line")).toHaveCount(2);
+  await held.release();
+  await settle(page);
+  await expect(page.getByTestId("qb-error")).toHaveText("");
+});
+
 test("guard remove line: a refused remove that answers after another quote opened shows no error there", async ({ page }) => {
   await seed(page, { customer_id: "c-fenwick" });
   await signIn(page);

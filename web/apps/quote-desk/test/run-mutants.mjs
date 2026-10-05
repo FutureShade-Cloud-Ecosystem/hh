@@ -29,14 +29,22 @@ for (const mutant of mutants) {
   }
   try {
     writeFileSync(path, parts.join(mutant.replace));
-    const run = spawnSync("npx", ["playwright", "test", "--grep", mutant.test, "--reporter=line"], {
-      cwd: appDir,
-      env: { ...process.env, CI: "true" },
-      encoding: "utf8",
-      timeout: 240000,
-    });
+    // A mutant is caught by a browser test, or by a unit test when it names the node runner.
+    const run =
+      mutant.runner === "node"
+        ? spawnSync(process.execPath, ["--import", "../../packages/api-client/src/_ts-js-loader.mjs", "--test", "--test-name-pattern", mutant.test, "test/quote-context.test.mjs"], {
+            cwd: appDir,
+            encoding: "utf8",
+            timeout: 240000,
+          })
+        : spawnSync("npx", ["playwright", "test", "--grep", mutant.test, "--reporter=line"], {
+            cwd: appDir,
+            env: { ...process.env, CI: "true" },
+            encoding: "utf8",
+            timeout: 240000,
+          });
     const text = `${run.stdout}${run.stderr}`;
-    const failed = /\d+ failed/.test(text) && run.status !== 0;
+    const failed = mutant.runner === "node" ? run.status !== 0 : /\d+ failed/.test(text) && run.status !== 0;
     results.push({ id: mutant.id, outcome: failed ? "RED (killed)" : "GREEN (SURVIVED)", test: mutant.test });
     if (!failed) console.log(text.split("\n").filter((line) => !line.includes("Lit is in dev mode")).slice(-12).join("\n"));
   } finally {
