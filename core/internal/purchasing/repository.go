@@ -133,11 +133,19 @@ func (r *Repository) POForUpdate(ctx context.Context, tx pgx.Tx, poID string) (P
 	return p, nil
 }
 
+// GetPO reads a PO through the pool, for callers that hold no transaction.
 func (r *Repository) GetPO(ctx context.Context, poID string) (PO, error) {
+	return r.GetPOTx(ctx, nil, poID)
+}
+
+// GetPOTx reads a PO through tx (nil means the pool). A caller inside a transaction must pass it: a read
+// through the pool there takes a second connection while the first is held, and enough of those at once
+// starve the pool.
+func (r *Repository) GetPOTx(ctx context.Context, tx pgx.Tx, poID string) (PO, error) {
 	if r.pool == nil {
 		return PO{}, errNoDB
 	}
-	p, err := scanPO(r.pool.QueryRow(ctx, `SELECT `+poCols+` FROM purchasing_pos p WHERE p.id = $1`, poID))
+	p, err := scanPO(r.q(tx).QueryRow(ctx, `SELECT `+poCols+` FROM purchasing_pos p WHERE p.id = $1`, poID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PO{}, errNotFound
 	}
@@ -560,11 +568,16 @@ func (r *Repository) Worklist(ctx context.Context, branchID string) ([]WorklistI
 // 0121 default row deleted) gets the conservative zero-tolerance answer rather than an error: a missing
 // configuration must not silently widen a control.
 func (r *Repository) Tolerance(ctx context.Context, branchID string) (Tolerance, error) {
+	return r.ToleranceTx(ctx, nil, branchID)
+}
+
+// ToleranceTx is Tolerance through tx (nil means the pool), for a caller that already holds a transaction.
+func (r *Repository) ToleranceTx(ctx context.Context, tx pgx.Tx, branchID string) (Tolerance, error) {
 	if r.pool == nil {
 		return Tolerance{}, errNoDB
 	}
 	var t Tolerance
-	err := r.pool.QueryRow(ctx, `
+	err := r.q(tx).QueryRow(ctx, `
 		SELECT COALESCE(branch_id::text,''), qty_tolerance_pct, price_tolerance_pct, price_tolerance_abs_cents
 		  FROM purchasing_match_tolerance
 		 WHERE branch_id IS NULL OR ($1 <> '' AND branch_id = $1::uuid)
