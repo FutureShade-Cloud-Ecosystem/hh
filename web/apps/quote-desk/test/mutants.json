@@ -1376,6 +1376,27 @@
     "test": "New Quote keeps the payment seam"
   },
   {
+    "id": "op-held-lock",
+    "file": "src/order-payment-panel.ts",
+    "find": "    const phase = this.attempt?.phase;\n    return this.busy || phase === \"not-known\" || phase === \"held\";",
+    "replace": "    const phase = this.attempt?.phase;\n    return this.busy;",
+    "test": "cannot become a 5 card"
+  },
+  {
+    "id": "op-held-mark",
+    "file": "src/order-payment-panel.ts",
+    "find": "    this.marked(ctx.id, isDifferentPaymentRefusal(result.error) ? \"held\" : \"kept\", words);",
+    "replace": "    this.marked(ctx.id, \"kept\", words);",
+    "test": "holds the attempt instead of looping"
+  },
+  {
+    "id": "op-start-new-reread",
+    "file": "src/order-payment-panel.ts",
+    "find": "    await this.load();\n    if (this.quoteId !== ctx.id) return;",
+    "replace": "    if (this.quoteId !== ctx.id) return;",
+    "test": "holds the attempt instead of looping"
+  },
+  {
     "id": "ws-serialize",
     "file": "src/workspace-store.ts",
     "find": "    this.#queued = send;\n    if (this.#inFlight !== null) return this.#inFlight;\n",

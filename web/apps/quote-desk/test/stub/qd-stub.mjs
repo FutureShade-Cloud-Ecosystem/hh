@@ -271,7 +271,7 @@ const HST_RATE_BPS = 1300;
 // approvalsShape: "page" is the contract's IdentityApprovalPage, "bare" is what
 // the core's handler writes today (a bare array), "paged" is the page object
 // split into pages of one row with next_cursor.
-const switches = { callerOnCostList: true, callerIsGeneralManager: false, floorRaiseBps: 0, approvalsShape: "page", quotePageSize: 0, paymentRoleRefused: false, paymentGhost: false };
+const switches = { callerOnCostList: true, callerIsGeneralManager: false, floorRaiseBps: 0, approvalsShape: "page", quotePageSize: 0, paymentRoleRefused: false, paymentGhost: false, paymentKeyCrossed: false };
 
 // Every write the stub sees, for the suite's layout save assertions. The
 // ledger is test scaffolding: no contract path reads it.
@@ -1137,6 +1137,18 @@ const server = createServer(async (request, response) => {
     });
     return;
   }
+  if (path === "/_stub/payment-key-crossed" && request.method === "PUT") {
+    // The crossed key: the next payment's key has ALREADY taken a different
+    // payment (another tab, an earlier post this desk never saw the answer
+    // of): the phantom CARD 5.00 is stored and applied under that key, so
+    // the post is answered with the core's 409 sentence and the family read
+    // shows what landed.
+    readBody(request, response, (body) => {
+      switches.paymentKeyCrossed = body.crossed === true;
+      respondJson(response, 200, { crossed: switches.paymentKeyCrossed });
+    });
+    return;
+  }
   if (path === "/_stub/foreign-invoice" && request.method === "POST") {
     readBody(request, response, (body) => {
       const quote = quoteOr404(String(body.quote_id ?? ""));
@@ -1187,6 +1199,7 @@ const server = createServer(async (request, response) => {
     switches.quotePageSize = 0;
     switches.paymentRoleRefused = false;
     switches.paymentGhost = false;
+    switches.paymentKeyCrossed = false;
     respondJson(response, 200, { reset: true });
     return;
   }
@@ -1939,6 +1952,38 @@ const server = createServer(async (request, response) => {
       // The replay is told apart first and answered with the stored payment, so a replay is never refused for a
       // balance it has since moved.
       const stored = payments.get(namespaced);
+      if (stored === undefined && switches.paymentKeyCrossed) {
+        // The crossed key: this key already took a DIFFERENT payment than the one posted. The
+        // phantom is a real stored CARD 5.00 applied to the invoice, so a later family read
+        // shows what landed and only a NEW key can take another payment.
+        const crossedInvoice = raiseAgreedInvoice(order);
+        paymentCounter += 1;
+        crossedInvoice.balance_cents -= 500;
+        crossedInvoice.status = crossedInvoice.balance_cents === 0 ? "PAID" : "PARTIALLY_PAID";
+        payments.set(namespaced, {
+          method: "CARD",
+          amount_cents: 500,
+          answer: {
+            order_id: order.id,
+            order_no: order.order_no,
+            invoice_id: crossedInvoice.id,
+            invoice_no: crossedInvoice.invoice_no,
+            invoice_total_cents: crossedInvoice.total_cents,
+            payment_id: `pay-${paymentCounter}`,
+            payment_no: `P-${String(paymentCounter).padStart(4, "0")}`,
+            method: "CARD",
+            amount_cents: 500,
+            received_at: new Date().toISOString(),
+            reference: "CROSSED",
+            received_by: userId,
+            balance_cents: crossedInvoice.balance_cents,
+            replayed: false,
+            converted: false,
+          },
+        });
+        respondJson(response, 409, { error: "this idempotency key took a different payment; use a new key for a new payment" });
+        return;
+      }
       if (stored !== undefined) {
         if (stored.method !== method || stored.amount_cents !== amount) {
           respondJson(response, 409, { error: "this idempotency key took a different payment; use a new key for a new payment" });

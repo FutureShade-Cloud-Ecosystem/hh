@@ -484,10 +484,33 @@ export class QdOrderPayment extends PanelBase {
     if (this.quoteId === ctx.id) this.refreshLive(ctx.id);
   }
 
+  /**
+   * The deliberate way out of a held attempt (the key took a different payment): a NEW payment
+   * on a fresh key, offered only after the quote and its family are read again, so what landed
+   * under the old key is on the screen before the form unlocks. A read that fails keeps the
+   * attempt held: the form never unlocks over a family it could not read.
+   */
+  private async startNew(): Promise<void> {
+    if (this.busy || this.attempt?.phase !== "held") return;
+    const ctx = this.ctx;
+    if (ctx.id === "" || ctx.stale) return;
+    await this.load();
+    if (this.quoteId !== ctx.id) return;
+    if (this.readError !== "") return;
+    this.book.clear(ctx.id);
+    const rec = this.record(ctx.id);
+    rec.attempt = null;
+    rec.refusal = "";
+    this.attempt = null;
+    this.error = "";
+    this.unknown = "";
+  }
+
   // ── delegation ────────────────────────────────────────────────────────────
 
   protected override onClickAction(action: string, control: HTMLElement): void {
     if (action === "take-payment") void this.take();
+    if (action === "start-new") void this.startNew();
     if (action === "tender") {
       if (this.fieldsLocked) return;
       const picked = control.getAttribute("data-tender");
@@ -597,6 +620,12 @@ export class QdOrderPayment extends PanelBase {
         </div>
         ${this.unknown !== "" ? html`<p class="err" role="status" data-testid="op-unknown">${this.unknown}</p>` : nothing}
         ${this.error !== "" ? html`<p class="err" role="alert" data-testid="op-error">${this.error}</p>` : nothing}
+        ${this.attempt?.phase === "held"
+          ? html`<div class="row">
+              <button type="button" data-action="start-new" data-testid="op-start-new">Start a new payment</button>
+              <span class="note">A new payment gets a new key. The documents above are read again first, so what landed under the held key is on the screen before the form unlocks.</span>
+            </div>`
+          : nothing}
         ${this.notice !== "" ? html`<p class="ok" role="status" data-testid="op-notice">${this.notice}</p>` : nothing}
         ${this.renderReceipt()}
       </fieldset>

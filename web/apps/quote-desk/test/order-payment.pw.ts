@@ -405,6 +405,67 @@ test("New Quote keeps the payment seam mounted, so a payment that lands while co
   expect(keys).toHaveLength(1);
 });
 
+test("a ghosted 10 cash cannot become a 5 card: while the outcome is not known the fields are locked to the attempt, and the way through is the retry or a fresh payment", async ({ page }) => {
+  await signIn(page);
+  await openWithPayment(page, "Q-2101");
+  await page.request.put("/_stub/payment-ghost", { data: { ghost: true } });
+  await take(page, "10.00", "AUTH 9", "CARD");
+  await expect(pay(page).getByTestId("op-unknown")).toContainText("not known");
+  // The reviewer's sequence: the cashier tries to change the payment to 5 CARD while the
+  // outcome is not known. The form does not offer the change: the fields are locked to the
+  // attempt, so no post can carry one key with two different payments.
+  await expect(pay(page).locator('[data-field="amount"]')).toBeDisabled();
+  await expect(pay(page).getByTestId("op-tenders").getByRole("button", { name: "CASH", exact: true })).toBeDisabled();
+  // The retry is the same attempt: the same key replays the ghost's payment.
+  await pay(page).getByTestId("op-take").click();
+  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("CA$10.00");
+  await expect(pay(page).getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("CA$27.06");
+  let keys = await postedKeys(page);
+  expect(keys).toHaveLength(2);
+  expect(keys[0]).toBe(keys[1]);
+  // A new deliberate payment after the taken one mints a fresh key and may be 5 CARD.
+  await page.request.put("/_stub/payment-ghost", { data: { ghost: false } });
+  await take(page, "5.00", "", "CARD");
+  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("CA$5.00");
+  await expect(pay(page).getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("CA$22.06");
+  keys = await postedKeys(page);
+  expect(keys).toHaveLength(3);
+  expect(keys[2]).not.toBe(keys[0]);
+});
+
+test("a 409 that says the key took a different payment holds the attempt instead of looping: the first payment's figures stay and a new payment starts only after a fresh read", async ({ page }) => {
+  await signIn(page);
+  await openWithPayment(page, "Q-2101");
+  await page.request.put("/_stub/payment-key-crossed", { data: { crossed: true } });
+  await take(page, "10.00", "AUTH 1", "CARD");
+  // The server's own sentence, said plainly.
+  await expect(pay(page).getByTestId("op-error")).toHaveText("This idempotency key took a different payment; use a new key for a new payment");
+  // The first attempt's details stay visible and locked: the amount box holds the 10.00 that was sent.
+  await expect(pay(page).locator('[data-field="amount"]')).toBeDisabled();
+  await expect(pay(page).locator('[data-field="amount"]')).toHaveValue("10.00");
+  await expect(pay(page).getByTestId("op-start-new")).toBeVisible();
+  // A retry is still offered and still refused in the same words: no second payment is taken.
+  await pay(page).getByTestId("op-take").click();
+  await expect(pay(page).getByTestId("op-error")).toHaveText("This idempotency key took a different payment; use a new key for a new payment");
+  await expect(pay(page).getByTestId("op-receipt")).toHaveCount(0);
+  let keys = await postedKeys(page);
+  expect(keys).toHaveLength(2);
+  expect(keys[0]).toBe(keys[1]);
+  // The way forward: start a new payment, which re-reads the family first, so what landed (the
+  // crossed key's CARD 5.00) is on the screen before the form unlocks.
+  await pay(page).getByTestId("op-start-new").click();
+  await expect(pay(page).getByTestId("op-figures")).toContainText("Part paid");
+  await expect(pay(page).getByTestId("op-start-new")).toHaveCount(0);
+  await expect(pay(page).getByTestId("op-error")).toHaveCount(0);
+  await expect(pay(page).locator('[data-field="amount"]')).toBeEnabled();
+  await page.request.put("/_stub/payment-key-crossed", { data: { crossed: false } });
+  await take(page, "5.00", "", "CARD");
+  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("CA$5.00");
+  keys = await postedKeys(page);
+  expect(keys).toHaveLength(3);
+  expect(keys[2]).not.toBe(keys[0]);
+});
+
 test("an amount that is not a number this desk can send is refused before any post", async ({ page }) => {
   await signIn(page);
   await openWithPayment(page, "Q-2101");
