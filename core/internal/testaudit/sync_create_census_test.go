@@ -10,8 +10,8 @@ package testaudit
 // Fifteen stores carried it and each was fixed by an unexported loader over a querier that the
 // conflict arm calls with the transaction (`s.load(ctx, tx, ...)`); each fix has its own pool-size leg.
 //
-// WHAT THIS CENSUS PINS. Every type in the module that has both a Create and a Load method is
-// classified here, by an AST walk of the production sources (no database), into exactly one of:
+// WHAT THIS CENSUS PINS. Every type in the module that has both a Create and a Load method (and
+// every type whose own Create calls a Load it inherits) is classified here, by an AST walk of the production sources (no database), into exactly one of:
 //   - fixed: Create reaches the loader through the transaction (s.load(ctx, tx, ...)) and never
 //     calls the public Load;
 //   - noTxHeld: Create calls the public Load but holds no transaction of its own at that point
@@ -274,6 +274,9 @@ func classifySyncStores(t *testing.T, internalRoot string) map[string]censusClas
 	// classOf classifies a store from Create's reach (scan of sf) and the loader's body (loaderFrom:
 	// the store itself, or the embedded store it inherits Load and load from).
 	classOf := func(sf, loaderFrom *storeFacts) censusClass {
+		if _, own := sf.methods["load"]; own {
+			loaderFrom = sf // a store that declares its own loader is judged by it, not by an inherited one
+		}
 		pool, viaTx := scan(sf)
 		switch {
 		case pool > 0:
@@ -303,13 +306,23 @@ func classifySyncStores(t *testing.T, internalRoot string) map[string]censusClas
 					}
 				}
 			}
+			keys := make([]typeKey, 0, len(facts))
+			for ek := range facts {
+				keys = append(keys, ek)
+			}
+			sort.Slice(keys, func(i, j int) bool {
+				if keys[i].dir != keys[j].dir {
+					return keys[i].dir < keys[j].dir
+				}
+				return keys[i].typ < keys[j].typ
+			})
 			for _, e := range sf.embeds {
-				for ek, esf := range facts {
+				for _, ek := range keys {
 					if ek.typ != e {
 						continue
 					}
-					if _, el := esf.methods["Load"]; el {
-						return esf
+					if _, el := facts[ek].methods["Load"]; el {
+						return facts[ek]
 					}
 				}
 			}
@@ -323,6 +336,10 @@ func classifySyncStores(t *testing.T, internalRoot string) map[string]censusClas
 		if hasCreate && !hasLoad {
 			if esf := findEmbedded(); esf != nil {
 				out[name] = classOf(sf, esf)
+			} else if pool, viaTx := scan(sf); pool > 0 || viaTx > 0 {
+				// A Load inherited some other way (two levels down, an embedded interface): a call to
+				// s.Load in Create only compiles if Load is reachable, so counting it is sound evidence.
+				out[name] = classOf(sf, sf)
 			}
 			continue
 		}
