@@ -16,14 +16,23 @@ import (
 // before it is fully buffered.
 const maxResolveBodyBytes = 1 << 20
 
+// maxReceivablesBodyBytes bounds a receivables body: the bound item
+// list at the record's full shape, plus framing, with headroom.
+const maxReceivablesBodyBytes = 4 << 20
+
 // Handler serves the frame's two documented operations, loadGetBatch and
-// loadResolveKeys, both read semantics. The org comes from the machine
-// scope the gate stamps on the request (ADR-0024): the gate owns X-Org
-// and every refusal for it is the one 403 body, so the handler reads no
-// header of its own.
+// loadResolveKeys, both read semantics, and carries the receivables door
+// (LD-11) when the wiring binds one: the write door registers only in
+// that composition, still behind the machine gate and the deployment's
+// switch, and a handler with no door bound answers 404 for its path,
+// the same answer an unregistered route carries. The org comes from the
+// machine scope the gate stamps on the request (ADR-0024): the gate owns
+// X-Org and every refusal for it is the one 403 body, so the handler
+// reads no header of its own.
 type Handler struct {
-	store *Store
-	log   *slog.Logger
+	store       *Store
+	log         *slog.Logger
+	receivables *ReceivablesDoor
 }
 
 // NewHandler wires the handler over the frame's store.
@@ -31,14 +40,26 @@ func NewHandler(store *Store, log *slog.Logger) *Handler {
 	return &Handler{store: store, log: log}
 }
 
-// RegisterRoutes registers the two operations. No guard lives in the
-// handler: the routes are machine surface, and the machine gate wraps
-// them at the registrar (ADR-0024), which is also where the deployment's
-// switch lives; the wiring registers them only where the configuration
-// switched the doors on and the machine gate rides the registrar.
+// WithReceivables binds the open receivables door (LD-11): the PUT path
+// registers only in a composition that carries the door, which is the
+// wiring behind the deployment's switch and the machine gate.
+func (h *Handler) WithReceivables(d *ReceivablesDoor) *Handler {
+	h.receivables = d
+	return h
+}
+
+// RegisterRoutes registers the operations this composition carries. No
+// guard lives in the handler: the routes are machine surface, and the
+// machine gate wraps them at the registrar (ADR-0024), which is also
+// where the deployment's switch lives; the wiring registers them only
+// where the configuration switched the doors on and the machine gate
+// rides the registrar.
 func (h *Handler) RegisterRoutes(r httpx.Registrar) {
 	r.Handle("GET /api/v1/load/batches/{id}", http.HandlerFunc(h.getBatch))
 	r.Handle("POST /api/v1/load/keys/resolve", http.HandlerFunc(h.resolveKeys))
+	if h.receivables != nil {
+		r.Handle("PUT /api/v1/load/receivables", http.HandlerFunc(h.putReceivables))
+	}
 }
 
 // machineRefused writes the machine leg's one 403 body, byte for byte
