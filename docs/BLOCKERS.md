@@ -1497,6 +1497,15 @@ test passed on main (the order, raw id, customer and payment cases and the Kings
 leak. The assertion now requires the row to be Trenton's and never Kingston's; a production bite (the adapter naming the wrong
 branch) turns it red. The package is green alone and the `assist/adapters` word leaves `red=` in `.github/workflows/ci.yml`.
 
+## internal/compliance is back in the integration job (decision log row 804, appended; the entries above are never edited)
+
+`TestIntegration_Compliance_HTTPSurface_ServesAndIsManagerGated` read 401 because the test drove the kit's real guards without a
+bearer: after the guards swap the route is refused "Missing or invalid credentials" before the authority is consulted, which is
+the guard doing its job and not a leak (an unauthenticated call reaches nothing). The test now sends the staff bearer and the
+X-Org header the kit's double admits. The fence legs bite: with the calendar route moved behind the staff guard instead of the
+manager guard, the frontline authority leg reads 200 and the test fails; restored byte identical. The package is green alone and
+the `compliance` word leaves `red=` in `.github/workflows/ci.yml`.
+
 The billing entry above, a follow-up (decision log row 804, review round 1): the old predicate also RE-SERVED same-day invoices with a
 LOWER number whenever a page ended mid date beyond the first invoice of that date, as well as skipping those with a greater one. The
 same descending row comparison against an ascending tiebreak is written at three other sites that this change does not touch:
@@ -1504,3 +1513,9 @@ same descending row comparison against an ascending tiebreak is written at three
 `core/internal/quote/edit_repository.go` (about line 588). The quote files belong to the Quote Desk lane; each needs the same two-part
 predicate (`key < cursor OR (key = cursor AND tiebreak > cursor tiebreak)`) wherever its ORDER BY mixes directions. Not exercised
 against a database here; found by reading.
+
+The compliance entry above, corrected (decision log row 804, review round 1): the fence leg was one route of four when that entry
+said "legs". The test now refuses the frontline authority on all four routes (the calendar, upcoming, the review-status read and
+the review-status upsert, which also proves the refused upsert wrote nothing) and asserts a call with no bearer is refused 401.
+Moving any one of the four routes from the manager guard to the staff guard turns the test red (three production bites run, each
+restored byte identical).
