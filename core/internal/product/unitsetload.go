@@ -16,8 +16,8 @@
 // factor refuses naming factor_type, never re-spelled), positive and at
 // scale eight or under, a factor beyond refused naming the legacy key
 // and the field, never a value, never rounded (the plan's section 8
-// point 3); every code naming a catalogue unit; the product's price
-// unit inside the set; no unit removed while a row of the pricing,
+// point 3); every code trimmed and naming a catalogue unit; the
+// product's price unit inside the set; no unit removed while a row of the pricing,
 // stock or supplier families still names it (checked through the owning
 // modules' read seams beside their own tables: the price and break and
 // rule rows of the product and of the product's category, the
@@ -53,6 +53,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/load"
 	"github.com/jackc/pgx/v5"
@@ -129,6 +130,13 @@ func (w UnitSetLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) 
 		if r.code == "" {
 			return "", &load.Refusal{Code: "field_required", Field: "code",
 				Detail: "a row of the set names no unit code"}
+		}
+		// The same gate the unit door runs: a padded spelling is not a
+		// unit, and the catalogue read's no_unit_row answer would name
+		// the wrong reason for it.
+		if r.code != strings.TrimSpace(r.code) {
+			return "", &load.Refusal{Code: "record_shape", Field: "code",
+				Detail: "a row of the set names a code that carries a leading or trailing space"}
 		}
 		f, refused := parseUnitFactor(r.qty)
 		if refused != nil {

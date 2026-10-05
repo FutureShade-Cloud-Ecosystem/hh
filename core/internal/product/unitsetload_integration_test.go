@@ -677,6 +677,78 @@ func TestUnitSetRefusesARemovalTheVendorSkuNames(t *testing.T) {
 	}
 }
 
+// TestUnitSetRefusesOneCodeTwiceUnderTheDatabaseFold pins the set's
+// duplicate code check: two spellings of one code are one row claimed
+// twice, folded the way the database folds (lower() through the
+// database, case and non ASCII letters alike), and the second would
+// overwrite the first silently if the check left. Both pairs refuse as
+// a record shape on code; the bite that proves the pin is the fold
+// itself (the check's lower(c) read as a case sensitive count turns
+// both cases red).
+func TestUnitSetRefusesOneCodeTwiceUnderTheDatabaseFold(t *testing.T) {
+	e := unitSetSetup(t)
+	ctx := context.Background()
+	for _, probe := range []struct {
+		batch string
+		rows  []map[string]any
+	}{
+		{"b-set-dup-ascii", []map[string]any{
+			{"code": "SF", "qty_in_base": "1", "is_base": true},
+			{"code": "PLT", "qty_in_base": "60", "is_base": false},
+			{"code": "plt", "qty_in_base": "60", "is_base": false}}},
+		{"b-set-dup-nonascii", []map[string]any{
+			{"code": "SF", "qty_in_base": "1", "is_base": true},
+			{"code": "ÆX", "qty_in_base": "4", "is_base": false},
+			{"code": "æx", "qty_in_base": "4", "is_base": false}}},
+	} {
+		r, err := e.door.UpsertBatch(ctx, load.Batch{OrgID: fxSetOrgID, SourceSystem: fxSetSource,
+			BatchID: probe.batch, Caller: fxSetActorID,
+			Items:   []load.Item{setItem("US-1", probe.rows...)}})
+		if err != nil {
+			t.Fatalf("duplicate batch %s: %v", probe.batch, err)
+		}
+		o := setOutcome(t, r, "US-1")
+		if o.Status != load.OutcomeRefused || o.Reason != "record_shape" || o.Field != "code" {
+			t.Fatalf("the doubled code answered %+v, want refused as record_shape on code", o)
+		}
+		if strings.Contains(o.Detail, "PLT") || strings.Contains(o.Detail, "ÆX") {
+			t.Fatalf("the duplicate refusal carries a value: %q", o.Detail)
+		}
+		got := e.setCodes(t, fxSetProdOne)
+		if len(got) != 3 {
+			t.Fatalf("the refused duplicate left %d rows: %+v, want the three seeded rows untouched", len(got), got)
+		}
+	}
+}
+
+// TestUnitSetRefusesAPaddedCode: a row of the set naming a code with a
+// leading or trailing space refuses as a record shape on code, the same
+// gate the unit door runs: the padded spelling is not a unit, and the
+// catalogue read's no_unit_row answer would name the wrong reason for
+// it.
+func TestUnitSetRefusesAPaddedCode(t *testing.T) {
+	e := unitSetSetup(t)
+	ctx := context.Background()
+	r, err := e.door.UpsertBatch(ctx, load.Batch{OrgID: fxSetOrgID, SourceSystem: fxSetSource,
+		BatchID: "b-set-pad", Caller: fxSetActorID,
+		Items: []load.Item{setItem("US-1",
+			setRow("SF", "1", true), setRow("PLT", "60", false), setRow("BOX ", "20", false))}})
+	if err != nil {
+		t.Fatalf("padded code batch: %v", err)
+	}
+	o := setOutcome(t, r, "US-1")
+	if o.Status != load.OutcomeRefused || o.Reason != "record_shape" || o.Field != "code" {
+		t.Fatalf("the padded code answered %+v, want refused as record_shape on code", o)
+	}
+	if strings.Contains(o.Detail, "BOX") {
+		t.Fatalf("the padded code refusal carries a value: %q", o.Detail)
+	}
+	got := e.setCodes(t, fxSetProdOne)
+	if len(got) != 3 {
+		t.Fatalf("the refused padded code left %d rows: %+v, want the three seeded rows untouched", len(got), got)
+	}
+}
+
 // TestUnitSetPoolFourThreeContendersEveryCallOnTheBatchTransaction is
 // the pool 4 leg for the unit set door (decision row 786).
 func TestUnitSetPoolFourThreeContendersEveryCallOnTheBatchTransaction(t *testing.T) {
