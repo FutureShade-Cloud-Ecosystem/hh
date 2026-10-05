@@ -16678,6 +16678,147 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/pricing/branch-prices:
+    get:
+      operationId: pricingListBranchPrices
+      tags:
+        - staff-pricing
+      summary: List the branch prices beside the dealer-wide anchor
+      description: "The live rows of the branch price table: one price per product and branch where the branch's own price stands instead of the dealer-wide anchor. Tombstoned rows are not listed; their trail stays in the change log. Ordered by product and branch."
+      x-addition: branch prices beside the dealer-wide anchor (plan CP0-5, HH-LOAD-1 LD-7); no ERP source route
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - dealer-admin
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: product_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: branch_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The page of branch prices
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingBranchPricePage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/pricing/branch-prices/{productId}/{branchId}:
+    put:
+      operationId: pricingPutBranchPrice
+      tags:
+        - staff-pricing
+      summary: Set one product's price at one branch
+      description: "A create and an update are the same act (the set), idempotent, money as integer cents (a non whole cent does not decode and is refused) and never negative. The price is per the named unit. An identical re-set moves nothing: no new change log row, no fresh sequence. Every change files a row in the pricing change log with the branch named, before and after, and stamps the row's org and sync sequence. At a branch whose price stands, the resolver starts from it and every percent rule, quantity break and promotion works from that start as it does from the dealer-wide anchor."
+      x-addition: branch prices beside the dealer-wide anchor (plan CP0-5, HH-LOAD-1 LD-7); no ERP source route
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - dealer-admin
+        level: manage
+        list: pricing_editors
+      x-guards:
+        - requirePathUUID
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: productId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: branchId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PricingBranchPriceWrite"
+      responses:
+        "200":
+          description: The stored branch price
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingBranchPrice"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          description: Validation failed against the pricing vocabulary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: pricingDeleteBranchPrice
+      tags:
+        - staff-pricing
+      summary: Remove one product's branch price
+      description: "The row is tombstoned and the trail carries the price the delete took away, with the branch named: at that branch the dealer-wide anchor answers again. An absent row is the 404."
+      x-addition: branch prices beside the dealer-wide anchor (plan CP0-5, HH-LOAD-1 LD-7); no ERP source route
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - dealer-admin
+        level: manage
+        list: pricing_editors
+      x-guards:
+        - requirePathUUID
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: productId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: branchId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The branch price was removed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingStatusResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/pricing/price-file/vendors:
     get:
       operationId: pricingListPriceFileVendors
@@ -42647,6 +42788,59 @@ components:
             - boolean
             - "null"
           description: Absent or null means active on write
+    PricingBranchPrice:
+      type: object
+      description: "One pricing_branch_prices row: the price at one branch for one product, beside the dealer-wide anchor. Money is integer cents."
+      required:
+        - product_id
+        - branch_id
+        - list_price_cents
+        - price_uom
+        - updated_at
+      properties:
+        product_id:
+          type: string
+          format: uuid
+        branch_id:
+          type: string
+          format: uuid
+        list_price_cents:
+          type: integer
+          format: int64
+        price_uom:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+    PricingBranchPriceWrite:
+      type: object
+      required:
+        - list_price_cents
+        - price_uom
+      properties:
+        list_price_cents:
+          type: integer
+          format: int64
+          description: The money as integer cents, never negative
+        price_uom:
+          type: string
+          description: The unit the price is per
+    PricingBranchPricePage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PricingBranchPrice"
+        next_cursor:
+          type:
+            - string
+            - "null"
+        limit:
+          type: integer
+          format: int32
     PricingRebateProgram:
       type: object
       description: One rebate_programs row. An absent ends_at is open-ended; the coverage window is half-open like a promotion's.

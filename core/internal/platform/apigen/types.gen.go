@@ -5808,6 +5808,25 @@ type PricingClearanceWrite struct {
 	IsActive            *bool     `json:"is_active,omitempty"`
 }
 
+type PricingBranchPrice struct {
+	ProductId      string    `json:"product_id"`
+	BranchId       string    `json:"branch_id"`
+	ListPriceCents int64     `json:"list_price_cents"`
+	PriceUom       string    `json:"price_uom"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+type PricingBranchPriceWrite struct {
+	ListPriceCents int64  `json:"list_price_cents"`
+	PriceUom       string `json:"price_uom"`
+}
+
+type PricingBranchPricePage struct {
+	Items      []PricingBranchPrice `json:"items"`
+	NextCursor *string              `json:"next_cursor,omitempty"`
+	Limit      *int32               `json:"limit,omitempty"`
+}
+
 type PricingRebateProgram struct {
 	Id               string     `json:"id"`
 	Code             string     `json:"code"`

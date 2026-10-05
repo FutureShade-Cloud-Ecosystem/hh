@@ -120,6 +120,7 @@ reason instead).
 | `DELETE /api/v1/orders/{id}/lines/{lineNo}` | hardscapeos_dibbits/backend/internal/order/edit_handler.go:31 |
 | `DELETE /api/v1/pos/parked/{id}` | hardscapeos_dibbits/backend/internal/pos/handler.go:84 |
 | `DELETE /api/v1/pos/workspace` | hardscapeos_dibbits/backend/internal/pos/handler.go:75 |
+| `DELETE /api/v1/pricing/branch-prices/{productId}/{branchId}` | (addition) Removes one product's branch price (plan CP0-5, HH-LOAD-1 LD-7), tombstoned and trailed in the change log with the branch named; no ERP source route. |
 | `DELETE /api/v1/pricing/clearance/{productId}` | hardscapeos_dibbits/backend/internal/pricing/w4_handler.go:41 |
 | `DELETE /api/v1/pricing/overrides/{id}` | hardscapeos_dibbits/backend/internal/pricing/handler.go:83 |
 | `DELETE /api/v1/pricing/promotions/{id}` | hardscapeos_dibbits/backend/internal/pricing/w4_handler.go:36 |
@@ -324,11 +325,13 @@ reason instead).
 | `GET /api/v1/pos/sales/{id}/receipt` | hardscapeos_dibbits/backend/internal/printing/handler.go:34 |
 | `GET /api/v1/pos/salespeople` | hardscapeos_dibbits/backend/internal/pos/handler.go:43 |
 | `GET /api/v1/pos/stock-glance` | hardscapeos_dibbits/backend/internal/pos/handler.go:41 |
+| `GET /api/v1/pos/tax-rate` | (addition) Row 661: the counter-readable tax rate; the rate the ring binds, read through the ring's own assessor, with the stored round rule beside it; no ERP source route. |
 | `GET /api/v1/pos/workspace` | hardscapeos_dibbits/backend/internal/pos/handler.go:73 |
 | `GET /api/v1/pricing/audit` | hardscapeos_dibbits/backend/internal/pricing/handler.go:86 |
 | `GET /api/v1/pricing/batches` | hardscapeos_dibbits/backend/internal/pricing/batch_handler.go:17 |
 | `GET /api/v1/pricing/batches/{id}` | hardscapeos_dibbits/backend/internal/pricing/batch_handler.go:19 |
 | `GET /api/v1/pricing/batches/{id}/lines` | hardscapeos_dibbits/backend/internal/pricing/batch_handler.go:20 |
+| `GET /api/v1/pricing/branch-prices` | (addition) The branch price list beside the dealer-wide anchor (plan CP0-5, HH-LOAD-1 LD-7); the ERP carries one list price per product and no branch price table; no ERP source route. |
 | `GET /api/v1/pricing/category-policies` | hardscapeos_dibbits/backend/internal/pricing/handler.go:76 |
 | `GET /api/v1/pricing/change-log` | hardscapeos_dibbits/backend/internal/pricing/batch_handler.go:30 |
 | `GET /api/v1/pricing/clearance` | hardscapeos_dibbits/backend/internal/pricing/w4_handler.go:39 |
@@ -621,6 +624,8 @@ reason instead).
 | `POST /api/v1/pricing/batches/{id}/import` | hardscapeos_dibbits/backend/internal/pricing/batch_handler.go:22 |
 | `POST /api/v1/pricing/batches/apply-due` | hardscapeos_dibbits/backend/internal/pricing/batch_handler.go:25 |
 | `POST /api/v1/pricing/customers/{customerId}/overrides` | hardscapeos_dibbits/backend/internal/pricing/handler.go:81 |
+| `POST /api/v1/pricing/floor-confirmations` | (addition) Records in the pricing log that the editor confirmed a floor warning (plan CP0-6, QD-4); the ERP's pricing writes log their own change and nothing records a confirmation; no ERP source route. |
+| `POST /api/v1/pricing/floor-preview` | (addition) The pricing editors' floor warning (plan CP0-6, QD-4): grades the products a proposed rule, customer price, margin policy or quantity break would put under the floor, through the resolver, writing nothing; the ERP's low-margin report grades supplied lines at today's prices only and its writes carry no warning; no ERP source route. |
 | `POST /api/v1/pricing/price-file/apply` | hardscapeos_dibbits/backend/internal/pricing/pricefile_handler.go:45 |
 | `POST /api/v1/pricing/price-file/preview` | hardscapeos_dibbits/backend/internal/pricing/pricefile_handler.go:44 |
 | `POST /api/v1/pricing/promotions` | hardscapeos_dibbits/backend/internal/pricing/w4_handler.go:34 |
@@ -648,6 +653,8 @@ reason instead).
 | `POST /api/v1/quotes/{id}/holds/resync` | hardscapeos_dibbits/backend/internal/quote/reserve_handler.go:27 |
 | `POST /api/v1/quotes/{id}/lines` | hardscapeos_dibbits/backend/internal/quote/edit_handler.go:38 |
 | `POST /api/v1/quotes/{id}/lines/{lineNo}/compare` | hardscapeos_dibbits/backend/internal/quote/edit_handler.go:50 |
+| `POST /api/v1/quotes/{id}/lines/{lineNo}/floor-approval` | (addition) The quote floor's request door (plan 1.1): files one approval request bound to that quote, that line and that discount; the ERP's margin request was a generic identity filing with no line binding; no ERP source route. |
+| `POST /api/v1/quotes/{id}/order-payment` | (addition) The counter's payment door on a converted quote's order (plan 1.1, QD-5): raises the order's invoice at the agreed totals and settles the payment through the payments settle; the ERP's one payment route is the register's record-payment against an existing invoice and no route finds the order a quote became; no ERP source route. |
 | `POST /api/v1/quotes/{id}/share-links` | hardscapeos_dibbits/backend/internal/quote/share_handler.go:23 |
 | `POST /api/v1/quotes/{id}/sms-share` | hardscapeos_dibbits/backend/internal/quote/followup_handler.go:33 |
 | `POST /api/v1/reporting/commission/rules` | hardscapeos_dibbits/backend/internal/reporting/handler.go:53 |
@@ -746,6 +753,7 @@ reason instead).
 | `PUT /api/v1/platform/tour/steps` | hardscapeos_dibbits/backend/internal/tour/handler.go:49 |
 | `PUT /api/v1/pos/policy` | hardscapeos_dibbits/backend/internal/pos/handler.go:65 |
 | `PUT /api/v1/pos/workspace` | hardscapeos_dibbits/backend/internal/pos/handler.go:74 |
+| `PUT /api/v1/pricing/branch-prices/{productId}/{branchId}` | (addition) Sets one product's price at one branch (plan CP0-5, HH-LOAD-1 LD-7): the ERP's one list price write path is keyed by product alone and carries no branch dimension; no ERP source route. |
 | `PUT /api/v1/pricing/category-policies/{categoryId}` | hardscapeos_dibbits/backend/internal/pricing/handler.go:77 |
 | `PUT /api/v1/pricing/clearance/{productId}` | hardscapeos_dibbits/backend/internal/pricing/w4_handler.go:40 |
 | `PUT /api/v1/pricing/import-profiles/{id}` | hardscapeos_dibbits/backend/internal/pricing/batch_handler.go:28 |
