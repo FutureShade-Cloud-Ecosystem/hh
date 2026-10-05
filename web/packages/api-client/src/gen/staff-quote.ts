@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { QuoteAcceptanceSettings, QuoteAcceptanceSettingsWrite, QuoteBranchStockList, QuoteConvertRequest, QuoteConvertResult, QuoteCreateRequest, QuoteEditHistory, QuoteEditResult, QuoteFloorApprovalAnswer, QuoteFloorApprovalRequest, QuoteFollowUpHistory, QuoteHoldExpiryView, QuoteHoldList, QuoteHoldReleaseResult, QuoteHoldResyncResult, QuoteLineAddRequest, QuoteLineAvailabilityList, QuoteLineCompareRequest, QuoteLineComparison, QuoteLinePatchRequest, QuoteMargin, QuoteMintedShareLink, QuotePolicy, QuoteRelatedDocumentList, QuoteSMSShareRequest, QuoteSMSShareResult, QuoteShareLinkList, QuoteShareLinkMintRequest, QuoteSummaryPage, QuoteTerms, QuoteTermsInput, QuoteValidUntilWrite, QuoteView } from "./types.js";
+import type { QuoteAcceptanceSettings, QuoteAcceptanceSettingsWrite, QuoteBranchStockList, QuoteConvertRequest, QuoteConvertResult, QuoteCreateRequest, QuoteEditHistory, QuoteEditResult, QuoteFloorApprovalAnswer, QuoteFloorApprovalRequest, QuoteFollowUpHistory, QuoteHoldExpiryView, QuoteHoldList, QuoteHoldReleaseResult, QuoteHoldResyncResult, QuoteLineAddRequest, QuoteLineAvailabilityList, QuoteLineCompareRequest, QuoteLineComparison, QuoteLinePatchRequest, QuoteMargin, QuoteMintedShareLink, QuoteOrderPaymentRequest, QuoteOrderPaymentResult, QuotePolicy, QuoteRelatedDocumentList, QuoteSMSShareRequest, QuoteSMSShareResult, QuoteShareLinkList, QuoteShareLinkMintRequest, QuoteSummaryPage, QuoteTerms, QuoteTermsInput, QuoteValidUntilWrite, QuoteView } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -408,6 +408,23 @@ export async function quoteMarginGlance(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "quoteMarginGlance",
+  });
+}
+
+export async function quoteTakeOrderPayment(
+  client: ApiClient,
+  id: string | number,
+  body: QuoteOrderPaymentRequest,
+  call?: ApiCallOptions
+): Promise<Result<QuoteOrderPaymentResult>> {
+  return client.request<QuoteOrderPaymentResult>({
+    method: "POST",
+    path: "/api/v1/quotes/{id}/order-payment",
+    pathParams: { id },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "quoteTakeOrderPayment",
   });
 }
 

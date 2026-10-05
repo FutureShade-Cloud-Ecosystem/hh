@@ -17,6 +17,7 @@ import (
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -184,11 +185,12 @@ func (a *qd1Arbiter) EvaluateLineFloor(_ context.Context, in pricing.FloorQuesti
 	}, nil
 }
 
-func (a *qd1Arbiter) RecordFloorDecision(ctx context.Context, rec pricing.FloorRecord) {
+func (a *qd1Arbiter) RecordFloorDecisionTx(ctx context.Context, tx pgx.Tx, rec pricing.FloorRecord) error {
 	a.recorded = append(a.recorded, rec)
 	if a.records != nil {
-		a.records.RecordFloorDecision(ctx, rec)
+		return a.records.RecordFloorDecisionTx(ctx, tx, rec)
 	}
+	return nil
 }
 
 // qd1SetDisc writes a stored discount on a seeded line directly, the
@@ -204,12 +206,16 @@ func qd1SetDisc(t *testing.T, pool *pgxpool.Pool, quoteID string, lineNo, discPc
 	}
 }
 
-// qd1BypassRows reads the pricing log rows the decision wrote for one quote.
+// qd1BypassRows reads the pricing log's BYPASS rows for one quote. The
+// action filter is the point (QD-2): a below rule above floor write now
+// leaves an UPDATE row beside any BYPASS row, and this helper answers only
+// the bypasses its name promises.
 func qd1BypassRows(t *testing.T, pool *pgxpool.Pool, quoteID string) []string {
 	t.Helper()
 	rows, err := pool.Query(context.Background(), `
-		SELECT action FROM pricing_audit_log WHERE ref_entity_type = 'quote' AND ref_entity_id = $1
-		ORDER BY created_at`, quoteID)
+		SELECT action FROM pricing_audit_log
+		 WHERE ref_entity_type = 'quote' AND ref_entity_id = $1 AND action = 'BYPASS'
+		 ORDER BY created_at`, quoteID)
 	if err != nil {
 		t.Fatalf("read pricing log: %v", err)
 	}
