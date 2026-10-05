@@ -122,7 +122,14 @@ func (s *Service) buildEntry(ctx context.Context, a SensitiveAccess) Entry {
 	// Base allowlisted fields. masked_ref is re-enforced here even though the caller is expected to
 	// have masked it ("already masked by the caller; the boundary re-enforces").
 	put("purpose", a.Purpose)
-	put("masked_ref", a.MaskedRef)
+	if a.Action == ActSignatureCapture && isSignatureReference(a.MaskedRef) {
+		// The minted signature reference is the capture row's only reference; its random hex often
+		// carries a 7+ digit run that the cleartext detector would read as an identifier. Exempt
+		// here, for this action and this field alone (isSignatureReference states the bounds).
+		changes["masked_ref"] = a.MaskedRef
+	} else {
+		put("masked_ref", a.MaskedRef)
+	}
 	put("reason", a.Reason)
 	// Extra is deny-by-default: only allowlisted keys survive, and each value is still redacted.
 	for k, v := range a.Extra {
@@ -435,6 +442,11 @@ var allowedExtraKeys = map[string]bool{
 	"amount_cents":    true, // integer money fact on a payment record (Q-044; an int, never an identifier)
 	"invoice_id":      true, // the invoice a payment slice was applied to (uuid; Q-044)
 	"payment_no":      true, // human payment number "PMT-000042" (6-digit run, under the redaction threshold)
+	// The pos RETURN_COMPLETED completion record (returns.go): the committed
+	// return's own number and total, the two facts a counter trail answers
+	// "which return, how much" with.
+	"return_no":       true, // the return's number, '#RET-' plus a return_no_seq value (repository_w7.go), a sequence count whose digit run stays under the redaction threshold like payment_no
+	"total_cents":     true, // the committed total in cents, an int money fact like amount_cents: non-string Extra values pass the chokepoint unchanged, so the digits never reach the string redactor
 	"source_order_id": true, // CP-04 reorder provenance (uuid; admin-only, NOT in operatorSafeKeys)
 	"lines":           true, // CP-04 reorder line count (an int, never an identifier)
 	// DIB-159 order-status history: from→to status codes on an ORDER_STATUS_CHANGED row.
@@ -499,7 +511,10 @@ var allowedExtraKeys = map[string]bool{
 // redactCleartext returns the value with cleartext-looking identifiers stripped. A value is treated as
 // a raw identifier if it contains a run of 7+ consecutive digits (PAN 13-19, SIN 9, registry numbers
 // ~10), a masked ref like "•••• 4321" (4 trailing digits) and a reason code like "ON_FN_POS_8" both
-// pass. The second return reports whether anything was redacted.
+// pass. A UUID is the one exempt shape (a safe internal identifier). The system's own signature
+// reference is exempted NARROWLY, in buildEntry's masked_ref handling for a SIGNATURE_CAPTURE row
+// only (see isSignatureReference), never here, so no other field or action inherits it. The second
+// return reports whether anything was redacted.
 func redactCleartext(s string) (string, bool) {
 	// A UUID is a safe internal identifier (staff/order/approver id), never PII, allow it through even
 	// though its all-numeric groups can look like a digit run.
@@ -510,6 +525,47 @@ func redactCleartext(s string) (string, bool) {
 		return s, false
 	}
 	return "[redacted]", true
+}
+
+// sigRefPrefix and sigRefHexLen pin the minted signature reference shape: "sig_" plus 8 random bytes
+// hex-encoded, 16 lowercase hex characters in all. sigRefMaxDigitRun caps the longest run of decimal
+// digits an exempt reference may carry: a payment card number runs 13 to 19 digits, so a reference
+// whose hex holds a run of 13 or more stays redacted (about half a percent of minted references,
+// erring on the safe side), and the exemption can never pass a card number-length run.
+const (
+	sigRefPrefix      = "sig_"
+	sigRefHexLen      = 16
+	sigRefMaxDigitRun = 12
+)
+
+// isSignatureReference reports whether s is exactly the system's own signature reference: the sig_
+// prefix followed by 16 lowercase hex characters, at least one of them a letter, with no run of more
+// than sigRefMaxDigitRun decimal digits. It is consulted ONLY for the masked_ref of a SIGNATURE_CAPTURE
+// row (the one field and action the pos provider writes the reference to, and a value a caller cannot
+// type: the provider mints it), so an attacker controlled or free text field (purpose, reason, an
+// Extra string) never inherits the exemption. The letter rule keeps an all decimal tail (exactly the
+// PAN shape) redacted; the run cap keeps a card number-length run redacted even beside a letter.
+func isSignatureReference(s string) bool {
+	if len(s) != len(sigRefPrefix)+sigRefHexLen || !strings.HasPrefix(s, sigRefPrefix) {
+		return false
+	}
+	letter := false
+	run, longest := 0, 0
+	for i := len(sigRefPrefix); i < len(s); i++ {
+		switch c := s[i]; {
+		case c >= '0' && c <= '9':
+			run++
+			if run > longest {
+				longest = run
+			}
+		case c >= 'a' && c <= 'f':
+			letter = true
+			run = 0
+		default:
+			return false
+		}
+	}
+	return letter && longest <= sigRefMaxDigitRun
 }
 
 func looksLikeCleartextID(s string) bool {
