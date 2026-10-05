@@ -121,9 +121,12 @@ test("every mutant is named by a ledger entry, and a mutant changes the source",
   assert.deepEqual(problems, []);
 });
 
+// The needles are built in pieces so this file does not trip the dash rule itself.
+const DASH = new RegExp(`[${String.fromCharCode(0x2013)}${String.fromCharCode(0x2014)}]`);
+
 test("the ledger follows the house rules: no em or en dash and no calendar date", () => {
   const { text } = readLedger();
-  const dash = text.split("\n").flatMap((line, index) => (/[–—]/.test(line) ? [`line ${index + 1}`] : []));
+  const dash = text.split("\n").flatMap((line, index) => (DASH.test(line) ? [`line ${index + 1}`] : []));
   const date = text.split("\n").flatMap((line, index) => (/\b(19|20)\d\d[-/]\d\d[-/]\d\d\b/.test(line) ? [`line ${index + 1}`] : []));
   assert.deepEqual(dash, []);
   assert.deepEqual(date, []);
