@@ -366,8 +366,9 @@ const contentionProbeTable = `CREATE TABLE IF NOT EXISTS contended_probe (
 // recognition still sees the Postgres error, the rule the doors' real
 // writers carry.
 type contentionWriter struct {
-	order   string // "s1s2" signals first, "s2s1" waits first
-	peer    chan struct{}
+	order   string        // "s1s2" locks s1 first, "s2s1" locks s2 first
+	mine    chan struct{} // signalled once this writer holds its first lock
+	theirs  chan struct{} // the peer's signal: it holds its first lock too
 	settled chan struct{} // closed once the first round is over; later runs wait free
 }
 
@@ -388,16 +389,17 @@ func (w contentionWriter) Apply(ctx context.Context, tx pgx.Tx, in Write) (strin
 	if err := lock(first); err != nil {
 		return "", err
 	}
-	if w.order == "s1s2" {
-		select {
-		case w.peer <- struct{}{}:
-		default:
-		}
-	} else {
-		select {
-		case <-w.peer:
-		case <-w.settled:
-		}
+	// Both sides signal that the first lock is held and wait for the
+	// peer's signal, so neither can finish before the other has started:
+	// each then wants the lock the other holds.
+	select {
+	case w.mine <- struct{}{}:
+	default:
+	}
+	select {
+	case <-w.theirs:
+	case <-w.settled:
+	case <-time.After(10 * time.Second):
 	}
 	if err := lock(second); err != nil {
 		return "", err
@@ -432,8 +434,9 @@ func TestContendedBatchAnswersTheSentinelAndResubmissionConverges(t *testing.T) 
 	})
 
 	settled := make(chan struct{})
-	one := contentionWriter{order: "s1s2", peer: make(chan struct{}, 1), settled: settled}
-	two := contentionWriter{order: "s2s1", peer: one.peer, settled: settled}
+	aSignal, bSignal := make(chan struct{}, 1), make(chan struct{}, 1)
+	one := contentionWriter{order: "s1s2", mine: aSignal, theirs: bSignal, settled: settled}
+	two := contentionWriter{order: "s2s1", mine: bSignal, theirs: aSignal, settled: settled}
 	doorOne := NewDoor(NewStore(pool), "contended", one, &countingAuditSink{})
 	doorTwo := NewDoor(NewStore(pool), "contended", two, &countingAuditSink{})
 
