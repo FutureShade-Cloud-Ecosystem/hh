@@ -12,8 +12,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Store is the write-only config store. It SELECTs/INSERTs ONLY payment_config (RUN-PAY-owned) -
-// it never touches payments, till_sessions, orders, etc. (zero-trust).
+// Store is the payment module's store. Two tables only, both its own: payment_config (RUN-PAY-owned,
+// the write-only encrypted config below) and card_charge_attempts (migration 0361, the attempt store
+// in attempts.go). It never reads or writes payments, till_sessions, orders, etc. (zero-trust); the
+// attempt row's foreign keys to them are the database's, and BindTx only records a payment id the
+// sale's own transaction already created.
 type Store struct {
 	pool  *pgxpool.Pool
 	vault *Vault
