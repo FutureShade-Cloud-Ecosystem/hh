@@ -471,7 +471,7 @@ func factorWorldSnapshot(t *testing.T, pool *pgxpool.Pool) []string {
 	rows, err := pool.Query(context.Background(), `
 		SELECT key || '=' || val FROM (
 		  SELECT 'product:' || sku AS key, pieces_per_sf::text AS val
-		    FROM products WHERE sku LIKE 'DBS-%'
+		    FROM products WHERE sku LIKE 'DBS-%' AND pieces_per_sf IS NOT NULL
 		  UNION ALL
 		  SELECT 'uom:' || p.sku || ':' || pu.uom_code, pu.qty_in_base::text
 		    FROM product_uoms pu JOIN products p ON p.id = pu.product_id WHERE p.sku LIKE 'DBS-%'
