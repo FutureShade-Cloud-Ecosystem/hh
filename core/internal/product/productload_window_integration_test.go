@@ -19,7 +19,10 @@
 // over two products in opposite orders, the deadlock shape the new row
 // locks can form: whatever Postgres rules, each batch either finishes or
 // answers the ErrBatchContended sentinel with nothing of it standing,
-// and the resubmission converges.
+// and the resubmission converges. The fourth leg pins the guard lock's
+// strength: it must stay weak enough that a referencing insert (a
+// barcode) lands while a reload stands open, the review's round 3
+// finding about a batch holding the row against foreign key checks.
 //
 // Fixtures are invented: the fxpr window skus, the org and actor ids.
 // Run (the database URL rides the command line, never a default):
@@ -292,6 +295,71 @@ func TestProductLoadSetReplaceWaitsForTheOpenReload(t *testing.T) {
 	runOne(t, "FXPR-0904", "PR-W3", "US-W3", false,
 		map[string]any{"code": "FXPRU-BOX", "qty_in_base": "1", "is_base": true},
 		map[string]any{"code": "EA", "qty_in_base": "10", "is_base": false})
+}
+
+// TestProductLoadOpenReloadDoesNotBlockAReferencingInsert pins the row
+// lock's strength itself, the review's round 3 finding 1: the guard's
+// lock closes the window against the set door's FOR SHARE, but it must
+// not be so strong that a load batch holding it blocks the wider
+// world's writes. While the reload stands open and uncommitted, a
+// second transaction inserting a product_barcodes row against the same
+// product, whose foreign key check takes the products row FOR KEY
+// SHARE, must answer inside a short bound and land. Under a guard lock
+// of FOR UPDATE the foreign key check waits for the whole batch and the
+// leg goes red on the lock timeout; under FOR NO KEY UPDATE the key
+// share passes and the insert lands while the reload still stands.
+func TestProductLoadOpenReloadDoesNotBlockAReferencingInsert(t *testing.T) {
+	e := productLoadSetup(t)
+	ctx := context.Background()
+	e.prSeedUnit(t, "EA", "Each", "count")
+	e.prSeedUnit(t, "FXPRU-BOX", "Fixture Box", "count")
+	pid := e.prPlantWindowProduct(t, "FXPR-0909")
+	e.prPlantWindowNames(t, "PR-W4", "US-W4", pid)
+
+	// Transaction one: the reload, open and uncommitted, its guard's
+	// row lock standing on the products row.
+	tx1, err := e.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("reload begin: %v", err)
+	}
+	defer func() { _ = tx1.Rollback(ctx) }()
+	if _, _, err := (ProductLoadWriter{}).ApplyAttached(ctx, tx1,
+		prWindowReloadWrite("FXPR-0909", "PR-W4", pid, "Fixture Window Product Reloaded")); err != nil {
+		t.Fatalf("the open reload answered an error %v", err)
+	}
+
+	// Transaction two: a barcode insert against the same product while
+	// the reload stands. The lock timeout keeps the leg failing fast,
+	// never hanging, when the row lock is too strong; a cancelled
+	// statement here is the red answer, not a pass.
+	tx2, err := e.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("barcode begin: %v", err)
+	}
+	defer func() { _ = tx2.Rollback(ctx) }()
+	if _, err := tx2.Exec(ctx, `SET LOCAL lock_timeout = '1500ms'`); err != nil {
+		t.Fatalf("barcode lock timeout: %v", err)
+	}
+	start := time.Now()
+	if _, err := tx2.Exec(ctx,
+		`INSERT INTO product_barcodes (product_id, code, symbology) VALUES ($1::uuid, $2, 'INTERNAL')`,
+		pid, "FXPR-BC-0909"); err != nil {
+		t.Fatalf("the barcode insert against the open reload answered %v after %s: the reload's row lock blocks a referencing write", err, time.Since(start))
+	}
+	if elapsed := time.Since(start); elapsed > 1500*time.Millisecond {
+		t.Fatalf("the barcode insert answered after %s: the reload's row lock held it past the bound", elapsed)
+	}
+	if err := tx2.Commit(ctx); err != nil {
+		t.Fatalf("barcode commit: %v", err)
+	}
+	var codes int
+	if err := e.pool.QueryRow(ctx,
+		`SELECT count(*) FROM product_barcodes WHERE product_id = $1::uuid`, pid).Scan(&codes); err != nil {
+		t.Fatalf("barcode count read: %v", err)
+	}
+	if codes != 1 {
+		t.Fatalf("the product carries %d barcode rows after the committed insert, want 1", codes)
+	}
 }
 
 // TestProductLoadAndSetBatchesInOppositeOrdersStayConsistent runs the
