@@ -584,7 +584,7 @@
   {
     "id": "ep-compare",
     "file": "src/edit-panel.ts",
-    "find": "const result = await ctx.guarded(client.compareLine(ctx.id, lineNo, this.compareAlts.map((a) => a.product_id)));\n    if (result === undefined) return;",
+    "find": "const result = await ctx.guarded(client.compareLine(ctx.id, lineNo, this.compareAlts.map((a) => a.product_id)));\n    if (result === undefined || ask !== this.compareAsk) return;",
     "replace": "const result = await client.compareLine(ctx.id, lineNo, this.compareAlts.map((a) => a.product_id));",
     "test": "guard edit compare:"
   },
@@ -1108,5 +1108,12 @@
     "find": "undefined, 0, true);",
     "replace": "undefined, 0, false);",
     "test": "P3 a refused expiry save returns the box"
+  },
+  {
+    "id": "ep-compare-order",
+    "file": "src/edit-panel.ts",
+    "find": "if (result === undefined || ask !== this.compareAsk) return;",
+    "replace": "if (result === undefined) return;",
+    "test": "P3 compare answers within one quote land"
   }
 ]

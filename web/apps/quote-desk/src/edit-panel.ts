@@ -551,14 +551,19 @@ export class QdQuoteEdit extends PanelBase {
 
   // ── compare ───────────────────────────────────────────────────────────────
 
+  /** Numbers the compare asks of this panel, so only the newest one's answer is shown. */
+  private compareAsk = 0;
+
   private async runCompare(lineNo: number): Promise<void> {
     const client = this.client;
     if (client === null) return;
     const ctx = this.ctx;
     this.compareLine = lineNo;
     this.error = "";
+    // A newer ask supersedes an older one still out (another line, or Score again): the older answer never lands over it.
+    const ask = ++this.compareAsk;
     const result = await ctx.guarded(client.compareLine(ctx.id, lineNo, this.compareAlts.map((a) => a.product_id)));
-    if (result === undefined) return;
+    if (result === undefined || ask !== this.compareAsk) return;
     if (!result.ok) {
       this.error = this.refuse(result, "compare this line");
       return;

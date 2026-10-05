@@ -492,3 +492,21 @@ test("P3 a refused expiry save returns the box to the server's date", async ({ p
   await expect(page.getByTestId("qe-error")).not.toHaveText("");
   await expect(box).toHaveValue(served);
 });
+
+test("P3 compare answers within one quote land in the order they were asked", async ({ page }) => {
+  await signIn(page, "Sales manager");
+  await openQuote(page, "Q-1001");
+  const panel = page.locator("qd-quote-edit");
+  const first = await hold(page, /\/quotes\/q-1001\/lines\/1\/compare$/, { method: "POST", times: 1 });
+  await panel.getByTestId("qe-line").nth(0).getByRole("button", { name: "Compare" }).click();
+  await first.asked;
+  await panel.getByTestId("qe-line").nth(1).getByRole("button", { name: "Compare" }).click();
+  const box = panel.getByTestId("qe-compare");
+  await expect(box.locator("legend")).toHaveText("Compare line 2");
+  await expect(box.locator("tbody tr")).not.toHaveCount(0);
+  const answered = await box.locator("tbody").innerText();
+  await first.release();
+  await settle(page);
+  await expect(box.locator("legend")).toHaveText("Compare line 2");
+  expect(await box.locator("tbody").innerText()).toBe(answered);
+});
