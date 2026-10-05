@@ -1296,8 +1296,8 @@
   {
     "id": "bq-changed-by-id",
     "file": "src/quote-builder.ts",
-    "find": "    if (event.detail.quoteId === this.selected) this.reloadDetailPanels();",
-    "replace": "    if ((event.detail as { ref?: string }).ref === this.selected) this.reloadDetailPanels();",
+    "find": "    const named = event.detail?.quoteId;",
+    "replace": "    const named = (event.detail as { ref?: string } | undefined)?.ref;",
     "test": "P3-3 the builder reads the changed quote's own id"
   }
 ]

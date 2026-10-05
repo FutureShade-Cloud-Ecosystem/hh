@@ -383,10 +383,14 @@ export class QdQuoteBuilder extends LitElement {
   /**
    * An edit anywhere reaches the screens that show it. The announcement names the quote it belongs to by its own id
    * (a late answer names the quote the write was made on, not the one that happens to be open), so the list re-reads
-   * whichever row changed, and the open views re-read only when the change is the quote they are showing.
+   * whichever row changed, the quote bound views re-read only when the change is the quote they are showing, and the
+   * panels no single quote owns (the settings and the approvals) re-read on any edit as before. An announcement that
+   * names no quote at all re-reads everything: it is the old fan-out, and nothing may be lost by the id's absence.
    */
-  private readonly onQuoteChanged = (event: CustomEvent<{ quoteId: string }>): void => {
-    if (event.detail.quoteId === this.selected) this.reloadDetailPanels();
+  private readonly onQuoteChanged = (event: CustomEvent<{ quoteId?: string }>): void => {
+    const named = event.detail?.quoteId;
+    if (named === undefined || named === this.selected) this.reloadDetailPanels();
+    else this.reloadSessionPanels();
     void this.loadList(true);
   };
 
@@ -423,6 +427,13 @@ export class QdQuoteBuilder extends LitElement {
       ?.querySelectorAll<HTMLElement & { reload?: () => void }>(
         "qd-quote-workarea, qd-panel-seam, qd-quote-edit, qd-quote-history, qd-quote-settings, qd-quote-assist, qd-quote-followups, qd-quote-hold-expiry, qd-quote-availability, qd-quote-guard, qd-approvals",
       )
+      .forEach((el) => el.reload?.());
+  }
+
+  /** The panels no single quote owns: they re-read on any edit, whichever quote it names. */
+  private reloadSessionPanels(): void {
+    this.renderRoot
+      ?.querySelectorAll<HTMLElement & { reload?: () => void }>("qd-quote-settings, qd-approvals")
       .forEach((el) => el.reload?.());
   }
 
