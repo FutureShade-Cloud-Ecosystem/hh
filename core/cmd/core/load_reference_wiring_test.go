@@ -26,12 +26,16 @@ import (
 // door, invented.
 const fixtureMoverRefID = "7c2e6b41-0000-4000-8000-00000000d101"
 
-// submitRoutes are the four doors' registration patterns.
+// submitRoutes are the submit doors' registration patterns: LD-4's four
+// and LD-3's two (the unit catalogue upsert and the product unit set
+// replace).
 var submitRoutes = []string{
 	"PUT /api/v1/load/branches",
 	"PUT /api/v1/load/users",
 	"PUT /api/v1/load/categories",
 	"PUT /api/v1/load/suppliers",
+	"PUT /api/v1/load/units",
+	"PUT /api/v1/load/products/unit-sets",
 }
 
 // plantSubmitPrincipal plants one enabled machine principal beside the
@@ -139,7 +143,7 @@ func TestSubmitDoorsServeEachDoorEndToEndThroughTheGate(t *testing.T) {
 		VALUES ($1::uuid, $2::uuid, 'fixture submit mover', TRUE, $3::text[])
 		ON CONFLICT (id) DO UPDATE SET enabled = EXCLUDED.enabled, doors = EXCLUDED.doors`,
 		fixtureMoverRefID, testkit.OrgNorthID,
-		[]string{"loadMapBranches", "loadMapUsers", "loadUpsertCategories", "loadUpsertSuppliers"}); err != nil {
+		[]string{"loadMapBranches", "loadMapUsers", "loadUpsertCategories", "loadUpsertSuppliers", "loadUpsertUnits", "loadPutUnitSets"}); err != nil {
 		t.Fatalf("plant principal: %v", err)
 	}
 	const staffID = "7c2e6b41-0000-4000-8000-00000000d102"
@@ -156,6 +160,10 @@ func TestSubmitDoorsServeEachDoorEndToEndThroughTheGate(t *testing.T) {
 		_, _ = pool.Exec(ctx, `DELETE FROM purchasing_vendor_contacts WHERE vendor_id IN (SELECT id FROM vendors WHERE vendor_no = 'FXV-W1')`)
 		_, _ = pool.Exec(ctx, `DELETE FROM vendors WHERE vendor_no = 'FXV-W1'`)
 		_, _ = pool.Exec(ctx, `DELETE FROM product_categories WHERE code LIKE 'fxcat-w%'`)
+		_, _ = pool.Exec(ctx, `DELETE FROM uoms WHERE code LIKE 'FXU-W%'`)
+		_, _ = pool.Exec(ctx, `UPDATE uoms SET org_id = NULL, idempotency_key = NULL WHERE code = 'PLT'`)
+		_, _ = pool.Exec(ctx, `DELETE FROM product_uoms WHERE product_id = $1::uuid`, wiredSetProductID)
+		_, _ = pool.Exec(ctx, `DELETE FROM products WHERE id = $1::uuid`, wiredSetProductID)
 	}
 	clean()
 	t.Cleanup(func() {
@@ -237,4 +245,44 @@ func TestSubmitDoorsServeEachDoorEndToEndThroughTheGate(t *testing.T) {
 	if statuses(a) != "FXV-W1=created;" {
 		t.Fatalf("the supplier door answered %s, want created", statuses(a))
 	}
+	// The unit door: a fresh code created, the seeded PLT attached, and
+	// the replay unchanged.
+	a = put("/api/v1/load/units",
+		`{"source_system":"wiredfx","batch_id":"b-w-5","items":[{"legacy_id":"WUN-1","record":{"code":"FXU-W1","name":"Fixture Wired Unit","dimension":"count"}},{"legacy_id":"WUN-2","record":{"code":"PLT","name":"Pallet","dimension":"count"}}]}`)
+	if statuses(a) != "WUN-1=created;WUN-2=attached;" {
+		t.Fatalf("the unit door answered %s, want created and attached", statuses(a))
+	}
+	a = put("/api/v1/load/units",
+		`{"source_system":"wiredfx","batch_id":"b-w-5r","items":[{"legacy_id":"WUN-1","record":{"code":"FXU-W1","name":"Fixture Wired Unit","dimension":"count"}}]}`)
+	if statuses(a) != "WUN-1=unchanged;" {
+		t.Fatalf("the unit door replay answered %s, want unchanged", statuses(a))
+	}
+	// The unit set door: the product named by legacy key through the
+	// registry, the set replacing whole, and the replay unchanged.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO products (id, sku, name, base_uom, price_uom, org_id)
+		VALUES ($1::uuid, 'FX-SET-W1', 'Fixture Wired Set Product', 'EA', 'EA', $2::uuid)`,
+		wiredSetProductID, testkit.OrgNorthID); err != nil {
+		t.Fatalf("plant set product: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO load_key_registry (org_id, source_system, kind, legacy_id, hh_id, content_hash)
+		VALUES ($1::uuid, 'wiredfx', 'product', 'WUP-1', $2::uuid, repeat('f', 64))`,
+		testkit.OrgNorthID, wiredSetProductID); err != nil {
+		t.Fatalf("plant set product name: %v", err)
+	}
+	a = put("/api/v1/load/products/unit-sets",
+		`{"source_system":"wiredfx","batch_id":"b-w-6","items":[{"legacy_id":"WUS-1","record":{"rows":[{"code":"EA","qty_in_base":"1","is_base":true},{"code":"PC","qty_in_base":1,"is_base":false}]},"requires":[{"kind":"product","legacy_id":"WUP-1"}]}]}`)
+	if statuses(a) != "WUS-1=created;" {
+		t.Fatalf("the unit set door answered %s, want created", statuses(a))
+	}
+	a = put("/api/v1/load/products/unit-sets",
+		`{"source_system":"wiredfx","batch_id":"b-w-6r","items":[{"legacy_id":"WUS-1","record":{"rows":[{"code":"EA","qty_in_base":"1","is_base":true},{"code":"PC","qty_in_base":1,"is_base":false}]},"requires":[{"kind":"product","legacy_id":"WUP-1"}]}]}`)
+	if statuses(a) != "WUS-1=unchanged;" {
+		t.Fatalf("the unit set door replay answered %s, want unchanged", statuses(a))
+	}
 }
+
+// wiredSetProductID is the fixture product the unit set leg loads, the
+// test's own row so the kit's catalogue product is never disturbed.
+const wiredSetProductID = "7c2e6b41-0000-4000-8000-00000000d1f1"
