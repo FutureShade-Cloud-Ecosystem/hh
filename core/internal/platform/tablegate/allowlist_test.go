@@ -657,11 +657,14 @@ var allowlist = []allowlistEntry{
 	{
 		module: "pos",
 		file:   "core/internal/pos/repository_rev8.go",
-		tables: []string{"order_lines", "pricing_list_prices", "product_branch_costs", "product_images", "products"},
+		tables: []string{"order_lines", "pricing_branch_prices", "pricing_list_prices", "product_branch_costs", "product_images", "products"},
 		// the file's own header: the SAME isolated M2-debt cross-read posture,
 		// display-only reads of catalog and costing data; pos never writes
-		// those tables.
-		reason: "rev 8 store reads (weight, per-branch cost, list price, images, add-on pairings, top applications): display-only M2-debt cross-reads, stated in the file header; read only",
+		// those tables. pricing_branch_prices is the LD-7 widening of the
+		// add-on tile's list price join: at a branch whose price stands the
+		// tile shows that price, the same pricing_list_prices anchor where
+		// not.
+		reason: "rev 8 store reads (weight, per-branch cost, list price, branch price, images, add-on pairings, top applications): display-only M2-debt cross-reads, stated in the file header; read only",
 	},
 	{
 		module: "pos",
@@ -729,14 +732,19 @@ var allowlist = []allowlistEntry{
 	{
 		module: "pricing",
 		file:   "core/internal/pricing/branchprice_repository.go",
-		tables: []string{"products"},
+		tables: []string{"locations", "products", "scope_sequences"},
 		writes: []string{"scope_sequences"},
 		// the file's own header: the branch price set and delete mirror the
 		// module's anchor write path (applyMatrixPrice), the org stamped off
 		// the product the branch price is for, the seq drawn from the
 		// branch_prices allocator (the 0213 shape, the recurring pattern
-		// stated at the top of this file).
-		reason: "the branch price write stamps org off the product named on the row and draws the 0213 seq from the branch_prices scope allocator, the syncscope.go entry's shape on the module's own branch price table",
+		// stated at the top of this file). The set reads the branch's
+		// loc_type inside its transaction (a price may stand only on a
+		// BRANCH, never on a zone, aisle or bin) and takes the allocator's
+		// row lock before its first read, locations being the shared branch
+		// table and scope_sequences the shared allocator the module's other
+		// writers already touch.
+		reason: "the branch price write stamps org off the product named on the row, draws the 0213 seq from the branch_prices scope allocator, checks the location named is a BRANCH and takes the allocator lock before its reads, the syncscope.go entry's shape on the module's own branch price table",
 	},
 	{
 		module: "pricing",
