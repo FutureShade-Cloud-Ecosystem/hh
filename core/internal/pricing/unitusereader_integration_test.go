@@ -278,3 +278,160 @@ func TestLoadedUnitUseSeesTheCategoryPromotionAndClearanceFamilies(t *testing.T)
 		t.Fatalf("the untouched unit answers in use")
 	}
 }
+
+// TestLoadedUnitUseSeesTheOverrideAndTheBesideCategoryRows: the rows the
+// round 2 delta review proved the read must answer. The customer
+// category override is a live price row of the plan's family: the
+// resolver serves it by customer and category (repository.go
+// OverrideFor), its price_uom becomes the declared unit
+// (service.go, the override arm) and the result conversion factor
+// needs it, so a MARKUP_ON_COST override priced in a unit the set
+// drops fails every later resolve for that customer. The beside
+// category rows are the mirror's other half: the resolver matches the
+// category scoped rules on category_id alone (repository.go
+// MatchingRules, the CUSTOMER_CATEGORY and TIER_CATEGORY arms) and the
+// break headers on product OR category (repository.go
+// QuantityBreaksFor), so a row carrying a product beside the category
+// still applies to every product of that category, and the read must
+// answer it. Each row blocks the unit while it stands and frees it
+// when it goes.
+func TestLoadedUnitUseSeesTheOverrideAndTheBesideCategoryRows(t *testing.T) {
+	pool := usePool(t)
+	ctx := context.Background()
+	productID := "4742a800-0000-4000-8000-00000000d313"
+	otherID := "4742a800-0000-4000-8000-00000000d314"
+	categoryID := "4742a800-0000-4000-8000-00000000d3c2"
+	customerID := "4742a800-0000-4000-8000-00000000d3a1"
+	for _, stmt := range []struct {
+		sql  string
+		args []any
+	}{
+		{`DELETE FROM customer_category_overrides WHERE customer_id = $1::uuid`, []any{customerID}},
+		{`DELETE FROM pricing_rules WHERE category_id = $1::uuid AND price_uom = 'BOX'`, []any{categoryID}},
+		{`DELETE FROM quantity_break_items WHERE header_id IN (SELECT id FROM quantity_break_headers WHERE code IN ('FXUSE5','FXUSE6'))`, nil},
+		{`DELETE FROM quantity_break_headers WHERE code IN ('FXUSE5','FXUSE6')`, nil},
+		{`DELETE FROM products WHERE id = ANY($1::uuid[])`, []any{[]string{productID, otherID}}},
+		{`DELETE FROM product_categories WHERE id = $1::uuid`, []any{categoryID}},
+		{`DELETE FROM customers WHERE id = $1::uuid`, []any{customerID}},
+	} {
+		if _, err := pool.Exec(ctx, stmt.sql, stmt.args...); err != nil {
+			t.Fatalf("beside category fixture clean: %v", err)
+		}
+	}
+	t.Cleanup(func() {
+		ctx := context.Background()
+		_, _ = pool.Exec(ctx, `DELETE FROM customer_category_overrides WHERE customer_id = $1::uuid`, customerID)
+		_, _ = pool.Exec(ctx, `DELETE FROM pricing_rules WHERE category_id = $1::uuid AND price_uom = 'BOX'`, categoryID)
+		_, _ = pool.Exec(ctx, `DELETE FROM quantity_break_items WHERE header_id IN (SELECT id FROM quantity_break_headers WHERE code IN ('FXUSE5','FXUSE6'))`)
+		_, _ = pool.Exec(ctx, `DELETE FROM quantity_break_headers WHERE code IN ('FXUSE5','FXUSE6')`)
+		_, _ = pool.Exec(ctx, `DELETE FROM products WHERE id = ANY($1::uuid[])`, []string{productID, otherID})
+		_, _ = pool.Exec(ctx, `DELETE FROM product_categories WHERE id = $1::uuid`, categoryID)
+		_, _ = pool.Exec(ctx, `DELETE FROM customers WHERE id = $1::uuid`, customerID)
+	})
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO customers (id, account_no, name)
+		VALUES ($1::uuid, 'FXUSE-CUST', 'Fixture Use Customer')`, customerID); err != nil {
+		t.Fatalf("fixture customer: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO product_categories (id, code, name)
+		VALUES ($1::uuid, 'FXUSE-CAT-2', 'Fixture Use Category Two')`, categoryID); err != nil {
+		t.Fatalf("fixture category: %v", err)
+	}
+	// Two products of one category: the rows under test carry the other
+	// product beside the category, and must still name THIS product's
+	// unit, the way the resolver's OR match serves them.
+	for _, p := range []struct {
+		id  string
+		sku string
+	}{{productID, "FX-USE-3"}, {otherID, "FX-USE-4"}} {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO products (id, sku, name, base_uom, price_uom, org_id, category_id)
+			VALUES ($1::uuid, $2, 'Fixture Use Product Three', 'SF', 'BOX', $3::uuid, $4::uuid)`,
+			p.id, p.sku, fxUseOrgID, categoryID); err != nil {
+			t.Fatalf("fixture product: %v", err)
+		}
+	}
+
+	read := func(t *testing.T, uom string) bool {
+		t.Helper()
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("use tx: %v", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		named, err := LoadedUnitUseReader{}.ProductUnitInUseTx(ctx, tx, productID, &categoryID, uom)
+		if err != nil {
+			t.Fatalf("use read: %v", err)
+		}
+		return named
+	}
+
+	if read(t, "BOX") {
+		t.Fatalf("the clear read answers in use")
+	}
+	families := []struct {
+		name     string
+		plant    string
+		args     []any
+		drop     string
+		dropArgs []any
+	}{
+		// The reviewer's probe: an override for a customer on the
+		// product's category, MARKUP_ON_COST priced in the unit, the one
+		// calc type whose result stays in the override's own unit.
+		{"customer override, markup on cost", `INSERT INTO customer_category_overrides
+			(customer_id, category_id, calc_type, markup_bps, price_uom)
+			VALUES ($1::uuid, $2::uuid, 'MARKUP_ON_COST', 1500, 'BOX')`, []any{customerID, categoryID},
+			`DELETE FROM customer_category_overrides WHERE customer_id = $1::uuid`, []any{customerID}},
+		// A break header carrying another product beside the category:
+		// the resolver's QuantityBreaksFor answers it for this product
+		// (product OR category), and selectBreak converts its threshold
+		// through the product's set.
+		{"beside category break threshold", `INSERT INTO quantity_break_headers (code, name, product_id, category_id, threshold_uom)
+			VALUES ('FXUSE5', 'Fixture Use Break Five', $1::uuid, $2::uuid, 'BOX')`, []any{otherID, categoryID},
+			`DELETE FROM quantity_break_headers WHERE code = 'FXUSE5'`, nil},
+		// The category scoped rules carry no product predicate in the
+		// resolver's match: a rule with a product beside the category
+		// applies to every product of the category, either scope.
+		{"beside category tier category rule", `INSERT INTO pricing_rules
+			(scope, customer_type, product_id, category_id, calc_type, discount_bps, price_uom)
+			VALUES ('TIER_CATEGORY', 'RETAIL', $1::uuid, $2::uuid, 'PCT_OFF_LIST', 500, 'BOX')`, []any{otherID, categoryID},
+			`DELETE FROM pricing_rules WHERE scope = 'TIER_CATEGORY' AND category_id = $1::uuid AND price_uom = 'BOX'`, []any{categoryID}},
+		{"beside category customer category rule", `INSERT INTO pricing_rules
+			(scope, customer_id, product_id, category_id, calc_type, discount_bps, price_uom)
+			VALUES ('CUSTOMER_CATEGORY', $1::uuid, $2::uuid, $3::uuid, 'PCT_OFF_LIST', 500, 'BOX')`, []any{customerID, otherID, categoryID},
+			`DELETE FROM pricing_rules WHERE scope = 'CUSTOMER_CATEGORY' AND category_id = $1::uuid AND price_uom = 'BOX'`, []any{categoryID}},
+	}
+	for _, f := range families {
+		if _, err := pool.Exec(ctx, f.plant, f.args...); err != nil {
+			t.Fatalf("plant %s: %v", f.name, err)
+		}
+		if !read(t, "BOX") {
+			t.Fatalf("the %s row stands and the read answers clear", f.name)
+		}
+		if _, err := pool.Exec(ctx, f.drop, f.dropArgs...); err != nil {
+			t.Fatalf("drop %s: %v", f.name, err)
+		}
+		if read(t, "BOX") {
+			t.Fatalf("the %s row is gone and the read still answers in use", f.name)
+		}
+	}
+	// The mirror stays exact the other way: a break header on the other
+	// product alone, no category, is not this product's row in the
+	// resolver's OR match, and the read answers clear.
+	if _, err := pool.Exec(ctx, `INSERT INTO quantity_break_headers (code, name, product_id, threshold_uom)
+		VALUES ('FXUSE6', 'Fixture Use Break Six', $1::uuid, 'BOX')`, otherID); err != nil {
+		t.Fatalf("plant other product break: %v", err)
+	}
+	if read(t, "BOX") {
+		t.Fatalf("the other product's own break named the unit: the read reads past the resolver's product arm")
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM quantity_break_headers WHERE code = 'FXUSE6'`); err != nil {
+		t.Fatalf("drop other product break: %v", err)
+	}
+	// A unit nothing names answers clear the whole way.
+	if read(t, "CYD") {
+		t.Fatalf("the untouched unit answers in use")
+	}
+}
