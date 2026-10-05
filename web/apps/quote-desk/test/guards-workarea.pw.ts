@@ -242,7 +242,8 @@ test("guard cart change after terms save: an add whose terms save answers after 
   await open(page, "Q-1004");
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
   await expect(page.getByTestId("qb-po")).toBeVisible();
-  const put = await hold(page, /\/api\/v1\/quotes\/q-1004\/terms$/, { method: "PUT" });
+  // The save is refused, so its late answer announces nothing itself (a success that lands late does, and the open views then refresh on their own).
+  const put = await hold(page, /\/api\/v1\/quotes\/q-1004\/terms$/, { method: "PUT", refuse: { status: 500, error: "quote: the terms store is down" } });
   const scan = page.getByTestId("pos-scan-input");
   await scan.fill("PSN-100");
   await scan.press("Enter");
