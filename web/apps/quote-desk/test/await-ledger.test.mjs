@@ -15,7 +15,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { census, walk } from "./await-census.mjs";
+import { census, censusOfText, walk } from "./await-census.mjs";
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const testDir = join(appDir, "test");
@@ -130,4 +130,28 @@ test("the ledger follows the house rules: no em or en dash and no calendar date"
   const date = text.split("\n").flatMap((line, index) => (/\b(19|20)\d\d[-/]\d\d[-/]\d\d\b/.test(line) ? [`line ${index + 1}`] : []));
   assert.deepEqual(dash, []);
   assert.deepEqual(date, []);
+});
+
+// The census sees every kind of call that starts or waits for asynchronous work, not only the ones with an await.
+const BLIND_SPOTS = [
+  ["a bare call to the client that nobody waits for", "class A { client: { put(): Promise<void> } | null = null; m() { this.client?.put(); } }", "floating call"],
+  ["an unvoided call to a method of another object", "declare const store: { flush(): Promise<void> }; class A { m() { store.flush(); } }", "floating call"],
+  ["a catch chain", "class A { m(p: Promise<void>) { void p.catch(() => undefined); } }", "catch"],
+  ["a finally chain", "class A { m(p: Promise<void>) { void p.finally(() => undefined); } }", "finally"],
+  ["a listener whose arrow body returns a promise", "class A { async g() {} onX = () => this.g(); }", "promise arrow"],
+  ["a promise kept in a field", "class A { p: Promise<void> | null = null; async g() {} m() { this.p = this.g(); } }", "stored promise"],
+  ["a for await loop", "class A { async m(it: AsyncIterable<number>) { for await (const x of it) { void x; } } }", "for await"],
+];
+
+for (const [name, source, kind] of BLIND_SPOTS) {
+  test(`the census counts ${name}`, () => {
+    const kinds = [...censusOfText(source).keys()].map((key) => key.split("\t")[2]);
+    assert.ok(kinds.includes(kind), `expected a ${kind}, the census found: ${kinds.join(", ") || "nothing"}`);
+  });
+}
+
+test("the census does not count a call that is voided or awaited as floating", () => {
+  const source = "class A { async g() {} m() { void this.g(); } async n() { await this.g(); } }";
+  const kinds = [...censusOfText(source).keys()].map((key) => key.split("\t")[2]);
+  assert.ok(!kinds.includes("floating call"));
 });
