@@ -1506,6 +1506,16 @@ X-Org header the kit's double admits. The fence legs bite: with the calendar rou
 manager guard, the frontline authority leg reads 200 and the test fails; restored byte identical. The package is green alone and
 the `compliance` word leaves `red=` in `.github/workflows/ci.yml`.
 
+## internal/messaging is back in the integration job (decision log row 804, appended; the entries above are never edited)
+
+`TestIntegration_PaymentFacts_ResolveTheOrderThroughAllocations` was red for a REAL defect in the payment notice, not a stale
+test: the notice wants the branch's SHORT name ("Taken at Kingston; the order is Trenton's."), and the query's own comment says
+the city half is the part after the em dash, the way the house slug convention derives it (0136). The SQL split on an ASCII hyphen,
+which migration 0003's names (the dealer name, an em dash, the city) never contain, so every notice spelled out the whole legal
+name twice. The split now uses the em dash (`chr(8212)`); a name with none still falls back whole. The test is unchanged: red on
+main, green with the fix; the package is green alone and the `messaging` word leaves `red=` in `.github/workflows/ci.yml`.
+
+
 The billing entry above, a follow-up (decision log row 804, review round 1): the old predicate also RE-SERVED same-day invoices with a
 LOWER number whenever a page ended mid date beyond the first invoice of that date, as well as skipping those with a greater one. The
 same descending row comparison against an ascending tiebreak is written at three other sites that this change does not touch:
@@ -1513,6 +1523,7 @@ same descending row comparison against an ascending tiebreak is written at three
 `core/internal/quote/edit_repository.go` (about line 588). The quote files belong to the Quote Desk lane; each needs the same two-part
 predicate (`key < cursor OR (key = cursor AND tiebreak > cursor tiebreak)`) wherever its ORDER BY mixes directions. Not exercised
 against a database here; found by reading.
+
 
 The compliance entry above, corrected (decision log row 804, review round 1): the fence leg was one route of four when that entry
 said "legs". The test now refuses the frontline authority on all four routes (the calendar, upcoming, the review-status read and
