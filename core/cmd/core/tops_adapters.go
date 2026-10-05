@@ -45,6 +45,12 @@ import (
 // breaks the build here instead of reverting the connection behaviour quietly.
 var _ order.CommittedSaleTxReader = (*pos.Repository)(nil)
 
+// The same pin for the invoice half of the cancel predicate: orderSvc.WithCancelGuards receives
+// billingRepo, and assertCancellable falls back to the pool read when it does not answer the
+// transaction-joining reader (order.FinalizedInvoiceTxReader, OrderHasFinalizedInvoiceTx). A signature
+// change on the billing method breaks the build here instead of quietly taking a second connection.
+var _ order.FinalizedInvoiceTxReader = (*billing.Repository)(nil)
+
 // cardChargerAdapter satisfies till.CardCharger over payment.Service.ChargeTx, the creds-free
 // charge rail (the posCardRefunderAdapter mirror): the till passes the tender amount and token and
 // gets the capture's own processor ref back; creds stay inside RUN-PAY. The sale transaction passes
