@@ -1514,3 +1514,11 @@ the city half is the part after the em dash, the way the house slug convention d
 which migration 0003's names (the dealer name, an em dash, the city) never contain, so every notice spelled out the whole legal
 name twice. The split now uses the em dash (`chr(8212)`); a name with none still falls back whole. The test is unchanged: red on
 main, green with the fix; the package is green alone and the `messaging` word leaves `red=` in `.github/workflows/ci.yml`.
+
+The billing entry above, a follow-up (decision log row 804, review round 1): the old predicate also RE-SERVED same-day invoices with a
+LOWER number whenever a page ended mid date beyond the first invoice of that date, as well as skipping those with a greater one. The
+same descending row comparison against an ascending tiebreak is written at three other sites that this change does not touch:
+`core/internal/order/repository.go` (about line 79), `core/internal/quote/repository.go` (about line 84) and
+`core/internal/quote/edit_repository.go` (about line 588). The quote files belong to the Quote Desk lane; each needs the same two-part
+predicate (`key < cursor OR (key = cursor AND tiebreak > cursor tiebreak)`) wherever its ORDER BY mixes directions. Not exercised
+against a database here; found by reading.
