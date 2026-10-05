@@ -149,11 +149,14 @@ func scanAttempt(row pgx.Row) (Attempt, error) {
 
 // Claim writes the attempt row and commits it before any processor call. created is true for the
 // caller that inserted it; a second claim of the same leg key returns the existing row with created
-// false and calls nothing. ErrTillUnresolved refuses a NEW claim while the same till session holds
-// an unresolved attempt for the same amount: under a different sale key every unresolved status
-// counts, and under the claim's own sale key only the statuses past an answer count (UNKNOWN,
-// VOIDING, VOID_UNKNOWN, VOID_DECLINED, the sameSaleBlockers comment has the shape reasoning).
-// In-flight siblings of one sale key never count against each other.
+// false and calls nothing, unless the input disagrees with the row on the amount, the till session
+// or the sale key: that is ErrClaimMismatch, not the row (see the comment at the comparison). A
+// created false row therefore already matches its caller's input. ErrTillUnresolved refuses a NEW
+// claim while the same till session holds an unresolved attempt for the same amount: under a
+// different sale key every unresolved status counts, and under the claim's own sale key only the
+// statuses past an answer count (UNKNOWN, VOIDING, VOID_UNKNOWN, VOID_DECLINED, the
+// sameSaleBlockers comment has the shape reasoning). In-flight siblings of one sale key never
+// count against each other.
 //
 // Race-free under concurrency, with no read then write. The unique leg_key is the arbiter for one
 // leg key: ON CONFLICT DO NOTHING lets exactly one insert land. The till guard is a guarded insert
@@ -204,6 +207,13 @@ func (s *Store) Claim(ctx context.Context, in ClaimInput) (Attempt, bool, error)
 	// retry of its own leg), or the guard refused a new leg.
 	existing, err := scanAttempt(tx.QueryRow(ctx, `SELECT `+attemptColumns+` FROM card_charge_attempts WHERE leg_key = $1`, in.LegKey))
 	if err == nil {
+		// The row came back, so it is a retry of this leg key, not a refused new leg. It is the
+		// leg's own retry only if the input agrees with the row on the amount, the till session
+		// and the sale key; anything else is ErrClaimMismatch, so a caller can answer from a
+		// created false row without re-comparing it first. Packet A2's Capture relies on that.
+		if existing.AmountCents != in.AmountCents || existing.TillSessionID != in.TillSessionID || existing.SaleKey != in.SaleKey {
+			return Attempt{}, false, ErrClaimMismatch
+		}
 		return existing, false, tx.Commit(ctx)
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
