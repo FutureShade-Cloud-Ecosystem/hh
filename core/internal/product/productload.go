@@ -312,6 +312,19 @@ func (ProductLoadWriter) ApplyAttached(ctx context.Context, tx pgx.Tx, in load.W
 // no refusal here: the first takes any catalogue unit, the second keeps
 // the write arm's own org answer.
 func landedUnitSetRefusal(ctx context.Context, tx pgx.Tx, productID, orgID, baseUOM, priceUOM, legacyID string) (*load.Refusal, error) {
+	// The row lock closes the concurrent window the review's round 2
+	// probe showed: the unit set door's product read takes the products
+	// row FOR SHARE and holds it to its commit, so this lock waits for a
+	// set replace in flight, and the set reads below then see the
+	// committed set instead of the pre replace snapshot. Taken on the
+	// item's own transaction before any read of the set; a row gone mid
+	// race answers no refusal here and keeps the write arm's own answer.
+	var locked string
+	if err := tx.QueryRow(ctx, `SELECT id::text FROM products WHERE id = $1::uuid FOR UPDATE`, productID).Scan(&locked); errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("product: load set row lock: %w", err)
+	}
 	var rows int
 	if err := tx.QueryRow(ctx, `
 		SELECT count(*)
