@@ -358,13 +358,16 @@ func TestProductLoadAndSetBatchesInOppositeOrdersStayConsistent(t *testing.T) {
 	setResult, setErr := <-setRes, <-setErrs
 
 	// Each batch either finished or answered the sentinel; anything else
-	// is a shape the frame does not own.
+	// is a shape the frame does not own. Whether Postgres rules a
+	// deadlock at all is the interleaving's own decision; both answers
+	// are recorded so a verbose run shows which one happened.
 	if prErr != nil && !errors.Is(prErr, load.ErrBatchContended) {
 		t.Fatalf("the product batch answered %v, want it finished or the ErrBatchContended sentinel", prErr)
 	}
 	if setErr != nil && !errors.Is(setErr, load.ErrBatchContended) {
 		t.Fatalf("the set batch answered %v, want it finished or the ErrBatchContended sentinel", setErr)
 	}
+	t.Logf("the races answered: product batch %v, set batch %v", prErr, setErr)
 	// A contended batch leaves nothing standing.
 	if prErr != nil {
 		var batches int
@@ -443,3 +446,109 @@ func TestProductLoadAndSetBatchesInOppositeOrdersStayConsistent(t *testing.T) {
 // repeatA64 is the planted hash no submission carries; a contended
 // batch's names must still carry it, the write having rolled back.
 const repeatA64 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+// TestProductLoadSetBatchDeadlockOnTheShareLockAnswersTheSentinel is the
+// new lock shape's own deterministic deadlock leg: an outside
+// transaction holds the second product's row FOR UPDATE (the hold a
+// product door's guard takes) while the set batch's first item has
+// landed its share lock on the first product's row; the batch's second
+// item parks on the outside's hold, the outside then wants the row the
+// batch holds FOR SHARE, the cycle closes, and Postgres kills the batch.
+// The batch answers the ErrBatchContended sentinel with nothing of it
+// standing, and the resubmission converges.
+func TestProductLoadSetBatchDeadlockOnTheShareLockAnswersTheSentinel(t *testing.T) {
+	e := productLoadSetup(t)
+	ctx := context.Background()
+	e.prSeedUnit(t, "EA", "Each", "count")
+	e.prSeedUnit(t, "FXPRU-BOX", "Fixture Box", "count")
+	p1 := e.prPlantWindowProduct(t, "FXPR-0907")
+	p2 := e.prPlantWindowProduct(t, "FXPR-0908")
+	e.prPlantWindowNames(t, "PR-W1", "US-W1", p1)
+	e.prPlantWindowNames(t, "PR-W2", "US-W2", p2)
+	uses := &fakeUnitUseReader{}
+	puses := &fakePricingUseReader{}
+	setDoor := load.NewDoor(load.NewStore(e.pool), load.KindUnitSet,
+		UnitSetLoadWriter{Pricing: puses, Stock: uses, Vendor: uses}, &loadAuditSpy{})
+	setRows := []load.Item{
+		{LegacyID: "US-W1", DerivedKey: "d3000000-0000-4000-8000-00000000af01",
+			Record: map[string]any{"rows": []map[string]any{
+				{"code": "EA", "qty_in_base": "1", "is_base": true},
+				{"code": "FXPRU-BOX", "qty_in_base": "10", "is_base": false}}},
+			Requires: []load.Ref{{Kind: "product", LegacyID: "PR-W1"}}},
+		{LegacyID: "US-W2", DerivedKey: "d3000000-0000-4000-8000-00000000af02",
+			Record: map[string]any{"rows": []map[string]any{
+				{"code": "EA", "qty_in_base": "1", "is_base": true},
+				{"code": "FXPRU-BOX", "qty_in_base": "10", "is_base": false}}},
+			Requires: []load.Ref{{Kind: "product", LegacyID: "PR-W2"}}},
+	}
+	outside, err := e.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("outside begin: %v", err)
+	}
+	defer func() { _ = outside.Rollback(ctx) }()
+	// A long deadlock timeout on the outside session, so the batch's own
+	// detection (the default, a second) fires first and the batch is the
+	// victim.
+	if _, err := outside.Exec(ctx, `SET LOCAL deadlock_timeout = '30s'`); err != nil {
+		t.Fatalf("outside timeout: %v", err)
+	}
+	if _, err := outside.Exec(ctx, `SELECT id::text FROM products WHERE id = $1::uuid FOR UPDATE`, p2); err != nil {
+		t.Fatalf("outside hold: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		defer cancel()
+		_, err := setDoor.UpsertBatch(cctx, load.Batch{OrgID: fxProdOrgID, SourceSystem: fxProdSource,
+			BatchID: "b-us-y", Caller: fxProdActorID, Items: setRows})
+		done <- err
+	}()
+	waitForLockWait(t, e.pool)
+	// The outside now wants the first product's row the batch holds FOR
+	// SHARE: the cycle closes and Postgres kills the batch.
+	if _, err := outside.Exec(ctx, `SELECT id::text FROM products WHERE id = $1::uuid FOR UPDATE`, p1); err != nil {
+		t.Fatalf("outside cycle: %v", err)
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, load.ErrBatchContended) {
+			t.Fatalf("the deadlocked set batch answered %v, want the ErrBatchContended sentinel", err)
+		}
+	case <-time.After(60 * time.Second):
+		t.Fatalf("the deadlock never resolved")
+	}
+	_ = outside.Rollback(ctx)
+	// Nothing of the victim stands: no batch row, no set rows, the
+	// planted hashes unmoved.
+	var batches, setRowCount int
+	var hash1 string
+	if err := e.pool.QueryRow(ctx, `
+		SELECT (SELECT count(*) FROM load_batch WHERE org_id = $1::uuid AND batch_id = 'b-us-y'),
+		       (SELECT count(*) FROM product_uoms WHERE product_id = ANY($2::uuid[])),
+		       (SELECT coalesce(content_hash, '') FROM load_key_registry
+		         WHERE org_id = $1::uuid AND source_system = $3 AND kind = $4 AND legacy_id = 'US-W1')`,
+		fxProdOrgID, []string{p1, p2}, fxProdSource, load.KindUnitSet).Scan(&batches, &setRowCount, &hash1); err != nil {
+		t.Fatalf("victim remainder read: %v", err)
+	}
+	if batches != 0 || setRowCount != 0 || hash1 != repeatA64 {
+		t.Fatalf("the victim left %d batch rows, %d set rows, hash %q: a contended batch rolls back whole", batches, setRowCount, hash1)
+	}
+	// The resubmission converges: the outside is gone, so both items
+	// land, each base over its own set's base row.
+	r, err := setDoor.UpsertBatch(ctx, load.Batch{OrgID: fxProdOrgID, SourceSystem: fxProdSource,
+		BatchID: "b-us-y", Caller: fxProdActorID, Items: setRows})
+	if err != nil {
+		t.Fatalf("set batch resubmission: %v", err)
+	}
+	for _, o := range r.Items {
+		if o.Status != load.OutcomeUpdated {
+			t.Fatalf("the resubmission answered %+v, want updated", o)
+		}
+	}
+	for _, pid := range []string{p1, p2} {
+		baseUOM, setBase, setRowCount := e.prWindowBaseAndSet(t, pid)
+		if baseUOM != "EA" || setBase != "EA" || setRowCount != 2 {
+			t.Fatalf("after the resubmission the row carries base %s over a set whose base row is %s (%d rows), want EA over EA with two rows", baseUOM, setBase, setRowCount)
+		}
+	}
+}
