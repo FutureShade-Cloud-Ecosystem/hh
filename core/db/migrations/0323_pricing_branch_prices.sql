@@ -29,7 +29,10 @@ CREATE TABLE pricing_branch_prices (
 CREATE INDEX idx_pricing_branch_prices_branch ON pricing_branch_prices(branch_id);
 
 -- A branch price change is traced like an anchor change: the trail row names
--- the branch. Nullable, so every anchor trail row already written stands.
--- The table is append-only (0039's trigger), which an ADD COLUMN does not
--- disturb.
+-- the branch, and carries the unit the price is per (a branch price may stand
+-- in a larger unit, and 12000 per PLT is a different price from 12000 per EA,
+-- so the trail says which one it records). Both nullable, so every anchor
+-- trail row already written stands. The table is append-only (0039's
+-- trigger), which an ADD COLUMN does not disturb.
 ALTER TABLE price_change_log ADD COLUMN branch_id UUID REFERENCES locations(id) ON DELETE SET NULL;
+ALTER TABLE price_change_log ADD COLUMN price_uom CITEXT REFERENCES uoms(code) ON DELETE RESTRICT;
