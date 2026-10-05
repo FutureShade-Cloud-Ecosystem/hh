@@ -150,13 +150,13 @@ export const pricingStyles = [
     button.danger {
       border-color: var(--hos-safety-red, var(--hh-danger));
     }
-    /* the console's inputs are filled boxes, not outlined pills: the striped row's own tint
-       fills them, so they read in light and dark alike */
+    /* the console's inputs are filled boxes, not outlined pills: a light tint over the striped
+       row, the weight the console's own margin boxes carry (a few percent of ink, no more) */
     .panel td input,
     .field input,
     .toolbar input {
       border-radius: 6px;
-      background: color-mix(in srgb, var(--hos-text, var(--hh-text)) 5%, var(--hos-row-alt, var(--hh-row-alt)));
+      background: color-mix(in srgb, var(--hos-text, var(--hh-text)) 3%, var(--hos-row-alt, var(--hh-row-alt)));
     }
     input.mono,
     td input.mono {

@@ -127,11 +127,31 @@ test("the margin boxes are filled boxes, and the code and id inputs sit left", a
   const cell = page.locator('input[data-field^="target-"]').first();
   const look = await cell.evaluate((el) => {
     const cs = getComputedStyle(el);
-    return { radius: parseFloat(cs.borderTopLeftRadius), back: cs.backgroundColor, card: getComputedStyle(el.closest("tr") as Element).backgroundColor, width: el.getBoundingClientRect().width };
+    const row = el.closest("tr");
+    return { radius: parseFloat(cs.borderTopLeftRadius), back: cs.backgroundColor, card: row === null ? "rgb(0, 0, 0)" : getComputedStyle(row).backgroundColor, width: el.getBoundingClientRect().width };
   });
   expect(look.radius).toBeLessThan(12);
   expect(look.width).toBeGreaterThanOrEqual(96);
   expect(look.back).not.toBe("rgba(0, 0, 0, 0)");
+  // a filled box at the reference's weight, in both themes: the box's fill must equal the
+  // exact few percent tint the style names (3 percent of the text colour over the row alt
+  // colour). A probe div carrying the same declaration is computed beside the input, inside
+  // the same shadow tree so the custom properties resolve identically, and the two computed
+  // values are compared as strings: the same expression serialises to the same string, so a
+  // heavier tint, a lighter one or a revert to outlined pills all read as a difference.
+  const striped = page.locator("qd-pricing-margin tbody tr:nth-child(2) input[data-field^='target-']");
+  for (const word of ["Light", "Dark"] as const) {
+    await setTheme(page, word);
+    const fills = await striped.evaluate((el) => {
+      const probe = document.createElement("div");
+      probe.style.background = "color-mix(in srgb, var(--hos-text, var(--hh-text)) 3%, var(--hos-row-alt, var(--hh-row-alt)))";
+      el.parentElement?.append(probe);
+      const want = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      return { fill: getComputedStyle(el).backgroundColor, want };
+    });
+    expect(fills.fill, `the ${word} margin box fill is the 3 percent text tint`).toBe(fills.want);
+  }
   await openTab(page, "breaks");
   await page.getByTestId("pb-new").click();
   expect(await page.getByTestId("pb-code").evaluate((el) => getComputedStyle(el).textAlign)).toBe("left");
