@@ -14,7 +14,7 @@
 // single-connection pool inserts the row with id X and holds it uncommitted. Pool-size creates, all
 // pushing id X over the real store at pool size 4, each open a transaction and queue inside it
 // (behind the blocker's row, a parent row lock or the seq draw). Once the probe sees pool-size
-// sessions waiting on a lock, the blocker commits, and every caller then reaches the conflict arm
+// sessions waiting on a lock, the blocker commits, and the callers then proceed to the conflict arm
 // holding its transaction. Unfixed they starve and the shared bound fires (a STALL banner); fixed
 // they all answer ErrRowExists within milliseconds.
 //
@@ -182,9 +182,10 @@ func TestPOSyncCreateConflictArm_ReadsThroughTx_NoPoolCycle(t *testing.T) {
 		}
 	}
 	if stalled {
-		t.Fatalf("STALL: %d creates reached the conflict arm holding their transactions and the shared %s bound fired "+
-			"%s after the release. The conflict arm read through the POOL and asked for a second connection while all %d "+
-			"were held (connection starvation by second acquisition). Outcomes: %s",
+		t.Fatalf("STALL: %d creates held their transactions and the shared %s bound fired "+
+			"%s after the release. At least one caller reached the conflict arm and asked the shared POOL for a second "+
+			"connection while all %d were held; the others may be queued on that caller's row locks. The cycle closes "+
+			"through the client-side pool, which the database cannot see (connection starvation by second acquisition). Outcomes: %s",
 			poolSize, stallBound, time.Since(released).Round(time.Millisecond), poolSize, strings.Join(bad, "; "))
 	}
 	if len(bad) > 0 {
