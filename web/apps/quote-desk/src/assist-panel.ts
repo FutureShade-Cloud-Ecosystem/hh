@@ -39,6 +39,7 @@ import { quoteErrorMessage } from "./_quote-edit.js";
 import { spokenRefusal } from "./_quote-workarea.js";
 import {
   AI_OFF_HINT,
+  interruptedAddText,
   READ_LABEL,
   addPayloads,
   addResultText,
@@ -79,9 +80,9 @@ export class QdQuoteAssist extends PanelBase {
   @state() private dismissed: string[] = [];
   @state() private gapsError = "";
 
-  private gapsSeq = 0;
-  private readSeq = 0;
   private lastQuote = "";
+  /** The epoch of the context the flags below belong to: a new one means a read or an add still out will not answer here. */
+  private lastEpoch = -1;
 
   static styles = [
     panelStyles,
@@ -286,6 +287,13 @@ export class QdQuoteAssist extends PanelBase {
 
   protected override willUpdate(changed: Map<string, unknown>): void {
     if (changed.has("quoteId") || changed.has("client")) {
+      // Leaving a quote and coming back inside one update is a new context too: what was out for the first visit is gone.
+      const epoch = this.ctx.epoch;
+      if (epoch !== this.lastEpoch) {
+        this.lastEpoch = epoch;
+        this.reading = false;
+        this.adding = false;
+      }
       if (this.quoteId !== this.lastQuote) {
         // A different quote is a different conversation: the proposals, the ticks and the
         // dismissals all belong to the quote they were made against.
@@ -298,7 +306,11 @@ export class QdQuoteAssist extends PanelBase {
         this.readError = "";
         // The pasted job description belongs to the quote it was pasted for.
         this.text = "";
-        this.readSeq += 1;
+        // A read or an add still out for the last quote will never answer here: its flags go with it.
+        this.reading = false;
+        this.adding = false;
+        this.gaps = null;
+        this.gapsError = "";
       }
       this.reload();
     }
@@ -328,14 +340,14 @@ export class QdQuoteAssist extends PanelBase {
   private async readDescription(): Promise<void> {
     const client = this.client;
     if (client === null || this.reading) return;
+    const ctx = this.ctx;
     this.readError = "";
     this.addNote = "";
     this.reading = true;
-    const seq = ++this.readSeq;
     const asked = this.useAi && !this.aiLatched;
     try {
-      const result = await client.assistExtract(this.text, this.branchId, asked);
-      if (seq !== this.readSeq) return;
+      const result = await ctx.guarded(client.assistExtract(this.text, this.branchId, asked));
+      if (result === undefined) return;
       if (!result.ok) {
         this.readError = spokenRefusal(quoteErrorMessage(result.status, result.error, "read that description"));
         return;
@@ -349,7 +361,7 @@ export class QdQuoteAssist extends PanelBase {
         this.useAi = false;
       }
     } finally {
-      if (seq === this.readSeq) this.reading = false;
+      if (!ctx.stale) this.reading = false;
     }
   }
 
@@ -359,7 +371,7 @@ export class QdQuoteAssist extends PanelBase {
     if (client === null || ex === null) return;
     const payloads = addPayloads({ ...ex, proposals: this.proposals }, this.selected);
     if (payloads.length === 0) return;
-    const quoteId = this.quoteId;
+    const ctx = this.ctx;
     this.adding = true;
     this.addNote = "";
     const failures: Array<{ ref: string; message: string }> = [];
@@ -368,8 +380,16 @@ export class QdQuoteAssist extends PanelBase {
       for (const p of payloads) {
         // ONE REQUEST PER LINE through the audited write: each line is priced, holds stock and
         // writes its own audit row, and a partial failure names the line that caused it.
-        const result = await client.addLine(quoteId, p.product_id, p.qty_entered, p.uom_entered);
-        if (quoteId !== this.quoteId) return;
+        // The add that is out when the person leaves has usually landed: its answer is counted even though it is dropped.
+        const result = await ctx.guarded(client.addLine(ctx.id, p.product_id, p.qty_entered, p.uom_entered), (late) => {
+          if (late.ok) added += 1;
+        });
+        if (result === undefined) {
+          // The person opened another quote: the loop stops, no line goes to it, and what landed is said.
+          this.addNote = interruptedAddText(added, payloads.length);
+          if (added > 0) this.dispatchEvent(new CustomEvent("quote-changed", { detail: { quoteId: ctx.id }, bubbles: true, composed: true }));
+          return;
+        }
         if (result.ok) {
           added += 1;
           this.selected = this.selected.filter((r) => r !== p.ref);
@@ -379,7 +399,7 @@ export class QdQuoteAssist extends PanelBase {
         failures.push({ ref: p.ref, message: `${p.description}: ${spokenRefusal(quoteErrorMessage(result.status, result.error, "add this line"))}` });
       }
     } finally {
-      this.adding = false;
+      if (!ctx.stale) this.adding = false;
     }
     this.addNote = addResultText(added, failures);
     if (added > 0) {
@@ -394,15 +414,17 @@ export class QdQuoteAssist extends PanelBase {
 
   private async loadGaps(): Promise<void> {
     const client = this.client;
-    if (client === null || this.quoteId === "") {
+    const ctx = this.ctx;
+    if (client === null || ctx.id === "") {
       this.gaps = null;
       this.gapsError = "";
       return;
     }
-    const seq = ++this.gapsSeq;
-    const quoteId = this.quoteId;
-    const result = await client.assistScopeGaps(quoteId);
-    if (seq !== this.gapsSeq || quoteId !== this.quoteId) return;
+    // A cancelled context issues no more requests: the panel left the page (sign out) and a read of its is not this session's.
+    if (ctx.stale) return;
+    const seq = ctx.startRead();
+    const result = await ctx.guardedRead(seq, client.assistScopeGaps(ctx.id));
+    if (result === undefined) return;
     if (!result.ok) {
       // A suggestion read that cannot load is quiet, not loud: nothing the rep is doing has
       // failed, so this is a status line and never an alert.

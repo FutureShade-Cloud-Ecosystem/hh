@@ -84,14 +84,19 @@ export class QdQuoteFollowups extends PanelBase {
 
   private async load(): Promise<void> {
     const client = this.client;
-    const quoteId = this.quoteId;
-    if (client === null || quoteId === "") {
+    const ctx = this.ctx;
+    if (client === null || ctx.id === "") {
       this.history = null;
       this.loaded = false;
       return;
     }
-    const [result, quote] = await Promise.all([client.followUps(quoteId), client.readQuote(quoteId)]);
-    if (quoteId !== this.quoteId) return;
+    // A cancelled context issues no more requests: the panel left the page (sign out) and a read of its is not this session's.
+    if (ctx.stale) return;
+    // A newer read of this quote supersedes an older one still out: the older answer never lands over it.
+    const seq = ctx.startRead();
+    const answers = await ctx.guardedRead(seq, Promise.all([client.followUps(ctx.id), client.readQuote(ctx.id)]));
+    if (answers === undefined) return;
+    const [result, quote] = answers;
     // Whether the quote can still be shared is the quote's own status; a read that fails offers no send.
     this.shareable = quote.ok && isShareable(quote.value);
     if (!result.ok) {
@@ -119,10 +124,13 @@ export class QdQuoteFollowups extends PanelBase {
   private async share(): Promise<void> {
     const client = this.client;
     if (client === null || this.busy) return;
+    const ctx = this.ctx;
     this.busy = true;
     this.error = "";
     this.notice = "";
-    const result = await client.shareBySMS(this.quoteId);
+    const result = await ctx.guarded(client.shareBySMS(ctx.id), this.lateWrite(ctx, (late) => spokenRefusal(shareErrorMessage(late.status, late.error))));
+    // The person opened another quote while this was out: its answer says nothing there.
+    if (result === undefined) return;
     this.busy = false;
     if (!result.ok) {
       this.error = spokenRefusal(shareErrorMessage(result.status, result.error));
@@ -130,6 +138,7 @@ export class QdQuoteFollowups extends PanelBase {
     }
     this.notice = queuedNotice();
     await this.load();
+    if (ctx.stale) return;
     // The surface shows the status, which a first share moves from draft to sent.
     this.announceChanged();
   }
@@ -137,10 +146,15 @@ export class QdQuoteFollowups extends PanelBase {
   private async change(stop: boolean): Promise<void> {
     const client = this.client;
     if (client === null || this.busy) return;
+    const ctx = this.ctx;
     this.busy = true;
     this.error = "";
     this.notice = "";
-    const result = stop ? await client.stopFollowUps(this.quoteId) : await client.resumeFollowUps(this.quoteId);
+    const result = await ctx.guarded(
+      stop ? client.stopFollowUps(ctx.id) : client.resumeFollowUps(ctx.id),
+      this.lateWrite(ctx, (late) => spokenRefusal(shareErrorMessage(late.status, late.error))),
+    );
+    if (result === undefined) return;
     this.busy = false;
     if (!result.ok) {
       this.error = spokenRefusal(shareErrorMessage(result.status, result.error));

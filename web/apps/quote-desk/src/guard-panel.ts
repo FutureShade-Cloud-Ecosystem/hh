@@ -88,6 +88,13 @@ export class QdQuoteGuard extends PanelBase {
   ];
 
   protected override willUpdate(changed: Map<string, unknown>): void {
+    if (changed.has("branchId") && changed.get("branchId") !== undefined) {
+      // A verdict is for the branch it was asked about: another branch's quote starts with none.
+      this.status = "";
+      this.blocked = false;
+      this.faulted = false;
+      this.busy = false;
+    }
     if (changed.has("client") || changed.has("branchId")) this.reload();
   }
 
@@ -103,8 +110,10 @@ export class QdQuoteGuard extends PanelBase {
   private async loadBranch(): Promise<void> {
     const client = this.client;
     if (client === null) return;
+    const wanted = this.branchId;
     const result = await client.resolveBranch();
-    this.branchName = result.ok && (this.branchId === "" || result.value.id === this.branchId) ? result.value.name : "";
+    if (wanted !== this.branchId) return; // the branch changed while this was out: the newer read names it
+    this.branchName = result.ok && (wanted === "" || result.value.id === wanted) ? result.value.name : "";
   }
 
   protected override onClickAction(action: string): void {
@@ -138,7 +147,10 @@ export class QdQuoteGuard extends PanelBase {
       return;
     }
     this.busy = true;
-    const result = await client.checkPolicy(price, cost, this.branchId);
+    const asked = this.branchId;
+    const result = await client.checkPolicy(price, cost, asked);
+    // The verdict is for the branch it was asked about; if the quote moved to another branch meanwhile it says nothing.
+    if (asked !== this.branchId) return;
     this.busy = false;
     if (result.ok) {
       this.faulted = false;

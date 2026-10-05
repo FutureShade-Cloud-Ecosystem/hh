@@ -77,20 +77,21 @@ export class QdQuoteHistory extends PanelBase {
     void this.load();
   }
 
-  /** An answer for the quote that was open before is dropped, never shown over the one open now. */
-  private loadSeq = 0;
-
+  /** An answer for the quote that was open before is dropped, never shown over the one open now, and an older read of this quote never lands over a newer one. */
   private async load(): Promise<void> {
     const client = this.client;
-    const seq = ++this.loadSeq;
-    if (client === null || this.quoteId === "") {
+    const ctx = this.ctx;
+    if (client === null || ctx.id === "") {
       this.changes = [];
       this.loaded = false;
       return;
     }
+    // A cancelled context issues no more requests: the panel left the page (sign out) and a read of its is not this session's.
+    if (ctx.stale) return;
     this.error = "";
-    const result = await client.editHistory(this.quoteId);
-    if (seq !== this.loadSeq) return;
+    const seq = ctx.startRead();
+    const result = await ctx.guardedRead(seq, client.editHistory(ctx.id));
+    if (result === undefined) return;
     if (!result.ok) {
       this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "read this quote's history"));
       return;

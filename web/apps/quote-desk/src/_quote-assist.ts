@@ -255,6 +255,17 @@ export function addResultText(added: number, failures: readonly { ref: string; m
 }
 
 /**
+ * interruptedAddText: said when the person opened another quote while a confirm run was still adding lines.
+ * The run stops at once, so the lines that had landed are named and the rest are said to be not added; it
+ * names no quote, because it is read on the quote opened since.
+ */
+export function interruptedAddText(added: number, total: number): string {
+  if (added >= total) return `You moved to another quote while lines were being added. All ${total} selected line${total === 1 ? " was" : "s were"} added to the quote you left.`;
+  const landed = added === 0 ? "None of the" : `${added} of the`;
+  return `You moved to another quote while lines were being added. ${landed} ${total} selected line${total === 1 ? " was" : "s were"} added to the quote you left, and the rest were not added.`;
+}
+
+/**
  * aiHelperLatched: the contract has no availability read, so the AI helper
  * starts available. It latches DISABLED only when the server answered an
  * extraction asked with use_ai true by source deterministic and an ai_note:
@@ -273,7 +284,7 @@ export function sourceText(ex: Extraction | null | undefined): string {
 
 /** The one-line explanation beside the AI helper. */
 export const AI_OFF_HINT =
-  "Off: your text is read here, with no AI and no cost. On: an AI pass helps split awkward wording, and it counts against your monthly allowance.";
+  "Off: your text is read here, with no AI and no cost. On: an AI pass helps split awkward wording, and it counts against your AI allowance.";
 
 /** The label of the button that reads the paste box. */
 export const READ_LABEL = "Suggest lines from this text";

@@ -99,9 +99,41 @@ import {
 } from "./quote-surface.js";
 import { FLOOR_REFUSAL_CLOSED_EVENT, floorRefusalMessage, openFloorRefusalDialog, parseFloorRefusal } from "./floor-refusal.js";
 import { OPEN_SETTINGS_EVENT } from "./panel-seams.js";
+import type { Result } from "@hardscapehouse/api-client";
 import type { QdClient, SurfaceConfig, TermsRef } from "./qd-client.js";
 import { WorkspaceStore } from "./workspace-store.js";
+import { QuoteContext, QuoteScope, SIGN_OUT_EVENT, UNSENT_WAIT_MS, waitUpTo, type SignOutDetail } from "./quote-context.js";
 import type { AddonSuggestion } from "@hardscapehouse/pos-kit/src/ported/pos-api.js";
+
+/** Said on return when the link was made after the person had left: its one-time address went with the answer. */
+const LATE_LINK_NOTE = "A share link was made on this quote while you were away. Its address was shown only once and was not kept: use Copy link again to make one you can copy.";
+
+/** Said when the read of a quote went ahead while a terms save of that quote was still out. */
+const STILL_SAVING = "A terms change you made on this quote is still being saved. What is shown may not include it yet.";
+
+/** How long a scan made in compose waits for the host to hand the quote just made down before it says so. */
+const HANDOFF_WAIT_MS = 3000;
+
+/** Thrown inside the send and link paths when the quote changed under them: caught and said nothing. */
+class StaleQuoteError extends Error {}
+
+/** The whole terms row as the save sends it (the core takes the row whole). */
+function termsBody(t: TermsRef): Parameters<QdClient["putTerms"]>[1] {
+  return {
+    depositRequired: t.depositRequired,
+    depositPct: t.depositPct,
+    includeImages: t.includeImages,
+    customerNotes: t.customerNotes,
+    contactName: t.contactName,
+    projectJob: t.projectJob,
+    customerPo: t.customerPo,
+    salespersonId: t.salespersonId,
+    fulfillment: t.fulfillment,
+    deliveryAddress: t.deliveryAddress,
+    requestedDate: t.requestedDate,
+    deliveryFeeCents: t.deliveryFeeCents,
+  };
+}
 
 interface AddonSuggestionRow {
   product_id: string;
@@ -138,6 +170,8 @@ export class QdQuoteWorkarea extends LitElement {
   @state() private columnsError = "";
   @state() private notice = "";
   @state() private busy = false;
+  /** How many writes are out: Send stays disabled until the last of them has answered, not the first. */
+  private busyHolds = 0;
   @state() private term = "";
   @state() private qtyDrafts: Record<number, string> = {};
   @state() private discDrafts: Record<number, string> = {};
@@ -157,6 +191,8 @@ export class QdQuoteWorkarea extends LitElement {
   private clockTimer: ReturnType<typeof setInterval> | undefined;
   private termsTimer: ReturnType<typeof setTimeout> | undefined;
   private mintedToken = "";
+  /** The context of the quote on screen: every read and write captures it at its start and checks it after each await. */
+  private readonly scope = new QuoteScope();
   private dragging = false;
   /** After creating a quote the caret goes to the scan box: the next action is always add. */
   private pendingFocusScan = false;
@@ -1046,7 +1082,9 @@ export class QdQuoteWorkarea extends LitElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
+    this.detached = false;
     window.addEventListener(FLOOR_REFUSAL_CLOSED_EVENT, this.onFloorDialogClosed);
+    window.addEventListener(SIGN_OUT_EVENT, this.onSignOut);
     this.startLoads();
     this.clockTimer = setInterval(() => {
       this.clockNow = new Date();
@@ -1071,6 +1109,7 @@ export class QdQuoteWorkarea extends LitElement {
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     window.removeEventListener(FLOOR_REFUSAL_CLOSED_EVENT, this.onFloorDialogClosed);
+    window.removeEventListener(SIGN_OUT_EVENT, this.onSignOut);
     this.renderRoot.removeEventListener("click", this.onActionClick as EventListener);
     this.renderRoot.removeEventListener("input", this.onFieldInput as EventListener);
     this.renderRoot.removeEventListener("change", this.onFieldChange as EventListener);
@@ -1088,19 +1127,153 @@ export class QdQuoteWorkarea extends LitElement {
     this.renderRoot.removeEventListener("customer-picked", this.onCustomerPicked as EventListener);
     if (this.clockTimer !== undefined) clearInterval(this.clockTimer);
     if (this.termsTimer !== undefined) clearTimeout(this.termsTimer);
+    // A write still out when the work area leaves the page (sign out) must not go on to send follow-ups under the next session.
+    this.detached = true;
+    this.scope.open("");
+    this.releaseHandoffWaiters();
   }
+
+  /** True from the moment this work area leaves the page: its context is then cancelled for good. */
+  private detached = false;
 
   protected override willUpdate(changed: Map<string, unknown>): void {
     // The host wires the client after this element mounts; the loads start
     // the moment it arrives.
+    if (changed.has("quoteId")) this.leaveQuote(typeof changed.get("quoteId") === "string" ? (changed.get("quoteId") as string) : "");
+    if (changed.has("quoteId") && this.quoteId !== "") this.releaseHandoffWaiters();
     if (changed.has("client") && this.client !== null) this.startLoads();
     if (changed.has("quoteId")) {
-      this.converted = null;
-      this.mintedToken = "";
       this.opening = this.loadAll();
-      // Remember what is open so a refresh resumes it.
-      if (changed.get("quoteId") !== undefined || this.quoteId) this.store?.scheduleSave();
+      // Remember what is open so a refresh resumes it, sent now rather than left to the debounce.
+      if (changed.get("quoteId") !== undefined || this.quoteId) {
+        if (this.store !== null) this.store.state.openRef = this.quoteId;
+        this.store?.scheduleSave();
+        void this.store?.flush();
+      }
     }
+  }
+
+  private releaseHandoffWaiters(): void {
+    const waiting = this.handoffWaiters;
+    this.handoffWaiters = [];
+    for (const release of waiting) release();
+  }
+
+  /** The context of the quote on screen; a quote id that moved without its context following gets a fresh one. */
+  private get ctx(): QuoteContext {
+    if (this.detached) return QuoteContext.cancelled(this.quoteId);
+    const live = this.scope.current;
+    return live.id === this.quoteId && !live.stale ? live : this.scope.open(this.quoteId);
+  }
+
+  /**
+   * The quote on screen changed. What the person left on the old quote goes to
+   * that quote (an unsaved terms edit is sent to the id it was typed on) or is
+   * dropped; the old context is cancelled, so no read or write still out for it
+   * can touch this one; and the work area starts the new quote clean: no error,
+   * notice, busy flag, draft, link or figure of the old quote remains.
+   */
+  private leaveQuote(previousId: string): void {
+    this.flushTermsOf(previousId);
+    this.scope.open(this.quoteId);
+    this.converted = null;
+    this.mintedToken = "";
+    this.error = "";
+    this.notice = "";
+    this.floorSpoken = "";
+    this.renderRoot.querySelector<HTMLElement & { announce?: (msg: string, kind: "ok") => void }>("hos-pos-scan-box")?.announce?.("", "ok"); // the gun's outcome line is the old quote's
+    this.busyHolds = 0;
+    this.busy = false;
+    this.sendOpen = false;
+    this.view = null;
+    this.terms = null;
+    this.glance = null;
+    this.customer = null; // the card shows nothing of the old account until the new one is read
+    this.addons = [];
+    this.qtyDrafts = {};
+    this.discDrafts = {};
+    this.addonQty = {};
+    this.ticketMoved();
+  }
+
+  /** What a late success changed that the screen cannot show, kept by quote until that quote is read again. */
+  private readonly lateNotes = new Map<string, string>();
+
+  /**
+   * What a guarded write does with its answer when the quote was left while it was out. It is never applied to the
+   * quote on screen, but a write that succeeded did change its quote: the screens are told, by that quote's own id,
+   * so the list and every open view of it re-read and the person who comes back finds what the server holds. A refusal
+   * is said only on the quote it belongs to, when the person is on it again.
+   */
+  private lateWrite(ctx: QuoteContext, what: string, note = ""): (late: Result<unknown>) => void {
+    return (late) => {
+      if (late.ok) {
+        // What the success changed that the screen cannot show is kept for that quote and said when it is read: the announcement makes it read again.
+        if (note !== "") this.lateNotes.set(ctx.id, note);
+        this.dispatchEvent(new CustomEvent("quote-changed", { detail: { quoteId: ctx.id }, bubbles: true, composed: true }));
+        return;
+      }
+      if (this.ctx.id !== ctx.id) return;
+      this.error = spokenRefusal(quoteErrorMessage(late.status, late.error, what));
+    };
+  }
+
+  /** Hold the Send and add controls while a write is out; the last write to answer lets go. A stale hold was reset with the quote. */
+  private holdBusy(ctx: QuoteContext): () => void {
+    this.busyHolds += 1;
+    this.busy = true;
+    let released = false;
+    return () => {
+      if (released || ctx.stale) return;
+      released = true;
+      this.busyHolds = Math.max(0, this.busyHolds - 1);
+      this.busy = this.busyHolds > 0;
+    };
+  }
+
+  /**
+   * The terms save of each quote the person left with an unsaved edit, until the server has answered it. Coming
+   * back to that quote waits on it, so the read never beats the save and the edit is not lost.
+   */
+  private readonly flushes = new Map<string, Promise<void>>();
+
+  /** The unsaved terms edit of the quote being left is sent to the quote it was typed on, then cleared. */
+  private flushTermsOf(previousId: string): void {
+    const client = this.client;
+    const terms = this.terms;
+    const dirty = this.termsPendingCount() > 0;
+    const label = this.view?.quote_no ?? previousId;
+    if (this.termsTimer !== undefined) {
+      clearTimeout(this.termsTimer);
+      this.termsTimer = undefined;
+    }
+    this.termsPending = {};
+    this.termsUnsaved = false;
+    this.termsEditSeq += 1;
+    if (!dirty || client === null || terms === null || previousId === "") return;
+    const body = termsBody(terms);
+    const sent = client.putTerms(previousId, body).then((result) => {
+      // Said plainly, naming the quote it was for, because the person has moved on to another.
+      if (!result.ok) this.error = `The terms you changed on ${label} were not saved: ${spokenRefusal(quoteErrorMessage(result.status, result.error, "save the quote terms"))}`;
+    });
+    this.flushes.set(previousId, sent);
+    void sent.then(() => {
+      if (this.flushes.get(previousId) === sent) this.flushes.delete(previousId);
+    });
+  }
+
+  /** Sign out: the unsaved terms edit and the layout are sent while the session still stands. */
+  private readonly onSignOut = (event: Event): void => {
+    const detail = (event as CustomEvent<SignOutDetail>).detail;
+    detail.waits.push(this.flushForSignOut());
+  };
+
+  private async flushForSignOut(): Promise<void> {
+    const ctx = this.ctx;
+    if (this.termsPendingCount() > 0 && ctx.id !== "") await this.putTermsNow();
+    await this.store?.flush();
+    // A terms save started by a switch is still the person's unsent work: sign out waits for it too (bounded by the host).
+    await Promise.all([...this.flushes.values()]);
   }
 
   private startLoads(): void {
@@ -1215,6 +1388,7 @@ export class QdQuoteWorkarea extends LitElement {
       }
     }
     this.buildValiditySelect();
+    this.syncTermsBoxes();
     if (view === null) return;
     for (const input of this.renderRoot.querySelectorAll<HTMLInputElement>('[data-field="qty"]')) {
       const lineNo = Number(input.getAttribute("data-line"));
@@ -1240,19 +1414,25 @@ export class QdQuoteWorkarea extends LitElement {
       const canonical = this.addonQty[productId] ?? String(addon.default_qty);
       if (input.value !== canonical) input.value = canonical;
     }
-    for (const input of this.renderRoot.querySelectorAll<HTMLInputElement>('[data-field="terms"]')) {
-      const field = input.getAttribute("data-terms-field") ?? "";
-      const canonical = this.termsTextOf(field);
-      if (canonical !== null && input.value !== canonical && !this.isTypingIn(input)) input.value = canonical;
+  }
+
+  /**
+   * The terms boxes hold the open quote's figures: the server's values once the terms are read, and nothing
+   * while they are not (so a box never keeps what the quote before it held). The box under the caret is left alone.
+   */
+  private syncTermsBoxes(): void {
+    for (const input of this.renderRoot.querySelectorAll<HTMLInputElement>('[data-terms-field]')) {
+      const canonical = this.termsTextOf(input.getAttribute("data-terms-field") ?? "") ?? "";
+      if (input.value !== canonical && !this.isTypingIn(input)) input.value = canonical;
     }
     const deliveryFee = this.renderRoot.querySelector<HTMLInputElement>('[data-field="delivery-fee"]');
-    if (deliveryFee !== null && this.terms !== null) {
-      const canonical = this.terms.deliveryFeeCents > 0 ? (this.terms.deliveryFeeCents / 100).toFixed(2) : "";
+    if (deliveryFee !== null) {
+      const canonical = this.terms !== null && this.terms.deliveryFeeCents > 0 ? (this.terms.deliveryFeeCents / 100).toFixed(2) : "";
       if (deliveryFee.value !== canonical && !this.isTypingIn(deliveryFee)) deliveryFee.value = canonical;
     }
     const depositPct = this.renderRoot.querySelector<HTMLInputElement>('[data-field="deposit-pct"]');
-    if (depositPct !== null && this.terms !== null) {
-      const canonical = this.terms.depositPct > 0 ? String(this.terms.depositPct) : "";
+    if (depositPct !== null) {
+      const canonical = this.terms !== null && this.terms.depositPct > 0 ? String(this.terms.depositPct) : "";
       if (depositPct.value !== canonical && !this.isTypingIn(depositPct)) depositPct.value = canonical;
     }
   }
@@ -1309,6 +1489,8 @@ export class QdQuoteWorkarea extends LitElement {
   private async maybeRestoreOpenQuote(ref: string): Promise<void> {
     if (this.restoreTried || ref === "" || this.quoteId !== "") return;
     this.restoreTried = true;
+    // A quote is being made (or was just made and not yet handed down): that is where the person is going, not the remembered one.
+    if (this.creating !== null || this.createdQuoteId !== "") return;
     this.dispatchEvent(new CustomEvent("quote-open", { detail: { quoteId: ref }, bubbles: true, composed: true }));
   }
 
@@ -1328,10 +1510,21 @@ export class QdQuoteWorkarea extends LitElement {
     return { field, line: Number(active.getAttribute("data-line")), value: active.value };
   }
 
+  /** The newest read of the quote on screen: a read that finds itself superseded hands its caller this one to wait on. */
+  private newestRead: Promise<void> = Promise.resolve();
+
   async loadAll(): Promise<void> {
+    const read = this.readAll();
+    this.newestRead = read;
+    return read;
+  }
+
+  private async readAll(): Promise<void> {
     const client = this.client;
     if (client === null) return;
-    if (this.quoteId === "") {
+    const ctx = this.ctx;
+    if (ctx.stale) return;
+    if (ctx.id === "") {
       this.view = null;
       this.terms = null;
       this.termsUnsaved = false;
@@ -1340,15 +1533,24 @@ export class QdQuoteWorkarea extends LitElement {
       this.addons = [];
       return;
     }
+    // Each edit reads twice (this panel's own and the builder's fan-out): the later read supersedes the earlier,
+    // so an older answer that arrives last never lands over a newer one.
+    const seq = ctx.startRead();
     // A refresh never CLEARS the error here: a refusal the user has not read
     // yet must survive the re-read that follows it; errors clear on the next
-    // user gesture.
-    const view = await client.readQuote(this.quoteId);
+    // user gesture. An answer for a quote that is no longer open says nothing.
+    const view = await ctx.guardedRead(seq, client.readQuote(ctx.id));
+    if (view === undefined) return this.supersededBy(ctx, seq);
     if (!view.ok) {
       this.error = "Could not read this quote.";
       return;
     }
     this.view = view.value;
+    const late = this.lateNotes.get(ctx.id);
+    if (late !== undefined) {
+      this.lateNotes.delete(ctx.id);
+      this.notice = late;
+    }
     // Drafts return to the server's truth after a re-read, except the box the
     // person is typing in right now: a late re-read must never wipe the figure
     // under their hands, or the blur that should save it sees an empty box.
@@ -1362,7 +1564,23 @@ export class QdQuoteWorkarea extends LitElement {
       this.pendingFocusScan = false;
       void this.updateComplete.then(() => this.focusScan());
     }
-    const terms = await client.readTerms(this.quoteId);
+    // A terms edit made on this quote before the person left it may still be on its way to the server: the read waits for it.
+    const unsent = this.flushes.get(ctx.id);
+    if (unsent !== undefined) {
+      const landed = await waitUpTo(UNSENT_WAIT_MS, unsent);
+      if (ctx.stale || !ctx.isLatestRead(seq)) return this.supersededBy(ctx, seq);
+      if (!landed) {
+        this.error = STILL_SAVING;
+        // The read went ahead without the save: when the save does answer, the quote is read again, so the change appears and the line above stops being true.
+        void unsent.then(() => {
+          if (ctx.stale) return;
+          if (this.error === STILL_SAVING) this.error = "";
+          void this.loadAll();
+        });
+      }
+    }
+    const terms = await ctx.guardedRead(seq, client.readTerms(ctx.id));
+    if (terms === undefined) return this.supersededBy(ctx, seq);
     if (terms.ok) {
       // A read that was in flight when the person edited must not land over the edit: the unsaved edits ride on top.
       this.terms = { ...terms.value, ...this.termsPending };
@@ -1370,14 +1588,20 @@ export class QdQuoteWorkarea extends LitElement {
     }
     // The margin glance: byte absent fields for a refused caller. An empty
     // object means no margin surface for you, never an error.
-    const glance = await client.marginGlance(this.quoteId);
+    const glance = await ctx.guardedRead(seq, client.marginGlance(ctx.id));
+    if (glance === undefined) return this.supersededBy(ctx, seq);
     if (glance.ok) this.glance = glance.value;
-    void this.loadAddons();
-    void this.hydrateCustomer();
+    void this.loadAddons(ctx, seq);
+    void this.hydrateCustomer(ctx, seq);
+  }
+
+  /** A read that was dropped because a newer read of the same quote began finishes when that newer read does; one dropped because the quote was left finishes at once. */
+  private supersededBy(ctx: QuoteContext, seq: number): Promise<void> {
+    return !ctx.stale && !ctx.isLatestRead(seq) ? this.newestRead : Promise.resolve();
   }
 
   /** The identity card's credit facts: best effort search by name matched on id. */
-  private async hydrateCustomer(): Promise<void> {
+  private async hydrateCustomer(ctx: QuoteContext, seq: number): Promise<void> {
     const v = this.view;
     if (v === null) return;
     if (this.customer?.id === v.customer_id) return;
@@ -1385,24 +1609,26 @@ export class QdQuoteWorkarea extends LitElement {
     const name = v.customer_name.trim();
     if (name === "") return;
     try {
-      const hits = await searchCustomers(name, 10, this.branchId);
+      const hits = await ctx.guardedRead(seq, searchCustomers(name, 10, this.branchId));
+      if (hits === undefined) return;
       this.customer = hits.find((h) => h.id === v.customer_id) ?? null;
     } catch {
-      this.customer = null; // the card renders without the credit line, honest absence
+      if (!ctx.stale && ctx.isLatestRead(seq)) this.customer = null; // the card renders without the credit line, honest absence
     }
   }
 
   /** The add-ons strip: the quote's lines feed the same suggestions read the counter uses. */
-  private async loadAddons(): Promise<void> {
+  private async loadAddons(ctx: QuoteContext, seq: number): Promise<void> {
     const ids = (this.view?.lines ?? []).map((l) => l.product_id).filter(Boolean);
     if (ids.length === 0) {
       this.addons = [];
       return;
     }
     try {
-      this.addons = await addonSuggestions(ids);
+      const rows = await ctx.guardedRead(seq, addonSuggestions(ids));
+      if (rows !== undefined) this.addons = rows;
     } catch {
-      this.addons = []; // empty never error: the strip hides entirely
+      if (!ctx.stale && ctx.isLatestRead(seq)) this.addons = []; // empty never error: the strip hides entirely
     }
   }
 
@@ -1720,19 +1946,41 @@ export class QdQuoteWorkarea extends LitElement {
   private opening: Promise<void> = Promise.resolve();
   private createdQuoteId = "";
 
+  /** Scans waiting for the host to hand a quote id down: released the moment this.quoteId changes. */
+  private handoffWaiters: Array<() => void> = [];
+
+  private handedDown(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      this.handoffWaiters.push(resolve);
+    });
+  }
+
   private async addProduct(p: { id: string; uom: string; name?: string }, qty = 1): Promise<void> {
     const client = this.client;
     if (client === null) return;
     // A scan right after the customer is picked lands while the quote is still being made or read: it waits
     // for them rather than being told to pick a customer who has just been picked.
-    if (this.creating !== null) {
+    // Only while compose is on screen: a scan on an open quote is for that quote and waits for no create.
+    if (this.creating !== null && this.quoteId === "") {
       await this.creating;
-      // The host hands the new quote id down on its own render: wait for it to arrive (bounded).
-      for (let waited = 0; this.createdQuoteId !== "" && this.quoteId === "" && waited < 50; waited += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+      // The host hands the new quote id down on its own render: wait for it to arrive, however long that takes (bounded, and said when it runs out).
+      if (this.createdQuoteId !== "" && this.quoteId === "" && !(await waitUpTo(HANDOFF_WAIT_MS, this.handedDown()))) {
+        this.speakAdd("The new quote did not open in time, so that scan was not added. Scan it again once the quote is on screen.", "warn");
+        return;
+      }
       await this.updateComplete;
+      // The person opened a quote that is not the one just made while the scan waited: it was meant for the new quote.
+      if (this.quoteId !== "" && this.quoteId !== this.createdQuoteId) {
+        this.speakAdd("That scan was meant for the new quote, which another quote overtook, so it was not added. Scan it again on the quote you want.", "warn");
+        return;
+      }
     }
-    if (this.quoteId !== "" && this.view === null) await this.opening;
-    if (this.quoteId === "" || this.view === null) {
+    const ctx = this.ctx;
+    if (ctx.id !== "" && this.view === null) {
+      await this.opening;
+      if (ctx.stale) return;
+    }
+    if (ctx.id === "" || this.view === null) {
       this.speakAdd("Pick a customer first. The quote starts there.", "warn");
       return;
     }
@@ -1740,14 +1988,15 @@ export class QdQuoteWorkarea extends LitElement {
       this.speakAdd(`This quote is ${quoteStatusPhrase(this.view.status)} and can no longer be changed.`, "err");
       return;
     }
-    this.busy = true;
+    const release = this.holdBusy(ctx);
     this.error = "";
     this.notice = "";
-    const result = await client.addLine(this.quoteId, p.id, String(qty), p.uom);
-    this.busy = false;
+    const result = await ctx.guarded(client.addLine(ctx.id, p.id, String(qty), p.uom), this.lateWrite(ctx, "add this line"));
+    if (result === undefined) return;
+    release();
     if (result.ok) {
       this.speakAdd(p.name !== undefined ? `Added ${p.name}` : "Line added.", "ok");
-      await this.afterCartChange();
+      await this.afterCartChange(ctx);
     } else {
       // The refusal belongs beside the gun, once.
       this.speakAdd(spokenRefusal(quoteErrorMessage(result.status, result.error, "add this line")), "err");
@@ -1763,20 +2012,22 @@ export class QdQuoteWorkarea extends LitElement {
       this.error = "Quantity must be a positive number.";
       return;
     }
-    this.busy = true;
+    const ctx = this.ctx;
+    const release = this.holdBusy(ctx);
     this.error = "";
-    const result = await client.editLine(this.quoteId, line.line_no, { qty });
-    this.busy = false;
+    const result = await ctx.guarded(client.editLine(ctx.id, line.line_no, { qty }), this.lateWrite(ctx, "change this quantity"));
+    if (result === undefined) return;
+    release();
     if (result.ok) {
       this.ticketMoved();
-      await this.afterCartChange();
+      await this.afterCartChange(ctx);
     } else {
       // The core may answer the typed floor refusal on this arm too: it is parsed like the discount arm's.
       const refusal = result.status === 409 ? parseFloorRefusal(result.error) : null;
       if (refusal !== null) {
         this.error = floorRefusalMessage(refusal);
         this.floorSpoken = this.error;
-        openFloorRefusalDialog(refusal, this.quoteId, line.line_no, this.termsLine(line.line_no)?.discPct ?? 0);
+        openFloorRefusalDialog(refusal, ctx.id, line.line_no, this.termsLine(line.line_no)?.discPct ?? 0);
       } else {
         this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "change this quantity"));
       }
@@ -1805,13 +2056,15 @@ export class QdQuoteWorkarea extends LitElement {
       this.error = "Discount must be a whole percent from 0 to 100.";
       return;
     }
-    this.busy = true;
+    const ctx = this.ctx;
+    const release = this.holdBusy(ctx);
     this.error = "";
-    const result = await client.editLine(this.quoteId, line.line_no, { discPct: n });
-    this.busy = false;
+    const result = await ctx.guarded(client.editLine(ctx.id, line.line_no, { discPct: n }), this.lateWrite(ctx, "change this discount"));
+    if (result === undefined) return;
+    release();
     if (result.ok) {
       this.ticketMoved();
-      await this.afterCartChange();
+      await this.afterCartChange(ctx);
       return;
     }
     if (result.status === 409) {
@@ -1819,7 +2072,7 @@ export class QdQuoteWorkarea extends LitElement {
       if (refusal !== null) {
         this.error = floorRefusalMessage(refusal);
         this.floorSpoken = this.error;
-        openFloorRefusalDialog(refusal, this.quoteId, line.line_no, n);
+        openFloorRefusalDialog(refusal, ctx.id, line.line_no, n);
         await this.loadAll();
         return;
       }
@@ -1843,13 +2096,15 @@ export class QdQuoteWorkarea extends LitElement {
   private async removeLine(line: QuoteViewLine): Promise<void> {
     const client = this.client;
     if (client === null) return;
-    this.busy = true;
+    const ctx = this.ctx;
+    const release = this.holdBusy(ctx);
     this.error = "";
-    const result = await client.removeLine(this.quoteId, line.line_no);
-    this.busy = false;
+    const result = await ctx.guarded(client.removeLine(ctx.id, line.line_no), this.lateWrite(ctx, "remove this line"));
+    if (result === undefined) return;
+    release();
     if (result.ok) {
       this.ticketMoved();
-      await this.afterCartChange();
+      await this.afterCartChange(ctx);
     } else {
       this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "remove this line"));
       await this.loadAll();
@@ -1914,26 +2169,16 @@ export class QdQuoteWorkarea extends LitElement {
   private async putTermsNow(reloadAfter = false): Promise<void> {
     const client = this.client;
     const t = this.terms;
-    if (client === null || t === null || this.quoteId === "") return;
+    const ctx = this.ctx;
+    if (client === null || t === null || ctx.id === "") return;
     if (this.termsTimer !== undefined) {
       clearTimeout(this.termsTimer);
       this.termsTimer = undefined;
     }
     const sent = this.termsEditSeq;
-    const result = await client.putTerms(this.quoteId, {
-      depositRequired: t.depositRequired,
-      depositPct: t.depositPct,
-      includeImages: t.includeImages,
-      customerNotes: t.customerNotes,
-      contactName: t.contactName,
-      projectJob: t.projectJob,
-      customerPo: t.customerPo,
-      salespersonId: t.salespersonId,
-      fulfillment: t.fulfillment,
-      deliveryAddress: t.deliveryAddress,
-      requestedDate: t.requestedDate,
-      deliveryFeeCents: t.deliveryFeeCents,
-    });
+    const result = await ctx.guarded(client.putTerms(ctx.id, termsBody(t)), this.lateWrite(ctx, "save the quote terms"));
+    // The quote changed while this save was out: its answer is not this screen's to show (leaving the quote already sent any later edit to its own quote).
+    if (result === undefined) return;
     // What was edited while this save was in flight is still unsaved and stays laid over the answer.
     if (this.termsEditSeq === sent) this.termsPending = {};
     if (!result.ok) {
@@ -1944,6 +2189,7 @@ export class QdQuoteWorkarea extends LitElement {
     this.termsUnsaved = this.termsPendingCount() > 0;
     if (reloadAfter) {
       await this.loadAll();
+      if (ctx.stale) return;
       this.quoteChanged();
     }
   }
@@ -1951,12 +2197,15 @@ export class QdQuoteWorkarea extends LitElement {
   private async saveValidity(days: number): Promise<void> {
     const client = this.client;
     if (client === null) return;
-    this.busy = true;
+    const ctx = this.ctx;
+    const release = this.holdBusy(ctx);
     this.error = "";
-    const result = await client.setValidUntil(this.quoteId, validUntilFromDays(days, this.clockNow));
-    this.busy = false;
+    const result = await ctx.guarded(client.setValidUntil(ctx.id, validUntilFromDays(days, this.clockNow)), this.lateWrite(ctx, "change the expiry date"));
+    if (result === undefined) return;
+    release();
     if (result.ok) {
       await this.loadAll();
+      if (ctx.stale) return;
       this.quoteChanged();
     } else {
       this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "change the expiry date"));
@@ -1964,11 +2213,13 @@ export class QdQuoteWorkarea extends LitElement {
   }
 
   /** After any cart change: refresh the terms (the server restamps the totals), then re-read. */
-  private async afterCartChange(): Promise<void> {
+  private async afterCartChange(ctx: QuoteContext): Promise<void> {
     if (this.terms !== null && this.view !== null && canEdit(this.view, EDIT_LINE_QTY)) {
       await this.putTermsNow();
+      if (ctx.stale) return;
     }
     await this.loadAll();
+    if (ctx.stale) return;
     this.quoteChanged();
   }
 
@@ -2085,9 +2336,13 @@ export class QdQuoteWorkarea extends LitElement {
       return;
     }
     this.columnsError = "";
+    // The save landed. The box keeps what was saved until a good read of the config brings the same figures:
+    // a failed re-read must not hand the box back to the state before the save.
     const config = await client.surfaceConfig(this.branchId);
-    if (config.ok) this.config = config.value;
-    this.columnsDraft = null;
+    if (config.ok) {
+      this.config = config.value;
+      this.columnsDraft = null;
+    }
   }
 
   private toggleColumn(id: string): void {
@@ -2115,7 +2370,13 @@ export class QdQuoteWorkarea extends LitElement {
     }
     this.columnsError = "";
     const config = await client.surfaceConfig(this.branchId);
-    if (config.ok) this.config = config.value;
+    if (config.ok) {
+      this.config = config.value;
+      this.columnsDraft = null; // a draft left by an earlier press must not outlive the reset
+    } else {
+      // The delete landed but the read did not: the columns are the role's own now, and the box says so until a good read.
+      this.columnsDraft = effectiveItems("column", QB_COLUMNS, this.config?.roleItems, undefined);
+    }
   }
 
   /** The visible columns for THIS render: curation first, then the server's cost gate on top. */
@@ -2137,12 +2398,19 @@ export class QdQuoteWorkarea extends LitElement {
   private async createForNow(cust: PickerCustomer): Promise<void> {
     const client = this.client;
     if (client === null || this.busy) return;
-    this.busy = true;
+    const ctx = this.ctx;
+    const release = this.holdBusy(ctx);
     this.error = "";
     this.createdQuoteId = "";
     const days = this.config?.policy?.defaultValidityDays || 30;
-    const result = await client.createQuote(cust.id, this.branchId, validUntilFromDays(days, this.clockNow));
-    this.busy = false;
+    const result = await ctx.guarded(client.createQuote(cust.id, this.branchId, validUntilFromDays(days, this.clockNow)));
+    if (result === undefined) {
+      // The person opened another quote while this one was being made: the screen stays where they went, and
+      // the list is told so the new draft shows in it.
+      this.quoteChanged();
+      return;
+    }
+    release();
     if (!result.ok) {
       this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "create a quote"));
       return;
@@ -2162,10 +2430,16 @@ export class QdQuoteWorkarea extends LitElement {
     this.dispatchEvent(new CustomEvent("quote-open", { detail: { quoteId: "" }, bubbles: true, composed: true }));
   }
 
-  private async ensureLink(): Promise<string> {
+  /**
+   * The quote's share link, minted once. It is minted for the quote the context
+   * names, and kept only while that quote is still the one on screen: a mint
+   * that lands after the person moved on is dropped, never held for the next quote.
+   */
+  private async ensureLink(ctx: QuoteContext): Promise<string> {
     const client = this.client;
     if (client === null || this.mintedToken !== "") return this.mintedToken;
-    const result = await client.mintShareLink(this.quoteId);
+    const result = await ctx.guarded(client.mintShareLink(ctx.id), this.lateWrite(ctx, "create a share link", LATE_LINK_NOTE));
+    if (result === undefined) throw new StaleQuoteError();
     if (!result.ok) {
       throw new Error(spokenRefusal(quoteErrorMessage(result.status, result.error, "create a share link")));
     }
@@ -2184,27 +2458,35 @@ export class QdQuoteWorkarea extends LitElement {
   }
 
   private async doCopyLink(): Promise<void> {
+    const ctx = this.ctx;
     try {
-      const token = await this.ensureLink();
+      const token = await this.ensureLink(ctx);
       // The clipboard is only there on a secure page: say so rather than claim a copy that did not happen.
       if (navigator.clipboard === undefined) throw new Error("The link was created but could not be copied from this page. Use Preview to open it and copy it from there.");
       await navigator.clipboard.writeText(this.shareUrl(token));
       // Creating a link emails nothing: sending is a different button.
+      if (ctx.stale) return;
       this.notice = "Link copied. Nothing was emailed. Paste the link, or use Send quote.";
       await this.loadAll();
+      if (ctx.stale) return;
       this.quoteChanged();
     } catch (e) {
+      if (ctx.stale) return;
       this.error = e instanceof Error ? e.message : "Could not create the link.";
     }
   }
 
   private async doPreview(print: boolean): Promise<void> {
+    const ctx = this.ctx;
     try {
-      const token = await this.ensureLink();
+      // ensureLink throws once the quote has been left, so the lines below only run on the quote that asked.
+      const token = await this.ensureLink(ctx);
       window.open(this.shareUrl(token, print), "_blank", "noopener");
       await this.loadAll();
+      if (ctx.stale) return;
       this.quoteChanged();
     } catch (e) {
+      if (ctx.stale) return;
       this.error = e instanceof Error ? e.message : "Could not open the preview.";
     }
   }
@@ -2212,19 +2494,27 @@ export class QdQuoteWorkarea extends LitElement {
   private async doSend(): Promise<void> {
     const client = this.client;
     if (client === null || this.busy) return;
+    const ctx = this.ctx;
     // One send at a time: a second press while the first is out would mint a second live link and start the cadence twice.
-    this.busy = true;
+    const release = this.holdBusy(ctx);
     this.sendOpen = false;
     this.error = "";
     this.notice = "";
     const channels = sendChannels(this.#sendPolicy()).filter((c) => this.sendPick[c]);
     try {
-      await this.ensureLink(); // the core mints a link, moves DRAFT to SENT and starts the cadence; it sends no email
+      // An edit still waiting on its save goes first: the quote the customer is sent holds what was typed.
+      if (this.termsPendingCount() > 0) {
+        await this.putTermsNow();
+        if (ctx.stale) return;
+        if (this.error !== "") return;
+      }
+      await this.ensureLink(ctx); // the core mints a link, moves DRAFT to SENT and starts the cadence; it sends no email (it throws once the quote was left)
       let smsOk = false;
       let smsWhy = "";
       const smsChosen = channels.includes("SMS");
       if (smsChosen) {
-        const sms = await client.shareBySMS(this.quoteId);
+        const sms = await ctx.guarded(client.shareBySMS(ctx.id), this.lateWrite(ctx, "send the text"));
+        if (sms === undefined) return;
         if (sms.ok) {
           smsOk = true;
         } else {
@@ -2233,21 +2523,25 @@ export class QdQuoteWorkarea extends LitElement {
       }
       this.notice = sentConfirmation(smsChosen, smsOk, smsWhy);
       await this.loadAll();
+      if (ctx.stale) return;
       this.quoteChanged();
     } catch (e) {
+      if (ctx.stale) return;
       this.error = e instanceof Error ? e.message : "Could not send the quote.";
     } finally {
-      this.busy = false;
+      release();
     }
   }
 
   private async doConvert(): Promise<void> {
     const client = this.client;
     if (client === null || this.busy || this.quoteId === "") return;
-    this.busy = true;
+    const ctx = this.ctx;
+    const release = this.holdBusy(ctx);
     this.error = "";
-    const result = await client.convertQuote(this.quoteId);
-    this.busy = false;
+    const result = await ctx.guarded(client.convertQuote(ctx.id), this.lateWrite(ctx, "convert this quote"));
+    if (result === undefined) return;
+    release();
     if (!result.ok) {
       this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "convert this quote"));
       await this.loadAll();
@@ -2255,6 +2549,7 @@ export class QdQuoteWorkarea extends LitElement {
     }
     this.converted = { orderNo: result.value.orderNo };
     await this.loadAll();
+    if (ctx.stale) return;
     this.quoteChanged();
   }
 

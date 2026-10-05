@@ -54,10 +54,18 @@ export class QdAcceptAdmin extends PanelBase {
     void this.load();
   }
 
+  /**
+   * Numbers the reads and the flip of this switch: a read's answer applies only while nothing newer has begun, and a flip
+   * counts as newer when it answers, so a read begun before it never lays the old value over the flip.
+   */
+  private generation = 0;
+
   private async load(): Promise<void> {
     const client = this.client;
     if (client === null) return;
+    const mine = ++this.generation;
     const result = await client.getAcceptance();
+    if (mine !== this.generation) return;
     if (!result.ok) {
       this.settings = null;
       this.readRefusal = writeRefusalLine(result.status, result.error);
@@ -74,6 +82,7 @@ export class QdAcceptAdmin extends PanelBase {
     this.error = "";
     this.notice = "";
     const result = await client.setAcceptance(next);
+    this.generation += 1; // a read begun before this answer must not land over it
     this.busy = false;
     if (!result.ok) {
       const line = writeRefusalLine(result.status, result.error);

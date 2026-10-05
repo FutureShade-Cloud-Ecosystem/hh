@@ -6,6 +6,11 @@
 // often as it won; this test makes the race deterministic.
 import { expect, test } from "@playwright/test";
 
+// Both tests read the second line of the seeded draft: a quote another test left behind, or a layout row that resumes
+// another quote, would put a different quote under the click, so each starts from the seeded world.
+test.beforeEach(async ({ request }) => {
+  await request.post("/_stub/reset");
+});
 test.afterAll(async ({ request }) => {
   await request.post("/_stub/reset");
 });
@@ -46,7 +51,7 @@ test("the edit panel keeps the figure being typed through a re-read too", async 
   await read;
   await page.waitForTimeout(300);
   await expect(qty).toHaveValue("7");
-  // A box nobody is typing in returns to the server's figure after the same re-read.
+  // A box nobody is typing in keeps its unsaved figure through the same re-read: only a save wipes the line it was for.
   await page.locator("qd-quote-edit").locator('[data-field="qty"]').first().focus();
   await qty.fill("9");
   await page.locator("qd-quote-edit").locator('[data-field="qty"]').first().focus();
@@ -54,5 +59,5 @@ test("the edit panel keeps the figure being typed through a re-read too", async 
     const root = document.querySelector("qd-app-root")?.shadowRoot?.querySelector("qd-quote-builder")?.shadowRoot;
     root?.dispatchEvent(new CustomEvent("quote-changed", { detail: { quoteId: "q-1001" } }));
   });
-  await expect(qty).toHaveValue("2");
+  await expect(qty).toHaveValue("9");
 });

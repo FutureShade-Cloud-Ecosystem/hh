@@ -1,0 +1,1252 @@
+[
+  {
+    "id": "wa-terms-read",
+    "file": "src/quote-workarea.ts",
+    "find": "await ctx.guardedRead(seq, client.readTerms(ctx.id))",
+    "replace": "await client.readTerms(ctx.id)",
+    "test": "guard terms read:"
+  },
+  {
+    "id": "wa-margin-glance",
+    "file": "src/quote-workarea.ts",
+    "find": "await ctx.guardedRead(seq, client.marginGlance(ctx.id))",
+    "replace": "await client.marginGlance(ctx.id)",
+    "test": "guard margin glance:"
+  },
+  {
+    "id": "wa-terms-save",
+    "file": "src/quote-workarea.ts",
+    "find": "await ctx.guarded(client.putTerms(ctx.id, termsBody(t)), this.lateWrite(ctx, \"save the quote terms\"))",
+    "replace": "await client.putTerms(ctx.id, termsBody(t))",
+    "test": "guard terms save answer:"
+  },
+  {
+    "id": "wa-add-line",
+    "file": "src/quote-workarea.ts",
+    "find": "await ctx.guarded(client.addLine(ctx.id, p.id, String(qty), p.uom), this.lateWrite(ctx, \"add this line\"))",
+    "replace": "await client.addLine(ctx.id, p.id, String(qty), p.uom)",
+    "test": "guard add line:"
+  },
+  {
+    "id": "wa-qty-edit",
+    "file": "src/quote-workarea.ts",
+    "find": "await ctx.guarded(client.editLine(ctx.id, line.line_no, { qty }), this.lateWrite(ctx, \"change this quantity\"))",
+    "replace": "await client.editLine(ctx.id, line.line_no, { qty })",
+    "test": "guard quantity edit:"
+  },
+  {
+    "id": "wa-remove-line",
+    "file": "src/quote-workarea.ts",
+    "find": "await ctx.guarded(client.removeLine(ctx.id, line.line_no), this.lateWrite(ctx, \"remove this line\"))",
+    "replace": "await client.removeLine(ctx.id, line.line_no)",
+    "test": "guard remove line:"
+  },
+  {
+    "id": "wa-validity",
+    "file": "src/quote-workarea.ts",
+    "find": "await ctx.guarded(client.setValidUntil(ctx.id, validUntilFromDays(days, this.clockNow)), this.lateWrite(ctx, \"change the expiry date\"))",
+    "replace": "await client.setValidUntil(ctx.id, validUntilFromDays(days, this.clockNow))",
+    "test": "guard validity:"
+  },
+  {
+    "id": "wa-convert",
+    "file": "src/quote-workarea.ts",
+    "find": "await ctx.guarded(client.convertQuote(ctx.id), this.lateWrite(ctx, \"convert this quote\"))",
+    "replace": "await client.convertQuote(ctx.id)",
+    "test": "guard convert:"
+  },
+  {
+    "id": "wa-customer-search",
+    "file": "src/quote-workarea.ts",
+    "find": "await ctx.guardedRead(seq, searchCustomers(name, 10, this.branchId))",
+    "replace": "await searchCustomers(name, 10, this.branchId)",
+    "test": "guard customer search:"
+  },
+  {
+    "id": "wa-addons",
+    "file": "src/quote-workarea.ts",
+    "find": "await ctx.guardedRead(seq, addonSuggestions(ids))",
+    "replace": "await addonSuggestions(ids)",
+    "test": "guard add-ons:"
+  },
+  {
+    "id": "wa-busy-release",
+    "file": "src/quote-workarea.ts",
+    "find": "if (released || ctx.stale) return;",
+    "replace": "if (released) return;",
+    "test": "guard busy release:"
+  },
+  {
+    "id": "wa-create-answer",
+    "file": "src/quote-workarea.ts",
+    "find": "await ctx.guarded(client.createQuote(cust.id, this.branchId, validUntilFromDays(days, this.clockNow)))",
+    "replace": "await client.createQuote(cust.id, this.branchId, validUntilFromDays(days, this.clockNow))",
+    "test": "P2-1 a scan on an open quote"
+  },
+  {
+    "id": "wa-scan-wait-compose-only",
+    "file": "src/quote-workarea.ts",
+    "find": "if (this.creating !== null && this.quoteId === \"\") {",
+    "replace": "if (this.creating !== null) {",
+    "test": "P2-1 a scan on an open quote"
+  },
+  {
+    "id": "wa-scan-wait-target",
+    "file": "src/quote-workarea.ts",
+    "find": "if (this.quoteId !== \"\" && this.quoteId !== this.createdQuoteId) {\n        this.speakAdd(\"That scan was meant for the new quote, which another quote overtook, so it was not added. Scan it again on the quote you want.\", \"warn\");\n        return;\n      }",
+    "replace": "",
+    "test": "P2-1 a scan made in compose"
+  },
+  {
+    "id": "wa-reload-waits-flush",
+    "file": "src/quote-workarea.ts",
+    "find": "const unsent = this.flushes.get(ctx.id);",
+    "replace": "const unsent = undefined as Promise<void> | undefined;",
+    "test": "P2-2 a terms edit still being saved"
+  },
+  {
+    "id": "wa-reload-wait-bound",
+    "file": "src/quote-workarea.ts",
+    "find": "const landed = await waitUpTo(UNSENT_WAIT_MS, unsent);",
+    "replace": "const landed = (await unsent, true);",
+    "test": "P2-2 a return to a quote whose terms save never answers"
+  },
+  {
+    "id": "wa-signout-waits-switch-flush",
+    "file": "src/quote-workarea.ts",
+    "find": "await Promise.all([...this.flushes.values()]);",
+    "replace": "",
+    "test": "P2-2 sign out waits for the terms save"
+  },
+  {
+    "id": "app-signout-bound",
+    "file": "src/app-root.ts",
+    "find": "const sent = await waitUpTo(UNSENT_WAIT_MS, Promise.allSettled(detail.waits));",
+    "replace": "const sent = (await Promise.allSettled(detail.waits), true);",
+    "test": "P2-2 sign out is bounded"
+  },
+  {
+    "id": "app-signout-says-timeout",
+    "file": "src/app-root.ts",
+    "find": "this.#message = sent ? null :",
+    "replace": "this.#message = true ? null :",
+    "test": "P2-2 sign out is bounded"
+  },
+  {
+    "id": "wa-leave-clears-customer",
+    "file": "src/quote-workarea.ts",
+    "find": "    this.customer = null; // the card shows nothing of the old account until the new one is read\n",
+    "replace": "",
+    "test": "P2-3 the identity card"
+  },
+  {
+    "id": "wa-open-ref",
+    "file": "src/quote-workarea.ts",
+    "find": "        if (this.store !== null) this.store.state.openRef = this.quoteId;\n        this.store?.scheduleSave();",
+    "replace": "        this.store?.scheduleSave();",
+    "test": "P2-4 the desk resumes"
+  },
+  {
+    "id": "wa-reset-columns-draft",
+    "file": "src/quote-workarea.ts",
+    "find": "      this.columnsDraft = effectiveItems(\"column\", QB_COLUMNS, this.config?.roleItems, undefined);\n",
+    "replace": "",
+    "test": "P3 Reset columns with the config re-read refused"
+  },
+  {
+    "id": "wa-reset-columns-release",
+    "file": "src/quote-workarea.ts",
+    "find": "      this.columnsDraft = null; // a draft left by an earlier press must not outlive the reset\n",
+    "replace": "",
+    "test": "P3 Reset columns takes"
+  },
+  {
+    "id": "wa-leave-clears-scan-line",
+    "file": "src/quote-workarea.ts",
+    "find": "?.announce?.(\"\", \"ok\"); // the gun's outcome line is the old quote's\n",
+    "replace": ";\n",
+    "test": "P3 the scan box's outcome line clears"
+  },
+  {
+    "id": "wa-view-read",
+    "file": "src/quote-workarea.ts",
+    "find": "await ctx.guardedRead(seq, client.readQuote(ctx.id))",
+    "replace": "await client.readQuote(ctx.id)",
+    "test": "a slow read of the quote just left never lands over the quote now open"
+  },
+  {
+    "id": "ctx-read-order",
+    "file": "src/quote-context.ts",
+    "find": "return this.aborted || seq !== this.reads ? undefined : answer;",
+    "replace": "return this.aborted ? undefined : answer;",
+    "test": "a newer read of the same quote supersedes an older one still out",
+    "runner": "node"
+  },
+  {
+    "id": "wa-superseded-waits",
+    "file": "src/quote-workarea.ts",
+    "find": "return !ctx.stale && !ctx.isLatestRead(seq) ? this.newestRead : Promise.resolve();",
+    "replace": "return Promise.resolve();",
+    "test": "P3 a scan that waits for the quote being opened"
+  },
+  {
+    "id": "as-late-add-counted",
+    "file": "src/assist-panel.ts",
+    "find": "          if (late.ok) added += 1;\n",
+    "replace": "",
+    "test": "P2-1 an add that was out when the person left lands"
+  },
+  {
+    "id": "as-late-add-announces",
+    "file": "src/assist-panel.ts",
+    "find": "          if (added > 0) this.dispatchEvent(new CustomEvent(\"quote-changed\", { detail: { quoteId: ctx.id }, bubbles: true, composed: true }));\n",
+    "replace": "",
+    "test": "P2-1 an add that was out when the person left lands"
+  },
+  {
+    "id": "ap-reason-clears-on-409",
+    "file": "src/approvals-panel.ts",
+    "find": "if (result.status === 403 || result.status === 409) this.clearReason();",
+    "replace": "if (result.status === 403) this.clearReason();",
+    "test": "P2-2 a reason typed for a row whose decision clashed"
+  },
+  {
+    "id": "ap-failed-read-unloaded",
+    "file": "src/approvals-panel.ts",
+    "find": "      this.loaded = false; // no count is shown beside a failed read\n",
+    "replace": "",
+    "test": "an approvals read that answers late never overwrites"
+  },
+  {
+    "id": "ep-late-announces",
+    "file": "src/edit-panel.ts",
+    "find": "      this.announceChangedFor(ctx);\n      return;\n    }\n    const now = this.ctx;",
+    "replace": "      return;\n    }\n    const now = this.ctx;",
+    "test": "P2-3 a quantity save that lands after leaving"
+  },
+  {
+    "id": "ep-write-late-callback",
+    "file": "src/edit-panel.ts",
+    "find": "const result = await ctx.guarded(action(ctx.id), (late) => this.lateAnswer(ctx, late, what, floor, lateNote));",
+    "replace": "const result = await ctx.guarded(action(ctx.id));",
+    "test": "P2-3 an add that lands after leaving"
+  },
+  {
+    "id": "ep-mint-late-callback",
+    "file": "src/edit-panel.ts",
+    "find": "const result = await ctx.guarded(client.mintShareLink(ctx.id), (late) => this.lateAnswer(ctx, late, \"create a share link\", undefined, LATE_LINK_NOTE));",
+    "replace": "const result = await ctx.guarded(client.mintShareLink(ctx.id));",
+    "test": "P2-3 a link minted after leaving"
+  },
+  {
+    "id": "ep-convert-late-callback",
+    "file": "src/edit-panel.ts",
+    "find": "const result = await ctx.guarded(client.convertQuote(ctx.id, this.convertFulfilment), (late) => this.lateAnswer(ctx, late, \"convert this quote\"));",
+    "replace": "const result = await ctx.guarded(client.convertQuote(ctx.id, this.convertFulfilment));",
+    "test": "P2-3 a conversion that lands after leaving"
+  },
+  {
+    "id": "ep-late-refusal-other-quote",
+    "file": "src/edit-panel.ts",
+    "find": "    if (now.stale || now.id !== ctx.id) return;\n",
+    "replace": "    if (now.stale) return;\n",
+    "test": "P3 a refusal answered while the person is on another quote"
+  },
+  {
+    "id": "ep-late-refusal-shown",
+    "file": "src/edit-panel.ts",
+    "find": "    if (now.stale || now.id !== ctx.id) return;\n",
+    "replace": "    if (now !== undefined) return;\n",
+    "test": "P3 a floor refusal answered after the person returned"
+  },
+  {
+    "id": "ep-load-keeps-other-drafts",
+    "file": "src/edit-panel.ts",
+    "find": ".filter(([lineNo]) => Number(lineNo) !== resetLine && present.has(Number(lineNo))));",
+    "replace": ".filter(() => false));",
+    "test": "P3 saving one line keeps the unsaved figures"
+  },
+  {
+    "id": "ep-fulfilment-clears",
+    "file": "src/edit-panel.ts",
+    "find": "      this.convertFulfilment = \"\";\n",
+    "replace": "",
+    "test": "P3 the fulfilment chosen for one conversion"
+  },
+  {
+    "id": "ss-policy-held-while-saving",
+    "file": "src/settings-surface.ts",
+    "find": " || this.policyLoading || this.busy; // held while a save is out",
+    "replace": " || this.policyLoading; // held while a save is out",
+    "test": "P3 the policy form is held while its save is out"
+  },
+  {
+    "id": "ss-items-held-while-saving",
+    "file": "src/settings-surface.ts",
+    "find": "    const heading = kindHeading(kind);\n    const locked = this.itemsLock !== \"\" || this.busy;",
+    "replace": "    const heading = kindHeading(kind);\n    const locked = this.itemsLock !== \"\";",
+    "test": "P3 the screen layout is held while its save is out"
+  },
+  {
+    "id": "ss-moved-save-announces",
+    "file": "src/settings-surface.ts",
+    "find": "    if (lockKey !== this.lockKey()) {\n      this.announceChanged();\n      return;\n    }",
+    "replace": "    if (lockKey !== this.lockKey()) {\n      return;\n    }",
+    "test": "P3 a policy save that succeeds after the scope moved on"
+  },
+  {
+    "id": "ss-moved-refusal-says",
+    "file": "src/settings-surface.ts",
+    "find": "      else this.error = `The settings you changed for ${lockKey",
+    "replace": "      else if (false) this.error = `The settings you changed for ${lockKey",
+    "test": "P3 a policy save refused after the scope moved on"
+  },
+  {
+    "id": "av-load-order",
+    "file": "src/availability-panel.ts",
+    "find": "await ctx.guardedRead(seq, Promise.all([client.availability(ctx.id), client.readQuote(ctx.id)]))",
+    "replace": "await ctx.guarded(Promise.all([client.availability(ctx.id), client.readQuote(ctx.id)]))",
+    "test": "P3 availability: an older read of the quote answered late"
+  },
+  {
+    "id": "av-peek-order",
+    "file": "src/availability-panel.ts",
+    "find": "    if (seq !== this.peekSeq) return;\n",
+    "replace": "",
+    "test": "P3 availability: a peek answered after a newer read"
+  },
+  {
+    "id": "fu-load-order",
+    "file": "src/followups-panel.ts",
+    "find": "await ctx.guardedRead(seq, Promise.all([client.followUps(ctx.id), client.readQuote(ctx.id)]))",
+    "replace": "await ctx.guarded(Promise.all([client.followUps(ctx.id), client.readQuote(ctx.id)]))",
+    "test": "P3 follow-ups: an older read of the quote answered late"
+  },
+  {
+    "id": "he-load-order",
+    "file": "src/hold-expiry-panel.ts",
+    "find": "await ctx.guardedRead(seq, client.holdExpiry(ctx.id))",
+    "replace": "await ctx.guarded(client.holdExpiry(ctx.id))",
+    "test": "P3 hold expiry: an older read of the quote answered late"
+  },
+  {
+    "id": "qg-verdict-branch",
+    "file": "src/guard-panel.ts",
+    "find": "    if (asked !== this.branchId) return;\n",
+    "replace": "",
+    "test": "P3 the guard panel: a verdict answered after the quote moved"
+  },
+  {
+    "id": "qg-verdict-cleared",
+    "file": "src/guard-panel.ts",
+    "find": "      this.status = \"\";\n      this.blocked = false;\n      this.faulted = false;\n      this.busy = false;\n    }\n    if (changed.has(\"client\")",
+    "replace": "    }\n    if (changed.has(\"client\")",
+    "test": "P3 the guard panel: a verdict is cleared when the quote moves"
+  },
+  {
+    "id": "qg-branch-name-order",
+    "file": "src/guard-panel.ts",
+    "find": "    if (wanted !== this.branchId) return; // the branch changed while this was out: the newer read names it\n",
+    "replace": "",
+    "test": "P3 the guard panel: the branch name read for the branch before"
+  },
+  {
+    "id": "fd-request-bound",
+    "file": "src/floor-refusal-dialog.ts",
+    "find": "    if (filedFor !== this.shown) return;\n",
+    "replace": "",
+    "test": "P3 the floor dialog: the answer to a request filed"
+  },
+  {
+    "id": "as-epoch-reset",
+    "file": "src/assist-panel.ts",
+    "find": "      if (epoch !== this.lastEpoch) {\n        this.lastEpoch = epoch;\n        this.reading = false;\n        this.adding = false;\n      }\n",
+    "replace": "",
+    "test": "P3 the assist panel: leaving a quote and coming back"
+  },
+  {
+    "id": "wa-scan-opening-stale",
+    "file": "src/quote-workarea.ts",
+    "find": "      await this.opening;\n      if (ctx.stale) return;\n",
+    "replace": "      await this.opening;\n",
+    "test": "guard scan waits for opening:"
+  },
+  {
+    "id": "wa-cart-after-terms",
+    "file": "src/quote-workarea.ts",
+    "find": "      await this.putTermsNow();\n      if (ctx.stale) return;\n    }\n    await this.loadAll();",
+    "replace": "      await this.putTermsNow();\n    }\n    await this.loadAll();",
+    "test": "guard cart change after terms save:"
+  },
+  {
+    "id": "wa-cart-after-read",
+    "file": "src/quote-workarea.ts",
+    "find": "    await this.loadAll();\n    if (ctx.stale) return;\n    this.quoteChanged();\n  }\n\n  // ── the workspace",
+    "replace": "    await this.loadAll();\n    this.quoteChanged();\n  }\n\n  // ── the workspace",
+    "test": "guard cart change after read:"
+  },
+  {
+    "id": "wa-terms-reload",
+    "file": "src/quote-workarea.ts",
+    "find": "      await this.loadAll();\n      if (ctx.stale) return;\n      this.quoteChanged();\n    }\n  }\n\n  private async saveValidity",
+    "replace": "      await this.loadAll();\n      this.quoteChanged();\n    }\n  }\n\n  private async saveValidity",
+    "test": "guard terms save reload:"
+  },
+  {
+    "id": "wa-validity-reload",
+    "file": "src/quote-workarea.ts",
+    "find": "      await this.loadAll();\n      if (ctx.stale) return;\n      this.quoteChanged();\n    } else {\n      this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, \"change the expiry date\"));",
+    "replace": "      await this.loadAll();\n      this.quoteChanged();\n    } else {\n      this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, \"change the expiry date\"));",
+    "test": "guard validity reload:"
+  },
+  {
+    "id": "wa-convert-reload",
+    "file": "src/quote-workarea.ts",
+    "find": "    this.converted = { orderNo: result.value.orderNo };\n    await this.loadAll();\n    if (ctx.stale) return;",
+    "replace": "    this.converted = { orderNo: result.value.orderNo };\n    await this.loadAll();",
+    "test": "guard convert reload:"
+  },
+  {
+    "id": "wa-copy-clipboard",
+    "file": "src/quote-workarea.ts",
+    "find": "      await navigator.clipboard.writeText(this.shareUrl(token));\n      // Creating a link emails nothing: sending is a different button.\n      if (ctx.stale) return;",
+    "replace": "      await navigator.clipboard.writeText(this.shareUrl(token));\n      // Creating a link emails nothing: sending is a different button.",
+    "test": "guard copy link clipboard:"
+  },
+  {
+    "id": "wa-copy-reload",
+    "file": "src/quote-workarea.ts",
+    "find": "      this.notice = \"Link copied. Nothing was emailed. Paste the link, or use Send quote.\";\n      await this.loadAll();\n      if (ctx.stale) return;",
+    "replace": "      this.notice = \"Link copied. Nothing was emailed. Paste the link, or use Send quote.\";\n      await this.loadAll();",
+    "test": "guard copy link reload:"
+  },
+  {
+    "id": "wa-copy-catch",
+    "file": "src/quote-workarea.ts",
+    "find": "      if (ctx.stale) return;\n      this.error = e instanceof Error ? e.message : \"Could not create the link.\";",
+    "replace": "      this.error = e instanceof Error ? e.message : \"Could not create the link.\";",
+    "test": "guard copy link error:"
+  },
+  {
+    "id": "wa-preview-catch",
+    "file": "src/quote-workarea.ts",
+    "find": "      if (ctx.stale) return;\n      this.error = e instanceof Error ? e.message : \"Could not open the preview.\";",
+    "replace": "      this.error = e instanceof Error ? e.message : \"Could not open the preview.\";",
+    "test": "guard preview error:"
+  },
+  {
+    "id": "wa-preview-reload",
+    "file": "src/quote-workarea.ts",
+    "find": "      window.open(this.shareUrl(token, print), \"_blank\", \"noopener\");\n      await this.loadAll();\n      if (ctx.stale) return;",
+    "replace": "      window.open(this.shareUrl(token, print), \"_blank\", \"noopener\");\n      await this.loadAll();",
+    "test": "guard preview reload:"
+  },
+  {
+    "id": "wa-send-terms",
+    "file": "src/quote-workarea.ts",
+    "find": "        await this.putTermsNow();\n        if (ctx.stale) return;\n        if (this.error !== \"\") return;",
+    "replace": "        await this.putTermsNow();\n        if (this.error !== \"\") return;",
+    "test": "guard send terms save:"
+  },
+  {
+    "id": "wa-send-reload",
+    "file": "src/quote-workarea.ts",
+    "find": "      this.notice = sentConfirmation(smsChosen, smsOk, smsWhy);\n      await this.loadAll();\n      if (ctx.stale) return;",
+    "replace": "      this.notice = sentConfirmation(smsChosen, smsOk, smsWhy);\n      await this.loadAll();",
+    "test": "guard send reload:"
+  },
+  {
+    "id": "wa-send-catch",
+    "file": "src/quote-workarea.ts",
+    "find": "      if (ctx.stale) return;\n      this.error = e instanceof Error ? e.message : \"Could not send the quote.\";",
+    "replace": "      this.error = e instanceof Error ? e.message : \"Could not send the quote.\";",
+    "test": "guard send error:"
+  },
+  {
+    "id": "wa-hydrate-catch",
+    "file": "src/quote-workarea.ts",
+    "find": "      if (!ctx.stale && ctx.isLatestRead(seq)) this.customer = null;",
+    "replace": "      this.customer = null;",
+    "test": "guard customer search error:"
+  },
+  {
+    "id": "wa-addons-catch",
+    "file": "src/quote-workarea.ts",
+    "find": "      if (!ctx.stale && ctx.isLatestRead(seq)) this.addons = [];",
+    "replace": "      this.addons = [];",
+    "test": "guard add-ons error:"
+  },
+  {
+    "id": "wa-sms-answer",
+    "file": "src/quote-workarea.ts",
+    "find": "const sms = await ctx.guarded(client.shareBySMS(ctx.id), this.lateWrite(ctx, \"send the text\"));",
+    "replace": "const sms = await client.shareBySMS(ctx.id);",
+    "test": "a text answer that lands after another quote opened"
+  },
+  {
+    "id": "wa-ensure-link",
+    "file": "src/quote-workarea.ts",
+    "find": "const result = await ctx.guarded(client.mintShareLink(ctx.id), this.lateWrite(ctx, \"create a share link\", LATE_LINK_NOTE));\n    if (result === undefined) throw new StaleQuoteError();",
+    "replace": "const result = await client.mintShareLink(ctx.id);\n    if (result === undefined) throw new StaleQuoteError();",
+    "test": "a send in flight when another quote opens"
+  },
+  {
+    "id": "ep-read-guard",
+    "file": "src/edit-panel.ts",
+    "find": "const result = await ctx.guardedRead(seq, client.readQuote(ctx.id));\n    if (result === undefined) return;",
+    "replace": "const result = await client.readQuote(ctx.id);",
+    "test": "guard edit read:"
+  },
+  {
+    "id": "ep-read-order",
+    "file": "src/edit-panel.ts",
+    "find": "const result = await ctx.guardedRead(seq, client.readQuote(ctx.id));",
+    "replace": "const result = await ctx.guarded(client.readQuote(ctx.id));",
+    "test": "guard edit read order:"
+  },
+  {
+    "id": "ep-discounts-guard",
+    "file": "src/edit-panel.ts",
+    "find": "await ctx.guardedRead(seq, Promise.all([client.readTerms(ctx.id), client.surfaceConfig(this.branchId)]));\n    if (answers === undefined) return;",
+    "replace": "await Promise.all([client.readTerms(ctx.id), client.surfaceConfig(this.branchId)]);",
+    "test": "guard edit discounts read:"
+  },
+  {
+    "id": "ep-discounts-order",
+    "file": "src/edit-panel.ts",
+    "find": "await ctx.guardedRead(seq, Promise.all([client.readTerms(ctx.id), client.surfaceConfig(this.branchId)]));",
+    "replace": "await ctx.guarded(Promise.all([client.readTerms(ctx.id), client.surfaceConfig(this.branchId)]));",
+    "test": "guard edit discounts order:"
+  },
+  {
+    "id": "ep-links-guard",
+    "file": "src/edit-panel.ts",
+    "find": "const result = await ctx.guardedRead(seq, client.listShareLinks(ctx.id));\n    if (result === undefined) return;",
+    "replace": "const result = await client.listShareLinks(ctx.id);",
+    "test": "guard edit links read:"
+  },
+  {
+    "id": "ep-links-order",
+    "file": "src/edit-panel.ts",
+    "find": "const result = await ctx.guardedRead(seq, client.listShareLinks(ctx.id));",
+    "replace": "const result = await ctx.guarded(client.listShareLinks(ctx.id));",
+    "test": "guard edit links order:"
+  },
+  {
+    "id": "ep-write-answer",
+    "file": "src/edit-panel.ts",
+    "find": "const result = await ctx.guarded(action(ctx.id), (late) => this.lateAnswer(ctx, late, what, floor, lateNote));\n    // The quote the person moved to meanwhile owns the screen now: this answer says nothing about it.\n    if (result === undefined) return \"moved\";",
+    "replace": "const result = await action(ctx.id);",
+    "test": "guard edit write answer:"
+  },
+  {
+    "id": "ep-write-reload",
+    "file": "src/edit-panel.ts",
+    "find": "    await this.load(resetLine, resetExpiry);\n    if (ctx.stale) return \"moved\";",
+    "replace": "    await this.load(resetLine, resetExpiry);",
+    "test": "guard edit write reload:"
+  },
+  {
+    "id": "ep-search-query",
+    "file": "src/edit-panel.ts",
+    "find": "    if ((which === \"add\" ? this.addQuery : this.compareQuery).trim() !== q) return;\n",
+    "replace": "",
+    "test": "guard edit search:"
+  },
+  {
+    "id": "ep-mint-answer",
+    "file": "src/edit-panel.ts",
+    "find": "const result = await ctx.guarded(client.mintShareLink(ctx.id), (late) => this.lateAnswer(ctx, late, \"create a share link\", undefined, LATE_LINK_NOTE));\n    if (result === undefined) return;",
+    "replace": "const result = await client.mintShareLink(ctx.id);",
+    "test": "guard edit mint answer:"
+  },
+  {
+    "id": "ep-mint-reload",
+    "file": "src/edit-panel.ts",
+    "find": "    await this.load();\n    if (ctx.stale) return;\n    // The just-minted link",
+    "replace": "    await this.load();\n    // The just-minted link",
+    "test": "guard edit mint reload:"
+  },
+  {
+    "id": "ep-copy-error",
+    "file": "src/edit-panel.ts",
+    "find": "    } catch {\n      if (ctx.stale) return;\n      this.error = \"The link could not be copied",
+    "replace": "    } catch {\n      this.error = \"The link could not be copied",
+    "test": "guard edit copy refused:"
+  },
+  {
+    "id": "ep-copy-done",
+    "file": "src/edit-panel.ts",
+    "find": "    if (ctx.stale) return;\n    this.error = \"\";\n    this.notice = \"Link copied.",
+    "replace": "    this.error = \"\";\n    this.notice = \"Link copied.",
+    "test": "guard edit copy:"
+  },
+  {
+    "id": "ep-compare",
+    "file": "src/edit-panel.ts",
+    "find": "const result = await ctx.guarded(client.compareLine(ctx.id, lineNo, this.compareAlts.map((a) => a.product_id)));\n    if (result === undefined || ask !== this.compareAsk) return;",
+    "replace": "const result = await client.compareLine(ctx.id, lineNo, this.compareAlts.map((a) => a.product_id));",
+    "test": "guard edit compare:"
+  },
+  {
+    "id": "ep-convert-answer",
+    "file": "src/edit-panel.ts",
+    "find": "const result = await ctx.guarded(client.convertQuote(ctx.id, this.convertFulfilment), (late) => this.lateAnswer(ctx, late, \"convert this quote\"));\n    if (result === undefined) return;",
+    "replace": "const result = await client.convertQuote(ctx.id, this.convertFulfilment);",
+    "test": "guard edit convert answer:"
+  },
+  {
+    "id": "ep-convert-reload",
+    "file": "src/edit-panel.ts",
+    "find": "    await this.load();\n    if (ctx.stale) return;\n    this.announceChanged();\n  }\n\n  // ── delegation",
+    "replace": "    await this.load();\n    this.announceChanged();\n  }\n\n  // ── delegation",
+    "test": "guard edit convert reload:"
+  },
+  {
+    "id": "hs-read-guard",
+    "file": "src/history-panel.ts",
+    "find": "const result = await ctx.guardedRead(seq, client.editHistory(ctx.id));\n    if (result === undefined) return;",
+    "replace": "const result = await client.editHistory(ctx.id);",
+    "test": "guard history read:"
+  },
+  {
+    "id": "hs-read-order",
+    "file": "src/history-panel.ts",
+    "find": "const result = await ctx.guardedRead(seq, client.editHistory(ctx.id));",
+    "replace": "const result = await ctx.guarded(client.editHistory(ctx.id));",
+    "test": "guard history order:"
+  },
+  {
+    "id": "as-read-guard",
+    "file": "src/assist-panel.ts",
+    "find": "const result = await ctx.guarded(client.assistExtract(this.text, this.branchId, asked));\n      if (result === undefined) return;",
+    "replace": "const result = await client.assistExtract(this.text, this.branchId, asked);",
+    "test": "guard assist read:"
+  },
+  {
+    "id": "as-reading-flag",
+    "file": "src/assist-panel.ts",
+    "find": "if (!ctx.stale) this.reading = false;",
+    "replace": "this.reading = false;",
+    "test": "guard assist reading flag:"
+  },
+  {
+    "id": "as-adding-flag",
+    "file": "src/assist-panel.ts",
+    "find": "if (!ctx.stale) this.adding = false;",
+    "replace": "this.adding = false;",
+    "test": "guard assist adding flag:"
+  },
+  {
+    "id": "as-add-guard",
+    "file": "src/assist-panel.ts",
+    "find": "const result = await ctx.guarded(client.addLine(ctx.id, p.product_id, p.qty_entered, p.uom_entered), (late) => {\n          if (late.ok) added += 1;\n        });",
+    "replace": "const result = await client.addLine(ctx.id, p.product_id, p.qty_entered, p.uom_entered);",
+    "test": "P2-1 an add that was out when the person left lands"
+  },
+  {
+    "id": "as-gaps-guard",
+    "file": "src/assist-panel.ts",
+    "find": "const result = await ctx.guardedRead(seq, client.assistScopeGaps(ctx.id));\n    if (result === undefined) return;",
+    "replace": "const result = await client.assistScopeGaps(ctx.id);",
+    "test": "guard assist gaps read:"
+  },
+  {
+    "id": "as-gaps-order",
+    "file": "src/assist-panel.ts",
+    "find": "const result = await ctx.guardedRead(seq, client.assistScopeGaps(ctx.id));",
+    "replace": "const result = await ctx.guarded(client.assistScopeGaps(ctx.id));",
+    "test": "guard assist gaps order:"
+  },
+  {
+    "id": "av-load-guard",
+    "file": "src/availability-panel.ts",
+    "find": "const answers = await ctx.guardedRead(seq, Promise.all([client.availability(ctx.id), client.readQuote(ctx.id)]));\n    if (answers === undefined) return;",
+    "replace": "const answers = await Promise.all([client.availability(ctx.id), client.readQuote(ctx.id)]);",
+    "test": "guard availability read:"
+  },
+  {
+    "id": "fu-load-guard",
+    "file": "src/followups-panel.ts",
+    "find": "const answers = await ctx.guardedRead(seq, Promise.all([client.followUps(ctx.id), client.readQuote(ctx.id)]));\n    if (answers === undefined) return;",
+    "replace": "const answers = await Promise.all([client.followUps(ctx.id), client.readQuote(ctx.id)]);",
+    "test": "guard follow-ups read:"
+  },
+  {
+    "id": "fu-share-answer",
+    "file": "src/followups-panel.ts",
+    "find": "const result = await ctx.guarded(client.shareBySMS(ctx.id), this.lateWrite(ctx, (late) => spokenRefusal(shareErrorMessage(late.status, late.error))));",
+    "replace": "const result = await client.shareBySMS(ctx.id);",
+    "test": "a text share answer that lands after another quote opened"
+  },
+  {
+    "id": "fu-share-reload",
+    "file": "src/followups-panel.ts",
+    "find": "    await this.load();\n    if (ctx.stale) return;\n    // The surface shows the status",
+    "replace": "    await this.load();\n    // The surface shows the status",
+    "test": "guard follow-ups text reload:"
+  },
+  {
+    "id": "fu-change-answer",
+    "file": "src/followups-panel.ts",
+    "find": "const result = await ctx.guarded(\n      stop ? client.stopFollowUps(ctx.id) : client.resumeFollowUps(ctx.id),\n      this.lateWrite(ctx, (late) => spokenRefusal(shareErrorMessage(late.status, late.error))),\n    );",
+    "replace": "const result = await (stop ? client.stopFollowUps(ctx.id) : client.resumeFollowUps(ctx.id));",
+    "test": "a follow-ups stop that lands after another quote opened"
+  },
+  {
+    "id": "he-load-guard",
+    "file": "src/hold-expiry-panel.ts",
+    "find": "const result = await ctx.guardedRead(seq, client.holdExpiry(ctx.id));\n    if (result === undefined) return;",
+    "replace": "const result = await client.holdExpiry(ctx.id);",
+    "test": "guard hold expiry read:"
+  },
+  {
+    "id": "he-rehold-answer",
+    "file": "src/hold-expiry-panel.ts",
+    "find": "const result = await ctx.guarded(client.resyncHolds(ctx.id), this.lateWrite(ctx, (late) => spokenRefusal(reholdRefusal(late.status, late.error))));",
+    "replace": "const result = await client.resyncHolds(ctx.id);",
+    "test": "a re-hold answer that lands after another quote opened"
+  },
+  {
+    "id": "he-rehold-reload",
+    "file": "src/hold-expiry-panel.ts",
+    "find": "    await this.load();\n    if (ctx.stale) return;\n    this.announceChanged();",
+    "replace": "    await this.load();\n    this.announceChanged();",
+    "test": "guard hold expiry reload:"
+  },
+  {
+    "id": "ap-load-order",
+    "file": "src/approvals-panel.ts",
+    "find": "    if (seq !== this.loadSeq) return;\n    if (!result.ok) {",
+    "replace": "    if (!result.ok) {",
+    "test": "an approvals read that answers late never overwrites"
+  },
+  {
+    "id": "bq-list-order",
+    "file": "src/quote-builder.ts",
+    "find": "    if (seq !== this.listSeq) return;\n    if (!result.ok) {\n      this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, \"list quotes\"));",
+    "replace": "    if (!result.ok) {\n      this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, \"list quotes\"));",
+    "test": "guard list order:"
+  },
+  {
+    "id": "bq-more-order",
+    "file": "src/quote-builder.ts",
+    "find": "    this.busy = false;\n    if (seq !== this.listSeq) return;",
+    "replace": "    this.busy = false;",
+    "test": "guard list paging:"
+  },
+  {
+    "id": "bq-create-selection",
+    "file": "src/quote-builder.ts",
+    "find": "    if (this.selected === onScreen) this.selected = result.value;",
+    "replace": "    this.selected = result.value;",
+    "test": "guard create selection:"
+  },
+  {
+    "id": "pk-search-order",
+    "file": "src/customer-picker.ts",
+    "find": "    if (mine !== this.seq) return;\n    this.loading = false;",
+    "replace": "    this.loading = false;",
+    "test": "guard picker search:"
+  },
+  {
+    "id": "ss-policy-order",
+    "file": "src/settings-surface.ts",
+    "find": "    if (seq !== this.policySeq) return;\n    this.policyLoading = false;",
+    "replace": "    this.policyLoading = false;",
+    "test": "guard policy order:"
+  },
+  {
+    "id": "ss-policy-dirty",
+    "file": "src/settings-surface.ts",
+    "find": "    if (this.policyDirty && !force) return;",
+    "replace": "",
+    "test": "guard policy edit:"
+  },
+  {
+    "id": "ss-policy-unread",
+    "file": "src/settings-surface.ts",
+    "find": "      if (force || this.formKey !== key) {",
+    "replace": "      if (false) {",
+    "test": "guard policy unread:"
+  },
+  {
+    "id": "ss-policy-wrong-form",
+    "file": "src/settings-surface.ts",
+    "find": "    if (this.formKey !== this.lockKey()) {\n      // The form was loaded for another scope or branch",
+    "replace": "    if (false) {\n      // The form was loaded for another scope or branch",
+    "test": "guard policy wrong form:"
+  },
+  {
+    "id": "ss-policy-save-answer",
+    "file": "src/settings-surface.ts",
+    "find": "    // The scope or branch moved on while this save was out: the saved row is not this form's to fill, but it did\n    // change, so the other screens are told, as a layout save for another profile does.\n    if (lockKey !== this.lockKey()) {\n      this.announceChanged();\n      return;\n    }",
+    "replace": "",
+    "test": "guard policy save answer:"
+  },
+  {
+    "id": "ss-policy-lock-key",
+    "file": "src/settings-surface.ts",
+    "find": "if (result.status === 403) this.policyLocks = { ...this.policyLocks, [lockKey]: line };",
+    "replace": "if (result.status === 403) this.policyLocks = { ...this.policyLocks, [this.lockKey()]: line };",
+    "test": "guard policy lock:"
+  },
+  {
+    "id": "ss-items-order",
+    "file": "src/settings-surface.ts",
+    "find": "    if (seq !== this.itemsSeq) return;\n    if (!result.ok) {",
+    "replace": "    if (!result.ok) {",
+    "test": "guard items order:"
+  },
+  {
+    "id": "ss-items-drafts",
+    "file": "src/settings-surface.ts",
+    "find": "    if (force) this.drafts = {};",
+    "replace": "    this.drafts = {};",
+    "test": "guard items drafts:"
+  },
+  {
+    "id": "ss-items-save-answer",
+    "file": "src/settings-surface.ts",
+    "find": "    if (profile !== this.profile) {\n      if (result.ok) this.announceChanged();\n      return;\n    }",
+    "replace": "",
+    "test": "guard items save answer:"
+  },
+  {
+    "id": "wa-disc-edit",
+    "file": "src/quote-workarea.ts",
+    "find": "const result = await ctx.guarded(client.editLine(ctx.id, line.line_no, { discPct: n }), this.lateWrite(ctx, \"change this discount\"));",
+    "replace": "const result = await client.editLine(ctx.id, line.line_no, { discPct: n });",
+    "test": "guard discount edit:"
+  },
+  {
+    "id": "wa-terms-timer-cleared",
+    "file": "src/quote-workarea.ts",
+    "find": "    if (this.termsTimer !== undefined) {\n      clearTimeout(this.termsTimer);\n      this.termsTimer = undefined;\n    }\n    this.termsPending = {};\n    this.termsUnsaved = false;\n    this.termsEditSeq += 1;\n    if (!dirty",
+    "replace": "    this.termsPending = {};\n    this.termsUnsaved = false;\n    this.termsEditSeq += 1;\n    if (!dirty",
+    "test": "a terms edit typed on one quote is saved to that quote"
+  },
+  {
+    "id": "ctx-guarded-stale",
+    "file": "src/quote-context.ts",
+    "find": "    if (!this.aborted) return answer;",
+    "replace": "    return answer;",
+    "test": "an answer is dropped when the context is cancelled while the call is out",
+    "runner": "node"
+  },
+  {
+    "id": "ctx-read-aborted",
+    "file": "src/quote-context.ts",
+    "find": "return this.aborted || seq !== this.reads ? undefined : answer;",
+    "replace": "return seq !== this.reads ? undefined : answer;",
+    "test": "a read cancelled while it was out is dropped",
+    "runner": "node"
+  },
+  {
+    "id": "ctx-wait-bound",
+    "file": "src/quote-context.ts",
+    "find": "    timer = setTimeout(() => resolve(false), ms);",
+    "replace": "    timer = setTimeout(() => resolve(true), ms);",
+    "test": "waitUpTo says whether the work finished inside the bound",
+    "runner": "node"
+  },
+  {
+    "id": "wa-read-order",
+    "file": "src/quote-context.ts",
+    "find": "return this.aborted || seq !== this.reads ? undefined : answer;",
+    "replace": "return this.aborted ? undefined : answer;",
+    "test": "P3 reads of one quote land in the order"
+  },
+  {
+    "id": "wa-reload-flush-stale",
+    "file": "src/quote-workarea.ts",
+    "find": "      if (ctx.stale || !ctx.isLatestRead(seq)) return this.supersededBy(ctx, seq);\n      if (!landed)",
+    "replace": "      if (!landed)",
+    "test": "guard reload flush wait:"
+  },
+  {
+    "id": "ss-policy-refusal-same-scope",
+    "file": "src/settings-surface.ts",
+    "find": "      else if (lockKey === this.lockKey()) this.error = line;",
+    "replace": "      else if (false) this.error = line;",
+    "test": "guard policy refusal:"
+  },
+  {
+    "id": "wa-disconnect-cancels",
+    "file": "src/quote-workarea.ts",
+    "find": "    this.detached = true;\n    this.scope.open(\"\");\n",
+    "replace": "    this.detached = true;\n",
+    "test": "A P2-1 a quantity write still out at sign out"
+  },
+  {
+    "id": "wa-detached-ctx",
+    "file": "src/quote-workarea.ts",
+    "find": "    if (this.detached) return QuoteContext.cancelled(this.quoteId);\n",
+    "replace": "",
+    "test": "A P2-1 a work area that has left the page reads nothing"
+  },
+  {
+    "id": "wa-read-stale-return",
+    "file": "src/quote-workarea.ts",
+    "find": "    const ctx = this.ctx;\n    if (ctx.stale) return;\n    if (ctx.id === \"\") {",
+    "replace": "    const ctx = this.ctx;\n    if (ctx.id === \"\") {",
+    "test": "A P2-1 a work area that has left the page reads nothing"
+  },
+  {
+    "id": "pb-disconnect-cancels",
+    "file": "src/panel-base.ts",
+    "find": "    this.detached = true;\n    this.quoteScope.open(\"\");\n",
+    "replace": "    this.detached = true;\n",
+    "test": "A P2-1 an edit panel save still out at sign out"
+  },
+  {
+    "id": "pb-detached-ctx",
+    "file": "src/panel-base.ts",
+    "find": "    if (this.detached) return QuoteContext.cancelled(this.quoteId);\n",
+    "replace": "",
+    "test": "A P2-1 a panel that has left the page reads nothing"
+  },
+  {
+    "id": "ep-late-answer-stale",
+    "file": "src/edit-panel.ts",
+    "find": "    if (now.stale || now.id !== ctx.id) return;",
+    "replace": "    if (now.id !== ctx.id) return;",
+    "test": "A P2-1 an edit panel save refused after sign out"
+  },
+  {
+    "id": "ep-load-stale",
+    "file": "src/edit-panel.ts",
+    "find": "    const ctx = this.ctx;\n    if (ctx.stale) return;\n    const seq = ctx.startRead();\n    const result = await ctx.guardedRead(seq, client.readQuote(ctx.id));",
+    "replace": "    const ctx = this.ctx;\n    const seq = ctx.startRead();\n    const result = await ctx.guardedRead(seq, client.readQuote(ctx.id));",
+    "test": "A P2-1 a panel that has left the page reads nothing"
+  },
+  {
+    "id": "hs-load-stale",
+    "file": "src/history-panel.ts",
+    "find": "    // A cancelled context issues no more requests: the panel left the page (sign out) and a read of its is not this session's.\n    if (ctx.stale) return;\n",
+    "replace": "",
+    "test": "A P2-1 a panel that has left the page reads nothing"
+  },
+  {
+    "id": "av-load-stale",
+    "file": "src/availability-panel.ts",
+    "find": "    // A cancelled context issues no more requests: the panel left the page (sign out) and a read of its is not this session's.\n    if (ctx.stale) return;\n",
+    "replace": "",
+    "test": "A P2-1 a panel that has left the page reads nothing"
+  },
+  {
+    "id": "he-load-stale",
+    "file": "src/hold-expiry-panel.ts",
+    "find": "    // A cancelled context issues no more requests: the panel left the page (sign out) and a read of its is not this session's.\n    if (ctx.stale) return;\n",
+    "replace": "",
+    "test": "A P2-1 a panel that has left the page reads nothing"
+  },
+  {
+    "id": "fu-load-stale",
+    "file": "src/followups-panel.ts",
+    "find": "    // A cancelled context issues no more requests: the panel left the page (sign out) and a read of its is not this session's.\n    if (ctx.stale) return;\n",
+    "replace": "",
+    "test": "A P2-1 a panel that has left the page reads nothing"
+  },
+  {
+    "id": "as-gaps-stale",
+    "file": "src/assist-panel.ts",
+    "find": "    // A cancelled context issues no more requests: the panel left the page (sign out) and a read of its is not this session's.\n    if (ctx.stale) return;\n",
+    "replace": "",
+    "test": "A P2-1 a panel that has left the page reads nothing"
+  },
+  {
+    "id": "wa-slow-flush-rereads",
+    "file": "src/quote-workarea.ts",
+    "find": "          void this.loadAll();\n        });\n      }\n",
+    "replace": "        });\n      }\n",
+    "test": "A P2-2 a terms save slower than the wait bound"
+  },
+  {
+    "id": "wa-slow-flush-clears-line",
+    "file": "src/quote-workarea.ts",
+    "find": "          if (this.error === STILL_SAVING) this.error = \"\";\n",
+    "replace": "",
+    "test": "A P2-2 a terms save slower than the wait bound"
+  },
+  {
+    "id": "wa-slow-flush-stale",
+    "file": "src/quote-workarea.ts",
+    "find": "          if (ctx.stale) return;\n          if (this.error === STILL_SAVING)",
+    "replace": "          if (this.error === STILL_SAVING)",
+    "test": "A P2-2 a slow terms save that lands after the person has left"
+  },
+  {
+    "id": "wa-late-add",
+    "file": "src/quote-workarea.ts",
+    "find": ", this.lateWrite(ctx, \"add this line\")",
+    "replace": "",
+    "test": "B P2-1 work area: an add answered after leaving"
+  },
+  {
+    "id": "wa-late-qty",
+    "file": "src/quote-workarea.ts",
+    "find": ", this.lateWrite(ctx, \"change this quantity\")",
+    "replace": "",
+    "test": "B P2-1 work area: a quantity change answered after leaving"
+  },
+  {
+    "id": "wa-late-disc",
+    "file": "src/quote-workarea.ts",
+    "find": ", this.lateWrite(ctx, \"change this discount\")",
+    "replace": "",
+    "test": "B P2-1 work area: a discount change answered after leaving"
+  },
+  {
+    "id": "wa-late-remove",
+    "file": "src/quote-workarea.ts",
+    "find": ", this.lateWrite(ctx, \"remove this line\")",
+    "replace": "",
+    "test": "B P2-1 work area: a line removal answered after leaving"
+  },
+  {
+    "id": "wa-late-validity",
+    "file": "src/quote-workarea.ts",
+    "find": ", this.lateWrite(ctx, \"change the expiry date\")",
+    "replace": "",
+    "test": "B P2-1 work area: an expiry change answered after leaving"
+  },
+  {
+    "id": "wa-late-terms",
+    "file": "src/quote-workarea.ts",
+    "find": ", this.lateWrite(ctx, \"save the quote terms\")",
+    "replace": "",
+    "test": "B P2-1 work area: a terms save answered after leaving"
+  },
+  {
+    "id": "wa-late-convert",
+    "file": "src/quote-workarea.ts",
+    "find": ", this.lateWrite(ctx, \"convert this quote\")",
+    "replace": "",
+    "test": "B P2-1 work area: a conversion answered after leaving"
+  },
+  {
+    "id": "wa-late-mint",
+    "file": "src/quote-workarea.ts",
+    "find": ", this.lateWrite(ctx, \"create a share link\", LATE_LINK_NOTE)",
+    "replace": "",
+    "test": "B P2-1 work area: a link made to copy answered after leaving"
+  },
+  {
+    "id": "wa-late-sms",
+    "file": "src/quote-workarea.ts",
+    "find": ", this.lateWrite(ctx, \"send the text\")",
+    "replace": "",
+    "test": "B P2-1 work area: a text share made by a send answered after leaving"
+  },
+  {
+    "id": "wa-late-refusal-said",
+    "file": "src/quote-workarea.ts",
+    "find": "      this.error = spokenRefusal(quoteErrorMessage(late.status, late.error, what));\n    };",
+    "replace": "      void what;\n    };",
+    "test": "B P2-1 work area: a quantity change refused after leaving and returning"
+  },
+  {
+    "id": "fu-share-late",
+    "file": "src/followups-panel.ts",
+    "find": ", this.lateWrite(ctx, (late) => spokenRefusal(shareErrorMessage(late.status, late.error))));",
+    "replace": ");",
+    "test": "B P2-1 a text share that lands after leaving"
+  },
+  {
+    "id": "fu-change-late",
+    "file": "src/followups-panel.ts",
+    "find": ",\n      this.lateWrite(ctx, (late) => spokenRefusal(shareErrorMessage(late.status, late.error))),\n    );",
+    "replace": "\n    );",
+    "test": "B P2-1 a follow-ups stop that lands after leaving and returning"
+  },
+  {
+    "id": "he-rehold-late",
+    "file": "src/hold-expiry-panel.ts",
+    "find": ", this.lateWrite(ctx, (late) => spokenRefusal(reholdRefusal(late.status, late.error))));",
+    "replace": ");",
+    "test": "B P2-1 a re-hold that lands after leaving"
+  },
+  {
+    "id": "pb-late-announces",
+    "file": "src/panel-base.ts",
+    "find": "      if (late.ok) {\n        this.announceChangedFor(ctx);\n        return;\n      }\n",
+    "replace": "      if (late.ok) return;\n",
+    "test": "B P2-1 a follow-ups restart that lands after leaving"
+  },
+  {
+    "id": "pb-late-refusal-other-quote",
+    "file": "src/panel-base.ts",
+    "find": "      if (this.ctx.id !== ctx.id) return;\n      this.error = say(late);",
+    "replace": "      this.error = say(late);",
+    "test": "B P2-1 a follow-ups stop refused while the person is on another quote"
+  },
+  {
+    "id": "pb-late-refusal-said",
+    "file": "src/panel-base.ts",
+    "find": "      this.error = say(late);",
+    "replace": "      void say;",
+    "test": "B P2-1 a follow-ups stop refused after leaving and returning"
+  },
+  {
+    "id": "ep-load-drops-missing-drafts",
+    "file": "src/edit-panel.ts",
+    "find": " && present.has(Number(lineNo))",
+    "replace": "",
+    "test": "P3 a draft typed on a line that is gone"
+  },
+  {
+    "id": "ep-expiry-draft-kept",
+    "file": "src/edit-panel.ts",
+    "find": "expiryUnsaved && !resetExpiry ? this.expiryDraft : ",
+    "replace": "",
+    "test": "P3 an unsaved expiry survives a re-read"
+  },
+  {
+    "id": "ep-expiry-save-resets",
+    "file": "src/edit-panel.ts",
+    "find": "undefined, 0, true);",
+    "replace": "undefined, 0, false);",
+    "test": "P3 a refused expiry save returns the box"
+  },
+  {
+    "id": "ep-compare-order",
+    "file": "src/edit-panel.ts",
+    "find": "if (result === undefined || ask !== this.compareAsk) return;",
+    "replace": "if (result === undefined) return;",
+    "test": "P3 compare answers within one quote land"
+  },
+  {
+    "id": "sa-read-after-flip",
+    "file": "src/settings-accept.ts",
+    "find": "    this.generation += 1; // a read begun before this answer must not land over it\n",
+    "replace": "",
+    "test": "P3 a read of the acceptance switch"
+  },
+  {
+    "id": "sa-read-order",
+    "file": "src/settings-accept.ts",
+    "find": "    if (mine !== this.generation) return;\n",
+    "replace": "",
+    "test": "P3 a read of the acceptance switch"
+  },
+  {
+    "id": "sr-read-after-flip",
+    "file": "src/settings-scope.ts",
+    "find": "    this.generation += 1; // a read begun before this answer must not land over it\n",
+    "replace": "",
+    "test": "P3 a read of the scope rules"
+  },
+  {
+    "id": "sr-read-order",
+    "file": "src/settings-scope.ts",
+    "find": "    if (mine !== this.generation) return;\n",
+    "replace": "",
+    "test": "P3 a read of the scope rules"
+  },
+  {
+    "id": "ss-lock-box-only-with-message",
+    "file": "src/settings-surface.ts",
+    "find": "${this.itemsLock !== \"\" ? html`<p class=\"lock\" role=\"status\" data-testid=\"qs-items-lock\">",
+    "replace": "${locked ? html`<p class=\"lock\" role=\"status\" data-testid=\"qs-items-lock\">",
+    "test": "P3 no empty lock box shows while a policy save is out"
+  },
+  {
+    "id": "ss-moved-refusal-names-branch",
+    "file": "src/settings-surface.ts",
+    "find": "this.scope === \"dealer\" ? \"this branch\" : \"the branch you left\"",
+    "replace": "\"the branch you left\"",
+    "test": "P3 a policy save refused after the scope moved on says which settings"
+  },
+  {
+    "id": "ws-serialize",
+    "file": "src/workspace-store.ts",
+    "find": "    if (this.#inFlight !== null) {\n      this.#again = true;\n      return this.#inFlight;\n    }\n",
+    "replace": "",
+    "test": "P3 layout saves reach the server one at a time"
+  },
+  {
+    "id": "ws-latest-after",
+    "file": "src/workspace-store.ts",
+    "find": "      } while (this.#again);",
+    "replace": "      } while (false);",
+    "test": "P3 layout saves reach the server one at a time"
+  },
+  {
+    "id": "wa-restore-not-while-creating",
+    "file": "src/quote-workarea.ts",
+    "find": "    if (this.creating !== null || this.createdQuoteId !== \"\") return;\n",
+    "replace": "",
+    "test": "P3 a late layout answer does not resume the remembered quote"
+  },
+  {
+    "id": "wa-scan-overtaken-says",
+    "file": "src/quote-workarea.ts",
+    "find": "        this.speakAdd(\"That scan was meant for the new quote, which another quote overtook, so it was not added. Scan it again on the quote you want.\", \"warn\");\n",
+    "replace": "",
+    "test": "P3 a scan made in compose that another quote overtook says so"
+  },
+  {
+    "id": "wa-scan-handoff-wait",
+    "file": "src/quote-workarea.ts",
+    "find": "!(await waitUpTo(HANDOFF_WAIT_MS, this.handedDown()))",
+    "replace": "false",
+    "test": "P3 a scan made in compose waits for the host"
+  },
+  {
+    "id": "wa-scan-handoff-timeout-says",
+    "file": "src/quote-workarea.ts",
+    "find": "        this.speakAdd(\"The new quote did not open in time, so that scan was not added. Scan it again once the quote is on screen.\", \"warn\");\n",
+    "replace": "",
+    "test": "P3 a scan made in compose says so when the host never"
+  },
+  {
+    "id": "wa-handoff-release",
+    "file": "src/quote-workarea.ts",
+    "find": "    if (changed.has(\"quoteId\") && this.quoteId !== \"\") this.releaseHandoffWaiters();\n",
+    "replace": "",
+    "test": "P3 a scan made in compose waits for the host"
+  },
+  {
+    "id": "ep-late-link-note",
+    "file": "src/edit-panel.ts",
+    "find": "(late) => this.lateAnswer(ctx, late, \"create a share link\", undefined, LATE_LINK_NOTE));",
+    "replace": "(late) => this.lateAnswer(ctx, late, \"create a share link\"));",
+    "test": "P3 a link made after the person left and came back is said at once"
+  },
+  {
+    "id": "ep-late-qty-note",
+    "file": "src/edit-panel.ts",
+    "find": "        discChanged ? LATE_QTY_NOTE : \"\",\n",
+    "replace": "        \"\",\n",
+    "test": "P3 a quantity saved after the person left says the discount half"
+  },
+  {
+    "id": "ep-late-note-kept",
+    "file": "src/edit-panel.ts",
+    "find": "      if (lateNote !== \"\") this.lateNotes.set(ctx.id, lateNote);\n",
+    "replace": "",
+    "test": "P3 a link made after the person left is said"
+  },
+  {
+    "id": "ep-late-note-said",
+    "file": "src/edit-panel.ts",
+    "find": "      this.notice = late;\n    }\n    // The line a save was for",
+    "replace": "    }\n    // The line a save was for",
+    "test": "P3 a link made after the person left is said"
+  },
+  {
+    "id": "wa-late-link-note",
+    "file": "src/quote-workarea.ts",
+    "find": "this.lateWrite(ctx, \"create a share link\", LATE_LINK_NOTE)",
+    "replace": "this.lateWrite(ctx, \"create a share link\")",
+    "test": "P3 a link made for the quote left by the work area is said"
+  },
+  {
+    "id": "wa-late-note-said",
+    "file": "src/quote-workarea.ts",
+    "find": "      this.notice = late;\n    }\n    // Drafts return",
+    "replace": "    }\n    // Drafts return",
+    "test": "P3 a link made for the quote left by the work area is said"
+  }
+]

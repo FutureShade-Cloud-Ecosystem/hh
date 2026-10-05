@@ -55,11 +55,19 @@ export class QdScopeRules extends PanelBase {
     void this.load();
   }
 
+  /**
+   * Numbers the reads and the switches of the rules: a read's answer applies only while nothing newer has begun, and a
+   * switch counts as newer when it answers, so a read begun before it never lays the old rows over it.
+   */
+  private generation = 0;
+
   private async load(): Promise<void> {
     const client = this.client;
     if (client === null) return;
     this.error = "";
+    const mine = ++this.generation;
     const result = await client.listScopeRules();
+    if (mine !== this.generation) return;
     this.loaded = true;
     if (!result.ok) {
       this.rules = [];
@@ -76,6 +84,7 @@ export class QdScopeRules extends PanelBase {
     this.pending = code;
     this.error = "";
     const result = await client.setScopeRule(code, !rule.enabled);
+    this.generation += 1; // a read begun before this answer must not land over it
     this.pending = "";
     if (!result.ok) {
       this.error = writeRefusalLine(result.status, result.error);

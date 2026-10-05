@@ -525,6 +525,8 @@ export class HosCustomerPicker extends LitElement {
 
   private async run(q: string): Promise<void> {
     const mine = ++this.seq;
+    let failure = '';
+    let rows: PickerCustomer[] = [];
     try {
       // DIB-506 fix pass: the branch rides the URL. The U-park E4 fence (customer/search_scope.go)
       // 403s any branch-SCOPED caller that names no branch, without this, only GLOBAL callers
@@ -532,30 +534,33 @@ export class HosCustomerPicker extends LitElement {
       // now it scopes the search itself, exactly as the fence expects.
       const branch = this.branchId ? `&branch_id=${encodeURIComponent(this.branchId)}` : '';
       const res = await api(`/api/v1/customers/search?q=${encodeURIComponent(q.trim())}&limit=20${branch}`);
-      // A stale response must not repaint the list under a user who has typed on. Comparing a
-      // sequence number is what makes the debounce correct rather than merely usual.
-      if (mine !== this.seq) return;
+      let body: unknown = null;
+      try {
+        body = await res.json();
+      } catch {
+        /* non-JSON body */
+      }
       if (!res.ok) {
         // Speak the SERVER's sentence, a status code is not a way forward. Fall back to plain
         // words when the body carries none.
-        let detail = '';
-        try {
-          detail = ((await res.json()) as { error?: string }).error ?? '';
-        } catch {
-          /* non-JSON body */
-        }
-        throw new Error(detail || 'Could not search accounts, try again.');
+        failure = (body as { error?: string } | null)?.error || 'Could not search accounts, try again.';
+      } else {
+        rows = (body as PickerCustomer[] | null) ?? [];
       }
-      const rows = (await res.json()) as PickerCustomer[];
-      this.results = orderResults(rows ?? [], this.recents);
-      this.error = '';
     } catch (e) {
-      if (mine !== this.seq) return;
-      this.results = [];
-      this.error = e instanceof Error ? e.message : 'Could not search accounts.';
-    } finally {
-      if (mine === this.seq) this.loading = false;
+      failure = e instanceof Error ? e.message : 'Could not search accounts.';
     }
+    // A stale response must not repaint the list under a user who has typed on. Comparing a
+    // sequence number is what makes the debounce correct rather than merely usual.
+    if (mine !== this.seq) return;
+    this.loading = false;
+    if (failure !== '') {
+      this.results = [];
+      this.error = failure;
+      return;
+    }
+    this.results = orderResults(rows, this.recents);
+    this.error = '';
   }
 
   private onKeyDown(e: KeyboardEvent): void {

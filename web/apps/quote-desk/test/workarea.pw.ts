@@ -11,6 +11,15 @@ import { expect, test, type Page } from "@playwright/test";
 
 const SALES = { name: "Sales", exact: true };
 
+// The stub's world is in memory and the layout test stores an open quote for the person: every test starts from the
+// seeded world, so the suite passes in any order and under --repeat-each.
+test.beforeEach(async ({ request }) => {
+  await request.post("/_stub/reset");
+});
+test.afterAll(async ({ request }) => {
+  await request.post("/_stub/reset");
+});
+
 async function signIn(page: Page, role = SALES): Promise<void> {
   await page.goto("/");
   await page.getByRole("button", role).click();
@@ -159,11 +168,7 @@ test("margin surfaces render only when the server sends them", async ({ page }) 
   await page.request.put("/_stub/cost-list", { data: { member: false } });
   await page.reload();
   await page.getByRole("button", SALES).click();
-  await page.getByTestId("qb-identity").locator("hos-customer-picker").getByPlaceholder("Search name or account #…").fill("Maple");
-  await page.getByTestId("qb-identity").locator("hos-customer-picker").getByRole("option", { name: /Maple Ridge Contracting/ }).click();
-  const scan2 = page.getByTestId("pos-scan-input");
-  await scan2.fill("PSN-100");
-  await scan2.press("Enter");
+  // The desk resumes the quote that was open (the resume ref is the open quote), so its line is already there.
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
   await expect(page.getByTestId("qb-margin-pill")).toHaveCount(0);
   expect(await page.getByTestId("qb-lines").locator('th[data-column="line.unit_cost"]').count()).toBe(0);

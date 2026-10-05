@@ -56,6 +56,9 @@ interface BranchRow {
   isDefault: boolean;
 }
 
+/** The most pages one refresh of the list reads: a runaway cursor ends here. */
+const MAX_LIST_PAGES = 40;
+
 @customElement("qd-quote-builder")
 export class QdQuoteBuilder extends LitElement {
   /** The host wires the validated client before the first render. */
@@ -291,19 +294,36 @@ export class QdQuoteBuilder extends LitElement {
 
   // ── loading ────────────────────────────────────────────────────────────────
 
-  private async loadList(): Promise<void> {
+  /**
+   * The list from its first page. After an edit the pages already shown are read again, so a quote opened from
+   * page two stays in the list; a fresh list (a new filter, Refresh) starts from page one.
+   */
+  private async loadList(keepPages = false): Promise<void> {
     const client = this.client;
     if (client === null) return;
     this.error = "";
     const seq = ++this.listSeq;
+    const shown = keepPages ? this.rows.length : 0;
     const result = await client.listQuotes(this.statusFilter);
+    let rows = result.ok ? result.value.rows : [];
+    let cursor = result.ok ? (result.value.nextCursor ?? "") : "";
+    const seen = new Set<string>();
+    for (let page = 0; result.ok && page < MAX_LIST_PAGES && rows.length < shown && cursor !== "" && !seen.has(cursor); page += 1) {
+      seen.add(cursor);
+      const more = await client.listQuotes(this.statusFilter, cursor);
+      if (!more.ok) break;
+      const known = new Set(rows.map((r) => r.id));
+      rows = [...rows, ...more.value.rows.filter((r) => !known.has(r.id))];
+      cursor = more.value.nextCursor ?? "";
+    }
+    // A newer read of the list began while this one was out (or while it followed the pages): its answer is the one to show.
     if (seq !== this.listSeq) return;
     if (!result.ok) {
       this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "list quotes"));
       return;
     }
-    this.rows = result.value.rows;
-    this.nextCursor = result.value.nextCursor ?? "";
+    this.rows = rows;
+    this.nextCursor = cursor;
   }
 
   /** The next page of the same list is added under the rows already shown. */
@@ -344,6 +364,7 @@ export class QdQuoteBuilder extends LitElement {
     }
     this.busy = true;
     this.error = "";
+    const onScreen = this.selected;
     const result = await client.createQuote(this.newCustomer.id, this.newBranch.trim(), this.newExpiry.trim());
     this.busy = false;
     if (!result.ok) {
@@ -353,7 +374,8 @@ export class QdQuoteBuilder extends LitElement {
     this.newCustomer = null;
     this.newExpiry = validUntilFromDays(30, new Date()); // stays pre-filled for the next quote
     await this.loadList();
-    this.selected = result.value;
+    // The person may have opened another quote while this one was being made: it joins the list but does not take the screen.
+    if (this.selected === onScreen) this.selected = result.value;
   }
 
   // ── the fan-out and the open events ────────────────────────────────────────
@@ -361,7 +383,7 @@ export class QdQuoteBuilder extends LitElement {
   /** An edit anywhere reaches every mounted panel and the list itself. */
   private readonly onQuoteChanged = (): void => {
     this.reloadDetailPanels();
-    void this.loadList();
+    void this.loadList(true);
   };
 
   private readonly onQuoteOpen = (event: CustomEvent<{ quoteId: string }>): void => {

@@ -103,13 +103,17 @@ export class QdQuoteHoldExpiry extends PanelBase {
 
   private async load(): Promise<void> {
     const client = this.client;
-    const quoteId = this.quoteId;
-    if (client === null || quoteId === "") {
+    const ctx = this.ctx;
+    if (client === null || ctx.id === "") {
       this.st = null;
       return;
     }
-    const result = await client.holdExpiry(quoteId);
-    if (quoteId !== this.quoteId) return;
+    // A cancelled context issues no more requests: the panel left the page (sign out) and a read of its is not this session's.
+    if (ctx.stale) return;
+    // A newer read of this quote supersedes an older one still out: the older answer never lands over it.
+    const seq = ctx.startRead();
+    const result = await ctx.guardedRead(seq, client.holdExpiry(ctx.id));
+    if (result === undefined) return;
     if (!result.ok) {
       // A lapse notice is not invented from a failed read, and silence would read as "nothing lapsed":
       // the panel says the status could not be read.
@@ -129,10 +133,12 @@ export class QdQuoteHoldExpiry extends PanelBase {
   private async rehold(): Promise<void> {
     const client = this.client;
     if (client === null || this.busy) return;
+    const ctx = this.ctx;
     this.busy = true;
     this.error = "";
     this.notice = "";
-    const result = await client.resyncHolds(this.quoteId);
+    const result = await ctx.guarded(client.resyncHolds(ctx.id), this.lateWrite(ctx, (late) => spokenRefusal(reholdRefusal(late.status, late.error))));
+    if (result === undefined) return;
     this.busy = false;
     if (!result.ok) {
       this.error = spokenRefusal(reholdRefusal(result.status, result.error));
@@ -141,6 +147,7 @@ export class QdQuoteHoldExpiry extends PanelBase {
     this.notice = reholdResultNote(result.value);
     // Re-read rather than assume: the status clears because the holds are real again, a fact only the server has.
     await this.load();
+    if (ctx.stale) return;
     this.announceChanged();
   }
 

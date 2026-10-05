@@ -160,10 +160,14 @@ export class QdFloorRefusal extends PanelBase {
 
   reload(): void {}
 
+  /** Counts the refusals put on screen: a request's answer belongs to the one it was filed for. */
+  private shown = 0;
+
   private readonly onSeam = (event: Event): void => {
     const detail = (event as CustomEvent<GuardRefusalEvent>).detail;
     if (detail === undefined || detail === null || detail.refusal === undefined) return;
     this.returnFocus = QdFloorRefusal.deepActive();
+    this.shown += 1;
     this.refusal = detail.refusal;
     this.target = { quoteId: detail.quoteId, lineNo: detail.lineNo, discPct: detail.discPct };
     this.sentence = detail.sentence ?? "";
@@ -271,7 +275,10 @@ export class QdFloorRefusal extends PanelBase {
     this.busy = true;
     this.error = "";
     this.notice = "";
+    const filedFor = this.shown;
     const result = await client.requestFloorApproval(target.quoteId, target.lineNo, target.discPct, this.note.trim());
+    // A refusal that came up since owns the dialog now (and reset its flags): this answer says nothing there.
+    if (filedFor !== this.shown) return;
     this.busy = false;
     if (!result.ok) {
       this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "ask for this approval"));

@@ -2,6 +2,14 @@
 // lines; the desk drew them all alike.
 import { expect, test } from "@playwright/test";
 
+// The stub keeps the person's layout row, which now remembers the open quote: every test starts from the seeded world.
+test.beforeEach(async ({ request }) => {
+  await request.post("/_stub/reset");
+});
+test.afterAll(async ({ request }) => {
+  await request.post("/_stub/reset");
+});
+
 for (const width of [1440, 820]) {
   test(`every second ticket row is striped at ${width}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1180 });

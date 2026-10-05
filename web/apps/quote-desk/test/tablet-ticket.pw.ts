@@ -3,6 +3,14 @@
 // checks read the boxes the browser laid out.
 import { expect, test, type Page } from "@playwright/test";
 
+// The stub keeps the person's layout row, which now remembers the open quote: every test starts from the seeded world.
+test.beforeEach(async ({ request }) => {
+  await request.post("/_stub/reset");
+});
+test.afterAll(async ({ request }) => {
+  await request.post("/_stub/reset");
+});
+
 async function openTicket(page: Page, role: string): Promise<void> {
   await page.goto("/");
   await page.getByRole("button", { name: role, exact: true }).click();

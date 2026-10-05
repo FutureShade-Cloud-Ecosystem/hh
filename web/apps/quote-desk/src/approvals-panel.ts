@@ -124,11 +124,20 @@ export class QdApprovals extends PanelBase {
     void this.load();
   }
 
+  /** An answer older than the newest request is dropped: a slow read never lays old rows over a newer one. */
+  private loadSeq = 0;
+
   private async load(): Promise<void> {
     const client = this.client;
     if (client === null) return;
+    const seq = ++this.loadSeq;
     const result = await client.listApprovals("");
+    if (seq !== this.loadSeq) return;
     if (!result.ok) {
+      // The rows of the read before this one are not shown under the failure: they may be stale, and a
+      // decision offered on a stale row is the server's to refuse.
+      this.items = [];
+      this.loaded = false; // no count is shown beside a failed read
       this.error = result.error;
       return;
     }
@@ -170,15 +179,18 @@ export class QdApprovals extends PanelBase {
     this.rowError = { ...this.rowError, [id]: "" };
     const result = await client.decideApproval(id, approve, this.reasonText());
     this.busyId = "";
-    // The reason belongs to the decision it was typed for: the next one starts empty.
-    this.clearReason();
     if (!result.ok) {
-      // The server's own text, verbatim.
+      // The server's own text, verbatim. A refusal that is not final (the store down, a transport failure) keeps
+      // the reason typed, so the retry files it. A 403 or a 409 ends the person's try on this row, and the reason
+      // typed for it must not be filed with the next row's decision.
       this.rowError = { ...this.rowError, [id]: result.error };
       if (result.status === 403) this.refusedRows = { ...this.refusedRows, [id]: result.error };
+      if (result.status === 403 || result.status === 409) this.clearReason();
       if (result.status === 409) await this.load();
       return;
     }
+    // The reason belongs to the decision it was typed for: the next one starts empty.
+    this.clearReason();
     this.notice = approve ? "Approved." : "Refused.";
     await this.load();
     this.announceChanged();

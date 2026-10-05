@@ -107,15 +107,21 @@ export class QdQuoteAvailability extends PanelBase {
 
   private async load(): Promise<void> {
     const client = this.client;
-    const quoteId = this.quoteId;
-    if (client === null || quoteId === "") {
+    const ctx = this.ctx;
+    if (client === null || ctx.id === "") {
       this.lines = [];
       this.loaded = false;
       return;
     }
+    // A cancelled context issues no more requests: the panel left the page (sign out) and a read of its is not this session's.
+    if (ctx.stale) return;
     this.error = "";
-    const [result, quote] = await Promise.all([client.availability(quoteId), client.readQuote(quoteId)]);
-    if (quoteId !== this.quoteId) return;
+    // A newer read of this quote supersedes an older one still out: the older answer never lands over it.
+    const seq = ctx.startRead();
+    this.peekSeq += 1; // a peek still out belongs to the figures this read replaces
+    const answers = await ctx.guardedRead(seq, Promise.all([client.availability(ctx.id), client.readQuote(ctx.id)]));
+    if (answers === undefined) return;
+    const [result, quote] = answers;
     this.names = quote.ok ? Object.fromEntries(quote.value.lines.map((line) => [line.line_no, line.description])) : {};
     if (!result.ok) {
       // A failed read shows no lines at all: the previous read's chips would be stale facts under this quote.
@@ -144,10 +150,16 @@ export class QdQuoteAvailability extends PanelBase {
     void this.readPeek(productId);
   }
 
+  private peekSeq = 0;
+
   private async readPeek(productId: string): Promise<void> {
     const client = this.client;
     if (client === null) return;
+    // Not tied to a quote on its own: a peek belongs to the read of the quote it was asked after, and a newer read
+    // (which a quote switch starts too) or a newer peek supersedes it.
+    const seq = ++this.peekSeq;
     const result = await client.availabilityBranches(productId);
+    if (seq !== this.peekSeq) return;
     if (!result.ok) {
       this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "read the other branches' stock"));
       return;

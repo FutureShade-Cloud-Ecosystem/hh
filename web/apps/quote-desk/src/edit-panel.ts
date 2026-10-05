@@ -53,13 +53,23 @@ import {
 } from "./_quote-edit.js";
 import { floorRefusalMessage, openFloorRefusalDialog, parseFloorRefusal } from "./floor-refusal.js";
 import { spokenRefusal } from "./_quote-workarea.js";
+import type { QuoteContext } from "./quote-context.js";
 import type { CatalogHit, ComparisonRow, ShareLinkRow } from "./_panel-wire.js";
 import type { Result } from "@hardscapehouse/api-client";
 
 type Which = "add" | "compare";
 
+/** How a guarded write ended: saved, refused (and said), or the person had moved to another quote (and nothing is said). */
+type Wrote = "saved" | "refused" | "moved";
+
 /** The mint's own notice: it is said beside the button that made it, not at the foot of the panel. */
 const LINK_CREATED_NOTICE = "Link created. Nothing was emailed: copy the link and send it yourself.";
+
+/** Said on return when the link was made after the person had left: its one-time address went with the answer. */
+const LATE_LINK_NOTE = "A share link was made on this quote while you were away. Its address was shown only once and was not kept: revoke it and create another to copy one.";
+
+/** Said on return when the quantity landed after the person had left: the discount half was never sent. */
+const LATE_QTY_NOTE = "The quantity you changed was saved while you were away, but the discount you also changed was not sent. Enter it again to save it.";
 
 @customElement("qd-quote-edit")
 export class QdQuoteEdit extends PanelBase {
@@ -125,8 +135,14 @@ export class QdQuoteEdit extends PanelBase {
       this.mintedToken = "";
       this.mintedLinkId = "";
       this.view = null;
+      this.discByLine = {};
+      this.discEnabled = false;
+      this.qtyDraft = {};
+      this.discDraft = {};
+      this.expiryDraft = "";
       this.links = [];
       this.converted = null;
+      this.convertFulfilment = "";
       this.compareLine = null;
       this.compareRows = [];
       this.compareAlts = [];
@@ -150,35 +166,46 @@ export class QdQuoteEdit extends PanelBase {
   /**
    * A read is only ever applied to the quote that asked for it: a slow answer
    * for the quote that was open before is dropped, never shown over the one
-   * open now, and a save can only be made from a view of the open quote.
+   * open now, and an older read of the same quote never lands over a newer one
+   * (the context numbers the reads). A save can only be made from a view of the open quote.
    */
-  private loadSeq = 0;
-
-  private async load(): Promise<void> {
+  private async load(resetLine = 0, resetExpiry = false): Promise<void> {
     const client = this.client;
     if (client === null || this.quoteId === "") {
-      this.loadSeq += 1;
       this.view = null;
       return;
     }
-    const seq = ++this.loadSeq;
-    const result = await client.readQuote(this.quoteId);
-    if (seq !== this.loadSeq) return;
+    const ctx = this.ctx;
+    if (ctx.stale) return;
+    const seq = ctx.startRead();
+    const result = await ctx.guardedRead(seq, client.readQuote(ctx.id));
+    if (result === undefined) return;
     if (!result.ok) {
       this.error = this.refuse(result, "read this quote");
       this.view = null;
       return;
     }
+    // An expiry typed and not saved is the person's: it differs from the expiry the last read showed.
+    const expiryUnsaved = this.expiryDraft !== (this.view?.valid_until ?? "");
     this.view = result.value;
-    // Drafts return to the server's truth after every load, so a refused edit
-    // never leaves a stale value sitting in a box looking saved. The one
-    // exception is the box under the person's hands: a late re-read must not
-    // wipe the figure being typed.
+    const late = this.lateNotes.get(ctx.id);
+    if (late !== undefined) {
+      this.lateNotes.delete(ctx.id);
+      this.notice = late;
+    }
+    // The line a save was for returns to the server's truth, so a refused edit never leaves a stale value sitting
+    // in its box looking saved. The figures typed on the other lines are the person's and stay, as does the box
+    // under their hands: a re-read must not wipe what is being typed. A figure typed for a line number the read no
+    // longer has is dropped: the core numbers a new line after the highest, so it would land on a different line.
     const typing = this.typingField();
-    this.qtyDraft = typing !== null && typing.field === "qty" ? { [typing.line]: typing.value } : {};
-    this.discDraft = typing !== null && typing.field === "disc" ? { [typing.line]: typing.value } : {};
-    this.expiryDraft = typing !== null && typing.field === "expiry" ? typing.value : (result.value.valid_until ?? "");
-    await Promise.all([this.loadDiscounts(seq), this.loadLinks(seq)]);
+    const present = new Set(result.value.lines.map((l) => l.line_no));
+    const keep = (drafts: Record<number, string>): Record<number, string> =>
+      Object.fromEntries(Object.entries(drafts).filter(([lineNo]) => Number(lineNo) !== resetLine && present.has(Number(lineNo))));
+    this.qtyDraft = { ...keep(this.qtyDraft), ...(typing !== null && typing.field === "qty" ? { [typing.line]: typing.value } : {}) };
+    this.discDraft = { ...keep(this.discDraft), ...(typing !== null && typing.field === "disc" ? { [typing.line]: typing.value } : {}) };
+    this.expiryDraft =
+      typing !== null && typing.field === "expiry" ? typing.value : expiryUnsaved && !resetExpiry ? this.expiryDraft : (result.value.valid_until ?? "");
+    await Promise.all([this.loadDiscounts(seq, ctx), this.loadLinks(seq, ctx)]);
   }
 
   /** The quantity, discount or expiry box holding focus, with what is in it, or null. */
@@ -198,22 +225,23 @@ export class QdQuoteEdit extends PanelBase {
    * and the dealer's per line discount switch (the surface config). Both are
    * the server's answers; an unreadable answer offers no discount control.
    */
-  private async loadDiscounts(seq: number): Promise<void> {
+  private async loadDiscounts(seq: number, ctx: QuoteContext): Promise<void> {
     const client = this.client;
     if (client === null) return;
-    const [terms, config] = await Promise.all([client.readTerms(this.quoteId), client.surfaceConfig(this.branchId)]);
-    if (seq !== this.loadSeq) return;
+    const answers = await ctx.guardedRead(seq, Promise.all([client.readTerms(ctx.id), client.surfaceConfig(this.branchId)]));
+    if (answers === undefined) return;
+    const [terms, config] = answers;
     const byLine: Record<number, number> = {};
     if (terms.ok) for (const line of terms.value.lines) byLine[line.lineNo] = line.discPct;
     this.discByLine = byLine;
     this.discEnabled = terms.ok && config.ok && config.value.policy?.lineDiscountsEnabled !== false;
   }
 
-  private async loadLinks(seq: number): Promise<void> {
+  private async loadLinks(seq: number, ctx: QuoteContext): Promise<void> {
     const client = this.client;
     if (client === null) return;
-    const result = await client.listShareLinks(this.quoteId);
-    if (seq !== this.loadSeq) return;
+    const result = await ctx.guardedRead(seq, client.listShareLinks(ctx.id));
+    if (result === undefined) return;
     this.links = result.ok ? result.value : [];
   }
 
@@ -232,42 +260,80 @@ export class QdQuoteEdit extends PanelBase {
    * dialog event; any other refusal shows the server's own sentence.
    */
   private async write(
+    ctx: QuoteContext,
     what: string,
-    action: () => Promise<Result<unknown>>,
+    action: (quoteId: string) => Promise<Result<unknown>>,
     floor?: { lineNo: number; discPct: number },
-  ): Promise<boolean> {
-    if (this.busy || this.client === null) return false;
+    resetLine = 0,
+    resetExpiry = false,
+    lateNote = "",
+  ): Promise<Wrote> {
+    if (this.busy || this.client === null) return "refused";
     this.busy = true;
     this.error = "";
     this.notice = "";
-    const quoteAtStart = this.quoteId;
-    const result = await action();
-    this.busy = false;
+    // The write is bound to the quote the context names, never to the quote open when the answer comes back.
+    const result = await ctx.guarded(action(ctx.id), (late) => this.lateAnswer(ctx, late, what, floor, lateNote));
     // The quote the person moved to meanwhile owns the screen now: this answer says nothing about it.
-    if (quoteAtStart !== this.quoteId) return result.ok;
+    if (result === undefined) return "moved";
+    this.busy = false;
     if (!result.ok) {
       const refusal = result.status === 409 && floor !== undefined ? parseFloorRefusal(result.error) : null;
       if (refusal !== null && floor !== undefined) {
         this.error = floorRefusalMessage(refusal);
-        openFloorRefusalDialog(refusal, this.quoteId, floor.lineNo, floor.discPct);
+        openFloorRefusalDialog(refusal, ctx.id, floor.lineNo, floor.discPct);
       } else {
         this.error = this.refuse(result, what);
       }
-      await this.load();
-      return false;
+      await this.load(resetLine, resetExpiry);
+      return "refused";
     }
     // "Saved." is said once the re-read has landed: the boxes and each line's baseline are then the saved
     // figures, so the next edit made on seeing it is measured against the truth, not the figures before the save.
-    await this.load();
-    if (quoteAtStart !== this.quoteId) return true;
+    await this.load(resetLine, resetExpiry);
+    if (ctx.stale) return "moved";
     this.notice = "Saved.";
     this.announceChanged();
-    return true;
+    return "saved";
   }
 
+  /**
+   * A write's answer that came back after the person had left the quote it was made on. It is never applied to the
+   * quote on screen, but a write that succeeded did change its quote: the screens are told, so that if the person
+   * has come back to that quote (or the list is showing it) they re-read and show what the server holds. A refusal
+   * is said only on the quote it belongs to, when the person is on it again; on any other quote it says nothing.
+   */
+  private lateAnswer(ctx: QuoteContext, late: Result<unknown>, what: string, floor?: { lineNo: number; discPct: number }, lateNote = ""): void {
+    if (late.ok) {
+      // Kept for that quote and said when it is read: the announcement below makes every view of it, this one included, read it again.
+      if (lateNote !== "") this.lateNotes.set(ctx.id, lateNote);
+      this.announceChangedFor(ctx);
+      return;
+    }
+    const now = this.ctx;
+    if (now.stale || now.id !== ctx.id) return;
+    const refusal = late.status === 409 && floor !== undefined ? parseFloorRefusal(late.error) : null;
+    if (refusal !== null && floor !== undefined) {
+      this.error = floorRefusalMessage(refusal);
+      openFloorRefusalDialog(refusal, ctx.id, floor.lineNo, floor.discPct);
+    } else {
+      this.error = this.refuse(late, what);
+    }
+    this.reload();
+  }
+
+  /** What a late success changed that the screen cannot show, said to the person who comes back, by quote. */
+  private readonly lateNotes = new Map<string, string>();
+
+
+  /**
+   * A line save writes the quantity, then the discount, each bound to the quote the save began on. When the
+   * person opens another quote between the two, the second write is dropped: it never goes to the new quote.
+   */
   private async saveLine(line: QuoteViewLine): Promise<void> {
     const client = this.client;
     if (client === null) return;
+    const ctx = this.ctx;
     const rawQty = (this.qtyDraft[line.line_no] ?? line.qty_entered).trim();
     const qtyChanged = rawQty !== line.qty_entered;
     const current = this.discByLine[line.line_no] ?? 0;
@@ -293,25 +359,33 @@ export class QdQuoteEdit extends PanelBase {
       }
     }
     if (qtyChanged) {
-      const saved = await this.write("change this quantity", () => client.editLine(this.quoteId, line.line_no, { qty: rawQty }), {
-        lineNo: line.line_no,
-        discPct: current,
-      });
-      if (!saved || !discChanged) return;
+      const saved = await this.write(
+        ctx,
+        "change this quantity",
+        (id) => client.editLine(id, line.line_no, { qty: rawQty }),
+        { lineNo: line.line_no, discPct: current },
+        line.line_no,
+        false,
+        discChanged ? LATE_QTY_NOTE : "",
+      );
+      if (saved !== "saved" || !discChanged) return;
     }
     if (discChanged) {
       const n = Number(rawDisc === "" ? 0 : rawDisc);
-      await this.write("change this discount", () => client.editLine(this.quoteId, line.line_no, { discPct: n }), {
-        lineNo: line.line_no,
-        discPct: n,
-      });
+      await this.write(
+        ctx,
+        "change this discount",
+        (id) => client.editLine(id, line.line_no, { discPct: n }),
+        { lineNo: line.line_no, discPct: n },
+        line.line_no,
+      );
     }
   }
 
   private async removeLine(line: QuoteViewLine): Promise<void> {
     const client = this.client;
     if (client === null) return;
-    await this.write("remove this line", () => client.removeLine(this.quoteId, line.line_no));
+    await this.write(this.ctx, "remove this line", (id) => client.removeLine(id, line.line_no), undefined, line.line_no);
   }
 
   private async saveExpiry(): Promise<void> {
@@ -322,7 +396,8 @@ export class QdQuoteEdit extends PanelBase {
       this.error = bad;
       return;
     }
-    await this.write("change the expiry date", () => client.setValidUntil(this.quoteId, this.expiryDraft.trim()));
+    const when = this.expiryDraft.trim();
+    await this.write(this.ctx, "change the expiry date", (id) => client.setValidUntil(id, when), undefined, 0, true);
   }
 
   private async addLine(): Promise<void> {
@@ -338,8 +413,10 @@ export class QdQuoteEdit extends PanelBase {
       this.error = bad;
       return;
     }
-    const saved = await this.write("add this line", () => client.addLine(this.quoteId, picked.product_id, this.addQty.trim(), picked.base_uom));
-    if (saved) {
+    const qty = this.addQty.trim();
+    const saved = await this.write(this.ctx, "add this line", (id) => client.addLine(id, picked.product_id, qty, picked.base_uom));
+    // Only the quote the add was made on has its add box cleared: a quote opened meanwhile keeps what was typed there.
+    if (saved === "saved") {
       this.picked = null;
       this.addQty = "";
       this.addQuery = "";
@@ -364,8 +441,9 @@ export class QdQuoteEdit extends PanelBase {
       else this.compareHits = [];
       return;
     }
+    // The catalogue is not tied to a quote: an answer belongs to the query it was asked for, and a slower answer
+    // for an older query never replaces the newer one (the quote before this one cleared both boxes).
     const result = await client.searchProducts(q, which === "add" ? 10 : 8);
-    // A slower answer for an older query never replaces the newer one.
     if ((which === "add" ? this.addQuery : this.compareQuery).trim() !== q) return;
     const rows = result.ok ? result.value : [];
     if (which === "add") this.hits = rows;
@@ -438,14 +516,14 @@ export class QdQuoteEdit extends PanelBase {
   private async mintLink(): Promise<void> {
     const client = this.client;
     if (client === null || this.busy) return;
+    const ctx = this.ctx;
     this.busy = true;
     this.error = "";
     this.notice = "";
-    const quoteAtStart = this.quoteId;
     const knownLinks = new Set(this.links.map((l) => l.id));
-    const result = await client.mintShareLink(quoteAtStart);
+    const result = await ctx.guarded(client.mintShareLink(ctx.id), (late) => this.lateAnswer(ctx, late, "create a share link", undefined, LATE_LINK_NOTE));
+    if (result === undefined) return;
     this.busy = false;
-    if (quoteAtStart !== this.quoteId) return;
     if (!result.ok) {
       this.error = this.refuse(result, "create a share link");
       return;
@@ -456,6 +534,7 @@ export class QdQuoteEdit extends PanelBase {
     this.mintedToken = result.value;
     this.notice = LINK_CREATED_NOTICE;
     await this.load();
+    if (ctx.stale) return;
     // The just-minted link is the live row that was not there before; revoking it must clear its URL.
     const fresh = this.links.filter((l) => l.live && !knownLinks.has(l.id));
     this.mintedLinkId = fresh.length === 1 ? (fresh[0]?.id ?? "") : "";
@@ -465,36 +544,46 @@ export class QdQuoteEdit extends PanelBase {
   private async revokeLink(id: string): Promise<void> {
     const client = this.client;
     if (client === null) return;
-    const revoked = await this.write("revoke this link", () => client.revokeShareLink(this.quoteId, id));
+    const revoked = await this.write(this.ctx, "revoke this link", (quoteId) => client.revokeShareLink(quoteId, id));
     // A revoked link is dead: its address and the "copy this now" offer go with it.
-    if (revoked && id === this.mintedLinkId) {
+    if (revoked === "saved" && id === this.mintedLinkId) {
       this.mintedToken = "";
       this.mintedLinkId = "";
     }
   }
 
   private async copyLink(): Promise<void> {
+    const ctx = this.ctx;
     // The clipboard is only there on a secure page: say so rather than claim a copy that did not happen.
     try {
       if (navigator.clipboard === undefined) throw new Error("no clipboard");
       await navigator.clipboard.writeText(this.shareUrl(this.mintedToken));
     } catch {
+      if (ctx.stale) return;
       this.error = "The link could not be copied from this page. Select it in the box and copy it yourself.";
       this.notice = "";
       return;
     }
+    if (ctx.stale) return;
     this.error = "";
     this.notice = "Link copied. Nothing was emailed: paste it to send it.";
   }
 
   // ── compare ───────────────────────────────────────────────────────────────
 
+  /** Numbers the compare asks of this panel, so only the newest one's answer is shown. */
+  private compareAsk = 0;
+
   private async runCompare(lineNo: number): Promise<void> {
     const client = this.client;
     if (client === null) return;
+    const ctx = this.ctx;
     this.compareLine = lineNo;
     this.error = "";
-    const result = await client.compareLine(this.quoteId, lineNo, this.compareAlts.map((a) => a.product_id));
+    // A newer ask supersedes an older one still out (another line, or Score again): the older answer never lands over it.
+    const ask = ++this.compareAsk;
+    const result = await ctx.guarded(client.compareLine(ctx.id, lineNo, this.compareAlts.map((a) => a.product_id)));
+    if (result === undefined || ask !== this.compareAsk) return;
     if (!result.ok) {
       this.error = this.refuse(result, "compare this line");
       return;
@@ -521,11 +610,13 @@ export class QdQuoteEdit extends PanelBase {
    */
   private async doConvert(): Promise<void> {
     const client = this.client;
-    if (client === null || this.busy || this.quoteId === "") return;
+    const ctx = this.ctx;
+    if (client === null || this.busy || ctx.id === "") return;
     this.busy = true;
     this.error = "";
     this.notice = "";
-    const result = await client.convertQuote(this.quoteId, this.convertFulfilment);
+    const result = await ctx.guarded(client.convertQuote(ctx.id, this.convertFulfilment), (late) => this.lateAnswer(ctx, late, "convert this quote"));
+    if (result === undefined) return;
     this.busy = false;
     if (!result.ok) {
       this.error = this.refuse(result, "convert this quote");
@@ -534,6 +625,7 @@ export class QdQuoteEdit extends PanelBase {
     }
     this.converted = result.value;
     await this.load();
+    if (ctx.stale) return;
     this.announceChanged();
   }
 
@@ -823,8 +915,8 @@ export class QdQuoteEdit extends PanelBase {
       <fieldset>
         <legend>Convert to order</legend>
         <p class="sub">
-          This quote is accepted. Converting it commits the order against the customer's account: their credit is checked at that
-          moment, and the stock this quote is holding becomes a firm reservation.
+          This quote is accepted. Converting it commits the order, and the stock this quote is holding becomes a firm
+          reservation. On an account customer the credit is checked at that moment, and a refusal names the limit and the shortfall.
         </p>
         <label for="convert-fulfilment">How is it leaving?</label>
         <div class="row flush-top">
