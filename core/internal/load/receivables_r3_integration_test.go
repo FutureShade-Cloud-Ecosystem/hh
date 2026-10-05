@@ -42,4 +42,52 @@ func TestReceivablesNightlyRepostNeverSweepsALoadedCreditMemo(t *testing.T) {
 	}
 }
 
-var _ = load.ReceivablesKind
+// P1-2: a replay is graded against what that batch recorded, not
+// against the registry's current stamp.
+func TestReceivablesReplayIsGradedAgainstWhatThatBatchRecorded(t *testing.T) {
+	e := setupLD11(t)
+	ctx := context.Background()
+	a := ld11Item("RV-A", "CUST-ONE", "BR-A", "RV-DOC-A", "2032-06-01", "2032-07-01", 1000, "", "")
+	b := ld11Item("RV-B", "CUST-ONE", "BR-A", "RV-DOC-B", "2032-06-02", "2032-07-02", 2000, "", "")
+	first, err := e.door.UpsertReceivables(ctx, ld11Batch("rv-r1", a))
+	if err != nil {
+		t.Fatalf("rv-r1: %v", err)
+	}
+	if _, err := e.door.UpsertReceivables(ctx, ld11Batch("rv-r2", b)); err != nil {
+		t.Fatalf("rv-r2: %v", err)
+	}
+	// Shape one: the replay carries an item another batch recorded,
+	// with its amount changed.
+	bChanged := ld11Item("RV-B", "CUST-ONE", "BR-A", "RV-DOC-B", "2032-06-02", "2032-07-02", 2500, "", "")
+	_, err = e.door.UpsertReceivables(ctx, ld11Batch("rv-r1", a, bChanged))
+	ref := ld11BatchRefused(t, err)
+	if ref.Refusing.Reason != load.ReasonReplayChanged || ref.Refusing.LegacyID != "RV-B" {
+		t.Fatalf("shape one answered %+v, want %s naming RV-B", ref.Refusing, load.ReasonReplayChanged)
+	}
+	// Shape two: another batch restamps A unchanged, then the replay of
+	// rv-r1 carries A with a changed amount.
+	if _, err := e.door.UpsertReceivables(ctx, ld11Batch("rv-r3", a)); err != nil {
+		t.Fatalf("rv-r3: %v", err)
+	}
+	aChanged := ld11Item("RV-A", "CUST-ONE", "BR-A", "RV-DOC-A", "2032-06-01", "2032-07-01", 1500, "", "")
+	_, err = e.door.UpsertReceivables(ctx, ld11Batch("rv-r1", aChanged))
+	ref = ld11BatchRefused(t, err)
+	if ref.Refusing.Reason != load.ReasonReplayChanged || ref.Refusing.LegacyID != "RV-A" {
+		t.Fatalf("shape two answered %+v, want %s naming RV-A", ref.Refusing, load.ReasonReplayChanged)
+	}
+	// The faithful replay still answers the first outcomes and writes nothing.
+	rowsBefore := e.count(t, `SELECT count(*) FROM invoices WHERE org_id = $1::uuid AND source_kind = 'IMPORT'`, ld11OrgID)
+	again, err := e.door.UpsertReceivables(ctx, ld11Batch("rv-r1", a))
+	if err != nil {
+		t.Fatalf("faithful replay: %v", err)
+	}
+	if len(again.Items) != 1 || again.Items[0] != first.Items[0] {
+		t.Fatalf("the faithful replay answered %+v, want the first outcomes %+v", again.Items, first.Items)
+	}
+	if n := e.count(t, `SELECT count(*) FROM invoices WHERE org_id = $1::uuid AND source_kind = 'IMPORT'`, ld11OrgID); n != rowsBefore {
+		t.Fatalf("the faithful replay wrote rows: %d, want %d", n, rowsBefore)
+	}
+	if inv := e.invoices(t); inv["RV-DOC-A"].Balance != 1000 || inv["RV-DOC-B"].Balance != 2000 {
+		t.Fatalf("the refused replays moved money: %+v", inv)
+	}
+}
