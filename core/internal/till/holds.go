@@ -9,13 +9,55 @@ import (
 	"context"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/jackc/pgx/v5"
 )
 
+// callerTxKey carries the CALLER's transaction through the context. AGENTS.md: transactions span
+// services through a context-carried transaction, never through shared repositories. This one has to:
+// the hold-aware gate below is consulted INSIDE other modules' write transactions (the quote
+// conversion's tx between the quote row lock and the order INSERT; the POS ring's sale tx) through the
+// widened pos.CreditGate / quote.CreditGate seams, whose Check signature carries the context only, so
+// the caller's transaction rides the context or it does not ride at all.
+type callerTxKey struct{}
+
+// WithCallerTx stamps an in-flight transaction into the context, for a caller whose write transaction
+// is open when it consults the credit gate: the gate's hold read then runs on the caller's own
+// connection instead of asking the pool for a SECOND one. That second ask is the pool cycle Postgres
+// cannot see (the caller waits for a free connection, every other connection waits on the caller's row
+// locks, at the deploy default pool of 4 the process stalls): the shape the inventory lane closed for
+// the reservation policy read and this file's pool-cycle regression leg pins. A caller outside any
+// transaction passes its context through unchanged, and a nil tx rides nothing.
+func WithCallerTx(ctx context.Context, tx pgx.Tx) context.Context {
+	if tx == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, callerTxKey{}, tx)
+}
+
+// callerTxFrom returns the transaction in flight on this context, nil when none is.
+func callerTxFrom(ctx context.Context) pgx.Tx {
+	tx, _ := ctx.Value(callerTxKey{}).(pgx.Tx)
+	return tx
+}
+
 // HasActiveHold reports whether the customer has an ACTIVE credit hold. Empty customer id → false (a
-// cash walk-in with no account cannot carry a hold).
+// cash walk-in with no account cannot carry a hold). The read joins the CALLER's transaction when one
+// is in flight on the context (WithCallerTx, above) and keeps the pool when none is, the inventory
+// store's nil-means-pool convention.
 func (r *Repository) HasActiveHold(ctx context.Context, customerID string) (bool, error) {
 	if customerID == "" {
 		return false, nil
+	}
+	if tx := callerTxFrom(ctx); tx != nil {
+		var exists bool
+		err := tx.QueryRow(ctx,
+			`SELECT EXISTS (SELECT 1 FROM credit_holds WHERE customer_id = $1 AND status = 'ACTIVE')`,
+			customerID,
+		).Scan(&exists)
+		if err != nil {
+			return false, err
+		}
+		return exists, nil
 	}
 	if r.pool == nil {
 		return false, errNoDB

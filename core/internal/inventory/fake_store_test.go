@@ -260,7 +260,7 @@ func defaultRules() fakeRules {
 
 // AllocationPolicy, the fake defaults every branch to the SYSTEM default (found=false) unless a
 // test seeds policies, so a unit test only has to think about policy when policy is what it is testing.
-func (f *fakeStore) AllocationPolicy(_ context.Context, branchID string) (AllocationPolicy, bool, error) {
+func (f *fakeStore) AllocationPolicy(_ context.Context, _ pgx.Tx, branchID string) (AllocationPolicy, bool, error) {
 	p, ok := f.policies[branchID]
 	return p, ok, nil
 }
