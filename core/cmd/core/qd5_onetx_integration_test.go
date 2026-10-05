@@ -39,6 +39,13 @@ func qd5SetupSized(t *testing.T, maxConns int32) *qd5Env { return qd5SetupWith(t
 // no pool of one can serve, so the one connection probe runs without holds.
 func qd5SetupWith(t *testing.T, maxConns int32, withStock bool) *qd5Env {
 	t.Helper()
+	return qd5SetupGated(t, maxConns, withStock, nil)
+}
+
+// qd5SetupGated is qd5SetupWith with the credit gate optionally wrapped, so a test can hold a
+// conversion inside the gate call. A nil wrap keeps the real hold-aware gate as it is.
+func qd5SetupGated(t *testing.T, maxConns int32, withStock bool, wrap func(quote.CreditGate) quote.CreditGate) *qd5Env {
+	t.Helper()
 	url := os.Getenv("DATABASE_URL")
 	if url == "" {
 		t.Skip("DATABASE_URL is not set; the QD-5 money path needs the scratch database")
@@ -63,7 +70,11 @@ func qd5SetupWith(t *testing.T, maxConns int32, withStock bool) *qd5Env {
 	}
 	orderSvc := order.NewService(order.NewRepository(pool))
 	inv := inventory.NewService(inventory.NewRepository(pool))
-	repo := quote.NewRepository(pool).WithCreditGate(till.NewHoldAwareCreditGate(till.NewRepository(pool)))
+	var gate quote.CreditGate = till.NewHoldAwareCreditGate(till.NewRepository(pool))
+	if wrap != nil {
+		gate = wrap(gate)
+	}
+	repo := quote.NewRepository(pool).WithCreditGate(gate)
 	if withStock {
 		repo.WithStockReserver(w5aQuoteStockReserver{svc: inv})
 	}

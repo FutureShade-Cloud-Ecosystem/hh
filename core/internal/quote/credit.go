@@ -7,8 +7,10 @@ package quote
 // to till.HoldAwareCreditGate).
 //
 // This file copies that seam verbatim: quote declares its OWN narrow CreditGate interface with the same
-// method shape, so *till.HoldAwareCreditGate satisfies it STRUCTURALLY, quote never imports till (and
-// till never imports quote), exactly as pos does it. main.go hands the same gate instance to both.
+// method shape, so *till.HoldAwareCreditGate satisfies it STRUCTURALLY, quote never names the gate (and
+// till never imports quote). The one till symbol quote uses is till.WithCallerTx, which stamps the
+// conversion's transaction on the context for the gate's hold read (checkCredit below). main.go hands
+// the same gate instance to both.
 
 import (
 	"context"
@@ -20,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 )
 
 // CreditGate is the credit/hold decision seam consulted before a conversion writes an order. The shape is
@@ -116,7 +119,7 @@ func (r *Repository) creditGate() CreditGate {
 // till.NewHoldAwareCreditGate(tillRepo), the same instance POS uses).
 func (r *Repository) WithCreditGate(g CreditGate) *Repository { r.credit = g; return r }
 
-// checkCredit runs the gate over the facts and returns ErrCreditBlocked when it refuses.
+// checkCredit runs the gate over the facts, on the conversion transaction tx, and returns ErrCreditBlocked when it refuses.
 //
 // termsAreCredit is TRUE for every conversion except the one QD-5 pays in full in the same action: a converted order is unpaid at creation and therefore draws on
 // the account, there is no cash/card tender at conversion to exempt it (the POS ring passes true for the
@@ -125,7 +128,11 @@ func (r *Repository) WithCreditGate(g CreditGate) *Repository { r.credit = g; re
 // hasApprovedOverride is FALSE, exactly as the POS ring passes it: this path claims no override, so the
 // gate's override branch stays the caller's to exercise, and a hold blocks regardless of one anyway
 // (till/holds.go:59).
-func (r *Repository) checkCredit(ctx context.Context, f creditFacts, termsAreCredit bool) error {
+func (r *Repository) checkCredit(ctx context.Context, tx pgx.Tx, f creditFacts, termsAreCredit bool) error {
+	// The gate runs INSIDE the conversion's transaction, which holds the quote row and one pool
+	// connection. Its hold read joins this transaction (till.WithCallerTx) instead of asking the pool
+	// for a second connection: at a small pool that second ask is a cycle Postgres cannot see.
+	ctx = till.WithCallerTx(ctx, tx)
 	blk := r.creditGate().Check(ctx, f.CustomerID, f.TotalCents, f.OpenBalanceCents, f.CreditLimitCents, termsAreCredit, f.BranchID, false)
 	if blk == nil {
 		return nil
