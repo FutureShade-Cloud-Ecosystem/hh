@@ -119,10 +119,14 @@ type store interface {
 
 	// reservations, DIB-60 (inside the caller's tx; the qty_reserved projection moves with the row)
 	//
-	// AllocationPolicy is a POOL read but lives on the seam anyway: it is consulted on the reserve
-	// path, so a unit test of the reserve path that could not fake it would have to reach a database
+	// AllocationPolicy is consulted on the reserve path, so it takes the caller's transaction like
+	// its reserve-path siblings (nil tx = the pool, the convention above): a policy read on the pool
+	// asks for a SECOND connection while the caller keeps its first, and pool-size in-flight
+	// reservations each doing that pin the whole pool, the connection starvation the seam shape
+	// exists to prevent. The HTTP policy read
+	// passes nil and keeps the pool; a unit test that cannot fake it would have to reach a database
 	// to prove a policy decision, which is exactly the dependency the store seam exists to remove.
-	AllocationPolicy(ctx context.Context, branchID string) (AllocationPolicy, bool, error)
+	AllocationPolicy(ctx context.Context, tx pgx.Tx, branchID string) (AllocationPolicy, bool, error)
 	InsertReservation(ctx context.Context, tx pgx.Tx, in ReserveInput, holdMode string, expires *time.Time) (Reservation, error)
 	AdjustReserved(ctx context.Context, tx pgx.Tx, productID, locationID, branchID string, delta float64) error
 	BalanceFactsTx(ctx context.Context, tx pgx.Tx, productID, branchID string) (onHand, reserved float64, err error)
