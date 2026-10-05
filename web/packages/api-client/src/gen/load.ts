@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { LoadBatchView, LoadKeysResolveRequest, LoadKeysResolveResult } from "./types.js";
+import type { LoadBatchView, LoadKeysResolveRequest, LoadKeysResolveResult, LoadReceivablesResult, LoadReceivablesUpsertRequest } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -34,5 +34,20 @@ export async function loadResolveKeys(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "loadResolveKeys",
+  });
+}
+
+export async function loadUpsertReceivables(
+  client: ApiClient,
+  body: LoadReceivablesUpsertRequest,
+  call?: ApiCallOptions
+): Promise<Result<LoadReceivablesResult>> {
+  return client.request<LoadReceivablesResult>({
+    method: "PUT",
+    path: "/api/v1/load/receivables",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "loadUpsertReceivables",
   });
 }

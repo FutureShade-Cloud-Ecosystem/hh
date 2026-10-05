@@ -3071,6 +3071,23 @@ export type InvCountReconRunPage = {
   next_cursor?: string | null;
   limit?: number;
 };
+export type LoadReceivablesRecord = { [key: string]: unknown };
+export type LoadReceivablesItem = {
+  legacy_id: string;
+  derived_key?: string | null;
+  requires: LoadKeyRef[];
+  record: LoadReceivablesRecord;
+};
+export type LoadReceivablesUpsertRequest = {
+  source_system: string;
+  batch_id: string;
+  items: LoadReceivablesItem[];
+};
+export type LoadReceivablesResult = {
+  batch_id: string;
+  counts: LoadBatchCounts;
+  items: LoadBatchItemOutcome[];
+};
 export type LoadKeyRef = {
   kind: string;
   legacy_id: string;
