@@ -91,6 +91,7 @@ func unitItem(legacyID, code, name, dimension string) load.Item {
 		"UU-CLASH": "000000000103",
 		"UU-DIM":   "000000000104",
 		"UU-ORG":   "000000000105",
+		"UU-CASE2": "000000000106",
 	}[legacyID]
 	return load.Item{
 		LegacyID:   legacyID,
@@ -320,6 +321,62 @@ func TestUnitLoadRefusesASecondNameOnOneUnitRow(t *testing.T) {
 	}
 	if !strings.Contains(o.Detail, "UU-1") || !strings.Contains(o.Detail, "UU-DIM") {
 		t.Fatalf("the conflict names not both keys: %q", o.Detail)
+	}
+}
+
+// TestUnitLoadRefusesACaseVariantClaimingOneRow: the catalogue's code is
+// CITEXT, so a case variant of a recorded code is the same row. The
+// registry must name that row once: the second legacy key is refused as
+// a key conflict naming both keys, and the first key replays unchanged.
+func TestUnitLoadRefusesACaseVariantClaimingOneRow(t *testing.T) {
+	e := unitLoadSetup(t)
+	ctx := context.Background()
+	r, err := e.door.UpsertBatch(ctx, load.Batch{OrgID: fxUnitOrgID, SourceSystem: fxUnitSource,
+		BatchID: "b-unit-case1", Caller: fxUnitActorID,
+		Items: []load.Item{unitItem("UU-1", "FXU-CASE", "Fixture Case Unit", "count")}})
+	if err != nil {
+		t.Fatalf("first spelling batch: %v", err)
+	}
+	if o := unitOutcome(t, r, "UU-1"); o.Status != load.OutcomeCreated {
+		t.Fatalf("the first spelling answered %+v, want created", o)
+	}
+	if o := unitOutcome(t, r, "UU-1"); o.HHID != UnitRowID("FXU-CASE") {
+		t.Fatalf("the first spelling named %s, want the stored code's derived id", o.HHID)
+	}
+	// The same row under the other spelling and a second legacy key: the
+	// registry refuses the second name, naming both keys.
+	r, err = e.door.UpsertBatch(ctx, load.Batch{OrgID: fxUnitOrgID, SourceSystem: fxUnitSource,
+		BatchID: "b-unit-case2", Caller: fxUnitActorID,
+		Items: []load.Item{unitItem("UU-CASE2", "fxu-case", "Fixture Case Unit", "count")}})
+	if err != nil {
+		t.Fatalf("case variant batch: %v", err)
+	}
+	o := unitOutcome(t, r, "UU-CASE2")
+	if o.Status != load.OutcomeRefused || o.Reason != load.ReasonKeyConflict {
+		t.Fatalf("the case variant answered %+v, want a key conflict: one unit row takes one name", o)
+	}
+	if !strings.Contains(o.Detail, "UU-1") || !strings.Contains(o.Detail, "UU-CASE2") {
+		t.Fatalf("the conflict names not both keys: %q", o.Detail)
+	}
+	var names int
+	if err := e.pool.QueryRow(ctx,
+		`SELECT count(*) FROM load_key_registry
+		 WHERE org_id = $1::uuid AND source_system = $2 AND kind = $3 AND hh_id = $4::uuid`,
+		fxUnitOrgID, fxUnitSource, load.KindUnit, UnitRowID("FXU-CASE")).Scan(&names); err != nil {
+		t.Fatalf("case variant name count: %v", err)
+	}
+	if names != 1 {
+		t.Fatalf("%d names stand on one unit row, want one", names)
+	}
+	// The same key replays unchanged.
+	r, err = e.door.UpsertBatch(ctx, load.Batch{OrgID: fxUnitOrgID, SourceSystem: fxUnitSource,
+		BatchID: "b-unit-case3", Caller: fxUnitActorID,
+		Items: []load.Item{unitItem("UU-1", "FXU-CASE", "Fixture Case Unit", "count")}})
+	if err != nil {
+		t.Fatalf("case replay batch: %v", err)
+	}
+	if o := unitOutcome(t, r, "UU-1"); o.Status != load.OutcomeUnchanged {
+		t.Fatalf("the replayed first spelling answered %+v, want unchanged", o)
 	}
 }
 

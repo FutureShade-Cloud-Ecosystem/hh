@@ -10,11 +10,13 @@
 // code, every reference in the core (products.base_uom and price_uom,
 // product_uoms.uom_code, the pricing and stock columns) names the code,
 // and the table carries no uuid column. The registry's hh_id for a unit
-// is therefore the unit's derived row id (UnitRowID), a v5 style uuid
-// derived from the code: stable, one per code, so the registry's two
-// way uniqueness holds (a second legacy key naming the same code is
-// refused as a key conflict), and the frame's keyed upsert runs
-// unmodified. This reading is recorded in the item report.
+// is therefore the unit's derived row id (UnitRowID) over the code the
+// ROW carries: a v5 style uuid derived from the stored code read back
+// from the table, stable across deployments, one per row, so case
+// variants of one code bind one name or refuse as a conflict, and the
+// registry's two way uniqueness holds (a second legacy key naming the
+// same code is refused as a key conflict). This reading is recorded in
+// the item report.
 //
 // The attach rule (the plan's section 2): a unit that already exists
 // with the same code and dimension is attached, never created twice; a
@@ -38,6 +40,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strconv"
 	"strings"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/load"
@@ -75,7 +78,10 @@ func (w UnitLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (st
 // standing attaches to that row and stamps it the load's own (attached
 // true); the same code under another dimension refuses naming the
 // field; a row another org owns refuses naming the kind and the key.
-// The answer is the unit's derived row id either way.
+// Either arm answers the row's stored code read back from the table:
+// the catalogue's code is CITEXT, the row spells the code its own way,
+// and the registry's id names the row, never the request's spelling of
+// it (two spellings of one code are one row, one registry name).
 func (w UnitLoadWriter) ApplyAttached(ctx context.Context, tx pgx.Tx, in load.Write) (string, bool, error) {
 	code, _ := in.Record["code"].(string)
 	name, _ := in.Record["name"].(string)
@@ -101,15 +107,21 @@ func (w UnitLoadWriter) ApplyAttached(ctx context.Context, tx pgx.Tx, in load.Wr
 			Detail: "the record names a dimension the catalogue does not carry"}
 	}
 	// The row the code names, under the row lock so two loads on one
-	// code serialise here before the registry's name lock.
-	var existingDimension string
+	// code serialise here before the registry's name lock. The stored
+	// spelling rides along: the answer names the row by the code the
+	// catalogue carries, whatever spelling arrived.
+	var storedCode, existingDimension string
 	var existingOrg *string
 	err := tx.QueryRow(ctx,
-		`SELECT dimension, org_id::text FROM uoms WHERE code = $1 FOR UPDATE`, code).
-		Scan(&existingDimension, &existingOrg)
+		`SELECT code::text, dimension, org_id::text FROM uoms WHERE code = $1 FOR UPDATE`, code).
+		Scan(&storedCode, &existingDimension, &existingOrg)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
-		if _, err := tx.Exec(ctx, `
+		// RETURNING code: the row's stored spelling answers the id, so a
+		// concurrent insert this read missed (the insert converges on its
+		// row) still names one row once, under the catalogue's spelling.
+		var rowCode string
+		err := tx.QueryRow(ctx, `
 			INSERT INTO uoms (code, name, dimension, org_id, idempotency_key)
 			VALUES ($1, $2, $3, $4::uuid, NULLIF($5, '')::uuid)
 			ON CONFLICT (code) DO UPDATE SET
@@ -117,11 +129,20 @@ func (w UnitLoadWriter) ApplyAttached(ctx context.Context, tx pgx.Tx, in load.Wr
 				org_id = EXCLUDED.org_id,
 				idempotency_key = EXCLUDED.idempotency_key,
 				updated_at = now()
-			WHERE uoms.org_id IS NULL OR uoms.org_id = EXCLUDED.org_id`,
-			code, name, dimension, in.OrgID, in.DerivedKey); err != nil {
+			WHERE uoms.org_id IS NULL OR uoms.org_id = EXCLUDED.org_id
+			RETURNING code::text`,
+			code, name, dimension, in.OrgID, in.DerivedKey).Scan(&rowCode)
+		if errors.Is(err, pgx.ErrNoRows) {
+			// The statement's org guard fit nobody: the concurrent row
+			// belongs to another org. Refuse the claim rather than answer
+			// created over a row this transaction never saw.
+			return "", false, &load.Refusal{Code: load.ReasonKeyConflict, Field: "code",
+				Detail: fmt.Sprintf("unit legacy key %s landed on a code a concurrent load inserted first, and that row's org is not this load's", in.LegacyID)}
+		}
+		if err != nil {
 			return "", false, fmt.Errorf("product: unit load write: %w", err)
 		}
-		return UnitRowID(code), false, nil
+		return UnitRowID(rowCode), false, nil
 	case err != nil:
 		return "", false, fmt.Errorf("product: unit row read: %w", err)
 	case existingOrg != nil && *existingOrg != in.OrgID:
@@ -136,7 +157,7 @@ func (w UnitLoadWriter) ApplyAttached(ctx context.Context, tx pgx.Tx, in load.Wr
 			WHERE code = $1`, code, name, in.OrgID, in.DerivedKey); err != nil {
 			return "", false, fmt.Errorf("product: unit load update: %w", err)
 		}
-		return UnitRowID(code), true, nil
+		return UnitRowID(storedCode), true, nil
 	}
 }
 
@@ -292,28 +313,34 @@ func decimalScale(text string) int {
 	return minimalDecimalScale(rat)
 }
 
-// decimalRoundTrip is the plan's round trip check on every conversion:
-// one sell unit lands on the factor's base units and back lands exactly
-// on one, computed in exact decimal arithmetic at the column's scale,
-// never a float and never a rounding. The refusal names the field and
-// carries no value.
+// decimalRoundTrip is the plan's round trip check on every conversion,
+// read against the representation the price resolver actually reads
+// (repository.go ConvertUOM parses the stored column with
+// strconv.ParseFloat): the factor spelled at the base column's scale
+// eight, read as a float64 and spelled back at scale eight, must be the
+// stored text again. A factor of more than fifteen significant digits
+// passes the scale gate and the column would hold it exactly, and the
+// float read reads it back as another number; the door refuses it
+// rather than storing a factor the resolver reads differently (the
+// plan's risk 1, stated honestly: factors are exact only to what the
+// resolver reads). The refusal names the field and carries no value.
 func decimalRoundTrip(factor string) *load.Refusal {
 	f, refused := parseUnitFactor(factor)
 	if refused != nil {
 		return refused
 	}
-	one := new(big.Rat).SetInt64(1)
-	base := new(big.Rat).Mul(one, f.value)
-	// The base quantity must sit inside DECIMAL(19,8) exactly: the
-	// factor gate above bounds it, and this walk states the trip.
-	if scale := minimalDecimalScale(base); scale > 8 {
+	// The stored text: the value at the base column's scale, spelled
+	// exactly (the gate above bound the scale to eight, so the spelling
+	// rounds nothing).
+	stored := f.value.FloatString(8)
+	parsed, err := strconv.ParseFloat(stored, 64)
+	if err != nil {
 		return &load.Refusal{Code: "round_trip", Field: "qty_in_base",
-			Detail: "the conversion does not land inside the base quantity column's scale; the door refuses it rather than rounding it"}
+			Detail: "the factor does not survive the float read the price resolver makes"}
 	}
-	back := new(big.Rat).Quo(base, f.value)
-	if back.Cmp(one) != 0 {
+	if back := strconv.FormatFloat(parsed, 'f', 8, 64); back != stored {
 		return &load.Refusal{Code: "round_trip", Field: "qty_in_base",
-			Detail: "the conversion does not survive one sell unit to base and back in exact decimal"}
+			Detail: "the factor does not survive the float read the price resolver makes; the door refuses it rather than storing a factor the resolver reads back differently"}
 	}
 	return nil
 }
