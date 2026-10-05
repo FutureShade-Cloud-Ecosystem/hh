@@ -347,7 +347,7 @@ export abstract class PricingTabBase extends PanelBase {
                 ? "Saved. The confirmation goes into the pricing log."
                 : affected.length > 0
                   ? "You may still save it: the editors set the prices. Confirming saves the price and records in the pricing log that you were shown this."
-                  : "You may still save it: the editors set the prices. Confirming saves the price."}
+                  : "You may still save it: the editors set the prices. Confirming saves the price; a notice that names no product writes no row to the pricing log."}
             </div>
             ${prompt.error !== "" ? html`<div class="err" role="alert" data-testid="floor-error">${prompt.error}</div>` : nothing}
           </div>

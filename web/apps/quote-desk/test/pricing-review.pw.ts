@@ -56,10 +56,11 @@ test("a check that graded nothing opens a notice and a decline saves nothing", a
   expect((await pricingState(page)).writes).toHaveLength(0);
 });
 
-test("confirming a notice that names no product saves the price and logs nothing", async ({ page }) => {
+test("confirming a notice that names no product saves the price, says no log row is written, and logs nothing", async ({ page }) => {
   await openRules(page);
   await setMode(page, { force_preview: { items: [], not_graded: 2, no_cost: 0, truncated: false } });
   await saveNewPaversRule(page, "5");
+  await expect(page.getByTestId("floor-dialog")).toContainText("a notice that names no product writes no row to the pricing log");
   await page.getByTestId("floor-confirm").click();
   await expect(page.getByTestId("floor-dialog")).toHaveCount(0);
   const state = await pricingState(page);
