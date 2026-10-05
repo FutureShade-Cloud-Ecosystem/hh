@@ -176,11 +176,10 @@ func TestHasActiveHold_GateReadJoinsCallerTx_NoPoolCycle(t *testing.T) {
 			if lockErr != nil {
 				outCh <- outcome{tag: tag, lockWait: lockWait, lockErr: lockErr, begun: true}
 			} else {
-				// THE SEAM UNDER TEST: the caller's transaction goes into the context the gate reads.
-				// On the pre-fix tree no context-carried transaction exists, the plain context rides
-				// (nothing is carried), and the gate's hold read asks the pool for a second
-				// connection. The fix commit points this line at WithCallerTx(ctx, tx).
-				ctxT := ctx
+				// THE SEAM UNDER TEST: the caller's transaction goes into the context the gate reads,
+				// WithCallerTx, so the hold read runs on this participant's own connection instead of
+				// asking the pool for a second one.
+				ctxT := WithCallerTx(ctx, tx)
 				gateStart := time.Now()
 				blk := gate.Check(ctxT, holdsCycleCustomerID, 11300, 0, 500000, true, holdsCycleBranchID, false)
 				outCh <- outcome{tag: tag, verdict: blk, checkDur: time.Since(gateStart), lockWait: lockWait, begun: true}
@@ -209,10 +208,10 @@ func TestHasActiveHold_GateReadJoinsCallerTx_NoPoolCycle(t *testing.T) {
 	time.Sleep(250 * time.Millisecond) // settle the scheduler before the release
 
 	close(hold)
-	// THE SEAM UNDER TEST, held side: on the pre-fix tree the plain context rides, the gate's hold read
-	// runs on the POOL, and with every connection held it stops at the bound and the gate answers fail
-	// closed. The fix commit points this line at WithCallerTx(scenarioCtx, held).
-	heldCtxT := scenarioCtx
+	// THE SEAM UNDER TEST, held side: the held conversion's transaction goes into the context the gate
+	// reads, WithCallerTx, so the hold read runs on the connection already holding the quote row's
+	// lock instead of asking the pool for a second one.
+	heldCtxT := WithCallerTx(scenarioCtx, held)
 	heldStart := time.Now()
 	heldBlk := gate.Check(heldCtxT, holdsCycleCustomerID, 11300, 0, 500000, true, holdsCycleBranchID, false)
 	heldDur := time.Since(heldStart)
