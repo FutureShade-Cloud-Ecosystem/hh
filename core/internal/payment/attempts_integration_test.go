@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -828,6 +829,71 @@ func TestAttempts_AFailingReversalEndKeepsTheFoldedDecision(t *testing.T) {
 	}
 	if got := fx.get(plain.LegKey).LastError; got != "plain lost answer" {
 		t.Fatalf("an empty last_error must take the diagnostic alone, got %q", got)
+	}
+}
+
+// A manager's note is never silently cut (F3): the whole sanitised note lives in resolution_note_full,
+// Resolve writes it beside the bounded resolution_note, and the late capture move carries it across
+// (the resolution trio goes with the move, the full note does not). last_error keeps the house cap and
+// takes the head of the note through the fold, so the tail is never pre cut before the fold composes.
+func TestAttempts_ALongNoteSurvivesTheLateCaptureMoveWhole(t *testing.T) {
+	fx := newAttemptFx(t)
+	ctx := context.Background()
+	a := fx.claim(fx.in(3950))
+	fx.force(a.ID, AttemptUnknown)
+	note := strings.Repeat("manager verified at run ", 25) // 600 runes, no redaction trigger
+	want := strings.TrimSpace(note)                        // the sanitiser flattens and trims, nothing else
+	if _, ok, err := fx.store.Resolve(ctx, a.ID, ResolutionNotCharged, note, fx.user); err != nil || !ok {
+		t.Fatalf("Resolve: ok=%v err=%v", ok, err)
+	}
+	row := fx.get(a.LegKey)
+	if row.ResolutionNoteFull != want {
+		t.Fatalf("resolution_note_full = %d runes, want the whole %d rune note",
+			utf8.RuneCountInString(row.ResolutionNoteFull), utf8.RuneCountInString(want))
+	}
+	if n := utf8.RuneCountInString(row.ResolutionNote); n != maxLastErrorRunes {
+		t.Fatalf("resolution_note = %d runes, want the bounded shape at the house cap", n)
+	}
+	if !strings.HasPrefix(want, row.ResolutionNote) {
+		t.Fatalf("the bounded note is not the head of the full note: %q vs %q", row.ResolutionNote, string([]rune(want)[:40]))
+	}
+	if _, ok, err := fx.store.StampLateCapture(ctx, a.ID, "late-trans-12", "A"); err != nil || !ok {
+		t.Fatalf("StampLateCapture: ok=%v err=%v", ok, err)
+	}
+	moved := fx.get(a.LegKey)
+	if moved.Status != AttemptVoiding || moved.Resolution != "" || moved.ResolutionNote != "" || moved.ResolvedBy != "" {
+		t.Fatalf("the move must still clear the resolution trio: %+v", moved)
+	}
+	if moved.ResolutionNoteFull != want {
+		t.Fatalf("the whole note must survive the move, got %d of %d runes",
+			utf8.RuneCountInString(moved.ResolutionNoteFull), utf8.RuneCountInString(want))
+	}
+	if !strings.Contains(moved.LastError, "NOT_CHARGED") || !strings.Contains(moved.LastError, "manager verified at run") {
+		t.Fatalf("last_error = %q, want the fold to carry the head of the whole note", moved.LastError)
+	}
+	if n := utf8.RuneCountInString(moved.LastError); n > maxLastErrorRunes {
+		t.Fatalf("last_error = %d runes, over the diagnostic cap", n)
+	}
+
+	// The fold falls back to resolution_note for a row whose note predates the column, and the 0362
+	// backfill carries such a note into the full column when the migration runs after the fact.
+	legacy := fx.claim(fx.in(3960))
+	fx.force(legacy.ID, AttemptUnknown)
+	if _, ok, err := fx.store.Resolve(ctx, legacy.ID, ResolutionNotCharged, "a note from before the column", fx.user); err != nil || !ok {
+		t.Fatalf("Resolve: ok=%v err=%v", ok, err)
+	}
+	if _, err := fx.helper.Exec(ctx, `UPDATE card_charge_attempts SET resolution_note_full = '' WHERE id = $1::uuid`, legacy.ID); err != nil {
+		t.Fatalf("reset the full note: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join("..", "..", "db", "migrations", "0362_card_charge_attempts_full_note.sql"))
+	if err != nil {
+		t.Fatalf("read 0362: %v", err)
+	}
+	if _, err := fx.helper.Exec(ctx, string(body)); err != nil {
+		t.Fatalf("the 0362 backfill applied to a populated table: %v", err)
+	}
+	if got := fx.get(legacy.LegKey).ResolutionNoteFull; got != "a note from before the column" {
+		t.Fatalf("the backfill left resolution_note_full = %q, want the legacy note carried into it", got)
 	}
 }
 

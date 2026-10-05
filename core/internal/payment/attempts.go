@@ -106,6 +106,7 @@ type Attempt struct {
 	ProcessorRef, ReversalKind, ReversalRef string
 	RespCode, LastError, PaymentID          string
 	Resolution, ResolutionNote, ResolvedBy  string
+	ResolutionNoteFull                      string
 	CreatedBy                               string
 	CreatedAt, UpdatedAt                    time.Time
 }
@@ -135,14 +136,14 @@ type attemptQuerier interface {
 
 const attemptColumns = `id::text, leg_key, sale_key::text, leg_seq, amount_cents, branch_id::text, till_session_id::text,
   COALESCE(customer_id::text, ''), card_type, processor, status, processor_ref, reversal_kind, reversal_ref,
-  resp_code, last_error, COALESCE(payment_id::text, ''), resolution, resolution_note,
+  resp_code, last_error, COALESCE(payment_id::text, ''), resolution, resolution_note, resolution_note_full,
   COALESCE(resolved_by::text, ''), COALESCE(created_by::text, ''), created_at, updated_at`
 
 func scanAttempt(row pgx.Row) (Attempt, error) {
 	var a Attempt
 	err := row.Scan(&a.ID, &a.LegKey, &a.SaleKey, &a.LegSeq, &a.AmountCents, &a.BranchID, &a.TillSessionID,
 		&a.CustomerID, &a.CardType, &a.Processor, &a.Status, &a.ProcessorRef, &a.ReversalKind, &a.ReversalRef,
-		&a.RespCode, &a.LastError, &a.PaymentID, &a.Resolution, &a.ResolutionNote,
+		&a.RespCode, &a.LastError, &a.PaymentID, &a.Resolution, &a.ResolutionNote, &a.ResolutionNoteFull,
 		&a.ResolvedBy, &a.CreatedBy, &a.CreatedAt, &a.UpdatedAt)
 	return a, err
 }
@@ -332,10 +333,13 @@ func (s *Store) BindTx(ctx context.Context, tx pgx.Tx, id, paymentID string) (At
 func (s *Store) Resolve(ctx context.Context, id, resolution, note, resolvedBy string) (Attempt, bool, error) {
 	note = strings.TrimSpace(note)
 	// The note is manager text, and a manager typing what they found at Run (a card number, a key
-	// shaped string) is its expected use. It is sanitised here, at its only write, so the column
-	// holds text already safe for diagnostics and StampLateCapture's fold, which composes the note
+	// shaped string) is its expected use. It is sanitised here, at its only write, so the columns
+	// hold text already safe for diagnostics and StampLateCapture's fold, which composes the note
 	// into last_error inside SQL and so cannot run the Go sanitiser, is clean by construction. A
 	// note that sanitises to nothing (control characters alone) is refused like a blank one.
+	// resolution_note_full keeps the whole sanitised note (F3: a manager's note is never silently
+	// cut); resolution_note keeps the bounded shape the row has always shown.
+	full := sanitizeDiagnostic(note)
 	note = SanitizeLastError(note)
 	if id == "" || note == "" || resolvedBy == "" ||
 		(resolution != ResolutionNotCharged && resolution != ResolutionReversedAtProcessor) {
@@ -352,7 +356,8 @@ func (s *Store) Resolve(ctx context.Context, id, resolution, note, resolvedBy st
 		}
 	}
 	return s.poolMove(ctx, id, []string{AttemptUnknown, AttemptVoidUnknown, AttemptVoidDeclined},
-		`status = 'RESOLVED', resolution = $3, resolution_note = $4, resolved_by = $5::uuid`, resolution, note, resolvedBy)
+		`status = 'RESOLVED', resolution = $3, resolution_note = $4, resolved_by = $5::uuid, resolution_note_full = $6`,
+		resolution, note, resolvedBy, full)
 }
 
 // ListOpen lists what a manager reads: the attempts that need a person (OpenOnly), plus every attempt
@@ -423,14 +428,26 @@ var (
 
 // SanitizeLastError returns text safe to keep in last_error: a bounded single line with no token,
 // credential or card number in it. It runs on every write of the column, whatever the caller passed
-// (a processor's error text, a transport error, a response body excerpt). Order matters: bytes that
-// are not UTF-8 go first (Postgres refuses the whole write for them, SQLSTATE 22021, and the row
-// would sit in its old status until the sweep moves it); whitespace and control characters flatten
-// next, because a PAN whose groups ride doubled spaces, a tab or a newline past the number rule
-// normalises into the exact readable form afterwards; then uuids are shielded and kept (a sale key
-// or an attempt id is not a secret); then the value rules redact. It redacts rather than rejects,
-// so the diagnostic survives.
+// (a processor's error text, a transport error, a response body excerpt, a manager's note). It is
+// sanitizeDiagnostic plus the house cap; the order of the rules is documented there. It redacts
+// rather than rejects, so the diagnostic survives.
 func SanitizeLastError(s string) string {
+	s = sanitizeDiagnostic(s)
+	if utf8.RuneCountInString(s) > maxLastErrorRunes {
+		s = string([]rune(s)[:maxLastErrorRunes])
+	}
+	return strings.TrimSpace(s)
+}
+
+// sanitizeDiagnostic is SanitizeLastError without the cap: the same validation, flattening and
+// redaction, unbounded, for text whose column is not a bounded diagnostic (the manager's whole
+// note in resolution_note_full). Order matters: bytes that are not UTF-8 go first (Postgres refuses
+// the whole write for them, SQLSTATE 22021, and the row would sit in its old status until the sweep
+// moves it); whitespace and control characters flatten next, because a PAN whose groups ride
+// doubled spaces, a tab or a newline past the number rule normalises into the exact readable form
+// afterwards; then uuids are shielded and kept (a sale key or an attempt id is not a secret); then
+// the value rules redact. It redacts rather than rejects, so the text survives.
+func sanitizeDiagnostic(s string) string {
 	s = strings.ToValidUTF8(s, "?")
 	if s == "" {
 		return ""
@@ -449,9 +466,6 @@ func SanitizeLastError(s string) string {
 	s = opaqueRe.ReplaceAllString(s, "[redacted token]")
 	for i, id := range ids {
 		s = strings.Replace(s, "\x00"+strconv.Itoa(i)+"\x00", id, 1)
-	}
-	if utf8.RuneCountInString(s) > maxLastErrorRunes {
-		s = string([]rune(s)[:maxLastErrorRunes])
 	}
 	return strings.TrimSpace(s)
 }

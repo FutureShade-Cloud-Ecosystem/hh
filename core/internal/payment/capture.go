@@ -126,9 +126,12 @@ func (s *Store) getByID(ctx context.Context, id string) (Attempt, bool, error) {
 // manager's resolution and note into last_error, where the decision stays readable next to the late
 // capture's cause. The CASE reads the row's own columns, so the text is the decision this statement
 // actually moved on, whatever a concurrent Resolve wrote; an UNKNOWN source (no decision on the row)
-// gets the cause alone. The appended note is the row's own resolution_note, which Resolve already
-// accepted as manager text; the fixed cause is sanitised here, and left() bounds the whole diagnostic
-// to the house cap.
+// gets the cause alone. The folded note is the whole one from resolution_note_full (falling back to
+// resolution_note for a row whose note predates that column), which Resolve already sanitised at its
+// write; the fixed cause is sanitised here, and left() bounds the whole diagnostic to the house cap,
+// so the cap takes the head of the note, never a pre cut tail. resolution_note_full itself is carried
+// across the move (0362): it is the manager's record, and the failing reversal ends keep the whole
+// first decision readable on the row.
 func (s *Store) StampLateCapture(ctx context.Context, id, ref, respCode string) (Attempt, bool, error) {
 	if id == "" || ref == "" {
 		return Attempt{}, false, errBadStamp
@@ -136,7 +139,7 @@ func (s *Store) StampLateCapture(ctx context.Context, id, ref, respCode string) 
 	return s.poolMove(ctx, id, []string{AttemptUnknown, AttemptResolved},
 		`status = 'VOIDING', processor_ref = $3, resp_code = $4,
 		   last_error = left($5 || CASE WHEN resolution = '' THEN ''
-		     ELSE ' (manager closed it as ' || resolution || ': ' || resolution_note || ')' END, `+strconv.Itoa(maxLastErrorRunes)+`),
+		     ELSE ' (manager closed it as ' || resolution || ': ' || COALESCE(NULLIF(resolution_note_full, ''), resolution_note) || ')' END, `+strconv.Itoa(maxLastErrorRunes)+`),
 		   resolution = '', resolution_note = '', resolved_by = NULL`,
 		ref, respCode, SanitizeLastError("capture answered after the attempt left CHARGING, reversing it"))
 }
