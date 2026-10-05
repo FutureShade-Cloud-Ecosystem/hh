@@ -33,14 +33,56 @@ export function gate(): { opened: Promise<void>; open: () => void } {
   return { opened, open: release };
 }
 
+/** How many requests of each page the test is holding behind a gate right now: the page's own fetches wait on them, so settle does not. */
+const heldNow = new WeakMap<Page, number>();
+
+function holding(page: Page, change: number): void {
+  heldNow.set(page, Math.max(0, (heldNow.get(page) ?? 0) + change));
+}
+
+/** The page counts the fetches it starts and the ones that have settled: the state settle waits on. */
+async function installActivityProbe(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const w = window as unknown as { __act?: { started: number; settled: number } };
+    if (w.__act !== undefined) return;
+    const act = { started: 0, settled: 0 };
+    w.__act = act;
+    const original = window.fetch.bind(window);
+    window.fetch = (...args: Parameters<typeof fetch>) => {
+      act.started += 1;
+      const call = original(...args);
+      const done = (): void => {
+        act.settled += 1;
+      };
+      call.then(done, done);
+      return call;
+    };
+  });
+}
+
 /**
- * Let the app's own continuations run after an answer has been delivered: the page's promise callbacks and the
- * render they cause, plus a short quiet stretch so a wrong late write has had its chance to show before a test
- * asserts that nothing changed.
+ * Let the app's own continuations run after an answer has been delivered, so a wrong late write has had its chance
+ * before a test asserts that nothing changed. It waits on the page's own state, not on a fixed time: every fetch the
+ * page started has settled (except the ones this test is holding behind a gate), and for two turns of the page's own
+ * event loop (a frame and a task) no new fetch was started. A page that never goes quiet is given up on after a
+ * bound, so a gate the test left shut cannot hang a test.
  */
 export async function settle(page: Page): Promise<void> {
+  await installActivityProbe(page);
   await page.evaluate(
-    () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 150)))),
+    async ({ held, bound }) => {
+      const act = (window as unknown as { __act: { started: number; settled: number } }).__act;
+      const turn = (): Promise<void> => new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+      const giveUp = performance.now() + bound;
+      let quiet = 0;
+      let last = -1;
+      while (quiet < 2 && performance.now() < giveUp) {
+        await turn();
+        quiet = act.started - act.settled <= held && act.started === last ? quiet + 1 : 0;
+        last = act.started;
+      }
+    },
+    { held: heldNow.get(page) ?? 0, bound: 5000 },
   );
 }
 
@@ -97,12 +139,14 @@ export async function hold(
       return;
     }
     held += 1;
+    holding(page, 1);
     heldRequests.push(request);
     seen.push(`${request.method()} ${request.url()}`);
     // A snapshot is taken before the test is told the request is held, so a change it makes next cannot be in it.
     const taken = options.snapshot === true ? await route.fetch() : undefined;
     askedNow();
     await door.opened;
+    holding(page, -1);
     if (taken !== undefined) {
       await route.fulfill({ response: taken });
     } else if (options.refuse !== undefined) {

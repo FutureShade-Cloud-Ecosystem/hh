@@ -266,7 +266,8 @@ test("P3 a policy save that succeeds after the scope moved on tells the other sc
   });
   await put.release();
   await settle(page);
-  expect(await page.evaluate(() => (window as unknown as { __changed: number }).__changed)).toBeGreaterThan(0);
+  // Said once the answer has been handled: read until it has, so a busy machine cannot make the count come early.
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __changed: number }).__changed)).toBeGreaterThan(0);
   await page.request.put("/_stub/general-manager", { data: { member: false } });
 });
 
