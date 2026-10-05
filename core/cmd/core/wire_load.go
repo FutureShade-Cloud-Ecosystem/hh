@@ -26,11 +26,13 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/branches"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/inventory"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/load"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/portal"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/product"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/purchasing"
 	"github.com/jackc/pgx/v5"
@@ -42,7 +44,8 @@ import (
 // registrar, the machine gate wraps each one, and the handler's org and
 // actor come from the scope the gate stamps. The frame's two read
 // operations register beside the four submit doors of LD-4 (the branch
-// map, the user map, the categories and the suppliers) and the open
+// map, the user map, the categories and the suppliers), the three
+// customer doors of LD-6 (customers, contacts, jobs) and the open
 // receivables door of LD-11 (billing's own import writer over the money
 // batch protocol): every door over the same store, each owning module's
 // writer or read taken by constructor, all of them off until the switch
@@ -75,6 +78,13 @@ func wireLoad(r httpx.Registrar, pool *pgxpool.Pool, log *slog.Logger, doors boo
 				Stock:   inventory.LoadedUnitUseReader{},
 				Vendor:  purchasing.LoadedUnitUseReader{},
 			}, auditSvc),
+		// LD-6's three customer doors.
+		"PUT /api/v1/load/customers": newLoadDoor(store, load.KindCustomer,
+			customer.CustomerLoadWriter{}, auditSvc),
+		"PUT /api/v1/load/contacts": newLoadDoor(store, load.KindContact,
+			customer.ContactLoadWriter{}, auditSvc),
+		"PUT /api/v1/load/jobs": newLoadDoor(store, load.KindJob,
+			portal.JobLoadWriter{}, auditSvc),
 	})
 	submits.RegisterRoutes(r)
 	log.Info("load: the load doors serve behind the machine gate")
