@@ -518,6 +518,115 @@ func TestProductLoadRefusesARowOwnedByAnotherOrg(t *testing.T) {
 	}
 }
 
+// The landed set rule (the review's P1-1 probe, red first): a reload
+// whose base or price unit would leave the unit set the set door
+// already landed is refused naming the field, the row untouched, and
+// ConvertUOM still reads the landed factors after the refusal. The
+// attach arm refuses like the update arm, and a product no set has
+// landed on yet still takes any catalogue unit.
+func TestProductLoadRefusesAReloadThatLeavesTheLandedUnitSet(t *testing.T) {
+	e := productLoadSetup(t)
+	ctx := context.Background()
+	e.prSeedUnit(t, "EA", "Each", "count")
+	e.prSeedUnit(t, "FXPRU-BOX", "Fixture Box", "count")
+	e.prSeedUnit(t, "FXPRU-PLT", "Fixture Pallet", "count")
+	// The product lands with base and price EA, then its set lands
+	// through the set door: EA the base row at one, the box at ten.
+	if _, err := e.door.UpsertBatch(ctx, load.Batch{OrgID: fxProdOrgID, SourceSystem: fxProdSource,
+		BatchID: "b-pr-g1", Caller: fxProdActorID,
+		Items: []load.Item{prItem("PR-1", "FXPR-0401", "Fixture Set Bearer", nil)}}); err != nil {
+		t.Fatalf("product batch: %v", err)
+	}
+	setDoor := load.NewDoor(load.NewStore(e.pool), load.KindUnitSet, UnitSetLoadWriter{}, &loadAuditSpy{})
+	if r, err := setDoor.UpsertBatch(ctx, load.Batch{OrgID: fxProdOrgID, SourceSystem: fxProdSource,
+		BatchID: "b-pr-g2", Caller: fxProdActorID,
+		Items: []load.Item{{LegacyID: "US-1", DerivedKey: "f6000000-0000-4000-8000-000000000301",
+			Record: map[string]any{"rows": []map[string]any{
+				{"code": "EA", "qty_in_base": "1", "is_base": true},
+				{"code": "FXPRU-BOX", "qty_in_base": "10", "is_base": false},
+			}},
+			Requires: []load.Ref{{Kind: "product", LegacyID: "PR-1"}}}}}); err != nil {
+		t.Fatalf("set batch: %v", err)
+	} else if o := prOutcome(t, r, "US-1"); o.Status != load.OutcomeCreated {
+		t.Fatalf("the set answered %+v, want created", o)
+	}
+	productID, _, _, _, _ := e.prRow(t, "FXPR-0401")
+
+	// The probe: the same key reloads the product with the box as base.
+	// The set's base row keeps products.base_uom, so the reload refuses
+	// naming the field, never a value.
+	r, err := e.door.UpsertBatch(ctx, load.Batch{OrgID: fxProdOrgID, SourceSystem: fxProdSource,
+		BatchID: "b-pr-g3", Caller: fxProdActorID,
+		Items: []load.Item{prItem("PR-1", "FXPR-0401", "Fixture Set Bearer", map[string]any{
+			"base_uom": "FXPRU-BOX", "price_uom": "EA",
+		})}})
+	if err != nil {
+		t.Fatalf("base move batch: %v", err)
+	}
+	if o := prOutcome(t, r, "PR-1"); o.Status != load.OutcomeRefused || o.Reason != "unit_set_mismatch" || o.Field != "base_uom" {
+		t.Fatalf("the base move answered %+v, want refused as unit_set_mismatch on base_uom", o)
+	}
+	// The price unit outside the landed set refuses on price_uom.
+	r, err = e.door.UpsertBatch(ctx, load.Batch{OrgID: fxProdOrgID, SourceSystem: fxProdSource,
+		BatchID: "b-pr-g4", Caller: fxProdActorID,
+		Items: []load.Item{prItem("PR-1", "FXPR-0401", "Fixture Set Bearer", map[string]any{
+			"base_uom": "EA", "price_uom": "FXPRU-PLT",
+		})}})
+	if err != nil {
+		t.Fatalf("price move batch: %v", err)
+	}
+	if o := prOutcome(t, r, "PR-1"); o.Status != load.OutcomeRefused || o.Reason != "unit_set_mismatch" || o.Field != "price_uom" {
+		t.Fatalf("the price move answered %+v, want refused as unit_set_mismatch on price_uom", o)
+	}
+	// The row stands untouched and the set still converts: the base and
+	// price units are still EA and the box is still ten each.
+	if got := e.prCol(t, "FXPR-0401", "base_uom"); got != "EA" {
+		t.Fatalf("the refused reload left base_uom %q, want the row untouched at EA", got)
+	}
+	if got := e.prCol(t, "FXPR-0401", "price_uom"); got != "EA" {
+		t.Fatalf("the refused reload left price_uom %q, want the row untouched at EA", got)
+	}
+	factor, err := NewRepository(e.pool).ConvertUOM(ctx, productID, "FXPRU-BOX")
+	if err != nil || factor != 10 {
+		t.Fatalf("ConvertUOM after the refusals answered %v, %v, want ten with no error", factor, err)
+	}
+
+	// The attach arm refuses like the update arm: a second key naming
+	// the set carrying sku with a base unit off the set.
+	r, err = e.door.UpsertBatch(ctx, load.Batch{OrgID: fxProdOrgID, SourceSystem: fxProdSource,
+		BatchID: "b-pr-g5", Caller: fxProdActorID,
+		Items: []load.Item{prItem("PR-Y", "FXPR-0401", "Fixture Set Bearer", map[string]any{
+			"base_uom": "FXPRU-PLT", "price_uom": "EA",
+		})}})
+	if err != nil {
+		t.Fatalf("attach batch: %v", err)
+	}
+	if o := prOutcome(t, r, "PR-Y"); o.Status != load.OutcomeRefused || o.Reason != "unit_set_mismatch" || o.Field != "base_uom" {
+		t.Fatalf("the attach with an off set base answered %+v, want refused as unit_set_mismatch on base_uom", o)
+	}
+	var n int
+	if err := e.pool.QueryRow(ctx,
+		`SELECT count(*) FROM products WHERE sku = 'FXPR-0401'`).Scan(&n); err != nil {
+		t.Fatalf("attach count: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("the refused attach left %d rows over the sku, want the one untouched row", n)
+	}
+
+	// A product no set has landed on yet still takes any catalogue unit.
+	r, err = e.door.UpsertBatch(ctx, load.Batch{OrgID: fxProdOrgID, SourceSystem: fxProdSource,
+		BatchID: "b-pr-g6", Caller: fxProdActorID,
+		Items: []load.Item{prItem("PR-2", "FXPR-0402", "Fixture No Set Yet", map[string]any{
+			"base_uom": "FXPRU-PLT", "price_uom": "FXPRU-BOX",
+		})}})
+	if err != nil {
+		t.Fatalf("no set batch: %v", err)
+	}
+	if o := prOutcome(t, r, "PR-2"); o.Status != load.OutcomeCreated {
+		t.Fatalf("the product with no set yet answered %+v, want created on any catalogue unit", o)
+	}
+}
+
 // Exit line 6: a loaded product appears in the staff sync pull of its
 // org and not another's, proven by request through the products sync
 // Store the staff pull serves.

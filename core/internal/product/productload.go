@@ -23,7 +23,12 @@
 // set row and every suite runs). The door therefore creates the product
 // alone; LD-3's unit set door replaces the set afterwards, and its own
 // rules keep the product's base and price units inside the set it
-// lands. The reading is recorded in the item report.
+// lands. Once a set has landed, this writer keeps those invariants
+// against the product's own columns: a reload whose base or price unit
+// would leave the landed set refuses naming the field (the landed set
+// rule, below), and until the set lands the product prices on no
+// conversion (the contract text names the window). The reading is
+// recorded in the item report.
 //
 // The writer's rules, binding: it opens no connection of its own, it
 // never commits or rolls back the transaction it is given (the frame's
@@ -97,6 +102,28 @@ func (ProductLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (s
 	category, refused := productCategory(in)
 	if refused != nil {
 		return "", refused
+	}
+	// The landed set rule: once a unit set has landed on the target row,
+	// unitsetload.go's invariants hold against the row's own columns,
+	// and a reload that would move base_uom or price_uom off the landed
+	// set refuses naming the field, the row untouched. The target is the
+	// recorded row on the update arm and the row the sku already names
+	// on the create arm's attach; a row the caller does not own answers
+	// no refusal here and keeps the write's own org_mismatch.
+	target := in.RowID
+	if target == "" {
+		if err := tx.QueryRow(ctx, `SELECT id::text FROM products WHERE sku = $1`, sku).Scan(&target); errors.Is(err, pgx.ErrNoRows) {
+			target = ""
+		} else if err != nil {
+			return "", fmt.Errorf("product: load set target read: %w", err)
+		}
+	}
+	if target != "" {
+		if refused, err := landedUnitSetRefusal(ctx, tx, target, in.OrgID, baseUOM, priceUOM, in.LegacyID); err != nil {
+			return "", err
+		} else if refused != nil {
+			return "", refused
+		}
 	}
 	isActive := true
 	if v, ok := in.Record["is_active"].(bool); ok {
@@ -262,6 +289,50 @@ func (ProductLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (s
 		}
 	}
 	return id, nil
+}
+
+// landedUnitSetRefusal refuses a product reload whose units would
+// leave the unit set already landed on the row: the set's one base row
+// keeps products.base_uom and the set carries price_uom, the same two
+// invariants unitsetload.go lands the set under, each refusal naming
+// its field and the legacy key, never a value. A row with no set yet,
+// and a row the caller does not own (or that no longer stands), answers
+// no refusal here: the first takes any catalogue unit, the second keeps
+// the write arm's own org answer.
+func landedUnitSetRefusal(ctx context.Context, tx pgx.Tx, productID, orgID, baseUOM, priceUOM, legacyID string) (*load.Refusal, error) {
+	var rows int
+	if err := tx.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM product_uoms pu
+		  JOIN products p ON p.id = pu.product_id
+		 WHERE pu.product_id = $1::uuid
+		   AND (p.org_id IS NULL OR p.org_id = $2::uuid)`, productID, orgID).Scan(&rows); err != nil {
+		return nil, fmt.Errorf("product: load set guard rows read: %w", err)
+	}
+	if rows == 0 {
+		return nil, nil
+	}
+	var sameBase bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM product_uoms
+		 WHERE product_id = $1::uuid AND is_base AND uom_code = $2::citext)`, productID, baseUOM).Scan(&sameBase); err != nil {
+		return nil, fmt.Errorf("product: load set guard base read: %w", err)
+	}
+	if !sameBase {
+		return &load.Refusal{Code: "unit_set_mismatch", Field: "base_uom",
+			Detail: fmt.Sprintf("product legacy key %s carries a unit set; the set's base row keeps base_uom and the record moves it", legacyID)}, nil
+	}
+	var priceInSet bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM product_uoms
+		 WHERE product_id = $1::uuid AND uom_code = $2::citext)`, productID, priceUOM).Scan(&priceInSet); err != nil {
+		return nil, fmt.Errorf("product: load set guard price read: %w", err)
+	}
+	if !priceInSet {
+		return &load.Refusal{Code: "unit_set_mismatch", Field: "price_uom",
+			Detail: fmt.Sprintf("product legacy key %s carries a unit set; the set carries price_uom and the record moves it outside", legacyID)}, nil
+	}
+	return nil, nil
 }
 
 // productOrgRefusal is the refusal for a row another org owns: the
