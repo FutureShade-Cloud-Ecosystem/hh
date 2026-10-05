@@ -39,11 +39,12 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/inventory"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // precheckLegPools builds the scenario pool (poolSize connections, the ONE constant the contender count
-// derives from) and a separate single-connection helper pool for the blocker, the seeding and the
+// derives from) and a separate two-connection helper pool for the blocker, the seeding and the
 // parked-session probe, so no helper ever eats one of the scenario connections.
 func precheckLegPools(t *testing.T, poolSize int) (scenario, helper *pgxpool.Pool) {
 	t.Helper()
@@ -183,7 +184,7 @@ func runPrecheckCycle(t *testing.T, scenario, helper *pgxpool.Pool, poolSize int
 
 func TestIntegration_OrderPrecheckJoinsOrderTx_NoPoolCycle(t *testing.T) {
 	const poolSize = 4
-	// build wires the order service exactly as main.go does for the money seam: the real repository, the
+	// build wires the order service as main.go does for the money seam (the stock reserver is bound per subtest): the real repository, the
 	// real audit spine and the REAL billing repository on the same pool.
 	build := func(pool *pgxpool.Pool) *Service {
 		auditSvc := audit.NewService(audit.NewRepository(pool), nil)
@@ -201,6 +202,34 @@ func TestIntegration_OrderPrecheckJoinsOrderTx_NoPoolCycle(t *testing.T) {
 			_, orders[i] = seedOrder(t, helper, "CONFIRMED")
 		}
 		svc := build(scenario)
+		runPrecheckCycle(t, scenario, helper, poolSize, orders, func(ctx context.Context, o string) error {
+			_, err := svc.TransitionManual(identity.ContextWithStaff(ctx, edIntManagerCtx()), o, ActionCancel, "pool cycle leg")
+			return err
+		})
+		if t.Failed() {
+			return
+		}
+		for _, o := range orders {
+			if got := liveStatus(t, helper, o); got != "CANCELLED" {
+				t.Errorf("order %s status = %q, want CANCELLED", o, got)
+			}
+		}
+	})
+
+	// The production manager cancel: main.go binds the stock reserver, and with it bound every cancel
+	// (effectRelease) routes through UpdateStatusFromTx (reservation_repository.go), not
+	// UpdateStatusFromChecked, so this is the path the first subtest does not reach.
+	t.Run("manager cancels through the reserve lane", func(t *testing.T) {
+		scenario, helper := precheckLegPools(t, poolSize)
+		orders := make([]string, poolSize)
+		for i := range orders {
+			_, orders[i] = seedOrder(t, helper, "CONFIRMED")
+		}
+		svc := build(scenario)
+		svc.WithStockReserver(w5aInvReserver{svc: inventory.NewService(inventory.NewRepository(scenario))})
+		if !svc.StockSeamWired() {
+			t.Fatal("the stock seam did not bind, the reserve lane would be inert and this subtest would prove nothing")
+		}
 		runPrecheckCycle(t, scenario, helper, poolSize, orders, func(ctx context.Context, o string) error {
 			_, err := svc.TransitionManual(identity.ContextWithStaff(ctx, edIntManagerCtx()), o, ActionCancel, "pool cycle leg")
 			return err
