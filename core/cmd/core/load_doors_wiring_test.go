@@ -78,7 +78,7 @@ func plantMachinePrincipals(t *testing.T, env *compEnv) {
 		       ($3::uuid, $2::uuid, 'fixture mover parked', FALSE, $4::text[])
 		ON CONFLICT (id) DO UPDATE SET enabled = EXCLUDED.enabled, doors = EXCLUDED.doors`,
 		fixtureMoverID, testkit.OrgNorthID, fixtureMoverDisabledID,
-		[]string{"loadGetBatch", "loadResolveKeys"})
+		[]string{"loadGetBatch", "loadResolveKeys", "loadUpsertReceivables"})
 	if err != nil {
 		t.Fatalf("plant machine principals: %v", err)
 	}

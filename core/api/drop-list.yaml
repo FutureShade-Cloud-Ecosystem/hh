@@ -56,3 +56,5 @@ additions:
     reason: "HH-LOAD-1 load doors: the machine batch read behind the load doors deployment switch; no ERP source route."
   - route: "POST /api/v1/load/keys/resolve"
     reason: "HH-LOAD-1 load doors: the machine legacy key resolution behind the load doors deployment switch; no ERP source route."
+  - route: "PUT /api/v1/load/receivables"
+    reason: "HH-LOAD-1 LD-11 open receivables load door: the machine money batch behind the load doors deployment switch; no ERP source route."

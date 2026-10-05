@@ -24,6 +24,7 @@ import (
 	"log/slog"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/load"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/jackc/pgx/v5"
@@ -33,12 +34,17 @@ import (
 // wireLoad registers the load doors when and only when the composition
 // root switched them on: the routes land through the gate carrying
 // registrar, the machine gate wraps each one, and the handler's org and
-// actor come from the scope the gate stamps.
+// actor come from the scope the gate stamps. The open receivables door
+// (LD-11) binds with the composition: billing's own import writer over
+// the frame's money batch protocol, the audit seam every batch rides,
+// still behind the same switch and the same gate.
 func wireLoad(r httpx.Registrar, pool *pgxpool.Pool, log *slog.Logger, doors bool, auditSvc *audit.Service) {
 	if !doors {
 		return
 	}
-	h := load.NewHandler(load.NewStore(pool), log)
+	store := load.NewStore(pool)
+	h := load.NewHandler(store, log).
+		WithReceivables(load.NewReceivablesDoor(store, billing.NewReceivablesLoadWriter(), loadAuditSeam{svc: auditSvc}))
 	h.RegisterRoutes(r)
 	log.Info("load: the load doors serve behind the machine gate")
 }

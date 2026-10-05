@@ -1,11 +1,12 @@
-# Fragment: the load doors (HH-LOAD-1 item LD-1).
+# Fragment: the load doors (HH-LOAD-1).
 #
 # The machine surface FB Move's loads arrive through. This fragment
-# carries the frame's own two operations: the batch read and the legacy
-# key resolution. The keyed load doors themselves land with the later
-# items of the cycle and take the one body shape the plan's operation
-# list names (the source system, the caller's batch id, a bounded list
-# of items).
+# carries the frame's own two read operations, the batch read and the
+# legacy key resolution, and the cycle's keyed load doors as they land:
+# the open receivables door (LD-11) takes the one body shape the plan's
+# operation list names (the source system, the caller's batch id, a
+# bounded list of items), under the money doors' all-or-nothing batch
+# rule.
 #
 # Gate: x-role machine, MachineBearer alone (ADR-0024): the machine word
 # and the scheme name each other, and the machine credential never
@@ -91,8 +92,125 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/load/receivables:
+    put:
+      operationId: loadUpsertReceivables
+      tags: [load]
+      summary: Load one batch of open receivable items
+      description: >-
+        The open receivables door (HH-LOAD-1 LD-11): each open item of
+        the caller's AR extract lands as an imported invoice or credit
+        memo, with the source document number beside HH's own, the issue
+        and due dates as recorded, and the open amount in whole cents,
+        one receivables ledger row per item in date order per customer
+        so aging survives. Unapplied cash loads as a negative item and
+        lands as a credit memo. The batch is all or nothing: one
+        refused item refuses the batch and nothing lands, and the
+        refusing item is named in the 422 body. A replayed batch id
+        returns the outcomes it first recorded and writes nothing; a
+        replay carrying a changed or added item refuses with 409; a
+        batch that contended with another batch on shared names rolled
+        back whole and answers 409, resubmit it. No journal, no
+        finalized event, no customer message, reminder or credit sweep
+        is triggered by a load: the imported document emits none of the
+        events those paths hang off. Money is integer cents, never a
+        float: an open amount that is not exact whole cents refuses with
+        400 naming the item and the field.
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: "HH-LOAD-1 LD-11 open receivables; no ERP source route"
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadReceivablesUpsertRequest"
+      responses:
+        "200":
+          description: The batch's counts by outcome and one outcome per item, in the body's own item order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadReceivablesResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: The batch id is recorded under another door, the replay carries a changed or added item, or the batch contended with another batch and rolled back whole; resubmission is the caller's answer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: The batch refused whole; the refusing item's legacy id, reason, field and detail ride the Error envelope, keys and fields only, never a record value
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 components:
   schemas:
+    LoadReceivablesRecord:
+      type: object
+      description: >-
+        One open item's record, the carried facts only, never
+        recomputed: source_doc_no (the source document number, one to
+        128 characters, required), issue_date and due_date (strict
+        calendar days as YYYY-MM-DD, both required, landed as recorded),
+        open_amount_cents (the open amount in whole cents, required,
+        non-zero: a negative amount is unapplied cash and lands as a
+        credit memo; a value that is not an exact integer refuses the
+        batch naming the item), and the optional source_job_key and
+        source_address_key (the source job and address legacy keys,
+        which ride on the record until their homes exist). The record is
+        closed: a field outside these six refuses, so two records that
+        differ anywhere the door cannot land also cannot hash alike.
+      additionalProperties: true
+    LoadReceivablesItem:
+      type: object
+      required: [legacy_id, requires, record]
+      properties:
+        legacy_id: { type: string, minLength: 1, maxLength: 512 }
+        derived_key:
+          type: [string, "null"]
+          format: uuid
+          description: The caller's name-based uuid over the same four parts; empty leaves the row's idempotency column untouched
+        requires:
+          type: array
+          description: >-
+            The item's references by legacy key: exactly one customer
+            and one branch. The source job and address keys ride on the
+            record instead; they have no registry homes yet.
+          items:
+            $ref: "#/components/schemas/LoadKeyRef"
+        record:
+          $ref: "#/components/schemas/LoadReceivablesRecord"
+    LoadReceivablesUpsertRequest:
+      type: object
+      required: [source_system, batch_id, items]
+      properties:
+        source_system: { type: string, minLength: 1, maxLength: 64 }
+        batch_id: { type: string, minLength: 1, maxLength: 128 }
+        items:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            $ref: "#/components/schemas/LoadReceivablesItem"
+    LoadReceivablesResult:
+      type: object
+      required: [batch_id, counts, items]
+      properties:
+        batch_id: { type: string }
+        counts:
+          $ref: "#/components/schemas/LoadBatchCounts"
+        items:
+          type: array
+          description: One outcome per item, in the request body's own item order
+          items:
+            $ref: "#/components/schemas/LoadBatchItemOutcome"
     LoadKeyRef:
       type: object
       required: [kind, legacy_id]
