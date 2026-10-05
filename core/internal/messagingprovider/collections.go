@@ -192,19 +192,23 @@ func (s *ARSweep) Run(ctx context.Context) (SweepResult, error) {
 // there is no interval in which we have recorded a notice we did not queue (a customer never told) or
 // queued a notice we did not record (a customer told twice tomorrow).
 func (s *ARSweep) considerOne(ctx context.Context, inv AgingInvoice, bucket int, now time.Time, textedThisRun map[string]bool) (enqueued, suppressed bool, err error) {
-	// THE CONSENT AND RECIPIENT READS HAPPEN BEFORE THE TRANSACTION OPENS, NEVER INSIDE IT.
+	// THE POOL READ OF CONSENT IS A SNAPSHOT TAKEN BEFORE THE TRANSACTION OPENS, NEVER INSIDE IT.
 	//
-	// They go through the shared pool (the consent table, and the contact seam whose adapter reads
+	// It goes through the shared pool (the consent table, and the contact seam whose adapter reads
 	// through its own pool). Made with the transaction open, each in-flight candidate would hold one
 	// connection and ask the pool for a second; with a pool's worth of candidates in flight every
 	// connection is held and every candidate waits for one more. Postgres sees idle sessions and no
 	// lock wait, so the stall is invisible there and lasts until the action timeout.
 	//
-	// Hoisting is equivalent because none of these reads touches ar_notice_log, so the ledger row
-	// claimBucket inserts cannot change what they return, and the answers are used at the same points
-	// in the same order below: a read error surfaces only where the unhoisted call would have failed,
-	// and a bucket another run already decided never reaches them. A customer already texted in this
-	// run is suppressed before consent is consulted, so it skips the read.
+	// THE SNAPSHOT IS NOT THE DECISION. Between this read and the queue sits an interval a customer's
+	// STOP, opt-out or number change can commit in, and a decision taken from the snapshot alone would
+	// text a customer who opted out moments after it was read. So below, once the transaction is open
+	// and the bucket claimed, the consent row is re-read THROUGH the transaction (RefreshOn) and the
+	// refreshed read decides. The re-read costs no second connection, it rides the one the transaction
+	// already holds. What the snapshot still earns: it takes the contact-seam read out of the
+	// transaction (the seam is another module's and has no transaction of this one to ride), and a
+	// customer already texted in this run is suppressed before consent is consulted at all, skipping
+	// both the snapshot and the re-read.
 	var consent ConsentRead
 	if !textedThisRun[inv.CustomerID] {
 		consent = s.resolver.ReadConsent(ctx, inv.CustomerID)
@@ -236,7 +240,12 @@ func (s *ARSweep) considerOne(ctx context.Context, inv AgingInvoice, bucket int,
 		return false, true, tx.Commit(ctx)
 	}
 
-	// Consent + quiet hours. MaySendAt answers both: may we text this customer at all, and when.
+	// Consent + quiet hours, decided from the consent row AS OF THIS TRANSACTION. The pool read above
+	// was a snapshot; a STOP, an opt-out or a number change that committed between it and the claim is
+	// visible to this re-read and is honoured here, at the moment the notice is queued.
+	if !textedThisRun[inv.CustomerID] {
+		consent = consent.RefreshOn(ctx, tx)
+	}
 	may, notBefore, err := consent.MaySendAt(now)
 	if err != nil {
 		return false, false, err
@@ -257,11 +266,13 @@ func (s *ARSweep) considerOne(ctx context.Context, inv AgingInvoice, bucket int,
 	// hit the dispatcher's duplicate-registration panic. So this producer uses the affordance Wave 2
 	// built into ARNotice for exactly this case (see the To field's doc) and resolves the number here.
 	//
-	// WHAT THAT COSTS, PRECISELY: consent is evaluated when the notice is QUEUED rather than when it is
-	// SENT, so a customer who opts out during the quiet-hours hold still receives this one message.
-	// The hold is seconds when the sweep runs inside the send window and at most one night otherwise.
-	// It is closed entirely by the one-line union change named in REPORT-W3-D.md. It is NOT closed by
-	// omitting the number, which would instead mean the notice is queued and never delivered at all.
+	// WHAT THAT COSTS, PRECISELY: consent is decided when the notice is QUEUED, from the re-read on
+	// the deciding transaction, so an opt-out that lands between the pool snapshot and the queue is
+	// honoured. What stays open is the quiet-hours hold AFTER the queue: a customer who opts out during
+	// the hold still receives this one message. The hold is seconds when the sweep runs inside the send
+	// window and at most one night otherwise. It is closed entirely by the one-line union change named
+	// in REPORT-W3-D.md. It is NOT closed by omitting the number, which would instead mean the notice
+	// is queued and never delivered at all.
 	//
 	// The number is redacted from the row the moment it is published (the outbox's existing
 	// published-row redaction), so it does not live in the queue table after it has been used.
