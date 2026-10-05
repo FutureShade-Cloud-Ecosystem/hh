@@ -556,6 +556,11 @@ func (s *ApprovalsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key
 		// The client-chosen id is taken: inside the caller's org the
 		// collision is the caller's own fact, outside it the answer is
 		// not-found so existence never leaks across the fence.
+		// Nothing was written, so the transaction ends first: the
+		// read-back goes through the pool, and asking it for a second
+		// connection while this one is held starves the pool once
+		// pool-size creates collide.
+		_ = tx.Rollback(ctx)
 		if _, own, _ := s.Load(ctx, f, id); own {
 			return sync.RowState{}, sync.ErrRowExists
 		}
