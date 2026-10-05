@@ -27,6 +27,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/load"
 	psync "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync"
@@ -281,8 +282,12 @@ func TestCustomerLoadBothConflictDirections(t *testing.T) {
 	// A recorded name re-pointing at the row another name owns.
 	r = e.submit(t, e.custDoor, "b-c-k3", custItem("CUST-A", "fxld6-b", "Fixture Customer A", nil))
 	o = outcome(t, r, "CUST-A")
-	if o.Status != load.OutcomeRefused || o.Reason != load.ReasonKeyConflict {
-		t.Fatalf("the re-point answered %+v, want refused as a key conflict", o)
+	if o.Status != load.OutcomeRefused || o.Reason != load.ReasonKeyConflict ||
+		!strings.Contains(o.Detail, "CUST-A") || !strings.Contains(o.Detail, "CUST-B") {
+		t.Fatalf("the re-point answered %+v, want a key conflict naming both legacy ids", o)
+	}
+	if strings.Contains(o.Detail, "fxld6-") {
+		t.Fatalf("the refusal names an account number value: %q", o.Detail)
 	}
 	if row := e.custRow(t, "fxld6-b"); row.name != "Fixture Customer B" {
 		t.Fatalf("the refused re-point changed the other row: %+v", row)
@@ -299,8 +304,8 @@ func TestCustomerLoadAttachesAStaffMadeRowAndStampsIt(t *testing.T) {
 		t.Fatalf("plant: %v", err)
 	}
 	r := e.submit(t, e.custDoor, "b-c-s1", custItem("CUST-A", "fxld6-s", "Made By Staff", nil))
-	if o := outcome(t, r, "CUST-A"); o.Status != load.OutcomeCreated {
-		t.Fatalf("the attach answered %+v", o)
+	if o := outcome(t, r, "CUST-A"); o.Status != load.OutcomeAttached {
+		t.Fatalf("the first bind to a staff made row answered %+v, want attached", o)
 	}
 	row := e.custRow(t, "fxld6-s")
 	if e.customerCount(t, "fxld6-s") != 1 || row.org != fxLoadOrgID || row.seq == 0 {
@@ -444,8 +449,9 @@ func TestCustomerLoadContactOrgRidesThroughItsCustomer(t *testing.T) {
 	}
 	r := e.submit(t, e.contactDoor, "b-o-1",
 		custItem("CON-1", "", "", map[string]any{"name": "Fixture Contact"}, load.Ref{Kind: load.KindCustomer, LegacyID: "CUST-O"}))
-	if o := outcome(t, r, "CON-1"); o.Status != load.OutcomeRefused {
-		t.Fatalf("a contact under another org's customer answered %+v, want refused", o)
+	if o := outcome(t, r, "CON-1"); o.Status != load.OutcomeRefused || o.Reason != "org_mismatch" ||
+		!strings.Contains(o.Detail, "customer") || !strings.Contains(o.Detail, "CUST-O") {
+		t.Fatalf("a contact under another org's customer answered %+v, want refused org_mismatch naming kind and key", o)
 	}
 }
 
@@ -478,7 +484,7 @@ func TestCustomerLoadPoolFourThreeContendersEveryCallOnTheBatchTransaction(t *te
 	store := load.NewStore(pool)
 	custDoor := load.NewDoor(store, load.KindCustomer, CustomerLoadWriter{}, &loadAuditSpy{})
 	contactDoor := load.NewDoor(store, load.KindContact, ContactLoadWriter{}, &loadAuditSpy{})
-	runContenders(t, func(k int) error {
+	runContenders(t, func(ctx context.Context, k int) error {
 		_, err := custDoor.UpsertBatch(ctx, load.Batch{OrgID: fxLoadOrgID, SourceSystem: fxLoadSource,
 			BatchID: fmt.Sprintf("b-pool-c-%d", k), Caller: fxLoadActorID,
 			Items: []load.Item{custItem("CUST-A", "fxld6-a", "Fixture Customer A", nil,
@@ -488,7 +494,7 @@ func TestCustomerLoadPoolFourThreeContendersEveryCallOnTheBatchTransaction(t *te
 	if n := e.customerCount(t, "fxld6-a"); n != 1 {
 		t.Fatalf("%d customer rows after three contenders, want one", n)
 	}
-	runContenders(t, func(k int) error {
+	runContenders(t, func(ctx context.Context, k int) error {
 		_, err := contactDoor.UpsertBatch(ctx, load.Batch{OrgID: fxLoadOrgID, SourceSystem: fxLoadSource,
 			BatchID: fmt.Sprintf("b-pool-k-%d", k), Caller: fxLoadActorID,
 			Items: []load.Item{custItem("CON-1", "", "", map[string]any{"name": "Fixture Contact"},
@@ -504,7 +510,11 @@ func TestCustomerLoadPoolFourThreeContendersEveryCallOnTheBatchTransaction(t *te
 	}
 }
 
-func runContenders(t *testing.T, fn func(k int) error, seconds int) {
+// runContenders runs three batches at once, each under the timeout the
+// caller names: a writer that takes a pool connection while the batch
+// holds its transaction stalls here, and the leg fails fast saying so
+// instead of hanging to the test binary's own timeout.
+func runContenders(t *testing.T, fn func(ctx context.Context, k int) error, seconds int) {
 	t.Helper()
 	var wg sync.WaitGroup
 	errs := make([]error, 3)
@@ -512,13 +522,15 @@ func runContenders(t *testing.T, fn func(k int) error, seconds int) {
 		wg.Add(1)
 		go func(k int) {
 			defer wg.Done()
-			errs[k] = fn(k)
+			cctx, cancel := context.WithTimeout(context.Background(), time.Duration(seconds)*time.Second)
+			defer cancel()
+			errs[k] = fn(cctx, k)
 		}(k)
 	}
 	wg.Wait()
 	for k, err := range errs {
 		if err != nil {
-			t.Fatalf("contender %d: %v (a batch needed a connection beyond the transaction it holds)", k, err)
+			t.Fatalf("contender %d: %v (a writer took a pool connection beyond the batch's transaction, or the batch stalled)", k, err)
 		}
 	}
 }
@@ -565,5 +577,137 @@ func TestCustomerLoadPoolFourBitesAWriterThatUsesThePool(t *testing.T) {
 		if err == nil {
 			t.Fatalf("contender %d finished: the pool 4 leg missed a writer that uses the pool", k)
 		}
+	}
+}
+
+// plantOtherOrgCustomer plants a customer another org owns and returns its id.
+func (e *custLoadEnv) plantOtherOrgCustomer(t *testing.T, accountNo, name string) string {
+	t.Helper()
+	var id string
+	if err := e.pool.QueryRow(context.Background(), `
+		INSERT INTO customers (account_no, name, org_id, seq) VALUES ($1, $2, $3::uuid, 7) RETURNING id::text`,
+		accountNo, name, fxLoadOtherOrgID).Scan(&id); err != nil {
+		t.Fatalf("plant other org customer: %v", err)
+	}
+	return id
+}
+
+func (e *custLoadEnv) pullHas(t *testing.T, org, id, name string) bool {
+	t.Helper()
+	items, _, err := NewCustomersStore(e.pool).Pull(context.Background(), psync.ScopeFilter{OrgID: org, Actor: "fixture-staff"}, 0, 1000)
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	for _, it := range items {
+		if it.ID == id && it.Data["name"] == name {
+			return true
+		}
+	}
+	return false
+}
+
+func TestCustomerLoadRefusesARowOwnedByAnotherOrgAndNeverTakesItOver(t *testing.T) {
+	e := custLoadSetup(t)
+	other := e.plantOtherOrgCustomer(t, "fxld6-x", "Other Org Owns")
+	// The create arm: the account number names the other org's row.
+	r := e.submit(t, e.custDoor, "b-x-1", custItem("CUST-A", "fxld6-x", "Loaded Over It", nil))
+	o := outcome(t, r, "CUST-A")
+	if o.Status != load.OutcomeRefused || o.Reason != "org_mismatch" ||
+		!strings.Contains(o.Detail, "customer") || !strings.Contains(o.Detail, "CUST-A") {
+		t.Fatalf("a row another org owns answered %+v, want refused org_mismatch naming kind and key", o)
+	}
+	if strings.Contains(o.Detail, "fxld6-x") || strings.Contains(o.Detail, "Other Org Owns") {
+		t.Fatalf("the refusal names a value: %q", o.Detail)
+	}
+	row := e.custRow(t, "fxld6-x")
+	if row.org != fxLoadOtherOrgID || row.name != "Other Org Owns" || row.seq != 7 || row.id != other {
+		t.Fatalf("the other org's row changed: %+v", row)
+	}
+	if !e.pullHas(t, fxLoadOtherOrgID, other, "Other Org Owns") || e.pullHas(t, fxLoadOrgID, other, "Loaded Over It") {
+		t.Fatalf("the other org's staff pull no longer shows its own customer unchanged")
+	}
+	// The update arm: a recorded row whose org is no longer ours is never rewritten.
+	e.submit(t, e.custDoor, "b-x-2", custItem("CUST-B", "fxld6-b", "Fixture Customer B", nil))
+	if _, err := e.pool.Exec(context.Background(),
+		`UPDATE customers SET org_id = $1::uuid WHERE account_no = 'fxld6-b'`, fxLoadOtherOrgID); err != nil {
+		t.Fatalf("reassign: %v", err)
+	}
+	r = e.submit(t, e.custDoor, "b-x-3", custItem("CUST-B", "fxld6-b", "Fixture Customer B Renamed", nil))
+	if o := outcome(t, r, "CUST-B"); o.Status != load.OutcomeRefused || o.Reason != "org_mismatch" {
+		t.Fatalf("the update arm on another org's row answered %+v, want refused org_mismatch", o)
+	}
+	if row := e.custRow(t, "fxld6-b"); row.org != fxLoadOtherOrgID || row.name != "Fixture Customer B" {
+		t.Fatalf("the update arm changed the other org's row: %+v", row)
+	}
+	// A re-point onto the other org's account number refuses the same way.
+	e.submit(t, e.custDoor, "b-x-4", custItem("CUST-C", "fxld6-c", "Fixture Customer C", nil))
+	r = e.submit(t, e.custDoor, "b-x-5", custItem("CUST-C", "fxld6-x", "Fixture Customer C", nil))
+	if o := outcome(t, r, "CUST-C"); o.Status != load.OutcomeRefused || o.Reason != "org_mismatch" {
+		t.Fatalf("a re-point onto another org's number answered %+v, want org_mismatch", o)
+	}
+}
+
+func TestCustomerLoadAccountConflictNamesBothKeysOrTheStaffRow(t *testing.T) {
+	e := custLoadSetup(t)
+	e.submit(t, e.custDoor, "b-n-1",
+		custItem("CUST-A", "fxld6-a", "Fixture Customer A", nil),
+		custItem("CUST-B", "fxld6-b", "Fixture Customer B", nil))
+	if _, err := e.pool.Exec(context.Background(),
+		`INSERT INTO customers (account_no, name) VALUES ('fxld6-s', 'Made By Staff')`); err != nil {
+		t.Fatalf("plant staff row: %v", err)
+	}
+	r := e.submit(t, e.custDoor, "b-n-2",
+		custItem("CUST-A", "fxld6-b", "Fixture Customer A", nil))
+	o := outcome(t, r, "CUST-A")
+	if o.Reason != load.ReasonKeyConflict || !strings.Contains(o.Detail, "CUST-A") || !strings.Contains(o.Detail, "CUST-B") {
+		t.Fatalf("the re-point answered %+v, want both legacy keys named", o)
+	}
+	r = e.submit(t, e.custDoor, "b-n-3", custItem("CUST-A", "fxld6-s", "Fixture Customer A", nil))
+	o = outcome(t, r, "CUST-A")
+	if o.Reason != load.ReasonKeyConflict || !strings.Contains(o.Detail, "CUST-A") || !strings.Contains(o.Detail, "staff") {
+		t.Fatalf("the re-point onto a staff row answered %+v, want the item's key and the staff row named", o)
+	}
+	for _, v := range []string{"fxld6-s", "fxld6-b", "Made By Staff"} {
+		if strings.Contains(o.Detail, v) {
+			t.Fatalf("the refusal names a value %q: %q", v, o.Detail)
+		}
+	}
+	if row := e.custRow(t, "fxld6-a"); row.name != "Fixture Customer A" {
+		t.Fatalf("a refused conflict changed the row: %+v", row)
+	}
+}
+
+func TestCustomerLoadAttachMergesStaffMetadataAndReloadKeepsTheAccountNumber(t *testing.T) {
+	e := custLoadSetup(t)
+	if _, err := e.pool.Exec(context.Background(),
+		`INSERT INTO customers (account_no, name, metadata) VALUES ('fxld6-s', 'Made By Staff', '{"staff_key":"kept"}')`); err != nil {
+		t.Fatalf("plant: %v", err)
+	}
+	e.submit(t, e.custDoor, "b-m-1", custItem("CUST-A", "fxld6-s", "Made By Staff", nil,
+		load.Ref{Kind: load.KindUser, LegacyID: "REP-1"}))
+	row := e.custRow(t, "fxld6-s")
+	if !strings.Contains(row.meta, `"staff_key"`) || !strings.Contains(row.meta, fxSeedUserID) {
+		t.Fatalf("metadata %s: want the staff key kept and the rep set", row.meta)
+	}
+	// A reload that stops naming the account number keeps the stored one.
+	item := load.Item{LegacyID: "CUST-A", DerivedKey: "d6000000-0000-4000-8000-000000000001",
+		Record: map[string]any{"name": "Made By Staff Renamed"}}
+	r := e.submit(t, e.custDoor, "b-m-2", item)
+	if o := outcome(t, r, "CUST-A"); o.Status != load.OutcomeUpdated {
+		t.Fatalf("the reload answered %+v, want updated", o)
+	}
+	row = e.custRow(t, "fxld6-s")
+	if row.name != "Made By Staff Renamed" || e.customerCount(t, "CUST-A") != 0 {
+		t.Fatalf("the reload rewrote the account number to the legacy id: %+v", row)
+	}
+	// The rep the reload no longer names is dropped; the staff key stays.
+	if strings.Contains(row.meta, fxSeedUserID) || !strings.Contains(row.meta, `"staff_key"`) {
+		t.Fatalf("metadata %s after a reload with no reps: want the staff key only", row.meta)
+	}
+	// A first load with no account number uses the legacy id.
+	e.submit(t, e.custDoor, "b-m-3", load.Item{LegacyID: "fxld6-l", DerivedKey: "d6000000-0000-4000-8000-000000000002",
+		Record: map[string]any{"name": "Legacy Keyed"}})
+	if e.customerCount(t, "fxld6-l") != 1 {
+		t.Fatalf("a first load with no account number did not use the legacy id")
 	}
 }

@@ -37,7 +37,6 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/load"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/localization"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // ReasonAddressLeftOut is the note a landed customer carries when its
@@ -75,10 +74,10 @@ func (CustomerLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (
 		return "", &load.Refusal{Code: "field_required", Field: "name",
 			Detail: "the record names no customer name"}
 	}
-	accountNo := in.LegacyID
-	if v, ok := in.Record["account_no"].(string); ok && v != "" {
-		accountNo = v
-	}
+	// The account number the record names; empty when it names none. The
+	// create arm falls back to the legacy id, the update arm keeps the
+	// stored number, so a reload that stops naming it never rewrites it.
+	accountNo, _ := in.Record["account_no"].(string)
 	custType := "CONTRACTOR"
 	if v, ok := in.Record["customer_type"]; ok && v != nil {
 		s, _ := v.(string)
@@ -143,8 +142,15 @@ func (CustomerLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (
 
 	var id string
 	if in.RowID == "" {
+		if accountNo == "" {
+			accountNo = in.LegacyID
+		}
 		// The create arm: insert, or attach the row the account number
-		// already names (a staff made customer), stamping it the load's.
+		// already names (a staff made customer, or one with no org),
+		// stamping it the load's. A row another org owns is never taken
+		// over: the guard leaves it untouched and the item refuses. The
+		// existing metadata keys are kept, ours set.
+		var inserted bool
 		err = tx.QueryRow(ctx, customerSeqCTE+`
 			INSERT INTO customers (account_no, name, customer_type, home_branch_id, payment_terms_days,
 			                       credit_limit_cents, is_active, billing_address, metadata,
@@ -159,45 +165,82 @@ func (CustomerLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (
 				credit_limit_cents = EXCLUDED.credit_limit_cents,
 				is_active = EXCLUDED.is_active,
 				billing_address = COALESCE($8::jsonb, customers.billing_address),
-				metadata = EXCLUDED.metadata,
+				metadata = (customers.metadata - 'sales_rep_user_ids') || EXCLUDED.metadata,
 				org_id = EXCLUDED.org_id,
 				seq = EXCLUDED.seq,
 				idempotency_key = EXCLUDED.idempotency_key,
 				updated_at = now()
-			RETURNING id::text`,
+			WHERE customers.org_id IS NULL OR customers.org_id = EXCLUDED.org_id
+			RETURNING id::text, (xmax = 0)`,
 			accountNo, name, custType, homeBranch, terms, limit, active, addrJSON, string(metaJSON),
-			in.OrgID, in.DerivedKey).Scan(&id)
+			in.OrgID, in.DerivedKey).Scan(&id, &inserted)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", orgMismatch(in)
+		}
 		if err != nil {
 			return "", fmt.Errorf("customer: load write: %w", err)
 		}
+		if !inserted && in.Attached != nil {
+			in.Attached()
+		}
 		return id, nil
 	}
-	// The update arm: the row the name records, updated in place. An
-	// account number another row already holds is a key conflict.
+	// The update arm. An account number another row holds is a key
+	// conflict: the holder's id comes back as the row written, and the
+	// frame refuses naming both legacy keys (or the staff row when no key
+	// names the holder). A holder another org owns refuses as org_mismatch.
+	if accountNo != "" {
+		var holder string
+		var holderOrg *string
+		err = tx.QueryRow(ctx,
+			`SELECT id::text, org_id::text FROM customers WHERE account_no = $1 AND id <> $2::uuid`,
+			accountNo, in.RowID).Scan(&holder, &holderOrg)
+		if err == nil {
+			if holderOrg != nil && *holderOrg != in.OrgID {
+				return "", orgMismatch(in)
+			}
+			return holder, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return "", fmt.Errorf("customer: load account holder read: %w", err)
+		}
+	}
 	err = tx.QueryRow(ctx, customerSeqCTE+`
 		UPDATE customers SET
-			account_no = $2, name = $3, customer_type = $4,
+			account_no = COALESCE(NULLIF($2, ''), account_no), name = $3, customer_type = $4,
 			home_branch_id = NULLIF($5, '')::uuid, payment_terms_days = $6, credit_limit_cents = $7,
-			is_active = $8, billing_address = COALESCE($9::jsonb, billing_address), metadata = $10::jsonb,
+			is_active = $8, billing_address = COALESCE($9::jsonb, billing_address),
+			metadata = (metadata - 'sales_rep_user_ids') || $10::jsonb,
 			org_id = $11::uuid, seq = (SELECT next_value FROM cseq),
 			idempotency_key = NULLIF($12, '')::uuid, updated_at = now()
-		WHERE id = $1::uuid
+		WHERE id = $1::uuid AND (org_id IS NULL OR org_id = $11::uuid)
 		RETURNING id::text`,
 		in.RowID, accountNo, name, custType, homeBranch, terms, limit, active, addrJSON, string(metaJSON),
 		in.OrgID, in.DerivedKey).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
+		// Gone, or owned by another org: say which, never overwrite.
+		var exists bool
+		if qerr := tx.QueryRow(ctx,
+			`SELECT EXISTS (SELECT 1 FROM customers WHERE id = $1::uuid)`, in.RowID).Scan(&exists); qerr != nil {
+			return "", fmt.Errorf("customer: load update target read: %w", qerr)
+		}
+		if exists {
+			return "", orgMismatch(in)
+		}
 		return "", &load.Refusal{Code: load.ReasonUpdateTargetMissing, Field: "legacy_id",
 			Detail: "the name's row is gone; the update refuses rather than creating a second row"}
-	}
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-		return "", &load.Refusal{Code: load.ReasonKeyConflict, Field: "account_no",
-			Detail: fmt.Sprintf("legacy key %s would claim an account number another customer row holds", in.LegacyID)}
 	}
 	if err != nil {
 		return "", fmt.Errorf("customer: load update: %w", err)
 	}
 	return id, nil
+}
+
+// orgMismatch is the refusal for a row another org owns: the load never
+// re-stamps a row's org, so the item refuses naming the kind and the key.
+func orgMismatch(in load.Write) *load.Refusal {
+	return &load.Refusal{Code: "org_mismatch", Field: "legacy_id",
+		Detail: fmt.Sprintf("customer legacy key %s names a row another org owns", in.LegacyID)}
 }
 
 // noteAddress leaves the failing address out and says so on the item's
@@ -246,13 +289,13 @@ func (ContactLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (s
 		return "", &load.Refusal{Code: "field_required", Field: "name",
 			Detail: "the record names no contact name"}
 	}
-	customerID := ""
+	customerID, customerKey := "", ""
 	for _, r := range in.Refs {
 		if r.Kind != load.KindCustomer || customerID != "" {
 			return "", &load.Refusal{Code: load.ReasonWrongReference, Field: r.Kind,
 				Detail: "a contact names one customer reference and no other"}
 		}
-		customerID = r.HHID
+		customerID, customerKey = r.HHID, r.LegacyID
 	}
 	if customerID == "" {
 		return "", &load.Refusal{Code: "field_required", Field: load.KindCustomer,
@@ -267,8 +310,8 @@ func (ContactLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (s
 		return "", fmt.Errorf("customer: contact customer read: %w", err)
 	}
 	if !inOrg {
-		return "", &load.Refusal{Code: load.ReasonMissingReference, Field: load.KindCustomer,
-			Detail: "the referenced customer is not a customer of this org"}
+		return "", &load.Refusal{Code: "org_mismatch", Field: load.KindCustomer,
+			Detail: fmt.Sprintf("customer legacy key %s names a row another org owns", customerKey)}
 	}
 	email, _ := in.Record["email"].(string)
 	phone, _ := in.Record["phone"].(string)
