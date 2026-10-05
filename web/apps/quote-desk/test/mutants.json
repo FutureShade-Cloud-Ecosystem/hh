@@ -1429,6 +1429,13 @@
     "test": "the parsed figure is shown beside the button"
   },
   {
+    "id": "op-tile-grid",
+    "file": "src/order-payment-panel.ts",
+    "find": "      .tenders {\n        display: grid;\n        grid-template-columns: 1fr 1fr;\n        gap: 8px;\n        margin-top: 8px;\n      }",
+    "replace": "      .tenders {\n        display: grid;\n        grid-template-columns: repeat(4, 1fr);\n        gap: 8px;\n        margin-top: 8px;\n      }",
+    "test": "the payment form follows the till's tile language"
+  },
+  {
     "id": "ws-serialize",
     "file": "src/workspace-store.ts",
     "find": "    this.#queued = send;\n    if (this.#inFlight !== null) return this.#inFlight;\n",

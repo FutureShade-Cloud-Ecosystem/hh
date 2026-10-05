@@ -75,6 +75,31 @@ import { spokenRefusal } from "./_quote-workarea.js";
 /** Said on return when a payment was taken on this quote while the person was away: its receipt is below, with the figures the server answered. */
 const LATE_PAYMENT_NOTE = "A payment was taken on this quote while you were away. Its receipt is below, with the figures the server answered.";
 
+/**
+ * The tender glyphs, the till's own icon discipline: inline currentColor SVG on the 24x24 grid,
+ * 2px stroke, round caps and joins, aria-hidden (the tile's label already names it), zero new
+ * colours. Cash and Card are the till's own tender art verbatim; Cheque and EFT are drawn in the
+ * same discipline for the two tenders the till's payment step does not carry.
+ */
+const TENDER_GLYPH: Record<TenderMethod, TemplateResult> = {
+  CASH: html`<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+    <rect x="2.5" y="6.5" width="19" height="11" rx="1.5"></rect>
+    <circle cx="12" cy="12" r="2.6"></circle>
+    <path d="M5.5 9.5v0M18.5 14.5v0"></path>
+  </svg>`,
+  CARD: html`<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+    <rect x="2.5" y="5.5" width="19" height="13" rx="2"></rect>
+    <path d="M2.5 9.5h19M6 15h4"></path>
+  </svg>`,
+  CHEQUE: html`<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <rect x="3" y="5" width="18" height="14" rx="2"></rect>
+    <path d="M7 10h6M7 13h3M13 16l1.4-2 1.4 1.6L17.5 13"></path>
+  </svg>`,
+  EFT: html`<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M4 8h13M13.5 4.5 17 8l-3.5 3.5M20 16H7M10.5 12.5 7 16l3.5 3.5"></path>
+  </svg>`,
+};
+
 /** What one quote's payment state is when the person is not on it: everything a return must find again. */
 interface QuotePayment {
   tender: TenderMethod;
@@ -130,34 +155,70 @@ export class QdOrderPayment extends PanelBase {
       .sub {
         margin: 0 0 6px;
       }
+      /* The till's own tile language (its payment step's paytiles): a 2x2 grid of icon tiles,
+         an unselected tile the card itself with a grey border, the selected tile the amber edge
+         and the amber tint over the deep card, normal ink, never a fade and never a second
+         accent. Colour is the state. */
       .tenders {
         display: grid;
-        grid-template-columns: repeat(4, 1fr);
+        grid-template-columns: 1fr 1fr;
         gap: 8px;
         margin-top: 8px;
       }
-      /* The till's own tile language: an unselected tile is the card itself with a grey
-         border; the selected tile takes the warm cream fill and the amber edge and keeps
-         the normal ink (colour is the state, never a fade and never a second accent). */
       .tenders button {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        min-height: 38px;
         border: 1px solid var(--hos-line, var(--hh-line));
         border-radius: var(--hos-radius-control, var(--hh-radius-control));
-        padding: 10px 6px;
+        padding: 10px 8px;
         font-size: var(--qp-body);
         font-weight: 600;
-        background: var(--hos-slate-warm, var(--hh-card));
+        background: var(--hos-deep-earth, var(--hh-page));
         color: var(--hos-text, var(--hh-text));
+        cursor: pointer;
+      }
+      /* The drawn glyph takes the tile's own ink in every state (the till's tender icon
+         discipline: aria-hidden art, zero new colours). */
+      .tenders button svg {
+        flex: none;
+        opacity: 0.85;
+      }
+      .tenders button:hover:not([aria-disabled="true"]) {
+        border-color: var(--hos-stone-amber, var(--hh-accent));
       }
       .tenders button.active {
-        background: color-mix(in srgb, var(--hos-stone-amber, var(--hh-accent)) 16%, transparent);
+        background: color-mix(in srgb, var(--hos-stone-amber, var(--hh-accent)) 10%, var(--hos-deep-earth, var(--hh-page)));
         border-color: var(--hos-stone-amber, var(--hh-accent));
-        color: var(--hos-text, var(--hh-text));
+        color: var(--hos-stone-amber-text, var(--hh-accent-text));
       }
-      .tenders button:disabled {
+      /* While a payment is out (or its key is held) the choice is not offered: the tiles say so
+         with the greyed look, EXCEPT the chosen one, whose selection is a fact being carried,
+         not a control being offered: it keeps its ink so the person can see what is in flight. */
+      .tenders button[aria-disabled="true"]:not(.active) {
         background: transparent;
         border-color: var(--hh-disabled-line);
         color: var(--hh-disabled-ink);
         cursor: not-allowed;
+      }
+      /* Full height controls on the till's measure: the amount and reference boxes and the Take
+         payment action are never smaller than a tile, and the inputs carry the control radius
+         (the shared sheet's own), so the primary action is never the smallest control. */
+      .payrow input,
+      .payrow .primary {
+        min-height: 38px;
+      }
+      .payrow .primary {
+        padding: 10px 18px;
+      }
+      @media (max-width: 1100px) {
+        .tenders button,
+        .payrow input,
+        .payrow .primary {
+          min-height: 44px;
+        }
       }
       input.amt {
         width: 7rem;
@@ -167,6 +228,10 @@ export class QdOrderPayment extends PanelBase {
       input.ref {
         flex: 1 1 14rem;
         min-width: 0;
+      }
+      .refcount {
+        font-size: var(--qp-caption);
+        color: var(--hos-text-dim, var(--hh-text-dim));
       }
       .figures {
         margin: 8px 0 0;
@@ -637,19 +702,21 @@ export class QdOrderPayment extends PanelBase {
               type="button"
               class="${this.tender === m ? "active" : ""}"
               aria-pressed=${this.tender === m ? "true" : "false"}
+              aria-disabled=${this.fieldsLocked ? "true" : "false"}
               data-action="tender"
               data-tender=${m}
-              ?disabled=${this.fieldsLocked}
             >
+              ${TENDER_GLYPH[m]}
               ${m}
             </button>`,
           )}
         </div>
-        <div class="row">
+        <div class="row payrow">
           <label class="flush" for="op-amount">Amount</label>
           <input id="op-amount" class="amt" type="text" inputmode="decimal" placeholder="0.00" data-field="amount" ?disabled=${this.fieldsLocked} />
           <label for="op-ref">Reference</label>
-          <input id="op-ref" class="ref" type="text" placeholder="Cheque number, EFT trace or terminal reference (may be empty for cash)" data-field="reference" ?disabled=${this.fieldsLocked} />
+          <input id="op-ref" class="ref" type="text" placeholder="Cheque no, EFT trace or terminal ref" maxlength="80" data-field="reference" ?disabled=${this.fieldsLocked} />
+          <span class="refcount" data-testid="op-ref-count">${this.reference.length}/80</span>
           <button type="button" class="primary" data-action="take-payment" data-testid="op-take" ?disabled=${this.busy}>
             ${this.busy ? "Taking payment..." : "Take payment"}
           </button>

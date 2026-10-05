@@ -451,7 +451,7 @@ test("a ghosted 10 cash cannot become a 5 card: while the outcome is not known t
   // outcome is not known. The form does not offer the change: the fields are locked to the
   // attempt, so no post can carry one key with two different payments.
   await expect(pay(page).locator('[data-field="amount"]')).toBeDisabled();
-  await expect(pay(page).getByTestId("op-tenders").getByRole("button", { name: "CASH", exact: true })).toBeDisabled();
+  await expect(pay(page).getByTestId("op-tenders").getByRole("button", { name: "CASH", exact: true })).toHaveAttribute("aria-disabled", "true");
   // The retry is the same attempt: the same key replays the ghost's payment.
   await pay(page).getByTestId("op-take").click();
   await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("CA$10.00");
@@ -522,6 +522,45 @@ test("a decimal comma is refused in words that teach the point, never sent, and 
   await pay(page).locator('[data-field="amount"]').fill("99999999999999999999");
   await pay(page).getByTestId("op-take").click();
   await expect(pay(page).getByTestId("op-error")).toHaveText("The amount is larger than this desk can send.");
+});
+
+test("the payment form follows the till's tile language: a 2x2 grid of icon tiles, full height controls, a capped reference with its count, and the chosen tile visible in flight", async ({ page }) => {
+  await signIn(page);
+  await openWithPayment(page, "Q-2101");
+  const tiles = pay(page).getByTestId("op-tenders").getByRole("button");
+  await expect(tiles).toHaveCount(4);
+  // A 2x2 grid: the first two tiles share a row, the third starts the second.
+  const group = (await pay(page).getByTestId("op-tenders").boundingBox())!;
+  const cash = (await tiles.nth(0).boundingBox())!;
+  const card = (await tiles.nth(1).boundingBox())!;
+  const cheque = (await tiles.nth(2).boundingBox())!;
+  expect(cash.y).toBe(card.y);
+  expect(cheque.y).toBeGreaterThan(cash.y);
+  expect(cash.width).toBeLessThan(group.width * 0.6);
+  // Every tile is full height and carries the till's drawn glyph.
+  for (let i = 0; i < 4; i += 1) {
+    expect((await tiles.nth(i).boundingBox())!.height).toBeGreaterThanOrEqual(38);
+    await expect(tiles.nth(i).locator("svg")).toHaveCount(1);
+  }
+  // The amount box and the Take payment action are at least as tall as a tile.
+  expect((await pay(page).locator('[data-field="amount"]').boundingBox())!.height).toBeGreaterThanOrEqual(38);
+  expect((await pay(page).getByTestId("op-take").boundingBox())!.height).toBeGreaterThanOrEqual(38);
+  // The reference is capped at the server's own 80 characters, with the count beside the box.
+  await expect(pay(page).locator('[data-field="reference"]')).toHaveAttribute("maxlength", "80");
+  await pay(page).locator('[data-field="reference"]').fill("AUTH 123");
+  await expect(pay(page).getByTestId("op-ref-count")).toHaveText("8/80");
+  // The chosen tile stays visible while the payment is out: its selection is a fact being
+  // carried, so it keeps its ink and its pressed state rather than greying away.
+  const held = await hold(page, /\/api\/v1\/quotes\/q-2101\/order-payment$/, { method: "POST", snapshot: true });
+  await pay(page).locator('[data-field="amount"]').fill("10.00");
+  await pay(page).getByTestId("op-take").click();
+  await held.asked;
+  const chosen = pay(page).getByTestId("op-tenders").getByRole("button", { name: "CASH", exact: true });
+  await expect(chosen).toHaveClass(/active/);
+  await expect(chosen).toHaveAttribute("aria-pressed", "true");
+  await held.release();
+  await settle(page);
+  await expect(pay(page).getByTestId("op-receipt")).toBeVisible();
 });
 
 test("an amount that is not a number this desk can send is refused before any post", async ({ page }) => {
