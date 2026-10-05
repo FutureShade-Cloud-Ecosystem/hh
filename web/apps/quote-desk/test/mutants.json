@@ -1115,5 +1115,33 @@
     "find": "if (result === undefined || ask !== this.compareAsk) return;",
     "replace": "if (result === undefined) return;",
     "test": "P3 compare answers within one quote land"
+  },
+  {
+    "id": "sa-read-after-flip",
+    "file": "src/settings-accept.ts",
+    "find": "    this.generation += 1; // a read begun before this answer must not land over it\n",
+    "replace": "",
+    "test": "P3 a read of the acceptance switch"
+  },
+  {
+    "id": "sa-read-order",
+    "file": "src/settings-accept.ts",
+    "find": "    if (mine !== this.generation) return;\n",
+    "replace": "",
+    "test": "P3 a read of the acceptance switch"
+  },
+  {
+    "id": "sr-read-after-flip",
+    "file": "src/settings-scope.ts",
+    "find": "    this.generation += 1; // a read begun before this answer must not land over it\n",
+    "replace": "",
+    "test": "P3 a read of the scope rules"
+  },
+  {
+    "id": "sr-read-order",
+    "file": "src/settings-scope.ts",
+    "find": "    if (mine !== this.generation) return;\n",
+    "replace": "",
+    "test": "P3 a read of the scope rules"
   }
 ]

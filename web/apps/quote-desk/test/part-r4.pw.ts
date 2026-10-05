@@ -510,3 +510,46 @@ test("P3 compare answers within one quote land in the order they were asked", as
   await expect(box.locator("legend")).toHaveText("Compare line 2");
   expect(await box.locator("tbody").innerText()).toBe(answered);
 });
+
+/** Ask the builder to re-read every panel, as any quote edit does. */
+async function fanOut(page: Page): Promise<void> {
+  await page.locator("qd-quote-settings").evaluate((el) => el.dispatchEvent(new CustomEvent("quote-changed", { bubbles: true, composed: true })));
+}
+
+test("P3 a read of the acceptance switch begun before a flip does not override the flip", async ({ page }) => {
+  await page.request.put("/_stub/general-manager", { data: { member: true } });
+  try {
+    await signIn(page, "Sales manager");
+    await page.getByText("Quote detail & admin").click();
+    const settings = page.locator("qd-quote-settings");
+    await settings.getByTestId("qa-details").locator("summary").click();
+    await expect(page.getByTestId("qa-switch")).toBeVisible();
+    await expect(page.getByTestId("qa-switch")).not.toBeChecked();
+    const read = await hold(page, /\/quotes\/settings\/acceptance$/, { method: "GET", times: 1, snapshot: true });
+    await fanOut(page);
+    await read.asked;
+    await page.getByTestId("qa-switch").check();
+    await expect(page.getByTestId("qa-notice")).toContainText("Multiple acceptance is on");
+    await read.release();
+    await settle(page);
+    await expect(page.getByTestId("qa-switch")).toBeChecked();
+  } finally {
+    await page.request.put("/_stub/general-manager", { data: { member: false } });
+  }
+});
+
+test("P3 a read of the scope rules begun before a switch does not override the switch", async ({ page }) => {
+  await signIn(page, "Sales manager");
+  await page.getByText("Quote detail & admin").click();
+  await page.locator("qd-quote-settings").getByTestId("qr-details").locator("summary").click();
+  await expect(page.getByTestId("qr-row")).toHaveCount(7);
+  const row = page.getByTestId("qr-row").filter({ hasText: "WALL_NEEDS_BASE" });
+  const read = await hold(page, /\/quote-assist\/scope-rules$/, { method: "GET", times: 1, snapshot: true });
+  await fanOut(page);
+  await read.asked;
+  await row.getByRole("button").click();
+  await expect(row).toHaveAttribute("data-enabled", "false");
+  await read.release();
+  await settle(page);
+  await expect(row).toHaveAttribute("data-enabled", "false");
+});
