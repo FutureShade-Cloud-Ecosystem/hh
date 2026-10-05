@@ -90,10 +90,10 @@ export class QdPricingBreaks extends PricingTabBase {
   /** A product scoped schedule shows "SKU, name" when the catalogue answers; the short id stands in until then. */
   private async nameProducts(rows: BreakRow[]): Promise<void> {
     const pricing = this.pricing;
+    if (pricing === null) return;
+    // The lookups run in the tab's context: a panel that closed while they were out paints no names.
     const ctx = this.ctx;
-    if (pricing === null || ctx.stale) return;
     const missing = [...new Set(rows.map((b) => b.productId).filter((id): id is string => id !== undefined))].filter((id) => !(id in this.productNames));
-    // The lookups are the tab's context's: names for a panel that closed meanwhile paint nothing on it.
     const labels = await ctx.guarded(Promise.all(missing.map(async (id) => [id, await pricing.productLabel(id)] as const)));
     if (labels === undefined) return;
     const next = { ...this.productNames };
