@@ -1,3 +1,5 @@
+//go:build integration
+
 package main
 
 // claim_pool_starvation_test.go is the outbox claim loops' connection starvation leg (hardening
@@ -18,10 +20,20 @@ package main
 // each asks for a second connection, and the claim is forced to be held before the contenders are
 // released, so the overlap does not depend on goroutine timing.
 //
+// WHAT THE LEGS TOUCH. Each leg back-dates its own row by a year and the store claims the OLDEST due
+// row in the table (forced to one row per batch). On a database that already holds a PENDING row
+// older than a year, the leg would claim that foreign row instead, mutate it (attempts plus one,
+// last_error set) and fail. The leg needs a migrated database with no such row; the seed's rows are
+// newer and are never touched. Its own row is deleted at the end.
+//
+// The file carries the integration tag: it needs a migrated database, and the untagged suite runs on
+// an unmigrated DATABASE_URL in the demo job. The integration job runs cmd/core on the migrated,
+// seeded gate.
+//
 // Run (own throwaway container; the leg skips without DATABASE_URL and pins no port or database):
 //
 //	DATABASE_URL='postgres://USER:PASS@HOST:PORT/DB?sslmode=disable' \
-//	  go test ./cmd/core/ -run TestClaimPool -count=1 -v
+//	  go test -tags integration ./cmd/core/ -run TestClaimPool -count=1 -v
 
 import (
 	"context"

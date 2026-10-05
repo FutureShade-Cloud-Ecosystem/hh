@@ -1,3 +1,5 @@
+//go:build integration
+
 package main
 
 // claim_pool_lifecycle_test.go pins the two properties the claim pools must keep besides not
