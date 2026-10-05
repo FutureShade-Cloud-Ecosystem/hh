@@ -362,7 +362,7 @@ The census asserts for every role and for every planted row that the replay answ
 
 ## 5. Known and accepted
 
-Ruled as known by the reviewer, so the next reader does not reopen them:
+Recorded as known, so the next reader does not reopen them:
 
 1. The census principals double as planted filers for some cells: the inside_sales
    caller is the same user as the Inside Sales filer, and the branch_manager caller is
