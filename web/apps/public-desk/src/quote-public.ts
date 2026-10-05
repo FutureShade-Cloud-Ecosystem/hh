@@ -30,6 +30,7 @@ import { createAcceptKeys } from "./accept-key.js";
 import { formatMoney, quoteStatusPhrase, withFullStop } from "./format.js";
 import {
   envelopeOnlyFetch,
+  isDeadLinkAnswer,
   isDefiniteRefusal,
   isKeyReuseRefusal,
   PublicQuoteClient,
@@ -579,7 +580,13 @@ export class QuotePublicPage extends HHElement {
       this.accepted = result.value;
       return;
     }
-    this.fatal = LINK_GONE;
+    // Only the core's own 410 proves nothing was recorded under this key. Anything else (a proxy,
+    // a timeout, a lost answer) leaves the outcome unknown, and the customer is told so.
+    if (isDeadLinkAnswer(result)) {
+      this.fatal = LINK_GONE;
+      return;
+    }
+    this.error = UNCONFIRMED;
   }
 
   private when(iso: string): string {

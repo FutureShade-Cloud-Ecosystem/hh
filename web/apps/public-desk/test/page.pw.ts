@@ -1190,3 +1190,34 @@ test("the link dying after an accept that never landed: the keyed re-send answer
   expect(sent[1]?.key).toBe(sent[0]?.key);
   expect(await acceptanceRows(page, token)).toHaveLength(0);
 });
+
+for (const [token, how] of [
+  ["q-dead-resend-abort", "a lost connection"],
+  ["q-dead-resend-503", "a proxy's 503 page"],
+  ["q-dead-resend-410html", "a proxy's 410 page with no envelope"],
+] as const) {
+  test(`the link dying, then the keyed re-send failing by ${how}: the outcome is unknown, never the dead link card`, async ({ page }) => {
+    const sent = trackAccepts(page);
+    await readyToAccept(page, token);
+    await page.route("**/accept", async (route) => {
+      if (sent.length > 1) {
+        if (how === "a lost connection") await route.abort("connectionreset");
+        else if (how === "a proxy's 503 page") await route.fulfill({ status: 503, contentType: "text/html", body: "<html><body>503 edge.internal.example</body></html>" });
+        else await route.fulfill({ status: 410, contentType: "text/html", body: "<html><body>410 edge.internal.example</body></html>" });
+        return;
+      }
+      // The first accept commits at the core, the answer is lost and the link is revoked.
+      await route.fetch();
+      await page.request.post(`/_stub/revoke?token=${token}`);
+      await route.abort("connectionreset");
+    });
+    await page.getByRole("button", { name: "Accept quote" }).click();
+    await expect.poll(() => sent.length).toBe(2);
+    await expect(page.getByRole("alert")).toHaveText(UNCONFIRMED);
+    await expect(page.getByText("Quote link unavailable")).toHaveCount(0);
+    await expect(page.getByText(/no longer valid/)).toHaveCount(0);
+    await expect(page.locator("body")).not.toContainText("edge.internal.example");
+    expect(sent[1]?.key).toBe(sent[0]?.key);
+    await expect(page.locator("#name")).toHaveJSProperty("readOnly", true);
+  });
+}

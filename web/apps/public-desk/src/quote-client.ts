@@ -259,6 +259,11 @@ export function isDefiniteRefusal(failure: { error: string; status?: number }): 
   return failure.status !== undefined && failure.status >= 400 && failure.status < 500 && serverWords(failure) !== null;
 }
 
+/** The server's own answer that a link is dead: a 410 carrying the error envelope. */
+export function isDeadLinkAnswer(failure: { error: string; status?: number }): boolean {
+  return failure.status === 410 && serverWords(failure) !== null;
+}
+
 export class PublicQuoteClient {
   readonly #client: ApiClient;
 
