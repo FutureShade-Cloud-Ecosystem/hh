@@ -32,6 +32,9 @@ var errNotImplemented = errors.New("invcount: not implemented (scaffold stub)")
 type StockCounter interface {
 	SnapshotOnHand(ctx context.Context, branchID string) ([]Snapshot, error)
 	WeightedAvgCostCents(ctx context.Context, productID, branchID string) (int64, error)
+	// WeightedAvgCostCentsTx reads inside the caller's transaction (the post holds one), so no second pool
+	// connection is taken while the first is held.
+	WeightedAvgCostCentsTx(ctx context.Context, tx pgx.Tx, productID, branchID string) (int64, error)
 	PostCountAdjustmentTx(ctx context.Context, tx pgx.Tx, productID, locationID, branchID string, qtyDelta float64, unitCostCents int64, reason string) (string, error)
 }
 

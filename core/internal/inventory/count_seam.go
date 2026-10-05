@@ -32,6 +32,14 @@ func (s *Service) WeightedAvgCostCents(ctx context.Context, productID, branchID 
 	return avg, err
 }
 
+// WeightedAvgCostCentsTx is WeightedAvgCostCents inside the caller's transaction: the count post holds a pool
+// connection for its whole transaction, so it reads the cost through that connection rather than asking the
+// shared pool for a second one (nil tx reads the pool).
+func (s *Service) WeightedAvgCostCentsTx(ctx context.Context, tx pgx.Tx, productID, branchID string) (int64, error) {
+	avg, _, err := s.db().GetBranchCost(ctx, tx, productID, branchID)
+	return avg, err
+}
+
 // PostCountAdjustmentTx writes the COUNT adjustment stock move for a counted variance inside the caller's tx
 // and returns the move id (the GL leg is posted separately via the reason-coded rule). qtyDelta is signed
 // (counted − snapshot). FROZEN signature; INV-CORE fills the body.

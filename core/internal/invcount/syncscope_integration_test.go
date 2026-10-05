@@ -58,6 +58,10 @@ func (f *fakeStockCounter) WeightedAvgCostCents(ctx context.Context, productID, 
 	return 500, nil
 }
 
+func (f *fakeStockCounter) WeightedAvgCostCentsTx(ctx context.Context, tx pgx.Tx, productID, branchID string) (int64, error) {
+	return 500, nil
+}
+
 func (f *fakeStockCounter) PostCountAdjustmentTx(ctx context.Context, tx pgx.Tx, productID, locationID, branchID string, qtyDelta float64, unitCostCents int64, reason string) (string, error) {
 	return "", nil
 }
