@@ -429,7 +429,13 @@ export class QdPricingRules extends PricingTabBase {
                     <label for="pr-branch">Branch (optional, blank is all)</label>
                     <select id="pr-branch" data-field="branchId" data-testid="pr-branch"></select>
                   </div>`
-              : nothing}
+              : f.branchId !== ""
+                ? html`<div class="field">
+                    <label>Branch</label>
+                    <input class="mono" value=${this.branchName(f.branchId)} disabled data-testid="pr-branch-readonly" />
+                    <span class="hint">This rule is limited to one branch. Only a tier and category rule can change it here.</span>
+                  </div>`
+                : nothing}
             ${f.scope === "CUSTOMER_CATEGORY"
               ? html`<div class="field">
                     <label for="pr-customer">Customer id (uuid)</label>

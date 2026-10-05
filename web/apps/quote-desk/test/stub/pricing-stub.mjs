@@ -86,7 +86,9 @@ function seedWorld() {
       rule("TIER_CATEGORY", { customer_type: "CONTRACTOR", category_id: CAT.pavers }, "PCT_OFF_LIST", { discount_bps: 1800 }, "SF", 40, "Contractor, Pavers: 18% off"),
       rule("TIER_CATEGORY", { customer_type: "CONTRACTOR", category_id: CAT.accessories }, "PCT_OFF_LIST", { discount_bps: 800 }, "SF", 40, "Contractor, Accessories: 8% off"),
       rule("CUSTOMER_CATEGORY", { customer_id: "c0000000-0000-4000-9000-000000000001", category_id: CAT.pavers }, "PCT_OFF_LIST", { discount_bps: 800 }, "SF", 20, "Maple Ridge, Pavers: 8% off"),
-      rule("TIER_DEFAULT", { customer_type: "CONTRACTOR" }, "PCT_OFF_LIST", { discount_bps: 1500 }, "SF", 10, "Contractor, default: 15% off"),
+      // Limited to one branch, on a scope whose editor shows no branch field: the round trip
+      // must carry the branch the rule already has (the server's patch clears it only on "").
+      rule("TIER_DEFAULT", { customer_type: "CONTRACTOR", branch_id: "6f1c2b3a-0000-4000-8000-000000000001" }, "PCT_OFF_LIST", { discount_bps: 1500 }, "SF", 10, "Contractor, default: 15% off"),
     ],
     overrides: [],
     breaks: [
@@ -243,8 +245,15 @@ function floorPreview(body) {
           final_cents: a.price, margin_bps: a.margin, floor_bps: a.floor, price_uom: product.uom.toLowerCase(), source: a.source,
           previous_final_cents: b.price, previous_margin_bps: b.margin, already_under_floor: b.blocked,
         };
-        // A newly under case outranks one that was under already; among the same kind the lower margin.
-        if (worst === null || (item.already_under_floor !== worst.already_under_floor ? !item.already_under_floor : item.margin_bps < worst.margin_bps)) worst = item;
+        // A newly under case outranks one that was under already; among the already-under ones a
+        // price the change DROPPED outranks one it left standing; then the lower margin. The
+        // core's worseBreach, mirrored (round 2 P2-B).
+        const dropped = (x) => x.final_cents < x.previous_final_cents;
+        if (worst === null || (item.already_under_floor !== worst.already_under_floor
+          ? !item.already_under_floor
+          : dropped(item) !== dropped(worst)
+            ? dropped(item)
+            : item.margin_bps < worst.margin_bps)) worst = item;
       }
     }
     if (worst !== null) items.push(worst);

@@ -174,11 +174,15 @@ export function ruleSave(form: RuleForm): FormOutcome<RuleSave> {
     }
   }
   // Every scope dimension is sent, the ones that do not belong to the scope as "" so the server clears a stale value.
+  // The branch is the one exception on every scope: a rule of any scope can be limited to one
+  // branch (the resolver honours it), and the field is editable on the tier and category scope
+  // alone, so the other scopes carry what the rule already has or the edit would silently widen
+  // it to every branch.
   const isTier = form.scope === "TIER_DEFAULT" || form.scope === "TIER_CATEGORY";
   const dims = {
     customer_type: isTier ? form.customerType : "",
     category_id: form.scope === "TIER_CATEGORY" || form.scope === "CUSTOMER_CATEGORY" ? form.categoryId : "",
-    branch_id: form.scope === "TIER_CATEGORY" ? form.branchId : "",
+    branch_id: form.branchId,
     customer_id: form.scope === "CUSTOMER_PRODUCT" || form.scope === "CUSTOMER_CATEGORY" ? form.customerId.trim() : "",
     product_id: form.scope === "CUSTOMER_PRODUCT" ? form.productId.trim() : "",
   };
@@ -216,12 +220,14 @@ export function ruleValueText(r: Pick<RuleRow, "calcType" | "discountBps" | "mar
 
 /** What a rule applies to, as the list says it; ids shorten to eight characters, and a named branch is named. */
 export function ruleAppliesTo(r: Pick<RuleRow, "scope" | "customerId" | "productId" | "customerType" | "categoryId" | "branchId">, branchName: (id: string) => string, categoryName: (id: string) => string): string {
-  if (r.scope === "CUSTOMER_PRODUCT") return `${(r.customerId ?? "").slice(0, 8)} \u00b7 ${(r.productId ?? "").slice(0, 8)}`;
-  if (r.scope === "CUSTOMER_CATEGORY") return `${(r.customerId ?? "").slice(0, 8)} \u00b7 ${categoryName(r.categoryId ?? "")}`;
+  // A rule of any scope can be limited to one branch, so the branch is named wherever it is set.
+  const at = r.branchId === undefined ? "" : ` \u00b7 ${branchName(r.branchId)}`;
+  if (r.scope === "CUSTOMER_PRODUCT") return `${(r.customerId ?? "").slice(0, 8)} \u00b7 ${(r.productId ?? "").slice(0, 8)}${at}`;
+  if (r.scope === "CUSTOMER_CATEGORY") return `${(r.customerId ?? "").slice(0, 8)} \u00b7 ${categoryName(r.categoryId ?? "")}${at}`;
   if (r.scope === "TIER_CATEGORY") {
-    return `${r.customerType ?? ""} \u00b7 ${categoryName(r.categoryId ?? "")}${r.branchId === undefined ? "" : ` \u00b7 ${branchName(r.branchId)}`}`;
+    return `${r.customerType ?? ""} \u00b7 ${categoryName(r.categoryId ?? "")}${at}`;
   }
-  return r.customerType ?? "";
+  return `${r.customerType ?? ""}${at}`;
 }
 
 // ── customer prices ──────────────────────────────────────────────────────────

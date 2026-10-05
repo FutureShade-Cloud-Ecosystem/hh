@@ -254,3 +254,20 @@ test("a rule's applies to reads as the list shows it", () => {
   assert.equal(ruleAppliesTo({ ...ruleRow, scope: "TIER_DEFAULT", categoryId: undefined }, branch, cat), "CONTRACTOR");
   assert.equal(ruleAppliesTo({ ...ruleRow, scope: "CUSTOMER_PRODUCT", customerId: CUST, productId: PROD }, branch, cat), "c0000000 · a7000000");
 });
+
+// The reviewer's P2-C case: a rule of any scope can be limited to one branch (the server's
+// patch clears it only on an empty string), so the save must carry the branch through for
+// every scope, not just the tier and category one whose editor can change it.
+test("a rule's branch is carried through for every scope", () => {
+  const BRANCH = "6f1c2b3a-0000-4000-8000-000000000002";
+  for (const scope of ["TIER_DEFAULT", "TIER_CATEGORY", "CUSTOMER_CATEGORY", "CUSTOMER_PRODUCT"]) {
+    const row = { ...ruleRow, scope, branchId: BRANCH, ...(scope === "CUSTOMER_CATEGORY" || scope === "CUSTOMER_PRODUCT" ? { customerId: CUST } : {}), ...(scope === "CUSTOMER_PRODUCT" ? { productId: PROD } : {}) };
+    const out = ruleSave(ruleFormFromRow(row));
+    assert.equal(out.ok, true, scope);
+    assert.equal(out.value.write.branch_id, BRANCH, `${scope} write carries the branch`);
+    assert.equal(out.value.patch.branch_id, BRANCH, `${scope} patch carries the branch`);
+  }
+  // A rule with no branch still sends the empty string, the clear signal.
+  const none = ruleSave(ruleFormFromRow({ ...ruleRow, branchId: undefined }));
+  assert.equal(none.value.write.branch_id, "");
+});

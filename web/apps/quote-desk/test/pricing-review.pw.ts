@@ -320,3 +320,21 @@ test("a BYPASS row keeps its reason", async ({ page }) => {
   await openTab(page, "audit");
   await expect(page.getByTestId("pa-bypass-reason")).toHaveText("Bypassed because the category's margin policy is switched off");
 });
+
+// ── round 2 P2-C: a rule limited to one branch keeps it through an edit ──────────────────────────────
+
+test("editing a branch limited tier default rule keeps its branch", async ({ page }) => {
+  await openRules(page);
+  const row = page.getByTestId("pr-row").filter({ hasText: "Contractor, default" });
+  await expect(row).toContainText("Trenton");
+  await row.getByTestId("pr-edit").click();
+  await expect(page.getByTestId("pr-dialog")).toBeVisible();
+  // the tier default scope cannot edit the branch, so the branch it has is shown read only
+  await expect(page.getByTestId("pr-branch")).toHaveCount(0);
+  await expect(page.getByTestId("pr-branch-readonly")).toHaveValue("Trenton");
+  await page.getByTestId("pr-detail").fill("Contractor, default: 15% off, reviewed");
+  await page.getByTestId("pr-save").click();
+  await expect(page.getByTestId("pr-dialog")).toHaveCount(0);
+  const rule = (await pricingState(page)).rules.find((r) => r.detail_text === "Contractor, default: 15% off, reviewed");
+  expect(rule?.branch_id).toBe("6f1c2b3a-0000-4000-8000-000000000001");
+});
