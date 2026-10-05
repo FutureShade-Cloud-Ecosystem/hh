@@ -129,6 +129,11 @@ export class QdQuoteEdit extends PanelBase {
   ];
 
   protected override willUpdate(changed: Map<string, unknown>): void {
+    // The payment seam's panels learn of the quote change HERE, before this
+    // panel renders, so their contexts are cancelled in the same update that
+    // cancels this panel's own: an answer that lands in between would be read
+    // as current by a panel whose host has already moved on.
+    if (changed.has("quoteId") || changed.has("branchId") || changed.has("client")) this.wirePaymentSeam();
     if (changed.has("quoteId") || changed.has("client")) {
       // Everything a person left on the last quote stays with that quote: the
       // outcome lines, the half typed add box, the open comparison, the link.
@@ -731,10 +736,19 @@ export class QdQuoteEdit extends PanelBase {
     this.renderRoot.querySelectorAll<HTMLElement>("[data-opt]").forEach((li) => {
       li.id = `qe-${li.getAttribute("data-opt")}-opt-${li.getAttribute("data-index")}`;
     });
-    // The payment seam's panels receive the open quote the way every host
-    // passes it: the client, the quote id, the branch id and, once this quote
-    // has been converted, the order's id ("" before: the family read is the
-    // truth the payment panel follows).
+    // The first render mounts the payment seam's panels: the wiring pass in
+    // willUpdate cannot see them yet, so updated() wires them once here too
+    // (the pass is idempotent).
+    this.wirePaymentSeam();
+  }
+
+  /**
+   * The payment seam's panels receive the open quote the way every host passes
+   * it: the client, the quote id, the branch id and, once this quote has been
+   * converted, the order's id ("" before: the family read is the truth the
+   * payment panel follows).
+   */
+  private wirePaymentSeam(): void {
     for (const seam of this.renderRoot.querySelectorAll<HTMLElement & Record<string, unknown>>("qd-related-docs, qd-order-payment")) {
       seam.quoteId = this.quoteId;
       seam.branchId = this.branchId;
@@ -1017,33 +1031,39 @@ export class QdQuoteEdit extends PanelBase {
   override render() {
     if (this.quoteId === "") return nothing;
     const view = this.view;
-    if (view === null) {
-      return html`<div class="box">
-        ${this.error !== "" ? html`<p class="err" role="alert">${this.error}</p>` : html`<p class="sub">Loading...</p>`}
-      </div>`;
-    }
+    // The payment seam's panels sit OUTSIDE the view branch on purpose: the
+    // edit panel's own box flips through a loading state on every quote
+    // switch, and a panel that unmounts there loses the per quote notes a
+    // payment that landed late depends on. They render nothing until their
+    // own reads answer, so the gap shows nothing.
     return html`
-      <div class="box" data-testid="qe-box">
-        <h3 data-testid="qe-title">${view.quote_no} · ${quoteStatusWord(view.status)}</h3>
-        <div class="sub" data-testid="qe-sub">${view.customer_name} · ${expiryLabel(view)}</div>
-        ${this.renderLines(view)}
-        <div class="totals">
-          <span>Subtotal <b>${money(view.subtotal_cents)}</b></span>
-          <span>Tax <b>${money(view.tax_cents)}</b></span>
-          <span>Total <b>${money(view.total_cents)}</b></span>
-        </div>
-        ${hasAnyEdit(view)
-          ? html`${this.renderExpiry(view)}${this.renderAdd(view)}`
-          : html`<p class="frozen" data-testid="qe-frozen">${frozenSentence(view)}</p>`}
-        ${this.renderShare(view)}
-        ${this.renderConvert(view)}
-        <div data-seam=${SEAM_PAYMENT} data-seam-label="Related documents and the order's payment (QD-5)">
-          <qd-related-docs></qd-related-docs>
-          <qd-order-payment></qd-order-payment>
-        </div>
-        ${this.renderCompare()}
-        <p class="err" role="alert" data-testid="qe-error">${this.error}</p>
-        <p class="ok" role="status" aria-live="polite" aria-atomic="true" data-testid=${this.notice === LINK_CREATED_NOTICE ? nothing : "qe-notice"}>${this.notice === LINK_CREATED_NOTICE ? "" : this.notice}</p>
+      ${view === null
+        ? html`<div class="box">
+            ${this.error !== "" ? html`<p class="err" role="alert">${this.error}</p>` : html`<p class="sub">Loading...</p>`}
+          </div>`
+        : html`
+            <div class="box" data-testid="qe-box">
+              <h3 data-testid="qe-title">${view.quote_no} · ${quoteStatusWord(view.status)}</h3>
+              <div class="sub" data-testid="qe-sub">${view.customer_name} · ${expiryLabel(view)}</div>
+              ${this.renderLines(view)}
+              <div class="totals">
+                <span>Subtotal <b>${money(view.subtotal_cents)}</b></span>
+                <span>Tax <b>${money(view.tax_cents)}</b></span>
+                <span>Total <b>${money(view.total_cents)}</b></span>
+              </div>
+              ${hasAnyEdit(view)
+                ? html`${this.renderExpiry(view)}${this.renderAdd(view)}`
+                : html`<p class="frozen" data-testid="qe-frozen">${frozenSentence(view)}</p>`}
+              ${this.renderShare(view)}
+              ${this.renderConvert(view)}
+              ${this.renderCompare()}
+              <p class="err" role="alert" data-testid="qe-error">${this.error}</p>
+              <p class="ok" role="status" aria-live="polite" aria-atomic="true" data-testid=${this.notice === LINK_CREATED_NOTICE ? nothing : "qe-notice"}>${this.notice === LINK_CREATED_NOTICE ? "" : this.notice}</p>
+            </div>
+          `}
+      <div data-seam=${SEAM_PAYMENT} data-seam-label="Related documents and the order's payment (QD-5)">
+        <qd-related-docs></qd-related-docs>
+        <qd-order-payment></qd-order-payment>
       </div>
     `;
   }

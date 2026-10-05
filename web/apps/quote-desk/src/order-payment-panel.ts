@@ -338,12 +338,19 @@ export class QdOrderPayment extends PanelBase {
 
   // ── render ────────────────────────────────────────────────────────────────
 
-  /** The server's own figures for what this payment lands on: the order row, the invoice row, never a computed figure. */
+  /** The server's own figures for what this payment lands on: the quote's agreed total before any order exists, then the order row, the invoice row, never a computed figure. */
   private renderFigures(): typeof nothing | ReturnType<typeof html> {
     const rows = this.orderRows;
-    const invoices = this.invoiceRows;
-    if (rows.length === 0) return nothing;
+    if (rows.length === 0) {
+      // Before any order exists (an accepted quote), the one figure the server holds is the quote's own agreed total.
+      const self = this.family.find((row) => row.kind === "QUOTE");
+      if (self === undefined) return nothing;
+      return html`<p class="figures" data-testid="op-figures">
+        ${kindLabel(self.kind)} ${self.number} is ${docStatusWord(self.kind, self.status)} at ${moneyWord(self.totalCents)}, the agreed total
+      </p>`;
+    }
     const order = rows[0];
+    const invoices = this.invoiceRows;
     const parts = [
       `${kindLabel(order.kind)} ${order.number} is ${docStatusWord(order.kind, order.status)} at ${moneyWord(order.totalCents)}`,
       ...invoices.map((inv) => `${kindLabel(inv.kind)} ${inv.number} is ${docStatusWord(inv.kind, inv.status)} at ${moneyWord(inv.totalCents)}`),

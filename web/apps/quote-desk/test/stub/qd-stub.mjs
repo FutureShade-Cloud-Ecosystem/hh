@@ -689,7 +689,7 @@ function seedWorld() {
   // own seeded quotes keep their numbers (the first dynamic seed stays 1004):
   // a credit customer's converted quote with its order (the deposit path),
   // and a cash customer's accepted quote (the one action).
-  const converted = seedQuote("CONVERTED", "c-fenwick", "sales", [{ p: "p-holland-60", q: 10 }], {}, { id: "q-2101", quoteNo: "Q-2101" });
+  const converted = seedQuote("CONVERTED", "c-maple-ridge", "sales", [{ p: "p-holland-60", q: 10 }], {}, { id: "q-2101", quoteNo: "Q-2101" });
   newOrder(converted, "COUNTER");
   seedQuote("ACCEPTED", "c-quarry-lane", "sales", [{ p: "p-polymer-sand", q: 4 }], {}, { id: "q-2102", quoteNo: "Q-2102" });
 }
