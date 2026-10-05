@@ -10883,12 +10883,20 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/LoadBatchView"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: The batch id is recorded under more than one source system in this org; the read refuses rather than guess
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/load/keys/resolve:
     post:
       operationId: loadResolveKeys

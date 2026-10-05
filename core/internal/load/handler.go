@@ -107,7 +107,7 @@ func resolveWire(req apigen.LoadKeysResolveRequest) ([]Ref, error) {
 	}
 	refs := make([]Ref, 0, len(req.Items))
 	for _, it := range req.Items {
-		if it.Kind == "" || it.LegacyId == "" || len(it.LegacyId) > MaxKeyLength {
+		if it.Kind == "" || len(it.Kind) > 64 || it.LegacyId == "" || len(it.LegacyId) > MaxKeyLength {
 			return nil, ErrMissingField
 		}
 		refs = append(refs, Ref{Kind: it.Kind, LegacyID: it.LegacyId})

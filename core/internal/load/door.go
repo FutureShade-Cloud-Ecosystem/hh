@@ -46,7 +46,7 @@ func (d *Door) UpsertBatch(ctx context.Context, in Batch) (BatchResult, error) {
 	if d.writer == nil {
 		return BatchResult{}, errors.New("load: the door carries no writer")
 	}
-	replay, found, err := d.store.replayBatch(ctx, in.OrgID, in.SourceSystem, in.BatchID)
+	replay, found, err := d.store.replayBatch(ctx, in.OrgID, in.SourceSystem, in.BatchID, d.kind)
 	if err != nil {
 		return BatchResult{}, err
 	}
@@ -103,7 +103,7 @@ func validateBatch(in Batch) error {
 // race hands the loss over: the rolled-back attempt leaves no row, no
 // draw and no record behind.
 func (d *Door) processItem(ctx context.Context, in Batch, item Item) (Outcome, error) {
-	hash := HashRecord(item.Record)
+	hash := HashItem(item)
 	if hash == "" {
 		return refusedOutcome(item, &Refusal{Code: ReasonRecordShape, Field: "record",
 			Detail: "the record does not normalise to a content hash"}), nil
@@ -236,10 +236,15 @@ func (d *Door) tryItem(ctx context.Context, in Batch, item Item, hash string) (o
 	}
 	if named {
 		if nameID != rowID {
-			// The name is recorded against a different row than this
-			// attempt resolved to: the same conflict, read off the winner.
-			return refusedOutcome(item, &Refusal{Code: ReasonKeyConflict, Field: "legacy_id",
-				Detail: conflictDetail(item.LegacyID, other)}), false, nil
+			// The name's row and this attempt's row differ. That is the
+			// race's signature, not a conflict's: the winner committed
+			// between this attempt's first name read and its writer call,
+			// and the 0213 draw held this writer until then. The
+			// speculative write rolls back and the retry takes the found
+			// arm against committed state, where the hash decides. A
+			// genuine second row claim is refused where it is detectable
+			// directly: the reverse-uniqueness read above.
+			return Outcome{}, true, nil
 		}
 		if nameHash == hash {
 			// The race lost and the record agrees: the speculative write

@@ -8,10 +8,12 @@ package load
 
 import (
 	"bytes"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -42,6 +44,30 @@ func postResolve(t *testing.T, h *Handler, org string, body []byte) *httptest.Re
 	rec := httptest.NewRecorder()
 	h.resolveKeys(rec, req)
 	return rec
+}
+
+// TestResolveWireCarriesNullHHIDForUnrecordedKeys pins the contract's
+// shape: hh_id is required and nullable on LoadKeyResolution, so an
+// unrecorded name answers hh_id present as null in the payload, never an
+// omitted key.
+func TestResolveWireCarriesNullHHIDForUnrecordedKeys(t *testing.T) {
+	out := ResolveResult{
+		Items: []Resolution{
+			{Kind: "probe", LegacyID: "k-absent"},
+			{Kind: "probe", LegacyID: "k-present", HHID: "5e1f0000-0000-4000-8000-1f00000000f1"},
+		},
+		Counts: map[string]int{"found": 1, "missing": 1},
+	}
+	raw, err := json.Marshal(resolveResultWire(out))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(raw), `"hh_id":null`) {
+		t.Fatalf("the unrecorded key's hh_id is not in the payload as null: %s", raw)
+	}
+	if !strings.Contains(string(raw), `"hh_id":"5e1f0000-0000-4000-8000-1f00000000f1"`) {
+		t.Fatalf("the recorded key's hh_id is not in the payload: %s", raw)
+	}
 }
 
 func TestResolveKeysRefusesABodyOverTheBound(t *testing.T) {

@@ -80,6 +80,12 @@ var ErrMissingField = errors.New("load: a required field is empty or over its bo
 // is recorded under more than one source system in this org.
 var ErrAmbiguousBatch = errors.New("load: the batch id is recorded under more than one source system")
 
+// ErrBatchDoorMismatch is the replay's sentinel: the caller's batch id
+// is recorded under a different door's kind, so the submission is not a
+// replay but a collision of two doors' batch namespaces. The boundary
+// answers it with 409.
+var ErrBatchDoorMismatch = errors.New("load: the batch id is recorded under another door")
+
 // Ref is a reference named by legacy key: the kind and the key, resolved
 // against the registry before any write.
 type Ref struct {

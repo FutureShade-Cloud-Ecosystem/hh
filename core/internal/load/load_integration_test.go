@@ -118,21 +118,24 @@ func (probeWriter) Apply(ctx context.Context, tx pgx.Tx, in Write) (string, erro
 }
 
 // probeEnv is one test's fixtures: the pool, the store over it, and the
-// probe door.
+// probe and bare doors.
 type probeEnv struct {
-	pool  *pgxpool.Pool
-	store *Store
-	door  *Door
+	pool     *pgxpool.Pool
+	store    *Store
+	door     *Door
+	bareDoor *Door
 }
 
-// setup hands one test its fixtures, the scratch shape and a clean org
-// slice of the two load tables, and undoes all of it at the end.
+// setup hands one test its fixtures, the two scratch shapes and a clean
+// org slice of the two load tables, and undoes all of it at the end.
 func setup(t *testing.T) *probeEnv {
 	t.Helper()
 	pool := testPool(t)
 	ctx := context.Background()
 	for _, ddl := range []string{
 		`DROP TABLE IF EXISTS load_probe`,
+		`DROP TABLE IF EXISTS bare_probe`,
+		bareProbeTable,
 		`CREATE TABLE load_probe (
 			id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 			org_id          UUID NOT NULL,
@@ -168,10 +171,162 @@ func setup(t *testing.T) *probeEnv {
 		}
 		_, _ = pool.Exec(ctx, `DELETE FROM scope_sequences WHERE scope = 'load_probe'`)
 		_, _ = pool.Exec(ctx, `DROP TABLE IF EXISTS load_probe`)
+		_, _ = pool.Exec(ctx, `DROP TABLE IF EXISTS bare_probe`)
 		pool.Close()
 	})
 	store := NewStore(pool)
-	return &probeEnv{pool: pool, store: store, door: NewDoor(store, "probe", probeWriter{})}
+	return &probeEnv{
+		pool:     pool,
+		store:    store,
+		door:     NewDoor(store, "probe", probeWriter{}),
+		bareDoor: NewDoor(store, "bare", bareWriter{}),
+	}
+}
+
+// bareRowsCount counts the committed bare rows one name's row makes up:
+// the race's one-row assertion read through the registry name.
+func (e *probeEnv) bareRowsCount(t *testing.T, legacyID string) int {
+	t.Helper()
+	var n int
+	if err := e.pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM bare_probe
+		WHERE org_id = $1::uuid AND id IN (
+			SELECT hh_id::uuid FROM load_key_registry
+			WHERE org_id = $1::uuid AND source_system = $2 AND kind = 'bare' AND legacy_id = $3)`,
+		testOrgID, testSource, legacyID).Scan(&n); err != nil {
+		t.Fatalf("bare count: %v", err)
+	}
+	return n
+}
+
+// bareProbeTable is the second test-owned shape: no natural key at all,
+// every create arm a fresh insert, the shape the review's race probe
+// showed the false conflict on.
+const bareProbeTable = `CREATE TABLE IF NOT EXISTS bare_probe (
+	id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+	org_id          UUID NOT NULL,
+	payload         TEXT NOT NULL,
+	seq             BIGINT,
+	idempotency_key UUID,
+	created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+	updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+)`
+
+// bareWriter is an insert-only writer over bare_probe: no natural key
+// to attach by, one sequence drawn per write through the 0213
+// allocator, the stamps carried.
+type bareWriter struct{}
+
+func (bareWriter) Apply(ctx context.Context, tx pgx.Tx, in Write) (string, error) {
+	payload, _ := in.Record["payload"].(string)
+	if in.RowID != "" {
+		tag, err := tx.Exec(ctx, probeSeqCTE+`
+			UPDATE bare_probe SET
+				payload = $3,
+				updated_at = now(),
+				seq = (SELECT next_value FROM pseq),
+				idempotency_key = NULLIF($4,'')::uuid
+			WHERE id = $2::uuid AND org_id = $1::uuid`,
+			in.OrgID, in.RowID, payload, in.DerivedKey)
+		if err != nil {
+			return "", fmt.Errorf("bare update: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return "", &Refusal{Code: ReasonUpdateTargetMissing, Field: "legacy_id",
+				Detail: "the name's row is gone; the update refuses rather than creating a second row"}
+		}
+		return in.RowID, nil
+	}
+	var id string
+	err := tx.QueryRow(ctx, probeSeqCTE+`
+		INSERT INTO bare_probe (org_id, payload, seq, idempotency_key)
+		VALUES ($1, $2, (SELECT next_value FROM pseq), NULLIF($3,'')::uuid)
+		RETURNING id::text`, in.OrgID, payload, in.DerivedKey).Scan(&id)
+	if err != nil {
+		return "", fmt.Errorf("bare create: %w", err)
+	}
+	return id, nil
+}
+
+// TestRacesOnOneNameNeverRefuseAFalseConflict drives the review's probe
+// into the suite: two concurrent upserts on one name over an
+// insert-only, sequence-drawing writer, many races, every one of them
+// answering created and unchanged (or updated, when the records
+// differ), never a key_conflict, and exactly one row per race. A
+// changed record from the race loser lands as the row's content.
+func TestRacesOnOneNameNeverRefuseAFalseConflict(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	const races = 24
+	for i := 0; i < races; i++ {
+		name := fmt.Sprintf("R-%02d", i)
+		changed := i == races-1
+		payloads := []string{"first", "second"}
+		results := make([]BatchResult, 2)
+		errs := make([]error, 2)
+		var wg sync.WaitGroup
+		for k := 0; k < 2; k++ {
+			wg.Add(1)
+			go func(k int) {
+				defer wg.Done()
+				payload := payloads[k]
+				if changed && k == 1 {
+					payload = "loser-change"
+				}
+				results[k], errs[k] = e.bareDoor.UpsertBatch(ctx, Batch{
+					OrgID: testOrgID, SourceSystem: testSource,
+					BatchID: fmt.Sprintf("bb-%02d-%d", i, k),
+					Items:   []Item{probeBareItem(name, payload)},
+				})
+			}(k)
+		}
+		wg.Wait()
+		for k, err := range errs {
+			if err != nil {
+				t.Fatalf("race %d racer %d: %v", i, k, err)
+			}
+			if o := outcomeOf(t, results[k], name); o.Status == OutcomeRefused {
+				t.Fatalf("race %d racer %d: false conflict refused %+v", i, k, o)
+			}
+		}
+		if changed {
+			continue
+		}
+		if n := e.bareRowsCount(t, name); n != 1 {
+			t.Fatalf("race %d left %d rows, want exactly one", i, n)
+		}
+		created := 0
+		for k := range results {
+			if outcomeOf(t, results[k], name).Status == OutcomeCreated {
+				created++
+			}
+		}
+		if created != 1 {
+			t.Fatalf("race %d: %d racers created, want exactly one", i, created)
+		}
+	}
+	if n := e.bareRowsCount(t, "R-00"); n != 1 {
+		t.Fatalf("the plain races left %d rows for R-00, want one", n)
+	}
+	// The changed race: no refusal (asserted above), and the loser's
+	// record stands as the row's content, because the loser retries into
+	// the update arm against the winner's committed row.
+	var payload string
+	if err := e.pool.QueryRow(ctx,
+		`SELECT payload FROM bare_probe WHERE org_id = $1::uuid AND id IN (
+			SELECT hh_id::uuid FROM load_key_registry
+			WHERE org_id = $1::uuid AND source_system = $2 AND kind = 'bare' AND legacy_id = $3)`,
+		testOrgID, testSource, fmt.Sprintf("R-%02d", races-1)).Scan(&payload); err != nil {
+		t.Fatalf("changed race row read: %v", err)
+	}
+	if payload != "loser-change" && payload != "first" {
+		t.Fatalf("changed race row payload %q, want the loser's change or the winner's record", payload)
+	}
+}
+
+// probeBareItem is one batch item over the bare shape.
+func probeBareItem(legacyID, payload string) Item {
+	return Item{LegacyID: legacyID, Record: map[string]any{"payload": payload}}
 }
 
 // probeItem is one batch item over the probe shape.
@@ -250,6 +405,68 @@ func outcomeOf(t *testing.T, r BatchResult, legacyID string) Outcome {
 	}
 	t.Fatalf("batch carries no outcome for %s: %+v", legacyID, r.Items)
 	return Outcome{}
+}
+
+// TestReferenceOnlyChangeUpdatesAndDraws pins the hash's coverage: the
+// content hash covers the record plus the named references (kind and
+// legacy key as named, never the resolved ids), so a re-parent lands as
+// an update and draws its sequence instead of answering unchanged.
+func TestReferenceOnlyChangeUpdatesAndDraws(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	if _, err := e.door.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+		BatchID: "b-refh-0",
+		Items: []Item{
+			probeItem("P-1", "p-1", "parent-one", "b1000000-0000-4000-8000-000000000001"),
+			probeItem("P-2", "p-2", "parent-two", "b1000000-0000-4000-8000-000000000002"),
+		}}); err != nil {
+		t.Fatalf("parents: %v", err)
+	}
+	if _, err := e.door.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+		BatchID: "b-refh-1",
+		Items: []Item{probeItem("C-1", "c-1", "child", "b1000000-0000-4000-8000-000000000003",
+			Ref{Kind: "probe", LegacyID: "P-1"})}}); err != nil {
+		t.Fatalf("child: %v", err)
+	}
+	seqBefore := e.probeSeqNext(t)
+
+	r, err := e.door.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+		BatchID: "b-refh-2",
+		Items: []Item{probeItem("C-1", "c-1", "child", "b1000000-0000-4000-8000-000000000003",
+			Ref{Kind: "probe", LegacyID: "P-2"})}})
+	if err != nil {
+		t.Fatalf("re-parent: %v", err)
+	}
+	if o := outcomeOf(t, r, "C-1"); o.Status != OutcomeUpdated {
+		t.Fatalf("a reference-only change answered %q, want updated", o.Status)
+	}
+	if drew := e.probeSeqNext(t) - seqBefore; drew != 1 {
+		t.Fatalf("the re-parent drew %d sequences, want exactly one", drew)
+	}
+	// The replayed identical item (record and references) still answers
+	// unchanged.
+	r, err = e.door.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+		BatchID: "b-refh-3",
+		Items: []Item{probeItem("C-1", "c-1", "child", "b1000000-0000-4000-8000-000000000003",
+			Ref{Kind: "probe", LegacyID: "P-2"})}})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if o := outcomeOf(t, r, "C-1"); o.Status != OutcomeUnchanged {
+		t.Fatalf("the identical replay answered %q, want unchanged", o.Status)
+	}
+	// A reference reordered among others is the same name set: the hash
+	// holds.
+	r, err = e.door.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+		BatchID: "b-refh-4",
+		Items: []Item{probeItem("C-1", "c-1", "child", "b1000000-0000-4000-8000-000000000003",
+			Ref{Kind: "probe", LegacyID: "P-2"}, Ref{Kind: "probe", LegacyID: "P-1"})}})
+	if err != nil {
+		t.Fatalf("added reference: %v", err)
+	}
+	if o := outcomeOf(t, r, "C-1"); o.Status != OutcomeUpdated {
+		t.Fatalf("an added reference answered %q, want updated", o.Status)
+	}
 }
 
 func TestUpsertCreatesANeverSeenName(t *testing.T) {
@@ -490,6 +707,40 @@ func TestReplayedBatchIDReturnsItsFirstOutcomes(t *testing.T) {
 	}
 	if _, payload, _, _ := e.probeRow(t, "c-1"); payload != "one" {
 		t.Fatalf("the replay overwrote the record: payload %q, want one", payload)
+	}
+}
+
+// TestCrossDoorBatchReplayRefuses pins the replay's key: a batch id is
+// one door's record, and replaying it against a different door refuses
+// with the door mismatch instead of returning the first door's outcomes
+// and loading nothing.
+func TestCrossDoorBatchReplayRefuses(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	if _, err := e.door.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+		BatchID: "b-shared",
+		Items:   []Item{probeItem("L-1", "c-1", "one", "c1000000-0000-4000-8000-000000000001")}}); err != nil {
+		t.Fatalf("first door: %v", err)
+	}
+
+	_, err := e.bareDoor.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+		BatchID: "b-shared",
+		Items:   []Item{probeBareItem("O-1", "other")}})
+	if !errors.Is(err, ErrBatchDoorMismatch) {
+		t.Fatalf("cross door replay answered %v, want ErrBatchDoorMismatch", err)
+	}
+	if n := e.bareRowsCount(t, "O-1"); n != 0 {
+		t.Fatalf("the cross door replay wrote %d rows, want none", n)
+	}
+	// The same door replaying its own batch id still replays.
+	r, err := e.door.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+		BatchID: "b-shared",
+		Items:   []Item{probeItem("L-1", "c-1", "CHANGED", "c1000000-0000-4000-8000-000000000001")}})
+	if err != nil {
+		t.Fatalf("same door replay: %v", err)
+	}
+	if o := outcomeOf(t, r, "L-1"); o.Status != OutcomeCreated {
+		t.Fatalf("same door replay answered %+v, want the first outcomes", o)
 	}
 }
 

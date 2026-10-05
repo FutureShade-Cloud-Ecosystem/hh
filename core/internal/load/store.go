@@ -118,19 +118,25 @@ func (s *Store) GetBatch(ctx context.Context, orgID, batchID string) (BatchView,
 
 // replayBatch looks up what a batch id first recorded: the outcomes ride
 // in the batch row, so a replay answers from the record and touches
-// nothing.
-func (s *Store) replayBatch(ctx context.Context, orgID, sourceSystem, batchID string) (BatchResult, bool, error) {
+// nothing. The door's kind is part of the lookup's meaning: a batch id
+// recorded under another door's kind is not a replay but a collision of
+// two doors' batch namespaces, and it refuses rather than answering with
+// the other door's outcomes.
+func (s *Store) replayBatch(ctx context.Context, orgID, sourceSystem, batchID, kind string) (BatchResult, bool, error) {
 	var countsJSON, itemsJSON []byte
-	var kind string
+	var recordedKind string
 	err := s.pool.QueryRow(ctx, `
 		SELECT kind, counts::text, items::text FROM load_batch
 		WHERE org_id = $1::uuid AND source_system = $2 AND batch_id = $3`,
-		orgID, sourceSystem, batchID).Scan(&kind, &countsJSON, &itemsJSON)
+		orgID, sourceSystem, batchID).Scan(&recordedKind, &countsJSON, &itemsJSON)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return BatchResult{}, false, nil
 	}
 	if err != nil {
 		return BatchResult{}, false, fmt.Errorf("load: batch replay read: %w", err)
+	}
+	if recordedKind != kind {
+		return BatchResult{}, false, ErrBatchDoorMismatch
 	}
 	r := BatchResult{BatchID: batchID}
 	if err := json.Unmarshal(countsJSON, &r.Counts); err != nil {
