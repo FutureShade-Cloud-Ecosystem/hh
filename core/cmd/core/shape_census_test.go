@@ -19,15 +19,15 @@ package main
 // allowlist with the reason read at source (the fixes are the owning
 // lanes', not this gate's). The gate fails on a mismatch the allowlist
 // does not name, on an uncovered operation the named list does not carry, on an allowlist
-//   entry that names no operation of the document, on an allowlist entry gone stale: its
-//   operation answers the right shape, so the entry must drop; that is the parity ledger's
-//   shrink discipline.
+// entry that names no operation of the document, on an allowlist entry gone stale: its
+// operation answers the right shape, so the entry must drop; that is the parity ledger's
+// shrink discipline.
 // Round 2 adds the mirror: the gate also fails on a stale uncovered entry, meaning an
-//   operation the uncovered list names that a caller just drove, fixture widened, or handler
-//   changed; the list must shrink. And it refuses a name sitting on both lists at once, as
-//   incoherent.
-// The driven count, the allowlist and the uncovered list print in the log and in every failure
-//   report.
+// operation the uncovered list names that a caller just drove, fixture widened, or handler
+// changed; the list must shrink. And it refuses a name sitting on both lists at once, as
+// incoherent.
+// The driven count, the allowlist and the uncovered list print in the log and in every
+// failure report.
 //
 // The gate is split so the plain ci job (no database) still walks the
 // contract: the parse and classify half (the walk, the cross check
@@ -683,15 +683,13 @@ func TestShapeCensusCheckerFailsTheBareArray(t *testing.T) {
 	t.Logf("fail first (a): the checker passed the page shaped control answer (items array, next_cursor null)")
 }
 
-// TestShapeCensusStaleUncoveredEntryFailsTheVerdict is the round 2 P2 fail
-// first (a) leg (no (database. (The (same (fixture (document (the (same (walk (and
-// (the (SAME (verdict (code (path (the (live (census (collects (its (report (from
-// (scVerdict (the (fixture (operation (is (named (by (the (leg's (own (uncovered
-// (map (and (a (2xx (page (answer (is (fed (through (the (verdict (the (verdict (must
-// (classify (the (operation (as (a (stale (uncovered (entry (carrying (the (failure
-// (line (the (live (census (fails (on. (A (verdict (that (stays (green (here (would
-// (mean (the (uncovered (list (can (never (shrink (and (the (mirror (discipline
-// (would (be (unproven.
+// TestShapeCensusStaleUncoveredEntryFailsTheVerdict is the round 2 P2 fail-first (a) leg,
+// with no database. The same fixture document, the same walk and the SAME verdict code path
+// the live census collects its report from (scVerdict): the fixture operation is named by
+// the leg's own uncovered map, and a 2xx page answer is fed through the verdict. The verdict
+// must classify the operation as a stale uncovered entry carrying the failure line the live
+// census fails on. A verdict that stays green here would mean the uncovered list can never
+// shrink and the mirror discipline would be unproven.
 func TestShapeCensusStaleUncoveredEntryFailsTheVerdict(t *testing.T) {
 	var doc map[string]any
 	if err := yaml.Unmarshal([]byte(shapeCensusFixtureDoc), &doc); err != nil {
@@ -701,10 +699,9 @@ func TestShapeCensusStaleUncoveredEntryFailsTheVerdict(t *testing.T) {
 	if len(ops) != 1 {
 		t.Fatalf("the fixture document classifies %d page shape operations, want exactly one (fixtureListApprovals)", len(ops))
 	}
-	// The leg's own uncovered map (the (fixture (operation (named (undrivable.
+	// The leg's own uncovered map: the fixture operation named undrivable.
 	uncov := map[string]string{ops[0].OperationID: "the fixture leg names this operation undrivable (a stand in for shapeCensusUncovered)"}
-	// A 2xx page answer for that named operation (the (fixture (widen (rebuilt (in
-	// (miniature.
+	// A 2xx page answer for that named operation: the fixture widen rebuilt in miniature.
 	out := scOutcome{legs: "fixture handler 200", status: http.StatusOK, body: `{"items":[],"next_cursor":null}`}
 	findings := scVerdict(ops[0], out, shapeCensusAllowlist, uncov)
 	stale := scFinding{}
@@ -720,7 +717,7 @@ func TestShapeCensusStaleUncoveredEntryFailsTheVerdict(t *testing.T) {
 	}
 	for _, f := range findings {
 		if f.kind != scStaleUncovered && f.kind != scClean {
-			t.Fatalf("the verdict for a clean 2xx page answer over an uncovered-named operation produced an unexpected extra kind %v: only scStaleUncovered and scClean belong here; the clean answer itself is no fault, the stale entry is the", f.kind)
+			t.Fatalf("the verdict for a clean 2xx page answer over an uncovered-named operation produced an unexpected extra kind %v: only scStaleUncovered and scClean belong here; the clean answer itself is no fault, the stale entry is the fault to name", f.kind)
 		}
 	}
 	t.Logf("fail first (the stale uncovered mirror): a 2xx drive of an uncovered-named operation classifies as the census failure kind (%s)", stale.line)
@@ -886,9 +883,8 @@ func scDrive(t *testing.T, fx *xrFixture, op scPageOp, path string, ladder []scC
 	return scOutcome{legs: strings.Join(names, ", ")}
 }
 
-// scVerdictKind is one drive verdict (the census's whole judgment about one
-// operation (passed (as (a (typed (kind (so (the (fixture (leg (can (assert (the
-// (classification (itself.
+// scVerdictKind is one drive verdict, the census's whole judgment about one operation,
+// passed as a typed kind so the fixture leg can assert the classification itself.
 type scVerdictKind int
 
 const (
@@ -901,27 +897,24 @@ const (
 	scUncoveredUnnamed
 )
 
-// scFinding is one verdict outcome (its (kind (and (the (report (line (the (census
-// (carries (for (it (empty (for (the (silent (kinds (clean (and (allow (hit (whose
-// (tallies (use (the (operation (name (instead).
+// scFinding is one verdict outcome: its kind and the report line the census carries for it
+// (empty for the silent kinds, clean and allow hit, whose tallies use the operation name
+// instead).
 type scFinding struct {
 	kind scVerdictKind
 	line string
 }
 
-// scVerdict is THE one verdict code path (the (live (census (collects (its (report
-// (from (it (and (the (ungated (fixture (leg (proves (the (stale (uncovered
-// (discipline (through (this (same (function (no (second (implementation (exists.
-// The (maps (arrive (as (parameters (so (the (fixture (leg (passes (its (own (stand
-// (ins (and (never (mutates (the (package (maps (the (live (census (reads.
+// scVerdict is THE one verdict code path: the live census collects its report from it, and
+// the ungated fixture leg proves the stale uncovered discipline through this same function;
+// no second implementation exists. The maps arrive as parameters so the fixture leg passes
+// its own stand-ins and never mutates the package maps the live census reads.
 //
-// The (uncovered (list's (mirror (discipline (the (round (2 (P2 (fix (lives (here (an
-// (operation (shapeCensusUncovered (names (that (a (caller (just (drove (to (a (2xx
-// (is (a (stale (uncovered (entry (regardless (of (the (answer's (shape (the
-// (fixture (widened (or (the (handler (changed (either (way (the (list (must
-// (shrink (the (allowlist's (stale (discipline (has (its (mirror (at (last (and (a
-// (name (on (both (lists (at (once (is (refused (at (the (live (census's (start (as
-// (incoherent.
+// The uncovered list's mirror discipline (the round 2 P2 fix) lives here: an operation
+// shapeCensusUncovered names that a caller just drove to a 2xx is a stale uncovered entry
+// regardless of the answer's shape (the fixture widened, or the handler changed; either way
+// the list must shrink), the allowlist's stale discipline has its mirror at last, and a name
+// on both lists at once is refused at the live census's start as incoherent.
 func scVerdict(op scPageOp, out scOutcome, allow, uncov map[string]string) []scFinding {
 	var f []scFinding
 	if out.status != 0 {
@@ -951,19 +944,18 @@ func scVerdict(op scPageOp, out scOutcome, allow, uncov map[string]string) []scF
 	return f
 }
 
-// TestShapeCensusListPagesServed is the live census (gated (the compfixture
-// discipline (it (skips (politely (without (the (gate (variable)). (Every (page (shape
-// operation (of (the (document (is (driven (through (the (real (mux (the (rig's
-// registerRoutes (over (the (identity (environment (map (and (the (gate (database
-// (with (the (caller (ladder (until (one (caller (answers (2xx (and (the (answer (body
-// (is (held (to (the (page (shape (items (an (array (next_cursor (a (string (or (null (through
-// (scVerdict (the (one (verdict (code (path (the (fixture (leg (shares. (A (mismatch (the
-// (allowlist (does (not (name (an (uncovered (operation (the (named (list (does (not
-// (carry (a (stale (allowlist (entry (an (operation (the (allowlist (names (that (now
-// (answers (the (page (shape (a (stale (uncovered (entry (an (operation (the (uncovered
-// (list (names (that (a (caller (just (drove (the (fixture (widened (or (the (handler
-// (changed (or (a (name (on (both (lists (at (once (fails (the (census (with (the (full
-// (report (the (driven (count (the (allowlist (the (uncovered (list (the (stale (entries.
+// TestShapeCensusListPagesServed is the live census, gated per the compfixture discipline
+// (it skips politely without the gate variable). Every page shape operation of the document
+// is driven through the real mux (the rig's registerRoutes over the identity environment
+// map and the gate database) with the caller ladder until one caller answers 2xx, and the
+// answer body is held to the page shape (items an array, next_cursor a string or null)
+// through scVerdict, the one verdict code path the fixture leg shares. A mismatch the
+// allowlist does not name, an uncovered operation the named list does not carry, a stale
+// allowlist entry (an operation the allowlist names that now answers the page shape), a
+// stale uncovered entry (an operation the uncovered list names that a caller just drove,
+// the fixture widened or the handler changed), or a name on both lists at once fails the
+// census with the full report: the driven count, the allowlist, the uncovered list and the
+// stale entries.
 func TestShapeCensusListPagesServed(t *testing.T) {
 	ops := scWalkContractPages(t, scReadContract(t))
 	if len(ops) != shapeCensusWantPages {
@@ -992,7 +984,7 @@ func TestShapeCensusListPagesServed(t *testing.T) {
 			staleAllow = append(staleAllow, fmt.Sprintf("the allowlist names %q, which is no page shape operation of the document (a typo, or an operation that stopped being a page shape): drop or correct the entry", name))
 		}
 		if _, also := shapeCensusUncovered[name]; also {
-			staleAllow = append(staleAllow, fmt.Sprintf("the allowlist AND the uncovered list both name %q: incoherent, an operation cannot be both broken-when-driven and undrivable; the uncovered entry is the one today's run supports, so correct or drop the allowlist entry", name))
+			staleAllow = append(staleAllow, fmt.Sprintf("the allowlist AND the uncovered list both name %q: incoherent, an operation cannot be both broken-when-driven and undrivable; whichever entry today's run does not support must go (a caller drove the operation: the uncovered entry is stale; none did: the allowlist entry is premature)", name))
 		}
 	}
 	for name := range shapeCensusUncovered {
