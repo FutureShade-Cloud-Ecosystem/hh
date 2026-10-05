@@ -51,6 +51,8 @@ export interface RuleForm {
   categoryId: string;
   productId: string;
   branchId: string;
+  /** The branch the stored rule came in with ("" on a create or when it had none): the line between the stored branch and a fresh pick. */
+  storedBranchId: string;
   calcType: RuleCalc;
   valuePct: string;
   priceDollars: string;
@@ -71,6 +73,7 @@ export function emptyRuleForm(): RuleForm {
     categoryId: "ca700000-0000-4000-9000-000000000001",
     productId: "",
     branchId: "",
+    storedBranchId: "",
     calcType: "PCT_OFF_LIST",
     valuePct: "",
     priceDollars: "",
@@ -123,6 +126,7 @@ export function ruleFormFromRow(r: RuleRow): RuleForm {
     categoryId: r.categoryId ?? base.categoryId,
     productId: r.productId ?? "",
     branchId: r.branchId ?? "",
+    storedBranchId: r.branchId ?? "",
     calcType: r.calcType,
     valuePct: r.calcType === "PCT_OFF_LIST" ? bpsText(r.discountBps ?? 0) : r.calcType === "MARKUP_ON_COST" ? bpsText(r.markupBps ?? 0) : "",
     priceDollars: r.calcType === "ABSOLUTE" ? centsText(r.priceCents ?? 0) : "",
@@ -141,15 +145,24 @@ export function ruleCalcOptions(scope: RuleScope | string): readonly RuleCalc[] 
 }
 
 /**
- * Changing the scope; leaving the customer and product scope drops a fixed price. On a
- * create it also drops a branch picked under the tier and category scope: every other
- * scope's editor cannot hold or clear a branch, so the pick would ride along read only and
- * the save would silently limit the new rule to that yard. An edit keeps the branch the
- * stored rule already has (round 2 P2-C): only the editor's own fresh pick is dropped.
+ * Changing the scope; leaving the customer and product scope drops a fixed price. A branch
+ * pick belongs to the tier and category scope's editor alone, so leaving that scope drops
+ * the editor's own FRESH pick: every other scope's editor cannot hold or clear a branch,
+ * so the pick would ride along read only and the save would silently limit the rule to
+ * that yard. What the stored rule already has stays as it is (round 2 P2-C), and a clear
+ * stays cleared: on a create every pick is fresh, and on an edit a pick is fresh exactly
+ * when it differs from the branch the rule came in with.
  */
 export function setRuleScope(form: RuleForm, scope: RuleScope): RuleForm {
   const calcType = scope !== "CUSTOMER_PRODUCT" && form.calcType === "ABSOLUTE" ? "PCT_OFF_LIST" : form.calcType;
-  const branchId = form.id === "" && scope !== "TIER_CATEGORY" ? "" : form.branchId;
+  let branchId = form.branchId;
+  if (scope !== "TIER_CATEGORY") {
+    if (form.id === "") {
+      branchId = ""; // on a create every pick is fresh
+    } else if (form.branchId !== "" && form.branchId !== form.storedBranchId) {
+      branchId = form.storedBranchId; // a fresh pick is dropped, the stored branch kept
+    }
+  }
   return { ...form, scope, calcType, branchId };
 }
 

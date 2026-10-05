@@ -105,17 +105,43 @@ test("a floor preview reads its items and counts, and refuses a half answer", ()
   assert.equal(p?.evaluated, 12);
   assert.equal(p?.notGraded, 1);
   assert.equal(p?.noCost, 2);
-  // The branch the worst grading happened at is optional: an item may carry both its id and
-  // its name (a branch-less preview names the yard), either alone, or neither (a change that
-  // named its own branch).
-  const atYard = readFloorPreview({ ...good, items: [{ ...good.items[0], branch_id: "b1", branch_name: "Kingston" }] });
+  assert.deepEqual(p?.noCostBranches, [], "the yards with no cost on file are optional: absent reads as none");
+  assert.equal(p?.notGradedBranches, 0, "the branch gradings the cap left out are optional: absent reads as none");
+  // The branch the worst grading happened at is optional: an item may carry its id with its
+  // code and its name (a branch-less preview names the yard), any alone, or nothing (a change
+  // that named its own branch).
+  const atYard = readFloorPreview({ ...good, items: [{ ...good.items[0], branch_id: "b1", branch_code: "KGN", branch_name: "Kingston" }] });
   assert.equal(atYard?.items[0]?.branchId, "b1");
+  assert.equal(atYard?.items[0]?.branchCode, "KGN");
   assert.equal(atYard?.items[0]?.branchName, "Kingston");
   assert.equal(p?.items[0]?.branchId, "");
+  assert.equal(p?.items[0]?.branchCode, "");
   assert.equal(readFloorPreview({ ...good, no_cost: undefined }), null, "the count of products with no cost is part of the contract");
   assert.equal(readFloorPreview({ ...good, truncated: undefined }), null);
   assert.equal(readFloorPreview({ ...good, items: [{ ...good.items[0], margin_bps: "8" }] }), null);
   assert.equal(readFloorPreview({ ...good, evaluated: 1.5 }), null);
+});
+
+// The round 4 additions: the yards a branch-less check found no cost on file at, and the
+// branch gradings the work cap left out. Absent both read as none; present but unreadable
+// refuses the whole answer, like every other half contract.
+test("a floor preview reads the yards with no cost and the branches the cap left out", () => {
+  const base = {
+    items: [], evaluated: 1, not_graded: 0, no_cost: 0, truncated: true,
+  };
+  const p = readFloorPreview({
+    ...base,
+    no_cost_branches: [{ branch_id: "b1", branch_code: "KGN", branch_name: "Kingston", products: 3 }],
+    not_graded_branches: 2,
+  });
+  assert.deepEqual(p?.noCostBranches, [{ branchId: "b1", branchCode: "KGN", branchName: "Kingston", products: 3 }]);
+  assert.equal(p?.notGradedBranches, 2);
+  const unnamed = readFloorPreview({ ...base, no_cost_branches: [{ branch_id: "b1", products: 1 }] });
+  assert.deepEqual(unnamed?.noCostBranches, [{ branchId: "b1", branchCode: "", branchName: "", products: 1 }]);
+  assert.equal(readFloorPreview({ ...base, no_cost_branches: [{ branch_id: "b1" }] }), null, "a yard without its product count is a half answer");
+  assert.equal(readFloorPreview({ ...base, no_cost_branches: [{ products: 1 }] }), null, "a count without its yard is a half answer");
+  assert.equal(readFloorPreview({ ...base, no_cost_branches: "Kingston" }), null);
+  assert.equal(readFloorPreview({ ...base, not_graded_branches: "2" }), null);
 });
 
 test("a list answered as a bare array (what the core writes today) reads the same as the contract's page", () => {

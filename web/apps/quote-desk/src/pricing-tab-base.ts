@@ -338,7 +338,7 @@ export abstract class PricingTabBase extends PanelBase {
             <div data-testid="floor-headline"><strong>${warningHeadline(prompt.preview)}</strong></div>
             ${names
               ? html`<ul class="floor-list" data-testid="floor-list">
-                  ${affected.map((item) => html`<li data-testid="floor-item">${itemLine(item)}</li>`)}
+                  ${affected.map((item) => html`<li data-testid="floor-item" data-branch-name="${item.branchName}">${itemLine(item)}</li>`)}
                 </ul>`
               : nothing}
             ${warningNotes(prompt.preview).map((note) => html`<div class="hint" data-testid="floor-note">${note}</div>`)}
@@ -367,6 +367,12 @@ export abstract class PricingTabBase extends PanelBase {
 
   protected override updated(changed: Map<string, unknown>): void {
     if (this.floorPrompt === null) return;
+    // The kits' gate allows no bound title attribute: the yard's full name rides in a data
+    // attribute and is laid on the item's native tooltip here, where the DOM is in hand.
+    for (const row of this.renderRoot.querySelectorAll<HTMLElement>('[data-testid="floor-item"]')) {
+      const name = row.getAttribute("data-branch-name") ?? "";
+      if (name !== "") row.title = name;
+    }
     const dialog = this.renderRoot.querySelector<HTMLElement>('[data-testid="floor-dialog"]');
     if (changed.has("floorPrompt")) {
       this.renderRoot.querySelector<HTMLElement>('[data-testid="floor-decline"]')?.focus();

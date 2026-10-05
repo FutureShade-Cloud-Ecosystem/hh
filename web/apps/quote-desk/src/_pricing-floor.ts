@@ -51,7 +51,12 @@ export function alreadyUnderCount(p: FloorPreview): number {
   return p.items.length - affectedItems(p).length;
 }
 
-/** Whether the check left something the editor has not been told: a gap in what it covered. */
+/**
+ * Whether the check left something the editor has not been told: a gap in what it covered.
+ * The per-branch no-cost list is deliberately NOT a gap: those products were graded wherever
+ * a cost exists, and a yard with no cost row would never be blocked by the gate, so it is
+ * said in the notes alone and never holds the save back.
+ */
 function hasGaps(p: FloorPreview): boolean {
   return p.notGraded > 0 || p.noCost > 0 || p.truncated;
 }
@@ -95,8 +100,10 @@ const TYPE_WORDS: Readonly<Record<string, string>> = {
 export function itemLine(i: FloorItem): string {
   const who = i.customerType === "" ? "" : ` for ${TYPE_WORDS[i.customerType] ?? i.customerType}`;
   // A branch-less change is graded at every branch and the worst kept: naming the yard tells
-  // the editor whose problem it is, and a change that named its branch already did.
-  const at = i.branchName === "" ? "" : ` at ${i.branchName}`;
+  // the editor whose problem it is, and a change that named its branch already did. The code
+  // keeps the line short; the full name rides in the item's tooltip.
+  const where = i.branchCode !== "" ? i.branchCode : i.branchName;
+  const at = where === "" ? "" : ` at ${where}`;
   return (
     `${i.sku}, ${i.name}: margin ${formatPct(i.marginBps)} against a floor of ${formatPct(i.floorBps)}${who}${at}, ` +
     `price ${formatMoney(i.finalCents)} per ${i.priceUom}${i.finalCents === i.previousFinalCents ? ", unchanged" : ` (was ${formatMoney(i.previousFinalCents)})`}`
@@ -106,12 +113,22 @@ export function itemLine(i: FloorItem): string {
 /** What the grading did not cover, said plainly and neutrally. */
 export function warningNotes(p: FloorPreview): string[] {
   const notes: string[] = [];
-  if (p.truncated) notes.push(`The check stopped at its limit after ${p.evaluated} products; the rest could not be checked.`);
+  if (p.truncated) {
+    // The dearest branches were graded first, so what the cap left out is at the cheap end.
+    const leftOut = p.notGradedBranches > 0 ? ` ${p.notGradedBranches === 1 ? "1 branch was" : `${p.notGradedBranches} branches were`} not graded.` : "";
+    notes.push(`The check stopped at its limit after ${p.evaluated} products; the rest could not be checked.${leftOut}`);
+  }
   if (p.notGraded > 0) {
     notes.push(p.notGraded === 1 ? "1 product could not be priced, so it could not be checked." : `${p.notGraded} products could not be priced, so they could not be checked.`);
   }
   if (p.noCost > 0) {
     notes.push(p.noCost === 1 ? "1 product has no cost on file, so its margin could not be told." : `${p.noCost} products have no cost on file, so their margin could not be told.`);
+  }
+  // A yard with no cost row of its own was skipped, not guessed at, and the products were
+  // graded where a cost exists: this is said for the editor, never made a stop.
+  for (const b of p.noCostBranches) {
+    const yard = b.branchName === "" ? b.branchId : b.branchName;
+    notes.push(b.products === 1 ? `No cost on file at ${yard} for 1 product, so that yard was not graded.` : `No cost on file at ${yard} for ${b.products} products, so that yard was not graded.`);
   }
   const already = alreadyUnderCount(p);
   if (already > 0) {

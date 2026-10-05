@@ -208,8 +208,8 @@ func TestFloorCandidates_TheSeamsReadThroughTheOwningServices(t *testing.T) {
 		if len(ids) != 2 {
 			t.Fatalf("the seed must hold two branches, got %d", len(ids))
 		}
-		kgn.id, kgn.name = ids[1], names[1] // code order TRT then KGN: Kingston is the dear yard
-		other.id = ids[0]
+		kgn.id, kgn.name = ids[0], names[0] // ORDER BY code puts KGN first, TRT second: Kingston is the dear yard
+		other.id = ids[1]
 		// List 2200 in the base unit, branch costs 1518 at the other yard and 1540 at Kingston
 		// (the plain average would be 1529), a 20 percent floor stored, and every stored price
 		// cleared except the one rule under test: RETAIL at 10 percent off, limited to Kingston.

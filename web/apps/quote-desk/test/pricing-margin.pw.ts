@@ -61,8 +61,10 @@ test("raising the floor shows the products it would put under it, and declining 
   await expect(page.getByTestId("floor-item")).toHaveCount(2);
   await expect(page.getByTestId("floor-item").first()).toContainText("HPV-80");
   // The change named no branch, so the check graded every yard: the worst item names the yard
-  // it happened at (Kingston runs the dearer pavers cost), never a yard-less figure.
-  await expect(page.getByTestId("floor-item").first()).toContainText("for Retail at Kingston");
+  // it happened at by its code, with the full name in the line's tooltip (Kingston runs the
+  // dearer pavers cost), never a yard-less figure.
+  await expect(page.getByTestId("floor-item").first()).toContainText("for Retail at KGN");
+  await expect(page.getByTestId("floor-item").first()).toHaveAttribute("title", "Kingston");
   await shot(dialog, "pricing-floor-warning");
   await page.getByTestId("floor-decline").click();
   await expect(dialog).toHaveCount(0);
@@ -85,7 +87,7 @@ test("a floor raised with no branch named still meets a rule limited to one bran
   await expect(page.getByTestId("floor-dialog")).toBeVisible();
   await expect(page.getByTestId("floor-item")).toHaveCount(1);
   await expect(page.getByTestId("floor-item").first()).toContainText("WALL-12");
-  await expect(page.getByTestId("floor-item").first()).toContainText("for Contractor at Trenton");
+  await expect(page.getByTestId("floor-item").first()).toContainText("for Contractor at TRT");
   await expect(page.getByTestId("floor-item").first()).toContainText("price CA$7.65 per ea, unchanged");
 });
 

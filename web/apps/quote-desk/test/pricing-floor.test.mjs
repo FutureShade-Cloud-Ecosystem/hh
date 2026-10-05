@@ -22,11 +22,13 @@ const CUST = "c0000000-0000-4000-9000-000000000001";
 const PROD = "a7000000-0000-4000-9000-000000000001";
 
 const item = (over = {}) => ({
-  productId: PROD, sku: "HPV-60", name: "Holland Stone 60 mm", customerType: "CONTRACTOR", branchId: "", branchName: "",
+  productId: PROD, sku: "HPV-60", name: "Holland Stone 60 mm", customerType: "CONTRACTOR", branchId: "", branchCode: "", branchName: "",
   finalCents: 300, marginBps: 800, floorBps: 2500, priceUom: "sf", previousFinalCents: 400, previousMarginBps: 3100,
   alreadyUnderFloor: false, ...over,
 });
-const preview = (items, over = {}) => ({ items, evaluated: 12, notGraded: 0, noCost: 0, truncated: false, ...over });
+const preview = (items, over = {}) => ({
+  items, evaluated: 12, notGraded: 0, noCost: 0, truncated: false, noCostBranches: [], notGradedBranches: 0, ...over,
+});
 
 const ruleWrite = { scope: "TIER_CATEGORY", customer_id: "", customer_type: "CONTRACTOR", category_id: CAT, product_id: "", branch_id: "", calc_type: "PCT_OFF_LIST", discount_bps: 4000, price_uom: "sf", priority: 1, detail_text: "", version: 0 };
 
@@ -113,7 +115,13 @@ test("a product's line gives the figures the server graded, in words", () => {
 
 test("a line names the branch the worst grading happened at when the server names one", () => {
   // A change that named no branch is graded at every branch, worst kept: the editor must see
-  // which yard breaches, or a breach at one yard reads like every yard's problem.
+  // which yard breaches, or a breach at one yard reads like every yard's problem. The code
+  // keeps the line short (the seeded names run long); the full name rides in the item's title.
+  assert.equal(
+    itemLine(item({ branchId: "b0000000-0000-4000-9000-000000000002", branchCode: "KGN", branchName: "Dibbits Landscape Supply, Kingston" })),
+    "HPV-60, Holland Stone 60 mm: margin 8.00% against a floor of 25.00% for Contractor at KGN, price CA$3.00 per sf (was CA$4.00)",
+  );
+  // No code from the server: the name still says the yard.
   assert.equal(
     itemLine(item({ branchId: "b0000000-0000-4000-9000-000000000002", branchName: "Kingston" })),
     "HPV-60, Holland Stone 60 mm: margin 8.00% against a floor of 25.00% for Contractor at Kingston, price CA$3.00 per sf (was CA$4.00)",
@@ -127,6 +135,12 @@ test("the notes say what the grading did not cover", () => {
   assert.deepEqual(warningNotes(preview([item()], { truncated: true, evaluated: 200 })), [
     "The check stopped at its limit after 200 products; the rest could not be checked.",
   ]);
+  assert.deepEqual(warningNotes(preview([item()], { truncated: true, evaluated: 40, notGradedBranches: 1 })), [
+    "The check stopped at its limit after 40 products; the rest could not be checked. 1 branch was not graded.",
+  ]);
+  assert.deepEqual(warningNotes(preview([item()], { truncated: true, evaluated: 2, notGradedBranches: 3 })), [
+    "The check stopped at its limit after 2 products; the rest could not be checked. 3 branches were not graded.",
+  ]);
   assert.deepEqual(warningNotes(preview([item()], { notGraded: 3 })), ["3 products could not be priced, so they could not be checked."]);
   assert.deepEqual(warningNotes(preview([item()], { notGraded: 1 })), ["1 product could not be priced, so it could not be checked."]);
   assert.deepEqual(warningNotes(preview([item()], { noCost: 2 })), ["2 products have no cost on file, so their margin could not be told."]);
@@ -134,6 +148,24 @@ test("the notes say what the grading did not cover", () => {
   assert.deepEqual(warningNotes(preview([item(), item({ productId: "p2", alreadyUnderFloor: true, finalCents: 400 })])), [
     "1 more product was already under its floor and is no worse.",
   ]);
+});
+
+// The reviewer's round 4 note: a branch-less check skips a yard with no cost row and grades
+// the branches that carry one; the notice says which yard and for how many products, without
+// ever holding the save back (needsConfirm stays closed by it).
+test("a branch with no cost on file is said with its name and count, and never holds the save back", () => {
+  const noCostAt = { branchId: "b0000000-0000-4000-9000-000000000002", branchCode: "KGN", branchName: "Kingston", products: 9 };
+  assert.deepEqual(warningNotes(preview([], { noCostBranches: [noCostAt] })), [
+    "No cost on file at Kingston for 9 products, so that yard was not graded.",
+  ]);
+  assert.deepEqual(warningNotes(preview([], { noCostBranches: [{ ...noCostAt, products: 1 }] })), [
+    "No cost on file at Kingston for 1 product, so that yard was not graded.",
+  ]);
+  // A yard the answer could not name falls back to its id.
+  assert.deepEqual(warningNotes(preview([], { noCostBranches: [{ ...noCostAt, branchName: "" }] })), [
+    `No cost on file at ${noCostAt.branchId} for 9 products, so that yard was not graded.`,
+  ]);
+  assert.equal(needsConfirm(preview([], { noCostBranches: [noCostAt] })), false, "the graded branches carry the check: this is said, not a stop");
 });
 
 test("the confirmation is logged against the record the save wrote, with the products shown", () => {

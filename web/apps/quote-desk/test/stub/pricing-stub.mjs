@@ -35,8 +35,8 @@ const CAT = {
 // be a real choice rather than the same yard every time.
 const KINGSTON_ID = "6f1c2b3a-0000-4000-8000-000000000002";
 const YARDS = [
-  { id: "6f1c2b3a-0000-4000-8000-000000000001", name: "Trenton" },
-  { id: KINGSTON_ID, name: "Kingston" },
+  { id: "6f1c2b3a-0000-4000-8000-000000000001", code: "TRT", name: "Trenton" },
+  { id: KINGSTON_ID, code: "KGN", name: "Kingston" },
 ];
 const KINGSTON_COST = new Map([
   ["a7000000-0000-4000-9000-000000000001", 300], // HPV-60: 276 at Trenton
@@ -251,13 +251,15 @@ function floorPreview(body) {
   const items = [];
   let evaluated = 0;
   const truncated = products.length > 200;
-  if (qtys.length === 0) return { items, evaluated: 0, not_graded: 0, no_cost: 0, truncated };
+  if (qtys.length === 0) return { items, evaluated: 0, not_graded: 0, no_cost: 0, no_cost_branches: [], not_graded_branches: 0, truncated };
   // A change that names a branch (the request's own or the rule's) is graded at that branch
   // alone, its id in each item and no name; one that names none is graded at every yard, each
   // at its own cost with its own branch-limited rules, and the worst item names its yard (the
   // core's round 3 fix, mirrored).
   const namedBranch = body.branch_id ?? (body.kind === "rule" ? body.rule?.branch_id ?? "" : "");
-  const sites = namedBranch === "" ? YARDS.map((yard) => ({ yard, branch_id: yard.id, branch_name: yard.name })) : [{ yard: null, branch_id: namedBranch, branch_name: "" }];
+  const sites = namedBranch === ""
+    ? YARDS.map((yard) => ({ yard, branch_id: yard.id, branch_code: yard.code, branch_name: yard.name }))
+    : [{ yard: null, branch_id: namedBranch, branch_code: "", branch_name: "" }];
   for (const product of products.slice(0, 200)) {
     evaluated += 1;
     let worst = null;
@@ -271,7 +273,7 @@ function floorPreview(body) {
           const item = {
             product_id: product.id, sku: product.sku, name: product.name, category_id: product.category,
             ...(ctx.customerType === "" ? {} : { customer_type: ctx.customerType }),
-            branch_id: site.branch_id, ...(site.branch_name === "" ? {} : { branch_name: site.branch_name }),
+            branch_id: site.branch_id, ...(site.branch_name === "" ? {} : { branch_code: site.branch_code, branch_name: site.branch_name }),
             final_cents: a.price, margin_bps: a.margin, floor_bps: a.floor, price_uom: product.uom.toLowerCase(), source: a.source,
             previous_final_cents: b.price, previous_margin_bps: b.margin, already_under_floor: b.blocked,
           };
@@ -290,7 +292,9 @@ function floorPreview(body) {
     if (worst !== null) items.push(worst);
   }
   items.sort((x, y) => x.margin_bps - y.margin_bps);
-  return { items, evaluated, not_graded: 0, no_cost: 0, truncated };
+  // Every stub product carries a cost at both yards, so no yard is ever left ungraded for
+  // want of one; the two round 4 fields ride along empty, as the core answers them.
+  return { items, evaluated, not_graded: 0, no_cost: 0, no_cost_branches: [], not_graded_branches: 0, truncated };
 }
 
 // ── the pricing log ─────────────────────────────────────────────────────────

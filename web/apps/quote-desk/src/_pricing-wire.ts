@@ -352,6 +352,8 @@ export interface FloorItem {
   customerType: string;
   /** The branch the worst grading happened at; "" when the answer named none. */
   branchId: string;
+  /** That branch's code, when the answer named it: the warning line stays short, the name rides in the tooltip. */
+  branchCode: string;
   /** That branch's name, when the answer named it (a branch-less preview names the yard). */
   branchName: string;
   finalCents: number;
@@ -363,6 +365,14 @@ export interface FloorItem {
   alreadyUnderFloor: boolean;
 }
 
+/** One yard the check graded products at with no cost row there; informational, never a stop. */
+export interface FloorNoCostBranch {
+  branchId: string;
+  branchCode: string;
+  branchName: string;
+  products: number;
+}
+
 export interface FloorPreview {
   items: FloorItem[];
   evaluated: number;
@@ -371,6 +381,10 @@ export interface FloorPreview {
   /** Products with no cost on file, whose margin cannot be told. */
   noCost: number;
   truncated: boolean;
+  /** Yards a branch-less check found no cost on file at, with the product count; absent when none. */
+  noCostBranches: FloorNoCostBranch[];
+  /** Branch gradings the work cap left out after the dearest branches were graded first; absent when none. */
+  notGradedBranches: number;
 }
 
 function readFloorItem(value: unknown): FloorItem | null {
@@ -397,6 +411,7 @@ function readFloorItem(value: unknown): FloorItem | null {
     name,
     customerType: optStr(value, "customer_type") ?? "",
     branchId: optStr(value, "branch_id") ?? "",
+    branchCode: optStr(value, "branch_code") ?? "",
     branchName: optStr(value, "branch_name") ?? "",
     finalCents,
     marginBps,
@@ -408,18 +423,48 @@ function readFloorItem(value: unknown): FloorItem | null {
   };
 }
 
+function readNoCostBranch(value: unknown): FloorNoCostBranch | null {
+  if (!isRecord(value)) return null;
+  const branchId = str(value, "branch_id");
+  const products = int(value, "products");
+  if (branchId === null || products === null) return null;
+  return { branchId, branchCode: optStr(value, "branch_code") ?? "", branchName: optStr(value, "branch_name") ?? "", products };
+}
+
+function readNoCostBranches(value: unknown): FloorNoCostBranch[] | null {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) return null;
+  const out: FloorNoCostBranch[] = [];
+  for (const raw of value) {
+    const row = readNoCostBranch(raw);
+    if (row === null) return null;
+    out.push(row);
+  }
+  return out;
+}
+
+/** An optional integer: absent reads as 0; present but not an integer refuses the row. */
+function readOptionalInt(value: unknown): number | null {
+  if (value === undefined) return 0;
+  return typeof value === "number" && Number.isInteger(value) ? value : null;
+}
+
 export function readFloorPreview(value: unknown): FloorPreview | null {
   if (!isRecord(value) || !Array.isArray(value["items"])) return null;
   const evaluated = int(value, "evaluated");
   const notGraded = int(value, "not_graded");
   const noCost = int(value, "no_cost");
   const truncated = bool(value, "truncated");
-  if (evaluated === null || notGraded === null || noCost === null || truncated === null) return null;
+  const noCostBranches = readNoCostBranches(value["no_cost_branches"]);
+  const notGradedBranches = readOptionalInt(value["not_graded_branches"]);
+  if (evaluated === null || notGraded === null || noCost === null || truncated === null || noCostBranches === null || notGradedBranches === null) {
+    return null;
+  }
   const items: FloorItem[] = [];
   for (const raw of value["items"]) {
     const item = readFloorItem(raw);
     if (item === null) return null;
     items.push(item);
   }
-  return { items, evaluated, notGraded, noCost, truncated };
+  return { items, evaluated, notGraded, noCost, truncated, noCostBranches, notGradedBranches };
 }

@@ -61,15 +61,36 @@ test("a fixed price is offered on a customer and product rule alone, and leaving
 // The reviewer's round 3 case: on a create, a branch picked under the tier and category scope
 // must not ride along when the scope switches to one whose editor cannot hold it. It showed
 // read only with no way to clear it, and the save silently limited the new rule to that yard.
-test("a branch picked on create does not carry across a scope switch, while an edit's own branch stays", () => {
+test("a branch picked on create does not carry across a scope switch, while an edit's stored branch stays", () => {
   const YARD = "6f1c2b3a-0000-4000-8000-000000000002";
   const picked = { ...emptyRuleForm(), scope: "TIER_CATEGORY", branchId: YARD, valuePct: "10" };
   assert.equal(setRuleScope(picked, "TIER_CATEGORY").branchId, YARD, "staying on the scope that holds it keeps the pick");
   const switched = setRuleScope(picked, "TIER_DEFAULT");
   assert.equal(switched.branchId, "");
   assert.equal(ruleSave(switched).value.write.branch_id, "", "the save sends no branch the editor cannot see or clear");
-  const edit = setRuleScope({ ...picked, id: "r9", version: 2 }, "TIER_DEFAULT");
-  assert.equal(edit.branchId, YARD, "an edit of a rule that already carries a branch keeps it (round 2 P2-C)");
+  const stored = setRuleScope({ ...picked, id: "r9", version: 2, storedBranchId: YARD }, "TIER_DEFAULT");
+  assert.equal(stored.branchId, YARD, "an edit of a rule that already carries a branch keeps it (round 2 P2-C)");
+});
+
+// The reviewer's round 4 case: the round 3 drop only reached creates. An edit that picked a
+// yard under the tier and category scope still carried the fresh pick across a switch to a
+// scope whose editor cannot hold or clear it, and the save silently limited the rule to that
+// yard. The fresh pick must fall back to the branch the stored rule came in with.
+test("an edit's fresh branch pick does not carry across a scope switch either: the stored branch is kept", () => {
+  const STORED = "6f1c2b3a-0000-4000-8000-000000000001";
+  const FRESH = "6f1c2b3a-0000-4000-8000-000000000002";
+  const base = { ...emptyRuleForm(), id: "r9", version: 2, scope: "TIER_CATEGORY", valuePct: "10" };
+  // A stored rule with no branch: the reviewer's own walk (edit, switch, pick, switch back).
+  const rePicked = setRuleScope({ ...base, storedBranchId: "", branchId: FRESH }, "TIER_DEFAULT");
+  assert.equal(rePicked.branchId, "", "the fresh pick is dropped and the stored rule had no branch to keep");
+  assert.equal(ruleSave(rePicked).value.write.branch_id, "", "the save sends no branch the editor cannot see or clear");
+  // A stored rule with a branch of its own: the pick falls back to it, a clear stays cleared.
+  const swapped = setRuleScope({ ...base, storedBranchId: STORED, branchId: FRESH }, "TIER_DEFAULT");
+  assert.equal(swapped.branchId, STORED, "the fresh pick falls back to the stored branch");
+  assert.equal(ruleSave(swapped).value.write.branch_id, STORED);
+  const cleared = setRuleScope({ ...base, storedBranchId: STORED, branchId: "" }, "TIER_DEFAULT");
+  assert.equal(cleared.branchId, "", "an explicit clear stays cleared");
+  assert.equal(setRuleScope({ ...base, storedBranchId: STORED, branchId: FRESH }, "TIER_CATEGORY").branchId, FRESH, "staying on the scope that holds it keeps the pick");
 });
 
 test("a tier rule sends every scope dimension, the unused ones cleared", () => {
