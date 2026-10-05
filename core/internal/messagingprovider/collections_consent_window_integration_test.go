@@ -4,7 +4,7 @@
 // sweep. The window is the interval between the sweep's consent read and the queue: the sweep reads
 // consent and the greeting name BEFORE it opens the transaction that claims the ledger slot and
 // enqueues the notice, so a STOP, an opt-out, or a phone number change that commits inside that
-// interval is invisible to the send decision. The decision must come from a re-read taken at queue
+// interval is invisible to the sweep's own decision (the consumer separately re-consents at delivery). The decision must come from a re-read taken at queue
 // time, inside the claim transaction, through that transaction.
 //
 // The window is forced, not left to goroutine timing: the ContactSource's name read is the hook.

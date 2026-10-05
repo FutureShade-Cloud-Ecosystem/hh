@@ -141,8 +141,8 @@ func (r *ConsentResolver) CustomerRecipient(ctx context.Context, customerID stri
 // through that transaction with RefreshOn, and the refreshed read answers the same two questions
 // MaySendAt and CustomerRecipient answer.
 //
-// A read error is carried, not returned, so it surfaces only at the point the answer is used, exactly
-// where the unhoisted call would have failed.
+// A read error is carried, not returned, so it surfaces only at the point the answer is used, where a
+// direct read would have failed.
 type ConsentRead struct {
 	r          *ConsentResolver
 	customerID string
@@ -190,7 +190,9 @@ func (c ConsentRead) RefreshOn(ctx context.Context, tx pgx.Tx) ConsentRead {
 		fresh.err = err
 		return fresh
 	}
-	fresh.prefs, fresh.found = prefs, found
+	// A successful re-read supersedes the snapshot completely, its carried error included: the fresh
+	// row is what decides.
+	fresh.prefs, fresh.found, fresh.err = prefs, found, nil
 	return fresh
 }
 
