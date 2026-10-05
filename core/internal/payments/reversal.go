@@ -218,13 +218,17 @@ INSERT INTO payments (payment_no, customer_id, method, amount_cents, status, bra
 	// return's account credit, an NSF bounce). Take every allocated invoice row explicitly, in
 	// ascending id order (the one money lock order, steps 3 then 4), before the first counter draw.
 	// This sits after the payments counter statements above, so the order is steps 2, 3, 4.
+	// The rows are taken FOR NO KEY UPDATE for the same reason the settle's are: the reversal writes
+	// no key column, and a FOR UPDATE would conflict with the FOR KEY SHARE a POS return's
+	// pos_returns foreign key check holds on the returned sale's invoice while the return waits on
+	// this transaction's payments counter, closing the same cycle the settle's lock once did.
 	lockIDs := make([]string, 0, len(allocs))
 	for _, a := range allocs {
 		lockIDs = append(lockIDs, a.invoiceID)
 	}
 	slices.Sort(lockIDs)
 	for _, id := range lockIDs {
-		if _, err := tx.Exec(ctx, `SELECT 1 FROM invoices WHERE id = $1::uuid FOR UPDATE`, id); err != nil {
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM invoices WHERE id = $1::uuid FOR NO KEY UPDATE`, id); err != nil {
 			return Reversal{}, fmt.Errorf("reverse: lock invoice %s: %w", id, err)
 		}
 	}

@@ -328,3 +328,96 @@ func TestIntegration_LockOrder_POSReturnBesideSettle(t *testing.T) {
 		})
 	}
 }
+
+// loposInvoice plants one FINALIZED invoice for the customer: the multi-invoice reversal leg needs
+// a second allocated invoice beside the sale's.
+func loposInvoice(t *testing.T, pool *pgxpool.Pool, cust, branchID string, cents int64) string {
+	t.Helper()
+	var id string
+	if err := pool.QueryRow(context.Background(),
+		`INSERT INTO invoices (invoice_no, customer_id, branch_id, status, due_date,
+		                       subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at)
+		 VALUES ('LOP-'||$1, $2::uuid, $3::uuid, 'FINALIZED', CURRENT_DATE + 30, $4, 0, $4, $4, now())
+		 RETURNING id::text`, fmt.Sprintf("%d", time.Now().UnixNano()%1_000_000_000), cust, branchID, cents).Scan(&id); err != nil {
+		t.Fatalf("plant invoice: %v", err)
+	}
+	return id
+}
+
+// TestIntegration_LockOrder_MultiInvoiceReversalBesidePOSReturn: the multi-invoice reversal against
+// a REAL POS cash return on the sale's invoice. The return holds the invoice key share (its
+// pos_returns foreign key) and then draws the payments counter for its refund rail; the reversal
+// draws the payments counter first (its reversing insert) and then takes every allocated invoice
+// row. Row locks at FOR UPDATE conflict with the key share, so the pair closes a cycle: the
+// reversal holds the counter and waits on the share, the return holds the share and waits on the
+// counter, and one side is aborted. At FOR NO KEY UPDATE the reversal's row locks no longer
+// conflict with the share: the reversal passes the parked return, commits, and the return's refund
+// rail takes the counter after it.
+func TestIntegration_LockOrder_MultiInvoiceReversalBesidePOSReturn(t *testing.T) {
+	for _, size := range []int32{4, 16} {
+		t.Run(fmt.Sprintf("pool %d", size), func(t *testing.T) {
+			pool, obs := loposPools(t, size)
+			key := wiringRailDB(t, pool, map[string]string{"api_key": "lockorder-pos-not-a-secret"})
+			w := plantWiringCounter(t, pool)
+			cust := loposCustomer(t, pool, w.branchID)
+			_, mux, sg := wireFold(t, pool, key, w.branchID)
+			orderID := loposRingSale(t, mux, sg, w, cust, "CASH")
+			inv := loposSaleInvoice(t, pool, orderID)
+			other := loposInvoice(t, pool, cust, w.branchID, 1_000_000)
+			p, err := payments.NewRepository(pool).Pay(context.Background(), cust, "CARD",
+				fmt.Sprintf("gw-lopos-%d", time.Now().UnixNano()),
+				[]payments.Allocation{{InvoiceID: inv, AmountCents: 500}, {InvoiceID: other, AmountCents: 500}})
+			if err != nil {
+				t.Fatalf("seed multi-invoice payment: %v", err)
+			}
+			var lineID string
+			var qty float64
+			if err := pool.QueryRow(context.Background(),
+				`SELECT id::text, qty_base FROM order_lines WHERE order_id = $1::uuid ORDER BY line_no LIMIT 1`,
+				orderID).Scan(&lineID, &qty); err != nil {
+				t.Fatalf("read the sale's line: %v", err)
+			}
+			loposArmReturnWindow(t, obs)
+			retDone := make(chan int, 1)
+			retBody := make(chan string, 1)
+			retKey := uuidKey(t)
+			go func() {
+				rec := loposPost(t, mux, sg, "/api/v1/pos/returns", map[string]any{
+					"idempotency_key": retKey,
+					"order_id":        orderID,
+					"refund_method":   "CASH",
+					"restock":         false,
+					"till_session_id": w.sessionID,
+					"lines":           []map[string]any{{"order_line_id": lineID, "qty_base": qty}},
+				})
+				retBody <- rec.Body.String()
+				retDone <- rec.Code
+			}()
+			loposWait(t, obs, "return parked holding the invoice key share", 1, loposParkedInReturn())
+			revErr := make(chan error, 1)
+			go func() {
+				_, err := payments.NewRepository(pool).ReversePayment(context.Background(), payments.ReverseInput{
+					PaymentID: p.ID, Reason: "lock order leg", ActorID: w.userID, IsManager: true}, time.Now())
+				revErr <- err
+			}()
+			// After the fix the reversal does not wait on the return's share at all, so there is no
+			// queued session to observe in the green world: the reversal's answer channel is the
+			// barrier. The return is already parked and holds the share either way.
+			var code int
+			select {
+			case code = <-retDone:
+			case <-time.After(60 * time.Second):
+				t.Fatal("return never answered")
+			}
+			rerr := loposAnswer(t, "reversal", revErr)
+			var returns int
+			_ = obs.QueryRow(context.Background(),
+				`SELECT count(*) FROM pos_returns WHERE order_id = $1::uuid`, orderID).Scan(&returns)
+			t.Logf("return: %d %s | reversal: %v | pos_returns rows committed: %d",
+				code, <-retBody, rerr, returns)
+			if code != http.StatusCreated || rerr != nil {
+				t.Fatalf("NOT BOTH ANSWERED: return %d, reversal %v", code, rerr)
+			}
+		})
+	}
+}

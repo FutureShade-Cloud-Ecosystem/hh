@@ -89,6 +89,7 @@ func newLORig(t *testing.T, size int32) *loRig {
 	t.Cleanup(func() {
 		c := context.Background()
 		_, _ = r.obs.Exec(c, `DROP TRIGGER IF EXISTS lo_slow_seq ON scope_sequences`)
+		_, _ = r.obs.Exec(c, `DROP TRIGGER IF EXISTS lo_slow_seq_before ON scope_sequences`)
 		_, _ = r.obs.Exec(c, `DROP TRIGGER IF EXISTS lo_slow_alloc ON payment_allocations`)
 		_, _ = r.obs.Exec(c, `DROP TRIGGER IF EXISTS lo_slow_sub ON customer_transactions`)
 		_, _ = r.obs.Exec(c, `DROP TABLE IF EXISTS lo_flag`)
@@ -206,9 +207,13 @@ const (
 	condLockWaiter      = `wait_event_type = 'Lock'`
 )
 
-// armSeqWindow parks the NEXT writer to touch the named counter row in pg_sleep, once, AFTER it has taken the row. The trigger consumes a one-shot flag, so every later touch runs
-// at full speed. This is the widened window: the first writer holds its counter row long enough for the
-// test to see the second writer queue behind it.
+// armSeqWindow parks the NEXT writer to touch the named counter row in pg_sleep, once, AFTER the
+// row has been written. The trigger consumes a one-shot flag, so every later touch runs at full
+// speed. This is the widened window: the first writer holds its counter row long enough for the
+// test to see the second writer queue behind it. The park sits mid-statement for a CTE writer (the
+// trigger fires once the counter row is updated, before the statement's remaining parts run), but
+// every row the writer locked in an EARLIER statement is already held at the park, so a leg that
+// needs the counter held WITHOUT those rows parks with armSeqBeforeWindow instead.
 func (r *loRig) armSeqWindow(scope string) {
 	r.t.Helper()
 	ctx := context.Background()
@@ -287,6 +292,38 @@ func (r *loRig) seqValue(scope string) int64 {
 		r.t.Fatalf("read %s counter: %v", scope, err)
 	}
 	return v
+}
+
+// armSeqBeforeWindow parks the NEXT writer to hit the named counter row INSIDE its upsert, once: a
+// BEFORE UPDATE trigger runs after ON CONFLICT has locked the conflicting row and before the row is
+// written, so the writer sleeps holding the counter row and nothing its statement takes later. A
+// writer whose row locks live in EARLIER statements (the reversal's and MarkNSF's explicit invoice
+// locks) is parked already holding them under armSeqWindow; this is the one window that shows a
+// writer the way the main branch really ran some of them, drawing the counter with no row held.
+func (r *loRig) armSeqBeforeWindow(scope string) {
+	r.t.Helper()
+	ctx := context.Background()
+	for _, q := range []string{
+		`CREATE TABLE IF NOT EXISTS lo_flag (id int PRIMARY KEY)`,
+		`CREATE OR REPLACE FUNCTION lo_slow_seq_before() RETURNS trigger LANGUAGE plpgsql AS $f$
+		 BEGIN
+		   IF NEW.scope = TG_ARGV[0] THEN
+		     DELETE FROM lo_flag WHERE id = 4;
+		     IF FOUND THEN PERFORM pg_sleep(3); END IF;
+		   END IF;
+		   RETURN NEW;
+		 END $f$`,
+		`DROP TRIGGER IF EXISTS lo_slow_seq_before ON scope_sequences`,
+		fmt.Sprintf(`CREATE TRIGGER lo_slow_seq_before BEFORE UPDATE ON scope_sequences FOR EACH ROW EXECUTE FUNCTION lo_slow_seq_before('%s')`, scope),
+		`INSERT INTO lo_flag VALUES (4) ON CONFLICT DO NOTHING`,
+	} {
+		if _, err := r.obs.Exec(ctx, q); err != nil {
+			r.t.Fatalf("arm before window: %v", err)
+		}
+	}
+	r.t.Cleanup(func() {
+		_, _ = r.obs.Exec(context.Background(), `DROP TRIGGER IF EXISTS lo_slow_seq_before ON scope_sequences`)
+	})
 }
 
 // answer waits for one writer's result, bounded.
@@ -522,22 +559,38 @@ func TestIntegration_LockOrder_LockDoesNotAdvanceTheFeed(t *testing.T) {
 
 // - leg 6: the pairs read for order that could take rows in opposite orders -
 
-// ReversePayment against the POS return's account credit. The credit locks the invoice row and then
-// the invoices counter row, never the payments row. A reversal that took the invoices counter row
-// before the invoice row (its UPDATE ... WITH iseq does, the counter first) meets it head on.
-func TestIntegration_LockOrder_ReversePaymentBesidePOSAccountCredit(t *testing.T) {
+// The multi-invoice reversal against the POS return's account credit on its second invoice, parked
+// with a BEFORE UPDATE trigger: the reversal sleeps inside the invoices counter upsert of its first
+// re-open, holding the counter row and nothing its statement takes later. A reversal that rested on
+// the contra allocation's incidental foreign key share lock (the main shape, no explicit row locks)
+// reached that window with no invoice row held at all, and the credit, holding the second invoice
+// FOR UPDATE while it waited on the counter, met the reversal's next key share head on: the probe
+// on that shape aborted the reversal at the contra allocation insert. The explicit row locks in
+// ascending id order, taken before the first counter draw, close the window: the parked reversal
+// already holds every allocated row, the credit queues, and both answer.
+func TestIntegration_LockOrder_MultiInvoiceReversalBesidePOSAccountCreditBeforeWindow(t *testing.T) {
 	loPoolSizes(t, func(t *testing.T, size int32) {
 		r := newLORig(t, size)
-		inv := r.invoice("C", 1_000_000)
-		p := r.payOnce(inv, 10_000)
-		r.armSeqWindow("invoices")
+		one := r.invoice("W1", 1_000_000)
+		two := r.invoice("W2", 1_000_000)
+		p, err := r.repo.Pay(context.Background(), r.custID, "CARD", fmt.Sprintf("gw-lo-%d", time.Now().UnixNano()),
+			[]payments.Allocation{{InvoiceID: one, AmountCents: 10_000}, {InvoiceID: two, AmountCents: 10_000}})
+		if err != nil {
+			t.Fatalf("seed payment: %v", err)
+		}
+		r.armSeqBeforeWindow("invoices")
 		revErr := make(chan error, 1)
 		go func() {
 			_, err := r.repo.ReversePayment(context.Background(), payments.ReverseInput{
 				PaymentID: p.ID, Reason: "lock order leg", ActorID: r.userID, IsManager: true}, time.Now())
 			revErr <- err
 		}()
-		r.waitSessions("reversal parked holding the invoices counter row", 1, condSleepingInSeq)
+		r.waitSessions("reversal parked inside the invoices counter upsert of its first re-open", 1, condSleepingInSeq)
+		// The credit goes on the invoice the reversal's loop has not reached, the second one.
+		second := two
+		if one > two {
+			second = one
+		}
 		credErr := make(chan error, 1)
 		go func() {
 			ctx := context.Background()
@@ -547,7 +600,7 @@ func TestIntegration_LockOrder_ReversePaymentBesidePOSAccountCredit(t *testing.T
 				return
 			}
 			defer func() { _ = tx.Rollback(ctx) }()
-			if _, err := pos.NewRepository(r.pool).ApplyCreditToInvoice(ctx, tx, inv, 300); err != nil {
+			if _, err := pos.NewRepository(r.pool).ApplyCreditToInvoice(ctx, tx, second, 300); err != nil {
 				credErr <- err
 				return
 			}
@@ -587,13 +640,13 @@ func TestIntegration_LockOrder_NSFBesideSettle(t *testing.T) {
 	}
 }
 
-// The multi-invoice reversal against the POS return's account credit. The single-invoice pair above
-// is green because the reversal's contra allocation takes a foreign key share lock on the invoice
-// row before the counter is drawn; that share lock covers only the invoice the reversal has already
-// reached. On its second invoice the reversal holds the invoices counter row with no lock on the
-// row, and a credit that holds that row FOR UPDATE while it waits on the counter meets it head on.
-// The explicit row locks in ascending id order, all taken before the first counter draw, close the
-// window.
+// The multi-invoice reversal against the POS return's account credit, parked past its first
+// re-open (inside the contra subledger insert of the loop's first invoice). On the main shape the
+// reversal reached that window holding the invoices counter with no lock on its second invoice: the
+// contra allocation's foreign key share lock covered only the invoice the loop had already reached,
+// and a credit holding that row FOR UPDATE while it waited on the counter met the reversal's next
+// share lock head on. The explicit row locks in ascending id order, all taken before the first
+// counter draw, close the window: the parked reversal already holds every allocated row.
 func TestIntegration_LockOrder_MultiInvoiceReversePaymentBesidePOSAccountCredit(t *testing.T) {
 	loPoolSizes(t, func(t *testing.T, size int32) {
 		r := newLORig(t, size)
