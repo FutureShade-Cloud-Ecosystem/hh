@@ -1397,6 +1397,13 @@
     "test": "holds the attempt instead of looping"
   },
   {
+    "id": "op-over-balance",
+    "file": "src/order-payment-panel.ts",
+    "find": "      const balance = this.paymentBalance;\n      if (balance !== null && cents > balance) {\n        this.error = `The payment is more than the balance of ${moneyWord(balance)}`;\n        this.unknown = \"\";\n        return;\n      }\n",
+    "replace": "",
+    "test": "refused before anything is sent"
+  },
+  {
     "id": "ws-serialize",
     "file": "src/workspace-store.ts",
     "find": "    this.#queued = send;\n    if (this.#inFlight !== null) return this.#inFlight;\n",

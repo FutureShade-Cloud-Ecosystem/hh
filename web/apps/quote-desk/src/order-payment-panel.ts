@@ -49,14 +49,16 @@ import { customElement, property, state } from "lit/decorators.js";
 import { PanelBase } from "./panel-base.js";
 import { panelStyles } from "./panel-styles.js";
 import { moneyWord, quoteErrorMessage } from "./_quote-edit.js";
-import { docStatusWord, kindLabel, type RelatedDoc } from "./_related-docs.js";
+import type { RelatedDoc } from "./_related-docs.js";
 import {
   AttemptBook,
   TENDER_METHODS,
   convertedNote,
+  figuresLine,
   isDifferentPaymentRefusal,
   isUnknownOutcome,
   paymentRefusalWords,
+  paymentTargetBalance,
   receiptRows,
   replayedNote,
   typedCents,
@@ -353,6 +355,22 @@ export class QdOrderPayment extends PanelBase {
     return rows.length === 1 ? rows[0].id : "";
   }
 
+  /**
+   * The balance a payment on the quote now open is bounded by, as the family read and the last
+   * receipt carry it (paymentTargetBalance holds the rule). The reads that carry a balance
+   * figure per invoice are the money desk's register doors, not this desk's, so this is derived
+   * from what the family read carries and never by arithmetic over payments this side summed.
+   */
+  private get paymentBalance(): number | null {
+    const rows = this.orderRows;
+    const invoices = this.invoiceRows;
+    if (invoices.length > 1) return null;
+    const invoice = invoices.length === 1 ? invoices[0] : null;
+    if (rows.length > 1) return null;
+    const agreed = rows.length === 1 ? rows[0] : (this.family.find((row) => row.kind === "QUOTE") ?? null);
+    return paymentTargetBalance(agreed, invoice, this.receipt);
+  }
+
   private async take(): Promise<void> {
     const client = this.client;
     if (client === null || this.busy) return;
@@ -377,6 +395,14 @@ export class QdOrderPayment extends PanelBase {
         return;
       }
       cents = parsed;
+      // The desk's own bound, in the desk's own money word, before anything is sent: the server
+      // still judges every amount, and its own refusal is shown in its own words.
+      const balance = this.paymentBalance;
+      if (balance !== null && cents > balance) {
+        this.error = `The payment is more than the balance of ${moneyWord(balance)}`;
+        this.unknown = "";
+        return;
+      }
       const opened = this.book.open(ctx.id, {
         amountRaw: this.amountRaw,
         amountCents: cents,
@@ -534,25 +560,13 @@ export class QdOrderPayment extends PanelBase {
 
   // ── render ────────────────────────────────────────────────────────────────
 
-  /** The server's own figures for what this payment lands on: the quote's agreed total before any order exists, then the order row, the invoice row, never a computed figure. */
+  /** The server's own figures for what this payment lands on: the quote's agreed total before any order exists, then the order row and the invoice row, with the balance the reads carry (figuresLine holds the wording; no figure is computed here). */
   private renderFigures(): TemplateResult | typeof nothing {
     const rows = this.orderRows;
-    if (rows.length === 0) {
-      // Before any order exists (an accepted quote), the one figure the server holds is the quote's own agreed total.
-      const self = this.family.find((row) => row.kind === "QUOTE");
-      if (self === undefined) return nothing;
-      return html`<p class="figures" data-testid="op-figures">
-        ${kindLabel(self.kind)} ${self.number} is ${docStatusWord(self.kind, self.status)} at ${moneyWord(self.totalCents)}, the agreed total
-      </p>`;
-    }
-    const order = rows[0];
-    const invoices = this.invoiceRows;
-    const parts = [
-      `${kindLabel(order.kind)} ${order.number} is ${docStatusWord(order.kind, order.status)} at ${moneyWord(order.totalCents)}`,
-      ...invoices.map((inv) => `${kindLabel(inv.kind)} ${inv.number} is ${docStatusWord(inv.kind, inv.status)} at ${moneyWord(inv.totalCents)}`),
-    ];
-    if (rows.length > 1) parts.push(`the server holds ${rows.length} orders for this quote and will say which one to pay`);
-    return html`<p class="figures" data-testid="op-figures">${parts.join(" · ")}</p>`;
+    const quote = this.family.find((row) => row.kind === "QUOTE") ?? null;
+    const line = figuresLine(quote, rows.length === 1 ? rows[0] : null, this.invoiceRows, this.paymentBalance, rows.length);
+    if (line === "") return nothing;
+    return html`<p class="figures" data-testid="op-figures">${line}</p>`;
   }
 
   private renderReceipt(): TemplateResult | typeof nothing {

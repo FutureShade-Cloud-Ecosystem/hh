@@ -24,6 +24,7 @@
 // It holds no rule about who may pay, what a cash customer owes or what a
 // balance is: those are the server's, and the panel shows the server's words.
 import { parseAmountCents } from "@hardscapehouse/pos-kit/src/ported/ports.js";
+import { docStatusWord, kindLabel, type RelatedDoc } from "./_related-docs.js";
 import { moneyWord, quoteErrorMessage } from "./_quote-edit.js";
 import { spokenRefusal } from "./_quote-workarea.js";
 
@@ -193,6 +194,53 @@ export class AttemptBook {
  */
 export function isDifferentPaymentRefusal(error: string): boolean {
   return error.includes("took a different payment");
+}
+
+// ── the balance a payment here is bounded by ────────────────────────────────
+
+/**
+ * The balance a payment on this quote is bounded by, as the reads carry it. Never a figure this
+ * side computes: every arm is a figure the server sent.
+ *
+ * - No invoice yet: the door raises the agreed invoice, whose opening balance IS the agreed
+ *   total the order row (or, before any order, the quote row) carries.
+ * - A FINALIZED (Open) invoice: nothing has been applied, so the balance is its total.
+ * - A PAID invoice: the balance is zero.
+ * - A PARTIALLY_PAID invoice: the balance is the live figure the receipt of this session's
+ *   payment answered, when that receipt is for this invoice. Without it, null: the family read
+ *   carries the part-paid state but not the figure, and a guessed balance is a confident wrong
+ *   number. Anything else (a draft, a void, more than one invoice or order) is null too.
+ */
+export function paymentTargetBalance(
+  agreed: { totalCents: number } | null,
+  invoice: RelatedDoc | null,
+  receipt: { invoiceId: string; balanceCents: number } | null,
+): number | null {
+  if (invoice === null) return agreed === null ? null : agreed.totalCents;
+  if (invoice.status === "PAID") return 0;
+  if (invoice.status === "FINALIZED") return invoice.totalCents;
+  if (invoice.status === "PARTIALLY_PAID" && receipt !== null && receipt.invoiceId === invoice.id) return receipt.balanceCents;
+  return null;
+}
+
+/**
+ * The figures line under the form: the server's own documents in its own words, and the balance
+ * a payment here is bounded by when the reads carry it (the family read carries the documents
+ * and their totals; the balance comes from paymentTargetBalance, never from arithmetic here).
+ */
+export function figuresLine(quote: RelatedDoc | null, order: RelatedDoc | null, invoices: RelatedDoc[], balanceCents: number | null, orderCount: number): string {
+  if (order === null) {
+    if (quote === null) return "";
+    const parts = [`${kindLabel(quote.kind)} ${quote.number} is ${docStatusWord(quote.kind, quote.status)} at ${moneyWord(quote.totalCents)}, the agreed total`];
+    if (balanceCents !== null) parts.push(`balance ${moneyWord(balanceCents)}`);
+    return parts.join(" · ");
+  }
+  const parts = [`${kindLabel(order.kind)} ${order.number} is ${docStatusWord(order.kind, order.status)} at ${moneyWord(order.totalCents)}`];
+  for (const inv of invoices) parts.push(`${kindLabel(inv.kind)} ${inv.number} is ${docStatusWord(inv.kind, inv.status)} at ${moneyWord(inv.totalCents)}`);
+  if (orderCount > 1) parts.push(`the server holds ${orderCount} orders for this quote and will say which one to pay`);
+  else if (balanceCents !== null) parts.push(`balance ${moneyWord(balanceCents)}`);
+  else if (invoices.length > 0) parts.push("the balance it still owes is not carried by this read, the server holds it");
+  return parts.join(" · ");
 }
 
 // ── the receipt ─────────────────────────────────────────────────────────────

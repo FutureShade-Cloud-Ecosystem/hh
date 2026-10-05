@@ -155,15 +155,50 @@ test("an unknown outcome with no answer at all keeps the key, and the retry post
 test("a refusal keeps the key, so the corrected retry is the same attempt", async ({ page }) => {
   await signIn(page);
   await openWithPayment(page, "Q-2101");
+  await take(page, "10.00");
+  await expect(pay(page).getByTestId("op-receipt")).toBeVisible();
+  // Reload: the desk no longer holds the receipt that answered the balance, and the family read
+  // carries the part-paid state but not the figure, so the balance is the server's to name.
+  await page.reload();
+  await signIn(page);
+  await openWithPayment(page, "Q-2101");
+  await expect(pay(page).getByTestId("op-figures")).toContainText("not carried by this read");
   // Over the balance: the server's 400 in its own words.
   await take(page, "99.00");
-  await expect(pay(page).getByTestId("op-error")).toHaveText("The payment is more than the balance of $37.06");
-  await take(page, "37.06");
-  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("CA$37.06");
+  await expect(pay(page).getByTestId("op-error")).toHaveText("The payment is more than the balance of $27.06");
+  await take(page, "27.06");
+  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("CA$27.06");
   const keys = await postedKeys(page);
   expect(keys).toHaveLength(2);
   expect(keys[0]).toBe(keys[1]);
   await expect(pay(page).getByTestId("op-replayed-note")).toHaveCount(0);
+});
+
+test("the figures name the balance the reads carry, and a payment over it is refused before anything is sent", async ({ page }) => {
+  await signIn(page);
+  await openWithPayment(page, "Q-2101");
+  // No invoice yet: the door raises the order's agreed invoice, whose opening balance is the agreed total.
+  await expect(pay(page).getByTestId("op-figures")).toContainText("balance CA$37.06");
+  const seen = writes(page);
+  await take(page, "99.00");
+  await expect(pay(page).getByTestId("op-error")).toHaveText("The payment is more than the balance of CA$37.06");
+  expect(seen.filter((line) => line.includes("order-payment"))).toEqual([]);
+  // After a deposit, the balance the receipt answered is the live one the reads carry.
+  await take(page, "10.00");
+  await expect(pay(page).getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("CA$27.06");
+  await expect(pay(page).getByTestId("op-figures")).toContainText("balance CA$27.06");
+  await take(page, "30.00");
+  await expect(pay(page).getByTestId("op-error")).toHaveText("The payment is more than the balance of CA$27.06");
+});
+
+test("an accepted quote's payment is bounded by the agreed total before anything is sent", async ({ page }) => {
+  await signIn(page);
+  await openWithPayment(page, "Q-2102");
+  await expect(pay(page).getByTestId("op-figures")).toContainText("balance CA$63.28");
+  const seen = writes(page);
+  await take(page, "99.00");
+  await expect(pay(page).getByTestId("op-error")).toHaveText("The payment is more than the balance of CA$63.28");
+  expect(seen.filter((line) => line.includes("order-payment"))).toEqual([]);
 });
 
 test("a new deliberate payment after a taken one mints a fresh key", async ({ page }) => {
@@ -255,11 +290,12 @@ test("a payment that lands after the person left says nothing on the quote now o
 test("a payment refused while the person is on another quote says nothing there", async ({ page }) => {
   await signIn(page);
   await openWithPayment(page, "Q-2101");
+  // A role refusal, which the desk cannot predict and so always sends.
   const held = await hold(page, /\/api\/v1\/quotes\/q-2101\/order-payment$/, {
     method: "POST",
-    refuse: { status: 400, error: "the payment is more than the balance of $37.06" },
+    refuse: { status: 403, error: "Forbidden" },
   });
-  await take(page, "99.00");
+  await take(page, "10.00");
   await held.asked;
   // The other quote is one the payment panel is offered on, so a late refusal would have somewhere to land.
   await page.getByTestId("qb-list-row").filter({ hasText: "Q-2102" }).first().click();

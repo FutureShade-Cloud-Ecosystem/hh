@@ -9,10 +9,12 @@ import {
   AttemptBook,
   TENDER_METHODS,
   convertedNote,
+  figuresLine,
   isDifferentPaymentRefusal,
   isUnknownOutcome,
   mintPaymentKey,
   paymentRefusalWords,
+  paymentTargetBalance,
   receivedByWord,
   receiptRows,
   replayedNote,
@@ -20,6 +22,8 @@ import {
   typedCents,
   unknownOutcomeNote,
 } from "../src/_order-payment.js";
+
+const doc = (kind, status, totalCents, id = `${kind}-1`) => ({ kind, id, number: `${kind}-1`, status, date: "", totalCents });
 
 test("the tender roster is the contract's four, in its order", () => {
   assert.deepEqual([...TENDER_METHODS], ["CASH", "CARD", "CHEQUE", "EFT"]);
@@ -127,6 +131,50 @@ test("the server's own words tell a key that took a different payment apart from
   assert.equal(isDifferentPaymentRefusal("this idempotency key took a different payment; use a new key for a new payment"), true);
   assert.equal(isDifferentPaymentRefusal("the payment is more than the balance of $37.06"), false);
   assert.equal(isDifferentPaymentRefusal(""), false);
+});
+
+test("the balance a payment is bounded by comes from the reads, never from arithmetic", () => {
+  const order = { totalCents: 3706 };
+  // No invoice yet: the agreed invoice the door raises opens at the agreed total.
+  assert.equal(paymentTargetBalance(order, null, null), 3706);
+  assert.equal(paymentTargetBalance(null, null, null), null);
+  // An open invoice owes its whole total; a paid one owes nothing.
+  assert.equal(paymentTargetBalance(order, doc("INVOICE", "FINALIZED", 3706), null), 3706);
+  assert.equal(paymentTargetBalance(order, doc("INVOICE", "PAID", 3706), null), 0);
+  // A part-paid invoice: the live figure only when THIS session's receipt answered it, for this invoice.
+  const partPaid = doc("INVOICE", "PARTIALLY_PAID", 3706, "inv-9");
+  assert.equal(paymentTargetBalance(order, partPaid, null), null);
+  assert.equal(paymentTargetBalance(order, partPaid, { invoiceId: "inv-8", balanceCents: 2706 }), null);
+  assert.equal(paymentTargetBalance(order, partPaid, { invoiceId: "inv-9", balanceCents: 2706 }), 2706);
+  // Any other invoice state is not guessed at.
+  assert.equal(paymentTargetBalance(order, doc("INVOICE", "DRAFT", 3706), null), null);
+});
+
+test("the figures line names the documents in their own words and the balance when the reads carry it", () => {
+  const quote = doc("QUOTE", "ACCEPTED", 6328);
+  // Before any order: the agreed total is the bound.
+  assert.equal(figuresLine(quote, null, [], 6328, 0), "Quote QUOTE-1 is Accepted at CA$63.28, the agreed total · balance CA$63.28");
+  assert.equal(figuresLine(quote, null, [], null, 0), "Quote QUOTE-1 is Accepted at CA$63.28, the agreed total");
+  // An order with no invoice yet.
+  const order = doc("ORDER", "DRAFT", 3706);
+  assert.equal(figuresLine(null, order, [], 3706, 1), "Order ORDER-1 is Draft at CA$37.06 · balance CA$37.06");
+  // An invoice, part paid, with the receipt's live balance.
+  const invoice = doc("INVOICE", "PARTIALLY_PAID", 3706, "inv-9");
+  assert.equal(
+    figuresLine(null, order, [invoice], 2706, 1),
+    "Order ORDER-1 is Draft at CA$37.06 · Invoice INVOICE-1 is Part paid at CA$37.06 · balance CA$27.06",
+  );
+  // The same invoice without the receipt: the state is carried, the figure is not.
+  assert.equal(
+    figuresLine(null, order, [invoice], null, 1),
+    "Order ORDER-1 is Draft at CA$37.06 · Invoice INVOICE-1 is Part paid at CA$37.06 · the balance it still owes is not carried by this read, the server holds it",
+  );
+  // More than one order: the server says which one to pay, and no balance is named.
+  assert.equal(
+    figuresLine(quote, order, [], null, 2),
+    "Order ORDER-1 is Draft at CA$37.06 · the server holds 2 orders for this quote and will say which one to pay",
+  );
+  assert.equal(figuresLine(null, null, [], null, 0), "");
 });
 
 test("the receipt rows are the server's figures in the order a counter reads them", () => {
