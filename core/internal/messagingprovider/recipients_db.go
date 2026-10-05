@@ -129,24 +129,64 @@ func (r *ConsentResolver) DispatchRecipient(ctx context.Context, orderID string)
 // number that is not E.164. The CALLER cannot tell those apart, deliberately: a producer that could
 // distinguish "opted out" from "no row" would eventually branch on it.
 func (r *ConsentResolver) CustomerRecipient(ctx context.Context, customerID string) (Recipient, error) {
-	prefs, found, err := r.prefs.Get(ctx, customerID)
-	if err != nil {
-		return Recipient{}, err
-	}
-	if !found || !prefs.Sendable() {
-		r.declined(customerID, found, prefs)
-		return Recipient{}, ErrNoRecipient
-	}
+	return r.ReadConsent(ctx, customerID).Recipient()
+}
 
-	name := ""
+// ConsentRead is one customer's consent facts, read once through the pool and answerable later
+// without touching the database again. A caller that holds an open transaction reads it BEFORE
+// opening the transaction (so the reads never ask the shared pool for a second connection while the
+// first is held) and asks it the same two questions MaySendAt and CustomerRecipient answer.
+//
+// A read error is carried, not returned, so it surfaces only at the point the answer is used, exactly
+// where the unhoisted call would have failed.
+type ConsentRead struct {
+	r          *ConsentResolver
+	customerID string
+	prefs      SMSPrefs
+	found      bool
+	name       string
+	err        error
+}
+
+// ReadConsent reads the consent row and, for a sendable customer, the greeting name. It is the pool
+// half of CustomerRecipient; Recipient is the decision half.
+func (r *ConsentResolver) ReadConsent(ctx context.Context, customerID string) ConsentRead {
+	c := ConsentRead{r: r, customerID: customerID}
+	c.prefs, c.found, c.err = r.prefs.Get(ctx, customerID)
+	if c.err != nil || !c.found || !c.prefs.Sendable() {
+		return c
+	}
 	if r.src != nil {
-		if c, cerr := r.src.ContactForCustomer(ctx, customerID); cerr == nil {
-			name = c.Name
+		if contact, cerr := r.src.ContactForCustomer(ctx, customerID); cerr == nil {
+			c.name = contact.Name
 		}
 		// A failed name lookup is not a reason to withhold a message the customer consented to. We
 		// greet them with "Hi" and send it.
 	}
-	return Recipient{Name: name, Phone: prefs.PhoneE164}, nil
+	return c
+}
+
+// Recipient is CustomerRecipient's answer from the facts already read.
+func (c ConsentRead) Recipient() (Recipient, error) {
+	if c.err != nil {
+		return Recipient{}, c.err
+	}
+	if !c.found || !c.prefs.Sendable() {
+		c.r.declined(c.customerID, c.found, c.prefs)
+		return Recipient{}, ErrNoRecipient
+	}
+	return Recipient{Name: c.name, Phone: c.prefs.PhoneE164}, nil
+}
+
+// MaySendAt is the resolver's MaySendAt answer from the facts already read.
+func (c ConsentRead) MaySendAt(t time.Time) (bool, time.Time, error) {
+	if c.err != nil {
+		return false, time.Time{}, c.err
+	}
+	if !c.found || !c.prefs.Sendable() {
+		return false, time.Time{}, nil
+	}
+	return true, c.prefs.QuietHours().NextOpen(t), nil
 }
 
 // MaySendAt reports whether a customer may be texted at instant t, and, when not, the earliest

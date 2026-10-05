@@ -192,6 +192,24 @@ func (s *ARSweep) Run(ctx context.Context) (SweepResult, error) {
 // there is no interval in which we have recorded a notice we did not queue (a customer never told) or
 // queued a notice we did not record (a customer told twice tomorrow).
 func (s *ARSweep) considerOne(ctx context.Context, inv AgingInvoice, bucket int, now time.Time, textedThisRun map[string]bool) (enqueued, suppressed bool, err error) {
+	// THE CONSENT AND RECIPIENT READS HAPPEN BEFORE THE TRANSACTION OPENS, NEVER INSIDE IT.
+	//
+	// They go through the shared pool (the consent table, and the contact seam whose adapter reads
+	// through its own pool). Made with the transaction open, each in-flight candidate would hold one
+	// connection and ask the pool for a second; with a pool's worth of candidates in flight every
+	// connection is held and every candidate waits for one more. Postgres sees idle sessions and no
+	// lock wait, so the stall is invisible there and lasts until the action timeout.
+	//
+	// Hoisting is equivalent because none of these reads touches ar_notice_log, so the ledger row
+	// claimBucket inserts cannot change what they return, and the answers are used at the same points
+	// in the same order below: a read error surfaces only where the unhoisted call would have failed,
+	// and a bucket another run already decided never reaches them. A customer already texted in this
+	// run is suppressed before consent is consulted, so it skips the read.
+	var consent ConsentRead
+	if !textedThisRun[inv.CustomerID] {
+		consent = s.resolver.ReadConsent(ctx, inv.CustomerID)
+	}
+
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return false, false, err
@@ -219,7 +237,7 @@ func (s *ARSweep) considerOne(ctx context.Context, inv AgingInvoice, bucket int,
 	}
 
 	// Consent + quiet hours. MaySendAt answers both: may we text this customer at all, and when.
-	may, notBefore, err := s.resolver.MaySendAt(ctx, inv.CustomerID, now)
+	may, notBefore, err := consent.MaySendAt(now)
 	if err != nil {
 		return false, false, err
 	}
@@ -247,7 +265,7 @@ func (s *ARSweep) considerOne(ctx context.Context, inv AgingInvoice, bucket int,
 	//
 	// The number is redacted from the row the moment it is published (the outbox's existing
 	// published-row redaction), so it does not live in the queue table after it has been used.
-	recipient, err := s.resolver.CustomerRecipient(ctx, inv.CustomerID)
+	recipient, err := consent.Recipient()
 	if err != nil {
 		return false, false, err
 	}
