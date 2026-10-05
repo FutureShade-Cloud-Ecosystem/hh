@@ -640,7 +640,7 @@ async function holdHandoff(page: Page): Promise<void> {
   });
 }
 
-/** True once a scan is parked waiting for the host's hand down (so the gate or the give up reaches it, never before it). */
+/** True once a scan is parked waiting for the host's hand down (so the gate reaches it, never before it). */
 async function scanIsWaiting(page: Page): Promise<void> {
   await expect
     .poll(() => page.locator("qd-quote-workarea").evaluate((el) => (el as unknown as { handoffWaiters: unknown[] }).handoffWaiters.length), { timeout: 60000 })
@@ -690,25 +690,7 @@ test("P3 a scan made in compose that another quote overtook says so", async ({ p
   await expect(page.getByTestId("qb-line")).toHaveCount(2);
 });
 
-test("P3 a scan made in compose says so when the host never hands the new quote down in time", async ({ page }) => {
-  await signIn(page);
-  await holdHandoff(page);
-  // The create route is held by a gate, so the scan is made while the quote is being made, however slow the page is.
-  const create = await hold(page, /\/api\/v1\/quotes$/, { method: "POST" });
-  const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
-  await picker.getByPlaceholder("Search name or account #…").fill("Fenwick");
-  await picker.getByRole("option", { name: /Fenwick/ }).click();
-  await create.asked;
-  await scanInCompose(page);
-  await create.release();
-  await scanIsWaiting(page);
-  // Only the host's explicit give up ends the wait.
-  await page.locator("qd-quote-workarea").evaluate((el) => (el as unknown as { giveUpHandoff: () => void }).giveUpHandoff());
-  await expect(page.getByTestId("qb-error")).toContainText("did not open in time");
-  await expect(page.getByTestId("qb-error")).not.toContainText("Pick a customer");
-});
-
-/** Makes a quote in compose with the hand down held and a scan parked behind it: the state every give up case starts from. */
+/** Makes a quote in compose with the hand down held and a scan parked behind it: the state every release case starts from. */
 async function parkedScan(page: Page): Promise<void> {
   await signIn(page);
   await holdHandoff(page);
@@ -755,7 +737,9 @@ test("P3 a scan made in compose says so at once when the create itself is refuse
   await create.asked;
   await scanInCompose(page);
   await create.release();
-  await expect(page.getByTestId("qb-error")).toHaveText("The new quote could not be made, so nothing was added.");
+  // The reason the create was refused stays on screen, and the scan's own line follows it.
+  await expect(page.getByTestId("qb-error")).toContainText("The quote store is down.");
+  await expect(page.getByTestId("qb-error")).toContainText("The new quote could not be made, so nothing was added.");
   await expect(page.getByTestId("qb-error")).not.toContainText("Pick a customer");
 });
 

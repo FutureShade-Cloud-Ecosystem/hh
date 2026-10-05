@@ -143,7 +143,7 @@ interface AddonSuggestionRow {
 }
 
 /** How a wait for the host's hand down ended. */
-type HandoffEnd = "handed" | "gave-up" | "leaving";
+type HandoffEnd = "handed" | "create-failed" | "leaving";
 
 const CREATE_FAILED_SCAN = "The new quote could not be made, so nothing was added.";
 
@@ -1165,11 +1165,6 @@ export class QdQuoteWorkarea extends LitElement {
     for (const release of waiting) release(end);
   }
 
-  /** The host's explicit signal that the new quote will not be handed down: the scans waiting for it say so. Never driven by elapsed time. */
-  giveUpHandoff(): void {
-    this.releaseHandoffWaiters("gave-up");
-  }
-
   /** The context of the quote on screen; a quote id that moved without its context following gets a fresh one. */
   private get ctx(): QuoteContext {
     if (this.detached) return QuoteContext.cancelled(this.quoteId);
@@ -1986,6 +1981,13 @@ export class QdQuoteWorkarea extends LitElement {
     }
   }
 
+  /** The scan's own line for a quote that could not be made, said after the reason the create was refused (which stays on screen) rather than over it. */
+  private speakCreateFailedScan(): void {
+    const reason = this.error;
+    this.speakAdd(CREATE_FAILED_SCAN, "warn");
+    if (reason !== "" && this.error === CREATE_FAILED_SCAN) this.error = `${reason.replace(/[.!?]?$/, ".")} ${CREATE_FAILED_SCAN}`;
+  }
+
   /** The quote being created and the read of the quote just opened: a scan that arrives first waits for them. */
   private creating: Promise<void> | null = null;
   private opening: Promise<void> = Promise.resolve();
@@ -1994,7 +1996,7 @@ export class QdQuoteWorkarea extends LitElement {
   /** True when the create itself was refused or failed: no quote will be handed down for it. */
   private createFailed = false;
 
-  /** Scans waiting for the host to hand a quote id down: released as handed the moment this.quoteId changes, or as gave-up (the host's signal, or a failed create) or leaving (the page or the session going). */
+  /** Scans waiting for the host to hand a quote id down: released as handed the moment this.quoteId changes, or as create-failed (a failed create) or leaving (the page or the session going). */
   private handoffWaiters: Array<(end: HandoffEnd) => void> = [];
 
   private handedDown(): Promise<HandoffEnd> {
@@ -2018,16 +2020,16 @@ export class QdQuoteWorkarea extends LitElement {
       await this.creating;
       // The create itself failed or was refused: no quote will ever be handed down, so the scan says so at once.
       if (this.createFailed && this.quoteId === "") {
-        this.speakAdd(CREATE_FAILED_SCAN, "warn");
+        this.speakCreateFailedScan();
         return;
       }
-      // The host hands the new quote id down on its own render: wait for it to arrive, however long that takes: no timer ends this wait, only the host's explicit give up signal, and that is said.
+      // The host hands the new quote id down on its own render: wait for it to arrive, however long that takes: no timer ends this wait. It ends when the id arrives, when the create fails, or when the page or the session goes.
       if (this.createdQuoteId !== "" && this.quoteId === "") {
         const end = await this.handedDown();
         // The page or the session is going: the screen is going with it, so nothing is said.
         if (end === "leaving") return;
-        if (end === "gave-up") {
-          this.speakAdd("The new quote did not open in time, so that scan was not added. Scan it again once the quote is on screen.", "warn");
+        if (end === "create-failed") {
+          this.speakCreateFailedScan();
           return;
         }
       }
@@ -2487,7 +2489,7 @@ export class QdQuoteWorkarea extends LitElement {
       this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "create a quote"));
       // No quote will be handed down for this create: whatever is parked waiting for one stops now.
       this.createFailed = true;
-      this.releaseHandoffWaiters("gave-up");
+      this.releaseHandoffWaiters("create-failed");
       return;
     }
     this.customer = cust;

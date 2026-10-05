@@ -1176,22 +1176,8 @@
     "id": "wa-scan-handoff-wait",
     "file": "src/quote-workarea.ts",
     "find": "const end = await this.handedDown();",
-    "replace": "const end = \"gave-up\" as HandoffEnd;",
+    "replace": "const end = \"create-failed\" as HandoffEnd;",
     "test": "P3 a scan made in compose waits for the host"
-  },
-  {
-    "id": "wa-scan-handoff-timeout-says",
-    "file": "src/quote-workarea.ts",
-    "find": "          this.speakAdd(\"The new quote did not open in time, so that scan was not added. Scan it again once the quote is on screen.\", \"warn\");\n",
-    "replace": "",
-    "test": "P3 a scan made in compose says so when the host never"
-  },
-  {
-    "id": "wa-handoff-give-up",
-    "file": "src/quote-workarea.ts",
-    "find": "    this.releaseHandoffWaiters(\"gave-up\");\n  }",
-    "replace": "  }",
-    "test": "P3 a scan made in compose says so when the host never"
   },
   {
     "id": "wa-handoff-leave-release",
@@ -1217,7 +1203,7 @@
   {
     "id": "wa-handoff-create-failed-says",
     "file": "src/quote-workarea.ts",
-    "find": "        this.speakAdd(CREATE_FAILED_SCAN, \"warn\");\n",
+    "find": "    this.speakAdd(CREATE_FAILED_SCAN, \"warn\");\n",
     "replace": "",
     "test": "P3 a scan made in compose says so at once when the create itself is refused"
   },
@@ -1364,5 +1350,12 @@
     "test": "sender quote: a write is not sent after the quote context moved, and the person still there is told",
     "runner": "node",
     "testFile": "test/deferred-send.test.mjs"
+  },
+  {
+    "id": "wa-create-failed-keeps-reason",
+    "file": "src/quote-workarea.ts",
+    "find": "    if (reason !== \"\" && this.error === CREATE_FAILED_SCAN) this.error = `${reason.replace(/[.!?]?$/, \".\")} ${CREATE_FAILED_SCAN}`;\n",
+    "replace": "",
+    "test": "P3 a scan made in compose says so at once when the create itself is refused"
   }
 ]
