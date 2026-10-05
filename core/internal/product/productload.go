@@ -65,44 +65,52 @@ const productSeqCTE = `WITH pseq AS (
 // path a load batch's product master items run through.
 type ProductLoadWriter struct{}
 
-// Apply answers one product item. The create arm inserts (or attaches
-// the row the SKU already names); the update arm renames the recorded
-// row in place, a SKU another row carries refusing as a key conflict
-// the frame words with both legacy keys. Both arms stamp the org, draw
-// one seq and carry the derived key.
-func (ProductLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (string, error) {
+// Apply answers one product item through the plain Writer seam; the
+// attach fact is not reported here (ApplyAttached is the door's entry).
+func (w ProductLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (string, error) {
+	id, _, err := w.ApplyAttached(ctx, tx, in)
+	return id, err
+}
+
+// ApplyAttached answers one product item with the attach fact. The
+// create arm answers attached when the sku already named a row before
+// the write stood (a staff made row the load binds to and stamps), and
+// created when the row is new; the update arm's answers stand as they
+// answer. Both arms stamp the org, draw one seq and carry the derived
+// key.
+func (ProductLoadWriter) ApplyAttached(ctx context.Context, tx pgx.Tx, in load.Write) (string, bool, error) {
 	sku, _ := in.Record["sku"].(string)
 	if sku == "" {
-		return "", &load.Refusal{Code: "field_required", Field: "sku",
+		return "", false, &load.Refusal{Code: "field_required", Field: "sku",
 			Detail: "the record names no sku"}
 	}
 	name, _ := in.Record["name"].(string)
 	if name == "" {
-		return "", &load.Refusal{Code: "field_required", Field: "name",
+		return "", false, &load.Refusal{Code: "field_required", Field: "name",
 			Detail: "the record names no name"}
 	}
 	baseUOM, refused := productUnit(in.Record, "base_uom")
 	if refused != nil {
-		return "", refused
+		return "", false, refused
 	}
 	priceUOM, refused := productUnit(in.Record, "price_uom")
 	if refused != nil {
-		return "", refused
+		return "", false, refused
 	}
 	// The catalogue is the units' owner: a code it does not carry
 	// refuses naming the field, before any write stands.
 	for _, code := range []struct{ field, uom string }{{"base_uom", baseUOM}, {"price_uom", priceUOM}} {
 		var known bool
 		if err := tx.QueryRow(ctx, `SELECT true FROM uoms WHERE code = $1`, code.uom).Scan(&known); errors.Is(err, pgx.ErrNoRows) {
-			return "", &load.Refusal{Code: "no_unit_row", Field: code.field,
+			return "", false, &load.Refusal{Code: "no_unit_row", Field: code.field,
 				Detail: fmt.Sprintf("product legacy key %s names a %s the catalogue does not carry", in.LegacyID, code.field)}
 		} else if err != nil {
-			return "", fmt.Errorf("product: load unit code read: %w", err)
+			return "", false, fmt.Errorf("product: load unit code read: %w", err)
 		}
 	}
 	category, refused := productCategory(in)
 	if refused != nil {
-		return "", refused
+		return "", false, refused
 	}
 	// The landed set rule: once a unit set has landed on the target row,
 	// unitsetload.go's invariants hold against the row's own columns,
@@ -116,14 +124,14 @@ func (ProductLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (s
 		if err := tx.QueryRow(ctx, `SELECT id::text FROM products WHERE sku = $1`, sku).Scan(&target); errors.Is(err, pgx.ErrNoRows) {
 			target = ""
 		} else if err != nil {
-			return "", fmt.Errorf("product: load set target read: %w", err)
+			return "", false, fmt.Errorf("product: load set target read: %w", err)
 		}
 	}
 	if target != "" {
 		if refused, err := landedUnitSetRefusal(ctx, tx, target, in.OrgID, baseUOM, priceUOM, in.LegacyID); err != nil {
-			return "", err
+			return "", false, err
 		} else if refused != nil {
-			return "", refused
+			return "", false, refused
 		}
 	}
 	isActive := true
@@ -154,32 +162,32 @@ func (ProductLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (s
 	}
 	fullSkid, refused := integerField(in.Record, "full_skid_quantity")
 	if refused != nil {
-		return "", refused
+		return "", false, refused
 	}
 	layerQty, refused := integerField(in.Record, "layer_quantity")
 	if refused != nil {
-		return "", refused
+		return "", false, refused
 	}
 	palletCount, refused := integerField(in.Record, "pallet_count")
 	if refused != nil {
-		return "", refused
+		return "", false, refused
 	}
 	minOrderQty, refused := decimalField(in.Record, "minimum_order_qty")
 	if refused != nil {
-		return "", refused
+		return "", false, refused
 	}
 	weight, refused := decimalField(in.Record, "weight_per_unit_kg")
 	if refused != nil {
-		return "", refused
+		return "", false, refused
 	}
 	dimensions, _ := in.Record["dimensions_lwh"].(string)
 	meta, refused := recordObject(in.Record, "metadata")
 	if refused != nil {
-		return "", refused
+		return "", false, refused
 	}
 	metaJSON, err := json.Marshal(meta)
 	if err != nil {
-		return "", fmt.Errorf("product: load metadata encode: %w", err)
+		return "", false, fmt.Errorf("product: load metadata encode: %w", err)
 	}
 
 	var id string
@@ -193,10 +201,10 @@ func (ProductLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (s
 		err := tx.QueryRow(ctx,
 			`SELECT id::text FROM products WHERE sku = $1 AND id <> $2::uuid`, sku, in.RowID).Scan(&other)
 		if err == nil {
-			return other, nil
+			return other, false, nil
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
-			return "", fmt.Errorf("product: load sku collision read: %w", err)
+			return "", false, fmt.Errorf("product: load sku collision read: %w", err)
 		}
 		err = tx.QueryRow(ctx, productSeqCTE+`
 			UPDATE products SET
@@ -222,10 +230,10 @@ func (ProductLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (s
 			isActive, string(metaJSON),
 			in.OrgID, in.DerivedKey, in.RowID).Scan(&id)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return "", productOrgRefusal(in)
+			return "", false, productOrgRefusal(in)
 		}
 		if err != nil {
-			return "", fmt.Errorf("product: load update: %w", err)
+			return "", false, fmt.Errorf("product: load update: %w", err)
 		}
 	} else {
 		err := tx.QueryRow(ctx, productSeqCTE+`
@@ -283,13 +291,16 @@ func (ProductLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (s
 			dimensions, palletCount, weight,
 			isActive, string(metaJSON), in.OrgID, in.DerivedKey).Scan(&id)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return "", productOrgRefusal(in)
+			return "", false, productOrgRefusal(in)
 		}
 		if err != nil {
-			return "", fmt.Errorf("product: load write: %w", err)
+			return "", false, fmt.Errorf("product: load write: %w", err)
 		}
+		// The sku named a row before the write stood: the load bound to
+		// it, and the frame answers attached.
+		return id, target != "", nil
 	}
-	return id, nil
+	return id, false, nil
 }
 
 // landedUnitSetRefusal refuses a product reload whose units would

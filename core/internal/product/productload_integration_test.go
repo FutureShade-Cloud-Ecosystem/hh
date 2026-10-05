@@ -108,6 +108,7 @@ func prItem(legacyID, sku, name string, extra map[string]any, requires ...load.R
 		"PR-I3": "00000000020d",
 		"PR-G1": "00000000020e",
 		"PR-OV": "00000000020f",
+		"PR-C1": "000000000210",
 	}[legacyID]
 	return load.Item{
 		LegacyID:   legacyID,
@@ -438,8 +439,9 @@ func TestProductLoadConflictsRefuseNamingBothKeys(t *testing.T) {
 		t.Fatalf("the sku claim answered %+v, want a key conflict naming PR-2 and PR-1", o)
 	}
 	// An HH row a second key would claim: a staff made row already
-	// carries the sku. The first key attaching to it answers created;
-	// a second key naming the same row refuses naming both keys,
+	// carries the sku. The first key attaching to it answers attached
+	// (the frame's fifth word: the row is not new, the load bound to
+	// it); a second key naming the same row refuses naming both keys,
 	// nothing merging silently.
 	if _, err := e.pool.Exec(ctx,
 		`INSERT INTO products (sku, name, base_uom, price_uom) VALUES ('FXPR-0103', 'Planted By Staff', 'EA', 'EA')`); err != nil {
@@ -451,8 +453,8 @@ func TestProductLoadConflictsRefuseNamingBothKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("attach batch: %v", err)
 	}
-	if o := prOutcome(t, r, "PR-Y"); o.Status != load.OutcomeCreated {
-		t.Fatalf("the first key's attach answered %+v, want created", o)
+	if o := prOutcome(t, r, "PR-Y"); o.Status != load.OutcomeAttached {
+		t.Fatalf("the first key's attach answered %+v, want attached", o)
 	}
 	r, err = e.door.UpsertBatch(ctx, load.Batch{OrgID: fxProdOrgID, SourceSystem: fxProdSource,
 		BatchID: "b-pr-c3b", Caller: fxProdActorID,
