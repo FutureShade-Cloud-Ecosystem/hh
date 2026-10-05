@@ -66,43 +66,6 @@ func cleanupBatch(t *testing.T, ctx context.Context, pool *pgxpool.Pool, batchID
 	})
 }
 
-// alignFixtureAnchorUnits points the named products' standing anchors at the
-// products' own price unit, the unit every desk sheet figure arrives in, and
-// restores each anchor's prior unit on cleanup. The round 2 law (LD-3 part B)
-// refuses a write that names no unit onto an anchor standing in a unit other
-// than the product's price unit, fail closed; the demo seed's provisional
-// backfill planted anchors per sold_by while the products carry another
-// price_uom, the mixed state the law refuses, so the lifecycle aligns them
-// for its apply and leaves the seeded state standing behind it.
-func alignFixtureAnchorUnits(t *testing.T, ctx context.Context, pool *pgxpool.Pool, skus []string) {
-	t.Helper()
-	type alignedUnit struct {
-		productID string
-		prior     string
-	}
-	var aligned []alignedUnit
-	for _, sku := range skus {
-		var pid, prior string
-		if err := pool.QueryRow(ctx, `
-			SELECT a.product_id::text, a.price_uom::text
-			  FROM pricing_list_prices a JOIN products p ON p.id = a.product_id
-			 WHERE p.sku = $1 AND a.price_uom <> p.price_uom`, sku).Scan(&pid, &prior); err != nil {
-			continue // no anchor, or already standing in the product's price unit
-		}
-		if _, err := pool.Exec(ctx, `
-			UPDATE pricing_list_prices a SET price_uom = p.price_uom
-			  FROM products p WHERE p.id = a.product_id AND a.product_id = $1::uuid`, pid); err != nil {
-			t.Fatalf("align anchor unit for %s: %v", sku, err)
-		}
-		aligned = append(aligned, alignedUnit{productID: pid, prior: prior})
-	}
-	t.Cleanup(func() {
-		for _, a := range aligned {
-			pool.Exec(ctx, `UPDATE pricing_list_prices SET price_uom = $2::citext WHERE product_id = $1::uuid`, a.productID, a.prior)
-		}
-	})
-}
-
 var techoFixtureSKUs = []string{"DBS-TB-BLU60", "DBS-TB-ABERDEEN", "DBS-TB-BOREALIS", "DBS-TB-MINICRETA", "DBS-TB-HYDR"}
 
 func TestIntegration_A08_BatchLifecycle(t *testing.T) {
@@ -111,7 +74,6 @@ func TestIntegration_A08_BatchLifecycle(t *testing.T) {
 	svc := realSvc(pool)
 	// Keep the shared private DB pristine for sibling integration tests.
 	snapshotFixtureAnchors(t, ctx, pool, techoFixtureSKUs)
-	alignFixtureAnchorUnits(t, ctx, pool, techoFixtureSKUs)
 
 	// Locate the seeded Techo profile.
 	var profileID string
