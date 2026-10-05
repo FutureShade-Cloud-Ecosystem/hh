@@ -40,6 +40,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
@@ -58,6 +59,15 @@ type sigTxLegCapturer struct{ svc *pos.Service }
 
 func (c sigTxLegCapturer) CaptureTyped(ctx context.Context, in TypedAttestation) (string, error) {
 	return c.svc.CaptureTypedSignature(ctx, pos.TypedAttestation{
+		Purpose: in.Purpose, RefType: in.RefType, RefID: in.RefID,
+		TypedName: in.TypedName, Affirmed: in.Affirmed,
+	})
+}
+
+// CaptureTypedTx is the leg's reason to exist: the confirm's capture rides the CALLER'S transaction
+// through pos.Service.CaptureTypedSignatureTx, the same delegation the production adapter makes.
+func (c sigTxLegCapturer) CaptureTypedTx(ctx context.Context, tx pgx.Tx, in TypedAttestation) (string, error) {
+	return c.svc.CaptureTypedSignatureTx(ctx, tx, pos.TypedAttestation{
 		Purpose: in.Purpose, RefType: in.RefType, RefID: in.RefID,
 		TypedName: in.TypedName, Affirmed: in.Affirmed,
 	})

@@ -399,7 +399,11 @@ func (s *PickupsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, ke
 	if before.pickup.Status != "ACTIVE" {
 		return sync.RowState{}, fmt.Errorf("dispatch: the pickup is %s, it cannot be confirmed again: %w", before.pickup.Status, sync.ErrOpRefused)
 	}
-	ref, err := s.sig.CaptureTyped(ctx, TypedAttestation{
+	// The attestation rides THIS transaction (CaptureTypedTx): its signature row and its audit row
+	// commit or roll back with the confirm, and the capture never asks the shared pool for a second
+	// connection while the transaction holds this one. The pool capture here was both the
+	// connection starvation at pool size and the orphan rows a rolled back confirm left behind.
+	ref, err := s.sig.CaptureTypedTx(ctx, tx, TypedAttestation{
 		Purpose: SignaturePurposePOD, RefType: RefTypeWillCall, RefID: id,
 		TypedName: name, Affirmed: true,
 	})
