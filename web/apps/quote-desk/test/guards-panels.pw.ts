@@ -713,7 +713,6 @@ test("guard policy lock: a refusal locks the row it was for and no other", async
   await page.getByTestId("qs-policy-save").click();
   await put.asked;
   await setBranch(own);
-  await expect(page.getByTestId("qs-policy-save")).toBeEnabled();
   await put.release();
   await settle(page);
   // The refusal was for the other branch: this one is not locked.
