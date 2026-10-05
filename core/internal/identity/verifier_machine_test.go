@@ -98,9 +98,9 @@ func TestMachineAudienceNeverVerifiesOnThePlatformKeySet(t *testing.T) {
 	wantClass(t, err, ClassCredential)
 
 	// The machine key set configured, the token still signed by the
-	// platform's key: the signature is valid, the audience is the
-	// machine one, and the binding refuses it anyway, because the
-	// machine class never rides the platform key set.
+	// platform's key: the audience selects the machine key set, whose
+	// lookup misses the platform kid, and the machine class never rides
+	// the platform set: the miss is a credential failure.
 	v := mustVerifier(t, machineConfig(platform, machineKeySource(m), clk))
 	_, err = v.Verify(context.Background(), signedByPlatform)
 	if err == nil {
@@ -109,10 +109,12 @@ func TestMachineAudienceNeverVerifiesOnThePlatformKeySet(t *testing.T) {
 	wantClass(t, err, ClassCredential)
 }
 
-// TestMachineKeyIDAmbiguousAcrossSets: a key id present in both the
-// machine set and the platform set is a deployment defect, answered as
-// operational so it is loud in monitoring rather than resolved by an
-// ordering guess.
+// TestMachineKeyIDAmbiguousAcrossSets: a machine audience token whose
+// key id is present in both the machine set and the platform set is a
+// deployment defect, answered as operational so it is loud in monitoring
+// rather than resolved by an ordering guess. The signal belongs to the
+// machine audience alone: platform tokens consult the platform set only
+// and never read the machine set (the P1-1 ruling).
 func TestMachineKeyIDAmbiguousAcrossSets(t *testing.T) {
 	k := generateTestKeys(t)
 	m := machineKeys(t)

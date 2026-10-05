@@ -22,12 +22,22 @@ where a deployment configures it:
   not at all. There is no default audience and no default key set: with
   neither set, a machine audience token is nobody for this API, exactly as
   before this record.
-- Machine tokens verify against that key set alone, never the platform's
-  staff key set, and a token signed by the machine key set can never claim
-  the staff or tenant audience. The class names the key set: a machine
-  audience token reaching the platform key set is a credential failure, and
-  a key id resolving in both sets is a deployment defect answered as
-  operational, never resolved by an ordering guess.
+- The key set is selected by the token's audience (the review's P1-1
+  ruling): a machine audience token consults the machine key set alone, and
+  every other token consults the platform key set alone, so a staff or
+  tenant login never waits on or fails because of FB Move's key endpoint,
+  which matters exactly when the doors are switched on for the parallel run
+  or the cut over load and every login on the deployment would otherwise
+  sit behind that endpoint. The audience read that selects the set is
+  unverified and trusted for nothing else; the class is confirmed after the
+  signature verifies. A machine audience token whose key id the machine set
+  does not carry is a credential failure (the machine class never rides the
+  platform set), and a machine audience token whose key id also sits in the
+  platform set is a deployment defect answered as operational, never
+  resolved by an ordering guess; that ambiguity signal belongs to the
+  machine audience alone, because platform tokens never read the machine
+  set. A token signed by the machine key set can never claim the staff or
+  tenant audience.
 - Every restriction the verifier already carries binds the machine class
   unchanged: the asymmetric algorithm set (the HMAC family refused before
   key material is touched), the issuer, the required subject, expiry with

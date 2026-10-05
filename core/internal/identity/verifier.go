@@ -218,38 +218,44 @@ func (v *Verifier) Verify(ctx context.Context, token string) (Token, error) {
 	if hdr.KeyID == "" {
 		return Token{}, credentialErr("token names no key id")
 	}
-	// The machine key set, when configured, is consulted first and the
-	// machine class is bound to it (ADR-0024): a token whose key id the
-	// machine set carries must carry the machine audience, and a key id
-	// resolving in both sets is a deployment defect answered as
-	// operational, never resolved by an ordering guess. A token whose key
-	// id only the platform set carries continues to the platform path
-	// below, where a machine audience is refused: FB Move's keys can
-	// never mint a staff or tenant login, and the platform's keys can
-	// never mint a machine credential.
-	if v.machineKeys != nil {
+	// The key set is selected by the token's audience (ADR-0024, the
+	// review's P1-1 ruling): a machine audience token consults the
+	// machine key set alone, and every other token consults the platform
+	// key set alone, so a staff or tenant login never waits on or fails
+	// because of FB Move's key endpoint, and a machine credential never
+	// rides the platform set. The audience read here is unverified and
+	// trusted for nothing but this choice; the class is confirmed after
+	// the signature verifies, below and in claimsFrom, exactly as before.
+	auds, err := peekAudience(claimsJSON)
+	if err == nil && v.machineKeys != nil && containsAudience(auds, v.machineAud) {
 		mkey, mok, err := v.machineKeys.KeyByID(ctx, hdr.KeyID)
 		if err != nil {
 			return Token{}, operationalErr("machine key source unavailable")
 		}
-		if mok {
-			if _, pok, perr := v.keys.KeyByID(ctx, hdr.KeyID); perr != nil {
-				return Token{}, operationalErr("key source unavailable")
-			} else if pok {
-				return Token{}, operationalErr("key id appears in both key sets")
-			}
-			if err := verifySignature(Alg(hdr.Algorithm), mkey, signed, sig); err != nil {
-				return Token{}, err
-			}
-			tok, err := v.claimsFrom(claimsJSON)
-			if err != nil {
-				return Token{}, err
-			}
-			if tok.Class != ClassMachine {
-				return Token{}, credentialErr("machine key set token does not carry the machine audience")
-			}
-			return tok, nil
+		if !mok {
+			return Token{}, credentialErr("unknown key id")
 		}
+		// A machine audience token whose key id also sits in the platform
+		// set is a deployment defect, answered as operational, never
+		// resolved by an ordering guess. The check reads the platform set
+		// for the machine class alone; platform tokens never read the
+		// machine set.
+		if _, pok, perr := v.keys.KeyByID(ctx, hdr.KeyID); perr != nil {
+			return Token{}, operationalErr("key source unavailable")
+		} else if pok {
+			return Token{}, operationalErr("key id appears in both key sets")
+		}
+		if err := verifySignature(Alg(hdr.Algorithm), mkey, signed, sig); err != nil {
+			return Token{}, err
+		}
+		tok, err := v.claimsFrom(claimsJSON)
+		if err != nil {
+			return Token{}, err
+		}
+		if tok.Class != ClassMachine {
+			return Token{}, credentialErr("machine key set token does not carry the machine audience")
+		}
+		return tok, nil
 	}
 	key, ok, err := v.keys.KeyByID(ctx, hdr.KeyID)
 	if err != nil {
@@ -266,13 +272,40 @@ func (v *Verifier) Verify(ctx context.Context, token string) (Token, error) {
 		return Token{}, err
 	}
 	if tok.Class == ClassMachine {
-		// Unreachable when the machine audience is unconfigured (nothing
-		// classifies as machine); the guard stands for the configured
-		// case, where this token reached the platform path because its
-		// key id lives there alone.
+		// Unreachable while the machine audience is configured (such a
+		// token took the machine path above); the guard stands for the
+		// unconfigured deployment, where nothing may classify as machine:
+		// no default key exists, so no machine token verifies anywhere.
 		return Token{}, credentialErr("audience not accepted")
 	}
 	return tok, nil
+}
+
+// peekAudience reads the aud claim of an unverified payload. It exists
+// only to select the key set before the signature is checked; nothing it
+// returns is trusted past that choice, and every classification and
+// validation still runs over the verified claims in claimsFrom. A payload
+// whose audience cannot be parsed answers malformed: no set can be
+// chosen for it, and the platform path would refuse it after signature
+// verification anyway.
+func peekAudience(claimsJSON []byte) ([]string, error) {
+	var raw struct {
+		Audience json.RawMessage `json:"aud"`
+	}
+	if err := json.Unmarshal(claimsJSON, &raw); err != nil {
+		return nil, err
+	}
+	return parseAudience(raw.Audience)
+}
+
+// containsAudience reports whether the audience list names one value.
+func containsAudience(auds []string, aud string) bool {
+	for _, a := range auds {
+		if a == aud {
+			return true
+		}
+	}
+	return false
 }
 
 // claimsFrom parses and validates the payload after the signature has been
@@ -304,14 +337,18 @@ func (v *Verifier) claimsFrom(claimsJSON []byte) (Token, error) {
 	}
 	class := ClassNone
 	for _, aud := range auds {
+		// The exclusivity guard is per arm: a repeated audience of one
+		// class verifies (an issuer may repeat it, and main always
+		// admitted that), and only a second, different class already
+		// claimed is refused.
 		switch aud {
 		case v.staffAud:
-			if class != ClassNone {
+			if class != ClassNone && class != ClassStaff {
 				return Token{}, credentialErr("token claims both bearer audiences")
 			}
 			class = ClassStaff
 		case v.tenantAud:
-			if class != ClassNone {
+			if class != ClassNone && class != ClassTenant {
 				return Token{}, credentialErr("token claims both bearer audiences")
 			}
 			class = ClassTenant
@@ -323,7 +360,7 @@ func (v *Verifier) claimsFrom(claimsJSON []byte) (Token, error) {
 				// audience cannot classify through the zero value.
 				continue
 			}
-			if class != ClassNone {
+			if class != ClassNone && class != ClassMachine {
 				return Token{}, credentialErr("token claims both bearer audiences")
 			}
 			class = ClassMachine
