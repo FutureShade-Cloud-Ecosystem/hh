@@ -275,16 +275,22 @@ test("a payment that lands after the person left says nothing on the quote now o
   const held = await hold(page, /\/api\/v1\/quotes\/q-2101\/order-payment$/, { method: "POST", snapshot: true });
   await take(page, "10.00");
   await held.asked;
-  // The payment is out; the person opens another quote.
-  await page.getByTestId("qb-list-row").filter({ hasText: "Q-1001" }).first().click();
-  await expect(page.getByTestId("qe-title")).toContainText("Q-1001");
+  // The payment is out; the person opens another quote the payment panel is offered on, so a
+  // receipt, an error or a note leaking onto it has somewhere to land and would be seen.
+  await page.getByTestId("qb-list-row").filter({ hasText: "Q-2102" }).first().click();
+  await expect(page.getByTestId("qe-title")).toContainText("Q-2102");
   await held.release();
   await settle(page);
-  // The draft quote never grows a receipt, an error or the payment box at all.
-  await expect(page.locator("qd-order-payment").getByTestId("op-box")).toHaveCount(0);
-  // Coming back to the quote that was paid: the note says the receipt went with the answer, and the documents show the invoice.
+  await expect(pay(page).getByTestId("op-receipt")).toHaveCount(0);
+  await expect(pay(page).getByTestId("op-error")).toHaveCount(0);
+  await expect(pay(page).getByTestId("op-unknown")).toHaveCount(0);
+  await expect(pay(page).getByTestId("op-notice")).toHaveCount(0);
+  // Coming back to the quote that was paid: the note says the receipt is below, with the
+  // server's own figures, and the documents show the invoice.
   await page.getByTestId("qb-list-row").filter({ hasText: "Q-2101" }).first().click();
   await expect(pay(page).getByTestId("op-notice")).toContainText("A payment was taken on this quote while you were away");
+  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("CA$10.00");
+  await expect(pay(page).getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("CA$27.06");
   await expect(docs(page).locator(".chip").filter({ hasText: /Invoice INV-\d+ · Part paid/ })).toBeVisible();
 });
 
@@ -596,6 +602,32 @@ test("the receipt of an earlier payment is marked as that, never as the result o
   await take(page, "17.06");
   await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("CA$17.06");
   await expect(pay(page).getByTestId("op-receipt-earlier")).toHaveCount(0);
+});
+
+test("the form does not render over an unread family: the read failure is shown with a retry", async ({ page }) => {
+  await signIn(page);
+  await openWithPayment(page, "Q-2101");
+  // Both panels' family reads are refused, so the figures behind the payment form are not known.
+  const gated = await armedHold(page, /\/api\/v1\/quotes\/q-2101\/related-documents$/, "GET", { times: 2, refuse: { status: 500, error: "internal" } });
+  gated.arm();
+  await dispatchReload(page);
+  await expect.poll(() => gated.held.seen.length).toBe(2);
+  await gated.held.release();
+  await settle(page);
+  await expect(pay(page).getByTestId("op-unread")).toBeVisible();
+  // No controls over a guess: no amount, no tender, no Take payment.
+  await expect(pay(page).getByTestId("op-take")).toHaveCount(0);
+  await expect(pay(page).locator('[data-field="amount"]')).toHaveCount(0);
+  await expect(pay(page).getByTestId("op-tenders")).toHaveCount(0);
+  await expect(pay(page).getByTestId("op-figures")).toHaveCount(0);
+  // The retry re-reads, and when the read answers the form is back.
+  gated.disarm();
+  await pay(page).getByTestId("op-retry-read").click();
+  await expect(pay(page).getByTestId("op-unread")).toHaveCount(0);
+  await expect(pay(page).getByTestId("op-take")).toBeVisible();
+  await gated.held.release();
+  await settle(page);
+  await expect(pay(page).getByTestId("op-figures")).toContainText("CA$37.06");
 });
 
 test("an amount that is not a number this desk can send is refused before any post", async ({ page }) => {

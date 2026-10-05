@@ -1459,6 +1459,13 @@
     "testFile": "test/order-payment.test.mjs"
   },
   {
+    "id": "op-unread-form",
+    "file": "src/order-payment-panel.ts",
+    "find": "    if (this.readError !== \"\") {\n      return html`\n        <fieldset data-testid=\"op-box\">\n          <legend>Take payment at the counter</legend>\n          <p class=\"err\" role=\"alert\" data-testid=\"op-unread\">${this.readError}</p>\n          <div class=\"row\">\n            <button type=\"button\" data-action=\"retry-read\" data-testid=\"op-retry-read\">Try the read again</button>\n          </div>\n        </fieldset>\n      `;\n    }\n",
+    "replace": "",
+    "test": "does not render over an unread family"
+  },
+  {
     "id": "ws-serialize",
     "file": "src/workspace-store.ts",
     "find": "    this.#queued = send;\n    if (this.#inFlight !== null) return this.#inFlight;\n",

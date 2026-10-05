@@ -45,7 +45,7 @@
 // late success is recorded for ITS quote and announced, so every view of it
 // re-reads; a late refusal is said only on the quote it belongs to).
 import { css, html, nothing, type TemplateResult } from "lit";
-import { customElement, property, state } from "lit/decorators.js";
+import { customElement, state } from "lit/decorators.js";
 import { PanelBase } from "./panel-base.js";
 import { panelStyles } from "./panel-styles.js";
 import { moneyWord, quoteErrorMessage } from "./_quote-edit.js";
@@ -117,9 +117,6 @@ interface QuotePayment {
 
 @customElement("qd-order-payment")
 export class QdOrderPayment extends PanelBase {
-  /** The converted order's id, "" until the quote has been converted. The family read is the truth this panel follows. */
-  @property({ attribute: "order-id" }) orderId = "";
-
   @state() private status = "";
   @state() private family: RelatedDoc[] = [];
   @state() private loaded = false;
@@ -652,6 +649,7 @@ export class QdOrderPayment extends PanelBase {
   protected override onClickAction(action: string, control: HTMLElement): void {
     if (action === "take-payment") void this.take();
     if (action === "start-new") void this.startNew();
+    if (action === "retry-read") this.reload();
     if (action === "tender") {
       if (this.fieldsLocked) return;
       const picked = control.getAttribute("data-tender");
@@ -716,11 +714,24 @@ export class QdOrderPayment extends PanelBase {
   }
 
   override render() {
-    if (this.quoteId === "" || !this.offered) return nothing;
+    if (this.quoteId === "") return nothing;
+    // An unread family (or an unread quote) shows the read failure and the way to try again:
+    // the payment controls never render over a guess, and neither do the figures.
+    if (this.readError !== "") {
+      return html`
+        <fieldset data-testid="op-box">
+          <legend>Take payment at the counter</legend>
+          <p class="err" role="alert" data-testid="op-unread">${this.readError}</p>
+          <div class="row">
+            <button type="button" data-action="retry-read" data-testid="op-retry-read">Try the read again</button>
+          </div>
+        </fieldset>
+      `;
+    }
+    if (!this.offered) return nothing;
     return html`
       <fieldset data-testid="op-box">
         <legend>Take payment at the counter</legend>
-        ${this.readError !== "" ? html`<p class="err" role="alert" data-testid="op-unread">${this.readError}</p>` : nothing}
         <p class="sub">
           ${this.status === "ACCEPTED"
             ? "This quote is accepted. For a customer with no credit account this one action converts the quote, raises the invoice and takes the payment in full; the server decides, and its refusal names what to do."

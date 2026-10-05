@@ -744,16 +744,15 @@ export class QdQuoteEdit extends PanelBase {
 
   /**
    * The payment seam's panels receive the open quote the way every host passes
-   * it: the client, the quote id, the branch id and, once this quote has been
-   * converted, the order's id ("" before: the family read is the truth the
-   * payment panel follows).
+   * it: the client, the quote id and the branch id. The payment panel follows
+   * the family read for the order and its invoice, so no order id is handed
+   * down: the family is the truth it shows.
    */
   private wirePaymentSeam(): void {
     for (const seam of this.renderRoot.querySelectorAll<HTMLElement & Record<string, unknown>>("qd-related-docs, qd-order-payment")) {
       seam.quoteId = this.quoteId;
       seam.branchId = this.branchId;
       seam.client = this.client;
-      if (seam.tagName === "QD-ORDER-PAYMENT") seam.orderId = this.converted?.orderId ?? "";
     }
   }
 
