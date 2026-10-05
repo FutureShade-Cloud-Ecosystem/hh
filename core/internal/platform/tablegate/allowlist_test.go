@@ -613,6 +613,20 @@ var allowlist = []allowlistEntry{
 		reason: "the load doors' supplier writer stamps its vendor rows through the 0213 seq stream (HH-LOAD-1 LD-4); the allocator write is part of the frozen 0213 shape",
 	},
 	{
+		module: "customer",
+		file:   "core/internal/customer/loadwriter.go",
+		tables: []string{},
+		writes: []string{"scope_sequences"},
+		reason: "the load doors' customer writer stamps its customer rows through the 0213 seq stream (HH-LOAD-1 LD-6); the allocator write is part of the frozen 0213 shape",
+	},
+	{
+		module: "portal",
+		file:   "core/internal/portal/jobload.go",
+		tables: []string{},
+		writes: []string{"scope_sequences"},
+		reason: "the load doors' job writer stamps its project rows through the 0213 seq stream (HH-LOAD-1 LD-6); the allocator write is part of the frozen 0213 shape",
+	},
+	{
 		module: "planflow",
 		file:   "core/internal/planflow/syncscope.go",
 		tables: []string{},
