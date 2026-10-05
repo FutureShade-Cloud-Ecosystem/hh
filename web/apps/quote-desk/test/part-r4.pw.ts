@@ -3,6 +3,9 @@
 import { expect, test, type Page } from "@playwright/test";
 import { gate, hold, open, quiet, row, seed, settle, signIn, stubBrowserChannels, writes } from "./switch-helpers.js";
 
+/** A day well after any seeded expiry, built at run time. */
+const FAR_DATE = new Date(Date.now() + 400 * 86_400_000).toISOString().slice(0, 10);
+
 test.beforeEach(async ({ request }) => {
   await request.post("/_stub/reset");
 });
@@ -472,12 +475,12 @@ test("P3 an unsaved expiry survives a re-read caused by another save", async ({ 
   await signIn(page, "Sales manager");
   await openQuote(page, "Q-1001");
   const panel = page.locator("qd-quote-edit");
-  await panel.locator('[data-field="expiry"]').fill("2031-06-15");
+  await panel.locator('[data-field="expiry"]').fill(FAR_DATE);
   const first = panel.getByTestId("qe-line").first();
   await first.locator('[data-field="qty"]').fill("6");
   await first.getByRole("button", { name: "Save" }).click();
   await expect(page.getByTestId("qe-notice")).toHaveText("Saved.");
-  await expect(panel.locator('[data-field="expiry"]')).toHaveValue("2031-06-15");
+  await expect(panel.locator('[data-field="expiry"]')).toHaveValue(FAR_DATE);
 });
 
 test("P3 a refused expiry save returns the box to the server's date", async ({ page }) => {
@@ -487,7 +490,7 @@ test("P3 a refused expiry save returns the box to the server's date", async ({ p
   const box = panel.locator('[data-field="expiry"]');
   const served = await box.inputValue();
   await hold(page, /\/quotes\/q-1001$/, { method: "PATCH", refuse: { status: 500, error: "quote: the expiry store is down" } }).then((held) => held.open());
-  await box.fill("2031-06-15");
+  await box.fill(FAR_DATE);
   await panel.getByRole("button", { name: "Save expiry" }).click();
   await expect(page.getByTestId("qe-error")).not.toHaveText("");
   await expect(box).toHaveValue(served);
