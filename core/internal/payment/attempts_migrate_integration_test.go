@@ -93,7 +93,8 @@ func TestMigration0361_AttemptTableAndSchedule(t *testing.T) {
 		}
 	}
 
-	for _, con := range []string{"cca_bound_has_payment", "cca_money_has_ref", "cca_voided_says_how", "cca_resolved_says_how"} {
+	for _, con := range []string{"cca_bound_has_payment", "cca_money_has_ref", "cca_voided_says_how", "cca_resolved_says_how",
+		"cca_payment_only_bound", "cca_reversal_only_on_voided", "cca_resolution_only_on_resolved"} {
 		var n int
 		if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_constraint
 		    WHERE conrelid = 'card_charge_attempts'::regclass AND conname = $1 AND contype = 'c'`, con).Scan(&n); err != nil || n != 1 {

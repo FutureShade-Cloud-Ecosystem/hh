@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -913,4 +914,79 @@ func TestAttempts_CheckConstraintsRejectImpossibleRows(t *testing.T) {
 	fx.force(a.ID, AttemptVoided)
 	fx.force(a.ID, AttemptResolved)
 	fx.force(a.ID, AttemptBound)
+}
+
+// tailPlaceholders builds ", $5, $6, ..." for the insert leg below, whose base columns take $1 to $4.
+func tailPlaceholders(n int) string {
+	parts := make([]string, n)
+	for i := range parts {
+		parts[i] = "$" + strconv.Itoa(5+i)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return ", " + strings.Join(parts, ", ")
+}
+
+// The round 1 review's impossible rows: no legal transition writes them, so the table refuses them.
+// Each is INSERTed straight at the table and must die on the named converse rule. CHARGING and
+// UNKNOWN may carry a processor ref and a resp code on purpose: packet A2 records a late capture
+// answer there (the review's P3-1), and the accepted cases at the end pin that.
+func TestAttempts_CheckConstraintsRejectImpossibleInserts(t *testing.T) {
+	fx := newAttemptFx(t)
+	ctx := context.Background()
+	insert := func(status, extraCols string, extra ...any) error {
+		args := append([]any{uuid.NewString(), uuid.NewString(), fx.branch, fx.session}, extra...)
+		_, err := fx.helper.Exec(ctx, `INSERT INTO card_charge_attempts
+		    (leg_key, sale_key, leg_seq, amount_cents, branch_id, till_session_id, status`+extraCols+`)
+		  VALUES ($1, $2::uuid, 1, 100, $3::uuid, $4::uuid, '`+status+`'`+tailPlaceholders(len(extra))+`)`,
+			args...)
+		return err
+	}
+	mustReject := func(name, constraint, status, extraCols string, extra ...any) {
+		t.Run(name, func(t *testing.T) {
+			if err := insert(status, extraCols, extra...); err == nil {
+				t.Fatalf("the impossible row %s was accepted", name)
+			} else {
+				checkViolation(t, err, constraint)
+			}
+		})
+	}
+
+	// payment_id is BOUND's alone: money bound to a sale and reversed at once is the worst of them.
+	mustReject("voided_with_payment", "cca_payment_only_bound", AttemptVoided,
+		`, processor_ref, reversal_kind, reversal_ref, payment_id`, "r", ReversalVoid, "v", fx.newPayment())
+	mustReject("charging_with_payment", "cca_payment_only_bound", AttemptCharging,
+		`, payment_id`, fx.newPayment())
+	mustReject("captured_with_payment", "cca_payment_only_bound", AttemptCaptured,
+		`, processor_ref, payment_id`, "r", fx.newPayment())
+	mustReject("resolved_with_payment", "cca_payment_only_bound", AttemptResolved,
+		`, resolution, resolution_note, resolved_by, payment_id`, ResolutionNotCharged, "n", fx.user, fx.newPayment())
+
+	// reversal columns are VOIDED's alone: StampVoided is their only writer, in one guarded move. A
+	// VOID_UNKNOWN row keeps no ref because its answer was lost; a VOID_DECLINED row keeps none
+	// because the reversal was refused and there is no trans id of ours to keep.
+	mustReject("bound_with_reversal", "cca_reversal_only_on_voided", AttemptBound,
+		`, processor_ref, payment_id, reversal_kind, reversal_ref`, "r", fx.newPayment(), ReversalVoid, "v")
+	mustReject("declined_with_reversal", "cca_reversal_only_on_voided", AttemptDeclined,
+		`, reversal_kind`, ReversalVoid)
+	mustReject("void_declined_with_reversal_ref", "cca_reversal_only_on_voided", AttemptVoidDeclined,
+		`, processor_ref, reversal_ref`, "r", "v")
+
+	// resolution columns are RESOLVED's alone.
+	mustReject("captured_with_resolution", "cca_resolution_only_on_resolved", AttemptCaptured,
+		`, processor_ref, resolution, resolution_note, resolved_by`, "r", ResolutionNotCharged, "n", fx.user)
+
+	// the store trims the note, and the table must not admit a whitespace only one either.
+	mustReject("resolved_with_blank_note", "cca_resolved_says_how", AttemptResolved,
+		`, resolution, resolution_note, resolved_by`, ResolutionNotCharged, "   ", fx.user)
+
+	// What a legal transition can write stays legal, the late capture answer shape included.
+	for _, status := range []string{AttemptCharging, AttemptUnknown} {
+		t.Run("accepted_"+status+"_carries_a_late_answer", func(t *testing.T) {
+			if err := insert(status, `, processor_ref, resp_code`, "late-capture-answer", "A"); err != nil {
+				t.Fatalf("%s with a late processor ref must be accepted: %v", status, err)
+			}
+		})
+	}
 }
