@@ -8,6 +8,7 @@ package customer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -17,14 +18,20 @@ import (
 // transaction.
 type OrgReader struct{}
 
-// CustomerInOrgTx reports whether the customer row exists and carries the
-// org the load stamped on it.
-func (OrgReader) CustomerInOrgTx(ctx context.Context, tx pgx.Tx, customerID, orgID string) (bool, error) {
-	var in bool
-	if err := tx.QueryRow(ctx,
-		`SELECT EXISTS (SELECT 1 FROM customers WHERE id = $1::uuid AND org_id = $2::uuid)`,
-		customerID, orgID).Scan(&in); err != nil {
-		return false, fmt.Errorf("customer: org membership read: %w", err)
+// CustomerOrgTx reads the customer row's org on the caller's
+// transaction: found is false when the row is gone, orgID is empty when
+// the row carries no org. The caller says the true thing in its refusal.
+func (OrgReader) CustomerOrgTx(ctx context.Context, tx pgx.Tx, customerID string) (found bool, orgID string, err error) {
+	var org *string
+	err = tx.QueryRow(ctx, `SELECT org_id::text FROM customers WHERE id = $1::uuid`, customerID).Scan(&org)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, "", nil
 	}
-	return in, nil
+	if err != nil {
+		return false, "", fmt.Errorf("customer: org read: %w", err)
+	}
+	if org != nil {
+		orgID = *org
+	}
+	return true, orgID, nil
 }

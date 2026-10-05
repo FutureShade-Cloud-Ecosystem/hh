@@ -303,15 +303,8 @@ func (ContactLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (s
 	}
 	// The org rides through the customer: the contact lands only under a
 	// customer of the machine principal's org.
-	var inOrg bool
-	if err := tx.QueryRow(ctx,
-		`SELECT EXISTS (SELECT 1 FROM customers WHERE id = $1::uuid AND org_id = $2::uuid)`,
-		customerID, in.OrgID).Scan(&inOrg); err != nil {
-		return "", fmt.Errorf("customer: contact customer read: %w", err)
-	}
-	if !inOrg {
-		return "", &load.Refusal{Code: "org_mismatch", Field: load.KindCustomer,
-			Detail: fmt.Sprintf("customer legacy key %s names a row another org owns", customerKey)}
+	if refused := customerOrgRefusal(ctx, tx, customerID, customerKey, in.OrgID); refused != nil {
+		return "", refused
 	}
 	email, _ := in.Record["email"].(string)
 	phone, _ := in.Record["phone"].(string)
@@ -346,6 +339,29 @@ func (ContactLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (s
 		return "", fmt.Errorf("customer: contact load update: %w", err)
 	}
 	return id, nil
+}
+
+// customerOrgRefusal reads the referenced customer row's org on the frame's
+// transaction and refuses with the true thing: a row that is gone is a
+// missing reference, a row with no org is not loaded into this org, and a
+// row another org owns is an org mismatch. Nil when the row is this org's.
+func customerOrgRefusal(ctx context.Context, tx pgx.Tx, customerID, customerKey, orgID string) error {
+	found, org, err := OrgReader{}.CustomerOrgTx(ctx, tx, customerID)
+	if err != nil {
+		return fmt.Errorf("customer: contact customer read: %w", err)
+	}
+	switch {
+	case !found:
+		return &load.Refusal{Code: load.ReasonMissingReference, Field: load.KindCustomer,
+			Detail: fmt.Sprintf("the customer row for legacy key %s is gone", customerKey)}
+	case org == "":
+		return &load.Refusal{Code: load.ReasonMissingReference, Field: load.KindCustomer,
+			Detail: fmt.Sprintf("the customer row for legacy key %s carries no org of this load", customerKey)}
+	case org != orgID:
+		return &load.Refusal{Code: "org_mismatch", Field: load.KindCustomer,
+			Detail: fmt.Sprintf("customer legacy key %s names a row another org owns", customerKey)}
+	}
+	return nil
 }
 
 // wholeNumber reads a record number as a whole count: the wire decodes
