@@ -1404,6 +1404,31 @@
     "test": "refused before anything is sent"
   },
   {
+    "id": "op-amount-comma",
+    "file": "src/_order-payment.ts",
+    "find": "  if (separators) return { cents: null, problem: COMMA_WORDS };",
+    "replace": "",
+    "test": "a decimal comma or a loose space is refused with the words that teach the point",
+    "runner": "node",
+    "testFile": "test/order-payment.test.mjs"
+  },
+  {
+    "id": "op-amount-cap",
+    "file": "src/_order-payment.ts",
+    "find": "  if (cents > Number.MAX_SAFE_INTEGER) return { cents: null, problem: OVERSAFE_WORDS };",
+    "replace": "",
+    "test": "an amount above Number.MAX_SAFE_INTEGER cents is refused",
+    "runner": "node",
+    "testFile": "test/order-payment.test.mjs"
+  },
+  {
+    "id": "op-preview",
+    "file": "src/order-payment-panel.ts",
+    "find": "    const parsed = parseTypedAmount(this.amountRaw);\n    return parsed.cents === null ? \"\" : `Taking ${moneyWord(parsed.cents)} by ${tenderWord(this.tender)}`;",
+    "replace": "    const parsed = parseTypedAmount(this.amountRaw);\n    return \"\";",
+    "test": "the parsed figure is shown beside the button"
+  },
+  {
     "id": "ws-serialize",
     "file": "src/workspace-store.ts",
     "find": "    this.#queued = send;\n    if (this.#inFlight !== null) return this.#inFlight;\n",

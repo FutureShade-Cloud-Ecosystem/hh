@@ -7,12 +7,15 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   AttemptBook,
+  COMMA_WORDS,
+  OVERSAFE_WORDS,
   TENDER_METHODS,
   convertedNote,
   figuresLine,
   isDifferentPaymentRefusal,
   isUnknownOutcome,
   mintPaymentKey,
+  parseTypedAmount,
   paymentRefusalWords,
   paymentTargetBalance,
   receivedByWord,
@@ -148,6 +151,29 @@ test("the balance a payment is bounded by comes from the reads, never from arith
   assert.equal(paymentTargetBalance(order, partPaid, { invoiceId: "inv-9", balanceCents: 2706 }), 2706);
   // Any other invoice state is not guessed at.
   assert.equal(paymentTargetBalance(order, doc("INVOICE", "DRAFT", 3706), null), null);
+});
+
+test("a decimal comma or a loose space is refused with the words that teach the point, and valid grouping passes", () => {
+  // The reviewer's table, verbatim: each of these once left the desk as a different amount.
+  for (const bad of ["0,50", "12,50", "1,5", "1 5", "12,50", "0 50", "1234,567", "1.234,50"]) {
+    assert.deepEqual(parseTypedAmount(bad), { cents: null, problem: COMMA_WORDS }, bad);
+  }
+  // Valid thousands grouping, comma or space, only left of the point, is what people paste.
+  assert.deepEqual(parseTypedAmount("$1,234.50"), { cents: 123450, problem: "" });
+  assert.deepEqual(parseTypedAmount("1 234.50"), { cents: 123450, problem: "" });
+  assert.deepEqual(parseTypedAmount("1,234,567.89"), { cents: 123456789, problem: "" });
+  assert.deepEqual(parseTypedAmount("1 234"), { cents: 123400, problem: "" });
+  // The parse's own refusals keep their words.
+  assert.deepEqual(parseTypedAmount("1.005").problem, "The amount is not a number this desk can send: type dollars and cents, like 40.00.");
+  assert.equal(parseTypedAmount("abc").cents, null);
+  assert.equal(parseTypedAmount("").cents, null);
+  assert.deepEqual(parseTypedAmount("40.00"), { cents: 4000, problem: "" });
+});
+
+test("an amount above Number.MAX_SAFE_INTEGER cents is refused, never rounded through a float", () => {
+  assert.deepEqual(parseTypedAmount("90071992547409.93"), { cents: null, problem: OVERSAFE_WORDS });
+  assert.deepEqual(parseTypedAmount("99999999999999999999"), { cents: null, problem: OVERSAFE_WORDS });
+  assert.deepEqual(parseTypedAmount("90071992547409.91"), { cents: 9007199254740991, problem: "" });
 });
 
 test("the figures line names the documents in their own words and the balance when the reads carry it", () => {

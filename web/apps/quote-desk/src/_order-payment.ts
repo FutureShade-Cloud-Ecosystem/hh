@@ -49,15 +49,55 @@ export function tenderWord(method: string): string {
 }
 
 /**
- * What the cashier typed, as integer cents. null when it is not a number this
- * desk can send (empty, not digits, or more than two decimal places): an
- * empty box and a deliberate zero are different things, and the server judges
- * zero, not this parse. Dollars in, cents out, through the digits: the typed
+ * What the cashier typed, as integer cents, with the words that teach the refusal when the desk
+ * will not send it. null cents when it is not a number this desk can send (empty, not digits, or
+ * more than two decimal places): an empty box and a deliberate zero are different things, and
+ * the server judges zero, not this parse. Dollars in, cents out, through the digits: the typed
  * string is split at the point and the fraction padded, never multiplied.
+ *
+ * THE APP'S OWN GUARD SITS IN FRONT of the shared pos-kit parse (parseAmountCents), which strips
+ * every comma and space because people paste from invoices: on this desk a comma or a space is a
+ * decimal separator waiting to happen ("0,50" for fifty cents becomes fifty DOLLARS when the
+ * separator is stripped), so a comma or a space is accepted only as valid thousands grouping
+ * (groups of exactly three digits after the first, and only left of the point) and anything else
+ * is refused with the words that teach the point. The shared helper itself stays untouched: the
+ * till's own tender boxes share it, and their exposure is the principal's to rule on. Anything
+ * above Number.MAX_SAFE_INTEGER cents is refused too: the shared parse of a very long digit
+ * string rounds through a float and can land a cent off, so the desk sends nothing it cannot
+ * name exactly.
  */
+export interface TypedAmount {
+  /** The parsed cents, null when the desk refuses to send what was typed. */
+  cents: number | null;
+  /** "" when the cents parsed; the words that teach the refusal when they did not. */
+  problem: string;
+}
+
+/** The words that teach the point, for a comma or a space that is not thousands grouping. */
+export const COMMA_WORDS = "Use a point for cents, for example 12.50.";
+
+/** The words for an amount no counter can name exactly in integer cents. */
+export const OVERSAFE_WORDS = "The amount is larger than this desk can send.";
+
+export function parseTypedAmount(raw: string): TypedAmount {
+  const t = raw.trim();
+  const pointAt = t.indexOf(".");
+  const whole = pointAt === -1 ? t : t.slice(0, pointAt);
+  const fraction = pointAt === -1 ? "" : t.slice(pointAt + 1);
+  const separators =
+    /[,\s]/.test(fraction) ||
+    (/[,\s]/.test(whole) && !/^[0-9]{1,3}([, ][0-9]{3})*$/.test(whole.replace(/\$/g, "")));
+  if (separators) return { cents: null, problem: COMMA_WORDS };
+  const cents = typedCents(t);
+  if (cents === null) return { cents: null, problem: "The amount is not a number this desk can send: type dollars and cents, like 40.00." };
+  if (cents > Number.MAX_SAFE_INTEGER) return { cents: null, problem: OVERSAFE_WORDS };
+  return { cents, problem: "" };
+}
+
+/** The shared pos-kit parse the desk's own guard (parseTypedAmount) sits in front of. */
 export function typedCents(raw: string): number | null {
-  const cents = parseAmountCents(raw);
-  return Number.isNaN(cents) ? null : cents;
+  const parsed = parseAmountCents(raw);
+  return Number.isNaN(parsed) ? null : parsed;
 }
 
 // ── the idempotency key ─────────────────────────────────────────────────────

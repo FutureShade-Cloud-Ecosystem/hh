@@ -57,11 +57,12 @@ import {
   figuresLine,
   isDifferentPaymentRefusal,
   isUnknownOutcome,
+  parseTypedAmount,
   paymentRefusalWords,
   paymentTargetBalance,
   receiptRows,
   replayedNote,
-  typedCents,
+  tenderWord,
   unknownOutcomeNote,
   type PaymentAttempt,
   type TenderMethod,
@@ -173,6 +174,11 @@ export class QdOrderPayment extends PanelBase {
         font-size: var(--qp-caption);
         color: var(--hos-text-dim, var(--hh-text-dim));
       }
+      .preview {
+        font-size: var(--qp-caption);
+        color: var(--hos-text-dim, var(--hh-text-dim));
+        white-space: nowrap;
+      }
       .receipt {
         margin-top: 10px;
         border: 1px solid var(--hos-line, var(--hh-line));
@@ -217,6 +223,22 @@ export class QdOrderPayment extends PanelBase {
   private get fieldsLocked(): boolean {
     const phase = this.attempt?.phase;
     return this.busy || phase === "not-known" || phase === "held";
+  }
+
+  /**
+   * The parsed figure beside the Take payment button, said before the button is pressed so the
+   * amount that will leave the desk is on the screen first: the receipt's own money word, the
+   * tender's own counter word. While an open attempt holds the form, the preview is the
+   * attempt's own figures, the ones a retry will send.
+   */
+  private get amountPreview(): string {
+    const held = this.attempt;
+    if (held !== null && (held.phase === "not-known" || held.phase === "held")) {
+      return `Taking ${moneyWord(held.amountCents)} by ${tenderWord(held.tender)}`;
+    }
+    if (this.busy || this.amountRaw.trim() === "") return "";
+    const parsed = parseTypedAmount(this.amountRaw);
+    return parsed.cents === null ? "" : `Taking ${moneyWord(parsed.cents)} by ${tenderWord(this.tender)}`;
   }
 
   protected override willUpdate(changed: Map<string, unknown>): void {
@@ -388,13 +410,13 @@ export class QdOrderPayment extends PanelBase {
       tender = kept.tender;
       reference = kept.reference;
     } else {
-      const parsed = typedCents(this.amountRaw);
-      if (parsed === null) {
-        this.error = "The amount is not a number this desk can send: type dollars and cents, like 40.00.";
+      const parsed = parseTypedAmount(this.amountRaw);
+      if (parsed.cents === null) {
+        this.error = parsed.problem;
         this.unknown = "";
         return;
       }
-      cents = parsed;
+      cents = parsed.cents;
       // The desk's own bound, in the desk's own money word, before anything is sent: the server
       // still judges every amount, and its own refusal is shown in its own words.
       const balance = this.paymentBalance;
@@ -631,6 +653,7 @@ export class QdOrderPayment extends PanelBase {
           <button type="button" class="primary" data-action="take-payment" data-testid="op-take" ?disabled=${this.busy}>
             ${this.busy ? "Taking payment..." : "Take payment"}
           </button>
+          ${this.amountPreview !== "" ? html`<span class="preview" data-testid="op-preview">${this.amountPreview}</span>` : nothing}
         </div>
         ${this.unknown !== "" ? html`<p class="err" role="status" data-testid="op-unknown">${this.unknown}</p>` : nothing}
         ${this.error !== "" ? html`<p class="err" role="alert" data-testid="op-error">${this.error}</p>` : nothing}

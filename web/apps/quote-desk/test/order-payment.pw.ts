@@ -502,6 +502,28 @@ test("a 409 that says the key took a different payment holds the attempt instead
   expect(keys[2]).not.toBe(keys[0]);
 });
 
+test("a decimal comma is refused in words that teach the point, never sent, and the parsed figure is shown beside the button before it is pressed", async ({ page }) => {
+  await signIn(page);
+  await openWithPayment(page, "Q-2101");
+  const seen = writes(page);
+  for (const bad of ["0,50", "12,50", "1,5", "1 5"]) {
+    await pay(page).locator('[data-field="amount"]').fill(bad);
+    await pay(page).getByTestId("op-take").click();
+    await expect(pay(page).getByTestId("op-error")).toHaveText("Use a point for cents, for example 12.50.");
+    await expect(pay(page).getByTestId("op-preview")).toHaveCount(0);
+  }
+  expect(seen.filter((line) => line.includes("order-payment"))).toEqual([]);
+  // The parsed figure is on the screen before Take payment is pressed, in the receipt's own money word.
+  await pay(page).locator('[data-field="amount"]').fill("12.50");
+  await expect(pay(page).getByTestId("op-preview")).toHaveText("Taking CA$12.50 by Cash");
+  await pay(page).getByTestId("op-tenders").getByRole("button", { name: "CARD", exact: true }).click();
+  await expect(pay(page).getByTestId("op-preview")).toHaveText("Taking CA$12.50 by Card");
+  // An amount no counter can name exactly is refused in words too.
+  await pay(page).locator('[data-field="amount"]').fill("99999999999999999999");
+  await pay(page).getByTestId("op-take").click();
+  await expect(pay(page).getByTestId("op-error")).toHaveText("The amount is larger than this desk can send.");
+});
+
 test("an amount that is not a number this desk can send is refused before any post", async ({ page }) => {
   await signIn(page);
   await openWithPayment(page, "Q-2101");
