@@ -58,6 +58,20 @@ test("a fixed price is offered on a customer and product rule alone, and leaving
   assert.equal(setRuleScope(f, "CUSTOMER_PRODUCT").calcType, "ABSOLUTE");
 });
 
+// The reviewer's round 3 case: on a create, a branch picked under the tier and category scope
+// must not ride along when the scope switches to one whose editor cannot hold it. It showed
+// read only with no way to clear it, and the save silently limited the new rule to that yard.
+test("a branch picked on create does not carry across a scope switch, while an edit's own branch stays", () => {
+  const YARD = "6f1c2b3a-0000-4000-8000-000000000002";
+  const picked = { ...emptyRuleForm(), scope: "TIER_CATEGORY", branchId: YARD, valuePct: "10" };
+  assert.equal(setRuleScope(picked, "TIER_CATEGORY").branchId, YARD, "staying on the scope that holds it keeps the pick");
+  const switched = setRuleScope(picked, "TIER_DEFAULT");
+  assert.equal(switched.branchId, "");
+  assert.equal(ruleSave(switched).value.write.branch_id, "", "the save sends no branch the editor cannot see or clear");
+  const edit = setRuleScope({ ...picked, id: "r9", version: 2 }, "TIER_DEFAULT");
+  assert.equal(edit.branchId, YARD, "an edit of a rule that already carries a branch keeps it (round 2 P2-C)");
+});
+
 test("a tier rule sends every scope dimension, the unused ones cleared", () => {
   const f = { ...ruleFormFromRow(ruleRow), valuePct: "18.5" };
   const out = ruleSave(f);

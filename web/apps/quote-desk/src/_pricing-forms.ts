@@ -140,10 +140,17 @@ export function ruleCalcOptions(scope: RuleScope | string): readonly RuleCalc[] 
   return scope === "CUSTOMER_PRODUCT" ? ["PCT_OFF_LIST", "MARKUP_ON_COST", "ABSOLUTE"] : ["PCT_OFF_LIST", "MARKUP_ON_COST"];
 }
 
-/** Changing the scope; leaving the customer and product scope drops a fixed price. */
+/**
+ * Changing the scope; leaving the customer and product scope drops a fixed price. On a
+ * create it also drops a branch picked under the tier and category scope: every other
+ * scope's editor cannot hold or clear a branch, so the pick would ride along read only and
+ * the save would silently limit the new rule to that yard. An edit keeps the branch the
+ * stored rule already has (round 2 P2-C): only the editor's own fresh pick is dropped.
+ */
 export function setRuleScope(form: RuleForm, scope: RuleScope): RuleForm {
   const calcType = scope !== "CUSTOMER_PRODUCT" && form.calcType === "ABSOLUTE" ? "PCT_OFF_LIST" : form.calcType;
-  return { ...form, scope, calcType };
+  const branchId = form.id === "" && scope !== "TIER_CATEGORY" ? "" : form.branchId;
+  return { ...form, scope, calcType, branchId };
 }
 
 export interface RuleSave {

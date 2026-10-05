@@ -330,14 +330,37 @@ test("editing a branch limited tier default rule keeps its branch", async ({ pag
   await expect(row).toContainText("Trenton");
   await row.getByTestId("pr-edit").click();
   await expect(page.getByTestId("pr-dialog")).toBeVisible();
-  // the tier default scope cannot edit the branch, so the branch it has is shown read only
+  // the tier default scope cannot edit the branch, so the branch it has is shown read only,
+  // and the read only value is tied to its label by an explicit relation (a11y, round 3)
   await expect(page.getByTestId("pr-branch")).toHaveCount(0);
   await expect(page.getByTestId("pr-branch-readonly")).toHaveText("Trenton");
+  const labelledBy = await page.getByTestId("pr-branch-readonly").getAttribute("aria-labelledby");
+  expect(labelledBy).not.toBeNull();
+  await expect(page.locator(`#${labelledBy}`)).toHaveText("Branch");
   await page.getByTestId("pr-detail").fill("Contractor, default: 15% off, reviewed");
   await page.getByTestId("pr-save").click();
   await expect(page.getByTestId("pr-dialog")).toHaveCount(0);
   const rule = (await pricingState(page)).rules.find((r) => r.detail_text === "Contractor, default: 15% off, reviewed");
   expect(rule?.branch_id).toBe("6f1c2b3a-0000-4000-8000-000000000001");
+});
+
+// ── round 3 P3: a branch picked on create does not ride a scope switch ──────────────────────────────
+
+test("a branch picked under the tier and category scope is dropped when a create switches scope", async ({ page }) => {
+  await openRules(page);
+  await page.getByTestId("pr-new").click();
+  await page.getByTestId("pr-scope").selectOption("TIER_CATEGORY");
+  await page.getByTestId("pr-branch").selectOption("6f1c2b3a-0000-4000-8000-000000000001");
+  await page.getByTestId("pr-scope").selectOption("TIER_DEFAULT");
+  // the tier default editor cannot hold or clear a branch, so the pick is gone rather than
+  // riding along read only and quietly limiting the new rule to that yard
+  await expect(page.getByTestId("pr-branch")).toHaveCount(0);
+  await expect(page.getByTestId("pr-branch-readonly")).toHaveCount(0);
+  await page.getByTestId("pr-value").fill("5");
+  await page.getByTestId("pr-save").click();
+  await expect(page.getByTestId("pr-dialog")).toHaveCount(0);
+  const made = (await pricingState(page)).rules.at(-1);
+  expect(made?.branch_id).toBe("");
 });
 
 // ── round 2 P3: the start date holds through an edit on a core not hosted in UTC ─────────────────────
