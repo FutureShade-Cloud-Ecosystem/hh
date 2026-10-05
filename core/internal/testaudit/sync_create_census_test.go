@@ -19,13 +19,21 @@ package testaudit
 //   - fenced: Create still calls the public Load under its own transaction; the owning lane has not
 //     fixed it yet (the entry names the owner). The census FAILS when a fenced store is fixed without
 //     moving its entry, so the list can only shrink;
-//   - noLoadCall: Create makes no call on the receiver's Load or load.
+//   - noLoadCall: Create (followed through the receiver's own helper methods) makes no call on the
+//     receiver's Load or load.
 // A NEW store with both methods that is in none of the lists fails the census until someone
 // classifies it, and a fixed store that regresses to the public Load fails it too.
 //
+// HOW IT READS A STORE. Create's body is followed through the receiver's own methods (a helper such
+// as writeAnchor counts as part of Create); a type that embeds another type of its package and
+// declares no Create or Load of its own inherits the embedded type's class (two dispatch stores do);
+// a fixed store's unexported loader must exist and must not name `.pool` anywhere in its body.
+//
 // WHAT IT CANNOT KNOW. It is name based and file scoped: it sees `<receiver>.Load(` and
-// `<receiver>.load(<ctx>, tx, ...)` inside Create's own body, not calls through helpers, function
-// valued fields or another type's methods; it cannot prove the transaction is the one Create opened.
+// `<receiver>.load(<ctx>, tx, ...)` in Create and the receiver's own helpers, not calls through
+// function valued fields or another type's methods; it cannot prove the transaction is the one
+// Create opened, and for a noTxHeld store it cannot prove the transaction is STILL absent at the
+// call (a Load moved under a Begin stays green: each noTxHeld reason is a claim read at source).
 // The pool-size legs (one per fixed store) are the proof; this census only keeps the shape from
 // re-arming quietly.
 
@@ -52,7 +60,9 @@ func (c censusClass) String() string {
 	return [...]string{"noLoadCall", "fixed", "poolLoad"}[c]
 }
 
-// storeKey names a store as "<package dir under internal>.<Type>".
+// Store names are "<package dir under internal>.<Type>".
+
+// syncCensusFixed: Create reaches the loader through the transaction (the fifteen stores of the sweep).
 var syncCensusFixed = []string{
 	"attachments.SyncStore",
 	"customerquote.SyncStore",
@@ -71,34 +81,57 @@ var syncCensusFixed = []string{
 	"tasks.WeightSyncStore",
 }
 
+// syncCensusPromoted: stores that embed a fixed store and inherit its Create and Load without
+// declaring either, so they carry its class.
+var syncCensusPromoted = map[string]string{
+	"dispatch.DeliveryStopsSyncStore": "embeds StopsSyncStore",
+	"dispatch.LoadsSyncStore":         "embeds StopsSyncStore",
+}
+
+// syncCensusNoTxHeld: Create reaches the public Load but holds no transaction of its own at that
+// point; each reason was read at source.
 var syncCensusNoTxHeld = map[string]string{
 	"billing.InvoicesSyncStore":      "Create's transaction lives inside writer.InvoiceOrderNamed, which has returned (committed or rolled back) before the conflict arm calls Load",
 	"planflow.InstructionsSyncStore": "Create delegates to OrdersSyncStore.Create (fixed above) and calls its own Load only after that Create has returned its connection",
+	"pricing.SyncStore":              "Create delegates to writeAnchor, which calls the public Load BEFORE its own Begin (the anchor check in pricing/syncscope.go), so no transaction of its own is held at that read",
 }
 
+// syncCensusFenced: Create still calls the public Load under its own transaction; the owner has not
+// fixed it yet. The census fails when one of these is fixed without moving its entry.
 var syncCensusFenced = map[string]string{
 	"quote.SyncStore":                          "owner: the Quote Desk lane (quote/syncscope.go)",
 	"identity/staffcontext.ApprovalsSyncStore": "owner: identity approvals (staffcontext/syncscope_approvals.go)",
 }
 
-// syncCensusNoLoadCall lists the stores with both methods whose Create never reads the row back
-// through its own Load (so the arm cannot starve this way): reviewed at source.
+// syncCensusNoLoadCall: stores with both methods whose Create never reads the row back through its
+// own Load (so the arm cannot starve this way); reviewed at source.
 var syncCensusNoLoadCall = []string{
 	"billing.AgingStore",
 	"dashboard.WidgetMeasuresStore",
 	"payments.PaymentMethodsStore",
 	"payments.PaymentsSyncStore",
-	"pricing.SyncStore",
 	"sync/readcache.Store",
 }
 
-// classifySyncStores walks the module's production sources and classifies every receiver type with
-// both a Create and a Load method.
+type storeFacts struct {
+	create, load *ast.FuncDecl
+	methods      map[string]*ast.FuncDecl
+	recv         map[string]string // method name -> receiver identifier
+	embeds       []string          // embedded type names of the same package
+}
+
+// classifySyncStores walks the module's production sources and classifies every receiver type that
+// has both a Create and a Load method (declared or promoted from an embedded type of its package).
 func classifySyncStores(t *testing.T, internalRoot string) map[string]censusClass {
 	t.Helper()
 	type typeKey struct{ dir, typ string }
-	methods := map[typeKey]map[string]*ast.FuncDecl{}
-	recvIdent := map[typeKey]string{}
+	facts := map[typeKey]*storeFacts{}
+	get := func(k typeKey) *storeFacts {
+		if facts[k] == nil {
+			facts[k] = &storeFacts{methods: map[string]*ast.FuncDecl{}, recv: map[string]string{}}
+		}
+		return facts[k]
+	}
 
 	err := filepath.WalkDir(internalRoot, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -117,27 +150,51 @@ func classifySyncStores(t *testing.T, internalRoot string) map[string]censusClas
 		if perr != nil {
 			return perr
 		}
+		dir := filepath.ToSlash(filepath.Dir(path))
 		for _, decl := range f.Decls {
-			fd, ok := decl.(*ast.FuncDecl)
-			if !ok || fd.Body == nil || fd.Recv == nil || len(fd.Recv.List) == 0 {
-				continue
-			}
-			field := fd.Recv.List[0]
-			rt := field.Type
-			if star, ok := rt.(*ast.StarExpr); ok {
-				rt = star.X
-			}
-			id, ok := rt.(*ast.Ident)
-			if !ok {
-				continue
-			}
-			k := typeKey{dir: filepath.ToSlash(filepath.Dir(path)), typ: id.Name}
-			if methods[k] == nil {
-				methods[k] = map[string]*ast.FuncDecl{}
-			}
-			methods[k][fd.Name.Name] = fd
-			if len(field.Names) > 0 {
-				recvIdent[k] = field.Names[0].Name
+			switch dd := decl.(type) {
+			case *ast.GenDecl:
+				for _, sp := range dd.Specs {
+					ts, ok := sp.(*ast.TypeSpec)
+					if !ok {
+						continue
+					}
+					st, ok := ts.Type.(*ast.StructType)
+					if !ok {
+						continue
+					}
+					sf := get(typeKey{dir, ts.Name.Name})
+					for _, fld := range st.Fields.List {
+						if len(fld.Names) != 0 {
+							continue // a named field is not an embedding
+						}
+						ft := fld.Type
+						if star, ok := ft.(*ast.StarExpr); ok {
+							ft = star.X
+						}
+						if id, ok := ft.(*ast.Ident); ok {
+							sf.embeds = append(sf.embeds, id.Name)
+						}
+					}
+				}
+			case *ast.FuncDecl:
+				if dd.Body == nil || dd.Recv == nil || len(dd.Recv.List) == 0 {
+					continue
+				}
+				field := dd.Recv.List[0]
+				rt := field.Type
+				if star, ok := rt.(*ast.StarExpr); ok {
+					rt = star.X
+				}
+				id, ok := rt.(*ast.Ident)
+				if !ok {
+					continue
+				}
+				sf := get(typeKey{dir, id.Name})
+				sf.methods[dd.Name.Name] = dd
+				if len(field.Names) > 0 {
+					sf.recv[dd.Name.Name] = field.Names[0].Name
+				}
 			}
 		}
 		return nil
@@ -146,49 +203,109 @@ func classifySyncStores(t *testing.T, internalRoot string) map[string]censusClas
 		t.Fatalf("walk %s: %v", internalRoot, err)
 	}
 
-	out := map[string]censusClass{}
-	root := filepath.ToSlash(internalRoot) + "/"
-	for k, m := range methods {
-		create, hasCreate := m["Create"]
-		_, hasLoad := m["Load"]
-		if !hasCreate || !hasLoad {
-			continue
-		}
-		recv := recvIdent[k]
-		pool, viaTx := 0, 0
-		ast.Inspect(create.Body, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
+	// scan follows Create through the receiver's own methods and counts the two call shapes.
+	scan := func(sf *storeFacts) (pool, viaTx int) {
+		visited := map[string]bool{}
+		var walk func(name string)
+		walk = func(name string) {
+			if visited[name] {
+				return
 			}
-			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok {
-				return true
+			visited[name] = true
+			fd := sf.methods[name]
+			if fd == nil {
+				return
 			}
-			x, ok := sel.X.(*ast.Ident)
-			if !ok || x.Name != recv {
-				return true
-			}
-			switch sel.Sel.Name {
-			case "Load":
-				pool++
-			case "load":
-				if len(call.Args) > 1 {
-					if a, ok := call.Args[1].(*ast.Ident); ok && a.Name == "tx" {
-						viaTx++
+			recv := sf.recv[name]
+			ast.Inspect(fd.Body, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				sel, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				x, ok := sel.X.(*ast.Ident)
+				if !ok || x.Name != recv {
+					return true
+				}
+				switch sel.Sel.Name {
+				case "Load":
+					pool++
+				case "load":
+					if len(call.Args) > 1 {
+						if a, ok := call.Args[1].(*ast.Ident); ok && a.Name == "tx" {
+							viaTx++
+						}
+					}
+				default:
+					if _, own := sf.methods[sel.Sel.Name]; own && sel.Sel.Name != "Create" {
+						walk(sel.Sel.Name)
 					}
 				}
+				return true
+			})
+		}
+		walk("Create")
+		return pool, viaTx
+	}
+
+	// loaderUsesPool reports whether the unexported loader's body names .pool anywhere.
+	loaderUsesPool := func(sf *storeFacts) bool {
+		fd := sf.methods["load"]
+		if fd == nil {
+			return true // a "fixed" store with no loader is not fixed
+		}
+		bad := false
+		ast.Inspect(fd.Body, func(n ast.Node) bool {
+			if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "pool" {
+				bad = true
 			}
 			return true
 		})
-		name := strings.TrimPrefix(k.dir, root) + "." + k.typ
+		return bad
+	}
+
+	classOf := func(k typeKey, sf *storeFacts) censusClass {
+		pool, viaTx := scan(sf)
 		switch {
 		case pool > 0:
-			out[name] = classPoolLoad
+			return classPoolLoad
+		case viaTx > 0 && !loaderUsesPool(sf):
+			return classFixed
 		case viaTx > 0:
-			out[name] = classFixed
+			return classPoolLoad // the call shape is right but the loader itself reads the pool
 		default:
-			out[name] = classNoLoadCall
+			return classNoLoadCall
+		}
+	}
+
+	out := map[string]censusClass{}
+	root := filepath.ToSlash(internalRoot) + "/"
+	for k, sf := range facts {
+		_, hasCreate := sf.methods["Create"]
+		_, hasLoad := sf.methods["Load"]
+		name := strings.TrimPrefix(k.dir, root) + "." + k.typ
+		if hasCreate && hasLoad {
+			out[name] = classOf(k, sf)
+			continue
+		}
+		// Promotion: no Create and no Load of its own, an embedded store of the same package has both.
+		if !hasCreate && !hasLoad {
+			for _, e := range sf.embeds {
+				ek := typeKey{k.dir, e}
+				esf := facts[ek]
+				if esf == nil {
+					continue
+				}
+				_, ec := esf.methods["Create"]
+				_, el := esf.methods["Load"]
+				if ec && el {
+					out[name] = classOf(ek, esf)
+					break
+				}
+			}
 		}
 	}
 	return out
@@ -199,6 +316,9 @@ func TestSyncCreateConflictArmCensus(t *testing.T) {
 
 	want := map[string]censusClass{}
 	for _, n := range syncCensusFixed {
+		want[n] = classFixed
+	}
+	for n := range syncCensusPromoted {
 		want[n] = classFixed
 	}
 	for n := range syncCensusNoTxHeld {
@@ -229,7 +349,7 @@ func TestSyncCreateConflictArmCensus(t *testing.T) {
 		w, inWant := want[n]
 		switch {
 		case inGot && !inWant:
-			problems = append(problems, n+": a store with both Create and Load that no census list classifies (it is "+g.String()+"); classify it after reading its Create at source")
+			problems = append(problems, n+": a store with both Create and Load (declared or promoted) that no census list classifies (it is "+g.String()+"); classify it after reading its Create at source")
 		case !inGot && inWant:
 			problems = append(problems, n+": listed in the census but no longer has both a Create and a Load method (renamed or removed: update the list)")
 		case g != w:
@@ -244,7 +364,7 @@ func TestSyncCreateConflictArmCensus(t *testing.T) {
 		t.Fatalf("the sync Create conflict arm census disagrees with the source (%d):\n  %s", len(problems), strings.Join(problems, "\n  "))
 	}
 
-	// The two no-transaction reasons and the fenced owners are claims; they must not be blank.
+	// The reasons and owners are claims; they must not be blank.
 	for n, why := range syncCensusNoTxHeld {
 		if strings.TrimSpace(why) == "" {
 			t.Errorf("%s: a noTxHeld entry needs its reason", n)
