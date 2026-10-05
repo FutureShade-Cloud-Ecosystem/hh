@@ -528,3 +528,34 @@ func TestContendedBatchAnswersTheSentinelAndResubmissionConverges(t *testing.T) 
 		}
 	}
 }
+
+// The user map keeps attaching suspended and deactivated staff: a former
+// rep's key must still resolve, and the attach grants nothing.
+func TestUserMapAttachesSuspendedAndDeactivatedStaff(t *testing.T) {
+	pool := mapSetup(t)
+	ctx := context.Background()
+	const suspID = "4442a800-0000-4000-8000-000000000c03"
+	const deactID = "4442a800-0000-4000-8000-000000000c04"
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO users (id, email, display_name, status) VALUES
+			($1::uuid, 'fixture.rep.three@example.invalid', 'Fixture Rep Three', 'SUSPENDED'),
+			($2::uuid, 'fixture.rep.four@example.invalid', 'Fixture Rep Four', 'DEACTIVATED')`, suspID, deactID); err != nil {
+		t.Fatalf("plant staff: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM users WHERE id = ANY($1::uuid[])`, []string{suspID, deactID})
+	})
+	door := NewAttachDoor(NewStore(pool), KindUser, &UserMapWriter{Staff: identity.StaffEmailReader{}}, &countingAuditSink{})
+	r, err := door.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+		BatchID: "b-umap-former", Caller: testActorID,
+		Items: []Item{userItem("U-S", "fixture.rep.three@example.invalid"), userItem("U-D", "fixture.rep.four@example.invalid")}})
+	if err != nil {
+		t.Fatalf("batch: %v", err)
+	}
+	if o := outcomeOf(t, r, "U-S"); o.Status != OutcomeAttached || o.HHID != suspID {
+		t.Fatalf("a suspended staff row answered %+v, want attached", o)
+	}
+	if o := outcomeOf(t, r, "U-D"); o.Status != OutcomeAttached || o.HHID != deactID {
+		t.Fatalf("a deactivated staff row answered %+v, want attached", o)
+	}
+}

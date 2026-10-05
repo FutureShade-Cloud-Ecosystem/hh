@@ -121,6 +121,8 @@ paths:
         unchanged, and a record that would re-point a recorded name at a
         second row refuses as a key conflict. A code that answers no
         branch row refuses naming the field. No branch is ever created.
+        The read assumes one deployment per dealer: it carries no org
+        predicate (the single org assumption of the plan's reading 3).
       x-role: machine
       security:
         - MachineBearer: []
@@ -169,7 +171,11 @@ paths:
         verified login email of an existing staff row; a name not yet
         recorded binds to that row and answers attached, a replay answers
         unchanged. An email that answers no staff row refuses naming the
-        field, never a value. No user is ever created.
+        field, never a value. No user is ever created. Any staff row
+        that is not deleted attaches, suspended and deactivated staff
+        included, so a former rep's key still resolves; the attach
+        grants nothing. The read assumes one deployment per dealer: it
+        carries no org predicate (the plan's reading 3).
       x-role: machine
       security:
         - MachineBearer: []
@@ -219,9 +225,13 @@ paths:
         category and resolves against the registry before any write, so
         a parent not yet loaded refuses naming the kind and the key. A
         parent chain that would return to the row the item names refuses
-        as a cycle with nothing of the write standing. A code a staff
-        member already made attaches to that row and takes the load's
-        stamps.
+        as a cycle, and one deeper than the bound the catalogue serves
+        refuses as too deep, each with nothing of the write standing. A
+        code a staff member already made attaches to that row and takes
+        the load's stamps. A changed code on a recorded legacy key
+        updates that row in place; a code another row carries refuses as
+        a key conflict naming both keys. A row another org owns refuses
+        naming the kind and the key; its org is never overwritten.
       x-role: machine
       security:
         - MachineBearer: []
@@ -272,7 +282,10 @@ paths:
         address, the active flag, the metadata, and the ordering contact
         (contact name, email, phone) through the purchasing module's own
         contact store. A contact that names neither an email nor a phone
-        refuses naming the field.
+        refuses naming the field, as do negative payment terms. A reload
+        whose record names no contact removes the loaded contact: the
+        record is the whole truth. A row another org owns refuses naming
+        the kind and the key; its org is never overwritten.
       x-role: machine
       security:
         - MachineBearer: []

@@ -20,6 +20,7 @@ package purchasing
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/load"
@@ -66,6 +67,10 @@ func (VendorLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (st
 			return "", &load.Refusal{Code: "record_shape", Field: "payment_terms_days",
 				Detail: "the terms in days are not a whole number"}
 		}
+		if days < 0 {
+			return "", &load.Refusal{Code: "record_shape", Field: "payment_terms_days",
+				Detail: "the terms in days are negative"}
+		}
 		terms = days
 	}
 	isEDI := false
@@ -111,11 +116,28 @@ func (VendorLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (st
 			seq = EXCLUDED.seq,
 			idempotency_key = EXCLUDED.idempotency_key,
 			updated_at = now()
+		WHERE vendors.org_id IS NULL OR vendors.org_id = EXCLUDED.org_id
 		RETURNING id::text`,
 		in.LegacyID, name, terms, isEDI, string(remitJSON), isActive, string(metaJSON),
 		in.OrgID, in.DerivedKey).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// The conflicting row belongs to another org: the load never
+		// re-stamps a row's org, so the item refuses naming kind and key.
+		return "", &load.Refusal{Code: "org_mismatch", Field: "legacy_id",
+			Detail: fmt.Sprintf("supplier legacy key %s names a row another org owns", in.LegacyID)}
+	}
 	if err != nil {
 		return "", fmt.Errorf("purchasing: vendor load write: %w", err)
+	}
+	if contact == nil && in.RowID != "" {
+		// A reload whose record names no contact removes the loaded one:
+		// the record is the whole truth. Only the update arm removes; a
+		// first attach to a staff made vendor never deletes the staff's
+		// own contact.
+		if _, err := tx.Exec(ctx,
+			`DELETE FROM purchasing_vendor_contacts WHERE vendor_id = $1::uuid`, id); err != nil {
+			return "", fmt.Errorf("purchasing: vendor contact remove: %w", err)
+		}
 	}
 	if contact != nil {
 		if _, err := tx.Exec(ctx, `

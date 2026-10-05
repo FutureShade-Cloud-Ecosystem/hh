@@ -71,24 +71,59 @@ func (CategoryLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (
 		return "", refused
 	}
 	var id string
-	err := tx.QueryRow(ctx, categorySeqCTE+`
-		INSERT INTO product_categories (parent_id, code, name, is_active, org_id, seq, idempotency_key)
-		VALUES (NULLIF($1, '')::uuid, $2, $3, $4, $5::uuid, (SELECT next_value FROM catseq), NULLIF($6, '')::uuid)
-		ON CONFLICT (code) DO UPDATE SET
-			parent_id = EXCLUDED.parent_id,
-			name = EXCLUDED.name,
-			is_active = EXCLUDED.is_active,
-			org_id = EXCLUDED.org_id,
-			seq = EXCLUDED.seq,
-			idempotency_key = EXCLUDED.idempotency_key,
-			updated_at = now()
-		RETURNING id::text`,
-		parent, code, name, isActive, in.OrgID, in.DerivedKey).Scan(&id)
-	if err != nil {
-		return "", fmt.Errorf("product: category load write: %w", err)
+	if in.RowID != "" {
+		// The update arm: the legacy key's recorded row is the identity and
+		// the code is content, so a changed code updates that row in place.
+		// A code another row already carries returns that row's id without
+		// a write, and the frame refuses the item as a conflict naming both
+		// legacy keys.
+		var other string
+		err := tx.QueryRow(ctx,
+			`SELECT id::text FROM product_categories WHERE code = $1 AND id <> $2::uuid`, code, in.RowID).Scan(&other)
+		if err == nil {
+			return other, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return "", fmt.Errorf("product: category code collision read: %w", err)
+		}
+		err = tx.QueryRow(ctx, categorySeqCTE+`
+			UPDATE product_categories SET
+				parent_id = NULLIF($1, '')::uuid, code = $2, name = $3, is_active = $4,
+				org_id = $5::uuid, seq = (SELECT next_value FROM catseq),
+				idempotency_key = NULLIF($6, '')::uuid, updated_at = now()
+			WHERE id = $7::uuid AND (org_id IS NULL OR org_id = $5::uuid)
+			RETURNING id::text`,
+			parent, code, name, isActive, in.OrgID, in.DerivedKey, in.RowID).Scan(&id)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", categoryOrgRefusal(in)
+		}
+		if err != nil {
+			return "", fmt.Errorf("product: category load update: %w", err)
+		}
+	} else {
+		err := tx.QueryRow(ctx, categorySeqCTE+`
+			INSERT INTO product_categories (parent_id, code, name, is_active, org_id, seq, idempotency_key)
+			VALUES (NULLIF($1, '')::uuid, $2, $3, $4, $5::uuid, (SELECT next_value FROM catseq), NULLIF($6, '')::uuid)
+			ON CONFLICT (code) DO UPDATE SET
+				parent_id = EXCLUDED.parent_id,
+				name = EXCLUDED.name,
+				is_active = EXCLUDED.is_active,
+				org_id = EXCLUDED.org_id,
+				seq = EXCLUDED.seq,
+				idempotency_key = EXCLUDED.idempotency_key,
+				updated_at = now()
+			WHERE product_categories.org_id IS NULL OR product_categories.org_id = EXCLUDED.org_id
+			RETURNING id::text`,
+			parent, code, name, isActive, in.OrgID, in.DerivedKey).Scan(&id)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", categoryOrgRefusal(in)
+		}
+		if err != nil {
+			return "", fmt.Errorf("product: category load write: %w", err)
+		}
 	}
 	if parent != "" {
-		cycle, err := categoryCycleTx(ctx, tx, id, parent)
+		cycle, deep, err := categoryCycleTx(ctx, tx, id, parent)
 		if err != nil {
 			return "", fmt.Errorf("product: category cycle check: %w", err)
 		}
@@ -96,8 +131,19 @@ func (CategoryLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (
 			return "", &load.Refusal{Code: "category_cycle", Field: "category",
 				Detail: "the parent chain returns to the row the item names; the tree would cycle and nothing of the write stands"}
 		}
+		if deep {
+			return "", &load.Refusal{Code: "category_depth", Field: "category",
+				Detail: "the parent chain is deeper than the bound the catalogue serves; the item refuses and nothing of the write stands"}
+		}
 	}
 	return id, nil
+}
+
+// categoryOrgRefusal is the refusal for a row another org owns: the
+// load never re-stamps a row's org. It names the kind and the key.
+func categoryOrgRefusal(in load.Write) *load.Refusal {
+	return &load.Refusal{Code: "org_mismatch", Field: "legacy_id",
+		Detail: fmt.Sprintf("category legacy key %s names a row another org owns", in.LegacyID)}
 }
 
 // categoryParent picks the parent out of the item's resolved
@@ -120,29 +166,30 @@ func categoryParent(in load.Write) (string, *load.Refusal) {
 	return parent, nil
 }
 
-// categoryCycleTx reports whether the parent chain from parentID
-// returns to rowID inside the caller's transaction: a bounded walk
-// from the new parent upward, one read of the module's own table per
-// step, self parenthood included.
-func categoryCycleTx(ctx context.Context, tx pgx.Tx, rowID, parentID string) (bool, error) {
+// categoryCycleTx walks the parent chain from parentID inside the
+// caller's transaction, one read of the module's own table per step.
+// cycle reports the chain returning to rowID (self parenthood included);
+// deep reports the walk reaching its bound without ending, which the
+// caller refuses: the walk fails closed.
+func categoryCycleTx(ctx context.Context, tx pgx.Tx, rowID, parentID string) (cycle, deep bool, err error) {
 	cur := parentID
 	for depth := 0; depth < categoryCycleDepth; depth++ {
 		if cur == rowID {
-			return true, nil
+			return true, false, nil
 		}
 		var next *string
 		err := tx.QueryRow(ctx,
 			`SELECT parent_id::text FROM product_categories WHERE id = $1::uuid`, cur).Scan(&next)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return false, nil
+			return false, false, nil
 		}
 		if err != nil {
-			return false, fmt.Errorf("product: category cycle walk: %w", err)
+			return false, false, fmt.Errorf("product: category cycle walk: %w", err)
 		}
 		if next == nil {
-			return false, nil
+			return false, false, nil
 		}
 		cur = *next
 	}
-	return false, nil
+	return false, true, nil
 }

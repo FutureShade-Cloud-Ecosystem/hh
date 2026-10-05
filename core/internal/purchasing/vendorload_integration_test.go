@@ -20,6 +20,7 @@ package purchasing
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 
@@ -310,5 +311,89 @@ func TestVendorLoadAttachesARowAStaffMemberAlreadyMade(t *testing.T) {
 	}
 	if o := vendorOutcome(t, r, "FXV-0002"); o.Status != load.OutcomeUnchanged {
 		t.Fatalf("the attach replay answered %q, want unchanged", o.Status)
+	}
+}
+
+// A reload that omits the contact removes the loaded contact (the record
+// is the whole truth); a reload that carries one updates it, both
+// through the module's own contact store.
+func TestVendorLoadReloadWithoutContactRemovesIt(t *testing.T) {
+	e := vendorLoadSetup(t)
+	ctx := context.Background()
+	with := func(email string) load.Item {
+		return vendItem("FXV-0009", "Fixture Desk Supplier", map[string]any{
+			"contact": map[string]any{"contact_name": "Fixture Desk", "email": email}})
+	}
+	if _, err := e.door.UpsertBatch(ctx, load.Batch{OrgID: fxVendorOrgID, SourceSystem: fxVendorSource,
+		BatchID: "b-vend-c1", Caller: fxVendorActorID, Items: []load.Item{with("first@example.invalid")}}); err != nil {
+		t.Fatalf("first batch: %v", err)
+	}
+	r, err := e.door.UpsertBatch(ctx, load.Batch{OrgID: fxVendorOrgID, SourceSystem: fxVendorSource,
+		BatchID: "b-vend-c2", Caller: fxVendorActorID, Items: []load.Item{with("second@example.invalid")}})
+	if err != nil {
+		t.Fatalf("update batch: %v", err)
+	}
+	if o := vendorOutcome(t, r, "FXV-0009"); o.Status != load.OutcomeUpdated {
+		t.Fatalf("the contact change answered %+v, want updated", o)
+	}
+	id, _, _, _, _, _ := e.vendRow(t, "FXV-0009")
+	if _, email, _ := e.vendContact(t, id); email != "second@example.invalid" {
+		t.Fatalf("the contact email is %q, want the reload's", email)
+	}
+	r, err = e.door.UpsertBatch(ctx, load.Batch{OrgID: fxVendorOrgID, SourceSystem: fxVendorSource,
+		BatchID: "b-vend-c3", Caller: fxVendorActorID,
+		Items: []load.Item{vendItem("FXV-0009", "Fixture Desk Supplier", nil)}})
+	if err != nil {
+		t.Fatalf("drop batch: %v", err)
+	}
+	if o := vendorOutcome(t, r, "FXV-0009"); o.Status != load.OutcomeUpdated {
+		t.Fatalf("the dropped contact answered %+v, want updated", o)
+	}
+	var n int
+	if err := e.pool.QueryRow(ctx,
+		`SELECT count(*) FROM purchasing_vendor_contacts WHERE vendor_id = $1::uuid`, id).Scan(&n); err != nil {
+		t.Fatalf("contact count: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("%d contact rows stand after a reload that names none, want none", n)
+	}
+}
+
+func TestVendorLoadRefusesNegativeTermsNamingTheField(t *testing.T) {
+	e := vendorLoadSetup(t)
+	r, err := e.door.UpsertBatch(context.Background(), load.Batch{OrgID: fxVendorOrgID, SourceSystem: fxVendorSource,
+		BatchID: "b-vend-n1", Caller: fxVendorActorID,
+		Items: []load.Item{vendItem("FXV-0008", "Fixture Negative", map[string]any{"payment_terms_days": -5})}})
+	if err != nil {
+		t.Fatalf("batch: %v", err)
+	}
+	o := vendorOutcome(t, r, "FXV-0008")
+	if o.Status != load.OutcomeRefused || o.Field != "payment_terms_days" {
+		t.Fatalf("negative terms answered %+v, want refused on payment_terms_days", o)
+	}
+}
+
+func TestVendorLoadRefusesARowOwnedByAnotherOrg(t *testing.T) {
+	e := vendorLoadSetup(t)
+	ctx := context.Background()
+	const otherOrg = "4442a800-0000-4000-8000-00000000e0ff"
+	if _, err := e.pool.Exec(ctx,
+		`INSERT INTO vendors (vendor_no, name, org_id) VALUES ('FXV-0002', 'Other Org Vendor', $1::uuid)`, otherOrg); err != nil {
+		t.Fatalf("plant: %v", err)
+	}
+	r, err := e.door.UpsertBatch(ctx, load.Batch{OrgID: fxVendorOrgID, SourceSystem: fxVendorSource,
+		BatchID: "b-vend-o1", Caller: fxVendorActorID,
+		Items: []load.Item{vendItem("FXV-0002", "Renamed By Load", nil)}})
+	if err != nil {
+		t.Fatalf("batch: %v", err)
+	}
+	o := vendorOutcome(t, r, "FXV-0002")
+	if o.Status != load.OutcomeRefused || o.Reason != "org_mismatch" ||
+		!strings.Contains(o.Detail, "supplier") || !strings.Contains(o.Detail, "FXV-0002") {
+		t.Fatalf("the other org's vendor answered %+v, want refused as org_mismatch naming the kind and key", o)
+	}
+	_, name, _, org, _, _ := e.vendRow(t, "FXV-0002")
+	if org != otherOrg || name != "Other Org Vendor" {
+		t.Fatalf("the vendor now carries org %q name %q, want it untouched", org, name)
 	}
 }
