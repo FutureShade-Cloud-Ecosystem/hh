@@ -162,21 +162,21 @@ func r15BangAlways(t *testing.T, pool *pgxpool.Pool) {
 }
 
 // r15BangFirstOnly plants the trigger in its first-firing-only shape (leg 2):
-// a counter table makes the FIRST INSERT raise 40P01 and every later one
-// pass, the transient fault the bounded rerun must see through.
+// a SEQUENCE makes the FIRST INSERT raise 40P01 and every later one pass, the
+// transient fault the bounded rerun must see through. The sequence is the
+// counter that counts firings: nextval moves forward even when the raising
+// transaction rolls back, where a table's counter would reset with it and
+// the fault would fire on every rerun forever.
 func r15BangFirstOnly(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	r15DropBang(t, pool)
 	if _, err := pool.Exec(context.Background(), `
-		CREATE TABLE IF NOT EXISTS r15_bang_count (n int NOT NULL);
-		DELETE FROM r15_bang_count;
-		INSERT INTO r15_bang_count VALUES (0);
+		CREATE SEQUENCE IF NOT EXISTS r15_bang_seq START 1;
 		CREATE OR REPLACE FUNCTION r15_bang() RETURNS trigger AS $fn$
-		DECLARE c int;
+		DECLARE c bigint;
 		BEGIN
-			SELECT n INTO c FROM r15_bang_count FOR UPDATE;
-			UPDATE r15_bang_count SET n = c + 1;
-			IF c = 0 THEN
+			c := nextval('r15_bang_seq');
+			IF c = 1 THEN
 				RAISE EXCEPTION 'r15 leg: first firing only' USING ERRCODE = '40P01';
 			END IF;
 			RETURN NEW;
@@ -188,13 +188,13 @@ func r15BangFirstOnly(t *testing.T, pool *pgxpool.Pool) {
 	t.Cleanup(func() { r15DropBang(t, pool) })
 }
 
-// r15DropBang removes the trigger, its function and its counter table.
+// r15DropBang removes the trigger, its function and its counter sequence.
 func r15DropBang(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	_, err := pool.Exec(context.Background(), `
 		DROP TRIGGER IF EXISTS r15_bang ON pos_sale;
 		DROP FUNCTION IF EXISTS r15_bang();
-		DROP TABLE IF EXISTS r15_bang_count;`)
+		DROP SEQUENCE IF EXISTS r15_bang_seq;`)
 	if err != nil {
 		t.Fatalf("drop the 40P01 trigger: %v", err)
 	}
@@ -307,12 +307,13 @@ func TestR15B_Leg1_ChargedRingRollsBackReversedAndNeverChargesTwice(t *testing.T
 	if charges != 2 || voids != 1 {
 		t.Fatalf("after the fresh ring: charges=%d voids=%d, want 2 and 1", charges, voids)
 	}
+	var hasPayment bool
 	if err := pool.QueryRow(context.Background(), `
 		SELECT a.status, p.id IS NOT NULL FROM card_charge_attempts a
-		LEFT JOIN payments p ON p.id = a.payment_id WHERE a.leg_key = $1`, fresh).Scan(&status, &n); err != nil {
+		LEFT JOIN payments p ON p.id = a.payment_id WHERE a.leg_key = $1`, fresh).Scan(&status, &hasPayment); err != nil {
 		t.Fatalf("read the fresh attempt row: %v", err)
 	}
-	if status != "BOUND" || n != 1 {
-		t.Fatalf("the fresh attempt is %s with payments row %d, want BOUND with its payments row", status, n)
+	if status != "BOUND" || !hasPayment {
+		t.Fatalf("the fresh attempt is %s with payments row %v, want BOUND with its payments row", status, hasPayment)
 	}
 }

@@ -179,6 +179,22 @@ func worker(getenv func(string) string) error {
 				RowsWritten: int64(notified),
 				Detail:      map[string]any{"window": stalePickWindow.String()},
 			}, err
+		}).
+		// The card charge attempt sweep (the card charge design section 4): its
+		// schedule row is planted by migration 0361 and enabled, so the handler
+		// must exist or the runner records an unknown job on every claim.
+		// Packet B registers the name and the rail it will read; the sweep body
+		// (the grace window, the guarded moves, the escalation posts) lands
+		// with packet C over the payment service the graph exposes.
+		Register("payment.card_attempt_sweep", func(jobCtx context.Context) (jobs.Result, error) {
+			if graph.tops.cardRail == nil {
+				return jobs.Result{Skipped: true, Detail: map[string]any{
+					"reason": "the card rail service is not wired; nothing to sweep",
+				}}, nil
+			}
+			return jobs.Result{Skipped: true, Detail: map[string]any{
+				"reason": "the card attempt sweep body lands with the next packet of this fix; the schedule is registered so the runner sees its handler",
+			}}, nil
 		})
 	go jobRunner.Run(ctx) // single instance, no leader election
 

@@ -51,24 +51,177 @@ var _ order.CommittedSaleTxReader = (*pos.Repository)(nil)
 // change on the billing method breaks the build here instead of quietly taking a second connection.
 var _ order.FinalizedInvoiceTxReader = (*billing.Repository)(nil)
 
-// cardChargerAdapter satisfies till.CardCharger over payment.Service.ChargeTx, the creds-free
-// charge rail (the posCardRefunderAdapter mirror): the till passes the tender amount and token and
-// gets the capture's own processor ref back; creds stay inside RUN-PAY. The sale transaction passes
-// STRAIGHT THROUGH: the config read rides the caller's transaction, the only shape inside a
-// transaction that holds a connection, where a pool read would stall a one-connection pool on a
-// single sale and deadlock a full pool of concurrent sales. The rotation write-back does NOT ride
-// the transaction: the service carries it to its rotation ledger and flushes it through the pool on
-// its own goroutine (see payment.Service.ChargeTx), so a rolled-back sale cannot discard a key the
-// processor has already exchanged.
-type cardChargerAdapter struct{ svc *payment.Service }
+// cardChargerAdapter satisfies till.CardCharger over payment.Service's Capture, Compensate and
+// BindTx, the creds-free card capture rail: the till passes the leg's facts and the token and gets
+// the attempt id and the capture's own processor ref back; creds stay inside RUN-PAY. The seam's
+// transaction discipline is the adapter's whole shape (the card charge design 3.3, decision log
+// row 786): Capture and Compensate go through the SERVICE's pool-shaped entry points with no
+// transaction anywhere in the call stack (pos calls them before the sale transaction opens and
+// after it returns), and BindTx rides the SALE's transaction for every statement it makes: the
+// FOR UPDATE verify below and payment's guarded bind both go through the tx the till handed in,
+// never the pool.
+//
+// This adapter is also the ONE place the payment module's typed capture answers become the till's
+// (the posTaxAdapter pattern): pos reads the till's sentinels, a payment word never crosses that
+// boundary. The store beside the service answers the seam's read-only arm (the retry pass that
+// must not claim), over the attempt store's own read.
+type cardChargerAdapter struct {
+	svc   *payment.Service
+	store *payment.Store
+}
 
-func (a cardChargerAdapter) Charge(ctx context.Context, tx pgx.Tx, amountCents int64, paymentToken, reference string) (till.ChargeResult, error) {
-	rcpt, err := a.svc.ChargeTx(ctx, tx, payment.ChargeInput{
-		AmountCents:  amountCents,
-		PaymentToken: paymentToken,
-		Reference:    reference,
+// Capture charges one leg at most once through payment.Service.Capture, translating the typed
+// answer. The read-only arm answers an existing row through the attempt store without claiming.
+func (a cardChargerAdapter) Capture(ctx context.Context, in till.CardChargeInput) (till.CardCapture, error) {
+	if in.ReadOnly {
+		return a.readAttempt(ctx, in.LegKey)
+	}
+	res, err := a.svc.Capture(ctx, payment.CaptureInput{
+		LegKey:        in.LegKey,
+		SaleKey:       in.SaleKey,
+		LegSeq:        in.LegSeq,
+		AmountCents:   in.AmountCents,
+		BranchID:      in.BranchID,
+		TillSessionID: in.TillSessionID,
+		CustomerID:    in.CustomerID,
+		CardType:      in.CardType,
+		CreatedBy:     in.CreatedBy,
+		AccountToken:  in.AccountToken,
 	})
-	return till.ChargeResult{ProcessorRef: rcpt.ProcessorRef, Status: rcpt.Status}, err
+	out := till.CardCapture{
+		AttemptID:    res.Attempt.ID,
+		ProcessorRef: res.Attempt.ProcessorRef,
+		PaymentID:    res.Attempt.PaymentID,
+	}
+	if err != nil {
+		return out, translateCaptureError(err)
+	}
+	switch res.Kind {
+	case payment.CaptureKindCaptured:
+		out.Kind = till.CardCaptureCaptured
+	case payment.CaptureKindBound:
+		out.Kind = till.CardCaptureBound
+	}
+	return out, nil
+}
+
+// translateCaptureError is the one table that turns the payment module's typed capture answers
+// into the till's (both packages' sentinels say the same things; only the words differ).
+func translateCaptureError(err error) error {
+	switch {
+	case errors.Is(err, payment.ErrCaptureInFlight):
+		return till.ErrCardInFlight
+	case errors.Is(err, payment.ErrCaptureDeclined):
+		return till.ErrCardDeclined
+	case errors.Is(err, payment.ErrCaptureReversed):
+		return till.ErrCardReversed
+	case errors.Is(err, payment.ErrCaptureResolved):
+		return till.ErrCardResolved
+	case errors.Is(err, payment.ErrTillUnresolved):
+		return till.ErrCardUnresolvedOnTill
+	case errors.Is(err, payment.ErrCaptureNotDispatched):
+		return till.ErrCardNotDispatched
+	case errors.Is(err, payment.ErrCaptureNeedsManager), errors.Is(err, payment.ErrCaptureAnswerUnrecorded):
+		return till.ErrCardNeedsManager
+	}
+	return err
+}
+
+// readAttempt is the seam's read-only arm: the attempt row's own answer, no claim, no call.
+func (a cardChargerAdapter) readAttempt(ctx context.Context, legKey string) (till.CardCapture, error) {
+	att, found, err := a.store.GetByLegKey(ctx, legKey)
+	if err != nil {
+		return till.CardCapture{}, err
+	}
+	if !found {
+		return till.CardCapture{}, till.ErrCardLegUnattempted
+	}
+	out := till.CardCapture{AttemptID: att.ID, ProcessorRef: att.ProcessorRef, PaymentID: att.PaymentID}
+	switch att.Status {
+	case payment.AttemptBound:
+		out.Kind = till.CardCaptureBound
+		return out, nil
+	case payment.AttemptCharging, payment.AttemptCaptured:
+		return out, till.ErrCardInFlight
+	case payment.AttemptDeclined:
+		return out, till.ErrCardDeclined
+	case payment.AttemptVoided:
+		return out, till.ErrCardReversed
+	case payment.AttemptUnknown, payment.AttemptVoiding, payment.AttemptVoidUnknown, payment.AttemptVoidDeclined:
+		return out, till.ErrCardNeedsManager
+	case payment.AttemptResolved:
+		return out, till.ErrCardResolved
+	}
+	return out, fmt.Errorf("payment: attempt %s has the unexpected status %q", att.ID, att.Status)
+}
+
+// BindTx binds a captured attempt to the payments row the sale's transaction just wrote. The
+// verify read takes the row lock FOR UPDATE ON THE SALE'S TRANSACTION and checks the four facts
+// the design names (the status, the amount, the till session, the leg key) against the tender;
+// payment's own guarded bind then moves the row, on the same transaction. Every statement rides
+// tx; nothing here can ask the pool for a second connection while the sale holds one (row 786).
+func (a cardChargerAdapter) BindTx(ctx context.Context, tx pgx.Tx, b till.CardBind) error {
+	var status string
+	var amount int64
+	var session, legKey string
+	err := tx.QueryRow(ctx, `
+		SELECT status, amount_cents, till_session_id::text, leg_key FROM card_charge_attempts
+		 WHERE id = $1::uuid FOR UPDATE`, b.AttemptID).Scan(&status, &amount, &session, &legKey)
+	if err != nil {
+		return fmt.Errorf("card bind: read the attempt on the sale's transaction: %w", err)
+	}
+	if status != payment.AttemptCaptured || amount != b.AmountCents || session != b.TillSessionID || legKey != b.LegKey {
+		return fmt.Errorf("%w: the attempt is %s (amount %d, session %s, leg %s) against the tender's (amount %d, session %s, leg %s)",
+			payment.ErrAttemptNotCaptured, status, amount, session, legKey, b.AmountCents, b.TillSessionID, b.LegKey)
+	}
+	return a.svc.BindTx(ctx, tx, b.AttemptID, b.PaymentID)
+}
+
+// Compensate reverses one captured leg through payment.Service.Compensate, translating the kind.
+func (a cardChargerAdapter) Compensate(ctx context.Context, attemptID string) (till.CardCompensation, error) {
+	res, err := a.svc.Compensate(ctx, attemptID)
+	out := till.CardCompensation{AttemptID: res.Attempt.ID}
+	if err != nil {
+		return out, err
+	}
+	switch res.Kind {
+	case payment.CompensateKindVoided:
+		out.Kind = till.CardCompVoided
+	case payment.CompensateKindCommitted:
+		out.Kind = till.CardCompCommitted
+	case payment.CompensateKindNeedsManager:
+		out.Kind = till.CardCompNeedsManager
+	}
+	return out, nil
+}
+
+// cardAttemptAlerter is the sweep's escalation post over messaging's escalations channel, the
+// unionSLANotifier pattern (the card charge design section 4): the attempt row is the system of
+// record, the post is visibility. The event key carries the attempt and the status it landed on,
+// so a state posts once. Packet C's sweep seam consumes this adapter; it lands with the wiring
+// now so the handoff it will close is visible at the composition root.
+type cardAttemptAlerter struct{ svc *messaging.Service }
+
+// PostCardAttemptAlert posts one escalation naming the attempt's money facts. The body never
+// carries a token, a credential or a customer name: the amount, the branch, the till session, the
+// sale key and the charge ref are what a person reconciling a settlement report needs.
+func (a cardAttemptAlerter) PostCardAttemptAlert(ctx context.Context, attemptID, status string, amountCents int64, branchID, tillSessionID, saleKey, processorRef string) error {
+	body := fmt.Sprintf("Card charge attempt %s is %s: amount %d cents, branch %s, till session %s, sale key %s",
+		shortRef(attemptID), status, amountCents, shortRef(branchID), shortRef(tillSessionID), shortRef(saleKey))
+	if processorRef != "" {
+		body += ", charge ref " + processorRef
+	}
+	_, _, err := a.svc.PostEventToChannelSlug(ctx, "escalations", "card-attempt:"+attemptID+":"+status, body,
+		messaging.EventRef{Topic: "payment.card_attempt", Entity: "card_charge_attempt:" + attemptID, Summary: body}, false)
+	return err
+}
+
+// shortRef names an id the way a person reads it: the head of the uuid.
+func shortRef(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
 }
 
 // customerTypeAdapter satisfies order.CustomerTypeResolver over customer.Service.ResolveAccount, so
