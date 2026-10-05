@@ -4,7 +4,7 @@
 // themes and the panel's text stays readable (its colour is not its background's).
 import { expect, test, type Page } from "@playwright/test";
 import { shot } from "./shot";
-import { openPricing, openTab, signIn } from "./pricing-helpers";
+import { openPricing, openTab, setMode, signIn } from "./pricing-helpers";
 
 test.beforeEach(async ({ request }) => {
   await request.post("/_stub/reset");
@@ -39,8 +39,31 @@ async function populated(page: Page, tab: "margin" | "rules" | "customers" | "br
     await expect(page.getByTestId("pc-edit")).toHaveCount(1);
   }
   if (tab === "breaks") await expect(page.getByTestId("pb-schedule")).toHaveCount(2);
-  if (tab === "audit") await expect(page.getByTestId("pa-row").first()).toBeVisible();
+  if (tab === "audit") {
+    await expect(page.getByTestId("pa-row").first()).toBeVisible();
+    // the actor names land after the rows; the wide cells they fill are the point of the check
+    await expect(page.getByTestId("pa-row").first().locator("td").last()).toContainText(/manager|principal|system/);
+  }
   await expect(page.getByText(/^Loading the /)).toHaveCount(0);
+}
+
+/** Each tab's own card, by the testid its panel carries. */
+const TAB_PANEL: Record<"margin" | "rules" | "customers" | "breaks" | "audit", string> = {
+  margin: "pm-panel",
+  rules: "pr-panel",
+  customers: "pc-panel",
+  breaks: "pb-panel",
+  audit: "pa-panel",
+};
+
+/**
+ * The card's own overflow, not only the document's: a card that hides its overflow clips what
+ * sticks out (the log's Actor column at 820) while the document still measures clean, so every
+ * tab's own panel is asked whether anything sticks out of it. A locator pierces the panel's
+ * shadow roots; an element that hides its overflow still reports it in scrollWidth.
+ */
+async function clippedBy(page: Page, tab: "margin" | "rules" | "customers" | "breaks" | "audit"): Promise<number> {
+  return page.getByTestId(TAB_PANEL[tab]).evaluate((card) => card.scrollWidth - card.clientWidth);
 }
 
 for (const theme of ["Light", "Dark"] as const) {
@@ -58,6 +81,7 @@ for (const theme of ["Light", "Dark"] as const) {
       await populated(page, tab);
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
       expect(overflow).toBeLessThanOrEqual(0);
+      expect(await clippedBy(page, tab), `${tab} must not clip inside its own card at 1440`).toBeLessThanOrEqual(0);
       const colours = await page.getByTestId("pricing-panel").evaluate((el) => {
         const cs = getComputedStyle(el);
         return { text: cs.color, back: getComputedStyle(document.body).backgroundColor };
@@ -83,10 +107,16 @@ test.describe("at the tablet's 820 wide", () => {
       expect(box === null ? 0 : box.height).toBeLessThanOrEqual(line * 1.6);
     }
     await shot(page, "pricing-rules-820-light");
-    for (const tab of ["margin", "rules", "breaks"] as const) {
+    // the customers step above leaves a floor confirmation in the log; with the product read
+    // off, the log lists its products by raw id, the widest text it holds and the one that
+    // used to stick out past the card's hidden overflow
+    await setMode(page, { product_names: false });
+    for (const tab of ["margin", "rules", "customers", "breaks", "audit"] as const) {
       await populated(page, tab);
       expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+      expect(await clippedBy(page, tab), `${tab} must not clip inside its own card at 820`).toBeLessThanOrEqual(0);
     }
+    await setMode(page, { product_names: true });
   });
 });
 

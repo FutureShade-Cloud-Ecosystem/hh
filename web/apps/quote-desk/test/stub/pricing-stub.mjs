@@ -67,7 +67,7 @@ const newId = (prefix) => {
   return `${prefix}0000000-0000-4000-9000-${String(seq).padStart(12, "0")}`;
 };
 
-const switches = { mode: "editor", auditAllowed: true, shape: "bare", failNext: null, failConfirm: false, forcePreview: null };
+const switches = { mode: "editor", auditAllowed: true, shape: "bare", failNext: null, failConfirm: false, forcePreview: null, productNames: true };
 let world;
 
 function seedWorld() {
@@ -307,6 +307,7 @@ export function resetPricing() {
   switches.failNext = null;
   switches.failConfirm = false;
   switches.forcePreview = null;
+  switches.productNames = true;
   clock = 0;
 }
 
@@ -318,6 +319,7 @@ export function handlePricing({ request, response, path, url, callerOf, readBody
       if (typeof body.audit_allowed === "boolean") switches.auditAllowed = body.audit_allowed;
       if (typeof body.shape === "string") switches.shape = body.shape === "page" ? "page" : "bare";
       if (body.fail_next !== undefined) switches.failNext = body.fail_next;
+      if (body.product_names !== undefined) switches.productNames = body.product_names;
       if (typeof body.fail_confirm === "boolean") switches.failConfirm = body.fail_confirm;
       // Fields laid over the next previews' answer (not_graded, no_cost, truncated, items), or null to stop.
       if (body.force_preview !== undefined) switches.forcePreview = body.force_preview;
@@ -378,6 +380,9 @@ export function handlePricing({ request, response, path, url, callerOf, readBody
     return true;
   }
   if (product !== null) {
+    // Names off stands for a core whose product read the panel cannot reach: the log then
+    // lists the confirmation's products by their raw ids, the widest text the log holds.
+    if (!switches.productNames) return respondJson(response, 404, { error: "product names are off" }), true;
     const p = productById.get(product[1]);
     respondJson(response, 200, { id: p.id, sku: p.sku, name: p.name });
     return true;

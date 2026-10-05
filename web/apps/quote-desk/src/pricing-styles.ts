@@ -298,6 +298,12 @@ export const pricingStyles = [
       color: var(--hos-text, var(--hh-text));
     }
     /* the pricing log's pager and links */
+    /* the log's own table scrolls sideways inside the card: the card hides its overflow for its
+       rounded corners, and the log is the one table whose cells (a timestamp, a badge, who made
+       the change) need not wrap, so at a narrow card the Actor column stays reachable */
+    .table-scroll {
+      overflow-x: auto;
+    }
     .pager {
       display: flex;
       align-items: center;

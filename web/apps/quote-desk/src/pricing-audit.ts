@@ -215,22 +215,24 @@ export class QdPricingAudit extends PricingTabBase {
             : filtered.length === 0
               ? html`<p class="msg" data-testid="pa-empty">No log entries match.</p>`
               : html`
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>When</th>
-                        <th>Entity</th>
-                        <th>Record</th>
-                        <th>Action</th>
-                        <th>Field</th>
-                        <th>Change</th>
-                        <th>Actor</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      ${shown.rows.map((row) => this.renderRow(row))}
-                    </tbody>
-                  </table>
+                  <div class="table-scroll" data-testid="pa-table-scroll">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>When</th>
+                          <th>Entity</th>
+                          <th>Record</th>
+                          <th>Action</th>
+                          <th>Field</th>
+                          <th>Change</th>
+                          <th>Actor</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        ${shown.rows.map((row) => this.renderRow(row))}
+                      </tbody>
+                    </table>
+                  </div>
                   <div class="pager">
                     <button type="button" data-action="prev" ?disabled=${!shown.hasPrev}>&lsaquo; Prev</button>
                     <button type="button" data-action="next" ?disabled=${!shown.hasNext}>Next &rsaquo;</button>
