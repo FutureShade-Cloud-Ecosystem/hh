@@ -241,15 +241,6 @@ type txRidingAudit interface {
 	RecordTx(ctx context.Context, q audit.Execer, a audit.SensitiveAccess) error
 }
 
-// insertSignatureOnTx is the statement the tx capture runs on the CALLER'S transaction. It is the
-// pool capture's insert (Repository.InsertSignature) verbatim, one writer, two surfaces, so a
-// signature row reads the same however it was captured: editing one means editing the other. The
-// statement lives here rather than behind the store seam because the capture must write through the
-// caller's own transaction handle, and the store seam's contract is pool writes.
-const insertSignatureOnTx = `
-INSERT INTO pos_signature (purpose, ref_type, ref_id, signature_enc, provider, captured_by)
-VALUES ($1, $2, $3, $4, $5, $6) RETURNING id::text`
-
 // CaptureTypedTx records the attestation on the CALLER'S transaction: the signature row inserts on
 // it, the audit row writes on it through RecordTx, so both commit or roll back WITH the caller's
 // mutation, and a capture inside a transaction never asks the shared pool for a second connection.
@@ -259,7 +250,10 @@ VALUES ($1, $2, $3, $4, $5, $6) RETURNING id::text`
 // writes run. Unlike the pool capture, whose audit row is best effort because its caller has
 // nothing to abort, a FAILED audit write here FAILS THE CAPTURE: the error propagates, the caller's
 // transaction rolls back, and nothing commits, because a SensitiveAccess row that cannot be written
-// must not be lost silently under a confirm that says the act happened. A wired recorder that
+// must not be lost silently under a confirm that says the act happened (the principal's ruling,
+// decision log row 804: a capture and its audit row commit together or not at all, a signature without
+// its audit row is the worse state, and best effort inside a transaction would need a savepoint to hide
+// a failure; the pool path is left as it is). A wired recorder that
 // cannot ride the transaction at all refuses for the same reason, and an unbound provider refuses
 // rather than answer success for a capture that persisted nothing, which on a transaction path
 // would commit the caller's mutation believing it carried evidence.
@@ -286,9 +280,11 @@ func (p *TypedNameSignatureProvider) CaptureTypedTx(ctx context.Context, tx pgx.
 	if err != nil {
 		return "", err
 	}
-	var id string
-	if err := tx.QueryRow(ctx, insertSignatureOnTx, row.Purpose, row.RefType, row.RefID, row.SignatureEnc,
-		row.Provider, nullStr(row.CapturedBy)).Scan(&id); err != nil {
+	// The insert rides the caller's transaction through the store seam (Repository.InsertSignatureTx,
+	// the module's ONE pos_signature insert), the same statement the pool capture persists through,
+	// so the row commits or rolls back with the caller's write and the two capture paths cannot
+	// carry statements that drift apart.
+	if _, err := p.store.InsertSignatureTx(ctx, tx, row); err != nil {
 		return "", err
 	}
 	if ride != nil {
