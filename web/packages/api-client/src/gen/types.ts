@@ -3071,6 +3071,51 @@ export type InvCountReconRunPage = {
   next_cursor?: string | null;
   limit?: number;
 };
+export type LoadKeyRef = {
+  kind: string;
+  legacy_id: string;
+};
+export type LoadKeysResolveRequest = {
+  source_system: string;
+  items: LoadKeyRef[];
+};
+export type LoadKeyResolution = {
+  kind: string;
+  legacy_id: string;
+  hh_id: string | null;
+};
+export type LoadKeysResolveCounts = {
+  found: number;
+  missing: number;
+};
+export type LoadKeysResolveResult = {
+  items: LoadKeyResolution[];
+  counts: LoadKeysResolveCounts;
+};
+export type LoadBatchItemOutcome = {
+  legacy_id: string;
+  status: "created" | "updated" | "unchanged" | "refused";
+  hh_id?: string | null;
+  reason?: string | null;
+  field?: string | null;
+  detail?: string | null;
+};
+export type LoadBatchCounts = {
+  created: number;
+  updated: number;
+  unchanged: number;
+  refused: number;
+};
+export type LoadBatchView = {
+  batch_id: string;
+  source_system: string;
+  kind: string;
+  caller: string;
+  state: "RECORDED";
+  counts: LoadBatchCounts;
+  items: LoadBatchItemOutcome[];
+  created_at: string;
+};
 export type MessagingChannel = {
   id: string;
   kind: "BRANCH" | "TEAM" | "TOPIC" | "DM" | "APPROVAL";
