@@ -1344,7 +1344,7 @@
     "id": "op-kept-restore",
     "file": "src/order-payment-panel.ts",
     "find": "    this.attempt = rec?.attempt ?? null;\n    this.busy = this.attempt?.phase === \"in-flight\";",
-    "replace": "    this.attempt = null;\n    this.busy = false;",
+    "replace": "    this.attempt = null as PaymentAttempt | null;\n    this.busy = false;",
     "test": "kept for its quote across switches"
   },
   {

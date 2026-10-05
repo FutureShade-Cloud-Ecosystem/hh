@@ -85,19 +85,20 @@ test("docDay is day grained and empty when unreadable", () => {
 test("docDay is the local day wherever the desk runs, pinned at both ends of the zone range", () => {
   // The chip's day is the LOCAL day of the document, so a desk at UTC+14 and one at UTC-12 can
   // read a different day off the same instant, both right. Each zone is spawned as its own
-  // process with TZ set, because the runner's own zone is whatever launched it; the expected
-  // day is derived from the instant's epoch at each offset, never typed as a date.
+  // process with TZ set (the program is fed on stdin, so no file is written), because the
+  // runner's own zone is whatever launched it; the expected day is derived from the instant's
+  // epoch at each offset, never typed as a date. The .ts source is named in a static import
+  // because the loader's hooks rewrite only relative specifiers, and Node's own type stripping
+  // loads the .ts source directly.
   const loader = new URL("../../../packages/api-client/src/_ts-js-loader.mjs", import.meta.url).href;
-  // The .ts source itself: the spawned process runs the loader's hooks, but an absolute URL
-  // import is not a relative specifier the hook rewrites, and Node's own type stripping loads
-  // the .ts source directly.
   const moduleUrl = new URL("../src/_related-docs.ts", import.meta.url).href;
-  const script = `const { docDay } = await import(${JSON.stringify(moduleUrl)}); process.stdout.write(docDay(${JSON.stringify(DAY_ISO)}));`;
+  const script = 'import { docDay } from "' + moduleUrl + '";\nprocess.stdout.write(docDay(' + JSON.stringify(DAY_ISO) + '));';
   for (const [zone, offsetMinutes] of [
     ["Pacific/Kiritimati", 14 * 60],
     ["Etc/GMT+12", -12 * 60],
   ]) {
-    const run = spawnSync(process.execPath, ["--import", loader, "--input-type=module", "--eval", script], {
+    const run = spawnSync(process.execPath, ["--import", loader, "--input-type=module"], {
+      input: script,
       encoding: "utf8",
       env: { ...process.env, TZ: zone },
     });
