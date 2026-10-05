@@ -163,7 +163,7 @@ var scanTargets = []string{
 	"branches", "compliance", "config", "customer", "customerquote",
 	"dashboard", "demo", "dispatch", "export", "feedback", "finstmt", "gl",
 	"identity", "invcount", "inventory", "jobs", "landedcost", "lien",
-	"localization", "messaging", "messagingprovider", "notify", "order",
+	"load", "localization", "messaging", "messagingprovider", "notify", "order",
 	"payment", "payments", "planflow", "platform", "portal", "pos",
 	"pricing", "printing", "procurement", "product", "purchasing", "quote",
 	"quoteassist", "reporting", "roleconfig", "settings", "sync", "tasks",
@@ -296,6 +296,8 @@ var migrationTopics = map[string]string{
 	"0213_org_tenant_seq_deleted_idem":     "identity",
 	"0214_new_entities_and_pricing":        "MULTI",
 	"0215_identity_audit":                  "MULTI",
+	"0320_load_key_registry":               "load",
+	"0321_fb_moves_machine_principal":      "identity",
 }
 
 // multiTopicSplits states the per-object attribution inside the five
