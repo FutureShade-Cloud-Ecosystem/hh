@@ -1248,5 +1248,68 @@
     "find": "      this.notice = late;\n    }\n    // Drafts return",
     "replace": "    }\n    // Drafts return",
     "test": "P3 a link made for the quote left by the work area is said"
+  },
+  {
+    "id": "rd-read-guard",
+    "file": "src/related-docs-panel.ts",
+    "find": "const result = await ctx.guardedRead(seq, client.relatedDocuments(ctx.id, this.kind));\n    if (result === undefined) return;",
+    "replace": "const result = await client.relatedDocuments(ctx.id, this.kind);",
+    "test": "guard related documents read:"
+  },
+  {
+    "id": "rd-read-order",
+    "file": "src/related-docs-panel.ts",
+    "find": "await ctx.guardedRead(seq, client.relatedDocuments(ctx.id, this.kind))",
+    "replace": "await ctx.guarded(client.relatedDocuments(ctx.id, this.kind))",
+    "test": "guard related documents order:"
+  },
+  {
+    "id": "rd-load-stale",
+    "file": "src/related-docs-panel.ts",
+    "find": "    // A cancelled context issues no more requests: the panel left the page (sign out) and a read of its is not this session's.\n    if (ctx.stale) return;\n",
+    "replace": "",
+    "test": "A P2-1 a panel that has left the page reads nothing"
+  },
+  {
+    "id": "op-read-guard",
+    "file": "src/order-payment-panel.ts",
+    "find": "const answers = await ctx.guardedRead(seq, Promise.all([client.readQuote(ctx.id), client.relatedDocuments(ctx.id, \"quote\")]));\n    if (answers === undefined) return;",
+    "replace": "const answers = await Promise.all([client.readQuote(ctx.id), client.relatedDocuments(ctx.id, \"quote\")]);",
+    "test": "guard payment read:"
+  },
+  {
+    "id": "op-read-order",
+    "file": "src/order-payment-panel.ts",
+    "find": "await ctx.guardedRead(seq, Promise.all([client.readQuote(ctx.id), client.relatedDocuments(ctx.id, \"quote\")]))",
+    "replace": "await ctx.guarded(Promise.all([client.readQuote(ctx.id), client.relatedDocuments(ctx.id, \"quote\")]))",
+    "test": "guard payment read order:"
+  },
+  {
+    "id": "op-load-stale",
+    "file": "src/order-payment-panel.ts",
+    "find": "    // A cancelled context issues no more requests: the panel left the page (sign out) and a read of its is not this session's.\n    if (ctx.stale) return;\n",
+    "replace": "",
+    "test": "A P2-1 a panel that has left the page reads nothing"
+  },
+  {
+    "id": "op-pay-answer",
+    "file": "src/order-payment-panel.ts",
+    "find": "    const result = await ctx.guarded(\n      client.takeOrderPayment(ctx.id, { method: this.tender, amountCents: cents, reference: this.reference.trim(), idempotencyKey: key }),\n      (late) => this.lateAnswer(ctx, late),\n    );",
+    "replace": "    const result = await client.takeOrderPayment(ctx.id, { method: this.tender, amountCents: cents, reference: this.reference.trim(), idempotencyKey: key });",
+    "test": "a payment that lands after the person left"
+  },
+  {
+    "id": "op-late-announce",
+    "file": "src/order-payment-panel.ts",
+    "find": "      (late) => this.lateAnswer(ctx, late),",
+    "replace": "      undefined,",
+    "test": "a payment that lands after the person left"
+  },
+  {
+    "id": "op-late-note",
+    "file": "src/order-payment-panel.ts",
+    "find": "      this.lateNotes.set(ctx.id, LATE_PAYMENT_NOTE);\n      this.announceChangedFor(ctx);",
+    "replace": "      this.announceChangedFor(ctx);",
+    "test": "a payment that lands after the person left"
   }
 ]

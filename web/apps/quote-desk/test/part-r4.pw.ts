@@ -89,7 +89,7 @@ test("A P2-1 a panel that has left the page reads nothing when it is asked to re
   await signIn(page, "Sales manager");
   await row(page, "Q-1001").click();
   await openDetail(page);
-  const tags = ["qd-quote-edit", "qd-quote-history", "qd-quote-assist", "qd-quote-followups", "qd-quote-hold-expiry", "qd-quote-availability"];
+  const tags = ["qd-quote-edit", "qd-quote-history", "qd-quote-assist", "qd-quote-followups", "qd-quote-hold-expiry", "qd-quote-availability", "qd-related-docs", "qd-order-payment"];
   for (const tag of tags) await expect(page.locator(tag)).toHaveCount(1);
   await quiet(page);
   const requests: string[] = [];

@@ -24,6 +24,8 @@ import { money } from "@hardscapehouse/pos-kit/src/ported/pos-api.js";
 import { nextActive } from "@hardscapehouse/pos-kit/src/ported/_customer-picker.js";
 import "./panel-seams.js";
 import { SEAM_PAYMENT } from "./panel-seams.js";
+import "./related-docs-panel.js";
+import "./order-payment-panel.js";
 import { PanelBase } from "./panel-base.js";
 import { panelStyles } from "./panel-styles.js";
 import {
@@ -159,6 +161,12 @@ export class QdQuoteEdit extends PanelBase {
 
   reload(): void {
     void this.load();
+    // The payment seam's panels (the document family and the order payment)
+    // ride this panel's reload: the builder's fan-out reaches the edit panel,
+    // and the edit panel hands it down through the seam they are mounted in.
+    for (const child of this.renderRoot.querySelectorAll<HTMLElement & { reload?: () => void }>("qd-related-docs, qd-order-payment")) {
+      child.reload?.();
+    }
   }
 
   // ── reads ─────────────────────────────────────────────────────────────────
@@ -723,12 +731,15 @@ export class QdQuoteEdit extends PanelBase {
     this.renderRoot.querySelectorAll<HTMLElement>("[data-opt]").forEach((li) => {
       li.id = `qe-${li.getAttribute("data-opt")}-opt-${li.getAttribute("data-index")}`;
     });
-    const seam = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("qd-panel-seam");
-    if (seam !== null) {
+    // The payment seam's panels receive the open quote the way every host
+    // passes it: the client, the quote id, the branch id and, once this quote
+    // has been converted, the order's id ("" before: the family read is the
+    // truth the payment panel follows).
+    for (const seam of this.renderRoot.querySelectorAll<HTMLElement & Record<string, unknown>>("qd-related-docs, qd-order-payment")) {
       seam.quoteId = this.quoteId;
       seam.branchId = this.branchId;
-      // The converted order's id, once this quote has been converted ("" before): what QD-5's payment step needs.
-      seam.orderId = this.converted?.orderId ?? "";
+      seam.client = this.client;
+      if (seam.tagName === "QD-ORDER-PAYMENT") seam.orderId = this.converted?.orderId ?? "";
     }
   }
 
@@ -1026,7 +1037,10 @@ export class QdQuoteEdit extends PanelBase {
           : html`<p class="frozen" data-testid="qe-frozen">${frozenSentence(view)}</p>`}
         ${this.renderShare(view)}
         ${this.renderConvert(view)}
-        <qd-panel-seam data-seam=${SEAM_PAYMENT} data-seam-label="Related documents and the order's payment (QD-5)"></qd-panel-seam>
+        <div data-seam=${SEAM_PAYMENT} data-seam-label="Related documents and the order's payment (QD-5)">
+          <qd-related-docs></qd-related-docs>
+          <qd-order-payment></qd-order-payment>
+        </div>
         ${this.renderCompare()}
         <p class="err" role="alert" data-testid="qe-error">${this.error}</p>
         <p class="ok" role="status" aria-live="polite" aria-atomic="true" data-testid=${this.notice === LINK_CREATED_NOTICE ? nothing : "qe-notice"}>${this.notice === LINK_CREATED_NOTICE ? "" : this.notice}</p>
