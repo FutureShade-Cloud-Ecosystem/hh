@@ -1013,7 +1013,7 @@ func (s *Service) PostBill(ctx context.Context, billID string, in PostBillReques
 	if err != nil {
 		return BillDetail{}, err
 	}
-	po, err := s.repo.GetPO(ctx, bill.POID)
+	po, err := s.repo.GetPOTx(ctx, tx, bill.POID)
 	if err != nil {
 		return BillDetail{}, err
 	}
@@ -1021,7 +1021,7 @@ func (s *Service) PostBill(ctx context.Context, billID string, in PostBillReques
 	if err != nil {
 		return BillDetail{}, err
 	}
-	tol, err := s.repo.Tolerance(ctx, bill.BranchID)
+	tol, err := s.repo.ToleranceTx(ctx, tx, bill.BranchID)
 	if err != nil {
 		return BillDetail{}, err
 	}

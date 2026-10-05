@@ -377,9 +377,11 @@ func (r *Repository) ClaimHouseConversation(ctx context.Context, conversationID,
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Either the row is gone (404) or someone already claimed it (409), distinguish, so the UI
-			// can tell "vanished" from "lost the race".
+			// can tell "vanished" from "lost the race". The probe reads through tx: asking the shared
+			// pool for a second connection while tx holds the first starves the pool when pool-size
+			// losers are in flight together.
 			var exists bool
-			if e2 := r.pool.QueryRow(ctx,
+			if e2 := tx.QueryRow(ctx,
 				`SELECT EXISTS(SELECT 1 FROM msg_house_conversations WHERE id = $1)`, conversationID).Scan(&exists); e2 == nil && exists {
 				return HouseConversation{}, ErrAlreadyClaimed
 			}
