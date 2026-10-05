@@ -14,14 +14,19 @@ import (
 // - DB-free fakes (the internal/product test pattern) -
 
 type fakeStore struct {
-	rules      []Rule
-	breaks     []QuantityBreak
-	override   *Override
-	listPrice  *ListPrice
-	catPolicy  *CategoryPolicy
-	prodPolicy *ProductPolicy
-	audits     []AuditEntry
-	byID       map[string]Rule
+	rules     []Rule
+	breaks    []QuantityBreak
+	override  *Override
+	listPrice *ListPrice
+	// branchPrices is the LD-7 branch map, keyed product+"|"+branch. A nil
+	// map answers nil for every branch read, so the resolver falls back to
+	// the dealer-wide anchor, the pre-LD-7 behaviour.
+	branchPrices map[string]*ListPrice
+	branchTomb   map[string]bool
+	catPolicy    *CategoryPolicy
+	prodPolicy   *ProductPolicy
+	audits       []AuditEntry
+	byID         map[string]Rule
 	// admin-editor (A-07 Tier-B) fakes
 	catPolicies   map[string]CategoryPolicy
 	overridesByID map[string]Override
@@ -54,6 +59,66 @@ func (f *fakeStore) OverrideFor(_ context.Context, customerID, categoryID string
 }
 func (f *fakeStore) ListPrice(_ context.Context, _ string) (*ListPrice, error) {
 	return f.listPrice, nil
+}
+
+// - branch price (LD-7) store methods -
+
+func (f *fakeStore) BranchListPrice(_ context.Context, productID, branchID string) (*ListPrice, error) {
+	if f.branchTomb[productID+"|"+branchID] {
+		return nil, nil
+	}
+	return f.branchPrices[productID+"|"+branchID], nil
+}
+
+func (f *fakeStore) ListBranchPrices(_ context.Context, flt BranchPriceFilter) ([]BranchPrice, error) {
+	var out []BranchPrice
+	for key, lp := range f.branchPrices {
+		if f.branchTomb[key] {
+			continue
+		}
+		var productID, branchID string
+		for _, part := range strings.SplitN(key, "|", 2) {
+			if productID == "" {
+				productID = part
+			} else {
+				branchID = part
+			}
+		}
+		if flt.ProductID != "" && flt.ProductID != productID {
+			continue
+		}
+		if flt.BranchID != "" && flt.BranchID != branchID {
+			continue
+		}
+		out = append(out, BranchPrice{
+			ProductID: productID, BranchID: branchID,
+			ListPriceCents: lp.ListPriceCents, PriceUOM: lp.PriceUOM,
+		})
+	}
+	return out, nil
+}
+
+func (f *fakeStore) PutBranchPrice(_ context.Context, productID, branchID string, in BranchPriceWrite, _ string) (BranchPrice, error) {
+	if f.branchPrices == nil {
+		f.branchPrices = map[string]*ListPrice{}
+	}
+	key := productID + "|" + branchID
+	f.branchPrices[key] = &ListPrice{ProductID: productID, ListPriceCents: in.ListPriceCents, PriceUOM: in.PriceUOM}
+	delete(f.branchTomb, key)
+	return BranchPrice{ProductID: productID, BranchID: branchID, ListPriceCents: in.ListPriceCents, PriceUOM: in.PriceUOM}, nil
+}
+
+func (f *fakeStore) DeleteBranchPrice(_ context.Context, productID, branchID, _ string) error {
+	key := productID + "|" + branchID
+	if _, ok := f.branchPrices[key]; !ok || f.branchTomb[key] {
+		return errNotFound
+	}
+	if f.branchTomb == nil {
+		f.branchTomb = map[string]bool{}
+	}
+	f.branchTomb[key] = true
+	delete(f.branchPrices, key)
+	return nil
 }
 func (f *fakeStore) CategoryPolicy(_ context.Context, categoryID string) (*CategoryPolicy, error) {
 	// Read-after-write for the upsert tests; fall back to the single resolver-test policy.

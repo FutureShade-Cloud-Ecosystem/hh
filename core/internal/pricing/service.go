@@ -116,9 +116,17 @@ type pricingStore interface {
 	QuantityBreaksFor(ctx context.Context, productID, categoryID string) ([]QuantityBreak, error)
 	OverrideFor(ctx context.Context, customerID, categoryID string) (*Override, error)
 	ListPrice(ctx context.Context, productID string) (*ListPrice, error)
+	// BranchListPrice is the branch-aware anchor read (LD-7): the live
+	// branch price at one branch, nil when none stands, so the anchor step
+	// falls back to the dealer-wide anchor.
+	BranchListPrice(ctx context.Context, productID, branchID string) (*ListPrice, error)
 	CategoryPolicy(ctx context.Context, categoryID string) (*CategoryPolicy, error)
 	ProductPolicy(ctx context.Context, productID string) (*ProductPolicy, error)
 	AppendAudit(ctx context.Context, e AuditEntry) error
+	// Branch price editor surface (LD-7): the list, the set and the delete.
+	ListBranchPrices(ctx context.Context, f BranchPriceFilter) ([]BranchPrice, error)
+	PutBranchPrice(ctx context.Context, productID, branchID string, in BranchPriceWrite, userID string) (BranchPrice, error)
+	DeleteBranchPrice(ctx context.Context, productID, branchID, userID string) error
 	// Admin CRUD (Tier B surface; the optimistic-lock + audit logic is service-side).
 	CreateRule(ctx context.Context, r Rule) (Rule, error)
 	GetRule(ctx context.Context, id string) (Rule, error)
@@ -391,16 +399,23 @@ func (s *Service) resolve(ctx context.Context, in ResolveInput, dryRun, counterT
 		return f, nil
 	}
 
-	// 2. Retail anchor. An explicit pricing_list_prices row IS the anchor; when one is
-	//    ABSENT we DERIVE a PROVISIONAL retail/LIST anchor from cost (cost × 1.85 -
-	//    retailMarkupBps, the 06-23 rule) so a rule-matched line NEVER prices off a $0
-	//    anchor (fix #1, the gate-critical $0 bug). The derived anchor is cost-denominated,
-	//    so it lives in the product BASE UOM (factor 1), exactly like CostCents, which the
-	//    caller passes per the product base UOM. With NEITHER an explicit anchor NOR a cost
-	//    to derive from, the anchored calc paths (PCT_OFF_LIST / surcharge / bare LIST)
-	//    return errNoListPrice (422) rather than computing off 0. ABSOLUTE and MARKUP_ON_COST
-	//    need no list anchor (they self-anchor on the contract price / cost respectively).
-	lp, err := s.store.ListPrice(ctx, in.ProductID)
+	// 2. Retail anchor. An explicit pricing_list_prices row IS the anchor;
+	//    since LD-7 the line's own branch row wins first: the branch price
+	//    at the line's branch where one is loaded, else the dealer-wide
+	//    anchor. When neither row exists we DERIVE a PROVISIONAL retail/LIST
+	//    anchor from cost (cost × 1.85 - retailMarkupBps, the 06-23 rule) so
+	//    a rule-matched line NEVER prices off a $0 anchor (fix #1, the
+	//    gate-critical $0 bug). A derived anchor is never branch specific:
+	//    the derivation is the dealer's own data, unbranched (per-branch
+	//    floors are deferred, 0023's note, and a cost is a product fact).
+	//    The derived anchor is cost-denominated, so it lives in the product
+	//    BASE UOM (factor 1), exactly like CostCents, which the caller
+	//    passes per the product base UOM. With NEITHER an explicit anchor
+	//    NOR a cost to derive from, the anchored calc paths (PCT_OFF_LIST /
+	//    surcharge / bare LIST) return errNoListPrice (422) rather than
+	//    computing off 0. ABSOLUTE and MARKUP_ON_COST need no list anchor
+	//    (they self-anchor on the contract price / cost respectively).
+	lp, branchAnchor, err := s.resolveAnchor(ctx, in)
 	if err != nil {
 		return Breakdown{}, fmt.Errorf("list price: %w", err)
 	}
@@ -501,7 +516,11 @@ func (s *Service) resolve(ctx context.Context, in ResolveInput, dryRun, counterT
 				source, detail, declaredUOM, calcType = SourceTierDefault, ruleDetail(*r, "Tier default price"), r.PriceUOM, r.CalcType
 				priceVal, discVal, markupVal = r.PriceCents, r.DiscountBps, r.MarkupBps
 			} else {
-				source, detail, declaredUOM, calcType = SourceList, "List price", listUOM, ""
+				source, declaredUOM, calcType = SourceList, listUOM, ""
+				detail = "List price"
+				if branchAnchor {
+					detail = "Branch list price"
+				}
 			}
 		}
 	}

@@ -728,6 +728,18 @@ var allowlist = []allowlistEntry{
 	},
 	{
 		module: "pricing",
+		file:   "core/internal/pricing/branchprice_repository.go",
+		tables: []string{"products"},
+		writes: []string{"scope_sequences"},
+		// the file's own header: the branch price set and delete mirror the
+		// module's anchor write path (applyMatrixPrice), the org stamped off
+		// the product the branch price is for, the seq drawn from the
+		// branch_prices allocator (the 0213 shape, the recurring pattern
+		// stated at the top of this file).
+		reason: "the branch price write stamps org off the product named on the row and draws the 0213 seq from the branch_prices scope allocator, the syncscope.go entry's shape on the module's own branch price table",
+	},
+	{
+		module: "pricing",
 		file:   "core/internal/pricing/w4_repository.go",
 		tables: []string{"products", "vendors"},
 		// the file's own header: two deliberate, read-only JOIN exceptions

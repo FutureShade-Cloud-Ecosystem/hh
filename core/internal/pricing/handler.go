@@ -107,6 +107,9 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// CP0-6: the pricing editors' floor warning (preview, then the confirmation in the log).
 	h.registerFloorRoutes(r, g)
 
+	// HH-LOAD-1 LD-7: the branch price editor surface beside the dealer-wide anchor.
+	h.registerBranchPriceRoutes(r, g)
+
 	// The price-file import (0198): upload → map → PREVIEW → apply. Its preview is behind the READ
 	// guard on purpose and its apply behind the write guard, pricefile_handler.go argues both.
 	h.registerPriceFileRoutes(r, g)
