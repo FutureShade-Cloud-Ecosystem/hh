@@ -384,13 +384,17 @@ func TestConcurrentSameBatchIDBothAnswerTheFirstOutcomes(t *testing.T) {
 			t.Fatalf("round %d: %d audit rows stand, want exactly one per recorded batch", round, n)
 		}
 	}
-	// The item rows converged: one row per name, forty names.
+	// The item rows converged: one row per name, the forty names round
+	// nine's items carry (each round's items share that round's code
+	// prefix, so the round's forty codes hold exactly forty rows).
 	var n int
 	if err := e.pool.QueryRow(ctx,
 		`SELECT count(*) FROM load_probe WHERE org_id = $1::uuid AND code LIKE 'R9c-%'`, testOrgID).Scan(&n); err != nil {
 		t.Fatalf("probe count: %v", err)
 	}
-	_ = n
+	if n != 40 {
+		t.Fatalf("round nine's forty names hold %d rows, want exactly forty: the item writes did not converge", n)
+	}
 }
 
 // TestConcurrentSameBatchIDLoserCarryingAnExtraItemLandsNothingOfIt: the

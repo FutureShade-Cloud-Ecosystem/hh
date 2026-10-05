@@ -60,21 +60,29 @@ func (d *Door) UpsertBatch(ctx context.Context, in Batch) (BatchResult, error) {
 	if replay != nil {
 		return *replay, nil
 	}
-	// The claim's transaction is the batch id's lock: it holds the row
-	// (invisible to every read until it commits) while the items run, so
-	// a concurrent same-id submission waits inside its own claim and
-	// replays the record this one finishes with. Any error path rolls the
-	// claim back, erasing the row: a crashed submission leaves nothing
-	// behind, and its items' transactions stand beside no record only in
-	// the crash case, which the next submission of the id re-runs to
-	// convergence.
+	// The claim's transaction is the batch id's lock AND the batch's only
+	// connection: it holds the row (invisible to every read until it
+	// commits) while the items run, and every item runs as a savepoint on
+	// that same transaction, so a batch holds exactly one pool connection
+	// from claim to finish. A concurrent same-id submission waits inside
+	// its own claim holding its own connection alone, and replays the
+	// record this one finishes with; no cycle can form, because the
+	// winner never needs a second connection. A refused item rolls back
+	// to its savepoint and the rest of the batch proceeds; an
+	// infrastructure failure or a Postgres deadlock on the shared name
+	// locks rolls the claim back whole, so no committed item row can
+	// outlive its record and audit row, and the caller resubmits into a
+	// clean state (the resubmission replays or re-runs to convergence).
 	result := BatchResult{BatchID: in.BatchID, Counts: map[string]int{
 		OutcomeCreated: 0, OutcomeUpdated: 0, OutcomeUnchanged: 0, OutcomeRefused: 0,
 	}, Items: make([]Outcome, 0, len(in.Items))}
 	for _, item := range in.Items {
-		o, err := d.processItem(ctx, in, item)
+		o, err := d.processItem(ctx, claim.tx, in, item)
 		if err != nil {
 			_ = claim.tx.Rollback(ctx)
+			if isDeadlock(err) {
+				return BatchResult{}, fmt.Errorf("%w: %v", ErrBatchContended, err)
+			}
 			return BatchResult{}, err
 		}
 		result.Items = append(result.Items, o)
@@ -126,16 +134,26 @@ func validateBatch(in Batch) error {
 
 // processItem answers one item, retrying the whole item when the name
 // race hands the loss over: the rolled-back attempt leaves no row, no
-// draw and no record behind.
-func (d *Door) processItem(ctx context.Context, in Batch, item Item) (Outcome, error) {
+// draw and no record behind. The item runs as a savepoint on the claim's
+// own transaction, one savepoint per attempt: tryItem keeps the commit
+// decision it always held (its internal commit folds the item into the
+// batch's single commit; its deferred rollback discards a refused or
+// retried attempt back to the savepoint, while the rest of the batch
+// proceeds), and this loop owns only the attempt count.
+func (d *Door) processItem(ctx context.Context, outer pgx.Tx, in Batch, item Item) (Outcome, error) {
 	hash := HashItem(item)
 	if hash == "" {
 		return refusedOutcome(item, &Refusal{Code: ReasonRecordShape, Field: "record",
 			Detail: "the record does not normalise to a content hash"}), nil
 	}
 	for attempt := 0; ; attempt++ {
-		o, retry, err := d.tryItem(ctx, in, item, hash)
+		sp, err := outer.Begin(ctx)
 		if err != nil {
+			return Outcome{}, fmt.Errorf("load: savepoint: %w", err)
+		}
+		o, retry, err := d.tryItem(ctx, sp, in, item, hash)
+		if err != nil {
+			_ = sp.Rollback(ctx)
 			return Outcome{}, err
 		}
 		if !retry {
@@ -167,12 +185,8 @@ func writerApply(ctx context.Context, tx pgx.Tx, w Writer, in Write) (rowID stri
 // The commit decision sits here so an unchanged answer that raced never
 // commits its speculative write: the replayed identical record leaves no
 // draw behind, exit line 3's second half.
-func (d *Door) tryItem(ctx context.Context, in Batch, item Item, hash string) (o Outcome, retry bool, err error) {
+func (d *Door) tryItem(ctx context.Context, tx pgx.Tx, in Batch, item Item, hash string) (o Outcome, retry bool, err error) {
 	key := nameKey{OrgID: in.OrgID, SourceSystem: in.SourceSystem, Kind: d.kind, LegacyID: item.LegacyID}
-	tx, err := d.store.pool.Begin(ctx)
-	if err != nil {
-		return Outcome{}, false, fmt.Errorf("load: begin: %w", err)
-	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	// The references resolve first, before any write: a reference to a

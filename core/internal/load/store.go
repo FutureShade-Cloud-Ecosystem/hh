@@ -300,6 +300,16 @@ func isUniqueViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
+// isDeadlock reports a Postgres deadlock victim (SQLSTATE 40P01): two
+// in-flight batches holding overlapping name locks, one rolled back
+// whole. Under the savepoint protocol the victim's claim dies with its
+// items, nothing partial survives, and the error maps to
+// ErrBatchContended at the batch boundary.
+func isDeadlock(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "40P01"
+}
+
 // validDerivedKey reports whether a derived key is either empty (the
 // row's idempotency column stays untouched) or a canonical uuid, the
 // shape NULLIF($,”)::uuid casts clean. The pricing module's boundary
