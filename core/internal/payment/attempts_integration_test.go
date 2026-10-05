@@ -730,6 +730,35 @@ func TestAttempts_LateCaptureOverAResolvedRowKeepsTheManagerDecision(t *testing.
 	if strings.Contains(row.LastError, "manager") {
 		t.Fatalf("no manager decision existed on an UNKNOWN row, last_error = %q", row.LastError)
 	}
+
+	// The note is sanitised at its write (Resolve), so the fold, which composes it inside SQL where
+	// the Go sanitiser cannot run, is clean by construction: a manager who typed a card number and
+	// a key shaped pair as what they found at Run leaks neither into last_error.
+	t.Run("the note is sanitised before the fold", func(t *testing.T) {
+		a := fx.claim(fx.in(3930))
+		fx.force(a.ID, AttemptUnknown)
+		dirty := "manager found card 4111 1111 1111 1111 charged, api_key=sk_live_1234567890 at Run"
+		if _, ok, err := fx.store.Resolve(ctx, a.ID, ResolutionNotCharged, dirty, fx.user); err != nil || !ok {
+			t.Fatalf("Resolve: ok=%v err=%v", ok, err)
+		}
+		if got := fx.get(a.LegKey).ResolutionNote; strings.Contains(got, "4111") || strings.Contains(got, "sk_live_1234567890") {
+			t.Fatalf("the stored note = %q, still unsanitised", got)
+		}
+		if _, ok, err := fx.store.StampLateCapture(ctx, a.ID, "late-trans-11", "A"); err != nil || !ok {
+			t.Fatalf("StampLateCapture: ok=%v err=%v", ok, err)
+		}
+		got := fx.get(a.LegKey).LastError
+		for _, bad := range []string{"4111", "1111", "sk_live_1234567890"} {
+			if strings.Contains(got, bad) {
+				t.Fatalf("last_error = %q, still holds %q", got, bad)
+			}
+		}
+		for _, want := range []string{"NOT_CHARGED", "manager found", "[redacted number]", "api_key=[redacted]"} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("last_error = %q, want the sanitised note kept in it (%s)", got, want)
+			}
+		}
+	})
 }
 
 // A bind on a transaction that rolls back leaves the attempt CAPTURED, so the compensator still owns it.

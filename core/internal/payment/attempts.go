@@ -322,6 +322,12 @@ func (s *Store) BindTx(ctx context.Context, tx pgx.Tx, id, paymentID string) (At
 // charges again.
 func (s *Store) Resolve(ctx context.Context, id, resolution, note, resolvedBy string) (Attempt, bool, error) {
 	note = strings.TrimSpace(note)
+	// The note is manager text, and a manager typing what they found at Run (a card number, a key
+	// shaped string) is its expected use. It is sanitised here, at its only write, so the column
+	// holds text already safe for diagnostics and StampLateCapture's fold, which composes the note
+	// into last_error inside SQL and so cannot run the Go sanitiser, is clean by construction. A
+	// note that sanitises to nothing (control characters alone) is refused like a blank one.
+	note = SanitizeLastError(note)
 	if id == "" || note == "" || resolvedBy == "" ||
 		(resolution != ResolutionNotCharged && resolution != ResolutionReversedAtProcessor) {
 		return Attempt{}, false, ErrResolveInvalid
