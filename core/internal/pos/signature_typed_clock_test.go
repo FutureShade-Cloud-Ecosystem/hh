@@ -22,32 +22,43 @@ var attestationClock = time.Date(2031, 4, 2, 9, 30, 0, 0, time.UTC)
 // clockedService is a harness service whose signature provider is the real typed-name provider and
 // whose clock went through WithClock, the seam a test uses to pin time. The recorder rides
 // transactions so the tx path is wired the way the dispatch pickups confirm is required.
-func clockedService() (*Service, *fakeStore) {
+func clockedService() (*Service, *fakeStore, *recordingSealer) {
 	h := newHarness()
-	h.svc = h.svc.WithSignatureProvider(NewTypedNameSignatureProvider(plainSealer{}))
+	sealer := &recordingSealer{}
+	h.svc = h.svc.WithSignatureProvider(NewTypedNameSignatureProvider(sealer))
 	h.svc = h.svc.WithClock(func() time.Time { return attestationClock })
 	h.svc = h.svc.WithAudit(&recordingTxAudit{})
-	return h.svc, h.store
+	return h.svc, h.store, sealer
 }
 
-// sealedCaptureTx is the transaction handle the tx-path test passes. The tx capture's insert carries
-// the sealed payload as its fourth argument; the fake row answers the scan and the handle keeps the
-// payload so the test can read what would have landed in the row, without a database.
+// recordingSealer is a transparent Sealer that remembers the last payload it was asked to seal. The
+// tx path's persistence goes through whichever seam the tree wires (a statement on the transaction,
+// or the store's InsertSignatureTx once the shared insert lands), so these tests read the sealed
+// payload from the SEALER, the one point both persistence shapes pass through, and stay independent
+// of how the row is written.
+type recordingSealer struct {
+	plainSealer
+	last []byte
+}
+
+func (r *recordingSealer) Encrypt(pt []byte) ([]byte, int, error) {
+	r.last = append([]byte(nil), pt...)
+	return r.plainSealer.Encrypt(pt)
+}
+
+// sealedCaptureTx is the transaction handle the tx-path tests pass: a stub whose QueryRow answers the
+// signature insert's scan with an empty row, whichever seam issues the insert.
 type sealedCaptureTx struct {
 	pgx.Tx
-	sealed []byte
 }
 
-func (tx *sealedCaptureTx) QueryRow(_ context.Context, _ string, args ...any) pgx.Row {
-	if enc, ok := args[3].([]byte); ok {
-		tx.sealed = enc
-	}
+func (tx *sealedCaptureTx) QueryRow(_ context.Context, _ string, _ ...any) pgx.Row {
 	return captureRow{}
 }
 
 // The pool capture: WithClock's clock, not the wall clock, is what the sealed attestation carries.
 func TestWithClock_GovernsTypedAttestationOnThePoolPath(t *testing.T) {
-	svc, store := clockedService()
+	svc, store, _ := clockedService()
 	if _, err := svc.CaptureTypedSignature(typedCtx(), okAttestation()); err != nil {
 		t.Fatalf("pool capture: %v", err)
 	}
@@ -65,15 +76,15 @@ func TestWithClock_GovernsTypedAttestationOnThePoolPath(t *testing.T) {
 
 // The tx capture: same clock, same payload rule, riding the caller's transaction.
 func TestWithClock_GovernsTypedAttestationOnTheTxPath(t *testing.T) {
-	svc, _ := clockedService()
+	svc, _, sealer := clockedService()
 	tx := &sealedCaptureTx{}
 	if _, err := svc.CaptureTypedSignatureTx(typedCtx(), tx, okAttestation()); err != nil {
 		t.Fatalf("tx capture: %v", err)
 	}
-	if tx.sealed == nil {
-		t.Fatal("the tx capture must seal a payload onto the caller's transaction")
+	if sealer.last == nil {
+		t.Fatal("the tx capture must seal a payload")
 	}
-	att, err := DecodeAttestation(tx.sealed)
+	att, err := DecodeAttestation(sealer.last)
 	if err != nil {
 		t.Fatalf("sealed payload must decode: %v", err)
 	}

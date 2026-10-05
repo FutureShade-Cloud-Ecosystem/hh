@@ -16,9 +16,10 @@ func TestTypedName_WithoutWithClockTheWallClockStands(t *testing.T) {
 	var tr []string
 	// The NewService default, mirrored: now is the wall clock and no WithClock was called. The
 	// recorder is left unwired, neither path's semantics turn on it here.
+	sealer := &recordingSealer{}
 	svc := &Service{
 		store: newFakeStore(&tr),
-		sig:   NewTypedNameSignatureProvider(plainSealer{}),
+		sig:   NewTypedNameSignatureProvider(sealer),
 		now:   time.Now,
 	}
 	tx := &sealedCaptureTx{}
@@ -41,7 +42,7 @@ func TestTypedName_WithoutWithClockTheWallClockStands(t *testing.T) {
 		t.Fatalf("tx capture: %v", err)
 	}
 	after = time.Now().UTC()
-	att, err = DecodeAttestation(tx.sealed)
+	att, err = DecodeAttestation(sealer.last)
 	if err != nil {
 		t.Fatalf("sealed payload must decode: %v", err)
 	}
