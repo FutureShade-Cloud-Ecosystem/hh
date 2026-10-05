@@ -86,6 +86,13 @@ func (s *freezeStarveStock) WeightedAvgCostCents(ctx context.Context, productID,
 	return 500, nil
 }
 
+// WeightedAvgCostCentsTx is the transaction taking cost read a sibling change (PR 162) adds to the
+// StockCounter seam. It is carried here as an extra method so this fake satisfies the interface
+// whichever of the two changes lands first (an extra method compiles against either interface).
+func (s *freezeStarveStock) WeightedAvgCostCentsTx(ctx context.Context, tx pgx.Tx, productID, branchID string) (int64, error) {
+	return s.WeightedAvgCostCents(ctx, productID, branchID)
+}
+
 func (s *freezeStarveStock) PostCountAdjustmentTx(ctx context.Context, tx pgx.Tx, productID, locationID, branchID string, qtyDelta float64, unitCostCents int64, reason string) (string, error) {
 	return "", nil
 }
