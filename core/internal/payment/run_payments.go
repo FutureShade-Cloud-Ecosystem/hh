@@ -266,3 +266,31 @@ func (c *RunPaymentsClient) Refund(ctx context.Context, creds map[string]string,
 		return RefundResult{ProcessorRef: out.TransID, Status: "failed"}, fmt.Errorf("run_payments: refund result %q (%s): %s", out.Result, out.RespCode, out.RespText)
 	}
 }
+
+// Void is not built yet.
+func (c *RunPaymentsClient) Void(context.Context, map[string]string, string, string, int64) (RefundResult, error) {
+	return RefundResult{}, ErrNotImplemented
+}
+
+// runOutcome is what one Run answer means for the money.
+type runOutcome int
+
+const (
+	outcomeApproved runOutcome = iota
+	outcomeDeclined
+	outcomeUnknown
+	outcomeReauth
+)
+
+// runAnswer is the decoded body every Run call answers with (the same A/B/C enum on every endpoint).
+type runAnswer struct {
+	Result   string `json:"result"`
+	RespCode string `json:"resp_code"`
+	RespText string `json:"resp_text"`
+	TransID  string `json:"trans_id"`
+}
+
+// classifyRun is not built yet.
+func classifyRun(status int, transportErr error, raw []byte, afterRefresh bool) (runOutcome, runAnswer, error) {
+	return outcomeDeclined, runAnswer{}, nil
+}

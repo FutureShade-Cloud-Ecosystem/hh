@@ -79,3 +79,8 @@ func (RunPaymentsStub) Refund(_ context.Context, creds map[string]string, mercha
 	h := sha256.Sum256([]byte("refund|" + seed))
 	return RefundResult{ProcessorRef: "rp_ref_" + hex.EncodeToString(h[:8]), Status: "refunded"}, nil
 }
+
+// Void is not built yet.
+func (RunPaymentsStub) Void(context.Context, map[string]string, string, string, int64) (RefundResult, error) {
+	return RefundResult{}, ErrNotImplemented
+}
