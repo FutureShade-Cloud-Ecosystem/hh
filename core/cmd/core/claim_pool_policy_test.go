@@ -39,14 +39,19 @@ func TestClaimPool_SmsClaimStoreKeepsTheSendPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("house zone: %v", err)
 	}
-	now := time.Date(2031, time.March, 12, 3, 0, 0, 0, loc) // quiet hours: the window is 08:00 to 20:00
+	atHour := func(h int) time.Time {
+		y, m, d := time.Now().In(loc).Date()
+		return time.Date(y, m, d, h, 0, 0, 0, loc)
+	}
+	now := atHour(3) // quiet hours: the window is 08:00 to 20:00
 	policy := messagingprovider.NewSendPolicy().WithClock(func() time.Time { return now })
 
 	var eventID string
 	if err := helper.QueryRow(ctx, `INSERT INTO sms_outbox (topic, payload, occurred_at)
-		VALUES ($1, $2::jsonb, now() - interval '1 year') RETURNING event_id::text`,
+		VALUES ($1, $2::jsonb, $3) RETURNING event_id::text`,
 		messagingprovider.TopicARNotice,
-		`{"invoice_id":"00000000-0000-4000-8000-0000000000aa","customer_id":"00000000-0000-4000-8000-0000000000bb"}`).Scan(&eventID); err != nil {
+		`{"invoice_id":"00000000-0000-4000-8000-0000000000aa","customer_id":"00000000-0000-4000-8000-0000000000bb"}`,
+		time.Now().AddDate(-1, 0, 0)).Scan(&eventID); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
 	t.Cleanup(func() {
@@ -78,7 +83,7 @@ func TestClaimPool_SmsClaimStoreKeepsTheSendPolicy(t *testing.T) {
 		t.Fatalf("closed window (03:00): row is %s with %d attempts, want PENDING and 0: the claim store lost its send policy", status, attempts)
 	}
 
-	now = time.Date(2031, time.March, 12, 12, 0, 0, 0, loc) // the window is open
+	now = atHour(12) // the window is open
 	if n := d.DrainOnce(ctx); n != 1 {
 		t.Fatalf("open window (12:00): the drain handled %d rows, want 1", n)
 	}
