@@ -912,6 +912,8 @@ test("after an unknown outcome the name is locked and says why, and a retry carr
   await expect(page.locator("#name")).toHaveJSProperty("readOnly", true);
   await expect(page.locator("#name")).toHaveValue("Sample Customer");
   await expect(page.getByText(/name is kept as you first entered it/)).toBeVisible();
+  // The lock note warns that changing the name by reloading may record a second acceptance.
+  await expect(page.getByText(/Reload this page to change it; a different name may record a second acceptance/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Accept quote" })).toBeEnabled();
 
   // Even if the field is forced open and edited, nothing but the first name and key is ever sent.

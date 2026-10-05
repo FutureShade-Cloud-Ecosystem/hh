@@ -50,7 +50,7 @@ const NOT_RECORDED = "Your acceptance was not recorded.";
 const UNCONFIRMED =
   "We could not confirm whether your acceptance was recorded. Trying again with the same name is safe: it will not be recorded twice.";
 const NAME_LOCKED =
-  "Your name is kept as you first entered it until we know whether your acceptance was recorded, so a retry counts as the same acceptance. Reload this page to change it.";
+  "Your name is kept as you first entered it until we know whether your acceptance was recorded, so a retry counts as the same acceptance. Reload this page to change it; a different name may record a second acceptance.";
 // The core words its refusals for staff ("convert it at the counter", "ask an administrator"), so
 // the customer only ever reads these sentences, chosen by status, never the server's text.
 const CANNOT_ACCEPT = "This quote cannot be accepted right now. Please contact us.";
