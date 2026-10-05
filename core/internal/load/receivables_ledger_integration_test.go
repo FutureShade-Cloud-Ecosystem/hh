@@ -92,8 +92,8 @@ func TestReceivablesReloadNeverOverwritesADocumentWorkedInHH(t *testing.T) {
 	restated := ld11Item("WK-1", "CUST-ONE", "BR-A", "WK-DOC-1", "2032-06-01", "2032-07-01", 9000, "", "")
 	_, err := e.door.UpsertReceivables(ctx, ld11Batch("b-wk-2", restated))
 	ref := ld11BatchRefused(t, err)
-	if ref.Refusing.Reason != load.ReasonUpdateTargetMissing || ref.Refusing.LegacyID != "WK-1" {
-		t.Fatalf("the reload answered %+v, want %s naming WK-1", ref.Refusing, load.ReasonUpdateTargetMissing)
+	if ref.Refusing.Reason != load.ReasonTargetWorkedInHH || ref.Refusing.LegacyID != "WK-1" {
+		t.Fatalf("the reload answered %+v, want %s naming WK-1", ref.Refusing, load.ReasonTargetWorkedInHH)
 	}
 	inv := e.invoices(t)["WK-DOC-1"]
 	if inv.Balance != 6000 || inv.Total != 10000 || inv.Status != "PARTIALLY_PAID" {

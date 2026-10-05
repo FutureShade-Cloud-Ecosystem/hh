@@ -306,14 +306,19 @@ func updateImportedDocument(ctx context.Context, tx pgx.Tx, in load.Write, rec i
 	// A source item that changed sign is a different document: the
 	// document's number prefix and type were minted for the sign it
 	// arrived with, so the update refuses instead of re-typing it.
-	var currentTotal int64
-	if err := tx.QueryRow(ctx, `SELECT total_cents FROM invoices WHERE id = $1::uuid AND org_id = $2::uuid FOR UPDATE`,
-		in.RowID, in.OrgID).Scan(&currentTotal); err != nil {
+	var currentTotal, currentBalance int64
+	var currentStatus, currentCustomer string
+	if err := tx.QueryRow(ctx, `SELECT total_cents, balance_cents, status, customer_id::text FROM invoices
+		WHERE id = $1::uuid AND org_id = $2::uuid FOR UPDATE`,
+		in.RowID, in.OrgID).Scan(&currentTotal, &currentBalance, &currentStatus, &currentCustomer); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", &load.Refusal{Code: load.ReasonUpdateTargetMissing, Field: "legacy_id",
 				Detail: "the name's document is gone; the update refuses rather than creating a second row"}
 		}
 		return "", fmt.Errorf("billing: read imported document: %w", err)
+	}
+	if currentStatus != "FINALIZED" || currentBalance != currentTotal || currentCustomer != customerID {
+		return "", workedInHH()
 	}
 	if (currentTotal < 0) != (rec.amount < 0) {
 		return "", &load.Refusal{Code: load.ReasonSignChanged, Field: loadFieldAmount,
@@ -334,8 +339,7 @@ WHERE id = $1::uuid AND org_id = $2::uuid AND customer_id = $10::uuid
 		return "", fmt.Errorf("billing: update imported document: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return "", &load.Refusal{Code: load.ReasonUpdateTargetMissing, Field: "legacy_id",
-			Detail: "the name's document is gone, belongs to another customer, or has been worked in HH since it loaded (no longer FINALIZED, or its balance moved); the update refuses rather than overwrite it or create a second row"}
+		return "", workedInHH()
 	}
 	balance, err := customerOpenBalance(ctx, tx, customerID)
 	if err != nil {
@@ -454,6 +458,15 @@ UPDATE customer_transactions SET balance_after = balance_after + $3::bigint
 		return fmt.Errorf("billing: move later running balances: %w", err)
 	}
 	return nil
+}
+
+// workedInHH is the refusal for a loaded document HH has worked since:
+// it is no longer FINALIZED, its balance moved, or it belongs to another
+// customer. The target is not missing, it moved on, so FB Move drops the
+// item from its extract; the reload never overwrites it.
+func workedInHH() *load.Refusal {
+	return &load.Refusal{Code: load.ReasonTargetWorkedInHH, Field: "legacy_id",
+		Detail: "the name's document has been worked in HH since it loaded (no longer FINALIZED, its balance moved, or it belongs to another customer); the reload refuses rather than overwrite it, so drop the item from the extract"}
 }
 
 // customerOpenBalance reads the customer's open balance the way every

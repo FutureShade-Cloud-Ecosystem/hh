@@ -193,3 +193,26 @@ func TestReceivablesSignChangeOnUpdateRefusesWithItsOwnReason(t *testing.T) {
 		t.Fatalf("the refused sign change moved the document: %+v", inv)
 	}
 }
+
+// P3-1: update_target_missing stays for a registry name whose document
+// is truly gone.
+func TestReceivablesGoneTargetKeepsUpdateTargetMissing(t *testing.T) {
+	e := setupLD11(t)
+	ctx := context.Background()
+	if _, err := e.door.UpsertReceivables(ctx, ld11Batch("b-gn-1",
+		ld11Item("GN-1", "CUST-ONE", "BR-A", "GN-DOC-1", "2032-06-01", "2032-07-01", 5000, "", ""))); err != nil {
+		t.Fatalf("first batch: %v", err)
+	}
+	if _, err := e.pool.Exec(ctx, `DELETE FROM customer_transactions WHERE source_ref_id IN (SELECT id FROM invoices WHERE source_doc_no = 'GN-DOC-1' AND org_id = $1::uuid)`, ld11OrgID); err != nil {
+		t.Fatalf("remove the ledger row: %v", err)
+	}
+	if _, err := e.pool.Exec(ctx, `DELETE FROM invoices WHERE source_doc_no = 'GN-DOC-1' AND org_id = $1::uuid`, ld11OrgID); err != nil {
+		t.Fatalf("remove the document: %v", err)
+	}
+	_, err := e.door.UpsertReceivables(ctx, ld11Batch("b-gn-2",
+		ld11Item("GN-1", "CUST-ONE", "BR-A", "GN-DOC-1", "2032-06-01", "2032-07-01", 6000, "", "")))
+	ref := ld11BatchRefused(t, err)
+	if ref.Refusing.Reason != load.ReasonUpdateTargetMissing {
+		t.Fatalf("a gone target answered %+v, want %s", ref.Refusing, load.ReasonUpdateTargetMissing)
+	}
+}
