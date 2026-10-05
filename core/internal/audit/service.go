@@ -499,17 +499,56 @@ var allowedExtraKeys = map[string]bool{
 // redactCleartext returns the value with cleartext-looking identifiers stripped. A value is treated as
 // a raw identifier if it contains a run of 7+ consecutive digits (PAN 13-19, SIN 9, registry numbers
 // ~10), a masked ref like "•••• 4321" (4 trailing digits) and a reason code like "ON_FN_POS_8" both
-// pass. The second return reports whether anything was redacted.
+// pass. Two safe internal identifier shapes are exempt: a UUID, and the system's own signature
+// reference (isSignatureReference below), whose random hex often carries a 7+ digit run without being
+// an identifier at all. The second return reports whether anything was redacted.
 func redactCleartext(s string) (string, bool) {
 	// A UUID is a safe internal identifier (staff/order/approver id), never PII, allow it through even
 	// though its all-numeric groups can look like a digit run.
 	if looksLikeUUID(s) {
 		return s, false
 	}
+	// The system's own signature reference is a safe internal identifier too: pos mints "sig_" plus 8
+	// random bytes hex-encoded, and about one capture in five the hex carries a run of 7+ decimal
+	// digits that reads as a raw identifier, which redacted the trail's only reference. The exemption
+	// is bounded to the exact minted shape: an uppercase variant, a different length, or a PAN-shaped
+	// all-decimal tail riding the prefix fails the shape and redacts as before.
+	if isSignatureReference(s) {
+		return s, false
+	}
 	if !looksLikeCleartextID(s) {
 		return s, false
 	}
 	return "[redacted]", true
+}
+
+// sigRefPrefix and sigRefHexLen pin the minted signature reference shape: "sig_" plus 8 random bytes
+// hex-encoded, 16 lowercase hex characters in all.
+const (
+	sigRefPrefix = "sig_"
+	sigRefHexLen = 16
+)
+
+// isSignatureReference reports whether s is exactly the system's own signature reference: the sig_
+// prefix followed by 16 lowercase hex characters, at least one of them a letter. The letter rule is
+// the bound that keeps the exemption from becoming a PAN launder: the provider mints hex, so a
+// genuine reference almost always carries a letter, while an all-decimal tail is exactly the PAN
+// shape and stays redacted, deny-by-default winning for anything the provider does not mint.
+func isSignatureReference(s string) bool {
+	if len(s) != len(sigRefPrefix)+sigRefHexLen || !strings.HasPrefix(s, sigRefPrefix) {
+		return false
+	}
+	letter := false
+	for i := len(sigRefPrefix); i < len(s); i++ {
+		switch c := s[i]; {
+		case c >= '0' && c <= '9':
+		case c >= 'a' && c <= 'f':
+			letter = true
+		default:
+			return false
+		}
+	}
+	return letter
 }
 
 func looksLikeCleartextID(s string) bool {
