@@ -315,7 +315,7 @@ export class QdSurfaceSettings extends PanelBase {
       // A refusal stays with the row it was for; it is only said here while that row is still the one on screen.
       if (result.status === 403) this.policyLocks = { ...this.policyLocks, [lockKey]: line };
       else if (lockKey === this.lockKey()) this.error = line;
-      else this.error = `The settings you changed for ${lockKey === "dealer" ? "the dealer wide default" : "the branch you left"} were not saved: ${line}`;
+      else this.error = `The settings you changed for ${lockKey === "dealer" ? "the dealer wide default" : this.scope === "dealer" ? "this branch" : "the branch you left"} were not saved: ${line}`;
       return;
     }
     // The scope or branch moved on while this save was out: the saved row is not this form's to fill, but it did
@@ -607,7 +607,7 @@ export class QdSurfaceSettings extends PanelBase {
         </select>
       </div>
       <div class="kindgrid">${CURATION_KINDS.map((kind) => this.renderKindTable(kind))}</div>
-      ${locked ? html`<p class="lock" role="status" data-testid="qs-items-lock">${this.itemsLock}</p>` : nothing}
+      ${this.itemsLock !== "" ? html`<p class="lock" role="status" data-testid="qs-items-lock">${this.itemsLock}</p>` : nothing}
       <div class="row">
         <button type="button" class="primary" data-action="save-items" data-testid="qs-items-save" ?disabled=${this.busy || locked}>
           Save layout for ${this.profile}

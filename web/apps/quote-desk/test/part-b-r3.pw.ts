@@ -279,7 +279,9 @@ test("P3 a policy save refused after the scope moved on says which settings were
   await page.getByTestId("qs-scope").selectOption("dealer");
   put.open();
   await expect(page.getByTestId("qs-error")).toContainText("were not saved");
-  await expect(page.getByTestId("qs-error")).toContainText("branch you left");
+  // The branch was not left: the form moved to the dealer wide default, so the sentence names the branch row, not a branch left behind.
+  await expect(page.getByTestId("qs-error")).toContainText("for this branch were not saved");
+  await expect(page.getByTestId("qs-error")).not.toContainText("you left");
   await page.request.put("/_stub/general-manager", { data: { member: false } });
 });
 

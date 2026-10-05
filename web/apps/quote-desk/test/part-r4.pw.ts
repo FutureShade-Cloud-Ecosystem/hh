@@ -553,3 +553,22 @@ test("P3 a read of the scope rules begun before a switch does not override the s
   await settle(page);
   await expect(row).toHaveAttribute("data-enabled", "false");
 });
+
+test("P3 no empty lock box shows while a policy save is out", async ({ page }) => {
+  await page.request.put("/_stub/general-manager", { data: { member: true } });
+  try {
+    await signIn(page, "Sales manager");
+    await page.getByText("Quote detail & admin").click();
+    await page.locator("qd-quote-settings").getByTestId("qs-screen").locator("summary").click();
+    await expect(page.getByTestId("qs-policy")).toBeVisible();
+    await page.getByTestId("qs-validity-days").fill("55");
+    const put = await hold(page, /\/api\/v1\/quotes\/policy/, { method: "PUT", times: 1 });
+    await page.getByTestId("qs-policy-save").click();
+    await put.asked;
+    await expect(page.getByTestId("qs-items-save")).toBeDisabled();
+    await expect(page.getByTestId("qs-items-lock")).toHaveCount(0);
+    await put.release();
+  } finally {
+    await page.request.put("/_stub/general-manager", { data: { member: false } });
+  }
+});

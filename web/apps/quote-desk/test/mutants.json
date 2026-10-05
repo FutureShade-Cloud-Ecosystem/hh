@@ -1143,5 +1143,19 @@
     "find": "    if (mine !== this.generation) return;\n",
     "replace": "",
     "test": "P3 a read of the scope rules"
+  },
+  {
+    "id": "ss-lock-box-only-with-message",
+    "file": "src/settings-surface.ts",
+    "find": "${this.itemsLock !== \"\" ? html`<p class=\"lock\" role=\"status\" data-testid=\"qs-items-lock\">",
+    "replace": "${locked ? html`<p class=\"lock\" role=\"status\" data-testid=\"qs-items-lock\">",
+    "test": "P3 no empty lock box shows while a policy save is out"
+  },
+  {
+    "id": "ss-moved-refusal-names-branch",
+    "file": "src/settings-surface.ts",
+    "find": "this.scope === \"dealer\" ? \"this branch\" : \"the branch you left\"",
+    "replace": "\"the branch you left\"",
+    "test": "P3 a policy save refused after the scope moved on says which settings"
   }
 ]
