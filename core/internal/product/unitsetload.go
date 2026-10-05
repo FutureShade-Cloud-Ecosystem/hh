@@ -188,13 +188,15 @@ func (w UnitSetLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) 
 	// The product's base and price units, and the product's category for
 	// the category scoped pricing families. The read takes FOR SHARE and
 	// holds it to the item's commit: the product door's landed set guard
-	// locks the same row FOR UPDATE before it reads the set, so a reload
-	// and a replace in flight together serialise here, each checking the
-	// other's committed state instead of a pre snapshot (the concurrent
-	// window the review's round 2 probe showed). Sharing suffices: the
-	// replace writes product_uoms rows, whose foreign key takes the
-	// products row FOR KEY SHARE, compatible with this share lock and
-	// refused by the product door's FOR UPDATE.
+	// locks the same row FOR NO KEY UPDATE before it reads the set, so a
+	// reload and a replace in flight together serialise here, each
+	// checking the other's committed state instead of a pre snapshot
+	// (the concurrent window the review's round 2 probe showed). FOR
+	// SHARE is the weakest mode the order needs: it refuses the guard's
+	// FOR NO KEY UPDATE, where a FOR KEY SHARE would let a replace read
+	// a reload's pre snapshot. The replace's own writes are product_uoms
+	// rows, whose foreign key takes the products row FOR KEY SHARE, so
+	// nothing here asks the product row for more than this read.
 	var baseUOM, priceUOM string
 	var categoryID *string
 	err := tx.QueryRow(ctx, `SELECT base_uom::text, price_uom::text, category_id::text FROM products WHERE id = $1::uuid FOR SHARE`, productID).

@@ -316,11 +316,17 @@ func landedUnitSetRefusal(ctx context.Context, tx pgx.Tx, productID, orgID, base
 	// probe showed: the unit set door's product read takes the products
 	// row FOR SHARE and holds it to its commit, so this lock waits for a
 	// set replace in flight, and the set reads below then see the
-	// committed set instead of the pre replace snapshot. Taken on the
-	// item's own transaction before any read of the set; a row gone mid
-	// race answers no refusal here and keeps the write arm's own answer.
+	// committed set instead of the pre replace snapshot. FOR NO KEY
+	// UPDATE is the strength the window needs and no more: the set
+	// door's FOR SHARE refuses it, so the two doors still serialise,
+	// while a referencing insert's foreign key check (FOR KEY SHARE)
+	// passes, so a standing batch no longer holds up order lines, stock
+	// moves, barcodes or any other write that names the product. Taken
+	// on the item's own transaction before any read of the set; a row
+	// gone mid race answers no refusal here and keeps the write arm's
+	// own answer.
 	var locked string
-	if err := tx.QueryRow(ctx, `SELECT id::text FROM products WHERE id = $1::uuid FOR UPDATE`, productID).Scan(&locked); errors.Is(err, pgx.ErrNoRows) {
+	if err := tx.QueryRow(ctx, `SELECT id::text FROM products WHERE id = $1::uuid FOR NO KEY UPDATE`, productID).Scan(&locked); errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	} else if err != nil {
 		return nil, fmt.Errorf("product: load set row lock: %w", err)
