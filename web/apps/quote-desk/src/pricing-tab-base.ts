@@ -69,9 +69,9 @@ export abstract class PricingTabBase extends PanelBase {
   /** What a straight save said afterwards about products already under their floor and no worse. */
   @state() protected settled = "";
   private returnFocus: HTMLElement | null = null;
-  /** The confirmed save while it is out, so sign out's wait can await it and send the confirmation it owes. */
-  private saveOut: Promise<Result<string>> | null = null;
-  /** The confirmation write while it is out, so sign out's wait can await it. */
+  /** The confirmed floor run (the save and the confirmation write it owes) while it is out, so sign out's wait can await it. */
+  private confirmRun: Promise<void> | null = null;
+  /** The confirmation write while it is out (a retry), so sign out's wait can await it. */
   private confirmOut: Promise<Result<true>> | null = null;
 
   /** Close the tab's own top dialog; true when one was open. */
@@ -280,9 +280,7 @@ export abstract class PricingTabBase extends PanelBase {
     prompt.error = "";
     this.requestUpdate();
     const out = prompt.save();
-    this.saveOut = out;
     const saved = await ctx.guarded(out);
-    this.saveOut = null;
     // The panel closed while the confirmed save was out: nothing is applied to the dead panel and the
     // confirmation it owes is sign out's flush to send, or the person's warned choice to drop.
     if (saved === undefined) return;
@@ -336,36 +334,24 @@ export abstract class PricingTabBase extends PanelBase {
 
   /**
    * Sign out's wait for this tab (the panel registers it in the SIGN_OUT_EVENT waits, as the work area
-   * does for a terms flush): the confirmed save still out is awaited and, when the live panel could not
-   * send it, the confirmation it owes is sent while the session still stands; the confirmation write
-   * still out is awaited; and one the log write refused is sent once. The host bounds the whole wait.
-   * The straight saves, the retires and the deletes are already out: the server holds them, and their
-   * follow-up reads are the context's to drop.
+   * does for a terms flush): the confirmed floor run still out is awaited (the live panel sends the
+   * confirmation itself), a retry still out is awaited, and a confirmation the log write refused is
+   * sent once while the session still stands. The host bounds the whole wait. The straight saves, the
+   * retires and the deletes are already out: the server holds them, and their follow-up reads are the
+   * context's to drop.
    */
   async flushForSignOut(): Promise<void> {
     const pricing = this.pricing;
     if (pricing === null) return;
     const prompt = this.floorPrompt;
     if (prompt === null) return;
-    const save = this.saveOut;
-    if (save !== null) {
-      const saved = await save;
-      // The live panel sends the confirmation itself; one that was dropped (the panel closed while the
-      // save was out) is sent here, with the session the save was made under.
-      if (saved.ok && prompt.savedId === "") {
-        const body = confirmationBody(prompt.change, saved.value, prompt.preview);
-        if (body !== null) await pricing.confirmFloor(body);
-      }
-    }
-    if (this.confirmOut !== null) {
-      await this.confirmOut;
-      return;
-    }
-    if (save === null && prompt.unlogged !== null) await pricing.confirmFloor(prompt.unlogged);
+    if (this.confirmRun !== null) await this.confirmRun;
+    if (this.confirmOut !== null) await this.confirmOut;
+    else if (prompt.unlogged !== null) await pricing.confirmFloor(prompt.unlogged);
   }
 
   protected onFloorAction(action: string): boolean {
-    if (action === "floor-confirm") void this.confirmFloor();
+    if (action === "floor-confirm") this.confirmRun = this.confirmFloor();
     else if (action === "floor-decline") this.declineFloor();
     else if (action === "floor-retry-log") void this.retryLog();
     else return false;

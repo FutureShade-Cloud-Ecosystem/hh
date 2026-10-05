@@ -1350,8 +1350,15 @@
   {
     "id": "ptb-signout-waits-save",
     "file": "src/pricing-tab-base.ts",
-    "find": "    const save = this.saveOut;",
-    "replace": "    const save = null;",
+    "find": "    if (this.confirmRun !== null) await this.confirmRun;\n",
+    "replace": "",
+    "test": "P2-2 sign out waits for a confirmed pricing save still out"
+  },
+  {
+    "id": "ptb-signout-run-kept",
+    "file": "src/pricing-tab-base.ts",
+    "find": "    if (action === \"floor-confirm\") this.confirmRun = this.confirmFloor();",
+    "replace": "    if (action === \"floor-confirm\") void this.confirmFloor();",
     "test": "P2-2 sign out waits for a confirmed pricing save still out"
   },
   {
@@ -1364,8 +1371,8 @@
   {
     "id": "ptb-signout-sends-unlogged",
     "file": "src/pricing-tab-base.ts",
-    "find": "    if (save === null && prompt.unlogged !== null) await pricing.confirmFloor(prompt.unlogged);",
-    "replace": "    void prompt;",
+    "find": "    else if (prompt.unlogged !== null) await pricing.confirmFloor(prompt.unlogged);",
+    "replace": "    else void prompt;",
     "test": "P2-2 sign out sends a floor confirmation the log write refused"
   },
   {
