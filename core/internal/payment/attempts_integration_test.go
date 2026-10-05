@@ -761,6 +761,76 @@ func TestAttempts_LateCaptureOverAResolvedRowKeepsTheManagerDecision(t *testing.
 	})
 }
 
+// A failing reversal end appends to last_error, never replaces it: on the late capture over a
+// manager's close the column already carries the folded decision, and VOID_UNKNOWN and VOID_DECLINED
+// are needs-a-person rows whose second manager must find what the first decided next to the
+// reversal's own diagnostic.
+func TestAttempts_AFailingReversalEndKeepsTheFoldedDecision(t *testing.T) {
+	fx := newAttemptFx(t)
+	ctx := context.Background()
+	planted := func(t *testing.T, amount int64) Attempt {
+		t.Helper()
+		a := fx.claim(fx.in(amount))
+		fx.force(a.ID, AttemptUnknown)
+		if _, ok, err := fx.store.Resolve(ctx, a.ID, ResolutionNotCharged, "closed while in flight", fx.user); err != nil || !ok {
+			t.Fatalf("Resolve: ok=%v err=%v", ok, err)
+		}
+		if _, ok, err := fx.store.StampLateCapture(ctx, a.ID, "late-"+a.ID, "A"); err != nil || !ok {
+			t.Fatalf("StampLateCapture: ok=%v err=%v", ok, err)
+		}
+		return a
+	}
+	for _, tc := range []struct {
+		name  string
+		call  func(s *Store, id string) (Attempt, bool, error)
+		want  string
+		diags string
+	}{
+		{"StampVoidUnknown", func(s *Store, id string) (Attempt, bool, error) {
+			return s.StampVoidUnknown(ctx, id, "void lost: status 502")
+		}, AttemptVoidUnknown, "void lost: status 502"},
+		{"StampVoidDeclined", func(s *Store, id string) (Attempt, bool, error) {
+			return s.StampVoidDeclined(ctx, id, "void refused: result C")
+		}, AttemptVoidDeclined, "void refused: result C"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Distinct amounts: each subtest's row stays unresolved (VOID_UNKNOWN or VOID_DECLINED),
+			// so the till guard would refuse a second claim of one till and amount.
+			a := planted(t, 2260+int64(len(tc.name)))
+			if _, ok, err := tc.call(fx.store, a.ID); err != nil || !ok {
+				t.Fatalf("%s: ok=%v err=%v", tc.name, ok, err)
+			}
+			got := fx.get(a.LegKey)
+			if got.Status != tc.want {
+				t.Fatalf("row = %s, want %s", got.Status, tc.want)
+			}
+			for _, want := range []string{"NOT_CHARGED", "closed while in flight", tc.diags} {
+				if !strings.Contains(got.LastError, want) {
+					t.Fatalf("last_error = %q, want it to keep %q", got.LastError, want)
+				}
+			}
+			if n := utf8.RuneCountInString(got.LastError); n > maxLastErrorRunes {
+				t.Fatalf("last_error = %d runes, over the diagnostic cap", n)
+			}
+		})
+	}
+
+	// The empty column case stays byte identical to the old overwrite: no leading separator.
+	plain := fx.claim(fx.in(2270))
+	if _, ok, err := fx.store.StampCaptured(ctx, plain.ID, "trans-"+plain.ID, "A"); err != nil || !ok {
+		t.Fatalf("StampCaptured: ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := fx.store.BeginVoiding(ctx, plain.ID); err != nil || !ok {
+		t.Fatalf("BeginVoiding: ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := fx.store.StampVoidUnknown(ctx, plain.ID, "plain lost answer"); err != nil || !ok {
+		t.Fatalf("StampVoidUnknown: ok=%v err=%v", ok, err)
+	}
+	if got := fx.get(plain.LegKey).LastError; got != "plain lost answer" {
+		t.Fatalf("an empty last_error must take the diagnostic alone, got %q", got)
+	}
+}
+
 // A bind on a transaction that rolls back leaves the attempt CAPTURED, so the compensator still owns it.
 func TestAttempts_BindTxRollbackLeavesTheRowCaptured(t *testing.T) {
 	fx := newAttemptFx(t)

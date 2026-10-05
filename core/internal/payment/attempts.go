@@ -291,15 +291,24 @@ func (s *Store) StampVoided(ctx context.Context, id, kind, ref string) (Attempt,
 	return s.poolMove(ctx, id, []string{AttemptVoiding}, `status = 'VOIDED', reversal_kind = $3, reversal_ref = $4`, kind, ref)
 }
 
-// StampVoidUnknown records a reversal whose answer was lost: VOIDING to VOID_UNKNOWN.
+// StampVoidUnknown records a reversal whose answer was lost: VOIDING to VOID_UNKNOWN. The stamp
+// APPENDS to last_error rather than replacing it: on a late capture over a manager's close the
+// column already carries the folded decision, and the second manager who reads this needs-a-person
+// row must find both stories on it. On every normal compensation path the column is empty here, so
+// the append writes exactly the diagnostic (the CASE keeps a leading separator off the empty case).
 func (s *Store) StampVoidUnknown(ctx context.Context, id, lastErr string) (Attempt, bool, error) {
-	return s.poolMove(ctx, id, []string{AttemptVoiding}, `status = 'VOID_UNKNOWN', last_error = $3`, SanitizeLastError(lastErr))
+	return s.poolMove(ctx, id, []string{AttemptVoiding},
+		`status = 'VOID_UNKNOWN', last_error = left(CASE WHEN last_error = '' THEN $3 ELSE last_error || '; ' || $3 END, `+strconv.Itoa(maxLastErrorRunes)+`)`,
+		SanitizeLastError(lastErr))
 }
 
 // StampVoidDeclined records a reversal Run refused: VOIDING to VOID_DECLINED. The customer's money
-// is held with no sale until a manager reverses it at the processor.
+// is held with no sale until a manager reverses it at the processor. Like StampVoidUnknown it
+// appends, never replaces, so a folded manager decision survives the refused end too.
 func (s *Store) StampVoidDeclined(ctx context.Context, id, lastErr string) (Attempt, bool, error) {
-	return s.poolMove(ctx, id, []string{AttemptVoiding}, `status = 'VOID_DECLINED', last_error = $3`, SanitizeLastError(lastErr))
+	return s.poolMove(ctx, id, []string{AttemptVoiding},
+		`status = 'VOID_DECLINED', last_error = left(CASE WHEN last_error = '' THEN $3 ELSE last_error || '; ' || $3 END, `+strconv.Itoa(maxLastErrorRunes)+`)`,
+		SanitizeLastError(lastErr))
 }
 
 // BindTx is the sale's own move, on the SALE's transaction: CAPTURED to BOUND with the payments row it
