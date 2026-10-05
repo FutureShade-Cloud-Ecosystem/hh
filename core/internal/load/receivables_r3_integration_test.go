@@ -216,3 +216,33 @@ func TestReceivablesGoneTargetKeepsUpdateTargetMissing(t *testing.T) {
 		t.Fatalf("a gone target answered %+v, want %s", ref.Refusing, load.ReasonUpdateTargetMissing)
 	}
 }
+
+// P3-3: the writer's open balance read carries the org predicate: a
+// FINALIZED document of another org that happens to name the customer
+// never enters the loading org's running balance.
+func TestReceivablesOpenBalanceReadCarriesTheOrgPredicate(t *testing.T) {
+	e := setupLD11(t)
+	ctx := context.Background()
+	const otherOrg = "6a110000-0000-4000-8000-0000000000a3"
+	for _, stmt := range []string{
+		`INSERT INTO org (id, slug, name) VALUES ('` + otherOrg + `', 'ld11-other-bal', 'LD11 Other Balance Yard') ON CONFLICT (id) DO NOTHING`,
+		`INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date, subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, org_id)
+		 VALUES ('#INV-LD11-X1', '` + ld11CustOneID + `', '` + ld11BranchAID + `', 'FINALIZED', '2032-01-01', '2032-02-01', 900, 0, 900, 900, now(), '` + otherOrg + `')`,
+	} {
+		if _, err := e.pool.Exec(ctx, stmt); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+	}
+	t.Cleanup(func() {
+		_, _ = e.pool.Exec(ctx, `DELETE FROM invoices WHERE invoice_no = '#INV-LD11-X1'`)
+		_, _ = e.pool.Exec(ctx, `DELETE FROM org WHERE id = '`+otherOrg+`'::uuid`)
+	})
+	if _, err := e.door.UpsertReceivables(ctx, ld11Batch("b-og-1",
+		ld11Item("OG-1", "CUST-ONE", "BR-A", "OG-DOC-1", "2032-06-01", "2032-07-01", 5000, "", ""))); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	ledger := e.ledger(t, ld11CustOneID)
+	if len(ledger) != 1 || ledger[0].BalanceAfter != 5000 {
+		t.Fatalf("the loaded row's running balance is %+v, want 5000: another org's document leaked in", ledger)
+	}
+}

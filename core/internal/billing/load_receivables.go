@@ -281,7 +281,7 @@ RETURNING id::text, invoice_no::text`,
 	if err != nil {
 		return "", fmt.Errorf("billing: insert imported document: %w", err)
 	}
-	balance, err := customerOpenBalance(ctx, tx, customerID)
+	balance, err := customerOpenBalance(ctx, tx, in.OrgID, customerID)
 	if err != nil {
 		return "", err
 	}
@@ -341,12 +341,12 @@ WHERE id = $1::uuid AND org_id = $2::uuid AND customer_id = $10::uuid
 	if tag.RowsAffected() == 0 {
 		return "", workedInHH()
 	}
-	balance, err := customerOpenBalance(ctx, tx, customerID)
+	balance, err := customerOpenBalance(ctx, tx, in.OrgID, customerID)
 	if err != nil {
 		return "", err
 	}
 	var docNo string
-	if err := tx.QueryRow(ctx, `SELECT invoice_no::text FROM invoices WHERE id = $1::uuid`, in.RowID).Scan(&docNo); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT invoice_no::text FROM invoices WHERE id = $1::uuid AND org_id = $2::uuid`, in.RowID, in.OrgID).Scan(&docNo); err != nil {
 		return "", fmt.Errorf("billing: read imported document number: %w", err)
 	}
 	day := rec.issueDate.UTC()
@@ -473,12 +473,12 @@ func workedInHH() *load.Refusal {
 // writer of this module does: the sum over FINALIZED and PARTIALLY_PAID
 // documents under this transaction, so the row just written or moved is
 // counted and a concurrent sale cannot interleave a stale figure.
-func customerOpenBalance(ctx context.Context, tx pgx.Tx, customerID string) (int64, error) {
+func customerOpenBalance(ctx context.Context, tx pgx.Tx, orgID, customerID string) (int64, error) {
 	var open int64
 	if err := tx.QueryRow(ctx,
 		`SELECT COALESCE(SUM(balance_cents),0) FROM invoices
-		  WHERE customer_id = $1::uuid AND status IN ('FINALIZED','PARTIALLY_PAID')`,
-		customerID).Scan(&open); err != nil {
+		  WHERE customer_id = $1::uuid AND org_id = $2::uuid AND status IN ('FINALIZED','PARTIALLY_PAID')`,
+		customerID, orgID).Scan(&open); err != nil {
 		return 0, fmt.Errorf("billing: read open balance: %w", err)
 	}
 	return open, nil
