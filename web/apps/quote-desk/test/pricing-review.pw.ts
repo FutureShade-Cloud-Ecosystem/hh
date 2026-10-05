@@ -332,7 +332,7 @@ test("editing a branch limited tier default rule keeps its branch", async ({ pag
   await expect(page.getByTestId("pr-dialog")).toBeVisible();
   // the tier default scope cannot edit the branch, so the branch it has is shown read only
   await expect(page.getByTestId("pr-branch")).toHaveCount(0);
-  await expect(page.getByTestId("pr-branch-readonly")).toHaveValue("Trenton");
+  await expect(page.getByTestId("pr-branch-readonly")).toHaveText("Trenton");
   await page.getByTestId("pr-detail").fill("Contractor, default: 15% off, reviewed");
   await page.getByTestId("pr-save").click();
   await expect(page.getByTestId("pr-dialog")).toHaveCount(0);
