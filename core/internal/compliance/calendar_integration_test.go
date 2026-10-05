@@ -242,6 +242,9 @@ func TestIntegration_Compliance_HTTPSurface_ServesAndIsManagerGated(t *testing.T
 	mux := http.NewServeMux()
 	NewHandler(svc, slog.Default()).RegisterRoutes(mux, sg.Guards)
 
+	// The kit's guards are the real ones: a request with no staff bearer is refused 401 before the
+	// authority is ever consulted, so every call carries the bearer the double admits.
+	bearer := sg.Bearer(t)
 	do := func(method, path, body string) *httptest.ResponseRecorder {
 		var r *http.Request
 		if body == "" {
@@ -250,6 +253,8 @@ func TestIntegration_Compliance_HTTPSurface_ServesAndIsManagerGated(t *testing.T
 			r = httptest.NewRequest(method, path, jsonBody(body))
 			r.Header.Set("Content-Type", "application/json")
 		}
+		r.Header.Set("Authorization", "Bearer "+bearer)
+		r.Header.Set("X-Org", testkit.OrgNorthSlug)
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, r)
 		return w

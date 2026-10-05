@@ -1496,3 +1496,12 @@ display name with a comma, while migration 0003 plants the dealer name, an em da
 test passed on main (the order, raw id, customer and payment cases and the Kingston mirror), so this was a stale test and not a
 leak. The assertion now requires the row to be Trenton's and never Kingston's; a production bite (the adapter naming the wrong
 branch) turns it red. The package is green alone and the `assist/adapters` word leaves `red=` in `.github/workflows/ci.yml`.
+
+## internal/compliance is back in the integration job (decision log row 804, appended; the entries above are never edited)
+
+`TestIntegration_Compliance_HTTPSurface_ServesAndIsManagerGated` read 401 because the test drove the kit's real guards without a
+bearer: after the guards swap the route is refused "Missing or invalid credentials" before the authority is consulted, which is
+the guard doing its job and not a leak (an unauthenticated call reaches nothing). The test now sends the staff bearer and the
+X-Org header the kit's double admits. The fence legs bite: with the calendar route moved behind the staff guard instead of the
+manager guard, the frontline authority leg reads 200 and the test fails; restored byte identical. The package is green alone and
+the `compliance` word leaves `red=` in `.github/workflows/ci.yml`.
