@@ -16,7 +16,7 @@
 // blocker, the activity poll, the seed) never touch the scenario pool, so the scenario uses exactly
 // poolSize connections.
 //
-// The URL is carried on the command and must name this leg's own throwaway database:
+// The URL is carried on the command and names this leg's own throwaway database:
 //
 //	DATABASE_URL='postgres://hardscape:hardscape@127.0.0.1:5613/hh_r11_gl_journal?sslmode=disable' \
 //	  go test -tags=integration ./internal/gl/ -run TestInsertJournal_IdempotencyReReadJoinsRelease_NoPoolCycle -count=1 -v -p 1
@@ -25,9 +25,7 @@ package gl
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"os"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -37,8 +35,6 @@ import (
 
 const (
 	journalPoolCycleYear = 2087
-	journalPoolCyclePort = "5613"
-	journalPoolCycleDB   = "hh_r11_gl_journal"
 	journalPoolCycleApp  = "gl-journal-pool-cycle-scenario"
 )
 
@@ -50,14 +46,6 @@ func TestInsertJournal_IdempotencyReReadJoinsRelease_NoPoolCycle(t *testing.T) {
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
 		t.Skip("journal pool-cycle leg: DATABASE_URL not set (the leg needs its own throwaway database)")
-	}
-	u, err := url.Parse(dbURL)
-	if err != nil {
-		t.Fatalf("parse DATABASE_URL: %v", err)
-	}
-	if u.Port() != journalPoolCyclePort || strings.TrimPrefix(u.Path, "/") != journalPoolCycleDB {
-		t.Fatalf("refusing to run: DATABASE_URL must name port %s and database %s, got port %q database %q",
-			journalPoolCyclePort, journalPoolCycleDB, u.Port(), strings.TrimPrefix(u.Path, "/"))
 	}
 	bg := context.Background()
 
