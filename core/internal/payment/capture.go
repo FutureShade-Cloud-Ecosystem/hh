@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -119,12 +120,24 @@ func (s *Store) getByID(ctx context.Context, id string) (Attempt, bool, error) {
 // table's cca_money_has_ref check holds), and the capture is reversed by the caller straight away: the
 // customer's money moved for a leg nobody will bind. It is the smallest safe path: no new status, no
 // widened guard on StampCaptured, and the same guarded row arbitrates between it and a manager's resolve.
+//
+// A RESOLVED source leaves its resolution columns behind with the move: the table holds them on a
+// RESOLVED row only (cca_resolution_only_on_resolved), so the same statement clears them and folds the
+// manager's resolution and note into last_error, where the decision stays readable next to the late
+// capture's cause. The CASE reads the row's own columns, so the text is the decision this statement
+// actually moved on, whatever a concurrent Resolve wrote; an UNKNOWN source (no decision on the row)
+// gets the cause alone. The appended note is the row's own resolution_note, which Resolve already
+// accepted as manager text; the fixed cause is sanitised here, and left() bounds the whole diagnostic
+// to the house cap.
 func (s *Store) StampLateCapture(ctx context.Context, id, ref, respCode string) (Attempt, bool, error) {
 	if id == "" || ref == "" {
 		return Attempt{}, false, errBadStamp
 	}
 	return s.poolMove(ctx, id, []string{AttemptUnknown, AttemptResolved},
-		`status = 'VOIDING', processor_ref = $3, resp_code = $4, last_error = $5`,
+		`status = 'VOIDING', processor_ref = $3, resp_code = $4,
+		   last_error = left($5 || CASE WHEN resolution = '' THEN ''
+		     ELSE ' (manager closed it as ' || resolution || ': ' || resolution_note || ')' END, `+strconv.Itoa(maxLastErrorRunes)+`),
+		   resolution = '', resolution_note = '', resolved_by = NULL`,
 		ref, respCode, SanitizeLastError("capture answered after the attempt left CHARGING, reversing it"))
 }
 
