@@ -38,6 +38,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
@@ -110,6 +111,12 @@ func (g *writeStarveGate) callsBy(caller string) int {
 type writeStarveSig struct{}
 
 func (writeStarveSig) CaptureTyped(context.Context, TypedAttestation) (string, error) {
+	return "starve-leg-signature-ref", nil
+}
+
+// CaptureTypedTx keeps the stub satisfiable of the widened seam. The stub touches no database, so
+// the caller's transaction passes through untouched and the answer is the same ref.
+func (writeStarveSig) CaptureTypedTx(context.Context, pgx.Tx, TypedAttestation) (string, error) {
 	return "starve-leg-signature-ref", nil
 }
 
