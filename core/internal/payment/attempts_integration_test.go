@@ -453,34 +453,36 @@ type transitionCase struct {
 	name string
 	from []string
 	want string
-	call func(s *Store, fx *attemptFx, id string) (Attempt, bool, error)
+	// from rides along so a move whose arguments depend on the source status can pick them
+	// (Resolve's resolution must fit the source).
+	call func(s *Store, fx *attemptFx, id, from string) (Attempt, bool, error)
 }
 
 func transitionCases() []transitionCase {
 	ctx := context.Background()
 	return []transitionCase{
-		{"StampCaptured", []string{AttemptCharging}, AttemptCaptured, func(s *Store, _ *attemptFx, id string) (Attempt, bool, error) {
+		{"StampCaptured", []string{AttemptCharging}, AttemptCaptured, func(s *Store, _ *attemptFx, id, _ string) (Attempt, bool, error) {
 			return s.StampCaptured(ctx, id, "trans-1", "A")
 		}},
-		{"StampDeclined", []string{AttemptCharging}, AttemptDeclined, func(s *Store, _ *attemptFx, id string) (Attempt, bool, error) {
+		{"StampDeclined", []string{AttemptCharging}, AttemptDeclined, func(s *Store, _ *attemptFx, id, _ string) (Attempt, bool, error) {
 			return s.StampDeclined(ctx, id, "C", "declined")
 		}},
-		{"StampUnknown", []string{AttemptCharging}, AttemptUnknown, func(s *Store, _ *attemptFx, id string) (Attempt, bool, error) {
+		{"StampUnknown", []string{AttemptCharging}, AttemptUnknown, func(s *Store, _ *attemptFx, id, _ string) (Attempt, bool, error) {
 			return s.StampUnknown(ctx, id, "timeout")
 		}},
-		{"BeginVoiding", []string{AttemptCaptured}, AttemptVoiding, func(s *Store, _ *attemptFx, id string) (Attempt, bool, error) {
+		{"BeginVoiding", []string{AttemptCaptured}, AttemptVoiding, func(s *Store, _ *attemptFx, id, _ string) (Attempt, bool, error) {
 			return s.BeginVoiding(ctx, id)
 		}},
-		{"StampVoided", []string{AttemptVoiding}, AttemptVoided, func(s *Store, _ *attemptFx, id string) (Attempt, bool, error) {
+		{"StampVoided", []string{AttemptVoiding}, AttemptVoided, func(s *Store, _ *attemptFx, id, _ string) (Attempt, bool, error) {
 			return s.StampVoided(ctx, id, ReversalVoid, "void-1")
 		}},
-		{"StampVoidUnknown", []string{AttemptVoiding}, AttemptVoidUnknown, func(s *Store, _ *attemptFx, id string) (Attempt, bool, error) {
+		{"StampVoidUnknown", []string{AttemptVoiding}, AttemptVoidUnknown, func(s *Store, _ *attemptFx, id, _ string) (Attempt, bool, error) {
 			return s.StampVoidUnknown(ctx, id, "timeout")
 		}},
-		{"StampVoidDeclined", []string{AttemptVoiding}, AttemptVoidDeclined, func(s *Store, _ *attemptFx, id string) (Attempt, bool, error) {
+		{"StampVoidDeclined", []string{AttemptVoiding}, AttemptVoidDeclined, func(s *Store, _ *attemptFx, id, _ string) (Attempt, bool, error) {
 			return s.StampVoidDeclined(ctx, id, "declined")
 		}},
-		{"BindTx", []string{AttemptCaptured}, AttemptBound, func(s *Store, fx *attemptFx, id string) (Attempt, bool, error) {
+		{"BindTx", []string{AttemptCaptured}, AttemptBound, func(s *Store, fx *attemptFx, id, _ string) (Attempt, bool, error) {
 			pay := fx.newPayment()
 			tx, err := s.pool.Begin(ctx)
 			if err != nil {
@@ -493,8 +495,13 @@ func transitionCases() []transitionCase {
 			}
 			return a, ok, tx.Commit(ctx)
 		}},
-		{"Resolve", []string{AttemptUnknown, AttemptVoidUnknown, AttemptVoidDeclined}, AttemptResolved, func(s *Store, fx *attemptFx, id string) (Attempt, bool, error) {
-			return s.Resolve(ctx, id, ResolutionNotCharged, "checked the settlement report", fx.user)
+		{"Resolve", []string{AttemptUnknown, AttemptVoidUnknown, AttemptVoidDeclined}, AttemptResolved, func(s *Store, fx *attemptFx, id, from string) (Attempt, bool, error) {
+			// A VOID source's capture was confirmed, so only a manager reversal tells the truth.
+			resolution := ResolutionNotCharged
+			if from != AttemptUnknown {
+				resolution = ResolutionReversedAtProcessor
+			}
+			return s.Resolve(ctx, id, resolution, "checked the settlement report", fx.user)
 		}},
 	}
 }
@@ -508,7 +515,7 @@ func TestAttempts_TransitionMatrix(t *testing.T) {
 				a := fx.claim(fx.in(300))
 				fx.force(a.ID, from)
 				before := fx.get(a.LegKey)
-				got, ok, err := tc.call(fx.store, fx, a.ID)
+				got, ok, err := tc.call(fx.store, fx, a.ID, from)
 				if err != nil {
 					t.Fatalf("%s from %s: %v", tc.name, from, err)
 				}

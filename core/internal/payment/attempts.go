@@ -315,13 +315,26 @@ func (s *Store) BindTx(ctx context.Context, tx pgx.Tx, id, paymentID string) (At
 }
 
 // Resolve is the manager's close of an item that needed a person: UNKNOWN, VOID_UNKNOWN or
-// VOID_DECLINED to RESOLVED. A resolution, a note and a resolver are required. The row stays and its
-// leg key never charges again.
+// VOID_DECLINED to RESOLVED. A resolution, a note and a resolver are required, and the resolution
+// must fit the source: a VOID_* row's capture was confirmed before its reversal went missing or was
+// refused, so only REVERSED_AT_PROCESSOR tells the truth about its money, while an UNKNOWN may
+// close either way depending on what the manager finds at Run. The row stays and its leg key never
+// charges again.
 func (s *Store) Resolve(ctx context.Context, id, resolution, note, resolvedBy string) (Attempt, bool, error) {
 	note = strings.TrimSpace(note)
 	if id == "" || note == "" || resolvedBy == "" ||
 		(resolution != ResolutionNotCharged && resolution != ResolutionReversedAtProcessor) {
 		return Attempt{}, false, ErrResolveInvalid
+	}
+	// The pairing check reads before the guarded move. No transaction is held, and a VOID_* row
+	// cannot move to anything but RESOLVED, so a stale read can only refuse a close that the move
+	// would refuse anyway; it can never allow one.
+	if resolution == ResolutionNotCharged && s.pool != nil {
+		var status string
+		if err := s.pool.QueryRow(ctx, `SELECT status FROM card_charge_attempts WHERE id = $1::uuid`, id).Scan(&status); err == nil &&
+			(status == AttemptVoidUnknown || status == AttemptVoidDeclined) {
+			return Attempt{}, false, ErrResolveInvalid
+		}
 	}
 	return s.poolMove(ctx, id, []string{AttemptUnknown, AttemptVoidUnknown, AttemptVoidDeclined},
 		`status = 'RESOLVED', resolution = $3, resolution_note = $4, resolved_by = $5::uuid`, resolution, note, resolvedBy)
