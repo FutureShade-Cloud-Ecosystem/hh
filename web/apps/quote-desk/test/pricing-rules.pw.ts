@@ -239,3 +239,28 @@ test("Escape on the floor warning is a decline: nothing is saved", async ({ page
   await expect(page.getByTestId("floor-dialog")).toHaveCount(0);
   expect((await pricingState(page)).writes).toHaveLength(0);
 });
+
+// A double click on the confirm button lands as one rule and one log row: the busy guard
+// (pricing-tab-base) holds the second click before the button can disable. Two synchronous
+// clicks inside one frame are the case, they both fire before a re-render.
+test("a double click on the confirm saves one rule and one log row", async ({ page }) => {
+  await openRules(page);
+  await page.getByTestId("pr-new").click();
+  await page.getByTestId("pr-scope").selectOption("TIER_CATEGORY");
+  await page.getByTestId("pr-customer-type").selectOption("CONTRACTOR");
+  await page.getByTestId("pr-category").selectOption(PAVERS);
+  await page.getByTestId("pr-value").fill("40");
+  await page.getByTestId("pr-priority").fill("91");
+  await page.getByTestId("pr-save").click();
+  await expect(page.getByTestId("floor-dialog")).toBeVisible();
+  await page.getByTestId("floor-confirm").evaluate((button) => {
+    button.click();
+    button.click();
+  });
+  await expect(page.getByTestId("floor-dialog")).toHaveCount(0);
+  await expect(page.getByTestId("pr-row")).toHaveCount(6);
+  const state = await pricingState(page);
+  expect(state.rules.filter((r) => r.priority === 91)).toHaveLength(1);
+  expect(state.confirmations).toHaveLength(1);
+  expect(state.writes.filter((w) => w.kind === "rule")).toHaveLength(1);
+});
