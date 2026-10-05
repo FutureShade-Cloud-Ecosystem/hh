@@ -161,12 +161,17 @@ func validateTypedAttestation(in TypedAttestation) (string, error) {
 	return name, nil
 }
 
+// sigRandRead is the random-byte seam behind the minted reference: production points it at
+// crypto/rand, and the redaction tests pin it so a capture's reference shape is deterministic
+// (the reference is what the audit chokepoint's cleartext filter judges).
+var sigRandRead = rand.Read
+
 // sealTypedAttestation mints the reference, seals the payload, and returns the row both capture
 // paths persist plus the reference the caller and the audit row carry. Shared so a pool capture and
 // a tx capture write the SAME evidence shape.
 func (p *TypedNameSignatureProvider) sealTypedAttestation(ctx context.Context, name string, in TypedAttestation) (signatureRow, string, error) {
 	var b [8]byte
-	if _, err := rand.Read(b[:]); err != nil {
+	if _, err := sigRandRead(b[:]); err != nil {
 		return signatureRow{}, "", err
 	}
 	ref := "sig_" + hex.EncodeToString(b[:])
