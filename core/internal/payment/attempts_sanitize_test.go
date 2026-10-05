@@ -22,6 +22,23 @@ func TestSanitizeLastError_RedactsSecrets(t *testing.T) {
 		{"password", "password: hunter2 rejected", []string{"hunter2"}},
 		{"account token", "account_token=tok_9f8e7d6c5b4a rejected", []string{"tok_9f8e7d6c5b4a"}},
 		{"opaque hex", "echo 0123456789abcdef0123456789abcdef0123456789abcdef", []string{"0123456789abcdef0123456789abcdef"}},
+		// The round 1 review's leak table: every row below came out of the old sanitiser with the
+		// secret intact. Whitespace and control characters must flatten BEFORE the redaction rules
+		// run, or a PAN whose groups ride doubled spaces, a tab or a newline past the number rule
+		// and then normalise into the exact readable form.
+		{"double spaced PAN", "card 4111  1111  1111  1111 refused", []string{"4111", "1111"}},
+		{"tabbed PAN", "card 4111\t1111\t1111\t1111 refused", []string{"4111", "1111"}},
+		{"newlined PAN", "card 4111\n1111\n1111\n1111 refused", []string{"4111", "1111"}},
+		{"dotted PAN", "card 4111.1111.1111.1111 refused", []string{"4111.1111.1111.1111", "1111.1111"}},
+		{"glued PAN", "cardno4111111111111111 refused", []string{"4111111111111111"}},
+		{"underscore PAN", "pan_4111111111111111_x", []string{"4111111111111111"}},
+		{"basic credential", "Authorization: Basic dXNlcjpwYXNzd29yZA== sent", []string{"Basic", "dXNlcjpwYXNzd29yZA=="}},
+		{"bare auth with a scheme", "auth=Basic dXNlcjpwYXNzd29yZA== sent", []string{"Basic", "dXNlcjpwYXNzd29yZA=="}},
+		{"hyphenated api key header", "X-Api-Key: sk_live_abc123def456 rejected", []string{"sk_live_abc123def456"}},
+		{"private key", "handshake failed private_key=MIIEpAIBAAKCAQEA refused", []string{"MIIEpAIBAAKCAQEA"}},
+		{"signature", "signature=tL0c9x8b7v6q2 refused", []string{"tL0c9x8b7v6q2"}},
+		{"json token with spaces", `{"token": "abc def ghi"}`, []string{"abc", "def", "ghi"}},
+		{"no break space bearer", "Bearer\u00a0tok_nbsp_123456 leaked", []string{"tok_nbsp_123456"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -44,6 +61,10 @@ func TestSanitizeLastError_KeepsPlainDiagnostics(t *testing.T) {
 		"context deadline exceeded",
 		"attempt 5d1b3f6e-0000-4000-9000-000000000001 timed out after 25s",
 		"amount 12500 cents",
+		// A bare run of twenty digits is left alone: the number rule takes thirteen to nineteen
+		// digits, which is every card number, and a wider net would take order numbers and
+		// settlement reference ids with it. This leg pins that judgement call.
+		"settlement batch 12345678901234567890 closed",
 	} {
 		if got := SanitizeLastError(in); got != in {
 			t.Errorf("SanitizeLastError(%q) = %q, want it unchanged", in, got)
