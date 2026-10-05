@@ -23,12 +23,15 @@ var demoEnvDenyPrefixes = []string{
 
 // demoEnvDenyNames are the single environment names refused outright on
 // a demo box: the SMS provider selection, the live card processor's
-// endpoint, the message bus and the statement notices switch.
+// endpoint, the message bus, the statement notices switch, and the load
+// doors switch (the doors are a dealer deployment's decision, never a
+// demo box's).
 var demoEnvDenyNames = []string{
 	"SMS_PROVIDER",
 	"HOS_CARD_BASE_URL",
 	"NATS_URL",
 	"HOS_STATEMENT_NOTICES",
+	"HH_LOAD_DOORS_ENABLED",
 }
 
 // demoEnvCardProcessorVar and demoEnvCardProcessorValue: the card
@@ -110,6 +113,7 @@ var envInventoryFixture = []string{
 	"HH_ACCEPTANCE_SIGN_KEY_ID",
 	"HH_ACCEPTANCE_SIGN_KEY_PREVIOUS",
 	"HH_ACCEPTANCE_SIGN_KEY_PREVIOUS_ID",
+	"HH_LOAD_DOORS_ENABLED",
 	"HOS_ASSIST_ANTHROPIC_API_KEY",
 	"HOS_CARD_BASE_URL",
 	"HOS_CARD_PROCESSOR",

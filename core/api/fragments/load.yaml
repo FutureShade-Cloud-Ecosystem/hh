@@ -1,0 +1,157 @@
+# Fragment: the load doors (HH-LOAD-1 item LD-1).
+#
+# The machine surface FB Move's loads arrive through. This fragment
+# carries the frame's own two operations: the batch read and the legacy
+# key resolution. The keyed load doors themselves land with the later
+# items of the cycle and take the one body shape the plan's operation
+# list names (the source system, the caller's batch id, a bounded list
+# of items).
+#
+# Gate: x-role machine. The machine bearer scheme and the machine gate
+# are the load cycle's machine identity item (LD-2); until that lands,
+# no operation in this fragment carries a security scheme of its own and
+# the routes register only where a deployment's configuration switches
+# the load doors on (the switch is off everywhere by default).
+#
+# Read semantics: both operations write nothing; loadResolveKeys exists
+# so callers can name references by legacy key and the reconcile can
+# count, and loadGetBatch returns what a batch first recorded.
+paths:
+  /api/v1/load/batches/{id}:
+    get:
+      operationId: loadGetBatch
+      tags: [load]
+      summary: Read one load batch by the caller's batch id
+      description: >-
+        The counts by outcome and the per item outcomes the batch first
+        recorded, so a replayed submission can be answered from the
+        record. The id is the caller's own batch id, not an HH uuid.
+      x-role: machine
+      x-addition: "HH-LOAD-1 load doors; no ERP source route"
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 128 }
+      responses:
+        "200":
+          description: The recorded batch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadBatchView"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/load/keys/resolve:
+    post:
+      operationId: loadResolveKeys
+      tags: [load]
+      summary: Resolve legacy keys to HH ids
+      description: >-
+        A list body of legacy keys in, one resolution per item out: the
+        HH row the key names within the org and source system, or null
+        where the name is not yet recorded, with the found and missing
+        counts. Read semantics; writes nothing. A list over the bound
+        refuses with 400.
+      x-role: machine
+      x-addition: "HH-LOAD-1 load doors; no ERP source route"
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadKeysResolveRequest"
+      responses:
+        "200":
+          description: One resolution per item, with the counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadKeysResolveResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+components:
+  schemas:
+    LoadKeyRef:
+      type: object
+      required: [kind, legacy_id]
+      properties:
+        kind: { type: string, minLength: 1, maxLength: 64 }
+        legacy_id: { type: string, minLength: 1, maxLength: 512 }
+    LoadKeysResolveRequest:
+      type: object
+      required: [source_system, items]
+      properties:
+        source_system: { type: string, minLength: 1, maxLength: 64 }
+        items:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            $ref: "#/components/schemas/LoadKeyRef"
+    LoadKeyResolution:
+      type: object
+      required: [kind, legacy_id, hh_id]
+      properties:
+        kind: { type: string }
+        legacy_id: { type: string }
+        hh_id: { type: [string, "null"], format: uuid }
+    LoadKeysResolveCounts:
+      type: object
+      required: [found, missing]
+      properties:
+        found: { type: integer, format: int32 }
+        missing: { type: integer, format: int32 }
+    LoadKeysResolveResult:
+      type: object
+      required: [items, counts]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/LoadKeyResolution"
+        counts:
+          $ref: "#/components/schemas/LoadKeysResolveCounts"
+    LoadBatchItemOutcome:
+      type: object
+      required: [legacy_id, status]
+      properties:
+        legacy_id: { type: string }
+        status:
+          type: string
+          enum: [created, updated, unchanged, refused]
+        hh_id: { type: [string, "null"], format: uuid }
+        reason: { type: [string, "null"] }
+        field: { type: [string, "null"] }
+        detail: { type: [string, "null"] }
+    LoadBatchCounts:
+      type: object
+      required: [created, updated, unchanged, refused]
+      properties:
+        created: { type: integer, format: int32 }
+        updated: { type: integer, format: int32 }
+        unchanged: { type: integer, format: int32 }
+        refused: { type: integer, format: int32 }
+    LoadBatchView:
+      type: object
+      required: [batch_id, source_system, kind, caller, state, counts, items, created_at]
+      properties:
+        batch_id: { type: string }
+        source_system: { type: string }
+        kind: { type: string }
+        caller: { type: string }
+        state:
+          type: string
+          enum: [RECORDED]
+        counts:
+          $ref: "#/components/schemas/LoadBatchCounts"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/LoadBatchItemOutcome"
+        created_at: { type: string, format: date-time }

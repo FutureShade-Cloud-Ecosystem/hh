@@ -375,6 +375,12 @@ func registerRoutesWithRoleConfig(r httpx.Registrar, getenv func(string) string,
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 
+	// The load doors (HH-LOAD-1 LD-1) register only where the deployment
+	// switches them on (HH_LOAD_DOORS_ENABLED, off by default); the
+	// switch, the pending gate wrapper and the doors' own wiring live in
+	// wire_load.go, the machine gate in the machine identity item.
+	wireLoad(r, pool, log, getenv)
+
 	return &appGraph{
 		cfg: cfg, log: log, pool: pool, verify: verifier, link: linkedUserID(pool), g: g,
 		money: money, ops: ops, tops: tops, smsBelt: belt, listenAddr: auth.listenAddr,

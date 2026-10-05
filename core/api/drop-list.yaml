@@ -52,3 +52,7 @@ additions:
     reason: "G1 customer-quote public acceptance (D8, D10, D12): typed-name attestation with the 404, 410 and 409 semantics; no ERP source route."
   - route: "GET /api/v1/pos/tax-rate"
     reason: "Row 661: the counter-readable tax rate; the rate the ring binds, read through the ring's own assessor, with the stored round rule beside it; no ERP source route."
+  - route: "GET /api/v1/load/batches/{id}"
+    reason: "HH-LOAD-1 load doors: the machine batch read behind the load doors deployment switch; no ERP source route."
+  - route: "POST /api/v1/load/keys/resolve"
+    reason: "HH-LOAD-1 load doors: the machine legacy key resolution behind the load doors deployment switch; no ERP source route."
