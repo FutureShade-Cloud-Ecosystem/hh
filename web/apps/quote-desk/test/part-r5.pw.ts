@@ -13,7 +13,7 @@ test.afterAll(async ({ request }) => {
 async function openQuoteDetail(page: Page, quoteNo: string): Promise<void> {
   await row(page, quoteNo).click();
   const detail = page.getByTestId("qb-detail");
-  if ((await detail.getAttribute("open")) === null) await page.getByText("Quote detail &amp; admin").click();
+  if ((await detail.getAttribute("open")) === null) await page.getByText("Quote detail & admin").click();
   await expect(page.getByTestId("qe-title")).toContainText(quoteNo);
 }
 

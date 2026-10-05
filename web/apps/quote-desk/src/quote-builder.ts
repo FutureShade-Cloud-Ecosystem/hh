@@ -550,17 +550,20 @@ export class QdQuoteBuilder extends LitElement {
       <details class="box" style="margin-top: 12px" data-testid="qb-detail">
         <summary style="cursor: pointer">Quote detail &amp; admin</summary>
         <div class="stack seams" style="margin-top: 10px">
-          ${this.selected !== ""
-            ? html`
-                <qd-quote-edit data-seam=${SEAM_EDIT_PANEL}></qd-quote-edit>
-                <qd-quote-assist data-seam=${SEAM_ASSIST}></qd-quote-assist>
-                <qd-quote-history data-seam=${SEAM_HISTORY}></qd-quote-history>
-                <qd-quote-followups data-seam=${SEAM_FOLLOWUPS}></qd-quote-followups>
-                <qd-quote-hold-expiry data-seam=${SEAM_HOLD_EXPIRY}></qd-quote-hold-expiry>
-                <qd-quote-availability data-seam=${SEAM_AVAILABILITY}></qd-quote-availability>
-                <qd-quote-guard></qd-quote-guard>
-              `
-            : html`<div class="box"><p class="empty">Select a quote to open it.</p></div>`}
+          ${this.selected === ""
+            ? html`<div class="box"><p class="empty">Select a quote to open it.</p></div>`
+            : nothing}
+          <!-- The panels stay mounted through New Quote (compose shows none of them, each returns nothing for no
+               quote): a panel taken off the page loses the late answers of writes still out for the quote it left,
+               its announcement dies with it and the panel that comes back is never told what landed. Leaving a quote
+               for another quote was already this way, and New Quote takes that same proven path. -->
+          <qd-quote-edit data-seam=${SEAM_EDIT_PANEL}></qd-quote-edit>
+          <qd-quote-assist data-seam=${SEAM_ASSIST}></qd-quote-assist>
+          <qd-quote-history data-seam=${SEAM_HISTORY}></qd-quote-history>
+          <qd-quote-followups data-seam=${SEAM_FOLLOWUPS}></qd-quote-followups>
+          <qd-quote-hold-expiry data-seam=${SEAM_HOLD_EXPIRY}></qd-quote-hold-expiry>
+          <qd-quote-availability data-seam=${SEAM_AVAILABILITY}></qd-quote-availability>
+          <qd-quote-guard></qd-quote-guard>
           <qd-approvals data-seam=${SEAM_APPROVALS}></qd-approvals>
           <qd-quote-settings data-seam=${SEAM_SETTINGS}></qd-quote-settings>
         </div>

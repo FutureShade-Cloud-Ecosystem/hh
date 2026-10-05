@@ -1278,5 +1278,19 @@
     "find": "    const answer = before.then(send);",
     "replace": "    const answer = send();",
     "test": "P3-1 one terms PUT per quote at a time"
+  },
+  {
+    "id": "qb-edit-panel-mounted",
+    "file": "src/quote-builder.ts",
+    "find": "          <qd-quote-edit data-seam=${SEAM_EDIT_PANEL}></qd-quote-edit>",
+    "replace": "          ${this.selected !== \"\" ? html`<qd-quote-edit data-seam=${SEAM_EDIT_PANEL}></qd-quote-edit>` : nothing}",
+    "test": "P2-2 leaving through New Quote: a quantity that lands while its panel is gone"
+  },
+  {
+    "id": "qb-followups-panel-mounted",
+    "file": "src/quote-builder.ts",
+    "find": "          <qd-quote-followups data-seam=${SEAM_FOLLOWUPS}></qd-quote-followups>",
+    "replace": "          ${this.selected !== \"\" ? html`<qd-quote-followups data-seam=${SEAM_FOLLOWUPS}></qd-quote-followups>` : nothing}",
+    "test": "P2-2 leaving through New Quote: a follow-ups stop that lands while its panel is gone"
   }
 ]
