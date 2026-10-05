@@ -173,3 +173,23 @@ func TestReceivablesSameDayItemsShowTheOpenTotalToTheCustomerReaders(t *testing.
 		}
 	}
 }
+
+// P2-1: a restated amount that changes sign on an update is refused: a
+// source item that changed sign is a different document.
+func TestReceivablesSignChangeOnUpdateRefusesWithItsOwnReason(t *testing.T) {
+	e := setupLD11(t)
+	ctx := context.Background()
+	if _, err := e.door.UpsertReceivables(ctx, ld11Batch("b-sg-1",
+		ld11Item("SG-1", "CUST-ONE", "BR-A", "SG-DOC-1", "2032-06-01", "2032-07-01", 5000, "", ""))); err != nil {
+		t.Fatalf("first batch: %v", err)
+	}
+	_, err := e.door.UpsertReceivables(ctx, ld11Batch("b-sg-2",
+		ld11Item("SG-1", "CUST-ONE", "BR-A", "SG-DOC-1", "2032-06-01", "2032-07-01", -2500, "", "")))
+	ref := ld11BatchRefused(t, err)
+	if ref.Refusing.Reason != load.ReasonSignChanged || ref.Refusing.Field != "open_amount_cents" || ref.Refusing.LegacyID != "SG-1" {
+		t.Fatalf("the sign change answered %+v, want %s naming open_amount_cents", ref.Refusing, load.ReasonSignChanged)
+	}
+	if inv := e.invoices(t)["SG-DOC-1"]; inv.DocType != "INVOICE" || inv.Total != 5000 || len(inv.InvoiceNo) < 5 || inv.InvoiceNo[:5] != "#INV-" {
+		t.Fatalf("the refused sign change moved the document: %+v", inv)
+	}
+}

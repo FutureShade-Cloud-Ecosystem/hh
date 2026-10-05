@@ -51,6 +51,14 @@ const (
 	ReasonUpdateTargetMissing = "update_target_missing"
 	// ReasonRecordShape: the record cannot be normalised to a hash.
 	ReasonRecordShape = "record_shape"
+	// ReasonSignChanged: a restated open amount changed sign on an update; a
+	// source item that changed sign is a different document, so the money
+	// door refuses it naming the amount field.
+	ReasonSignChanged = "sign_changed"
+	// ReasonTargetWorkedInHH: the update target exists but HH has worked it
+	// since it loaded (no longer FINALIZED, or its balance moved, or it
+	// belongs to another customer); a reload never overwrites it.
+	ReasonTargetWorkedInHH = "target_worked_in_hh"
 	// ReasonReplayChanged: a replayed batch id arrived carrying an item
 	// the recorded batch never carried, or an item whose content hash
 	// no longer matches the hash the batch recorded under that name.

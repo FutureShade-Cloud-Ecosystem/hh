@@ -303,6 +303,22 @@ RETURNING id::text, invoice_no::text`,
 func updateImportedDocument(ctx context.Context, tx pgx.Tx, in load.Write, rec importRecord,
 	customerID, branchID, docType, txnType string, idemKey any, metaJSON []byte) (string, error) {
 
+	// A source item that changed sign is a different document: the
+	// document's number prefix and type were minted for the sign it
+	// arrived with, so the update refuses instead of re-typing it.
+	var currentTotal int64
+	if err := tx.QueryRow(ctx, `SELECT total_cents FROM invoices WHERE id = $1::uuid AND org_id = $2::uuid FOR UPDATE`,
+		in.RowID, in.OrgID).Scan(&currentTotal); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", &load.Refusal{Code: load.ReasonUpdateTargetMissing, Field: "legacy_id",
+				Detail: "the name's document is gone; the update refuses rather than creating a second row"}
+		}
+		return "", fmt.Errorf("billing: read imported document: %w", err)
+	}
+	if (currentTotal < 0) != (rec.amount < 0) {
+		return "", &load.Refusal{Code: load.ReasonSignChanged, Field: loadFieldAmount,
+			Detail: "the restated open amount changed sign: a source item that changed sign is a different document"}
+	}
 	tag, err := tx.Exec(ctx, invoiceWriterSeqCTE+`
 UPDATE invoices SET
     issue_date = $3, due_date = $4,
