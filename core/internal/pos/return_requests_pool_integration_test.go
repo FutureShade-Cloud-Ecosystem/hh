@@ -457,11 +457,21 @@ func TestIntegration_ReturnRequests_RejectPoolSizeConcurrent(t *testing.T) {
 	}
 }
 
-// Approve then reject racing on ONE request: the request row's FOR UPDATE
-// serializes the decisions, so exactly one lands, the loser refuses with
-// the 409, and the money matches the decision that landed, never both.
-// The race holds on the starved tree and on the fixed core alike: the fix
-// changes what rides the decision transaction, never the serialization.
+// Approve then reject racing on ONE request, the overlap FORCED: a blocker
+// transaction on a SEPARATE helper connection holds the request row FOR
+// UPDATE while both decision goroutines open their decision transactions
+// and park INSIDE them on the row lock (each decision's first transactional
+// statement is LockReturnRequestStatus's SELECT FOR UPDATE), and the TWO
+// WAITER BARRIER (rreqBarrierWait polling pg_stat_activity until both
+// contender sessions wait on a Lock, bounded) proves both decisions are in
+// flight before the blocker commits. Only then does the blocker release the
+// row: the request row's FOR UPDATE serializes the decisions, so exactly
+// one lands, the loser refuses with the 409 for a decided request, and the
+// money matches the decision that landed, never both. Without the blocker
+// the leg proved nothing: approve could finish before reject started and
+// the PENDING re-checks kept it green whatever the row lock did. The race
+// holds on the starved tree and on the fixed core alike: the fix changes
+// what rides the decision transaction, never the serialization.
 func TestIntegration_ReturnRequests_ApproveRejectRace(t *testing.T) {
 	scenario := rreqScenarioPool(t, "rreq_race_contenders")
 	helper := rreqHelperPool(t)
@@ -471,9 +481,32 @@ func TestIntegration_ReturnRequests_ApproveRejectRace(t *testing.T) {
 	sale := s.ringSale(key(), trentonBranchID, s.trentonTill, "trenton", []float64{30}, TenderCash)
 	requestID := rreqPlantRequest(t, s.svc, helper, sctx, sale.OrderID)
 
+	// The blocker holds the request row on its own helper connection: every
+	// exit path below releases it (rollback guard) BEFORE the test
+	// framework's pool cleanups run, the same shape the pool-size legs use,
+	// because a Fatal with the blocker tx still open would deadlock
+	// helper's Close on its checked-out connection.
+	blockerCtx, blockerCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer blockerCancel()
+	blocker, err := helper.Begin(blockerCtx)
+	if err != nil {
+		t.Fatalf("blocker begin: %v", err)
+	}
+	blockerDone := false
+	defer func() {
+		if !blockerDone {
+			_ = blocker.Rollback(context.Background())
+		}
+	}()
+	if _, err := blocker.Exec(blockerCtx,
+		`SELECT id FROM return_requests WHERE id::text = $1 FOR UPDATE`, requestID); err != nil {
+		t.Fatalf("blocker lock: %v", err)
+	}
+
 	// Both decision callers run under the same stamped context, the race
-	// decides who lands.
-	ctx, cancel := context.WithTimeout(sctx, 30*time.Second)
+	// decides who lands. The cancellable contender context derives from it,
+	// so a cancel never drops the staff stamp.
+	ctx, cancel := context.WithCancel(sctx)
 	defer cancel()
 	type verdict struct {
 		err     error
@@ -494,7 +527,39 @@ func TestIntegration_ReturnRequests_ApproveRejectRace(t *testing.T) {
 		_, rejectV.err = s.svc.RejectReturnRequest(ctx, requestID, "pool-size race leg: refused at the desk")
 		rejectV.elapsed = time.Since(start)
 	}()
-	wg.Wait()
+
+	// The TWO WAITER BARRIER: both contender sessions must sit waiting on a
+	// Lock while the blocker still holds the row, which is the proof both
+	// goroutines are inside their decision transactions, parked on the
+	// request row lock, before either decision can move.
+	if !rreqBarrierWait(helper, "rreq_race_contenders", 2) {
+		cancel()
+		wg.Wait()
+		t.Fatalf("could not force the overlap: the approve and reject backends never both parked on the request row lock within the barrier bound, approve: %v (%v), reject: %v (%v)",
+			approveV.err, approveV.elapsed, rejectV.err, rejectV.elapsed)
+	}
+	if err := blocker.Commit(blockerCtx); err != nil {
+		cancel()
+		wg.Wait()
+		t.Fatalf("blocker commit: %v", err)
+	}
+	blockerDone = true
+
+	// The serialized decisions answer in milliseconds on a healthy core;
+	// the bound only turns a hung core into a failing leg.
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(rreqStallBound):
+		cancel()
+		<-done
+		t.Fatalf("the forced race hit the %v bound, approve err: %v (%v), reject err: %v (%v)",
+			rreqStallBound, approveV.err, approveV.elapsed, rejectV.err, rejectV.elapsed)
+	}
 
 	decisions := 0
 	if approveV.err == nil {
@@ -535,5 +600,20 @@ func TestIntegration_ReturnRequests_ApproveRejectRace(t *testing.T) {
 		}
 	default:
 		t.Fatalf("the raced request must land decided, got %s", status)
+	}
+	// The loser leaves no money either way: under an APPROVED winner the one
+	// reserved-key return is the winner's own rail run, and a REJECTED
+	// winner already pinned returns to zero above, so any second refund
+	// under the key would surface here as a count or an id mismatch.
+	if status == RequestApproved {
+		var keyReturns int
+		if err := helper.QueryRow(context.Background(),
+			`SELECT count(*) FROM pos_returns WHERE idempotency_key = $1 AND id::text = $2`,
+			reservedRequestKeyPrefix+requestID, returnID).Scan(&keyReturns); err != nil {
+			t.Fatalf("read the winner's return: %v", err)
+		}
+		if keyReturns != 1 {
+			t.Fatalf("the request's linked return must be the one return under the reserved key, got %d", keyReturns)
+		}
 	}
 }
