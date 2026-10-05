@@ -21,7 +21,7 @@ import (
 //  2. the payments sequence row (scope_sequences, scope payments), taken WITHOUT advancing it by
 //     LockPaymentsSequenceTx, or by the settle's own incrementing statement where the writer inserts
 //     a payment and has no earlier use for the lock,
-//  3. the existing invoice rows (FOR UPDATE; a writer that walks the rows an already-written
+//  3. the existing invoice rows (FOR NO KEY UPDATE; a writer that walks the rows an already-written
 //     payment allocated, the reversal and till MarkNSF, takes them in ascending id order),
 //  4. the invoices sequence row (scope_sequences, scope invoices).
 //
@@ -31,26 +31,39 @@ import (
 // charged). The cycle was real between the register settle and ReversePayment before this order was
 // written down.
 //
+// The invoice rows are FOR NO KEY UPDATE, not FOR UPDATE, because a FOR UPDATE conflicts with the
+// FOR KEY SHARE a foreign key check takes: a POS return's pos_returns INSERT holds the returned
+// sale's invoice share before its refund rail draws the payments counter, and a payments writer
+// holding the counter while its FOR UPDATE waits on that share closes a cycle. NO KEY UPDATE still
+// conflicts with every invoice UPDATE and with the account credit's FOR UPDATE, so nothing
+// serialises more weakly against real writers, and no writer deletes invoices or changes their
+// keys, so nothing relied on the key conflict. The one writer outside the order's letter is that
+// POS return (key share before the counter); it is safe for exactly this reason, and till MarkNSF
+// taking the counter too means every payments-walking writer now serialises there against every
+// other, whatever order each names its invoices in.
+//
 // Writers and where each sits in the order (LOCK-ORDER.md carries the same table with the reasoning):
 //   - the register's RecordPayment, which reaches the counter's RecordReceipt: steps 2, 3, 4 (lockAndTotal).
 //   - the counter's RecordReceipt: steps 2, 3, 4 (lockAndTotal).
 //   - PayWithStamps and PayWithIntent, and Pay over them, the portal and card settle: steps 2, 3, 4.
-//   - ReversePayment: the payment row, then steps 2, 3 (its allocated invoice rows, taken
-//     explicitly FOR UPDATE in ascending id order before the first counter draw; the contra
-//     allocation's foreign key share lock covers only the invoice the loop has reached), 4. The
-//     payment row is no other writer's first lock except NSF's.
+//   - ReversePayment: the payment row, then steps 2 (its reversing insert and the original's stamp)
+//     and 3 (its allocated invoice rows, taken explicitly FOR NO KEY UPDATE in ascending id order
+//     before the first counter draw; the contra allocation's foreign key share lock covers only the
+//     invoice the loop has reached), 4. The payment row is no other writer's first lock except NSF's.
 //   - the POS ring: stock rows, then step 2 (the tender's payment insert), then step 4 (a new
 //     invoice). It never touches an existing invoice.
-//   - the till refund and the POS return: the per-sale advisory lock and the returned order lines,
-//     then step 2 (the refund payment's insert) for a cash or card refund, or steps 3 and 4 for an
-//     account credit (which takes no payments row).
+//   - the POS return with a cash or card refund: the per-sale advisory lock and the returned order
+//     lines, then the invoice KEY SHARE (the pos_returns foreign key), then step 2 (the refund
+//     payment's insert). The share before the counter is the one exception, safe because no
+//     payments-walking writer's invoice lock conflicts with a share. An account credit return takes
+//     the share, then the invoice FOR UPDATE, then step 4 (it writes no payments row).
 //   - the group and whole-order invoice writers: the order row its caller locked, then step 4 only
 //     (a new invoice).
 //   - the quote counter door, once it lands: the order row, LockPaymentsSequenceTx, then steps 3
 //     and 4 on its own transaction.
-//   - till MarkNSF: the payment row, then steps 3 and 4, its allocated invoice rows taken in
-//     ascending id order before the re-open draws the counter (it writes no payments feed row,
-//     so it has no step 2).
+//   - till MarkNSF: the payment row, then step 2 (LockPaymentsSequenceTx, not advancing: the
+//     serialising lock, it writes no payments feed row), then steps 3 (its allocated invoice rows
+//     in ascending id order, FOR NO KEY UPDATE) and 4.
 //
 // Reads, and the outbox observer, take none of these rows.
 
@@ -418,7 +431,7 @@ func (r *Repository) allocationsByPayment(ctx context.Context, paymentIDs []stri
 
 // Pay records ONE settled charge across N invoices in a single transaction (the
 // all-or-nothing split that designs away card partial-failure, sec. 4.2). Each invoice is
-// re-read FOR UPDATE and its balance re-validated against the allocation before any write,
+// re-read FOR NO KEY UPDATE and its balance re-validated against the allocation before any write,
 // so a balance that moved between the charge decision and settlement aborts the whole tx.
 func (r *Repository) Pay(ctx context.Context, customerID, method, gatewayRef string, allocs []Allocation) (Payment, error) {
 	return r.PayWithIntent(ctx, customerID, method, gatewayRef, allocs, "")

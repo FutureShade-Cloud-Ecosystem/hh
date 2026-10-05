@@ -376,7 +376,7 @@ func (r *loRig) doorShaped(orderID, existingInvoiceID string, holding chan<- str
 		<-release
 	}
 	if existingInvoiceID != "" {
-		if _, err := tx.Exec(ctx, `SELECT 1 FROM invoices WHERE id = $1::uuid FOR UPDATE`, existingInvoiceID); err != nil {
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM invoices WHERE id = $1::uuid FOR NO KEY UPDATE`, existingInvoiceID); err != nil {
 			return fmt.Errorf("door: lock invoice: %w", err)
 		}
 	} else if _, err := tx.Exec(ctx, `INSERT INTO scope_sequences (scope) VALUES ('invoices')
