@@ -146,7 +146,7 @@ export class QdQuoteBuilder extends LitElement {
       flex-direction: column;
       gap: 12px;
     }
-    .stack[hidden] {
+    .stack[data-compose="true"] {
       display: none;
     }
     .row {
@@ -575,7 +575,7 @@ export class QdQuoteBuilder extends LitElement {
                quote): a panel taken off the page loses the late answers of writes still out for the quote it left,
                its announcement dies with it and the panel that comes back is never told what landed. Leaving a quote
                for another quote was already this way, and New Quote takes that same proven path. -->
-          <div class="stack" data-testid="qb-quote-panels" ?hidden=${this.selected === ""}>
+          <div class="stack" data-testid="qb-quote-panels" data-compose=${this.selected === "" ? "true" : "false"}>
             <qd-quote-edit data-seam=${SEAM_EDIT_PANEL}></qd-quote-edit>
             <qd-quote-assist data-seam=${SEAM_ASSIST}></qd-quote-assist>
             <qd-quote-history data-seam=${SEAM_HISTORY}></qd-quote-history>
