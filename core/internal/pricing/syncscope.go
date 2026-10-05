@@ -33,15 +33,25 @@
 // own established posture on the same table, fail closed on a NULL or
 // foreign org.
 //
-// THE UNIT SET READ, added with the anchor's own unit (LD-3 part B) and
-// disclosed the same way: when the caller names the anchor's unit, the
-// write path checks it against product_uoms, the product's own unit
-// set, in one EXISTS beside the statement's products reads, on the
-// caller's transaction (row 786); a unit outside the set refuses
-// before anything is drawn. The sync door names no unit, so its
-// clients' payloads and the sync projection are unchanged; the check
-// exists for the list price door the load cycle assembles, which sends
-// a fixture price per the unit its fixture names.
+// THE UNIT SET READ, added with the anchor's own unit (LD-3 part B)
+// and disclosed the same way: the write path takes the price_matrix
+// allocator's row lock first (without drawing, matrixSeqHoldSQL, the
+// order the convergence leg proves deadlock free), then checks the
+// unit under the products row's FOR NO KEY UPDATE (matrixUnitCheckSQL)
+// on the caller's transaction (row 786): a named unit must sit in
+// product_uoms, the product's own unit set, and lands as the
+// catalogue's own stored code, the caller's case normalised away; an
+// absent unit refuses a standing anchor whose unit is not the
+// product's own price unit, fail closed, so the desk batch and the
+// sync door can never silently misdenominate one; a product no row
+// carries refuses naming product_id. The lock conflicts with the unit
+// set door's FOR SHARE (LD-3 part A), so a price landing in a unit
+// and a set replacement dropping it serialise in either order and no
+// price ever stands outside the set (the window legs prove both
+// orders). Every refusal draws nothing. The sync door names no unit,
+// so its clients' payloads are unchanged; the checks exist for the
+// list price door the load cycle assembles, which sends a fixture
+// price per the unit its fixture names.
 package pricing
 
 import (
@@ -74,6 +84,51 @@ const priceSeqCTE = `WITH pseq AS (
 	RETURNING next_value
 ) `
 
+// matrixSeqHoldSQL takes the price_matrix allocator's row lock WITHOUT
+// drawing: the insert arm plants the row at zero the first real draw
+// consumes (0 plus one is one, the sequence starts where it always
+// did), the conflict arm re-locks the row the transaction already
+// holds and changes nothing, and both return the value as it stands.
+// Every list price write takes the allocator BEFORE any products row
+// (the lock order leg in the pool file proves it cannot deadlock), so
+// two writers applying lines in opposite product order serialise here
+// instead of each holding a products row while queueing on the other
+// side of the allocator.
+const matrixSeqHoldSQL = `INSERT INTO scope_sequences (scope, next_value) VALUES ($1, 0)
+	ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value
+	RETURNING next_value`
+
+// matrixProductLockSQL takes the products row's FOR NO KEY UPDATE,
+// the serialisation point with the unit set door's FOR SHARE (LD-3
+// part A): the door holds that share from before its removal check
+// reads the price rows until its unit drop commits, so a price
+// landing in a unit and a set replacement dropping it serialise in
+// either order and the final state never leaves a price in a unit
+// outside the set (the window legs prove both orders). FOR NO KEY
+// UPDATE rather than FOR UPDATE keeps referencing inserts (FOR KEY
+// SHARE) running.
+const matrixProductLockSQL = `SELECT 1 FROM products WHERE id = $1::uuid FOR NO KEY UPDATE`
+
+// matrixUnitCheckSQL is the unit check itself, its OWN statement AFTER
+// the product lock statement, and the split is the point: in READ
+// COMMITTED a statement blocked on a row lock resumes on the snapshot
+// it took at its start, so a set read inside the same statement as
+// the lock still sees the set as it stood before the wait, the door's
+// committed drop invisible; read after the lock is held, the fresh
+// statement snapshot sees every unit move the door committed while
+// the write waited. The set read returns the catalogue's own stored
+// code so the caller's case is normalised away, and the standing
+// anchor's unit rides beside it for the absent unit's mismatch
+// check: a write that names no unit onto an anchor standing in a
+// unit other than the product's own price unit refuses, fail closed,
+// never silently misdenominated.
+const matrixUnitCheckSQL = `SELECT u.uom_code::text,
+	       (a.product_id IS NOT NULL AND a.price_uom <> p.price_uom)
+	  FROM products p
+	  LEFT JOIN product_uoms u ON u.product_id = p.id AND u.uom_code = $2
+	  LEFT JOIN pricing_list_prices a ON a.product_id = p.id
+	 WHERE p.id = $1::uuid`
+
 // matrixExec is the executor the one list-price write path runs on:
 // the pool, a transaction, anything pgx-shaped that can Exec. The
 // caller named unit's set check reads beside the write, so the
@@ -89,8 +144,10 @@ type matrixExec interface {
 // idempotency key. BatchID nil and Effective nil mark a sync write;
 // Key empty marks the batch path. PriceUOM is the anchor's own unit
 // from the caller (LD-3 part B): empty keeps the shipped derivation
-// from products.price_uom, a named unit must sit in the product's own
-// unit set and denominates the cents the caller sent.
+// from products.price_uom and refuses a standing anchor outside it, a
+// named unit must sit in the product's own unit set and denominates
+// the cents the caller sent, landing as the catalogue's own stored
+// code.
 type matrixPriceWrite struct {
 	ProductID string
 	Cents     int64
@@ -107,6 +164,18 @@ type matrixPriceWrite struct {
 // value, and a caller answers errors.Is against it.
 var errPriceUOMNotInSet = errors.New("pricing: price_uom is not in the product's own unit set")
 
+// errAnchorUnitMismatch is the typed refusal for a write that names no
+// unit onto a standing anchor whose unit is not the product's own
+// price unit: the desk batch and the sync door would otherwise land a
+// figure denominated in the product's price unit on an anchor that
+// stands in another, confident and wrong by the units between. The
+// field is named, never the value.
+var errAnchorUnitMismatch = errors.New("pricing: price_uom of the standing anchor is not the product's own price unit, a write that names no unit refuses")
+
+// errProductMissing is the typed refusal for a product no row carries:
+// its own field is named, never the unit set's.
+var errProductMissing = errors.New("pricing: product_id does not name a known product")
+
 // applyMatrixPrice is THE list-price write path, the statement the
 // batch apply ran before the sync door existed, extracted so every
 // writer of pricing_list_prices runs one upsert with one
@@ -117,26 +186,58 @@ var errPriceUOMNotInSet = errors.New("pricing: price_uom is not in the product's
 // visible to a device's pull the moment it lands. The D30 key column
 // carries the latest live key applied (the drive-run design note).
 //
+// The order the path takes is allocator hold, products lock, unit
+// check, statement, trail: the allocator hold first (without drawing)
+// is what keeps two writers that apply lines in opposite product order
+// from deadlocking across the allocator with products rows held in
+// opposite order, and the products lock and its split out unit check
+// behind it are what serialise the write against the unit set door's
+// window (both proofs live in the test files, the convergence leg and
+// the window legs).
+//
 // The anchor's own unit (LD-3 part B) comes from the caller: a named
-// unit is checked against the product's own unit set FIRST (the read
-// rides the caller's transaction, row 786), refuses as
-// errPriceUOMNotInSet naming the field and never the value, and draws
-// nothing (no seq, no row, no trail) behind the refusal; it
-// denominates the cents the caller sent and lands on create and on
-// conflict, never half moved. An absent unit keeps the shipped
-// derivation from products.price_uom, so every existing caller and
-// the existing pricing operations keep their shapes and results.
+// unit is checked against the product's own unit set under the
+// products row lock (the read rides the caller's transaction, row
+// 786), refuses as errPriceUOMNotInSet naming the field and never the
+// value, and lands as the catalogue's own stored code, the caller's
+// case normalised away; it denominates the cents the caller sent and
+// lands on create and on conflict, never half moved. A write that
+// names no unit refuses with errAnchorUnitMismatch when a standing
+// anchor sits in a unit other than the product's own price unit (the
+// desk batch and the sync door would otherwise land a per price unit
+// figure on a per larger unit anchor), and otherwise keeps the
+// shipped derivation from products.price_uom, so every existing
+// caller and the existing pricing operations keep their shapes and
+// results. A product no row carries refuses as errProductMissing
+// naming product_id, named unit or not. Nothing is drawn behind any
+// refusal: no seq, no row, no trail.
 func applyMatrixPrice(ctx context.Context, q matrixExec, in matrixPriceWrite) error {
-	if in.PriceUOM != "" {
-		var inSet bool
-		if err := q.QueryRow(ctx,
-			`SELECT EXISTS (SELECT 1 FROM product_uoms WHERE product_id = $1::uuid AND uom_code = $2)`,
-			in.ProductID, in.PriceUOM).Scan(&inSet); err != nil {
-			return fmt.Errorf("pricing: matrix unit set read: %w", err)
+	var held int64
+	if err := q.QueryRow(ctx, matrixSeqHoldSQL, matrixSyncScope).Scan(&held); err != nil {
+		return fmt.Errorf("pricing: matrix seq lock: %w", err)
+	}
+	var locked int
+	if err := q.QueryRow(ctx, matrixProductLockSQL, in.ProductID).Scan(&locked); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("pricing: matrix write refused: %w", errProductMissing)
 		}
-		if !inSet {
+		return fmt.Errorf("pricing: matrix product lock: %w", err)
+	}
+	var setCode *string
+	var mismatched *bool
+	if err := q.QueryRow(ctx, matrixUnitCheckSQL, in.ProductID, in.PriceUOM).Scan(&setCode, &mismatched); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("pricing: matrix write refused: %w", errProductMissing)
+		}
+		return fmt.Errorf("pricing: matrix unit set read: %w", err)
+	}
+	if in.PriceUOM != "" {
+		if setCode == nil {
 			return fmt.Errorf("pricing: matrix write refused: %w", errPriceUOMNotInSet)
 		}
+		in.PriceUOM = *setCode
+	} else if mismatched != nil && *mismatched {
+		return fmt.Errorf("pricing: matrix write refused: %w", errAnchorUnitMismatch)
 	}
 	if _, err := q.Exec(ctx, priceSeqCTE+`
 		INSERT INTO pricing_list_prices (product_id, list_price_cents, price_uom, org_id, seq, idempotency_key)

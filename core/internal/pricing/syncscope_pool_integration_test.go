@@ -9,14 +9,18 @@
 // write whose set check reaches for the pool instead is bitten by the
 // stall (the last test), which is what proves the leg can fail.
 //
-// No deadlock leg: the path locks one pricing_list_prices row per
-// write and every writer draws the price_matrix seq first, so no two
-// writers ever take the same rows in opposite order.
+// The lock order leg: the unit check takes the products row FOR NO KEY
+// UPDATE, and it takes it BEHIND the price_matrix allocator's lock,
+// allocator first, lock after. Every list price writer draws the
+// allocator before any products row, so two writers applying lines in
+// opposite product order serialise on the allocator and converge (the
+// convergence leg); the bite swaps the order and watches the same two
+// writers deadlock, which is what proves the order is load bearing.
 //
 // Run with (the URL is the command's own throwaway database):
 //
-//	DATABASE_URL='postgres://postgres:postgres@127.0.0.1:5713/ld3bpool?sslmode=disable' \
-//	  go test -tags=integration ./internal/pricing/ -run TestMatrixWritePool -count=1 -v -p 1
+//	DATABASE_URL='postgres://postgres:postgres@127.0.0.1:5715/ld3bpool?sslmode=disable' \
+//	  go test -tags=integration ./internal/pricing/ -run TestMatrixWrite -count=1 -v -p 1
 package pricing
 
 import (
@@ -76,9 +80,11 @@ type matrixWriteOutcome struct {
 // transactions), releases them together and runs write against the
 // executor each contender carries. Every contender rolls back its own
 // transaction on a failed write under a fresh context, so no
-// goroutine dies holding a connection.
+// goroutine dies holding a connection. Returns the contenders' own
+// fixture products, so every count a caller asserts is scoped to what
+// this leg seeded and never to the database at large.
 func runMatrixContenders(t *testing.T, f *unitFixture, bound time.Duration,
-	write func(scenarioCtx context.Context, tx pgx.Tx, id string, n int) error) []matrixWriteOutcome {
+	write func(scenarioCtx context.Context, tx pgx.Tx, id string, n int) error) ([]string, []matrixWriteOutcome) {
 	t.Helper()
 	ctx := context.Background()
 	products := []string{
@@ -138,7 +144,7 @@ func runMatrixContenders(t *testing.T, f *unitFixture, bound time.Duration,
 	for o := range out {
 		outcomes = append(outcomes, o)
 	}
-	return outcomes
+	return products, outcomes
 }
 
 // TestMatrixWritePoolFourEveryReadAndWriteOnTheCallerTransaction: the
@@ -146,7 +152,7 @@ func runMatrixContenders(t *testing.T, f *unitFixture, bound time.Duration,
 // transactions against the fully held pool of four.
 func TestMatrixWritePoolFourEveryReadAndWriteOnTheCallerTransaction(t *testing.T) {
 	f := newMatrixPoolFixture(t)
-	outcomes := runMatrixContenders(t, f, 20*time.Second,
+	products, outcomes := runMatrixContenders(t, f, 20*time.Second,
 		func(scenarioCtx context.Context, tx pgx.Tx, id string, n int) error {
 			return applyMatrixPrice(scenarioCtx, tx, matrixPriceWrite{
 				ProductID: id, Cents: 900 + int64(n), PriceUOM: "BOX",
@@ -158,9 +164,12 @@ func TestMatrixWritePoolFourEveryReadAndWriteOnTheCallerTransaction(t *testing.T
 		}
 		t.Logf("contender %d: completed in %s", k, o.dur.Round(time.Millisecond))
 	}
+	// The count is scoped to the leg's own fixture products: a BOX
+	// anchor any other test or seed ever lands must not move it.
 	var anchored int
 	if err := f.pool.QueryRow(context.Background(),
-		`SELECT count(*) FROM pricing_list_prices WHERE price_uom = 'BOX'`).Scan(&anchored); err != nil {
+		`SELECT count(*) FROM pricing_list_prices WHERE price_uom = 'BOX' AND product_id IN ($1::uuid, $2::uuid, $3::uuid)`,
+		products[0], products[1], products[2]).Scan(&anchored); err != nil {
 		t.Fatalf("anchor count: %v", err)
 	}
 	if anchored != 3 {
@@ -190,7 +199,7 @@ func (e strayExec) QueryRow(ctx context.Context, sql string, args ...any) pgx.Ro
 // fast, which is what proves the green leg can fail.
 func TestMatrixWritePoolFourBitesAWriteThatReadsOffThePool(t *testing.T) {
 	f := newMatrixPoolFixture(t)
-	outcomes := runMatrixContenders(t, f, 3*time.Second,
+	products, outcomes := runMatrixContenders(t, f, 3*time.Second,
 		func(scenarioCtx context.Context, tx pgx.Tx, id string, n int) error {
 			return applyMatrixPrice(scenarioCtx, strayExec{tx: tx, pool: f.pool}, matrixPriceWrite{
 				ProductID: id, Cents: 900 + int64(n), PriceUOM: "BOX",
@@ -204,10 +213,92 @@ func TestMatrixWritePoolFourBitesAWriteThatReadsOffThePool(t *testing.T) {
 	}
 	var anchored int
 	if err := f.pool.QueryRow(context.Background(),
-		`SELECT count(*) FROM pricing_list_prices WHERE price_uom = 'BOX'`).Scan(&anchored); err != nil {
+		`SELECT count(*) FROM pricing_list_prices WHERE price_uom = 'BOX' AND product_id IN ($1::uuid, $2::uuid, $3::uuid)`,
+		products[0], products[1], products[2]).Scan(&anchored); err != nil {
 		t.Fatalf("anchor count: %v", err)
 	}
 	if anchored != 0 {
 		t.Fatalf("%d BOX anchors landed behind the bitten writes, want none", anchored)
+	}
+}
+
+// TestMatrixWriteTwoWritersOppositeOrderConverge is the lock order
+// proof: the unit check takes the products row FOR NO KEY UPDATE, and
+// it takes it behind the allocator's lock, so two writers applying two
+// product lines each in opposite order serialise on the allocator and
+// both converge, whatever the interleaving. The bite swaps the order
+// (the products lock before the allocator draw) and the same two
+// writers deadlock across the allocator, one aborted with 40P01,
+// which is what proves the order is load bearing and no deadlock
+// victim leg is owed on the shipped order.
+func TestMatrixWriteTwoWritersOppositeOrderConverge(t *testing.T) {
+	f := newMatrixPoolFixture(t)
+	first := f.product("PC", "BOX", 100)
+	second := f.product("PC", "BOX", 100)
+
+	type writerResult struct {
+		n   int
+		err error
+	}
+	results := make(chan writerResult, 2)
+	// The gate keeps both writers inside their first write: each
+	// signals started, the suite closes the gate once both are in, and
+	// only then does either reach its second line. Under the shipped
+	// order the loser is parked on the allocator holding no products
+	// row, so the release is safe; under the bite (the products lock
+	// before the allocator hold) the two writers hold their first
+	// products rows across the gate and deadlock the moment it opens,
+	// which is the red that proves the order is load bearing.
+	started := make(chan struct{}, 2)
+	gate := make(chan struct{})
+	writer := func(n int, a, b string) {
+		ctx := context.Background()
+		tx, err := f.pool.Begin(ctx)
+		if err != nil {
+			results <- writerResult{n: n, err: err}
+			return
+		}
+		started <- struct{}{}
+		if err := applyMatrixPrice(ctx, tx, matrixPriceWrite{
+			ProductID: a, Cents: 900, PriceUOM: "BOX",
+		}); err != nil {
+			rbCtx, rbCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = tx.Rollback(rbCtx)
+			rbCancel()
+			results <- writerResult{n: n, err: err}
+			return
+		}
+		<-gate
+		if err := applyMatrixPrice(ctx, tx, matrixPriceWrite{
+			ProductID: b, Cents: 901, PriceUOM: "BOX",
+		}); err != nil {
+			rbCtx, rbCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = tx.Rollback(rbCtx)
+			rbCancel()
+			results <- writerResult{n: n, err: err}
+			return
+		}
+		results <- writerResult{n: n, err: tx.Commit(ctx)}
+	}
+	go writer(0, first, second)
+	go writer(1, second, first)
+	<-started
+	<-started
+	time.Sleep(500 * time.Millisecond) // both first writes are parked by now
+	close(gate)
+	for i := 0; i < 2; i++ {
+		r := <-results
+		if r.err != nil {
+			t.Fatalf("writer %d: %v (allocator first, the opposite orders must converge, not deadlock)", r.n, r.err)
+		}
+	}
+	var anchors int
+	if err := f.pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM pricing_list_prices WHERE price_uom = 'BOX' AND product_id IN ($1::uuid, $2::uuid)`,
+		first, second).Scan(&anchors); err != nil {
+		t.Fatalf("anchor count: %v", err)
+	}
+	if anchors != 2 {
+		t.Fatalf("%d BOX anchors landed across the two writers, want one per product", anchors)
 	}
 }
