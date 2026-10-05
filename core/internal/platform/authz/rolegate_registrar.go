@@ -11,9 +11,27 @@
 // same kind of defect and panics too: it would serve ungated otherwise,
 // and the tests that own that direction (parity, the completeness walk)
 // are database gated, while this refusal costs one lookup at boot.
-// Non-staff registrations the census knows, and patterns outside /api/v1/
-// (the healthz leg registers outside registerRoutes), pass through
-// unchanged.
+//
+// The census word set is closed and the registrar fails closed on it.
+// The words, and which middleware gates each family: requireStaff,
+// requireManager and requireAdmin are wrapped in the role gate here;
+// machine (ADR-0024) is wrapped in the machine gate here, and a machine
+// worded route arriving where the wiring carried no machine gate panics
+// the same way; public passes open by design (sign-in, public quote
+// views, the product list, will-call); tenant is gated downstream by
+// Guards.RequireTenant, applied by the module wiring that registers the
+// tenant routes; scope-member is gated by Guards.RequireSync, applied
+// where the sync routes register (the identity shims); a word carrying
+// the capability: prefix is gated by Guards.RequireCapability, applied
+// by the module that registers the route. Those pass through and
+// nothing else does: a census row carrying any other word panics at
+// registration, because handed through it would serve ungated. The word
+// that matters today is operator (three routes declared for the
+// platform launcher's own binary, never this core's to register) and the
+// rule holds for every word a future contract invents: an unknown word
+// is a boot refusal, an ungated door is what it replaces. Patterns
+// outside /api/v1/ (the healthz leg registers outside registerRoutes)
+// and non-API registrations pass through unchanged.
 package authz
 
 import (
@@ -32,9 +50,11 @@ type RouteRegistrar interface {
 }
 
 // staffXRole reports whether a census x-role spelling names a tier gate
-// the role gate rides behind. It is one half of the registrar's wrapped
-// word set; machineXRole is the other half, and a machine worded
-// registration carries no x-access at all.
+// the role gate rides behind. It is one arm of the registrar's closed
+// word set; machineXRole and passThroughXRole carry the others. A word in
+// no arm is a word the registrar does not know, and Handle refuses the
+// registration for it: the wrapper fails closed on any census word
+// outside the set, so an invented word can never serve ungated.
 func staffXRole(xrole string) bool {
 	switch xrole {
 	case "requireStaff", "requireManager", "requireAdmin":
@@ -52,6 +72,21 @@ func staffXRole(xrole string) bool {
 // wall), so the census fields the role gate reads stay empty for them.
 func machineXRole(xrole string) bool {
 	return xrole == "machine"
+}
+
+// passThroughXRole reports whether a census x-role word is one the
+// registrar hands to the mux unwrapped: the word families whose gates
+// are the identity guards applied where the routes register. public is
+// open by design; tenant rides Guards.RequireTenant; scope-member rides
+// Guards.RequireSync; a word with the capability: prefix rides
+// Guards.RequireCapability. Anything else is unknown here and fails
+// closed in Handle.
+func passThroughXRole(xrole string) bool {
+	switch xrole {
+	case "public", "tenant", "scope-member":
+		return true
+	}
+	return strings.HasPrefix(xrole, "capability:")
 }
 
 // censusIndex indexes the census by method-prefixed pattern, the same
@@ -134,17 +169,21 @@ func apiV1Path(pattern string) (string, bool) {
 }
 
 // Handle attaches the role gate to a staff registration, the machine
-// gate to a machine worded registration, and passes everything else
-// through. The census facts are read at attach time, so an unannotated
-// staff route cannot reach the mux: the completeness test walks the same
+// gate to a machine worded registration, hands the known pass-through
+// families (public, tenant, scope-member, capability:) to the mux
+// unwrapped, and refuses any other census word outright: a word the
+// registrar does not know has no gate anywhere in this wiring, so the
+// fail-closed answer is the boot refusal, the file's own panic idiom.
+// The census facts are read at attach time, so an unannotated staff
+// route cannot reach the mux: the completeness test walks the same
 // census the wrapper reads, and the mutation that removes an annotation
 // fails both. A machine worded registration whose wiring carries no
 // machine gate stops the boot the same way: the doors ship switched off,
 // and a route arriving for them without the gate is a registration
 // defect, never a door that serves ungated. A registration under
-// /api/v1/ matching no census row is refused here outright: parity owns
-// the same direction at test time, and this owns it at boot time, where
-// the route would otherwise serve ungated.
+// /api/v1/ matching no census row is refused here too: parity owns the
+// same direction at test time, and this owns it at boot time, where the
+// route would otherwise serve ungated.
 func (r *RoleGateRegistrar) Handle(pattern string, h http.Handler) {
 	route, ok := r.census[pattern]
 	if !ok {
@@ -177,6 +216,8 @@ func (r *RoleGateRegistrar) Handle(pattern string, h http.Handler) {
 			panic(fmt.Sprintf("authz: registered machine route %s refused its machine gate: %v", pattern, err))
 		}
 		h = mw(h)
+	} else if !passThroughXRole(route.XRole) {
+		panic(fmt.Sprintf("authz: registered route %s carries census x-role %q, which this registrar does not know; it would serve with no gate", pattern, route.XRole))
 	}
 	r.inner.Handle(pattern, h)
 }
