@@ -296,6 +296,7 @@ var migrationTopics = map[string]string{
 	"0213_org_tenant_seq_deleted_idem":     "identity",
 	"0214_new_entities_and_pricing":        "MULTI",
 	"0215_identity_audit":                  "MULTI",
+	"0321_fb_moves_machine_principal":      "identity",
 }
 
 // multiTopicSplits states the per-object attribution inside the five
@@ -436,6 +437,7 @@ var ownedObjects = map[string]string{
 	"lien_participants":               "lien",              // 0038_lien_holdback_compliance
 	"load_scan_checkpoints":           "dispatch",          // 0108_scan_trail_weight_advance
 	"locations":                       "branches",          // 0003_locations_and_branches
+	"machine_principal":               "identity",          // 0321_fb_moves_machine_principal
 	"manifest_lines":                  "dispatch",          // 0012_manifests
 	"manifest_versions":               "dispatch",          // 0012_manifests
 	"manifests":                       "dispatch",          // 0012_manifests
