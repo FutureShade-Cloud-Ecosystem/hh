@@ -34,9 +34,10 @@ import (
 // stock at the branch so a hold can be raised on it.
 func qd5SetupSized(t *testing.T, maxConns int32) *qd5Env { return qd5SetupWith(t, maxConns, true) }
 
-// qd5SetupWith is qd5SetupSized with the stock reserver optional: inventory's reserve reads its
-// allocation policy through the pool while the conversion holds the action's connection, a nested read
-// no pool of one can serve, so the one connection probe runs without holds.
+// qd5SetupWith is qd5SetupSized with the stock reserver optional: with it a conversion raises the
+// order's hard holds through inventory's ReserveTx, which reads its allocation policy on the
+// caller's transaction, so the action asks the pool for no second connection and even a pool of one
+// serves it with holds.
 func qd5SetupWith(t *testing.T, maxConns int32, withStock bool) *qd5Env {
 	t.Helper()
 	return qd5SetupGated(t, maxConns, withStock, nil)
@@ -487,7 +488,7 @@ func TestQD5OneTx_EightParallelCallsOnAPoolOfFourOrOneComplete(t *testing.T) {
 		t.Run(fmt.Sprintf("pool %d, one key on one quote", size), func(t *testing.T) {
 			e, setup := qd5SetupSized(t, size), qd5SetupSized(t, 0)
 			q := setup.seedQuote(1_000_000, 0, qd5Trenton)
-			setup.convert(q) // the plain conversion door needs a second connection for its hold lookup: not the action under test
+			setup.convert(q) // the conversion happens on the setup pool, so the sized pool serves the action under test alone
 			errs := parallel(t, 8, 40*time.Second, func(int) error {
 				_, err := e.svc.TakeOrderPayment(e.counter(), q.QuoteID, pay("CASH", 1000, "k-one"))
 				return err
@@ -502,7 +503,7 @@ func TestQD5OneTx_EightParallelCallsOnAPoolOfFourOrOneComplete(t *testing.T) {
 			}
 		})
 		t.Run(fmt.Sprintf("pool %d, eight different quotes", size), func(t *testing.T) {
-			e, setup := qd5SetupWith(t, size, size > 1), qd5SetupSized(t, 0)
+			e, setup := qd5SetupWith(t, size, true), qd5SetupSized(t, 0)
 			quotes := make([]qd5Quote, 8)
 			for i := range quotes {
 				quotes[i] = setup.seedQuote(0, 0, qd5Trenton)
@@ -518,14 +519,14 @@ func TestQD5OneTx_EightParallelCallsOnAPoolOfFourOrOneComplete(t *testing.T) {
 			}
 			for i, q := range quotes {
 				if c := e.counts(q); c != (qd5Counts{Orders: 1, Invoices: 1, Payments: 1}) {
-					t.Fatalf("quote %d left %+v", i, c)
+					t.Fatalf("quote %d left %+v, want one order, one invoice, one payment", i, c)
 				}
 			}
 		})
 		t.Run(fmt.Sprintf("pool %d, eight keys on one quote", size), func(t *testing.T) {
 			e, setup := qd5SetupSized(t, size), qd5SetupSized(t, 0)
 			q := setup.seedQuote(1_000_000, 0, qd5Trenton)
-			setup.convert(q) // the plain conversion door needs a second connection for its hold lookup: not the action under test
+			setup.convert(q) // the conversion happens on the setup pool, so the sized pool serves the action under test alone
 			errs := parallel(t, 8, 40*time.Second, func(i int) error {
 				_, err := e.svc.TakeOrderPayment(e.counter(), q.QuoteID, pay("CASH", 100, fmt.Sprintf("k-key-%d", i)))
 				return err
@@ -541,5 +542,53 @@ func TestQD5OneTx_EightParallelCallsOnAPoolOfFourOrOneComplete(t *testing.T) {
 				t.Fatalf("eight keys left %+v balance %d, want 8 payments, one invoice, balance %d", c, bal, q.Total-800)
 			}
 		})
+	}
+}
+
+// TestQD5OneTx_BothPathsOnAPoolOfOneCompleteWithTheirStockHolds (review round 4): the cash
+// customer's one action (the conversion inside it raising the order's hard holds through inventory's
+// ReserveTx, which reads its allocation policy on the caller's transaction) and the credit
+// customer's payment on an order already holding stock, side by side on a pool of exactly ONE
+// connection. Both complete, and the two orders hold exactly the four hard holds their four lines
+// raise: a nested pool read anywhere in either path (the shape the reserve's policy read had before
+// it moved onto the caller's transaction) would wait for a second connection the pool cannot give
+// and stall the leg to its bound.
+func TestQD5OneTx_BothPathsOnAPoolOfOneCompleteWithTheirStockHolds(t *testing.T) {
+	e := qd5SetupSized(t, 1)
+	e.stockFor(qd5Trenton)
+	setup := qd5SetupSized(t, 0)
+	cash := setup.seedQuote(0, 0, qd5Trenton)
+	credit := setup.seedQuote(1_000_000, 0, qd5Trenton)
+	setup.convert(credit) // the credit customer's order exists and holds its stock before its payment
+
+	errs := parallel(t, 2, 40*time.Second, func(i int) error {
+		if i == 0 {
+			_, err := e.svc.TakeOrderPayment(e.counter(), cash.QuoteID, pay("CASH", cash.Total, "k-one-cash"))
+			return err
+		}
+		_, err := e.svc.TakeOrderPayment(e.counter(), credit.QuoteID, pay("CASH", 1000, "k-one-credit"))
+		return err
+	})
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("path %d: %v", i, err)
+		}
+	}
+	var holds int
+	if err := e.pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM stock_reservations
+		 WHERE res_type = 'ORDER' AND status = 'ACTIVE'
+		   AND source_ref_id IN (SELECT id FROM orders WHERE quote_id = ANY($1::uuid[]))`,
+		[]string{cash.QuoteID, credit.QuoteID}).Scan(&holds); err != nil {
+		t.Fatal(err)
+	}
+	if holds != 4 {
+		t.Fatalf("the two converted orders hold %d hard holds, want the four their lines raise", holds)
+	}
+	if c := e.counts(cash); c != (qd5Counts{Orders: 1, Invoices: 1, Payments: 1}) {
+		t.Fatalf("the cash path left %+v", c)
+	}
+	if c := e.counts(credit); c.Invoices != 1 || c.Payments != 1 {
+		t.Fatalf("the credit path left %+v", c)
 	}
 }
