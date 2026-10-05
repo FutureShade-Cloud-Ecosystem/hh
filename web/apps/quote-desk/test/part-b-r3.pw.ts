@@ -303,6 +303,7 @@ test("P3 availability: an older read of the quote answered late does not undo a 
   await reloadOf(page, "qd-quote-availability");
   await expect.poll(() => chip.innerText()).not.toBe(before);
   const after = await chip.innerText();
+  await quiet(page);
   await older.release();
   await settle(page);
   await expect(chip).toHaveText(after);
@@ -324,6 +325,7 @@ test("P3 availability: a peek answered after a newer read of the quote is droppe
   await request.put("/_stub/stock", { data: { product_id: "p-clear-stone", belleville: 7 } });
   await reloadOf(page, "qd-quote-availability");
   await expect(panel.getByTestId("av-branch").filter({ hasText: "BEL: 7 available" })).toBeVisible();
+  await quiet(page);
   await older.release();
   await settle(page);
   await expect(panel.getByTestId("av-branch").filter({ hasText: "BEL: 7 available" })).toBeVisible();
@@ -345,6 +347,7 @@ test("P3 follow-ups: an older read of the quote answered late does not undo a ne
   await request.post("/_stub/followup-event", { data: { quote_id: "q-1002", step_day: 3, channel: "EMAIL", status: "SENT" } });
   await reloadOf(page, "qd-quote-followups");
   await expect(panel.getByTestId("fu-contact")).toContainText("Heard from us");
+  await quiet(page);
   await older.release();
   await settle(page);
   await expect(panel.getByTestId("fu-contact")).toContainText("Heard from us");
@@ -365,6 +368,7 @@ test("P3 hold expiry: an older read of the quote answered late does not undo a n
   await request.post("/_stub/hold-lapse", { data: { quote_id: "q-1001", line_no: 2 } });
   await reloadOf(page, "qd-quote-hold-expiry");
   await expect(panel.getByTestId("he-headline")).toBeVisible();
+  await quiet(page);
   await older.release();
   await settle(page);
   await expect(panel.getByTestId("he-headline")).toBeVisible();

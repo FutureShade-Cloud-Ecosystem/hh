@@ -60,6 +60,7 @@ test("guard edit read order: an older read of the quote answered late does not u
   await scan.fill("PSN-100");
   await scan.press("Enter");
   await expect(edit(page).getByTestId("qe-line")).toHaveCount(3);
+  await quiet(page);
   await gated.held.release();
   await settle(page);
   await expect(edit(page).getByTestId("qe-line")).toHaveCount(3);
@@ -76,14 +77,13 @@ test("guard edit discounts read: the discounts of the quote left never show on t
   await expect(page.getByTestId("qb-totals")).toContainText("Discount");
   await openQuote(page, "Q-1004");
   await quiet(page);
-  const gated = await armedHold(page, /\/api\/v1\/quotes\/q-1001\/terms$/, "GET");
-  gated.arm();
+  // Both the work area's and the edit panel's terms reads of Q-1001 are held; the person leaves once both are out.
+  const held = await hold(page, /\/api\/v1\/quotes\/q-1001\/terms$/, { method: "GET" });
   await row(page, "Q-1001").click();
-  await gated.held.asked;
-  gated.disarm();
+  await expect.poll(() => held.seen.length).toBeGreaterThanOrEqual(2);
   await openQuote(page, "Q-1004");
   await expect(edit(page).getByTestId("qe-line")).toHaveCount(2);
-  await gated.held.release();
+  await held.release();
   await settle(page);
   await expect(edit(page).getByTestId("qe-line").nth(1).locator('[data-field="disc"]')).toHaveValue("");
 });
@@ -104,6 +104,7 @@ test("guard edit discounts order: an older terms read answered late does not und
   await disc.fill("7");
   await disc.blur();
   await expect(edit(page).getByTestId("qe-line").nth(1).locator('[data-field="disc"]')).toHaveValue("7");
+  await quiet(page);
   await gated.held.release();
   await settle(page);
   await expect(edit(page).getByTestId("qe-line").nth(1).locator('[data-field="disc"]')).toHaveValue("7");
@@ -140,6 +141,7 @@ test("guard edit links order: an older links read answered late does not undo a 
   gated.disarm();
   await edit(page).getByRole("button", { name: "Create link to copy" }).click();
   await expect(edit(page).getByTestId("qe-link")).toHaveCount(1);
+  await quiet(page);
   await gated.held.release();
   await settle(page);
   await expect(edit(page).getByTestId("qe-link")).toHaveCount(1);
@@ -191,6 +193,7 @@ test("guard edit search: a search answered for an older query never replaces the
   await older.asked;
   await box.fill("edge");
   await expect(edit(page).getByRole("option").first()).toContainText("Edge Restraint");
+  await quiet(page);
   await older.release();
   await settle(page);
   await expect(edit(page).getByRole("option").first()).toContainText("Edge Restraint");
@@ -333,6 +336,7 @@ test("guard history order: an older read answered late does not undo a newer one
   await sand.locator('[data-field="qty"]').fill("6");
   await sand.getByRole("button", { name: "Save" }).click();
   await expect(page.locator("qd-quote-history").getByTestId("qh-group")).toHaveCount(1);
+  await quiet(page);
   await gated.held.release();
   await settle(page);
   await expect(page.locator("qd-quote-history").getByTestId("qh-group")).toHaveCount(1);
@@ -432,6 +436,7 @@ test("guard assist gaps order: an older suggestions read answered late does not 
   await scan.fill("GRA-CL");
   await scan.press("Enter");
   await expect(assist(page).getByTestId("qa-gaps")).not.toContainText("Granular base for the paved area");
+  await quiet(page);
   await gated.held.release();
   await settle(page);
   await expect(assist(page).getByTestId("qa-gaps")).not.toContainText("Granular base for the paved area");
@@ -546,6 +551,7 @@ test("guard list order: an older read of the list answered late does not undo a 
   await seed(page, { customer_id: "c-fenwick" });
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(row(page, "Q-1004")).toBeVisible();
+  await quiet(page);
   await gated.held.release();
   await settle(page);
   await expect(row(page, "Q-1004")).toBeVisible();
@@ -565,6 +571,7 @@ test("guard list paging: a page asked for before the list was read again is not 
   // An edit elsewhere on the page reads the list again while the page is out (the Refresh button is held while it loads).
   await page.getByTestId("qb-list").evaluate((el) => el.dispatchEvent(new CustomEvent("quote-changed", { detail: { quoteId: "q-1001" }, bubbles: true, composed: true })));
   await expect(page.getByTestId("qb-list-row")).toHaveCount(1);
+  await quiet(page);
   await gated.held.release();
   await settle(page);
   await expect(page.getByTestId("qb-list-row")).toHaveCount(1);
@@ -595,6 +602,7 @@ test("guard picker search: a customer search answered for an older word never re
   await older.asked;
   await picker.getByPlaceholder("Search name or account #…").fill("Fenwick");
   await expect(picker.getByRole("option", { name: /Fenwick Builders/ })).toBeVisible();
+  await quiet(page);
   await older.release();
   await settle(page);
   await expect(picker.getByRole("option", { name: /Fenwick Builders/ })).toBeVisible();
@@ -634,6 +642,7 @@ test("guard policy order: a policy read for the scope before, answered late, doe
   gated.disarm();
   await page.getByTestId("qs-scope").selectOption("branch");
   await expect(page.getByTestId("qs-validity-days")).toHaveValue("55");
+  await quiet(page);
   await gated.held.release();
   await settle(page);
   await expect(page.getByTestId("qs-validity-days")).toHaveValue("55");
@@ -699,11 +708,19 @@ test("guard policy lock: a refusal locks the row it was for and no other", async
       (el as unknown as { branchId: string }).branchId = value;
     }, id);
   await setBranch("another-branch");
+  await expect(page.getByTestId("qs-policy-save")).toBeEnabled();
+  const put = await hold(page, /\/api\/v1\/quotes\/policy/, { method: "PUT", refuse: { status: 403, error: "quote: that branch is not one your role reaches" } });
   await page.getByTestId("qs-policy-save").click();
-  await expect(page.getByTestId("qs-policy-lock")).toContainText("not one your role reaches");
+  await put.asked;
   await setBranch(own);
+  await expect(page.getByTestId("qs-policy-save")).toBeEnabled();
+  await put.release();
+  await settle(page);
+  // The refusal was for the other branch: this one is not locked.
   await expect(page.getByTestId("qs-policy-lock")).toHaveCount(0);
   await expect(page.getByTestId("qs-policy-save")).toBeEnabled();
+  await setBranch("another-branch");
+  await expect(page.getByTestId("qs-policy-lock")).toContainText("not one your role reaches");
 });
 
 test("guard items order: a layout read for the profile before, answered late, does not undo the newer one", async ({ page }) => {
@@ -723,6 +740,7 @@ test("guard items order: a layout read for the profile before, answered late, do
   gated.disarm();
   await page.getByTestId("qs-profile").selectOption("yard");
   await expect(items.getByLabel("Show Photo")).toBeChecked();
+  await quiet(page);
   await gated.held.release();
   await settle(page);
   await expect(items.getByLabel("Show Photo")).toBeChecked();
