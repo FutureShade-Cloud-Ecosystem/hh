@@ -90,10 +90,12 @@ func buildPkgIndex(t *testing.T, dir string) (*pkgIndex, []*ast.File) {
 	}
 	idx := newPkgIndex(map[string][]string{}, map[string][]string{})
 	building := map[string]bool{}
-	// sinks resolve to a fixpoint: each round admits wrappers whose string
-	// parameter flows into an already known sink, so a wrapper over a
-	// wrapper resolves a level at a time, bounded by the round cap.
-	for round := 0; round < 4; round++ {
+	// sinks resolve to a REAL fixpoint: each round admits wrappers whose
+	// string parameter flows into an already known sink. The set only
+	// grows over a finite set of names, so the loop terminates without a
+	// cap, and no depth of wrapping escapes (a cap would fail open at its
+	// bound, silently).
+	for {
 		changed := false
 		for _, f := range files {
 			for _, name := range packageSinks(f, idx.sinks) {
@@ -133,6 +135,18 @@ func buildPkgIndex(t *testing.T, dir string) (*pkgIndex, []*ast.File) {
 // not carry, and any cross-module access the allowlist does not name.
 func TestCensusZeroCrossModuleTableAccess(t *testing.T) {
 	root := repoRoot(t)
+
+	// one entry per (module, file): a duplicate inflates the entry count
+	// every coverage claim rests on, so the census enforces the one to one
+	// itself (round 3's finding, closed structurally).
+	seenPair := map[[2]string]bool{}
+	for _, e := range allowlist {
+		key := [2]string{e.module, e.file}
+		if seenPair[key] {
+			t.Fatalf("duplicate allowlist entry for %s / %s: merge the tables and writes into the one entry", e.module, e.file)
+		}
+		seenPair[key] = true
+	}
 
 	// fail closed on unknown directories under core/internal
 	entries, err := os.ReadDir(filepath.Join(root, "core", "internal"))

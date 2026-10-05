@@ -157,6 +157,30 @@ func TestCompositeConstFieldSQLIsSeen(t *testing.T) {
 	}
 }
 
+// TestSinkStatementSplitAcrossPiecesKeepsItsTables plants the account_lookup
+// tail shape the round 3 review caught the per-piece verb test dropping: the
+// statement arrives at the sink as `SELECT ` + a column const + ` FROM t ...`,
+// so no single piece carries a leading verb on its own. The assembled text is
+// the statement, and its cross-module FROM must surface.
+func TestSinkStatementSplitAcrossPiecesKeepsItsTables(t *testing.T) {
+	src := "package p\n\n" +
+		"const cols = \"t.balance_after, t.created_at\"\n\n" +
+		"func (r *repo) exec(ctx context.Context, sql string, args ...any) error {\n" +
+		"\t_, err := r.pool.Exec(ctx, sql, args...)\n" +
+		"\treturn err\n" +
+		"}\n\n" +
+		"func (r *repo) latest(ctx context.Context, id string) error {\n" +
+		"\treturn r.exec(ctx, \"SELECT \"+cols+\" FROM customer_transactions t WHERE t.customer_id = $1\", id)\n" +
+		"}\n"
+	v := sinkViolations("customer", "core/internal/customer/fixture_lookup.go", src)
+	if len(v) == 0 {
+		t.Fatal("the split-piece statement's FROM customer_transactions was NOT seen: the verb test is still per piece")
+	}
+	if !strings.Contains(strings.Join(v, "\n"), `"customer_transactions"`) {
+		t.Fatalf("the split-piece shape surfaced something else: %v", v)
+	}
+}
+
 // TestProseAtSinkCallSiteStaysIgnored pins the round 3 sink argument rule:
 // at a same-named sink call site a raw argument contributes only when it
 // tokenizes as a statement. The plain English phrase that failed the round

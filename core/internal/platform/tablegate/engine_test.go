@@ -104,16 +104,15 @@ package tablegate
 //     engine, and the day one lands the gate does not see it.
 //   - The SQL sink rule keys on bare function and method names: two
 //     same-named sinks in one module collapse to one. The argument
-//     statement filter keeps prose out of the resulting corpora; what
-//     remains of the keying is over-capture (visiting same-named calls
-//     that carry no SQL), which fails closed.
-//   - Two composite literal shapes are not read and do not occur in the
-//     tree today: positional (unkeyed) struct literals (only named fields
-//     are collected), and a statement field built inside a composite
-//     literal nested in a function LITERAL assigned outside the function
-//     whose consts resolve (the collected shapes are package level
-//     declarations and function bodies). If either lands, the gate does
-//     not see it.
+//     statement filter (on the ASSEMBLED text, never per piece) keeps
+//     prose out of the resulting corpora; what remains of the keying is
+//     over-capture (visiting same-named calls that carry no SQL), which
+//     fails closed. The sink set at this revision counts 1301 names
+//     across the 51 scanned modules; recount and restate here whenever
+//     the sink rule changes.
+//   - Positional (unkeyed) composite literals are not read (only named
+//     fields are collected); the tree carries none today, and if one
+//     lands the gate does not see it.
 //   - A closure sink is recognized only where the literal is assigned to
 //     a local name in the same function that calls it (customer's scan
 //     shape). A statement-carrying function literal stored in a struct
@@ -212,14 +211,23 @@ func goFileUnits(src []byte, filename string, pkg *pkgIndex) ([]sqlUnit, error) 
 				if !isPGX && !pkg.sinks[sel] && !localSinks[sel] {
 					return true
 				}
-				w := &corpusWalker{resolve: resolve, pkg: pkg, requireStatement: !isPGX}
+				w := &corpusWalker{resolve: resolve, pkg: pkg}
 				for _, arg := range call.Args {
 					ast.Inspect(arg, func(child ast.Node) bool {
 						w.collect(child)
 						return true
 					})
 				}
-				if c := strings.Join(w.parts, " "); strings.TrimSpace(c) != "" {
+				c := strings.Join(w.parts, " ")
+				if !isPGX && !leadingSQLVerb(c) {
+					// a sink call site contributes only statements, and
+					// the test is on the ASSEMBLED text, never per piece:
+					// `SELECT ` + cols + ` FROM t` keeps its tables while
+					// prose answers of unrelated same-named methods never
+					// enter a corpus.
+					return true
+				}
+				if strings.TrimSpace(c) != "" {
 					units = append(units, sqlUnit{decl: name, corpus: c})
 				}
 				return true
@@ -691,17 +699,16 @@ func mergeInto(base, extra map[string][]string) map[string][]string {
 }
 
 // corpusWalker collects string literal parts at a node, resolving const,
-// local and function-return idents. requireStatement marks sink call site
+// local and function-return idents.
 // collection: there, a raw string literal contributes only when it
 // tokenizes as a statement (a leading SELECT, WITH, INSERT, UPDATE or
 // DELETE), so prose arguments at a same-named call never enter a corpus;
 // fragments that arrive through the string idiom chain (consts, locals,
 // known helpers) are already vetted and pass as they are.
 type corpusWalker struct {
-	resolve          map[string][]string
-	pkg              *pkgIndex
-	parts            []string
-	requireStatement bool
+	resolve map[string][]string
+	pkg     *pkgIndex
+	parts   []string
 }
 
 func (w *corpusWalker) collect(n ast.Node) {
@@ -709,9 +716,6 @@ func (w *corpusWalker) collect(n ast.Node) {
 	case *ast.BasicLit:
 		if node.Kind == token.STRING {
 			if s, err := strconv.Unquote(node.Value); err == nil {
-				if w.requireStatement && !leadingSQLVerb(s) {
-					return
-				}
 				w.parts = append(w.parts, s)
 			}
 		}

@@ -425,38 +425,10 @@ var allowlist = []allowlistEntry{
 		reason: "the cross-branch visibility read names the branches it answers for, read only",
 	},
 	{
-		module: "messagingprovider",
-		file:   "core/internal/messagingprovider/collections.go",
-		tables: []string{"ar_notice_log"},
-		writes: []string{"ar_notice_log"},
-		// the file calls ar_notice_log the collections ledger: claimBucket
-		// INSERTs the (invoice, bucket) row that makes the claim atomic,
-		// the sweep links the queued notice to it and backfills the buckets
-		// an invoice sailed past unnotified, and the cooldown read excludes
-		// the just-claimed row so the claim itself never suppresses the
-		// job's own notice. The 0110 topic owns the table (billing); the
-		// sweep's touches are the fence crossing this entry states.
-		reason: "the collections sweep keeps its notice ledger (claim, link, backfill, cooldown) in ar_notice_log, read and written",
-	},
-	{
 		module: "messaging",
 		file:   "core/internal/messaging/payment_rules_repo.go",
 		tables: []string{"customers", "invoices", "locations", "orders", "payment_allocations", "payments", "users"},
 		reason: "payment notification rules evaluate the AR facts (invoice, payment, allocation) they notify about and join the customer, branch and staff names the message names, read only",
-	},
-	{
-		module: "messagingprovider",
-		file:   "core/internal/messagingprovider/collections.go",
-		tables: []string{"ar_notice_log"},
-		writes: []string{"ar_notice_log"},
-		// the file calls ar_notice_log the collections ledger: claimBucket
-		// INSERTs the (invoice, bucket) row that makes the claim atomic,
-		// the sweep links the queued notice to it and backfills the buckets
-		// an invoice sailed past unnotified, and the cooldown read excludes
-		// the just-claimed row so the claim itself never suppresses the
-		// job's own notice. The 0110 topic owns the table (billing); the
-		// sweep's touches are the fence crossing this entry states.
-		reason: "the collections sweep keeps its notice ledger (claim, link, backfill, cooldown) in ar_notice_log, read and written",
 	},
 	{
 		module: "messaging",
