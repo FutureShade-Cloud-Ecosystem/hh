@@ -14,6 +14,7 @@ package payments_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -89,6 +90,7 @@ func newLORig(t *testing.T, size int32) *loRig {
 		c := context.Background()
 		_, _ = r.obs.Exec(c, `DROP TRIGGER IF EXISTS lo_slow_seq ON scope_sequences`)
 		_, _ = r.obs.Exec(c, `DROP TRIGGER IF EXISTS lo_slow_alloc ON payment_allocations`)
+		_, _ = r.obs.Exec(c, `DROP TRIGGER IF EXISTS lo_slow_sub ON customer_transactions`)
 		_, _ = r.obs.Exec(c, `DROP TABLE IF EXISTS lo_flag`)
 		_, _ = r.obs.Exec(c, `DELETE FROM events_outbox WHERE payload->>'customer_id' = $1`, r.custID)
 		_, _ = r.obs.Exec(c, `DELETE FROM credit_holds WHERE customer_id = $1::uuid`, r.custID)
@@ -200,6 +202,7 @@ func (r *loRig) waitSessions(what string, want int, cond string) {
 const (
 	condSleepingInSeq   = `wait_event = 'PgSleep' AND query LIKE '%scope_sequences%'`
 	condSleepingInAlloc = `wait_event = 'PgSleep' AND query LIKE '%payment_allocations%'`
+	condSleepingInSub   = `wait_event = 'PgSleep' AND query LIKE '%customer_transactions%'`
 	condLockWaiter      = `wait_event_type = 'Lock'`
 )
 
@@ -248,6 +251,31 @@ func (r *loRig) armAllocWindow() {
 	} {
 		if _, err := r.obs.Exec(ctx, q); err != nil {
 			r.t.Fatalf("arm alloc window: %v", err)
+		}
+	}
+}
+
+// armSubledgerWindow parks the NEXT customer_transactions insert in pg_sleep, once: a multi-invoice
+// writer sits there with its FIRST invoice fully re-opened (its counter row drawn and held) and its
+// second invoice not yet touched, the window where a writer resting on incidental locks holds the
+// counter with no lock on the row it is about to need.
+func (r *loRig) armSubledgerWindow() {
+	r.t.Helper()
+	ctx := context.Background()
+	for _, q := range []string{
+		`CREATE TABLE IF NOT EXISTS lo_flag (id int PRIMARY KEY)`,
+		`CREATE OR REPLACE FUNCTION lo_slow_sub() RETURNS trigger LANGUAGE plpgsql AS $f$
+		 BEGIN
+		   DELETE FROM lo_flag WHERE id = 3;
+		   IF FOUND THEN PERFORM pg_sleep(3); END IF;
+		   RETURN NEW;
+		 END $f$`,
+		`DROP TRIGGER IF EXISTS lo_slow_sub ON customer_transactions`,
+		`CREATE TRIGGER lo_slow_sub BEFORE INSERT ON customer_transactions FOR EACH ROW EXECUTE FUNCTION lo_slow_sub()`,
+		`INSERT INTO lo_flag VALUES (3) ON CONFLICT DO NOTHING`,
+	} {
+		if _, err := r.obs.Exec(ctx, q); err != nil {
+			r.t.Fatalf("arm subledger window: %v", err)
 		}
 	}
 }
@@ -557,4 +585,102 @@ func TestIntegration_LockOrder_NSFBesideSettle(t *testing.T) {
 			})
 		})
 	}
+}
+
+// The multi-invoice reversal against the POS return's account credit. The single-invoice pair above
+// is green because the reversal's contra allocation takes a foreign key share lock on the invoice
+// row before the counter is drawn; that share lock covers only the invoice the reversal has already
+// reached. On its second invoice the reversal holds the invoices counter row with no lock on the
+// row, and a credit that holds that row FOR UPDATE while it waits on the counter meets it head on.
+// The explicit row locks in ascending id order, all taken before the first counter draw, close the
+// window.
+func TestIntegration_LockOrder_MultiInvoiceReversePaymentBesidePOSAccountCredit(t *testing.T) {
+	loPoolSizes(t, func(t *testing.T, size int32) {
+		r := newLORig(t, size)
+		one := r.invoice("U1", 1_000_000)
+		two := r.invoice("U2", 1_000_000)
+		p, err := r.repo.Pay(context.Background(), r.custID, "CARD", fmt.Sprintf("gw-lo-%d", time.Now().UnixNano()),
+			[]payments.Allocation{{InvoiceID: one, AmountCents: 10_000}, {InvoiceID: two, AmountCents: 10_000}})
+		if err != nil {
+			t.Fatalf("seed payment: %v", err)
+		}
+		r.armSubledgerWindow()
+		revErr := make(chan error, 1)
+		go func() {
+			_, err := r.repo.ReversePayment(context.Background(), payments.ReverseInput{
+				PaymentID: p.ID, Reason: "lock order leg", ActorID: r.userID, IsManager: true}, time.Now())
+			revErr <- err
+		}()
+		r.waitSessions("reversal parked past its first re-open, holding the invoices counter row", 1, condSleepingInSub)
+		// A credit on EACH invoice: whichever the reversal reaches second is the one that holds its
+		// row while the reversal holds the counter, so the leg does not depend on the order the
+		// database returns the payment's allocations in.
+		credOne, credTwo := make(chan error, 1), make(chan error, 1)
+		for _, leg := range []struct {
+			inv string
+			ch  chan error
+		}{{one, credOne}, {two, credTwo}} {
+			go func(inv string, ch chan error) {
+				ctx := context.Background()
+				tx, err := r.pool.Begin(ctx)
+				if err != nil {
+					ch <- err
+					return
+				}
+				defer func() { _ = tx.Rollback(ctx) }()
+				if _, err := pos.NewRepository(r.pool).ApplyCreditToInvoice(ctx, tx, inv, 300); err != nil {
+					ch <- err
+					return
+				}
+				ch <- tx.Commit(ctx)
+			}(leg.inv, leg.ch)
+		}
+		r.waitSessions("credits queued", 2, condLockWaiter)
+		credits := errors.Join(loAnswer(t, "credit on the first invoice", credOne), loAnswer(t, "credit on the second invoice", credTwo))
+		loBothAnswered(t, "reversal", loAnswer(t, "reversal", revErr), "account credits", credits)
+	})
+}
+
+// The multi-invoice reversal against NSF bounces on its invoices. MarkNSF locks its allocated
+// invoice row FOR UPDATE before it draws the counter; a reversal resting on the foreign key share
+// lock reaches its second invoice holding the counter with no row lock, and the bounce holding that
+// row while it waits on the counter closes the cycle. Both writers taking their rows in ascending id
+// order before any counter draw keeps the pair green whatever order the ids fall in.
+func TestIntegration_LockOrder_MultiInvoiceReversePaymentBesideNSF(t *testing.T) {
+	loPoolSizes(t, func(t *testing.T, size int32) {
+		r := newLORig(t, size)
+		one := r.invoice("V1", 1_000_000)
+		two := r.invoice("V2", 1_000_000)
+		p, err := r.repo.Pay(context.Background(), r.custID, "CARD", fmt.Sprintf("gw-lo-%d", time.Now().UnixNano()),
+			[]payments.Allocation{{InvoiceID: one, AmountCents: 10_000}, {InvoiceID: two, AmountCents: 10_000}})
+		if err != nil {
+			t.Fatalf("seed payment: %v", err)
+		}
+		// Each invoice's bounce is its own payment on that invoice alone, and its own goroutine:
+		// whichever invoice the reversal has not reached yet is the one whose bounce holds the row.
+		nsfOne, nsfTwo := r.payOnce(one, 10_000), r.payOnce(two, 10_000)
+		r.armSubledgerWindow()
+		revErr := make(chan error, 1)
+		go func() {
+			_, err := r.repo.ReversePayment(context.Background(), payments.ReverseInput{
+				PaymentID: p.ID, Reason: "lock order leg", ActorID: r.userID, IsManager: true}, time.Now())
+			revErr <- err
+		}()
+		r.waitSessions("reversal parked past its first re-open, holding the invoices counter row", 1, condSleepingInSub)
+		bOne, bTwo := make(chan error, 1), make(chan error, 1)
+		for _, leg := range []struct {
+			pay string
+			ch  chan error
+		}{{nsfOne.ID, bOne}, {nsfTwo.ID, bTwo}} {
+			go func(payID string, ch chan error) {
+				ctx := staffcontext.ContextWithStaff(context.Background(), staffcontext.StaffContext{
+					UserID: r.userID, Tier: staffcontext.TierLeadership, Scope: staffcontext.ScopeGlobal, Status: "ACTIVE"})
+				_, err := till.NewService(till.NewRepository(r.pool)).MarkNSF(ctx, till.NSFInput{PaymentID: payID, Reason: "lock order leg"})
+				ch <- err
+			}(leg.pay, leg.ch)
+		}
+		r.waitSessions("bounces queued", 2, condLockWaiter)
+		bounces := errors.Join(loAnswer(t, "bounce on the first invoice", bOne), loAnswer(t, "bounce on the second invoice", bTwo))
+		loBothAnswered(t, "reversal", loAnswer(t, "reversal", revErr), "bounces", bounces)
+	})
 }

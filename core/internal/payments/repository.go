@@ -35,8 +35,10 @@ import (
 //   - the register's RecordPayment, which reaches the counter's RecordReceipt: steps 2, 3, 4 (lockAndTotal).
 //   - the counter's RecordReceipt: steps 2, 3, 4 (lockAndTotal).
 //   - PayWithStamps and PayWithIntent, and Pay over them, the portal and card settle: steps 2, 3, 4.
-//   - ReversePayment: the payment row, then steps 2, 3 (the contra allocation's foreign key share
-//     locks the invoice), 4. The payment row is no other writer's first lock except NSF's.
+//   - ReversePayment: the payment row, then steps 2, 3 (its allocated invoice rows, taken
+//     explicitly FOR UPDATE in ascending id order before the first counter draw; the contra
+//     allocation's foreign key share lock covers only the invoice the loop has reached), 4. The
+//     payment row is no other writer's first lock except NSF's.
 //   - the POS ring: stock rows, then step 2 (the tender's payment insert), then step 4 (a new
 //     invoice). It never touches an existing invoice.
 //   - the till refund and the POS return: the per-sale advisory lock and the returned order lines,

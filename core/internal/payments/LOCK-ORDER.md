@@ -29,7 +29,7 @@ feed number is used up only by the statement that stamps a row, once per payment
 | Register `RecordPayment` (through the counter `RecordReceipt`) | payments counter, invoices, payment insert, invoices counter | yes |
 | Counter `RecordReceipt` | the same, in `lockAndTotal` | yes |
 | `PayWithStamps`, `PayWithIntent`, `Pay` (portal and card settle) | the same, in `lockAndTotal` | yes |
-| `ReversePayment` | payment row, payments counter, invoice (share lock from the contra allocation's foreign key), invoices counter, invoice update | yes: the payment row is no other writer's first lock except NSF's |
+| `ReversePayment` | payment row, payments counter, existing invoice rows (ascending id order), invoices counter, invoice update | yes: the payment row is no other writer's first lock except NSF's |
 | POS ring | stock rows, payments counter (the tender's payment insert), invoices counter (a new invoice) | yes: no existing invoice |
 | Till refund and POS return, cash or card | per-sale advisory lock, returned order lines, payments counter (the refund payment's insert) | yes: no invoice |
 | POS return to account credit | per-sale advisory lock, returned order lines, invoice row, invoices counter | yes: no payments row |
@@ -48,6 +48,13 @@ before it locks the invoice, so a bounce of an earlier payment on an invoice met
 same invoice head on. The bounce now takes `SELECT 1 FROM invoices WHERE id = $1 FOR UPDATE` on each
 allocated invoice, in ascending id order, before the re-open runs.
 
+`ReversePayment` rested on a weaker accident: its contra allocation's insert takes a foreign key
+share lock on the invoice row, which ordered the single-invoice case without anyone deciding it. A
+share lock covers only the invoice the loop has already reached, so a multi-invoice reversal held
+the counter with no lock at all on its second invoice, and met the POS return's account credit (or
+an NSF bounce) holding that row head on. The reversal now takes the same explicit `FOR UPDATE` on
+every allocated invoice, in ascending id order, before its first counter draw.
+
 ## The legs
 
 `lockorder_integration_test.go`, each at pool 4 and pool 16, each parked in a widened window and released by reading
@@ -59,4 +66,9 @@ allocated invoice, in ascending id order, before the re-open runs.
 - the multi-invoice card settle that locks the door's invoice first and closes the cycle last
 - the lock does not advance the feed: a settle's feed number advances by exactly one
 - `ReversePayment` against the POS return's account credit
+- the multi-invoice `ReversePayment` against account credits on its invoices, and against NSF
+  bounces on its invoices (the share lock covers only the first invoice; the explicit row locks
+  cover both). A reversal cannot cycle with a settle, in any id order: both take the payments
+  counter row before any invoice row, so they serialize there and never interleave their invoice
+  rows. No settle-against-reversal leg exists for that reason.
 - the NSF pair against each settle

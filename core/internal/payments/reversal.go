@@ -45,6 +45,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -208,6 +209,24 @@ INSERT INTO payments (payment_no, customer_id, method, amount_cents, status, bra
 	}
 	if tag.RowsAffected() != 1 {
 		return Reversal{}, ErrAlreadyReversed
+	}
+
+	// The re-open's UPDATE draws the invoices counter while it computes the new row, and the contra
+	// allocation's foreign key share lock only covers the invoice the loop has already reached: on
+	// the second invoice of a multi-invoice reversal the counter would be held with no lock on the
+	// row at all, head on into any writer holding that invoice while it waits on the counter (a POS
+	// return's account credit, an NSF bounce). Take every allocated invoice row explicitly, in
+	// ascending id order (the one money lock order, steps 3 then 4), before the first counter draw.
+	// This sits after the payments counter statements above, so the order is steps 2, 3, 4.
+	lockIDs := make([]string, 0, len(allocs))
+	for _, a := range allocs {
+		lockIDs = append(lockIDs, a.invoiceID)
+	}
+	slices.Sort(lockIDs)
+	for _, id := range lockIDs {
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM invoices WHERE id = $1::uuid FOR UPDATE`, id); err != nil {
+			return Reversal{}, fmt.Errorf("reverse: lock invoice %s: %w", id, err)
+		}
 	}
 
 	// 3 + 4. Re-open each invoice and mirror the subledger.
