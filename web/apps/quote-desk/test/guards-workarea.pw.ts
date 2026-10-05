@@ -500,3 +500,23 @@ test("guard add-ons error: a failed suggestions read for the quote left does not
   await settle(page);
   await expect(page.getByTestId("qb-addon-tile").first()).toBeVisible();
 });
+
+test("guard reload flush wait: a read waiting for a terms save is dropped when the person leaves again", async ({ page }) => {
+  await seed(page, { customer_id: "c-fenwick" });
+  await signIn(page);
+  await open(page, "Q-1004");
+  await expect(page.getByTestId("qb-po")).toBeVisible();
+  const put = await hold(page, /\/api\/v1\/quotes\/q-1004\/terms$/, { method: "PUT" });
+  await page.getByTestId("qb-po").fill("PO-TYPED-ON-1004");
+  await row(page, "Q-1001").click();
+  await put.asked;
+  // Back on the quote whose save is out: its read waits. The person leaves again before the save answers.
+  await row(page, "Q-1004").click();
+  await expect(page.getByTestId("qb-context")).toContainText("Q-1004");
+  await open(page, "Q-1001");
+  await settle(page);
+  const reads = countRequests(page, /^GET .*\/api\/v1\/quotes\/q-1004\/terms$/);
+  await put.release();
+  await settle(page);
+  expect(reads()).toBe(0);
+});

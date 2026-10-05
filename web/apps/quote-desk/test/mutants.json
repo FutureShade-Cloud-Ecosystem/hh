@@ -856,5 +856,19 @@
     "find": "return this.aborted || seq !== this.reads ? undefined : answer;",
     "replace": "return this.aborted ? undefined : answer;",
     "test": "P3 reads of one quote land in the order"
+  },
+  {
+    "id": "wa-reload-flush-stale",
+    "file": "src/quote-workarea.ts",
+    "find": "      if (ctx.stale || !ctx.isLatestRead(seq)) return this.supersededBy(ctx, seq);\n      if (!landed)",
+    "replace": "      if (!landed)",
+    "test": "guard reload flush wait:"
+  },
+  {
+    "id": "ss-policy-refusal-same-scope",
+    "file": "src/settings-surface.ts",
+    "find": "      else if (lockKey === this.lockKey()) this.error = line;",
+    "replace": "      else if (false) this.error = line;",
+    "test": "guard policy refusal:"
   }
 ]

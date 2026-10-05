@@ -699,6 +699,19 @@ test("guard policy save answer: a save that answers after the scope moved on fil
   await expect(page.getByTestId("qs-notice")).toHaveCount(0);
 });
 
+test("guard policy refusal: a refusal of a save on the scope still on screen is said there", async ({ page }) => {
+  await generalManager(page);
+  await page.getByTestId("qs-validity-days").fill("55");
+  const put = await hold(page, /\/api\/v1\/quotes\/policy/, { method: "PUT", refuse: { status: 500, error: "quote: the policy store is down" } });
+  await page.getByTestId("qs-policy-save").click();
+  await put.asked;
+  await put.release();
+  await expect(page.getByTestId("qs-error")).toContainText("policy store is down");
+  // It is the scope on screen: the sentence is the plain refusal, not the one for settings left behind.
+  await expect(page.getByTestId("qs-error")).not.toContainText("you left");
+  await expect(page.getByTestId("qs-error")).not.toContainText("were not saved");
+});
+
 test("guard policy lock: a refusal locks the row it was for and no other", async ({ page }) => {
   await signIn(page);
   await openScreenSettings(page);
