@@ -92,6 +92,7 @@ func unitItem(legacyID, code, name, dimension string) load.Item {
 		"UU-DIM":   "000000000104",
 		"UU-ORG":   "000000000105",
 		"UU-CASE2": "000000000106",
+		"UU-PAD":   "000000000107",
 	}[legacyID]
 	return load.Item{
 		LegacyID:   legacyID,
@@ -266,6 +267,44 @@ func TestUnitLoadRefusesADimensionTheCatalogueDoesNotCarry(t *testing.T) {
 	}
 	if rows != 0 {
 		t.Fatalf("the unknown dimension wrote a row")
+	}
+}
+
+// TestUnitLoadRefusesAPaddedCode: a code with a leading or trailing
+// space is a different spelling of the catalogue's row, not a unit
+// (the delta review's probe: FXU-CASE with a trailing space landed its
+// own row beside FXU-CASE). The door refuses as a record shape on code,
+// naming the field, never the value, and nothing lands.
+func TestUnitLoadRefusesAPaddedCode(t *testing.T) {
+	e := unitLoadSetup(t)
+	ctx := context.Background()
+	submit := func(batchID, code string) load.Outcome {
+		t.Helper()
+		r, err := e.door.UpsertBatch(ctx, load.Batch{OrgID: fxUnitOrgID, SourceSystem: fxUnitSource,
+			BatchID: batchID, Caller: fxUnitActorID,
+			Items:   []load.Item{unitItem("UU-PAD", code, "Fixture Padded Unit", "count")}})
+		if err != nil {
+			t.Fatalf("padded code batch %s: %v", batchID, err)
+		}
+		return unitOutcome(t, r, "UU-PAD")
+	}
+	for _, probe := range []struct {
+		batch, code string
+	}{{"b-unit-pad-t", "FXU-PAD "}, {"b-unit-pad-l", " FXU-PAD"}} {
+		o := submit(probe.batch, probe.code)
+		if o.Status != load.OutcomeRefused || o.Reason != "record_shape" || o.Field != "code" {
+			t.Fatalf("the padded code %q answered %+v, want refused as record_shape on code", probe.code, o)
+		}
+		if strings.Contains(o.Detail, "FXU") {
+			t.Fatalf("the padded code refusal carries a value: %q", o.Detail)
+		}
+	}
+	var rows int
+	if err := e.pool.QueryRow(ctx, `SELECT count(*) FROM uoms WHERE code LIKE '%FXU-PAD%'`).Scan(&rows); err != nil {
+		t.Fatalf("padded code row read: %v", err)
+	}
+	if rows != 0 {
+		t.Fatalf("the padded code wrote %d rows, want none", rows)
 	}
 }
 

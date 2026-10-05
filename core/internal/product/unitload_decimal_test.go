@@ -10,6 +10,7 @@ package product
 // These are pure tests: no database, no pool.
 
 import (
+	"math/big"
 	"testing"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/load"
@@ -136,6 +137,18 @@ func TestDecimalRoundTripRefusalCarriesTheField(t *testing.T) {
 	if r.Field != "qty_in_base" {
 		t.Fatalf("the round trip refusal names field %q, want qty_in_base", r.Field)
 	}
+}
+
+// decimalScale is the tests' scale ruler over the production scale
+// counter (minimalDecimalScale): the value's exact decimal scale of the
+// text, trailing zeros not counted, and -1 for text that names no
+// decimal.
+func decimalScale(text string) int {
+	rat, ok := new(big.Rat).SetString(text)
+	if !ok {
+		return -1
+	}
+	return minimalDecimalScale(rat)
 }
 
 // TestUnitScaleOfCountsDecimalPlaces is the scale ruler the factor gate

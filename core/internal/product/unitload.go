@@ -90,6 +90,12 @@ func (w UnitLoadWriter) ApplyAttached(ctx context.Context, tx pgx.Tx, in load.Wr
 		return "", false, &load.Refusal{Code: "field_required", Field: "code",
 			Detail: "the record names no unit code"}
 	}
+	// A padded spelling is not a unit: CITEXT folds case, not spaces, so
+	// a trailing space would land its own row beside the code it spells.
+	if code != strings.TrimSpace(code) {
+		return "", false, &load.Refusal{Code: "record_shape", Field: "code",
+			Detail: "the unit code carries a leading or trailing space; the catalogue's codes are trimmed"}
+	}
 	if len(code) > maxUnitCodeLength {
 		return "", false, &load.Refusal{Code: "record_shape", Field: "code",
 			Detail: "the unit code is over the bound the catalogue carries"}
@@ -302,28 +308,18 @@ func integerDigits(intPart string) int {
 	return len(trimmed)
 }
 
-// decimalScale is the test-facing scale ruler: the value's exact
-// decimal scale of the text, trailing zeros not counted, and -1 for
-// text that names no decimal.
-func decimalScale(text string) int {
-	rat, ok := new(big.Rat).SetString(text)
-	if !ok {
-		return -1
-	}
-	return minimalDecimalScale(rat)
-}
-
 // decimalRoundTrip is the plan's round trip check on every conversion,
 // read against the representation the price resolver actually reads
 // (repository.go ConvertUOM parses the stored column with
 // strconv.ParseFloat): the factor spelled at the base column's scale
 // eight, read as a float64 and spelled back at scale eight, must be the
-// stored text again. A factor of more than fifteen significant digits
+// stored text again. A factor beyond what a float64 names exactly
 // passes the scale gate and the column would hold it exactly, and the
-// float read reads it back as another number; the door refuses it
-// rather than storing a factor the resolver reads differently (the
-// plan's risk 1, stated honestly: factors are exact only to what the
-// resolver reads). The refusal names the field and carries no value.
+// float read may read it back as another number; the check refuses
+// exactly those, so the door never stores a factor the resolver reads
+// differently (the plan's risk 1, stated honestly: factors are exact
+// only to what the resolver reads). The refusal names the field and
+// carries no value.
 func decimalRoundTrip(factor string) *load.Refusal {
 	f, refused := parseUnitFactor(factor)
 	if refused != nil {
@@ -331,13 +327,11 @@ func decimalRoundTrip(factor string) *load.Refusal {
 	}
 	// The stored text: the value at the base column's scale, spelled
 	// exactly (the gate above bound the scale to eight, so the spelling
-	// rounds nothing).
+	// rounds nothing). The parse cannot fail: FloatString's output is a
+	// plain decimal whose integer part the gate bounded to eleven digits,
+	// always inside a float64's range.
 	stored := f.value.FloatString(8)
-	parsed, err := strconv.ParseFloat(stored, 64)
-	if err != nil {
-		return &load.Refusal{Code: "round_trip", Field: "qty_in_base",
-			Detail: "the factor does not survive the float read the price resolver makes"}
-	}
+	parsed, _ := strconv.ParseFloat(stored, 64)
 	if back := strconv.FormatFloat(parsed, 'f', 8, 64); back != stored {
 		return &load.Refusal{Code: "round_trip", Field: "qty_in_base",
 			Detail: "the factor does not survive the float read the price resolver makes; the door refuses it rather than storing a factor the resolver reads back differently"}
