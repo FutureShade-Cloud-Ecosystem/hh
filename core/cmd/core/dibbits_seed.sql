@@ -405,7 +405,7 @@ SELECT p.id,
     WHEN pc.code IN ('AGGREGATE', 'BULK')  THEN 5500  -- PROVISIONAL ~$55/T
     ELSE 2400                                          -- PROVISIONAL accessories/other
   END,
-  COALESCE(NULLIF(p.sold_by, ''), p.base_uom, 'EA')
+  p.price_uom
   FROM products p
   LEFT JOIN product_categories pc ON pc.id = p.category_id
  WHERE p.sku LIKE 'DBS-%'
