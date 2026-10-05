@@ -345,7 +345,14 @@ func (s *PickupsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key s
 // path uses, and the row moves ACTIVE to CONFIRMED with a fresh seq
 // and the idempotency key.
 func (s *PickupsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key string, fields map[string]any) (sync.RowState, error) {
-	if _, ok := s.tenantIDs(ctx, f); !ok {
+	// The tenant's order id set resolves here, before the transaction
+	// opens: the order seam reads through the shared pool, so asking it
+	// again from inside the transaction would take a second connection
+	// while the first is held (connection starvation when pool-size
+	// confirms do this together). The set is the one the refusal check
+	// already used, so the semantics are unchanged.
+	tenantOrderIDs, idsOK := s.tenantIDs(ctx, f)
+	if !idsOK {
 		return sync.RowState{}, sync.ErrOpRefused
 	}
 	for k := range fields {
@@ -377,11 +384,10 @@ func (s *PickupsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, ke
 		return sync.RowState{}, fmt.Errorf("dispatch: begin pickups write: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	ids, _ := s.tenantIDs(ctx, f)
 	before, err := scanPickupSync(tx.QueryRow(ctx, fmt.Sprintf(`
 		SELECT %s FROM will_call_pickups
 		WHERE id = $1::uuid AND order_id = ANY($2::uuid[]) AND deleted_at IS NULL FOR UPDATE`,
-		pickupsColumns), id, ids))
+		pickupsColumns), id, tenantOrderIDs))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, sync.ErrRowNotFound
 	}
