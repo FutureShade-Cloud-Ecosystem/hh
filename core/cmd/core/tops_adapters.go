@@ -220,6 +220,19 @@ func (a dispatchSignatureAdapter) CaptureTyped(ctx context.Context, in dispatch.
 	})
 }
 
+// CaptureTypedTx rides the CALLER'S transaction through pos.Service.CaptureTypedSignatureTx: the
+// pickups sync confirm captures inside its own transaction, so the signature row and its audit row
+// commit or roll back with the confirm and the capture never takes a second pool connection.
+func (a dispatchSignatureAdapter) CaptureTypedTx(ctx context.Context, tx pgx.Tx, in dispatch.TypedAttestation) (string, error) {
+	return a.svc.CaptureTypedSignatureTx(ctx, tx, pos.TypedAttestation{
+		Purpose:   in.Purpose,
+		RefType:   in.RefType,
+		RefID:     in.RefID,
+		TypedName: in.TypedName,
+		Affirmed:  in.Affirmed,
+	})
+}
+
 // stalePickWindow is how long a PICK task may sit QUEUED before the nightly sweep speaks up. Twelve
 // hours means "still there the next morning" for anything queued during a working day, without
 // nagging about a ticket raised at five o'clock.
