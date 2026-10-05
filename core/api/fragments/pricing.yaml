@@ -472,7 +472,9 @@ paths:
         a bounded number of product, customer type and quantity combinations
         are graded, and truncated says when more existed. A quantity break has
         at most 20 tiers, and a tier starting at zero is graded at one base
-        unit. Writes nothing, not even a log row. Refuses what the write itself
+        unit. Writes nothing: no price changes and no row in the pricing
+        log. The request trail the server keeps of every POST still records
+        the call itself. Refuses what the write itself
         would refuse (an override needs a customer, a category and a price unit).
       x-addition: "the editors' floor warning (plan CP0-6, QD-4); no ERP source route"
       x-role: requireManager
