@@ -23,7 +23,7 @@
 // leg owes for planting a balance with no matching move is taken on its OWN single-connection pool,
 // so the fence stays held without eating one of the four scenario connections.
 //
-// The pool size is set HERE, in the leg (cfg.MaxConns = 4 below), from the leg's own throwaway
+// The pool size is set HERE, in the leg (cfg.MaxConns from the poolSize constant below), from the leg's own throwaway
 // database URL carried on the command; no export, no shared database:
 //
 //	DATABASE_URL='postgres://hardscape:hardscape@localhost:5571/hh_r10_reserve?sslmode=disable' \
@@ -71,7 +71,7 @@ func TestReserveTx_PolicyReadJoinsCallerTx_NoPoolCycle(t *testing.T) {
 
 	// The DIB-396 drift lease on its own connection: the leg plants a stock_balances row with no
 	// matching move, and the lease fences the whole-database drift readers without consuming one of
-	// the four scenario connections the cycle below is built from.
+	// the poolSize scenario connections the starvation below is built from.
 	leaseCfg, err := pgxpool.ParseConfig(url)
 	if err != nil {
 		t.Fatalf("parse DATABASE_URL for the lease pool: %v", err)
@@ -213,8 +213,9 @@ func TestReserveTx_PolicyReadJoinsCallerTx_NoPoolCycle(t *testing.T) {
 		_ = held.Rollback(rbCtx)
 		rbCancel()
 		t.Fatalf("THE STALL REPRODUCED: the held confirm's ReserveTx did not complete within the %s bound "+
-			"(stopped at %s, err: %v). The policy read on the pool asked for a second connection while the "+
-			"confirm's row locks held the rest of the pool; timings for the %d contenders are logged above.",
+			"(stopped at %s, err: %v). Every in-flight reservation held one connection and asked the pool "+
+			"for a second, so the pool-size transactions in flight pinned every connection with no lock "+
+			"waited on anywhere; timings for the %d contenders are logged above.",
 			stallBound, confirmDur.Round(time.Millisecond), confirmErr, contenders)
 	}
 	t.Logf("held-confirm: completed in %s", confirmDur.Round(time.Millisecond))
