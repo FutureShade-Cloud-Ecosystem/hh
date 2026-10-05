@@ -102,6 +102,7 @@ import { OPEN_SETTINGS_EVENT } from "./panel-seams.js";
 import type { Result } from "@hardscapehouse/api-client";
 import type { QdClient, SurfaceConfig, TermsRef } from "./qd-client.js";
 import { WorkspaceStore } from "./workspace-store.js";
+import { captureSend, deferredSend, wasUnsent, type SendCapture, type SendNow } from "./deferred-send.js";
 import { QuoteContext, QuoteScope, SIGN_OUT_EVENT, UNSENT_WAIT_MS, waitUpTo, type SignOutDetail } from "./quote-context.js";
 import type { AddonSuggestion } from "@hardscapehouse/pos-kit/src/ported/pos-api.js";
 
@@ -1255,6 +1256,12 @@ export class QdQuoteWorkarea extends LitElement {
    */
   private readonly termsPutBefore = new Map<string, Promise<void>>();
 
+  /** What the component holds at the moment a deferred write is sent: the sender compares it with what it took down when the person acted. */
+  private readonly sendNow = (): SendNow => ({ client: this.client, attached: this.isConnected && !this.detached, quote: this.ctx });
+
+  /** The session as it stood at the person's last terms keystroke: every terms PUT made from that edit is sent under it or not at all. */
+  private termsCapture: SendCapture | null = null;
+
   /** Send one terms PUT of one quote, in its turn: after the send before it of the same quote, whenever that answers. */
   private queueTermsPut<T>(quoteId: string, send: () => Promise<T>): Promise<T> {
     const before = this.termsPutBefore.get(quoteId) ?? Promise.resolve();
@@ -1281,7 +1288,11 @@ export class QdQuoteWorkarea extends LitElement {
     this.termsEditSeq += 1;
     if (!dirty || client === null || terms === null || previousId === "") return;
     const body = termsBody(terms);
-    const sent = this.queueTermsPut(previousId, () => client.putTerms(previousId, body)).then((result) => {
+    const capture = this.termsCapture ?? captureSend(this.sendNow, { follows: true });
+    this.termsCapture = null;
+    const sent = this.queueTermsPut(previousId, () => deferredSend(capture, () => client.putTerms(previousId, body))).then((result) => {
+      // A refusal by the sender sent nothing, and the person it was for is not the one on the page: nothing is said.
+      if (wasUnsent(result)) return;
       // Said plainly, naming the quote it was for, because the person has moved on to another.
       if (!result.ok) this.error = `The terms you changed on ${label} were not saved: ${spokenRefusal(quoteErrorMessage(result.status, result.error, "save the quote terms"))}`;
     });
@@ -1508,7 +1519,7 @@ export class QdQuoteWorkarea extends LitElement {
   }
 
   private newStore(config: SurfaceConfig | null): WorkspaceStore {
-    const store = new WorkspaceStore(this.client as QdClient, config);
+    const store = new WorkspaceStore(this.client as QdClient, config, this.sendNow);
     store.onError = (line) => {
       this.layoutError = line;
     };
@@ -1995,6 +2006,11 @@ export class QdQuoteWorkarea extends LitElement {
   private async addProduct(p: { id: string; uom: string; name?: string }, qty = 1): Promise<void> {
     const client = this.client;
     if (client === null) return;
+    // Taken down when the person scans: on an open quote the scan stays with that quote; in compose it follows the quote the scan makes. Either way it is sent under this session or not at all.
+    const capture = captureSend(this.sendNow, {
+      ...(this.quoteId === "" ? { follows: true } : { quote: this.ctx, label: this.view?.quote_no ?? "" }),
+      say: (line) => this.speakAdd(line, "warn"),
+    });
     // A scan right after the customer is picked lands while the quote is still being made or read: it waits
     // for them rather than being told to pick a customer who has just been picked.
     // Only while compose is on screen: a scan on an open quote is for that quote and waits for no create.
@@ -2038,9 +2054,10 @@ export class QdQuoteWorkarea extends LitElement {
     const release = this.holdBusy(ctx);
     this.error = "";
     this.notice = "";
-    const result = await ctx.guarded(client.addLine(ctx.id, p.id, String(qty), p.uom), this.lateWrite(ctx, "add this line"));
+    const result = await ctx.guarded(deferredSend(capture, () => client.addLine(ctx.id, p.id, String(qty), p.uom)), this.lateWrite(ctx, "add this line"));
     if (result === undefined) return;
     release();
+    if (wasUnsent(result)) return;
     if (result.ok) {
       this.speakAdd(p.name !== undefined ? `Added ${p.name}` : "Line added.", "ok");
       await this.afterCartChange(ctx);
@@ -2177,6 +2194,7 @@ export class QdQuoteWorkarea extends LitElement {
     this.termsEditSeq += 1;
     this.termsPending = { ...this.termsPending, ...patch };
     this.terms = { ...this.terms, ...patch };
+    this.termsCapture = captureSend(this.sendNow, { follows: true });
     if (this.termsTimer !== undefined) clearTimeout(this.termsTimer);
     this.termsTimer = setTimeout(() => void this.putTermsNow(true), 600);
   }
@@ -2223,14 +2241,15 @@ export class QdQuoteWorkarea extends LitElement {
       this.termsTimer = undefined;
     }
     const sent = this.termsEditSeq;
+    const capture = this.termsCapture ?? captureSend(this.sendNow, { follows: true });
     // One PUT per quote at a time: this save goes in its turn behind any send of this quote still out (a leave may
     // have started one), so an older whole row can never land after it and erase it.
     const result = await ctx.guarded(
-      this.queueTermsPut(ctx.id, () => client.putTerms(ctx.id, termsBody(t))),
+      this.queueTermsPut(ctx.id, () => deferredSend(capture, () => client.putTerms(ctx.id, termsBody(t)))),
       this.lateWrite(ctx, "save the quote terms"),
     );
     // The quote changed while this save was out: its answer is not this screen's to show (leaving the quote already sent any later edit to its own quote).
-    if (result === undefined) return;
+    if (result === undefined || wasUnsent(result)) return;
     // What was edited while this save was in flight is still unsaved and stays laid over the answer.
     if (this.termsEditSeq === sent) this.termsPending = {};
     if (!result.ok) {
@@ -2491,11 +2510,11 @@ export class QdQuoteWorkarea extends LitElement {
    * names, and kept only while that quote is still the one on screen: a mint
    * that lands after the person moved on is dropped, never held for the next quote.
    */
-  private async ensureLink(ctx: QuoteContext): Promise<string> {
+  private async ensureLink(ctx: QuoteContext, capture: SendCapture): Promise<string> {
     const client = this.client;
     if (client === null || this.mintedToken !== "") return this.mintedToken;
-    const result = await ctx.guarded(client.mintShareLink(ctx.id), this.lateWrite(ctx, "create a share link", LATE_LINK_NOTE));
-    if (result === undefined) throw new StaleQuoteError();
+    const result = await ctx.guarded(deferredSend(capture, () => client.mintShareLink(ctx.id)), this.lateWrite(ctx, "create a share link", LATE_LINK_NOTE));
+    if (result === undefined || wasUnsent(result)) throw new StaleQuoteError();
     if (!result.ok) {
       throw new Error(spokenRefusal(quoteErrorMessage(result.status, result.error, "create a share link")));
     }
@@ -2513,10 +2532,22 @@ export class QdQuoteWorkarea extends LitElement {
     return `${location.origin}/quote.html?t=${encodeURIComponent(token)}${print ? "&print=1" : ""}`;
   }
 
+  /** The session and the quote as they stand when the person presses the button, for the writes that button sends after an await. */
+  private captureFor(ctx: QuoteContext): SendCapture {
+    return captureSend(this.sendNow, {
+      quote: ctx,
+      label: this.view?.quote_no ?? "",
+      say: (line) => {
+        this.error = line;
+      },
+    });
+  }
+
   private async doCopyLink(): Promise<void> {
     const ctx = this.ctx;
+    const capture = this.captureFor(ctx);
     try {
-      const token = await this.ensureLink(ctx);
+      const token = await this.ensureLink(ctx, capture);
       // The clipboard is only there on a secure page: say so rather than claim a copy that did not happen.
       if (navigator.clipboard === undefined) throw new Error("The link was created but could not be copied from this page. Use Preview to open it and copy it from there.");
       await navigator.clipboard.writeText(this.shareUrl(token));
@@ -2534,9 +2565,10 @@ export class QdQuoteWorkarea extends LitElement {
 
   private async doPreview(print: boolean): Promise<void> {
     const ctx = this.ctx;
+    const capture = this.captureFor(ctx);
     try {
       // ensureLink throws once the quote has been left, so the lines below only run on the quote that asked.
-      const token = await this.ensureLink(ctx);
+      const token = await this.ensureLink(ctx, capture);
       window.open(this.shareUrl(token, print), "_blank", "noopener");
       await this.loadAll();
       if (ctx.stale) return;
@@ -2551,6 +2583,7 @@ export class QdQuoteWorkarea extends LitElement {
     const client = this.client;
     if (client === null || this.busy) return;
     const ctx = this.ctx;
+    const capture = this.captureFor(ctx);
     // One send at a time: a second press while the first is out would mint a second live link and start the cadence twice.
     const release = this.holdBusy(ctx);
     this.sendOpen = false;
@@ -2564,13 +2597,13 @@ export class QdQuoteWorkarea extends LitElement {
         if (ctx.stale) return;
         if (this.error !== "") return;
       }
-      await this.ensureLink(ctx); // the core mints a link, moves DRAFT to SENT and starts the cadence; it sends no email (it throws once the quote was left)
+      await this.ensureLink(ctx, capture); // the core mints a link, moves DRAFT to SENT and starts the cadence; it sends no email (it throws once the quote was left)
       let smsOk = false;
       let smsWhy = "";
       const smsChosen = channels.includes("SMS");
       if (smsChosen) {
-        const sms = await ctx.guarded(client.shareBySMS(ctx.id), this.lateWrite(ctx, "send the text"));
-        if (sms === undefined) return;
+        const sms = await ctx.guarded(deferredSend(capture, () => client.shareBySMS(ctx.id)), this.lateWrite(ctx, "send the text"));
+        if (sms === undefined || wasUnsent(sms)) return;
         if (sms.ok) {
           smsOk = true;
         } else {

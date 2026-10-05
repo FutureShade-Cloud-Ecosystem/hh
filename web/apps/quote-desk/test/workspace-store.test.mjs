@@ -22,6 +22,7 @@ function heldClient() {
   };
   const client = {
     calls,
+    callerId: () => "u1",
     putMyWorkspace: (body) => {
       const held = gateFor(() => ({ ok: true, value: { ...body, source: "user" } }));
       calls.push({ kind: "put", body, open: held.open });

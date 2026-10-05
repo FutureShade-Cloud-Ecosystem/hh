@@ -34,6 +34,7 @@
 import { css, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { PanelBase } from "./panel-base.js";
+import { captureSend, deferredSend, wasUnsent } from "./deferred-send.js";
 import { panelStyles } from "./panel-styles.js";
 import { quoteErrorMessage } from "./_quote-edit.js";
 import { spokenRefusal } from "./_quote-workarea.js";
@@ -372,6 +373,8 @@ export class QdQuoteAssist extends PanelBase {
     const payloads = addPayloads({ ...ex, proposals: this.proposals }, this.selected);
     if (payloads.length === 0) return;
     const ctx = this.ctx;
+    // Taken down when the person presses the button: every line of the loop is sent under this session on this quote, or not at all.
+    const capture = captureSend(this.sendNow, { quote: ctx });
     this.adding = true;
     this.addNote = "";
     const failures: Array<{ ref: string; message: string }> = [];
@@ -381,10 +384,10 @@ export class QdQuoteAssist extends PanelBase {
         // ONE REQUEST PER LINE through the audited write: each line is priced, holds stock and
         // writes its own audit row, and a partial failure names the line that caused it.
         // The add that is out when the person leaves has usually landed: its answer is counted even though it is dropped.
-        const result = await ctx.guarded(client.addLine(ctx.id, p.product_id, p.qty_entered, p.uom_entered), (late) => {
+        const result = await ctx.guarded(deferredSend(capture, () => client.addLine(ctx.id, p.product_id, p.qty_entered, p.uom_entered)), (late) => {
           if (late.ok) added += 1;
         });
-        if (result === undefined) {
+        if (result === undefined || wasUnsent(result)) {
           // The person opened another quote: the loop stops, no line goes to it, and what landed is said.
           this.addNote = interruptedAddText(added, payloads.length);
           if (added > 0) this.dispatchEvent(new CustomEvent("quote-changed", { detail: { quoteId: ctx.id }, bubbles: true, composed: true }));
