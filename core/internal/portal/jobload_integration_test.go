@@ -198,8 +198,9 @@ func TestJobLoadRefusesMissingAndCrossOrgCustomers(t *testing.T) {
 		!strings.Contains(o.Detail, "customer") || !strings.Contains(o.Detail, "CUST-NOPE") {
 		t.Fatalf("a missing customer answered %+v, want refused naming kind and key", o)
 	}
-	if o := jobOutcome(t, r, "JOB-2"); o.Status != load.OutcomeRefused {
-		t.Fatalf("another org's customer answered %+v, want refused", o)
+	if o := jobOutcome(t, r, "JOB-2"); o.Status != load.OutcomeRefused || o.Reason != "org_mismatch" ||
+		!strings.Contains(o.Detail, "customer") || !strings.Contains(o.Detail, "CUST-O") {
+		t.Fatalf("another org's customer answered %+v, want refused org_mismatch naming kind and key", o)
 	}
 	if e.projectRows(t) != 0 {
 		t.Fatalf("a refused job left a project row")
