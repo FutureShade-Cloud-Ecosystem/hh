@@ -61,13 +61,15 @@ func wireLoad(r httpx.Registrar, pool *pgxpool.Pool, log *slog.Logger, doors boo
 		"PUT /api/v1/load/suppliers": newLoadDoor(store, load.KindSupplier,
 			purchasing.VendorLoadWriter{}, auditSvc),
 		// LD-3's two doors: the unit catalogue upsert, and the product
-		// unit set replace through the pricing and inventory readers.
+		// unit set replace through the pricing, inventory and purchasing
+		// readers.
 		"PUT /api/v1/load/units": newLoadDoor(store, load.KindUnit,
 			product.UnitLoadWriter{}, auditSvc),
 		"PUT /api/v1/load/products/unit-sets": newLoadDoor(store, load.KindUnitSet,
 			product.UnitSetLoadWriter{
 				Pricing: pricing.LoadedUnitUseReader{},
 				Stock:   inventory.LoadedUnitUseReader{},
+				Vendor:  purchasing.LoadedUnitUseReader{},
 			}, auditSvc),
 	})
 	submits.RegisterRoutes(r)

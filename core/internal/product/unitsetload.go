@@ -10,17 +10,28 @@
 // deleted and the new rows inserted inside the item's own transaction,
 // so a refused shape leaves the old set standing untouched. The set's
 // rules, each refusing with nothing of the replace standing: exactly
-// one base row at factor one; every factor positive and at scale eight
-// or under, a factor beyond refused naming the legacy key and the
-// field, never a value, never rounded (the plan's section 8 point 3);
-// every code naming a catalogue unit; the product's base and price
-// units inside the set; no unit removed while a price, break, rule or
-// stock row still names it (checked through the owning modules' read
-// seams beside their own tables: the price and break and rule rows
-// through the pricing module's reader, the stock rows through the
-// inventory module's reader, the product module's own rounding rules
-// read here); and the decimal round trip on every conversion, one sell
-// unit to base and back, in exact decimal.
+// one base row at factor one, and that base row the product's own base
+// unit (products.base_uom, compared as CITEXT compares, in the
+// database's fold); every factor arriving as decimal text (a numeric
+// factor refuses naming factor_type, never re-spelled), positive and at
+// scale eight or under, a factor beyond refused naming the legacy key
+// and the field, never a value, never rounded (the plan's section 8
+// point 3); every code naming a catalogue unit; the product's price
+// unit inside the set; no unit removed while a row of the pricing,
+// stock or supplier families still names it (checked through the owning
+// modules' read seams beside their own tables: the price and break and
+// rule rows of the product and of the product's category, the
+// promotions and clearance prices, the conversion edges and the
+// supplier skus through the pricing, inventory and purchasing modules'
+// readers, the product module's own rounding rules read here); and the
+// decimal round trip on every conversion against the representation
+// the price resolver reads (the float parse of repository.go
+// ConvertUOM): factors are exact only to what the resolver reads, and a
+// factor the resolver would read back differently refuses. The open
+// document lines (quotes and orders not yet closed, open purchase
+// order lines, transfers in transit) are deliberately not read here:
+// the plan's load order loads the unit sets before any document exists,
+// and the document reload of LD-12 carries the follow up.
 //
 // The product is named by legacy key through the registry (the frame
 // resolves the reference before any write; a name not yet loaded
@@ -38,10 +49,10 @@ package product
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
-	"strconv"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/load"
 	"github.com/jackc/pgx/v5"
@@ -53,12 +64,13 @@ import (
 const maxSetRows = 64
 
 // PricingUnitUseReader is the pricing module's read the unit set door
-// checks a removal through: whether any pricing row of this product
-// (the list price, the rules, the quantity break headers and items, the
-// conversion edges) still names the unit. The consumer declares the
-// narrow interface; the concrete reader is pricing.LoadedUnitUseReader.
+// checks a removal through: whether any pricing row of this product, or
+// of the product's category the way the price resolver matches them
+// (category_id equal to the product's category, exactly, no walk up the
+// tree), still names the unit. The consumer declares the narrow
+// interface; the concrete reader is pricing.LoadedUnitUseReader.
 type PricingUnitUseReader interface {
-	ProductUnitInUseTx(ctx context.Context, tx pgx.Tx, productID, uom string) (bool, error)
+	ProductUnitInUseTx(ctx context.Context, tx pgx.Tx, productID string, categoryID *string, uom string) (bool, error)
 }
 
 // InventoryUnitUseReader is the inventory module's read the unit set
@@ -69,13 +81,22 @@ type InventoryUnitUseReader interface {
 	ProductUnitInUseTx(ctx context.Context, tx pgx.Tx, productID, uom string) (bool, error)
 }
 
+// PurchasingUnitUseReader is the purchasing module's read the unit set
+// door checks a removal through: whether any supplier row of this
+// product (the vendor skus) still sells in the unit. The concrete
+// reader is purchasing.LoadedUnitUseReader.
+type PurchasingUnitUseReader interface {
+	ProductUnitInUseTx(ctx context.Context, tx pgx.Tx, productID, uom string) (bool, error)
+}
+
 // UnitSetLoadWriter is the load doors' unit set writer, the one write
-// path a load batch's unit set items run through. The pricing and stock
-// readers arrive by constructor: a nil reader fails the removal check
-// loudly at the first ask, never as a silent clear.
+// path a load batch's unit set items run through. The pricing, stock
+// and vendor readers arrive by constructor: a nil reader fails the
+// removal check loudly at the first ask, never as a silent clear.
 type UnitSetLoadWriter struct {
 	Pricing PricingUnitUseReader
 	Stock   InventoryUnitUseReader
+	Vendor  PurchasingUnitUseReader
 }
 
 // Apply answers one unit set item: the reference of kind product names
@@ -99,24 +120,18 @@ func (w UnitSetLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) 
 		return "", &load.Refusal{Code: "record_shape", Field: "rows",
 			Detail: "the set names more rows than a unit set carries"}
 	}
-	// The factor gate: exact decimals, positive, scale eight or under,
-	// the base row single and at one.
+	// The factor gate: exact decimal text only, positive, scale eight or
+	// under, the base row single and at one.
 	baseCount := 0
+	baseCode := ""
 	codes := make([]string, 0, len(rows))
-	seen := map[string]bool{}
 	for _, r := range rows {
 		if r.code == "" {
 			return "", &load.Refusal{Code: "field_required", Field: "code",
 				Detail: "a row of the set names no unit code"}
 		}
-		key := lowercaseCode(r.code)
-		if seen[key] {
-			return "", &load.Refusal{Code: "record_shape", Field: "code",
-				Detail: "the set names one unit code twice"}
-		}
-		seen[key] = true
-		codes = append(codes, r.code)
-		if _, refused := parseUnitFactor(r.qty); refused != nil {
+		f, refused := parseUnitFactor(r.qty)
+		if refused != nil {
 			refused.Detail = fmt.Sprintf("unit set legacy key %s: %s", in.LegacyID, refused.Detail)
 			return "", refused
 		}
@@ -124,13 +139,11 @@ func (w UnitSetLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) 
 			refused.Detail = fmt.Sprintf("unit set legacy key %s: %s", in.LegacyID, refused.Detail)
 			return "", refused
 		}
+		codes = append(codes, r.code)
 		if r.isBase {
 			baseCount++
-			parsed, refused := parseUnitFactor(r.qty)
-			if refused != nil {
-				return "", refused
-			}
-			if parsed.value.Cmp(newBigRatOne()) != 0 {
+			baseCode = r.code
+			if f.value.Cmp(newBigRatOne()) != 0 {
 				return "", &load.Refusal{Code: "unit_set_base", Field: "rows",
 					Detail: fmt.Sprintf("unit set legacy key %s: the base row's factor is not one", in.LegacyID)}
 			}
@@ -139,6 +152,20 @@ func (w UnitSetLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) 
 	if baseCount != 1 {
 		return "", &load.Refusal{Code: "unit_set_base", Field: "rows",
 			Detail: fmt.Sprintf("unit set legacy key %s: the set carries %d base rows, want exactly one", in.LegacyID, baseCount)}
+	}
+	// The set's own duplicates, folded the way the database folds
+	// (CITEXT's lower(), through the database, not a Go spelling of the
+	// fold): two spellings of one code are one row claimed twice, and the
+	// second insert would overwrite the first silently.
+	var distinct bool
+	if err := tx.QueryRow(ctx, `
+		SELECT count(*) = count(DISTINCT lower(c))
+		  FROM unnest($1::text[]) AS c(code)`, codes).Scan(&distinct); err != nil {
+		return "", fmt.Errorf("product: unit set duplicate read: %w", err)
+	}
+	if !distinct {
+		return "", &load.Refusal{Code: "record_shape", Field: "code",
+			Detail: "the set names one unit code twice"}
 	}
 	// Every code names a catalogue unit.
 	for _, code := range codes {
@@ -150,10 +177,12 @@ func (w UnitSetLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) 
 			return "", fmt.Errorf("product: unit set code read: %w", err)
 		}
 	}
-	// The product's base and price units ride inside the set.
+	// The product's base and price units, and the product's category for
+	// the category scoped pricing families.
 	var baseUOM, priceUOM string
-	err := tx.QueryRow(ctx, `SELECT base_uom::text, price_uom::text FROM products WHERE id = $1::uuid`, productID).
-		Scan(&baseUOM, &priceUOM)
+	var categoryID *string
+	err := tx.QueryRow(ctx, `SELECT base_uom::text, price_uom::text, category_id::text FROM products WHERE id = $1::uuid`, productID).
+		Scan(&baseUOM, &priceUOM, &categoryID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", &load.Refusal{Code: load.ReasonUpdateTargetMissing, Field: "product",
 			Detail: fmt.Sprintf("unit set legacy key %s names a product row that is gone", in.LegacyID)}
@@ -161,19 +190,41 @@ func (w UnitSetLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) 
 	if err != nil {
 		return "", fmt.Errorf("product: unit set product read: %w", err)
 	}
-	if !seen[lowercaseCode(baseUOM)] {
-		return "", &load.Refusal{Code: "unit_set_base", Field: "base_uom",
-			Detail: "the product's base unit is not inside the set"}
+	// The set's one base row IS the product's own base unit: CITEXT
+	// equality, the database's fold, not a Go spelling of it. A set whose
+	// base row names another member would price every conversion of the
+	// product by the wrong factor (the resolver answers the base quantity
+	// against products.base_uom).
+	var sameBase bool
+	if err := tx.QueryRow(ctx, `SELECT $1::citext = $2::citext`, baseCode, baseUOM).Scan(&sameBase); err != nil {
+		return "", fmt.Errorf("product: unit set base row read: %w", err)
 	}
-	if !seen[lowercaseCode(priceUOM)] {
+	if !sameBase {
+		return "", &load.Refusal{Code: "unit_set_base", Field: "base_uom",
+			Detail: "the set's base row is not the product's base unit"}
+	}
+	// The product's price unit rides inside the set.
+	var priceInSet bool
+	if err := tx.QueryRow(ctx, `SELECT $1::citext = ANY($2::citext[])`, priceUOM, codes).Scan(&priceInSet); err != nil {
+		return "", fmt.Errorf("product: unit set price unit read: %w", err)
+	}
+	if !priceInSet {
 		return "", &load.Refusal{Code: "unit_set_base", Field: "price_uom",
 			Detail: "the product's price unit is not inside the set"}
 	}
-	// No unit removed while a price, break, rule or stock row still
-	// names it: the rows the set drops, checked through the owning
-	// modules' readers and this module's own rounding rules. The refusal
-	// names the field and the legacy key, never the code it would drop.
-	current, err := tx.Query(ctx, `SELECT uom_code::text FROM product_uoms WHERE product_id = $1::uuid`, productID)
+	// No unit removed while a row of the pricing, stock or supplier
+	// families still names it: the rows the set drops, checked through
+	// the owning modules' readers and this module's own rounding rules.
+	// The dropped set is the database's own fold too (CITEXT equality
+	// against the codes the set carries). The refusal names the field and
+	// the legacy key, never the code it would drop.
+	current, err := tx.Query(ctx, `
+		SELECT p.uom_code::text
+		  FROM product_uoms p
+		 WHERE p.product_id = $1::uuid
+		   AND NOT EXISTS (
+		       SELECT 1 FROM unnest($2::citext[]) AS s(code)
+		        WHERE s.code = p.uom_code)`, productID, codes)
 	if err != nil {
 		return "", fmt.Errorf("product: unit set current read: %w", err)
 	}
@@ -184,9 +235,7 @@ func (w UnitSetLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) 
 			current.Close()
 			return "", fmt.Errorf("product: unit set current scan: %w", err)
 		}
-		if !seen[lowercaseCode(code)] {
-			removed = append(removed, code)
-		}
+		removed = append(removed, code)
 	}
 	current.Close()
 	if err := current.Err(); err != nil {
@@ -205,13 +254,13 @@ func (w UnitSetLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) 
 		if w.Pricing == nil {
 			return "", fmt.Errorf("product: the unit set door carries no pricing reader; a removal cannot be checked")
 		}
-		inUse, err := w.Pricing.ProductUnitInUseTx(ctx, tx, productID, code)
+		inUse, err := w.Pricing.ProductUnitInUseTx(ctx, tx, productID, categoryID, code)
 		if err != nil {
 			return "", fmt.Errorf("product: unit set pricing use read: %w", err)
 		}
 		if inUse {
 			return "", &load.Refusal{Code: "unit_in_use", Field: "code",
-				Detail: fmt.Sprintf("unit set legacy key %s drops a unit a price, break, rule or conversion row still names; nothing of the replace stands", in.LegacyID)}
+				Detail: fmt.Sprintf("unit set legacy key %s drops a unit a price, break, rule, promotion or conversion row still names; nothing of the replace stands", in.LegacyID)}
 		}
 		if w.Stock == nil {
 			return "", fmt.Errorf("product: the unit set door carries no stock reader; a removal cannot be checked")
@@ -223,6 +272,17 @@ func (w UnitSetLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) 
 		if inUse {
 			return "", &load.Refusal{Code: "unit_in_use", Field: "code",
 				Detail: fmt.Sprintf("unit set legacy key %s drops a unit a stock row still names; nothing of the replace stands", in.LegacyID)}
+		}
+		if w.Vendor == nil {
+			return "", fmt.Errorf("product: the unit set door carries no vendor reader; a removal cannot be checked")
+		}
+		inUse, err = w.Vendor.ProductUnitInUseTx(ctx, tx, productID, code)
+		if err != nil {
+			return "", fmt.Errorf("product: unit set vendor use read: %w", err)
+		}
+		if inUse {
+			return "", &load.Refusal{Code: "unit_in_use", Field: "code",
+				Detail: fmt.Sprintf("unit set legacy key %s drops a unit a supplier row still sells in; nothing of the replace stands", in.LegacyID)}
 		}
 	}
 	// The replace: the old rows gone, the new rows in, both on the
@@ -289,10 +349,12 @@ func setProduct(in load.Write) (string, *load.Refusal) {
 }
 
 // setRows reads the record's rows: an array of objects, each naming the
-// code, the factor as decimal text or a number, the base flag and, if
-// named, the role hints as text strings. The wire decodes the array as
-// []any of map[string]any; a Go caller through the frame may carry
-// []map[string]any, and both land the same.
+// code, the factor as decimal text (a factor that arrives as a number
+// refuses naming factor_type: the wire re-spells a float64 before any
+// gate sees it, and the re-spelling is where a nineteen digit factor
+// rounds), the base flag and, if named, the role hints as text strings.
+// The wire decodes the array as []any of map[string]any; a Go caller
+// through the frame may carry []map[string]any, and both land the same.
 func setRows(in load.Write) ([]setRowRecord, *load.Refusal) {
 	raw, ok := in.Record["rows"]
 	if !ok || raw == nil {
@@ -323,18 +385,19 @@ func setRows(in load.Write) ([]setRowRecord, *load.Refusal) {
 		row.code, _ = obj["code"].(string)
 		qtyText, isText := obj["qty_in_base"].(string)
 		if !isText {
-			if qtyNum, ok := obj["qty_in_base"].(float64); ok {
-				qtyText = strconv.FormatFloat(qtyNum, 'f', -1, 64)
-			} else {
-				return nil, &load.Refusal{Code: "record_shape", Field: "qty_in_base",
-					Detail: "a row of the set names no factor"}
+			if isNumberSpelling(obj["qty_in_base"]) {
+				return nil, &load.Refusal{Code: "factor_type", Field: "factor_type",
+					Detail: "a row of the set names its factor as a number; the factor arrives as decimal text, which the door reads exactly"}
 			}
+			return nil, &load.Refusal{Code: "record_shape", Field: "qty_in_base",
+				Detail: "a row of the set names no factor"}
 		}
 		row.qty = qtyText
 		if v, ok := obj["is_base"].(bool); ok {
 			row.isBase = v
 		}
-		if hints, ok := obj["role_hints"].([]any); ok {
+		switch hints := obj["role_hints"].(type) {
+		case []any:
 			for _, h := range hints {
 				s, ok := h.(string)
 				if !ok {
@@ -343,22 +406,27 @@ func setRows(in load.Write) ([]setRowRecord, *load.Refusal) {
 				}
 				row.roleHints = append(row.roleHints, s)
 			}
+		case []string:
+			row.roleHints = hints
 		}
 		out = append(out, row)
 	}
 	return out, nil
 }
 
-// lowercaseCode folds a unit code the way CITEXT compares: the case
-// fold for the set's own duplicate and membership checks.
-func lowercaseCode(code string) string {
-	b := []byte(code)
-	for i := range b {
-		if b[i] >= 'A' && b[i] <= 'Z' {
-			b[i] += 'a' - 'A'
-		}
+// isNumberSpelling reports a factor that arrived as a number rather
+// than decimal text: the wire decodes a JSON number as float64, and a
+// Go caller through the frame may carry any numeric type. The door
+// refuses the number instead of re-spelling it, because the
+// re-spelling rounds before any gate runs.
+func isNumberSpelling(v any) bool {
+	switch v.(type) {
+	case float64, float32, json.Number,
+		int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64:
+		return true
 	}
-	return string(b)
+	return false
 }
 
 // newBigRatOne is the exact one the base factor compares against.

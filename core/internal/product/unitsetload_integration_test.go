@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/load"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/purchasing"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -41,12 +42,14 @@ const (
 	fxSetProdTwo = "4642a800-0000-4000-8000-00000000d212"
 )
 
-// fakeUnitUseReader is the seam double both readers stand behind in this
-// file: it records the questions the writer asks and answers from a
-// switch. The real implementations (pricing.LoadedUnitUseReader and
-// inventory.LoadedUnitUseReader) carry their own suites beside their own
-// tables; the wiring test in cmd/core proves the real pair is what the
-// door is built with.
+// fakeUnitUseReader is the seam double the stock and vendor readers
+// stand behind in this file: it records the questions the writer asks
+// and answers from a switch. fakePricingUseReader is the pricing seam's
+// double, its question carrying the product's category beside the
+// product. The real implementations (pricing.LoadedUnitUseReader,
+// inventory.LoadedUnitUseReader, purchasing.LoadedUnitUseReader) carry
+// their own suites beside their own tables; the wiring test in cmd/core
+// proves the real triple is what the door is built with.
 type fakeUnitUseReader struct {
 	inUse bool
 	asked []string
@@ -57,13 +60,37 @@ func (f *fakeUnitUseReader) ProductUnitInUseTx(_ context.Context, _ pgx.Tx, prod
 	return f.inUse, nil
 }
 
-// unitSetEnv is one test's fixtures: the pool and a door over the seam
-// doubles.
-type unitSetEnv struct {
-	pool *pgxpool.Pool
-	door *load.Door
-	uses *fakeUnitUseReader
+type fakePricingUseReader struct {
+	inUse bool
+	asked []string
 }
+
+func (f *fakePricingUseReader) ProductUnitInUseTx(_ context.Context, _ pgx.Tx, productID string, categoryID *string, uom string) (bool, error) {
+	cat := ""
+	if categoryID != nil {
+		cat = *categoryID
+	}
+	f.asked = append(f.asked, productID+":"+cat+":"+uom)
+	return f.inUse, nil
+}
+
+// unitSetEnv is one test's fixtures: the pool, a door over the seam
+// doubles, the product's category id.
+type unitSetEnv struct {
+	pool       *pgxpool.Pool
+	door       *load.Door
+	uses       *fakeUnitUseReader
+	puses      *fakePricingUseReader
+	categoryID string
+}
+
+// fxSetCategoryID and fxSetParentCategoryID are the fixture product's
+// category and its parent, invented.
+const (
+	fxSetCategoryID      = "4642a800-0000-4000-8000-00000000d2c1"
+	fxSetParentCategory  = "4642a800-0000-4000-8000-00000000d2c0"
+	fxSetProdOneCategory = fxSetCategoryID
+)
 
 func unitSetSetup(t *testing.T) *unitSetEnv {
 	t.Helper()
@@ -78,6 +105,8 @@ func unitSetSetup(t *testing.T) *unitSetEnv {
 		{`DELETE FROM product_uoms WHERE product_id = ANY($1::uuid[])`, []any{[]string{fxSetProdOne, fxSetProdTwo}}},
 		{`DELETE FROM products WHERE id = ANY($1::uuid[])`, []any{[]string{fxSetProdOne, fxSetProdTwo}}},
 		{`DELETE FROM product_rounding_rules WHERE product_id = ANY($1::uuid[])`, []any{[]string{fxSetProdOne, fxSetProdTwo}}},
+		{`DELETE FROM products WHERE category_id = $1::uuid`, []any{fxSetCategoryID}},
+		{`DELETE FROM product_categories WHERE id = ANY($1::uuid[])`, []any{[]string{fxSetCategoryID, fxSetParentCategory}}},
 	} {
 		if _, err := pool.Exec(ctx, stmt.sql, stmt.args...); err != nil {
 			t.Fatalf("unit set fixture clean: %v", err)
@@ -90,15 +119,29 @@ func unitSetSetup(t *testing.T) *unitSetEnv {
 		_, _ = pool.Exec(ctx, `DELETE FROM product_uoms WHERE product_id = ANY($1::uuid[])`, []string{fxSetProdOne, fxSetProdTwo})
 		_, _ = pool.Exec(ctx, `DELETE FROM products WHERE id = ANY($1::uuid[])`, []string{fxSetProdOne, fxSetProdTwo})
 		_, _ = pool.Exec(ctx, `DELETE FROM product_rounding_rules WHERE product_id = ANY($1::uuid[])`, []string{fxSetProdOne, fxSetProdTwo})
+		_, _ = pool.Exec(ctx, `DELETE FROM products WHERE category_id = $1::uuid`, fxSetCategoryID)
+		_, _ = pool.Exec(ctx, `DELETE FROM product_categories WHERE id = ANY($1::uuid[])`, []string{fxSetCategoryID, fxSetParentCategory})
 		pool.Close()
 	})
+	// The fixture category stands under a parent, so the category
+	// question carries a real answer.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO product_categories (id, code, name)
+		VALUES ($1::uuid, 'FX-SET-CAT-P', 'Fixture Set Category Parent')`, fxSetParentCategory); err != nil {
+		t.Fatalf("fixture parent category: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO product_categories (id, code, name, parent_id)
+		VALUES ($1::uuid, 'FX-SET-CAT', 'Fixture Set Category', $2::uuid)`, fxSetCategoryID, fxSetParentCategory); err != nil {
+		t.Fatalf("fixture category: %v", err)
+	}
 	// Two fixture products, base SF, price PLT, each with a seeded set of
-	// SF (base), PLT and BOX.
+	// SF (base), PLT and BOX, in the fixture category.
 	for _, pid := range []string{fxSetProdOne, fxSetProdTwo} {
 		if _, err := pool.Exec(ctx, `
-			INSERT INTO products (id, sku, name, base_uom, price_uom, org_id)
-			VALUES ($1::uuid, $2, 'Fixture Set Product', 'SF', 'PLT', $3::uuid)`,
-			pid, "FX-SET-"+pid[len(pid)-4:], fxSetOrgID); err != nil {
+			INSERT INTO products (id, sku, name, base_uom, price_uom, org_id, category_id)
+			VALUES ($1::uuid, $2, 'Fixture Set Product', 'SF', 'PLT', $3::uuid, $4::uuid)`,
+			pid, "FX-SET-"+pid[len(pid)-4:], fxSetOrgID, fxSetCategoryID); err != nil {
 			t.Fatalf("fixture product: %v", err)
 		}
 		for _, row := range []struct {
@@ -128,12 +171,15 @@ func unitSetSetup(t *testing.T) *unitSetEnv {
 		}
 	}
 	uses := &fakeUnitUseReader{}
+	puses := &fakePricingUseReader{}
 	store := load.NewStore(pool)
 	return &unitSetEnv{
 		pool: pool,
 		door: load.NewDoor(store, load.KindUnitSet,
-			UnitSetLoadWriter{Pricing: uses, Stock: uses}, &loadAuditSpy{}),
-		uses: uses,
+			UnitSetLoadWriter{Pricing: puses, Stock: uses, Vendor: uses}, &loadAuditSpy{}),
+		uses:       uses,
+		puses:      puses,
+		categoryID: fxSetProdOneCategory,
 	}
 }
 
@@ -383,40 +429,54 @@ func TestUnitSetRefusesARemovalAReaderNames(t *testing.T) {
 		 WHERE org_id = $1::uuid AND source_system = $2 AND legacy_id = 'US-1'`, fxSetOrgID, fxSetSource); err != nil {
 		t.Fatalf("drop hash plant: %v", err)
 	}
-	// The reader names BOX: the drop refuses as unit_in_use, naming the
-	// field, and nothing of the replace stands.
+	// Each seam in turn names BOX: the drop refuses as unit_in_use,
+	// naming the field, and nothing of the replace stands. The writer
+	// short circuits at the first naming seam, so the rounds prove each
+	// seam's ask: the pricing ask carries the product's category beside
+	// the product (the category scoped families ride the same ask), the
+	// stock and vendor asks the dropped code alone.
+	askedWant := fxSetProdOne + ":BOX"
+	askedCategoryWant := fxSetProdOne + ":" + e.categoryID + ":BOX"
+	e.uses.asked = nil
+	e.puses.asked = nil
+	e.puses.inUse = true
+	r, err = e.door.UpsertBatch(ctx, load.Batch{OrgID: fxSetOrgID, SourceSystem: fxSetSource,
+		BatchID: "b-set-drop-blocked-pricing", Caller: fxSetActorID, Items: []load.Item{dropsBOX}})
+	if err != nil {
+		t.Fatalf("pricing blocked drop batch: %v", err)
+	}
+	if o := setOutcome(t, r, "US-1"); o.Status != load.OutcomeRefused || o.Reason != "unit_in_use" || o.Field != "code" {
+		t.Fatalf("the pricing blocked drop answered %+v, want unit_in_use on code", o)
+	}
+	if len(e.puses.asked) != 1 || e.puses.asked[0] != askedCategoryWant {
+		t.Fatalf("the writer asked the pricing seam %v, want the dropped code with the product's category (%s)", e.puses.asked, askedCategoryWant)
+	}
+	if len(e.uses.asked) != 0 {
+		t.Fatalf("the pricing seam named the unit and the writer still asked %v", e.uses.asked)
+	}
+	e.puses.inUse = false
 	e.uses.inUse = true
 	e.uses.asked = nil
 	r, err = e.door.UpsertBatch(ctx, load.Batch{OrgID: fxSetOrgID, SourceSystem: fxSetSource,
-		BatchID: "b-set-drop-blocked", Caller: fxSetActorID, Items: []load.Item{dropsBOX}})
+		BatchID: "b-set-drop-blocked-stock", Caller: fxSetActorID, Items: []load.Item{dropsBOX}})
 	if err != nil {
-		t.Fatalf("blocked drop batch: %v", err)
+		t.Fatalf("stock blocked drop batch: %v", err)
 	}
-	o := setOutcome(t, r, "US-1")
-	if o.Status != load.OutcomeRefused || o.Reason != "unit_in_use" {
-		t.Fatalf("the blocked drop answered %+v, want unit_in_use", o)
+	if o := setOutcome(t, r, "US-1"); o.Status != load.OutcomeRefused || o.Reason != "unit_in_use" {
+		t.Fatalf("the stock blocked drop answered %+v, want unit_in_use", o)
 	}
-	if o.Field != "code" {
-		t.Fatalf("the blocked drop names field %q, want code", o.Field)
+	if len(e.uses.asked) != 1 || e.uses.asked[0] != askedWant {
+		t.Fatalf("the writer asked the stock or vendor seam %v, want the dropped code %s", e.uses.asked, askedWant)
 	}
+	e.uses.inUse = false
 	got := e.setCodes(t, fxSetProdOne)
 	if len(got) != 3 {
-		t.Fatalf("the blocked drop left %d rows: %+v, want the three seeded rows untouched", len(got), got)
-	}
-	askedWant := fxSetProdOne + ":BOX"
-	found := false
-	for _, a := range e.uses.asked {
-		if a == askedWant {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("the writer asked the readers %v, want the dropped code %s", e.uses.asked, askedWant)
+		t.Fatalf("the blocked drops left %d rows: %+v, want the three seeded rows untouched", len(got), got)
 	}
 	// The readers answer clear: the same drop lands, and the kept rows
 	// are never asked about.
-	e.uses.inUse = false
 	e.uses.asked = nil
+	e.puses.asked = nil
 	r, err = e.door.UpsertBatch(ctx, load.Batch{OrgID: fxSetOrgID, SourceSystem: fxSetSource,
 		BatchID: "b-set-drop-free", Caller: fxSetActorID, Items: []load.Item{dropsBOX}})
 	if err != nil {
@@ -432,6 +492,191 @@ func TestUnitSetRefusesARemovalAReaderNames(t *testing.T) {
 	}
 }
 
+// TestUnitSetBaseRowIsTheProductsBaseUnit: the set's one base row must
+// be the product's own base unit (products.base_uom, compared the way
+// CITEXT compares), not merely a set whose base and price units are
+// members. The reviewer's probe (a BOX base row on a product whose base
+// is SF) refuses; a loaded set answers one for the base unit's own
+// conversion.
+func TestUnitSetBaseRowIsTheProductsBaseUnit(t *testing.T) {
+	e := unitSetSetup(t)
+	ctx := context.Background()
+	// The probe: BOX carries the base row, SF sits inside at a fraction.
+	// Every narrower check passes this set; only the base row equality
+	// refuses it.
+	probe := setItem("US-1",
+		setRow("BOX", "1", true), setRow("SF", "0.5", false), setRow("PLT", "30", false))
+	r, err := e.door.UpsertBatch(ctx, load.Batch{OrgID: fxSetOrgID, SourceSystem: fxSetSource,
+		BatchID: "b-set-base-probe", Caller: fxSetActorID, Items: []load.Item{probe}})
+	if err != nil {
+		t.Fatalf("base probe batch: %v", err)
+	}
+	o := setOutcome(t, r, "US-1")
+	if o.Status != load.OutcomeRefused || o.Reason != "unit_set_base" || o.Field != "base_uom" {
+		t.Fatalf("the foreign base row answered %+v, want refused as unit_set_base on base_uom", o)
+	}
+	// Nothing of the refused replace stands: the seeded set keeps its own
+	// base row, and the base unit's own conversion answers one.
+	got := e.setCodes(t, fxSetProdOne)
+	if got["SF"] != "1.00000000" {
+		t.Fatalf("after the refusal the seeded base row is %+v, want SF 1.00000000 untouched", got)
+	}
+	factor, err := NewRepository(e.pool).ConvertUOM(ctx, fxSetProdOne, "SF")
+	if err != nil {
+		t.Fatalf("base unit conversion: %v", err)
+	}
+	if factor != 1 {
+		t.Fatalf("the product's own base unit converts by %v, want 1", factor)
+	}
+	// The honest set, the base row the product's own, lands.
+	r, err = e.door.UpsertBatch(ctx, load.Batch{OrgID: fxSetOrgID, SourceSystem: fxSetSource,
+		BatchID: "b-set-base-good", Caller: fxSetActorID,
+		Items: []load.Item{setItem("US-1",
+			setRow("SF", "1", true), setRow("PLT", "30", false), setRow("BOX", "0.5", false))}})
+	if err != nil {
+		t.Fatalf("honest base batch: %v", err)
+	}
+	if o := setOutcome(t, r, "US-1"); o.Status != load.OutcomeCreated {
+		t.Fatalf("the honest set answered %+v, want created (the first submission that stands)", o)
+	}
+	factor, err = NewRepository(e.pool).ConvertUOM(ctx, fxSetProdOne, "SF")
+	if err != nil || factor != 1 {
+		t.Fatalf("after the honest set the base unit converts by %v (%v), want 1", factor, err)
+	}
+}
+
+// TestUnitSetRefusesANumberFactor: the factor arrives as decimal text;
+// a JSON number is refused naming factor_type, never re-spelled into
+// text and never stored rounded. The reviewer's nineteen significant
+// digit number is the probe.
+func TestUnitSetRefusesANumberFactor(t *testing.T) {
+	e := unitSetSetup(t)
+	ctx := context.Background()
+	it := setItem("US-1",
+		setRow("SF", "1", true),
+		map[string]any{"code": "PLT", "qty_in_base": float64(12345678901.12345678), "is_base": false})
+	r, err := e.door.UpsertBatch(ctx, load.Batch{OrgID: fxSetOrgID, SourceSystem: fxSetSource,
+		BatchID: "b-set-numfactor", Caller: fxSetActorID, Items: []load.Item{it}})
+	if err != nil {
+		t.Fatalf("number factor batch: %v", err)
+	}
+	o := setOutcome(t, r, "US-1")
+	if o.Status != load.OutcomeRefused || o.Reason != "factor_type" || o.Field != "factor_type" {
+		t.Fatalf("the numeric factor answered %+v, want refused as factor_type on factor_type", o)
+	}
+	for _, digit := range []string{"12345678901", "123457", "30"} {
+		if strings.Contains(o.Detail, digit) {
+			t.Fatalf("the numeric factor refusal carries a value: %q", o.Detail)
+		}
+	}
+	got := e.setCodes(t, fxSetProdOne)
+	if got["PLT"] != "60.00000000" {
+		t.Fatalf("the refused number left PLT %+v, want the seeded 60.00000000 untouched", got["PLT"])
+	}
+}
+
+// TestUnitSetRefusesAFactorTheResolverWouldCorrupt: the stored decimal
+// text must survive the representation the price resolver reads (the
+// float parse of repository.go ConvertUOM). A factor of more than
+// fifteen significant digits passes the scale gate and the column would
+// hold it exactly, and the door refuses it as a round trip failure
+// naming the legacy key, never a value.
+func TestUnitSetRefusesAFactorTheResolverWouldCorrupt(t *testing.T) {
+	e := unitSetSetup(t)
+	ctx := context.Background()
+	it := setItem("US-1",
+		setRow("SF", "1", true),
+		map[string]any{"code": "PLT", "qty_in_base": "12345678901.12345678", "is_base": false})
+	r, err := e.door.UpsertBatch(ctx, load.Batch{OrgID: fxSetOrgID, SourceSystem: fxSetSource,
+		BatchID: "b-set-floattrip", Caller: fxSetActorID, Items: []load.Item{it}})
+	if err != nil {
+		t.Fatalf("float trip batch: %v", err)
+	}
+	o := setOutcome(t, r, "US-1")
+	if o.Status != load.OutcomeRefused || o.Reason != "round_trip" {
+		t.Fatalf("the wide factor answered %+v, want refused as round_trip: the resolver reads it back differently", o)
+	}
+	if !strings.Contains(o.Detail, "US-1") {
+		t.Fatalf("the round trip refusal names no legacy key: %q", o.Detail)
+	}
+	if strings.Contains(o.Detail, "12345678901") {
+		t.Fatalf("the round trip refusal carries a value: %q", o.Detail)
+	}
+	got := e.setCodes(t, fxSetProdOne)
+	if got["PLT"] != "60.00000000" {
+		t.Fatalf("the refused factor left PLT %+v, want the seeded 60.00000000 untouched", got["PLT"])
+	}
+}
+
+// TestUnitSetRefusesARemovalTheVendorSkuNames: the purchasing module's
+// live supplier rows name units too. A unit a vendor sku sells in is
+// refused the drop while the sku stands and is free once it goes, read
+// by the real purchasing reader at the same seam (its own suite proves
+// the read beside its table; this proves the door consults it).
+func TestUnitSetRefusesARemovalTheVendorSkuNames(t *testing.T) {
+	e := unitSetSetup(t)
+	ctx := context.Background()
+	vendorDoor := load.NewDoor(load.NewStore(e.pool), load.KindUnitSet,
+		UnitSetLoadWriter{Pricing: e.puses, Stock: e.uses, Vendor: purchasing.LoadedUnitUseReader{}},
+		&loadAuditSpy{})
+	var vendorID string
+	if err := e.pool.QueryRow(ctx, `SELECT id FROM vendors ORDER BY vendor_no LIMIT 1`).Scan(&vendorID); err != nil {
+		t.Fatalf("fixture vendor read: %v", err)
+	}
+	if _, err := e.pool.Exec(ctx, `
+		INSERT INTO purchasing_vendor_skus (vendor_id, product_id, vendor_sku, vendor_uom, qty_per_vendor_uom)
+		VALUES ($1::uuid, $2::uuid, 'FXUSE-SKU', 'BOX', 20)`, vendorID, fxSetProdOne); err != nil {
+		t.Fatalf("plant vendor sku: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = e.pool.Exec(ctx, `DELETE FROM purchasing_vendor_skus WHERE product_id = $1::uuid`, fxSetProdOne)
+	})
+	// The set stands loaded whole, so the next submission is a real drop.
+	r, err := vendorDoor.UpsertBatch(ctx, load.Batch{OrgID: fxSetOrgID, SourceSystem: fxSetSource,
+		BatchID: "b-set-vendor-seed", Caller: fxSetActorID,
+		Items: []load.Item{setItem("US-1",
+			setRow("SF", "1", true), setRow("PLT", "60", false), setRow("BOX", "20", false))}})
+	if err != nil {
+		t.Fatalf("vendor seed batch: %v", err)
+	}
+	if o := setOutcome(t, r, "US-1"); o.Status != load.OutcomeCreated {
+		t.Fatalf("the vendor seed answered %+v, want created", o)
+	}
+	if _, err := e.pool.Exec(ctx,
+		`UPDATE load_key_registry SET content_hash = repeat('f', 64)
+		 WHERE org_id = $1::uuid AND source_system = $2 AND legacy_id = 'US-1'`, fxSetOrgID, fxSetSource); err != nil {
+		t.Fatalf("vendor drop hash plant: %v", err)
+	}
+	// The load drops BOX, which the vendor sku sells in: the drop refuses
+	// and nothing of the replace stands.
+	dropsBOX := setItem("US-1", setRow("SF", "1", true), setRow("PLT", "60", false))
+	r, err = vendorDoor.UpsertBatch(ctx, load.Batch{OrgID: fxSetOrgID, SourceSystem: fxSetSource,
+		BatchID: "b-set-vendor-blocked", Caller: fxSetActorID, Items: []load.Item{dropsBOX}})
+	if err != nil {
+		t.Fatalf("vendor blocked batch: %v", err)
+	}
+	o := setOutcome(t, r, "US-1")
+	if o.Status != load.OutcomeRefused || o.Reason != "unit_in_use" {
+		t.Fatalf("the vendor sku drop answered %+v, want refused as unit_in_use", o)
+	}
+	got := e.setCodes(t, fxSetProdOne)
+	if len(got) != 3 {
+		t.Fatalf("the blocked drop left %d rows, want the three seeded rows untouched", len(got))
+	}
+	// The sku goes: the same drop lands.
+	if _, err := e.pool.Exec(ctx, `DELETE FROM purchasing_vendor_skus WHERE product_id = $1::uuid`, fxSetProdOne); err != nil {
+		t.Fatalf("drop vendor sku: %v", err)
+	}
+	r, err = vendorDoor.UpsertBatch(ctx, load.Batch{OrgID: fxSetOrgID, SourceSystem: fxSetSource,
+		BatchID: "b-set-vendor-free", Caller: fxSetActorID, Items: []load.Item{dropsBOX}})
+	if err != nil {
+		t.Fatalf("vendor free batch: %v", err)
+	}
+	if o := setOutcome(t, r, "US-1"); o.Status != load.OutcomeUpdated {
+		t.Fatalf("the free drop answered %+v, want updated", o)
+	}
+}
+
 // TestUnitSetPoolFourThreeContendersEveryCallOnTheBatchTransaction is
 // the pool 4 leg for the unit set door (decision row 786).
 func TestUnitSetPoolFourThreeContendersEveryCallOnTheBatchTransaction(t *testing.T) {
@@ -444,9 +689,10 @@ func TestUnitSetPoolFourThreeContendersEveryCallOnTheBatchTransaction(t *testing
 	}
 	defer held.Release()
 	uses := &fakeUnitUseReader{}
+	puses := &fakePricingUseReader{}
 	store := load.NewStore(pool)
 	door := load.NewDoor(store, load.KindUnitSet,
-		UnitSetLoadWriter{Pricing: uses, Stock: uses}, &loadAuditSpy{})
+		UnitSetLoadWriter{Pricing: puses, Stock: uses, Vendor: uses}, &loadAuditSpy{})
 	items := []load.Item{setItem("US-1", setRow("SF", "1", true), setRow("PLT", "60", false))}
 	var wg sync.WaitGroup
 	errs := make([]error, 3)
@@ -478,6 +724,61 @@ func TestUnitSetPoolFourThreeContendersEveryCallOnTheBatchTransaction(t *testing
 	}
 	if totalCreated != 1 {
 		t.Fatalf("%d creates across the contenders, want exactly one name created", totalCreated)
+	}
+}
+
+// straySetWriter is the deliberate violation, the pool leg's bite twin:
+// a writer that reaches for the pool while the batch holds its
+// transaction. The pool leg is only worth its name if this one fails it.
+type straySetWriter struct {
+	pool  *pgxpool.Pool
+	inner UnitSetLoadWriter
+}
+
+func (w straySetWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (string, error) {
+	if _, err := w.pool.Exec(ctx, `SELECT 1`); err != nil {
+		return "", err
+	}
+	return w.inner.Apply(ctx, tx, in)
+}
+
+// TestUnitSetPoolFourBitesAWriterThatUsesThePool is the bite twin of the
+// set door's pool 4 leg: the same three contenders over a pool of four,
+// the suite holding the fourth connection, against a writer that makes
+// one stray pool call beside the transaction. Every contender fails
+// fast, and none hangs on the held connection.
+func TestUnitSetPoolFourBitesAWriterThatUsesThePool(t *testing.T) {
+	unitSetSetup(t)
+	pool := poolFour(t)
+	ctx := context.Background()
+	held, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("hold one connection: %v", err)
+	}
+	defer held.Release()
+	uses := &fakeUnitUseReader{}
+	puses := &fakePricingUseReader{}
+	door := load.NewDoor(load.NewStore(pool), load.KindUnitSet,
+		straySetWriter{pool: pool, inner: UnitSetLoadWriter{Pricing: puses, Stock: uses, Vendor: uses}},
+		&loadAuditSpy{})
+	var wg sync.WaitGroup
+	errs := make([]error, 3)
+	for k := 0; k < 3; k++ {
+		wg.Add(1)
+		go func(k int) {
+			defer wg.Done()
+			cctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			defer cancel()
+			_, errs[k] = door.UpsertBatch(cctx, load.Batch{OrgID: fxSetOrgID,
+				SourceSystem: fxSetSource, BatchID: fmt.Sprintf("b-set-stray-%d", k), Caller: fxSetActorID,
+				Items: []load.Item{setItem("US-1", setRow("SF", "1", true), setRow("PLT", "60", false))}})
+		}(k)
+	}
+	wg.Wait()
+	for k, err := range errs {
+		if err == nil {
+			t.Fatalf("contender %d finished: the pool 4 leg missed a writer that uses the pool", k)
+		}
 	}
 }
 

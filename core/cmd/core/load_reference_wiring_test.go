@@ -185,6 +185,8 @@ func TestSubmitDoorsServeEachDoorEndToEndThroughTheGate(t *testing.T) {
 			LegacyID string `json:"legacy_id"`
 			Status   string `json:"status"`
 			HHID     string `json:"hh_id"`
+			Reason   *string `json:"reason"`
+			Field    *string `json:"field"`
 		}
 	}
 	put := func(route, body string) answer {
@@ -272,14 +274,25 @@ func TestSubmitDoorsServeEachDoorEndToEndThroughTheGate(t *testing.T) {
 		t.Fatalf("plant set product name: %v", err)
 	}
 	a = put("/api/v1/load/products/unit-sets",
-		`{"source_system":"wiredfx","batch_id":"b-w-6","items":[{"legacy_id":"WUS-1","record":{"rows":[{"code":"EA","qty_in_base":"1","is_base":true},{"code":"PC","qty_in_base":1,"is_base":false}]},"requires":[{"kind":"product","legacy_id":"WUP-1"}]}]}`)
+		`{"source_system":"wiredfx","batch_id":"b-w-6","items":[{"legacy_id":"WUS-1","record":{"rows":[{"code":"EA","qty_in_base":"1","is_base":true},{"code":"PC","qty_in_base":"1","is_base":false}]},"requires":[{"kind":"product","legacy_id":"WUP-1"}]}]}`)
 	if statuses(a) != "WUS-1=created;" {
 		t.Fatalf("the unit set door answered %s, want created", statuses(a))
 	}
 	a = put("/api/v1/load/products/unit-sets",
-		`{"source_system":"wiredfx","batch_id":"b-w-6r","items":[{"legacy_id":"WUS-1","record":{"rows":[{"code":"EA","qty_in_base":"1","is_base":true},{"code":"PC","qty_in_base":1,"is_base":false}]},"requires":[{"kind":"product","legacy_id":"WUP-1"}]}]}`)
+		`{"source_system":"wiredfx","batch_id":"b-w-6r","items":[{"legacy_id":"WUS-1","record":{"rows":[{"code":"EA","qty_in_base":"1","is_base":true},{"code":"PC","qty_in_base":"1","is_base":false}]},"requires":[{"kind":"product","legacy_id":"WUP-1"}]}]}`)
 	if statuses(a) != "WUS-1=unchanged;" {
 		t.Fatalf("the unit set door replay answered %s, want unchanged", statuses(a))
+	}
+	// A factor that arrives as a JSON number refuses at the door naming
+	// factor_type: the factor is decimal text only, and the wire's float
+	// re-spelling never touches it.
+	a = put("/api/v1/load/products/unit-sets",
+		`{"source_system":"wiredfx","batch_id":"b-w-6n","items":[{"legacy_id":"WUS-NUM","record":{"rows":[{"code":"EA","qty_in_base":"1","is_base":true},{"code":"PC","qty_in_base":2,"is_base":false}]},"requires":[{"kind":"product","legacy_id":"WUP-1"}]}]}`)
+	if statuses(a) != "WUS-NUM=refused;" {
+		t.Fatalf("the numeric factor answered %s, want refused", statuses(a))
+	}
+	if a.Items[0].Reason == nil || *a.Items[0].Reason != "factor_type" || a.Items[0].Field == nil || *a.Items[0].Field != "factor_type" {
+		t.Fatalf("the numeric factor refused as %v on %v, want factor_type on factor_type", a.Items[0].Reason, a.Items[0].Field)
 	}
 }
 

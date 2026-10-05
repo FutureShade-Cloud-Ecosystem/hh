@@ -17,13 +17,19 @@ import (
 
 // LoadedUnitUseReader answers the product unit set door's removal
 // question: the list price, the pricing rules, the quantity break
-// headers and their items, and the sales conversion edges, any row of
-// those naming the unit for the product is a removal refused.
+// headers and their items, the promotions' fixed prices, the clearance
+// prices, and the sales conversion edges, any row of those naming the
+// unit for the product is a removal refused. The category scoped rows
+// are read the way the price resolver matches them (repository.go
+// MatchingRules and QuantityBreaksFor): category_id equal to the
+// product's category, exactly, no walk up the tree, the product scoped
+// rows answered by the product itself.
 type LoadedUnitUseReader struct{}
 
-// ProductUnitInUseTx reports whether any pricing row of productID names
-// uom, inside the caller's transaction.
-func (LoadedUnitUseReader) ProductUnitInUseTx(ctx context.Context, tx pgx.Tx, productID, uom string) (bool, error) {
+// ProductUnitInUseTx reports whether any pricing row of productID, or
+// of the product's category, names uom, inside the caller's
+// transaction. A nil categoryID reads the product scoped families only.
+func (LoadedUnitUseReader) ProductUnitInUseTx(ctx context.Context, tx pgx.Tx, productID string, categoryID *string, uom string) (bool, error) {
 	var named bool
 	err := tx.QueryRow(ctx, `
 		SELECT EXISTS (
@@ -33,17 +39,34 @@ func (LoadedUnitUseReader) ProductUnitInUseTx(ctx context.Context, tx pgx.Tx, pr
 			SELECT 1 FROM pricing_rules
 			 WHERE product_id = $1::uuid AND price_uom = $2
 		) OR EXISTS (
+			SELECT 1 FROM pricing_rules
+			 WHERE product_id IS NULL AND category_id = $3::uuid AND price_uom = $2
+		) OR EXISTS (
 			SELECT 1 FROM quantity_break_headers
 			 WHERE product_id = $1::uuid AND threshold_uom = $2
+		) OR EXISTS (
+			SELECT 1 FROM quantity_break_headers
+			 WHERE product_id IS NULL AND category_id = $3::uuid AND threshold_uom = $2
 		) OR EXISTS (
 			SELECT 1
 			  FROM quantity_break_items qi
 			  JOIN quantity_break_headers qh ON qh.id = qi.header_id
 			 WHERE qh.product_id = $1::uuid AND qi.price_uom = $2
 		) OR EXISTS (
+			SELECT 1
+			  FROM quantity_break_items qi
+			  JOIN quantity_break_headers qh ON qh.id = qi.header_id
+			 WHERE qh.product_id IS NULL AND qh.category_id = $3::uuid AND qi.price_uom = $2
+		) OR EXISTS (
+			SELECT 1 FROM pricing_promotions
+			 WHERE product_id = $1::uuid AND price_uom = $2
+		) OR EXISTS (
+			SELECT 1 FROM pricing_clearance_items
+			 WHERE product_id = $1::uuid AND price_uom = $2
+		) OR EXISTS (
 			SELECT 1 FROM pricing_uom_conversions
 			 WHERE product_id = $1::uuid AND (from_uom = $2 OR to_uom = $2)
-		)`, productID, uom).Scan(&named)
+		)`, productID, uom, categoryID).Scan(&named)
 	if err != nil {
 		return false, fmt.Errorf("pricing: loaded unit use read: %w", err)
 	}

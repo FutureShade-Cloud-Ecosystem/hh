@@ -81,14 +81,43 @@ func TestUnitFactorRefusesColumnOverflow(t *testing.T) {
 	}
 }
 
-// TestDecimalRoundTripHoldsOneSellUnitToBaseAndBack: every conversion the
-// door accepts survives one sell unit to base and back, exactly, in
-// decimal arithmetic. A float implementation leaves binary noise and this
-// test fails it.
-func TestDecimalRoundTripHoldsOneSellUnitToBaseAndBack(t *testing.T) {
-	for _, f := range []string{"1", "2", "60", "0.66", "0.12345678", "9.87654321"} {
+// TestDecimalRoundTripHoldsTheResolverRead: every factor the door
+// accepts survives the representation the price resolver reads
+// (repository.go ConvertUOM parses the stored column with
+// strconv.ParseFloat): the factor spelled at the column's scale eight,
+// read as float64 and spelled back at scale eight, is the stored text
+// again. Real dealer factors survive it: a pallet of sixty, a
+// sixteenth, a coverage factor of one hundred and forty four, a twelve
+// digit whole with a short fraction.
+func TestDecimalRoundTripHoldsTheResolverRead(t *testing.T) {
+	for _, f := range []string{"1", "2", "60", "0.0625", "144", "0.66", "0.12345678", "9.87654321", "1234567890.25"} {
 		if refused := decimalRoundTrip(f); refused != nil {
-			t.Fatalf("factor %s failed the decimal round trip: %v", f, refused)
+			t.Fatalf("factor %s failed the round trip: %v", f, refused)
+		}
+	}
+}
+
+// TestDecimalRoundTripRefusesWhatTheResolverWouldCorrupt: a factor of
+// more than fifteen significant digits passes the scale gate and the
+// column would hold it exactly, but the resolver's float read reads it
+// back differently; the door refuses it rather than storing a factor
+// the resolver reads as another number. Every case in this table parses
+// clean through the factor gate alone, which is what makes the table
+// the proof the round trip refuses where the scale gate would pass.
+func TestDecimalRoundTripRefusesWhatTheResolverWouldCorrupt(t *testing.T) {
+	for _, f := range []string{"12345678901.12345678", "99999999999.99999999", "11111111111.11111111"} {
+		if _, refused := parseUnitFactor(f); refused != nil {
+			t.Fatalf("table fault: %s must pass the factor gate for this table to mean anything", f)
+		}
+		refused := decimalRoundTrip(f)
+		if refused == nil {
+			t.Fatalf("factor %s passed the round trip: the resolver reads it back differently and the door must refuse it", f)
+		}
+		if refused.Code != "round_trip" {
+			t.Fatalf("the refusal code is %q, want round_trip", refused.Code)
+		}
+		if refused.Field != "qty_in_base" {
+			t.Fatalf("the refusal names field %q, want qty_in_base", refused.Field)
 		}
 	}
 }
