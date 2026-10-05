@@ -482,6 +482,9 @@ func transitionCases() []transitionCase {
 		{"StampVoidDeclined", []string{AttemptVoiding}, AttemptVoidDeclined, func(s *Store, _ *attemptFx, id, _ string) (Attempt, bool, error) {
 			return s.StampVoidDeclined(ctx, id, "declined")
 		}},
+		{"StampLateCapture", []string{AttemptUnknown, AttemptResolved}, AttemptVoiding, func(s *Store, _ *attemptFx, id, _ string) (Attempt, bool, error) {
+			return s.StampLateCapture(ctx, id, "trans-late", "A")
+		}},
 		{"BindTx", []string{AttemptCaptured}, AttemptBound, func(s *Store, fx *attemptFx, id, _ string) (Attempt, bool, error) {
 			pay := fx.newPayment()
 			tx, err := s.pool.Begin(ctx)
@@ -671,6 +674,61 @@ func TestAttempts_ResolvePairing(t *testing.T) {
 	fx.force(u.ID, AttemptUnknown)
 	if _, ok, err := fx.store.Resolve(ctx, u.ID, ResolutionNotCharged, "no charge on the settlement report", fx.user); err != nil || !ok {
 		t.Fatalf("UNKNOWN with NOT_CHARGED: ok=%v err=%v", ok, err)
+	}
+}
+
+// A late capture answer over a row the manager already closed must drop neither story: the move to
+// VOIDING carries the late answer's ref (the money is real and the caller reverses it next) and keeps
+// the manager's resolution and note as text, because the table holds the resolution columns on a
+// RESOLVED row only (cca_resolution_only_on_resolved), so the move clears them from the row.
+func TestAttempts_LateCaptureOverAResolvedRowKeepsTheManagerDecision(t *testing.T) {
+	fx := newAttemptFx(t)
+	ctx := context.Background()
+	for i, resolution := range []string{ResolutionNotCharged, ResolutionReversedAtProcessor} {
+		t.Run(resolution, func(t *testing.T) {
+			a := fx.claim(fx.in(int64(3900 + i)))
+			if _, err := fx.helper.Exec(ctx, `UPDATE card_charge_attempts
+			    SET status = 'RESOLVED', resolution = $2, resolution_note = $3, resolved_by = $4::uuid
+			    WHERE id = $1::uuid`, a.ID, resolution, "manager closed it while the charge was out", fx.user); err != nil {
+				t.Fatalf("plant resolved: %v", err)
+			}
+			got, ok, err := fx.store.StampLateCapture(ctx, a.ID, "late-trans-9", "A")
+			if err != nil || !ok {
+				t.Fatalf("StampLateCapture: ok=%v err=%v", ok, err)
+			}
+			row := fx.get(a.LegKey)
+			if row.Status != AttemptVoiding || got.Status != AttemptVoiding {
+				t.Fatalf("row = %s, returned %s, want VOIDING", row.Status, got.Status)
+			}
+			if row.ProcessorRef != "late-trans-9" || row.RespCode != "A" {
+				t.Fatalf("the late answer's ref and resp code must be recorded: %+v", row)
+			}
+			if row.Resolution != "" || row.ResolutionNote != "" || row.ResolvedBy != "" {
+				t.Fatalf("the resolution columns must go with the move: %+v", row)
+			}
+			for _, want := range []string{resolution, "manager closed it while the charge was out", "capture answered after the attempt left CHARGING"} {
+				if !strings.Contains(row.LastError, want) {
+					t.Fatalf("last_error = %q, want the manager's decision (%s) kept in it", row.LastError, want)
+				}
+			}
+			if n := utf8.RuneCountInString(row.LastError); n > maxLastErrorRunes {
+				t.Fatalf("last_error = %d runes, over the diagnostic cap", n)
+			}
+		})
+	}
+
+	// From UNKNOWN there was never a manager decision: the diagnostic is the late capture's cause alone.
+	u := fx.claim(fx.in(3920))
+	fx.force(u.ID, AttemptUnknown)
+	if _, ok, err := fx.store.StampLateCapture(ctx, u.ID, "late-trans-10", ""); err != nil || !ok {
+		t.Fatalf("StampLateCapture from UNKNOWN: ok=%v err=%v", ok, err)
+	}
+	row := fx.get(u.LegKey)
+	if row.Status != AttemptVoiding || row.ProcessorRef != "late-trans-10" {
+		t.Fatalf("unknown source row = %+v, want VOIDING with the late ref", row)
+	}
+	if strings.Contains(row.LastError, "manager") {
+		t.Fatalf("no manager decision existed on an UNKNOWN row, last_error = %q", row.LastError)
 	}
 }
 

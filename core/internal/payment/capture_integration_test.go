@@ -626,6 +626,17 @@ func TestCapture_ALateAnswerAfterTheSweepIsVoidedNotDropped(t *testing.T) {
 			if res.Attempt.Status != AttemptVoided {
 				t.Fatalf("the result carries the row: %+v", res.Attempt)
 			}
+			// A RESOLVED source keeps the manager's story: the resolution and note survive in the
+			// diagnostic (the table holds the resolution columns on a RESOLVED row only), and the
+			// late answer's ref is the row's ref.
+			if moved == AttemptResolved {
+				if !strings.Contains(row.LastError, "NOT_CHARGED") || !strings.Contains(row.LastError, "closed while in flight") {
+					t.Fatalf("the manager's resolution and note must survive the move: last_error = %q", row.LastError)
+				}
+				if row.Resolution != "" || row.ResolutionNote != "" || row.ResolvedBy != "" {
+					t.Fatalf("the resolution columns must go with the move: %+v", row)
+				}
+			}
 			r.wantCounts(1, 1, 0)
 			r.run.mu.Lock()
 			vb := r.run.voidBodies[0]
