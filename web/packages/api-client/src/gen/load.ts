@@ -106,8 +106,8 @@ export async function loadPutProductImage(
   client: ApiClient,
   legacyId: string | number,
   body: string | Uint8Array,
-  contentType?: "image/jpeg" | "image/png" | "image/webp",
   opts: { source_system: string; alt?: string },
+  contentType?: "image/jpeg" | "image/png" | "image/webp",
   call?: ApiCallOptions
 ): Promise<Result<LoadBatchItemOutcome>> {
   return client.request<LoadBatchItemOutcome>({
