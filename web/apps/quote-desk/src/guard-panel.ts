@@ -174,6 +174,8 @@ export class QdQuoteGuard extends PanelBase {
   }
 
   override render() {
+    // Check Quote is a check of the quote on screen: with no quote (compose) nothing is drawn, as every other quote panel does.
+    if (this.quoteId === "") return nothing;
     return html`
       <div class="box" data-testid="qg-box">
         <h3>Check Quote</h3>
