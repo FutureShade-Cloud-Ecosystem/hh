@@ -1488,3 +1488,11 @@ keys: after a page ending at one invoice, every other invoice of the SAME issue 
 so a customer paging the portal's AR list lost those invoices. The predicate is now `issue_date < d OR (issue_date = d AND
 invoice_no > no)`, matching the ordering. The test (unchanged) is the red proof on main and green with the fix; the package is
 green alone and the `billing` word leaves `red=` in `.github/workflows/ci.yml`.
+
+## internal/assist/adapters is back in the integration job (decision log row 804, appended; the entries above are never edited)
+
+`TestIntegration_AScopedUserCannotReachAnotherBranch` was red only on the stock lookup's branch row name: the test asserted a
+display name with a comma, while migration 0003 plants the dealer name, an em dash and the city. Every fence assertion in the
+test passed on main (the order, raw id, customer and payment cases and the Kingston mirror), so this was a stale test and not a
+leak. The assertion now requires the row to be Trenton's and never Kingston's; a production bite (the adapter naming the wrong
+branch) turns it red. The package is green alone and the `assist/adapters` word leaves `red=` in `.github/workflows/ci.yml`.
