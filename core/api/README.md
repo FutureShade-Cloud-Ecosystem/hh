@@ -625,6 +625,8 @@ reason instead).
 | `POST /api/v1/pricing/batches/{id}/import` | hardscapeos_dibbits/backend/internal/pricing/batch_handler.go:22 |
 | `POST /api/v1/pricing/batches/apply-due` | hardscapeos_dibbits/backend/internal/pricing/batch_handler.go:25 |
 | `POST /api/v1/pricing/customers/{customerId}/overrides` | hardscapeos_dibbits/backend/internal/pricing/handler.go:81 |
+| `POST /api/v1/pricing/floor-confirmations` | (addition) Records in the pricing log that the editor confirmed a floor warning (plan CP0-6, QD-4); the ERP's pricing writes log their own change and nothing records a confirmation; no ERP source route. |
+| `POST /api/v1/pricing/floor-preview` | (addition) The pricing editors' floor warning (plan CP0-6, QD-4): grades the products a proposed rule, customer price, margin policy or quantity break would put under the floor, through the resolver, writing nothing; the ERP's low-margin report grades supplied lines at today's prices only and its writes carry no warning; no ERP source route. |
 | `POST /api/v1/pricing/price-file/apply` | hardscapeos_dibbits/backend/internal/pricing/pricefile_handler.go:45 |
 | `POST /api/v1/pricing/price-file/preview` | hardscapeos_dibbits/backend/internal/pricing/pricefile_handler.go:44 |
 | `POST /api/v1/pricing/promotions` | hardscapeos_dibbits/backend/internal/pricing/w4_handler.go:34 |
@@ -652,6 +654,8 @@ reason instead).
 | `POST /api/v1/quotes/{id}/holds/resync` | hardscapeos_dibbits/backend/internal/quote/reserve_handler.go:27 |
 | `POST /api/v1/quotes/{id}/lines` | hardscapeos_dibbits/backend/internal/quote/edit_handler.go:38 |
 | `POST /api/v1/quotes/{id}/lines/{lineNo}/compare` | hardscapeos_dibbits/backend/internal/quote/edit_handler.go:50 |
+| `POST /api/v1/quotes/{id}/lines/{lineNo}/floor-approval` | (addition) The quote floor's request door (plan 1.1): files one approval request bound to that quote, that line and that discount; the ERP's margin request was a generic identity filing with no line binding; no ERP source route. |
+| `POST /api/v1/quotes/{id}/order-payment` | (addition) The counter's payment door on a converted quote's order (plan 1.1, QD-5): raises the order's invoice at the agreed totals and settles the payment through the payments settle; the ERP's one payment route is the register's record-payment against an existing invoice and no route finds the order a quote became; no ERP source route. |
 | `POST /api/v1/quotes/{id}/share-links` | hardscapeos_dibbits/backend/internal/quote/share_handler.go:23 |
 | `POST /api/v1/quotes/{id}/sms-share` | hardscapeos_dibbits/backend/internal/quote/followup_handler.go:33 |
 | `POST /api/v1/reporting/commission/rules` | hardscapeos_dibbits/backend/internal/reporting/handler.go:53 |
@@ -740,9 +744,13 @@ reason instead).
 | `PUT /api/v1/inventory/transit-days` | hardscapeos_dibbits/backend/internal/inventory/module.go:295 |
 | `PUT /api/v1/load/branches` | (addition) HH-LOAD-1 load doors: the branch map, names against existing branch rows, behind the load doors deployment switch; no ERP source route. |
 | `PUT /api/v1/load/categories` | (addition) HH-LOAD-1 load doors: the product category upsert, the parent named by legacy key, behind the load doors deployment switch; no ERP source route. |
+| `PUT /api/v1/load/contacts` | (addition) HH-LOAD-1 load doors: the contact upsert under its customer by legacy key, behind the load doors deployment switch; no ERP source route. |
+| `PUT /api/v1/load/customers` | (addition) HH-LOAD-1 load doors: the customer upsert by legacy key through the customer module's own validation, behind the load doors deployment switch; no ERP source route. |
+| `PUT /api/v1/load/jobs` | (addition) HH-LOAD-1 load doors: the job upsert as a project record under its customer by legacy key, behind the load doors deployment switch; no ERP source route. |
 | `PUT /api/v1/load/products` | (addition) HH-LOAD-1 load doors (LD-5): the product master upsert by legacy key, the SKU the natural key and the category by key, behind the load doors deployment switch; no ERP source route. |
 | `PUT /api/v1/load/products/{legacyId}/image` | (addition) HH-LOAD-1 load doors (LD-5): the product image put through the product module's own image store and size cap, the product named by legacy key; no ERP source route. |
 | `PUT /api/v1/load/products/unit-sets` | (addition) HH-LOAD-1 load doors (LD-3): the product unit set replace, the product named by legacy key, behind the load doors deployment switch; no ERP source route. |
+| `PUT /api/v1/load/receivables` | (addition) HH-LOAD-1 LD-11 open receivables load door: the machine money batch behind the load doors deployment switch; no ERP source route. |
 | `PUT /api/v1/load/supplier-skus` | (addition) HH-LOAD-1 load doors (LD-5): the supplier SKU upsert through the purchasing module's writer, the product and supplier each named by legacy key; no ERP source route. |
 | `PUT /api/v1/load/suppliers` | (addition) HH-LOAD-1 load doors: the supplier upsert with its contact through the purchasing contact store, behind the load doors deployment switch; no ERP source route. |
 | `PUT /api/v1/load/units` | (addition) HH-LOAD-1 load doors (LD-3): the unit catalogue upsert, a unit that already stands with the same code and dimension attached, behind the load doors deployment switch; no ERP source route. |
