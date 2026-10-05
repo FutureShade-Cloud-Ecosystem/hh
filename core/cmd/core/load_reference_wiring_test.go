@@ -419,6 +419,116 @@ func TestSubmitDoorsServeEachDoorEndToEndThroughTheGate(t *testing.T) {
 	}
 }
 
+// TestLoadProductReachesTheStaffSyncPullByRequest is exit line 6 by
+// request (the review's P1-2): a product loaded through the real gate
+// and wiring is found by pulling the staff sync route with a staff
+// bearer of its org, and a staff bearer of another org (the kit's
+// two-org subject acting on the south org) does not find it.
+func TestLoadProductReachesTheStaffSyncPullByRequest(t *testing.T) {
+	ctx := context.Background()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate machine key: %v", err)
+	}
+	srv := machineJWKSServer(t, key)
+	env := newCompEnv(t)
+	// The two-org subject's memberships: the fake's default wires one
+	// team per subject, and this leg needs both orgs the fixture's grant
+	// rows carry (the kit's SubTwoOrg holds a grant in each).
+	env.appwrite.setTeam(testkit.SubTwoOrg, "org:"+testkit.OrgNorthSlug, "org:"+testkit.OrgSouthSlug)
+	pool := env.fixturePool()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO machine_principal (id, org_id, name, enabled, doors)
+		VALUES ($1::uuid, $2::uuid, 'fixture pull mover', TRUE, $3::text[])
+		ON CONFLICT (id) DO UPDATE SET enabled = EXCLUDED.enabled, doors = EXCLUDED.doors`,
+		fixtureMoverRefID, testkit.OrgNorthID, []string{"loadUpsertProducts"}); err != nil {
+		t.Fatalf("plant principal: %v", err)
+	}
+	clean := func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM load_key_registry WHERE org_id = $1::uuid AND source_system = 'pullfx'`, testkit.OrgNorthID)
+		_, _ = pool.Exec(ctx, `DELETE FROM audit_log WHERE entity_id IN (SELECT id FROM load_batch WHERE org_id = $1::uuid AND source_system = 'pullfx')`, testkit.OrgNorthID)
+		_, _ = pool.Exec(ctx, `DELETE FROM load_batch WHERE org_id = $1::uuid AND source_system = 'pullfx'`, testkit.OrgNorthID)
+		_, _ = pool.Exec(ctx, `DELETE FROM products WHERE sku = 'FX-PULL-1'`)
+	}
+	clean()
+	t.Cleanup(func() {
+		clean()
+		_, _ = pool.Exec(ctx, `DELETE FROM machine_principal WHERE id = $1::uuid`, fixtureMoverRefID)
+	})
+	env.set("CORE_LOAD_DOORS", "on")
+	env.set("CORE_MACHINE_AUDIENCE", fixtureMachineAudience)
+	env.set("CORE_MACHINE_JWKS_URL", srv.URL)
+	rec, _ := registeredSurface(t, env)
+	mux := rec.inner
+	right := machineBearer(t, env, key, fixtureMoverRefID)
+
+	// The product loads through the real gate and wiring.
+	resp := serveLoad(t, mux, http.MethodPut, "/api/v1/load/products", right, testkit.OrgNorthSlug,
+		`{"source_system":"pullfx","batch_id":"b-pull-1","items":[{"legacy_id":"WPP-1","record":{"sku":"FX-PULL-1","name":"Fixture Pull Product","base_uom":"EA","price_uom":"EA"}}]}`)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("the product put answered %d %q, want 200", resp.Code, resp.Body.String())
+	}
+	var landed struct {
+		Items []struct {
+			LegacyID string `json:"legacy_id"`
+			Status   string `json:"status"`
+			HHID     string `json:"hh_id"`
+		}
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &landed); err != nil {
+		t.Fatalf("product put body: %v", err)
+	}
+	if len(landed.Items) != 1 || landed.Items[0].Status != "created" || landed.Items[0].HHID == "" {
+		t.Fatalf("the product put answered %+v, want created with its hh id", landed.Items)
+	}
+	productID := landed.Items[0].HHID
+
+	// The staff sync route, pulled by request: a staff bearer of the
+	// product's org finds it, a staff bearer of another org does not.
+	pull := func(org string) (string, []syncEntity) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/sync/products?since=0&limit=1000", nil)
+		req.Header.Set("Authorization", "Bearer "+env.minter.StaffToken(t, testkit.SubTwoOrg))
+		req.Header.Set(authz.HeaderXOrg, org)
+		rr := httptest.NewRecorder()
+		mux.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("the %s pull answered %d %q, want 200", org, rr.Code, rr.Body.String())
+		}
+		var page struct {
+			Items []syncEntity `json:"items"`
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &page); err != nil {
+			t.Fatalf("the %s pull body: %v", org, err)
+		}
+		return org, page.Items
+	}
+	_, north := pull(testkit.OrgNorthSlug)
+	found := false
+	for _, it := range north {
+		if it.Id == productID && it.Seq > 0 && it.Data["sku"] == "FX-PULL-1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the loaded product %s is absent from its own org's staff sync pull: %d items", productID, len(north))
+	}
+	_, south := pull(testkit.OrgSouthSlug)
+	for _, it := range south {
+		if it.Id == productID {
+			t.Fatalf("the loaded product appears in another org's staff sync pull")
+		}
+	}
+}
+
+// syncEntity is the sync pull's item shape over the wire, read locally
+// so the leg asserts the served answer rather than a store call.
+type syncEntity struct {
+	Id   string         `json:"id"`
+	Seq  int64          `json:"seq"`
+	Data map[string]any `json:"data"`
+}
+
 // wiredSetProductID is the fixture product the unit set leg loads, the
 // test's own row so the kit's catalogue product is never disturbed.
 const wiredSetProductID = "7c2e6b41-0000-4000-8000-00000000d1f1"
