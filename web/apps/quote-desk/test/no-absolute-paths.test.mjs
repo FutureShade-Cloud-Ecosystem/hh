@@ -1,7 +1,7 @@
 // No file under the app may carry a workstation absolute path: a path that
 // exists on one machine fails on CI (the screenshots once did exactly that).
-// Any home or user directory path on any system is refused: a Linux home, a
-// macOS user directory, a Windows drive path. The needles are built in pieces
+// Any home or user directory path on any system is refused: a Linux home or root
+// home, an atomic Linux home, a macOS user directory or volume, a Windows drive path. The needles are built in pieces
 // so this file does not trip itself.
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -16,6 +16,9 @@ const needles = [
   "C:" + "\\",
   "c:" + "\\",
   "C:" + "/Users",
+  "/ro" + "ot/",
+  "/var/" + "home/",
+  "/Vol" + "umes/",
 ];
 const skipDirs = new Set(["node_modules", "test-results", "dist", "playwright-report"]);
 const skipExts = new Set([".woff2", ".png", ".jpg", ".ico"]);
