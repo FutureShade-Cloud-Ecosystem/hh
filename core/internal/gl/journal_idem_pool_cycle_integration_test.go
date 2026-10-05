@@ -8,7 +8,7 @@
 // connection and wait for one more: the sessions sit idle in transaction, no lock is waited on, and
 // the process stalls to the action timeout.
 //
-// The shape, fail first: a pool built at 4 EXPLICITLY (the deploy default), a blocker transaction
+// The shape, fail first: a pool built at 4 EXPLICITLY (pgx's default is max(4, CPUs)), a blocker transaction
 // on a SEPARATE single-connection pool that holds an uncommitted header with the contested key, and
 // poolSize callers with that same key. Every caller opens its transaction (the leg polls
 // pg_stat_activity until all poolSize are inside one), then the blocker commits and every caller
