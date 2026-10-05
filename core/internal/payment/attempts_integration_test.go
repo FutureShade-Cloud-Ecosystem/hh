@@ -201,6 +201,42 @@ func TestAttempts_ClaimOfAnExistingLegIsNotRefusedByTheGuard(t *testing.T) {
 	}
 }
 
+// A retry of a leg key whose row disagrees with the input on the amount, the till session or the
+// sale key is not the leg's own retry: Claim refuses it with a typed error so no caller can answer
+// from a row that describes a different charge. The well formed retry (the design's 3.4 table) is
+// unchanged: the row comes back with created false.
+func TestAttempts_ClaimOfAnExistingLegRefusesAMismatch(t *testing.T) {
+	fx := newAttemptFx(t)
+	ctx := context.Background()
+	in := fx.in(700)
+	a := fx.claim(in)
+
+	otherAmount := in
+	otherAmount.AmountCents = 701
+	if _, _, err := fx.store.Claim(ctx, otherAmount); !errors.Is(err, ErrClaimMismatch) {
+		t.Fatalf("same leg key, other amount: err=%v, want ErrClaimMismatch", err)
+	}
+
+	otherSession := in
+	otherSession.TillSessionID = fx.newSession()
+	t.Cleanup(func() {
+		_, _ = fx.helper.Exec(ctx, `DELETE FROM till_sessions WHERE id = $1::uuid`, otherSession.TillSessionID)
+	})
+	if _, _, err := fx.store.Claim(ctx, otherSession); !errors.Is(err, ErrClaimMismatch) {
+		t.Fatalf("same leg key, other till session: err=%v, want ErrClaimMismatch", err)
+	}
+
+	otherSale := in
+	otherSale.SaleKey = uuid.NewString()
+	if _, _, err := fx.store.Claim(ctx, otherSale); !errors.Is(err, ErrClaimMismatch) {
+		t.Fatalf("same leg key, other sale key: err=%v, want ErrClaimMismatch", err)
+	}
+
+	if got, created, err := fx.store.Claim(ctx, in); err != nil || created || got.ID != a.ID {
+		t.Fatalf("the well formed retry: id=%s created=%v err=%v, want %s existing", got.ID, created, err, a.ID)
+	}
+}
+
 // Contenders on one leg key at pool size: exactly one winner, everybody answers within the deadline.
 // A claim that held a connection while asking for a second would stall here (decision log row 786).
 func TestAttempts_ConcurrentClaimsOfOneLegKeyHaveOneWinner(t *testing.T) {

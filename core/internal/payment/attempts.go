@@ -56,6 +56,10 @@ var (
 	// ErrTillUnresolved is the till guard's refusal: the same till session holds an unresolved
 	// attempt for the same amount under a different sale key.
 	ErrTillUnresolved = errors.New("payment: the till session holds an unresolved card attempt for this amount")
+	// ErrClaimMismatch is a claim of a leg key whose existing row disagrees with the input on the
+	// amount, the till session or the sale key: the caller's retry is not the leg's own retry, and
+	// answering from the row would describe a charge the caller never made.
+	ErrClaimMismatch = errors.New("payment: the leg key exists with a different amount, till session or sale key")
 	// ErrResolveInvalid is a resolve with an unknown resolution, or a missing note or resolver.
 	ErrResolveInvalid = errors.New("payment: resolve needs a known resolution, a note and a resolver")
 	// ErrListUnbounded is a list with neither the open filter nor a date range.
