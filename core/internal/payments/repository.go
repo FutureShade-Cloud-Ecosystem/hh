@@ -594,6 +594,16 @@ func (r *Repository) LockPaymentsSequenceTx(ctx context.Context, tx pgx.Tx) erro
 // the top of this file: every other writer that takes both the payments counter and an invoice takes
 // the counter first, so a settle can never hold an invoice while it waits on a counter row another
 // writer holds on its way to that same invoice.
+//
+// The invoice row is taken FOR NO KEY UPDATE, not FOR UPDATE. The settle only writes non key columns,
+// so this still conflicts with every other invoice writer's row lock (any UPDATE of the row, and the
+// POS account credit's explicit FOR UPDATE) and serialises against each of them exactly as before.
+// What it no longer conflicts with is a FOR KEY SHARE, the lock a foreign key check takes: a POS
+// return's INSERT INTO pos_returns holds the returned sale's invoice key share before its refund
+// rail draws the payments counter, and a settle holding the counter while it waits on a FOR UPDATE
+// that the key share blocks closes a cycle (the return's refund rail then waits on the counter). With
+// NO KEY UPDATE the settle never waits on the return's share at all: no writer deletes invoices or
+// changes their keys, so the share is never something the settle needs to hold back.
 func lockAndTotal(ctx context.Context, tx pgx.Tx, customerID string, allocs []Allocation) (int64, string, error) {
 	if _, err := tx.Exec(ctx, lockPaymentsSequenceSQL); err != nil {
 		return 0, "", fmt.Errorf("pay: lock payments sequence: %w", err)
@@ -605,7 +615,7 @@ func lockAndTotal(ctx context.Context, tx pgx.Tx, customerID string, allocs []Al
 		var invBranch string
 		err := tx.QueryRow(ctx,
 			`SELECT balance_cents, holdback_cents, branch_id::text
-			 FROM invoices WHERE id = $2 AND customer_id = $1 FOR UPDATE`,
+			 FROM invoices WHERE id = $2 AND customer_id = $1 FOR NO KEY UPDATE`,
 			customerID, a.InvoiceID).Scan(&balance, &holdback, &invBranch)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
