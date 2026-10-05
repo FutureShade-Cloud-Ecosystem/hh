@@ -368,12 +368,15 @@ var (
 
 // SanitizeLastError returns text safe to keep in last_error: a bounded single line with no token,
 // credential or card number in it. It runs on every write of the column, whatever the caller passed
-// (a processor's error text, a transport error, a response body excerpt). Order matters: whitespace
-// and control characters flatten FIRST, because a PAN whose groups ride doubled spaces, a tab or a
-// newline past the number rule normalises into the exact readable form afterwards; then uuids are
-// shielded and kept (a sale key or an attempt id is not a secret); then the value rules redact. It
-// redacts rather than rejects, so the diagnostic survives.
+// (a processor's error text, a transport error, a response body excerpt). Order matters: bytes that
+// are not UTF-8 go first (Postgres refuses the whole write for them, SQLSTATE 22021, and the row
+// would sit in its old status until the sweep moves it); whitespace and control characters flatten
+// next, because a PAN whose groups ride doubled spaces, a tab or a newline past the number rule
+// normalises into the exact readable form afterwards; then uuids are shielded and kept (a sale key
+// or an attempt id is not a secret); then the value rules redact. It redacts rather than rejects,
+// so the diagnostic survives.
 func SanitizeLastError(s string) string {
+	s = strings.ToValidUTF8(s, "?")
 	if s == "" {
 		return ""
 	}
