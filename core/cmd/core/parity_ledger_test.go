@@ -63,6 +63,8 @@ var notYetRegistered = map[string]string{
 	"loadUpsertCustomers":           "HH-LOAD-1 load doors (LD-6): registers only where the deployment's configuration switches the load doors on (CORE_LOAD_DOORS, off by default), behind the machine gate the registrar carries exactly then",
 	"loadUpsertJobs":                "HH-LOAD-1 load doors (LD-6): registers only where the deployment's configuration switches the load doors on (CORE_LOAD_DOORS, off by default), behind the machine gate the registrar carries exactly then",
 	"loadUpsertSuppliers":           "HH-LOAD-1 load doors (LD-4): registers only where the deployment's configuration switches the load doors on (CORE_LOAD_DOORS, off by default), behind the machine gate the registrar carries exactly then",
+	"loadUpsertUnits":               "HH-LOAD-1 load doors (LD-3): registers only where the deployment's configuration switches the load doors on (CORE_LOAD_DOORS, off by default), behind the machine gate the registrar carries exactly then",
+	"loadPutUnitSets":               "HH-LOAD-1 load doors (LD-3): registers only where the deployment's configuration switches the load doors on (CORE_LOAD_DOORS, off by default), behind the machine gate the registrar carries exactly then",
 	"putDealerCredential":           "operator launcher surface (D4); no implementation lane assigned",
 	"putPlatformKey":                "operator launcher surface (D4); no implementation lane assigned",
 	"putTenantBrand":                "held for the tenant brand gap (ADR 0021 annex records the hold)",

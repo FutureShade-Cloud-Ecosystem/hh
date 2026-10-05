@@ -39,7 +39,7 @@ package main
 //
 // THE CENSUS'S FIRST FINDING (the run that classified the debt, the
 // reason the two maps below are as long as they are): of the document's
-// 117 page shape operations the rig drives 78 (the other 39 sit uncovered
+// 118 page shape operations the rig drives 78 (the other 40 sit uncovered
 // with their reasons) and only 6 answer the contract's page shape
 // (glListJournals, quoteListQuotes, tasksList, tenantListInvoices,
 // tenantListOrders, tenantListQuotes); the other 72 break it in four
@@ -69,13 +69,13 @@ import (
 )
 
 // shapeCensusWantPages pins the page shape operation count the document
-// carries (117 at this census's cut: 112 staff lists, 3 tenant lists, the
+// carries (118 at this census's cut: 113 staff lists, 3 tenant lists, the
 // sync pull and the public products list, all answered at 200). The pin is
 // the census's knowing (the same discipline as the 595 staff operation pin
 // in census_test.go): a page shape added or removed must move this number
 // consciously, with the live half's report (the new operation is driven,
 // or the dropped one is named) as the evidence.
-const shapeCensusWantPages = 117
+const shapeCensusWantPages = 118
 
 // shapeCensusAllowlist names (per the brief) the page shape operations
 // whose served answer already breaks the page shape, each with the reason
@@ -96,7 +96,7 @@ const shapeCensusWantPages = 117
 //	(4) wrong key: the list is written under a key the contract does
 //	    not declare (items is the contract's spelling).
 var shapeCensusAllowlist = map[string]string{
-	// (1) bare array (24 of the 117, the first entry the brief names).
+	// (1) bare array (24 of the 118, the first entry the brief names).
 	"identityListApprovals":       "answers a bare JSON array (core/internal/identity/staffcontext/approvals_handler.go, listApprovals writes the ListApprovals slice directly) against the contract's IdentityApprovalPage (items, next_cursor); the fix is the owning lane's",
 	"auditListEntries":            "answers a bare JSON array (internal/audit/handler.go, (*Handler).list writes the h.svc.List rows directly) against the contract's AuditEntryPage; the fix is the owning lane's",
 	"auditReopenTransaction":      "answers a bare JSON array (internal/audit/handler.go, (*Handler).reopen writes its projected []Entry directly) against the contract's AuditEntryPage; the fix is the owning lane's",

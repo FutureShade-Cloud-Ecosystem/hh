@@ -18,7 +18,9 @@ import (
 )
 
 // The map doors' registry kinds. The kind is the batch record's kind
-// and the reference kind later doors name these rows by.
+// and the reference kind later doors name these rows by. KindUnit and
+// KindUnitSet are HH-LOAD-1 LD-3's: the unit catalogue door and the
+// product unit set door.
 const (
 	KindBranch   = "branch"
 	KindUser     = "user"
@@ -28,6 +30,9 @@ const (
 	KindCustomer = "customer"
 	KindContact  = "contact"
 	KindJob      = "job"
+	// The unit catalogue and unit set doors' kinds (HH-LOAD-1 LD-3).
+	KindUnit    = "unit"
+	KindUnitSet = "unit_set"
 )
 
 // The writer level refusal codes the maps carry. A refusal names the

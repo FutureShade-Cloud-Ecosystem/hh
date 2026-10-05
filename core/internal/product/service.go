@@ -96,6 +96,7 @@ type Service struct {
 	stock      StockReader
 	branchQty  BranchStockReader
 	listPrices ListPriceReader
+	uoms       UomReader  // the staff units list's catalogue read, nil until WithUomReader
 	images     imageStore // GABLE:product-images-ui, nil until WithImages is called
 }
 

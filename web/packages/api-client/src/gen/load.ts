@@ -142,6 +142,21 @@ export async function loadUpsertSuppliers(
   });
 }
 
+export async function loadUpsertUnits(
+  client: ApiClient,
+  body: LoadSubmitRequest,
+  call?: ApiCallOptions
+): Promise<Result<LoadSubmitResult>> {
+  return client.request<LoadSubmitResult>({
+    method: "PUT",
+    path: "/api/v1/load/units",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "loadUpsertUnits",
+  });
+}
+
 export async function loadMapUsers(
   client: ApiClient,
   body: LoadSubmitRequest,
