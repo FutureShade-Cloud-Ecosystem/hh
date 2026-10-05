@@ -251,7 +251,18 @@ func (d *Door) tryItem(ctx context.Context, tx pgx.Tx, in Batch, item Item, hash
 			}
 			detail := conflictDetail(item.LegacyID, other)
 			if other == "" {
-				detail = fmt.Sprintf("legacy key %s would claim a staff row no legacy key names", item.LegacyID)
+				// No key of this source system names the holder: say
+				// whether another source system does, or no key does at
+				// all (a staff row).
+				elsewhere, err := rowNamedBySource(ctx, tx, key, wrote)
+				if err != nil {
+					return Outcome{}, false, err
+				}
+				if elsewhere {
+					detail = fmt.Sprintf("legacy key %s would claim a row another source system already names", item.LegacyID)
+				} else {
+					detail = fmt.Sprintf("legacy key %s would claim a staff row no legacy key names", item.LegacyID)
+				}
 			}
 			return refusedOutcome(item, &Refusal{Code: ReasonKeyConflict, Field: "legacy_id",
 				Detail: detail}), false, nil
