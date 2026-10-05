@@ -530,17 +530,11 @@ func TestIntegration_LockOrder_ReversePaymentBesidePOSAccountCredit(t *testing.T
 	})
 }
 
-// nsfLockOrderFixed flips to true when till's MarkNSF locks each allocated invoice row before the UPDATE
-// that draws the invoices counter (LOCK-ORDER.md, open item). The fix is outside the payments change that
-// wrote this leg, so the leg is held, not deleted: with the flag true it must pass at both pool sizes.
-const nsfLockOrderFixed = false
-
-// A NSF bounce against a settle on the invoice the bounced payment paid. MarkNSF locks the payment row
-// and then re-opens the invoice, taking the invoices counter row before the invoice row.
+// A NSF bounce against a settle on the invoice the bounced payment paid. MarkNSF locks the payment
+// row, then each allocated invoice row in ascending id order, and only then re-opens the invoice
+// (drawing the invoices counter row): the re-open never wants the counter while a settle holds the
+// invoice, so both answer.
 func TestIntegration_LockOrder_NSFBesideSettle(t *testing.T) {
-	if !nsfLockOrderFixed {
-		t.Skip("held: till MarkNSF takes the invoices counter before the invoice row (LOCK-ORDER.md, open item)")
-	}
 	for _, kind := range []string{"register", "paysettle"} {
 		t.Run(kind, func(t *testing.T) {
 			loPoolSizes(t, func(t *testing.T, size int32) {

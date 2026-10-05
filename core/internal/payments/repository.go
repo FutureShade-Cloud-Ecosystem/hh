@@ -21,7 +21,8 @@ import (
 //  2. the payments sequence row (scope_sequences, scope payments), taken WITHOUT advancing it by
 //     LockPaymentsSequenceTx, or by the settle's own incrementing statement where the writer inserts
 //     a payment and has no earlier use for the lock,
-//  3. the existing invoice rows (FOR UPDATE, in the order the writer names them),
+//  3. the existing invoice rows (FOR UPDATE; a writer that walks the rows an already-written
+//     payment allocated, the reversal and till MarkNSF, takes them in ascending id order),
 //  4. the invoices sequence row (scope_sequences, scope invoices).
 //
 // The payments counter comes before every invoice because the settle holds an invoice while it
@@ -45,9 +46,9 @@ import (
 //     (a new invoice).
 //   - the quote counter door, once it lands: the order row, LockPaymentsSequenceTx, then steps 3
 //     and 4 on its own transaction.
-//   - till MarkNSF is the one writer that does NOT follow the order: the payment row, then the
-//     invoices sequence row (its UPDATE draws the counter before it locks the invoice), then the
-//     invoice. Its pair with a settle is a recorded open item, see LOCK-ORDER.md.
+//   - till MarkNSF: the payment row, then steps 3 and 4, its allocated invoice rows taken in
+//     ascending id order before the re-open draws the counter (it writes no payments feed row,
+//     so it has no step 2).
 //
 // Reads, and the outbox observer, take none of these rows.
 

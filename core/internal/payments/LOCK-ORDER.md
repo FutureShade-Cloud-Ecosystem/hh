@@ -4,7 +4,8 @@ Every writer that touches a payment, an invoice balance or a feed counter takes 
 
 1. the order row (a writer that works on one order)
 2. the payments sequence row (`scope_sequences`, scope `payments`), without advancing it
-3. the existing invoice rows (`FOR UPDATE`)
+3. the existing invoice rows (`FOR UPDATE`; a writer that walks the rows an already-written payment
+   allocated, the reversal and `MarkNSF`, takes them in ascending id order)
 4. the invoices sequence row (`scope_sequences`, scope `invoices`)
 
 A writer that has no use for a step skips it and keeps the order of the steps it does take.
@@ -34,20 +35,18 @@ feed number is used up only by the statement that stamps a row, once per payment
 | POS return to account credit | per-sale advisory lock, returned order lines, invoice row, invoices counter | yes: no payments row |
 | Group and whole-order invoice writers | the order row its caller locked, invoices counter (a new invoice) | yes: no payments row, no existing invoice |
 | Quote counter door (once it lands) | order row, `LockPaymentsSequenceTx`, existing invoice row, invoices counter | yes |
-| Till `MarkNSF` | payment row, invoices counter, invoice | **no**, see below |
+| Till `MarkNSF` | payment row, existing invoice rows (ascending id order), invoices counter | yes: no payments row is written, so no step 2 |
 | Outbox observer | pool read after commit | takes none of these rows |
 
-## Open item: NSF against a settle
+## Why the invoice rows come before the invoices counter
 
-`MarkNSF` re-opens each invoice with `WITH iseq AS (INSERT ... scope_sequences invoices ...) UPDATE invoices ...`. The
-UPDATE computes the new row, which draws the invoices counter, before it locks the invoice row. A settle holds the
-invoice row and then wants the invoices counter, so a bounce of an earlier payment on an invoice, against a settle on the
-same invoice, meets head on and one side is aborted with a 40P01. This was already so before the order was written down,
-and this change neither causes nor cures it: it lives in `till/repository.go`, outside this change's reach.
-
-The leg `TestIntegration_LockOrder_NSFBesideSettle` reproduces it deterministically at pool 4 and 16 and is held behind
-`nsfLockOrderFixed` until the till lane lands the fix. The fix that turns the leg green was tried and reverted: before
-the loop that re-opens the invoices, take `SELECT 1 FROM invoices WHERE id = $1 FOR UPDATE` on each allocated invoice.
+A settle holds an invoice row while it waits for the invoices counter row. Any other writer that
+draws the counter on its way to that same invoice closes a cycle, and Postgres aborts one side with
+a 40P01. Till `MarkNSF` did exactly that: its re-open statement (`WITH iseq AS (INSERT ...
+scope_sequences invoices ...) UPDATE invoices ...`) draws the counter while it computes the new row,
+before it locks the invoice, so a bounce of an earlier payment on an invoice met a settle on the
+same invoice head on. The bounce now takes `SELECT 1 FROM invoices WHERE id = $1 FOR UPDATE` on each
+allocated invoice, in ascending id order, before the re-open runs.
 
 ## The legs
 
@@ -60,4 +59,4 @@ the loop that re-opens the invoices, take `SELECT 1 FROM invoices WHERE id = $1 
 - the multi-invoice card settle that locks the door's invoice first and closes the cycle last
 - the lock does not advance the feed: a settle's feed number advances by exactly one
 - `ReversePayment` against the POS return's account credit
-- the NSF pair (held, see above)
+- the NSF pair against each settle

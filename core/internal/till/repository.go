@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -616,6 +617,22 @@ func (r *Repository) MarkNSF(ctx context.Context, in nsfReverseInput) (nsfRevers
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return nsfReverseResult{}, err
+	}
+	// The re-open's UPDATE draws the invoices sequence row while it computes the new row, so the
+	// invoice row must already be held before that statement runs: a settle holding the invoice and
+	// waiting on the counter otherwise meets the bounce head on and one side is aborted with a 40P01.
+	// The rows are taken in ascending id order, the one order every multi-invoice writer uses (the
+	// money lock order recorded in payments/LOCK-ORDER.md), so two writers sharing invoices can
+	// never take them in opposite orders.
+	lockIDs := make([]string, 0, len(allocs))
+	for _, a := range allocs {
+		lockIDs = append(lockIDs, a.inv)
+	}
+	slices.Sort(lockIDs)
+	for _, id := range lockIDs {
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM invoices WHERE id = $1 FOR UPDATE`, id); err != nil {
+			return nsfReverseResult{}, fmt.Errorf("till: lock invoice %s: %w", id, err)
+		}
 	}
 	for _, a := range allocs {
 		// The re-open stamps the invoices feed seq beside the move
