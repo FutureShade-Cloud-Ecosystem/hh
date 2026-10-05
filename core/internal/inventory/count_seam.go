@@ -22,7 +22,13 @@ type CountSnapshot struct {
 // SnapshotOnHand returns the frozen on-hand + weighted-avg for every product at a branch (the count-sheet
 // freeze basis). FROZEN signature; INV-CORE fills the body.
 func (s *Service) SnapshotOnHand(ctx context.Context, branchID string) ([]CountSnapshot, error) {
-	return s.db().SnapshotOnHand(ctx, branchID)
+	return s.db().SnapshotOnHand(ctx, nil, branchID)
+}
+
+// SnapshotOnHandTx is SnapshotOnHand inside the caller's transaction: a caller that already holds a pool
+// connection reads through it rather than asking the shared pool for a second one (nil tx reads the pool).
+func (s *Service) SnapshotOnHandTx(ctx context.Context, tx pgx.Tx, branchID string) ([]CountSnapshot, error) {
+	return s.db().SnapshotOnHand(ctx, tx, branchID)
 }
 
 // WeightedAvgCostCents returns the current weighted-average unit cost for a product at a branch (the variance

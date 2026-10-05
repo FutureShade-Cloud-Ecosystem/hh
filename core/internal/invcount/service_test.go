@@ -408,3 +408,7 @@ func asClient(err error, target *clientError) bool {
 	}
 	return false
 }
+
+func (s *fakeStock) SnapshotOnHandTx(ctx context.Context, _ pgx.Tx, branchID string) ([]Snapshot, error) {
+	return s.SnapshotOnHand(ctx, branchID)
+}
