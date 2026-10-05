@@ -1064,7 +1064,11 @@ func (a invCountAdapter) SnapshotOnHandTx(ctx context.Context, tx pgx.Tx, branch
 }
 
 func (a invCountAdapter) WeightedAvgCostCents(ctx context.Context, productID, branchID string) (int64, error) {
-	return a.svc.WeightedAvgCostCents(ctx, productID, branchID)
+	return a.WeightedAvgCostCentsTx(ctx, nil, productID, branchID)
+}
+
+func (a invCountAdapter) WeightedAvgCostCentsTx(ctx context.Context, tx pgx.Tx, productID, branchID string) (int64, error) {
+	return a.svc.WeightedAvgCostCentsTx(ctx, tx, productID, branchID)
 }
 
 func (a invCountAdapter) PostCountAdjustmentTx(ctx context.Context, tx pgx.Tx, productID, locationID, branchID string, qtyDelta float64, unitCostCents int64, reason string) (string, error) {

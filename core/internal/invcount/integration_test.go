@@ -97,6 +97,10 @@ func (s *fakeStockSeam) WeightedAvgCostCents(_ context.Context, _, _ string) (in
 	return s.avg, nil
 }
 
+func (s *fakeStockSeam) WeightedAvgCostCentsTx(_ context.Context, _ pgx.Tx, _, _ string) (int64, error) {
+	return s.avg, nil
+}
+
 // PostCountAdjustmentTx writes a real COUNT stock move inside the caller's tx (as the real inventory seam
 // would) so count_lines.move_id links to a genuine append-only ledger row. Signed qtyDelta → to/from location.
 func (s *fakeStockSeam) PostCountAdjustmentTx(ctx context.Context, tx pgx.Tx, productID, locationID, branchID string, qtyDelta float64, unitCostCents int64, reason string) (string, error) {
