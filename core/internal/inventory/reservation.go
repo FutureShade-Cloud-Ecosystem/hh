@@ -182,14 +182,25 @@ type ReserveResult struct {
 
 // ResolveAllocationPolicy returns the branch's configured policy, or the system default when the
 // branch has no row. An empty branchID resolves to the system default too, a caller with no branch
-// context gets defined behaviour rather than a lookup on ".
+// context gets defined behaviour rather than a lookup on ". The read runs on the POOL (nil tx): the
+// HTTP surface calling this holds no transaction.
 func (s *Service) ResolveAllocationPolicy(ctx context.Context, branchID string) (AllocationPolicy, error) {
+	return s.resolveAllocationPolicyTx(ctx, nil, branchID)
+}
+
+// resolveAllocationPolicyTx is the transaction-aware core of the policy read; nil tx means the pool,
+// the seam's stated convention. The reserve path passes ITS transaction so the policy read joins the
+// connection already holding the caller's row locks: on the pool it would ask for a second
+// connection, and at the deploy default pool of 4 that forms the connection cycle Postgres cannot
+// see (the caller waits for a connection, every connection waits on the caller's locks) and the
+// confirm stalls to the action timeout.
+func (s *Service) resolveAllocationPolicyTx(ctx context.Context, tx pgx.Tx, branchID string) (AllocationPolicy, error) {
 	def := DefaultAllocationPolicy()
 	def.BranchID = branchID
 	if branchID == "" {
 		return def, nil
 	}
-	p, found, err := s.db().AllocationPolicy(ctx, branchID)
+	p, found, err := s.db().AllocationPolicy(ctx, tx, branchID)
 	if err != nil || !found {
 		return def, err
 	}
@@ -221,7 +232,10 @@ func (s *Service) ReserveTx(ctx context.Context, tx pgx.Tx, in ReserveInput) (Re
 		in.LocationID = in.BranchID
 	}
 
-	policy, err := s.ResolveAllocationPolicy(ctx, in.BranchID)
+	// The policy read runs INSIDE the caller's tx, on the connection already holding the caller's row
+	// locks, for the same reason the overdraft guard below does: a pool read here asks for a second
+	// connection while the caller's locks hold the rest of the pool.
+	policy, err := s.resolveAllocationPolicyTx(ctx, tx, in.BranchID)
 	if err != nil {
 		return ReserveResult{}, err
 	}

@@ -99,7 +99,8 @@ func TestReserveTx_PolicyReadJoinsCallerTx_NoPoolCycle(t *testing.T) {
 	)
 	contenders := poolSize - 1
 
-	// source_ref_id is a UUID column, so the tags are valid UUIDs, one per participant.
+	// source_ref_id is a UUID column and created_by carries an FK to users (0115), so the tags are
+	// UUIDs and the actor is the seeded staff user the composition legs use.
 	input := func(n int) ReserveInput {
 		return ReserveInput{
 			ProductID:   p,
@@ -108,7 +109,7 @@ func TestReserveTx_PolicyReadJoinsCallerTx_NoPoolCycle(t *testing.T) {
 			QtyBase:     1,
 			SourceType:  "reserve-pool-cycle-leg",
 			SourceRefID: fmt.Sprintf("a0c10000-0000-4000-8000-%012d", n),
-			CreatedBy:   "hh hardening coder",
+			CreatedBy:   "40000061-0000-4000-9000-000000000001",
 		}
 	}
 
