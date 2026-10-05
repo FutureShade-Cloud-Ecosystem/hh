@@ -20,6 +20,8 @@ package product
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -298,5 +300,129 @@ func TestCategoryLoadAttachesARowThatAlreadyCarriesTheCode(t *testing.T) {
 	o := outcome(t, r, "CAT-Y")
 	if o.Status != load.OutcomeRefused || o.Reason != load.ReasonKeyConflict {
 		t.Fatalf("the second claim answered %+v, want refused as %s", o, load.ReasonKeyConflict)
+	}
+}
+
+// A changed code on a recorded legacy key updates that row in place and
+// draws exactly one sequence; the row count and the id do not move.
+func TestCategoryLoadRenamedCodeUpdatesTheRecordedRowInPlace(t *testing.T) {
+	e := categoryLoadSetup(t)
+	ctx := context.Background()
+	if _, err := e.door.UpsertBatch(ctx, load.Batch{OrgID: fxLoadOrgID, SourceSystem: fxLoadSource,
+		BatchID: "b-cat-rn1", Caller: fxLoadActorID,
+		Items: []load.Item{catItem("CAT-X", "fxcat-r1", "Fixture Renamed")}}); err != nil {
+		t.Fatalf("first batch: %v", err)
+	}
+	id1, _, _, seq1, _ := e.catRow(t, "fxcat-r1")
+	r, err := e.door.UpsertBatch(ctx, load.Batch{OrgID: fxLoadOrgID, SourceSystem: fxLoadSource,
+		BatchID: "b-cat-rn2", Caller: fxLoadActorID,
+		Items: []load.Item{catItem("CAT-X", "fxcat-r2", "Fixture Renamed")}})
+	if err != nil {
+		t.Fatalf("rename batch: %v", err)
+	}
+	if o := outcome(t, r, "CAT-X"); o.Status != load.OutcomeUpdated || o.HHID != id1 {
+		t.Fatalf("the code change answered %+v, want updated on the recorded row %s", o, id1)
+	}
+	id2, _, _, seq2, _ := e.catRow(t, "fxcat-r2")
+	if id2 != id1 || seq2 != seq1+1 {
+		t.Fatalf("the renamed row is %s seq %d, want the same row %s with one new draw after %d", id2, seq2, id1, seq1)
+	}
+	var n int
+	if err := e.pool.QueryRow(ctx, `SELECT count(*) FROM product_categories WHERE code IN ('fxcat-r1','fxcat-r2')`).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("%d rows carry the old or new code, want the one renamed row", n)
+	}
+}
+
+// A new code that another row already carries is a conflict naming
+// both legacy keys, and nothing of the write stands.
+func TestCategoryLoadRenameOntoAnotherRowsCodeRefusesNamingBothKeys(t *testing.T) {
+	e := categoryLoadSetup(t)
+	ctx := context.Background()
+	if _, err := e.door.UpsertBatch(ctx, load.Batch{OrgID: fxLoadOrgID, SourceSystem: fxLoadSource,
+		BatchID: "b-cat-rc1", Caller: fxLoadActorID,
+		Items: []load.Item{
+			catItem("CAT-X", "fxcat-r1", "Fixture One"),
+			catItem("CAT-Y", "fxcat-r3", "Fixture Three"),
+		}}); err != nil {
+		t.Fatalf("first batch: %v", err)
+	}
+	r, err := e.door.UpsertBatch(ctx, load.Batch{OrgID: fxLoadOrgID, SourceSystem: fxLoadSource,
+		BatchID: "b-cat-rc2", Caller: fxLoadActorID,
+		Items: []load.Item{catItem("CAT-Y", "fxcat-r1", "Fixture Three")}})
+	if err != nil {
+		t.Fatalf("collision batch: %v", err)
+	}
+	o := outcome(t, r, "CAT-Y")
+	if o.Status != load.OutcomeRefused || o.Reason != load.ReasonKeyConflict ||
+		!strings.Contains(o.Detail, "CAT-Y") || !strings.Contains(o.Detail, "CAT-X") {
+		t.Fatalf("the collision answered %+v, want a key conflict naming CAT-Y and CAT-X", o)
+	}
+}
+
+// The parent walk fails closed at its bound: a chain deeper than the
+// bound is refused, naming the field.
+func TestCategoryLoadRefusesAChainOverTheDepthBound(t *testing.T) {
+	e := categoryLoadSetup(t)
+	ctx := context.Background()
+	items := make([]load.Item, 0, 70)
+	for i := 0; i < 70; i++ {
+		it := load.Item{LegacyID: fmt.Sprintf("CAT-D%d", i),
+			Record: map[string]any{"code": fmt.Sprintf("fxcat-d%d", i), "name": "Fixture Deep"}}
+		if i > 0 {
+			it.Requires = []load.Ref{{Kind: "category", LegacyID: fmt.Sprintf("CAT-D%d", i-1)}}
+		}
+		items = append(items, it)
+	}
+	r, err := e.door.UpsertBatch(ctx, load.Batch{OrgID: fxLoadOrgID, SourceSystem: fxLoadSource,
+		BatchID: "b-cat-deep", Caller: fxLoadActorID, Items: items})
+	if err != nil {
+		t.Fatalf("deep batch: %v", err)
+	}
+	first := -1
+	for i, o := range r.Items {
+		if o.Status == load.OutcomeRefused {
+			first = i
+			break
+		}
+	}
+	if first < 60 || first > 70 {
+		t.Fatalf("the first refusal is at %d, want one just past the bound of %d", first, categoryCycleDepth)
+	}
+	o := r.Items[first]
+	if o.Reason != "category_depth" || o.Field != "category" {
+		t.Fatalf("the over bound item answered %+v, want refused as category_depth on the field category", o)
+	}
+}
+
+// A row owned by another org is refused, never re-stamped.
+func TestCategoryLoadRefusesARowOwnedByAnotherOrg(t *testing.T) {
+	e := categoryLoadSetup(t)
+	ctx := context.Background()
+	const otherOrg = "4442a800-0000-4000-8000-00000000d0ff"
+	if _, err := e.pool.Exec(ctx, `
+		INSERT INTO product_categories (code, name, org_id) VALUES ('fxcat-o1', 'Other Org Row', $1::uuid)`, otherOrg); err != nil {
+		t.Fatalf("plant other org row: %v", err)
+	}
+	r, err := e.door.UpsertBatch(ctx, load.Batch{OrgID: fxLoadOrgID, SourceSystem: fxLoadSource,
+		BatchID: "b-cat-og1", Caller: fxLoadActorID,
+		Items: []load.Item{catItem("CAT-X", "fxcat-o1", "Renamed By Load")}})
+	if err != nil {
+		t.Fatalf("org batch: %v", err)
+	}
+	o := outcome(t, r, "CAT-X")
+	if o.Status != load.OutcomeRefused || o.Reason != "org_mismatch" ||
+		!strings.Contains(o.Detail, "category") || !strings.Contains(o.Detail, "CAT-X") {
+		t.Fatalf("the other org's row answered %+v, want refused as org_mismatch naming the kind and key", o)
+	}
+	_, _, org, _, _ := e.catRow(t, "fxcat-o1")
+	var name string
+	if err := e.pool.QueryRow(ctx, `SELECT name FROM product_categories WHERE code = 'fxcat-o1'`).Scan(&name); err != nil {
+		t.Fatalf("name read: %v", err)
+	}
+	if org != otherOrg || name != "Other Org Row" {
+		t.Fatalf("the row now carries org %q name %q, want it untouched", org, name)
 	}
 }
