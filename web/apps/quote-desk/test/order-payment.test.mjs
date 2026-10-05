@@ -248,13 +248,24 @@ test("a stored empty reference is said as none given, never invented", () => {
 
 test("the refusal words keep the server's sentence and only peel its prefixes", () => {
   assert.equal(paymentRefusalWords(400, "the payment is more than the balance of $30.68"), "The payment is more than the balance of $30.68");
-  assert.equal(paymentRefusalWords(403, "Forbidden"), "Forbidden");
   const clerk = paymentRefusalWords(
     409,
     "this order is already invoiced as INV-3001 by another route, so the counter cannot bill it again; hand the customer to Payables and receivables, or to the General Manager or Financial controller, who record the payment against that invoice",
   );
   assert.ok(clerk.startsWith("This order is already invoiced as INV-3001"));
   assert.ok(clerk.includes("who record the payment against that invoice"));
+});
+
+test("a payment's role refusal names what to do when the gate's body carries no words of its own", () => {
+  const words = "Taking a payment on this order is not open to your login. Ask a manager or the counter.";
+  assert.equal(paymentRefusalWords(403, ""), words);
+  assert.equal(paymentRefusalWords(403, "Forbidden"), words);
+  // When the core sends words of its own (this door's role rule names the role and who to ask),
+  // the server's sentence is the message.
+  assert.equal(
+    paymentRefusalWords(403, "quote: converting a quote to an order commits the customer's credit and is limited to sales roles, YARD cannot do it; ask inside sales or a manager"),
+    "Converting a quote to an order commits the customer's credit and is limited to sales roles, YARD cannot do it; ask inside sales or a manager",
+  );
 });
 
 test("an unknown outcome is no status or a 5xx, and its note says the retry is safe", () => {

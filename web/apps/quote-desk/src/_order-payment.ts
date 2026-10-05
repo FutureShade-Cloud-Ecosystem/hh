@@ -342,8 +342,20 @@ export function unknownOutcomeNote(): string {
   return "The outcome of that payment is not known: no answer the desk can read came back. Trying again with the same amount and method is safe: the server replays the first result and posts nothing a second time.";
 }
 
+/** The words a payment's role refusal is said in when the gate's body carries none of its own. */
+export const PAYMENT_ROLE_WORDS = "Taking a payment on this order is not open to your login. Ask a manager or the counter.";
+
 /** A refusal in the app's spoken voice; the server's own sentence is the message. */
 export function paymentRefusalWords(status: number | undefined, error: string): string {
+  if (status === 403) {
+    const body = (error ?? "").trim();
+    // The authz gate's body is the single word "Forbidden" or nothing at all, which says nothing
+    // a cashier can act on; when this door's own role rule refuses it carries a sentence of its
+    // own (it names the role and who to ask) and the server's words are always the message. Only
+    // the wordless body gets the desk's own sentence, which names what to do.
+    if (body !== "" && body !== "Forbidden") return spokenRefusal(quoteErrorMessage(403, body, "take this payment"));
+    return PAYMENT_ROLE_WORDS;
+  }
   return spokenRefusal(quoteErrorMessage(status, error, "take this payment"));
 }
 

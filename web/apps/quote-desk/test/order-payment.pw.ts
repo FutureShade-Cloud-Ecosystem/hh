@@ -236,7 +236,8 @@ test("the wrong role is offered the controls and shown the server's refusal; the
   await openWithPayment(page, "Q-2101");
   await expect(pay(page).getByTestId("op-take")).toBeEnabled();
   await take(page, "10.00");
-  await expect(pay(page).getByTestId("op-error")).toHaveText("Forbidden");
+  // The gate's body is the single word "Forbidden": the desk says what that means and what to do.
+  await expect(pay(page).getByTestId("op-error")).toHaveText("Taking a payment on this order is not open to your login. Ask a manager or the counter.");
   await expect(pay(page).getByTestId("op-receipt")).toHaveCount(0);
 });
 

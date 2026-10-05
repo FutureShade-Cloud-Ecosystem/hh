@@ -1450,6 +1450,15 @@
     "test": "marked as that, never as the result of a refusal"
   },
   {
+    "id": "op-403-words",
+    "file": "src/_order-payment.ts",
+    "find": "    if (body !== \"\" && body !== \"Forbidden\") return spokenRefusal(quoteErrorMessage(403, body, \"take this payment\"));\n    return PAYMENT_ROLE_WORDS;",
+    "replace": "    if (body !== \"\" && body !== \"Forbidden\") return spokenRefusal(quoteErrorMessage(403, body, \"take this payment\"));\n    return spokenRefusal(quoteErrorMessage(403, \"\", \"take this payment\"));",
+    "test": "a payment's role refusal names what to do",
+    "runner": "node",
+    "testFile": "test/order-payment.test.mjs"
+  },
+  {
     "id": "ws-serialize",
     "file": "src/workspace-store.ts",
     "find": "    this.#queued = send;\n    if (this.#inFlight !== null) return this.#inFlight;\n",
