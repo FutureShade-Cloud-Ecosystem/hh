@@ -18,12 +18,16 @@ package main
 // refused, what the fixture lacks), and a mismatch lands on the named
 // allowlist with the reason read at source (the fixes are the owning
 // lanes', not this gate's). The gate fails on a mismatch the allowlist
-// does not name, on an uncovered operation the named list does not carry,
-// on an allowlist entry that names no operation of the document, and on
-// an allowlist entry gone stale (its operation answers the right shape,
-// so the entry must drop, the parity ledger's shrink discipline). The
-// driven count, the allowlist and the uncovered list print in the log and
-// in every failure report.
+// does not name, on an uncovered operation the named list does not carry, on an allowlist
+//   entry that names no operation of the document, on an allowlist entry gone stale: its
+//   operation answers the right shape, so the entry must drop; that is the parity ledger's
+//   shrink discipline.
+// Round 2 adds the mirror: the gate also fails on a stale uncovered entry, meaning an
+//   operation the uncovered list names that a caller just drove, fixture widened, or handler
+//   changed; the list must shrink. And it refuses a name sitting on both lists at once, as
+//   incoherent.
+// The driven count, the allowlist and the uncovered list print in the log and in every failure
+//   report.
 //
 // The gate is split so the plain ci job (no database) still walks the
 // contract: the parse and classify half (the walk, the cross check
@@ -679,6 +683,49 @@ func TestShapeCensusCheckerFailsTheBareArray(t *testing.T) {
 	t.Logf("fail first (a): the checker passed the page shaped control answer (items array, next_cursor null)")
 }
 
+// TestShapeCensusStaleUncoveredEntryFailsTheVerdict is the round 2 P2 fail
+// first (a) leg (no (database. (The (same (fixture (document (the (same (walk (and
+// (the (SAME (verdict (code (path (the (live (census (collects (its (report (from
+// (scVerdict (the (fixture (operation (is (named (by (the (leg's (own (uncovered
+// (map (and (a (2xx (page (answer (is (fed (through (the (verdict (the (verdict (must
+// (classify (the (operation (as (a (stale (uncovered (entry (carrying (the (failure
+// (line (the (live (census (fails (on. (A (verdict (that (stays (green (here (would
+// (mean (the (uncovered (list (can (never (shrink (and (the (mirror (discipline
+// (would (be (unproven.
+func TestShapeCensusStaleUncoveredEntryFailsTheVerdict(t *testing.T) {
+	var doc map[string]any
+	if err := yaml.Unmarshal([]byte(shapeCensusFixtureDoc), &doc); err != nil {
+		t.Fatalf("parse the fixture document: %v", err)
+	}
+	ops := scWalkContractPages(t, doc)
+	if len(ops) != 1 {
+		t.Fatalf("the fixture document classifies %d page shape operations, want exactly one (fixtureListApprovals)", len(ops))
+	}
+	// The leg's own uncovered map (the (fixture (operation (named (undrivable.
+	uncov := map[string]string{ops[0].OperationID: "the fixture leg names this operation undrivable (a stand in for shapeCensusUncovered)"}
+	// A 2xx page answer for that named operation (the (fixture (widen (rebuilt (in
+	// (miniature.
+	out := scOutcome{legs: "fixture handler 200", status: http.StatusOK, body: `{"items":[],"next_cursor":null}`}
+	findings := scVerdict(ops[0], out, shapeCensusAllowlist, uncov)
+	stale := scFinding{}
+	hasStale := false
+	for _, f := range findings {
+		if f.kind == scStaleUncovered && f.line != "" {
+			stale = f
+			hasStale = true
+		}
+	}
+	if !hasStale {
+		t.Fatalf("the verdict for a driven operation the uncovered list names produced %d findings with no scStaleUncovered finding carrying a failure line; the uncovered list cannot shrink and the mirror is unproven (fail first, unproven)", len(findings))
+	}
+	for _, f := range findings {
+		if f.kind != scStaleUncovered && f.kind != scClean {
+			t.Fatalf("the verdict for a clean 2xx page answer over an uncovered-named operation produced an unexpected extra kind %v: only scStaleUncovered and scClean belong here; the clean answer itself is no fault, the stale entry is the", f.kind)
+		}
+	}
+	t.Logf("fail first (the stale uncovered mirror): a 2xx drive of an uncovered-named operation classifies as the census failure kind (%s)", stale.line)
+}
+
 // scCaller is one ladder leg: a planted principal and the headers its
 // bearer class carries. Staff legs select the org; tenant legs carry the
 // tenant id inside the token. The anon leg (the public class) sends no
@@ -839,16 +886,84 @@ func scDrive(t *testing.T, fx *xrFixture, op scPageOp, path string, ladder []scC
 	return scOutcome{legs: strings.Join(names, ", ")}
 }
 
-// TestShapeCensusListPagesServed is the live census (gated (the
-// compfixture discipline: it skips politely without the gate variable)):
-// every page shape operation of the document is driven through the real
-// mux (the rig's registerRoutes over the identity environment map and the
-// gate database) with the caller ladder until one caller answers 2xx, and
-// the answer body is held to the page shape (items an array, next_cursor
-// a string or null). A mismatch the allowlist does not name (or an
-// uncovered operation the named list does not carry, or a stale allowlist
-// entry) fails the census with the full report (the driven count, the
-// allowlist, the uncovered list).
+// scVerdictKind is one drive verdict (the census's whole judgment about one
+// operation (passed (as (a (typed (kind (so (the (fixture (leg (can (assert (the
+// (classification (itself.
+type scVerdictKind int
+
+const (
+	scClean scVerdictKind = iota
+	scAllowHit
+	scFreshMismatch
+	scStaleAllow
+	scStaleUncovered
+	scUncoveredNamed
+	scUncoveredUnnamed
+)
+
+// scFinding is one verdict outcome (its (kind (and (the (report (line (the (census
+// (carries (for (it (empty (for (the (silent (kinds (clean (and (allow (hit (whose
+// (tallies (use (the (operation (name (instead).
+type scFinding struct {
+	kind scVerdictKind
+	line string
+}
+
+// scVerdict is THE one verdict code path (the (live (census (collects (its (report
+// (from (it (and (the (ungated (fixture (leg (proves (the (stale (uncovered
+// (discipline (through (this (same (function (no (second (implementation (exists.
+// The (maps (arrive (as (parameters (so (the (fixture (leg (passes (its (own (stand
+// (ins (and (never (mutates (the (package (maps (the (live (census (reads.
+//
+// The (uncovered (list's (mirror (discipline (the (round (2 (P2 (fix (lives (here (an
+// (operation (shapeCensusUncovered (names (that (a (caller (just (drove (to (a (2xx
+// (is (a (stale (uncovered (entry (regardless (of (the (answer's (shape (the
+// (fixture (widened (or (the (handler (changed (either (way (the (list (must
+// (shrink (the (allowlist's (stale (discipline (has (its (mirror (at (last (and (a
+// (name (on (both (lists (at (once (is (refused (at (the (live (census's (start (as
+// (incoherent.
+func scVerdict(op scPageOp, out scOutcome, allow, uncov map[string]string) []scFinding {
+	var f []scFinding
+	if out.status != 0 {
+		if _, named := uncov[op.OperationID]; named {
+			f = append(f, scFinding{scStaleUncovered, fmt.Sprintf("%s %s %s, reached a 2xx answer (status %d, via %s) while shapeCensusUncovered still names it: fixture widened, or handler changed; either way the uncovered list must shrink. Drop the entry, and read the answer at source: fresh mismatch until allowlisted or clean.", op.OperationID, op.Method, op.Path, out.status, out.legs)})
+		}
+		if mismatch := scPageMismatch(out.body); mismatch != "" {
+			if _, allowlisted := allow[op.OperationID]; allowlisted {
+				f = append(f, scFinding{scAllowHit, ""})
+			} else {
+				f = append(f, scFinding{scFreshMismatch, fmt.Sprintf("%s (%s %s, contract schema %s): %s (status %d via %s; body: %s)", op.OperationID, op.Method, op.Path, op.Schema, mismatch, out.status, out.legs, scSnippet(out.body))})
+			}
+			return f
+		}
+		if _, allowlisted := allow[op.OperationID]; allowlisted {
+			f = append(f, scFinding{scStaleAllow, fmt.Sprintf("%s (%s %s) now answers the page shape (the allowlist entry is stale (the owning lane's fix landed), drop it (the parity ledger's shrink discipline))", op.OperationID, op.Method, op.Path)})
+			return f
+		}
+		f = append(f, scFinding{scClean, ""})
+		return f
+	}
+	if reason, named := uncov[op.OperationID]; named {
+		f = append(f, scFinding{scUncoveredNamed, fmt.Sprintf("%s (%s %s): %s (this run: %s)", op.OperationID, op.Method, op.Path, reason, out.legs)})
+		return f
+	}
+	f = append(f, scFinding{scUncoveredUnnamed, fmt.Sprintf("%s, %s, %s, no caller in the %s ladder reached a 2xx (%s); name it in shapeCensusUncovered with the reason read at source, or widen the fixture: a planted row, a uuid fill in scFixturePath, or a conscious query fill noted in the report, so a caller can drive it.", op.OperationID, op.Method, op.Path, op.Bearer, out.legs)})
+	return f
+}
+
+// TestShapeCensusListPagesServed is the live census (gated (the compfixture
+// discipline (it (skips (politely (without (the (gate (variable)). (Every (page (shape
+// operation (of (the (document (is (driven (through (the (real (mux (the (rig's
+// registerRoutes (over (the (identity (environment (map (and (the (gate (database
+// (with (the (caller (ladder (until (one (caller (answers (2xx (and (the (answer (body
+// (is (held (to (the (page (shape (items (an (array (next_cursor (a (string (or (null (through
+// (scVerdict (the (one (verdict (code (path (the (fixture (leg (shares. (A (mismatch (the
+// (allowlist (does (not (name (an (uncovered (operation (the (named (list (does (not
+// (carry (a (stale (allowlist (entry (an (operation (the (allowlist (names (that (now
+// (answers (the (page (shape (a (stale (uncovered (entry (an (operation (the (uncovered
+// (list (names (that (a (caller (just (drove (the (fixture (widened (or (the (handler
+// (changed (or (a (name (on (both (lists (at (once (fails (the (census (with (the (full
+// (report (the (driven (count (the (allowlist (the (uncovered (list (the (stale (entries.
 func TestShapeCensusListPagesServed(t *testing.T) {
 	ops := scWalkContractPages(t, scReadContract(t))
 	if len(ops) != shapeCensusWantPages {
@@ -866,6 +981,7 @@ func TestShapeCensusListPagesServed(t *testing.T) {
 		uncovered   []string
 		uncoveredKn []string
 		staleAllow  []string
+		staleUnc    []string
 	)
 	known := make(map[string]bool, len(ops))
 	for _, op := range ops {
@@ -874,6 +990,9 @@ func TestShapeCensusListPagesServed(t *testing.T) {
 	for name := range shapeCensusAllowlist {
 		if !known[name] {
 			staleAllow = append(staleAllow, fmt.Sprintf("the allowlist names %q, which is no page shape operation of the document (a typo, or an operation that stopped being a page shape): drop or correct the entry", name))
+		}
+		if _, also := shapeCensusUncovered[name]; also {
+			staleAllow = append(staleAllow, fmt.Sprintf("the allowlist AND the uncovered list both name %q: incoherent, an operation cannot be both broken-when-driven and undrivable; the uncovered entry is the one today's run supports, so correct or drop the allowlist entry", name))
 		}
 	}
 	for name := range shapeCensusUncovered {
@@ -888,27 +1007,28 @@ func TestShapeCensusListPagesServed(t *testing.T) {
 			t.Fatalf("page shape operation %s carries the derived bearer shape %q, which names no ladder (scLadderFor must be total over the bearer shapes the derivation returns)", op.OperationID, op.Bearer)
 		}
 		out := scDrive(t, fx, op, scFixturePath(t, op), ladder)
-		if out.status == 0 {
-			if reason, named := shapeCensusUncovered[op.OperationID]; named {
-				uncoveredKn = append(uncoveredKn, fmt.Sprintf("%s (%s %s): %s (this run: %s)", op.OperationID, op.Method, op.Path, reason, out.legs))
-			} else {
-				uncovered = append(uncovered, fmt.Sprintf("%s (%s %s): no caller in the %s ladder reached a 2xx (%s); name it in shapeCensusUncovered with the reason read at source, or widen the fixture (a planted row, a uuid fill (scFixturePath), or a conscious query fill noted in the report) so a caller can drive it", op.OperationID, op.Method, op.Path, op.Bearer, out.legs))
+		if out.status != 0 {
+			driven = append(driven, op.OperationID)
+		}
+		for _, f := range scVerdict(op, out, shapeCensusAllowlist, shapeCensusUncovered) {
+			switch f.kind {
+			case scClean:
+			case scAllowHit:
+				allowHits = append(allowHits, op.OperationID)
+			case scFreshMismatch:
+				freshFails = append(freshFails, f.line)
+			case scStaleAllow:
+				staleAllow = append(staleAllow, f.line)
+			case scStaleUncovered:
+				staleUnc = append(staleUnc, f.line)
+			case scUncoveredNamed:
+				uncoveredKn = append(uncoveredKn, f.line)
+			case scUncoveredUnnamed:
+				uncovered = append(uncovered, f.line)
+			default:
+				t.Fatalf("the verdict produced an unknown kind %d for %s; the switch must be total over scVerdictKind", f.kind, op.OperationID)
 			}
-			continue
 		}
-		driven = append(driven, op.OperationID)
-		mismatch := scPageMismatch(out.body)
-		if mismatch == "" {
-			if _, allowlisted := shapeCensusAllowlist[op.OperationID]; allowlisted {
-				staleAllow = append(staleAllow, fmt.Sprintf("%s (%s %s) now answers the page shape (the allowlist entry is stale (the owning lane's fix landed), drop it (the parity ledger's shrink discipline))", op.OperationID, op.Method, op.Path))
-			}
-			continue
-		}
-		if _, allowlisted := shapeCensusAllowlist[op.OperationID]; allowlisted {
-			allowHits = append(allowHits, op.OperationID)
-			continue
-		}
-		freshFails = append(freshFails, fmt.Sprintf("%s (%s %s, contract schema %s): %s (status %d via %s; body: %s)", op.OperationID, op.Method, op.Path, op.Schema, mismatch, out.status, out.legs, scSnippet(out.body)))
 	}
 
 	sort.Strings(driven)
@@ -922,7 +1042,7 @@ func TestShapeCensusListPagesServed(t *testing.T) {
 		t.Logf("SHAPE CENSUS uncovered: %s", line)
 	}
 
-	if len(freshFails) > 0 || len(uncovered) > 0 || len(staleAllow) > 0 {
+	if len(freshFails) > 0 || len(uncovered) > 0 || len(staleAllow) > 0 || len(staleUnc) > 0 {
 		var b strings.Builder
 		fmt.Fprintf(&b, "the response shape census FAILED (drove %d of %d page shape operations)\n", len(driven), len(ops))
 		for _, line := range freshFails {
@@ -933,6 +1053,9 @@ func TestShapeCensusListPagesServed(t *testing.T) {
 		}
 		for _, line := range staleAllow {
 			fmt.Fprintf(&b, "STALE (allowlist): %s\n", line)
+		}
+		for _, line := range staleUnc {
+			fmt.Fprintf(&b, "STALE (uncovered): %s\n", line)
 		}
 		fmt.Fprintf(&b, "driven: %s\n", strings.Join(driven, ", "))
 		fmt.Fprintf(&b, "allowlist (named, with reasons):")
