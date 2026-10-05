@@ -116,45 +116,87 @@ func (s *Store) GetBatch(ctx context.Context, orgID, batchID string) (BatchView,
 	}
 }
 
-// replayBatch looks up what a batch id first recorded: the outcomes ride
-// in the batch row, so a replay answers from the record and touches
-// nothing. The door's kind is part of the lookup's meaning: a batch id
-// recorded under another door's kind is not a replay but a collision of
-// two doors' batch namespaces, and it refuses rather than answering with
-// the other door's outcomes.
-func (s *Store) replayBatch(ctx context.Context, orgID, sourceSystem, batchID, kind string) (BatchResult, bool, error) {
-	var countsJSON, itemsJSON []byte
-	var recordedKind string
-	err := s.pool.QueryRow(ctx, `
-		SELECT kind, counts::text, items::text FROM load_batch
-		WHERE org_id = $1::uuid AND source_system = $2 AND batch_id = $3`,
-		orgID, sourceSystem, batchID).Scan(&recordedKind, &countsJSON, &itemsJSON)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return BatchResult{}, false, nil
-	}
-	if err != nil {
-		return BatchResult{}, false, fmt.Errorf("load: batch replay read: %w", err)
-	}
-	if recordedKind != kind {
-		return BatchResult{}, false, ErrBatchDoorMismatch
-	}
-	r := BatchResult{BatchID: batchID}
-	if err := json.Unmarshal(countsJSON, &r.Counts); err != nil {
-		return BatchResult{}, false, fmt.Errorf("load: batch counts decode: %w", err)
-	}
-	if err := json.Unmarshal(itemsJSON, &r.Items); err != nil {
-		return BatchResult{}, false, fmt.Errorf("load: batch items decode: %w", err)
-	}
-	return r, true, nil
+// batchClaim is a held claim on one batch id: the load_batch row is the
+// lock two concurrent submissions of one id contend on, held from the
+// claim to the finish inside one open transaction, so the loser waits
+// for the winner's record instead of writing alongside it. Finish
+// commits the transaction; every error path rolls it back, which for an
+// uncommitted claim erases the row entirely, so a crashed submission
+// leaves nothing for the next one to trip over.
+type batchClaim struct {
+	tx        pgx.Tx
+	batchUUID string
 }
 
-// recordBatch lands the batch row with the counts by outcome, the per
-// item outcomes and the state, and the batch's one audit row on the same
-// transaction (the audit ruling: the row commits or rolls back with the
-// record it describes). A concurrent same-id submission loses the row
-// write and keeps its computed answer; the first record stands, the
-// plan's replay rule read sequentially.
-func (s *Store) recordBatch(ctx context.Context, in Batch, kind string, r BatchResult, sink BatchAuditSink) error {
+// claimBatch claims one batch id and answers one of three ways: a held
+// claim (this submission is the winner and runs its items), a replay
+// (the id is already recorded; the recorded outcomes come back and the
+// submission runs nothing), or an error. The INSERT's unique index is
+// the arbitration: a concurrent claimant waits inside its own INSERT
+// until the holder's finish commits, then takes the conflict arm, reads
+// the recorded row FOR UPDATE, and replays it. A kind mismatch refuses
+// as the door collision it is, winner or loser alike.
+func (s *Store) claimBatch(ctx context.Context, in Batch, kind string) (claim *batchClaim, replay *BatchResult, err error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load: batch claim begin: %w", err)
+	}
+	claim = &batchClaim{tx: tx}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			claim = nil
+		}
+	}()
+	var batchUUID string
+	insertErr := tx.QueryRow(ctx, `
+		INSERT INTO load_batch (org_id, source_system, batch_id, caller, kind, state)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6)
+		ON CONFLICT (org_id, source_system, batch_id) DO NOTHING
+		RETURNING id::text`,
+		in.OrgID, in.SourceSystem, in.BatchID, in.Caller, kind, BatchStateRecorded).Scan(&batchUUID)
+	if insertErr == nil {
+		claim.batchUUID = batchUUID
+		return claim, nil, nil
+	}
+	if !errors.Is(insertErr, pgx.ErrNoRows) {
+		return nil, nil, fmt.Errorf("load: batch claim: %w", insertErr)
+	}
+	// The conflict arm: the id is claimed or recorded. The row lock waits
+	// for a holder's finish; a recorded row is already unlocked, so this
+	// answers at once.
+	var recordedKind string
+	var countsJSON, itemsJSON []byte
+	if err := tx.QueryRow(ctx, `
+		SELECT id::text, kind, counts::text, items::text FROM load_batch
+		WHERE org_id = $1::uuid AND source_system = $2 AND batch_id = $3
+		FOR UPDATE`,
+		in.OrgID, in.SourceSystem, in.BatchID).Scan(&batchUUID, &recordedKind, &countsJSON, &itemsJSON); err != nil {
+		return nil, nil, fmt.Errorf("load: batch claim read: %w", err)
+	}
+	if recordedKind != kind {
+		return nil, nil, ErrBatchDoorMismatch
+	}
+	r := BatchResult{BatchID: in.BatchID}
+	if err := json.Unmarshal(countsJSON, &r.Counts); err != nil {
+		return nil, nil, fmt.Errorf("load: batch counts decode: %w", err)
+	}
+	if err := json.Unmarshal(itemsJSON, &r.Items); err != nil {
+		return nil, nil, fmt.Errorf("load: batch items decode: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, nil, fmt.Errorf("load: batch claim commit: %w", err)
+	}
+	return nil, &r, nil
+}
+
+// finishBatch lands the batch's record on the claim's transaction and
+// commits the claim: the counts by outcome, the per item outcomes, the
+// state, and the batch's one audit row, all in the one transaction the
+// item writes stood beside. The record and the audit row commit or roll
+// back together, and the commit releases the lock a waiting same-id
+// submission reads its replay through.
+func (s *Store) finishBatch(ctx context.Context, claim *batchClaim, in Batch, kind string, r BatchResult, sink BatchAuditSink) error {
 	countsJSON, err := json.Marshal(r.Counts)
 	if err != nil {
 		return fmt.Errorf("load: batch counts encode: %w", err)
@@ -163,22 +205,14 @@ func (s *Store) recordBatch(ctx context.Context, in Batch, kind string, r BatchR
 	if err != nil {
 		return fmt.Errorf("load: batch items encode: %w", err)
 	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("load: batch record begin: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	var batchUUID string
-	if err := tx.QueryRow(ctx, `
-		INSERT INTO load_batch (org_id, source_system, batch_id, caller, kind, state, counts, items)
-		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)
-		ON CONFLICT (org_id, source_system, batch_id) DO NOTHING
-		RETURNING id::text`,
-		in.OrgID, in.SourceSystem, in.BatchID, in.Caller, kind, BatchStateRecorded, countsJSON, itemsJSON).Scan(&batchUUID); err != nil {
+	if _, err := claim.tx.Exec(ctx, `
+		UPDATE load_batch SET caller = $2, counts = $3::jsonb, items = $4::jsonb, updated_at = now()
+		WHERE id = $1::uuid`,
+		claim.batchUUID, in.Caller, countsJSON, itemsJSON); err != nil {
 		return fmt.Errorf("load: batch record: %w", err)
 	}
-	if err := sink.RecordBatchTx(ctx, tx, BatchAuditRow{
-		BatchUUID:    batchUUID,
+	if err := sink.RecordBatchTx(ctx, claim.tx, BatchAuditRow{
+		BatchUUID:    claim.batchUUID,
 		BatchID:      in.BatchID,
 		Kind:         kind,
 		SourceSystem: in.SourceSystem,
@@ -187,7 +221,7 @@ func (s *Store) recordBatch(ctx context.Context, in Batch, kind string, r BatchR
 	}); err != nil {
 		return fmt.Errorf("load: batch audit: %w", err)
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := claim.tx.Commit(ctx); err != nil {
 		return fmt.Errorf("load: batch record commit: %w", err)
 	}
 	return nil
@@ -266,6 +300,16 @@ func isUniqueViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
+// isDeadlock reports a Postgres deadlock victim (SQLSTATE 40P01): two
+// in-flight batches holding overlapping name locks, one rolled back
+// whole. Under the savepoint protocol the victim's claim dies with its
+// items, nothing partial survives, and the error maps to
+// ErrBatchContended at the batch boundary.
+func isDeadlock(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "40P01"
+}
+
 // validDerivedKey reports whether a derived key is either empty (the
 // row's idempotency column stays untouched) or a canonical uuid, the
 // shape NULLIF($,”)::uuid casts clean. The pricing module's boundary
@@ -274,6 +318,12 @@ func validDerivedKey(s string) bool {
 	if s == "" {
 		return true
 	}
+	return canonicalUUID(s)
+}
+
+// canonicalUUID reports whether s is a canonical 36 character uuid. The
+// pricing module's boundary guard, restated local to this package.
+func canonicalUUID(s string) bool {
 	if len(s) != 36 {
 		return false
 	}

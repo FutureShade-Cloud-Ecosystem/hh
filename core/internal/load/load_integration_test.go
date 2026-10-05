@@ -325,6 +325,162 @@ func TestEveryBatchLandsOneAuditRow(t *testing.T) {
 	}
 }
 
+// concItems builds the shared item list the concurrency rounds submit.
+func concItems(prefix, codePrefix string) []Item {
+	items := make([]Item, 0, 40)
+	for i := 0; i < 40; i++ {
+		items = append(items, probeItem(
+			fmt.Sprintf("%s-%02d", prefix, i),
+			fmt.Sprintf("%s-%02d", codePrefix, i),
+			"same",
+			fmt.Sprintf("e1000000-0000-4000-8000-%012d", i),
+		))
+	}
+	return items
+}
+
+// TestConcurrentSameBatchIDBothAnswerTheFirstOutcomes drives the
+// reviewer's probe into the suite: two concurrent submissions of one
+// batch id, ten rounds. Both answer the first outcomes, neither errors,
+// one batch record and one audit row stand per batch id, and the item
+// rows converge to one per name. A client that times out and resubmits
+// while the first run is still going is the caller this protects.
+func TestConcurrentSameBatchIDBothAnswerTheFirstOutcomes(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	for round := 0; round < 10; round++ {
+		batchID := fmt.Sprintf("b-conc-%02d", round)
+		items := concItems(fmt.Sprintf("R%dL", round), fmt.Sprintf("R%dc", round))
+		results := make([]BatchResult, 2)
+		errs := make([]error, 2)
+		var wg sync.WaitGroup
+		for k := 0; k < 2; k++ {
+			wg.Add(1)
+			go func(k int) {
+				defer wg.Done()
+				results[k], errs[k] = e.door.UpsertBatch(ctx, Batch{
+					OrgID: testOrgID, SourceSystem: testSource, BatchID: batchID, Caller: testActorID,
+					Items: append([]Item(nil), items...),
+				})
+			}(k)
+		}
+		wg.Wait()
+		for k, err := range errs {
+			if err != nil {
+				t.Fatalf("round %d racer %d: %v", round, k, err)
+			}
+		}
+		if len(results[0].Items) != len(results[1].Items) {
+			t.Fatalf("round %d: the submitters answered %d and %d outcomes, want the same first outcomes",
+				round, len(results[0].Items), len(results[1].Items))
+		}
+		for i := range results[0].Items {
+			if results[0].Items[i] != results[1].Items[i] {
+				t.Fatalf("round %d: the submitters' outcomes differ at %d: %+v vs %+v",
+					round, i, results[0].Items[i], results[1].Items[i])
+			}
+		}
+		if n := e.probeAudit.len(); n != round+1 {
+			t.Fatalf("round %d: %d audit rows stand, want exactly one per recorded batch", round, n)
+		}
+	}
+	// The item rows converged: one row per name, the forty names round
+	// nine's items carry (each round's items share that round's code
+	// prefix, so the round's forty codes hold exactly forty rows).
+	var n int
+	if err := e.pool.QueryRow(ctx,
+		`SELECT count(*) FROM load_probe WHERE org_id = $1::uuid AND code LIKE 'R9c-%'`, testOrgID).Scan(&n); err != nil {
+		t.Fatalf("probe count: %v", err)
+	}
+	if n != 40 {
+		t.Fatalf("round nine's forty names hold %d rows, want exactly forty: the item writes did not converge", n)
+	}
+}
+
+// TestConcurrentSameBatchIDLoserCarryingAnExtraItemLandsNothingOfIt: the
+// losing submission of one batch id carries one item the winner does
+// not. Neither submitter errors, both answer the first outcomes, and
+// nothing lands for the extra item: no row, no registry name, and no
+// audit row beside the one the winner's record carries, because the
+// item writes, the batch record and the audit row stand or fall
+// together.
+func TestConcurrentSameBatchIDLoserCarryingAnExtraItemLandsNothingOfIt(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	for round := 0; round < 10; round++ {
+		batchID := fmt.Sprintf("b-extra-%02d", round)
+		first := concItems(fmt.Sprintf("E%dL", round), fmt.Sprintf("E%dc", round))
+		extra := append(append([]Item(nil), first...), probeItem(
+			fmt.Sprintf("E%dX", round), fmt.Sprintf("E%dx", round), "extra", "",
+		))
+		results := make([]BatchResult, 2)
+		errs := make([]error, 2)
+		var wg sync.WaitGroup
+		for k := 0; k < 2; k++ {
+			wg.Add(1)
+			go func(k int) {
+				defer wg.Done()
+				items := first
+				if k == 1 {
+					items = extra
+				}
+				results[k], errs[k] = e.door.UpsertBatch(ctx, Batch{
+					OrgID: testOrgID, SourceSystem: testSource, BatchID: batchID, Caller: testActorID,
+					Items: append([]Item(nil), items...),
+				})
+			}(k)
+		}
+		wg.Wait()
+		for k, err := range errs {
+			if err != nil {
+				t.Fatalf("round %d racer %d: %v", round, k, err)
+			}
+		}
+		// The two answers are one answer: whichever submission won the
+		// claim, both read the same recorded outcomes.
+		for i := range results[0].Items {
+			if results[0].Items[i] != results[1].Items[i] {
+				t.Fatalf("round %d: the submitters' outcomes differ at %d", round, i)
+			}
+		}
+		// The extra item stands or falls whole: either it landed with the
+		// record that names it (its carrier won the claim, so its item is
+		// one of the first outcomes, named in the registry, in a row, and
+		// counted on the audit row), or it landed nowhere at all. What
+		// must never happen is the half: a row without a record, a record
+		// without its item, an outcome without a row behind it.
+		name := fmt.Sprintf("E%dX", round)
+		code := fmt.Sprintf("E%dx", round)
+		var names, rows int
+		if err := e.pool.QueryRow(ctx, `
+			SELECT
+				(SELECT count(*) FROM load_key_registry WHERE org_id = $1::uuid AND source_system = $2 AND legacy_id = $3),
+				(SELECT count(*) FROM load_probe WHERE org_id = $1::uuid AND code = $4)`,
+			testOrgID, testSource, name, code).Scan(&names, &rows); err != nil {
+			t.Fatalf("extra item read: %v", err)
+		}
+		if names != rows {
+			t.Fatalf("round %d: the extra item stands half written (%d names, %d rows)", round, names, rows)
+		}
+		var extraOutcome *Outcome
+		for i := range results[0].Items {
+			if results[0].Items[i].LegacyID == name {
+				extraOutcome = &results[0].Items[i]
+			}
+		}
+		if (names == 1) != (extraOutcome != nil) {
+			t.Fatalf("round %d: the extra item's landing (%d names) and the record naming it (%v) disagree",
+				round, names, extraOutcome)
+		}
+		if extraOutcome != nil && extraOutcome.Status != OutcomeCreated {
+			t.Fatalf("round %d: the landed extra item answered %s, want created", round, extraOutcome.Status)
+		}
+		if n := e.probeAudit.len(); n != round+1 {
+			t.Fatalf("round %d: %d audit rows stand, want exactly one per recorded batch", round, n)
+		}
+	}
+}
+
 // TestRacesOnOneNameNeverRefuseAFalseConflict drives the review's probe
 // into the suite: two concurrent upserts on one name over an
 // insert-only, sequence-drawing writer, many races, every one of them
@@ -351,7 +507,8 @@ func TestRacesOnOneNameNeverRefuseAFalseConflict(t *testing.T) {
 					payload = "loser-change"
 				}
 				results[k], errs[k] = e.bareDoor.UpsertBatch(ctx, Batch{
-					OrgID: testOrgID, SourceSystem: testSource,
+					Caller: testActorID,
+					OrgID:  testOrgID, SourceSystem: testSource,
 					BatchID: fmt.Sprintf("bb-%02d-%d", i, k),
 					Items:   []Item{probeBareItem(name, payload)},
 				})
@@ -491,7 +648,7 @@ func outcomeOf(t *testing.T, r BatchResult, legacyID string) Outcome {
 func TestReferenceOnlyChangeUpdatesAndDraws(t *testing.T) {
 	e := setup(t)
 	ctx := context.Background()
-	if _, err := e.door.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+	if _, err := e.door.UpsertBatch(ctx, Batch{Caller: testActorID, OrgID: testOrgID, SourceSystem: testSource,
 		BatchID: "b-refh-0",
 		Items: []Item{
 			probeItem("P-1", "p-1", "parent-one", "b1000000-0000-4000-8000-000000000001"),
@@ -499,7 +656,7 @@ func TestReferenceOnlyChangeUpdatesAndDraws(t *testing.T) {
 		}}); err != nil {
 		t.Fatalf("parents: %v", err)
 	}
-	if _, err := e.door.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+	if _, err := e.door.UpsertBatch(ctx, Batch{Caller: testActorID, OrgID: testOrgID, SourceSystem: testSource,
 		BatchID: "b-refh-1",
 		Items: []Item{probeItem("C-1", "c-1", "child", "b1000000-0000-4000-8000-000000000003",
 			Ref{Kind: "probe", LegacyID: "P-1"})}}); err != nil {
@@ -507,7 +664,7 @@ func TestReferenceOnlyChangeUpdatesAndDraws(t *testing.T) {
 	}
 	seqBefore := e.probeSeqNext(t)
 
-	r, err := e.door.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+	r, err := e.door.UpsertBatch(ctx, Batch{Caller: testActorID, OrgID: testOrgID, SourceSystem: testSource,
 		BatchID: "b-refh-2",
 		Items: []Item{probeItem("C-1", "c-1", "child", "b1000000-0000-4000-8000-000000000003",
 			Ref{Kind: "probe", LegacyID: "P-2"})}})
@@ -522,7 +679,7 @@ func TestReferenceOnlyChangeUpdatesAndDraws(t *testing.T) {
 	}
 	// The replayed identical item (record and references) still answers
 	// unchanged.
-	r, err = e.door.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+	r, err = e.door.UpsertBatch(ctx, Batch{Caller: testActorID, OrgID: testOrgID, SourceSystem: testSource,
 		BatchID: "b-refh-3",
 		Items: []Item{probeItem("C-1", "c-1", "child", "b1000000-0000-4000-8000-000000000003",
 			Ref{Kind: "probe", LegacyID: "P-2"})}})
@@ -534,7 +691,7 @@ func TestReferenceOnlyChangeUpdatesAndDraws(t *testing.T) {
 	}
 	// A reference reordered among others is the same name set: the hash
 	// holds.
-	r, err = e.door.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+	r, err = e.door.UpsertBatch(ctx, Batch{Caller: testActorID, OrgID: testOrgID, SourceSystem: testSource,
 		BatchID: "b-refh-4",
 		Items: []Item{probeItem("C-1", "c-1", "child", "b1000000-0000-4000-8000-000000000003",
 			Ref{Kind: "probe", LegacyID: "P-2"}, Ref{Kind: "probe", LegacyID: "P-1"})}})
@@ -550,7 +707,7 @@ func TestUpsertCreatesANeverSeenName(t *testing.T) {
 	e := setup(t)
 
 	r, err := e.door.UpsertBatch(context.Background(), Batch{
-		OrgID: testOrgID, SourceSystem: testSource, BatchID: "b-create-1", Caller: "load-lane-test",
+		OrgID: testOrgID, SourceSystem: testSource, BatchID: "b-create-1", Caller: testActorID,
 		Items: []Item{probeItem("L-1", "c-1", "first", "a1000000-0000-4000-8000-000000000001")},
 	})
 	if err != nil {
@@ -576,14 +733,14 @@ func TestUpsertReplayUnchangedWritesNothingAndDrawsNothing(t *testing.T) {
 	e := setup(t)
 	ctx := context.Background()
 	item := probeItem("L-1", "c-1", "same", "a1000000-0000-4000-8000-000000000001")
-	if _, err := e.door.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+	if _, err := e.door.UpsertBatch(ctx, Batch{Caller: testActorID, OrgID: testOrgID, SourceSystem: testSource,
 		BatchID: "b-replay-1", Items: []Item{item}}); err != nil {
 		t.Fatalf("first batch: %v", err)
 	}
 	seqBefore := e.probeSeqNext(t)
 	_, _, rowSeqBefore, _ := e.probeRow(t, "c-1")
 
-	r, err := e.door.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+	r, err := e.door.UpsertBatch(ctx, Batch{Caller: testActorID, OrgID: testOrgID, SourceSystem: testSource,
 		BatchID: "b-replay-2", Items: []Item{item}})
 	if err != nil {
 		t.Fatalf("second batch: %v", err)
@@ -602,7 +759,7 @@ func TestUpsertReplayUnchangedWritesNothingAndDrawsNothing(t *testing.T) {
 func TestUpsertChangeUpdatesThatRowAloneAndDrawsExactlyOneSequence(t *testing.T) {
 	e := setup(t)
 	ctx := context.Background()
-	if _, err := e.door.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+	if _, err := e.door.UpsertBatch(ctx, Batch{Caller: testActorID, OrgID: testOrgID, SourceSystem: testSource,
 		BatchID: "b-change-1",
 		Items: []Item{
 			probeItem("L-1", "c-1", "before", "a1000000-0000-4000-8000-000000000001"),
@@ -614,7 +771,7 @@ func TestUpsertChangeUpdatesThatRowAloneAndDrawsExactlyOneSequence(t *testing.T)
 	_, _, rowOneSeqBefore, _ := e.probeRow(t, "c-1")
 	_, _, rowTwoSeq, _ := e.probeRow(t, "c-2")
 
-	r, err := e.door.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+	r, err := e.door.UpsertBatch(ctx, Batch{Caller: testActorID, OrgID: testOrgID, SourceSystem: testSource,
 		BatchID: "b-change-2",
 		Items: []Item{
 			probeItem("L-1", "c-1", "after", "a1000000-0000-4000-8000-000000000001"),
@@ -643,13 +800,13 @@ func TestUpsertChangeUpdatesThatRowAloneAndDrawsExactlyOneSequence(t *testing.T)
 func TestUpsertConflictRefusesNamingBothLegacyIDsAndTheRestLands(t *testing.T) {
 	e := setup(t)
 	ctx := context.Background()
-	if _, err := e.door.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+	if _, err := e.door.UpsertBatch(ctx, Batch{Caller: testActorID, OrgID: testOrgID, SourceSystem: testSource,
 		BatchID: "b-conflict-1",
 		Items:   []Item{probeItem("L-1", "c-1", "held", "a1000000-0000-4000-8000-000000000001")}}); err != nil {
 		t.Fatalf("first batch: %v", err)
 	}
 
-	r, err := e.door.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+	r, err := e.door.UpsertBatch(ctx, Batch{Caller: testActorID, OrgID: testOrgID, SourceSystem: testSource,
 		BatchID: "b-conflict-2",
 		Items: []Item{
 			// L-2's record carries the same natural code, so the writer's
@@ -682,7 +839,8 @@ func TestUpsertConflictRefusesNamingBothLegacyIDsAndTheRestLands(t *testing.T) {
 func TestUpsertRefusesAMissingReferenceNamingKindAndKey(t *testing.T) {
 	e := setup(t)
 	r, err := e.door.UpsertBatch(context.Background(), Batch{
-		OrgID: testOrgID, SourceSystem: testSource, BatchID: "b-ref-1",
+		Caller: testActorID,
+		OrgID:  testOrgID, SourceSystem: testSource, BatchID: "b-ref-1",
 		Items: []Item{
 			probeItem("L-1", "c-1", "child", "a1000000-0000-4000-8000-000000000001",
 				Ref{Kind: "probe_parent", LegacyID: "parent-999"}),
@@ -718,7 +876,8 @@ func TestTwoRacingUpsertsOnOneNameProduceOneRow(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			results[i], errs[i] = e.door.UpsertBatch(context.Background(), Batch{
-				OrgID: testOrgID, SourceSystem: testSource,
+				Caller: testActorID,
+				OrgID:  testOrgID, SourceSystem: testSource,
 				BatchID: fmt.Sprintf("b-race-%d", i+1), Items: []Item{item},
 			})
 		}(i)
@@ -746,7 +905,7 @@ func TestTwoRacingUpsertsOnOneNameProduceOneRow(t *testing.T) {
 func TestReplayedBatchIDReturnsItsFirstOutcomes(t *testing.T) {
 	e := setup(t)
 	ctx := context.Background()
-	first, err := e.door.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+	first, err := e.door.UpsertBatch(ctx, Batch{Caller: testActorID, OrgID: testOrgID, SourceSystem: testSource,
 		BatchID: "b-replay-same",
 		Items: []Item{
 			probeItem("L-1", "c-1", "one", "a1000000-0000-4000-8000-000000000001"),
@@ -757,7 +916,7 @@ func TestReplayedBatchIDReturnsItsFirstOutcomes(t *testing.T) {
 	}
 	rowsBefore, seqBefore := e.probeRowsCount(t, "c-1"), e.probeSeqNext(t)
 
-	second, err := e.door.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+	second, err := e.door.UpsertBatch(ctx, Batch{Caller: testActorID, OrgID: testOrgID, SourceSystem: testSource,
 		BatchID: "b-replay-same",
 		Items: []Item{
 			probeItem("L-1", "c-1", "CHANGED", "a1000000-0000-4000-8000-000000000001"),
@@ -794,13 +953,13 @@ func TestReplayedBatchIDReturnsItsFirstOutcomes(t *testing.T) {
 func TestCrossDoorBatchReplayRefuses(t *testing.T) {
 	e := setup(t)
 	ctx := context.Background()
-	if _, err := e.door.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+	if _, err := e.door.UpsertBatch(ctx, Batch{Caller: testActorID, OrgID: testOrgID, SourceSystem: testSource,
 		BatchID: "b-shared",
 		Items:   []Item{probeItem("L-1", "c-1", "one", "c1000000-0000-4000-8000-000000000001")}}); err != nil {
 		t.Fatalf("first door: %v", err)
 	}
 
-	_, err := e.bareDoor.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+	_, err := e.bareDoor.UpsertBatch(ctx, Batch{Caller: testActorID, OrgID: testOrgID, SourceSystem: testSource,
 		BatchID: "b-shared",
 		Items:   []Item{probeBareItem("O-1", "other")}})
 	if !errors.Is(err, ErrBatchDoorMismatch) {
@@ -810,7 +969,7 @@ func TestCrossDoorBatchReplayRefuses(t *testing.T) {
 		t.Fatalf("the cross door replay wrote %d rows, want none", n)
 	}
 	// The same door replaying its own batch id still replays.
-	r, err := e.door.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+	r, err := e.door.UpsertBatch(ctx, Batch{Caller: testActorID, OrgID: testOrgID, SourceSystem: testSource,
 		BatchID: "b-shared",
 		Items:   []Item{probeItem("L-1", "c-1", "CHANGED", "c1000000-0000-4000-8000-000000000001")}})
 	if err != nil {
@@ -824,7 +983,7 @@ func TestCrossDoorBatchReplayRefuses(t *testing.T) {
 func TestKeyReadResolvesNamesToIDsAndCounts(t *testing.T) {
 	e := setup(t)
 	ctx := context.Background()
-	if _, err := e.door.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+	if _, err := e.door.UpsertBatch(ctx, Batch{Caller: testActorID, OrgID: testOrgID, SourceSystem: testSource,
 		BatchID: "b-resolve-1",
 		Items: []Item{
 			probeItem("L-1", "c-1", "one", "a1000000-0000-4000-8000-000000000001"),
@@ -857,7 +1016,7 @@ func TestBatchReadReturnsTheRecordedBatch(t *testing.T) {
 	e := setup(t)
 	ctx := context.Background()
 	if _, err := e.door.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
-		BatchID: "b-read-1", Caller: "load-lane-test",
+		BatchID: "b-read-1", Caller: testActorID,
 		Items: []Item{probeItem("L-1", "c-1", "one", "a1000000-0000-4000-8000-000000000001")}}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
@@ -865,7 +1024,7 @@ func TestBatchReadReturnsTheRecordedBatch(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("get batch: ok %v err %v", ok, err)
 	}
-	if v.BatchID != "b-read-1" || v.SourceSystem != testSource || v.Caller != "load-lane-test" {
+	if v.BatchID != "b-read-1" || v.SourceSystem != testSource || v.Caller != testActorID {
 		t.Fatalf("batch view carries the wrong identity: %+v", v)
 	}
 	if v.State != BatchStateRecorded {
@@ -882,19 +1041,36 @@ func TestBatchReadReturnsTheRecordedBatch(t *testing.T) {
 func TestUpsertValidatesItsBatch(t *testing.T) {
 	e := setup(t)
 	ctx := context.Background()
-	if _, err := e.door.UpsertBatch(ctx, Batch{OrgID: testOrgID, BatchID: "b-v-1",
+	if _, err := e.door.UpsertBatch(ctx, Batch{Caller: testActorID, OrgID: testOrgID, BatchID: "b-v-1",
 		Items: []Item{probeItem("L-1", "c-1", "one", "")}}); !errors.Is(err, ErrMissingField) {
 		t.Fatalf("a batch without its source system answered %v, want ErrMissingField", err)
 	}
-	if _, err := e.door.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+	if _, err := e.door.UpsertBatch(ctx, Batch{Caller: testActorID, OrgID: testOrgID, SourceSystem: testSource,
 		BatchID: "b-v-2"}); !errors.Is(err, ErrBatchBound) {
 		t.Fatalf("a batch with no items answered %v, want ErrBatchBound", err)
 	}
-	if _, err := e.door.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+	if _, err := e.door.UpsertBatch(ctx, Batch{Caller: testActorID, OrgID: testOrgID, SourceSystem: testSource,
 		BatchID: "b-v-3", Items: []Item{
 			probeItem("", "c-1", "one", ""),
 		}}); !errors.Is(err, ErrMissingField) {
 		t.Fatalf("an item with no legacy id answered %v, want ErrMissingField", err)
+	}
+	// The audit actor's guard: a batch with no machine principal as its
+	// caller refuses loudly, before anything runs, because an audit row
+	// with a blank actor is a silent failure the platform cannot answer
+	// for. A non uuid caller is the same refusal.
+	if _, err := e.door.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+		BatchID: "b-v-4", Caller: "",
+		Items: []Item{probeItem("L-1", "c-1", "one", "")}}); !errors.Is(err, ErrBatchActor) {
+		t.Fatalf("a batch with no caller answered %v, want ErrBatchActor", err)
+	}
+	if _, err := e.door.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+		BatchID: "b-v-5", Caller: "not-a-uuid",
+		Items: []Item{probeItem("L-1", "c-1", "one", "")}}); !errors.Is(err, ErrBatchActor) {
+		t.Fatalf("a batch with a non uuid caller answered %v, want ErrBatchActor", err)
+	}
+	if n := e.probeAudit.len(); n != 0 {
+		t.Fatalf("the refused batches landed %d audit rows, want none", n)
 	}
 }
 
