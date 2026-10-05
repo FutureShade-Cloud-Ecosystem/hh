@@ -10866,6 +10866,8 @@ paths:
       summary: Read one load batch by the caller's batch id
       description: The counts by outcome and the per item outcomes the batch first recorded, so a replayed submission can be answered from the record. The id is the caller's own batch id, not an HH uuid.
       x-role: machine
+      security:
+        - MachineBearer: []
       x-addition: HH-LOAD-1 load doors; no ERP source route
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -10905,6 +10907,8 @@ paths:
       summary: Resolve legacy keys to HH ids
       description: "A list body of legacy keys in, one resolution per item out: the HH row the key names within the org and source system, or null where the name is not yet recorded, with the found and missing counts. Read semantics; writes nothing. A list over the bound refuses with 400."
       x-role: machine
+      security:
+        - MachineBearer: []
       x-addition: HH-LOAD-1 load doors; no ERP source route
       parameters:
         - $ref: "#/components/parameters/XOrg"

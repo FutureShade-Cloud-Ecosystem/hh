@@ -149,10 +149,12 @@ func (s *Store) replayBatch(ctx context.Context, orgID, sourceSystem, batchID, k
 }
 
 // recordBatch lands the batch row with the counts by outcome, the per
-// item outcomes and the state, the record a replay reads. A concurrent
-// same-id submission loses the row write and keeps its computed answer;
-// the first record stands, the plan's replay rule read sequentially.
-func (s *Store) recordBatch(ctx context.Context, in Batch, kind string, r BatchResult) error {
+// item outcomes and the state, and the batch's one audit row on the same
+// transaction (the audit ruling: the row commits or rolls back with the
+// record it describes). A concurrent same-id submission loses the row
+// write and keeps its computed answer; the first record stands, the
+// plan's replay rule read sequentially.
+func (s *Store) recordBatch(ctx context.Context, in Batch, kind string, r BatchResult, sink BatchAuditSink) error {
 	countsJSON, err := json.Marshal(r.Counts)
 	if err != nil {
 		return fmt.Errorf("load: batch counts encode: %w", err)
@@ -161,12 +163,32 @@ func (s *Store) recordBatch(ctx context.Context, in Batch, kind string, r BatchR
 	if err != nil {
 		return fmt.Errorf("load: batch items encode: %w", err)
 	}
-	if _, err := s.pool.Exec(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("load: batch record begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var batchUUID string
+	if err := tx.QueryRow(ctx, `
 		INSERT INTO load_batch (org_id, source_system, batch_id, caller, kind, state, counts, items)
 		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)
-		ON CONFLICT (org_id, source_system, batch_id) DO NOTHING`,
-		in.OrgID, in.SourceSystem, in.BatchID, in.Caller, kind, BatchStateRecorded, countsJSON, itemsJSON); err != nil {
+		ON CONFLICT (org_id, source_system, batch_id) DO NOTHING
+		RETURNING id::text`,
+		in.OrgID, in.SourceSystem, in.BatchID, in.Caller, kind, BatchStateRecorded, countsJSON, itemsJSON).Scan(&batchUUID); err != nil {
 		return fmt.Errorf("load: batch record: %w", err)
+	}
+	if err := sink.RecordBatchTx(ctx, tx, BatchAuditRow{
+		BatchUUID:    batchUUID,
+		BatchID:      in.BatchID,
+		Kind:         kind,
+		SourceSystem: in.SourceSystem,
+		ActorID:      in.Caller,
+		Counts:       r.Counts,
+	}); err != nil {
+		return fmt.Errorf("load: batch audit: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("load: batch record commit: %w", err)
 	}
 	return nil
 }

@@ -17,10 +17,10 @@ import (
 const maxResolveBodyBytes = 1 << 20
 
 // Handler serves the frame's two documented operations, loadGetBatch and
-// loadResolveKeys, both read semantics. The org arrives from X-Org for
-// as long as no machine principal exists to resolve it from; the machine
-// identity item (LD-2) re-points that resolution when it lands, and its
-// gate wraps these registrations.
+// loadResolveKeys, both read semantics. The org comes from the machine
+// scope the gate stamps on the request (ADR-0024): the gate owns X-Org
+// and every refusal for it is the one 403 body, so the handler reads no
+// header of its own.
 type Handler struct {
 	store *Store
 	log   *slog.Logger
@@ -31,27 +31,41 @@ func NewHandler(store *Store, log *slog.Logger) *Handler {
 	return &Handler{store: store, log: log}
 }
 
-// RegisterRoutes registers the two operations. No guard lives here: the
-// routes are machine surface, the machine gate is LD-2's, and the wiring
-// registers them only where the deployment's configuration switches the
-// load doors on.
+// RegisterRoutes registers the two operations. No guard lives in the
+// handler: the routes are machine surface, and the machine gate wraps
+// them at the registrar (ADR-0024), which is also where the deployment's
+// switch lives; the wiring registers them only where the configuration
+// switched the doors on and the machine gate rides the registrar.
 func (h *Handler) RegisterRoutes(r httpx.Registrar) {
 	r.Handle("GET /api/v1/load/batches/{id}", http.HandlerFunc(h.getBatch))
 	r.Handle("POST /api/v1/load/keys/resolve", http.HandlerFunc(h.resolveKeys))
 }
 
+// machineRefused writes the machine leg's one 403 body, byte for byte
+// the gate's. A request reaching a handler without the scope the gate
+// stamps is a wiring defect; it is answered exactly as the gate answers
+// everything else, so the handler adds no answer of its own.
+func machineRefused(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	_, _ = w.Write(authz.BodyForbidden)
+}
+
 // getBatch answers the recorded batch: the counts by outcome and the per
-// item outcomes the batch first recorded.
+// item outcomes the batch first recorded. The org is the machine scope's
+// own, stamped by the gate, never the raw header: the gate owns X-Org
+// and its refusals are the one 403 body, so a malformed or missing value
+// never reaches this handler, and nothing here can answer 500 for one.
 func (h *Handler) getBatch(w http.ResponseWriter, r *http.Request) {
-	org := r.Header.Get(authz.HeaderXOrg)
-	if org == "" {
-		httpx.Error(w, http.StatusBadRequest, "the load surface serves one org per call: name it in X-Org")
+	scope, ok := authz.MachineScopeFrom(r.Context())
+	if !ok {
+		machineRefused(w)
 		return
 	}
 	id := r.PathValue("id")
-	v, ok, err := h.store.GetBatch(r.Context(), org, id)
+	v, found, err := h.store.GetBatch(r.Context(), scope.OrgID, id)
 	switch {
-	case err == nil && ok:
+	case err == nil && found:
 		httpx.WriteJSON(w, http.StatusOK, batchViewWire(v))
 	case err == nil:
 		httpx.Error(w, http.StatusNotFound, "no batch is recorded under that id")
@@ -66,9 +80,9 @@ func (h *Handler) getBatch(w http.ResponseWriter, r *http.Request) {
 // resolveKeys answers one resolution per named key: the HH row the key
 // records, null where the name is not yet recorded, with the counts.
 func (h *Handler) resolveKeys(w http.ResponseWriter, r *http.Request) {
-	org := r.Header.Get(authz.HeaderXOrg)
-	if org == "" {
-		httpx.Error(w, http.StatusBadRequest, "the load surface serves one org per call: name it in X-Org")
+	scope, ok := authz.MachineScopeFrom(r.Context())
+	if !ok {
+		machineRefused(w)
 		return
 	}
 	var req apigen.LoadKeysResolveRequest
@@ -82,7 +96,7 @@ func (h *Handler) resolveKeys(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	out, err := h.store.ResolveKeys(r.Context(), org, req.SourceSystem, refs)
+	out, err := h.store.ResolveKeys(r.Context(), scope.OrgID, req.SourceSystem, refs)
 	if err != nil {
 		if errors.Is(err, ErrBatchBound) || errors.Is(err, ErrMissingField) {
 			httpx.Error(w, http.StatusBadRequest, err.Error())

@@ -112,7 +112,8 @@ type Item struct {
 }
 
 // Batch is one submitted load batch: the org, the source system, the
-// caller's batch id, the caller of record, and the bounded item list.
+// caller's batch id, the caller of record (the machine principal id, the
+// audit row's actor), and the bounded item list.
 type Batch struct {
 	OrgID        string
 	SourceSystem string
@@ -212,4 +213,35 @@ func refusedOutcome(item Item, r *Refusal) Outcome {
 		r = &Refusal{Code: "refused", Detail: "the write refused with no reason named"}
 	}
 	return Outcome{LegacyID: item.LegacyID, Status: OutcomeRefused, Reason: r.Code, Field: r.Field, Detail: r.Detail}
+}
+
+// The audit row's vocabulary, the words the platform's audit write path
+// carries for the load frame's one-audit-row-per-batch ruling (ADR-0024):
+// the machine principal as actor, the counts by outcome, keys and fields
+// only, never a record value.
+const (
+	AuditAction     = "LOAD_BATCH"
+	AuditEntityType = "load.batch"
+	AuditPurpose    = "LOAD_BATCH_OUTCOME"
+)
+
+// BatchAuditRow is one batch's audit fact: the batch row's own uuid (the
+// audit row's entity id), the caller's batch id and the door's kind (keys
+// only), the machine principal the batch is attributed to, and the counts
+// by outcome.
+type BatchAuditRow struct {
+	BatchUUID    string
+	BatchID      string
+	Kind         string
+	SourceSystem string
+	ActorID      string
+	Counts       map[string]int
+}
+
+// BatchAuditSink is the platform audit write path's seam: the wiring
+// hands the door one implementation over the audit service, and the row
+// lands on the batch record's own transaction, committing or rolling
+// back with it.
+type BatchAuditSink interface {
+	RecordBatchTx(ctx context.Context, tx pgx.Tx, row BatchAuditRow) error
 }

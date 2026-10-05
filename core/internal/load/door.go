@@ -11,17 +11,21 @@ import (
 // Door is the one keyed upsert helper bound to one owning module's
 // writer: the object one load door holds. The kind is the door's
 // registry kind (the batch record's kind too); the writer is the owning
-// module's, taken by constructor, and every row write it makes joins the
-// transaction this door opens.
+// module's, and the audit sink the platform's write path, both taken by
+// constructor, and every row write they make joins a transaction this
+// door opens.
 type Door struct {
 	store  *Store
 	kind   string
 	writer Writer
+	audit  BatchAuditSink
 }
 
-// NewDoor binds the helper to one door's kind and writer.
-func NewDoor(store *Store, kind string, w Writer) *Door {
-	return &Door{store: store, kind: kind, writer: w}
+// NewDoor binds the helper to one door's kind, writer and audit sink. A
+// nil sink is a construction the door refuses at the first batch: every
+// batch is audited, one row per batch, or the batch does not land.
+func NewDoor(store *Store, kind string, w Writer, a BatchAuditSink) *Door {
+	return &Door{store: store, kind: kind, writer: w, audit: a}
 }
 
 // maxNameRetries bounds the race retry: the registry insert is the lock,
@@ -46,6 +50,9 @@ func (d *Door) UpsertBatch(ctx context.Context, in Batch) (BatchResult, error) {
 	if d.writer == nil {
 		return BatchResult{}, errors.New("load: the door carries no writer")
 	}
+	if d.audit == nil {
+		return BatchResult{}, errors.New("load: the door carries no audit sink; every batch is audited")
+	}
 	replay, found, err := d.store.replayBatch(ctx, in.OrgID, in.SourceSystem, in.BatchID, d.kind)
 	if err != nil {
 		return BatchResult{}, err
@@ -64,7 +71,7 @@ func (d *Door) UpsertBatch(ctx context.Context, in Batch) (BatchResult, error) {
 		result.Items = append(result.Items, o)
 		result.Counts[o.Status]++
 	}
-	if err := d.store.recordBatch(ctx, in, d.kind, result); err != nil {
+	if err := d.store.recordBatch(ctx, in, d.kind, result, d.audit); err != nil {
 		return BatchResult{}, err
 	}
 	return result, nil

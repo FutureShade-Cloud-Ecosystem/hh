@@ -36,9 +36,10 @@ import (
 // org id is a random-shaped uuid no org row is planted for, because the
 // registry carries no foreign key (0079's crosswalk posture, carried).
 const (
-	testOrgID  = "5e1f0000-0000-4000-8000-1f0000000001"
-	testSource = "testsuite"
-	probeScope = "load_probe"
+	testOrgID   = "5e1f0000-0000-4000-8000-1f0000000001"
+	testSource  = "testsuite"
+	testActorID = "5e1f0000-0000-4000-8000-1f000000000a"
+	probeScope  = "load_probe"
 )
 
 // testPool opens the suite's pool off DATABASE_URL and skips politely
@@ -117,13 +118,15 @@ func (probeWriter) Apply(ctx context.Context, tx pgx.Tx, in Write) (string, erro
 	return in.RowID, nil
 }
 
-// probeEnv is one test's fixtures: the pool, the store over it, and the
-// probe and bare doors.
+// probeEnv is one test's fixtures: the pool, the store over it, the
+// probe and bare doors, and each door's audit capture.
 type probeEnv struct {
-	pool     *pgxpool.Pool
-	store    *Store
-	door     *Door
-	bareDoor *Door
+	pool       *pgxpool.Pool
+	store      *Store
+	door       *Door
+	bareDoor   *Door
+	probeAudit *countingAuditSink
+	bareAudit  *countingAuditSink
 }
 
 // setup hands one test its fixtures, the two scratch shapes and a clean
@@ -175,11 +178,15 @@ func setup(t *testing.T) *probeEnv {
 		pool.Close()
 	})
 	store := NewStore(pool)
+	probeAudit := &countingAuditSink{}
+	bareAudit := &countingAuditSink{}
 	return &probeEnv{
-		pool:     pool,
-		store:    store,
-		door:     NewDoor(store, "probe", probeWriter{}),
-		bareDoor: NewDoor(store, "bare", bareWriter{}),
+		pool:       pool,
+		store:      store,
+		door:       NewDoor(store, "probe", probeWriter{}, probeAudit),
+		bareDoor:   NewDoor(store, "bare", bareWriter{}, bareAudit),
+		probeAudit: probeAudit,
+		bareAudit:  bareAudit,
 	}
 }
 
@@ -246,6 +253,76 @@ func (bareWriter) Apply(ctx context.Context, tx pgx.Tx, in Write) (string, error
 		return "", fmt.Errorf("bare create: %w", err)
 	}
 	return id, nil
+}
+
+// countingAuditSink captures the audit rows the doors write, the suite's
+// stand-in for the platform's audit write path.
+type countingAuditSink struct {
+	mu   sync.Mutex
+	rows []BatchAuditRow
+}
+
+func (s *countingAuditSink) RecordBatchTx(_ context.Context, _ pgx.Tx, row BatchAuditRow) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.rows = append(s.rows, row)
+	return nil
+}
+
+func (s *countingAuditSink) len() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.rows)
+}
+
+func (s *countingAuditSink) last() BatchAuditRow {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.rows[len(s.rows)-1]
+}
+
+// TestEveryBatchLandsOneAuditRow pins the audit ruling: one audit row per
+// batch, the machine principal as actor and the counts by outcome, no
+// record value anywhere in the row, and a replayed batch lands no second
+// row.
+func TestEveryBatchLandsOneAuditRow(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	if _, err := e.door.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+		BatchID: "b-audit-1", Caller: testActorID,
+		Items: []Item{
+			probeItem("L-1", "c-1", "one", "d1000000-0000-4000-8000-000000000001"),
+			probeItem("L-2", "c-2", "two", "d1000000-0000-4000-8000-000000000002"),
+		}}); err != nil {
+		t.Fatalf("first submission: %v", err)
+	}
+	// A second batch whose one item replays unchanged: the counts differ
+	// per batch, and each batch carries its own row.
+	if _, err := e.door.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+		BatchID: "b-audit-2", Caller: testActorID,
+		Items: []Item{probeItem("L-1", "c-1", "one", "d1000000-0000-4000-8000-000000000001")}}); err != nil {
+		t.Fatalf("replay batch: %v", err)
+	}
+	if n := e.probeAudit.len(); n != 2 {
+		t.Fatalf("two batches landed %d audit rows, want exactly one per batch", n)
+	}
+	row := e.probeAudit.last()
+	if row.ActorID != testActorID || row.Kind != "probe" || row.BatchID != "b-audit-2" {
+		t.Fatalf("audit row carries the wrong identity: %+v", row)
+	}
+	if row.Counts[OutcomeUnchanged] != 1 || row.Counts[OutcomeCreated] != 0 {
+		t.Fatalf("audit row counts %+v, want one unchanged", row.Counts)
+	}
+	// A replayed batch id returns its first outcomes and lands no second
+	// audit row.
+	if _, err := e.door.UpsertBatch(ctx, Batch{OrgID: testOrgID, SourceSystem: testSource,
+		BatchID: "b-audit-1", Caller: testActorID,
+		Items: []Item{probeItem("L-9", "c-9", "nine", "d1000000-0000-4000-8000-000000000009")}}); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if n := e.probeAudit.len(); n != 2 {
+		t.Fatalf("the replay landed a second audit row: %d rows", n)
+	}
 }
 
 // TestRacesOnOneNameNeverRefuseAFalseConflict drives the review's probe

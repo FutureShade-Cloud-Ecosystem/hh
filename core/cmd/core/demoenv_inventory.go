@@ -25,13 +25,14 @@ var demoEnvDenyPrefixes = []string{
 // a demo box: the SMS provider selection, the live card processor's
 // endpoint, the message bus, the statement notices switch, and the load
 // doors switch (the doors are a dealer deployment's decision, never a
-// demo box's).
+// demo box's; the machine credential names beside the switch are classed
+// allowed, the doors off relaxation ignores them with one warning).
 var demoEnvDenyNames = []string{
 	"SMS_PROVIDER",
 	"HOS_CARD_BASE_URL",
 	"NATS_URL",
 	"HOS_STATEMENT_NOTICES",
-	"HH_LOAD_DOORS_ENABLED",
+	"CORE_LOAD_DOORS",
 }
 
 // demoEnvCardProcessorVar and demoEnvCardProcessorValue: the card
@@ -116,7 +117,6 @@ var envInventoryFixture = []string{
 	"HH_ACCEPTANCE_SIGN_KEY_ID",
 	"HH_ACCEPTANCE_SIGN_KEY_PREVIOUS",
 	"HH_ACCEPTANCE_SIGN_KEY_PREVIOUS_ID",
-	"HH_LOAD_DOORS_ENABLED",
 	"HOS_ASSIST_ANTHROPIC_API_KEY",
 	"HOS_CARD_BASE_URL",
 	"HOS_CARD_PROCESSOR",
