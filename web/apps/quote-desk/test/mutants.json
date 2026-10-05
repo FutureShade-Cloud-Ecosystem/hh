@@ -16,42 +16,42 @@
   {
     "id": "wa-terms-save",
     "file": "src/quote-workarea.ts",
-    "find": "await ctx.guarded(client.putTerms(ctx.id, termsBody(t)))",
+    "find": "await ctx.guarded(client.putTerms(ctx.id, termsBody(t)), this.lateWrite(ctx, \"save the quote terms\"))",
     "replace": "await client.putTerms(ctx.id, termsBody(t))",
     "test": "guard terms save answer:"
   },
   {
     "id": "wa-add-line",
     "file": "src/quote-workarea.ts",
-    "find": "await ctx.guarded(client.addLine(ctx.id, p.id, String(qty), p.uom))",
+    "find": "await ctx.guarded(client.addLine(ctx.id, p.id, String(qty), p.uom), this.lateWrite(ctx, \"add this line\"))",
     "replace": "await client.addLine(ctx.id, p.id, String(qty), p.uom)",
     "test": "guard add line:"
   },
   {
     "id": "wa-qty-edit",
     "file": "src/quote-workarea.ts",
-    "find": "await ctx.guarded(client.editLine(ctx.id, line.line_no, { qty }))",
+    "find": "await ctx.guarded(client.editLine(ctx.id, line.line_no, { qty }), this.lateWrite(ctx, \"change this quantity\"))",
     "replace": "await client.editLine(ctx.id, line.line_no, { qty })",
     "test": "guard quantity edit:"
   },
   {
     "id": "wa-remove-line",
     "file": "src/quote-workarea.ts",
-    "find": "await ctx.guarded(client.removeLine(ctx.id, line.line_no))",
+    "find": "await ctx.guarded(client.removeLine(ctx.id, line.line_no), this.lateWrite(ctx, \"remove this line\"))",
     "replace": "await client.removeLine(ctx.id, line.line_no)",
     "test": "guard remove line:"
   },
   {
     "id": "wa-validity",
     "file": "src/quote-workarea.ts",
-    "find": "await ctx.guarded(client.setValidUntil(ctx.id, validUntilFromDays(days, this.clockNow)))",
+    "find": "await ctx.guarded(client.setValidUntil(ctx.id, validUntilFromDays(days, this.clockNow)), this.lateWrite(ctx, \"change the expiry date\"))",
     "replace": "await client.setValidUntil(ctx.id, validUntilFromDays(days, this.clockNow))",
     "test": "guard validity:"
   },
   {
     "id": "wa-convert",
     "file": "src/quote-workarea.ts",
-    "find": "await ctx.guarded(client.convertQuote(ctx.id))",
+    "find": "await ctx.guarded(client.convertQuote(ctx.id), this.lateWrite(ctx, \"convert this quote\"))",
     "replace": "await client.convertQuote(ctx.id)",
     "test": "guard convert:"
   },
@@ -220,7 +220,7 @@
   {
     "id": "ep-late-announces",
     "file": "src/edit-panel.ts",
-    "find": "      this.dispatchEvent(new CustomEvent(\"quote-changed\", { detail: { quoteId: ctx.id }, bubbles: true, composed: true }));\n      return;\n    }\n    const now = this.ctx;",
+    "find": "      this.announceChangedFor(ctx);\n      return;\n    }\n    const now = this.ctx;",
     "replace": "      return;\n    }\n    const now = this.ctx;",
     "test": "P2-3 a quantity save that lands after leaving"
   },
@@ -479,14 +479,14 @@
   {
     "id": "wa-sms-answer",
     "file": "src/quote-workarea.ts",
-    "find": "const sms = await ctx.guarded(client.shareBySMS(ctx.id));",
+    "find": "const sms = await ctx.guarded(client.shareBySMS(ctx.id), this.lateWrite(ctx, \"send the text\"));",
     "replace": "const sms = await client.shareBySMS(ctx.id);",
     "test": "a text answer that lands after another quote opened"
   },
   {
     "id": "wa-ensure-link",
     "file": "src/quote-workarea.ts",
-    "find": "const result = await ctx.guarded(client.mintShareLink(ctx.id));\n    if (result === undefined) throw new StaleQuoteError();",
+    "find": "const result = await ctx.guarded(client.mintShareLink(ctx.id), this.lateWrite(ctx, \"create a share link\"));\n    if (result === undefined) throw new StaleQuoteError();",
     "replace": "const result = await client.mintShareLink(ctx.id);\n    if (result === undefined) throw new StaleQuoteError();",
     "test": "a send in flight when another quote opens"
   },
@@ -675,7 +675,7 @@
   {
     "id": "fu-share-answer",
     "file": "src/followups-panel.ts",
-    "find": "const result = await ctx.guarded(client.shareBySMS(ctx.id));",
+    "find": "const result = await ctx.guarded(client.shareBySMS(ctx.id), this.lateWrite(ctx, (late) => spokenRefusal(shareErrorMessage(late.status, late.error))));",
     "replace": "const result = await client.shareBySMS(ctx.id);",
     "test": "a text share answer that lands after another quote opened"
   },
@@ -689,7 +689,7 @@
   {
     "id": "fu-change-answer",
     "file": "src/followups-panel.ts",
-    "find": "const result = await ctx.guarded(stop ? client.stopFollowUps(ctx.id) : client.resumeFollowUps(ctx.id));",
+    "find": "const result = await ctx.guarded(\n      stop ? client.stopFollowUps(ctx.id) : client.resumeFollowUps(ctx.id),\n      this.lateWrite(ctx, (late) => spokenRefusal(shareErrorMessage(late.status, late.error))),\n    );",
     "replace": "const result = await (stop ? client.stopFollowUps(ctx.id) : client.resumeFollowUps(ctx.id));",
     "test": "a follow-ups stop that lands after another quote opened"
   },
@@ -703,7 +703,7 @@
   {
     "id": "he-rehold-answer",
     "file": "src/hold-expiry-panel.ts",
-    "find": "const result = await ctx.guarded(client.resyncHolds(ctx.id));",
+    "find": "const result = await ctx.guarded(client.resyncHolds(ctx.id), this.lateWrite(ctx, (late) => spokenRefusal(reholdRefusal(late.status, late.error))));",
     "replace": "const result = await client.resyncHolds(ctx.id);",
     "test": "a re-hold answer that lands after another quote opened"
   },
@@ -815,7 +815,7 @@
   {
     "id": "wa-disc-edit",
     "file": "src/quote-workarea.ts",
-    "find": "const result = await ctx.guarded(client.editLine(ctx.id, line.line_no, { discPct: n }));",
+    "find": "const result = await ctx.guarded(client.editLine(ctx.id, line.line_no, { discPct: n }), this.lateWrite(ctx, \"change this discount\"));",
     "replace": "const result = await client.editLine(ctx.id, line.line_no, { discPct: n });",
     "test": "guard discount edit:"
   },
@@ -975,5 +975,117 @@
     "find": "          if (ctx.stale) return;\n          if (this.error === STILL_SAVING)",
     "replace": "          if (this.error === STILL_SAVING)",
     "test": "A P2-2 a slow terms save that lands after the person has left"
+  },
+  {
+    "id": "wa-late-add",
+    "file": "src/quote-workarea.ts",
+    "find": ", this.lateWrite(ctx, \"add this line\")",
+    "replace": "",
+    "test": "B P2-1 work area: an add answered after leaving"
+  },
+  {
+    "id": "wa-late-qty",
+    "file": "src/quote-workarea.ts",
+    "find": ", this.lateWrite(ctx, \"change this quantity\")",
+    "replace": "",
+    "test": "B P2-1 work area: a quantity change answered after leaving"
+  },
+  {
+    "id": "wa-late-disc",
+    "file": "src/quote-workarea.ts",
+    "find": ", this.lateWrite(ctx, \"change this discount\")",
+    "replace": "",
+    "test": "B P2-1 work area: a discount change answered after leaving"
+  },
+  {
+    "id": "wa-late-remove",
+    "file": "src/quote-workarea.ts",
+    "find": ", this.lateWrite(ctx, \"remove this line\")",
+    "replace": "",
+    "test": "B P2-1 work area: a line removal answered after leaving"
+  },
+  {
+    "id": "wa-late-validity",
+    "file": "src/quote-workarea.ts",
+    "find": ", this.lateWrite(ctx, \"change the expiry date\")",
+    "replace": "",
+    "test": "B P2-1 work area: an expiry change answered after leaving"
+  },
+  {
+    "id": "wa-late-terms",
+    "file": "src/quote-workarea.ts",
+    "find": ", this.lateWrite(ctx, \"save the quote terms\")",
+    "replace": "",
+    "test": "B P2-1 work area: a terms save answered after leaving"
+  },
+  {
+    "id": "wa-late-convert",
+    "file": "src/quote-workarea.ts",
+    "find": ", this.lateWrite(ctx, \"convert this quote\")",
+    "replace": "",
+    "test": "B P2-1 work area: a conversion answered after leaving"
+  },
+  {
+    "id": "wa-late-mint",
+    "file": "src/quote-workarea.ts",
+    "find": ", this.lateWrite(ctx, \"create a share link\")",
+    "replace": "",
+    "test": "B P2-1 work area: a link made to copy answered after leaving"
+  },
+  {
+    "id": "wa-late-sms",
+    "file": "src/quote-workarea.ts",
+    "find": ", this.lateWrite(ctx, \"send the text\")",
+    "replace": "",
+    "test": "B P2-1 work area: a text share made by a send answered after leaving"
+  },
+  {
+    "id": "wa-late-refusal-said",
+    "file": "src/quote-workarea.ts",
+    "find": "      this.error = spokenRefusal(quoteErrorMessage(late.status, late.error, what));\n    };",
+    "replace": "      void what;\n    };",
+    "test": "B P2-1 work area: a quantity change refused after leaving and returning"
+  },
+  {
+    "id": "fu-share-late",
+    "file": "src/followups-panel.ts",
+    "find": ", this.lateWrite(ctx, (late) => spokenRefusal(shareErrorMessage(late.status, late.error))));",
+    "replace": ");",
+    "test": "B P2-1 a text share that lands after leaving"
+  },
+  {
+    "id": "fu-change-late",
+    "file": "src/followups-panel.ts",
+    "find": ",\n      this.lateWrite(ctx, (late) => spokenRefusal(shareErrorMessage(late.status, late.error))),\n    );",
+    "replace": "\n    );",
+    "test": "B P2-1 a follow-ups stop that lands after leaving and returning"
+  },
+  {
+    "id": "he-rehold-late",
+    "file": "src/hold-expiry-panel.ts",
+    "find": ", this.lateWrite(ctx, (late) => spokenRefusal(reholdRefusal(late.status, late.error))));",
+    "replace": ");",
+    "test": "B P2-1 a re-hold that lands after leaving"
+  },
+  {
+    "id": "pb-late-announces",
+    "file": "src/panel-base.ts",
+    "find": "      if (late.ok) {\n        this.announceChangedFor(ctx);\n        return;\n      }\n",
+    "replace": "      if (late.ok) return;\n",
+    "test": "B P2-1 a follow-ups restart that lands after leaving"
+  },
+  {
+    "id": "pb-late-refusal-other-quote",
+    "file": "src/panel-base.ts",
+    "find": "      if (this.ctx.id !== ctx.id) return;\n      this.error = say(late);",
+    "replace": "      this.error = say(late);",
+    "test": "B P2-1 a follow-ups stop refused while the person is on another quote"
+  },
+  {
+    "id": "pb-late-refusal-said",
+    "file": "src/panel-base.ts",
+    "find": "      this.error = say(late);",
+    "replace": "      void say;",
+    "test": "B P2-1 a follow-ups stop refused after leaving and returning"
   }
 ]

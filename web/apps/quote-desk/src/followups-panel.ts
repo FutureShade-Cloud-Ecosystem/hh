@@ -128,7 +128,7 @@ export class QdQuoteFollowups extends PanelBase {
     this.busy = true;
     this.error = "";
     this.notice = "";
-    const result = await ctx.guarded(client.shareBySMS(ctx.id));
+    const result = await ctx.guarded(client.shareBySMS(ctx.id), this.lateWrite(ctx, (late) => spokenRefusal(shareErrorMessage(late.status, late.error))));
     // The person opened another quote while this was out: its answer says nothing there.
     if (result === undefined) return;
     this.busy = false;
@@ -150,7 +150,10 @@ export class QdQuoteFollowups extends PanelBase {
     this.busy = true;
     this.error = "";
     this.notice = "";
-    const result = await ctx.guarded(stop ? client.stopFollowUps(ctx.id) : client.resumeFollowUps(ctx.id));
+    const result = await ctx.guarded(
+      stop ? client.stopFollowUps(ctx.id) : client.resumeFollowUps(ctx.id),
+      this.lateWrite(ctx, (late) => spokenRefusal(shareErrorMessage(late.status, late.error))),
+    );
     if (result === undefined) return;
     this.busy = false;
     if (!result.ok) {

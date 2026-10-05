@@ -9,6 +9,7 @@
 import { LitElement, type PropertyValues } from "lit";
 import { property, state } from "lit/decorators.js";
 import type { QdClient } from "./qd-client.js";
+import type { Result } from "@hardscapehouse/api-client";
 import { QuoteContext, QuoteScope } from "./quote-context.js";
 
 export type Controls = Record<string, (control: HTMLElement, event: Event) => void>;
@@ -107,6 +108,28 @@ export abstract class PanelBase extends LitElement {
   /** Tell the surface an edit landed so every sibling panel and the list re-read, with no page reload. */
   protected announceChanged(): void {
     this.dispatchEvent(new CustomEvent("quote-changed", { detail: { quoteId: this.quoteId }, bubbles: true, composed: true }));
+  }
+
+  /** Tell the surface the quote the context names changed, whichever quote is open now: every view of it re-reads. */
+  protected announceChangedFor(ctx: QuoteContext): void {
+    this.dispatchEvent(new CustomEvent("quote-changed", { detail: { quoteId: ctx.id }, bubbles: true, composed: true }));
+  }
+
+  /**
+   * What a guarded write does with its answer when the quote was left while it was out. It is never applied to the
+   * quote on screen, but a write that succeeded did change its quote, so the screens are told and the person who
+   * comes back finds what the server holds. A refusal is said only on the quote it belongs to (when the person is on
+   * it again) and says nothing on any other.
+   */
+  protected lateWrite(ctx: QuoteContext, say: (refusal: Extract<Result<unknown>, { ok: false }>) => string): (late: Result<unknown>) => void {
+    return (late) => {
+      if (late.ok) {
+        this.announceChangedFor(ctx);
+        return;
+      }
+      if (this.ctx.id !== ctx.id) return;
+      this.error = say(late);
+    };
   }
 
   /** Set an uncontrolled field to the state's value unless it already holds it. */

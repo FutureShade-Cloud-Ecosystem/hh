@@ -137,7 +137,7 @@ export class QdQuoteHoldExpiry extends PanelBase {
     this.busy = true;
     this.error = "";
     this.notice = "";
-    const result = await ctx.guarded(client.resyncHolds(ctx.id));
+    const result = await ctx.guarded(client.resyncHolds(ctx.id), this.lateWrite(ctx, (late) => spokenRefusal(reholdRefusal(late.status, late.error))));
     if (result === undefined) return;
     this.busy = false;
     if (!result.ok) {

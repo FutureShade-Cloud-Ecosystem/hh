@@ -99,6 +99,7 @@ import {
 } from "./quote-surface.js";
 import { FLOOR_REFUSAL_CLOSED_EVENT, floorRefusalMessage, openFloorRefusalDialog, parseFloorRefusal } from "./floor-refusal.js";
 import { OPEN_SETTINGS_EVENT } from "./panel-seams.js";
+import type { Result } from "@hardscapehouse/api-client";
 import type { QdClient, SurfaceConfig, TermsRef } from "./qd-client.js";
 import { WorkspaceStore } from "./workspace-store.js";
 import { QuoteContext, QuoteScope, SIGN_OUT_EVENT, UNSENT_WAIT_MS, waitUpTo, type SignOutDetail } from "./quote-context.js";
@@ -1181,6 +1182,23 @@ export class QdQuoteWorkarea extends LitElement {
     this.ticketMoved();
   }
 
+  /**
+   * What a guarded write does with its answer when the quote was left while it was out. It is never applied to the
+   * quote on screen, but a write that succeeded did change its quote: the screens are told, by that quote's own id,
+   * so the list and every open view of it re-read and the person who comes back finds what the server holds. A refusal
+   * is said only on the quote it belongs to, when the person is on it again.
+   */
+  private lateWrite(ctx: QuoteContext, what: string): (late: Result<unknown>) => void {
+    return (late) => {
+      if (late.ok) {
+        this.dispatchEvent(new CustomEvent("quote-changed", { detail: { quoteId: ctx.id }, bubbles: true, composed: true }));
+        return;
+      }
+      if (this.ctx.id !== ctx.id) return;
+      this.error = spokenRefusal(quoteErrorMessage(late.status, late.error, what));
+    };
+  }
+
   /** Hold the Send and add controls while a write is out; the last write to answer lets go. A stale hold was reset with the quote. */
   private holdBusy(ctx: QuoteContext): () => void {
     this.busyHolds += 1;
@@ -1932,7 +1950,7 @@ export class QdQuoteWorkarea extends LitElement {
     const release = this.holdBusy(ctx);
     this.error = "";
     this.notice = "";
-    const result = await ctx.guarded(client.addLine(ctx.id, p.id, String(qty), p.uom));
+    const result = await ctx.guarded(client.addLine(ctx.id, p.id, String(qty), p.uom), this.lateWrite(ctx, "add this line"));
     if (result === undefined) return;
     release();
     if (result.ok) {
@@ -1956,7 +1974,7 @@ export class QdQuoteWorkarea extends LitElement {
     const ctx = this.ctx;
     const release = this.holdBusy(ctx);
     this.error = "";
-    const result = await ctx.guarded(client.editLine(ctx.id, line.line_no, { qty }));
+    const result = await ctx.guarded(client.editLine(ctx.id, line.line_no, { qty }), this.lateWrite(ctx, "change this quantity"));
     if (result === undefined) return;
     release();
     if (result.ok) {
@@ -2000,7 +2018,7 @@ export class QdQuoteWorkarea extends LitElement {
     const ctx = this.ctx;
     const release = this.holdBusy(ctx);
     this.error = "";
-    const result = await ctx.guarded(client.editLine(ctx.id, line.line_no, { discPct: n }));
+    const result = await ctx.guarded(client.editLine(ctx.id, line.line_no, { discPct: n }), this.lateWrite(ctx, "change this discount"));
     if (result === undefined) return;
     release();
     if (result.ok) {
@@ -2040,7 +2058,7 @@ export class QdQuoteWorkarea extends LitElement {
     const ctx = this.ctx;
     const release = this.holdBusy(ctx);
     this.error = "";
-    const result = await ctx.guarded(client.removeLine(ctx.id, line.line_no));
+    const result = await ctx.guarded(client.removeLine(ctx.id, line.line_no), this.lateWrite(ctx, "remove this line"));
     if (result === undefined) return;
     release();
     if (result.ok) {
@@ -2117,7 +2135,7 @@ export class QdQuoteWorkarea extends LitElement {
       this.termsTimer = undefined;
     }
     const sent = this.termsEditSeq;
-    const result = await ctx.guarded(client.putTerms(ctx.id, termsBody(t)));
+    const result = await ctx.guarded(client.putTerms(ctx.id, termsBody(t)), this.lateWrite(ctx, "save the quote terms"));
     // The quote changed while this save was out: its answer is not this screen's to show (leaving the quote already sent any later edit to its own quote).
     if (result === undefined) return;
     // What was edited while this save was in flight is still unsaved and stays laid over the answer.
@@ -2141,7 +2159,7 @@ export class QdQuoteWorkarea extends LitElement {
     const ctx = this.ctx;
     const release = this.holdBusy(ctx);
     this.error = "";
-    const result = await ctx.guarded(client.setValidUntil(ctx.id, validUntilFromDays(days, this.clockNow)));
+    const result = await ctx.guarded(client.setValidUntil(ctx.id, validUntilFromDays(days, this.clockNow)), this.lateWrite(ctx, "change the expiry date"));
     if (result === undefined) return;
     release();
     if (result.ok) {
@@ -2379,7 +2397,7 @@ export class QdQuoteWorkarea extends LitElement {
   private async ensureLink(ctx: QuoteContext): Promise<string> {
     const client = this.client;
     if (client === null || this.mintedToken !== "") return this.mintedToken;
-    const result = await ctx.guarded(client.mintShareLink(ctx.id));
+    const result = await ctx.guarded(client.mintShareLink(ctx.id), this.lateWrite(ctx, "create a share link"));
     if (result === undefined) throw new StaleQuoteError();
     if (!result.ok) {
       throw new Error(spokenRefusal(quoteErrorMessage(result.status, result.error, "create a share link")));
@@ -2454,7 +2472,7 @@ export class QdQuoteWorkarea extends LitElement {
       let smsWhy = "";
       const smsChosen = channels.includes("SMS");
       if (smsChosen) {
-        const sms = await ctx.guarded(client.shareBySMS(ctx.id));
+        const sms = await ctx.guarded(client.shareBySMS(ctx.id), this.lateWrite(ctx, "send the text"));
         if (sms === undefined) return;
         if (sms.ok) {
           smsOk = true;
@@ -2480,7 +2498,7 @@ export class QdQuoteWorkarea extends LitElement {
     const ctx = this.ctx;
     const release = this.holdBusy(ctx);
     this.error = "";
-    const result = await ctx.guarded(client.convertQuote(ctx.id));
+    const result = await ctx.guarded(client.convertQuote(ctx.id), this.lateWrite(ctx, "convert this quote"));
     if (result === undefined) return;
     release();
     if (!result.ok) {

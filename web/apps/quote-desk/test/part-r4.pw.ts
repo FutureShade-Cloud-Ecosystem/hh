@@ -1,7 +1,7 @@
 // PR 121 round 4 findings: each test holds one answer back behind a delayed route, so the order of events is exact
 // and does not depend on the machine's speed.
 import { expect, test, type Page } from "@playwright/test";
-import { hold, open, quiet, row, seed, settle, signIn, writes } from "./switch-helpers.js";
+import { gate, hold, open, quiet, row, seed, settle, signIn, stubBrowserChannels, writes } from "./switch-helpers.js";
 
 test.beforeEach(async ({ request }) => {
   await request.post("/_stub/reset");
@@ -166,4 +166,287 @@ test("A P2-2 a slow terms save that lands after the person has left the quote ag
   await settle(page);
   expect(reads).toEqual([]);
   await expect(page.getByTestId("qb-error")).toHaveText("");
+});
+
+const followups = (page: Page) => page.locator("qd-quote-followups");
+const holdExpiry = (page: Page) => page.locator("qd-quote-hold-expiry");
+
+async function openQuote(page: Page, quoteNo: string): Promise<void> {
+  await row(page, quoteNo).click();
+  await openDetail(page);
+  await expect(page.getByTestId("qe-title")).toContainText(quoteNo);
+}
+
+test("B P2-1 a follow-ups stop that lands after leaving and returning shows on return", async ({ page }) => {
+  await signIn(page, "Sales manager");
+  await openQuote(page, "Q-1002");
+  await expect(followups(page).getByTestId("fu-summary")).toContainText("Follow-ups are on");
+  const disable = await hold(page, /\/quotes\/q-1002\/followups\/disable$/, { method: "POST", times: 1 });
+  await followups(page).getByRole("button", { name: "Stop follow-ups" }).click();
+  await disable.asked;
+  await openQuote(page, "Q-1001");
+  await openQuote(page, "Q-1002");
+  await expect(followups(page).getByTestId("fu-summary")).toContainText("Follow-ups are on");
+  await disable.release();
+  await expect(followups(page).getByTestId("fu-summary")).toContainText("Follow-ups are OFF");
+});
+
+test("B P2-1 a follow-ups restart that lands after leaving and returning shows on return", async ({ page }) => {
+  await signIn(page, "Sales manager");
+  await openQuote(page, "Q-1002");
+  await followups(page).getByRole("button", { name: "Stop follow-ups" }).click();
+  await expect(followups(page).getByTestId("fu-summary")).toContainText("Follow-ups are OFF");
+  const enable = await hold(page, /\/quotes\/q-1002\/followups\/enable$/, { method: "POST", times: 1 });
+  await followups(page).getByRole("button", { name: "Restart follow-ups" }).click();
+  await enable.asked;
+  await openQuote(page, "Q-1001");
+  await openQuote(page, "Q-1002");
+  await expect(followups(page).getByTestId("fu-summary")).toContainText("Follow-ups are OFF");
+  await enable.release();
+  await expect(followups(page).getByTestId("fu-summary")).toContainText("Follow-ups are on");
+});
+
+test("B P2-1 a text share that lands after leaving and returning makes the quote re-read", async ({ page }) => {
+  await signIn(page, "Sales manager");
+  await openQuote(page, "Q-1002");
+  const door = gate();
+  await page.route(/\/api\/v1\/quotes\/q-1002\/sms-share$/, async (route) => {
+    await door.opened;
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ queued: true }) });
+  });
+  const asked = page.waitForRequest((r) => r.url().endsWith("/quotes/q-1002/sms-share"));
+  await followups(page).getByRole("button", { name: "Text the quote link" }).click();
+  await asked;
+  await openQuote(page, "Q-1001");
+  await openQuote(page, "Q-1002");
+  await quiet(page);
+  const reads: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "GET" && /\/api\/v1\/quotes\/q-1002\/followups$/.test(request.url())) reads.push(request.url());
+  });
+  const answered = page.waitForResponse((r) => r.url().endsWith("/quotes/q-1002/sms-share"));
+  door.open();
+  await answered;
+  await settle(page);
+  expect(reads.length).toBeGreaterThan(0);
+});
+
+test("B P2-1 a re-hold that lands after leaving and returning shows on return", async ({ page, request }) => {
+  await request.post("/_stub/hold-lapse", { data: { quote_id: "q-1001", line_no: 2 } });
+  await signIn(page, "Sales manager");
+  await openQuote(page, "Q-1001");
+  await expect(holdExpiry(page).getByTestId("he-headline")).toBeVisible();
+  const resync = await hold(page, /\/quotes\/q-1001\/holds\/resync$/, { method: "POST", times: 1 });
+  await holdExpiry(page).getByRole("button", { name: "Re-hold these lines" }).click();
+  await resync.asked;
+  await openQuote(page, "Q-1003");
+  await openQuote(page, "Q-1001");
+  await expect(holdExpiry(page).getByTestId("he-headline")).toBeVisible();
+  await resync.release();
+  await expect(holdExpiry(page).getByTestId("he-headline")).toHaveCount(0);
+});
+
+test("B P2-1 a follow-ups stop refused after leaving and returning is said on return", async ({ page }) => {
+  await signIn(page, "Sales manager");
+  await openQuote(page, "Q-1002");
+  const disable = await hold(page, /\/quotes\/q-1002\/followups\/disable$/, { method: "POST", times: 1, refuse: { status: 409, error: "quote: the cadence is locked" } });
+  await followups(page).getByRole("button", { name: "Stop follow-ups" }).click();
+  await disable.asked;
+  await openQuote(page, "Q-1001");
+  await openQuote(page, "Q-1002");
+  await expect(followups(page).getByTestId("fu-error")).toHaveCount(0);
+  await disable.release();
+  await expect(followups(page).getByTestId("fu-error")).toBeVisible();
+});
+
+test("B P2-1 a follow-ups stop refused while the person is on another quote says nothing there", async ({ page }) => {
+  await signIn(page, "Sales manager");
+  await openQuote(page, "Q-1002");
+  const disable = await hold(page, /\/quotes\/q-1002\/followups\/disable$/, { method: "POST", times: 1, refuse: { status: 409, error: "quote: the cadence is locked" } });
+  await followups(page).getByRole("button", { name: "Stop follow-ups" }).click();
+  await disable.asked;
+  await openQuote(page, "Q-1001");
+  await disable.release();
+  await settle(page);
+  await expect(followups(page).getByTestId("fu-error")).toHaveCount(0);
+});
+
+// The work area's own writes: each, answered after the person left the quote, still tells the screens that quote changed.
+interface LateCase {
+  name: string;
+  seed?: Record<string, unknown>;
+  url: RegExp;
+  method: string;
+  fulfilOk?: Record<string, unknown>;
+  trigger: (page: Page) => Promise<void>;
+}
+
+const LATE_CASES: LateCase[] = [
+  {
+    name: "an add",
+    url: /\/quotes\/q-1004\/lines$/,
+    method: "POST",
+    trigger: async (page) => {
+      const scan = page.getByTestId("pos-scan-input");
+      await scan.fill("PSN-100");
+      await scan.press("Enter");
+    },
+  },
+  {
+    name: "a quantity change",
+    url: /\/quotes\/q-1004\/lines\/1$/,
+    method: "PATCH",
+    trigger: async (page) => {
+      await page.getByRole("button", { name: /^Increase quantity/ }).first().click();
+    },
+  },
+  {
+    name: "a discount change",
+    url: /\/quotes\/q-1004\/lines\/1$/,
+    method: "PATCH",
+    trigger: async (page) => {
+      const disc = page.getByTestId("qb-line-disc");
+      await disc.fill("5");
+      await disc.blur();
+    },
+  },
+  {
+    name: "a line removal",
+    url: /\/quotes\/q-1004\/lines\/1$/,
+    method: "DELETE",
+    trigger: async (page) => {
+      await page.getByTestId("qb-line-trash").first().click();
+    },
+  },
+  {
+    name: "an expiry change",
+    url: /\/quotes\/q-1004$/,
+    method: "PATCH",
+    trigger: async (page) => {
+      await page.getByTestId("qb-terms-validity").selectOption("60 days");
+    },
+  },
+  {
+    name: "a terms save",
+    url: /\/quotes\/q-1004\/terms$/,
+    method: "PUT",
+    trigger: async (page) => {
+      await page.getByTestId("qb-po").fill("PO-LATE-ANSWER");
+    },
+  },
+  {
+    name: "a conversion",
+    seed: { customer_id: "c-fenwick", status: "ACCEPTED" },
+    url: /\/quotes\/q-1004\/convert$/,
+    method: "POST",
+    trigger: async (page) => {
+      await page.getByTestId("qb-convert").click();
+    },
+  },
+  {
+    name: "a link made to copy",
+    url: /\/quotes\/q-1004\/share-links$/,
+    method: "POST",
+    trigger: async (page) => {
+      await page.getByTestId("qb-copy-link").click();
+    },
+  },
+  {
+    name: "a text share made by a send",
+    url: /\/quotes\/q-1004\/sms-share$/,
+    method: "POST",
+    fulfilOk: { queued: true },
+    trigger: async (page) => {
+      await page.getByTestId("qb-send").click();
+    },
+  },
+];
+
+async function lateCase(page: Page, c: LateCase): Promise<void> {
+  await stubBrowserChannels(page);
+  await seed(page, c.seed ?? { customer_id: "c-fenwick" });
+  await signIn(page);
+  await open(page, "Q-1004");
+  await expect(page.getByTestId("qb-line")).toHaveCount(1);
+  await quiet(page);
+  const door = gate();
+  let askedNow: () => void = () => undefined;
+  const asked = new Promise<void>((resolve) => {
+    askedNow = resolve;
+  });
+  await page.route(c.url, async (route) => {
+    if (route.request().method() !== c.method || c.fulfilOk === undefined) {
+      if (route.request().method() === c.method) {
+        askedNow();
+        await door.opened;
+      }
+      await route.continue();
+      return;
+    }
+    askedNow();
+    await door.opened;
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(c.fulfilOk) });
+  });
+  await c.trigger(page);
+  await asked;
+  await open(page, "Q-1001");
+  await expect(page.getByTestId("qb-line")).toHaveCount(2);
+  await page.evaluate(() => {
+    const w = window as unknown as { __changedFor: string[] };
+    w.__changedFor = [];
+    window.addEventListener("quote-changed", (event) => w.__changedFor.push((event as CustomEvent<{ quoteId: string }>).detail.quoteId), true);
+  });
+  door.open();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __changedFor: string[] }).__changedFor)).toContain("q-1004");
+}
+
+test("B P2-1 work area: an add answered after leaving the quote tells the screens that quote changed", async ({ page }) => {
+  await lateCase(page, LATE_CASES[0] as LateCase);
+});
+
+test("B P2-1 work area: a quantity change answered after leaving the quote tells the screens that quote changed", async ({ page }) => {
+  await lateCase(page, LATE_CASES[1] as LateCase);
+});
+
+test("B P2-1 work area: a discount change answered after leaving the quote tells the screens that quote changed", async ({ page }) => {
+  await lateCase(page, LATE_CASES[2] as LateCase);
+});
+
+test("B P2-1 work area: a line removal answered after leaving the quote tells the screens that quote changed", async ({ page }) => {
+  await lateCase(page, LATE_CASES[3] as LateCase);
+});
+
+test("B P2-1 work area: an expiry change answered after leaving the quote tells the screens that quote changed", async ({ page }) => {
+  await lateCase(page, LATE_CASES[4] as LateCase);
+});
+
+test("B P2-1 work area: a terms save answered after leaving the quote tells the screens that quote changed", async ({ page }) => {
+  await lateCase(page, LATE_CASES[5] as LateCase);
+});
+
+test("B P2-1 work area: a conversion answered after leaving the quote tells the screens that quote changed", async ({ page }) => {
+  await lateCase(page, LATE_CASES[6] as LateCase);
+});
+
+test("B P2-1 work area: a link made to copy answered after leaving the quote tells the screens that quote changed", async ({ page }) => {
+  await lateCase(page, LATE_CASES[7] as LateCase);
+});
+
+test("B P2-1 work area: a text share made by a send answered after leaving the quote tells the screens that quote changed", async ({ page }) => {
+  await lateCase(page, LATE_CASES[8] as LateCase);
+});
+
+test("B P2-1 work area: a quantity change refused after leaving and returning is said on return", async ({ page }) => {
+  await seed(page, { customer_id: "c-fenwick" });
+  await signIn(page);
+  await open(page, "Q-1004");
+  await expect(page.getByTestId("qb-line")).toHaveCount(1);
+  const held = await hold(page, /\/quotes\/q-1004\/lines\/1$/, { method: "PATCH", times: 1, refuse: { status: 500, error: "quote: the line store is down" } });
+  await page.getByRole("button", { name: /^Increase quantity/ }).first().click();
+  await held.asked;
+  await open(page, "Q-1001");
+  await open(page, "Q-1004");
+  await expect(page.getByTestId("qb-error")).toHaveText("");
+  await held.release();
+  await expect(page.getByTestId("qb-error")).not.toHaveText("");
 });

@@ -287,7 +287,7 @@ export class QdQuoteEdit extends PanelBase {
    */
   private lateAnswer(ctx: QuoteContext, late: Result<unknown>, what: string, floor?: { lineNo: number; discPct: number }): void {
     if (late.ok) {
-      this.dispatchEvent(new CustomEvent("quote-changed", { detail: { quoteId: ctx.id }, bubbles: true, composed: true }));
+      this.announceChangedFor(ctx);
       return;
     }
     const now = this.ctx;
