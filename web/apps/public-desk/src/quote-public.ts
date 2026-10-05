@@ -487,7 +487,7 @@ export class QuotePublicPage extends HHElement {
 
   private async accept(): Promise<void> {
     if (this.busy) return;
-    const refusal = acceptanceRefusal(this.typedName, this.affirmed);
+    const refusal = acceptanceRefusal(this.lockedName ?? this.typedName, this.affirmed);
     if (refusal !== null) {
       this.error = refusal;
       return;
@@ -544,7 +544,6 @@ export class QuotePublicPage extends HHElement {
         // A re-read showing SENT does not prove nothing was recorded, so the
         // page never says it; the retry carries the same key and name, so it is safe.
         this.lockedName = typedName;
-        this.typedName = typedName;
         const reread = await this.load(true, true);
         if (reread === "gone") {
           await this.learnThroughDeadLink(typedName, key);

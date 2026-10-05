@@ -930,6 +930,26 @@ test("after an unknown outcome the name is locked and says why, and a retry carr
   await expect(page.locator("#name")).toHaveValue("Sample Customer");
 });
 
+test("the saved name is what a retry sends and validates: a blanked field after an unknown outcome still retries the first name and key", async ({ page }) => {
+  const token = "q-lock-blank";
+  const sent = trackAccepts(page);
+  await readyToAccept(page, token);
+  await page.route("**/accept", (route) => route.abort("timedout"));
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByRole("alert")).toHaveText(UNCONFIRMED);
+  expect(sent).toHaveLength(1);
+
+  // The field is forced open and blanked: the saved name, not the field, is the retry's name.
+  await forceName(page, "");
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect.poll(() => sent.length).toBe(2);
+  await expect(page.getByRole("alert")).toHaveText(UNCONFIRMED);
+  expect(sent[1]?.typedName).toBe("Sample Customer");
+  expect(sent[1]?.key).toBe(expectedKey(token, "Sample Customer"));
+  expect(sent[1]?.key).toBe(sent[0]?.key);
+  await expect(page.locator("#name")).toHaveValue("Sample Customer");
+});
+
 test("an unknown outcome that later shows the quote accepted closes the form: nothing is left to lock", async ({ page }) => {
   const token = "q-lock-refusal";
   await readyToAccept(page, token);

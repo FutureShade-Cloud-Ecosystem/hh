@@ -193,6 +193,7 @@ for (const token of [
   "q-key-nosubtle",
   "q-key-reuse",
   "q-lock-keys",
+  "q-lock-blank",
   "q-lock-refusal",
   "q-stale-tab",
   "q-proxy-403",
