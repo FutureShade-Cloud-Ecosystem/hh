@@ -211,8 +211,13 @@ func (h *Handler) changeLog(w http.ResponseWriter, r *http.Request, _ guards.Sta
 		httpx.Error(w, http.StatusBadRequest, "batch_id must be a uuid")
 		return
 	}
+	branchID := q.Get("branch_id")
+	if branchID != "" && !uuidRe.MatchString(branchID) {
+		httpx.Error(w, http.StatusBadRequest, "branch_id must be a uuid")
+		return
+	}
 	limit, _ := strconv.Atoi(q.Get("limit"))
-	out, err := h.svc.ChangeLog(r.Context(), ChangeLogFilter{ProductID: productID, BatchID: batchID, Limit: limit})
+	out, err := h.svc.ChangeLog(r.Context(), ChangeLogFilter{ProductID: productID, BatchID: batchID, BranchID: branchID, Limit: limit})
 	if err != nil {
 		h.writeErr(w, r, err)
 		return

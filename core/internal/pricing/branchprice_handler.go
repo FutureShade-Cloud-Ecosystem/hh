@@ -19,9 +19,12 @@ func (h *Handler) registerBranchPriceRoutes(r httpx.Registrar, g *guards.Guards)
 
 // branchPricePayload is the set body: the money as integer cents (a JSON
 // number with a fraction does not decode into an int64, so a non whole cent
-// is refused at the decode) and the unit the price is per.
+// is refused at the decode) and the unit the price is per. The money decodes
+// through a pointer so an ABSENT or null field is distinguishable from zero:
+// the contract makes it required, and a silent zero branch price would answer
+// LIST 0 at the branch until someone noticed.
 type branchPricePayload struct {
-	ListPriceCents int64  `json:"list_price_cents"`
+	ListPriceCents *int64 `json:"list_price_cents"`
 	PriceUOM       string `json:"price_uom"`
 }
 
@@ -74,8 +77,12 @@ func (h *Handler) putBranchPrice(w http.ResponseWriter, r *http.Request, _ guard
 	if !decode(w, r, &p) {
 		return
 	}
+	if p.ListPriceCents == nil {
+		httpx.Error(w, http.StatusBadRequest, "list_price_cents is required")
+		return
+	}
 	out, err := h.svc.PutBranchPrice(r.Context(), productID, branchID,
-		BranchPriceWrite{ListPriceCents: p.ListPriceCents, PriceUOM: p.PriceUOM}, staffUserID(r))
+		BranchPriceWrite{ListPriceCents: *p.ListPriceCents, PriceUOM: p.PriceUOM}, staffUserID(r))
 	if err != nil {
 		h.writeErr(w, r, err)
 		return

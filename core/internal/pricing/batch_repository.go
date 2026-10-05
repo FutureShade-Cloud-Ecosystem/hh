@@ -469,13 +469,14 @@ func (r *Repository) ListChangeLog(ctx context.Context, f ChangeLogFilter) ([]Ch
 		limit = 200
 	}
 	rows, err := r.pool.Query(ctx,
-		`SELECT id::text, COALESCE(product_id::text,''), COALESCE(batch_id::text,''), field,
-		        before_cents, after_cents, effective_date, COALESCE(changed_by::text,''), created_at
+		`SELECT id::text, COALESCE(product_id::text,''), COALESCE(batch_id::text,''), branch_id::text, field,
+		        before_cents, after_cents, effective_date, COALESCE(changed_by::text,''), COALESCE(price_uom::text,''), created_at
 		   FROM price_change_log
 		  WHERE ($1 = '' OR product_id = NULLIF($1,'')::uuid)
 		    AND ($2 = '' OR batch_id = NULLIF($2,'')::uuid)
-		  ORDER BY created_at DESC LIMIT $3`,
-		f.ProductID, f.BatchID, limit)
+		    AND ($3 = '' OR branch_id = NULLIF($3,'')::uuid)
+		  ORDER BY created_at DESC LIMIT $4`,
+		f.ProductID, f.BatchID, f.BranchID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -486,8 +487,8 @@ func (r *Repository) ListChangeLog(ctx context.Context, f ChangeLogFilter) ([]Ch
 			c   ChangeLogRow
 			eff *time.Time
 		)
-		if err := rows.Scan(&c.ID, &c.ProductID, &c.BatchID, &c.Field, &c.BeforeCents, &c.AfterCents,
-			&eff, &c.ChangedBy, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.ProductID, &c.BatchID, &c.BranchID, &c.Field, &c.BeforeCents, &c.AfterCents,
+			&eff, &c.ChangedBy, &c.PriceUOM, &c.CreatedAt); err != nil {
 			return nil, err
 		}
 		c.EffectiveDate = eff

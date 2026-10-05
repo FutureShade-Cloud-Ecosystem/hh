@@ -122,15 +122,21 @@ type PriceChangeLine struct {
 }
 
 // ChangeLogRow is one price_change_log row (append-only who/when/before/after).
+// BranchID is the branch a branch price change was made on; a dealer-wide
+// anchor change reads with none, so the two anchors can always be told apart.
+// PriceUOM is the unit the row's after price stands in (a branch price may be
+// per a larger unit; 12000 per PLT is not 12000 per EA).
 type ChangeLogRow struct {
 	ID            string     `json:"id"`
 	ProductID     string     `json:"product_id,omitempty"`
 	BatchID       string     `json:"batch_id,omitempty"`
+	BranchID      *string    `json:"branch_id"`
 	Field         string     `json:"field"` // 'cost_cents' | 'retail_cents'
 	BeforeCents   *int64     `json:"before_cents,omitempty"`
 	AfterCents    *int64     `json:"after_cents,omitempty"`
 	EffectiveDate *time.Time `json:"effective_date,omitempty"`
 	ChangedBy     string     `json:"changed_by,omitempty"`
+	PriceUOM      string     `json:"price_uom,omitempty"`
 	CreatedAt     time.Time  `json:"created_at"`
 }
 
@@ -145,6 +151,7 @@ type BatchFilter struct {
 type ChangeLogFilter struct {
 	ProductID string
 	BatchID   string
+	BranchID  string
 	Limit     int
 }
 

@@ -29,14 +29,35 @@ type listPriceBulkStore interface {
 	ListPricesFor(ctx context.Context, productIDs []string) (map[string]int64, error)
 }
 
+// listPriceBranchBulkStore is the branch-aware widening of the bulk read,
+// asserted rather than added to pricingStore for the same reason: the several
+// fake stores in this package's unit tests keep compiling unchanged, and a
+// store that predates this read degrades the caller to "no detail" instead of
+// failing the search. The real Repository implements it.
+type listPriceBranchBulkStore interface {
+	ListPricesForBranch(ctx context.Context, productIDs []string, branchID string) (map[string]int64, error)
+}
+
 // ListPriceCentsFor returns product id → list price in cents for the ids that HAVE a retail anchor.
 //
 // Ids with no anchor are absent from the map, never present as 0. "No list price on file" and "the
 // list price is zero" are different facts about a product, and a catalogue that collapses them shows
 // a $0.00 someone may try to sell at. Callers must treat absence as "unknown".
-func (s *Service) ListPriceCentsFor(ctx context.Context, productIDs []string) (map[string]int64, error) {
+//
+// The branch argument is optional. With a branch named, the branch's own price stands where one is
+// set and the dealer-wide anchor where not (LD-7: what the customer pays at that branch starts from
+// that branch's price); with no branch named the read is byte for byte the dealer-wide read it always
+// was. This is still NOT a pricing decision: it names the anchor, never the customer's final price.
+func (s *Service) ListPriceCentsFor(ctx context.Context, productIDs []string, branchID ...string) (map[string]int64, error) {
 	if len(productIDs) == 0 {
 		return map[string]int64{}, nil
+	}
+	if len(branchID) > 0 && branchID[0] != "" {
+		branchBulk, ok := s.store.(listPriceBranchBulkStore)
+		if !ok {
+			return nil, errBulkListPriceUnavailable
+		}
+		return branchBulk.ListPricesForBranch(ctx, productIDs, branchID[0])
 	}
 	bulk, ok := s.store.(listPriceBulkStore)
 	if !ok {
@@ -124,6 +145,42 @@ func (r *Repository) ListPricesFor(ctx context.Context, productIDs []string) (ma
 	rows, err := r.pool.Query(ctx,
 		`SELECT product_id::text, list_price_cents FROM pricing_list_prices WHERE product_id = ANY($1::uuid[])`,
 		productIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]int64, len(productIDs))
+	for rows.Next() {
+		var id string
+		var cents int64
+		if err := rows.Scan(&id, &cents); err != nil {
+			return nil, err
+		}
+		out[id] = cents
+	}
+	return out, rows.Err()
+}
+
+// ListPricesForBranch is the branch-aware read: for each requested product the
+// branch's own live price where one stands, else the dealer-wide anchor, the
+// resolver's anchor step as one bulk query. A tombstoned branch row is not a
+// price. Ids with neither are absent from the map, the seam's own rule.
+func (r *Repository) ListPricesForBranch(ctx context.Context, productIDs []string, branchID string) (map[string]int64, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	if len(productIDs) == 0 {
+		return map[string]int64{}, nil
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT p.id::text,
+		        COALESCE(bp.list_price_cents, plp.list_price_cents) AS list_price_cents
+		   FROM unnest($1::uuid[]) AS p(id)
+		   LEFT JOIN pricing_branch_prices bp
+		          ON bp.product_id = p.id AND bp.branch_id = $2::uuid AND bp.deleted_at IS NULL
+		   LEFT JOIN pricing_list_prices plp ON plp.product_id = p.id
+		  WHERE COALESCE(bp.list_price_cents, plp.list_price_cents) IS NOT NULL`,
+		productIDs, branchID)
 	if err != nil {
 		return nil, err
 	}

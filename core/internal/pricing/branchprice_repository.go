@@ -86,12 +86,13 @@ func (r *Repository) ListBranchPrices(ctx context.Context, f BranchPriceFilter) 
 }
 
 // PutBranchPrice sets one product's price at one branch in ONE transaction:
-// the prior row read, the upsert (org stamped off the product, seq drawn from
-// the branch_prices allocator, a tombstone revived), and the change log row
-// naming the branch, before and after. An identical re-set of a live row is
-// the value-equal arm: nothing is written and nothing is drawn, so a replayed
-// set cannot inflate the trail. The row's own updated_at is the read back
-// truth, not a Go clock.
+// the branch_prices allocator lock taken FIRST so every writer on this scope
+// serializes before any read, then the prior row read, the upsert (org
+// stamped off the product, seq drawn from the allocator, a tombstone revived),
+// and the change log row naming the branch, its unit, and before and after.
+// An identical re-set of a live row is the value-equal arm: nothing is written
+// and no seq is drawn, so a replayed set cannot inflate the trail. The row's
+// own updated_at is the read back truth, not a Go clock.
 func (r *Repository) PutBranchPrice(ctx context.Context, productID, branchID string, in BranchPriceWrite, userID string) (BranchPrice, error) {
 	if r.pool == nil {
 		return BranchPrice{}, errNoDB
@@ -101,6 +102,36 @@ func (r *Repository) PutBranchPrice(ctx context.Context, productID, branchID str
 		return BranchPrice{}, fmt.Errorf("branch price put: %w", err)
 	}
 	defer tx.Rollback(ctx)
+
+	// The allocator lock before any read: the trail's before and the
+	// value-equal check must see what the last committed writer left, not a
+	// snapshot taken while another set was still in flight. The two
+	// statements draw nothing, so the value-equal arm still moves no seq.
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO scope_sequences (scope) VALUES ($1) ON CONFLICT (scope) DO NOTHING`, branchPriceSyncScope); err != nil {
+		return BranchPrice{}, fmt.Errorf("branch price put: %w", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`SELECT 1 FROM scope_sequences WHERE scope = $1 FOR UPDATE`, branchPriceSyncScope); err != nil {
+		return BranchPrice{}, fmt.Errorf("branch price put: %w", err)
+	}
+
+	// The branch id must name a BRANCH: locations also holds zones, aisles
+	// and bins, and a price on one is junk the editors' list would show. One
+	// read, inside this transaction; an unknown branch maps to the same
+	// friendly refusal the FK gives.
+	var locType string
+	err = tx.QueryRow(ctx,
+		`SELECT loc_type::text FROM locations WHERE id = $1::uuid`, branchID).Scan(&locType)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return BranchPrice{}, errFKViolation
+	}
+	if err != nil {
+		return BranchPrice{}, fmt.Errorf("branch price location read: %w", err)
+	}
+	if locType != "BRANCH" {
+		return BranchPrice{}, unprocessable("branch_id is not a branch")
+	}
 
 	var priorCents *int64
 	var priorUOM string
@@ -143,14 +174,20 @@ func (r *Repository) PutBranchPrice(ctx context.Context, productID, branchID str
 		&bp.ProductID, &bp.BranchID, &bp.ListPriceCents, &bp.PriceUOM, &bp.UpdatedAt)
 	if err != nil {
 		if isFKViolation(err) {
-			return BranchPrice{}, errFKViolation // nonexistent product, branch or unit -> 422
+			return BranchPrice{}, errFKViolation // nonexistent product or unit -> 422
 		}
 		return BranchPrice{}, fmt.Errorf("branch price upsert: %w", err)
 	}
+	// The trail's before is the LIVE price this write replaced: over a
+	// tombstone (a revive) no live price stood, so the revive opens at NULL.
+	var beforeCents *int64
+	if !priorDeleted {
+		beforeCents = priorCents
+	}
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO price_change_log (product_id, branch_id, field, before_cents, after_cents, changed_by)
-		 VALUES ($1::uuid, $2::uuid, 'retail_cents', $3, $4, NULLIF($5,'')::uuid)`,
-		productID, branchID, priorCents, in.ListPriceCents, userID); err != nil {
+		`INSERT INTO price_change_log (product_id, branch_id, field, before_cents, after_cents, price_uom, changed_by)
+		 VALUES ($1::uuid, $2::uuid, 'retail_cents', $3, $4, $5::citext, NULLIF($6,'')::uuid)`,
+		productID, branchID, beforeCents, in.ListPriceCents, in.PriceUOM, userID); err != nil {
 		return BranchPrice{}, fmt.Errorf("branch price trail: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -175,6 +212,7 @@ func (r *Repository) DeleteBranchPrice(ctx context.Context, productID, branchID,
 
 	var seq int64
 	var before *int64
+	var takenUOM string
 	err = tx.QueryRow(ctx, `
 		WITH bseq AS (
 			INSERT INTO scope_sequences (scope) VALUES ('`+branchPriceSyncScope+`')
@@ -186,8 +224,8 @@ func (r *Repository) DeleteBranchPrice(ctx context.Context, productID, branchID,
 			updated_at = now(),
 			seq        = (SELECT next_value FROM bseq)
 		WHERE product_id = $1::uuid AND branch_id = $2::uuid AND deleted_at IS NULL
-		RETURNING seq, list_price_cents`,
-		productID, branchID).Scan(&seq, &before)
+		RETURNING seq, list_price_cents, price_uom::text`,
+		productID, branchID).Scan(&seq, &before, &takenUOM)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return errNotFound
 	}
@@ -195,9 +233,9 @@ func (r *Repository) DeleteBranchPrice(ctx context.Context, productID, branchID,
 		return fmt.Errorf("branch price tombstone: %w", err)
 	}
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO price_change_log (product_id, branch_id, field, before_cents, after_cents, changed_by)
-		 VALUES ($1::uuid, $2::uuid, 'retail_cents', $3, NULL, NULLIF($4,'')::uuid)`,
-		productID, branchID, before, userID); err != nil {
+		`INSERT INTO price_change_log (product_id, branch_id, field, before_cents, after_cents, price_uom, changed_by)
+		 VALUES ($1::uuid, $2::uuid, 'retail_cents', $3, NULL, $4::citext, NULLIF($5,'')::uuid)`,
+		productID, branchID, before, takenUOM, userID); err != nil {
 		return fmt.Errorf("branch price trail: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {

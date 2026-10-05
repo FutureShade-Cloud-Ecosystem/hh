@@ -280,6 +280,34 @@ func TestPutBranchPriceRequiresProductAndBranch(t *testing.T) {
 	}
 }
 
+// TestPutBranchPriceRefusesAUnitTheProductCannotConvert: a branch price per a
+// unit outside the product's set would strand every resolve of that product at
+// that branch (the resolver prices through the same conversion the unit set
+// holds), so the set refuses before the store is touched, naming the field.
+func TestPutBranchPriceRefusesAUnitTheProductCannotConvert(t *testing.T) {
+	st := bpStore(nil, map[string]*ListPrice{})
+	_, err := newSvc(st, "pavers").PutBranchPrice(context.Background(), "p1", "branchA",
+		BranchPriceWrite{ListPriceCents: 100, PriceUOM: "BOX"}, "user-1")
+	if err == nil {
+		t.Fatal("a branch price per an unconvertible unit must refuse")
+	}
+	var up unprocessableError
+	if !errors.As(err, &up) {
+		t.Fatalf("err %v, want a 422 unprocessable refusal", err)
+	}
+	if !strings.Contains(up.msg, "price_uom") {
+		t.Fatalf("refusal %q must name the field", up.msg)
+	}
+	if len(st.branchPrices) != 0 {
+		t.Fatalf("the refusing set reached the store anyway: %v", st.branchPrices)
+	}
+	// A unit the set holds still sets.
+	if _, err := newSvc(st, "pavers").PutBranchPrice(context.Background(), "p1", "branchA",
+		BranchPriceWrite{ListPriceCents: 100, PriceUOM: "SF"}, "user-1"); err != nil {
+		t.Fatalf("a convertible unit must set: %v", err)
+	}
+}
+
 // TestPutBranchPriceStoresAndAnswers: the editor's set lands on the store and
 // answers the stored row.
 func TestPutBranchPriceStoresAndAnswers(t *testing.T) {

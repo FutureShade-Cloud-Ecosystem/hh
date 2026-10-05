@@ -9,6 +9,7 @@ package pricing
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -99,11 +100,36 @@ func (s *Service) PutBranchPrice(ctx context.Context, productID, branchID string
 	if in.ListPriceCents < 0 {
 		return BranchPrice{}, unprocessable("list_price_cents must not be negative")
 	}
+	// The unit must be one the product's own set can convert: the resolver
+	// prices every line of this product at this branch through the same
+	// conversion, so a price per a unit outside the set would strand the
+	// ring, the quote lines and the order lines until it was taken back down.
+	// A conversion that fails because the PRODUCT is unknown is left to the
+	// store's foreign-key refusal, which names the reference.
+	if _, err := s.uomFactorFor(ctx, productID, in.PriceUOM); err != nil {
+		if errors.Is(err, errNoConversion) && s.productKnown(ctx, productID) {
+			return BranchPrice{}, unprocessable("price_uom does not convert for this product")
+		}
+		if !errors.Is(err, errNoConversion) {
+			return BranchPrice{}, err
+		}
+	}
 	out, err := s.store.PutBranchPrice(ctx, productID, branchID, in, userID)
 	if err != nil {
 		return BranchPrice{}, err // repo maps the FK violation to errFKViolation (422)
 	}
 	return out, nil
+}
+
+// productKnown answers whether the catalogue can resolve the product at all:
+// the convertibility guard only speaks for a product that exists, an unknown
+// one belongs to the foreign-key refusal.
+func (s *Service) productKnown(ctx context.Context, productID string) bool {
+	if s.cat == nil {
+		return false
+	}
+	_, err := s.cat.GetBaseUOM(ctx, productID)
+	return err == nil
 }
 
 // DeleteBranchPrice removes one product's branch price: a tombstone with a
