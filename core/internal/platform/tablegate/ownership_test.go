@@ -145,7 +145,7 @@ var knownDirs = map[string]bool{
 	"demo": true, "dispatch": true, "export": true, "feedback": true,
 	"finstmt": true, "gl": true, "identity": true, "invcount": true,
 	"inventory": true, "jobs": true, "landedcost": true, "lien": true,
-	"localization": true, "messaging": true, "messagingprovider": true,
+	"load": true, "localization": true, "messaging": true, "messagingprovider": true,
 	"notify": true, "order": true, "payment": true, "payments": true,
 	"planflow": true, "platform": true, "portal": true, "pos": true,
 	"pricing": true, "printing": true, "procurement": true, "product": true,
@@ -434,8 +434,11 @@ var ownedObjects = map[string]string{
 	"lien_documents":                  "lien",              // 0038_lien_holdback_compliance
 	"lien_jobs":                       "lien",              // 0038_lien_holdback_compliance
 	"lien_participants":               "lien",              // 0038_lien_holdback_compliance
+	"load_batch":                      "load",              // 0320_load_key_registry
+	"load_key_registry":               "load",              // 0320_load_key_registry
 	"load_scan_checkpoints":           "dispatch",          // 0108_scan_trail_weight_advance
 	"locations":                       "branches",          // 0003_locations_and_branches
+	"machine_principal":               "identity",          // 0321_fb_moves_machine_principal
 	"manifest_lines":                  "dispatch",          // 0012_manifests
 	"manifest_versions":               "dispatch",          // 0012_manifests
 	"manifests":                       "dispatch",          // 0012_manifests
