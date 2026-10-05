@@ -37,7 +37,7 @@ import (
 // claimStores are the two outbox stores the worker's dispatchers drain through. Each claim loop holds
 // its claimed row in an open transaction while the registered handlers run, and eight of the ten
 // handlers ask the shared pool for a SECOND connection inside that window. If the claim connection
-// came from the shared pool the dispatcher would be one of its holders, and at the pool's default of 4
+// came from the shared pool the dispatcher would be one of its holders, and at a pool of 4 (pgx's default is max(4, CPUs))
 // it starves with the other holders (a wait Postgres cannot see). Each store therefore draws its claim
 // connection from its own one-connection pool, so a held claim never takes a shared connection. The
 // enqueue and requeue paths keep the shared pool.

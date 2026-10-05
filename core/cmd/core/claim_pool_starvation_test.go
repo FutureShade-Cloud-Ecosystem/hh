@@ -55,7 +55,7 @@ import (
 )
 
 const (
-	// poolSize is the shared pool the scenario runs at, the deploy's default; the contender count derives from it.
+	// poolSize is the shared pool the scenario runs at (pgx's default is max(4, CPUs)); the contender count derives from it.
 	claimLegPoolSize = 4
 	// claimLegBound is the one shared deadline: a stalled run fails in seconds, a healthy one takes milliseconds.
 	claimLegBound = 10 * time.Second
