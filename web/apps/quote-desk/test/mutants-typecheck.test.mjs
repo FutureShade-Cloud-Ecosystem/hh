@@ -11,7 +11,8 @@ import ts from "typescript";
 const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const mutants = JSON.parse(readFileSync(join(appDir, "test", "mutants.json"), "utf8"));
 
-test("every mutant leaves the file it edits free of syntax errors and type errors", () => {
+// Typing every mutant takes longer than a runner's default test time, so the test is given its own.
+test("every mutant leaves the file it edits free of syntax errors and type errors", { timeout: 180000 }, () => {
   const configPath = join(appDir, "tsconfig.json");
   const parsed = ts.parseJsonConfigFileContent(ts.readConfigFile(configPath, ts.sys.readFile).config, ts.sys, appDir);
   const overrides = new Map();
