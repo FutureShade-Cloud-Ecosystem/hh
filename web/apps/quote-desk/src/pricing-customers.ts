@@ -25,6 +25,10 @@ import { CATEGORY_OPTIONS, categoryLabel } from "./_pricing-shared.js";
 import { emptyOverrideForm, overrideFormFromRow, overrideSave, overrideValueText, type OverrideForm } from "./_pricing-forms.js";
 import type { OverrideRow } from "./_pricing-wire.js";
 
+/** Fired (bubbling, composed) when the editor picks a customer by name: the one place the
+ * panel learns a customer id's name, which the rules list then shows where it is known. */
+export const PRICING_CUSTOMER_KNOWN_EVENT = "pricing-customer-known";
+
 const CALC_OPTIONS: ReadonlyArray<readonly [string, string]> = [
   ["PCT_OFF_LIST", "Discount % off list"],
   ["MARKUP_ON_COST", "Markup % on cost"],
@@ -70,6 +74,7 @@ export class QdPricingCustomers extends PricingTabBase {
   private readonly onPicked = (event: CustomEvent<PickerCustomer>): void => {
     this.picked = event.detail;
     this.customerId = event.detail.id;
+    this.dispatchEvent(new CustomEvent(PRICING_CUSTOMER_KNOWN_EVENT, { detail: { id: event.detail.id, name: event.detail.name }, bubbles: true, composed: true }));
     void this.load(event.detail.id);
   };
 

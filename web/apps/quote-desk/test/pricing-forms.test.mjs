@@ -283,3 +283,14 @@ test("a rule's start date is read as the day the core wrote, whatever offset it 
   assert.equal(ruleFormFromRow({ ...ruleRow, validFrom: null }).validFrom, "");
   assert.equal(ruleFormFromRow({ ...ruleRow, validFrom: "not a date" }).validFrom, "not a date");
 });
+
+// The rules list names a customer by name where the panel knows it, and by short id where it
+// does not (round 2's small item: "c0000000 · Pavers" said nothing).
+test("a rule's customer reads by name where one is known", () => {
+  const names = (id) => (id === CUST ? "Maple Ridge Contracting" : "");
+  const row = { ...ruleRow, scope: "CUSTOMER_CATEGORY", customerId: CUST };
+  assert.equal(ruleAppliesTo(row, () => "Trenton", () => "Pavers", names), "Maple Ridge Contracting · Pavers");
+  assert.equal(ruleAppliesTo(row, () => "Trenton", () => "Pavers"), "c0000000 · Pavers");
+  const prod = { ...ruleRow, scope: "CUSTOMER_PRODUCT", customerId: CUST, productId: PROD };
+  assert.equal(ruleAppliesTo(prod, () => "Trenton", () => "Pavers", names), "Maple Ridge Contracting · a7000000");
+});

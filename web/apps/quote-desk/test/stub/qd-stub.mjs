@@ -212,7 +212,9 @@ const productById = new Map(PRODUCTS.map((p) => [p.product_id, p]));
 // names, and that rule is what puts Holland under the Pavers floor.
 const CUSTOMERS = [
   {
-    id: "c-maple-ridge",
+    // the core's own uuid, the same id the pricing routes carry, so a name learned at a
+    // customer pick answers for the customer the rules list names by id
+    id: "c0000000-0000-4000-9000-000000000001",
     account_no: "C01",
     name: "Maple Ridge Contracting",
     customer_type: "CONTRACTOR",
@@ -222,7 +224,7 @@ const CUSTOMERS = [
     percent_off: 18,
   },
   {
-    id: "c-fenwick",
+    id: "c0000000-0000-4000-9000-000000000002",
     account_no: "C02",
     name: "Fenwick Builders Ltd",
     customer_type: "BUILDER",
@@ -233,7 +235,12 @@ const CUSTOMERS = [
   },
 ];
 
-const customerById = new Map(CUSTOMERS.map((c) => [c.id, c]));
+const customerById = new Map([
+  ...CUSTOMERS.map((c) => [c.id, c]),
+  // the short labels the seeded quotes were written with stay resolvable
+  ["c-maple-ridge", CUSTOMERS[0]],
+  ["c-fenwick", CUSTOMERS[1]],
+]);
 
 const HST_RATE_BPS = 1300;
 

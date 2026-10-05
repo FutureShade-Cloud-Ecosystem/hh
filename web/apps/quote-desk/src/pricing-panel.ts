@@ -20,6 +20,7 @@ import { pricingStyles } from "./pricing-styles.js";
 import type { PricingClient } from "./pricing-client.js";
 import { PRICING_REFUSED_EVENT, type PricingRefusalDetail } from "./pricing-tab-base.js";
 import { PRICING_DRILL_EVENT } from "./pricing-audit.js";
+import { PRICING_CUSTOMER_KNOWN_EVENT } from "./pricing-customers.js";
 import type { PricingTabId } from "./_pricing-audit.js";
 import "./pricing-margin.js";
 import "./pricing-rules.js";
@@ -57,6 +58,8 @@ export class QdPricingPanel extends PanelBase {
   @state() private readOnly = "";
   /** Set when a leave was held once because a saved price's confirmation is not in the log: the next leave goes. */
   @state() private leaveWarned = false;
+  /** Customer names learned at the Customer prices tab's picks: the rules list shows them. */
+  @state() private knownCustomers = new Map<string, string>();
 
   static styles = [
     pricingStyles,
@@ -91,12 +94,14 @@ export class QdPricingPanel extends PanelBase {
     super.connectedCallback();
     this.renderRoot.addEventListener(PRICING_REFUSED_EVENT, this.onRefused as EventListener);
     this.renderRoot.addEventListener(PRICING_DRILL_EVENT, this.onDrill as EventListener);
+    this.renderRoot.addEventListener(PRICING_CUSTOMER_KNOWN_EVENT, this.onCustomerKnown as EventListener);
     this.renderRoot.addEventListener("keydown", this.onTabKey as EventListener);
   }
 
   override disconnectedCallback(): void {
     this.renderRoot.removeEventListener(PRICING_REFUSED_EVENT, this.onRefused as EventListener);
     this.renderRoot.removeEventListener(PRICING_DRILL_EVENT, this.onDrill as EventListener);
+    this.renderRoot.removeEventListener(PRICING_CUSTOMER_KNOWN_EVENT, this.onCustomerKnown as EventListener);
     this.renderRoot.removeEventListener("keydown", this.onTabKey as EventListener);
     super.disconnectedCallback();
   }
@@ -110,6 +115,12 @@ export class QdPricingPanel extends PanelBase {
     // The log is behind the cost and margin list, a different wall from the price screens:
     // a refusal there is the log tab's own to show, not the whole panel's.
     if (this.tab !== "audit") this.denied = detail.message;
+  };
+
+  private readonly onCustomerKnown = (event: CustomEvent<{ id: string; name: string }>): void => {
+    const { id, name } = event.detail;
+    if (id === "" || name === "" || this.knownCustomers.get(id) === name) return;
+    this.knownCustomers = new Map(this.knownCustomers).set(id, name);
   };
 
   private readonly onDrill = (event: CustomEvent<{ tab: PricingTabId; id: string; kind: string }>): void => {
@@ -188,6 +199,7 @@ export class QdPricingPanel extends PanelBase {
       if (child["focusCustomerId"] !== this.focusCustomerId) child["focusCustomerId"] = this.focusCustomerId;
       if (child["branchScope"] !== this.branchId) child["branchScope"] = this.branchId;
     }
+    if (this.tab === "rules" && child["customerNames"] !== this.knownCustomers) child["customerNames"] = this.knownCustomers;
   }
 
   private renderTab() {

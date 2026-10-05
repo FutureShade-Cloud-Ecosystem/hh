@@ -13,7 +13,7 @@
 // category price belongs to the Customer prices tab); a rule of that fourth scope still
 // lists, in its own words.
 import { html, nothing } from "lit";
-import { customElement, state } from "lit/decorators.js";
+import { customElement, property, state } from "lit/decorators.js";
 import { err, ok } from "@hardscapehouse/api-client";
 import { PricingTabBase } from "./pricing-tab-base.js";
 import { pricingStyles } from "./pricing-styles.js";
@@ -59,6 +59,8 @@ export class QdPricingRules extends PricingTabBase {
   @state() private form: RuleForm = emptyRuleForm();
   @state() private confirmRetire: RuleRow | null = null;
   @state() private branchNames: Array<{ id: string; name: string }> = [];
+  /** Customer names the panel has learned (a pick in the Customer prices tab): shown where known. */
+  @property({ attribute: false }) customerNames: Map<string, string> = new Map();
   private loadSeq = 0;
   private editSeq = 0;
   private branchesAsked = false;
@@ -109,6 +111,7 @@ export class QdPricingRules extends PricingTabBase {
   }
 
   private branchName = (id: string): string => this.branchNames.find((b) => b.id === id)?.name ?? id.slice(0, 8);
+  private customerName = (id: string): string => this.customerNames.get(id) ?? "";
 
   protected override closeTopDialog(): boolean {
     if (this.confirmRetire !== null) {
@@ -373,7 +376,7 @@ export class QdPricingRules extends PricingTabBase {
                           <tr class="${r.isActive ? "" : "inactive"}" data-testid="pr-row">
                             <td><span class="scopechip">${scopeLabel(r.scope)}</span></td>
                             <td>
-                              <div>${ruleAppliesTo(r, this.branchName, categoryLabel)}</div>
+                              <div>${ruleAppliesTo(r, this.branchName, categoryLabel, this.customerName)}</div>
                               <div class="dim small">${r.detailText !== "" ? r.detailText : "-"}</div>
                             </td>
                             <td class="r mono amber">${ruleValueText(r)}</td>
@@ -513,7 +516,7 @@ export class QdPricingRules extends PricingTabBase {
           </div>
           <div class="dialog-body">
             <div class="confirm-note">
-              This retires the ${ruleAppliesTo(r, this.branchName, categoryLabel)} rule (${ruleValueText(r)}). The rule stops matching but its history is kept and logged.
+              This retires the ${ruleAppliesTo(r, this.branchName, categoryLabel, this.customerName)} rule (${ruleValueText(r)}). The rule stops matching but its history is kept and logged.
             </div>
             ${this.formError !== "" ? html`<div class="err" role="alert" data-testid="pr-retire-error">${this.formError}</div>` : nothing}
           </div>

@@ -91,7 +91,7 @@ test("a deep price warns, declining saves nothing, confirming saves and logs aga
   await expect(page.getByTestId("pc-row")).toContainText("22.00% off");
   const state = await pricingState(page);
   expect(state.overrides).toHaveLength(1);
-  expect(state.confirmations[0]).toMatchObject({ entity_type: "customer_override", entity_id: state.overrides[0]?.id, ref_entity_type: "customer", ref_entity_id: "c-maple-ridge" });
+  expect(state.confirmations[0]).toMatchObject({ entity_type: "customer_override", entity_id: state.overrides[0]?.id, ref_entity_type: "customer", ref_entity_id: "c0000000-0000-4000-9000-000000000001" });
 });
 
 test("the pricing log links a customer row back to that customer's prices", async ({ page }) => {
@@ -137,7 +137,7 @@ test("a late answer for the customer the picker has left never lands under the n
     release = resolve;
   });
   let held = false;
-  await page.route("**/api/v1/pricing/customers/c-maple-ridge/overrides*", async (route) => {
+  await page.route("**/api/v1/pricing/customers/c0000000-0000-4000-9000-000000000001/overrides*", async (route) => {
     if (!held) {
       held = true;
       await gate;
@@ -154,7 +154,7 @@ test("a late answer for the customer the picker has left never lands under the n
   await expect(page.getByTestId("pc-count")).toHaveText("Fenwick Builders Ltd · 0 prices");
   release();
   // The held Maple answer arrives now and must be dropped.
-  await page.waitForResponse("**/api/v1/pricing/customers/c-maple-ridge/overrides*");
+  await page.waitForResponse("**/api/v1/pricing/customers/c0000000-0000-4000-9000-000000000001/overrides*");
   await expect(page.getByTestId("pc-system")).toBeVisible();
   await expect(page.getByTestId("pc-row")).toHaveCount(0);
   await expect(page.getByTestId("pc-count")).toHaveText("Fenwick Builders Ltd · 0 prices");

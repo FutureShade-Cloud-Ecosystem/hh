@@ -232,12 +232,22 @@ export function ruleValueText(r: Pick<RuleRow, "calcType" | "discountBps" | "mar
   return `${formatMoney(r.priceCents ?? 0)} / ${r.priceUom}`;
 }
 
-/** What a rule applies to, as the list says it; ids shorten to eight characters, and a named branch is named. */
-export function ruleAppliesTo(r: Pick<RuleRow, "scope" | "customerId" | "productId" | "customerType" | "categoryId" | "branchId">, branchName: (id: string) => string, categoryName: (id: string) => string): string {
+/** What a rule applies to, as the list says it; a customer or branch is named where its name is
+ * known, and an unknown id shortens to eight characters. */
+export function ruleAppliesTo(
+  r: Pick<RuleRow, "scope" | "customerId" | "productId" | "customerType" | "categoryId" | "branchId">,
+  branchName: (id: string) => string,
+  categoryName: (id: string) => string,
+  customerName: (id: string) => string = () => "",
+): string {
   // A rule of any scope can be limited to one branch, so the branch is named wherever it is set.
   const at = r.branchId === undefined ? "" : ` \u00b7 ${branchName(r.branchId)}`;
-  if (r.scope === "CUSTOMER_PRODUCT") return `${(r.customerId ?? "").slice(0, 8)} \u00b7 ${(r.productId ?? "").slice(0, 8)}${at}`;
-  if (r.scope === "CUSTOMER_CATEGORY") return `${(r.customerId ?? "").slice(0, 8)} \u00b7 ${categoryName(r.categoryId ?? "")}${at}`;
+  const who = (id: string | undefined): string => {
+    const name = id === undefined ? "" : customerName(id);
+    return name !== "" ? name : (id ?? "").slice(0, 8);
+  };
+  if (r.scope === "CUSTOMER_PRODUCT") return `${who(r.customerId)} \u00b7 ${(r.productId ?? "").slice(0, 8)}${at}`;
+  if (r.scope === "CUSTOMER_CATEGORY") return `${who(r.customerId)} \u00b7 ${categoryName(r.categoryId ?? "")}${at}`;
   if (r.scope === "TIER_CATEGORY") {
     return `${r.customerType ?? ""} \u00b7 ${categoryName(r.categoryId ?? "")}${at}`;
   }

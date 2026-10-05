@@ -254,8 +254,8 @@ test("a double click on the confirm saves one rule and one log row", async ({ pa
   await page.getByTestId("pr-save").click();
   await expect(page.getByTestId("floor-dialog")).toBeVisible();
   await page.getByTestId("floor-confirm").evaluate((button) => {
-    button.click();
-    button.click();
+    (button as HTMLElement).click();
+    (button as HTMLElement).click();
   });
   await expect(page.getByTestId("floor-dialog")).toHaveCount(0);
   await expect(page.getByTestId("pr-row")).toHaveCount(6);
@@ -263,4 +263,19 @@ test("a double click on the confirm saves one rule and one log row", async ({ pa
   expect(state.rules.filter((r) => r.priority === 91)).toHaveLength(1);
   expect(state.confirmations).toHaveLength(1);
   expect(state.writes.filter((w) => w.kind === "rule")).toHaveLength(1);
+});
+
+// A customer the panel has a name for is shown by that name in the rules list, not by a short
+// id: the name is learned where the panel can learn it, at the Customer prices tab's picker.
+test("a rule's customer is shown by name where the panel knows it", async ({ page }) => {
+  await openRules(page);
+  await page.getByTestId("pricing-tab-customers").click();
+  const picker = page.locator("qd-pricing-customers hos-customer-picker");
+  await picker.getByPlaceholder("Search name or account #…").fill("Maple");
+  await picker.getByRole("option", { name: /Maple Ridge Contracting/ }).click();
+  await expect(page.getByTestId("pc-add")).toBeVisible();
+  await page.getByTestId("pricing-tab-rules").click();
+  const row = page.getByTestId("pr-row").filter({ hasText: "Maple Ridge, Pavers: 8% off" });
+  await expect(row).toContainText("Maple Ridge Contracting · Pavers");
+  await expect(row).not.toContainText("c0000000");
 });
