@@ -37,10 +37,17 @@ package tablegate
 // both state "no foreign join" and both carry one), and their entries
 // state what the SQL actually does.
 
+// allowlistEntry states one file's known cross-module accesses: tables are
+// the foreign objects it READS there, writes the foreign objects it WRITES
+// there. Matching requires the verb: an UPDATE under an entry that lists
+// the table only as a read fails, which is the point, since AGENTS.md
+// routes cross-module writes through the event bus and a read-only reason
+// must not become a write licence.
 type allowlistEntry struct {
 	module string
 	file   string
 	tables []string
+	writes []string
 	reason string
 }
 
@@ -49,7 +56,7 @@ var allowlist = []allowlistEntry{
 		// the item's given first entry, verbatim from the source.
 		module: "pricing",
 		file:   "core/internal/pricing/repository.go",
-		tables: []string{"order_lines", "orders", "customers", "products", "product_branch_costs", "pos_sale"},
+		tables: []string{"customers", "order_lines", "orders", "pos_sale", "product_branch_costs", "products"},
 		// the file's own comment: LowMarginSalesLines reads the COMMITTED
 		// sold lines for the principal's daily low-margin report (D-PA-3).
 		// This is the ONE deliberately cross-module reporting query in the
@@ -64,7 +71,7 @@ var allowlist = []allowlistEntry{
 	{
 		module: "assist",
 		file:   "core/internal/assist/repository.go",
-		tables: []string{"users", "user_roles", "roles"},
+		tables: []string{"roles", "user_roles", "users"},
 		// the file's own header: the admin spend list has to name the people
 		// it reports on. Read only, admin gated at the route, and the
 		// package's one stated exception.
@@ -73,13 +80,15 @@ var allowlist = []allowlistEntry{
 	{
 		module: "attachments",
 		file:   "core/internal/attachments/store.go",
-		tables: []string{"scope_sequences"},
+		tables: []string{},
+		writes: []string{"scope_sequences"},
 		reason: "sync allocator: the 0213 seq stamp on pushed rows (shared pattern above)",
 	},
 	{
 		module: "bankrec",
 		file:   "core/internal/bankrec/repository.go",
-		tables: []string{"events_outbox", "payments"},
+		tables: []string{},
+		writes: []string{"events_outbox", "payments"},
 		// the reconciliation marks card payments deposited as the statement
 		// lines match (UPDATE payments SET status), and raises its events
 		// through the outbox.
@@ -105,6 +114,7 @@ var allowlist = []allowlistEntry{
 		module: "billing",
 		file:   "core/internal/billing/credit_repository.go",
 		tables: []string{"credit_holds", "customers", "orders"},
+		writes: []string{"credit_holds"},
 		// the file's own header, restating the module note: billing WRITES
 		// credit_holds, deliberate and documented in migration 0104, the
 		// alternative was a second holds table duplicating the one ACTIVE
@@ -123,7 +133,8 @@ var allowlist = []allowlistEntry{
 	{
 		module: "billing",
 		file:   "core/internal/billing/invoice_writer.go",
-		tables: []string{"events_outbox", "locations", "scope_sequences"},
+		tables: []string{"locations"},
+		writes: []string{"events_outbox", "scope_sequences"},
 		// DIB-422: the order to invoice writer outside the POS ring. It
 		// stamps the invoice row with its org through the locations anchor,
 		// draws the invoice stream from the 0213 allocator, and raises its
@@ -147,7 +158,8 @@ var allowlist = []allowlistEntry{
 	{
 		module: "billing",
 		file:   "core/internal/billing/statement_repository.go",
-		tables: []string{"customers", "locations", "print_queue"},
+		tables: []string{"customers", "locations"},
+		writes: []string{"print_queue"},
 		reason: "statements carry the customer and branch names they are addressed by, and print through the shared print_queue substrate (0088)",
 	},
 	{
@@ -169,15 +181,26 @@ var allowlist = []allowlistEntry{
 		reason: "account lookup and search read the account's latest AR balance (balance_after) beside the account rows, read only",
 	},
 	{
+		module: "customer",
+		file:   "core/internal/customer/account_lookup.go",
+		tables: []string{"customer_transactions"},
+		// the file's own header: resolve ONE account from what a person
+		// typed; the lookup carries the account's live AR balance beside its
+		// identity, read through the file's scan closure.
+		reason: "the single account lookup reads the account's latest AR balance beside the account row, read only",
+	},
+	{
 		module: "customerquote",
 		file:   "core/internal/customerquote/store.go",
-		tables: []string{"scope_sequences"},
+		tables: []string{},
+		writes: []string{"scope_sequences"},
 		reason: "sync allocator: the 0213 seq stamp on pushed rows (shared pattern above)",
 	},
 	{
 		module: "dashboard",
 		file:   "core/internal/dashboard/quickaction_repository.go",
-		tables: []string{"quick_action_settings", "quick_action_profile_visibility"},
+		tables: []string{"quick_action_profile_visibility", "quick_action_settings"},
+		writes: []string{"quick_action_profile_visibility", "quick_action_settings"},
 		// the dashboard is the quick action surface; 0151 built the substrate
 		// it configures. Its own reads and writes.
 		reason: "the quick action surface reads and writes its visibility config in the 0151 substrate; the substrate was migrated under the settings topic but the dashboard is its only writer",
@@ -200,7 +223,7 @@ var allowlist = []allowlistEntry{
 	{
 		module: "demo",
 		file:   "core/internal/demo/boot/database.go",
-		tables: []string{"org", "payment_config", "users", "information_schema"},
+		tables: []string{"information_schema", "org", "payment_config", "users"},
 		// the boot guard checks the database is a demo database in shape
 		// before anything runs: one org, no users outside the planted set,
 		// the demo payment configuration.
@@ -209,7 +232,8 @@ var allowlist = []allowlistEntry{
 	{
 		module: "demo",
 		file:   "core/internal/demo/populate.go",
-		tables: []string{"locations", "payment_config", "roles", "system_settings", "user_branch_grants", "user_roles", "users"},
+		tables: []string{"locations", "roles", "user_branch_grants", "user_roles"},
+		writes: []string{"locations", "payment_config", "system_settings", "user_branch_grants", "user_roles", "users"},
 		// the file's own header: the one-shot demo populate turns a freshly
 		// migrated database into the demo world; every insert carries an
 		// explicit deterministic id and ends in ON CONFLICT DO NOTHING. It
@@ -225,7 +249,8 @@ var allowlist = []allowlistEntry{
 	{
 		module: "dispatch",
 		file:   "core/internal/dispatch/repository.go",
-		tables: []string{"customers", "locations", "order_lines", "orders", "scope_sequences"},
+		tables: []string{"customers", "locations", "order_lines", "orders"},
+		writes: []string{"scope_sequences"},
 		reason: "manifests and deliveries read the order, its lines and the customer and branch names the manifest carries; the 0213 seq stamp marks its rows for device pull",
 	},
 	{
@@ -237,19 +262,22 @@ var allowlist = []allowlistEntry{
 	{
 		module: "dispatch",
 		file:   "core/internal/dispatch/repository_loadboard.go",
-		tables: []string{"customers", "orders", "scope_sequences"},
+		tables: []string{"customers", "orders"},
+		writes: []string{"scope_sequences"},
 		reason: "the load board reads the order and customer names the board rows show; the 0213 seq stamp marks its rows for device pull",
 	},
 	{
 		module: "dispatch",
 		file:   "core/internal/dispatch/repository_w3.go",
-		tables: []string{"customers", "orders", "scope_sequences"},
+		tables: []string{"customers", "orders"},
+		writes: []string{"scope_sequences"},
 		reason: "the Wave 3 reads (pick feed, MTO, reschedule, scan trail) read the order and customer facts the stops carry; the 0213 seq stamp marks its rows",
 	},
 	{
 		module: "dispatch",
 		file:   "core/internal/dispatch/syncscope.go",
-		tables: []string{"scope_sequences"},
+		tables: []string{},
+		writes: []string{"scope_sequences"},
 		reason: "sync allocator: the 0213 seq stamp on pushed rows (shared pattern above)",
 	},
 	{
@@ -261,13 +289,23 @@ var allowlist = []allowlistEntry{
 	{
 		module: "dispatch",
 		file:   "core/internal/dispatch/syncscope_pickups.go",
-		tables: []string{"scope_sequences"},
+		tables: []string{},
+		writes: []string{"scope_sequences"},
 		reason: "sync allocator: the 0213 seq stamp on pushed rows (shared pattern above)",
 	},
 	{
 		module: "dispatch",
+		file:   "core/internal/dispatch/syncscope_readcache.go",
+		tables: []string{"locations"},
+		// the file's own header: the drivers and trucks pull-only stores; the
+		// org fence is the branch, and branch_id resolves through locations.
+		reason: "the drivers and trucks sync scopes resolve their branch org fence through the locations anchor, read only, stated in the file header",
+	},
+	{
+		module: "dispatch",
 		file:   "core/internal/dispatch/syncscope_runs.go",
-		tables: []string{"locations", "scope_sequences"},
+		tables: []string{"locations"},
+		writes: []string{"scope_sequences"},
 		reason: "org fence through the locations anchor (read only) plus the 0213 seq stamp",
 	},
 	{
@@ -289,6 +327,7 @@ var allowlist = []allowlistEntry{
 		module: "identity",
 		file:   "core/internal/identity/populate.go",
 		tables: []string{"dispatch_drivers", "portal_users"},
+		writes: []string{"portal_users"},
 		// population provisions the portal accounts (the backfill stamps
 		// tenant_id, the sweep lists unlinked portal users) and reads the
 		// driver profiles it provisions beside them.
@@ -309,13 +348,15 @@ var allowlist = []allowlistEntry{
 	{
 		module: "invcount",
 		file:   "core/internal/invcount/repository.go",
-		tables: []string{"products", "scope_sequences"},
+		tables: []string{"products"},
+		writes: []string{"scope_sequences"},
 		reason: "count sheet lines join the product sku and name the counter sees on the sheet; the 0213 seq stamp marks its rows",
 	},
 	{
 		module: "invcount",
 		file:   "core/internal/invcount/syncscope.go",
-		tables: []string{"locations", "scope_sequences"},
+		tables: []string{"locations"},
+		writes: []string{"scope_sequences"},
 		reason: "org fence through the locations anchor (read only) plus the 0213 seq stamp",
 	},
 	{
@@ -351,7 +392,8 @@ var allowlist = []allowlistEntry{
 	{
 		module: "inventory",
 		file:   "core/internal/inventory/repository.go",
-		tables: []string{"events_outbox", "order_lines", "orders", "po_lines", "po_receipts", "products", "purchase_orders"},
+		tables: []string{"order_lines", "orders", "po_lines", "products", "purchase_orders"},
+		writes: []string{"events_outbox", "po_lines", "po_receipts", "purchase_orders"},
 		// the file's own header: it reads and writes the 0011 receiving
 		// documents (purchase_orders, po_lines, po_receipts) beside the stock
 		// ledger; orders and order_lines feed the reserved computation; the
@@ -409,7 +451,8 @@ var allowlist = []allowlistEntry{
 	{
 		module: "notify",
 		file:   "core/internal/notify/requeue.go",
-		tables: []string{"events_outbox"},
+		tables: []string{},
+		writes: []string{"events_outbox"},
 		// the file's own header: the scaffold-owned dead-row replay seam on
 		// the outbox store; gl's DeadRequeuer satisfied by notify.
 		reason: "the outbox dead-row replay resets DEAD rows to PENDING for redelivery, stated in the file header",
@@ -418,6 +461,7 @@ var allowlist = []allowlistEntry{
 		module: "notify",
 		file:   "core/internal/notify/store.go",
 		tables: []string{"events_outbox"},
+		writes: []string{"events_outbox"},
 		// the outbox store implementation itself lives here: PgOutboxStore is
 		// the write and read side of the 0013 bus every producer inserts to.
 		reason: "the transactional outbox store's own implementation (PgOutboxStore); the bus is the table and this module is its keeper",
@@ -486,7 +530,8 @@ var allowlist = []allowlistEntry{
 	{
 		module: "payments",
 		file:   "core/internal/payments/counter_receipt.go",
-		tables: []string{"invoices", "locations", "scope_sequences"},
+		tables: []string{"invoices", "locations"},
+		writes: []string{"scope_sequences"},
 		reason: "the counter receipt reads the invoice balance it applies against, stamps org through the locations anchor and seq through the 0213 allocator",
 	},
 	{
@@ -498,17 +543,18 @@ var allowlist = []allowlistEntry{
 	{
 		module: "payments",
 		file:   "core/internal/payments/repository.go",
-		tables: []string{"customer_transactions", "customers", "events_outbox", "invoices", "portal_payment_methods", "scope_sequences", "users"},
+		tables: []string{"customers", "invoices", "users"},
+		writes: []string{"customer_transactions", "events_outbox", "invoices", "scope_sequences"},
 		// the payments module maintains the AR subledger projection of the
 		// payment stream (customer_transactions), applies payments to invoice
-		// balances, keeps the saved card cache it owns (portal_payment_methods),
-		// and stamps org and seq on its rows.
+		// balances, and stamps org and seq on its rows.
 		reason: "payment writes maintain the AR subledger projection and the invoice balances they apply to; the saved method cache is the module's own table; org and seq stamped",
 	},
 	{
 		module: "payments",
 		file:   "core/internal/payments/reversal.go",
-		tables: []string{"customer_transactions", "customers", "events_outbox", "invoices", "scope_sequences"},
+		tables: []string{"customers", "invoices"},
+		writes: []string{"customer_transactions", "events_outbox", "invoices", "scope_sequences"},
 		// the file's own header: an undo posts a REVERSING entry; the AR
 		// subledger and the general ledger are append-only projections of the
 		// payment stream.
@@ -517,7 +563,8 @@ var allowlist = []allowlistEntry{
 	{
 		module: "planflow",
 		file:   "core/internal/planflow/syncscope.go",
-		tables: []string{"scope_sequences"},
+		tables: []string{},
+		writes: []string{"scope_sequences"},
 		reason: "sync allocator: the 0213 seq stamp on pushed rows (shared pattern above)",
 	},
 	{
@@ -550,19 +597,24 @@ var allowlist = []allowlistEntry{
 	{
 		module: "portal",
 		file:   "core/internal/portal/repository.go",
-		tables: []string{"customers", "events_outbox"},
-		reason: "the portal session resolves the customer account behind the caller and raises its events through the outbox",
+		tables: []string{"customers"},
+		writes: []string{"events_outbox", "scope_sequences"},
+		// the scope_sequences write is the teamSeqCTE allocator, run through
+		// the file's own exec and guardedAdminUpdate wrappers.
+		reason: "the portal session resolves the customer account behind the caller, raises its events through the outbox, and stamps its rows through the 0213 scope allocator",
 	},
 	{
 		module: "portal",
 		file:   "core/internal/portal/syncscope.go",
-		tables: []string{"scope_sequences"},
+		tables: []string{},
+		writes: []string{"scope_sequences"},
 		reason: "sync allocator: the 0213 seq stamp on pushed rows (shared pattern above)",
 	},
 	{
 		module: "pos",
 		file:   "core/internal/pos/repository.go",
-		tables: []string{"customer_transactions", "customers", "events_outbox", "invoice_lines", "invoices", "locations", "order_lines", "orders", "payment_allocations", "payments", "product_reorder_points", "product_uoms", "products", "scope_sequences", "stock_balances", "user_roles", "users"},
+		tables: []string{"customer_transactions", "customers", "invoices", "locations", "order_lines", "orders", "payments", "product_reorder_points", "product_uoms", "products", "stock_balances", "user_roles", "users"},
+		writes: []string{"customer_transactions", "events_outbox", "invoice_lines", "invoices", "order_lines", "orders", "payment_allocations", "scope_sequences"},
 		// the POS sale ring: one counter sale writes the order and its lines,
 		// raises the invoice and its lines, the AR transaction and the tender
 		// allocation in one transaction (the file's header isolates these
@@ -592,7 +644,8 @@ var allowlist = []allowlistEntry{
 	{
 		module: "pos",
 		file:   "core/internal/pos/repository_w7.go",
-		tables: []string{"customer_transactions", "customers", "invoices", "order_lines", "orders", "payments", "products", "scope_sequences"},
+		tables: []string{"customer_transactions", "customers", "invoices", "order_lines", "orders", "payments", "products"},
+		writes: []string{"invoices", "scope_sequences"},
 		// the file's own header: the W7 counter-v2 persistence over the 0043
 		// tables plus the invoice-credit write, which stays in the M2-debt
 		// family the repository header isolates behind posStore.
@@ -632,7 +685,8 @@ var allowlist = []allowlistEntry{
 	{
 		module: "pricing",
 		file:   "core/internal/pricing/syncscope.go",
-		tables: []string{"products", "scope_sequences"},
+		tables: []string{"products"},
+		writes: []string{"scope_sequences"},
 		// the file's own header, THE PRODUCTS READ, stated plainly: the
 		// module's own shipped apply statement already derives the anchor's
 		// unit from products, and this adapter reads products.org_id beside it
@@ -663,19 +717,22 @@ var allowlist = []allowlistEntry{
 	{
 		module: "purchasing",
 		file:   "core/internal/purchasing/incoming_repository.go",
-		tables: []string{"scope_sequences"},
+		tables: []string{},
+		writes: []string{"scope_sequences"},
 		reason: "sync allocator: the 0213 seq stamp on pushed rows (shared pattern above)",
 	},
 	{
 		module: "purchasing",
 		file:   "core/internal/purchasing/repository.go",
-		tables: []string{"products", "scope_sequences"},
+		tables: []string{"products"},
+		writes: []string{"scope_sequences"},
 		reason: "the PO line columns join the product sku the line shows (the identical join vendor_order_repository.go's header documents) and the 0213 seq stamp marks rows for device pull",
 	},
 	{
 		module: "purchasing",
 		file:   "core/internal/purchasing/syncscope.go",
-		tables: []string{"locations", "scope_sequences"},
+		tables: []string{"locations"},
+		writes: []string{"scope_sequences"},
 		reason: "org fence through the locations anchor (read only) plus the 0213 seq stamp",
 	},
 	{
@@ -691,6 +748,7 @@ var allowlist = []allowlistEntry{
 		module: "quote",
 		file:   "core/internal/quote/acceptcontrols_repository.go",
 		tables: []string{"orders", "system_settings"},
+		writes: []string{"system_settings"},
 		// the file's own header: AllowMultiAccept answers the display
 		// questions (should the accept form be offered, should CanConvert
 		// appear); the DIB-393 admin switch lives in system_settings.
@@ -719,21 +777,24 @@ var allowlist = []allowlistEntry{
 	{
 		module: "quote",
 		file:   "core/internal/quote/edit_repository.go",
-		tables: []string{"customers", "locations", "products", "scope_sequences", "users"},
+		tables: []string{"customers", "locations", "products", "users"},
+		writes: []string{"scope_sequences"},
 		reason: "the quote editor joins the customer, branch, product and preparer facts the document shows; the 0213 seq stamp marks its rows",
 	},
 	{
 		module: "quote",
 		file:   "core/internal/quote/lineage_repository.go",
-		tables: []string{"orders"},
+		tables: []string{"invoices", "orders"},
 		// the file's own header: the lineage read walks exactly the links the
-		// conversion left behind, document HEADERS only, no lines, no costs.
-		reason: "quote lineage reads the order headers the conversion produced, stated in the file header; read only",
+		// conversion left behind (its orders and their invoices), document
+		// HEADERS only, no lines, no costs.
+		reason: "quote lineage reads the order and invoice headers the conversion produced, stated in the file header; read only",
 	},
 	{
 		module: "quote",
 		file:   "core/internal/quote/repository.go",
-		tables: []string{"order_lines", "orders", "products", "scope_sequences"},
+		tables: []string{"order_lines", "orders", "products"},
+		writes: []string{"order_lines", "orders", "scope_sequences"},
 		// the lineage header states it: this module already writes
 		// orders/order_lines inside Convert, the conversion IS the order
 		// write, 0008's design. products feeds the quote lines' display.
@@ -754,13 +815,15 @@ var allowlist = []allowlistEntry{
 	{
 		module: "quote",
 		file:   "core/internal/quote/share_repository.go",
-		tables: []string{"customers", "product_images", "products", "scope_sequences"},
+		tables: []string{"customers", "product_images", "products"},
+		writes: []string{"scope_sequences"},
 		reason: "the public share payload resolves the customer name, product facts and the image the public page shows; the 0213 seq stamp marks its rows",
 	},
 	{
 		module: "quote",
 		file:   "core/internal/quote/syncscope.go",
-		tables: []string{"locations", "scope_sequences"},
+		tables: []string{"locations"},
+		writes: []string{"scope_sequences"},
 		reason: "org fence through the locations anchor (read only) plus the 0213 seq stamp",
 	},
 	{
@@ -774,8 +837,20 @@ var allowlist = []allowlistEntry{
 	},
 	{
 		module: "reporting",
+		file:   "core/internal/reporting/catalog.go",
+		tables: []string{"ar_statement_runs", "credit_holds", "customers", "delivery_stops", "invoice_lines", "invoices", "locations", "payments", "product_categories", "product_reorder_points", "products", "purchasing_bill_lines", "purchasing_bills", "purchasing_po_lines", "purchasing_pos", "purchasing_receipt_lines", "purchasing_receipts", "rep_assignments", "stock_balances", "stock_moves", "users", "v_ar_aging", "vendors", "v_product_weighted_avg_cost", "warranty_claims"},
+		// the file's own header: the compiled report definitions, ONE fixed
+		// SQL string per template code; these queries read PEER TABLES,
+		// read-only, no locks beyond a snapshot, and the coupling is
+		// deliberate, the price of a reporting module that reports on the
+		// business rather than on a private copy of it.
+		reason: "the compiled report definitions read the peer tables they report on, read only, stated in the file's own header (the statements live in catalogEntry.sql fields the runner executes)",
+	},
+	{
+		module: "reporting",
 		file:   "core/internal/reporting/repository.go",
-		tables: []string{"print_queue"},
+		tables: []string{},
+		writes: []string{"print_queue"},
 		// the module's own header: print_queue is the shared substrate every
 		// printed document goes through; a new document type joins it by
 		// widening the CHECK rather than growing a private print path.
@@ -794,13 +869,15 @@ var allowlist = []allowlistEntry{
 	{
 		module: "tasks",
 		file:   "core/internal/tasks/repository.go",
-		tables: []string{"scope_sequences"},
+		tables: []string{},
+		writes: []string{"scope_sequences"},
 		reason: "sync allocator: the 0213 seq stamp on pushed rows (shared pattern above)",
 	},
 	{
 		module: "tax",
 		file:   "core/internal/tax/repository.go",
 		tables: []string{"tax_decision_snapshot"},
+		writes: []string{"tax_decision_snapshot"},
 		// the file's own header: the repository reads and writes the
 		// inherited 0029 tax_decision_snapshot (created by the POS counter
 		// migration, owned there by the topic rule); the sale ring inserts
@@ -830,6 +907,7 @@ var allowlist = []allowlistEntry{
 		module: "till",
 		file:   "core/internal/till/recon_seam.go",
 		tables: []string{"payments"},
+		writes: []string{"payments"},
 		// the file's own header: FROZEN scaffold seam; the sanctioned
 		// cross-module seam for bankrec and gl, read and deposit-stamp only.
 		reason: "the frozen bankrec and gl read seams over the payment rows (UnreconciledCardPayments, MarkDeposited, PaymentForGL), stated in the file header",
@@ -837,7 +915,8 @@ var allowlist = []allowlistEntry{
 	{
 		module: "till",
 		file:   "core/internal/till/repository.go",
-		tables: []string{"credit_holds", "customer_transactions", "events_outbox", "invoices", "locations", "nsf_policy", "payment_allocations", "payment_attempts", "payment_nsf", "payments", "scope_sequences"},
+		tables: []string{"credit_holds", "customer_transactions", "invoices", "locations", "nsf_policy", "payment_allocations", "payment_nsf", "payments"},
+		writes: []string{"credit_holds", "customer_transactions", "events_outbox", "invoices", "nsf_policy", "payment_allocations", "payment_attempts", "payment_nsf", "payments", "scope_sequences"},
 		// the counter ring: A-03 TakeTender inserts the payment and its
 		// allocation and the AR transaction; the NSF rail (0035) records the
 		// bounce and places and releases the holds it causes; invoices carry
@@ -846,6 +925,14 @@ var allowlist = []allowlistEntry{
 		// gives them to the payments module and this entry is the fence
 		// between the two readings (disclosed in the item report).
 		reason: "the till ring takes tenders (payment, allocation, AR transaction), runs the 0035 NSF rail and the holds it places, and reads and adjusts the invoice balances tenders apply against",
+	},
+	{
+		module: "warranty",
+		file:   "core/internal/warranty/syncscope.go",
+		tables: []string{"locations"},
+		// the file's own header: the warranty claims and recovery board
+		// pull-only stores; the org fence rides the branch through locations.
+		reason: "the warranty sync scopes resolve their branch org fence through the locations anchor, read only",
 	},
 	{
 		module: "warranty",

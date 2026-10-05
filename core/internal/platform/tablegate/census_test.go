@@ -90,6 +90,11 @@ func buildPkgIndex(t *testing.T, dir string) (*pkgIndex, []*ast.File) {
 	}
 	idx := newPkgIndex(map[string][]string{}, map[string][]string{})
 	building := map[string]bool{}
+	for _, f := range files {
+		for _, name := range packageSinks(f) {
+			idx.sinks[name] = true
+		}
+	}
 	for round := 0; round < 6; round++ {
 		changed := false
 		for _, f := range files {
@@ -140,6 +145,7 @@ func TestCensusZeroCrossModuleTableAccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read core/db/queries: %v", err)
 	}
+	var violations []string
 	for _, e := range qEntries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
 			continue
@@ -148,9 +154,15 @@ func TestCensusZeroCrossModuleTableAccess(t *testing.T) {
 		if !knownDirs[module] || module == "testkit" || module == "testaudit" {
 			t.Fatalf("census fails closed: core/db/queries/%s does not follow the one file per module convention (its module name is not a scanned module); name the module in knownDirs", e.Name())
 		}
+		// the content is checked by the same engine, attributed to the file's
+		// module by the one file per module convention the README states.
+		content, err := os.ReadFile(filepath.Join(queriesDir, e.Name()))
+		if err != nil {
+			t.Fatalf("read %s: %v", e.Name(), err)
+		}
+		violations = append(violations, queriesFileViolations(module,
+			"core/db/queries/"+e.Name(), string(content))...)
 	}
-
-	var violations []string
 	for _, module := range scanTargets {
 		for _, a := range moduleAccesses(t, root, module) {
 			violations = append(violations, checkAccess(a, ownedObjects[a.table])...)
@@ -188,6 +200,18 @@ func checkAccess(a access, ownerFor string) []string {
 // the gate as if extracted from the named module and file.
 func fixtureAccess(module, file, decl, table string, write bool) access {
 	return access{module: module, file: file, decl: decl, table: table, write: write}
+}
+
+// queriesFileViolations runs one core/db/queries file's content through the
+// same tokenizer, statement extraction and rules, attributed to the file's
+// module by the one file per module convention.
+func queriesFileViolations(module, file, content string) []string {
+	var out []string
+	for _, ref := range extractTables(content) {
+		a := fixtureAccess(module, file, filepath.Base(file), ref.table, ref.write)
+		out = append(out, checkAccess(a, ownedObjects[ref.table])...)
+	}
+	return out
 }
 
 // moduleAccesses walks one module's non-test .go files and returns every
@@ -235,13 +259,19 @@ func moduleAccesses(t *testing.T, root, module string) []access {
 }
 
 // allowlisted answers whether the access matches an allowlist entry: same
-// module, same file, table named in the entry.
+// module, same file, table named in the verb-matched list, reads against
+// tables and writes against writes. A write under a read-only listing
+// fails, and so does a read under a write-only listing.
 func allowlisted(a access) bool {
 	for _, e := range allowlist {
 		if e.module != a.module || e.file != a.file {
 			continue
 		}
-		for _, tbl := range e.tables {
+		names := e.tables
+		if a.write {
+			names = e.writes
+		}
+		for _, tbl := range names {
 			if tbl == a.table {
 				return true
 			}

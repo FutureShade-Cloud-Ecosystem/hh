@@ -1,12 +1,12 @@
 package tablegate
 
 // ownership_test.go states the ownership map the census checks against: one
-
-import "strings"
-
 // owning module per table and view the scan can meet, with the derivation
 // method written beside it, so a referenced name missing from the map fails
 // closed instead of silently passing.
+
+import "strings"
+
 //
 // DERIVATION (stated per the item):
 //
@@ -22,12 +22,15 @@ import "strings"
 //     table lives outside the frozen chain: demo_box is created at runtime
 //     by core/internal/demo/populate.go's writeDemoBox, whose own comment
 //     states no migration is ever written for it, and it is owned by demo.
-//     Together: 285 owned objects. Every number here was counted at source
-//     by the check's author and the count script's output is recorded in
-//     the item report; the brief's by-eye figure of 276 CREATE TABLE
-//     statements is superseded by the counted 272 (the by-eye figure reads
-//     the prose mentions of CREATE TABLE inside migration comments as
-//     statements).
+//     Together with the information_schema catalog (stated below), the
+//     map carries 286 keys: 272 + 12 + demo_box + information_schema. The
+//     directory's 209 entries are 208 .sql migration files plus
+//     README.md. Every number here was counted at source by the check's
+//     author and the count script's output is recorded in the item
+//     report; the round 1 brief's by-eye figure of 276 CREATE TABLE
+//     statements is superseded by the counted 272 (the by-eye figure
+//     reads the prose mentions of CREATE TABLE inside migration comments
+//     as statements).
 //
 //   - The attribution: each object belongs to the module its migration's
 //     topic and filename name. The filename after its number is the topic
@@ -42,35 +45,66 @@ import "strings"
 //
 //   - The cross-check: every attribution was cross-checked against the
 //     module whose repository layer reads or writes the table today, by
-//     running the census and walking each violation to its source. Where
-//     exactly one module touches a table and the migration topic pointed
-//     elsewhere, the cross-check decided and the correction is recorded in
-//     crossCheckedOwners with its reason. Where two modules touch one table
-//     today, the migration topic owns it and the other module's touch is an
-//     allowlist entry (allowlist_test.go) with the reason read from that
-//     source.
+//     running the census and walking each violation to its source. The
+//     RULE, stated as applied: the migration topic owns by default, and a
+//     correction was made ONLY where a source file's own header claims
+//     ownership of the object and that claim contradicts the topic
+//     reading (each correction's evidence sits in the corrections
+//     paragraph below). A single module's touch alone never moved
+//     ownership: eleven objects are touched today only by a non-owning
+//     module and keep their topic owner (nsf_policy, payment_attempts and
+//     payment_nsf are written only by till and mapped to payments;
+//     po_receipts is written only by inventory and mapped to purchasing;
+//     quick_action_settings and quick_action_profile_visibility are
+//     written only by dashboard and mapped to settings; dealer_hotkeys,
+//     manifests, manifest_lines, v_gl_account_balances and
+//     v_product_weighted_avg_cost are read only by one foreign module
+//     each). Where two modules touch one table, the migration topic owns
+//     it and the other module's touch is an allowlist entry
+//     (allowlist_test.go) with the reason read from that source.
+//     OPEN QUESTION for the owning lanes, recorded in the item report:
+//     the 0035 NSF tables (nsf_policy, payment_attempts, payment_nsf) are
+//     written today only by the till, which the 0035 topic maps to
+//     payments; if the NSF rail belongs to the till, the lanes and the
+//     decision record should say so and the map should follow.
 //
-//   - The corrections the cross-check made (each verified at source by
-//     finding every module whose SQL touches the object): sync_jobs,
-//     sync_discrepancies and bistrack_id_map go to bistrack (the sync
-//     module's own directory contains no SQL at all; bistrack/repository.go
-//     is the sync's 0079 implementation). compliance_calendar and
-//     review_status go to compliance (only compliance/repository.go touches
-//     them; 0038's filename covers the lien and compliance topics).
-//     load_scan_checkpoints goes to dispatch (repository_w3.go's scan trail;
-//     0108's other table, task_status_advance_rules, stays with tasks).
-//     driver_profile goes to identity (identity/populate.go provisions it;
-//     no dispatch SQL touches it). payment_config goes to payment (the
-//     payment module's store.go is its persistence; the payments module is a
-//     different directory). portal_payment_methods goes to payments (whose
-//     own header records the boundary: the table this module owns;
-//     migration 0030's portal topic predates the split). return_requests
-//     and return_request_lines go to pos (pos/return_requests.go is the
-//     A-06 request-and-approval flow's only SQL). sms_outbox,
-//     customer_sms_prefs and ar_notice_log go to messagingprovider (the
-//     provider is their only SQL; customer/sms_consent_repository.go's own
-//     header states NO SQL AGAINST customer_sms_prefs LIVES HERE, AND NONE
-//     MAY).
+//   - The corrections: 15 objects over 11 migrations moved off their
+//     topic reading, each ONE way: a source file's own header claims the
+//     object, and the claim contradicts the topic reading. The evidence,
+//     quoted from each claiming header: sync_jobs, sync_discrepancies and
+//     bistrack_id_map to bistrack (bistrack/repository.go: persistence
+//     for sync_jobs / sync_discrepancies / bistrack_id_map (0079); the
+//     sync module's directory authors no SQL of its own).
+//     compliance_calendar and review_status to compliance
+//     (compliance/module.go: it owns the 0038 compliance_calendar +
+//     review_status tables; 0038's filename covers the lien and
+//     compliance topics). load_scan_checkpoints to dispatch
+//     (dispatch/repository_w3.go: this file is the scan trail
+//     persistence; 0108's other table, task_status_advance_rules, stays
+//     with tasks). driver_profile to identity (identity/populate.go:
+//     PopulateDriverProfiles is plan step 8, driver_profile from).
+//     payment_config to payment (payment/store.go: it SELECTs/INSERTs
+//     ONLY payment_config, RUN-PAY-owned). portal_payment_methods to
+//     payments (payments/repository.go: Repository owns
+//     portal_payment_methods; 0030's portal topic predates the module
+//     split). return_requests and return_request_lines to pos
+//     (pos/return_requests.go: the portal BFF submits and reads requests
+//     through the service seam HERE). sms_outbox, customer_sms_prefs and
+//     ar_notice_log to messagingprovider (messagingprovider/consumer.go:
+//     consumer owns the two topics on sms_outbox; prefs.go: the consent
+//     record, customer_sms_prefs, migration 0109; collections.go runs
+//     the ar_notice_log writes;
+//     customer/sms_consent_repository.go's own header states NO SQL
+//     AGAINST customer_sms_prefs LIVES HERE, AND NONE MAY).
+//     quote_scope_rules to quoteassist (quoteassist/repository.go: ONE
+//     TABLE, quote_scope_rules, which this package owns outright).
+//     KNOWN CONTRADICTION, disclosed beside the payments ruling in the
+//     item report: tax/repository.go's header claims
+//     tax_decision_snapshot as the inherited 0029 tax-owned table, while
+//     the map gives it to pos (the 0029 topic, and pos/gl_seam.go states
+//     pos owns tax_decision_snapshot (0029)); the map keeps pos and the
+//     contradiction is recorded, not resolved, until the lanes and the
+//     decision record settle it.
 //
 // The map is complete over what the scan meets: the census fails closed on
 // any referenced name absent from it.
@@ -78,10 +112,11 @@ import "strings"
 // knownDirs is the stated directory list of core/internal. The census fails
 // closed when a directory appears that this list does not know.
 //
-// Modules (52): every directory below is a flat module of the core except
-// the four exclusions.
+// Scanned modules (51): 50 domain modules plus platform, scanned with an
+// empty ownership scope. Every directory below is a flat module of the
+// core except the two exclusions.
 //
-// Exclusions (4), named per the item:
+// Exclusions (2), named per the item:
 //   - testkit: the shared test fixture builder; it is not a module and its
 //     fixture SQL is deliberately cross-module by construction (it tears
 //     down and seeds the whole org). It ships test-only.

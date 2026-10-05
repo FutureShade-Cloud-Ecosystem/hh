@@ -56,6 +56,9 @@ func fixtureIndex(src []byte) *pkgIndex {
 	}
 	idx := newPkgIndex(map[string][]string{}, map[string][]string{})
 	building := map[string]bool{}
+	for _, name := range packageSinks(f) {
+		idx.sinks[name] = true
+	}
 	for round := 0; round < 6; round++ {
 		changed := false
 		if got := packageFuncParts(f, idx, building); len(got) > 0 {
@@ -154,13 +157,23 @@ func TestCTENameIsNotATable(t *testing.T) {
 	}
 }
 
-// TestDataModifyingCTEKeepsItsAllocator proves the sync scope pattern: the
-// WITH seq AS (...) allocator concatenated with the statement body, the way
-// the syncscope adapters ship it, hides the allocator name.
+// TestDataModifyingCTEKeepsItsAllocator proves the sync scope pattern as
+// the real portal site runs it: the WITH seq AS (...) allocator const
+// concatenated with the statement body and passed through the module's own
+// exec wrapper (whose string parameter flows into the pgx Exec), hiding the
+// allocator name.
 func TestDataModifyingCTEKeepsItsAllocator(t *testing.T) {
 	cte := "WITH seq AS (INSERT INTO scope_sequences (scope) VALUES ('team') RETURNING next_value) "
 	body := "UPDATE portal_users SET seq = (SELECT next_value FROM seq) WHERE id = $1"
-	src := "package p\n\nconst cte = `" + cte + "`\n\nfunc f(db *pgxpool.Pool) {\n\t_, _ = db.Exec(ctx, cte+`" + body + "`)\n}\n"
+	src := "package p\n\n" +
+		"const cte = `" + cte + "`\n\n" +
+		"func (r *repo) exec(ctx context.Context, sql string, args ...any) error {\n" +
+		"\t_, err := r.pool.Exec(ctx, sql, args...)\n" +
+		"\treturn err\n" +
+		"}\n\n" +
+		"func (r *repo) f(ctx context.Context, id string) error {\n" +
+		"\treturn r.exec(ctx, cte+`" + body + "`, id)\n" +
+		"}\n"
 	units, err := goFileUnits([]byte(src), "fixture.go", fixtureIndex([]byte(src)))
 	if err != nil {
 		t.Fatal(err)

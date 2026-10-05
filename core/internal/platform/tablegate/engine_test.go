@@ -10,19 +10,30 @@ package tablegate
 //
 //   - SQL is gathered from the positions where it reaches the database:
 //     the call sites of the pgx surface (Query, QueryRow, Exec and
-//     friends). Every string literal in a call's arguments is collected in
-//     source order, and names resolve through the string idioms the tree
-//     actually uses: package level const and var declarations of pure
-//     string expressions (backtick or interpreted literals joined by +),
-//     local names assigned the same inside their function, and package
-//     functions (or methods) whose body returns pure string expressions,
-//     resolved with memoization and a cycle guard (the query helper
-//     pattern: convertInsertSQL building the conversion INSERT beside its
-//     caller).
+//     friends), the call sites of the module's SQL sinks, and composite
+//     literal fields whose value tokenizes as a statement. A SQL sink is
+//     any function, method or function literal whose STRING parameter
+//     flows into a pgx call (portal's r.exec and guardedAdminUpdate,
+//     quote's invoicesForTx, messaging's scanMessagePage, order's
+//     guardedChangeUpdate, customer's scan closure): the statements they
+//     run arrive at their call sites, so the gate collects them there,
+//     exactly as it collects direct pgx arguments. Composite fields
+//     (reporting's catalogEntry.sql, the sync skeleton's
+//     readcache.Query.Page and ByID) are read from the literal itself,
+//     because the runner executes them later. Every string literal in a
+//     call's arguments is collected in source order, and names resolve
+//     through the string idioms the tree actually uses: package level
+//     const and var declarations of pure string expressions (backtick or
+//     interpreted literals joined by +), local names assigned the same
+//     inside their function, and package functions (or methods) whose
+//     body returns pure string expressions, resolved with memoization and
+//     a cycle guard (the query helper pattern: convertInsertSQL building
+//     the conversion INSERT beside its caller).
 //   - Nothing else is read as SQL. Prompt text, message templates and
-//     error prose live in strings that never reach a pgx call, so they are
-//     outside every corpus by construction; a gate that vacuumed every
-//     literal would fail closed on the English words from and the.
+//     error prose live in strings that never reach a pgx call or a
+//     statement-shaped field, so they are outside every corpus by
+//     construction; a gate that vacuumed every literal would fail closed
+//     on the English words from and the.
 //   - A corpus is tokenized (SQL line and block comments and quoted value
 //     literals are blanked so words inside them are never read as SQL),
 //     split into statements at depth zero verbs, and each statement yields
@@ -68,12 +79,23 @@ package tablegate
 //     table name. Today every Sprintf in the tree injects column lists,
 //     WHERE fragments and scope values only; the table itself stays in the
 //     literal. If a module ever Sprintfs a table name, this gate does not
-//     see it. There is no query builder dependency in core/go.mod, so
-//     there is no other hidden SQL anywhere in the tree.
+//     see it. There is no query builder dependency in core/go.mod.
 //   - SQL assembled through a strings.Builder or bytes.Buffer inside a
 //     helper is invisible (b.String() is not a string expression). The
 //     tree's builders build documents, letters and exports, not queries;
 //     if one ever builds a query, the gate does not see it.
+//   - Statement text that never appears as a source literal is invisible:
+//     SQL assembled at run time from values the gate cannot trace (rows
+//     read back, configuration strings, identifiers built from data) has
+//     no literal for the engine to read. Statement positions reached
+//     without a string literal, like CopyFrom's pgx.Identifier, are
+//     likewise unseen. The tree uses none of these shapes for SQL today;
+//     that is an audited fact of this revision, not a property of the
+//     engine, and the day one lands the gate does not see it.
+//   - The SQL sink rule keys on bare function and method names: two
+//     same-named sinks in one module collapse to one, and a sink call's
+//     non-string arguments contribute whatever literals they carry. Both
+//     effects over-capture rather than hide, which fails closed.
 //   - Comma separated FROM lists (FROM a, b) capture only a. The tree uses
 //     none today; this engine does not cover the spelling.
 //   - Sequence values fetched through nextval('name') are string arguments,
@@ -113,23 +135,35 @@ type sqlUnit struct {
 }
 
 // pkgIndex is the resolution index of one module: the package level const
-// and var string values and the function return string parts, merged across
-// the module's directory tree (the module's subpackages included; a name
-// collision across subpackages can only widen a corpus, which fails closed,
-// never narrow it).
+// and var string values, the function return string parts, and the SQL
+// sinks (functions and methods whose string parameter flows into a pgx
+// call), merged across the module's directory tree. Merging is FIRST WINS
+// per name: a name collision across subpackages (or two methods named
+// alike on different types, since function parts and sinks are keyed by
+// bare name) leaves the SECOND value unresolved, which NARROWS coverage.
+// That is the honest weakness of the keying: a collision would make the
+// second fragment's SQL invisible, a fail-open direction. No const
+// collision across subpackages exists in the tree today, and no sink name
+// collision was found across the 51 scanned modules; both facts are of
+// this revision, and a reviewer re-checking them should re-run the dump.
 type pkgIndex struct {
 	consts map[string][]string
 	funcs  map[string][]string
+	sinks  map[string]bool
 }
 
 func newPkgIndex(consts, funcs map[string][]string) *pkgIndex {
-	return &pkgIndex{consts: consts, funcs: funcs}
+	return &pkgIndex{consts: consts, funcs: funcs, sinks: map[string]bool{}}
 }
 
 // goFileUnits parses one non-test Go file and returns its SQL corpora: one
-// per pgx-surface call site, with every literal and resolvable fragment in
-// the call's arguments gathered in source order. Locals resolve per
-// function, package names through the module index.
+// per SQL-carrying call site and one per composite literal field whose
+// value tokenizes as a statement. A call site carries SQL when the callee
+// is the pgx surface, or a SQL sink of the module: any function, method or
+// function literal whose string parameter flows into a pgx call (portal's
+// r.exec and guardedAdminUpdate, quote's invoicesForTx, messaging's
+// scanMessagePage, order's guardedChangeUpdate, customer's scan closure).
+// Locals resolve per function, package names through the module index.
 func goFileUnits(src []byte, filename string, pkg *pkgIndex) ([]sqlUnit, error) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, filename, src, 0)
@@ -138,30 +172,196 @@ func goFileUnits(src []byte, filename string, pkg *pkgIndex) ([]sqlUnit, error) 
 	}
 	var units []sqlUnit
 	for _, decl := range file.Decls {
-		d, ok := decl.(*ast.FuncDecl)
-		if !ok || d.Body == nil {
-			continue
-		}
-		resolve := localStringValues(d, pkg)
-		ast.Inspect(d.Body, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok || !sqlCallMethods[callSelName(call)] {
-				return true
+		switch d := decl.(type) {
+		case *ast.FuncDecl:
+			if d.Body == nil {
+				continue
 			}
-			w := &corpusWalker{resolve: resolve, pkg: pkg}
-			for _, arg := range call.Args {
-				ast.Inspect(arg, func(child ast.Node) bool {
-					w.collect(child)
+			resolve := localStringValues(d, pkg)
+			localSinks := localSinkNames(d)
+			name := declName(d)
+			ast.Inspect(d.Body, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
 					return true
-				})
+				}
+				sel := callSelName(call)
+				if !sqlCallMethods[sel] && !pkg.sinks[sel] && !localSinks[sel] {
+					return true
+				}
+				w := &corpusWalker{resolve: resolve, pkg: pkg}
+				for _, arg := range call.Args {
+					ast.Inspect(arg, func(child ast.Node) bool {
+						w.collect(child)
+						return true
+					})
+				}
+				if c := strings.Join(w.parts, " "); strings.TrimSpace(c) != "" {
+					units = append(units, sqlUnit{decl: name, corpus: c})
+				}
+				return true
+			})
+			units = append(units, compositeSQLUnits(d.Body, resolve, pkg, name)...)
+		case *ast.GenDecl:
+			if d.Tok == token.TYPE {
+				continue
 			}
-			if c := strings.Join(w.parts, " "); strings.TrimSpace(c) != "" {
-				units = append(units, sqlUnit{decl: declName(d), corpus: c})
-			}
-			return true
-		})
+			units = append(units, compositeSQLUnits(d, pkg.consts, pkg, genDeclName(d))...)
+		}
 	}
 	return units, nil
+}
+
+// packageSinks answers the names of the file's functions and methods whose
+// string parameter flows into a pgx call: the body holds a pgx call with an
+// argument (at any depth) that is one of the function's own parameters.
+// Such a function is a SQL sink; the statements it runs arrive at its call
+// sites, so the gate collects them there.
+func packageSinks(file *ast.File) []string {
+	var names []string
+	for _, decl := range file.Decls {
+		d, ok := decl.(*ast.FuncDecl)
+		if !ok || d.Body == nil || d.Type.Params == nil {
+			continue
+		}
+		params := stringParamNames(d.Type.Params)
+		if len(params) == 0 {
+			continue
+		}
+		if paramFlowsIntoPGX(d.Body, params) {
+			names = append(names, d.Name.Name)
+		}
+	}
+	return names
+}
+
+// localSinkNames answers the function's own local names assigned a function
+// literal whose string parameter flows into a pgx call (customer's
+// scan := func(sql string) closure). The closure's call sites sit in the
+// same function, so the names resolve locally.
+func localSinkNames(fn *ast.FuncDecl) map[string]bool {
+	out := map[string]bool{}
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		as, ok := n.(*ast.AssignStmt)
+		if !ok || (as.Tok != token.ASSIGN && as.Tok != token.DEFINE) ||
+			len(as.Lhs) != 1 || len(as.Rhs) != 1 {
+			return true
+		}
+		name, ok := as.Lhs[0].(*ast.Ident)
+		if !ok {
+			return true
+		}
+		fl, ok := as.Rhs[0].(*ast.FuncLit)
+		if !ok || fl.Type.Params == nil {
+			return true
+		}
+		params := stringParamNames(fl.Type.Params)
+		if len(params) > 0 && paramFlowsIntoPGX(fl.Body, params) {
+			out[name.Name] = true
+		}
+		return true
+	})
+	return out
+}
+
+// stringParamNames answers the function's parameters whose type is string,
+// the only parameters that can carry a statement. A context, a count or an
+// options parameter flowing into a pgx call does not make a function a SQL
+// sink.
+func stringParamNames(fields *ast.FieldList) map[string]bool {
+	out := map[string]bool{}
+	if fields == nil {
+		return out
+	}
+	for _, f := range fields.List {
+		if id, ok := f.Type.(*ast.Ident); !ok || id.Name != "string" {
+			continue
+		}
+		for _, n := range f.Names {
+			out[n.Name] = true
+		}
+	}
+	return out
+}
+
+// paramFlowsIntoPGX answers whether any pgx call in the body takes one of
+// the named parameters as an argument, at any depth.
+func paramFlowsIntoPGX(body ast.Node, params map[string]bool) bool {
+	flows := false
+	ast.Inspect(body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok || !sqlCallMethods[callSelName(call)] {
+			return true
+		}
+		for _, arg := range call.Args {
+			ast.Inspect(arg, func(c ast.Node) bool {
+				if id, ok := c.(*ast.Ident); ok && params[id.Name] {
+					flows = true
+				}
+				return true
+			})
+		}
+		return true
+	})
+	return flows
+}
+
+// sqlStatementVerbs is the leading-token test for a composite literal field
+// that carries a statement rather than a value.
+var sqlStatementVerbs = map[string]bool{
+	"SELECT": true, "WITH": true, "INSERT": true, "UPDATE": true, "DELETE": true,
+}
+
+// leadingSQLVerb answers whether the text's first identifier token is a
+// statement verb, the shape of SQL parked in a struct field
+// (catalogEntry{sql: ...}, readcache.Query{Page: ..., ByID: ...}).
+func leadingSQLVerb(text string) bool {
+	for _, tok := range tokenizeSQL(text) {
+		if tok.kind == identKind {
+			return sqlStatementVerbs[tok.upper]
+		}
+		if tok.kind == punctKind {
+			return false
+		}
+	}
+	return false
+}
+
+// compositeSQLUnits gathers one corpus per composite literal field whose
+// pure string value tokenizes as a statement. The runner executes these
+// later (the sync readcache skeleton runs Query.Page and Query.ByID; the
+// reporting runner runs catalogEntry.sql), so the literal is the SQL's
+// only appearance in source.
+func compositeSQLUnits(node ast.Node, resolve map[string][]string, pkg *pkgIndex, decl string) []sqlUnit {
+	r := &partsResolver{consts: resolve, funcs: pkg.funcs}
+	var units []sqlUnit
+	ast.Inspect(node, func(n ast.Node) bool {
+		cl, ok := n.(*ast.CompositeLit)
+		if !ok {
+			return true
+		}
+		for _, elt := range cl.Elts {
+			kv, ok := elt.(*ast.KeyValueExpr)
+			if !ok {
+				continue
+			}
+			key, ok := kv.Key.(*ast.Ident)
+			if !ok {
+				continue
+			}
+			parts := r.parts(kv.Value, 0)
+			if parts == nil {
+				continue
+			}
+			text := strings.Join(parts, " ")
+			if !leadingSQLVerb(text) {
+				continue
+			}
+			units = append(units, sqlUnit{decl: decl + " field " + key.Name, corpus: text})
+		}
+		return true
+	})
+	return units
 }
 
 func declName(d *ast.FuncDecl) string {
