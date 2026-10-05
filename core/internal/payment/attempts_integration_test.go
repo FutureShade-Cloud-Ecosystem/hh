@@ -630,6 +630,43 @@ func TestAttempts_NonUTF8DiagnosticStillStamps(t *testing.T) {
 	}
 }
 
+// A VOID_* row's capture was confirmed before its reversal went missing or was refused, so it can
+// never close as NOT_CHARGED: only a manager reversal at the processor tells the truth about the
+// money. UNKNOWN may close either way, depending on what the manager finds at Run.
+func TestAttempts_ResolvePairing(t *testing.T) {
+	fx := newAttemptFx(t)
+	ctx := context.Background()
+	vd := fx.claim(fx.in(800))
+	fx.force(vd.ID, AttemptVoidDeclined)
+	if _, _, err := fx.store.Resolve(ctx, vd.ID, ResolutionNotCharged, "checked the settlement report", fx.user); !errors.Is(err, ErrResolveInvalid) {
+		t.Fatalf("VOID_DECLINED with NOT_CHARGED: err=%v, want ErrResolveInvalid", err)
+	}
+	if got := fx.get(vd.LegKey); got.Status != AttemptVoidDeclined {
+		t.Fatalf("a refused resolve moved the row to %s", got.Status)
+	}
+
+	vu := fx.claim(fx.in(810))
+	fx.force(vu.ID, AttemptVoidUnknown)
+	if _, _, err := fx.store.Resolve(ctx, vu.ID, ResolutionNotCharged, "checked", fx.user); !errors.Is(err, ErrResolveInvalid) {
+		t.Fatalf("VOID_UNKNOWN with NOT_CHARGED: err=%v, want ErrResolveInvalid", err)
+	}
+
+	// Both VOID_* rows close as reversed at the processor.
+	if _, ok, err := fx.store.Resolve(ctx, vd.ID, ResolutionReversedAtProcessor, "reversed at Run", fx.user); err != nil || !ok {
+		t.Fatalf("VOID_DECLINED with REVERSED_AT_PROCESSOR: ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := fx.store.Resolve(ctx, vu.ID, ResolutionReversedAtProcessor, "reversed at Run", fx.user); err != nil || !ok {
+		t.Fatalf("VOID_UNKNOWN with REVERSED_AT_PROCESSOR: ok=%v err=%v", ok, err)
+	}
+
+	// UNKNOWN keeps both doors.
+	u := fx.claim(fx.in(820))
+	fx.force(u.ID, AttemptUnknown)
+	if _, ok, err := fx.store.Resolve(ctx, u.ID, ResolutionNotCharged, "no charge on the settlement report", fx.user); err != nil || !ok {
+		t.Fatalf("UNKNOWN with NOT_CHARGED: ok=%v err=%v", ok, err)
+	}
+}
+
 // A bind on a transaction that rolls back leaves the attempt CAPTURED, so the compensator still owns it.
 func TestAttempts_BindTxRollbackLeavesTheRowCaptured(t *testing.T) {
 	fx := newAttemptFx(t)
