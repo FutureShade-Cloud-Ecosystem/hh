@@ -515,7 +515,9 @@ paths:
         Writes one pricing log row (action UPDATE, field floor_warning_confirmed)
         naming the actor and the products the editor was shown. Unlike the
         writes' own log rows, a failure to write this one is an error answer,
-        not a silent drop.
+        not a silent drop. A reference pair must be complete and its id must
+        match its kind where the server can see the record (a product id sent
+        as a quote reference is a 400).
       x-addition: "records the editor's confirmation of a floor warning (plan CP0-6, QD-4); no ERP source route"
       x-role: requireManager
       x-access:

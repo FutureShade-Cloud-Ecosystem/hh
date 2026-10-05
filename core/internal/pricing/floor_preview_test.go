@@ -314,3 +314,38 @@ func TestPreviewFloor_AnUndercutTypeIsNotHiddenBehindAnUnchangedOne(t *testing.T
 		t.Fatalf("the item must be the undercut RETAIL case (1000 was 3000, already under), got %+v", it)
 	}
 }
+
+// A reference whose id names a record of another kind the server can see is refused: a quote
+// reference carrying a product id was accepted with 200, and the log then linked a product as
+// a quote. Kinds pricing has no read for (quote, order, category) are checked against the two
+// it can see; ids do not cross tables, so a refusal is always a mismatched pair.
+func TestRecordFloorConfirmation_RefusesAReferenceIdOfAnotherKind(t *testing.T) {
+	st := &fakeStore{byID: map[string]Rule{"r1": {ID: "r1"}}}
+	s := previewSvc(st)
+	ctx := context.Background()
+	bad := []struct{ refType, refID, why string }{
+		{"quote", "blu60", "a product id on a quote reference"},
+		{"product", "cust1", "a customer id on a product reference"},
+		{"category", "blu60", "a product id on a category reference"},
+	}
+	for _, b := range bad {
+		err := s.RecordFloorConfirmation(ctx, FloorConfirmation{EntityType: "pricing_rule", EntityID: "r1",
+			ProductIDs: []string{"blu60"}, RefType: b.refType, RefID: b.refID}, "u")
+		if err == nil {
+			t.Errorf("%s must be refused", b.why)
+		}
+	}
+	// A quote reference carrying an id pricing cannot see (a real quote id) still logs: the
+	// check refuses mismatches, it does not guess at kinds it cannot read.
+	if err := s.RecordFloorConfirmation(ctx, FloorConfirmation{EntityType: "pricing_rule", EntityID: "r1",
+		ProductIDs: []string{"blu60"}, RefType: "quote", RefID: "17000000-0000-4000-9000-000000000001"}, "u"); err != nil {
+		t.Fatalf("an unreadable quote id is not a mismatch: %v", err)
+	}
+	if err := s.RecordFloorConfirmation(ctx, FloorConfirmation{EntityType: "pricing_rule", EntityID: "r1",
+		ProductIDs: []string{"blu60"}, RefType: "product", RefID: "blu60"}, "u"); err != nil {
+		t.Fatalf("a product id on a product reference is right: %v", err)
+	}
+	if len(st.audits) != 2 {
+		t.Fatalf("the two honest confirmations logged, got %d", len(st.audits))
+	}
+}

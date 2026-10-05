@@ -471,6 +471,55 @@ func worseBreach(a, b FloorPreviewItem) bool {
 	return a.MarginBps < b.MarginBps
 }
 
+// refMatchesItsKind refuses a reference whose id names a record of another kind the pricing
+// module can see: a quote reference carrying a product id would link that product as a quote in
+// the log. Pricing holds a product read (the candidates seam) and a customer read (the floor
+// customers seam), and ids do not cross tables, so an id found by either is a mismatch whenever
+// the reference claims another kind; the kinds pricing has no read for (quote, order, category)
+// are checked only against those two, and an id neither sees is taken as it comes.
+func (s *Service) refMatchesItsKind(ctx context.Context, refType, refID string) error {
+	namesProduct, err := s.refIDNamesProduct(ctx, refID)
+	if err != nil {
+		return err
+	}
+	namesCustomer, err := s.refIDNamesCustomer(ctx, refID)
+	if err != nil {
+		return err
+	}
+	switch {
+	case refType != RefProduct && namesProduct:
+		return badReq("ref_entity_id names a product, not the %s the ref_entity_type claims", refType)
+	case refType != RefCustomer && namesCustomer:
+		return badReq("ref_entity_id names a customer, not the %s the ref_entity_type claims", refType)
+	}
+	return nil
+}
+
+func (s *Service) refIDNamesProduct(ctx context.Context, refID string) (bool, error) {
+	if s.cands == nil {
+		return false, nil
+	}
+	prods, err := s.cands.CandidateProducts(ctx, "", refID, "", 1)
+	if err != nil {
+		return false, fmt.Errorf("floor confirmation reference: %w", err)
+	}
+	return len(prods) > 0, nil
+}
+
+func (s *Service) refIDNamesCustomer(ctx context.Context, refID string) (bool, error) {
+	if s.floorCust == nil {
+		return false, nil
+	}
+	_, err := s.floorCust.CustomerType(ctx, refID)
+	if errors.Is(err, ErrFloorCustomerNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("floor confirmation reference: %w", err)
+	}
+	return true, nil
+}
+
 // RecordFloorConfirmation writes the editor's confirmation of a floor warning into the
 // pricing log, against the record the confirmed save wrote. Unlike the writes' own log
 // rows, whose failure is dropped, a failure here is returned: the confirmation is the
@@ -487,6 +536,11 @@ func (s *Service) RecordFloorConfirmation(ctx context.Context, c FloorConfirmati
 	}
 	if (c.RefType == "") != (c.RefID == "") || (c.RefType != "" && !validRefTypes[c.RefType]) {
 		return badReq("ref_entity_type must be one of product, customer, category, quote, order and come with ref_entity_id")
+	}
+	if c.RefType != "" {
+		if err := s.refMatchesItsKind(ctx, c.RefType, c.RefID); err != nil {
+			return err
+		}
 	}
 	var err error
 	switch c.EntityType {
