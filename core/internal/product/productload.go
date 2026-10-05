@@ -321,8 +321,10 @@ func landedUnitSetRefusal(ctx context.Context, tx pgx.Tx, productID, orgID, base
 	// door's FOR SHARE refuses it, so the two doors still serialise,
 	// while a referencing insert's foreign key check (FOR KEY SHARE)
 	// passes, so a standing batch no longer holds up order lines, stock
-	// moves, barcodes or any other write that names the product. Taken
-	// on the item's own transaction before any read of the set; a row
+	// moves, barcodes or any other write that names the product (a
+	// reload that changes the sku updates a key column, which Postgres
+	// raises to FOR UPDATE on its own, so only that shape holds them
+	// until the commit). Taken on the item's own transaction before any read of the set; a row
 	// gone mid race answers no refusal here and keeps the write arm's
 	// own answer.
 	var locked string
