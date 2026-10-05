@@ -68,6 +68,12 @@ func (f *fakeGLPoster) PostJournal(_ context.Context, in GLJournal) (string, err
 	return "", nil
 }
 
+// PostJournalTx is PostJournal through the caller's transaction; the fake records + dedupes identically (it
+// touches no database, so a nil tx rides fine).
+func (f *fakeGLPoster) PostJournalTx(_ context.Context, _ pgx.Tx, in GLJournal) (string, error) {
+	return f.PostJournal(context.Background(), in)
+}
+
 func (f *fakeGLPoster) debit(key, acct string) int64 {
 	var t int64
 	for _, l := range f.journals[key].Lines {
@@ -686,6 +692,16 @@ func (f *failOnceGL) PostJournal(ctx context.Context, in GLJournal) (string, err
 		return "", errTransientGL // the post never lands: no gl_journals row, and the caller's tx must roll back
 	}
 	return f.inner.PostJournal(ctx, in)
+}
+
+// PostJournalTx carries the same fail-once semantics through the tx-aware seam variant the fixed Void posts
+// the reversing journal with.
+func (f *failOnceGL) PostJournalTx(ctx context.Context, tx pgx.Tx, in GLJournal) (string, error) {
+	if !f.failed && in.IdempotencyKey == f.failKey {
+		f.failed = true
+		return "", errTransientGL // the post never lands: no gl_journals row, and the caller's tx must roll back
+	}
+	return f.inner.PostJournalTx(ctx, tx, in)
 }
 
 // txDurableWAC is a subledger stand-in whose weighted-average cost lives IN THE DATABASE, written through the
