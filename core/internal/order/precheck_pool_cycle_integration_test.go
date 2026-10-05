@@ -18,9 +18,13 @@
 // does the blocker commit, and every caller then reaches the precheck with every pool connection taken.
 // On the pre-fix tree each precheck needs a fifth connection that never comes and the shared bound fires.
 //
-// The sale half of the predicate is a permissive stand-in here: the POS reader lives in a module this
-// leg's fix does not touch, and a real POS reader would add its own second acquisition (disclosed in the
-// lane report), which would mask whether the invoice half is fixed.
+// The sale half of the predicate is the REAL pos repository too, wired the way the composition root
+// wires it. That reader (pos.Repository.OrderHasCommittedPOSSale) asks the POOL for its connection
+// while the order transaction still holds one, so on the unfixed tree the stall this leg catches lives
+// in the pos read. A permissive stand-in for this half would hide exactly that: with the invoice half
+// already reading through the transaction (OrderHasFinalizedInvoiceTx), a stand-in sale half passes
+// while every manager cancel still takes a second connection. Both halves therefore run their real
+// production readers here, so the leg can only go green when NEITHER half acquires twice.
 //
 // The pool size and the database come from the leg's own throwaway database URL carried on the command:
 //
@@ -40,6 +44,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/inventory"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -184,13 +189,13 @@ func runPrecheckCycle(t *testing.T, scenario, helper *pgxpool.Pool, poolSize int
 
 func TestIntegration_OrderPrecheckJoinsOrderTx_NoPoolCycle(t *testing.T) {
 	const poolSize = 4
-	// build wires the order service as main.go does for the money seam (the stock reserver is bound per subtest): the real repository, the
-	// real audit spine and the REAL billing repository on the same pool.
+	// build wires the order service as the composition root does for the money seam (the stock reserver is bound per
+	// subtest): the real repository, the real audit spine and the REAL billing and pos repositories on the same pool.
 	build := func(pool *pgxpool.Pool) *Service {
 		auditSvc := audit.NewService(audit.NewRepository(pool), nil)
 		return NewService(NewRepository(pool)).
 			WithAudit(auditSvc).WithAuditTrail(auditSvc).
-			WithCancelGuards(billing.NewRepository(pool), permissiveGuards{}).
+			WithCancelGuards(billing.NewRepository(pool), pos.NewRepository(pool)).
 			WithReorderPricing(intPricer{}).WithReorderInventory(intInv{}).
 			WithCustomerType(intCustType{})
 	}
@@ -264,4 +269,94 @@ func TestIntegration_OrderPrecheckJoinsOrderTx_NoPoolCycle(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestIntegration_OrderCancelPosSalePredicate_RefusedWhenCommitted_AllowedWhenVoided pins the sale
+// half's TRUTH while the legs above pin its liveness. Joining the caller's transaction must not move
+// what the predicate says: a cancel is still refused while a COMMITTED pos_sale is attached, and still
+// allowed once that sale is VOIDED, through the real billing and pos repositories the composition root
+// wires. Where the pos repository implements the transaction-joining variant (CommittedSaleTxReader)
+// the same question is asked again through a REAL open transaction, so the two shapes must answer
+// identically; where it does not, the run answers through the pool read, which is the pre-fix shape,
+// and the point is that the fix may not change the answer either.
+func TestIntegration_OrderCancelPosSalePredicate_RefusedWhenCommitted_AllowedWhenVoided(t *testing.T) {
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		t.Skip("order precheck pool-cycle leg: DATABASE_URL not set (the leg needs its own throwaway database and skips politely without it)")
+	}
+	cfg, err := pgxpool.ParseConfig(url)
+	if err != nil {
+		t.Fatalf("parse DATABASE_URL: %v", err)
+	}
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("build pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	if err := pool.Ping(context.Background()); err != nil {
+		t.Fatalf("database not reachable: %v", err)
+	}
+
+	ctx := context.Background()
+	auditSvc := audit.NewService(audit.NewRepository(pool), nil)
+	posRepo := pos.NewRepository(pool)
+	svc := NewService(NewRepository(pool)).WithAudit(auditSvc).WithAuditTrail(auditSvc).
+		WithCancelGuards(billing.NewRepository(pool), posRepo)
+
+	for _, tc := range []struct {
+		saleStatus string
+		wantBlock  bool
+	}{
+		{saleStatus: "COMMITTED", wantBlock: true},
+		{saleStatus: "VOIDED", wantBlock: false},
+	} {
+		t.Run(tc.saleStatus, func(t *testing.T) {
+			_, ord := seedOrder(t, pool, "CONFIRMED")
+			if _, err := pool.Exec(ctx,
+				`INSERT INTO pos_sale (idempotency_key, order_id, branch_id, tender, status)
+				 VALUES (gen_random_uuid(), $1, $2, 'CASH', $3)`, ord, trentonBranch, tc.saleStatus); err != nil {
+				t.Fatalf("seed %s pos_sale: %v", tc.saleStatus, err)
+			}
+
+			// The joined read must answer identically to the pool read: a COMMITTED sale is money
+			// attached, a VOIDED one has been unwound and is not.
+			if r, ok := CommittedSaleReader(posRepo).(CommittedSaleTxReader); ok {
+				tx, err := pool.Begin(ctx)
+				if err != nil {
+					t.Fatalf("open a transaction for the joined read: %v", err)
+				}
+				hasSale, err := r.OrderHasCommittedPOSSaleTx(ctx, tx, ord)
+				if err != nil {
+					_ = tx.Rollback(ctx)
+					t.Fatalf("OrderHasCommittedPOSSaleTx: %v", err)
+				}
+				if err := tx.Rollback(ctx); err != nil {
+					t.Fatalf("roll the joined read back: %v", err)
+				}
+				if hasSale != tc.wantBlock {
+					t.Fatalf("joined read says committed pos_sale = %v for a %s sale, want %v",
+						hasSale, tc.saleStatus, tc.wantBlock)
+				}
+			} else {
+				t.Logf("pos repository does not join the caller's transaction yet; this run's predicate answered through the pool read")
+			}
+
+			_, err := svc.TransitionManual(identity.ContextWithStaff(ctx, edIntManagerCtx()), ord, ActionCancel, "pos sale predicate leg")
+			if tc.wantBlock {
+				if !errors.Is(err, ErrCancelBlocked) {
+					t.Fatalf("cancel with a COMMITTED pos_sale attached: err = %v, want ErrCancelBlocked", err)
+				}
+				if got := liveStatus(t, pool, ord); got != "CONFIRMED" {
+					t.Fatalf("refused order status = %q, want CONFIRMED", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("cancel with only a VOIDED pos_sale attached: %v, want the cancel allowed", err)
+			}
+			if got := liveStatus(t, pool, ord); got != "CANCELLED" {
+				t.Fatalf("allowed order status = %q, want CANCELLED", got)
+			}
+		})
+	}
 }
