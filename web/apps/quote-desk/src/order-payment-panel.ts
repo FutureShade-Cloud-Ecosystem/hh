@@ -107,6 +107,8 @@ interface QuotePayment {
   reference: string;
   /** The receipt of the payment the server took (or replayed) on this quote. */
   receipt: OrderPaymentAnswer | null;
+  /** True when the receipt on screen is of an EARLIER payment, not of the attempt now open. */
+  receiptEarlier: boolean;
   /** The server's words of the last definite refusal on this quote. */
   refusal: string;
   /** The quote's kept payment attempt, null when none is open. */
@@ -128,6 +130,8 @@ export class QdOrderPayment extends PanelBase {
   @state() private reference = "";
   /** The receipt of the payment the server took (or replayed) on this quote. */
   @state() private receipt: OrderPaymentAnswer | null = null;
+  /** True when the receipt on screen is of an EARLIER payment, so it never reads as the result of a refusal under it. */
+  @state() private receiptEarlier = false;
   /** The unknown outcome note: set when no answer the desk can read came back; a retry keeps the same key. */
   @state() private unknown = "";
   /** The kept attempt of the quote now open, mirrored from the book for render. */
@@ -233,6 +237,13 @@ export class QdOrderPayment extends PanelBase {
         font-size: var(--qp-caption);
         color: var(--hos-text-dim, var(--hh-text-dim));
       }
+      /* The paid state says what it is in the success ink; it replaces the form, so nothing
+         offers a payment nothing is owed for. */
+      .paid {
+        margin: 8px 0 0;
+        font-size: var(--qp-body);
+        color: var(--hos-success, var(--hh-success));
+      }
       .figures {
         margin: 8px 0 0;
         padding: 0;
@@ -306,6 +317,11 @@ export class QdOrderPayment extends PanelBase {
     return parsed.cents === null ? "" : `Taking ${moneyWord(parsed.cents)} by ${tenderWord(this.tender)}`;
   }
 
+  /** True when the invoice is read as owing nothing: the form gives way to a Paid in full state. */
+  private get paidInFull(): boolean {
+    return this.loaded && this.readError === "" && this.paymentBalance === 0;
+  }
+
   protected override willUpdate(changed: Map<string, unknown>): void {
     if (changed.has("client")) {
       // A new client is a new session: no payment, key or receipt of the last one is this one's.
@@ -334,7 +350,7 @@ export class QdOrderPayment extends PanelBase {
   private record(id: string): QuotePayment {
     let rec = this.byQuote.get(id);
     if (rec === undefined) {
-      rec = { tender: "CASH", amountRaw: "", reference: "", receipt: null, refusal: "", attempt: null };
+      rec = { tender: "CASH", amountRaw: "", reference: "", receipt: null, receiptEarlier: false, refusal: "", attempt: null };
       this.byQuote.set(id, rec);
     }
     return rec;
@@ -346,6 +362,7 @@ export class QdOrderPayment extends PanelBase {
     this.record(id).amountRaw = this.amountRaw;
     this.record(id).reference = this.reference;
     this.record(id).receipt = this.receipt;
+    this.record(id).receiptEarlier = this.receiptEarlier;
     this.record(id).refusal = this.error;
     this.record(id).attempt = this.attempt;
   }
@@ -357,6 +374,7 @@ export class QdOrderPayment extends PanelBase {
     this.amountRaw = rec?.amountRaw ?? "";
     this.reference = rec?.reference ?? "";
     this.receipt = rec?.receipt ?? null;
+    this.receiptEarlier = rec?.receiptEarlier ?? false;
     this.error = rec?.refusal ?? "";
     this.attempt = rec?.attempt ?? null;
     this.busy = this.attempt?.phase === "in-flight";
@@ -368,6 +386,7 @@ export class QdOrderPayment extends PanelBase {
     const rec = this.record(id);
     this.attempt = rec.attempt;
     this.receipt = rec.receipt;
+    this.receiptEarlier = rec.receiptEarlier;
     this.error = rec.refusal;
     this.amountRaw = rec.amountRaw;
     this.reference = rec.reference;
@@ -462,6 +481,12 @@ export class QdOrderPayment extends PanelBase {
     const client = this.client;
     if (client === null || this.busy) return;
     const ctx = this.ctx;
+    // A press at a new payment retires any receipt already on screen: from here it is the
+    // receipt of an EARLIER payment, and it must never read as the result of this attempt.
+    if (this.receipt !== null && !this.receiptEarlier) {
+      this.receiptEarlier = true;
+      this.record(ctx.id).receiptEarlier = true;
+    }
     const kept = this.attempt;
     let key: string;
     let cents: number;
@@ -533,11 +558,13 @@ export class QdOrderPayment extends PanelBase {
     const rec = this.record(id);
     rec.attempt = null;
     rec.receipt = value;
+    rec.receiptEarlier = false;
     rec.refusal = "";
     rec.amountRaw = "";
     rec.reference = "";
     this.attempt = null;
     this.receipt = value;
+    this.receiptEarlier = false;
     this.error = "";
     this.unknown = "";
     this.amountRaw = "";
@@ -576,6 +603,7 @@ export class QdOrderPayment extends PanelBase {
       const rec = this.record(ctx.id);
       rec.attempt = null;
       rec.receipt = late.value;
+      rec.receiptEarlier = false;
       rec.refusal = "";
       rec.amountRaw = "";
       rec.reference = "";
@@ -674,7 +702,10 @@ export class QdOrderPayment extends PanelBase {
     );
     return html`
       <div class="receipt" role="status" data-testid="op-receipt">
-        <h4>Receipt</h4>
+        <h4>${this.receiptEarlier ? "Receipt of an earlier payment" : "Receipt"}</h4>
+        ${this.receiptEarlier
+          ? html`<p class="note" data-testid="op-receipt-earlier">This receipt is of an earlier payment on this quote; it is not the result of the attempt above it.</p>`
+          : nothing}
         <dl>
           ${rows.map((row) => html`<dt>${row.label}</dt><dd data-testid="op-receipt-${row.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}">${row.value}</dd>`)}
         </dl>
@@ -696,7 +727,12 @@ export class QdOrderPayment extends PanelBase {
             : "Payment on the order this quote became. The server holds the figures and decides the amount rules; its refusal names what to do."}
         </p>
         ${this.renderFigures()}
-        <div class="tenders" role="group" aria-label="Payment method" data-testid="op-tenders">
+        ${this.paidInFull
+          ? html`<p class="paid" data-testid="op-paid">
+              Paid in full: nothing is owed on this invoice, so no payment is taken here${this.receipt !== null ? ". The receipt below is the payment that settled it." : "."}
+            </p>`
+          : html`
+            <div class="tenders" role="group" aria-label="Payment method" data-testid="op-tenders">
           ${TENDER_METHODS.map(
             (m) => html`<button
               type="button"
@@ -721,15 +757,16 @@ export class QdOrderPayment extends PanelBase {
             ${this.busy ? "Taking payment..." : "Take payment"}
           </button>
           ${this.amountPreview !== "" ? html`<span class="preview" data-testid="op-preview">${this.amountPreview}</span>` : nothing}
-        </div>
+            </div>
+            ${this.attempt?.phase === "held"
+              ? html`<div class="row">
+                  <button type="button" data-action="start-new" data-testid="op-start-new">Start a new payment</button>
+                  <span class="note">A new payment gets a new key. The documents above are read again first, so what landed under the held key is on the screen before the form unlocks.</span>
+                </div>`
+              : nothing}
+          `}
         ${this.unknown !== "" ? html`<p class="err" role="status" data-testid="op-unknown">${this.unknown}</p>` : nothing}
         ${this.error !== "" ? html`<p class="err" role="alert" data-testid="op-error">${this.error}</p>` : nothing}
-        ${this.attempt?.phase === "held"
-          ? html`<div class="row">
-              <button type="button" data-action="start-new" data-testid="op-start-new">Start a new payment</button>
-              <span class="note">A new payment gets a new key. The documents above are read again first, so what landed under the held key is on the screen before the form unlocks.</span>
-            </div>`
-          : nothing}
         ${this.notice !== "" ? html`<p class="ok" role="status" data-testid="op-notice">${this.notice}</p>` : nothing}
         ${this.renderReceipt()}
       </fieldset>

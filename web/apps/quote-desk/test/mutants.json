@@ -1357,7 +1357,7 @@
   {
     "id": "op-late-kept-record",
     "file": "src/order-payment-panel.ts",
-    "find": "      rec.attempt = null;\n      rec.receipt = late.value;\n      rec.refusal = \"\";\n      rec.amountRaw = \"\";\n      rec.reference = \"\";\n      this.lateNotes.set(ctx.id, LATE_PAYMENT_NOTE);",
+    "find": "      rec.attempt = null;\n      rec.receipt = late.value;\n      rec.receiptEarlier = false;\n      rec.refusal = \"\";\n      rec.amountRaw = \"\";\n      rec.reference = \"\";\n      this.lateNotes.set(ctx.id, LATE_PAYMENT_NOTE);",
     "replace": "      rec.attempt = null;\n      this.lateNotes.set(ctx.id, LATE_PAYMENT_NOTE);",
     "test": "keeps the controls held on return"
   },
@@ -1434,6 +1434,20 @@
     "find": "      .tenders {\n        display: grid;\n        grid-template-columns: 1fr 1fr;\n        gap: 8px;\n        margin-top: 8px;\n      }",
     "replace": "      .tenders {\n        display: grid;\n        grid-template-columns: repeat(4, 1fr);\n        gap: 8px;\n        margin-top: 8px;\n      }",
     "test": "the payment form follows the till's tile language"
+  },
+  {
+    "id": "op-paid-state",
+    "file": "src/order-payment-panel.ts",
+    "find": "    return this.loaded && this.readError === \"\" && this.paymentBalance === 0;",
+    "replace": "    return false;",
+    "test": "shows a Paid in full state in place of the form"
+  },
+  {
+    "id": "op-receipt-earlier",
+    "file": "src/order-payment-panel.ts",
+    "find": "    if (this.receipt !== null && !this.receiptEarlier) {\n      this.receiptEarlier = true;\n      this.record(ctx.id).receiptEarlier = true;\n    }\n",
+    "replace": "",
+    "test": "marked as that, never as the result of a refusal"
   },
   {
     "id": "ws-serialize",

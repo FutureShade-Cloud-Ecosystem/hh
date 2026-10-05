@@ -563,6 +563,40 @@ test("the payment form follows the till's tile language: a 2x2 grid of icon tile
   await expect(pay(page).getByTestId("op-receipt")).toBeVisible();
 });
 
+test("a paid invoice shows a Paid in full state in place of the form", async ({ page }) => {
+  await signIn(page);
+  await openWithPayment(page, "Q-2101");
+  await take(page, "37.06");
+  await expect(pay(page).getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("CA$0.00");
+  await expect(pay(page).getByTestId("op-paid")).toContainText("Paid in full");
+  // No live amount, no tender, no Take payment when nothing is owed.
+  await expect(pay(page).getByTestId("op-take")).toHaveCount(0);
+  await expect(pay(page).locator('[data-field="amount"]')).toHaveCount(0);
+  await expect(pay(page).getByTestId("op-tenders")).toHaveCount(0);
+  // The receipt of the payment that settled it stays.
+  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("CA$37.06");
+  await expect(pay(page).getByTestId("op-receipt-earlier")).toHaveCount(0);
+});
+
+test("the receipt of an earlier payment is marked as that, never as the result of a refusal under it", async ({ page }) => {
+  await signIn(page);
+  await openWithPayment(page, "Q-2101");
+  await take(page, "10.00");
+  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("CA$10.00");
+  await expect(pay(page).getByTestId("op-receipt-earlier")).toHaveCount(0);
+  // A second attempt, refused before it is sent: the receipt stays, marked as the earlier
+  // payment's, so it cannot read as this refusal's result.
+  await take(page, "30.00");
+  await expect(pay(page).getByTestId("op-error")).toHaveText("The payment is more than the balance of CA$27.06");
+  await expect(pay(page).getByTestId("op-receipt")).toBeVisible();
+  await expect(pay(page).getByTestId("op-receipt-earlier")).toContainText("earlier payment");
+  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("CA$10.00");
+  // A taken payment replaces the mark with its own receipt.
+  await take(page, "17.06");
+  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("CA$17.06");
+  await expect(pay(page).getByTestId("op-receipt-earlier")).toHaveCount(0);
+});
+
 test("an amount that is not a number this desk can send is refused before any post", async ({ page }) => {
   await signIn(page);
   await openWithPayment(page, "Q-2101");
