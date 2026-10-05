@@ -1029,19 +1029,22 @@ export class QdQuoteEdit extends PanelBase {
   }
 
   override render() {
-    if (this.quoteId === "") return nothing;
     const view = this.view;
     // The payment seam's panels sit OUTSIDE the view branch on purpose: the
     // edit panel's own box flips through a loading state on every quote
     // switch, and a panel that unmounts there loses the per quote notes a
-    // payment that landed late depends on. They render nothing until their
-    // own reads answer, so the gap shows nothing.
+    // payment that landed late depends on. That includes New Quote (no quote
+    // open at all): the seam stays mounted and its panels render nothing for
+    // no quote, the same proven path the other panels take through compose,
+    // so a payment still out keeps its element, its context and its record.
     return html`
-      ${view === null
-        ? html`<div class="box">
-            ${this.error !== "" ? html`<p class="err" role="alert">${this.error}</p>` : html`<p class="sub">Loading...</p>`}
-          </div>`
-        : html`
+      ${this.quoteId === ""
+        ? nothing
+        : view === null
+          ? html`<div class="box">
+              ${this.error !== "" ? html`<p class="err" role="alert">${this.error}</p>` : html`<p class="sub">Loading...</p>`}
+            </div>`
+          : html`
             <div class="box" data-testid="qe-box">
               <h3 data-testid="qe-title">${view.quote_no} · ${quoteStatusWord(view.status)}</h3>
               <div class="sub" data-testid="qe-sub">${view.customer_name} · ${expiryLabel(view)}</div>

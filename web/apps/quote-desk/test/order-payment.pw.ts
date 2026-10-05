@@ -380,6 +380,31 @@ test("a late answer with no readable outcome is recorded for its own quote only"
   expect(keys[0]).toBe(keys[1]);
 });
 
+test("New Quote keeps the payment seam mounted, so a payment that lands while compose is open is on its attempt when the person returns", async ({ page }) => {
+  await signIn(page);
+  await openWithPayment(page, "Q-2101");
+  const held = await hold(page, /\/api\/v1\/quotes\/q-2101\/order-payment$/, { method: "POST", snapshot: true });
+  await take(page, "10.00");
+  await held.asked;
+  await page.getByRole("button", { name: "New Quote" }).click();
+  await expect(page.getByTestId("qb-title")).toHaveText("New Quote");
+  // The seam's panels stay mounted through compose (they render nothing for no quote), so the
+  // payment still out keeps its element, its context and its per quote record.
+  await expect(page.locator("qd-order-payment")).toHaveCount(1);
+  await expect(page.locator("qd-related-docs")).toHaveCount(1);
+  await held.release();
+  await settle(page);
+  // Back on the quote that was paid: the note is there, the receipt is there, and only one
+  // payment ever left the browser.
+  await page.getByTestId("qb-list-row").filter({ hasText: "Q-2101" }).first().click();
+  await expect(pay(page).getByTestId("op-notice")).toContainText("A payment was taken on this quote while you were away");
+  const receipt = pay(page).getByTestId("op-receipt");
+  await expect(receipt.getByTestId("op-receipt-amount")).toHaveText("CA$10.00");
+  await expect(receipt.getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("CA$27.06");
+  const keys = await postedKeys(page);
+  expect(keys).toHaveLength(1);
+});
+
 test("an amount that is not a number this desk can send is refused before any post", async ({ page }) => {
   await signIn(page);
   await openWithPayment(page, "Q-2101");
