@@ -86,6 +86,13 @@ var ErrAmbiguousBatch = errors.New("load: the batch id is recorded under more th
 // answers it with 409.
 var ErrBatchDoorMismatch = errors.New("load: the batch id is recorded under another door")
 
+// ErrBatchActor is the audit actor's guard: the batch names no machine
+// principal as its caller, so there is no actor the one audit row per
+// batch could carry. The batch refuses loudly before anything runs; an
+// audit row with a blank actor is a silent failure the platform cannot
+// answer for.
+var ErrBatchActor = errors.New("load: the batch names no machine principal as its caller")
+
 // Ref is a reference named by legacy key: the kind and the key, resolved
 // against the registry before any write.
 type Ref struct {

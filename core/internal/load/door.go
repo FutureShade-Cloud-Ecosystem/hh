@@ -53,25 +53,35 @@ func (d *Door) UpsertBatch(ctx context.Context, in Batch) (BatchResult, error) {
 	if d.audit == nil {
 		return BatchResult{}, errors.New("load: the door carries no audit sink; every batch is audited")
 	}
-	replay, found, err := d.store.replayBatch(ctx, in.OrgID, in.SourceSystem, in.BatchID, d.kind)
+	claim, replay, err := d.store.claimBatch(ctx, in, d.kind)
 	if err != nil {
 		return BatchResult{}, err
 	}
-	if found {
-		return replay, nil
+	if replay != nil {
+		return *replay, nil
 	}
+	// The claim's transaction is the batch id's lock: it holds the row
+	// (invisible to every read until it commits) while the items run, so
+	// a concurrent same-id submission waits inside its own claim and
+	// replays the record this one finishes with. Any error path rolls the
+	// claim back, erasing the row: a crashed submission leaves nothing
+	// behind, and its items' transactions stand beside no record only in
+	// the crash case, which the next submission of the id re-runs to
+	// convergence.
 	result := BatchResult{BatchID: in.BatchID, Counts: map[string]int{
 		OutcomeCreated: 0, OutcomeUpdated: 0, OutcomeUnchanged: 0, OutcomeRefused: 0,
 	}, Items: make([]Outcome, 0, len(in.Items))}
 	for _, item := range in.Items {
 		o, err := d.processItem(ctx, in, item)
 		if err != nil {
+			_ = claim.tx.Rollback(ctx)
 			return BatchResult{}, err
 		}
 		result.Items = append(result.Items, o)
 		result.Counts[o.Status]++
 	}
-	if err := d.store.recordBatch(ctx, in, d.kind, result, d.audit); err != nil {
+	if err := d.store.finishBatch(ctx, claim, in, d.kind, result, d.audit); err != nil {
+		_ = claim.tx.Rollback(ctx)
 		return BatchResult{}, err
 	}
 	return result, nil
@@ -86,6 +96,14 @@ func validateBatch(in Batch) error {
 	}
 	if len(in.SourceSystem) > 64 || len(in.BatchID) > 128 || len(in.Caller) > 128 {
 		return ErrMissingField
+	}
+	// The audit actor's guard: every batch is audited to the machine
+	// principal that submitted it, so the caller of record must be a
+	// canonical uuid before anything runs. An empty or non uuid caller
+	// would store a blank audit actor, a silent failure, and the loud
+	// refusal is the answer.
+	if !canonicalUUID(in.Caller) {
+		return ErrBatchActor
 	}
 	if len(in.Items) == 0 || len(in.Items) > MaxBatchItems {
 		return ErrBatchBound
