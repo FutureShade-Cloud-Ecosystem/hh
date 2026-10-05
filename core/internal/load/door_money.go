@@ -170,6 +170,37 @@ func (d *Door) assertFaithfulReplay(ctx context.Context, in Batch) error {
 	for _, r := range recorded {
 		byName[r.LegacyID] = r.ContentHash
 	}
+	// The count rule, before any outcome is built: a replayed id carries
+	// exactly the items it recorded. A subset names the first recorded
+	// item the submission dropped, a superset the first submitted item
+	// the batch never recorded; with the per item grading below, the
+	// submission is then a bijection onto the recorded outcomes, so the
+	// outcomes map back to the wire's positions without a gap.
+	if len(in.Items) != len(recorded) {
+		submitted := make(map[string]bool, len(in.Items))
+		for _, item := range in.Items {
+			submitted[item.LegacyID] = true
+		}
+		if len(in.Items) < len(recorded) {
+			for _, r := range recorded {
+				if !submitted[r.LegacyID] {
+					return &BatchRefusal{Refusing: refusedOutcome(Item{LegacyID: r.LegacyID}, &Refusal{
+						Code: ReasonReplayChanged, Field: "legacy_id",
+						Detail: fmt.Sprintf("the replayed batch drops an item it recorded: legacy key %s", r.LegacyID)})}
+				}
+			}
+		}
+		for _, item := range in.Items {
+			if _, ok := byName[item.LegacyID]; !ok {
+				return &BatchRefusal{Refusing: refusedOutcome(item, &Refusal{
+					Code: ReasonReplayChanged, Field: "legacy_id",
+					Detail: fmt.Sprintf("the replayed batch carries an item it never recorded: legacy key %s", item.LegacyID)})}
+			}
+		}
+		return &BatchRefusal{Refusing: refusedOutcome(Item{}, &Refusal{
+			Code: ReasonReplayChanged, Field: "legacy_id",
+			Detail: "the replayed batch carries a different number of items than it recorded"})}
+	}
 	for _, item := range in.Items {
 		hash := HashItem(item)
 		if hash == "" {
