@@ -16665,6 +16665,13 @@ paths:
           schema:
             type: string
             format: uuid
+        - name: branch_id
+          in: query
+          required: false
+          description: Only the change rows made on this branch
+          schema:
+            type: string
+            format: uuid
       responses:
         "200":
           description: The page of change-log rows
@@ -42219,7 +42226,7 @@ components:
             type: string
     PricingChangeLogRow:
       type: object
-      description: One append-only price_change_log row (who, before, after)
+      description: One append-only price_change_log row (who, before, after). branch_id names the branch a branch price change was made on and is null for a dealer-wide anchor change; price_uom is the unit the after price stands in.
       required:
         - id
         - field
@@ -42233,6 +42240,11 @@ components:
           format: uuid
         batch_id:
           type: string
+          format: uuid
+        branch_id:
+          type:
+            - string
+            - "null"
           format: uuid
         field:
           type: string
@@ -42255,6 +42267,8 @@ components:
             - "null"
           format: date-time
         changed_by:
+          type: string
+        price_uom:
           type: string
         created_at:
           type: string

@@ -233,7 +233,7 @@ export async function pricingUpsertCategoryPolicy(
 
 export async function pricingListChangeLog(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; product_id?: string; batch_id?: string },
+  opts?: { cursor?: string; limit?: number; product_id?: string; batch_id?: string; branch_id?: string },
   call?: ApiCallOptions
 ): Promise<Result<PricingChangeLogPage>> {
   return client.request<PricingChangeLogPage>({

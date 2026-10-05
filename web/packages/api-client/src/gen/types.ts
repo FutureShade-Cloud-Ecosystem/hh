@@ -4852,11 +4852,13 @@ export type PricingChangeLogRow = {
   id: string;
   product_id?: string;
   batch_id?: string;
+  branch_id?: string | null;
   field: "cost_cents" | "retail_cents";
   before_cents?: number | null;
   after_cents?: number | null;
   effective_date?: string | null;
   changed_by?: string;
+  price_uom?: string;
   created_at: string;
 };
 export type PricingPriceFileForm = {
