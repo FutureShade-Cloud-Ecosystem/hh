@@ -72,6 +72,15 @@ type Config struct {
 	// the Tech Lead as an open arbitration.
 	StaffAudience  string
 	TenantAudience string
+	// MachineAudience, with MachineKeySource or MachineJWKSURL, is the
+	// third bearer class (ADR-0024, HH-LOAD-1 LD-2): FB Move's machine
+	// credential audience. Optional with no default: with neither set, no
+	// machine token verifies, exactly as before the class existed. A
+	// machine audience token verifies only against the machine key set,
+	// never the platform key set above.
+	MachineAudience  string
+	MachineJWKSURL   string
+	MachineKeySource KeySource
 	// Algorithms restricts the accepted signature algorithms. Empty means
 	// RS256 and ES256.
 	Algorithms []Alg
@@ -98,13 +107,15 @@ type Config struct {
 // credential is verified from scratch on every request (D28: the credential
 // is never cached).
 type Verifier struct {
-	keys      KeySource
-	issuer    string
-	staffAud  string
-	tenantAud string
-	algs      map[Alg]bool
-	skew      time.Duration
-	now       func() time.Time
+	keys        KeySource
+	issuer      string
+	staffAud    string
+	tenantAud   string
+	machineAud  string
+	machineKeys KeySource
+	algs        map[Alg]bool
+	skew        time.Duration
+	now         func() time.Time
 }
 
 // NewVerifier validates the configuration and returns the verifier. It
@@ -127,6 +138,27 @@ func NewVerifier(cfg Config) (*Verifier, error) {
 	if cfg.StaffAudience == cfg.TenantAudience {
 		return nil, errors.New("identity: staff and tenant audience values must differ")
 	}
+	// The machine leg is all or nothing: the audience and its key set
+	// arrive together or not at all, so no half configuration can exist
+	// and no default key set can silently appear (ADR-0024).
+	machineKeys := cfg.MachineKeySource
+	if machineKeys == nil && cfg.MachineJWKSURL != "" {
+		src, err := NewRemoteJWKS(cfg.MachineJWKSURL, cfg.KeyCacheTTL, cfg.RefreshFloor, cfg.HTTPClient, cfg.Now)
+		if err != nil {
+			return nil, err
+		}
+		machineKeys = src
+	}
+	if cfg.MachineAudience != "" && machineKeys == nil {
+		return nil, errors.New("identity: machine audience requires a machine key set")
+	}
+	if cfg.MachineAudience == "" && machineKeys != nil {
+		return nil, errors.New("identity: machine key set requires the machine audience")
+	}
+	if cfg.MachineAudience != "" &&
+		(cfg.MachineAudience == cfg.StaffAudience || cfg.MachineAudience == cfg.TenantAudience) {
+		return nil, errors.New("identity: machine audience must differ from the staff and tenant audiences")
+	}
 	algs := make(map[Alg]bool, len(cfg.Algorithms))
 	if len(cfg.Algorithms) == 0 {
 		cfg.Algorithms = []Alg{RS256, ES256}
@@ -144,13 +176,15 @@ func NewVerifier(cfg Config) (*Verifier, error) {
 		cfg.Now = time.Now
 	}
 	return &Verifier{
-		keys:      cfg.KeySource,
-		issuer:    cfg.Issuer,
-		staffAud:  cfg.StaffAudience,
-		tenantAud: cfg.TenantAudience,
-		algs:      algs,
-		skew:      cfg.ClockSkew,
-		now:       cfg.Now,
+		keys:        cfg.KeySource,
+		issuer:      cfg.Issuer,
+		staffAud:    cfg.StaffAudience,
+		tenantAud:   cfg.TenantAudience,
+		machineAud:  cfg.MachineAudience,
+		machineKeys: machineKeys,
+		algs:        algs,
+		skew:        cfg.ClockSkew,
+		now:         cfg.Now,
 	}, nil
 }
 
@@ -184,6 +218,39 @@ func (v *Verifier) Verify(ctx context.Context, token string) (Token, error) {
 	if hdr.KeyID == "" {
 		return Token{}, credentialErr("token names no key id")
 	}
+	// The machine key set, when configured, is consulted first and the
+	// machine class is bound to it (ADR-0024): a token whose key id the
+	// machine set carries must carry the machine audience, and a key id
+	// resolving in both sets is a deployment defect answered as
+	// operational, never resolved by an ordering guess. A token whose key
+	// id only the platform set carries continues to the platform path
+	// below, where a machine audience is refused: FB Move's keys can
+	// never mint a staff or tenant login, and the platform's keys can
+	// never mint a machine credential.
+	if v.machineKeys != nil {
+		mkey, mok, err := v.machineKeys.KeyByID(ctx, hdr.KeyID)
+		if err != nil {
+			return Token{}, operationalErr("machine key source unavailable")
+		}
+		if mok {
+			if _, pok, perr := v.keys.KeyByID(ctx, hdr.KeyID); perr != nil {
+				return Token{}, operationalErr("key source unavailable")
+			} else if pok {
+				return Token{}, operationalErr("key id appears in both key sets")
+			}
+			if err := verifySignature(Alg(hdr.Algorithm), mkey, signed, sig); err != nil {
+				return Token{}, err
+			}
+			tok, err := v.claimsFrom(claimsJSON)
+			if err != nil {
+				return Token{}, err
+			}
+			if tok.Class != ClassMachine {
+				return Token{}, credentialErr("machine key set token does not carry the machine audience")
+			}
+			return tok, nil
+		}
+	}
 	key, ok, err := v.keys.KeyByID(ctx, hdr.KeyID)
 	if err != nil {
 		return Token{}, operationalErr("key source unavailable")
@@ -194,7 +261,18 @@ func (v *Verifier) Verify(ctx context.Context, token string) (Token, error) {
 	if err := verifySignature(Alg(hdr.Algorithm), key, signed, sig); err != nil {
 		return Token{}, err
 	}
-	return v.claimsFrom(claimsJSON)
+	tok, err := v.claimsFrom(claimsJSON)
+	if err != nil {
+		return Token{}, err
+	}
+	if tok.Class == ClassMachine {
+		// Unreachable when the machine audience is unconfigured (nothing
+		// classifies as machine); the guard stands for the configured
+		// case, where this token reached the platform path because its
+		// key id lives there alone.
+		return Token{}, credentialErr("audience not accepted")
+	}
+	return tok, nil
 }
 
 // claimsFrom parses and validates the payload after the signature has been
@@ -228,15 +306,27 @@ func (v *Verifier) claimsFrom(claimsJSON []byte) (Token, error) {
 	for _, aud := range auds {
 		switch aud {
 		case v.staffAud:
-			if class == ClassTenant {
+			if class != ClassNone {
 				return Token{}, credentialErr("token claims both bearer audiences")
 			}
 			class = ClassStaff
 		case v.tenantAud:
-			if class == ClassStaff {
+			if class != ClassNone {
 				return Token{}, credentialErr("token claims both bearer audiences")
 			}
 			class = ClassTenant
+		case v.machineAud:
+			if v.machineAud == "" {
+				// An unconfigured machine audience can never match a real
+				// audience value (both configured values are non-empty and
+				// differ from it); this arm exists so an empty-string
+				// audience cannot classify through the zero value.
+				continue
+			}
+			if class != ClassNone {
+				return Token{}, credentialErr("token claims both bearer audiences")
+			}
+			class = ClassMachine
 		}
 	}
 	if class == ClassNone {
