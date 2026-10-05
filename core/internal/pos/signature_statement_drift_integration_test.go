@@ -28,9 +28,11 @@ import (
 // capturedAtWindow is how far apart the two inserts' stamps may sit. Both paths take the database
 // default now() at insert (pos_signature.captured_at is NOT NULL DEFAULT now(): the database stamps
 // the row, no path writes the column), and the two inserts run back to back in this leg, so the
-// rule is: both stamps non null and within five seconds of each other. A path that stamped from the
-// Go clock, from a fake, or stopped letting the database stamp at all pushes the pair apart or
-// empties it, and this window is what notices.
+// rule is: both stamps non null and within five seconds of each other. This rule notices a path that
+// stopped letting the database stamp (an empty column) or a stamp skewed by more than the window (a
+// fixed or fake time); it does NOT notice a path that stamps from the Go clock at about the same
+// instant, which stays inside the window. That drift is guarded by the statement census in
+// signature_statement_drift_test.go, not by this window.
 const capturedAtWindow = 5 * time.Second
 
 // sigMaskedRefShape matches the masked reference a signature capture's audit row carries: the sig_
@@ -142,8 +144,8 @@ func TestIntegration_SignaturePoolAndTxPathsShareOneStatement(t *testing.T) {
 
 	// captured_at: neither path writes the column, both rows carry the database's own now() at
 	// insert, so both stamps are non null and the back to back inserts sit inside one small window
-	// (the rule capturedAtWindow states). A path that stamped from a Go clock or a fake, or wrote
-	// the column itself, breaks the pair apart or empties it.
+	// (the rule capturedAtWindow states: it catches an empty stamp or a stamp skewed beyond the window,
+	// not a Go clock stamp taken at about the same instant).
 	if a.capturedAt == nil || b.capturedAt == nil {
 		t.Fatalf("both rows must carry the database's captured_at stamp, got %v and %v", a.capturedAt, b.capturedAt)
 	}
