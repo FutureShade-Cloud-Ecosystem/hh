@@ -1109,6 +1109,7 @@ func qd1gDocCells(raw string) (cells, legends map[string]string, problems []stri
 	}
 	cells = map[string]string{}
 	legends = map[string]string{}
+	rows := map[string]bool{}
 	door := ""
 	heading := regexp.MustCompile("^### `([a-z]+\\.[A-Za-z]+)`")
 	legend := regexp.MustCompile("^([0-9]+)\\. (.+)$")
@@ -1140,6 +1141,11 @@ func qd1gDocCells(raw string) (cells, legends map[string]string, problems []stri
 		if !isRole {
 			continue
 		}
+		if rows[door+"|"+role] {
+			problems = append(problems, fmt.Sprintf("census document: %s has the %s row twice", door, role))
+			continue
+		}
+		rows[door+"|"+role] = true
 		for i, cell := range parts[1:] {
 			cell = strings.TrimSpace(cell)
 			if cell != "A" && cell != "R" {
@@ -1256,6 +1262,15 @@ func qd1gMatrixMutants(t *testing.T) {
 		{"a legend number repeated",
 			mutate("quotes.Create", "2. create in branch B", "1. create in branch B"),
 			"appears twice"},
+		{"a role row repeated with other cells first",
+			mutate("quotes.Create", "| inside_sales | A | R |", "| inside_sales | R | A |\n| inside_sales | A | R |"),
+			"inside_sales row twice"},
+		{"a role row repeated with other cells last",
+			mutate("quotes.Create", "| inside_sales | A | R |", "| inside_sales | A | R |\n| inside_sales | R | A |"),
+			"inside_sales row twice"},
+		{"a role row repeated unchanged",
+			mutate("approvals.Load", "| hr |", "| hr | R | R | R | R | R | R | R | R |\n| hr |"),
+			"hr row twice"},
 	}
 	for _, m := range mutants {
 		problems := qd1gCheckMatrices(m.doc, qd1gAnswers)
