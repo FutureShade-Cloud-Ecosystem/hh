@@ -25,8 +25,9 @@ package testaudit
 // classifies it, and a fixed store that regresses to the public Load fails it too.
 //
 // HOW IT READS A STORE. Create's body is followed through the receiver's own methods (a helper such
-// as writeAnchor counts as part of Create); a type that embeds another type of its package and
-// declares no Create or Load of its own inherits the embedded type's class (two dispatch stores do);
+// as writeAnchor counts as part of Create); a type that embeds another store and declares no Create or Load of its own inherits the embedded
+// store's class (two dispatch stores do); a type that declares its own Create over an inherited Load
+// is scanned like any store, with the embedded store's loader checked;
 // a fixed store's unexported loader must exist and must not name `.pool` anywhere in its body.
 //
 // WHAT IT CANNOT KNOW. It is name based and file scoped: it sees `<receiver>.Load(` and
@@ -172,8 +173,11 @@ func classifySyncStores(t *testing.T, internalRoot string) map[string]censusClas
 						if star, ok := ft.(*ast.StarExpr); ok {
 							ft = star.X
 						}
-						if id, ok := ft.(*ast.Ident); ok {
-							sf.embeds = append(sf.embeds, id.Name)
+						switch e := ft.(type) {
+						case *ast.Ident:
+							sf.embeds = append(sf.embeds, e.Name)
+						case *ast.SelectorExpr:
+							sf.embeds = append(sf.embeds, e.Sel.Name) // an embedded type of another package
 						}
 					}
 				}
@@ -267,12 +271,14 @@ func classifySyncStores(t *testing.T, internalRoot string) map[string]censusClas
 		return bad
 	}
 
-	classOf := func(k typeKey, sf *storeFacts) censusClass {
+	// classOf classifies a store from Create's reach (scan of sf) and the loader's body (loaderFrom:
+	// the store itself, or the embedded store it inherits Load and load from).
+	classOf := func(sf, loaderFrom *storeFacts) censusClass {
 		pool, viaTx := scan(sf)
 		switch {
 		case pool > 0:
 			return classPoolLoad
-		case viaTx > 0 && !loaderUsesPool(sf):
+		case viaTx > 0 && !loaderUsesPool(loaderFrom):
 			return classFixed
 		case viaTx > 0:
 			return classPoolLoad // the call shape is right but the loader itself reads the pool
@@ -287,22 +293,50 @@ func classifySyncStores(t *testing.T, internalRoot string) map[string]censusClas
 		_, hasCreate := sf.methods["Create"]
 		_, hasLoad := sf.methods["Load"]
 		name := strings.TrimPrefix(k.dir, root) + "." + k.typ
+		// findEmbedded returns the facts of an embedded store type that declares a Load (the same
+		// package first, then any package: embedded types of other packages are matched by name).
+		findEmbedded := func() *storeFacts {
+			for _, e := range sf.embeds {
+				if esf := facts[typeKey{k.dir, e}]; esf != nil {
+					if _, el := esf.methods["Load"]; el {
+						return esf
+					}
+				}
+			}
+			for _, e := range sf.embeds {
+				for ek, esf := range facts {
+					if ek.typ != e {
+						continue
+					}
+					if _, el := esf.methods["Load"]; el {
+						return esf
+					}
+				}
+			}
+			return nil
+		}
 		if hasCreate && hasLoad {
-			out[name] = classOf(k, sf)
+			out[name] = classOf(sf, sf)
+			continue
+		}
+		// A Create of its own over a Load inherited by embedding: the shape that carries the defect.
+		if hasCreate && !hasLoad {
+			if esf := findEmbedded(); esf != nil {
+				out[name] = classOf(sf, esf)
+			}
 			continue
 		}
 		// Promotion: no Create and no Load of its own, an embedded store of the same package has both.
 		if !hasCreate && !hasLoad {
 			for _, e := range sf.embeds {
-				ek := typeKey{k.dir, e}
-				esf := facts[ek]
+				esf := facts[typeKey{k.dir, e}]
 				if esf == nil {
 					continue
 				}
 				_, ec := esf.methods["Create"]
 				_, el := esf.methods["Load"]
 				if ec && el {
-					out[name] = classOf(ek, esf)
+					out[name] = classOf(esf, esf)
 					break
 				}
 			}
@@ -351,7 +385,7 @@ func TestSyncCreateConflictArmCensus(t *testing.T) {
 		case inGot && !inWant:
 			problems = append(problems, n+": a store with both Create and Load (declared or promoted) that no census list classifies (it is "+g.String()+"); classify it after reading its Create at source")
 		case !inGot && inWant:
-			problems = append(problems, n+": listed in the census but no longer has both a Create and a Load method (renamed or removed: update the list)")
+			problems = append(problems, n+": listed in the census but the census no longer sees it as a store (it has no Create and Load, declared or promoted from an embedded store): read its Create at source BEFORE editing the list; moving or renaming a method does not make a store safe")
 		case g != w:
 			if _, fenced := syncCensusFenced[n]; fenced && g == classFixed {
 				problems = append(problems, n+": FENCED entry is now fixed (Create reaches the loader through the transaction): move it to syncCensusFixed and drop it from syncCensusFenced")
