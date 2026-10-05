@@ -1,0 +1,325 @@
+// loadwriter.go is the customer module's write path for the load doors'
+// customer and contact items (HH-LOAD-1 LD-6). The customers and
+// customer_contacts tables are this module's (0006), so both writers
+// live here and the load frame hands each item inside its own batch
+// transaction, taken by constructor at the wiring. The staff create
+// route (POST /api/v1/customers) is untouched: it stamps no org, sequence
+// or key and answers 409 on a taken account number, which is why this
+// path exists.
+//
+// A customer upserts by its account number (the table's own natural key,
+// the item's legacy id unless the record names another), so a load item
+// whose account number a staff member already made attaches to that row
+// and stamps it the load's own. The billing address runs the same
+// Canadian normalisation the staff write runs; an address that fails is
+// left out and the item's note says so, naming the field and the
+// reason, never a value. The home branch and the reps arrive as
+// references by legacy key, resolved by the frame before any write.
+//
+// A contact carries no org column of its own (0006, absent from 0213):
+// its org rides through its customer, so the writer lands a contact only
+// under a customer of the machine principal's org.
+//
+// The writers' rules, binding: they open no connection of their own, they
+// never commit or roll back the transaction they are given (the frame's
+// savepoint protocol owns that decision), and their errors wrap the
+// statement's own (%w) so a Postgres deadlock stays recognisable at the
+// batch boundary. Refusals come back as *load.Refusal and carry codes
+// and fields, never a record value.
+package customer
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/load"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/localization"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+)
+
+// ReasonAddressLeftOut is the note a landed customer carries when its
+// billing address failed the Canadian validation and was left out.
+const ReasonAddressLeftOut = "address_left_out"
+
+// customerSeqCTE draws the seq atomically in the same statement from the
+// customers scope, the scope the module's own customers pull reads rows
+// through.
+const customerSeqCTE = `WITH cseq AS (
+	INSERT INTO scope_sequences (scope) VALUES ('customers')
+	ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value + 1
+	RETURNING next_value
+) `
+
+// CustomerLoadWriter is the load doors' customer writer.
+type CustomerLoadWriter struct{}
+
+// deferredCustomerFields wait for the receivables load: a credit hold and
+// tax exemption need their evidence, and neither lands here.
+var deferredCustomerFields = []string{"on_hold", "tax_exempt"}
+
+// Apply answers one customer item. The record names the name (required)
+// and, named, the account number, the customer type, the terms in days,
+// the credit limit, the active flag, and the billing address.
+func (CustomerLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (string, error) {
+	for _, f := range deferredCustomerFields {
+		if _, present := in.Record[f]; present {
+			return "", &load.Refusal{Code: "deferred_field", Field: f,
+				Detail: "this field waits for the receivables load; it is not loaded here"}
+		}
+	}
+	name, _ := in.Record["name"].(string)
+	if name == "" {
+		return "", &load.Refusal{Code: "field_required", Field: "name",
+			Detail: "the record names no customer name"}
+	}
+	accountNo := in.LegacyID
+	if v, ok := in.Record["account_no"].(string); ok && v != "" {
+		accountNo = v
+	}
+	custType := "CONTRACTOR"
+	if v, ok := in.Record["customer_type"]; ok && v != nil {
+		s, _ := v.(string)
+		if !validCustomerType(s) {
+			return "", &load.Refusal{Code: "record_shape", Field: "customer_type",
+				Detail: "the customer type is not one the customer table keeps"}
+		}
+		custType = s
+	}
+	terms := 30
+	if v, ok := in.Record["payment_terms_days"]; ok && v != nil {
+		n, whole := wholeNumber(v)
+		if !whole || n < 0 {
+			return "", &load.Refusal{Code: "record_shape", Field: "payment_terms_days",
+				Detail: "the terms in days are not a whole number of zero or more"}
+		}
+		terms = int(n)
+	}
+	var limit int64
+	if v, ok := in.Record["credit_limit_cents"]; ok && v != nil {
+		n, whole := wholeNumber(v)
+		if !whole || n < 0 {
+			return "", &load.Refusal{Code: "record_shape", Field: "credit_limit_cents",
+				Detail: "the credit limit is not a whole number of cents of zero or more"}
+		}
+		limit = n
+	}
+	active := true
+	if v, ok := in.Record["is_active"].(bool); ok {
+		active = v
+	}
+	homeBranch, reps, refused := customerRefs(in)
+	if refused != nil {
+		return "", refused
+	}
+	meta := map[string]any{}
+	if len(reps) > 0 {
+		meta["sales_rep_user_ids"] = reps
+	}
+	metaJSON, err := json.Marshal(meta)
+	if err != nil {
+		return "", fmt.Errorf("customer: load metadata encode: %w", err)
+	}
+
+	// The address: validated and normalised exactly as the staff write
+	// does. A failing address is left out, never stored half validated.
+	var addrJSON any // nil leaves the stored address as it stands
+	if raw, ok := in.Record["billing_address"]; ok && raw != nil {
+		obj, isObj := raw.(map[string]any)
+		if !isObj {
+			noteAddress(in, "the billing address is not an object")
+		} else if norm, nerr := localization.NormalizeBillingAddress(obj); nerr != nil {
+			noteAddress(in, "the billing address failed the Canadian address validation")
+		} else {
+			b, merr := json.Marshal(orEmptyObject(norm))
+			if merr != nil {
+				return "", fmt.Errorf("customer: load address encode: %w", merr)
+			}
+			addrJSON = string(b)
+		}
+	}
+
+	var id string
+	if in.RowID == "" {
+		// The create arm: insert, or attach the row the account number
+		// already names (a staff made customer), stamping it the load's.
+		err = tx.QueryRow(ctx, customerSeqCTE+`
+			INSERT INTO customers (account_no, name, customer_type, home_branch_id, payment_terms_days,
+			                       credit_limit_cents, is_active, billing_address, metadata,
+			                       org_id, seq, idempotency_key)
+			VALUES ($1, $2, $3, NULLIF($4, '')::uuid, $5, $6, $7, COALESCE($8::jsonb, '{}'::jsonb), $9::jsonb,
+			        $10::uuid, (SELECT next_value FROM cseq), NULLIF($11, '')::uuid)
+			ON CONFLICT (account_no) DO UPDATE SET
+				name = EXCLUDED.name,
+				customer_type = EXCLUDED.customer_type,
+				home_branch_id = EXCLUDED.home_branch_id,
+				payment_terms_days = EXCLUDED.payment_terms_days,
+				credit_limit_cents = EXCLUDED.credit_limit_cents,
+				is_active = EXCLUDED.is_active,
+				billing_address = COALESCE($8::jsonb, customers.billing_address),
+				metadata = EXCLUDED.metadata,
+				org_id = EXCLUDED.org_id,
+				seq = EXCLUDED.seq,
+				idempotency_key = EXCLUDED.idempotency_key,
+				updated_at = now()
+			RETURNING id::text`,
+			accountNo, name, custType, homeBranch, terms, limit, active, addrJSON, string(metaJSON),
+			in.OrgID, in.DerivedKey).Scan(&id)
+		if err != nil {
+			return "", fmt.Errorf("customer: load write: %w", err)
+		}
+		return id, nil
+	}
+	// The update arm: the row the name records, updated in place. An
+	// account number another row already holds is a key conflict.
+	err = tx.QueryRow(ctx, customerSeqCTE+`
+		UPDATE customers SET
+			account_no = $2, name = $3, customer_type = $4,
+			home_branch_id = NULLIF($5, '')::uuid, payment_terms_days = $6, credit_limit_cents = $7,
+			is_active = $8, billing_address = COALESCE($9::jsonb, billing_address), metadata = $10::jsonb,
+			org_id = $11::uuid, seq = (SELECT next_value FROM cseq),
+			idempotency_key = NULLIF($12, '')::uuid, updated_at = now()
+		WHERE id = $1::uuid
+		RETURNING id::text`,
+		in.RowID, accountNo, name, custType, homeBranch, terms, limit, active, addrJSON, string(metaJSON),
+		in.OrgID, in.DerivedKey).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", &load.Refusal{Code: load.ReasonUpdateTargetMissing, Field: "legacy_id",
+			Detail: "the name's row is gone; the update refuses rather than creating a second row"}
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return "", &load.Refusal{Code: load.ReasonKeyConflict, Field: "account_no",
+			Detail: fmt.Sprintf("legacy key %s would claim an account number another customer row holds", in.LegacyID)}
+	}
+	if err != nil {
+		return "", fmt.Errorf("customer: load update: %w", err)
+	}
+	return id, nil
+}
+
+// noteAddress leaves the failing address out and says so on the item's
+// note: the field and the reason, never a value.
+func noteAddress(in load.Write, detail string) {
+	if in.Note != nil {
+		in.Note(load.Refusal{Code: ReasonAddressLeftOut, Field: "billing_address", Detail: detail + "; the address was left out"})
+	}
+}
+
+// customerRefs sorts the item's resolved references: at most one branch
+// (the home branch) and any number of users (the reps). Any other kind
+// refuses, naming the kind.
+func customerRefs(in load.Write) (homeBranch string, reps []string, refused *load.Refusal) {
+	for _, r := range in.Refs {
+		switch r.Kind {
+		case load.KindBranch:
+			if homeBranch != "" {
+				return "", nil, &load.Refusal{Code: load.ReasonWrongReference, Field: r.Kind,
+					Detail: "a customer names one home branch"}
+			}
+			homeBranch = r.HHID
+		case load.KindUser:
+			reps = append(reps, r.HHID)
+		default:
+			return "", nil, &load.Refusal{Code: load.ReasonWrongReference, Field: r.Kind,
+				Detail: "a customer record takes branch and user references only"}
+		}
+	}
+	return homeBranch, reps, nil
+}
+
+// ContactLoadWriter is the load doors' contact writer: contacts under
+// their customer by key.
+type ContactLoadWriter struct{}
+
+// Apply answers one contact item. The record names the contact's name
+// (required) and, named, the email, the phone, the role, the primary
+// flag and the active flag; the one reference of kind customer names the
+// customer the contact belongs under. The row has no natural key of its
+// own, so the registry's name is its identity: the create arm inserts,
+// the update arm updates the named row.
+func (ContactLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (string, error) {
+	name, _ := in.Record["name"].(string)
+	if name == "" {
+		return "", &load.Refusal{Code: "field_required", Field: "name",
+			Detail: "the record names no contact name"}
+	}
+	customerID := ""
+	for _, r := range in.Refs {
+		if r.Kind != load.KindCustomer || customerID != "" {
+			return "", &load.Refusal{Code: load.ReasonWrongReference, Field: r.Kind,
+				Detail: "a contact names one customer reference and no other"}
+		}
+		customerID = r.HHID
+	}
+	if customerID == "" {
+		return "", &load.Refusal{Code: "field_required", Field: load.KindCustomer,
+			Detail: "the item names no customer reference; a contact lands under its customer"}
+	}
+	// The org rides through the customer: the contact lands only under a
+	// customer of the machine principal's org.
+	var inOrg bool
+	if err := tx.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM customers WHERE id = $1::uuid AND org_id = $2::uuid)`,
+		customerID, in.OrgID).Scan(&inOrg); err != nil {
+		return "", fmt.Errorf("customer: contact customer read: %w", err)
+	}
+	if !inOrg {
+		return "", &load.Refusal{Code: load.ReasonMissingReference, Field: load.KindCustomer,
+			Detail: "the referenced customer is not a customer of this org"}
+	}
+	email, _ := in.Record["email"].(string)
+	phone, _ := in.Record["phone"].(string)
+	role, _ := in.Record["role"].(string)
+	primary, _ := in.Record["is_primary"].(bool)
+	active := true
+	if v, ok := in.Record["is_active"].(bool); ok {
+		active = v
+	}
+	var id string
+	if in.RowID == "" {
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO customer_contacts (customer_id, name, email, phone, role, is_primary, is_active)
+			VALUES ($1::uuid, $2, NULLIF($3, ''), $4, $5, $6, $7)
+			RETURNING id::text`,
+			customerID, name, email, phone, role, primary, active).Scan(&id); err != nil {
+			return "", fmt.Errorf("customer: contact load write: %w", err)
+		}
+		return id, nil
+	}
+	err := tx.QueryRow(ctx, `
+		UPDATE customer_contacts SET customer_id = $2::uuid, name = $3, email = NULLIF($4, ''), phone = $5,
+		       role = $6, is_primary = $7, is_active = $8, updated_at = now()
+		WHERE id = $1::uuid
+		RETURNING id::text`,
+		in.RowID, customerID, name, email, phone, role, primary, active).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", &load.Refusal{Code: load.ReasonUpdateTargetMissing, Field: "legacy_id",
+			Detail: "the name's row is gone; the update refuses rather than creating a second row"}
+	}
+	if err != nil {
+		return "", fmt.Errorf("customer: contact load update: %w", err)
+	}
+	return id, nil
+}
+
+// wholeNumber reads a record number as a whole count: the wire decodes
+// numbers as float64 and a Go caller may carry an int, and both land the
+// same. A fraction or a type that names no number is not whole.
+func wholeNumber(raw any) (int64, bool) {
+	switch v := raw.(type) {
+	case int:
+		return int64(v), true
+	case int64:
+		return v, true
+	case float64:
+		if v != float64(int64(v)) {
+			return 0, false
+		}
+		return int64(v), true
+	default:
+		return 0, false
+	}
+}
