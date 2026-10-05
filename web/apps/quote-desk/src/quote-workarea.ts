@@ -1470,6 +1470,8 @@ export class QdQuoteWorkarea extends LitElement {
   private async maybeRestoreOpenQuote(ref: string): Promise<void> {
     if (this.restoreTried || ref === "" || this.quoteId !== "") return;
     this.restoreTried = true;
+    // A quote is being made (or was just made and not yet handed down): that is where the person is going, not the remembered one.
+    if (this.creating !== null || this.createdQuoteId !== "") return;
     this.dispatchEvent(new CustomEvent("quote-open", { detail: { quoteId: ref }, bubbles: true, composed: true }));
   }
 

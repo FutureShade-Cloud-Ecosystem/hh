@@ -1171,5 +1171,12 @@
     "find": "      } while (this.#again);",
     "replace": "      } while (false);",
     "test": "P3 layout saves reach the server one at a time"
+  },
+  {
+    "id": "wa-restore-not-while-creating",
+    "file": "src/quote-workarea.ts",
+    "find": "    if (this.creating !== null || this.createdQuoteId !== \"\") return;\n",
+    "replace": "",
+    "test": "P3 a late layout answer does not resume the remembered quote"
   }
 ]

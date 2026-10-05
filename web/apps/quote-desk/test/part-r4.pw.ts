@@ -597,3 +597,26 @@ test("P3 layout saves reach the server one at a time, so the resume reference is
   await page.getByRole("button", { name: "Sales", exact: true }).click();
   await expect(page.getByTestId("qb-context")).toContainText("Q-1003");
 });
+
+test("P3 a late layout answer does not resume the remembered quote while a new quote is being made", async ({ page }) => {
+  await signIn(page);
+  await open(page, "Q-1001");
+  await quiet(page);
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
+  const config = await hold(page, /\/surfaces\/quotes\.builder\/config/, { method: "GET", times: 1 });
+  await page.getByRole("button", { name: "Sales", exact: true }).click();
+  await expect(page.getByTestId("qb-list")).toBeVisible();
+  await config.asked;
+  const create = await hold(page, /\/api\/v1\/quotes$/, { method: "POST" });
+  const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
+  await picker.getByPlaceholder("Search name or account #…").fill("Fenwick");
+  await picker.getByRole("option", { name: /Fenwick/ }).click();
+  await create.asked;
+  await config.release();
+  await settle(page);
+  // The remembered quote is not opened over the quote being made.
+  await expect(page.getByTestId("qb-context")).not.toContainText("Q-1001");
+  await create.release();
+  await expect(page.getByTestId("qb-context")).toContainText("Q-1004");
+});
