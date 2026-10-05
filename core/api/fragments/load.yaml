@@ -333,11 +333,18 @@ paths:
         and due dates as recorded, and the open amount in whole cents,
         one receivables ledger row per item in date order per customer
         so aging survives. Unapplied cash loads as a negative item and
-        lands as a credit memo. The batch is all or nothing: one
+        lands as a credit memo. An item whose issue_date is after the
+        load day (the day the batch's transaction runs, UTC) refuses the
+        batch naming the issue_date field, never a value: a postdated
+        document would sit above HH's own sales in the ledger readers and
+        understate the balance, so the extract carries none; an item
+        dated the load day itself lands. The batch is all or nothing: one
         refused item refuses the batch and nothing lands, and the
         refusing item is named in the 422 body. A replayed batch id
-        returns the outcomes it first recorded and writes nothing; a
-        replay carrying a changed or added item refuses with 409; a
+        returns the outcomes it first recorded and writes nothing (the
+        replay must carry exactly the recorded items, in any order: a
+        subset, a superset or a changed item refuses with 409 before any
+        outcome is built); a
         batch that contended with another batch on shared names rolled
         back whole and answers 503 with Retry-After: resubmit the whole
         batch (money batches re-run whole; the id was never recorded).
