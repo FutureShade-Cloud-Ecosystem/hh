@@ -1240,6 +1240,25 @@ export class QdQuoteWorkarea extends LitElement {
    */
   private readonly flushes = new Map<string, Promise<void>>();
 
+  /**
+   * One terms PUT per quote at a time, keyed by quote id: a send waits for the last send of the same quote to
+   * answer first. The row is sent whole, so two PUTs of one quote that cross on the wire can land in either order
+   * at the server, and the older row would erase a later edit; in this queue the later row is always the last to
+   * land. A quote's save never waits behind another quote's.
+   */
+  private readonly termsPutBefore = new Map<string, Promise<void>>();
+
+  /** Send one terms PUT of one quote, in its turn: after the send before it of the same quote, whenever that answers. */
+  private queueTermsPut<T>(quoteId: string, send: () => Promise<T>): Promise<T> {
+    const before = this.termsPutBefore.get(quoteId) ?? Promise.resolve();
+    const answer = before.then(send);
+    this.termsPutBefore.set(quoteId, answer.then(
+      () => undefined,
+      () => undefined,
+    ));
+    return answer;
+  }
+
   /** The unsaved terms edit of the quote being left is sent to the quote it was typed on, then cleared. */
   private flushTermsOf(previousId: string): void {
     const client = this.client;
@@ -1255,7 +1274,7 @@ export class QdQuoteWorkarea extends LitElement {
     this.termsEditSeq += 1;
     if (!dirty || client === null || terms === null || previousId === "") return;
     const body = termsBody(terms);
-    const sent = client.putTerms(previousId, body).then((result) => {
+    const sent = this.queueTermsPut(previousId, () => client.putTerms(previousId, body)).then((result) => {
       // Said plainly, naming the quote it was for, because the person has moved on to another.
       if (!result.ok) this.error = `The terms you changed on ${label} were not saved: ${spokenRefusal(quoteErrorMessage(result.status, result.error, "save the quote terms"))}`;
     });
@@ -2182,7 +2201,12 @@ export class QdQuoteWorkarea extends LitElement {
       this.termsTimer = undefined;
     }
     const sent = this.termsEditSeq;
-    const result = await ctx.guarded(client.putTerms(ctx.id, termsBody(t)), this.lateWrite(ctx, "save the quote terms"));
+    // One PUT per quote at a time: this save goes in its turn behind any send of this quote still out (a leave may
+    // have started one), so an older whole row can never land after it and erase it.
+    const result = await ctx.guarded(
+      this.queueTermsPut(ctx.id, () => client.putTerms(ctx.id, termsBody(t))),
+      this.lateWrite(ctx, "save the quote terms"),
+    );
     // The quote changed while this save was out: its answer is not this screen's to show (leaving the quote already sent any later edit to its own quote).
     if (result === undefined) return;
     // What was edited while this save was in flight is still unsaved and stays laid over the answer.

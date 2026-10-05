@@ -1271,5 +1271,12 @@
     "find": "    // layout is ever sent under the next person's.\n    this.store?.close();",
     "replace": "    // layout is ever sent under the next person's.",
     "test": "P2-1 a queued layout save is never sent under the next person's session"
+  },
+  {
+    "id": "wa-terms-put-serial",
+    "file": "src/quote-workarea.ts",
+    "find": "    const answer = before.then(send);",
+    "replace": "    const answer = send();",
+    "test": "P3-1 one terms PUT per quote at a time"
   }
 ]
