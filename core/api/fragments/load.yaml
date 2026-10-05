@@ -11,7 +11,8 @@
 # each with its legacy key, the derived key, the record, and the
 # references named by legacy key. One answer shape: one outcome per item
 # and the batch's counts. The outcome vocabulary is created, attached,
-# updated, unchanged and refused: the map doors record names against rows
+# updated, unchanged and refused: the map doors, and the customer door for
+# a staff made row its account number names, record names against rows
 # that already exist and answer attached for an item whose name was not
 # yet recorded and now binds to the pre existing row; a replay of an
 # already recorded name answers unchanged or updated as usual. A landed
@@ -330,7 +331,12 @@ paths:
         receivables load. A row the account number already names attaches and
         takes the load's org, sequence and key; a second legacy key claiming it,
         or a recorded key re-pointing at another customer's, refuses as a key
-        conflict naming both legacy ids.
+        conflict naming both legacy ids (the staff row, when no key names the
+        holder). A first bind to a staff made row answers attached, and the
+        row's existing metadata keys are kept. A reload that names no account
+        number keeps the stored one; the legacy id serves only a first load
+        that names none. A row another org owns refuses as org_mismatch
+        naming the kind and the key; its org is never overwritten.
       x-role: machine
       security:
         - MachineBearer: []
@@ -379,7 +385,8 @@ paths:
         email, the phone, the role, the primary flag and the active flag; the one
         reference of kind customer names the customer the contact belongs under.
         A contact has no org column of its own: its org rides through its
-        customer, so a customer of another org refuses as a missing reference.
+        customer, so a customer another org owns refuses as org_mismatch
+        naming the kind and the key.
       x-role: machine
       security:
         - MachineBearer: []
@@ -429,7 +436,8 @@ paths:
         belongs to. The job is the record only: balances, statements and
         receivables attribution are not loaded here. The project row has no org
         column, so its org rides through its customer, and the writer stamps the
-        tenant, the sync sequence and the derived key.
+        tenant, the sync sequence and the derived key; a customer another org
+        owns refuses as org_mismatch naming the kind and the key.
       x-role: machine
       security:
         - MachineBearer: []
