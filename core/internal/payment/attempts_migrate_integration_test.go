@@ -17,6 +17,37 @@ import (
 )
 
 const migrate0361File = "0361_card_charge_attempts.sql"
+const migrate0362File = "0362_card_charge_attempts_full_note.sql"
+
+// TestMigration0362_FullNoteColumn pins the from-zero shape of the full note column: present after
+// every migration, NOT NULL, an empty default, and the migration idempotent on a second application
+// (the backfill's WHERE guard keeps it a no-op when there is nothing to carry).
+func TestMigration0362_FullNoteColumn(t *testing.T) {
+	ctx := context.Background()
+	pool, _ := migratedThrowaway(t, "payment_a2_migrate_it")
+
+	var nullable, dflt string
+	if err := pool.QueryRow(ctx, `SELECT is_nullable, column_default FROM information_schema.columns
+	    WHERE table_name = 'card_charge_attempts' AND column_name = 'resolution_note_full'`).Scan(&nullable, &dflt); err != nil {
+		t.Fatalf("resolution_note_full is absent after every migration: %v", err)
+	}
+	if nullable != "NO" || dflt != "''::text" {
+		t.Fatalf("resolution_note_full = nullable %s default %s, want NOT NULL with an empty default", nullable, dflt)
+	}
+
+	body, err := os.ReadFile(filepath.Join("..", "..", "db", "migrations", migrate0362File))
+	if err != nil {
+		t.Fatalf("read %s: %v", migrate0362File, err)
+	}
+	if _, err := pool.Exec(ctx, string(body)); err != nil {
+		t.Fatalf("0362 applied twice: %v", err)
+	}
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns
+	    WHERE table_name = 'card_charge_attempts' AND column_name = 'resolution_note_full'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("resolution_note_full columns after a second application = %d (err=%v), want 1", n, err)
+	}
+}
 
 func swapDBName(dsn, name string) string {
 	slash := strings.LastIndex(dsn, "/")

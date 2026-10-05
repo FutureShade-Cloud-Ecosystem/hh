@@ -274,6 +274,9 @@ type credsReencryptor interface {
 type Service struct {
 	cfg  configResolver
 	proc Processor
+	// attempts is the card charge attempt store Capture, Compensate and BindTx work over; nil on a
+	// Service built without one (those entry points then refuse).
+	attempts *Store
 
 	rotMu        sync.Mutex
 	rotPend      *rotatedCreds
@@ -298,7 +301,7 @@ const rotationFlushWindow = 30 * time.Second
 
 // NewService wires the config store + the active Processor (RunPaymentsStub by default).
 func NewService(store *Store, proc Processor) *Service {
-	s := &Service{cfg: store, proc: proc}
+	s := &Service{cfg: store, proc: proc, attempts: store}
 	s.startFlusher = s.startRotationFlusherGoroutine
 	return s
 }
