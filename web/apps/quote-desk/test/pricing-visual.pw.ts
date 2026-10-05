@@ -107,10 +107,12 @@ test.describe("at the tablet's 820 wide", () => {
       expect(box === null ? 0 : box.height).toBeLessThanOrEqual(line * 1.6);
     }
     await shot(page, "pricing-rules-820-light");
-    // the customers step above leaves a floor confirmation in the log; with the product read
-    // off, the log lists its products by raw id, the widest text it holds and the one that
-    // used to stick out past the card's hidden overflow
+    // the customers step above leaves a floor confirmation in the log, and a seeded rule note
+    // carrying a long link is wider still: a URL has no break opportunity, so at this width
+    // the log's table cannot shrink inside its card and the audit check really faces the row
+    // the card must not clip (the natural rows alone fit the 820 card).
     await setMode(page, { product_names: false });
+    await page.request.post("/_stub/pricing-seed-wide-row");
     for (const tab of ["margin", "rules", "customers", "breaks", "audit"] as const) {
       await populated(page, tab);
       expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);

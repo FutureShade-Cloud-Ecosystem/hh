@@ -365,6 +365,19 @@ export function handlePricing({ request, response, path, url, callerOf, readBody
     respondJson(response, 200, { rows: world.audit.length });
     return true;
   }
+  // The log's widest honest row: a rule note carrying a long link, the kind an editor pastes.
+  // A URL has no break opportunity, so this one cell's floor sits above the 820 card's width
+  // and the table cannot shrink inside it: at that width this row is what the table's own
+  // sideways scroll must reach, and what the card's own overflow check must see (round 2 P2-D).
+  if (path === "/_stub/pricing-seed-wide-row" && request.method === "POST") {
+    const ruleId = world.rules[0].id;
+    logRow("demo-account-sales-manager", "pricing_rule", ruleId, "UPDATE", "detail_text",
+      "Contractor, default: 15% off",
+      "Reviewed with purchasing, tracker: https://intranet.hardscape.example/pricing-reviews/floors/contractor-default-tier-and-branch-consolidation",
+      { type: "rule", id: ruleId });
+    respondJson(response, 200, { rows: world.audit.length });
+    return true;
+  }
   // Another editor saved first: the record's version moves under an open form.
   if (path === "/_stub/pricing-bump" && request.method === "POST") {
     readBody(request, response, (body) => {
