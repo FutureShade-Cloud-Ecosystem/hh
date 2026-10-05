@@ -23,6 +23,7 @@ package customer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -72,7 +73,14 @@ func cleanCustLoad(ctx context.Context, pool *pgxpool.Pool) {
 		_, _ = pool.Exec(ctx, `DELETE FROM load_key_registry WHERE org_id = $1::uuid`, org)
 		_, _ = pool.Exec(ctx, `DELETE FROM load_batch WHERE org_id = $1::uuid`, org)
 	}
-	_, _ = pool.Exec(ctx, `DELETE FROM customers WHERE account_no::text LIKE 'fxld6-%'`)
+	// Every row a load could leave, including one a regressed reload
+	// rewrote to its legacy id: by the fixture account prefix, by the
+	// fixture orgs' stamp, and by the legacy ids the items carry.
+	_, _ = pool.Exec(ctx, `
+		DELETE FROM customers
+		WHERE account_no::text LIKE 'fxld6-%'
+		   OR account_no::text IN ('CUST-A', 'CUST-B', 'CUST-C', 'CUST-X', 'CUST-Y', 'CUST-Z', 'CUST-O', 'CUST-N1', 'CUST-N2')
+		   OR org_id IN ($1::uuid, $2::uuid)`, fxLoadOrgID, fxLoadOtherOrgID)
 }
 
 func custLoadSetup(t *testing.T) *custLoadEnv {
@@ -113,6 +121,7 @@ func custItem(legacyID, accountNo, name string, extra map[string]any, requires .
 	}
 	suffix := map[string]string{
 		"CUST-A": "000000000001", "CUST-B": "000000000002", "CUST-C": "000000000003",
+		"CUST-X": "000000000004", "CUST-Y": "000000000005", "CUST-Z": "000000000006",
 		"CON-1": "000000000011", "CON-2": "000000000012",
 	}[legacyID]
 	return load.Item{LegacyID: legacyID, DerivedKey: "d6000000-0000-4000-8000-" + suffix,
@@ -121,7 +130,13 @@ func custItem(legacyID, accountNo, name string, extra map[string]any, requires .
 
 func (e *custLoadEnv) submit(t *testing.T, door *load.Door, batchID string, items ...load.Item) load.BatchResult {
 	t.Helper()
-	r, err := door.UpsertBatch(context.Background(), load.Batch{OrgID: fxLoadOrgID, SourceSystem: fxLoadSource,
+	return e.submitFrom(t, door, fxLoadSource, batchID, items...)
+}
+
+// submitFrom is submit from a named source system.
+func (e *custLoadEnv) submitFrom(t *testing.T, door *load.Door, source, batchID string, items ...load.Item) load.BatchResult {
+	t.Helper()
+	r, err := door.UpsertBatch(context.Background(), load.Batch{OrgID: fxLoadOrgID, SourceSystem: source,
 		BatchID: batchID, Caller: fxLoadActorID, Items: items})
 	if err != nil {
 		t.Fatalf("batch %s: %v", batchID, err)
@@ -710,4 +725,167 @@ func TestCustomerLoadAttachMergesStaffMetadataAndReloadKeepsTheAccountNumber(t *
 	if e.customerCount(t, "fxld6-l") != 1 {
 		t.Fatalf("a first load with no account number did not use the legacy id")
 	}
+}
+
+func TestCustomerLoadRefusalsSayTheTrueThing(t *testing.T) {
+	e := custLoadSetup(t)
+	// A row recorded by another source system is named as that.
+	e.submit(t, e.custDoor, "b-t-1", custItem("CUST-A", "fxld6-a", "Fixture Customer A", nil))
+	e.submitFrom(t, e.custDoor, "othersys", "b-t-2", custItem("CUST-Z", "fxld6-z", "Fixture Customer Z", nil))
+	r := e.submitFrom(t, e.custDoor, "othersys", "b-t-3", custItem("CUST-Z", "fxld6-a", "Fixture Customer Z", nil))
+	o := outcome(t, r, "CUST-Z")
+	if o.Reason != load.ReasonKeyConflict || !strings.Contains(o.Detail, "another source system") || strings.Contains(o.Detail, "staff") {
+		t.Fatalf("a re-point onto a row another source system names answered %+v, want that said and not a staff row", o)
+	}
+	// A contact whose customer row is gone is a missing reference.
+	r = e.submit(t, e.custDoor, "b-t-4", custItem("CUST-B", "fxld6-b", "Fixture Customer B", nil))
+	if _, err := e.pool.Exec(context.Background(), `DELETE FROM customers WHERE account_no = 'fxld6-b'`); err != nil {
+		t.Fatalf("delete customer: %v", err)
+	}
+	r = e.submit(t, e.contactDoor, "b-t-5", custItem("CON-1", "", "", map[string]any{"name": "Fixture Contact"},
+		load.Ref{Kind: load.KindCustomer, LegacyID: "CUST-B"}))
+	o = outcome(t, r, "CON-1")
+	if o.Reason != load.ReasonMissingReference || strings.Contains(o.Detail, "another org") || !strings.Contains(o.Detail, "CUST-B") {
+		t.Fatalf("a contact under a gone customer answered %+v, want missing_reference naming kind and key, not another org", o)
+	}
+}
+
+// ---- deadlock victims ----
+
+// waitForLockWait polls until some session in this database waits on a
+// lock, the batch standing behind the outside transaction.
+func waitForLockWait(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		var n int
+		if err := pool.QueryRow(context.Background(), `
+			SELECT count(*) FROM pg_stat_activity
+			WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&n); err != nil {
+			t.Fatalf("lock wait poll: %v", err)
+		}
+		if n > 0 {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("no session ever waited on a lock: the batch never reached the held row")
+}
+
+// deadlockLeg runs one batch into a deadlock with an outside transaction
+// that holds a row the batch's second item needs (lockSQL) and then asks
+// for a row the batch already holds (wantSQL): Postgres kills the batch,
+// which must answer ErrBatchContended (the doors' handler maps it to the
+// retryable 503, proven in the load package's handler test), leave
+// nothing of itself behind (no batch record, no registry name, nothing of
+// the items' rows), and converge when the same batch is resubmitted.
+func (e *custLoadEnv) deadlockLeg(t *testing.T, door *load.Door, kind, batchID string, items []load.Item, lockSQL, wantSQL string, rowsLeft string) {
+	t.Helper()
+	ctx := context.Background()
+	outside, err := e.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("outside begin: %v", err)
+	}
+	defer func() { _ = outside.Rollback(ctx) }()
+	// A long deadlock timeout on the outside session, so the batch's own
+	// detection (the default, a second) fires first and the batch is the
+	// victim.
+	if _, err := outside.Exec(ctx, `SET LOCAL deadlock_timeout = '30s'`); err != nil {
+		t.Fatalf("outside timeout: %v", err)
+	}
+	if _, err := outside.Exec(ctx, lockSQL); err != nil {
+		t.Fatalf("outside lock: %v", err)
+	}
+	batch := load.Batch{OrgID: fxLoadOrgID, SourceSystem: fxLoadSource, BatchID: batchID, Caller: fxLoadActorID, Items: items}
+	done := make(chan error, 1)
+	go func() {
+		cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		defer cancel()
+		_, err := door.UpsertBatch(cctx, batch)
+		done <- err
+	}()
+	waitForLockWait(t, e.pool)
+	// The outside transaction now wants what the batch holds: the cycle
+	// closes and Postgres kills the batch.
+	_, _ = outside.Exec(ctx, wantSQL)
+	select {
+	case err := <-done:
+		if !errors.Is(err, load.ErrBatchContended) {
+			t.Fatalf("the deadlocked batch answered %v, want the ErrBatchContended sentinel", err)
+		}
+	case <-time.After(60 * time.Second):
+		t.Fatalf("the deadlock never resolved")
+	}
+	_ = outside.Rollback(ctx)
+
+	names := make([]string, 0, len(items))
+	for _, it := range items {
+		names = append(names, it.LegacyID)
+	}
+	var batches, registry, rows int
+	if err := e.pool.QueryRow(ctx, `
+		SELECT (SELECT count(*) FROM load_batch WHERE org_id = $1::uuid AND batch_id = $2),
+		       (SELECT count(*) FROM load_key_registry WHERE org_id = $1::uuid AND legacy_id = ANY($3) AND kind = $4),
+		       (`+rowsLeft+`)`, fxLoadOrgID, batchID, names, kind).Scan(&batches, &registry, &rows); err != nil {
+		t.Fatalf("remainder read: %v", err)
+	}
+	if batches != 0 || registry != 0 || rows != 0 {
+		t.Fatalf("the victim left %d batch rows, %d names, %d item rows: a contended batch rolls back whole", batches, registry, rows)
+	}
+	r, err := door.UpsertBatch(ctx, batch)
+	if err != nil {
+		t.Fatalf("resubmission: %v", err)
+	}
+	for _, o := range r.Items {
+		if o.Status != load.OutcomeCreated && o.Status != load.OutcomeAttached {
+			t.Fatalf("the resubmission answered %+v, want it to converge", o)
+		}
+	}
+}
+
+func TestCustomerLoadDeadlockInTheWriterAnswersTheContentionSentinel(t *testing.T) {
+	e := custLoadSetup(t)
+	ctx := context.Background()
+	// A staff made row the outside transaction will hold.
+	if _, err := e.pool.Exec(ctx, `INSERT INTO customers (account_no, name) VALUES ('fxld6-d1', 'Fixture Held')`); err != nil {
+		t.Fatalf("plant held row: %v", err)
+	}
+	// The scope's sequence row exists before the batch draws, so the outside
+	// transaction's later update waits on the batch's hold.
+	if _, err := e.pool.Exec(ctx, `INSERT INTO scope_sequences (scope) VALUES ('customers') ON CONFLICT (scope) DO NOTHING`); err != nil {
+		t.Fatalf("plant scope row: %v", err)
+	}
+	// Item one lands fresh (it draws the scope's sequence and holds it to
+	// the batch's end), item two takes the held row and waits on the outside.
+	e.deadlockLeg(t, e.custDoor, load.KindCustomer, "b-dl-c",
+		[]load.Item{
+			custItem("CUST-X", "fxld6-d2", "Fixture Fresh", nil),
+			custItem("CUST-Y", "fxld6-d1", "Fixture Held Renamed", nil),
+		},
+		`UPDATE customers SET name = name WHERE account_no = 'fxld6-d1'`,
+		`UPDATE scope_sequences SET next_value = next_value WHERE scope = 'customers'`,
+		`SELECT count(*) FROM customers WHERE account_no = 'fxld6-d2'`)
+}
+
+func TestContactLoadDeadlockInTheWriterAnswersTheContentionSentinel(t *testing.T) {
+	e := custLoadSetup(t)
+	ctx := context.Background()
+	e.submit(t, e.custDoor, "b-dl-k0",
+		custItem("CUST-A", "fxld6-a", "Fixture Customer A", nil),
+		custItem("CUST-B", "fxld6-b", "Fixture Customer B", nil))
+	idB := e.custRow(t, "fxld6-b").id
+	// Item one inserts a contact and holds its registry name to the batch's
+	// end; item two inserts a contact under customer B, whose row the
+	// outside transaction holds, and waits. The outside then asks for the
+	// registry name the batch holds.
+	e.deadlockLeg(t, e.contactDoor, load.KindContact, "b-dl-k1",
+		[]load.Item{
+			custItem("CON-1", "", "", map[string]any{"name": "Fixture Contact One"}, load.Ref{Kind: load.KindCustomer, LegacyID: "CUST-A"}),
+			custItem("CON-2", "", "", map[string]any{"name": "Fixture Contact Two"}, load.Ref{Kind: load.KindCustomer, LegacyID: "CUST-B"}),
+		},
+		`SELECT 1 FROM customers WHERE id = '`+idB+`'::uuid FOR UPDATE`,
+		fmt.Sprintf(`INSERT INTO load_key_registry (org_id, source_system, kind, legacy_id, hh_id, content_hash)
+			VALUES ('%s'::uuid, '%s', 'contact', 'CON-1', gen_random_uuid(), repeat('c', 64))`, fxLoadOrgID, fxLoadSource),
+		`SELECT count(*) FROM customer_contacts WHERE name LIKE 'Fixture Contact %'`)
+	_ = ctx
 }
