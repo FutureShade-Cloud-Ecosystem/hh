@@ -25,6 +25,13 @@ export class QuoteContext {
     this.epoch = epoch;
   }
 
+  /** A context that is already cancelled: what a screen that has left the page hands out, so nothing it still holds can issue a request. */
+  static cancelled(id: string): QuoteContext {
+    const dead = new QuoteContext(id, 0);
+    dead.cancel();
+    return dead;
+  }
+
   /** True once the quote this context belongs to has been left. */
   get stale(): boolean {
     return this.aborted;

@@ -108,6 +108,8 @@ export class QdQuoteHoldExpiry extends PanelBase {
       this.st = null;
       return;
     }
+    // A cancelled context issues no more requests: the panel left the page (sign out) and a read of its is not this session's.
+    if (ctx.stale) return;
     // A newer read of this quote supersedes an older one still out: the older answer never lands over it.
     const seq = ctx.startRead();
     const result = await ctx.guardedRead(seq, client.holdExpiry(ctx.id));

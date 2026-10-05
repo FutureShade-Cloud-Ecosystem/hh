@@ -420,6 +420,8 @@ export class QdQuoteAssist extends PanelBase {
       this.gapsError = "";
       return;
     }
+    // A cancelled context issues no more requests: the panel left the page (sign out) and a read of its is not this session's.
+    if (ctx.stale) return;
     const seq = ctx.startRead();
     const result = await ctx.guardedRead(seq, client.assistScopeGaps(ctx.id));
     if (result === undefined) return;

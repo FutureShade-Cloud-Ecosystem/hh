@@ -220,8 +220,8 @@
   {
     "id": "ep-late-announces",
     "file": "src/edit-panel.ts",
-    "find": "      this.dispatchEvent(new CustomEvent(\"quote-changed\", { detail: { quoteId: ctx.id }, bubbles: true, composed: true }));\n      return;\n    }\n    if (this.ctx.id !== ctx.id) return;",
-    "replace": "      return;\n    }\n    if (this.ctx.id !== ctx.id) return;",
+    "find": "      this.dispatchEvent(new CustomEvent(\"quote-changed\", { detail: { quoteId: ctx.id }, bubbles: true, composed: true }));\n      return;\n    }\n    const now = this.ctx;",
+    "replace": "      return;\n    }\n    const now = this.ctx;",
     "test": "P2-3 a quantity save that lands after leaving"
   },
   {
@@ -248,15 +248,15 @@
   {
     "id": "ep-late-refusal-other-quote",
     "file": "src/edit-panel.ts",
-    "find": "    if (this.ctx.id !== ctx.id) return;\n",
-    "replace": "",
+    "find": "    if (now.stale || now.id !== ctx.id) return;\n",
+    "replace": "    if (now.stale) return;\n",
     "test": "P3 a refusal answered while the person is on another quote"
   },
   {
     "id": "ep-late-refusal-shown",
     "file": "src/edit-panel.ts",
-    "find": "    if (this.ctx.id !== ctx.id) return;\n",
-    "replace": "    return;\n",
+    "find": "    if (now.stale || now.id !== ctx.id) return;\n",
+    "replace": "    if (late !== undefined) return;\n",
     "test": "P3 a floor refusal answered after the person returned"
   },
   {
@@ -381,8 +381,8 @@
   {
     "id": "wa-cart-after-read",
     "file": "src/quote-workarea.ts",
-    "find": "    await this.loadAll();\n    if (ctx.stale) return;\n    this.quoteChanged();\n  }\n\n  // \u2500\u2500 the workspace",
-    "replace": "    await this.loadAll();\n    this.quoteChanged();\n  }\n\n  // \u2500\u2500 the workspace",
+    "find": "    await this.loadAll();\n    if (ctx.stale) return;\n    this.quoteChanged();\n  }\n\n  // ── the workspace",
+    "replace": "    await this.loadAll();\n    this.quoteChanged();\n  }\n\n  // ── the workspace",
     "test": "guard cart change after read:"
   },
   {
@@ -598,8 +598,8 @@
   {
     "id": "ep-convert-reload",
     "file": "src/edit-panel.ts",
-    "find": "    await this.load();\n    if (ctx.stale) return;\n    this.announceChanged();\n  }\n\n  // \u2500\u2500 delegation",
-    "replace": "    await this.load();\n    this.announceChanged();\n  }\n\n  // \u2500\u2500 delegation",
+    "find": "    await this.load();\n    if (ctx.stale) return;\n    this.announceChanged();\n  }\n\n  // ── delegation",
+    "replace": "    await this.load();\n    this.announceChanged();\n  }\n\n  // ── delegation",
     "test": "guard edit convert reload:"
   },
   {
@@ -870,5 +870,89 @@
     "find": "      else if (lockKey === this.lockKey()) this.error = line;",
     "replace": "      else if (false) this.error = line;",
     "test": "guard policy refusal:"
+  },
+  {
+    "id": "wa-disconnect-cancels",
+    "file": "src/quote-workarea.ts",
+    "find": "    this.detached = true;\n    this.scope.open(\"\");\n",
+    "replace": "    this.detached = true;\n",
+    "test": "A P2-1 a quantity write still out at sign out"
+  },
+  {
+    "id": "wa-detached-ctx",
+    "file": "src/quote-workarea.ts",
+    "find": "    if (this.detached) return QuoteContext.cancelled(this.quoteId);\n",
+    "replace": "",
+    "test": "A P2-1 a work area that has left the page reads nothing"
+  },
+  {
+    "id": "wa-read-stale-return",
+    "file": "src/quote-workarea.ts",
+    "find": "    const ctx = this.ctx;\n    if (ctx.stale) return;\n    if (ctx.id === \"\") {",
+    "replace": "    const ctx = this.ctx;\n    if (ctx.id === \"\") {",
+    "test": "A P2-1 a work area that has left the page reads nothing"
+  },
+  {
+    "id": "pb-disconnect-cancels",
+    "file": "src/panel-base.ts",
+    "find": "    this.detached = true;\n    this.quoteScope.open(\"\");\n",
+    "replace": "    this.detached = true;\n",
+    "test": "A P2-1 an edit panel save still out at sign out"
+  },
+  {
+    "id": "pb-detached-ctx",
+    "file": "src/panel-base.ts",
+    "find": "    if (this.detached) return QuoteContext.cancelled(this.quoteId);\n",
+    "replace": "",
+    "test": "A P2-1 a panel that has left the page reads nothing"
+  },
+  {
+    "id": "ep-late-answer-stale",
+    "file": "src/edit-panel.ts",
+    "find": "    if (now.stale || now.id !== ctx.id) return;",
+    "replace": "    if (now.id !== ctx.id) return;",
+    "test": "A P2-1 an edit panel save refused after sign out"
+  },
+  {
+    "id": "ep-load-stale",
+    "file": "src/edit-panel.ts",
+    "find": "    const ctx = this.ctx;\n    if (ctx.stale) return;\n    const seq = ctx.startRead();\n    const result = await ctx.guardedRead(seq, client.readQuote(ctx.id));",
+    "replace": "    const ctx = this.ctx;\n    const seq = ctx.startRead();\n    const result = await ctx.guardedRead(seq, client.readQuote(ctx.id));",
+    "test": "A P2-1 a panel that has left the page reads nothing"
+  },
+  {
+    "id": "hs-load-stale",
+    "file": "src/history-panel.ts",
+    "find": "    // A cancelled context issues no more requests: the panel left the page (sign out) and a read of its is not this session's.\n    if (ctx.stale) return;\n",
+    "replace": "",
+    "test": "A P2-1 a panel that has left the page reads nothing"
+  },
+  {
+    "id": "av-load-stale",
+    "file": "src/availability-panel.ts",
+    "find": "    // A cancelled context issues no more requests: the panel left the page (sign out) and a read of its is not this session's.\n    if (ctx.stale) return;\n",
+    "replace": "",
+    "test": "A P2-1 a panel that has left the page reads nothing"
+  },
+  {
+    "id": "he-load-stale",
+    "file": "src/hold-expiry-panel.ts",
+    "find": "    // A cancelled context issues no more requests: the panel left the page (sign out) and a read of its is not this session's.\n    if (ctx.stale) return;\n",
+    "replace": "",
+    "test": "A P2-1 a panel that has left the page reads nothing"
+  },
+  {
+    "id": "fu-load-stale",
+    "file": "src/followups-panel.ts",
+    "find": "    // A cancelled context issues no more requests: the panel left the page (sign out) and a read of its is not this session's.\n    if (ctx.stale) return;\n",
+    "replace": "",
+    "test": "A P2-1 a panel that has left the page reads nothing"
+  },
+  {
+    "id": "as-gaps-stale",
+    "file": "src/assist-panel.ts",
+    "find": "    // A cancelled context issues no more requests: the panel left the page (sign out) and a read of its is not this session's.\n    if (ctx.stale) return;\n",
+    "replace": "",
+    "test": "A P2-1 a panel that has left the page reads nothing"
   }
 ]

@@ -86,6 +86,8 @@ export class QdQuoteHistory extends PanelBase {
       this.loaded = false;
       return;
     }
+    // A cancelled context issues no more requests: the panel left the page (sign out) and a read of its is not this session's.
+    if (ctx.stale) return;
     this.error = "";
     const seq = ctx.startRead();
     const result = await ctx.guardedRead(seq, client.editHistory(ctx.id));

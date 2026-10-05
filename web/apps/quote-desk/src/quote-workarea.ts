@@ -101,7 +101,7 @@ import { FLOOR_REFUSAL_CLOSED_EVENT, floorRefusalMessage, openFloorRefusalDialog
 import { OPEN_SETTINGS_EVENT } from "./panel-seams.js";
 import type { QdClient, SurfaceConfig, TermsRef } from "./qd-client.js";
 import { WorkspaceStore } from "./workspace-store.js";
-import { QuoteScope, SIGN_OUT_EVENT, UNSENT_WAIT_MS, waitUpTo, type QuoteContext, type SignOutDetail } from "./quote-context.js";
+import { QuoteContext, QuoteScope, SIGN_OUT_EVENT, UNSENT_WAIT_MS, waitUpTo, type SignOutDetail } from "./quote-context.js";
 import type { AddonSuggestion } from "@hardscapehouse/pos-kit/src/ported/pos-api.js";
 
 /** Thrown inside the send and link paths when the quote changed under them: caught and said nothing. */
@@ -1072,6 +1072,7 @@ export class QdQuoteWorkarea extends LitElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
+    this.detached = false;
     window.addEventListener(FLOOR_REFUSAL_CLOSED_EVENT, this.onFloorDialogClosed);
     window.addEventListener(SIGN_OUT_EVENT, this.onSignOut);
     this.startLoads();
@@ -1116,7 +1117,13 @@ export class QdQuoteWorkarea extends LitElement {
     this.renderRoot.removeEventListener("customer-picked", this.onCustomerPicked as EventListener);
     if (this.clockTimer !== undefined) clearInterval(this.clockTimer);
     if (this.termsTimer !== undefined) clearTimeout(this.termsTimer);
+    // A write still out when the work area leaves the page (sign out) must not go on to send follow-ups under the next session.
+    this.detached = true;
+    this.scope.open("");
   }
+
+  /** True from the moment this work area leaves the page: its context is then cancelled for good. */
+  private detached = false;
 
   protected override willUpdate(changed: Map<string, unknown>): void {
     // The host wires the client after this element mounts; the loads start
@@ -1136,6 +1143,7 @@ export class QdQuoteWorkarea extends LitElement {
 
   /** The context of the quote on screen; a quote id that moved without its context following gets a fresh one. */
   private get ctx(): QuoteContext {
+    if (this.detached) return QuoteContext.cancelled(this.quoteId);
     const live = this.scope.current;
     return live.id === this.quoteId && !live.stale ? live : this.scope.open(this.quoteId);
   }
@@ -1473,6 +1481,7 @@ export class QdQuoteWorkarea extends LitElement {
     const client = this.client;
     if (client === null) return;
     const ctx = this.ctx;
+    if (ctx.stale) return;
     if (ctx.id === "") {
       this.view = null;
       this.terms = null;

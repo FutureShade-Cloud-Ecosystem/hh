@@ -170,6 +170,7 @@ export class QdQuoteEdit extends PanelBase {
       return;
     }
     const ctx = this.ctx;
+    if (ctx.stale) return;
     const seq = ctx.startRead();
     const result = await ctx.guardedRead(seq, client.readQuote(ctx.id));
     if (result === undefined) return;
@@ -289,7 +290,8 @@ export class QdQuoteEdit extends PanelBase {
       this.dispatchEvent(new CustomEvent("quote-changed", { detail: { quoteId: ctx.id }, bubbles: true, composed: true }));
       return;
     }
-    if (this.ctx.id !== ctx.id) return;
+    const now = this.ctx;
+    if (now.stale || now.id !== ctx.id) return;
     const refusal = late.status === 409 && floor !== undefined ? parseFloorRefusal(late.error) : null;
     if (refusal !== null && floor !== undefined) {
       this.error = floorRefusalMessage(refusal);

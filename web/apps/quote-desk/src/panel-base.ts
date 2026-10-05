@@ -9,7 +9,7 @@
 import { LitElement, type PropertyValues } from "lit";
 import { property, state } from "lit/decorators.js";
 import type { QdClient } from "./qd-client.js";
-import { QuoteScope, type QuoteContext } from "./quote-context.js";
+import { QuoteContext, QuoteScope } from "./quote-context.js";
 
 export type Controls = Record<string, (control: HTMLElement, event: Event) => void>;
 
@@ -26,11 +26,15 @@ export abstract class PanelBase extends LitElement {
   /** Holds the context of the quote this panel shows; see quote-context.ts. */
   private readonly quoteScope = new QuoteScope();
 
+  /** True from the moment this panel leaves the page (sign out removes it): its context is then cancelled for good. */
+  private detached = false;
+
   /**
    * The context of the quote now shown. Every read and write captures it at its start, binds itself to its
    * id (never to this.quoteId read after an await) and checks it after every await.
    */
   protected get ctx(): QuoteContext {
+    if (this.detached) return QuoteContext.cancelled(this.quoteId);
     const live = this.quoteScope.current;
     return live.id === this.quoteId && !live.stale ? live : this.quoteScope.open(this.quoteId);
   }
@@ -82,6 +86,7 @@ export abstract class PanelBase extends LitElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
+    this.detached = false;
     this.renderRoot.addEventListener("click", this.handleClick);
     this.renderRoot.addEventListener("input", this.handleInput);
     this.renderRoot.addEventListener("change", this.handleChange);
@@ -90,6 +95,9 @@ export abstract class PanelBase extends LitElement {
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
+    // A write still out when the panel leaves (sign out) must not go on to send follow-ups under the next session.
+    this.detached = true;
+    this.quoteScope.open("");
     this.renderRoot.removeEventListener("click", this.handleClick);
     this.renderRoot.removeEventListener("input", this.handleInput);
     this.renderRoot.removeEventListener("change", this.handleChange);
