@@ -122,10 +122,10 @@ func (s *Service) buildEntry(ctx context.Context, a SensitiveAccess) Entry {
 	// Base allowlisted fields. masked_ref is re-enforced here even though the caller is expected to
 	// have masked it ("already masked by the caller; the boundary re-enforces").
 	put("purpose", a.Purpose)
-	if a.Action == ActSignatureCapture && isSignatureReference(a.MaskedRef) {
-		// The minted signature reference is the capture row's only reference; its random hex often
+	if sigRefActions[a.Action] && isSignatureReference(a.MaskedRef) {
+		// The minted signature reference is the only reference these rows carry; its random hex often
 		// carries a 7+ digit run that the cleartext detector would read as an identifier. Exempt
-		// here, for this action and this field alone (isSignatureReference states the bounds).
+		// here, for these actions and this field alone (isSignatureReference states the bounds).
 		changes["masked_ref"] = a.MaskedRef
 	} else {
 		put("masked_ref", a.MaskedRef)
@@ -513,7 +513,7 @@ var allowedExtraKeys = map[string]bool{
 // ~10), a masked ref like "•••• 4321" (4 trailing digits) and a reason code like "ON_FN_POS_8" both
 // pass. A UUID is the one exempt shape (a safe internal identifier). The system's own signature
 // reference is exempted NARROWLY, in buildEntry's masked_ref handling for a SIGNATURE_CAPTURE row
-// only (see isSignatureReference), never here, so no other field or action inherits it. The second
+// and the dispatch actions in sigRefActions only (see isSignatureReference), never here, so no other field or action inherits it. The second
 // return reports whether anything was redacted.
 func redactCleartext(s string) (string, bool) {
 	// A UUID is a safe internal identifier (staff/order/approver id), never PII, allow it through even
@@ -525,6 +525,17 @@ func redactCleartext(s string) (string, bool) {
 		return s, false
 	}
 	return "[redacted]", true
+}
+
+// sigRefActions are the actions whose masked_ref is the minted signature reference: the capture row
+// itself and the three dispatch rows that carry the same reference (proof of delivery captured, its
+// photos attached, a will call confirmed). The dispatch names are literals at their call sites, so
+// they are listed here as literals rather than as constants every call site would need to adopt.
+var sigRefActions = map[string]bool{
+	ActSignatureCapture:            true,
+	"DELIVERY_POD_CAPTURED":        true,
+	"DELIVERY_POD_PHOTOS_ATTACHED": true,
+	"WILL_CALL_CONFIRMED":          true,
 }
 
 // sigRefPrefix and sigRefHexLen pin the minted signature reference shape: "sig_" plus 8 random bytes
@@ -540,8 +551,8 @@ const (
 
 // isSignatureReference reports whether s is exactly the system's own signature reference: the sig_
 // prefix followed by 16 lowercase hex characters, at least one of them a letter, with no run of more
-// than sigRefMaxDigitRun decimal digits. It is consulted ONLY for the masked_ref of a SIGNATURE_CAPTURE
-// row (the one field and action the pos provider writes the reference to, and a value a caller cannot
+// than sigRefMaxDigitRun decimal digits. It is consulted ONLY for the masked_ref of a sigRefActions
+// row (the one field and the actions the pos provider's reference is written to, and a value a caller cannot
 // type: the provider mints it), so an attacker controlled or free text field (purpose, reason, an
 // Extra string) never inherits the exemption. The letter rule keeps an all decimal tail (exactly the
 // PAN shape) redacted; the run cap keeps a card number-length run redacted even beside a letter.
