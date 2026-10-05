@@ -32,6 +32,13 @@ type ProductImageLoadRules struct{}
 // MaxImageBytes is the 0102 cap the boundary bounds its read with.
 func (ProductImageLoadRules) MaxImageBytes() int { return maxImageBytes }
 
+// NormaliseContentType is the module's own media type normalisation:
+// the parameter strip and the case fold, the one spelling the
+// allowlist, the stored row and the replay decision all read.
+func (ProductImageLoadRules) NormaliseContentType(contentType string) string {
+	return normalizeContentType(contentType)
+}
+
 // ValidateImage runs the module's rules over one put: the declared type
 // on the allowlist, the bytes present, the size under the cap, and the
 // magic bytes agreeing with the declared type. A violation names the
@@ -62,30 +69,30 @@ type ProductImageLoadWriter struct{}
 // ApplyImage upserts the product's primary image on the caller's
 // transaction, the same statement the staff byte route's store write
 // carries (the unique partial index makes the primary image a single
-// row, so an upload is an upsert), with uploaded_by left null: the
-// column foreign keys the users table, and the load's caller of record
-// is the machine principal, a user of no row.
+// row, so an upload is an upsert), with uploaded_by cleared: the column
+// foreign keys the users table, and the load's caller of record is the
+// machine principal, a user of no row. The clear runs on the update arm
+// too: a load put that replaces a staff member's upload is the machine
+// principal's record, and the staff member is not the loader of the new
+// bytes.
 func (ProductImageLoadWriter) ApplyImage(ctx context.Context, tx pgx.Tx, in load.ImageWrite) error {
 	rules := ProductImageLoadRules{}
 	if field, detail, ok := rules.ValidateImage(in.ContentType, in.Bytes); !ok {
 		return &load.Refusal{Code: "image_rule", Field: field, Detail: detail}
 	}
-	contentType := strings.TrimSpace(in.ContentType)
-	if i := strings.IndexByte(contentType, ';'); i >= 0 {
-		contentType = strings.ToLower(strings.TrimSpace(contentType[:i]))
-	}
+	contentType := normalizeContentType(in.ContentType)
 	sum := md5.Sum(in.Bytes)
-	// uploaded_by stays NULL on a loaded image: the column foreign keys
-	// the users table and the caller of record is the machine principal,
-	// a user of no row. The put's actor lives on the audit row and the
-	// image's registry name, where it belongs.
+	// uploaded_by is NULL on a loaded image, first put or replace: the
+	// column foreign keys the users table and the caller of record is
+	// the machine principal, a user of no row. The put's actor lives on
+	// the audit row and the image's registry name, where it belongs.
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO product_images (product_id, content_type, byte_size, image_bytes, alt_text, sort_order, checksum)
 		VALUES ($1::uuid, $2, $3, $4, $5, 0, $6)
 		ON CONFLICT (product_id) WHERE sort_order = 0
 		DO UPDATE SET content_type = EXCLUDED.content_type, byte_size = EXCLUDED.byte_size,
 		              image_bytes = EXCLUDED.image_bytes, alt_text = EXCLUDED.alt_text,
-		              checksum = EXCLUDED.checksum, created_at = now()`,
+		              checksum = EXCLUDED.checksum, uploaded_by = NULL, created_at = now()`,
 		in.ProductID, contentType, len(in.Bytes), in.Bytes, strings.TrimSpace(in.AltText),
 		hex.EncodeToString(sum[:])); err != nil {
 		return fmt.Errorf("product: load image write: %w", err)
