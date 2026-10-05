@@ -708,6 +708,57 @@ test("P3 a scan made in compose says so when the host never hands the new quote 
   await expect(page.getByTestId("qb-error")).not.toContainText("Pick a customer");
 });
 
+/** Makes a quote in compose with the hand down held and a scan parked behind it: the state every give up case starts from. */
+async function parkedScan(page: Page): Promise<void> {
+  await signIn(page);
+  await holdHandoff(page);
+  const create = await hold(page, /\/api\/v1\/quotes$/, { method: "POST" });
+  const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
+  await picker.getByPlaceholder("Search name or account #…").fill("Fenwick");
+  await picker.getByRole("option", { name: /Fenwick/ }).click();
+  await create.asked;
+  await scanInCompose(page);
+  await create.release();
+  await scanIsWaiting(page);
+}
+
+test("P3 a scan parked in compose is released when the work area leaves the page, and says nothing", async ({ page }) => {
+  await parkedScan(page);
+  const left = await page.locator("qd-quote-workarea").evaluate(async (el) => {
+    const w = el as unknown as { handoffWaiters: unknown[]; error: string; notice: string; updateComplete: Promise<unknown> };
+    el.remove();
+    await w.updateComplete;
+    // Let the released scan run to its end (a microtask turn each, no timer).
+    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    return { waiting: w.handoffWaiters.length, error: w.error, notice: w.notice };
+  });
+  expect(left).toEqual({ waiting: 0, error: "", notice: "" });
+});
+
+test("P3 a scan parked in compose is released at sign out, before the session goes", async ({ page }) => {
+  await parkedScan(page);
+  // The sign out signal alone, with nothing leaving the page: the wait ends with the signal, not with the element going.
+  const waiting = await page.locator("qd-quote-workarea").evaluate((el) => {
+    window.dispatchEvent(new CustomEvent("qd-sign-out", { detail: { waits: [] as Promise<void>[] } }));
+    return (el as unknown as { handoffWaiters: unknown[] }).handoffWaiters.length;
+  });
+  expect(waiting).toBe(0);
+  await expect(page.getByTestId("qb-error")).toHaveText("");
+});
+
+test("P3 a scan made in compose says so at once when the create itself is refused", async ({ page }) => {
+  await signIn(page);
+  const create = await hold(page, /\/api\/v1\/quotes$/, { method: "POST", refuse: { status: 500, error: "quote: the quote store is down" } });
+  const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
+  await picker.getByPlaceholder("Search name or account #…").fill("Fenwick");
+  await picker.getByRole("option", { name: /Fenwick/ }).click();
+  await create.asked;
+  await scanInCompose(page);
+  await create.release();
+  await expect(page.getByTestId("qb-error")).toHaveText("The new quote could not be made, so nothing was added.");
+  await expect(page.getByTestId("qb-error")).not.toContainText("Pick a customer");
+});
+
 test("P3 a link made after the person left is said when they come back to the quote", async ({ page }) => {
   await signIn(page, "Sales manager");
   await openQuote(page, "Q-1001");

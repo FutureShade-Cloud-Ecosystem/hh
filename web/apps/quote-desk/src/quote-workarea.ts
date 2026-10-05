@@ -141,6 +141,11 @@ interface AddonSuggestionRow {
   list_price_cents?: number;
 }
 
+/** How a wait for the host's hand down ended. */
+type HandoffEnd = "handed" | "gave-up" | "leaving";
+
+const CREATE_FAILED_SCAN = "The new quote could not be made, so nothing was added.";
+
 @customElement("qd-quote-workarea")
 export class QdQuoteWorkarea extends LitElement {
   /** The open quote ('' means compose: pick a customer to start one). */
@@ -1127,7 +1132,7 @@ export class QdQuoteWorkarea extends LitElement {
     // A write still out when the work area leaves the page (sign out) must not go on to send follow-ups under the next session.
     this.detached = true;
     this.scope.open("");
-    this.releaseHandoffWaiters();
+    this.releaseHandoffWaiters("leaving");
     // The layout store stops with the page: whatever it still has queued is dropped, and nothing of this session's
     // layout is ever sent under the next person's.
     this.store?.close();
@@ -1153,15 +1158,15 @@ export class QdQuoteWorkarea extends LitElement {
     }
   }
 
-  private releaseHandoffWaiters(handed = true): void {
+  private releaseHandoffWaiters(end: HandoffEnd = "handed"): void {
     const waiting = this.handoffWaiters;
     this.handoffWaiters = [];
-    for (const release of waiting) release(handed);
+    for (const release of waiting) release(end);
   }
 
   /** The host's explicit signal that the new quote will not be handed down: the scans waiting for it say so. Never driven by elapsed time. */
   giveUpHandoff(): void {
-    this.releaseHandoffWaiters(false);
+    this.releaseHandoffWaiters("gave-up");
   }
 
   /** The context of the quote on screen; a quote id that moved without its context following gets a fresh one. */
@@ -1289,6 +1294,8 @@ export class QdQuoteWorkarea extends LitElement {
   /** Sign out: the unsaved terms edit and the layout are sent while the session still stands. */
   private readonly onSignOut = (event: Event): void => {
     const detail = (event as CustomEvent<SignOutDetail>).detail;
+    // The session is about to go: a scan parked for a hand down will never be answered, and the screen is going, so it ends without a word.
+    this.releaseHandoffWaiters("leaving");
     detail.waits.push(this.flushForSignOut());
   };
 
@@ -1973,11 +1980,14 @@ export class QdQuoteWorkarea extends LitElement {
   private opening: Promise<void> = Promise.resolve();
   private createdQuoteId = "";
 
-  /** Scans waiting for the host to hand a quote id down: released (true) the moment this.quoteId changes, or (false) by giveUpHandoff. */
-  private handoffWaiters: Array<(handed: boolean) => void> = [];
+  /** True when the create itself was refused or failed: no quote will be handed down for it. */
+  private createFailed = false;
 
-  private handedDown(): Promise<boolean> {
-    return new Promise<boolean>((resolve) => {
+  /** Scans waiting for the host to hand a quote id down: released as handed the moment this.quoteId changes, or as gave-up (the host's signal, or a failed create) or leaving (the page or the session going). */
+  private handoffWaiters: Array<(end: HandoffEnd) => void> = [];
+
+  private handedDown(): Promise<HandoffEnd> {
+    return new Promise<HandoffEnd>((resolve) => {
       this.handoffWaiters.push(resolve);
     });
   }
@@ -1990,10 +2000,20 @@ export class QdQuoteWorkarea extends LitElement {
     // Only while compose is on screen: a scan on an open quote is for that quote and waits for no create.
     if (this.creating !== null && this.quoteId === "") {
       await this.creating;
-      // The host hands the new quote id down on its own render: wait for it to arrive, however long that takes: no timer ends this wait, only the host's explicit give up signal, and that is said.
-      if (this.createdQuoteId !== "" && this.quoteId === "" && !(await this.handedDown())) {
-        this.speakAdd("The new quote did not open in time, so that scan was not added. Scan it again once the quote is on screen.", "warn");
+      // The create itself failed or was refused: no quote will ever be handed down, so the scan says so at once.
+      if (this.createFailed && this.quoteId === "") {
+        this.speakAdd(CREATE_FAILED_SCAN, "warn");
         return;
+      }
+      // The host hands the new quote id down on its own render: wait for it to arrive, however long that takes: no timer ends this wait, only the host's explicit give up signal, and that is said.
+      if (this.createdQuoteId !== "" && this.quoteId === "") {
+        const end = await this.handedDown();
+        // The page or the session is going: the screen is going with it, so nothing is said.
+        if (end === "leaving") return;
+        if (end === "gave-up") {
+          this.speakAdd("The new quote did not open in time, so that scan was not added. Scan it again once the quote is on screen.", "warn");
+          return;
+        }
       }
       await this.updateComplete;
       // The person opened a quote that is not the one just made while the scan waited: it was meant for the new quote.
@@ -2434,6 +2454,7 @@ export class QdQuoteWorkarea extends LitElement {
     const release = this.holdBusy(ctx);
     this.error = "";
     this.createdQuoteId = "";
+    this.createFailed = false;
     const days = this.config?.policy?.defaultValidityDays || 30;
     const result = await ctx.guarded(client.createQuote(cust.id, this.branchId, validUntilFromDays(days, this.clockNow)));
     if (result === undefined) {
@@ -2445,6 +2466,9 @@ export class QdQuoteWorkarea extends LitElement {
     release();
     if (!result.ok) {
       this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "create a quote"));
+      // No quote will be handed down for this create: whatever is parked waiting for one stops now.
+      this.createFailed = true;
+      this.releaseHandoffWaiters("gave-up");
       return;
     }
     this.customer = cust;
