@@ -45,7 +45,7 @@ const projectSeqCTE = `WITH pseq AS (
 // interface it needs; the concrete reader is the customer package's
 // OrgReader.
 type CustomerOrgSource interface {
-	CustomerInOrgTx(ctx context.Context, tx pgx.Tx, customerID, orgID string) (bool, error)
+	CustomerOrgTx(ctx context.Context, tx pgx.Tx, customerID string) (found bool, orgID string, err error)
 }
 
 // JobLoadWriter is the load doors' job writer.
@@ -77,11 +77,18 @@ func (w JobLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (str
 		return "", &load.Refusal{Code: "field_required", Field: load.KindCustomer,
 			Detail: "the item names no customer reference; a job lands under its customer"}
 	}
-	inOrg, err := w.Customers.CustomerInOrgTx(ctx, tx, customerID, in.OrgID)
+	found, org, err := w.Customers.CustomerOrgTx(ctx, tx, customerID)
 	if err != nil {
 		return "", fmt.Errorf("portal: job customer read: %w", err)
 	}
-	if !inOrg {
+	switch {
+	case !found:
+		return "", &load.Refusal{Code: load.ReasonMissingReference, Field: load.KindCustomer,
+			Detail: fmt.Sprintf("the customer row for legacy key %s is gone", customerKey)}
+	case org == "":
+		return "", &load.Refusal{Code: load.ReasonMissingReference, Field: load.KindCustomer,
+			Detail: fmt.Sprintf("the customer row for legacy key %s carries no org of this load", customerKey)}
+	case org != in.OrgID:
 		return "", &load.Refusal{Code: "org_mismatch", Field: load.KindCustomer,
 			Detail: fmt.Sprintf("customer legacy key %s names a row another org owns", customerKey)}
 	}

@@ -19,6 +19,7 @@ package portal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -53,7 +54,12 @@ func cleanJobLoad(ctx context.Context, pool *pgxpool.Pool) {
 		_, _ = pool.Exec(ctx, `DELETE FROM load_key_registry WHERE org_id = $1::uuid`, org)
 		_, _ = pool.Exec(ctx, `DELETE FROM load_batch WHERE org_id = $1::uuid`, org)
 	}
-	_, _ = pool.Exec(ctx, `DELETE FROM customers WHERE account_no::text LIKE 'fxjob-%'`) // cascades the projects
+	// By the fixture account prefix and by the fixture orgs' stamp, so a
+	// row a broken reload left under either survives no run; the delete
+	// cascades the projects.
+	_, _ = pool.Exec(ctx, `
+		DELETE FROM customers
+		WHERE account_no::text LIKE 'fxjob-%' OR org_id IN ($1::uuid, $2::uuid)`, fxJobOrgID, fxJobOtherOrgID)
 }
 
 func jobLoadSetup(t *testing.T) *jobLoadEnv {
@@ -302,6 +308,119 @@ func TestJobLoadPoolFourBitesAWriterThatUsesThePool(t *testing.T) {
 	for k, err := range errs {
 		if err == nil {
 			t.Fatalf("contender %d finished: the pool 4 leg missed a writer that uses the pool", k)
+		}
+	}
+}
+
+func TestJobLoadRefusalSaysTheCustomerRowIsGone(t *testing.T) {
+	e := jobLoadSetup(t)
+	if _, err := e.pool.Exec(context.Background(), `DELETE FROM customers WHERE id = $1::uuid`, e.custID); err != nil {
+		t.Fatalf("delete customer: %v", err)
+	}
+	r := e.submit(t, e.door, "b-j-g1", jobItem("JOB-1", "Fixture Job", "x", load.Ref{Kind: load.KindCustomer, LegacyID: "CUST-A"}))
+	o := jobOutcome(t, r, "JOB-1")
+	if o.Status != load.OutcomeRefused || o.Reason != load.ReasonMissingReference ||
+		strings.Contains(o.Detail, "another org") || !strings.Contains(o.Detail, "CUST-A") {
+		t.Fatalf("a job under a gone customer answered %+v, want missing_reference naming the key, not another org", o)
+	}
+}
+
+// waitForJobLockWait polls until some session in this database waits on a
+// lock, the batch standing behind the outside transaction.
+func waitForJobLockWait(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		var n int
+		if err := pool.QueryRow(context.Background(), `
+			SELECT count(*) FROM pg_stat_activity
+			WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&n); err != nil {
+			t.Fatalf("lock wait poll: %v", err)
+		}
+		if n > 0 {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("no session ever waited on a lock: the batch never reached the held row")
+}
+
+func TestJobLoadDeadlockInTheWriterAnswersTheContentionSentinel(t *testing.T) {
+	e := jobLoadSetup(t)
+	ctx := context.Background()
+	// A second customer of the org, whose row the outside transaction holds.
+	var heldID string
+	if err := e.pool.QueryRow(ctx, `
+		INSERT INTO customers (account_no, name, org_id, seq) VALUES ('fxjob-b', 'Fixture Held', $1::uuid, 2)
+		RETURNING id::text`, fxJobOrgID).Scan(&heldID); err != nil {
+		t.Fatalf("plant held customer: %v", err)
+	}
+	if _, err := e.pool.Exec(ctx, `
+		INSERT INTO load_key_registry (org_id, source_system, kind, legacy_id, hh_id, content_hash)
+		VALUES ($1::uuid, $2, $3, 'CUST-B', $4::uuid, repeat('a', 64))`,
+		fxJobOrgID, fxJobSource, load.KindCustomer, heldID); err != nil {
+		t.Fatalf("plant name: %v", err)
+	}
+	outside, err := e.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("outside begin: %v", err)
+	}
+	defer func() { _ = outside.Rollback(ctx) }()
+	// A long deadlock timeout on the outside session, so the batch's own
+	// detection (the default, a second) fires first and the batch is the
+	// victim.
+	if _, err := outside.Exec(ctx, `SET LOCAL deadlock_timeout = '30s'`); err != nil {
+		t.Fatalf("outside timeout: %v", err)
+	}
+	if _, err := outside.Exec(ctx, `SELECT 1 FROM customers WHERE id = $1::uuid FOR UPDATE`, heldID); err != nil {
+		t.Fatalf("outside lock: %v", err)
+	}
+	// Item one inserts a job and holds its registry name to the batch's end;
+	// item two inserts a job under the held customer and waits. The outside
+	// then asks for the registry name the batch holds.
+	batch := load.Batch{OrgID: fxJobOrgID, SourceSystem: fxJobSource, BatchID: "b-j-dl", Caller: fxJobActorID,
+		Items: []load.Item{
+			jobItem("JOB-1", "Fixture Job One", "1 Fixture Lane", load.Ref{Kind: load.KindCustomer, LegacyID: "CUST-A"}),
+			jobItem("JOB-2", "Fixture Job Two", "2 Fixture Lane", load.Ref{Kind: load.KindCustomer, LegacyID: "CUST-B"}),
+		}}
+	done := make(chan error, 1)
+	go func() {
+		cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		defer cancel()
+		_, err := e.door.UpsertBatch(cctx, batch)
+		done <- err
+	}()
+	waitForJobLockWait(t, e.pool)
+	_, outsideErr := outside.Exec(ctx, `
+		INSERT INTO load_key_registry (org_id, source_system, kind, legacy_id, hh_id, content_hash)
+		VALUES ($1::uuid, $2, 'job', 'JOB-1', gen_random_uuid(), repeat('c', 64))`, fxJobOrgID, fxJobSource)
+	_ = outsideErr
+	select {
+	case err := <-done:
+		if !errors.Is(err, load.ErrBatchContended) {
+			t.Fatalf("the deadlocked batch answered %v, want the ErrBatchContended sentinel", err)
+		}
+	case <-time.After(60 * time.Second):
+		t.Fatalf("the deadlock never resolved")
+	}
+	_ = outside.Rollback(ctx)
+	var batches, names, rows int
+	if err := e.pool.QueryRow(ctx, `
+		SELECT (SELECT count(*) FROM load_batch WHERE org_id = $1::uuid AND batch_id = 'b-j-dl'),
+		       (SELECT count(*) FROM load_key_registry WHERE org_id = $1::uuid AND kind = 'job'),
+		       (SELECT count(*) FROM projects WHERE name LIKE 'Fixture Job %')`, fxJobOrgID).Scan(&batches, &names, &rows); err != nil {
+		t.Fatalf("remainder read: %v", err)
+	}
+	if batches != 0 || names != 0 || rows != 0 {
+		t.Fatalf("the victim left %d batch rows, %d names, %d job rows: a contended batch rolls back whole", batches, names, rows)
+	}
+	r, err := e.door.UpsertBatch(ctx, batch)
+	if err != nil {
+		t.Fatalf("resubmission: %v", err)
+	}
+	for _, o := range r.Items {
+		if o.Status != load.OutcomeCreated {
+			t.Fatalf("the resubmission answered %+v, want created", o)
 		}
 	}
 }
