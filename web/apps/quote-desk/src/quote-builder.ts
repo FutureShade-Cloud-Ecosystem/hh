@@ -380,9 +380,13 @@ export class QdQuoteBuilder extends LitElement {
 
   // ── the fan-out and the open events ────────────────────────────────────────
 
-  /** An edit anywhere reaches every mounted panel and the list itself. */
-  private readonly onQuoteChanged = (): void => {
-    this.reloadDetailPanels();
+  /**
+   * An edit anywhere reaches the screens that show it. The announcement names the quote it belongs to by its own id
+   * (a late answer names the quote the write was made on, not the one that happens to be open), so the list re-reads
+   * whichever row changed, and the open views re-read only when the change is the quote they are showing.
+   */
+  private readonly onQuoteChanged = (event: CustomEvent<{ quoteId: string }>): void => {
+    if (event.detail.quoteId === this.selected) this.reloadDetailPanels();
     void this.loadList(true);
   };
 

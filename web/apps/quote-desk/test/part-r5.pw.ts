@@ -130,4 +130,33 @@ test("P2-2 leaving through New Quote: a link minted while its panel was gone is 
   await expect(page.getByTestId("qe-notice")).toContainText("A share link was made on this quote while you were away");
 });
 
+async function announce(page: Page, detail: Record<string, string>): Promise<void> {
+  await page.locator("qd-quote-workarea").evaluate((el, d) => {
+    el.shadowRoot?.dispatchEvent(new CustomEvent("quote-changed", { detail: d, bubbles: true, composed: true }));
+  }, detail);
+}
+
+test("P3-3 the builder reads the changed quote's own id: another quote's change re-reads the list, not the open quote", async ({ page }) => {
+  await signIn(page, "Sales manager");
+  await open(page, "Q-1001");
+  await quiet(page);
+  const openQuoteReads: string[] = [];
+  let listReads = 0;
+  page.on("request", (request) => {
+    if (/\/api\/v1\/quotes\/q-1001/.test(request.url())) openQuoteReads.push(request.url());
+    if (request.method() === "GET" && /\/api\/v1\/quotes(\?|$)/.test(request.url())) listReads += 1;
+  });
+  // The announcement names another quote; the decoy field carries the open one, so a builder reading any other
+  // field, or none and reloading every view regardless, would re-read the open quote's screens.
+  await announce(page, { quoteId: "q-1003", ref: "q-1001" });
+  await settle(page);
+  expect(openQuoteReads).toEqual([]);
+  expect(listReads).toBeGreaterThan(0);
+  // An announcement naming the open quote does re-read its screens, so the id is what decides.
+  await announce(page, { quoteId: "q-1001", ref: "q-1003" });
+  await settle(page);
+  expect(openQuoteReads.length).toBeGreaterThan(0);
+});
+
+
 
