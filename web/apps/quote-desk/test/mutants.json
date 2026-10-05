@@ -256,7 +256,7 @@
     "id": "ep-late-refusal-shown",
     "file": "src/edit-panel.ts",
     "find": "    if (now.stale || now.id !== ctx.id) return;\n",
-    "replace": "    if (late !== undefined) return;\n",
+    "replace": "    if (now !== undefined) return;\n",
     "test": "P3 a floor refusal answered after the person returned"
   },
   {
