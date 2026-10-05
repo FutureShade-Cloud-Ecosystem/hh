@@ -18,7 +18,7 @@
 // The legs take their database from DATABASE_URL on the command and skip without it. They never fall
 // back to a default database:
 //
-//	DATABASE_URL='postgres://hardscape:hardscape@127.0.0.1:5672/hh_r12_ar?sslmode=disable' \
+//	DATABASE_URL='postgres://hardscape:hardscape@127.0.0.1:<port>/<database>?sslmode=disable' \
 //	  go test -tags=integration ./internal/messagingprovider/ -run TestIntegration_ARSweep_ConsentWindow -count=1 -v -p 1
 package messagingprovider
 
