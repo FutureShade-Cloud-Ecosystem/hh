@@ -309,7 +309,7 @@ func (r *Repository) Convert(ctx context.Context, customerID, quoteID string, op
 		// The payment was validated against a total the lock no longer sees: refuse, write nothing.
 		return ConvertResult{}, &OrderPaymentConflictError{Msg: "the quote's total changed while the payment was being taken; read it again"}
 	}
-	if err := r.checkCredit(ctx, facts, !opt.paidAtCounter); err != nil {
+	if err := r.checkCredit(ctx, tx, facts, !opt.paidAtCounter); err != nil {
 		return ConvertResult{}, err
 	}
 
