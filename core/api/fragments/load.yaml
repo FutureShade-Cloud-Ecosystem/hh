@@ -710,8 +710,11 @@ paths:
         and the writer refuses half a pair before the write; a factor at
         a fifth decimal place or beyond refuses naming the field, never
         rounded; a unit the catalogue does not carry refuses naming the
-        field. The table carries no cost column, so the door lands none.
-        A reload whose record names no pair clears the pair: the record
+        field. The table carries no cost column: a record field naming a
+        cost is refused naming the field, never dropped, so no caller is
+        left believing a cost landed. A negative pack factor refuses its
+        own item before any write stands. A reload whose record names no
+        pair clears the pair: the record
         is the whole truth. The table carries no org, sequence or
         idempotency column (0213's lists name it on none), so the org
         rides through the supplier row the supplier door stamped; a
