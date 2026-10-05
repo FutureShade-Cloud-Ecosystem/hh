@@ -5,9 +5,12 @@
 // a method that is itself called from such a position, is DEFERRED: it can outlive the person who asked for it and the
 // quote it was asked on. A deferred write is allowed one way only, as the closure handed to deferredSend
 // (src/deferred-send.ts), which captured the session and the quote when the person acted and checks them at send time.
-// The capture belongs at the person's action too: a captureSend written inside the sender's own call is evaluated at
-// send time, so every check compares now with now, and a row sent that way is a violation like any other. Anything
-// else deferred is a violation. test/write-census.test.mjs holds the src to it.
+// The capture belongs at the person's action too: one taken inside the sender's own call, or taken by a local of the
+// send's own function whose initializer sits at a deferred position (a then() callback, the store's queue turn), is
+// evaluated at send time, so every check compares now with now, and a row sent that way is a violation like any
+// other; the same holds for a capture helper written where the send is. A capture named outside the send's own
+// function, or at its entry before any await, was taken when the person acted. Anything else deferred is a violation.
+// test/write-census.test.mjs holds the src to it.
 import { join, relative } from "node:path";
 import ts from "typescript";
 import { appDir, makeProgram, symbolOf, walk } from "./await-census.mjs";
@@ -221,6 +224,74 @@ function captureInsideSender(node, checker) {
 }
 
 /**
+ * True when the call brings back the sender's capture: captureSend itself, or a method or function whose body returns
+ * one (a capture helper such as the work area's captureFor). `seen` stops a cycle of helpers returning each other's
+ * answer.
+ */
+function captureTakingCall(call, checker, seen = new Set()) {
+  const decl = calleeDeclaration(checker, call);
+  if (decl === undefined || decl.name === undefined) return false;
+  if (decl.name.getText() === CAPTURE && decl.getSourceFile().fileName.endsWith("/deferred-send.ts")) return true;
+  if (!isFunctionLike(decl) || decl.body === undefined) return false;
+  const key = `${decl.getSourceFile().fileName}:${decl.pos}`;
+  if (seen.has(key)) return false;
+  seen.add(key);
+  let found = false;
+  (function step(n) {
+    if (found) return;
+    if (ts.isReturnStatement(n) && n.expression !== undefined) {
+      let value = n.expression;
+      while (ts.isParenthesizedExpression(value)) value = value.expression;
+      if (ts.isCallExpression(value) && captureTakingCall(value, checker, seen)) found = true;
+    }
+    ts.forEachChild(n, step);
+  })(decl.body);
+  return found;
+}
+
+/** True when the expression is, or hands back through ??, a call that takes the capture where it runs. */
+function captureCallInArgument(value, checker) {
+  while (ts.isParenthesizedExpression(value)) value = value.expression;
+  if (ts.isBinaryExpression(value) && value.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken) {
+    return captureCallInArgument(value.left, checker) || captureCallInArgument(value.right, checker);
+  }
+  return ts.isCallExpression(value) && captureTakingCall(value, checker);
+}
+
+/** True when the expression is, or hands back through ?? or ?:, a value some call of it takes where it runs. */
+function takesCapture(value, checker) {
+  while (ts.isParenthesizedExpression(value)) value = value.expression;
+  if (ts.isBinaryExpression(value) && value.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken) {
+    return takesCapture(value.left, checker) || takesCapture(value.right, checker);
+  }
+  if (ts.isConditionalExpression(value)) return takesCapture(value.whenTrue, checker) || takesCapture(value.whenFalse, checker);
+  return ts.isCallExpression(value) && captureTakingCall(value, checker);
+}
+
+/**
+ * True when the capture the send is handed is itself taken when the send runs: a capture taking call written where
+ * the send is (a captureSend beside the closure, or a capture helper called there), or a local of the send's own
+ * function whose initializer takes it at a deferred position there (a then() callback, the store's queue turn). A
+ * capture named in another function and handed in, or named at its own function's entry before any await, was taken
+ * when the person acted: that is the sender's whole point, and it stays allowed.
+ */
+function captureTakenAtSend(send, checker, env) {
+  const argument = send.arguments[0];
+  if (argument === undefined) return false;
+  if (captureCallInArgument(argument, checker)) return true;
+  let value = argument;
+  while (ts.isParenthesizedExpression(value)) value = value.expression;
+  if (!ts.isIdentifier(value)) return false;
+  const symbol = checker.getSymbolAtLocation(value);
+  const decl = symbol?.declarations?.find((d) => ts.isVariableDeclaration(d) && d.initializer !== undefined);
+  // A parameter or a field was filled by the caller, outside this function: the census cannot see where, and the
+  // committed senders are built that way, so the walk stops at the function's own locals.
+  if (decl === undefined) return false;
+  if (enclosingFunction(decl) !== enclosingFunction(send)) return false;
+  return takesCapture(decl.initializer, checker) && deferredReason(decl.initializer, env) !== null;
+}
+
+/**
  * Every write of the given source files: file, symbol, client method, HTTP verb, line, and how it is sent: immediate,
  * sender (deferred, through deferredSend) or VIOLATION (deferred any other way, with the reason).
  */
@@ -252,9 +323,10 @@ export function writeCensus(program, sourceFiles) {
           if (way === "sender") {
             const send = senderCallAbove(n, checker);
             const takenInside = send !== undefined && captures.some((cs) => captureInsideSender(cs, checker) && cs.getStart() >= send.getStart() && cs.getEnd() <= send.getEnd());
-            if (takenInside) {
+            const takenAtSend = send !== undefined && captureTakenAtSend(send, checker, env);
+            if (takenInside || takenAtSend) {
               way = "VIOLATION";
-              why = "capture taken inside the sender closure";
+              why = "capture taken inside the sender closure or at a deferred position";
             }
           }
           rows.push({

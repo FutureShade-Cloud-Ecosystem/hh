@@ -1380,5 +1380,23 @@
     "find": "    // be sent once this session has ended, under whoever signs in next.\n    this.store?.close();",
     "replace": "    // be sent once this session has ended, under whoever signs in next.",
     "test": "sign out flush: the layout store is stopped when the flush has run, whatever the page does next"
+  },
+  {
+    "id": "sender-capture-hoisted",
+    "file": "src/workspace-store.ts",
+    "find": "    const capture = this.#changed ?? captureSend(this.#now);\n    this.#changed = null;\n    return this.#enqueue(\"save\", () => this.#sendRow(capture));\n  }\n\n  /** The row as it stands, sent whole, under the session it was asked in or not at all. */\n  async #sendRow(capture: SendCapture): Promise<void> {",
+    "replace": "    this.#changed = null;\n    return this.#enqueue(\"save\", () => this.#sendRow());\n  }\n\n  /** The row as it stands, sent whole, under the session it was asked in or not at all. */\n  async #sendRow(): Promise<void> {\n    const capture = this.#changed ?? captureSend(this.#now);",
+    "test": "no write of the src is sent from a deferred position",
+    "runner": "node",
+    "testFile": "test/write-census.test.mjs"
+  },
+  {
+    "id": "sender-capture-inline-helper",
+    "file": "src/quote-workarea.ts",
+    "find": "    const capture = this.captureFor(ctx);\n    // One send at a time: a second press while the first is out would mint a second live link and start the cadence twice.\n    const release = this.holdBusy(ctx);\n    this.sendOpen = false;\n    this.error = \"\";\n    this.notice = \"\";\n    const channels = sendChannels(this.#sendPolicy()).filter((c) => this.sendPick[c]);\n    try {\n      // An edit still waiting on its save goes first: the quote the customer is sent holds what was typed.\n      if (this.termsPendingCount() > 0) {\n        await this.putTermsNow();\n        if (ctx.stale) return;\n        if (this.error !== \"\") return;\n      }\n      await this.ensureLink(ctx, capture); // the core mints a link, moves DRAFT to SENT and starts the cadence; it sends no email (it throws once the quote was left)\n      let smsOk = false;\n      let smsWhy = \"\";\n      const smsChosen = channels.includes(\"SMS\");\n      if (smsChosen) {\n        const sms = await ctx.guarded(deferredSend(capture, () => client.shareBySMS(ctx.id)), this.lateWrite(ctx, \"send the text\"));",
+    "replace": "    // One send at a time: a second press while the first is out would mint a second live link and start the cadence twice.\n    const release = this.holdBusy(ctx);\n    this.sendOpen = false;\n    this.error = \"\";\n    this.notice = \"\";\n    const channels = sendChannels(this.#sendPolicy()).filter((c) => this.sendPick[c]);\n    try {\n      // An edit still waiting on its save goes first: the quote the customer is sent holds what was typed.\n      if (this.termsPendingCount() > 0) {\n        await this.putTermsNow();\n        if (ctx.stale) return;\n        if (this.error !== \"\") return;\n      }\n      await this.ensureLink(ctx, this.captureFor(ctx)); // the core mints a link, moves DRAFT to SENT and starts the cadence; it sends no email (it throws once the quote was left)\n      let smsOk = false;\n      let smsWhy = \"\";\n      const smsChosen = channels.includes(\"SMS\");\n      if (smsChosen) {\n        const sms = await ctx.guarded(deferredSend(this.captureFor(ctx), () => client.shareBySMS(ctx.id)), this.lateWrite(ctx, \"send the text\"));",
+    "test": "no write of the src is sent from a deferred position",
+    "runner": "node",
+    "testFile": "test/write-census.test.mjs"
   }
 ]

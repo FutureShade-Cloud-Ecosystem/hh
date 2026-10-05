@@ -13,7 +13,7 @@ import { srcWriteCensus, writeCensusOfText, writeMethods } from "./write-census.
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-const HEAD = 'import type { QdClient } from "./qd-client.js";\nimport { captureSend, deferredSend } from "./deferred-send.js";\nimport type { SendNow } from "./deferred-send.js";\n';
+const HEAD = 'import type { QdClient } from "./qd-client.js";\nimport { captureSend, deferredSend } from "./deferred-send.js";\nimport type { SendCapture, SendNow } from "./deferred-send.js";\n';
 
 test("no write of the src is sent from a deferred position except through the sender", () => {
   const violations = srcWriteCensus().filter((row) => row.way === "VIOLATION");
@@ -98,6 +98,32 @@ test("the write census rules a capture taken inside the sender closure a violati
   assert.notEqual(row.way, "sender");
   assert.equal(row.way, "VIOLATION");
   assert.match(row.reason, /capture taken inside the sender closure/);
+});
+
+// Two shapes a tidy refactor could introduce, one step outside the send's own text (review PR 121 round 8, P2-1):
+// the capture named as a local of the deferred position itself (a then() callback, or the store's queue turn), so it
+// is taken when the position runs; and the capture helper called where the send is, after the awaits. Both are ruled
+// senders by a span check alone, and both take the capture at send time.
+const NEW_HOISTED_LOCAL = `${HEAD}class W { client: QdClient | null = null; private before: Promise<unknown> = Promise.resolve(); now = (): SendNow => ({ client: this.client, attached: true, quote: null }); putTerms(): void { const client = this.client; if (client === null) return; this.before.then(() => { const capture = captureSend(this.now); return deferredSend(capture, () => client.putTerms("q", {} as never)); }); } }`;
+
+const NEW_INLINE_HELPER = `${HEAD}class W { client: QdClient | null = null; now = (): SendNow => ({ client: this.client, attached: true, quote: null }); captureFor(_: unknown): SendCapture { return captureSend(this.now); } share(): void { deferredSend(this.captureFor(null), () => this.client.shareBySMS("q", {} as never)); } }`;
+
+test("the write census rules a capture hoisted into the deferred position a violation", () => {
+  const rows = writeCensusOfText(NEW_HOISTED_LOCAL);
+  const row = rows.find((candidate) => candidate.call === "putTerms");
+  assert.ok(row !== undefined, `the census found no write in the fixture: ${JSON.stringify(rows)}`);
+  assert.notEqual(row.way, "sender");
+  assert.equal(row.way, "VIOLATION");
+  assert.match(row.reason, /capture taken inside the sender closure or at a deferred position/);
+});
+
+test("the write census rules a capture helper called at the send a violation", () => {
+  const rows = writeCensusOfText(NEW_INLINE_HELPER);
+  const row = rows.find((candidate) => candidate.call === "shareBySMS");
+  assert.ok(row !== undefined, `the census found no write in the fixture: ${JSON.stringify(rows)}`);
+  assert.notEqual(row.way, "sender");
+  assert.equal(row.way, "VIOLATION");
+  assert.match(row.reason, /capture taken inside the sender closure or at a deferred position/);
 });
 
 const ALLOWED = [
