@@ -67,9 +67,19 @@ var (
 	errBadBind      = errors.New("payment: BindTx needs the sale's transaction, the attempt id and the payment id")
 )
 
-// unresolvedForGuard are the statuses that block a new claim for the same till session and amount:
+// unresolvedForGuard are the statuses that block a NEW sale key on one till session and amount:
 // money may be held, or an outcome is not known. It matches idx_cca_till_guard's predicate.
 const unresolvedForGuard = `'CHARGING','CAPTURED','UNKNOWN','VOIDING','VOID_UNKNOWN','VOID_DECLINED'`
+
+// sameSaleBlockers are the statuses that block a new leg key of the SAME sale (round 1 review,
+// P2-3). A ring stops at the first leg that ends anything else, so a live sibling leg is only ever
+// CHARGING or CAPTURED and never counts against the next leg of its own sale. A same sale row in
+// UNKNOWN, VOIDING, VOID_UNKNOWN or VOID_DECLINED means an earlier leg of THIS ring lost its
+// answer or is being reversed, and the leg key being claimed is a re-mint (the client keeps its
+// key only while the tender shape holds, pos/split_tender.go), so letting it through would put a
+// second charge in flight while the first one's outcome is open. Packet B sees this as the same
+// 409 card_charge_unresolved_on_till the different-key arm answers, for a sale's own re-shape.
+const sameSaleBlockers = `'UNKNOWN','VOIDING','VOID_UNKNOWN','VOID_DECLINED'`
 
 // needsAPerson are the statuses a manager has to close: the answer, or the reversal's answer, was
 // lost or refused. The in-flight statuses (CHARGING, CAPTURED, VOIDING) belong to the sweep until
@@ -135,9 +145,11 @@ func scanAttempt(row pgx.Row) (Attempt, error) {
 
 // Claim writes the attempt row and commits it before any processor call. created is true for the
 // caller that inserted it; a second claim of the same leg key returns the existing row with created
-// false and calls nothing. ErrTillUnresolved refuses a NEW claim while the same till session holds an
-// unresolved attempt for the same amount under a DIFFERENT sale key (legs of one sale key never
-// count against each other).
+// false and calls nothing. ErrTillUnresolved refuses a NEW claim while the same till session holds
+// an unresolved attempt for the same amount: under a different sale key every unresolved status
+// counts, and under the claim's own sale key only the statuses past an answer count (UNKNOWN,
+// VOIDING, VOID_UNKNOWN, VOID_DECLINED, the sameSaleBlockers comment has the shape reasoning).
+// In-flight siblings of one sale key never count against each other.
 //
 // Race-free under concurrency, with no read then write. The unique leg_key is the arbiter for one
 // leg key: ON CONFLICT DO NOTHING lets exactly one insert land. The till guard is a guarded insert
@@ -171,8 +183,9 @@ func (s *Store) Claim(ctx context.Context, in ClaimInput) (Attempt, bool, error)
 		SELECT $1, $2::uuid, $3, $4::bigint, $5::uuid, $6::uuid, NULLIF($7, '')::uuid, $8, $9, 'CHARGING', NULLIF($10, '')::uuid
 		WHERE NOT EXISTS (
 		  SELECT 1 FROM card_charge_attempts g
-		   WHERE g.till_session_id = $6::uuid AND g.amount_cents = $4::bigint AND g.sale_key <> $2::uuid
-		     AND g.status IN (`+unresolvedForGuard+`))
+		   WHERE g.till_session_id = $6::uuid AND g.amount_cents = $4::bigint
+		     AND ((g.sale_key <> $2::uuid AND g.status IN (`+unresolvedForGuard+`))
+		       OR (g.sale_key =  $2::uuid AND g.status IN (`+sameSaleBlockers+`))))
 		ON CONFLICT (leg_key) DO NOTHING
 		RETURNING `+attemptColumns,
 		in.LegKey, in.SaleKey, in.LegSeq, in.AmountCents, in.BranchID, in.TillSessionID, in.CustomerID,
