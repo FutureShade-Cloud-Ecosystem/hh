@@ -251,6 +251,11 @@ type Write struct {
 	DerivedKey string
 	Record     map[string]any
 	Refs       []RefMatch
+	// Note lets a writer that landed its row but left one field out say
+	// so: the frame carries the note's code, field and detail on the
+	// item's created or updated outcome. A note names a field and a
+	// reason, never a value. Nil on a call that cannot carry one.
+	Note func(Refusal)
 }
 
 // Writer is the owning module's write path for one loaded table, handed

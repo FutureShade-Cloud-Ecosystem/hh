@@ -26,8 +26,13 @@ const (
 	KindUser     = "user"
 	KindCategory = "category"
 	KindSupplier = "supplier"
-	KindUnit     = "unit"
-	KindUnitSet  = "unit_set"
+	// The unit catalogue door and the product unit set door (HH-LOAD-1 LD-3).
+	KindUnit    = "unit"
+	KindUnitSet = "unit_set"
+	// The customer, contact and job doors' kinds (HH-LOAD-1 LD-6).
+	KindCustomer = "customer"
+	KindContact  = "contact"
+	KindJob      = "job"
 )
 
 // The writer level refusal codes the maps carry. A refusal names the
