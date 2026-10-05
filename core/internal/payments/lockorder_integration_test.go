@@ -737,3 +737,104 @@ func TestIntegration_LockOrder_MultiInvoiceReversePaymentBesideNSF(t *testing.T)
 		loBothAnswered(t, "reversal", loAnswer(t, "reversal", revErr), "bounces", bounces)
 	})
 }
+
+// A multi-invoice NSF bounce beside a settle that names the same invoices in the OTHER order. The
+// bounce walks its invoices in ascending id order; the settle locks its allocations in the order the
+// caller names them, which nothing pins to ascending. Two writers taking the same rows in opposite
+// orders is a deadlock waiting for its interleaving, so the leg builds that interleaving exactly,
+// with one helper and no grant-timing window: the helper holds the lower id row, the bounce queues
+// on it, and only then does the settle run, taking the higher id row freely (nothing competes for
+// it yet) and queueing for the lower BEHIND the bounce. When the helper steps aside the bounce is
+// granted the lower row and asks for the higher, which the settle now holds, while the settle asks
+// for the lower, which the bounce holds: a cycle with both sides provably parked. The payments
+// counter row is what removes the interleaving: once the bounce takes it before any invoice row,
+// the settle queues at the counter instead of ever holding the higher row, and the two never
+// overlap their rows.
+func TestIntegration_LockOrder_MultiInvoiceNSFBesideSettleOtherOrder(t *testing.T) {
+	loPoolSizes(t, func(t *testing.T, size int32) {
+		r := newLORig(t, size)
+		low, high := r.invoice("Z1", 1_000_000), r.invoice("Z2", 1_000_000)
+		if low > high {
+			low, high = high, low
+		}
+		p, err := r.repo.Pay(context.Background(), r.custID, "CHEQUE", "",
+			[]payments.Allocation{{InvoiceID: low, AmountCents: 5_000}, {InvoiceID: high, AmountCents: 5_000}})
+		if err != nil {
+			t.Fatalf("seed payment: %v", err)
+		}
+		ctx := context.Background()
+		holdLow, err := r.pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := holdLow.Exec(ctx, `SELECT 1 FROM invoices WHERE id = $1::uuid FOR UPDATE`, low); err != nil {
+			t.Fatal(err)
+		}
+		nsfErr := make(chan error, 1)
+		go func() {
+			ctx := staffcontext.ContextWithStaff(context.Background(), staffcontext.StaffContext{
+				UserID: r.userID, Tier: staffcontext.TierLeadership, Scope: staffcontext.ScopeGlobal, Status: "ACTIVE"})
+			_, err := till.NewService(till.NewRepository(r.pool)).MarkNSF(ctx, till.NSFInput{PaymentID: p.ID, Reason: "lock order leg"})
+			nsfErr <- err
+		}()
+		// The barriers name the statements, not just any lock waiter: the bounce's invoice lock and
+		// the settle's own locks are plain SELECTs whose text pg_stat_activity shows in full, and a
+		// generic waiter count could fire on an unrelated session before a side has truly queued.
+		r.waitSessions("bounce queued on the lower id row", 1,
+			`wait_event_type = 'Lock' AND query LIKE '%SELECT 1 FROM invoices%'`)
+		setErr := make(chan error, 1)
+		go func() {
+			_, err := r.repo.Pay(context.Background(), r.custID, "CARD", fmt.Sprintf("gw-lo-%d", time.Now().UnixNano()),
+				[]payments.Allocation{{InvoiceID: high, AmountCents: 500}, {InvoiceID: low, AmountCents: 500}})
+			setErr <- err
+		}()
+		// Before the fix the settle takes the higher row and queues on the lower, behind the bounce;
+		// after it the bounce holds the payments counter first and the settle queues there instead,
+		// never touching the higher row. Either shape proves each side is committed before the
+		// helper steps aside.
+		r.waitSessions("settle queued on its own next lock", 1,
+			`wait_event_type = 'Lock' AND (query LIKE '%balance_cents%' OR query LIKE '%scope_sequences%')`)
+		_ = holdLow.Rollback(ctx)
+		loBothAnswered(t, "nsf", loAnswer(t, "nsf", nsfErr), "settle", loAnswer(t, "settle", setErr))
+	})
+}
+
+// A bounce beside the POS return's account credit on the same invoice, with the bounce parked inside
+// its invoices counter upsert by a BEFORE UPDATE trigger: it sleeps holding the counter row and
+// nothing its statement takes later. On the main shape the bounce's re-open statement was its first
+// touch of the invoice, so this window held the counter with no row at all, and the credit, taking
+// the row FOR UPDATE on its way to the counter, closed a cycle. The row locks taken before the
+// re-open keep the parked bounce holding every row it will need: the credit queues and both answer.
+func TestIntegration_LockOrder_NSFBesidePOSAccountCreditBeforeWindow(t *testing.T) {
+	loPoolSizes(t, func(t *testing.T, size int32) {
+		r := newLORig(t, size)
+		inv := r.invoice("Y1", 1_000_000)
+		p := r.payOnce(inv, 10_000)
+		r.armSeqBeforeWindow("invoices")
+		nsfErr := make(chan error, 1)
+		go func() {
+			ctx := staffcontext.ContextWithStaff(context.Background(), staffcontext.StaffContext{
+				UserID: r.userID, Tier: staffcontext.TierLeadership, Scope: staffcontext.ScopeGlobal, Status: "ACTIVE"})
+			_, err := till.NewService(till.NewRepository(r.pool)).MarkNSF(ctx, till.NSFInput{PaymentID: p.ID, Reason: "lock order leg"})
+			nsfErr <- err
+		}()
+		r.waitSessions("bounce parked inside its invoices counter upsert", 1, condSleepingInSeq)
+		credErr := make(chan error, 1)
+		go func() {
+			ctx := context.Background()
+			tx, err := r.pool.Begin(ctx)
+			if err != nil {
+				credErr <- err
+				return
+			}
+			defer func() { _ = tx.Rollback(ctx) }()
+			if _, err := pos.NewRepository(r.pool).ApplyCreditToInvoice(ctx, tx, inv, 300); err != nil {
+				credErr <- err
+				return
+			}
+			credErr <- tx.Commit(ctx)
+		}()
+		r.waitSessions("credit queued", 1, condLockWaiter)
+		loBothAnswered(t, "nsf", loAnswer(t, "nsf", nsfErr), "pos credit", loAnswer(t, "pos credit", credErr))
+	})
+}
