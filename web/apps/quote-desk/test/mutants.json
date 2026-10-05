@@ -262,7 +262,7 @@
   {
     "id": "ep-load-keeps-other-drafts",
     "file": "src/edit-panel.ts",
-    "find": ".filter(([lineNo]) => Number(lineNo) !== resetLine));",
+    "find": ".filter(([lineNo]) => Number(lineNo) !== resetLine && present.has(Number(lineNo))));",
     "replace": ".filter(() => false));",
     "test": "P3 saving one line keeps the unsaved figures"
   },
@@ -542,8 +542,8 @@
   {
     "id": "ep-write-reload",
     "file": "src/edit-panel.ts",
-    "find": "    await this.load(resetLine);\n    if (ctx.stale) return \"moved\";",
-    "replace": "    await this.load(resetLine);",
+    "find": "    await this.load(resetLine, resetExpiry);\n    if (ctx.stale) return \"moved\";",
+    "replace": "    await this.load(resetLine, resetExpiry);",
     "test": "guard edit write reload:"
   },
   {
@@ -1087,5 +1087,26 @@
     "find": "      this.error = say(late);",
     "replace": "      void say;",
     "test": "B P2-1 a follow-ups stop refused after leaving and returning"
+  },
+  {
+    "id": "ep-load-drops-missing-drafts",
+    "file": "src/edit-panel.ts",
+    "find": " && present.has(Number(lineNo))",
+    "replace": "",
+    "test": "P3 a draft typed on a line that is gone"
+  },
+  {
+    "id": "ep-expiry-draft-kept",
+    "file": "src/edit-panel.ts",
+    "find": "expiryUnsaved && !resetExpiry ? this.expiryDraft : ",
+    "replace": "",
+    "test": "P3 an unsaved expiry survives a re-read"
+  },
+  {
+    "id": "ep-expiry-save-resets",
+    "file": "src/edit-panel.ts",
+    "find": "undefined, 0, true);",
+    "replace": "undefined, 0, false);",
+    "test": "P3 a refused expiry save returns the box"
   }
 ]

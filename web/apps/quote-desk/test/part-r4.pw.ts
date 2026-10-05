@@ -450,3 +450,45 @@ test("B P2-1 work area: a quantity change refused after leaving and returning is
   await held.release();
   await expect(page.getByTestId("qb-error")).not.toHaveText("");
 });
+
+test("P3 a draft typed on a line that is gone is dropped, so it does not land on the new line that takes its number", async ({ page }) => {
+  await signIn(page, "Sales manager");
+  await openQuote(page, "Q-1001");
+  const lines = page.locator("qd-quote-edit").getByTestId("qe-line");
+  await expect(lines).toHaveCount(2);
+  await lines.nth(1).locator('[data-field="qty"]').fill("9");
+  await page.getByTestId("qb-line-trash").nth(1).click();
+  await expect(page.getByTestId("qb-line")).toHaveCount(1);
+  await expect(lines).toHaveCount(1);
+  const scan = page.getByTestId("pos-scan-input");
+  await scan.fill("PSN-100");
+  await scan.press("Enter");
+  await expect(page.getByTestId("qb-line")).toHaveCount(2);
+  await expect(lines).toHaveCount(2);
+  await expect(lines.nth(1).locator('[data-field="qty"]')).toHaveValue("1");
+});
+
+test("P3 an unsaved expiry survives a re-read caused by another save", async ({ page }) => {
+  await signIn(page, "Sales manager");
+  await openQuote(page, "Q-1001");
+  const panel = page.locator("qd-quote-edit");
+  await panel.locator('[data-field="expiry"]').fill("2031-06-15");
+  const first = panel.getByTestId("qe-line").first();
+  await first.locator('[data-field="qty"]').fill("6");
+  await first.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("qe-notice")).toHaveText("Saved.");
+  await expect(panel.locator('[data-field="expiry"]')).toHaveValue("2031-06-15");
+});
+
+test("P3 a refused expiry save returns the box to the server's date", async ({ page }) => {
+  await signIn(page, "Sales manager");
+  await openQuote(page, "Q-1001");
+  const panel = page.locator("qd-quote-edit");
+  const box = panel.locator('[data-field="expiry"]');
+  const served = await box.inputValue();
+  await hold(page, /\/quotes\/q-1001$/, { method: "PATCH", refuse: { status: 500, error: "quote: the expiry store is down" } }).then((held) => held.open());
+  await box.fill("2031-06-15");
+  await panel.getByRole("button", { name: "Save expiry" }).click();
+  await expect(page.getByTestId("qe-error")).not.toHaveText("");
+  await expect(box).toHaveValue(served);
+});

@@ -163,7 +163,7 @@ export class QdQuoteEdit extends PanelBase {
    * open now, and an older read of the same quote never lands over a newer one
    * (the context numbers the reads). A save can only be made from a view of the open quote.
    */
-  private async load(resetLine = 0): Promise<void> {
+  private async load(resetLine = 0, resetExpiry = false): Promise<void> {
     const client = this.client;
     if (client === null || this.quoteId === "") {
       this.view = null;
@@ -179,16 +179,21 @@ export class QdQuoteEdit extends PanelBase {
       this.view = null;
       return;
     }
+    // An expiry typed and not saved is the person's: it differs from the expiry the last read showed.
+    const expiryUnsaved = this.expiryDraft !== (this.view?.valid_until ?? "");
     this.view = result.value;
     // The line a save was for returns to the server's truth, so a refused edit never leaves a stale value sitting
     // in its box looking saved. The figures typed on the other lines are the person's and stay, as does the box
-    // under their hands: a re-read must not wipe what is being typed.
+    // under their hands: a re-read must not wipe what is being typed. A figure typed for a line number the read no
+    // longer has is dropped: the core numbers a new line after the highest, so it would land on a different line.
     const typing = this.typingField();
+    const present = new Set(result.value.lines.map((l) => l.line_no));
     const keep = (drafts: Record<number, string>): Record<number, string> =>
-      Object.fromEntries(Object.entries(drafts).filter(([lineNo]) => Number(lineNo) !== resetLine));
+      Object.fromEntries(Object.entries(drafts).filter(([lineNo]) => Number(lineNo) !== resetLine && present.has(Number(lineNo))));
     this.qtyDraft = { ...keep(this.qtyDraft), ...(typing !== null && typing.field === "qty" ? { [typing.line]: typing.value } : {}) };
     this.discDraft = { ...keep(this.discDraft), ...(typing !== null && typing.field === "disc" ? { [typing.line]: typing.value } : {}) };
-    this.expiryDraft = typing !== null && typing.field === "expiry" ? typing.value : (result.value.valid_until ?? "");
+    this.expiryDraft =
+      typing !== null && typing.field === "expiry" ? typing.value : expiryUnsaved && !resetExpiry ? this.expiryDraft : (result.value.valid_until ?? "");
     await Promise.all([this.loadDiscounts(seq, ctx), this.loadLinks(seq, ctx)]);
   }
 
@@ -249,6 +254,7 @@ export class QdQuoteEdit extends PanelBase {
     action: (quoteId: string) => Promise<Result<unknown>>,
     floor?: { lineNo: number; discPct: number },
     resetLine = 0,
+    resetExpiry = false,
   ): Promise<Wrote> {
     if (this.busy || this.client === null) return "refused";
     this.busy = true;
@@ -267,12 +273,12 @@ export class QdQuoteEdit extends PanelBase {
       } else {
         this.error = this.refuse(result, what);
       }
-      await this.load(resetLine);
+      await this.load(resetLine, resetExpiry);
       return "refused";
     }
     // "Saved." is said once the re-read has landed: the boxes and each line's baseline are then the saved
     // figures, so the next edit made on seeing it is measured against the truth, not the figures before the save.
-    await this.load(resetLine);
+    await this.load(resetLine, resetExpiry);
     if (ctx.stale) return "moved";
     this.notice = "Saved.";
     this.announceChanged();
@@ -371,7 +377,7 @@ export class QdQuoteEdit extends PanelBase {
       return;
     }
     const when = this.expiryDraft.trim();
-    await this.write(this.ctx, "change the expiry date", (id) => client.setValidUntil(id, when));
+    await this.write(this.ctx, "change the expiry date", (id) => client.setValidUntil(id, when), undefined, 0, true);
   }
 
   private async addLine(): Promise<void> {
