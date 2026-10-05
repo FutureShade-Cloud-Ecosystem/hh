@@ -49,7 +49,7 @@ import (
 //   - ReversePayment: the payment row, then steps 2 (its reversing insert and the original's stamp)
 //     and 3 (its allocated invoice rows, taken explicitly FOR NO KEY UPDATE in ascending id order
 //     before the first counter draw; the contra allocation's foreign key share lock covers only the
-//     invoice the loop has reached), 4. The payment row is no other writer's first lock except NSF's.
+//     invoice the loop has reached), 4. Among writers that take a counter or an invoice, the payment row is first only for NSF and the reversal.
 //   - the POS ring: stock rows, then step 2 (the tender's payment insert), then step 4 (a new
 //     invoice). It never touches an existing invoice.
 //   - the POS return with a cash or card refund: the per-sale advisory lock and the returned order

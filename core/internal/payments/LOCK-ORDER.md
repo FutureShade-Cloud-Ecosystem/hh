@@ -64,7 +64,7 @@ conflict; the share was never something these writers needed to hold back.
 | Register `RecordPayment` (through the counter `RecordReceipt`) | payments counter (not advancing), invoice rows (`FOR NO KEY UPDATE`, the allocation order), payment insert (payments feed +1), invoice balance moves (invoices counter +1 each) | yes |
 | Counter `RecordReceipt` | the same, in `lockAndTotal` | yes |
 | `PayWithStamps`, `PayWithIntent`, `Pay` (portal and card settle) | the same, in `lockAndTotal` | yes |
-| `ReversePayment` | payment row, payments counter (the reversing insert and the stamp, feed +1 each), every allocated invoice row `FOR NO KEY UPDATE` ascending, contra allocations, invoice re-opens (invoices counter +1 each) | yes: the payment row is no other writer's first lock except NSF's |
+| `ReversePayment` | payment row, payments counter (the reversing insert and the stamp, feed +1 each), every allocated invoice row `FOR NO KEY UPDATE` ascending, contra allocations, invoice re-opens (invoices counter +1 each) | yes: among the writers that take a counter or an invoice, the payment row is first only for NSF and this one (the terminal writers `MarkDeposited` and bankrec's claim and release update payment rows but take no counter and no invoice) |
 | POS ring | stock rows, order rows, payments counter (the tender's payment insert), new invoice (invoices counter) | yes: no existing invoice |
 | POS return, cash or card refund (the till refund rail) | per-sale advisory lock, returned order lines, invoice `FOR KEY SHARE` (the `pos_returns` foreign key), payments counter (the refund payment's insert) | the one exception, safe as written above |
 | POS return to account credit | per-sale advisory lock, returned order lines, invoice `FOR KEY SHARE` (the `pos_returns` foreign key), invoice `FOR UPDATE` (ApplyCreditToInvoice), invoices counter | yes: no payments row, and the share and the FOR UPDATE are one writer's own sequence |
@@ -119,5 +119,6 @@ REAL POS return over HTTP), each at pool 4 and pool 16, each parked in a widened
   the reversal's `FOR NO KEY UPDATE`)
 
 A reversal cannot cycle with a settle, in any id order: both take the payments counter row before any invoice row,
-so they serialize there and never interleave their invoice rows. No settle-against-reversal leg exists for that
-reason. The same holds for every pair of payments-walking writers now that `MarkNSF` takes the counter too.
+so they serialize there and never interleave their invoice rows. The settle-against-reversal leg
+(`TestIntegration_LockOrder_SettleBesideReversePayment`) is a regression guard for exactly that: it is red
+only on the old invoice-first settle. The same holds for every pair of payments-walking writers now that `MarkNSF` takes the counter too.
