@@ -1175,7 +1175,7 @@
   {
     "id": "wa-scan-handoff-wait",
     "file": "src/quote-workarea.ts",
-    "find": "!(await waitUpTo(HANDOFF_WAIT_MS, this.handedDown()))",
+    "find": "!(await this.handedDown())",
     "replace": "false",
     "test": "P3 a scan made in compose waits for the host"
   },
@@ -1183,6 +1183,13 @@
     "id": "wa-scan-handoff-timeout-says",
     "file": "src/quote-workarea.ts",
     "find": "        this.speakAdd(\"The new quote did not open in time, so that scan was not added. Scan it again once the quote is on screen.\", \"warn\");\n",
+    "replace": "",
+    "test": "P3 a scan made in compose says so when the host never"
+  },
+  {
+    "id": "wa-handoff-give-up",
+    "file": "src/quote-workarea.ts",
+    "find": "    this.releaseHandoffWaiters(false);\n",
     "replace": "",
     "test": "P3 a scan made in compose says so when the host never"
   },

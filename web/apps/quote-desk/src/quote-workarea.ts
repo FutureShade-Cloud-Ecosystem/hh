@@ -111,9 +111,6 @@ const LATE_LINK_NOTE = "A share link was made on this quote while you were away.
 /** Said when the read of a quote went ahead while a terms save of that quote was still out. */
 const STILL_SAVING = "A terms change you made on this quote is still being saved. What is shown may not include it yet.";
 
-/** How long a scan made in compose waits for the host to hand the quote just made down before it says so. */
-const HANDOFF_WAIT_MS = 3000;
-
 /** Thrown inside the send and link paths when the quote changed under them: caught and said nothing. */
 class StaleQuoteError extends Error {}
 
@@ -1156,10 +1153,15 @@ export class QdQuoteWorkarea extends LitElement {
     }
   }
 
-  private releaseHandoffWaiters(): void {
+  private releaseHandoffWaiters(handed = true): void {
     const waiting = this.handoffWaiters;
     this.handoffWaiters = [];
-    for (const release of waiting) release();
+    for (const release of waiting) release(handed);
+  }
+
+  /** The host's explicit signal that the new quote will not be handed down: the scans waiting for it say so. Never driven by elapsed time. */
+  giveUpHandoff(): void {
+    this.releaseHandoffWaiters(false);
   }
 
   /** The context of the quote on screen; a quote id that moved without its context following gets a fresh one. */
@@ -1971,11 +1973,11 @@ export class QdQuoteWorkarea extends LitElement {
   private opening: Promise<void> = Promise.resolve();
   private createdQuoteId = "";
 
-  /** Scans waiting for the host to hand a quote id down: released the moment this.quoteId changes. */
-  private handoffWaiters: Array<() => void> = [];
+  /** Scans waiting for the host to hand a quote id down: released (true) the moment this.quoteId changes, or (false) by giveUpHandoff. */
+  private handoffWaiters: Array<(handed: boolean) => void> = [];
 
-  private handedDown(): Promise<void> {
-    return new Promise<void>((resolve) => {
+  private handedDown(): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
       this.handoffWaiters.push(resolve);
     });
   }
@@ -1988,8 +1990,8 @@ export class QdQuoteWorkarea extends LitElement {
     // Only while compose is on screen: a scan on an open quote is for that quote and waits for no create.
     if (this.creating !== null && this.quoteId === "") {
       await this.creating;
-      // The host hands the new quote id down on its own render: wait for it to arrive, however long that takes (bounded, and said when it runs out).
-      if (this.createdQuoteId !== "" && this.quoteId === "" && !(await waitUpTo(HANDOFF_WAIT_MS, this.handedDown()))) {
+      // The host hands the new quote id down on its own render: wait for it to arrive, however long that takes: no timer ends this wait, only the host's explicit give up signal, and that is said.
+      if (this.createdQuoteId !== "" && this.quoteId === "" && !(await this.handedDown())) {
         this.speakAdd("The new quote did not open in time, so that scan was not added. Scan it again once the quote is on screen.", "warn");
         return;
       }
