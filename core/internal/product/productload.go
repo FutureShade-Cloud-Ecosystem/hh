@@ -43,6 +43,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -375,8 +376,10 @@ func productCategory(in load.Write) (string, *load.Refusal) {
 
 // integerField reads one record number as an optional whole integer
 // count: the wire decodes numbers as float64 and a Go caller may carry
-// an int, and both land the same. A fraction or a type that names no
-// number refuses naming the field.
+// an int, and both land the same. A fraction, a type that names no
+// number, and a value the column cannot hold (the INTEGER fields bound
+// to int4, the writer refusing wide before the insert rather than
+// failing the batch at the encode) refuse naming the field.
 func integerField(rec map[string]any, field string) (*int, *load.Refusal) {
 	raw, ok := rec[field]
 	if !ok || raw == nil {
@@ -397,6 +400,10 @@ func integerField(rec map[string]any, field string) (*int, *load.Refusal) {
 	default:
 		return nil, &load.Refusal{Code: "record_shape", Field: field,
 			Detail: "the field is not a whole number"}
+	}
+	if v > math.MaxInt32 || v < math.MinInt32 {
+		return nil, &load.Refusal{Code: "record_shape", Field: field,
+			Detail: "the field is wider than its column holds; the door refuses it rather than failing the batch"}
 	}
 	out := int(v)
 	return &out, nil
