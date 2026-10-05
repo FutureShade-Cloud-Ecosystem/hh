@@ -954,5 +954,26 @@
     "find": "    // A cancelled context issues no more requests: the panel left the page (sign out) and a read of its is not this session's.\n    if (ctx.stale) return;\n",
     "replace": "",
     "test": "A P2-1 a panel that has left the page reads nothing"
+  },
+  {
+    "id": "wa-slow-flush-rereads",
+    "file": "src/quote-workarea.ts",
+    "find": "          void this.loadAll();\n        });\n      }\n",
+    "replace": "        });\n      }\n",
+    "test": "A P2-2 a terms save slower than the wait bound"
+  },
+  {
+    "id": "wa-slow-flush-clears-line",
+    "file": "src/quote-workarea.ts",
+    "find": "          if (this.error === STILL_SAVING) this.error = \"\";\n",
+    "replace": "",
+    "test": "A P2-2 a terms save slower than the wait bound"
+  },
+  {
+    "id": "wa-slow-flush-stale",
+    "file": "src/quote-workarea.ts",
+    "find": "          if (ctx.stale) return;\n          if (this.error === STILL_SAVING)",
+    "replace": "          if (this.error === STILL_SAVING)",
+    "test": "A P2-2 a slow terms save that lands after the person has left"
   }
 ]

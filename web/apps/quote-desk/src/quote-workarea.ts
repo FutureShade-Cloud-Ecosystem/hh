@@ -104,6 +104,9 @@ import { WorkspaceStore } from "./workspace-store.js";
 import { QuoteContext, QuoteScope, SIGN_OUT_EVENT, UNSENT_WAIT_MS, waitUpTo, type SignOutDetail } from "./quote-context.js";
 import type { AddonSuggestion } from "@hardscapehouse/pos-kit/src/ported/pos-api.js";
 
+/** Said when the read of a quote went ahead while a terms save of that quote was still out. */
+const STILL_SAVING = "A terms change you made on this quote is still being saved. What is shown may not include it yet.";
+
 /** Thrown inside the send and link paths when the quote changed under them: caught and said nothing. */
 class StaleQuoteError extends Error {}
 
@@ -1522,7 +1525,15 @@ export class QdQuoteWorkarea extends LitElement {
     if (unsent !== undefined) {
       const landed = await waitUpTo(UNSENT_WAIT_MS, unsent);
       if (ctx.stale || !ctx.isLatestRead(seq)) return this.supersededBy(ctx, seq);
-      if (!landed) this.error = "A terms change you made on this quote is still being saved. What is shown may not include it yet.";
+      if (!landed) {
+        this.error = STILL_SAVING;
+        // The read went ahead without the save: when the save does answer, the quote is read again, so the change appears and the line above stops being true.
+        void unsent.then(() => {
+          if (ctx.stale) return;
+          if (this.error === STILL_SAVING) this.error = "";
+          void this.loadAll();
+        });
+      }
     }
     const terms = await ctx.guardedRead(seq, client.readTerms(ctx.id));
     if (terms === undefined) return this.supersededBy(ctx, seq);

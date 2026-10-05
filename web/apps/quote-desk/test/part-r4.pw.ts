@@ -119,3 +119,51 @@ test("A P2-1 a work area that has left the page reads nothing when it is asked t
   await settle(page);
   expect(requests).toEqual([]);
 });
+
+test("A P2-2 a terms save slower than the wait bound shows its edit when it lands, and the next edit does not erase it", async ({ page }) => {
+  await seed(page, { customer_id: "c-fenwick" });
+  await signIn(page);
+  await open(page, "Q-1004");
+  await expect(page.getByTestId("qb-po")).toBeVisible();
+  const seen = writes(page);
+  const put = await hold(page, /\/quotes\/q-1004\/terms$/, { method: "PUT", times: 1 });
+  await page.getByTestId("qb-po").fill("PO-SLOW-FLUSH");
+  await row(page, "Q-1001").click();
+  await put.asked;
+  await row(page, "Q-1004").click();
+  await expect(page.getByTestId("qb-context")).toContainText("Q-1004");
+  // Past the bound: the read went ahead without the save and says so.
+  await expect(page.getByTestId("qb-error")).toContainText("still being saved", { timeout: 10000 });
+  await put.release();
+  // The save has landed: what was typed is what the box shows, and the line that promised it no longer stands.
+  await expect(page.getByTestId("qb-po")).toHaveValue("PO-SLOW-FLUSH");
+  await expect(page.getByTestId("qb-error")).toHaveText("");
+  await page.getByTestId("qb-contact").fill("Site contact");
+  await expect.poll(() => seen.filter((w) => w.startsWith("PUT") && w.includes("Site contact")).length).toBeGreaterThan(0);
+  const last = seen.filter((w) => w.startsWith("PUT") && w.includes("Site contact")).pop() ?? "";
+  expect(last).toContain('"customer_po":"PO-SLOW-FLUSH"');
+});
+
+test("A P2-2 a slow terms save that lands after the person has left the quote again reads nothing", async ({ page }) => {
+  await seed(page, { customer_id: "c-fenwick" });
+  await signIn(page);
+  await open(page, "Q-1004");
+  await expect(page.getByTestId("qb-po")).toBeVisible();
+  const put = await hold(page, /\/quotes\/q-1004\/terms$/, { method: "PUT", times: 1 });
+  await page.getByTestId("qb-po").fill("PO-SLOW-FLUSH");
+  await row(page, "Q-1001").click();
+  await put.asked;
+  await row(page, "Q-1004").click();
+  await expect(page.getByTestId("qb-error")).toContainText("still being saved", { timeout: 10000 });
+  await open(page, "Q-1001");
+  await expect(page.getByTestId("qb-line")).toHaveCount(2);
+  await quiet(page);
+  const reads: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "GET" && /\/api\/v1\/quotes\/q-100\d/.test(request.url())) reads.push(request.url());
+  });
+  await put.release();
+  await settle(page);
+  expect(reads).toEqual([]);
+  await expect(page.getByTestId("qb-error")).toHaveText("");
+});
