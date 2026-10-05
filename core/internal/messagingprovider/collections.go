@@ -192,6 +192,28 @@ func (s *ARSweep) Run(ctx context.Context) (SweepResult, error) {
 // there is no interval in which we have recorded a notice we did not queue (a customer never told) or
 // queued a notice we did not record (a customer told twice tomorrow).
 func (s *ARSweep) considerOne(ctx context.Context, inv AgingInvoice, bucket int, now time.Time, textedThisRun map[string]bool) (enqueued, suppressed bool, err error) {
+	// THE POOL READ OF CONSENT IS A SNAPSHOT TAKEN BEFORE THE TRANSACTION OPENS, NEVER INSIDE IT.
+	//
+	// It goes through the shared pool (the consent table, and the contact seam whose adapter reads
+	// through its own pool). Made with the transaction open, each in-flight candidate would hold one
+	// connection and ask the pool for a second; with a pool's worth of candidates in flight every
+	// connection is held and every candidate waits for one more. Postgres sees idle sessions and no
+	// lock wait, so the stall is invisible there and lasts until the action timeout.
+	//
+	// THE SNAPSHOT IS NOT THE DECISION. Between this read and the queue sits an interval a customer's
+	// STOP, opt-out or number change can commit in, and a decision taken from the snapshot alone would
+	// text a customer who opted out moments after it was read. So below, once the transaction is open
+	// and the bucket claimed, the consent row is re-read THROUGH the transaction (RefreshOn) and the
+	// refreshed read decides. The re-read costs no second connection, it rides the one the transaction
+	// already holds. What the snapshot still earns: it takes the contact-seam read out of the
+	// transaction (the seam is another module's and has no transaction of this one to ride), and a
+	// customer already texted in this run is suppressed before consent is consulted at all, skipping
+	// both the snapshot and the re-read.
+	var consent ConsentRead
+	if !textedThisRun[inv.CustomerID] {
+		consent = s.resolver.ReadConsent(ctx, inv.CustomerID)
+	}
+
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return false, false, err
@@ -218,8 +240,13 @@ func (s *ARSweep) considerOne(ctx context.Context, inv AgingInvoice, bucket int,
 		return false, true, tx.Commit(ctx)
 	}
 
-	// Consent + quiet hours. MaySendAt answers both: may we text this customer at all, and when.
-	may, notBefore, err := s.resolver.MaySendAt(ctx, inv.CustomerID, now)
+	// Consent + quiet hours, decided from the consent row AS OF THIS TRANSACTION. The pool read above
+	// was a snapshot; a STOP, an opt-out or a number change that committed between it and the claim is
+	// visible to this re-read and is honoured here, at the moment the notice is queued.
+	if !textedThisRun[inv.CustomerID] {
+		consent = consent.RefreshOn(ctx, tx)
+	}
+	may, notBefore, err := consent.MaySendAt(now)
 	if err != nil {
 		return false, false, err
 	}
@@ -232,22 +259,17 @@ func (s *ARSweep) considerOne(ctx context.Context, inv AgingInvoice, bucket int,
 
 	// THE PRE-RESOLVED RECIPIENT, AND WHY IT IS ON THE PAYLOAD.
 	//
-	// Every other topic in this package leaves To empty and lets the CONSUMER resolve the recipient at
-	// delivery time, which re-checks consent at the last possible moment. sms.ar.notice cannot: its
-	// handler was registered by the Wave 2 wiring against the empty fixture resolver, that consumer
-	// instance is not reachable from the Wave 3 composition block, and re-registering the topic would
-	// hit the dispatcher's duplicate-registration panic. So this producer uses the affordance Wave 2
-	// built into ARNotice for exactly this case (see the To field's doc) and resolves the number here.
-	//
-	// WHAT THAT COSTS, PRECISELY: consent is evaluated when the notice is QUEUED rather than when it is
-	// SENT, so a customer who opts out during the quiet-hours hold still receives this one message.
-	// The hold is seconds when the sweep runs inside the send window and at most one night otherwise.
-	// It is closed entirely by the one-line union change named in REPORT-W3-D.md. It is NOT closed by
-	// omitting the number, which would instead mean the notice is queued and never delivered at all.
+	// The number rides on the payload as a hint: ARNotice's To field is the affordance Wave 2 built so a
+	// producer that already holds a consented number can state it. It is not what authorizes the send.
+	// The consumer ignores the preset and re-resolves the recipient through the real ConsentResolver at
+	// delivery time (Consumer.resolve), so consent is checked twice: here, at queue time, from the
+	// re-read on the deciding transaction (an opt-out that lands between the pool snapshot and the queue
+	// is recorded as suppressed, and a changed number is queued fresh), and again at the last possible
+	// moment, so a customer who opts out during a quiet-hours hold is not texted either.
 	//
 	// The number is redacted from the row the moment it is published (the outbox's existing
 	// published-row redaction), so it does not live in the queue table after it has been used.
-	recipient, err := s.resolver.CustomerRecipient(ctx, inv.CustomerID)
+	recipient, err := consent.Recipient()
 	if err != nil {
 		return false, false, err
 	}
