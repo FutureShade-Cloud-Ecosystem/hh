@@ -33,6 +33,8 @@ type floorPreviewItemJSON struct {
 	Name               string `json:"name"`
 	CategoryID         string `json:"category_id,omitempty"`
 	CustomerType       string `json:"customer_type,omitempty"`
+	BranchID           string `json:"branch_id,omitempty"`
+	BranchName         string `json:"branch_name,omitempty"`
 	FinalCents         int64  `json:"final_cents"`
 	MarginBps          int64  `json:"margin_bps"`
 	FloorBps           int64  `json:"floor_bps"`
@@ -101,6 +103,7 @@ func (h *Handler) floorPreview(w http.ResponseWriter, r *http.Request, _ guards.
 	for _, it := range out.Items {
 		items = append(items, floorPreviewItemJSON{
 			ProductID: it.ProductID, SKU: it.SKU, Name: it.Name, CategoryID: it.CategoryID, CustomerType: it.CustomerType,
+			BranchID: it.BranchID, BranchName: it.BranchName,
 			FinalCents: it.FinalCents, MarginBps: it.MarginBps, FloorBps: it.FloorBps, PriceUOM: it.PriceUOM,
 			Source: it.Source, PreviousFinalCents: it.PreviousFinalCents, PreviousMarginBps: it.PreviousMarginBps,
 			AlreadyUnderFloor: it.AlreadyUnderFloor,

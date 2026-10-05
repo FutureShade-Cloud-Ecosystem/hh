@@ -15915,7 +15915,7 @@ paths:
       tags:
         - staff-pricing
       summary: Name the products a proposed price would put under the margin floor
-      description: "The pricing editors' floor warning (the editors warn and may still save). Lays the proposed rule, customer price, category margin policy or quantity break over the stored pricing data and grades the existing products it can reach through the resolver and its margin gate, as a quote line would meet them. Returns the products the new price leaves under the floor, worst first, each marked when it was already under the floor before the change. A surcharge tier never changes a price under the replace rule, so a break of surcharge tiers names nothing. A change that names a customer is graded at that customer's own pricing type, so the price today is what the customer pays. Products with no cost on file are counted in no_cost, and products the resolver has no price to grade (no list price, no unit conversion) in not_graded; any other failure of the grading is an error answer, never a count. At most 200 products and a bounded number of product, customer type and quantity combinations are graded, and truncated says when more existed. A quantity break has at most 20 tiers, and a tier starting at zero is graded at one base unit. Writes nothing: no price changes and no row in the pricing log. The request trail the server keeps of every POST still records the call itself. Refuses what the write itself would refuse (an override needs a customer, a category and a price unit)."
+      description: "The pricing editors' floor warning (the editors warn and may still save). Lays the proposed rule, customer price, category margin policy or quantity break over the stored pricing data and grades the existing products it can reach through the resolver and its margin gate, as a quote line would meet them. A change that names no branch is graded at every branch location, each at its own cost with its own branch-limited rules, keeping the worst per product and naming that branch in the item, so a breach only one yard makes is named. Returns the products the new price leaves under the floor, worst first, each marked when it was already under the floor before the change. A surcharge tier never changes a price under the replace rule, so a break of surcharge tiers names nothing. A change that names a customer is graded at that customer's own pricing type, so the price today is what the customer pays. Products with no cost on file at any branch are counted in no_cost, and products the resolver has no price to grade (no list price, no unit conversion) in not_graded; any other failure of the grading is an error answer, never a count. At most 200 products and a bounded number of product, customer type, quantity and branch combinations are graded (a combination is one resolve at one branch), and truncated says when more existed. A quantity break has at most 20 tiers, and a tier starting at zero is graded at one base unit. Writes nothing: no price changes and no row in the pricing log. The request trail the server keeps of every POST still records the call itself. Refuses what the write itself would refuse (an override needs a customer, a category and a price unit)."
       x-addition: the editors' floor warning (plan CP0-6, QD-4); no ERP source route
       x-role: requireManager
       x-access:
@@ -15958,7 +15958,7 @@ paths:
       tags:
         - staff-pricing
       summary: Record in the pricing log that the editor confirmed a floor warning
-      description: Called after the confirmed save, against the record that save wrote. Writes one pricing log row (action UPDATE, field floor_warning_confirmed) naming the actor and the products the editor was shown. Unlike the writes' own log rows, a failure to write this one is an error answer, not a silent drop. A reference pair must be complete and its id must match its kind where the server can see the record (a product id sent as a quote reference is a 400).
+      description: "Called after the confirmed save, against the record that save wrote. Writes one pricing log row (action UPDATE, field floor_warning_confirmed) naming the actor and the products the editor was shown. Unlike the writes' own log rows, a failure to write this one is an error answer, not a silent drop. A reference pair must be complete, and its id is checked only against the two kinds the pricing module can read itself: an id that names a product or a customer is refused when the claimed kind is the other (a product id sent as a quote reference is a 400). That check is partial by design: the kinds pricing has no read for (quote, order, category) are never resolved, an id that names nothing the module can see is taken as it comes, and the product read drops inactive products, so a product reference carrying an inactive product's id is accepted."
       x-addition: records the editor's confirmation of a floor warning (plan CP0-6, QD-4); no ERP source route
       x-role: requireManager
       x-access:
@@ -41390,7 +41390,7 @@ components:
         branch_id:
           type: string
           format: uuid
-          description: Grade against this branch's cost; omitted grades against the product's engagement-wide weighted cost
+          description: Grade against this branch's own cost and its branch-limited rules; omitted grades every branch location at its own cost with its own branch-limited rules, keeps the worst per product and names that branch in each item
         rule:
           $ref: "#/components/schemas/PricingRuleWrite"
         customer_id:
@@ -41433,6 +41433,12 @@ components:
         customer_type:
           type: string
           description: The customer type this was worst for; the customer's own type when the change names a customer
+        branch_id:
+          type: string
+          description: "The branch this worst grading happened at: the change's own branch when it named one, else the worst branch of those graded"
+        branch_name:
+          type: string
+          description: That branch's name, so an editor who named no branch still sees which yard breaches; empty when the change named its branch
         final_cents:
           type: integer
           format: int64
@@ -41490,7 +41496,7 @@ components:
           description: Products with no cost on file, whose margin cannot be told
         truncated:
           type: boolean
-          description: More products or combinations were reachable than one preview grades (200 products, a bounded number of combinations); the rest were not graded
+          description: More products or combinations were reachable than one preview grades (200 products, a bounded number of product, customer type, quantity and branch combinations); the rest were not graded
     PricingFloorConfirmation:
       type: object
       required:

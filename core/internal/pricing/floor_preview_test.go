@@ -22,6 +22,11 @@ func (f fakeCands) CandidateProducts(_ context.Context, categoryID, productID, _
 		if categoryID != "" && p.CategoryID != categoryID {
 			continue
 		}
+		// The real seam answers every branch location; a fake that names none answers one
+		// yard carrying the product's cost, so a cost still grades where it did.
+		if len(p.BranchCosts) == 0 && p.CostCents > 0 {
+			p.BranchCosts = []CandidateBranchCost{{BranchID: "br-yard", BranchName: "The yard", CostCents: p.CostCents}}
+		}
 		out = append(out, p)
 	}
 	if limit > 0 && len(out) > limit {

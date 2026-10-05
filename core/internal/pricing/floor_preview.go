@@ -27,13 +27,17 @@ type FloorChange struct {
 	Break    *QuantityBreakHeader
 }
 
-// FloorPreviewItem is one product the new price leaves under the floor.
+// FloorPreviewItem is one product the new price leaves under the floor. BranchID and
+// BranchName name the branch the worst grading happened at, so an editor who named no branch
+// still sees which yard breaches; both are empty when the seam could not name it.
 type FloorPreviewItem struct {
 	ProductID          string
 	SKU                string
 	Name               string
 	CategoryID         string
 	CustomerType       string
+	BranchID           string
+	BranchName         string
 	FinalCents         int64
 	MarginBps          int64
 	FloorBps           int64
@@ -53,6 +57,15 @@ type FloorPreview struct {
 	Truncated bool
 }
 
+// CandidateBranchCost is one branch location's own cost row for a product, with the branch's
+// code and name so an item can say which yard the worst grading happened at.
+type CandidateBranchCost struct {
+	BranchID   string
+	BranchCode string
+	BranchName string
+	CostCents  int64
+}
+
 // CandidateProduct is one active product the preview may grade, with its cost.
 type CandidateProduct struct {
 	ProductID  string
@@ -61,10 +74,16 @@ type CandidateProduct struct {
 	Name       string
 	BaseUOM    string
 	CostCents  int64
+	// BranchCosts carries every branch location's own cost row, filled when the change names
+	// no branch (the preview grades each branch at its own cost with its own branch-limited
+	// rules); with a branch named it is empty and CostCents is that branch's own cost.
+	BranchCosts []CandidateBranchCost
 }
 
 // FloorCandidates finds the products a change may reach, with their cost. The composition
 // root implements it over the product and inventory services, so pricing reads neither' table.
+// With no branch named, each product also carries every branch location's own cost row, so
+// the preview can grade each branch as a resolve at that branch would be priced.
 type FloorCandidates interface {
 	CandidateProducts(ctx context.Context, categoryID, productID, branchID string, limit int) ([]CandidateProduct, error)
 }
@@ -89,8 +108,10 @@ func (s *Service) WithFloorCustomerType(c FloorCustomers) *Service {
 // grades every tier for every product and customer type.
 const MaxBreakTiers = 20
 
-// MaxPreviewGrades bounds the product, customer type and quantity combinations one preview
-// grades. Past it the preview stops and says it was truncated.
+// MaxPreviewGrades bounds the product, customer type, quantity and BRANCH combinations one
+// preview grades: a combination is one resolve at one branch's own cost, so a change that
+// names no branch spends the cap across every branch location it grades. Past it the
+// preview stops and says it was truncated.
 const MaxPreviewGrades = 4000
 
 // FloorConfirmation is the editor's confirmation of a floor warning.
@@ -230,9 +251,40 @@ type previewQty struct {
 	uom string // "" means the product's base unit
 }
 
+// previewSite is one branch location the change is graded at: a change that names a branch
+// is graded at that branch alone, and a change that names none is graded at every branch
+// location the candidates seam reports, each with its own cost (a branch with no cost row is
+// not guessed at) and its own branch-limited rules, because that is what a resolve at that
+// branch would meet once the change is saved.
+type previewSite struct {
+	branchID   string
+	branchName string
+	costCents  int64
+}
+
+// sitesFor names the branches one product is graded at: the change's own branch when it
+// names one, else every branch carrying a cost. No site at all means no cost on file
+// anywhere, which the preview counts rather than guessing a margin.
+func sitesFor(p CandidateProduct, branchID string) []previewSite {
+	if branchID != "" {
+		return []previewSite{{branchID: branchID, costCents: p.CostCents}}
+	}
+	var sites []previewSite
+	for _, b := range p.BranchCosts {
+		if b.CostCents <= 0 {
+			continue
+		}
+		sites = append(sites, previewSite{branchID: b.BranchID, branchName: b.BranchName, costCents: b.CostCents})
+	}
+	return sites
+}
+
 // PreviewFloor grades the proposed change: for each existing product it can reach, the
 // price today and the price with the change laid over the stored data, both through the
-// resolver and its margin gate, and the products the new price leaves under the floor.
+// resolver and its margin gate. A change that names no branch is graded at every branch
+// location, with that branch's own cost and that branch's own branch-limited rules, keeping
+// the worst per product and naming the branch it happened at; that is what a resolve at each
+// branch meets once the change is saved, so a breach only one yard makes is named.
 // A refusal here is the refusal the write itself would give (the same validators), and
 // nothing is written, not even the BYPASS row a live resolve leaves.
 func (s *Service) PreviewFloor(ctx context.Context, ch FloorChange) (FloorPreview, error) {
@@ -362,14 +414,16 @@ func (s *Service) PreviewFloor(ctx context.Context, ch FloorChange) (FloorPrevie
 	}
 	overlay := *s
 	overlay.store = ov
-	perProduct := len(contexts) * len(qtys)
 	grades := 0
 	for _, p := range products {
-		if p.CostCents <= 0 {
-			// No cost on file: a margin cannot be told, and a zero would read as a clean 100 percent.
+		sites := sitesFor(p, branchID)
+		if len(sites) == 0 {
+			// No cost on file at any branch: a margin cannot be told, and a zero would read
+			// as a clean 100 percent.
 			out.NoCost++
 			continue
 		}
+		perProduct := len(contexts) * len(qtys) * len(sites)
 		if grades+perProduct > MaxPreviewGrades {
 			out.Truncated = true
 			break
@@ -379,42 +433,45 @@ func (s *Service) PreviewFloor(ctx context.Context, ch FloorChange) (FloorPrevie
 		skipped, graded := false, false
 		for _, c := range contexts {
 			for _, q := range qtys {
-				uom := q.uom
-				if uom == "" {
-					uom = p.BaseUOM
-				}
-				in := ResolveInput{
-					CustomerID: c.customerID, CustomerType: c.customerType, ProductID: p.ProductID,
-					CategoryID: p.CategoryID, BranchID: branchID, QtyEntered: q.qty, UOMEntered: uom, CostCents: p.CostCents,
-				}
-				after, aerr := overlay.resolve(ctx, in, true, false)
-				if aerr != nil {
-					if !notGradable(aerr) {
-						return FloorPreview{}, fmt.Errorf("floor preview grading %s: %w", p.ProductID, aerr)
+				for _, site := range sites {
+					uom := q.uom
+					if uom == "" {
+						uom = p.BaseUOM
 					}
-					skipped = true
-					continue
-				}
-				graded = true
-				if !after.Blocked {
-					continue
-				}
-				before, berr := s.resolve(ctx, in, true, false)
-				if berr != nil {
-					if !notGradable(berr) {
-						return FloorPreview{}, fmt.Errorf("floor preview grading %s: %w", p.ProductID, berr)
+					in := ResolveInput{
+						CustomerID: c.customerID, CustomerType: c.customerType, ProductID: p.ProductID,
+						CategoryID: p.CategoryID, BranchID: site.branchID, QtyEntered: q.qty, UOMEntered: uom, CostCents: site.costCents,
 					}
-					skipped = true
-					continue
-				}
-				it := FloorPreviewItem{
-					ProductID: p.ProductID, SKU: p.SKU, Name: p.Name, CategoryID: p.CategoryID, CustomerType: c.customerType,
-					FinalCents: after.FinalCents, MarginBps: after.MarginBps, FloorBps: after.FloorBps,
-					PriceUOM: after.PriceUOM, Source: after.Source,
-					PreviousFinalCents: before.FinalCents, PreviousMarginBps: before.MarginBps, AlreadyUnderFloor: before.Blocked,
-				}
-				if worst == nil || worseBreach(it, *worst) {
-					worst = &it
+					after, aerr := overlay.resolve(ctx, in, true, false)
+					if aerr != nil {
+						if !notGradable(aerr) {
+							return FloorPreview{}, fmt.Errorf("floor preview grading %s: %w", p.ProductID, aerr)
+						}
+						skipped = true
+						continue
+					}
+					graded = true
+					if !after.Blocked {
+						continue
+					}
+					before, berr := s.resolve(ctx, in, true, false)
+					if berr != nil {
+						if !notGradable(berr) {
+							return FloorPreview{}, fmt.Errorf("floor preview grading %s: %w", p.ProductID, berr)
+						}
+						skipped = true
+						continue
+					}
+					it := FloorPreviewItem{
+						ProductID: p.ProductID, SKU: p.SKU, Name: p.Name, CategoryID: p.CategoryID, CustomerType: c.customerType,
+						BranchID: site.branchID, BranchName: site.branchName,
+						FinalCents: after.FinalCents, MarginBps: after.MarginBps, FloorBps: after.FloorBps,
+						PriceUOM: after.PriceUOM, Source: after.Source,
+						PreviousFinalCents: before.FinalCents, PreviousMarginBps: before.MarginBps, AlreadyUnderFloor: before.Blocked,
+					}
+					if worst == nil || worseBreach(it, *worst) {
+						worst = &it
+					}
 				}
 			}
 		}
@@ -476,7 +533,10 @@ func worseBreach(a, b FloorPreviewItem) bool {
 // the log. Pricing holds a product read (the candidates seam) and a customer read (the floor
 // customers seam), and ids do not cross tables, so an id found by either is a mismatch whenever
 // the reference claims another kind; the kinds pricing has no read for (quote, order, category)
-// are checked only against those two, and an id neither sees is taken as it comes.
+// are checked only against those two, and an id neither sees is taken as it comes. The check is
+// partial by design and says so in the contract: the candidates seam drops inactive products
+// (wire_money.go's IsActive filter), so a product reference carrying an inactive product's id is
+// accepted, and no kind beyond product and customer is ever resolved.
 func (s *Service) refMatchesItsKind(ctx context.Context, refType, refID string) error {
 	namesProduct, err := s.refIDNamesProduct(ctx, refID)
 	if err != nil {

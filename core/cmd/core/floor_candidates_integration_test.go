@@ -118,9 +118,11 @@ func TestFloorCandidates_TheSeamsReadThroughTheOwningServices(t *testing.T) {
 		if branches[0] == "" || branches[1] == "" {
 			t.Fatalf("the seed must hold two branches")
 		}
-		// List 2200 in the base unit, branch costs 1518 and 1540 (the weighted cost would be 1529),
-		// and a 20 percent floor on the category. Every stored price the product could resolve
-		// through is cleared so before/after speak only the list price and the proposed rule.
+		// List 2200 in the base unit, branch costs 1518 and 1540 (the plain average of the
+		// two rows would be 1529; the old read fell back to that average, and the average
+		// hides the dearer yard's breach), and a 20 percent floor on the category. Every
+		// stored price the product could resolve through is cleared so before/after speak
+		// only the list price and the proposed rule.
 		mustExec(t, ctx, pool, `UPDATE pricing_list_prices SET list_price_cents = 2200 WHERE product_id = $1`, productID)
 		mustExec(t, ctx, pool, `DELETE FROM product_branch_costs WHERE product_id = $1`, productID)
 		mustExec(t, ctx, pool, `INSERT INTO product_branch_costs (product_id, branch_id, avg_unit_cost_cents)
@@ -142,7 +144,7 @@ func TestFloorCandidates_TheSeamsReadThroughTheOwningServices(t *testing.T) {
 		}
 		noBranch, err := cands.CandidateProducts(ctx, categoryID, productID, "", 10)
 		if err != nil || len(noBranch) != 1 || noBranch[0].CostCents != 1540 {
-			t.Errorf("with no branch the HIGHEST branch cost applies (1540, not the weighted 1529): %+v, %v", noBranch, err)
+			t.Errorf("with no branch the HIGHEST branch cost applies (1540, not the plain average 1529): %+v, %v", noBranch, err)
 		}
 
 		pricingSvc := pricing.NewService(pricing.NewRepository(pool)).
@@ -170,6 +172,109 @@ func TestFloorCandidates_TheSeamsReadThroughTheOwningServices(t *testing.T) {
 		if it.FinalCents != 1914 || it.PreviousFinalCents != 2200 ||
 			it.MarginBps != 1954 || it.FloorBps != 2000 || it.AlreadyUnderFloor {
 			t.Errorf("the reviewer's figures: %+v", *it)
+		}
+	})
+
+	// The reviewer's round 3 case, pinned end to end: a stored RETAIL rule at 10 percent off
+	// LIMITED TO ONE BRANCH must be graded even when the change names no branch. The preview
+	// used to build its resolve with no branch, so the stored-rules read dropped every
+	// branch-limited rule: raising the floor previewed zero items while the save left a
+	// Kingston RETAIL resolve blocked. With no branch the preview now grades each branch at
+	// its own cost with its own branch rules, keeps the worst and names the branch.
+	t.Run("no branch still grades a rule limited to a branch", func(t *testing.T) {
+		var productID, categoryID, baseUOM string
+		if err := pool.QueryRow(ctx, `
+			SELECT p.id::text, p.category_id::text, p.base_uom::text
+			  FROM products p
+			  JOIN pricing_list_prices plp ON plp.product_id = p.id AND plp.price_uom = p.base_uom
+			 WHERE p.is_active AND p.category_id IS NOT NULL AND p.sku LIKE 'DBS-%'
+			 ORDER BY p.sku LIMIT 1`).Scan(&productID, &categoryID, &baseUOM); err != nil {
+			t.Fatalf("no seeded product with a base-unit anchor: %v", err)
+		}
+		var kgn, other struct{ id, name string }
+		brows, err := pool.Query(ctx, `SELECT id::text, name FROM locations WHERE loc_type = 'BRANCH' ORDER BY code`)
+		if err != nil {
+			t.Fatalf("branches: %v", err)
+		}
+		defer brows.Close()
+		var ids, names []string
+		for brows.Next() {
+			var id, name string
+			if err := brows.Scan(&id, &name); err != nil {
+				t.Fatalf("branch: %v", err)
+			}
+			ids, names = append(ids, id), append(names, name)
+		}
+		if len(ids) != 2 {
+			t.Fatalf("the seed must hold two branches, got %d", len(ids))
+		}
+		kgn.id, kgn.name = ids[1], names[1] // code order TRT then KGN: Kingston is the dear yard
+		other.id = ids[0]
+		// List 2200 in the base unit, branch costs 1518 at the other yard and 1540 at Kingston
+		// (the plain average would be 1529), a 20 percent floor stored, and every stored price
+		// cleared except the one rule under test: RETAIL at 10 percent off, limited to Kingston.
+		mustExec(t, ctx, pool, `UPDATE pricing_list_prices SET list_price_cents = 2200 WHERE product_id = $1`, productID)
+		mustExec(t, ctx, pool, `DELETE FROM product_branch_costs WHERE product_id = $1`, productID)
+		mustExec(t, ctx, pool, `INSERT INTO product_branch_costs (product_id, branch_id, avg_unit_cost_cents)
+			VALUES ($1, $2, 1518), ($1, $3, 1540)`, productID, other.id, kgn.id)
+		mustExec(t, ctx, pool, `DELETE FROM stock_balances WHERE product_id = $1`, productID)
+		mustExec(t, ctx, pool, `DELETE FROM pricing_rules WHERE customer_type = 'RETAIL' OR category_id = $1`, categoryID)
+		mustExec(t, ctx, pool, `DELETE FROM quantity_break_items WHERE header_id IN
+			(SELECT id FROM quantity_break_headers WHERE product_id = $1 OR category_id = $2)`, productID, categoryID)
+		mustExec(t, ctx, pool, `DELETE FROM quantity_break_headers WHERE product_id = $1 OR category_id = $2`, productID, categoryID)
+		mustExec(t, ctx, pool, `INSERT INTO pricing_category_policy (category_id, margin_target_bps, margin_floor_bps, margin_enforcement_disabled)
+			VALUES ($1, 3000, 2000, false)
+			ON CONFLICT (category_id) DO UPDATE SET margin_target_bps = 3000, margin_floor_bps = 2000, margin_enforcement_disabled = false`, categoryID)
+		mustExec(t, ctx, pool, `INSERT INTO pricing_rules (scope, customer_type, category_id, branch_id, calc_type, discount_bps, price_uom, priority)
+			VALUES ('TIER_CATEGORY','RETAIL',$1,$2,'PCT_OFF_LIST',1000,$3,40)`, categoryID, kgn.id, baseUOM)
+
+		svc := pricing.NewService(pricing.NewRepository(pool)).
+			WithCategoryResolver(productSvc).WithUOMConverter(productSvc).WithMarginGate(pricing.NewIdentityMarginGate()).
+			WithCandidateSource(cands)
+		out, err := svc.PreviewFloor(ctx, pricing.FloorChange{Kind: "category_policy",
+			Policy: &pricing.CategoryPolicy{CategoryID: categoryID, MarginTargetBps: 3000, MarginFloorBps: 2300}})
+		if err != nil {
+			t.Fatalf("PreviewFloor: %v", err)
+		}
+		var it *pricing.FloorPreviewItem
+		for i := range out.Items {
+			if out.Items[i].ProductID == productID {
+				it = &out.Items[i]
+			}
+		}
+		if it == nil {
+			t.Fatalf("raising the floor to 23 percent must name the product the Kingston rule leaves at 1980 (22.22 percent), got %+v", out.Items)
+		}
+		if it.CustomerType != "RETAIL" || it.FinalCents != 1980 || it.MarginBps != 2222 || it.FloorBps != 2300 || it.AlreadyUnderFloor {
+			t.Errorf("the reviewer's figures (1980 at 2222 bps against a 2300 floor, newly under): %+v", *it)
+		}
+		if it.BranchID != kgn.id || it.BranchName != kgn.name {
+			t.Errorf("the item must name Kingston as the worst branch (id %s, name %s), got id %s name %q", kgn.id, kgn.name, it.BranchID, it.BranchName)
+		}
+		// The served equivalence the reviewer proved: after the real save, a Kingston RETAIL
+		// resolve at Kingston's own cost is blocked at exactly the previewed figures, and the
+		// other yard's resolve is not.
+		if _, err := svc.UpsertCategoryPolicy(ctx, pricing.CategoryPolicy{
+			CategoryID: categoryID, MarginTargetBps: 3000, MarginFloorBps: 2300}, "it-floor-preview"); err != nil {
+			t.Fatalf("UpsertCategoryPolicy: %v", err)
+		}
+		atKgn, err := svc.ResolvePrice(ctx, pricing.ResolveInput{
+			CustomerType: "RETAIL", ProductID: productID, CategoryID: categoryID, BranchID: kgn.id,
+			QtyEntered: 1, UOMEntered: baseUOM, CostCents: 1540})
+		if err != nil {
+			t.Fatalf("resolve at Kingston: %v", err)
+		}
+		if !atKgn.Blocked || atKgn.FinalCents != 1980 || atKgn.MarginBps != 2222 || atKgn.FloorBps != 2300 {
+			t.Errorf("the saved floor blocks the Kingston resolve the preview named: %+v", atKgn)
+		}
+		atOther, err := svc.ResolvePrice(ctx, pricing.ResolveInput{
+			CustomerType: "RETAIL", ProductID: productID, CategoryID: categoryID, BranchID: other.id,
+			QtyEntered: 1, UOMEntered: baseUOM, CostCents: 1518})
+		if err != nil {
+			t.Fatalf("resolve at the other yard: %v", err)
+		}
+		if atOther.Blocked {
+			t.Errorf("the other yard pays the 2200 list at 30.9 percent and must not be blocked: %+v", atOther)
 		}
 	})
 

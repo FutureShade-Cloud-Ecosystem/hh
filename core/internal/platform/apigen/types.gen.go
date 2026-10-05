@@ -5455,6 +5455,8 @@ type PricingFloorPreviewItem struct {
 	Name               string  `json:"name"`
 	CategoryId         *string `json:"category_id,omitempty"`
 	CustomerType       *string `json:"customer_type,omitempty"`
+	BranchId           *string `json:"branch_id,omitempty"`
+	BranchName         *string `json:"branch_name,omitempty"`
 	FinalCents         int64   `json:"final_cents"`
 	MarginBps          int64   `json:"margin_bps"`
 	FloorBps           int64   `json:"floor_bps"`

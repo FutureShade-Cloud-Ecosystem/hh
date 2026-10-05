@@ -4677,6 +4677,8 @@ export type PricingFloorPreviewItem = {
   name: string;
   category_id?: string;
   customer_type?: string;
+  branch_id?: string;
+  branch_name?: string;
   final_cents: number;
   margin_bps: number;
   floor_bps: number;
