@@ -668,9 +668,11 @@ func TestProductLoadRefusesAReloadThatLeavesTheLandedUnitSet(t *testing.T) {
 	}
 }
 
-// Exit line 6: a loaded product appears in the staff sync pull of its
-// org and not another's, proven by request through the products sync
-// Store the staff pull serves.
+// The store's half of exit line 6: a loaded product appears in the
+// staff sync pull of its org and not another's, read through the
+// products sync Store the staff pull serves. The request half (the
+// route, the bearers) is proven in cmd/core's load reference wiring
+// leg.
 func TestProductLoadAppearsInTheStaffSyncPullOfItsOrgAlone(t *testing.T) {
 	e := productLoadSetup(t)
 	ctx := context.Background()
