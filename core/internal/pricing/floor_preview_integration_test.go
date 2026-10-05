@@ -10,6 +10,7 @@ package pricing
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -18,14 +19,20 @@ import (
 
 // poolCandidates is this test's own product source over the test pool. In the served core the
 // composition root implements the seam over the product and inventory services (tested in
-// cmd/core); pricing's repository no longer reads either table.
+// cmd/core); pricing's repository no longer reads either table. Like the real seam it answers
+// every branch row's own cost beside the highest, so a branch-less preview grades each branch.
 type poolCandidates struct{ pool *pgxpool.Pool }
 
 func (c poolCandidates) CandidateProducts(ctx context.Context, categoryID, productID, _ string, limit int) ([]CandidateProduct, error) {
 	rows, err := c.pool.Query(ctx, `
 		SELECT p.id::text, COALESCE(p.category_id::text, ''), p.sku::text, p.name, p.base_uom::text,
-		       COALESCE(MAX(pbc.avg_unit_cost_cents), 0)
-		  FROM products p LEFT JOIN product_branch_costs pbc ON pbc.product_id = p.id
+		       COALESCE(MAX(pbc.avg_unit_cost_cents), 0),
+		       COALESCE(json_agg(json_build_object(
+		                  'BranchID', pbc.branch_id::text, 'BranchCode', l.code::text, 'BranchName', l.name, 'CostCents', pbc.avg_unit_cost_cents)
+		        ) FILTER (WHERE pbc.product_id IS NOT NULL), '[]')
+		  FROM products p
+		  LEFT JOIN product_branch_costs pbc ON pbc.product_id = p.id
+		  LEFT JOIN locations l ON l.id = pbc.branch_id AND l.loc_type = 'BRANCH'
 		 WHERE p.is_active AND ($1 = '' OR p.category_id::text = $1) AND ($2 = '' OR p.id::text = $2)
 		 GROUP BY p.id ORDER BY p.sku, p.id LIMIT $3`, categoryID, productID, limit)
 	if err != nil {
@@ -35,7 +42,11 @@ func (c poolCandidates) CandidateProducts(ctx context.Context, categoryID, produ
 	var out []CandidateProduct
 	for rows.Next() {
 		var p CandidateProduct
-		if err := rows.Scan(&p.ProductID, &p.CategoryID, &p.SKU, &p.Name, &p.BaseUOM, &p.CostCents); err != nil {
+		var branches []byte
+		if err := rows.Scan(&p.ProductID, &p.CategoryID, &p.SKU, &p.Name, &p.BaseUOM, &p.CostCents, &branches); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(branches, &p.BranchCosts); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
