@@ -263,6 +263,11 @@ const (
 	anticoSKU      = `'DBS-BWS-ANTICO'`
 	changedUOM     = "3.3333" // a value no seed ever wrote
 	changedQtyBase = "999.999"
+
+	// The protected-edge plants of the changed-value leg: whose edge carries which protection, and
+	// the factor somebody retyped onto Lafitt's SEEDED_DEFAULT edge (no seed and no derivation ever
+	// wrote it; Lafitt's old derived edge is 3.10 over 55, or 0.05636364).
+	retypedEdgeFactor = "0.12345678"
 )
 
 func migration0360Body(t *testing.T) string {
@@ -382,7 +387,7 @@ const edgeFactorMismatches = `SELECT v.sku || '=' || COALESCE(c.factor::text, 'm
 	   JOIN product_uoms plt ON plt.product_id = p.id AND plt.uom_code = 'PLT' AND plt.qty_in_base > 0
 	   LEFT JOIN pricing_uom_conversions c ON c.product_id = p.id AND c.from_uom = 'SF'
 	        AND c.to_uom = 'PLT' AND c.source = 'SEEDED_DEFAULT' AND c.is_active
-	  WHERE c.id IS NULL OR c.factor <> ROUND(v.want / plt.qty_in_base, 8)`
+	  WHERE (c.id IS NULL OR c.factor <> ROUND(v.want / plt.qty_in_base, 8))`
 
 // The old world, corrected: every seeded value the old factor touched lands at its face-derived
 // figure, and nothing the old factor never touched moves (Brussels keeps the factor migration 0061
@@ -438,6 +443,41 @@ func TestIntegration_Migration0360LeavesAChangedValueAlone(t *testing.T) {
 		FROM products p WHERE pu.product_id = p.id AND p.sku = `+anticoSKU+` AND pu.uom_code = 'SF'`)
 	mustExec(t, ctx, pool, `UPDATE quote_lines SET qty_base = `+changedQtyBase+`
 		 WHERE quote_id = `+bluQuoteID+` AND line_no = 1`)
+	// Three edges the guards must protect, planted on top of the plain old world: the client
+	// confirmed Il Campo's factor as it stood, the yard measured Hydr's off its own scale, and
+	// somebody retyped Lafitt's SEEDED_DEFAULT factor by hand. The fourteen plain edges left behind
+	// are the controls the migration MUST correct, asserted below.
+	mustExec(t, ctx, pool, `UPDATE pricing_uom_conversions c SET source = 'CLIENT_CONFIRMED',
+		       source_note = 'confirmed with the client'
+		  FROM products p
+		 WHERE c.product_id = p.id AND p.sku = 'DBS-UL-ILCAMPO'
+		   AND c.from_uom = 'SF' AND c.to_uom = 'PLT' AND c.source = 'SEEDED_DEFAULT'`)
+	mustExec(t, ctx, pool, `UPDATE pricing_uom_conversions c SET source = 'MEASURED',
+		       source_note = 'read off the yard scale'
+		  FROM products p
+		 WHERE c.product_id = p.id AND p.sku = 'DBS-TB-HYDR'
+		   AND c.from_uom = 'SF' AND c.to_uom = 'PLT' AND c.source = 'SEEDED_DEFAULT'`)
+	mustExec(t, ctx, pool, `UPDATE pricing_uom_conversions c SET factor = `+retypedEdgeFactor+`, updated_at = now()
+		  FROM products p
+		 WHERE c.product_id = p.id AND p.sku = 'DBS-PM-LAFITT'
+		   AND c.from_uom = 'SF' AND c.to_uom = 'PLT' AND c.source = 'SEEDED_DEFAULT'`)
+	wantCount(t, pool, "planted a CLIENT_CONFIRMED edge for Il Campo at the old derived factor", 1,
+		`SELECT count(*) FROM pricing_uom_conversions c JOIN products p ON p.id = c.product_id
+		  WHERE p.sku = 'DBS-UL-ILCAMPO' AND c.from_uom = 'SF' AND c.to_uom = 'PLT'
+		    AND c.source = 'CLIENT_CONFIRMED' AND c.factor = ROUND(1.55 / 45, 8)`)
+	wantCount(t, pool, "planted a MEASURED edge for Hydr at the old derived factor", 1,
+		`SELECT count(*) FROM pricing_uom_conversions c JOIN products p ON p.id = c.product_id
+		  WHERE p.sku = 'DBS-TB-HYDR' AND c.from_uom = 'SF' AND c.to_uom = 'PLT'
+		    AND c.source = 'MEASURED' AND c.factor = ROUND(3.95 / 44, 8)`)
+	wantCount(t, pool, "planted a retyped SEEDED_DEFAULT edge for Lafitt", 1,
+		`SELECT count(*) FROM pricing_uom_conversions c JOIN products p ON p.id = c.product_id
+		  WHERE p.sku = 'DBS-PM-LAFITT' AND c.from_uom = 'SF' AND c.to_uom = 'PLT'
+		    AND c.source = 'SEEDED_DEFAULT' AND c.factor = `+retypedEdgeFactor)
+	wantCount(t, pool, "planted the plain old SEEDED_DEFAULT controls", 14,
+		`SELECT count(*) FROM pricing_uom_conversions c JOIN products p ON p.id = c.product_id
+		  JOIN `+oldFactorValues+` v(sku, old) ON p.sku = v.sku
+		 WHERE c.from_uom = 'SF' AND c.to_uom = 'PLT' AND c.source = 'SEEDED_DEFAULT'
+		   AND c.factor = ROUND(v.old / (SELECT qty_in_base FROM product_uoms pu WHERE pu.product_id = p.id AND pu.uom_code = 'PLT'), 8)`)
 	mustExec(t, ctx, pool, migration0360Body(t))
 
 	wantCount(t, pool, "the changed product factor stands", 1,
@@ -447,6 +487,18 @@ func TestIntegration_Migration0360LeavesAChangedValueAlone(t *testing.T) {
 		 WHERE p.sku = `+anticoSKU+` AND pu.uom_code = 'SF' AND pu.qty_in_base = `+changedUOM)
 	wantCount(t, pool, "the changed quote line stands", 1,
 		`SELECT count(*) FROM quote_lines WHERE quote_id = `+bluQuoteID+` AND line_no = 1 AND qty_base = `+changedQtyBase)
+	wantCount(t, pool, "the client confirmed edge stands", 1,
+		`SELECT count(*) FROM pricing_uom_conversions c JOIN products p ON p.id = c.product_id
+		  WHERE p.sku = 'DBS-UL-ILCAMPO' AND c.from_uom = 'SF' AND c.to_uom = 'PLT'
+		    AND c.source = 'CLIENT_CONFIRMED' AND c.factor = ROUND(1.55 / 45, 8)`)
+	wantCount(t, pool, "the measured edge stands", 1,
+		`SELECT count(*) FROM pricing_uom_conversions c JOIN products p ON p.id = c.product_id
+		  WHERE p.sku = 'DBS-TB-HYDR' AND c.from_uom = 'SF' AND c.to_uom = 'PLT'
+		    AND c.source = 'MEASURED' AND c.factor = ROUND(3.95 / 44, 8)`)
+	wantCount(t, pool, "the retyped edge stands", 1,
+		`SELECT count(*) FROM pricing_uom_conversions c JOIN products p ON p.id = c.product_id
+		  WHERE p.sku = 'DBS-PM-LAFITT' AND c.from_uom = 'SF' AND c.to_uom = 'PLT'
+		    AND c.source = 'SEEDED_DEFAULT' AND c.factor = `+retypedEdgeFactor)
 
 	noRowOutside(t, pool, "the untouched sixteen: product factors still off",
 		fmt.Sprintf(productFactorMismatches, newFactorValues)+` AND v.sku <> `+anticoSKU)
@@ -461,8 +513,9 @@ func TestIntegration_Migration0360LeavesAChangedValueAlone(t *testing.T) {
 		 WHERE pu.uom_code = 'SF' AND pu.qty_in_base = v.want AND v.sku <> `+anticoSKU)
 	wantCount(t, pool, "the Magnumstone invoice line corrected", 1,
 		`SELECT count(*) FROM invoice_lines WHERE invoice_id = `+magnumInvoice+` AND line_no = 1 AND qty_base = 1548.45`)
-	noRowOutside(t, pool, "the untouched sixteen: edges still at the old derived factor",
-		fmt.Sprintf(edgeFactorMismatches, newFactorValues)+` AND v.sku <> `+anticoSKU)
+	noRowOutside(t, pool, "the plain SEEDED_DEFAULT controls: edges still at the old derived factor",
+		fmt.Sprintf(edgeFactorMismatches, newFactorValues)+
+			` AND v.sku NOT IN (`+anticoSKU+`,'DBS-UL-ILCAMPO','DBS-TB-HYDR','DBS-PM-LAFITT')`)
 }
 
 // factorWorldSnapshot is every row the migration may write, as one ordered string list.
