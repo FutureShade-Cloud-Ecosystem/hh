@@ -209,6 +209,11 @@ type Write struct {
 	// item's created or updated outcome. A note names a field and a
 	// reason, never a value. Nil on a call that cannot carry one.
 	Note func(Refusal)
+	// Attached lets a writer whose create arm bound the item to a row
+	// that already existed (a staff made row its own natural key named)
+	// say so: the frame then answers attached, the fifth outcome word,
+	// instead of created. Nil on a call that cannot carry one.
+	Attached func()
 }
 
 // Writer is the owning module's write path for one loaded table, handed
