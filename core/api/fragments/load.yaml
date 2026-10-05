@@ -403,12 +403,20 @@ paths:
         refused naming the legacy key and the field, never a value,
         never rounded (the plan's section 8 point 3); every code naming
         a catalogue unit; the product's price unit inside the set; no
-        unit removed while a price, break, rule or stock row still names
-        it (the list price, the pricing rules and the quantity break
-        headers and items of the product and of the product's category,
-        the promotions' fixed prices, the clearance prices, the supplier
+        unit removed while a price, break, rule, override or stock row
+        still names it (the list price, the pricing rules and the
+        quantity break headers and items of the product and of the
+        product's category, matched the way the price resolver matches
+        them so a row carrying a product beside the category still
+        applies, the customer category overrides priced in the unit, the
+        promotions' fixed prices, the clearance prices, the supplier
         skus, the product's rounding rule, the stock moves and the
-        pricing conversion edges); and the decimal round trip holding on
+        pricing conversion edges; the category scoped and store wide
+        promotions and the tier default rules are deliberately beyond
+        this check: a unit mismatch leaves such a promotion inert rather
+        than failing a resolve, and a rule that applies to every product
+        is no one product's row to hold); and the decimal round trip
+        holding on
         every conversion against the representation the price resolver
         reads: factors are exact only to what the resolver reads, and a
         factor the float read would corrupt is refused (the plan's risk
