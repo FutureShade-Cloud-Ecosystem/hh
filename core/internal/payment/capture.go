@@ -286,8 +286,10 @@ func (s *Service) stampCaptured(ctx context.Context, a Attempt, ref string) (Cap
 // lateCapture is the answer that arrived after the row left CHARGING (A1 guards StampCaptured from
 // CHARGING only, so the stamp matched nothing). The money moved and nobody will bind it, so the capture
 // is voided here: the row goes UNKNOWN or RESOLVED to VOIDING with the ref recorded (StampLateCapture),
-// and the compensation runs from there. A row in any other status cannot take the ref and the capture is
-// surfaced loudly instead.
+// and the reversal runs from there with NO refund fallback (the double reversal ruling: this row's
+// history is already exceptional, the machine makes at most one reversal move, and every failing end
+// is a manager item). A row in any other status cannot take the ref and the capture is surfaced
+// loudly instead.
 func (s *Service) lateCapture(ctx context.Context, a Attempt, ref string) (CaptureResult, error) {
 	row, ok, err := s.attempts.StampLateCapture(ctx, a.ID, ref, "")
 	if err != nil {
@@ -300,7 +302,9 @@ func (s *Service) lateCapture(ctx context.Context, a Attempt, ref string) (Captu
 		"attempt", a.ID, "ref", ref, "was", "late capture")
 	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), CompensationDeadline)
 	defer cancel()
-	cres, err := s.reverse(rctx, row)
+	// No refund fallback on this path (the double reversal ruling): one void is the machine's move,
+	// and every failing end goes to a manager.
+	cres, err := s.reverse(rctx, row, false)
 	res := CaptureResult{Attempt: cres.Attempt}
 	if err != nil {
 		return res, err
@@ -339,7 +343,7 @@ func (s *Service) Compensate(ctx context.Context, attemptID string) (CompensateR
 		return CompensateResult{}, err
 	}
 	if moved {
-		return s.reverse(dctx, row)
+		return s.reverse(dctx, row, true)
 	}
 	cur, found, err := s.attempts.getByID(dctx, attemptID)
 	if err != nil {
@@ -386,7 +390,16 @@ func classifyReversal(res RefundResult, err error) reversalOutcome {
 }
 
 // reverse runs the void and its refund fallback for a row this call just moved to VOIDING.
-func (s *Service) reverse(ctx context.Context, a Attempt) (CompensateResult, error) {
+// refundFallback says whether a refused void may fall back to a refund on its own. The normal
+// compensation keeps the designed fallback (the full amount comes back by either instrument, and a
+// cleanly refused void moved no money). A late capture over a row that left CHARGING never takes
+// it: that row already carries an exceptional history (the sweep gave it up, or a manager closed
+// it, and a manager who closed it REVERSED_AT_PROCESSOR says the money was already sent back), so
+// the machine makes at most one reversal move there and every failing end, lost or refused, is a
+// manager item (the principal's ruling on the double reversal): the human re-attempts the reversal
+// with the folded decision readable on the row, or accepts the loss. A second money moving call on
+// our own is the one thing this path must not do.
+func (s *Service) reverse(ctx context.Context, a Attempt, refundFallback bool) (CompensateResult, error) {
 	cfg, creds, err := s.cfg.activeConfig(ctx)
 	if err != nil {
 		// Nothing was sent, and the money is held: stop at VOID_UNKNOWN so a person looks.
@@ -406,6 +419,13 @@ func (s *Service) reverse(ctx context.Context, a Attempt) (CompensateResult, err
 		return s.finishReversal(ctx, a, func() (Attempt, bool, error) {
 			return s.attempts.StampVoidUnknown(ctx, a.ID, "void: "+errText(verr))
 		}, vres.ProcessorRef)
+	}
+
+	if !refundFallback {
+		return s.finishReversal(ctx, a, func() (Attempt, bool, error) {
+			return s.attempts.StampVoidDeclined(ctx, a.ID,
+				"void: "+errText(verr)+"; no refund fallback on this path, a manager re-attempts the reversal or accepts the loss")
+		}, "")
 	}
 
 	// The void was refused: the refund is the fallback.

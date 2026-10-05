@@ -651,6 +651,74 @@ func TestCapture_ALateAnswerAfterTheSweepIsVoidedNotDropped(t *testing.T) {
 	}
 }
 
+// A late capture's reversal never falls back to the refund on its own (the double reversal ruling):
+// the row's history is already exceptional (the sweep gave it up, or a manager closed it, and a
+// REVERSED_AT_PROCESSOR close says the money was already sent back), so the machine makes at most one
+// reversal move and every failing end, lost or refused, is a manager item that keeps the folded
+// decision readable. The normal Compensate path keeps its designed refund fallback, pinned by
+// TestCompensate_VoidDeclinedThenRefundApproved and TestCompensate_BothDeclinedIsVoidDeclined below.
+func TestCapture_ALateCaptureReversalNeverFallsBackToTheRefund(t *testing.T) {
+	cases := []struct {
+		name       string
+		moved      string // how the row left CHARGING while the charge was out
+		voidHook   func(int, http.ResponseWriter, *http.Request)
+		refundHook func(int, http.ResponseWriter, *http.Request)
+		wantStatus string
+	}{
+		{"manager close, void lost", "RESOLVED", replyStatus(502), nil, AttemptVoidUnknown},
+		{"manager close, void refused", "RESOLVED", replyC, nil, AttemptVoidDeclined},
+		// The mirror: the old code called the refund here and lost its answer, ending VOID_UNKNOWN.
+		{"manager close, void refused, the refund would be lost", "RESOLVED", replyC, replyStatus(502), AttemptVoidDeclined},
+		{"swept row, void refused", "UNKNOWN", replyC, nil, AttemptVoidDeclined},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := newCaptureRig(t)
+			r.run.void, r.run.refund = c.voidHook, c.refundHook
+			arrived, release := make(chan struct{}), make(chan struct{})
+			r.run.charge = func(n int, w http.ResponseWriter, _ *http.Request) {
+				close(arrived)
+				holdUntil(release)
+				_, _ = fmt.Fprintf(w, `{"result":"A","trans_id":"run-ch-%d"}`, n)
+			}
+			in := r.input()
+			done := make(chan error, 1)
+			go func() {
+				_, err := r.capture(in)
+				done <- err
+			}()
+			await(t, arrived, "the charge to reach the processor")
+			set := `status = 'UNKNOWN', last_error = 'swept past grace'`
+			if c.moved == "RESOLVED" {
+				set = fmt.Sprintf(`status = 'RESOLVED', resolution = 'REVERSED_AT_PROCESSOR', resolution_note = 'closed while in flight', resolved_by = '%s'::uuid`, r.fx.user)
+			}
+			if _, err := r.fx.helper.Exec(context.Background(), `UPDATE card_charge_attempts SET `+set+`
+			    WHERE leg_key = $1 AND status = 'CHARGING'`, in.LegKey); err != nil {
+				t.Fatal(err)
+			}
+			close(release)
+			if err := awaitErr(t, done); !errors.Is(err, ErrCaptureNeedsManager) {
+				t.Fatalf("err = %v, want ErrCaptureNeedsManager (the row goes to a person)", err)
+			}
+			row := r.row(in.LegKey)
+			if row.Status != c.wantStatus {
+				t.Fatalf("row = %s, want %s", row.Status, c.wantStatus)
+			}
+			if row.ProcessorRef != "run-ch-1" {
+				t.Fatalf("the late answer's ref must be kept: %+v", row)
+			}
+			if c.moved == "RESOLVED" {
+				for _, want := range []string{"REVERSED_AT_PROCESSOR", "closed while in flight", "void"} {
+					if !strings.Contains(row.LastError, want) {
+						t.Fatalf("last_error = %q, want the manager decision kept next to the void's diagnostic (%s)", row.LastError, want)
+					}
+				}
+			}
+			r.wantCounts(1, 1, 0) // one charge, one void, and no refund on its own
+		})
+	}
+}
+
 // A late answer on a row no status path can take (not UNKNOWN, not RESOLVED) is surfaced loudly with
 // the ref in the error and in the log, never dropped.
 func TestCapture_ALateAnswerThatCannotBeRecordedIsSurfacedWithItsRef(t *testing.T) {
