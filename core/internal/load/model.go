@@ -58,6 +58,21 @@ const (
 	ReasonUpdateTargetMissing = "update_target_missing"
 	// ReasonRecordShape: the record cannot be normalised to a hash.
 	ReasonRecordShape = "record_shape"
+	// ReasonSignChanged: a restated open amount changed sign on an update; a
+	// source item that changed sign is a different document, so the money
+	// door refuses it naming the amount field.
+	ReasonSignChanged = "sign_changed"
+	// ReasonTargetWorkedInHH: the update target exists but HH has worked it
+	// since it loaded (no longer FINALIZED, or its balance moved, or it
+	// belongs to another customer); a reload never overwrites it.
+	ReasonTargetWorkedInHH = "target_worked_in_hh"
+	// ReasonReplayChanged: a replayed batch id arrived carrying an item
+	// the recorded batch never carried, or an item whose content hash
+	// no longer matches the hash the batch recorded under that name.
+	// The money doors answer it at the batch boundary: a played batch id
+	// replays faithfully or refuses, never silently answers first
+	// outcomes over a submission the caller believes landed whole.
+	ReasonReplayChanged = "replay_changed"
 )
 
 // BatchStateRecorded is the one state this round records: the batch row
@@ -107,6 +122,38 @@ var ErrBatchActor = errors.New("load: the batch names no machine principal as it
 // answer: the resubmission replays the winner's record or re-runs to
 // convergence, the same rules every submission follows.
 var ErrBatchContended = errors.New("load: the batch contended with another batch on shared names and rolled back whole")
+
+// BatchRefusal is the money doors' batch level refusal (the plan's
+// reading 14: money is all or nothing per batch): one item's refusal
+// refused the whole batch, the claim and every item rolled back
+// together, nothing landed, and nothing recorded the batch id, so the
+// corrected batch may resubmit under the same id. The refusing item's
+// outcome names the reason code, the field and the key; the detail
+// carries keys and fields, never a record value. A divergent replay
+// (ReasonReplayChanged on the outcome) refuses the same way.
+type BatchRefusal struct {
+	Refusing Outcome
+}
+
+func (e *BatchRefusal) Error() string {
+	o := e.Refusing
+	return fmt.Sprintf("load: the batch refused on legacy key %s: %s %s: %s", o.LegacyID, o.Status, o.Reason, o.Detail)
+}
+
+// ItemError names one item's boundary refusal: the record's own shape
+// failed validation before any store call, so the batch answers 400 at
+// the boundary naming the item, the field and the reason. The detail
+// carries field names and keys, never a record value.
+type ItemError struct {
+	LegacyID string
+	Code     string
+	Field    string
+	Detail   string
+}
+
+func (e *ItemError) Error() string {
+	return fmt.Sprintf("load: item %s refused %s on %s: %s", e.LegacyID, e.Code, e.Field, e.Detail)
+}
 
 // Ref is a reference named by legacy key: the kind and the key, resolved
 // against the registry before any write.

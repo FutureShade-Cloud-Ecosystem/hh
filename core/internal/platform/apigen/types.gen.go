@@ -3638,6 +3638,27 @@ type InvCountReconRunPage struct {
 	Limit      *int32             `json:"limit,omitempty"`
 }
 
+type LoadReceivablesRecord map[string]any
+
+type LoadReceivablesItem struct {
+	LegacyId   string                `json:"legacy_id"`
+	DerivedKey *string               `json:"derived_key,omitempty"`
+	Requires   []LoadKeyRef          `json:"requires"`
+	Record     LoadReceivablesRecord `json:"record"`
+}
+
+type LoadReceivablesUpsertRequest struct {
+	SourceSystem string                `json:"source_system"`
+	BatchId      string                `json:"batch_id"`
+	Items        []LoadReceivablesItem `json:"items"`
+}
+
+type LoadReceivablesResult struct {
+	BatchId string                 `json:"batch_id"`
+	Counts  LoadBatchCounts        `json:"counts"`
+	Items   []LoadBatchItemOutcome `json:"items"`
+}
+
 type LoadKeyRef struct {
 	Kind     string `json:"kind"`
 	LegacyId string `json:"legacy_id"`

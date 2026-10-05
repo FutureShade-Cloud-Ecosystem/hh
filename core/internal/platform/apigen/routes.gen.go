@@ -301,6 +301,7 @@ var Routes = []Route{
 	{Method: "PUT", Path: "/api/v1/load/customers", OperationID: "loadUpsertCustomers", Tag: "load", XRole: "machine", Bearer: "machine", Addition: true, Surfaces: nil, Level: "", List: ""},
 	{Method: "PUT", Path: "/api/v1/load/jobs", OperationID: "loadUpsertJobs", Tag: "load", XRole: "machine", Bearer: "machine", Addition: true, Surfaces: nil, Level: "", List: ""},
 	{Method: "POST", Path: "/api/v1/load/keys/resolve", OperationID: "loadResolveKeys", Tag: "load", XRole: "machine", Bearer: "machine", Addition: true, Surfaces: nil, Level: "", List: ""},
+	{Method: "PUT", Path: "/api/v1/load/receivables", OperationID: "loadUpsertReceivables", Tag: "load", XRole: "machine", Bearer: "machine", Addition: true, Surfaces: nil, Level: "", List: ""},
 	{Method: "PUT", Path: "/api/v1/load/suppliers", OperationID: "loadUpsertSuppliers", Tag: "load", XRole: "machine", Bearer: "machine", Addition: true, Surfaces: nil, Level: "", List: ""},
 	{Method: "PUT", Path: "/api/v1/load/users", OperationID: "loadMapUsers", Tag: "load", XRole: "machine", Bearer: "machine", Addition: true, Surfaces: nil, Level: "", List: ""},
 	{Method: "GET", Path: "/api/v1/messaging/channels", OperationID: "messagingListChannels", Tag: "staff-messaging", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"house-messages"}, Level: "read", List: ""},
