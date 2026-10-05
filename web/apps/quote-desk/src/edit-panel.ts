@@ -160,21 +160,19 @@ export class QdQuoteEdit extends PanelBase {
   /**
    * A read is only ever applied to the quote that asked for it: a slow answer
    * for the quote that was open before is dropped, never shown over the one
-   * open now, and a save can only be made from a view of the open quote.
+   * open now, and an older read of the same quote never lands over a newer one
+   * (the context numbers the reads). A save can only be made from a view of the open quote.
    */
-  private loadSeq = 0;
-
   private async load(resetLine = 0): Promise<void> {
     const client = this.client;
     if (client === null || this.quoteId === "") {
-      this.loadSeq += 1;
       this.view = null;
       return;
     }
-    const seq = ++this.loadSeq;
     const ctx = this.ctx;
-    const result = await ctx.guarded(client.readQuote(ctx.id));
-    if (result === undefined || seq !== this.loadSeq) return;
+    const seq = ctx.startRead();
+    const result = await ctx.guardedRead(seq, client.readQuote(ctx.id));
+    if (result === undefined) return;
     if (!result.ok) {
       this.error = this.refuse(result, "read this quote");
       this.view = null;
@@ -213,8 +211,8 @@ export class QdQuoteEdit extends PanelBase {
   private async loadDiscounts(seq: number, ctx: QuoteContext): Promise<void> {
     const client = this.client;
     if (client === null) return;
-    const answers = await ctx.guarded(Promise.all([client.readTerms(ctx.id), client.surfaceConfig(this.branchId)]));
-    if (answers === undefined || seq !== this.loadSeq) return;
+    const answers = await ctx.guardedRead(seq, Promise.all([client.readTerms(ctx.id), client.surfaceConfig(this.branchId)]));
+    if (answers === undefined) return;
     const [terms, config] = answers;
     const byLine: Record<number, number> = {};
     if (terms.ok) for (const line of terms.value.lines) byLine[line.lineNo] = line.discPct;
@@ -225,8 +223,8 @@ export class QdQuoteEdit extends PanelBase {
   private async loadLinks(seq: number, ctx: QuoteContext): Promise<void> {
     const client = this.client;
     if (client === null) return;
-    const result = await ctx.guarded(client.listShareLinks(ctx.id));
-    if (result === undefined || seq !== this.loadSeq) return;
+    const result = await ctx.guardedRead(seq, client.listShareLinks(ctx.id));
+    if (result === undefined) return;
     this.links = result.ok ? result.value : [];
   }
 
@@ -251,7 +249,6 @@ export class QdQuoteEdit extends PanelBase {
     floor?: { lineNo: number; discPct: number },
     resetLine = 0,
   ): Promise<Wrote> {
-    if (ctx.stale) return "moved";
     if (this.busy || this.client === null) return "refused";
     this.busy = true;
     this.error = "";
@@ -270,7 +267,7 @@ export class QdQuoteEdit extends PanelBase {
         this.error = this.refuse(result, what);
       }
       await this.load(resetLine);
-      return ctx.stale ? "moved" : "refused";
+      return "refused";
     }
     // "Saved." is said once the re-read has landed: the boxes and each line's baseline are then the saved
     // figures, so the next edit made on seeing it is measured against the truth, not the figures before the save.
@@ -416,10 +413,10 @@ export class QdQuoteEdit extends PanelBase {
       else this.compareHits = [];
       return;
     }
-    const ctx = this.ctx;
-    const result = await ctx.guarded(client.searchProducts(q, which === "add" ? 10 : 8));
-    // A slower answer for an older query, or for the quote before this one, never replaces the newer one.
-    if (result === undefined || (which === "add" ? this.addQuery : this.compareQuery).trim() !== q) return;
+    // The catalogue is not tied to a quote: an answer belongs to the query it was asked for, and a slower answer
+    // for an older query never replaces the newer one (the quote before this one cleared both boxes).
+    const result = await client.searchProducts(q, which === "add" ? 10 : 8);
+    if ((which === "add" ? this.addQuery : this.compareQuery).trim() !== q) return;
     const rows = result.ok ? result.value : [];
     if (which === "add") this.hits = rows;
     else this.compareHits = rows;

@@ -305,22 +305,22 @@ export class QdQuoteBuilder extends LitElement {
     const seq = ++this.listSeq;
     const shown = keepPages ? this.rows.length : 0;
     const result = await client.listQuotes(this.statusFilter);
-    if (seq !== this.listSeq) return;
-    if (!result.ok) {
-      this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "list quotes"));
-      return;
-    }
-    let rows = result.value.rows;
-    let cursor = result.value.nextCursor ?? "";
+    let rows = result.ok ? result.value.rows : [];
+    let cursor = result.ok ? (result.value.nextCursor ?? "") : "";
     const seen = new Set<string>();
-    for (let page = 0; page < MAX_LIST_PAGES && rows.length < shown && cursor !== "" && !seen.has(cursor); page += 1) {
+    for (let page = 0; result.ok && page < MAX_LIST_PAGES && rows.length < shown && cursor !== "" && !seen.has(cursor); page += 1) {
       seen.add(cursor);
       const more = await client.listQuotes(this.statusFilter, cursor);
-      if (seq !== this.listSeq) return;
       if (!more.ok) break;
       const known = new Set(rows.map((r) => r.id));
       rows = [...rows, ...more.value.rows.filter((r) => !known.has(r.id))];
       cursor = more.value.nextCursor ?? "";
+    }
+    // A newer read of the list began while this one was out (or while it followed the pages): its answer is the one to show.
+    if (seq !== this.listSeq) return;
+    if (!result.ok) {
+      this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "list quotes"));
+      return;
     }
     this.rows = rows;
     this.nextCursor = cursor;
@@ -364,6 +364,7 @@ export class QdQuoteBuilder extends LitElement {
     }
     this.busy = true;
     this.error = "";
+    const onScreen = this.selected;
     const result = await client.createQuote(this.newCustomer.id, this.newBranch.trim(), this.newExpiry.trim());
     this.busy = false;
     if (!result.ok) {
@@ -373,7 +374,8 @@ export class QdQuoteBuilder extends LitElement {
     this.newCustomer = null;
     this.newExpiry = validUntilFromDays(30, new Date()); // stays pre-filled for the next quote
     await this.loadList();
-    this.selected = result.value;
+    // The person may have opened another quote while this one was being made: it joins the list but does not take the screen.
+    if (this.selected === onScreen) this.selected = result.value;
   }
 
   // ── the fan-out and the open events ────────────────────────────────────────

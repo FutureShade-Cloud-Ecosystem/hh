@@ -310,8 +310,8 @@
   {
     "id": "av-peek-order",
     "file": "src/availability-panel.ts",
-    "find": "if (result === undefined || seq !== this.peekSeq) return;",
-    "replace": "if (result === undefined) return;",
+    "find": "    if (seq !== this.peekSeq) return;\n",
+    "replace": "",
     "test": "P3 availability: a peek answered after a newer read"
   },
   {
@@ -488,5 +488,327 @@
     "find": "const result = await ctx.guarded(client.mintShareLink(ctx.id));\n    if (result === undefined) throw new StaleQuoteError();",
     "replace": "const result = await client.mintShareLink(ctx.id);\n    if (result === undefined) throw new StaleQuoteError();",
     "test": "a send in flight when another quote opens"
+  },
+  {
+    "id": "ep-read-guard",
+    "file": "src/edit-panel.ts",
+    "find": "const result = await ctx.guardedRead(seq, client.readQuote(ctx.id));\n    if (result === undefined) return;",
+    "replace": "const result = await client.readQuote(ctx.id);",
+    "test": "guard edit read:"
+  },
+  {
+    "id": "ep-read-order",
+    "file": "src/edit-panel.ts",
+    "find": "const result = await ctx.guardedRead(seq, client.readQuote(ctx.id));",
+    "replace": "const result = await ctx.guarded(client.readQuote(ctx.id));",
+    "test": "guard edit read order:"
+  },
+  {
+    "id": "ep-discounts-guard",
+    "file": "src/edit-panel.ts",
+    "find": "await ctx.guardedRead(seq, Promise.all([client.readTerms(ctx.id), client.surfaceConfig(this.branchId)]));\n    if (answers === undefined) return;",
+    "replace": "await Promise.all([client.readTerms(ctx.id), client.surfaceConfig(this.branchId)]);",
+    "test": "guard edit discounts read:"
+  },
+  {
+    "id": "ep-discounts-order",
+    "file": "src/edit-panel.ts",
+    "find": "await ctx.guardedRead(seq, Promise.all([client.readTerms(ctx.id), client.surfaceConfig(this.branchId)]));",
+    "replace": "await ctx.guarded(Promise.all([client.readTerms(ctx.id), client.surfaceConfig(this.branchId)]));",
+    "test": "guard edit discounts order:"
+  },
+  {
+    "id": "ep-links-guard",
+    "file": "src/edit-panel.ts",
+    "find": "const result = await ctx.guardedRead(seq, client.listShareLinks(ctx.id));\n    if (result === undefined) return;",
+    "replace": "const result = await client.listShareLinks(ctx.id);",
+    "test": "guard edit links read:"
+  },
+  {
+    "id": "ep-links-order",
+    "file": "src/edit-panel.ts",
+    "find": "const result = await ctx.guardedRead(seq, client.listShareLinks(ctx.id));",
+    "replace": "const result = await ctx.guarded(client.listShareLinks(ctx.id));",
+    "test": "guard edit links order:"
+  },
+  {
+    "id": "ep-write-answer",
+    "file": "src/edit-panel.ts",
+    "find": "const result = await ctx.guarded(action(ctx.id), (late) => this.lateAnswer(ctx, late, what, floor));\n    // The quote the person moved to meanwhile owns the screen now: this answer says nothing about it.\n    if (result === undefined) return \"moved\";",
+    "replace": "const result = await action(ctx.id);",
+    "test": "guard edit write answer:"
+  },
+  {
+    "id": "ep-write-reload",
+    "file": "src/edit-panel.ts",
+    "find": "    await this.load(resetLine);\n    if (ctx.stale) return \"moved\";",
+    "replace": "    await this.load(resetLine);",
+    "test": "guard edit write reload:"
+  },
+  {
+    "id": "ep-search-query",
+    "file": "src/edit-panel.ts",
+    "find": "    if ((which === \"add\" ? this.addQuery : this.compareQuery).trim() !== q) return;\n",
+    "replace": "",
+    "test": "guard edit search:"
+  },
+  {
+    "id": "ep-mint-answer",
+    "file": "src/edit-panel.ts",
+    "find": "const result = await ctx.guarded(client.mintShareLink(ctx.id), (late) => this.lateAnswer(ctx, late, \"create a share link\"));\n    if (result === undefined) return;",
+    "replace": "const result = await client.mintShareLink(ctx.id);",
+    "test": "guard edit mint answer:"
+  },
+  {
+    "id": "ep-mint-reload",
+    "file": "src/edit-panel.ts",
+    "find": "    await this.load();\n    if (ctx.stale) return;\n    // The just-minted link",
+    "replace": "    await this.load();\n    // The just-minted link",
+    "test": "guard edit mint reload:"
+  },
+  {
+    "id": "ep-copy-error",
+    "file": "src/edit-panel.ts",
+    "find": "    } catch {\n      if (ctx.stale) return;\n      this.error = \"The link could not be copied",
+    "replace": "    } catch {\n      this.error = \"The link could not be copied",
+    "test": "guard edit copy refused:"
+  },
+  {
+    "id": "ep-copy-done",
+    "file": "src/edit-panel.ts",
+    "find": "    if (ctx.stale) return;\n    this.error = \"\";\n    this.notice = \"Link copied.",
+    "replace": "    this.error = \"\";\n    this.notice = \"Link copied.",
+    "test": "guard edit copy:"
+  },
+  {
+    "id": "ep-compare",
+    "file": "src/edit-panel.ts",
+    "find": "const result = await ctx.guarded(client.compareLine(ctx.id, lineNo, this.compareAlts.map((a) => a.product_id)));\n    if (result === undefined) return;",
+    "replace": "const result = await client.compareLine(ctx.id, lineNo, this.compareAlts.map((a) => a.product_id));",
+    "test": "guard edit compare:"
+  },
+  {
+    "id": "ep-convert-answer",
+    "file": "src/edit-panel.ts",
+    "find": "const result = await ctx.guarded(client.convertQuote(ctx.id, this.convertFulfilment), (late) => this.lateAnswer(ctx, late, \"convert this quote\"));\n    if (result === undefined) return;",
+    "replace": "const result = await client.convertQuote(ctx.id, this.convertFulfilment);",
+    "test": "guard edit convert answer:"
+  },
+  {
+    "id": "ep-convert-reload",
+    "file": "src/edit-panel.ts",
+    "find": "    await this.load();\n    if (ctx.stale) return;\n    this.announceChanged();\n  }\n\n  // \u2500\u2500 delegation",
+    "replace": "    await this.load();\n    this.announceChanged();\n  }\n\n  // \u2500\u2500 delegation",
+    "test": "guard edit convert reload:"
+  },
+  {
+    "id": "hs-read-guard",
+    "file": "src/history-panel.ts",
+    "find": "const result = await ctx.guardedRead(seq, client.editHistory(ctx.id));\n    if (result === undefined) return;",
+    "replace": "const result = await client.editHistory(ctx.id);",
+    "test": "guard history read:"
+  },
+  {
+    "id": "hs-read-order",
+    "file": "src/history-panel.ts",
+    "find": "const result = await ctx.guardedRead(seq, client.editHistory(ctx.id));",
+    "replace": "const result = await ctx.guarded(client.editHistory(ctx.id));",
+    "test": "guard history order:"
+  },
+  {
+    "id": "as-read-guard",
+    "file": "src/assist-panel.ts",
+    "find": "const result = await ctx.guarded(client.assistExtract(this.text, this.branchId, asked));\n      if (result === undefined) return;",
+    "replace": "const result = await client.assistExtract(this.text, this.branchId, asked);",
+    "test": "guard assist read:"
+  },
+  {
+    "id": "as-reading-flag",
+    "file": "src/assist-panel.ts",
+    "find": "if (!ctx.stale) this.reading = false;",
+    "replace": "this.reading = false;",
+    "test": "guard assist reading flag:"
+  },
+  {
+    "id": "as-adding-flag",
+    "file": "src/assist-panel.ts",
+    "find": "if (!ctx.stale) this.adding = false;",
+    "replace": "this.adding = false;",
+    "test": "guard assist adding flag:"
+  },
+  {
+    "id": "as-add-guard",
+    "file": "src/assist-panel.ts",
+    "find": "const result = await ctx.guarded(client.addLine(ctx.id, p.product_id, p.qty_entered, p.uom_entered), (late) => {\n          if (late.ok) added += 1;\n        });",
+    "replace": "const result = await client.addLine(ctx.id, p.product_id, p.qty_entered, p.uom_entered);",
+    "test": "P2-1 an add that was out when the person left lands"
+  },
+  {
+    "id": "as-gaps-guard",
+    "file": "src/assist-panel.ts",
+    "find": "const result = await ctx.guardedRead(seq, client.assistScopeGaps(ctx.id));\n    if (result === undefined) return;",
+    "replace": "const result = await client.assistScopeGaps(ctx.id);",
+    "test": "guard assist gaps read:"
+  },
+  {
+    "id": "as-gaps-order",
+    "file": "src/assist-panel.ts",
+    "find": "const result = await ctx.guardedRead(seq, client.assistScopeGaps(ctx.id));",
+    "replace": "const result = await ctx.guarded(client.assistScopeGaps(ctx.id));",
+    "test": "guard assist gaps order:"
+  },
+  {
+    "id": "av-load-guard",
+    "file": "src/availability-panel.ts",
+    "find": "const answers = await ctx.guardedRead(seq, Promise.all([client.availability(ctx.id), client.readQuote(ctx.id)]));\n    if (answers === undefined) return;",
+    "replace": "const answers = await Promise.all([client.availability(ctx.id), client.readQuote(ctx.id)]);",
+    "test": "guard availability read:"
+  },
+  {
+    "id": "fu-load-guard",
+    "file": "src/followups-panel.ts",
+    "find": "const answers = await ctx.guardedRead(seq, Promise.all([client.followUps(ctx.id), client.readQuote(ctx.id)]));\n    if (answers === undefined) return;",
+    "replace": "const answers = await Promise.all([client.followUps(ctx.id), client.readQuote(ctx.id)]);",
+    "test": "guard follow-ups read:"
+  },
+  {
+    "id": "fu-share-answer",
+    "file": "src/followups-panel.ts",
+    "find": "const result = await ctx.guarded(client.shareBySMS(ctx.id));",
+    "replace": "const result = await client.shareBySMS(ctx.id);",
+    "test": "a text share answer that lands after another quote opened"
+  },
+  {
+    "id": "fu-share-reload",
+    "file": "src/followups-panel.ts",
+    "find": "    await this.load();\n    if (ctx.stale) return;\n    // The surface shows the status",
+    "replace": "    await this.load();\n    // The surface shows the status",
+    "test": "guard follow-ups text reload:"
+  },
+  {
+    "id": "fu-change-answer",
+    "file": "src/followups-panel.ts",
+    "find": "const result = await ctx.guarded(stop ? client.stopFollowUps(ctx.id) : client.resumeFollowUps(ctx.id));",
+    "replace": "const result = await (stop ? client.stopFollowUps(ctx.id) : client.resumeFollowUps(ctx.id));",
+    "test": "a follow-ups stop that lands after another quote opened"
+  },
+  {
+    "id": "he-load-guard",
+    "file": "src/hold-expiry-panel.ts",
+    "find": "const result = await ctx.guardedRead(seq, client.holdExpiry(ctx.id));\n    if (result === undefined) return;",
+    "replace": "const result = await client.holdExpiry(ctx.id);",
+    "test": "guard hold expiry read:"
+  },
+  {
+    "id": "he-rehold-answer",
+    "file": "src/hold-expiry-panel.ts",
+    "find": "const result = await ctx.guarded(client.resyncHolds(ctx.id));",
+    "replace": "const result = await client.resyncHolds(ctx.id);",
+    "test": "a re-hold answer that lands after another quote opened"
+  },
+  {
+    "id": "he-rehold-reload",
+    "file": "src/hold-expiry-panel.ts",
+    "find": "    await this.load();\n    if (ctx.stale) return;\n    this.announceChanged();",
+    "replace": "    await this.load();\n    this.announceChanged();",
+    "test": "guard hold expiry reload:"
+  },
+  {
+    "id": "ap-load-order",
+    "file": "src/approvals-panel.ts",
+    "find": "    if (seq !== this.loadSeq) return;\n    if (!result.ok) {",
+    "replace": "    if (!result.ok) {",
+    "test": "an approvals read that answers late never overwrites"
+  },
+  {
+    "id": "bq-list-order",
+    "file": "src/quote-builder.ts",
+    "find": "    if (seq !== this.listSeq) return;\n    if (!result.ok) {\n      this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, \"list quotes\"));",
+    "replace": "    if (!result.ok) {\n      this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, \"list quotes\"));",
+    "test": "guard list order:"
+  },
+  {
+    "id": "bq-more-order",
+    "file": "src/quote-builder.ts",
+    "find": "    this.busy = false;\n    if (seq !== this.listSeq) return;",
+    "replace": "    this.busy = false;",
+    "test": "guard list paging:"
+  },
+  {
+    "id": "bq-create-selection",
+    "file": "src/quote-builder.ts",
+    "find": "    if (this.selected === onScreen) this.selected = result.value;",
+    "replace": "    this.selected = result.value;",
+    "test": "guard create selection:"
+  },
+  {
+    "id": "pk-search-order",
+    "file": "src/customer-picker.ts",
+    "find": "      if (mine !== this.seq) return;\n      if (!res.ok) {",
+    "replace": "      if (!res.ok) {",
+    "test": "guard picker search:"
+  },
+  {
+    "id": "ss-policy-order",
+    "file": "src/settings-surface.ts",
+    "find": "    if (seq !== this.policySeq) return;\n    this.policyLoading = false;",
+    "replace": "    this.policyLoading = false;",
+    "test": "guard policy order:"
+  },
+  {
+    "id": "ss-policy-dirty",
+    "file": "src/settings-surface.ts",
+    "find": "    if (this.policyDirty && !force) return;",
+    "replace": "",
+    "test": "guard policy edit:"
+  },
+  {
+    "id": "ss-policy-unread",
+    "file": "src/settings-surface.ts",
+    "find": "      if (force || this.formKey !== key) {",
+    "replace": "      if (false) {",
+    "test": "guard policy unread:"
+  },
+  {
+    "id": "ss-policy-wrong-form",
+    "file": "src/settings-surface.ts",
+    "find": "    if (this.formKey !== this.lockKey()) {\n      // The form was loaded for another scope or branch",
+    "replace": "    if (false) {\n      // The form was loaded for another scope or branch",
+    "test": "guard policy wrong form:"
+  },
+  {
+    "id": "ss-policy-save-answer",
+    "file": "src/settings-surface.ts",
+    "find": "    // The scope or branch moved on while this save was out: the saved row is not this form's to fill, but it did\n    // change, so the other screens are told, as a layout save for another profile does.\n    if (lockKey !== this.lockKey()) {\n      this.announceChanged();\n      return;\n    }",
+    "replace": "",
+    "test": "guard policy save answer:"
+  },
+  {
+    "id": "ss-policy-lock-key",
+    "file": "src/settings-surface.ts",
+    "find": "if (result.status === 403) this.policyLocks = { ...this.policyLocks, [lockKey]: line };",
+    "replace": "if (result.status === 403) this.policyLocks = { ...this.policyLocks, [this.lockKey()]: line };",
+    "test": "guard policy lock:"
+  },
+  {
+    "id": "ss-items-order",
+    "file": "src/settings-surface.ts",
+    "find": "    if (seq !== this.itemsSeq) return;\n    if (!result.ok) {",
+    "replace": "    if (!result.ok) {",
+    "test": "guard items order:"
+  },
+  {
+    "id": "ss-items-drafts",
+    "file": "src/settings-surface.ts",
+    "find": "    if (force) this.drafts = {};",
+    "replace": "    this.drafts = {};",
+    "test": "guard items drafts:"
+  },
+  {
+    "id": "ss-items-save-answer",
+    "file": "src/settings-surface.ts",
+    "find": "    if (profile !== this.profile) {\n      if (result.ok) this.announceChanged();\n      return;\n    }",
+    "replace": "",
+    "test": "guard items save answer:"
   }
 ]

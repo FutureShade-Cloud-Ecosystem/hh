@@ -80,7 +80,6 @@ export class QdQuoteAssist extends PanelBase {
   @state() private dismissed: string[] = [];
   @state() private gapsError = "";
 
-  private gapsSeq = 0;
   private lastQuote = "";
   /** The epoch of the context the flags below belong to: a new one means a read or an add still out will not answer here. */
   private lastEpoch = -1;
@@ -421,9 +420,9 @@ export class QdQuoteAssist extends PanelBase {
       this.gapsError = "";
       return;
     }
-    const seq = ++this.gapsSeq;
-    const result = await ctx.guarded(client.assistScopeGaps(ctx.id));
-    if (result === undefined || seq !== this.gapsSeq) return;
+    const seq = ctx.startRead();
+    const result = await ctx.guardedRead(seq, client.assistScopeGaps(ctx.id));
+    if (result === undefined) return;
     if (!result.ok) {
       // A suggestion read that cannot load is quiet, not loud: nothing the rep is doing has
       // failed, so this is a status line and never an alert.

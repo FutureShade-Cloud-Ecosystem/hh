@@ -2,7 +2,7 @@
 // behind a delayed route, moves to another quote, lets the answer go and asserts the other quote shows none of it.
 // Take the guard away (test/mutants.json names the exact edit) and the test goes red.
 import { expect, test } from "@playwright/test";
-import { countRequests, hold, open, row, seed, settle, signIn, stubBrowserChannels, watchEvent, writes } from "./switch-helpers.js";
+import { armedHold, countRequests, hold, open, row, seed, settle, signIn, stubBrowserChannels, watchEvent, writes } from "./switch-helpers.js";
 
 test.beforeEach(async ({ request }) => {
   await request.post("/_stub/reset");
@@ -199,20 +199,6 @@ test("guard busy release: a send that finishes on the quote just left does not f
 
 // ── the guards after an await that is not itself a guarded call: each holds one step of a chain back, switches
 // quotes, lets it go, and asserts the chain stopped (no write sent, no notice, no quote-changed announced). ──
-
-async function armedHold(page: import("@playwright/test").Page, url: RegExp, method: string) {
-  let armed = false;
-  const held = await hold(page, url, { method, match: () => armed });
-  return {
-    held,
-    arm: () => {
-      armed = true;
-    },
-    disarm: () => {
-      armed = false;
-    },
-  };
-}
 
 test("guard scan waits for opening: a scan that waited for the quote being opened is dropped when another quote opens", async ({ page }) => {
   await seed(page, { customer_id: "c-fenwick" });

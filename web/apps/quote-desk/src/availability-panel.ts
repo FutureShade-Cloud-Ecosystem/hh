@@ -153,10 +153,11 @@ export class QdQuoteAvailability extends PanelBase {
   private async readPeek(productId: string): Promise<void> {
     const client = this.client;
     if (client === null) return;
-    const ctx = this.ctx;
+    // Not tied to a quote on its own: a peek belongs to the read of the quote it was asked after, and a newer read
+    // (which a quote switch starts too) or a newer peek supersedes it.
     const seq = ++this.peekSeq;
-    const result = await ctx.guarded(client.availabilityBranches(productId));
-    if (result === undefined || seq !== this.peekSeq) return;
+    const result = await client.availabilityBranches(productId);
+    if (seq !== this.peekSeq) return;
     if (!result.ok) {
       this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "read the other branches' stock"));
       return;

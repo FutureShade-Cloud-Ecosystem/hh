@@ -150,19 +150,24 @@ export async function watchEvent(page: Page, name: string): Promise<() => Promis
 /** Stand-in for the page's clipboard and window.open, so a test can hold the copy back and see what was opened. */
 export async function stubBrowserChannels(page: Page): Promise<void> {
   await page.addInitScript(() => {
-    const w = window as unknown as { __clipHold: boolean; __clipRelease: () => void; __copied: string[]; __opened: string[] };
+    const w = window as unknown as { __clipHold: boolean; __clipRelease: () => void; __clipReject: () => void; __copied: string[]; __opened: string[] };
     w.__clipHold = false;
     w.__copied = [];
     w.__opened = [];
     w.__clipRelease = () => undefined;
+    w.__clipReject = () => undefined;
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: {
         writeText: (text: string) =>
-          new Promise<void>((resolve) => {
+          new Promise<void>((resolve, reject) => {
             w.__copied.push(text);
-            if (!w.__clipHold) resolve();
-            else w.__clipRelease = resolve;
+            if (!w.__clipHold) {
+              resolve();
+              return;
+            }
+            w.__clipRelease = resolve;
+            w.__clipReject = () => reject(new Error("the clipboard refused"));
           }),
       },
     });
@@ -180,4 +185,24 @@ export function countRequests(page: Page, pattern: RegExp): () => number {
     if (pattern.test(`${request.method()} ${request.url()}`)) seen += 1;
   });
   return () => seen;
+}
+
+/** A hold that catches nothing until the test arms it, so a stray read made by another part of the page cannot take its place. */
+export async function armedHold(
+  page: Page,
+  url: RegExp,
+  method: string,
+  options: { snapshot?: boolean; times?: number; refuse?: { status: number; error: string } } = {},
+): Promise<{ held: Held; arm: () => void; disarm: () => void }> {
+  let armed = false;
+  const held = await hold(page, url, { ...options, method, match: () => armed });
+  return {
+    held,
+    arm: () => {
+      armed = true;
+    },
+    disarm: () => {
+      armed = false;
+    },
+  };
 }

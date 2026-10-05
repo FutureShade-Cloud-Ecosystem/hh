@@ -77,12 +77,9 @@ export class QdQuoteHistory extends PanelBase {
     void this.load();
   }
 
-  /** An answer for the quote that was open before is dropped, never shown over the one open now. */
-  private loadSeq = 0;
-
+  /** An answer for the quote that was open before is dropped, never shown over the one open now, and an older read of this quote never lands over a newer one. */
   private async load(): Promise<void> {
     const client = this.client;
-    const seq = ++this.loadSeq;
     const ctx = this.ctx;
     if (client === null || ctx.id === "") {
       this.changes = [];
@@ -90,8 +87,9 @@ export class QdQuoteHistory extends PanelBase {
       return;
     }
     this.error = "";
-    const result = await ctx.guarded(client.editHistory(ctx.id));
-    if (result === undefined || seq !== this.loadSeq) return;
+    const seq = ctx.startRead();
+    const result = await ctx.guardedRead(seq, client.editHistory(ctx.id));
+    if (result === undefined) return;
     if (!result.ok) {
       this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "read this quote's history"));
       return;
