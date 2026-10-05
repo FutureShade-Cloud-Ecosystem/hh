@@ -738,6 +738,52 @@ func TestIntegration_LockOrder_MultiInvoiceReversePaymentBesideNSF(t *testing.T)
 	})
 }
 
+// Two multi-invoice settles naming the same invoices in opposite orders. On the main shape (the
+// invoice locked before the payments counter) this is a deadlock by construction: each settle locks
+// the caller's allocation order, and one helper holding the lower id row is enough to force the
+// interleaving, the first settle queued on the lower row while the second takes the higher row
+// freely and queues behind it. With the counter taken first, the settles serialise there and never
+// overlap their rows at all, whatever order each names. This leg is the guard for that credit: red
+// the day a settle stops taking the payments counter before its invoice rows.
+func TestIntegration_LockOrder_SettleBesideSettleOppositeOrder(t *testing.T) {
+	loPoolSizes(t, func(t *testing.T, size int32) {
+		r := newLORig(t, size)
+		low, high := r.invoice("T1", 1_000_000), r.invoice("T2", 1_000_000)
+		if low > high {
+			low, high = high, low
+		}
+		ctx := context.Background()
+		holdLow, err := r.pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := holdLow.Exec(ctx, `SELECT 1 FROM invoices WHERE id = $1::uuid FOR UPDATE`, low); err != nil {
+			t.Fatal(err)
+		}
+		aErr := make(chan error, 1)
+		go func() {
+			_, err := r.repo.Pay(context.Background(), r.custID, "CARD", fmt.Sprintf("gw-lo-%d", time.Now().UnixNano()),
+				[]payments.Allocation{{InvoiceID: low, AmountCents: 500}, {InvoiceID: high, AmountCents: 500}})
+			aErr <- err
+		}()
+		r.waitSessions("settle A queued on the lower id row", 1,
+			`wait_event_type = 'Lock' AND query LIKE '%balance_cents%'`)
+		bErr := make(chan error, 1)
+		go func() {
+			_, err := r.repo.Pay(context.Background(), r.custID, "CARD", fmt.Sprintf("gw-lo-%d", time.Now().UnixNano()),
+				[]payments.Allocation{{InvoiceID: high, AmountCents: 500}, {InvoiceID: low, AmountCents: 500}})
+			bErr <- err
+		}()
+		// Settle B either queues behind A's payments counter row or, on a shape that lost the
+		// counter-first rule, on the lower invoice row itself: both prove B is committed before the
+		// helper steps aside.
+		r.waitSessions("settle B queued", 2,
+			`wait_event_type = 'Lock' AND (query LIKE '%balance_cents%' OR query LIKE '%scope_sequences%')`)
+		_ = holdLow.Rollback(ctx)
+		loBothAnswered(t, "settle A", loAnswer(t, "A", aErr), "settle B", loAnswer(t, "B", bErr))
+	})
+}
+
 // A multi-invoice NSF bounce beside a settle that names the same invoices in the OTHER order. The
 // bounce walks its invoices in ascending id order; the settle locks its allocations in the order the
 // caller names them, which nothing pins to ascending. Two writers taking the same rows in opposite

@@ -22,6 +22,17 @@ would have appeared again between a settle and the quote counter door once the d
 the value the row already holds, and a missing row is seeded at 0 so the settle's own increment still hands out 1. A
 feed number is used up only by the statement that stamps a row, once per payment.
 
+## The queueing cost of the one counter row
+
+The counter-first rule buys deadlock freedom at a queueing cost: every settle holds the one payments counter row while
+it waits on its invoice locks, so a settle held up on an invoice stalls every other payments writer behind it. The
+worst case was a POS card return, whose transaction holds the returned sale's invoice key share through its processor
+call: a settle waiting on that share held the counter for the length of an external round trip. The invoice rows are
+now taken FOR NO KEY UPDATE, which does not conflict with a key share, so a settle never waits on a return at all, and
+the writers a settle can still queue behind (an account credit, a reversal, a bounce) hold their rows for the length
+of local statements only. The settle-beside-settle leg is the guard for the rule itself: two settles naming the same
+invoices in opposite orders serialise at the counter instead of deadlocking on the rows.
+
 ## The writers
 
 | Writer | Rows, in the order taken | Follows the order |
