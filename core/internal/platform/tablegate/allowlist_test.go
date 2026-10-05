@@ -718,13 +718,17 @@ var allowlist = []allowlistEntry{
 	{
 		module: "pricing",
 		file:   "core/internal/pricing/syncscope.go",
-		tables: []string{"products"},
+		tables: []string{"product_uoms", "products"},
 		writes: []string{"scope_sequences"},
 		// the file's own header, THE PRODUCTS READ, stated plainly: the
 		// module's own shipped apply statement already derives the anchor's
 		// unit from products, and this adapter reads products.org_id beside it
 		// for the org fence, fail closed on a NULL or foreign org.
-		reason: "the sync adapter reads products.org_id for the org fence beside the shipped apply path's own products read, stated in the file header, plus the 0213 seq stamp",
+		// THE UNIT SET READ, added with LD-3 part B: a caller named anchor
+		// unit is checked against product_uoms, the product's own unit set,
+		// in one EXISTS beside the statement's products reads, on the
+		// caller's transaction, refusing before anything is drawn.
+		reason: "the sync adapter reads products.org_id for the org fence beside the shipped apply path's own products read, stated in the file header, plus the 0213 seq stamp, and the anchor's own unit checks a caller named unit against product_uoms in the same statement family (LD-3 part B), read only",
 	},
 	{
 		module: "pricing",
