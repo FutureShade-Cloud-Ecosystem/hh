@@ -108,6 +108,9 @@ import type { AddonSuggestion } from "@hardscapehouse/pos-kit/src/ported/pos-api
 /** Said when the read of a quote went ahead while a terms save of that quote was still out. */
 const STILL_SAVING = "A terms change you made on this quote is still being saved. What is shown may not include it yet.";
 
+/** How long a scan made in compose waits for the host to hand the quote just made down before it says so. */
+const HANDOFF_WAIT_MS = 3000;
+
 /** Thrown inside the send and link paths when the quote changed under them: caught and said nothing. */
 class StaleQuoteError extends Error {}
 
@@ -1124,6 +1127,7 @@ export class QdQuoteWorkarea extends LitElement {
     // A write still out when the work area leaves the page (sign out) must not go on to send follow-ups under the next session.
     this.detached = true;
     this.scope.open("");
+    this.releaseHandoffWaiters();
   }
 
   /** True from the moment this work area leaves the page: its context is then cancelled for good. */
@@ -1133,6 +1137,7 @@ export class QdQuoteWorkarea extends LitElement {
     // The host wires the client after this element mounts; the loads start
     // the moment it arrives.
     if (changed.has("quoteId")) this.leaveQuote(typeof changed.get("quoteId") === "string" ? (changed.get("quoteId") as string) : "");
+    if (changed.has("quoteId") && this.quoteId !== "") this.releaseHandoffWaiters();
     if (changed.has("client") && this.client !== null) this.startLoads();
     if (changed.has("quoteId")) {
       this.opening = this.loadAll();
@@ -1143,6 +1148,12 @@ export class QdQuoteWorkarea extends LitElement {
         void this.store?.flush();
       }
     }
+  }
+
+  private releaseHandoffWaiters(): void {
+    const waiting = this.handoffWaiters;
+    this.handoffWaiters = [];
+    for (const release of waiting) release();
   }
 
   /** The context of the quote on screen; a quote id that moved without its context following gets a fresh one. */
@@ -1922,6 +1933,15 @@ export class QdQuoteWorkarea extends LitElement {
   private opening: Promise<void> = Promise.resolve();
   private createdQuoteId = "";
 
+  /** Scans waiting for the host to hand a quote id down: released the moment this.quoteId changes. */
+  private handoffWaiters: Array<() => void> = [];
+
+  private handedDown(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      this.handoffWaiters.push(resolve);
+    });
+  }
+
   private async addProduct(p: { id: string; uom: string; name?: string }, qty = 1): Promise<void> {
     const client = this.client;
     if (client === null) return;
@@ -1930,11 +1950,17 @@ export class QdQuoteWorkarea extends LitElement {
     // Only while compose is on screen: a scan on an open quote is for that quote and waits for no create.
     if (this.creating !== null && this.quoteId === "") {
       await this.creating;
-      // The host hands the new quote id down on its own render: wait for it to arrive (bounded).
-      for (let waited = 0; this.createdQuoteId !== "" && this.quoteId === "" && waited < 50; waited += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+      // The host hands the new quote id down on its own render: wait for it to arrive, however long that takes (bounded, and said when it runs out).
+      if (this.createdQuoteId !== "" && this.quoteId === "" && !(await waitUpTo(HANDOFF_WAIT_MS, this.handedDown()))) {
+        this.speakAdd("The new quote did not open in time, so that scan was not added. Scan it again once the quote is on screen.", "warn");
+        return;
+      }
       await this.updateComplete;
       // The person opened a quote that is not the one just made while the scan waited: it was meant for the new quote.
-      if (this.quoteId !== "" && this.quoteId !== this.createdQuoteId) return;
+      if (this.quoteId !== "" && this.quoteId !== this.createdQuoteId) {
+        this.speakAdd("That scan was meant for the new quote, which another quote overtook, so it was not added. Scan it again on the quote you want.", "warn");
+        return;
+      }
     }
     const ctx = this.ctx;
     if (ctx.id !== "" && this.view === null) {

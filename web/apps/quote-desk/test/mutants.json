@@ -93,7 +93,7 @@
   {
     "id": "wa-scan-wait-target",
     "file": "src/quote-workarea.ts",
-    "find": "if (this.quoteId !== \"\" && this.quoteId !== this.createdQuoteId) return;",
+    "find": "if (this.quoteId !== \"\" && this.quoteId !== this.createdQuoteId) {\n        this.speakAdd(\"That scan was meant for the new quote, which another quote overtook, so it was not added. Scan it again on the quote you want.\", \"warn\");\n        return;\n      }",
     "replace": "",
     "test": "P2-1 a scan made in compose"
   },
@@ -1178,5 +1178,33 @@
     "find": "    if (this.creating !== null || this.createdQuoteId !== \"\") return;\n",
     "replace": "",
     "test": "P3 a late layout answer does not resume the remembered quote"
+  },
+  {
+    "id": "wa-scan-overtaken-says",
+    "file": "src/quote-workarea.ts",
+    "find": "        this.speakAdd(\"That scan was meant for the new quote, which another quote overtook, so it was not added. Scan it again on the quote you want.\", \"warn\");\n",
+    "replace": "",
+    "test": "P3 a scan made in compose that another quote overtook says so"
+  },
+  {
+    "id": "wa-scan-handoff-wait",
+    "file": "src/quote-workarea.ts",
+    "find": "!(await waitUpTo(HANDOFF_WAIT_MS, this.handedDown()))",
+    "replace": "false",
+    "test": "P3 a scan made in compose waits for the host"
+  },
+  {
+    "id": "wa-scan-handoff-timeout-says",
+    "file": "src/quote-workarea.ts",
+    "find": "        this.speakAdd(\"The new quote did not open in time, so that scan was not added. Scan it again once the quote is on screen.\", \"warn\");\n",
+    "replace": "",
+    "test": "P3 a scan made in compose says so when the host never"
+  },
+  {
+    "id": "wa-handoff-release",
+    "file": "src/quote-workarea.ts",
+    "find": "    if (changed.has(\"quoteId\") && this.quoteId !== \"\") this.releaseHandoffWaiters();\n",
+    "replace": "",
+    "test": "P3 a scan made in compose waits for the host"
   }
 ]
