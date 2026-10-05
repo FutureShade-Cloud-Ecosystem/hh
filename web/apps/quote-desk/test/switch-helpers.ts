@@ -129,3 +129,55 @@ export async function quiet(page: Page): Promise<void> {
   }
 }
 
+
+/** Count the events of one name that reach the window (capture phase, so the shadow boundaries do not hide them). */
+export async function watchEvent(page: Page, name: string): Promise<() => Promise<number>> {
+  await page.evaluate((eventName) => {
+    const w = window as unknown as { __seenEvents?: Record<string, number> };
+    w.__seenEvents = w.__seenEvents ?? {};
+    w.__seenEvents[eventName] = 0;
+    window.addEventListener(
+      eventName,
+      () => {
+        (w.__seenEvents as Record<string, number>)[eventName] += 1;
+      },
+      true,
+    );
+  }, name);
+  return () => page.evaluate((eventName) => (window as unknown as { __seenEvents: Record<string, number> }).__seenEvents[eventName] ?? 0, name);
+}
+
+/** Stand-in for the page's clipboard and window.open, so a test can hold the copy back and see what was opened. */
+export async function stubBrowserChannels(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const w = window as unknown as { __clipHold: boolean; __clipRelease: () => void; __copied: string[]; __opened: string[] };
+    w.__clipHold = false;
+    w.__copied = [];
+    w.__opened = [];
+    w.__clipRelease = () => undefined;
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: (text: string) =>
+          new Promise<void>((resolve) => {
+            w.__copied.push(text);
+            if (!w.__clipHold) resolve();
+            else w.__clipRelease = resolve;
+          }),
+      },
+    });
+    window.open = ((url?: string | URL) => {
+      w.__opened.push(String(url));
+      return null;
+    }) as typeof window.open;
+  });
+}
+
+/** Count the requests made from now on whose "METHOD url" matches. */
+export function countRequests(page: Page, pattern: RegExp): () => number {
+  let seen = 0;
+  page.on("request", (request: Request) => {
+    if (pattern.test(`${request.method()} ${request.url()}`)) seen += 1;
+  });
+  return () => seen;
+}

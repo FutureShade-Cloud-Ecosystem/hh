@@ -2135,7 +2135,6 @@ export class QdQuoteWorkarea extends LitElement {
 
   /** After any cart change: refresh the terms (the server restamps the totals), then re-read. */
   private async afterCartChange(ctx: QuoteContext): Promise<void> {
-    if (ctx.stale) return;
     if (this.terms !== null && this.view !== null && canEdit(this.view, EDIT_LINE_QTY)) {
       await this.putTermsNow();
       if (ctx.stale) return;
@@ -2401,8 +2400,8 @@ export class QdQuoteWorkarea extends LitElement {
   private async doPreview(print: boolean): Promise<void> {
     const ctx = this.ctx;
     try {
+      // ensureLink throws once the quote has been left, so the lines below only run on the quote that asked.
       const token = await this.ensureLink(ctx);
-      if (ctx.stale) return;
       window.open(this.shareUrl(token, print), "_blank", "noopener");
       await this.loadAll();
       if (ctx.stale) return;
@@ -2430,8 +2429,7 @@ export class QdQuoteWorkarea extends LitElement {
         if (ctx.stale) return;
         if (this.error !== "") return;
       }
-      await this.ensureLink(ctx); // the core mints a link, moves DRAFT to SENT and starts the cadence; it sends no email
-      if (ctx.stale) return;
+      await this.ensureLink(ctx); // the core mints a link, moves DRAFT to SENT and starts the cadence; it sends no email (it throws once the quote was left)
       let smsOk = false;
       let smsWhy = "";
       const smsChosen = channels.includes("SMS");

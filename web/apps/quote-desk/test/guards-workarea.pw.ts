@@ -2,7 +2,7 @@
 // behind a delayed route, moves to another quote, lets the answer go and asserts the other quote shows none of it.
 // Take the guard away (test/mutants.json names the exact edit) and the test goes red.
 import { expect, test } from "@playwright/test";
-import { hold, open, row, seed, settle, signIn } from "./switch-helpers.js";
+import { countRequests, hold, open, row, seed, settle, signIn, stubBrowserChannels, watchEvent, writes } from "./switch-helpers.js";
 
 test.beforeEach(async ({ request }) => {
   await request.post("/_stub/reset");
@@ -195,4 +195,305 @@ test("guard busy release: a send that finishes on the quote just left does not f
   await expect(page.getByTestId("qb-send")).toBeDisabled();
   edit.open();
   await expect(page.getByTestId("qb-send")).toBeEnabled();
+});
+
+// ── the guards after an await that is not itself a guarded call: each holds one step of a chain back, switches
+// quotes, lets it go, and asserts the chain stopped (no write sent, no notice, no quote-changed announced). ──
+
+async function armedHold(page: import("@playwright/test").Page, url: RegExp, method: string) {
+  let armed = false;
+  const held = await hold(page, url, { method, match: () => armed });
+  return {
+    held,
+    arm: () => {
+      armed = true;
+    },
+    disarm: () => {
+      armed = false;
+    },
+  };
+}
+
+test("guard scan waits for opening: a scan that waited for the quote being opened is dropped when another quote opens", async ({ page }) => {
+  await seed(page, { customer_id: "c-fenwick" });
+  await signIn(page);
+  const seen = writes(page);
+  const reads = await hold(page, /\/api\/v1\/quotes\/q-1004$/, { method: "GET" });
+  await row(page, "Q-1004").click();
+  await reads.asked;
+  await page.locator("qd-quote-workarea").evaluate((el) => {
+    el.shadowRoot?.dispatchEvent(
+      new CustomEvent("pos-add-product", { detail: { product: { id: "p-polymer-sand", base_uom: "bag", name: "Polymeric Locking Sand" } }, bubbles: true, composed: true }),
+    );
+  });
+  await open(page, "Q-1001");
+  await expect(page.getByTestId("qb-line")).toHaveCount(2);
+  await reads.release();
+  await settle(page);
+  expect(seen.filter((w) => w.includes("/lines"))).toEqual([]);
+});
+
+test("guard cart change after terms save: an add whose terms save answers after another quote opened announces nothing", async ({ page }) => {
+  await seed(page, { customer_id: "c-fenwick" });
+  await signIn(page);
+  await open(page, "Q-1004");
+  await expect(page.getByTestId("qb-line")).toHaveCount(1);
+  await expect(page.getByTestId("qb-po")).toBeVisible();
+  const put = await hold(page, /\/api\/v1\/quotes\/q-1004\/terms$/, { method: "PUT" });
+  const scan = page.getByTestId("pos-scan-input");
+  await scan.fill("PSN-100");
+  await scan.press("Enter");
+  await put.asked;
+  await open(page, "Q-1001");
+  await settle(page);
+  const changed = await watchEvent(page, "quote-changed");
+  const readsOfOpen = countRequests(page, /^GET .*\/api\/v1\/quotes\/q-1001$/);
+  await put.release();
+  await settle(page);
+  expect(await changed()).toBe(0);
+  // The chain stopped: it did not go on to re-read the quote now open.
+  expect(readsOfOpen()).toBe(0);
+});
+
+test("guard cart change after read: an add whose re-read answers after another quote opened announces nothing", async ({ page }) => {
+  await seed(page, { customer_id: "c-fenwick" });
+  await signIn(page);
+  await open(page, "Q-1004");
+  await expect(page.getByTestId("qb-line")).toHaveCount(1);
+  const gated = await armedHold(page, /\/api\/v1\/quotes\/q-1004$/, "GET");
+  gated.arm();
+  const scan = page.getByTestId("pos-scan-input");
+  await scan.fill("PSN-100");
+  await scan.press("Enter");
+  await gated.held.asked;
+  gated.disarm();
+  await open(page, "Q-1001");
+  const changed = await watchEvent(page, "quote-changed");
+  await gated.held.release();
+  await settle(page);
+  expect(await changed()).toBe(0);
+});
+
+test("guard terms save reload: a terms save whose re-read answers after another quote opened announces nothing", async ({ page }) => {
+  await seed(page, { customer_id: "c-fenwick" });
+  await signIn(page);
+  await open(page, "Q-1004");
+  await expect(page.getByTestId("qb-po")).toBeVisible();
+  const gated = await armedHold(page, /\/api\/v1\/quotes\/q-1004$/, "GET");
+  gated.arm();
+  await page.getByTestId("qb-po").fill("PO-RELOAD");
+  await gated.held.asked;
+  gated.disarm();
+  await open(page, "Q-1001");
+  const changed = await watchEvent(page, "quote-changed");
+  await gated.held.release();
+  await settle(page);
+  expect(await changed()).toBe(0);
+});
+
+test("guard validity reload: a validity change whose re-read answers after another quote opened announces nothing", async ({ page }) => {
+  await seed(page, { customer_id: "c-fenwick" });
+  await signIn(page);
+  await open(page, "Q-1004");
+  await expect(page.getByTestId("qb-terms-validity")).toBeVisible();
+  const gated = await armedHold(page, /\/api\/v1\/quotes\/q-1004$/, "GET");
+  gated.arm();
+  await page.getByTestId("qb-terms-validity").selectOption("60 days");
+  await gated.held.asked;
+  gated.disarm();
+  await open(page, "Q-1001");
+  const changed = await watchEvent(page, "quote-changed");
+  await gated.held.release();
+  await settle(page);
+  expect(await changed()).toBe(0);
+});
+
+test("guard convert reload: a conversion whose re-read answers after another quote opened announces nothing", async ({ page }) => {
+  await seed(page, { customer_id: "c-fenwick", status: "ACCEPTED" });
+  await signIn(page);
+  await open(page, "Q-1004");
+  await expect(page.getByTestId("qb-convert")).toBeVisible();
+  const gated = await armedHold(page, /\/api\/v1\/quotes\/q-1004$/, "GET");
+  gated.arm();
+  await page.getByTestId("qb-convert").click();
+  await gated.held.asked;
+  gated.disarm();
+  await open(page, "Q-1001");
+  const changed = await watchEvent(page, "quote-changed");
+  await gated.held.release();
+  await settle(page);
+  expect(await changed()).toBe(0);
+  await expect(page.getByTestId("qb-convert-done")).toHaveCount(0);
+});
+
+test("guard copy link clipboard: a copy that finishes after another quote opened says nothing there", async ({ page }) => {
+  await stubBrowserChannels(page);
+  await seed(page, { customer_id: "c-fenwick" });
+  await signIn(page);
+  await open(page, "Q-1004");
+  await page.evaluate(() => ((window as unknown as { __clipHold: boolean }).__clipHold = true));
+  await page.getByTestId("qb-copy-link").click();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __copied: string[] }).__copied.length)).toBe(1);
+  await open(page, "Q-1001");
+  const changed = await watchEvent(page, "quote-changed");
+  await page.evaluate(() => (window as unknown as { __clipRelease: () => void }).__clipRelease());
+  await settle(page);
+  await expect(page.getByTestId("qb-notice")).toHaveText("");
+  expect(await changed()).toBe(0);
+});
+
+test("guard copy link reload: a copy whose re-read answers after another quote opened announces nothing", async ({ page }) => {
+  await stubBrowserChannels(page);
+  await seed(page, { customer_id: "c-fenwick" });
+  await signIn(page);
+  await open(page, "Q-1004");
+  const gated = await armedHold(page, /\/api\/v1\/quotes\/q-1004$/, "GET");
+  gated.arm();
+  await page.getByTestId("qb-copy-link").click();
+  await gated.held.asked;
+  gated.disarm();
+  await open(page, "Q-1001");
+  const changed = await watchEvent(page, "quote-changed");
+  await gated.held.release();
+  await settle(page);
+  expect(await changed()).toBe(0);
+});
+
+async function errorOnOpenQuote(page: import("@playwright/test").Page): Promise<void> {
+  // A refused quantity edit puts a sentence on the quote now open, which a late catch must not blank.
+  await page.route(/\/api\/v1\/quotes\/q-1001\/lines\/1$/, (route) =>
+    route.request().method() === "PATCH"
+      ? route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "quote: the line store is down" }) })
+      : route.continue(),
+  );
+  await page.getByRole("button", { name: /^Increase quantity/ }).first().click();
+  await expect(page.getByTestId("qb-error")).not.toHaveText("");
+}
+
+test("guard copy link error: a link that could not be made for the quote left leaves the sentence on the quote open", async ({ page }) => {
+  await stubBrowserChannels(page);
+  await seed(page, { customer_id: "c-fenwick" });
+  await signIn(page);
+  await open(page, "Q-1004");
+  const mint = await hold(page, /\/api\/v1\/quotes\/q-1004\/share-links$/, { method: "POST" });
+  await page.getByTestId("qb-copy-link").click();
+  await mint.asked;
+  await open(page, "Q-1001");
+  await errorOnOpenQuote(page);
+  const said = await page.getByTestId("qb-error").innerText();
+  await mint.release();
+  await settle(page);
+  await expect(page.getByTestId("qb-error")).toHaveText(said);
+});
+
+test("guard preview error: a preview that could not be made for the quote left leaves the sentence on the quote open", async ({ page }) => {
+  await stubBrowserChannels(page);
+  await seed(page, { customer_id: "c-fenwick" });
+  await signIn(page);
+  await open(page, "Q-1004");
+  const mint = await hold(page, /\/api\/v1\/quotes\/q-1004\/share-links$/, { method: "POST" });
+  await page.getByTestId("qb-preview").click();
+  await mint.asked;
+  await open(page, "Q-1001");
+  await errorOnOpenQuote(page);
+  const said = await page.getByTestId("qb-error").innerText();
+  await mint.release();
+  await settle(page);
+  await expect(page.getByTestId("qb-error")).toHaveText(said);
+  expect(await page.evaluate(() => (window as unknown as { __opened: string[] }).__opened)).toEqual([]);
+});
+
+test("guard send error: a send that could not be made for the quote left leaves the sentence on the quote open", async ({ page }) => {
+  await seed(page, { customer_id: "c-fenwick" });
+  await signIn(page);
+  await open(page, "Q-1004");
+  const mint = await hold(page, /\/api\/v1\/quotes\/q-1004\/share-links$/, { method: "POST" });
+  await page.getByTestId("qb-send").click();
+  await mint.asked;
+  await open(page, "Q-1001");
+  await errorOnOpenQuote(page);
+  const said = await page.getByTestId("qb-error").innerText();
+  await mint.release();
+  await settle(page);
+  await expect(page.getByTestId("qb-error")).toHaveText(said);
+});
+
+test("guard preview reload: a preview whose re-read answers after another quote opened announces nothing", async ({ page }) => {
+  await stubBrowserChannels(page);
+  await seed(page, { customer_id: "c-fenwick" });
+  await signIn(page);
+  await open(page, "Q-1004");
+  const gated = await armedHold(page, /\/api\/v1\/quotes\/q-1004$/, "GET");
+  gated.arm();
+  await page.getByTestId("qb-preview").click();
+  await gated.held.asked;
+  gated.disarm();
+  await open(page, "Q-1001");
+  const changed = await watchEvent(page, "quote-changed");
+  await gated.held.release();
+  await settle(page);
+  expect(await changed()).toBe(0);
+});
+
+test("guard send terms save: a send whose terms save answers after another quote opened mints no link", async ({ page }) => {
+  await seed(page, { customer_id: "c-fenwick" });
+  await signIn(page);
+  await open(page, "Q-1004");
+  await expect(page.getByTestId("qb-po")).toBeVisible();
+  const seen = writes(page);
+  const put = await hold(page, /\/api\/v1\/quotes\/q-1004\/terms$/, { method: "PUT", times: 1 });
+  await page.getByTestId("qb-po").fill("PO-BEFORE-SEND");
+  await page.getByTestId("qb-send").click();
+  await put.asked;
+  await open(page, "Q-1001");
+  await put.release();
+  await settle(page);
+  expect(seen.filter((w) => w.includes("/share-links") || w.includes("/sms-share"))).toEqual([]);
+});
+
+test("guard send reload: a send whose re-read answers after another quote opened announces nothing", async ({ page }) => {
+  await seed(page, { customer_id: "c-fenwick" });
+  await signIn(page);
+  await open(page, "Q-1004");
+  const gated = await armedHold(page, /\/api\/v1\/quotes\/q-1004$/, "GET");
+  gated.arm();
+  await page.getByTestId("qb-send").click();
+  await gated.held.asked;
+  gated.disarm();
+  await open(page, "Q-1001");
+  const changed = await watchEvent(page, "quote-changed");
+  await gated.held.release();
+  await settle(page);
+  expect(await changed()).toBe(0);
+  await expect(page.getByTestId("qb-notice")).toHaveText("");
+});
+
+test("guard customer search error: a failed account search for the quote left does not clear the card of the quote open", async ({ page }) => {
+  await seed(page, { customer_id: "c-fenwick" });
+  await signIn(page);
+  const held = await hold(page, /\/customers\/search/, { method: "GET", match: (request) => request.url().includes("Fenwick"), refuse: { status: 500, error: "customers: the account search is down" } });
+  await row(page, "Q-1004").click();
+  await held.asked;
+  await open(page, "Q-1001");
+  await expect(page.getByTestId("qb-identity-credit")).toBeVisible();
+  await held.release();
+  await settle(page);
+  await expect(page.getByTestId("qb-identity-credit")).toBeVisible();
+});
+
+test("guard add-ons error: a failed suggestions read for the quote left does not hide the strip of the quote open", async ({ page }) => {
+  await seed(page, { customer_id: "c-fenwick", lines: [{ p: "p-holland-60", q: 5 }] });
+  await signIn(page);
+  const held = await hold(page, /\/pos\/addon-suggestions/, {
+    method: "GET",
+    match: (request) => request.url().endsWith("product_ids=p-holland-60"),
+    refuse: { status: 500, error: "pos: the suggestions are down" },
+  });
+  await row(page, "Q-1004").click();
+  await held.asked;
+  await open(page, "Q-1001");
+  await expect(page.getByTestId("qb-addon-tile").first()).toBeVisible();
+  await held.release();
+  await settle(page);
+  await expect(page.getByTestId("qb-addon-tile").first()).toBeVisible();
 });

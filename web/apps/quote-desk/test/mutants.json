@@ -362,5 +362,131 @@
     "find": "      if (epoch !== this.lastEpoch) {\n        this.lastEpoch = epoch;\n        this.reading = false;\n        this.adding = false;\n      }\n",
     "replace": "",
     "test": "P3 the assist panel: leaving a quote and coming back"
+  },
+  {
+    "id": "wa-scan-opening-stale",
+    "file": "src/quote-workarea.ts",
+    "find": "      await this.opening;\n      if (ctx.stale) return;\n",
+    "replace": "      await this.opening;\n",
+    "test": "guard scan waits for opening:"
+  },
+  {
+    "id": "wa-cart-after-terms",
+    "file": "src/quote-workarea.ts",
+    "find": "      await this.putTermsNow();\n      if (ctx.stale) return;\n    }\n    await this.loadAll();",
+    "replace": "      await this.putTermsNow();\n    }\n    await this.loadAll();",
+    "test": "guard cart change after terms save:"
+  },
+  {
+    "id": "wa-cart-after-read",
+    "file": "src/quote-workarea.ts",
+    "find": "    await this.loadAll();\n    if (ctx.stale) return;\n    this.quoteChanged();\n  }\n\n  // \u2500\u2500 the workspace",
+    "replace": "    await this.loadAll();\n    this.quoteChanged();\n  }\n\n  // \u2500\u2500 the workspace",
+    "test": "guard cart change after read:"
+  },
+  {
+    "id": "wa-terms-reload",
+    "file": "src/quote-workarea.ts",
+    "find": "      await this.loadAll();\n      if (ctx.stale) return;\n      this.quoteChanged();\n    }\n  }\n\n  private async saveValidity",
+    "replace": "      await this.loadAll();\n      this.quoteChanged();\n    }\n  }\n\n  private async saveValidity",
+    "test": "guard terms save reload:"
+  },
+  {
+    "id": "wa-validity-reload",
+    "file": "src/quote-workarea.ts",
+    "find": "      await this.loadAll();\n      if (ctx.stale) return;\n      this.quoteChanged();\n    } else {\n      this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, \"change the expiry date\"));",
+    "replace": "      await this.loadAll();\n      this.quoteChanged();\n    } else {\n      this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, \"change the expiry date\"));",
+    "test": "guard validity reload:"
+  },
+  {
+    "id": "wa-convert-reload",
+    "file": "src/quote-workarea.ts",
+    "find": "    this.converted = { orderNo: result.value.orderNo };\n    await this.loadAll();\n    if (ctx.stale) return;",
+    "replace": "    this.converted = { orderNo: result.value.orderNo };\n    await this.loadAll();",
+    "test": "guard convert reload:"
+  },
+  {
+    "id": "wa-copy-clipboard",
+    "file": "src/quote-workarea.ts",
+    "find": "      await navigator.clipboard.writeText(this.shareUrl(token));\n      // Creating a link emails nothing: sending is a different button.\n      if (ctx.stale) return;",
+    "replace": "      await navigator.clipboard.writeText(this.shareUrl(token));\n      // Creating a link emails nothing: sending is a different button.",
+    "test": "guard copy link clipboard:"
+  },
+  {
+    "id": "wa-copy-reload",
+    "file": "src/quote-workarea.ts",
+    "find": "      this.notice = \"Link copied. Nothing was emailed. Paste the link, or use Send quote.\";\n      await this.loadAll();\n      if (ctx.stale) return;",
+    "replace": "      this.notice = \"Link copied. Nothing was emailed. Paste the link, or use Send quote.\";\n      await this.loadAll();",
+    "test": "guard copy link reload:"
+  },
+  {
+    "id": "wa-copy-catch",
+    "file": "src/quote-workarea.ts",
+    "find": "      if (ctx.stale) return;\n      this.error = e instanceof Error ? e.message : \"Could not create the link.\";",
+    "replace": "      this.error = e instanceof Error ? e.message : \"Could not create the link.\";",
+    "test": "guard copy link error:"
+  },
+  {
+    "id": "wa-preview-catch",
+    "file": "src/quote-workarea.ts",
+    "find": "      if (ctx.stale) return;\n      this.error = e instanceof Error ? e.message : \"Could not open the preview.\";",
+    "replace": "      this.error = e instanceof Error ? e.message : \"Could not open the preview.\";",
+    "test": "guard preview error:"
+  },
+  {
+    "id": "wa-preview-reload",
+    "file": "src/quote-workarea.ts",
+    "find": "      window.open(this.shareUrl(token, print), \"_blank\", \"noopener\");\n      await this.loadAll();\n      if (ctx.stale) return;",
+    "replace": "      window.open(this.shareUrl(token, print), \"_blank\", \"noopener\");\n      await this.loadAll();",
+    "test": "guard preview reload:"
+  },
+  {
+    "id": "wa-send-terms",
+    "file": "src/quote-workarea.ts",
+    "find": "        await this.putTermsNow();\n        if (ctx.stale) return;\n        if (this.error !== \"\") return;",
+    "replace": "        await this.putTermsNow();\n        if (this.error !== \"\") return;",
+    "test": "guard send terms save:"
+  },
+  {
+    "id": "wa-send-reload",
+    "file": "src/quote-workarea.ts",
+    "find": "      this.notice = sentConfirmation(smsChosen, smsOk, smsWhy);\n      await this.loadAll();\n      if (ctx.stale) return;",
+    "replace": "      this.notice = sentConfirmation(smsChosen, smsOk, smsWhy);\n      await this.loadAll();",
+    "test": "guard send reload:"
+  },
+  {
+    "id": "wa-send-catch",
+    "file": "src/quote-workarea.ts",
+    "find": "      if (ctx.stale) return;\n      this.error = e instanceof Error ? e.message : \"Could not send the quote.\";",
+    "replace": "      this.error = e instanceof Error ? e.message : \"Could not send the quote.\";",
+    "test": "guard send error:"
+  },
+  {
+    "id": "wa-hydrate-catch",
+    "file": "src/quote-workarea.ts",
+    "find": "      if (!ctx.stale && ctx.isLatestRead(seq)) this.customer = null;",
+    "replace": "      this.customer = null;",
+    "test": "guard customer search error:"
+  },
+  {
+    "id": "wa-addons-catch",
+    "file": "src/quote-workarea.ts",
+    "find": "      if (!ctx.stale && ctx.isLatestRead(seq)) this.addons = [];",
+    "replace": "      this.addons = [];",
+    "test": "guard add-ons error:"
+  },
+  {
+    "id": "wa-sms-answer",
+    "file": "src/quote-workarea.ts",
+    "find": "const sms = await ctx.guarded(client.shareBySMS(ctx.id));",
+    "replace": "const sms = await client.shareBySMS(ctx.id);",
+    "test": "a text answer that lands after another quote opened"
+  },
+  {
+    "id": "wa-ensure-link",
+    "file": "src/quote-workarea.ts",
+    "find": "const result = await ctx.guarded(client.mintShareLink(ctx.id));\n    if (result === undefined) throw new StaleQuoteError();",
+    "replace": "const result = await client.mintShareLink(ctx.id);\n    if (result === undefined) throw new StaleQuoteError();",
+    "test": "a send in flight when another quote opens"
   }
 ]
