@@ -14,6 +14,23 @@
 -- The existing payment_attempts table (0035) is not reused: it logs declined attempts the client
 -- posts, and its result CHECK admits only DECLINED and ERROR.
 --
+-- The column matrix (round 1 review, P2-4): what a legal transition can write decides what a row
+-- may carry, and the converse constraints below reject the rest.
+--   payment_id                 only BOUND. BindTx is its only writer, and it moves CAPTURED to BOUND
+--                              in the sale's transaction; a VOIDED row with a payment would be money
+--                              bound to a sale and reversed at once.
+--   reversal_kind, reversal_ref only VOIDED. StampVoided is their only writer, one guarded move
+--                              VOIDING to VOIDED. A VOID_UNKNOWN row keeps no ref: its answer was
+--                              lost, and the diagnostic lives in last_error. A VOID_DECLINED row
+--                              keeps none: the reversal was refused, so there is no trans id of
+--                              ours to keep.
+--   resolution set             only RESOLVED. Resolve is its only writer.
+--   resolution_note            RESOLVED requires a non blank note: the store trims, and the table
+--                              refuses a whitespace only one anyway.
+--   processor_ref, resp_code   free on CHARGING and UNKNOWN on purpose: packet A2 records a late
+--                              capture answer there (the review's P3-1). The statuses that hold
+--                              money are covered by cca_money_has_ref.
+--
 -- Idempotent: every statement carries its own guard, so a second application changes nothing.
 -- job_schedules columns are 0096's real ones (name, kind, interval_secs, enabled); the schedule
 -- row is enabled on purpose, because a compensating sweep that is switched off is the defect
@@ -46,11 +63,15 @@ CREATE TABLE IF NOT EXISTS card_charge_attempts (
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT cca_bound_has_payment CHECK (status <> 'BOUND' OR payment_id IS NOT NULL),
+  CONSTRAINT cca_payment_only_bound CHECK (payment_id IS NULL OR status = 'BOUND'),
   CONSTRAINT cca_money_has_ref CHECK (status NOT IN ('CAPTURED','BOUND','VOIDING','VOIDED','VOID_UNKNOWN',
     'VOID_DECLINED') OR processor_ref <> ''),
   CONSTRAINT cca_voided_says_how CHECK (status <> 'VOIDED' OR (reversal_kind <> '' AND reversal_ref <> '')),
+  CONSTRAINT cca_reversal_only_on_voided CHECK (status = 'VOIDED' OR (reversal_kind = '' AND reversal_ref = '')),
   CONSTRAINT cca_resolved_says_how CHECK (status <> 'RESOLVED'
-    OR (resolution <> '' AND resolution_note <> '' AND resolved_by IS NOT NULL))
+    OR (resolution <> '' AND btrim(resolution_note) <> '' AND resolved_by IS NOT NULL)),
+  CONSTRAINT cca_resolution_only_on_resolved CHECK (status = 'RESOLVED'
+    OR (resolution = '' AND resolution_note = '' AND resolved_by IS NULL))
 );
 
 -- The sweep reads the rows still in flight, oldest first.

@@ -14,10 +14,12 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -199,6 +201,42 @@ func TestAttempts_ClaimOfAnExistingLegIsNotRefusedByTheGuard(t *testing.T) {
 	}
 }
 
+// A retry of a leg key whose row disagrees with the input on the amount, the till session or the
+// sale key is not the leg's own retry: Claim refuses it with a typed error so no caller can answer
+// from a row that describes a different charge. The well formed retry (the design's 3.4 table) is
+// unchanged: the row comes back with created false.
+func TestAttempts_ClaimOfAnExistingLegRefusesAMismatch(t *testing.T) {
+	fx := newAttemptFx(t)
+	ctx := context.Background()
+	in := fx.in(700)
+	a := fx.claim(in)
+
+	otherAmount := in
+	otherAmount.AmountCents = 701
+	if _, _, err := fx.store.Claim(ctx, otherAmount); !errors.Is(err, ErrClaimMismatch) {
+		t.Fatalf("same leg key, other amount: err=%v, want ErrClaimMismatch", err)
+	}
+
+	otherSession := in
+	otherSession.TillSessionID = fx.newSession()
+	t.Cleanup(func() {
+		_, _ = fx.helper.Exec(ctx, `DELETE FROM till_sessions WHERE id = $1::uuid`, otherSession.TillSessionID)
+	})
+	if _, _, err := fx.store.Claim(ctx, otherSession); !errors.Is(err, ErrClaimMismatch) {
+		t.Fatalf("same leg key, other till session: err=%v, want ErrClaimMismatch", err)
+	}
+
+	otherSale := in
+	otherSale.SaleKey = uuid.NewString()
+	if _, _, err := fx.store.Claim(ctx, otherSale); !errors.Is(err, ErrClaimMismatch) {
+		t.Fatalf("same leg key, other sale key: err=%v, want ErrClaimMismatch", err)
+	}
+
+	if got, created, err := fx.store.Claim(ctx, in); err != nil || created || got.ID != a.ID {
+		t.Fatalf("the well formed retry: id=%s created=%v err=%v, want %s existing", got.ID, created, err, a.ID)
+	}
+}
+
 // Contenders on one leg key at pool size: exactly one winner, everybody answers within the deadline.
 // A claim that held a connection while asking for a second would stall here (decision log row 786).
 func TestAttempts_ConcurrentClaimsOfOneLegKeyHaveOneWinner(t *testing.T) {
@@ -315,6 +353,43 @@ func TestAttempts_TillGuard(t *testing.T) {
 			t.Fatalf("leg 2 of the same sale: created=%v err=%v", created, err)
 		}
 	})
+	t.Run("same_sale_key_past_an_answer_blocks_a_new_shape", func(t *testing.T) {
+		// The round 1 review's re-shaped ring: a single tender's leg key IS the sale key, it loses
+		// its answer (or sits mid reversal), the cashier re-shapes the ring (a split, or reordered
+		// legs), the client mints a new leg key under the SAME sale key, and that new key must not
+		// reach the processor over the open outcome.
+		for _, status := range []string{AttemptUnknown, AttemptVoiding, AttemptVoidUnknown, AttemptVoidDeclined} {
+			t.Run(status, func(t *testing.T) {
+				fx := newAttemptFx(t)
+				ctx := context.Background()
+				first := fx.claim(fx.in(5000))
+				driveViaStore(t, fx, first, status)
+				reshaped := fx.in(5000)
+				reshaped.SaleKey = first.SaleKey
+				_, created, err := fx.store.Claim(ctx, reshaped)
+				if !errors.Is(err, ErrTillUnresolved) || created {
+					t.Fatalf("re-shaped ring over a same-sale %s row: created=%v err=%v, want ErrTillUnresolved", status, created, err)
+				}
+			})
+		}
+	})
+	t.Run("same_sale_key_in_flight_sibling_still_claims", func(t *testing.T) {
+		// A live sibling leg is only ever CHARGING or CAPTURED (a ring stops at the first leg that
+		// ends anything else), and a split's next leg must claim over it.
+		for _, status := range []string{AttemptCharging, AttemptCaptured} {
+			t.Run(status, func(t *testing.T) {
+				fx := newAttemptFx(t)
+				ctx := context.Background()
+				first := fx.claim(fx.in(5000))
+				driveViaStore(t, fx, first, status)
+				sibling := fx.in(5000)
+				sibling.SaleKey, sibling.LegSeq = first.SaleKey, 2
+				if _, created, err := fx.store.Claim(ctx, sibling); err != nil || !created {
+					t.Fatalf("sibling leg over a same-sale %s row: created=%v err=%v", status, created, err)
+				}
+			})
+		}
+	})
 	t.Run("different_amount_is_allowed", func(t *testing.T) {
 		fx := newAttemptFx(t)
 		fx.claim(fx.in(5000))
@@ -337,38 +412,77 @@ func TestAttempts_TillGuard(t *testing.T) {
 	})
 }
 
+// driveViaStore moves a row to a status through the store's own guarded transitions, so the guard
+// legs see exactly what production writes and nothing a forced UPDATE could fake.
+func driveViaStore(t *testing.T, fx *attemptFx, a Attempt, status string) {
+	t.Helper()
+	ctx := context.Background()
+	switch status {
+	case AttemptCharging:
+		return
+	case AttemptUnknown:
+		if _, ok, err := fx.store.StampUnknown(ctx, a.ID, "no usable answer"); err != nil || !ok {
+			t.Fatalf("StampUnknown: ok=%v err=%v", ok, err)
+		}
+	case AttemptCaptured, AttemptVoiding, AttemptVoidUnknown, AttemptVoidDeclined:
+		if _, ok, err := fx.store.StampCaptured(ctx, a.ID, "trans-"+a.ID, "A"); err != nil || !ok {
+			t.Fatalf("StampCaptured: ok=%v err=%v", ok, err)
+		}
+		if status == AttemptCaptured {
+			return
+		}
+		if _, ok, err := fx.store.BeginVoiding(ctx, a.ID); err != nil || !ok {
+			t.Fatalf("BeginVoiding: ok=%v err=%v", ok, err)
+		}
+		switch status {
+		case AttemptVoidUnknown:
+			if _, ok, err := fx.store.StampVoidUnknown(ctx, a.ID, "answer lost"); err != nil || !ok {
+				t.Fatalf("StampVoidUnknown: ok=%v err=%v", ok, err)
+			}
+		case AttemptVoidDeclined:
+			if _, ok, err := fx.store.StampVoidDeclined(ctx, a.ID, "reversal refused"); err != nil || !ok {
+				t.Fatalf("StampVoidDeclined: ok=%v err=%v", ok, err)
+			}
+		}
+	default:
+		t.Fatalf("driveViaStore cannot reach %s", status)
+	}
+}
+
 type transitionCase struct {
 	name string
 	from []string
 	want string
-	call func(s *Store, fx *attemptFx, id string) (Attempt, bool, error)
+	// from rides along so a move whose arguments depend on the source status can pick them
+	// (Resolve's resolution must fit the source).
+	call func(s *Store, fx *attemptFx, id, from string) (Attempt, bool, error)
 }
 
 func transitionCases() []transitionCase {
 	ctx := context.Background()
 	return []transitionCase{
-		{"StampCaptured", []string{AttemptCharging}, AttemptCaptured, func(s *Store, _ *attemptFx, id string) (Attempt, bool, error) {
+		{"StampCaptured", []string{AttemptCharging}, AttemptCaptured, func(s *Store, _ *attemptFx, id, _ string) (Attempt, bool, error) {
 			return s.StampCaptured(ctx, id, "trans-1", "A")
 		}},
-		{"StampDeclined", []string{AttemptCharging}, AttemptDeclined, func(s *Store, _ *attemptFx, id string) (Attempt, bool, error) {
+		{"StampDeclined", []string{AttemptCharging}, AttemptDeclined, func(s *Store, _ *attemptFx, id, _ string) (Attempt, bool, error) {
 			return s.StampDeclined(ctx, id, "C", "declined")
 		}},
-		{"StampUnknown", []string{AttemptCharging}, AttemptUnknown, func(s *Store, _ *attemptFx, id string) (Attempt, bool, error) {
+		{"StampUnknown", []string{AttemptCharging}, AttemptUnknown, func(s *Store, _ *attemptFx, id, _ string) (Attempt, bool, error) {
 			return s.StampUnknown(ctx, id, "timeout")
 		}},
-		{"BeginVoiding", []string{AttemptCaptured}, AttemptVoiding, func(s *Store, _ *attemptFx, id string) (Attempt, bool, error) {
+		{"BeginVoiding", []string{AttemptCaptured}, AttemptVoiding, func(s *Store, _ *attemptFx, id, _ string) (Attempt, bool, error) {
 			return s.BeginVoiding(ctx, id)
 		}},
-		{"StampVoided", []string{AttemptVoiding}, AttemptVoided, func(s *Store, _ *attemptFx, id string) (Attempt, bool, error) {
+		{"StampVoided", []string{AttemptVoiding}, AttemptVoided, func(s *Store, _ *attemptFx, id, _ string) (Attempt, bool, error) {
 			return s.StampVoided(ctx, id, ReversalVoid, "void-1")
 		}},
-		{"StampVoidUnknown", []string{AttemptVoiding}, AttemptVoidUnknown, func(s *Store, _ *attemptFx, id string) (Attempt, bool, error) {
+		{"StampVoidUnknown", []string{AttemptVoiding}, AttemptVoidUnknown, func(s *Store, _ *attemptFx, id, _ string) (Attempt, bool, error) {
 			return s.StampVoidUnknown(ctx, id, "timeout")
 		}},
-		{"StampVoidDeclined", []string{AttemptVoiding}, AttemptVoidDeclined, func(s *Store, _ *attemptFx, id string) (Attempt, bool, error) {
+		{"StampVoidDeclined", []string{AttemptVoiding}, AttemptVoidDeclined, func(s *Store, _ *attemptFx, id, _ string) (Attempt, bool, error) {
 			return s.StampVoidDeclined(ctx, id, "declined")
 		}},
-		{"BindTx", []string{AttemptCaptured}, AttemptBound, func(s *Store, fx *attemptFx, id string) (Attempt, bool, error) {
+		{"BindTx", []string{AttemptCaptured}, AttemptBound, func(s *Store, fx *attemptFx, id, _ string) (Attempt, bool, error) {
 			pay := fx.newPayment()
 			tx, err := s.pool.Begin(ctx)
 			if err != nil {
@@ -381,8 +495,13 @@ func transitionCases() []transitionCase {
 			}
 			return a, ok, tx.Commit(ctx)
 		}},
-		{"Resolve", []string{AttemptUnknown, AttemptVoidUnknown, AttemptVoidDeclined}, AttemptResolved, func(s *Store, fx *attemptFx, id string) (Attempt, bool, error) {
-			return s.Resolve(ctx, id, ResolutionNotCharged, "checked the settlement report", fx.user)
+		{"Resolve", []string{AttemptUnknown, AttemptVoidUnknown, AttemptVoidDeclined}, AttemptResolved, func(s *Store, fx *attemptFx, id, from string) (Attempt, bool, error) {
+			// A VOID source's capture was confirmed, so only a manager reversal tells the truth.
+			resolution := ResolutionNotCharged
+			if from != AttemptUnknown {
+				resolution = ResolutionReversedAtProcessor
+			}
+			return s.Resolve(ctx, id, resolution, "checked the settlement report", fx.user)
 		}},
 	}
 }
@@ -396,7 +515,7 @@ func TestAttempts_TransitionMatrix(t *testing.T) {
 				a := fx.claim(fx.in(300))
 				fx.force(a.ID, from)
 				before := fx.get(a.LegKey)
-				got, ok, err := tc.call(fx.store, fx, a.ID)
+				got, ok, err := tc.call(fx.store, fx, a.ID, from)
 				if err != nil {
 					t.Fatalf("%s from %s: %v", tc.name, from, err)
 				}
@@ -468,6 +587,90 @@ func TestAttempts_LastErrorIsSanitisedOnWrite(t *testing.T) {
 		if strings.Contains(got, bad) {
 			t.Fatalf("last_error = %q, still holds %q", got, bad)
 		}
+	}
+}
+
+// A diagnostic carrying bytes that are not UTF-8 must stamp, not strand: Postgres refuses the write
+// otherwise (SQLSTATE 22021) and the row would sit in its old status until the sweep moves it, so a
+// plain decline pages a manager. The sanitiser replaces the bad bytes and every stamp lands.
+func TestAttempts_NonUTF8DiagnosticStillStamps(t *testing.T) {
+	fx := newAttemptFx(t)
+	ctx := context.Background()
+	bad := "declined \xff\xfe body"
+
+	d := fx.claim(fx.in(3400))
+	if _, ok, err := fx.store.StampDeclined(ctx, d.ID, "C", bad); err != nil || !ok {
+		t.Fatalf("StampDeclined: ok=%v err=%v", ok, err)
+	}
+	if got := fx.get(d.LegKey); got.Status != AttemptDeclined || !utf8.ValidString(got.LastError) {
+		t.Fatalf("declined row = %+v", got)
+	}
+
+	u := fx.claim(fx.in(3500))
+	if _, ok, err := fx.store.StampUnknown(ctx, u.ID, bad); err != nil || !ok {
+		t.Fatalf("StampUnknown: ok=%v err=%v", ok, err)
+	}
+	if got := fx.get(u.LegKey); got.Status != AttemptUnknown || !utf8.ValidString(got.LastError) {
+		t.Fatalf("unknown row = %+v", got)
+	}
+
+	vu := capturedAttempt(t, fx, 3600)
+	if _, ok, err := fx.store.BeginVoiding(ctx, vu.ID); err != nil || !ok {
+		t.Fatalf("BeginVoiding: ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := fx.store.StampVoidUnknown(ctx, vu.ID, bad); err != nil || !ok {
+		t.Fatalf("StampVoidUnknown: ok=%v err=%v", ok, err)
+	}
+	if got := fx.get(vu.LegKey); got.Status != AttemptVoidUnknown || !utf8.ValidString(got.LastError) {
+		t.Fatalf("void unknown row = %+v", got)
+	}
+
+	vd := capturedAttempt(t, fx, 3700)
+	if _, ok, err := fx.store.BeginVoiding(ctx, vd.ID); err != nil || !ok {
+		t.Fatalf("BeginVoiding: ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := fx.store.StampVoidDeclined(ctx, vd.ID, bad); err != nil || !ok {
+		t.Fatalf("StampVoidDeclined: ok=%v err=%v", ok, err)
+	}
+	if got := fx.get(vd.LegKey); got.Status != AttemptVoidDeclined || !utf8.ValidString(got.LastError) {
+		t.Fatalf("void declined row = %+v", got)
+	}
+}
+
+// A VOID_* row's capture was confirmed before its reversal went missing or was refused, so it can
+// never close as NOT_CHARGED: only a manager reversal at the processor tells the truth about the
+// money. UNKNOWN may close either way, depending on what the manager finds at Run.
+func TestAttempts_ResolvePairing(t *testing.T) {
+	fx := newAttemptFx(t)
+	ctx := context.Background()
+	vd := fx.claim(fx.in(800))
+	fx.force(vd.ID, AttemptVoidDeclined)
+	if _, _, err := fx.store.Resolve(ctx, vd.ID, ResolutionNotCharged, "checked the settlement report", fx.user); !errors.Is(err, ErrResolveInvalid) {
+		t.Fatalf("VOID_DECLINED with NOT_CHARGED: err=%v, want ErrResolveInvalid", err)
+	}
+	if got := fx.get(vd.LegKey); got.Status != AttemptVoidDeclined {
+		t.Fatalf("a refused resolve moved the row to %s", got.Status)
+	}
+
+	vu := fx.claim(fx.in(810))
+	fx.force(vu.ID, AttemptVoidUnknown)
+	if _, _, err := fx.store.Resolve(ctx, vu.ID, ResolutionNotCharged, "checked", fx.user); !errors.Is(err, ErrResolveInvalid) {
+		t.Fatalf("VOID_UNKNOWN with NOT_CHARGED: err=%v, want ErrResolveInvalid", err)
+	}
+
+	// Both VOID_* rows close as reversed at the processor.
+	if _, ok, err := fx.store.Resolve(ctx, vd.ID, ResolutionReversedAtProcessor, "reversed at Run", fx.user); err != nil || !ok {
+		t.Fatalf("VOID_DECLINED with REVERSED_AT_PROCESSOR: ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := fx.store.Resolve(ctx, vu.ID, ResolutionReversedAtProcessor, "reversed at Run", fx.user); err != nil || !ok {
+		t.Fatalf("VOID_UNKNOWN with REVERSED_AT_PROCESSOR: ok=%v err=%v", ok, err)
+	}
+
+	// UNKNOWN keeps both doors.
+	u := fx.claim(fx.in(820))
+	fx.force(u.ID, AttemptUnknown)
+	if _, ok, err := fx.store.Resolve(ctx, u.ID, ResolutionNotCharged, "no charge on the settlement report", fx.user); err != nil || !ok {
+		t.Fatalf("UNKNOWN with NOT_CHARGED: ok=%v err=%v", ok, err)
 	}
 }
 
@@ -791,4 +994,79 @@ func TestAttempts_CheckConstraintsRejectImpossibleRows(t *testing.T) {
 	fx.force(a.ID, AttemptVoided)
 	fx.force(a.ID, AttemptResolved)
 	fx.force(a.ID, AttemptBound)
+}
+
+// tailPlaceholders builds ", $5, $6, ..." for the insert leg below, whose base columns take $1 to $4.
+func tailPlaceholders(n int) string {
+	parts := make([]string, n)
+	for i := range parts {
+		parts[i] = "$" + strconv.Itoa(5+i)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return ", " + strings.Join(parts, ", ")
+}
+
+// The round 1 review's impossible rows: no legal transition writes them, so the table refuses them.
+// Each is INSERTed straight at the table and must die on the named converse rule. CHARGING and
+// UNKNOWN may carry a processor ref and a resp code on purpose: packet A2 records a late capture
+// answer there (the review's P3-1), and the accepted cases at the end pin that.
+func TestAttempts_CheckConstraintsRejectImpossibleInserts(t *testing.T) {
+	fx := newAttemptFx(t)
+	ctx := context.Background()
+	insert := func(status, extraCols string, extra ...any) error {
+		args := append([]any{uuid.NewString(), uuid.NewString(), fx.branch, fx.session}, extra...)
+		_, err := fx.helper.Exec(ctx, `INSERT INTO card_charge_attempts
+		    (leg_key, sale_key, leg_seq, amount_cents, branch_id, till_session_id, status`+extraCols+`)
+		  VALUES ($1, $2::uuid, 1, 100, $3::uuid, $4::uuid, '`+status+`'`+tailPlaceholders(len(extra))+`)`,
+			args...)
+		return err
+	}
+	mustReject := func(name, constraint, status, extraCols string, extra ...any) {
+		t.Run(name, func(t *testing.T) {
+			if err := insert(status, extraCols, extra...); err == nil {
+				t.Fatalf("the impossible row %s was accepted", name)
+			} else {
+				checkViolation(t, err, constraint)
+			}
+		})
+	}
+
+	// payment_id is BOUND's alone: money bound to a sale and reversed at once is the worst of them.
+	mustReject("voided_with_payment", "cca_payment_only_bound", AttemptVoided,
+		`, processor_ref, reversal_kind, reversal_ref, payment_id`, "r", ReversalVoid, "v", fx.newPayment())
+	mustReject("charging_with_payment", "cca_payment_only_bound", AttemptCharging,
+		`, payment_id`, fx.newPayment())
+	mustReject("captured_with_payment", "cca_payment_only_bound", AttemptCaptured,
+		`, processor_ref, payment_id`, "r", fx.newPayment())
+	mustReject("resolved_with_payment", "cca_payment_only_bound", AttemptResolved,
+		`, resolution, resolution_note, resolved_by, payment_id`, ResolutionNotCharged, "n", fx.user, fx.newPayment())
+
+	// reversal columns are VOIDED's alone: StampVoided is their only writer, in one guarded move. A
+	// VOID_UNKNOWN row keeps no ref because its answer was lost; a VOID_DECLINED row keeps none
+	// because the reversal was refused and there is no trans id of ours to keep.
+	mustReject("bound_with_reversal", "cca_reversal_only_on_voided", AttemptBound,
+		`, processor_ref, payment_id, reversal_kind, reversal_ref`, "r", fx.newPayment(), ReversalVoid, "v")
+	mustReject("declined_with_reversal", "cca_reversal_only_on_voided", AttemptDeclined,
+		`, reversal_kind`, ReversalVoid)
+	mustReject("void_declined_with_reversal_ref", "cca_reversal_only_on_voided", AttemptVoidDeclined,
+		`, processor_ref, reversal_ref`, "r", "v")
+
+	// resolution columns are RESOLVED's alone.
+	mustReject("captured_with_resolution", "cca_resolution_only_on_resolved", AttemptCaptured,
+		`, processor_ref, resolution, resolution_note, resolved_by`, "r", ResolutionNotCharged, "n", fx.user)
+
+	// the store trims the note, and the table must not admit a whitespace only one either.
+	mustReject("resolved_with_blank_note", "cca_resolved_says_how", AttemptResolved,
+		`, resolution, resolution_note, resolved_by`, ResolutionNotCharged, "   ", fx.user)
+
+	// What a legal transition can write stays legal, the late capture answer shape included.
+	for _, status := range []string{AttemptCharging, AttemptUnknown} {
+		t.Run("accepted_"+status+"_carries_a_late_answer", func(t *testing.T) {
+			if err := insert(status, `, processor_ref, resp_code`, "late-capture-answer", "A"); err != nil {
+				t.Fatalf("%s with a late processor ref must be accepted: %v", status, err)
+			}
+		})
+	}
 }

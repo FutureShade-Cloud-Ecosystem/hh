@@ -56,6 +56,10 @@ var (
 	// ErrTillUnresolved is the till guard's refusal: the same till session holds an unresolved
 	// attempt for the same amount under a different sale key.
 	ErrTillUnresolved = errors.New("payment: the till session holds an unresolved card attempt for this amount")
+	// ErrClaimMismatch is a claim of a leg key whose existing row disagrees with the input on the
+	// amount, the till session or the sale key: the caller's retry is not the leg's own retry, and
+	// answering from the row would describe a charge the caller never made.
+	ErrClaimMismatch = errors.New("payment: the leg key exists with a different amount, till session or sale key")
 	// ErrResolveInvalid is a resolve with an unknown resolution, or a missing note or resolver.
 	ErrResolveInvalid = errors.New("payment: resolve needs a known resolution, a note and a resolver")
 	// ErrListUnbounded is a list with neither the open filter nor a date range.
@@ -67,9 +71,19 @@ var (
 	errBadBind      = errors.New("payment: BindTx needs the sale's transaction, the attempt id and the payment id")
 )
 
-// unresolvedForGuard are the statuses that block a new claim for the same till session and amount:
+// unresolvedForGuard are the statuses that block a NEW sale key on one till session and amount:
 // money may be held, or an outcome is not known. It matches idx_cca_till_guard's predicate.
 const unresolvedForGuard = `'CHARGING','CAPTURED','UNKNOWN','VOIDING','VOID_UNKNOWN','VOID_DECLINED'`
+
+// sameSaleBlockers are the statuses that block a new leg key of the SAME sale (round 1 review,
+// P2-3). A ring stops at the first leg that ends anything else, so a live sibling leg is only ever
+// CHARGING or CAPTURED and never counts against the next leg of its own sale. A same sale row in
+// UNKNOWN, VOIDING, VOID_UNKNOWN or VOID_DECLINED means an earlier leg of THIS ring lost its
+// answer or is being reversed, and the leg key being claimed is a re-mint (the client keeps its
+// key only while the tender shape holds, pos/split_tender.go), so letting it through would put a
+// second charge in flight while the first one's outcome is open. Packet B sees this as the same
+// 409 card_charge_unresolved_on_till the different-key arm answers, for a sale's own re-shape.
+const sameSaleBlockers = `'UNKNOWN','VOIDING','VOID_UNKNOWN','VOID_DECLINED'`
 
 // needsAPerson are the statuses a manager has to close: the answer, or the reversal's answer, was
 // lost or refused. The in-flight statuses (CHARGING, CAPTURED, VOIDING) belong to the sweep until
@@ -135,9 +149,14 @@ func scanAttempt(row pgx.Row) (Attempt, error) {
 
 // Claim writes the attempt row and commits it before any processor call. created is true for the
 // caller that inserted it; a second claim of the same leg key returns the existing row with created
-// false and calls nothing. ErrTillUnresolved refuses a NEW claim while the same till session holds an
-// unresolved attempt for the same amount under a DIFFERENT sale key (legs of one sale key never
-// count against each other).
+// false and calls nothing, unless the input disagrees with the row on the amount, the till session
+// or the sale key: that is ErrClaimMismatch, not the row (see the comment at the comparison). A
+// created false row therefore already matches its caller's input. ErrTillUnresolved refuses a NEW
+// claim while the same till session holds an unresolved attempt for the same amount: under a
+// different sale key every unresolved status counts, and under the claim's own sale key only the
+// statuses past an answer count (UNKNOWN, VOIDING, VOID_UNKNOWN, VOID_DECLINED, the
+// sameSaleBlockers comment has the shape reasoning). In-flight siblings of one sale key never
+// count against each other.
 //
 // Race-free under concurrency, with no read then write. The unique leg_key is the arbiter for one
 // leg key: ON CONFLICT DO NOTHING lets exactly one insert land. The till guard is a guarded insert
@@ -171,8 +190,9 @@ func (s *Store) Claim(ctx context.Context, in ClaimInput) (Attempt, bool, error)
 		SELECT $1, $2::uuid, $3, $4::bigint, $5::uuid, $6::uuid, NULLIF($7, '')::uuid, $8, $9, 'CHARGING', NULLIF($10, '')::uuid
 		WHERE NOT EXISTS (
 		  SELECT 1 FROM card_charge_attempts g
-		   WHERE g.till_session_id = $6::uuid AND g.amount_cents = $4::bigint AND g.sale_key <> $2::uuid
-		     AND g.status IN (`+unresolvedForGuard+`))
+		   WHERE g.till_session_id = $6::uuid AND g.amount_cents = $4::bigint
+		     AND ((g.sale_key <> $2::uuid AND g.status IN (`+unresolvedForGuard+`))
+		       OR (g.sale_key =  $2::uuid AND g.status IN (`+sameSaleBlockers+`))))
 		ON CONFLICT (leg_key) DO NOTHING
 		RETURNING `+attemptColumns,
 		in.LegKey, in.SaleKey, in.LegSeq, in.AmountCents, in.BranchID, in.TillSessionID, in.CustomerID,
@@ -187,6 +207,13 @@ func (s *Store) Claim(ctx context.Context, in ClaimInput) (Attempt, bool, error)
 	// retry of its own leg), or the guard refused a new leg.
 	existing, err := scanAttempt(tx.QueryRow(ctx, `SELECT `+attemptColumns+` FROM card_charge_attempts WHERE leg_key = $1`, in.LegKey))
 	if err == nil {
+		// The row came back, so it is a retry of this leg key, not a refused new leg. It is the
+		// leg's own retry only if the input agrees with the row on the amount, the till session
+		// and the sale key; anything else is ErrClaimMismatch, so a caller can answer from a
+		// created false row without re-comparing it first. Packet A2's Capture relies on that.
+		if existing.AmountCents != in.AmountCents || existing.TillSessionID != in.TillSessionID || existing.SaleKey != in.SaleKey {
+			return Attempt{}, false, ErrClaimMismatch
+		}
 		return existing, false, tx.Commit(ctx)
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -288,13 +315,26 @@ func (s *Store) BindTx(ctx context.Context, tx pgx.Tx, id, paymentID string) (At
 }
 
 // Resolve is the manager's close of an item that needed a person: UNKNOWN, VOID_UNKNOWN or
-// VOID_DECLINED to RESOLVED. A resolution, a note and a resolver are required. The row stays and its
-// leg key never charges again.
+// VOID_DECLINED to RESOLVED. A resolution, a note and a resolver are required, and the resolution
+// must fit the source: a VOID_* row's capture was confirmed before its reversal went missing or was
+// refused, so only REVERSED_AT_PROCESSOR tells the truth about its money, while an UNKNOWN may
+// close either way depending on what the manager finds at Run. The row stays and its leg key never
+// charges again.
 func (s *Store) Resolve(ctx context.Context, id, resolution, note, resolvedBy string) (Attempt, bool, error) {
 	note = strings.TrimSpace(note)
 	if id == "" || note == "" || resolvedBy == "" ||
 		(resolution != ResolutionNotCharged && resolution != ResolutionReversedAtProcessor) {
 		return Attempt{}, false, ErrResolveInvalid
+	}
+	// The pairing check reads before the guarded move. No transaction is held, and a VOID_* row
+	// cannot move to anything but RESOLVED, so a stale read can only refuse a close that the move
+	// would refuse anyway; it can never allow one.
+	if resolution == ResolutionNotCharged && s.pool != nil {
+		var status string
+		if err := s.pool.QueryRow(ctx, `SELECT status FROM card_charge_attempts WHERE id = $1::uuid`, id).Scan(&status); err == nil &&
+			(status == AttemptVoidUnknown || status == AttemptVoidDeclined) {
+			return Attempt{}, false, ErrResolveInvalid
+		}
 	}
 	return s.poolMove(ctx, id, []string{AttemptUnknown, AttemptVoidUnknown, AttemptVoidDeclined},
 		`status = 'RESOLVED', resolution = $3, resolution_note = $4, resolved_by = $5::uuid`, resolution, note, resolvedBy)
@@ -343,11 +383,24 @@ func (s *Store) ListOpen(ctx context.Context, q ListQuery) ([]Attempt, error) {
 
 var (
 	uuidShieldRe = regexp.MustCompile(`(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`)
-	bearerRe     = regexp.MustCompile(`(?i)\bbearer\s+[^\s"',;]+`)
-	// A secret-looking key, then its value. The key may be a JSON key (quoted) or a form or log key.
-	secretKVRe = regexp.MustCompile(`(?i)([a-z0-9_]*(?:token|secret|password|passwd|pwd|api_?key|authorization|credential|cvv|cvc|card_?number)[a-z0-9_]*["']?\s*[:=]\s*)(["']?)([^\s"',;&}]+)`)
-	// A card number: thirteen to nineteen digits, with single spaces or hyphens between them.
-	panRe = regexp.MustCompile(`\b\d(?:[ -]?\d){12,18}\b`)
+	// An Authorization style key and its whole value, under ANY scheme: the scheme word and the
+	// credential go together, so Basic and Bearer need no list of their own.
+	authValueRe = regexp.MustCompile(`(?i)\b((?:proxy-)?auth[a-z0-9-]*["']?\s*[:=]\s*)(?:\S+\s+)?\S+`)
+	bearerRe    = regexp.MustCompile(`(?i)\bbearer\s+[^\s"',;]+`)
+	// A JSON key whose name is secret looking, then its quoted value, spaces included: a JSON body
+	// excerpt must not keep the tail of a value the key already gave away.
+	secretJSONRe = regexp.MustCompile(`(?i)("[a-z0-9_-]*(?:token|secret|password|passwd|pwd|api[-_]?key|private[-_]?key|signature|authorization|credential|cvv|cvc|card[-_]?number)[a-z0-9_-]*"\s*:\s*)"[^"]*"`)
+	// A secret-looking key, then its value. The key may be a JSON key (quoted) or a form or log
+	// key, and hyphens count in the key so header names like x-api-key and api-key match, as do
+	// auth, private_key and signature. A value with spaces only travels under the JSON rule.
+	secretKVRe = regexp.MustCompile(`(?i)([a-z0-9_-]*(?:token|secret|password|passwd|pwd|api[-_]?key|private[-_]?key|signature|authorization|credential|cvv|cvc|card[-_]?number)[a-z0-9_-]*["']?\s*[:=]\s*)(["']?)([^\s"',;&}]+)`)
+	// A card number: thirteen to nineteen digits, with any run of spaces, dots or hyphens between
+	// the groups (the text is flattened before this runs, so whitespace is single spaces here).
+	// The boundaries are non digit characters, not \b: a PAN glued to word characters
+	// (cardno4111...) has no word boundary to match. A bare run of twenty or more digits is left
+	// alone on purpose: thirteen to nineteen already covers every card length, and redacting every
+	// long digit run would take order numbers and settlement reference ids with it.
+	panRe = regexp.MustCompile(`(^|[^0-9])(\d(?:[ .-]*\d){12,18})([^0-9]|$)`)
 	// Any long opaque run (a token, a key, a signature). Hyphens count so a hyphenated token is one
 	// run, and a uuid (shielded above anyway) stays shorter than the floor.
 	opaqueRe = regexp.MustCompile(`[A-Za-z0-9_+/=-]{40,}`)
@@ -355,25 +408,33 @@ var (
 
 // SanitizeLastError returns text safe to keep in last_error: a bounded single line with no token,
 // credential or card number in it. It runs on every write of the column, whatever the caller passed
-// (a processor's error text, a transport error, a response body excerpt). It redacts rather than
-// rejects, so the diagnostic survives; uuids are kept (a sale key or an attempt id is not a secret).
+// (a processor's error text, a transport error, a response body excerpt). Order matters: bytes that
+// are not UTF-8 go first (Postgres refuses the whole write for them, SQLSTATE 22021, and the row
+// would sit in its old status until the sweep moves it); whitespace and control characters flatten
+// next, because a PAN whose groups ride doubled spaces, a tab or a newline past the number rule
+// normalises into the exact readable form afterwards; then uuids are shielded and kept (a sale key
+// or an attempt id is not a secret); then the value rules redact. It redacts rather than rejects,
+// so the diagnostic survives.
 func SanitizeLastError(s string) string {
+	s = strings.ToValidUTF8(s, "?")
 	if s == "" {
 		return ""
 	}
+	s = strings.Join(strings.FieldsFunc(s, func(r rune) bool { return unicode.IsControl(r) || unicode.IsSpace(r) }), " ")
 	var ids []string
 	s = uuidShieldRe.ReplaceAllStringFunc(s, func(m string) string {
 		ids = append(ids, m)
 		return "\x00" + strconv.Itoa(len(ids)-1) + "\x00"
 	})
+	s = authValueRe.ReplaceAllString(s, "${1}[redacted]")
 	s = bearerRe.ReplaceAllString(s, "Bearer [redacted]")
+	s = secretJSONRe.ReplaceAllString(s, `${1}"[redacted]"`)
 	s = secretKVRe.ReplaceAllString(s, "${1}${2}[redacted]")
-	s = panRe.ReplaceAllString(s, "[redacted number]")
+	s = panRe.ReplaceAllString(s, "${1}[redacted number]${3}")
 	s = opaqueRe.ReplaceAllString(s, "[redacted token]")
 	for i, id := range ids {
 		s = strings.Replace(s, "\x00"+strconv.Itoa(i)+"\x00", id, 1)
 	}
-	s = strings.Join(strings.FieldsFunc(s, func(r rune) bool { return unicode.IsControl(r) || unicode.IsSpace(r) }), " ")
 	if utf8.RuneCountInString(s) > maxLastErrorRunes {
 		s = string([]rune(s)[:maxLastErrorRunes])
 	}
