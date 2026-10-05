@@ -75,8 +75,13 @@ type BranchStockReader interface {
 //
 // pricing owns pricing_list_prices; this module never reads it. Primitive-only for the same reason
 // as BranchStockReader: *pricing.Service satisfies it as-is.
+//
+// The branch argument is optional (LD-7): a caller that names a branch asks for the price at THAT
+// branch, the branch's own where one stands and the dealer-wide anchor where not; a caller that
+// names none keeps the dealer-wide read. The catalogue list names none; the counter search names the
+// branch the till is signed into.
 type ListPriceReader interface {
-	ListPriceCentsFor(ctx context.Context, productIDs []string) (map[string]int64, error)
+	ListPriceCentsFor(ctx context.Context, productIDs []string, branchID ...string) (map[string]int64, error)
 }
 
 // ListPriceUOMReader is the DIB-437 widening of ListPriceReader: the UNIT each anchor is

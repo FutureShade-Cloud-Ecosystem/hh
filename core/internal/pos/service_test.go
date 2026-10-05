@@ -75,6 +75,7 @@ type fakeStore struct {
 	addonPairings map[string][]string // source application → suggested applications
 	addonCands    []addonCandidate    // canned ListAddonCandidates answer
 	addonAsked    [][]string          // the application lists the service asked with
+	addonBranch   string              // the branch the last candidates read asked for
 	productApps   map[string]string   // product id → application
 	topApps       []string            // canned TopSellingApplications answer
 	pickups       map[string]ReturnPickup
@@ -591,8 +592,12 @@ func (f *fakeStore) ReadAddonPairings(_ context.Context) (map[string][]string, e
 	return f.addonPairings, nil
 }
 
-func (f *fakeStore) ListAddonCandidates(_ context.Context, applications, exclude []string, limit int) ([]addonCandidate, error) {
+func (f *fakeStore) ListAddonCandidates(_ context.Context, applications, exclude []string, limit int, branchID ...string) ([]addonCandidate, error) {
 	f.addonAsked = append(f.addonAsked, applications)
+	f.addonBranch = ""
+	if len(branchID) > 0 {
+		f.addonBranch = branchID[0]
+	}
 	skip := map[string]bool{}
 	for _, id := range exclude {
 		skip[id] = true

@@ -221,7 +221,10 @@ func (s *Service) enrichHits(ctx context.Context, hits []CounterHit, branchID st
 		}
 	}
 	if s.listPrices != nil {
-		if prices, err := s.listPrices.ListPriceCentsFor(ctx, ids); err == nil {
+		// The branch goes with the read (LD-7): at a branch whose price
+		// stands the search shows the price the customer pays there, the
+		// dealer-wide anchor where none does and when no branch is named.
+		if prices, err := s.listPrices.ListPriceCentsFor(ctx, ids, branchID); err == nil {
 			for i := range hits {
 				if cents, ok := prices[hits[i].ProductID]; ok {
 					v := cents

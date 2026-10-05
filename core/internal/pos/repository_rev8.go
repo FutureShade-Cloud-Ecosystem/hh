@@ -126,28 +126,40 @@ func (r *Repository) ReadAddonPairings(ctx context.Context) (map[string][]string
 // without), capped by limit. The list-price join is the SAME pricing_list_prices anchor the
 // counter search shows; has_image mirrors the counter-search EXISTS so the tile's thumb hint is
 // honest.
-func (r *Repository) ListAddonCandidates(ctx context.Context, applications, excludeProductIDs []string, limit int) ([]addonCandidate, error) {
+func (r *Repository) ListAddonCandidates(ctx context.Context, applications, excludeProductIDs []string, limit int, branchID ...string) ([]addonCandidate, error) {
 	if r.pool == nil {
 		return nil, errNoPool
 	}
 	if len(applications) == 0 || limit <= 0 {
 		return nil, nil
 	}
+	// The tile's price is branch aware (LD-7): the branch's own price where
+	// one stands at the named branch, else the SAME pricing_list_prices
+	// anchor as before. No branch named, no branch join: the answer is the
+	// dealer-wide read this query has always given.
+	branch := ""
+	if len(branchID) > 0 {
+		branch = branchID[0]
+	}
 	rows, err := r.pool.Query(ctx, `
 SELECT p.id::text, p.sku::text, p.name,
        COALESCE(p.product_size,''), COALESCE(p.dimensions_lwh,''),
        p.base_uom::text, COALESCE(p.sold_by,''),
        COALESCE(p.minimum_order_qty::float8, 0),
-       plp.list_price_cents, COALESCE(plp.price_uom::text,''),
+       COALESCE(bp.list_price_cents, plp.list_price_cents),
+       COALESCE(bp.price_uom::text, COALESCE(plp.price_uom::text,'')),
        EXISTS (SELECT 1 FROM product_images pi WHERE pi.product_id = p.id),
        COALESCE(p.application,'')
   FROM products p
   LEFT JOIN pricing_list_prices plp ON plp.product_id = p.id
+  LEFT JOIN pricing_branch_prices bp
+         ON bp.product_id = p.id AND bp.branch_id = NULLIF($4,'')::uuid AND bp.deleted_at IS NULL
  WHERE p.is_active
    AND p.application = ANY($1)
    AND NOT (p.id::text = ANY($2))
- ORDER BY array_position($1::citext[], p.application), plp.list_price_cents IS NULL, p.sku
- LIMIT $3`, applications, excludeProductIDs, limit)
+ ORDER BY array_position($1::citext[], p.application),
+          COALESCE(bp.list_price_cents, plp.list_price_cents) IS NULL, p.sku
+ LIMIT $3`, applications, excludeProductIDs, limit, branch)
 	if err != nil {
 		return nil, err
 	}

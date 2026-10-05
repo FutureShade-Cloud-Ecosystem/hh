@@ -357,3 +357,27 @@ func TestStockGlance_CarriesWeightWhenOnFile(t *testing.T) {
 		t.Fatalf("weight must be byte-absent when not on file: %s", raw)
 	}
 }
+
+// - LD-7 round 2: the strip hands the branch to the candidates read -
+
+// TestAddonSuggestionsAskTheStoreForTheQuerysBranch: a branch-scoped strip
+// asks the store for THAT branch's prices, so a tile shows the price the
+// customer pays at the branch the till is signed into; with no branch the
+// read stays the dealer-wide one.
+func TestAddonSuggestionsAskTheStoreForTheQuerysBranch(t *testing.T) {
+	h := newHarness()
+	h.store.productApps = map[string]string{"prod-paver": "Paver"}
+	h.store.addonPairings = map[string][]string{"Paver": {"Jointing"}}
+	if _, err := h.svc.AddonSuggestions(context.Background(), []string{"prod-paver"}, 3, "branchA"); err != nil {
+		t.Fatalf("suggestions at a branch: %v", err)
+	}
+	if h.store.addonBranch != "branchA" {
+		t.Fatalf("the branch-scoped strip asked the store for branch %q, want branchA: the tiles would show the dealer-wide price where a branch price stands", h.store.addonBranch)
+	}
+	if _, err := h.svc.AddonSuggestions(context.Background(), []string{"prod-paver"}, 3); err != nil {
+		t.Fatalf("suggestions with no branch: %v", err)
+	}
+	if h.store.addonBranch != "" {
+		t.Fatalf("the branchless strip asked the store for branch %q, want none: with no branch named the read is the dealer-wide one", h.store.addonBranch)
+	}
+}

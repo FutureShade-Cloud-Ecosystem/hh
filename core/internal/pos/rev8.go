@@ -233,7 +233,7 @@ func (s *Service) MarginGlance(ctx context.Context, in MarginGlanceInput) (Margi
 // ticket, from the 0169 category-level pairing map, excluding products already on the ticket.
 // Every empty outcome, empty ticket, no categories, empty map, no candidates, is an ordinary
 // empty list, never an error (the strip hides entirely).
-func (s *Service) AddonSuggestions(ctx context.Context, ticketProductIDs []string, limit int) (AddonSuggestions, error) {
+func (s *Service) AddonSuggestions(ctx context.Context, ticketProductIDs []string, limit int, branchID ...string) (AddonSuggestions, error) {
 	out := AddonSuggestions{Suggestions: []AddonSuggestion{}}
 	if limit <= 0 || limit > 3 {
 		limit = 3
@@ -275,7 +275,9 @@ func (s *Service) AddonSuggestions(ctx context.Context, ticketProductIDs []strin
 		return out, nil
 	}
 	exclude := append([]string{}, ticketProductIDs...)
-	cands, err := s.store.ListAddonCandidates(ctx, suggested, exclude, limit)
+	// The branch rides along (LD-7): the tiles show the branch's own price
+	// where one stands, the dealer-wide anchor where not.
+	cands, err := s.store.ListAddonCandidates(ctx, suggested, exclude, limit, branchID...)
 	if err != nil {
 		return out, err
 	}

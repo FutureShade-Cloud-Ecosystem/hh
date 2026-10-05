@@ -117,7 +117,9 @@ type posStore interface {
 	ReadBranchCosts(ctx context.Context, productIDs []string, branchID string) (map[string]int64, error)
 	// item 8 (DIB-502): the 0169 pairing map + its candidates + the ticket lines' categories
 	ReadAddonPairings(ctx context.Context) (map[string][]string, error)
-	ListAddonCandidates(ctx context.Context, applications, excludeProductIDs []string, limit int) ([]addonCandidate, error)
+	// branchID is optional (LD-7): at a branch whose price stands the tile
+	// shows that price, the dealer-wide anchor where none does or none is named.
+	ListAddonCandidates(ctx context.Context, applications, excludeProductIDs []string, limit int, branchID ...string) ([]addonCandidate, error)
 	ReadProductApplications(ctx context.Context, productIDs []string) (map[string]string, error)
 	// item 4: the data-driven default for the curated quick-chip set
 	TopSellingApplications(ctx context.Context, limit int) ([]string, error)

@@ -725,15 +725,20 @@ func (f *fakeBranchQty) OnHandByBranch(_ context.Context, ids []string) (map[str
 }
 
 type fakeListPrices struct {
-	cents   map[string]int64
-	calls   int
-	lastIDs []string
-	err     error
+	cents      map[string]int64
+	calls      int
+	lastIDs    []string
+	lastBranch string
+	err        error
 }
 
-func (f *fakeListPrices) ListPriceCentsFor(_ context.Context, ids []string) (map[string]int64, error) {
+func (f *fakeListPrices) ListPriceCentsFor(_ context.Context, ids []string, branchID ...string) (map[string]int64, error) {
 	f.calls++
 	f.lastIDs = append([]string(nil), ids...)
+	f.lastBranch = ""
+	if len(branchID) > 0 {
+		f.lastBranch = branchID[0]
+	}
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -987,5 +992,30 @@ func TestDIB437_UnitReaderIsOptionalAndFailSoft(t *testing.T) {
 				t.Errorf("a failed unit read must leave the unit empty, not guess: %q", p.ListPriceUOM)
 			}
 		}
+	}
+}
+
+// - LD-7 round 2: the counter search hands the query's branch to the reader -
+
+// TestCounterSearchAsksTheReaderForTheQuerysBranch: a branch-scoped search
+// must ask the pricing seam for THAT branch's prices, so the till's product
+// search shows the price the customer pays at the branch the till is signed
+// into; with no branch on the query the read stays the dealer-wide one.
+func TestCounterSearchAsksTheReaderForTheQuerysBranch(t *testing.T) {
+	lp := &fakeListPrices{cents: map[string]int64{"1": 48000}}
+	st := m4Store()
+	st.counterHits = []CounterHit{{ProductID: "1", SKU: "TB-BLU-01", Name: "Blu 60 Smooth"}}
+	svc := NewService(st).WithListPrices(lp)
+	if _, err := svc.CounterSearch(context.Background(), CounterSearchQuery{Q: "blu", BranchID: "branchA", Limit: 20}); err != nil {
+		t.Fatalf("counter search at a branch: %v", err)
+	}
+	if lp.lastBranch != "branchA" {
+		t.Fatalf("the branch-scoped search asked the reader for branch %q, want branchA: the search would show the dealer-wide price where a branch price stands", lp.lastBranch)
+	}
+	if _, err := svc.CounterSearch(context.Background(), CounterSearchQuery{Q: "blu", Limit: 20}); err != nil {
+		t.Fatalf("counter search with no branch: %v", err)
+	}
+	if lp.lastBranch != "" {
+		t.Fatalf("the branchless search asked the reader for branch %q, want none: with no branch named the read is the dealer-wide one", lp.lastBranch)
 	}
 }

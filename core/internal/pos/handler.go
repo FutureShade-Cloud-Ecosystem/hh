@@ -472,7 +472,7 @@ func (h *Handler) addonSuggestions(w http.ResponseWriter, r *http.Request, calle
 			}
 		}
 	}
-	out, err := h.svc.AddonSuggestions(r.Context(), ids, 3)
+	out, err := h.svc.AddonSuggestions(r.Context(), ids, 3, r.URL.Query().Get("branch_id"))
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
