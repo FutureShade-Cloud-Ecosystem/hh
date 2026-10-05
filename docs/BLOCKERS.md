@@ -1505,3 +1505,12 @@ the guard doing its job and not a leak (an unauthenticated call reaches nothing)
 X-Org header the kit's double admits. The fence legs bite: with the calendar route moved behind the staff guard instead of the
 manager guard, the frontline authority leg reads 200 and the test fails; restored byte identical. The package is green alone and
 the `compliance` word leaves `red=` in `.github/workflows/ci.yml`.
+
+## internal/messaging is back in the integration job (decision log row 804, appended; the entries above are never edited)
+
+`TestIntegration_PaymentFacts_ResolveTheOrderThroughAllocations` was red for a REAL defect in the payment notice, not a stale
+test: the notice wants the branch's SHORT name ("Taken at Kingston; the order is Trenton's."), and the query's own comment says
+the city half is the part after the em dash, the way the house slug convention derives it (0136). The SQL split on an ASCII hyphen,
+which migration 0003's names (the dealer name, an em dash, the city) never contain, so every notice spelled out the whole legal
+name twice. The split now uses the em dash (`chr(8212)`); a name with none still falls back whole. The test is unchanged: red on
+main, green with the fix; the package is green alone and the `messaging` word leaves `red=` in `.github/workflows/ci.yml`.
