@@ -295,7 +295,13 @@ func (r *Repository) InsertJournal(ctx context.Context, d journalDraft) (string,
 		nullStr(d.CreatedBy), d.IdempotencyKey, nullStr(d.ApprovedBy), nullStr(d.ReversesJournalID)).Scan(&id)
 	if err != nil {
 		if isUniqueViolation(err) && d.IdempotencyKey != "" {
-			// A concurrent insert won the idempotency race, return the winner.
+			// A concurrent insert won the idempotency race, return the winner. The violation has
+			// already aborted this transaction, so nothing more can be read through it; roll it back
+			// FIRST to hand its connection back, then read on the pool. Reading the pool while the
+			// transaction still held its connection let pool-size callers each pin one connection
+			// and wait for another (connection starvation by second acquisition, no lock involved).
+			// The deferred Rollback below becomes a no-op on the closed transaction.
+			_ = tx.Rollback(ctx)
 			if existing, found, ferr := r.journalIDByKey(ctx, d.IdempotencyKey); ferr == nil && found {
 				return existing, false, nil
 			}
