@@ -1515,6 +1515,17 @@ which migration 0003's names (the dealer name, an em dash, the city) never conta
 name twice. The split now uses the em dash (`chr(8212)`); a name with none still falls back whole. The test is unchanged: red on
 main, green with the fix; the package is green alone and the `messaging` word leaves `red=` in `.github/workflows/ci.yml`.
 
+## internal/tour is back in the integration job (decision log row 804, appended; the entries above are never edited)
+
+The four tour surface legs read 503 "authorization dependencies unavailable" because the test drove the kit's real guards without
+the authority they resolve: the kit's default authority has no role, the session ceiling refuses an empty role, and the guard
+fails closed. That is the guard working, not a leak, and the recorded diagnosis (the harness not wiring the tour's on-state) was
+partly wrong. The handler also rebuilds the request's staff context from the guard's caller plus a user linker (as production
+wiring does), so the test's own pre-stamped context was ignored. The test helpers now set the authority per caller and give the
+handler a linker, test only; every assertion keeps its meaning. A production bite (the platform-admin gate in the service
+disabled) turns the 403 legs red; restored byte identical. The package is green alone and the `tour` word leaves `red=` in
+`.github/workflows/ci.yml`.
+
 
 The billing entry above, a follow-up (decision log row 804, review round 1): the old predicate also RE-SERVED same-day invoices with a
 LOWER number whenever a page ended mid date beyond the first invoice of that date, as well as skipping those with a greater one. The
