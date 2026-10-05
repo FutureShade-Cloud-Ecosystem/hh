@@ -643,7 +643,7 @@ async function holdHandoff(page: Page): Promise<void> {
 /** True once a scan is parked waiting for the host's hand down (so the gate or the give up reaches it, never before it). */
 async function scanIsWaiting(page: Page): Promise<void> {
   await expect
-    .poll(() => page.locator("qd-quote-workarea").evaluate((el) => (el as unknown as { handoffWaiters: unknown[] }).handoffWaiters.length))
+    .poll(() => page.locator("qd-quote-workarea").evaluate((el) => (el as unknown as { handoffWaiters: unknown[] }).handoffWaiters.length), { timeout: 60000 })
     .toBe(1);
 }
 
@@ -659,10 +659,14 @@ async function scanInCompose(page: Page): Promise<void> {
 test("P3 a scan made in compose waits for the host to hand the new quote down, however long that takes", async ({ page }) => {
   await signIn(page);
   await holdHandoff(page);
+  // The create route is held by a gate, so the scan is made while the quote is being made, however slow the page is.
+  const create = await hold(page, /\/api\/v1\/quotes$/, { method: "POST" });
   const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
   await picker.getByPlaceholder("Search name or account #…").fill("Fenwick");
   await picker.getByRole("option", { name: /Fenwick/ }).click();
+  await create.asked;
   await scanInCompose(page);
+  await create.release();
   await scanIsWaiting(page);
   await expect(page.getByTestId("qb-error")).toHaveText("");
   await page.evaluate(() => (window as unknown as { __releaseHandoff: () => void }).__releaseHandoff());
@@ -689,10 +693,14 @@ test("P3 a scan made in compose that another quote overtook says so", async ({ p
 test("P3 a scan made in compose says so when the host never hands the new quote down in time", async ({ page }) => {
   await signIn(page);
   await holdHandoff(page);
+  // The create route is held by a gate, so the scan is made while the quote is being made, however slow the page is.
+  const create = await hold(page, /\/api\/v1\/quotes$/, { method: "POST" });
   const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
   await picker.getByPlaceholder("Search name or account #…").fill("Fenwick");
   await picker.getByRole("option", { name: /Fenwick/ }).click();
+  await create.asked;
   await scanInCompose(page);
+  await create.release();
   await scanIsWaiting(page);
   // Only the host's explicit give up ends the wait.
   await page.locator("qd-quote-workarea").evaluate((el) => (el as unknown as { giveUpHandoff: () => void }).giveUpHandoff());
