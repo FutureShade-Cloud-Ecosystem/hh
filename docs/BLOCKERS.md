@@ -1478,3 +1478,11 @@ defect; both were stale tests, repaired test only, zero production lines:
   the static fixture cannot tie. The test is now `TestIntegration_M2C1_DemoSeed_RetiredSeedNetsZero` and pins the
   retirement; the tie-out machinery stays proven by `bistrack_tieout_integration_test.go`.
 The packages still excluded after this change, and why, are in the stand-in's red list reading in the pull request body.
+
+## internal/assist/adapters is back in the integration job (decision log row 804, appended; the entries above are never edited)
+
+`TestIntegration_AScopedUserCannotReachAnotherBranch` was red only on the stock lookup's branch row name: the test asserted a
+display name with a comma, while migration 0003 plants the dealer name, an em dash and the city. Every fence assertion in the
+test passed on main (the order, raw id, customer and payment cases and the Kingston mirror), so this was a stale test and not a
+leak. The assertion now requires the row to be Trenton's and never Kingston's; a production bite (the adapter naming the wrong
+branch) turns it red. The package is green alone and the `assist/adapters` word leaves `red=` in `.github/workflows/ci.yml`.
