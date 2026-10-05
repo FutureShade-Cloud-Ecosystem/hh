@@ -234,6 +234,21 @@ func (s *SyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key str
 // Load reads one PO by id under the org fence; a PO outside the
 // caller's org is the same as an absent one.
 func (s *SyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
+	return s.load(ctx, s.pool, f, id)
+}
+
+// poQuerier is the read surface a pool and a transaction share, so one
+// loader body serves the public Load (the pool) and the callers that
+// already hold a transaction (their own connection).
+type poQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// load is Load over a querier. A caller inside a transaction passes the
+// transaction, so the read rides the connection it already holds instead
+// of asking the shared pool for a second one (connection starvation by
+// second acquisition when pool-size callers do this together).
+func (s *SyncStore) load(ctx context.Context, db poQuerier, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
 	where, args, ok := poScopePredicate(f)
 	if !ok || !looksLikeUUID(id) {
 		return sync.RowState{}, false, nil
@@ -241,7 +256,7 @@ func (s *SyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sy
 	q := fmt.Sprintf(`SELECT %s FROM purchasing_pos p WHERE p.id = $2::uuid AND %s`,
 		syncPOColumns, where)
 	args = append(args, id)
-	r, err := scanSyncPO(s.pool.QueryRow(ctx, q, args...))
+	r, err := scanSyncPO(db.QueryRow(ctx, q, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, false, nil
 	}
@@ -374,7 +389,7 @@ func (s *SyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, 
 		RETURNING `+syncPOColumns,
 		id, poNo, vendorID, branchID, expectedAt, notes, actor, seq, key))
 	if errors.Is(err, pgx.ErrNoRows) {
-		if _, own, _ := s.Load(ctx, f, id); own {
+		if _, own, _ := s.load(ctx, tx, f, id); own {
 			return sync.RowState{}, sync.ErrRowExists
 		}
 		return sync.RowState{}, sync.ErrRowNotFound
