@@ -301,8 +301,13 @@ func (s *StaffService) takeOrderPaymentTx(ctx context.Context, tx pgx.Tx, ps ord
 	if !replay {
 		// Held to what the invoice still owes, not to its total: once a deposit is on it, the rest is the
 		// balance whatever the customer's credit has become since. A customer with no credit pays all of
-		// it at once; nobody pays more than it.
+		// it at once; nobody pays more than it. Nothing owed is its own answer: a cashier who tries
+		// another payment on a paid order is told the order is paid, never asked for a balance of
+		// $0.00.
 		if cash && in.AmountCents != agreed.BalanceCents {
+			if agreed.BalanceCents == 0 {
+				return OrderPaymentResult{}, httpx.BadRequestf("The order is paid in full.")
+			}
 			if agreed.BalanceCents == agreed.TotalCents {
 				return OrderPaymentResult{}, httpx.BadRequestf(
 					"a customer with no credit account pays the whole agreed total of %s", moneyWords(agreed.TotalCents))
