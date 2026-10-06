@@ -40,7 +40,11 @@
 import { html, css, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
-import { ApiClient, staffDemo } from "@hardscapehouse/api-client";
+import { ApiClient, staffDemo, staffFeedback } from "@hardscapehouse/api-client";
+import {
+  HHFeedback,
+  type FeedbackSender,
+} from "@hardscapehouse/design-system/src/feedback.js";
 // The ported icon registry: the one registry, the shared POS kit's own files
 // (moved once out of the Counter Till's app so the box's apps import the same
 // pieces). Only type imports reach the kit's ports from here, so the front
@@ -606,7 +610,39 @@ export class FrontDoorApp extends HHElement {
       baseUrl: "",
       headers: async () => ({ "X-Org": DEMO_ORG }),
     });
+    // The feedback widget's client: the mint's own bearer when a role is
+    // signed in (the feedback route is staff guarded), and no credential
+    // before that, so the widget's panel says what happened rather than the
+    // gate. The token is read per request from the store, never held here.
+    this.#feedbackClient = new ApiClient({
+      baseUrl: "",
+      headers: async () => {
+        const headers: Record<string, string> = { "X-Org": DEMO_ORG };
+        const session = this.#store.current();
+        if (session !== null) headers["Authorization"] = `Bearer ${session.token}`;
+        return headers;
+      },
+    });
   }
+
+  /** The feedback bridge's client (the widget's sender rides it). */
+  readonly #feedbackClient: ApiClient;
+
+  /** The sender the widget calls on Send; the wire and its errors stay here. */
+  #feedbackSender: FeedbackSender = async (request) => {
+    const answer = await staffFeedback.feedbackCreateMultipart(this.#feedbackClient, {
+      type: request.type,
+      message: request.message,
+      screen: request.screen,
+      url: request.url,
+      user_agent: request.userAgent,
+      images: request.images.map((image) => image.blob),
+    });
+    if (answer.ok) {
+      return { ok: true, issueNumber: answer.value.issue_number ?? "" };
+    }
+    return { ok: false, error: answer.error };
+  };
 
   connectedCallback(): void {
     super.connectedCallback();
@@ -729,7 +765,17 @@ export class FrontDoorApp extends HHElement {
       <div class="stage">
         <p class="notice" role="status" aria-live="polite" aria-atomic="true">${this.#notice}</p>
       </div>
+      <hh-feedback screen="Front door"></hh-feedback>
     `;
+  }
+
+  /** The widget's sender rides the property, never a template binding (the
+   * design system's position gate refuses . bindings in dependents too). */
+  protected override updated(): void {
+    const widget = this.renderRoot.querySelector("hh-feedback");
+    if (widget instanceof HHFeedback && widget.send !== this.#feedbackSender) {
+      widget.send = this.#feedbackSender;
+    }
   }
 
   #header(): TemplateResult {
