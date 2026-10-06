@@ -168,11 +168,19 @@
   --hh-color-scheme: dark;
 
   /* ── type ───────────────────────────────────────────────────────────────────
-     The ERP's stacks, kept. No webfont ships in this package and none is
-     fetched: the first name is the face a later fonts lane may self-host, and
-     the stack degrades to system faces that are always present. */
-  --hh-font-ui: 'Outfit', 'Segoe UI', system-ui, sans-serif;
-  --hh-font-mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+     The type pass (decision log row 942): Inter everywhere, and Inter for the
+     figures too, on its tabular widths. A webfont NOW ships in this package
+     (src/fonts/, four latin weights under SIL OFL 1.1, licence in
+     src/fonts/OFL.txt) and the @font-face rules at the foot of this sheet
+     register it, so every app importing this sheet gets the face with no
+     change to its own files; the stack after Inter keeps today's system
+     fallbacks for the glyphs the latin subset does not carry and for a failed
+     load. The mono ROLE survives as a token (porting seams still name it) but
+     resolves to Inter first: money, quantities, totals, times and codes read
+     in the same face as the words around them, lined up by the tabular
+     figures rule at the foot of this sheet and in the base styles. */
+  --hh-font-ui: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  --hh-font-mono: 'Inter', 'SF Mono', Consolas, monospace;
 
   /* ── the spacing grid: value-named, and it is Pencil's ───────────────────────
      The ERP adopted a continuous 4px grid named BY VALUE (--s-4 is 4px) beside
@@ -383,3 +391,67 @@
 /* The contractor layer needs no brand block: it is a runtime layer. The public
    proposal surface sets --cbrand and --cbrand-on on its own root, from the quote.
    See the :root declaration above for the rules that bind it. */
+
+/* ── the vendored face: Inter, latin, weights 400 to 700 ────────────────────
+   Copied from the @fontsource/inter package (version 5.3.0 on the public npm
+   registry), which repackages Inter by The Inter Project Authors under the
+   SIL Open Font License 1.1; the licence ships beside the bytes as
+   src/fonts/OFL.txt. No runtime dependency is added and no font CDN is
+   touched: the woff2 files are repo files under src/fonts/, the src URLs
+   below are relative to this sheet, and every bundler that carries this
+   sheet resolves and ships the bytes with it (the demo box's CSP allows no
+   font host, and nothing here would ask for one). The latin subset only; the
+   system fallbacks behind Inter in the stacks above carry the glyphs this
+   subset does not. sha256 of the vendored bytes:
+
+     inter-latin-400-normal.woff2  8909904ab6c872eb994093482a88a28eca2cd95912d7b6fecd72103b0dc07edc
+     inter-latin-500-normal.woff2  f3779f1efccc4bdcdf9c0a02ab95bf6bd092ed09c48c08cedc725889edd1d19f
+     inter-latin-600-normal.woff2  f9a06e79cd3a2a20951c0f0e28f66dd0e6d3fda73911d640a2125c8fcb78f21a
+     inter-latin-700-normal.woff2  6f56409fd3d64bb85f7d070bce20749db2d66b6d63cec586cc22d1c761be2491 */
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./fonts/inter-latin-400-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('./fonts/inter-latin-500-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('./fonts/inter-latin-600-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./fonts/inter-latin-700-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+
+/* ── tabular figures everywhere a person reads numbers ──────────────────────
+   The type pass's second ruling (row 942): figures line up in columns, and
+   true monospace survives nowhere a person reads them. Inter's tabular
+   figures give every digit one width, so one inherited rule on the root
+   replaces the old mono stack; the base styles (primitives.ts) repeat it
+   inside each kit's shadow root so a kit stays aligned even where a host
+   page never loads this half. The variant declaration is the high-level
+   author and the feature string its low-level pair; carrying both covers
+   engines that honor only one. */
+:root {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}

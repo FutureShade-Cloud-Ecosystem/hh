@@ -81,8 +81,8 @@ func (r *Repository) ListQuotes(ctx context.Context, customerID string, f Filter
 	}
 	args = append(args, cCreated, cQuoteNo, f.Limit)
 	q := fmt.Sprintf(
-		"SELECT %s FROM quotes WHERE %s AND ($%d::timestamptz IS NULL OR (created_at, quote_no) < ($%d::timestamptz, $%d::text)) ORDER BY created_at DESC, quote_no LIMIT $%d",
-		quoteColumns, where, len(args)-2, len(args)-2, len(args)-1, len(args),
+		"SELECT %s FROM quotes WHERE %s AND ($%d::timestamptz IS NULL OR created_at < $%d::timestamptz OR (created_at = $%d::timestamptz AND quote_no > $%d::text)) ORDER BY created_at DESC, quote_no LIMIT $%d",
+		quoteColumns, where, len(args)-2, len(args)-2, len(args)-2, len(args)-1, len(args),
 	)
 	rows, err := r.pool.Query(ctx, q, args...)
 	if err != nil {

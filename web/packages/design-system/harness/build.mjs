@@ -12,7 +12,7 @@
 //
 //   node --import ./src/_ts-js-loader.mjs harness/build.mjs
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -40,3 +40,21 @@ for (const { tag, css } of harnessSheets()) {
   written.push(sheetPath);
 }
 for (const p of written) console.log(`wrote ${p}`);
+
+// The vendored face travels with the pages the same way the sheets do: the
+// token sheet the build inlines registers Inter through @font-face URLs
+// relative to the page (./fonts/...), so the static pages open from a file
+// with the face beside them and the served variant finds them at /fonts/.
+// Byte-for-byte copies of src/fonts (the woff2 quartet and the OFL licence),
+// held exact by the harness drift test.
+const fontsSrc = join(here, '..', 'src', 'fonts');
+const fontsDir = join(here, 'fonts');
+mkdirSync(fontsDir, { recursive: true });
+for (const name of readdirSync(fontsSrc)) {
+  const from = join(fontsSrc, name);
+  if (!statSync(from).isFile()) continue;
+  const to = join(fontsDir, name);
+  writeFileSync(to, readFileSync(from));
+  written.push(to);
+}
+for (const p of written.slice(-1)) console.log(`wrote ${fontsDir}/ (${written.length - harnessSheets().length} font files)`);

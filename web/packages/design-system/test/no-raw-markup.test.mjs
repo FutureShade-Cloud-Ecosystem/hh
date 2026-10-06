@@ -300,6 +300,7 @@ test('the walk finds this package and names the workspace packages it must also 
     'src/primitives.ts',
     'src/state-icons.ts',
     'src/harness-page.ts',
+    'src/header.ts',
     'src/kits/scan-and-confirm.ts',
     'src/kits/list-detail.ts',
     'src/kits/guided-flow.ts',

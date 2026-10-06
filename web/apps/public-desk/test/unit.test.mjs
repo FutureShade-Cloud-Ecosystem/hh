@@ -235,19 +235,32 @@ test("the acceptance result parses, and an answer without its timestamp is refus
   assert.equal(validateAcceptance(undefined), null);
 });
 
-test("the vendored Outfit faces ship with their licence text beside them", async () => {
-  const { readdirSync, readFileSync } = await import("node:fs");
+test("the page rides the design system's shared Inter, with its licence beside the faces, and keeps no face of its own", async () => {
+  const { existsSync, readdirSync, readFileSync } = await import("node:fs");
   const { dirname, join } = await import("node:path");
   const { fileURLToPath } = await import("node:url");
-  const fonts = join(dirname(fileURLToPath(import.meta.url)), "..", "public", "fonts");
+  const here = dirname(fileURLToPath(import.meta.url));
+  // The type pass (row 942) moved the vendored face into the design system:
+  // this app once carried four Outfit woff2 under public/fonts, and that copy
+  // is gone for the shared Inter every importing app receives through the
+  // token sheet. The licence still sits beside the faces it licenses.
+  const own = join(here, "..", "public", "fonts");
+  assert.ok(!existsSync(own), "the public desk must not vendor a face of its own any more");
+  const fonts = join(here, "..", "..", "..", "packages", "design-system", "src", "fonts");
   const files = readdirSync(fonts);
-  assert.equal(files.filter((name) => name.startsWith("outfit-") && name.endsWith(".woff2")).length, 4);
+  assert.equal(files.filter((name) => name.startsWith("inter-") && name.endsWith(".woff2")).length, 4);
   assert.ok(files.includes("OFL.txt"), "OFL.txt must sit beside the font files");
   const text = readFileSync(join(fonts, "OFL.txt"), "utf8");
-  assert.match(text, /^Copyright .* The Outfit Project Authors/);
+  assert.match(text, /^Copyright .* The Inter Project Authors/);
   assert.match(text, /SIL OPEN FONT LICENSE Version 1\.1/);
   assert.match(text, /PERMISSION & CONDITIONS/);
   assert.match(text, /DISCLAIMER/);
+  // And the sheet that reaches this app's bundle registers the face itself:
+  // the @font-face rules live in the token sheet main.ts imports, so no app
+  // file of ours names a font URL.
+  const sheet = readFileSync(join(here, "..", "..", "..", "packages", "design-system", "src", "tokens.css"), "utf8");
+  assert.match(sheet, /font-family:\s*'Inter'/);
+  assert.match(sheet, /url\('\.\/fonts\/inter-latin-400-normal\.woff2'\)/);
 });
 
 // -- the acceptance key: derived, never stored.
