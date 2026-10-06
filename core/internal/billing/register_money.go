@@ -17,7 +17,7 @@ package billing
 //      billing asking payments to do the thing payments owns.
 //
 //   2. An EVENT would be wrong for this specific write. The operator is standing at a desk with a
-//      cheque, and the answer they need is "the balance is now CA$0.00", not "we have queued your
+//      cheque, and the answer they need is "the balance is now $0.00", not "we have queued your
 //      intention". A fire-and-forget receipt is a receipt that can silently not happen, and the one
 //      thing a receivables screen may never do is tell somebody money was applied when it was not.
 //

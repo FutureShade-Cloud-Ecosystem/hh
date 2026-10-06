@@ -25,7 +25,7 @@
 //      has wired its host throws the port message rather than returning a
 //      plausible answer. An honest refusal beats a quiet zero at a counter.
 
-import { centsAmount } from "./_money-format.js";
+import { formatDollars } from "./_money-format.js";
 import { DEMO_CARD_TOKEN, HOUSE_ZONE, houseDayInZone } from "./host-facts.js";
 
 /**
@@ -563,12 +563,11 @@ export interface SplitReadiness {
 export const MAX_SPLIT_LEGS = 6;
 
 /**
- * The split panel's money word: centsAmount's grouped spelling (the one place
- * integer cents become a readable amount), with this panel's own CA$ prefix
- * and minus, exactly as the reference's fmtCents kept its own decoration.
+ * The split panel's money word: the shared dollars spelling (the one place
+ * integer cents become a customer facing amount): `$1,234.00`, with a minus.
  */
 function splitFmt(cents: number): string {
-  return `CA$${cents < 0 ? "-" : ""}${centsAmount(cents)}`;
+  return formatDollars(cents);
 }
 
 /**

@@ -7,22 +7,19 @@
 // placeholder, because a confident wrong number is dishonest in a way that
 // costs money).
 
+import { formatDollars } from "@hardscapehouse/pos-kit/src/ported/_money-format.js";
+
 export const MONEY_PLACEHOLDER = "(not priced)";
 
 /**
  * Format integer cents as the customer's money string: 9665 becomes "$96.65".
- * The split is integer arithmetic on the absolute value. Anything that is not
- * an integer (a field the server left out) renders the explicit placeholder.
+ * The figure itself comes from the shared dollars formatter in pos-kit, the one
+ * place a customer facing amount is spelled. Anything that is not an integer (a
+ * field the server left out) renders the explicit placeholder.
  */
 export function formatMoney(cents: number | null | undefined): string {
   if (typeof cents !== "number" || !Number.isInteger(cents)) return MONEY_PLACEHOLDER;
-  const negative = cents < 0;
-  const magnitude = negative ? -cents : cents;
-  const whole = Math.floor(magnitude / 100);
-  const remainder = magnitude - whole * 100;
-  const wholePart = whole.toLocaleString("en-CA");
-  const fraction = String(remainder).padStart(2, "0");
-  return `${negative ? "-" : ""}$${wholePart}.${fraction}`;
+  return formatDollars(cents);
 }
 
 /**

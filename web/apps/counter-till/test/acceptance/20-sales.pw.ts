@@ -188,7 +188,7 @@ test("tender and receipt: cash with change due, held against the core's own read
   // states no change figure, even with an amount typed.
   await page.getByLabel(/Cash tendered in dollars/).fill("60.00");
   await expect(page.getByTestId("cash-change-preview")).toContainText("the ring's own answer");
-  await expect(page.getByTestId("cash-change-preview")).not.toContainText("CA$");
+  await expect(page.getByTestId("cash-change-preview")).not.toContainText("$");
   const rung = await ringCash(page, "60.00");
   const sold = page.getByTestId("sold-panel");
   const bearer = await mint(page, "sales");

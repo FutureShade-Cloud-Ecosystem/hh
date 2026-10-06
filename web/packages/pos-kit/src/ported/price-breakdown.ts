@@ -1,7 +1,7 @@
 // Ported from hardscapeos_dibbits master 87d7941b app/src/price-breakdown.ts; adapted for HH.
 
 import { LitElement, css, html, nothing } from 'lit';
-import { centsAmount } from './_money-format.js';
+import { centsAmount, formatDollars } from './_money-format.js';
 import { belowFloorWords } from './_price-breakdown-words.js';
 import { customElement, property, state } from 'lit/decorators.js';
 import { api } from './ports.js';
@@ -48,7 +48,7 @@ export interface PriceBreakdown {
 // own path (src/money.ts). Same shape, same swap intent, now aimed at the polish
 // work item's convergence pass.
 function priceMoney(cents: number): string {
-  return `CA$${centsAmount(cents)}`;
+  return formatDollars(Math.abs(cents));
 }
 
 @customElement('hos-price-breakdown')

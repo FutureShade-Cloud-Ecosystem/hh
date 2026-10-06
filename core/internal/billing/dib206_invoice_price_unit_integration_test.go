@@ -1,7 +1,7 @@
 //go:build integration
 
 // HH-206: an invoice line priced per square foot and sold in pieces printed its unit price with no
-// price unit, so "CA$14.76" sat beside a quantity in PC and read as a per-piece price. The stored
+// price unit, so "$14.76" sat beside a quantity in PC and read as a per-piece price. The stored
 // line is right (unit price per SF, total per quantity); the printed document must carry the unit.
 package billing
 
@@ -31,7 +31,7 @@ func TestIntegration_Billing_InvoiceHTML_CarriesPriceUnitWhenSoldInOtherUnit(t *
 		t.Fatalf("detail lines: %v (%d)", err, len(lines))
 	}
 	html := renderInvoiceHTML(InvoiceDetail{InvoiceNo: "INV-U1", Lines: lines}, "Branch")
-	if !strings.Contains(html, "CA$14.76 / SF") {
+	if !strings.Contains(html, "$14.76 / SF") {
 		t.Fatalf("the unit price per SF on a line sold in PC must print its unit, got:\n%s", html)
 	}
 }

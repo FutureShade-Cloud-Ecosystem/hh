@@ -144,11 +144,12 @@ func TestIntegration_Item5_AClerkOpensTheSameOrderAndReceivesNoCostBytes(t *test
 			t.Fatalf("clerk read: %v", err)
 		}
 		body := string(mustJSON(t, asClerk))
-		for _, forbidden := range []string{"unit_cost_cents", "line_total_cents", "billed_cents",
-			"subtotal_cents", "subtotal_cad_cents", "5511", "661320"} {
-			if strings.Contains(body, forbidden) {
-				t.Errorf("the clerk received %q:\n%s", forbidden, body)
-			}
+		// The cost FIELDS must be absent as keys at any depth, and the cost VALUES must not appear as a
+		// whole JSON value. A raw substring search for "5511" matches a random uuid or number by chance.
+		for _, leak := range costLeaks(t, []byte(body),
+			[]string{"unit_cost_cents", "line_total_cents", "billed_cents", "subtotal_cents", "subtotal_cad_cents"},
+			[]string{"5511", "661320"}) {
+			t.Errorf("the clerk received %s:\n%s", leak, body)
 		}
 		// `null` IS NOT ABSENCE, the arm three trains here have been caught by. Nothing on a
 		// purchase order may arrive as a field that announces itself and declines to answer.
@@ -182,6 +183,52 @@ func TestIntegration_Item5_AClerkOpensTheSameOrderAndReceivesNoCostBytes(t *test
 			t.Fatalf("ALL_STAFF did not reach the clerk:\n%s", raw)
 		}
 	})
+}
+
+// costLeaks walks a decoded JSON body and names every object key in keys and every scalar whose whole
+// value is one of values (a number, or a string holding exactly that number). Substrings of ids or
+// other numbers never count.
+func costLeaks(t *testing.T, body []byte, keys, values []string) []string {
+	t.Helper()
+	dec := json.NewDecoder(strings.NewReader(string(body)))
+	dec.UseNumber()
+	var root any
+	if err := dec.Decode(&root); err != nil {
+		t.Fatalf("the body is not JSON: %v\n%s", err, body)
+	}
+	var leaks []string
+	var walk func(path string, v any)
+	walk = func(path string, v any) {
+		switch x := v.(type) {
+		case map[string]any:
+			for k, child := range x {
+				for _, key := range keys {
+					if k == key {
+						leaks = append(leaks, fmt.Sprintf("the field %q at %s", k, path))
+					}
+				}
+				walk(path+"."+k, child)
+			}
+		case []any:
+			for i, child := range x {
+				walk(fmt.Sprintf("%s[%d]", path, i), child)
+			}
+		case json.Number:
+			for _, val := range values {
+				if x.String() == val {
+					leaks = append(leaks, fmt.Sprintf("the value %s at %s", val, path))
+				}
+			}
+		case string:
+			for _, val := range values {
+				if x == val {
+					leaks = append(leaks, fmt.Sprintf("the value %q at %s", val, path))
+				}
+			}
+		}
+	}
+	walk("$", root)
+	return leaks
 }
 
 func mustJSON(t *testing.T, v any) []byte {

@@ -240,7 +240,7 @@ func TestCounterQuotes_AnUnpriceableRowDoesNotFailTheBatch(t *testing.T) {
 	}
 	for _, r := range rows {
 		if !r.Unpriceable {
-			t.Fatalf("an unpriced row says so instead of reporting CA$0.00: %+v", r)
+			t.Fatalf("an unpriced row says so instead of reporting $0.00: %+v", r)
 		}
 		if r.RetailCents != 0 || r.CustomerCents != 0 {
 			t.Fatalf("nothing may be invented for it: %+v", r)
