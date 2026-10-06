@@ -74,7 +74,9 @@ test("the picker renders the two live cards and the eleven coming rows", async (
   await expect(sales).toBeVisible();
   await expect(sales).toBeEnabled();
   // The live cards lead: one line of what the role does and the call to act.
-  await expect(sales).toContainText("The counter sale flow.");
+  // The Sales line names both modules the role works (decision log row 900);
+  // the Counter Till tile's own line, on the role home, stays about the till.
+  await expect(sales).toContainText("Ring up counter sales and build quotes.");
   await expect(sales).toContainText("Sign in as Sales");
   await expect(sales).toContainText("Counter Till");
   await expect(sales).toContainText("Quote Desk");

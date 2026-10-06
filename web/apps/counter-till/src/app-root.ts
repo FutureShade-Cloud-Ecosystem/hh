@@ -361,13 +361,17 @@ export class CounterTillApp extends HHElement {
     // credential (this app's custody is memory per tab by design, and its
     // committed sink gate refuses every storage and channel path a handshake
     // would dial). The flow table answers first (its label is the role's name
-    // in the chrome), then the flow runs. A window that is not a pop-out
-    // takes the front door's handoff instead: the mint the front door held
-    // for the box lands signed in, no second picker.
+    // in the chrome), then the flow runs. A window that is not a pop-out,
+    // on a demo build, takes the front door's handoff instead: the mint the
+    // front door held for the box lands signed in, no second picker. The
+    // seam rule (decision log row 893) keeps that read a demo seam: Vite
+    // substitutes MODE at build time, so this branch exists only in a build
+    // that asked for the demo mode, and a default build carries no adopt
+    // path at all (test/no-default-adopt.test.mjs reads the built files).
     const popped = new URLSearchParams(window.location.search).get("popout");
     if (typeof popped === "string" && popped !== "") {
       void this.#flowsLoaded.then(() => this.#chooseFlow(popped));
-    } else {
+    } else if (import.meta.env.MODE === "demo") {
       void this.#adoptFromFrontDoor();
     }
   }
