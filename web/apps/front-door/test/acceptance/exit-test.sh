@@ -118,9 +118,9 @@ if [ ! -d web/node_modules ]; then
 	fail "web/node_modules is absent: run npm --prefix web install first"
 	exit 1
 fi
-if (cd web/apps/front-door && PATH="$PWD/../../node_modules/.bin:$PATH" vite build) >/dev/null 2>&1 \
-	&& [ -f web/apps/front-door/dist/index.html ]; then
-	pass "the front door builds (vite build)"
+if (cd web/apps/front-door && PATH="$PWD/../../node_modules/.bin:$PATH" vite build --outDir "$WORK/dist" --emptyOutDir) >/dev/null 2>&1 \
+	&& [ -f "$WORK/dist/index.html" ]; then
+	pass "the front door builds (vite build, into the run's own work dir, so the tree carries no build output)"
 else
 	fail "the front door build failed"
 	exit 1
@@ -198,7 +198,7 @@ pass "the core answers its health on the loopback port"
 
 echo "== the phrase gate in front of the built app"
 PHRASE="d2 exit phrase $(random_hex 12)"
-FD_EXIT_DIST="$PWD/web/apps/front-door/dist" \
+FD_EXIT_DIST="$WORK/dist" \
 	FD_EXIT_UPSTREAM="$CORE_URL" \
 	FD_EXIT_PORT="$APP_PORT" \
 	FD_EXIT_PHRASE="$PHRASE" \
