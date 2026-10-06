@@ -43,8 +43,11 @@ async function openQuote(page: Page): Promise<void> {
   }
 }
 
-async function plant(page: Page, line = 1): Promise<void> {
-  await page.request.post("/_stub/plant-approval", { data: { quote_id: "q-1001", line_no: line, requested_by_flow: "sales" } });
+/** A request filed before anyone signs in (a reload would end the session, which lives in tab memory only). */
+async function plantFirst(browser: Browser, line = 1): Promise<void> {
+  const context = await browser.newContext();
+  await context.request.post("/_stub/plant-approval", { data: { quote_id: "q-1001", line_no: line, requested_by_flow: "sales" } });
+  await context.close();
 }
 
 async function both(name: string, page: Page, only: "before" | "after" | "both" = "both"): Promise<void> {
@@ -56,11 +59,9 @@ test("shots: the navigation bar", async ({ browser }) => {
   const sales = await as(browser, "Sales");
   await go(sales, "#/quotes");
   await both("topnav-sales-desktop", sales);
+  await plantFirst(browser, 1);
   const manager = await as(browser, "Sales manager");
-  await plant(manager);
   await go(manager, "#/quotes");
-  await manager.reload();
-  await manager.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
   await both("topnav-manager-desktop", manager);
   const tablet = await as(browser, "Sales manager", TABLET);
   await go(tablet, "#/quotes");
@@ -97,14 +98,13 @@ test("shots: the approvals route as Sales", async ({ browser }) => {
 });
 
 test("shots: the approval request and its detail", async ({ browser }) => {
+  await plantFirst(browser, 2);
   const manager = await as(browser, "Sales manager");
-  await plant(manager, 2);
   await go(manager, "#/approvals");
-  await manager.reload();
-  await manager.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
   await both("approvals-queue-manager-desktop", manager, "after");
   const open = manager.getByTestId("ap-open");
   if ((await open.count()) > 0) await open.first().click();
+  await manager.getByTestId("ad-line").first().waitFor({ timeout: 4000 }).catch(() => undefined);
   await manager.waitForLoadState("networkidle");
   await both("approval-detail-manager-desktop", manager);
 });
