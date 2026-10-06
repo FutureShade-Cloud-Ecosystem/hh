@@ -22,7 +22,9 @@ package main
 // D4), the tenant brand pair held for the tenant_brand gap (ADR 0021
 // annex, the table is HH-5's), the D10 attachment trio, the demo pair
 // (carried, demo-box gated), the xlsx export trio, the Plane-bridge-gated
-// feedback route, and the staff identity admin remainder. The sliding
+// feedback route, the staff identity admin remainder, and the load doors
+// pair (HH-LOAD-1, carried behind the load doors deployment switch until
+// a boot registers them). The sliding
 // refresh (tenantRefreshToken) is REGISTERED, not ledgered: the identity
 // proof shim serves its guard class until HH-4.2 registers the real mint
 // surface, and the shim mints nothing.
@@ -51,6 +53,15 @@ var notYetRegistered = map[string]string{
 	"identityLogin":                 "the D38 sign-in-methods leave-behind: the staff sign-in surface stays unregistered until HH-4.2 lands one",
 	"identityPing":                  "no implementation lane assigned for the staff identity admin surface",
 	"listPlatformKeys":              "operator launcher surface (D4); no implementation lane assigned",
+	"loadGetBatch":                  "HH-LOAD-1 load doors: registers only where the deployment's configuration switches the load doors on (CORE_LOAD_DOORS, off by default), behind the machine gate the registrar carries exactly then",
+	"loadMapBranches":               "HH-LOAD-1 load doors (LD-4): registers only where the deployment's configuration switches the load doors on (CORE_LOAD_DOORS, off by default), behind the machine gate the registrar carries exactly then",
+	"loadMapUsers":                  "HH-LOAD-1 load doors (LD-4): registers only where the deployment's configuration switches the load doors on (CORE_LOAD_DOORS, off by default), behind the machine gate the registrar carries exactly then",
+	"loadResolveKeys":               "HH-LOAD-1 load doors: registers only where the deployment's configuration switches the load doors on (CORE_LOAD_DOORS, off by default), behind the machine gate the registrar carries exactly then",
+	"loadUpsertReceivables":         "HH-LOAD-1 load doors: registers only where the deployment's configuration switches the load doors on (CORE_LOAD_DOORS, off by default), behind the machine gate the registrar carries exactly then",
+	"loadUpsertCategories":          "HH-LOAD-1 load doors (LD-4): registers only where the deployment's configuration switches the load doors on (CORE_LOAD_DOORS, off by default), behind the machine gate the registrar carries exactly then",
+	"loadUpsertSuppliers":           "HH-LOAD-1 load doors (LD-4): registers only where the deployment's configuration switches the load doors on (CORE_LOAD_DOORS, off by default), behind the machine gate the registrar carries exactly then",
+	"loadUpsertUnits":               "HH-LOAD-1 load doors (LD-3): registers only where the deployment's configuration switches the load doors on (CORE_LOAD_DOORS, off by default), behind the machine gate the registrar carries exactly then",
+	"loadPutUnitSets":               "HH-LOAD-1 load doors (LD-3): registers only where the deployment's configuration switches the load doors on (CORE_LOAD_DOORS, off by default), behind the machine gate the registrar carries exactly then",
 	"putDealerCredential":           "operator launcher surface (D4); no implementation lane assigned",
 	"putPlatformKey":                "operator launcher surface (D4); no implementation lane assigned",
 	"putTenantBrand":                "held for the tenant brand gap (ADR 0021 annex records the hold)",

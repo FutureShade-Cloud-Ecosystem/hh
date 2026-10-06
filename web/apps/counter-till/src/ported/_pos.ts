@@ -8,9 +8,9 @@
 // customer and the ticket total: keyed by the server ticket id. It is consulted on resume
 // (restore the customer: DIB-246) and by the parked list (show who + how much: DIB-247).
 
-import type { PosCustomer } from './pos-customer-strip.js';
-import type { CartLine } from './pos-api.js';
-import { balanceAfterDepositCents } from './ports.js';
+import type { PosCustomer } from '@hardscapehouse/pos-kit/src/ported/pos-customer-strip.js';
+import type { CartLine } from '@hardscapehouse/pos-kit/src/ported/pos-api.js';
+import { balanceAfterDepositCents } from '@hardscapehouse/pos-kit/src/ported/ports.js';
 
 // One parked ticket's client-side display snapshot, captured in parkCurrent() before the order
 // is reset. `customer` is the full account (or null for walk-in); `subtotalCents` is the ticket's
@@ -305,12 +305,12 @@ export function accountTypeTag(customerType: string): string {
 }
 
 /** One parsed answer for the optional cash-tendered quick entry (rev 6, item F). */
-export type { CashTenderedPlan } from './ports.js';
+export type { CashTenderedPlan } from '@hardscapehouse/pos-kit/src/ported/ports.js';
 
 // HH note: the reference parsed the typed dollars through a float and computed the change due
 // here. HH's rule is that the core computes money, so the computation is left out of the port
 // and the seam lives in ports.ts with the reference's signature (CLOSURE.md names it).
-export { cashTenderedPlan } from './ports.js';
+export { cashTenderedPlan } from '@hardscapehouse/pos-kit/src/ported/ports.js';
 
 /**
  * counterRingMessage: the ring-failure line as the COUNTER should read it. ringErrorMessage()
@@ -412,6 +412,60 @@ export function humanizeRingError(msg: string): string {
     return 'That did not go through, and nothing was rung: check the sale and try again.';
   }
   return stripped;
+}
+
+// ── the card charge answers: the counter card packet's client half ─────────────────────────────
+//
+// A ring that took a card capture answers with one of the card charge design's typed words
+// (402 card_charge_card_declined, 409 card_charge_in_flight, 409 card_charge_needs_manager),
+// never the bare 500 a rolled back card ring used to carry. The till answers each word in the
+// counter's words and clears the per-till card charge key on the answer, so the next press
+// mints a new sale key and no kept key can answer "declined" forever. The key is RingKeyMemo's
+// key: the ring's idempotency key, the sale key the attempt rows carry server-side.
+//
+// The successful answer (201) keeps the confirmation panel's own words; the till clears the key
+// there as it always has, and the table says so in one place with the rest.
+//
+// Pure: exercised in card-charge-key-201.test.mjs and its four sibling legs.
+
+/** One card charge answer's counter words, and whether the till clears the card charge key on it. */
+export interface CardChargeAnswer {
+  /** The words the till shows. Empty on 201: the confirmation panel words that answer. */
+  msg: string;
+  /** True when the till clears the per-till card charge key on this answer. */
+  clearsKey: boolean;
+}
+
+/**
+ * cardChargeAnswer: the till's whole answer to a card charge word, as data. `status` and `error`
+ * are the ring answer's status and error word verbatim; `split` says which ring arm asks, because
+ * the split panel's leg words differ from the single tender's. Returns null for every shape the
+ * table does not name: those keep today's handling (the credit gate's words, the server's own
+ * detail through counterRingMessage).
+ */
+export function cardChargeAnswer(status: number, error: string, split: boolean): CardChargeAnswer | null {
+  if (status === 201) return { msg: '', clearsKey: true };
+  if (status === 402 && error === 'card_charge_card_declined') {
+    return split
+      ? {
+          msg: 'A card leg was declined. Any card already charged for this sale was reversed. Try another tender.',
+          clearsKey: true,
+        }
+      : { msg: 'Card declined: try another tender.', clearsKey: true };
+  }
+  if (status === 409 && error === 'card_charge_in_flight') {
+    return {
+      msg: 'The card is still being charged. Wait a moment, then press Complete again: it will not charge twice.',
+      clearsKey: true,
+    };
+  }
+  if (status === 409 && error === 'card_charge_needs_manager') {
+    return {
+      msg: "This sale's card charge has no answer from the card processor. A manager has to check it before the card is charged again.",
+      clearsKey: true,
+    };
+  }
+  return null;
 }
 
 // ── DIB-DUPLINE: one product, one line ─────────────────────────────────────────────────────────

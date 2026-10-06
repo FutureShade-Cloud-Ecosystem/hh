@@ -20,31 +20,17 @@ import {
 export const DRAWER_STATION = "MAIN";
 
 /**
- * The demo dealer's house zone: the same constant the core itself compiles
- * (core/internal/dashboard/window.go, core/internal/gl/businessday.go). No
- * route serves an organization's zone yet, and the ring's requested_date is
- * contract-required, so the till names a day in THIS zone and never in the
- * browser's UTC. The stub validates the day against the same zone, and the
- * review records for a later item the served zone that should replace this
- * constant when the core offers one.
+ * The demo dealer's house zone, the house day conversion and the demo card
+ * token live in @hardscapehouse/pos-kit (src/ported/host-facts.ts), which
+ * carried them out of this file when the shared pieces moved into that
+ * package: the kit's seam file reads them and must not import the app. This
+ * module re-exports the same three names, so this file's own callers are
+ * unchanged, and the wording of their comments moved with them.
  */
-export const HOUSE_ZONE = "America/Toronto";
-
-/**
- * The calendar day an instant falls on in the given zone, as the date literal
- * the wire type carries: "2026-01-31". Through Intl's formatter, never
- * through toISOString's UTC clock, because the dealer's day is the invariant:
- * a sale rung at nine in the evening in Trenton is that day's sale, though
- * the UTC clock has rolled over.
- */
-export function houseDayInZone(zone: string, now: Date = new Date()): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: zone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(now);
-}
+export { HOUSE_ZONE, houseDayInZone, DEMO_CARD_TOKEN } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
+// This module's own ring path still swaps the card token onto the demo
+// constant, so the value rides in beside the re-export above.
+import { DEMO_CARD_TOKEN } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 
 /**
  * The float a first use opens the drawer with: an invented, constant amount
@@ -96,14 +82,6 @@ export interface TicketItem {
   qty: number;
   uom: string;
 }
-
-/**
- * The card tender's token: the fixed demo token the simulator requires to be
- * non-empty. No field in this app takes a card's digits, and no script that
- * reads a card is loaded: the token is a constant, and the second source scan
- * holds that.
- */
-export const DEMO_CARD_TOKEN = "demo-card-token";
 
 /** What the till sends to ring one sale: no price anywhere in it. */
 export interface SaleRing {

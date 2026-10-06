@@ -145,7 +145,7 @@ var knownDirs = map[string]bool{
 	"demo": true, "dispatch": true, "export": true, "feedback": true,
 	"finstmt": true, "gl": true, "identity": true, "invcount": true,
 	"inventory": true, "jobs": true, "landedcost": true, "lien": true,
-	"localization": true, "messaging": true, "messagingprovider": true,
+	"load": true, "localization": true, "messaging": true, "messagingprovider": true,
 	"notify": true, "order": true, "payment": true, "payments": true,
 	"planflow": true, "platform": true, "portal": true, "pos": true,
 	"pricing": true, "printing": true, "procurement": true, "product": true,
@@ -163,7 +163,7 @@ var scanTargets = []string{
 	"branches", "compliance", "config", "customer", "customerquote",
 	"dashboard", "demo", "dispatch", "export", "feedback", "finstmt", "gl",
 	"identity", "invcount", "inventory", "jobs", "landedcost", "lien",
-	"localization", "messaging", "messagingprovider", "notify", "order",
+	"load", "localization", "messaging", "messagingprovider", "notify", "order",
 	"payment", "payments", "planflow", "platform", "portal", "pos",
 	"pricing", "printing", "procurement", "product", "purchasing", "quote",
 	"quoteassist", "reporting", "roleconfig", "settings", "sync", "tasks",
@@ -296,6 +296,9 @@ var migrationTopics = map[string]string{
 	"0213_org_tenant_seq_deleted_idem":     "identity",
 	"0214_new_entities_and_pricing":        "MULTI",
 	"0215_identity_audit":                  "MULTI",
+	"0320_load_key_registry":               "load",
+	"0321_fb_moves_machine_principal":      "identity",
+	"0361_card_charge_attempts":            "payment",
 }
 
 // multiTopicSplits states the per-object attribution inside the five
@@ -371,6 +374,7 @@ var ownedObjects = map[string]string{
 	"bistrack_id_map":                 "bistrack",          // 0079_bistrack_sync
 	"branch_allocation_policy":        "inventory",         // 0115_stock_reservations
 	"branch_transit_days":             "inventory",         // 0158_transfer_eta_transit_days
+	"card_charge_attempts":            "payment",           // 0361_card_charge_attempts
 	"change_order_lines":              "order",             // 0125_order_change_orders
 	"change_orders":                   "order",             // 0125_order_change_orders
 	"commission_rules":                "reporting",         // 0144_commission_rules
@@ -434,8 +438,11 @@ var ownedObjects = map[string]string{
 	"lien_documents":                  "lien",              // 0038_lien_holdback_compliance
 	"lien_jobs":                       "lien",              // 0038_lien_holdback_compliance
 	"lien_participants":               "lien",              // 0038_lien_holdback_compliance
+	"load_batch":                      "load",              // 0320_load_key_registry
+	"load_key_registry":               "load",              // 0320_load_key_registry
 	"load_scan_checkpoints":           "dispatch",          // 0108_scan_trail_weight_advance
 	"locations":                       "branches",          // 0003_locations_and_branches
+	"machine_principal":               "identity",          // 0321_fb_moves_machine_principal
 	"manifest_lines":                  "dispatch",          // 0012_manifests
 	"manifest_versions":               "dispatch",          // 0012_manifests
 	"manifests":                       "dispatch",          // 0012_manifests

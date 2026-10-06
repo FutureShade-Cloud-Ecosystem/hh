@@ -278,6 +278,7 @@ reason instead).
 | `GET /api/v1/lien/jobs/{id}` | hardscapeos_dibbits/backend/internal/lien/module.go:186 |
 | `GET /api/v1/lien/jobs/{id}/documents` | hardscapeos_dibbits/backend/internal/lien/module.go:189 |
 | `GET /api/v1/lien/triage` | hardscapeos_dibbits/backend/internal/lien/module.go:187 |
+| `GET /api/v1/load/batches/{id}` | (addition) HH-LOAD-1 load doors: the machine batch read behind the load doors deployment switch; no ERP source route. |
 | `GET /api/v1/messaging/channels` | hardscapeos_dibbits/backend/internal/messaging/handler.go:57 |
 | `GET /api/v1/messaging/channels/{id}/house-queue` | hardscapeos_dibbits/backend/internal/messaging/repassign_handler.go:37 |
 | `GET /api/v1/messaging/channels/{id}/messages` | hardscapeos_dibbits/backend/internal/messaging/handler.go:58 |
@@ -324,6 +325,7 @@ reason instead).
 | `GET /api/v1/pos/sales/{id}/receipt` | hardscapeos_dibbits/backend/internal/printing/handler.go:34 |
 | `GET /api/v1/pos/salespeople` | hardscapeos_dibbits/backend/internal/pos/handler.go:43 |
 | `GET /api/v1/pos/stock-glance` | hardscapeos_dibbits/backend/internal/pos/handler.go:41 |
+| `GET /api/v1/pos/tax-rate` | (addition) Row 661: the counter-readable tax rate; the rate the ring binds, read through the ring's own assessor, with the stored round rule beside it; no ERP source route. |
 | `GET /api/v1/pos/workspace` | hardscapeos_dibbits/backend/internal/pos/handler.go:73 |
 | `GET /api/v1/pricing/audit` | hardscapeos_dibbits/backend/internal/pricing/handler.go:86 |
 | `GET /api/v1/pricing/batches` | hardscapeos_dibbits/backend/internal/pricing/batch_handler.go:17 |
@@ -448,6 +450,7 @@ reason instead).
 | `GET /api/v1/till/sessions/{id}/zreport` | hardscapeos_dibbits/backend/internal/till/handler.go:41 |
 | `GET /api/v1/till/sessions/open` | hardscapeos_dibbits/backend/internal/till/handler.go:37 |
 | `GET /api/v1/tour` | hardscapeos_dibbits/backend/internal/tour/handler.go:44 |
+| `GET /api/v1/uoms` | (addition) HH-LOAD-1 load doors (LD-3): the staff read of the unit catalogue, Dealer Admin at read; no ERP source route. |
 | `GET /api/v1/warranty/board` | hardscapeos_dibbits/backend/internal/warranty/module.go:155 |
 | `GET /api/v1/warranty/claims` | hardscapeos_dibbits/backend/internal/warranty/module.go:136 |
 | `GET /api/v1/warranty/claims/{id}` | hardscapeos_dibbits/backend/internal/warranty/module.go:137 |
@@ -579,6 +582,7 @@ reason instead).
 | `POST /api/v1/lien/holdback/{jobID}/release` | hardscapeos_dibbits/backend/internal/lien/module.go:195 |
 | `POST /api/v1/lien/jobs` | hardscapeos_dibbits/backend/internal/lien/module.go:192 |
 | `POST /api/v1/lien/jobs/{id}/sync` | hardscapeos_dibbits/backend/internal/lien/module.go:193 |
+| `POST /api/v1/load/keys/resolve` | (addition) HH-LOAD-1 load doors: the machine legacy key resolution behind the load doors deployment switch; no ERP source route. |
 | `POST /api/v1/messaging/channels/{id}/messages` | hardscapeos_dibbits/backend/internal/messaging/handler.go:59 |
 | `POST /api/v1/messaging/channels/{id}/messages/{msgID}/ack` | hardscapeos_dibbits/backend/internal/messaging/handler.go:64 |
 | `POST /api/v1/messaging/channels/{id}/read` | hardscapeos_dibbits/backend/internal/messaging/handler.go:61 |
@@ -734,6 +738,12 @@ reason instead).
 | `PUT /api/v1/inventory/allocation-policy` | hardscapeos_dibbits/backend/internal/inventory/stock_truth_handler.go:41 |
 | `PUT /api/v1/inventory/reorder-points` | hardscapeos_dibbits/backend/internal/inventory/stock_truth_handler.go:54 |
 | `PUT /api/v1/inventory/transit-days` | hardscapeos_dibbits/backend/internal/inventory/module.go:295 |
+| `PUT /api/v1/load/branches` | (addition) HH-LOAD-1 load doors: the branch map, names against existing branch rows, behind the load doors deployment switch; no ERP source route. |
+| `PUT /api/v1/load/categories` | (addition) HH-LOAD-1 load doors: the product category upsert, the parent named by legacy key, behind the load doors deployment switch; no ERP source route. |
+| `PUT /api/v1/load/products/unit-sets` | (addition) HH-LOAD-1 load doors (LD-3): the product unit set replace, the product named by legacy key, behind the load doors deployment switch; no ERP source route. |
+| `PUT /api/v1/load/suppliers` | (addition) HH-LOAD-1 load doors: the supplier upsert with its contact through the purchasing contact store, behind the load doors deployment switch; no ERP source route. |
+| `PUT /api/v1/load/units` | (addition) HH-LOAD-1 load doors (LD-3): the unit catalogue upsert, a unit that already stands with the same code and dimension attached, behind the load doors deployment switch; no ERP source route. |
+| `PUT /api/v1/load/users` | (addition) HH-LOAD-1 load doors: the user map, names against existing staff rows by verified email, behind the load doors deployment switch; no ERP source route. |
 | `PUT /api/v1/messaging/channels/{id}/notify-prefs` | hardscapeos_dibbits/backend/internal/messaging/handler.go:68 |
 | `PUT /api/v1/messaging/event-classes/{topic}` | hardscapeos_dibbits/backend/internal/messaging/handler.go:88 |
 | `PUT /api/v1/messaging/payment-rules/{rule}` | hardscapeos_dibbits/backend/internal/messaging/handler.go:94 |

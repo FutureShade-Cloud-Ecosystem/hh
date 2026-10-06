@@ -141,10 +141,27 @@ func runHoldsAfterInsert(ctx context.Context, hooks quoteEditHooks, tx pgx.Tx) e
 	return runHolds(ctx, hooks, tx)
 }
 
+// runPricingLog invokes the pricing log hook on the tx, the LAST step
+// before commit: the pricing log rows a write owes ride the same
+// transaction as the mutation, the totals and the trail, so a commit with
+// no row cannot happen and a rolled back write leaves no row (plan 4.2).
+// changed is the write's own verdict on whether it moved the line, so an
+// idempotent rewrite writes no row. A nil hook means this write owes no
+// pricing log row.
+func runPricingLog(ctx context.Context, hook func(context.Context, pgx.Tx, int, bool) error, tx pgx.Tx, lineNo int, changed bool) error {
+	if hook == nil {
+		return nil
+	}
+	return hook(ctx, tx, lineNo, changed)
+}
+
 // - guarded writes -
 
-// UpdateLineGuarded changes one line's quantity + price under the lock.
-func (r *Repository) UpdateLineGuarded(ctx context.Context, w quoteEditWrite, hooks quoteEditHooks) (before, after QuoteLineSnapshot, totals QuoteTotals, status string, err error) {
+// UpdateLineGuarded changes one line's quantity + price under the lock. A
+// floor plan whose expectedDisc is set (a repriced discounted line, D5)
+// re-checks the stored discount under the lock, consumes any approval on
+// this transaction, and stamps the clearing the decision granted.
+func (r *Repository) UpdateLineGuarded(ctx context.Context, w quoteEditWrite, plan floorWritePlan, hooks quoteEditHooks) (before, after QuoteLineSnapshot, totals QuoteTotals, status string, err error) {
 	if r.pool == nil {
 		return before, after, totals, "", errNoDB
 	}
@@ -170,22 +187,69 @@ func (r *Repository) UpdateLineGuarded(ctx context.Context, w quoteEditWrite, ho
 		}
 		return before, after, totals, status, fmt.Errorf("read quote line pre-image: %w", err)
 	}
+	// The price was read for the product the caller saw on this line; a row
+	// holding another product under the lock (a delete and a re-add inside
+	// the pricing window) must never take that price, with or without a
+	// floor question (P2-1, round 3).
+	if before.ProductID != w.ProductID {
+		return before, after, totals, status, errFloorStateChanged
+	}
+	// And the same product re-added in another unit inside that window: the
+	// price and qty_base were resolved for the unit the caller saw, so a row
+	// entered in another unit under the lock would show an entered quantity
+	// and unit that disagree with both (review round 4, P3-6).
+	if w.UOMEntered != "" {
+		var rowUOM string
+		if err := tx.QueryRow(ctx,
+			`SELECT uom_entered::text FROM quote_lines WHERE quote_id = $1 AND line_no = $2`,
+			w.QuoteID, w.LineNo).Scan(&rowUOM); err != nil {
+			return before, after, totals, status, fmt.Errorf("read quote line unit: %w", err)
+		}
+		if rowUOM != w.UOMEntered {
+			return before, after, totals, status, errFloorStateChanged
+		}
+	}
+	if plan.expectedDisc >= 0 || plan.lineID != "" {
+		// The floor decision priced THIS stored discount on THIS row; a
+		// different one under the lock means figures nobody decided on (a
+		// discount moved between the read and the lock, or the number was
+		// reused by another row inside the evaluation window, P2-A), refuse
+		// the write rather than re-discount it blind.
+		var disc int
+		var rowID string
+		if err := tx.QueryRow(ctx,
+			`SELECT disc_pct, id::text FROM quote_lines WHERE quote_id = $1 AND line_no = $2`,
+			w.QuoteID, w.LineNo).Scan(&disc, &rowID); err != nil {
+			return before, after, totals, status, fmt.Errorf("read quote line discount: %w", err)
+		}
+		if plan.expectedDisc >= 0 && disc != plan.expectedDisc {
+			return before, after, totals, status, errFloorStateChanged
+		}
+		if plan.lineID != "" && plan.lineID != rowID {
+			return before, after, totals, status, errFloorStateChanged
+		}
+	}
+	if err := runFloorPlan(ctx, tx, &plan); err != nil {
+		return before, after, totals, status, err
+	}
 	// DIB-506: a reprice PRESERVES the line's stored discount, the engine's gross total lands in
 	// pre_discount_total_cents and the stored disc_pct re-discounts it (half-up once). disc_pct = 0
 	// (every pre-0173 line, and every line never discounted) makes both expressions the shipped
 	// values byte-for-byte.
-	after, err = scanLineSnapshot(tx.QueryRow(ctx, fmt.Sprintf(
-		`UPDATE quote_lines
+	after, err = scanLineSnapshot(tx.QueryRow(ctx, fmt.Sprintf(`
+		UPDATE quote_lines
 		    SET qty_entered = $3::decimal, qty_base = $4::decimal,
 		        unit_price_cents = $5, price_uom = $6,
 		        line_total_cents = CASE WHEN disc_pct > 0
 		                                THEN ($7::bigint * (100 - disc_pct) + 50) / 100
 		                                ELSE $7 END,
 		        pre_discount_total_cents = $7,
+		        metadata = CASE WHEN $8::jsonb IS NULL THEN metadata
+		                        ELSE metadata || jsonb_build_object('floor_clear', $8::jsonb) END,
 		        updated_at = now()
 		  WHERE quote_id = $1 AND line_no = $2
 		  RETURNING %s`, editLineColumns),
-		w.QuoteID, w.LineNo, w.QtyEntered, w.QtyBase, w.UnitPriceCents, w.PriceUOM, w.LineTotalCents))
+		w.QuoteID, w.LineNo, w.QtyEntered, w.QtyBase, w.UnitPriceCents, w.PriceUOM, w.LineTotalCents, stampClearingJSON(plan.clearing)))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return before, after, totals, status, ErrLineNotFound
@@ -201,11 +265,21 @@ func (r *Repository) UpdateLineGuarded(ctx context.Context, w quoteEditWrite, ho
 	if err = runHolds(ctx, hooks, tx); err != nil {
 		return before, after, totals, status, err
 	}
+	if err = runPricingLog(ctx, hooks.pricing, tx, w.LineNo, before != after); err != nil {
+		return before, after, totals, status, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return before, after, totals, status, fmt.Errorf("commit quote line edit: %w", err)
 	}
 	return before, after, totals, status, nil
 }
+
+// errFloorStateChanged is the refusal a guarded write answers when the row
+// under the lock is not the row the floor decision priced: the stored
+// discount moved between the read and the lock, or the line number was
+// reused by another row inside the evaluation window. The decision priced
+// figures that are no longer the line's.
+var errFloorStateChanged = errors.New("quote: the line changed while its price was being decided, try again")
 
 // InsertLineGuarded appends a line under the lock.
 //
@@ -255,6 +329,12 @@ func (r *Repository) InsertLineGuarded(ctx context.Context, w quoteEditWrite, ho
 		return after, totals, status, err
 	}
 	if err = runRecord(ctx, hooks, tx, QuoteLineSnapshot{}, after, totals); err != nil {
+		return after, totals, status, err
+	}
+	// The pricing log row (a below floor rule price, CP0-3 answer A) is
+	// named by the line the insert derived under the lock; a new line is a
+	// change by definition.
+	if err = runPricingLog(ctx, hooks.pricing, tx, after.LineNo, true); err != nil {
 		return after, totals, status, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -355,7 +435,9 @@ func (r *Repository) UpdateValidUntilGuarded(ctx context.Context, quoteID, newDa
 
 // - creation -
 
-// CreateQuote inserts a DRAFT quote, minting its number from quote_no_seq as '#Q-<n>'.
+// CreateQuote inserts a DRAFT quote, minting its number from quote_no_seq as '#Q-<n>'. The
+// salesperson is the caller (plan 3.3: creating a quote sets the salesperson to the caller), so
+// the quote is born owned by the person who opened it.
 //
 // The sync legs (0213, syncscope.go) stamp beside the row: the org
 // read off the branch (the fence the drive-run adapters stamp the same
@@ -367,8 +449,9 @@ func (r *Repository) CreateQuote(ctx context.Context, in QuoteCreate) (id, quote
 		return "", "", errNoDB
 	}
 	err = r.pool.QueryRow(ctx, quoteSeqCTE+`
-		INSERT INTO quotes (quote_no, customer_id, branch_id, status, valid_until, created_by, org_id, seq)
+		INSERT INTO quotes (quote_no, customer_id, branch_id, status, valid_until, created_by, salesperson_id, org_id, seq)
 		SELECT '#Q-' || nextval('quote_no_seq'), $1::uuid, $2::uuid, 'DRAFT', NULLIF($3,'')::date, NULLIF($4,'')::uuid,
+		       NULLIF($4,'')::uuid,
 		       (SELECT org_id FROM locations WHERE id = $2::uuid), (SELECT next_value FROM qseq)
 		RETURNING id::text, quote_no::text`,
 		in.CustomerID, in.BranchID, in.ValidUntil, in.CreatedBy).Scan(&id, &quoteNo)
@@ -423,24 +506,29 @@ func (r *Repository) ResolveQuoteID(ctx context.Context, idOrNo string, global b
 	return id, nil
 }
 
-// QuoteEditHeader reads the three facts every edit guard needs in one query.
-func (r *Repository) QuoteEditHeader(ctx context.Context, quoteID string) (status, branchID string, validUntil *time.Time, err error) {
+// QuoteEditHeader reads the four facts every edit guard needs in one query:
+// status, owning branch, the validity window, and the quote's owner (the
+// salesperson when one is set, else the creator, plan 3.3; "" when neither
+// is stamped).
+func (r *Repository) QuoteEditHeader(ctx context.Context, quoteID string) (status, branchID string, validUntil *time.Time, ownerID string, err error) {
 	if r.pool == nil {
-		return "", "", nil, errNoDB
+		return "", "", nil, "", errNoDB
 	}
 	if !looksLikeUUID(quoteID) {
-		return "", "", nil, ErrNotFound
+		return "", "", nil, "", ErrNotFound
 	}
 	err = r.pool.QueryRow(ctx,
-		`SELECT status, branch_id::text, valid_until FROM quotes WHERE id = $1`, quoteID).
-		Scan(&status, &branchID, &validUntil)
+		`SELECT status, branch_id::text, valid_until,
+		        COALESCE(salesperson_id::text, COALESCE(created_by::text, ''))
+		  FROM quotes WHERE id = $1`, quoteID).
+		Scan(&status, &branchID, &validUntil, &ownerID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return "", "", nil, ErrNotFound
+			return "", "", nil, "", ErrNotFound
 		}
-		return "", "", nil, fmt.Errorf("read quote edit header: %w", err)
+		return "", "", nil, "", fmt.Errorf("read quote edit header: %w", err)
 	}
-	return status, branchID, validUntil, nil
+	return status, branchID, validUntil, ownerID, nil
 }
 
 // QuotePricingContext resolves the customer + branch a quote line must be priced for.
@@ -508,11 +596,12 @@ func (r *Repository) StaffDetail(ctx context.Context, quoteID string) (StaffQuot
 	var validUntil *time.Time
 	err = tx.QueryRow(ctx, `
 		SELECT q.id::text, q.quote_no::text, q.customer_id::text, COALESCE(c.name,''), q.branch_id::text,
-		       q.status, q.valid_until, q.subtotal_cents, q.tax_cents, q.total_cents, q.updated_at
+		       q.status, q.valid_until, q.subtotal_cents, q.tax_cents, q.total_cents, q.updated_at,
+		       COALESCE(q.salesperson_id::text, COALESCE(q.created_by::text, ''))
 		  FROM quotes q LEFT JOIN customers c ON c.id = q.customer_id
 		 WHERE q.id = $1`, quoteID).
 		Scan(&v.ID, &v.QuoteNo, &v.CustomerID, &v.CustomerName, &v.BranchID,
-			&v.Status, &validUntil, &v.SubtotalCents, &v.TaxCents, &v.TotalCents, &v.UpdatedAt)
+			&v.Status, &validUntil, &v.SubtotalCents, &v.TaxCents, &v.TotalCents, &v.UpdatedAt, &v.OwnerID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return v, ErrNotFound
@@ -552,8 +641,11 @@ func (r *Repository) StaffDetail(ctx context.Context, quoteID string) (StaffQuot
 	return v, nil
 }
 
-// ListStaffQuotes lists quotes the caller can reach, newest first.
-func (r *Repository) ListStaffQuotes(ctx context.Context, global bool, branchIDs []string, f Filter) ([]StaffQuoteSummary, error) {
+// ListStaffQuotes lists quotes the caller can reach, newest first. A
+// non-empty ownerID narrows the list to that owner's quotes (a Work
+// caller's default, plan 3.3): the owner is the salesperson when one is
+// set, else the creator.
+func (r *Repository) ListStaffQuotes(ctx context.Context, global bool, branchIDs []string, ownerID string, f Filter) ([]StaffQuoteSummary, error) {
 	if r.pool == nil {
 		return nil, errNoDB
 	}
@@ -566,6 +658,10 @@ func (r *Repository) ListStaffQuotes(ctx context.Context, global bool, branchIDs
 	}
 	args := []any{global, branchIDs}
 	where := "(q.branch_id = ANY($2::uuid[]) OR $1)"
+	if ownerID != "" {
+		args = append(args, ownerID)
+		where += fmt.Sprintf(" AND COALESCE(q.salesperson_id::text, COALESCE(q.created_by::text, '')) = $%d", len(args))
+	}
 	if f.Status != "" {
 		args = append(args, f.Status)
 		where += fmt.Sprintf(" AND q.status = $%d", len(args))
@@ -583,7 +679,8 @@ func (r *Repository) ListStaffQuotes(ctx context.Context, global bool, branchIDs
 	rows, err := r.pool.Query(ctx, fmt.Sprintf(`
 		SELECT q.id::text, q.quote_no::text, q.customer_id::text, COALESCE(c.name,''), q.branch_id::text,
 		       q.status, COALESCE(q.valid_until::text,''), q.subtotal_cents, q.tax_cents, q.total_cents,
-		       q.updated_at, q.created_at::text
+		       q.updated_at, q.created_at::text,
+		       COALESCE(q.salesperson_id::text, COALESCE(q.created_by::text, ''))
 		  FROM quotes q LEFT JOIN customers c ON c.id = q.customer_id
 		 WHERE %s AND ($%d::timestamptz IS NULL OR (q.created_at, q.quote_no) < ($%d::timestamptz, $%d::text))
 		 ORDER BY q.created_at DESC, q.quote_no LIMIT $%d`,
@@ -598,7 +695,7 @@ func (r *Repository) ListStaffQuotes(ctx context.Context, global bool, branchIDs
 		var createdAt string
 		if err := rows.Scan(&s.ID, &s.QuoteNo, &s.CustomerID, &s.CustomerName, &s.BranchID,
 			&s.Status, &s.ValidUntil, &s.SubtotalCents, &s.TaxCents, &s.TotalCents, &s.UpdatedAt,
-			&createdAt); err != nil {
+			&createdAt, &s.OwnerID); err != nil {
 			return nil, fmt.Errorf("scan staff quote: %w", err)
 		}
 		s.cursorKey = createdAt + "/" + s.QuoteNo

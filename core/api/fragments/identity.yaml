@@ -412,14 +412,17 @@ paths:
       description: >-
         Decide authority is enforced in the service per policy: the rail
         policies (MARGIN_BELOW_MINIMUM, JE_OVER_THRESHOLD,
-        FREIGHT_ABOVE_QUOTE) are decidable only by the ruled leadership role
-        set, credit policies by leadership tier. Separation of duties bars
+        FREIGHT_ABOVE_QUOTE) are decidable by the ruled leadership role
+        set, with the margin floor's authority from the dealer's role
+        configuration (a branch scoped Quote Desk manager decides floor
+        requests of its own branch, beside the dealer wide approvers);
+        credit policies by leadership tier. Separation of duties bars
         the requester from deciding their own request. A decision on a JE or
         freight subject bridges into the owning module inside the same
         transaction. Deciding an already-decided request returns 409.
       x-role: requireStaff
       x-access:
-        surfaces: [manager-home]
+        surfaces: [manager-home, quote-desk]
         level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"

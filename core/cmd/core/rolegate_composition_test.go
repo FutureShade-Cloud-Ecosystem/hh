@@ -131,7 +131,7 @@ func xrKnownLevel(s string) bool {
 // census calls staff carries a surface and a level in roleconfig's
 // vocabulary, and no registered route the census does not call staff
 // carries an annotation. This test leans on two things it cannot see: the
-// census half (all 595 document operations annotated, including the 31
+// census half (all 600 document operations annotated, including the 31
 // ledgered routes not yet registered) is the plain TestCensusStaffRoutes-
 // CarrySurfaceAndLevel beside this file, and the fact that the walk's
 // passing means the gate is truly in the chain is the registrar's own
@@ -179,7 +179,7 @@ func assertRouteAnnotated(t *testing.T, pattern string, route apigen.Route) {
 	if !xrKnownLevel(route.Level) {
 		t.Fatalf("staff route %s (%s) names unknown level %q", pattern, route.OperationID, route.Level)
 	}
-	if route.List != "" && route.List != roleconfig.SettingPricingEditors {
+	if route.List != "" && route.List != roleconfig.SettingPricingEditors && route.List != roleconfig.SettingCostVisibility {
 		t.Fatalf("staff route %s (%s) names list %q, which no gate reader knows", pattern, route.OperationID, route.List)
 	}
 }
@@ -341,4 +341,34 @@ func TestRoleGateDealerConfigurationAtTheCounter(t *testing.T) {
 	// The configured editor writes prices with no code change.
 	code, body = rgProbe(t, fx, http.MethodPost, "/api/v1/pricing/rules", rgHeaders(t, fx, xrSubBranchManager))
 	rgAdmitted(t, "the configured editor writes a price rule", code, body)
+}
+
+// TestRoleGateQuoteSettingsAgreesWithCP0_5A is the settings rule's route
+// half (the review's P2-2): the gate must let both roles the rule names
+// REACH the service, because the rule itself runs there in words (the
+// Sales manager writes a branch row, the General Manager the dealer
+// default). At Manage on the Quote Desk the gate refused the General
+// Manager, who holds Read, before the service could run its dealer
+// default arm, so over HTTP nobody could write the dealer wide policy.
+// At Read the gate stays a gate (a role with no Quote Desk level is still
+// refused) and the service holds the rule.
+func TestRoleGateQuoteSettingsAgreesWithCP0_5A(t *testing.T) {
+	fx := newXRoleFixture(t)
+	gm := rgHeaders(t, fx, testkit.SubGeneralMgr)
+	manager := rgHeaders(t, fx, testkit.SubSalesManager)
+	hr := rgHeaders(t, fx, xrSubHR)
+
+	code, body := rgProbe(t, fx, http.MethodPut, "/api/v1/quotes/policy", gm)
+	rgAdmitted(t, "the General Manager reaches the policy write", code, body)
+	code, body = rgProbe(t, fx, http.MethodPut, "/api/v1/quotes/settings/acceptance", gm)
+	rgAdmitted(t, "the General Manager reaches the acceptance write", code, body)
+	code, body = rgProbe(t, fx, http.MethodPut, "/api/v1/quotes/policy", manager)
+	rgAdmitted(t, "the Sales manager reaches the policy write", code, body)
+
+	// The gate is still a gate: a role with no Quote Desk level is refused
+	// both writes outright.
+	code, body = rgProbe(t, fx, http.MethodPut, "/api/v1/quotes/policy", hr)
+	rgRefused(t, "hr is held off the policy write", code, body)
+	code, body = rgProbe(t, fx, http.MethodPut, "/api/v1/quotes/settings/acceptance", hr)
+	rgRefused(t, "hr is held off the acceptance write", code, body)
 }

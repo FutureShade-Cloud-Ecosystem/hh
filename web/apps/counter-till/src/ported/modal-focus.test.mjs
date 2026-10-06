@@ -24,10 +24,15 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { nextTrapIndex, pickInitialIndex, FOCUSABLE_SELECTOR, focusablesIn } from './modal-focus.js';
+import { nextTrapIndex, pickInitialIndex, FOCUSABLE_SELECTOR, focusablesIn } from '@hardscapehouse/pos-kit/src/ported/modal-focus.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
+// modal-focus.ts moved into @hardscapehouse/pos-kit (web/packages/pos-kit,
+// src/ported, same name) with the customer picker it serves; the source-gate
+// reads below follow it there.
+const kitPorted = join(here, '..', '..', '..', '..', 'packages', 'pos-kit', 'src', 'ported');
 const read = (p) => readFileSync(join(here, p), 'utf8');
+const readKit = (p) => readFileSync(join(kitPorted, p), 'utf8');
 
 // ── 0 · the composed-tree walk (DIB-564 refuted: focusablesIn starved a nested shadow root) ──────
 //
@@ -249,7 +254,7 @@ test('the controller swallows Tab in an empty dialog rather than deferring to th
  // empty-dialog branch must come before nextTrapIndex is consulted, and it must preventDefault.
  // If a refactor moves the count===0 check after the arithmetic, the modal leaks focus again and
  // only the Chromium walk would notice.
-  const src = read('modal-focus.ts');
+  const src = readKit('modal-focus.ts');
   const emptyBranch = src.indexOf('if (items.length === 0) {');
   const arithmetic = src.indexOf('nextTrapIndex(items.length');
   assert.ok(emptyBranch > 0, 'the empty-dialog branch is gone: an unloaded modal will leak focus');
@@ -269,7 +274,7 @@ test('the controller re-establishes focus the browser dropped on a re-render', (
  // resets focus to <body>, and because the keydown listener lives on the HOST, Escape silently
  // stops working. The recovery must stay narrowed to document.body: recovering from ANY outside
  // location makes the two-dialog panes fight over focus on every update.
-  const src = read('modal-focus.ts');
+  const src = readKit('modal-focus.ts');
   assert.match(src, /recoverIfDropped/, 'the dropped-focus recovery is gone: a wizard step change strands the user');
   const fn = src.slice(src.indexOf('private recoverIfDropped'));
   assert.match(
@@ -336,8 +341,11 @@ test('the modal scan finds the app modals (guards the gate below)', () => {
   // HH note: the census is this tree's, not the reference app's: six modal-class components came
   // over, and the reference's other screens (till-close, kiosk-takeover, fallback-modal,
   // rule-editor) stayed unported, so their anchors left with them (CLOSURE.md).
-  assert.ok(modals.length >= 6, `expected the scan to find the ported modal surfaces; found ${modals.length}`);
-  for (const anchor of ['pos-parked.ts', 'pos-return.ts', 'pos-customer-picker.ts', 'pos-assess-relief.ts', 'pos-terminal.ts', 'quick-action-start-guard.ts']) {
+  // HH note: the customer picker moved into @hardscapehouse/pos-kit
+  // (web/packages/pos-kit, src/ported); the kit's modal census copy anchors
+  // it there, and this tree keeps the five below.
+  assert.ok(modals.length >= 5, `expected the scan to find the ported modal surfaces; found ${modals.length}`);
+  for (const anchor of ['pos-parked.ts', 'pos-return.ts', 'pos-assess-relief.ts', 'pos-terminal.ts', 'quick-action-start-guard.ts']) {
     assert.ok(modals.includes(anchor), `the modal scan missed ${anchor}`);
   }
 });

@@ -124,8 +124,13 @@ type resolveRequest struct {
 	QtyEntered   float64 `json:"qty_entered"`
 	UOMEntered   string  `json:"uom_entered"`
 	CostCents    int64   `json:"cost_cents"`
-	// HasApprovedOverride is a REQUEST, not an assertion (DIB-420). It is carried into
-	// ResolveInput.OverrideRequested and decided server-side; the wire name is unchanged.
+	// HasApprovedOverride is READ AND DROPPED (the QD-1 review's P2-5,
+	// closing D3 on this route): this is the read-only preview route, and
+	// through the flag any approved margin card answered "granted" whatever
+	// its subject, even used up, planting false BYPASS rows in the pricing
+	// log. A below-floor price that may be cleared is cleared by the quote
+	// module's own floor decision, which binds the request to the line's
+	// own row. The wire name is unchanged so no caller breaks.
 	HasApprovedOverride bool `json:"has_approved_override"`
 	// E3 unpark: the document being priced, so a BYPASS audit row can be clicked through to it.
 	// Optional, every pre-W4 caller omits it and gets the previous behaviour exactly.
@@ -149,15 +154,16 @@ func (h *Handler) resolve(w http.ResponseWriter, r *http.Request, _ guards.Staff
 		return
 	}
 	bd, err := h.svc.ResolvePrice(r.Context(), ResolveInput{
-		CustomerID:        req.CustomerID,
-		CustomerType:      req.CustomerType,
-		ProductID:         req.ProductID,
-		CategoryID:        req.CategoryID,
-		BranchID:          req.BranchID,
-		QtyEntered:        req.QtyEntered,
-		UOMEntered:        req.UOMEntered,
-		CostCents:         req.CostCents,
-		OverrideRequested: req.HasApprovedOverride,
+		CustomerID:   req.CustomerID,
+		CustomerType: req.CustomerType,
+		ProductID:    req.ProductID,
+		CategoryID:   req.CategoryID,
+		BranchID:     req.BranchID,
+		QtyEntered:   req.QtyEntered,
+		UOMEntered:   req.UOMEntered,
+		CostCents:    req.CostCents,
+		// req.HasApprovedOverride is deliberately NOT carried: a preview
+		// requests no override, the quote floor path is the only door.
 		// Attribute the resolve so an enforcement-disabled BYPASS row records WHO ran it
 		// (R-1; service.go BYPASS path), never a silent, unattributed bypass.
 		UserID:     staffUserID(r),
@@ -521,7 +527,9 @@ func (h *Handler) lowMarginReport(w http.ResponseWriter, r *http.Request, _ guar
 		inputs = append(inputs, ResolveInput{
 			CustomerID: l.CustomerID, CustomerType: l.CustomerType, ProductID: l.ProductID,
 			CategoryID: l.CategoryID, BranchID: l.BranchID, QtyEntered: l.QtyEntered,
-			UOMEntered: l.UOMEntered, CostCents: l.CostCents, OverrideRequested: l.HasApprovedOverride,
+			UOMEntered: l.UOMEntered, CostCents: l.CostCents,
+			// l.HasApprovedOverride is deliberately NOT carried: the
+			// classifier grades the arithmetic, an override changes nothing.
 			UserID: staffUserID(r),
 		})
 	}

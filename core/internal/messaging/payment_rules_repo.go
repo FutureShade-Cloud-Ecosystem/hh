@@ -56,8 +56,9 @@ SELECT p.branch_id::text,
        -- Trenton"); a notice that spells that out twice in one sentence buries the two words the
        -- reader actually needs. The city half is the same part of the same string the house slug
        -- convention already derives from (0136: house-<name-after-em-dash>), so this is the shipped
-       -- naming rule, not a second one. A name with no em-dash falls back whole.
-       COALESCE(NULLIF(btrim(split_part(pl.name, '-', 2)), ''), pl.name, ''),
+       -- naming rule, not a second one. A name with no em dash falls back whole. chr(8212) is the em
+       -- dash the migrations plant; an ASCII hyphen split never matched them and left the legal name.
+       COALESCE(NULLIF(btrim(split_part(pl.name, chr(8212), 2)), ''), pl.name, ''),
        (p.till_session_id IS NOT NULL OR p.received_by IS NOT NULL) AS taken_at_counter,
        p.amount_cents,
        COALESCE(p.customer_id::text, ''),
@@ -65,7 +66,7 @@ SELECT p.branch_id::text,
        COALESCE(o.id::text, ''),
        COALESCE(o.order_no::text, ''),
        COALESCE(o.branch_id::text, ''),
-       COALESCE(NULLIF(btrim(split_part(ol.name, '-', 2)), ''), ol.name, ''),
+       COALESCE(NULLIF(btrim(split_part(ol.name, chr(8212), 2)), ''), ol.name, ''),
        EXISTS (SELECT 1 FROM payment_allocations a WHERE a.payment_id = p.id) AS on_statement
 FROM payments p
 LEFT JOIN locations pl ON pl.id = p.branch_id

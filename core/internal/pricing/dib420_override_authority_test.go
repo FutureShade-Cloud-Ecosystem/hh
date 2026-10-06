@@ -10,8 +10,15 @@ package pricing
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 )
 
 // - authority doubles -
@@ -264,5 +271,45 @@ func TestDIB420_OverrideDoesNotHideALineFromTheLowMarginClassifier(t *testing.T)
 	}
 	if with[0].MarginBps != without[0].MarginBps || with[0].Level != without[0].Level {
 		t.Fatalf("an override must not change the CLASSIFICATION: %+v vs %+v", with[0], without[0])
+	}
+}
+
+// - the route: the body flag never reaches the decision (D3, the QD-1 review's P2-5) -
+//
+// The service seam above is for a LIVE caller that binds its request to a
+// document. The generic preview route is not one: through
+// has_approved_override in its body, any approved margin card answered
+// "granted" whatever its subject, and false BYPASS rows went into the log
+// QD-2 and QD-4 read. The route reads the flag (the wire name is
+// unchanged) and must drop it: a preview below the floor says blocked,
+// and the write path that may clear it is the quote module's own floor
+// decision, which binds the request to the line's own row.
+func TestResolveRoute_BodyOverrideFlagNeverGrants(t *testing.T) {
+	st := belowFloorStore()
+	svc := newSvc(st, "pavers").WithOverrideAuthority(&grantingAuthority{source: AuthorityApproval})
+	h := NewHandler(svc, nil)
+
+	body := `{"product_id":"blu60","customer_id":"abc","category_id":"pavers","customer_type":"CONTRACTOR","qty_entered":1,"uom_entered":"EA","cost_cents":8500,"has_approved_override":true}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pricing/resolve", strings.NewReader(body))
+	req = req.WithContext(identity.ContextWithStaffUserID(req.Context(), "3b420000-0000-4000-9000-000000000001"))
+	h.resolve(rec, req, guards.StaffCaller{})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("resolve: %d (%s)", rec.Code, rec.Body.String())
+	}
+	var bd Breakdown
+	if err := json.Unmarshal(rec.Body.Bytes(), &bd); err != nil {
+		t.Fatalf("decode the breakdown: %v", err)
+	}
+	if !bd.Blocked {
+		t.Fatalf("the body flag must not carry the preview past the floor, got %+v", bd)
+	}
+	if bd.OverrideAuthority != "" {
+		t.Fatalf("a preview grants no authority, got %q", bd.OverrideAuthority)
+	}
+	for _, a := range st.audits {
+		if a.Action == "BYPASS" {
+			t.Fatalf("a preview asked with the body flag must write no BYPASS row, got %+v", a)
+		}
 	}
 }

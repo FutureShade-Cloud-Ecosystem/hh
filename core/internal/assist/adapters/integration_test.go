@@ -270,7 +270,9 @@ func TestIntegration_AScopedUserCannotReachAnotherBranch(t *testing.T) {
 		if own.Empty || len(own.Items) != 1 {
 			t.Fatalf("Trenton's own stock: empty=%v items=%d, a scoped caller must see exactly their own branches", own.Empty, len(own.Items))
 		}
-		if own.Items[0].Title != "Dibbits Landscape Supply, Trenton" {
+		// The branch's display name is whatever the migrations plant (migration 0003 writes the dealer
+		// name, then the city); the fence only needs the row to be Trenton's and never Kingston's.
+		if !strings.HasSuffix(own.Items[0].Title, "Trenton") || strings.Contains(own.Items[0].Title, "Kingston") {
 			t.Fatalf("branch row = %q, want only Trenton's", own.Items[0].Title)
 		}
 	})

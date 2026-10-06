@@ -93,11 +93,15 @@ func seedQuote(t *testing.T, pool *pgxpool.Pool, status string, validUntil any) 
 		tag, tag).Scan(&cust); err != nil {
 		t.Fatalf("seed customer: %v", err)
 	}
+	var creator any
+	if seedUserID != "" {
+		creator = seedUserID
+	}
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO quotes (quote_no, customer_id, branch_id, status, valid_until,
-		                    subtotal_cents, tax_cents, total_cents)
-		VALUES ($1, $2::uuid, $3::uuid, $4, $5, 2000, 0, 2000) RETURNING id::text`,
-		"#Q-"+tag, cust, intTrenton, status, validUntil).Scan(&quoteID); err != nil {
+		                    subtotal_cents, tax_cents, total_cents, created_by)
+		VALUES ($1, $2::uuid, $3::uuid, $4, $5, 2000, 0, 2000, $6) RETURNING id::text`,
+		"#Q-"+tag, cust, intTrenton, status, validUntil, creator).Scan(&quoteID); err != nil {
 		t.Fatalf("seed quote: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -134,6 +138,8 @@ func intSvc(t *testing.T, pool *pgxpool.Pool, now time.Time) (*StaffService, *Re
 		WithCostBasis(qInv{}).
 		WithCustomerType(qCustType{}).
 		WithActorNamer(repo).
+		WithRoleConfig(qTestRoleConfig()).
+		WithFloorArbiter(&unitFloorArbiter{}).
 		withCaller(qCallerFrom).
 		withNow(func() time.Time { return now })
 	return svc, repo, aud
@@ -141,7 +147,10 @@ func intSvc(t *testing.T, pool *pgxpool.Pool, now time.Time) (*StaffService, *Re
 
 func intStaff(branch string) identity.StaffContext {
 	return identity.StaffContext{
-		UserID: seedUserID, Tier: identity.TierFrontline, Scope: identity.ScopeBranch,
+		// Inside Sales, the ladder's Work rung (plan 3.3); the seeded
+		// quotes carry the same user as their creator, so the caller owns
+		// them.
+		UserID: seedUserID, RoleCode: "INSIDE_SALES", Tier: identity.TierFrontline, Scope: identity.ScopeBranch,
 		Status: identity.StatusActive, Branches: map[string]bool{branch: true},
 	}
 }

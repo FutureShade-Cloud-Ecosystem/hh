@@ -2,11 +2,11 @@
 
 import { LitElement, css, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import { focusRing } from './styles/focus-ring.js';
-import './product-thumb.js';
-import { quickPicks, money, type HotPick } from './pos-api.js';
-import { pricePicture } from './_pos-searchdrop.js';
-import { AddOnce } from './_pos-add-dedupe.js';
+import { focusRing } from '@hardscapehouse/pos-kit/src/ported/styles/focus-ring.js';
+import '@hardscapehouse/pos-kit/src/ported/product-thumb.js';
+import { quickPicks, money, type HotPick } from '@hardscapehouse/pos-kit/src/ported/pos-api.js';
+import { pricePicture } from '@hardscapehouse/pos-kit/src/ported/_pos-searchdrop.js';
+import { AddOnce } from '@hardscapehouse/pos-kit/src/ported/_pos-add-dedupe.js';
 import {
   hotTiles,
   drillInto,
