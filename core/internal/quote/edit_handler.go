@@ -400,7 +400,6 @@ func (h *StaffHandler) setAcceptanceSettings(w http.ResponseWriter, r *http.Requ
 func (h *StaffHandler) writeErr(w http.ResponseWriter, err error) {
 	var notEditable *NotEditableError
 	var expired *QuoteExpiredError
-	var priceBlocked *PriceBlockedError
 	var badRequest httpx.BadRequestError
 	var creditBlocked ErrCreditBlocked
 	var notSelling *NotSellingRoleError
@@ -448,8 +447,6 @@ func (h *StaffHandler) writeErr(w http.ResponseWriter, err error) {
 	case errors.As(err, &expired):
 		// D2b: name the date AND the way forward, not a bare "expired".
 		httpx.Error(w, http.StatusConflict, expired.Error())
-	case errors.As(err, &priceBlocked):
-		httpx.Error(w, http.StatusConflict, priceBlocked.Error())
 	case errors.As(err, &badRequest):
 		httpx.Error(w, http.StatusBadRequest, badRequest.Error())
 	case errors.Is(err, ErrInvalidTransition):

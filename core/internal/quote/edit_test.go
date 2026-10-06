@@ -215,6 +215,10 @@ func (f *fakeStaffStore) UpdateLineGuarded(ctx context.Context, w quoteEditWrite
 			return before, after, totals, f.status, err
 		}
 	}
+	if err := runPricingLog(ctx, hooks.pricing, nil, after.LineNo, before != after); err != nil {
+		f.line = saved
+		return before, after, totals, f.status, err
+	}
 	f.writes++
 	f.lastWrite = w
 	return before, after, totals, f.status, nil
@@ -237,6 +241,9 @@ func (f *fakeStaffStore) InsertLineGuarded(ctx context.Context, w quoteEditWrite
 		if err := hooks.record(ctx, nil, QuoteLineSnapshot{}, after, totals); err != nil {
 			return after, totals, f.status, err
 		}
+	}
+	if err := runPricingLog(ctx, hooks.pricing, nil, after.LineNo, true); err != nil {
+		return after, totals, f.status, err
 	}
 	f.writes++
 	f.lastWrite = w
@@ -323,9 +330,12 @@ func (r *recordingTxRecorder) RecordTx(_ context.Context, _ audit.Execer, a audi
 // - pricing / seam doubles -
 
 type qPricer struct {
-	blocked bool
-	factor  float64
-	err     error
+	blocked    bool
+	finalCents int64
+	marginBps  int64
+	floorBps   int64
+	factor     float64
+	err        error
 }
 
 func (p qPricer) ResolvePrice(_ context.Context, in pricing.ResolveInput) (pricing.Breakdown, error) {
@@ -333,7 +343,17 @@ func (p qPricer) ResolvePrice(_ context.Context, in pricing.ResolveInput) (prici
 		return pricing.Breakdown{}, p.err
 	}
 	if p.blocked {
-		return pricing.Breakdown{Blocked: true, BlockPolicy: "FLOOR"}, nil
+		// The resolve shape a rule price below the floor answers: complete,
+		// with Blocked set and the figures riding it (plan 4.1 keeps them).
+		final := p.finalCents
+		if final == 0 {
+			final = 600
+		}
+		return pricing.Breakdown{
+			Blocked: true, BlockPolicy: "FLOOR",
+			FinalCents: final, MarginBps: p.marginBps, FloorBps: p.floorBps,
+			PriceUOM: "EA", QtyBase: in.QtyEntered, LineTotalCents: int64(in.QtyEntered) * final,
+		}, nil
 	}
 	f := p.factor
 	if f == 0 {
@@ -871,18 +891,23 @@ func TestQuoteQty_RejectsNonPositive(t *testing.T) {
 	}
 }
 
-// TestQuoteEdit_PriceBlockedIsRefused pins that the A-20 margin gate stays live on a quoted line, a
-// staff quote must not be able to go out below floor.
-func TestQuoteEdit_PriceBlockedIsRefused(t *testing.T) {
+// TestQuoteEdit_RulePriceBelowFloorIsAccepted pins plan 4.1 (defect D1,
+// CP0-3 answer A): a line whose rule price resolves below the margin floor
+// is priced and written like any other, as at the till, the resolver's
+// figures riding the breakdown for the write's own logging. The floor
+// question belongs to the two writes that put a line below its rule price,
+// not to the resolve.
+func TestQuoteEdit_RulePriceBelowFloorIsAccepted(t *testing.T) {
 	svc, store, _ := qFixture(t, "DRAFT")
-	svc.WithPricing(qPricer{blocked: true})
-	err := applyQuoteEdit(svc, qCtxAs(qStaff()), FieldQuoteLineQty)
-	var pb *PriceBlockedError
-	if !errors.As(err, &pb) {
-		t.Fatalf("want *PriceBlockedError, got %T: %v", err, err)
+	// The arbiter is wired: the rule price row cannot be logged without one,
+	// and the write then fails closed (qd2_floor_source_integration_test.go).
+	svc.WithPricing(qPricer{blocked: true, finalCents: 600, marginBps: 500, floorBps: 1200}).
+		WithFloorArbiter(&unitFloorArbiter{})
+	if err := applyQuoteEdit(svc, qCtxAs(qStaff()), FieldQuoteLineQty); err != nil {
+		t.Fatalf("a line at its rule price must be accepted wherever the floor sits: %v", err)
 	}
-	if store.writes != 0 {
-		t.Error("a below-floor line must not be written")
+	if store.writes != 1 {
+		t.Errorf("the reprice must be written, got %d writes", store.writes)
 	}
 }
 
