@@ -18,6 +18,46 @@
 // this port keeps. HH changes: the house dash rule (no em or en dash anywhere)
 // and the empty state's words match the desk's own voice.
 import { quoteStatusWord } from "./_quote-edit.js";
+import type { Result } from "@hardscapehouse/api-client";
+import type { QdClient } from "./qd-client.js";
+
+/**
+ * The seam's one family read per read cycle. The related documents panel and the order payment
+ * panel both need the quote's document family, and a read apiece on every quote open answered
+ * twice (the round 1 and round 2 reviews' duplicate read). The share hands both callers of a
+ * cycle the SAME read, keyed by the quote it was asked on; a new cycle begins with beginCycle(),
+ * so a later cycle reads fresh and never joins an older answer. A cycle begins at every quote
+ * switch and edit fan out (the edit panel begins it: it is the seam host that re-reads both
+ * panels), at a new session (each panel begins one when its client changes), and at the payment
+ * panel's own retry of its read. The read answers per caller through that caller's guardedRead,
+ * so an answer that lands after the person left the quote is dropped for the quote now open, and
+ * an older read never lands over a newer one, exactly as before the share: the read outlives a
+ * quote switch as a request, and its answer is refused where the quote id moved.
+ */
+export class FamilyShare {
+  private generation = 0;
+  private quoteId = "";
+  private live: Promise<Result<RelatedDoc[]>> | null = null;
+
+  /** A new read cycle: the next read of a quote is fresh, whatever older cycles answered. */
+  beginCycle(): void {
+    this.generation += 1;
+    this.quoteId = "";
+    this.live = null;
+  }
+
+  /** The cycle's one read of the quote's family (the quote end only; an order end read is its own). */
+  read(client: QdClient, quoteId: string, kind: "quote" | "order"): Promise<Result<RelatedDoc[]>> {
+    if (kind !== "quote") return client.relatedDocuments(quoteId, kind);
+    if (this.live !== null && this.quoteId === quoteId) return this.live;
+    this.quoteId = quoteId;
+    this.live = client.relatedDocuments(quoteId, kind);
+    return this.live;
+  }
+}
+
+/** The one share the seam's two family readers use. */
+export const familyShare = new FamilyShare();
 
 /** One row of a document family, as the client proved it off the wire. */
 export interface RelatedDoc {

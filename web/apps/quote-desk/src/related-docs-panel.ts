@@ -33,6 +33,7 @@ import {
   familyEmptyText,
   familyIsOnlySelf,
   isOpenable,
+  familyShare,
   type RelatedDoc,
 } from "./_related-docs.js";
 
@@ -101,7 +102,9 @@ export class QdRelatedDocs extends PanelBase {
 
   protected override willUpdate(changed: Map<string, unknown>): void {
     if (changed.has("quoteId") || changed.has("client") || changed.has("kind")) {
-      // One quote's family never sits under the next quote's heading or error.
+      // One quote's family never sits under the next quote's heading or error. A new session is a
+      // new read cycle for the seam's share (the payment panel begins one at its own client change).
+      if (changed.has("client")) familyShare.beginCycle();
       this.rows = [];
       this.loaded = false;
       this.readError = "";
@@ -126,7 +129,7 @@ export class QdRelatedDocs extends PanelBase {
     if (ctx.stale) return;
     this.readError = "";
     const seq = ctx.startRead();
-    const result = await ctx.guardedRead(seq, client.relatedDocuments(ctx.id, this.kind));
+    const result = await ctx.guardedRead(seq, familyShare.read(client, ctx.id, this.kind));
     if (result === undefined) return;
     if (!result.ok) {
       // A fault, not an empty family: nothing was read. A staff panel pointed at a document that

@@ -61,12 +61,12 @@ test("guard related documents read: a family read for the quote left never lands
   await signIn(page);
   await openQuote(page, "Q-2101");
   // The gate is armed before the read it holds is asked for: a reload of the open quote's panels.
-  // Both panels' family reads are held (the document family's and the payment's), so whichever
-  // lands late is covered and the catch does not depend on which one asked first.
-  const gated = await armedHold(page, new RegExp("/api/v1/quotes/q-2101/related-documents$"), "GET", { times: 2, snapshot: true });
+  // The seam makes ONE family read per reload pass (the panels share it), so that one read is the
+  // thing held, whichever panel's guard drops it.
+  const gated = await armedHold(page, new RegExp("/api/v1/quotes/q-2101/related-documents$"), "GET", { times: 1, snapshot: true });
   gated.arm();
   await dispatchReload(page);
-  await expect.poll(() => gated.held.seen.length).toBe(2);
+  await expect.poll(() => gated.held.seen.length).toBe(1);
   // The family reads of the open quote are out; the person opens the cash customer's accepted quote.
   await page.getByTestId("qb-list-row").filter({ hasText: "Q-2102" }).first().click();
   await expect(page.getByTestId("qe-title")).toContainText("Q-2102");
@@ -83,13 +83,13 @@ test("guard related documents order: an older read of the quote answered late ne
   await openQuote(page, "Q-2101");
   // The first family read is held and will answer as a refusal; a newer read of the same quote is asked for after it.
   const gated = await armedHold(page, new RegExp("/api/v1/quotes/q-2101/related-documents$"), "GET", {
-    times: 2,
+    times: 1,
     refuse: { status: 500, error: "internal" },
   });
   gated.arm();
   await dispatchReload(page);
-  await expect.poll(() => gated.held.seen.length).toBe(2);
-  // A newer read of the same quote begins and succeeds while the older ones are still out.
+  await expect.poll(() => gated.held.seen.length).toBe(1);
+  // A newer read of the same quote (a new share cycle) begins and succeeds while the older one is still out.
   await dispatchReload(page);
   await expect(panel(page).locator(".chip").filter({ hasText: "SO-2001" })).toBeVisible();
   await gated.held.release();

@@ -9,7 +9,7 @@
 // shown (the app guesses nothing by role). Deterministic throughout: answers
 // are held behind gates the tests open, never sleeps.
 import { expect, test, type Page } from "@playwright/test";
-import { armedHold, hold, settle, signIn, writes } from "./switch-helpers.js";
+import { armedHold, countRequests, hold, settle, signIn, writes } from "./switch-helpers.js";
 import { shot } from "./shot";
 
 const pay = (page: Page) => page.locator("qd-order-payment");
@@ -326,10 +326,10 @@ test("guard payment read: a read for the quote left never lands on the one open 
   // The gate is armed before the read it holds is asked for: a reload of the open quote's panels.
   // Both panels' family reads are held (the payment's and the document family's), so whichever
   // lands late is covered and the catch does not depend on which one asked first.
-  const gated = await armedHold(page, /\/api\/v1\/quotes\/q-2101\/related-documents$/, "GET", { times: 2, snapshot: true });
+  const gated = await armedHold(page, /\/api\/v1\/quotes\/q-2101\/related-documents$/, "GET", { times: 1, snapshot: true });
   gated.arm();
   await dispatchReload(page);
-  await expect.poll(() => gated.held.seen.length).toBe(2);
+  await expect.poll(() => gated.held.seen.length).toBe(1);
   await page.getByTestId("qb-list-row").filter({ hasText: "Q-1001" }).first().click();
   await expect(page.getByTestId("qe-title")).toContainText("Q-1001");
   await gated.held.release();
@@ -343,13 +343,13 @@ test("guard payment read order: an older read of the quote answered late never l
   await signIn(page);
   await openWithPayment(page, "Q-2101");
   const gated = await armedHold(page, /\/api\/v1\/quotes\/q-2101\/related-documents$/, "GET", {
-    times: 2,
+    times: 1,
     refuse: { status: 500, error: "internal" },
   });
   gated.arm();
   await dispatchReload(page);
-  await expect.poll(() => gated.held.seen.length).toBe(2);
-  // A newer read of the same quote begins and succeeds while the older ones are still out.
+  await expect.poll(() => gated.held.seen.length).toBe(1);
+  // A newer read of the same quote (a new share cycle) begins and succeeds while the older one is still out.
   await dispatchReload(page);
   await expect(pay(page).getByTestId("op-figures")).toContainText("CA$37.06");
   await gated.held.release();
@@ -615,10 +615,10 @@ test("the form does not render over an unread family: the read failure is shown 
   await signIn(page);
   await openWithPayment(page, "Q-2101");
   // Both panels' family reads are refused, so the figures behind the payment form are not known.
-  const gated = await armedHold(page, /\/api\/v1\/quotes\/q-2101\/related-documents$/, "GET", { times: 2, refuse: { status: 500, error: "internal" } });
+  const gated = await armedHold(page, /\/api\/v1\/quotes\/q-2101\/related-documents$/, "GET", { times: 1, refuse: { status: 500, error: "internal" } });
   gated.arm();
   await dispatchReload(page);
-  await expect.poll(() => gated.held.seen.length).toBe(2);
+  await expect.poll(() => gated.held.seen.length).toBe(1);
   await gated.held.release();
   await settle(page);
   await expect(pay(page).getByTestId("op-unread")).toBeVisible();
@@ -711,6 +711,20 @@ test("a credit that moved the order to Paid while the desk held the old Part pai
   await expect(pay(page).getByTestId("op-paid")).toContainText("Paid in full");
   await expect(pay(page).getByTestId("op-take")).toHaveCount(0);
   await other.close();
+});
+
+test("the seam makes one related documents read per read cycle, shared by the family and the payment panels", async ({ page }) => {
+  await signIn(page);
+  const reads = countRequests(page, /GET .*\/quotes\/q-2101\/related-documents$/);
+  await openWithPayment(page, "Q-2101");
+  await expect(pay(page).getByTestId("op-figures")).toContainText("CA$37.06");
+  await expect(docs(page).getByTestId("rd-box")).toBeVisible();
+  // One quote open, one family read: the two panels share the cycle's read.
+  expect(reads()).toBe(1);
+  // An edit's fan out is a new cycle: exactly one more read, not joined to the old answer.
+  await dispatchReload(page);
+  await settle(page);
+  expect(reads()).toBe(2);
 });
 
 test("the stub door says the core's words for another payment on a paid order: The order is paid in full.", async ({ request }) => {

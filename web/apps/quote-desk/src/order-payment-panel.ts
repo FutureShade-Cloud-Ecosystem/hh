@@ -71,6 +71,7 @@ import {
   type PaymentAttempt,
   type TenderMethod,
 } from "./_order-payment.js";
+import { familyShare } from "./_related-docs.js";
 import type { OrderPaymentAnswer } from "./qd-client.js";
 import { SIGN_OUT_EVENT, UNSENT_WAIT_MS, waitUpTo, type SignOutDetail } from "./quote-context.js";
 import type { QuoteContext } from "./quote-context.js";
@@ -360,6 +361,7 @@ export class QdOrderPayment extends PanelBase {
       this.lateNotes.clear();
       this.posting.clear();
       this.quoteNos.clear();
+      familyShare.beginCycle();
     }
     if (changed.has("quoteId") || changed.has("client")) {
       const left = changed.has("quoteId") ? (changed.get("quoteId") as string | undefined) : undefined;
@@ -468,7 +470,7 @@ export class QdOrderPayment extends PanelBase {
     if (ctx.stale) return false;
     this.readError = "";
     const seq = ctx.startRead();
-    const answers = await ctx.guardedRead(seq, Promise.all([client.readQuote(ctx.id), client.relatedDocuments(ctx.id, "quote")]));
+    const answers = await ctx.guardedRead(seq, Promise.all([client.readQuote(ctx.id), familyShare.read(client, ctx.id, "quote")]));
     if (answers === undefined) return false;
     const [view, family] = answers;
     if (!view.ok) {
@@ -801,7 +803,12 @@ export class QdOrderPayment extends PanelBase {
   protected override onClickAction(action: string, control: HTMLElement): void {
     if (action === "take-payment") void this.take();
     if (action === "start-new") void this.startNew();
-    if (action === "retry-read") this.reload();
+    if (action === "retry-read") {
+      // The retry of the read is its own cycle: it must ask the server again, not join the cycle
+      // that just failed.
+      familyShare.beginCycle();
+      this.reload();
+    }
     if (action === "tender") {
       if (this.fieldsLocked) return;
       const picked = control.getAttribute("data-tender");

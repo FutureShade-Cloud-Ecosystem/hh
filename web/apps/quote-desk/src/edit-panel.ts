@@ -24,6 +24,7 @@ import { money } from "@hardscapehouse/pos-kit/src/ported/pos-api.js";
 import { nextActive } from "@hardscapehouse/pos-kit/src/ported/_customer-picker.js";
 import "./panel-seams.js";
 import { SEAM_PAYMENT } from "./panel-seams.js";
+import { familyShare } from "./_related-docs.js";
 import "./related-docs-panel.js";
 import "./order-payment-panel.js";
 import { PanelBase } from "./panel-base.js";
@@ -167,6 +168,9 @@ export class QdQuoteEdit extends PanelBase {
   }
 
   reload(): void {
+    // One family read per reload pass for the seam's two readers: the pass
+    // begins the share's cycle, so both panels' loads join one fresh read.
+    familyShare.beginCycle();
     void this.load();
     // The payment seam's panels (the document family and the order payment)
     // ride this panel's reload: the builder's fan-out reaches the edit panel,

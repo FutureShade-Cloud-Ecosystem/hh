@@ -1266,15 +1266,15 @@
   {
     "id": "rd-read-guard",
     "file": "src/related-docs-panel.ts",
-    "find": "const result = await ctx.guardedRead(seq, client.relatedDocuments(ctx.id, this.kind));\n    if (result === undefined) return;",
-    "replace": "const result = await client.relatedDocuments(ctx.id, this.kind);",
+    "find": "const result = await ctx.guardedRead(seq, familyShare.read(client, ctx.id, this.kind));\n    if (result === undefined) return;",
+    "replace": "const result = await familyShare.read(client, ctx.id, this.kind);",
     "test": "guard related documents read:"
   },
   {
     "id": "rd-read-order",
     "file": "src/related-docs-panel.ts",
-    "find": "await ctx.guardedRead(seq, client.relatedDocuments(ctx.id, this.kind))",
-    "replace": "await ctx.guarded(client.relatedDocuments(ctx.id, this.kind))",
+    "find": "await ctx.guardedRead(seq, familyShare.read(client, ctx.id, this.kind))",
+    "replace": "await ctx.guarded(familyShare.read(client, ctx.id, this.kind))",
     "test": "guard related documents order:"
   },
   {
@@ -1287,15 +1287,15 @@
   {
     "id": "op-read-guard",
     "file": "src/order-payment-panel.ts",
-    "find": "const answers = await ctx.guardedRead(seq, Promise.all([client.readQuote(ctx.id), client.relatedDocuments(ctx.id, \"quote\")]));\n    if (answers === undefined) return false;",
-    "replace": "const answers = await Promise.all([client.readQuote(ctx.id), client.relatedDocuments(ctx.id, \"quote\")]);",
+    "find": "const answers = await ctx.guardedRead(seq, Promise.all([client.readQuote(ctx.id), familyShare.read(client, ctx.id, \"quote\")]));\n    if (answers === undefined) return false;",
+    "replace": "const answers = await Promise.all([client.readQuote(ctx.id), familyShare.read(client, ctx.id, \"quote\")]);",
     "test": "guard payment read:"
   },
   {
     "id": "op-read-order",
     "file": "src/order-payment-panel.ts",
-    "find": "await ctx.guardedRead(seq, Promise.all([client.readQuote(ctx.id), client.relatedDocuments(ctx.id, \"quote\")]))",
-    "replace": "await ctx.guarded(Promise.all([client.readQuote(ctx.id), client.relatedDocuments(ctx.id, \"quote\")]))",
+    "find": "await ctx.guardedRead(seq, Promise.all([client.readQuote(ctx.id), familyShare.read(client, ctx.id, \"quote\")]))",
+    "replace": "await ctx.guarded(Promise.all([client.readQuote(ctx.id), familyShare.read(client, ctx.id, \"quote\")]))",
     "test": "guard payment read order:"
   },
   {
@@ -1655,5 +1655,19 @@
     "find": "    this.marked(ctx.id, isDifferentPaymentRefusal(result.error) ? \"held\" : \"kept\", words);\n    // A definite refusal is evidence the server's state moved under the desk (a payment or a\n    // credit landed elsewhere, a balance changed): the family is read again, so the figures say\n    // what the server said at the latest read, and an invoice that is no longer owed leaves the\n    // form. The read is the panel's guarded one (its own row), never applied to another quote.\n    void this.load();",
     "replace": "    this.marked(ctx.id, isDifferentPaymentRefusal(result.error) ? \"held\" : \"kept\", words);",
     "test": "a credit that moved the order to Paid while the desk held the old Part paid balance is caught: a refusal re-reads and the panel shows Paid"
+  },
+  {
+    "id": "rd-share-single",
+    "file": "src/_related-docs.ts",
+    "find": "    if (this.live !== null && this.quoteId === quoteId) return this.live;",
+    "replace": "    if (quoteId === \"\" && this.live !== null) return this.live;",
+    "test": "the seam makes one related documents read per read cycle, shared by the family and the payment panels"
+  },
+  {
+    "id": "rd-share-stale",
+    "file": "src/_related-docs.ts",
+    "find": "  beginCycle(): void {\n    this.generation += 1;\n    this.quoteId = \"\";\n    this.live = null;\n  }",
+    "replace": "  beginCycle(): void {\n    this.generation += 1;\n  }",
+    "test": "the seam makes one related documents read per read cycle, shared by the family and the payment panels"
   }
 ]
