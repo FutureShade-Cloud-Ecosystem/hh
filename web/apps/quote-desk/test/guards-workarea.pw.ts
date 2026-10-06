@@ -82,6 +82,7 @@ test("guard add line: an add that answers after another quote opened says nothin
   await expect(page.getByTestId("qb-line")).toHaveCount(2);
   await held.release();
   await settle(page);
+  await expect(page.getByText("Line added.")).toHaveCount(0);
   await expect(page.getByText("Added Polymeric Locking Sand")).toHaveCount(0);
   await expect(page.getByTestId("qb-error")).toHaveText("");
 });
