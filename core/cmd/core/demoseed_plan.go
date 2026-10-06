@@ -685,8 +685,8 @@ var demoParked = []parkedSpec{
 // identity.sellingRoles admits neither LOGISTICS_MANAGER nor YARD_TEAM nor DRIVERS; a JE approval is
 // filed by the ledger and refuses a caller-facing filer outright. FREIGHT_ABOVE_QUOTE is filed by
 // the DISPATCHER, from the load board, when a split would charge a customer more delivery than they
-// were quoted, which is precisely the dispatcher persona's job (0200's
-// Scrubname0008 Whitlock). So one policy fits, twice, once per branch,
+// were quoted, which is precisely the dispatcher persona's job (the login 0200 planted, now "Dispatch
+// (demo)"). So one policy fits, twice, once per branch,
 // and the alternative was to plant a margin override under a driver's name.
 //
 // WHO IT WAITS ON. CanApprove routes FREIGHT_ABOVE_QUOTE to identity's rail-approver set -
