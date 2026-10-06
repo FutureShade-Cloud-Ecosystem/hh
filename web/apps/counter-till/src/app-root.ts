@@ -92,6 +92,24 @@ export class CounterTillApp extends HHElement {
       main {
         padding: var(--hh-s-20);
       }
+      /* THE PANELS VIEW IS A SCREEN: when the terminal's counter layout is
+         the detached panels, its surface gets the window's height below this
+         app's own bar (the surfacebar's 48px plus its 8px margin), so the
+         grid inside fills down to the pinned bottom bars and the page below
+         (the returns desk) flows on past the fold. The stepper layout keeps
+         the natural page height it has always had: the rule is scoped to the
+         terminal's own layout pick, which the terminal reflects as an
+         attribute when it changes. The Quote Desk's workarea is the
+         reference pattern. */
+      main.on-till {
+        /* The bar's own arithmetic, named once: the surfacebar's min-height
+           plus its bottom margin. */
+        --ct-till-bar: calc(48px + var(--hh-s-8));
+      }
+      main.on-till:has(hos-pos-terminal[data-counter-layout="PANELS"]) .surface {
+        height: calc(100dvh - var(--ct-till-bar));
+        box-sizing: border-box;
+      }
       /* The terminal paints its own full-bleed chrome; the app's padding would
          letterbox it, so the mounted surface sits edge to edge. */
       .surface {

@@ -312,9 +312,19 @@ test('legend: it is mounted once, at the terminal\'s root, outside the scrolling
  // asserts is exactly what it asserted before: the column reserves the foot, so the legend never
  // covers the last control: and what it now also refuses is the surface going back to guessing.
   const flowcol = terminalSrc.match(/\.flowcol \{[^}]*\}/g) ?? [];
-  assert.equal(flowcol.length, 2, 'the base column rule and its touch-till loosening, and no third');
+  // THE COUNT GREW BY ONE, NAMED (the till fill work). The base column rule
+  // and its touch-till loosening are the stepper's; the panels view's column
+  // is a third rule, scoped to the layout pick through the host attribute,
+  // and it owes the same no-guesses answer to the foot: it ends the grid's
+  // column above the legend's lane (--pos-legend-lane, named on the host
+  // beside --pos-column-max) rather than above a reserved blank.
+  assert.equal(flowcol.length, 3, 'the base column rule, its touch-till loosening, and the panels view column');
   assert.match(flowcol[0], /padding: var\(--hos-space-4\) var\(--hos-space-5\) calc\(var\(--hos-fab-lane\) \+ var\(--hos-safe-bottom\)\);/,
     'and the column reserves the foot so the legend never covers the last control');
+  assert.match(terminalSrc, /:host\(\[data-counter-layout='PANELS'\]\) \.flowcol \{/,
+    'the third rule is the panels view column, scoped to the layout pick');
+  assert.match(flowcol[2], /padding: var\(--hos-space-1\) var\(--hos-space-4\) var\(--pos-legend-lane\);/,
+    'and it reserves the legend lane the same way, by name');
   assert.ok(
     flowcol.every((r) => !/\d+px/.test(r)),
     'every number in the sale column is a token: a bare pixel here is a guess at something this file does not own',
