@@ -250,3 +250,73 @@ func previewNoBearerCall(s *trentonStack, method, path string) *httptest.Respons
 	s.mux.ServeHTTP(rec, req)
 	return rec
 }
+
+// Leg B: the preview writes no row. A body that the ring would commit as an
+// order goes through the preview, and every table the ring writes is
+// unchanged afterwards: no order, no order line, no pos_sale, no payment,
+// and no order number consumed (the branch's counter holds its last value).
+func TestIntegration_Trenton_SalePreview_WritesNoRow(t *testing.T) {
+	s := previewWiredStack(t)
+	ctx := context.Background()
+
+	count := func(table string) int64 {
+		t.Helper()
+		var n int64
+		if err := s.pool.QueryRow(ctx, "SELECT count(*) FROM "+table).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		return n
+	}
+	lastOrderNo := func() int64 {
+		t.Helper()
+		var n int64
+		if err := s.pool.QueryRow(ctx,
+			`SELECT last_value FROM order_no_sequences WHERE branch_id = $1::uuid`, trentonBranchID).Scan(&n); err != nil {
+			t.Fatalf("read the branch order counter: %v", err)
+		}
+		return n
+	}
+	before := map[string]int64{
+		"orders":          count("orders"),
+		"order_lines":     count("order_lines"),
+		"pos_sale":        count("pos_sale"),
+		"payments":        count("payments"),
+		"order_no_seq":    lastOrderNo(),
+		"idempotency_key": countIdempotencyKeys(t, s, ctx),
+	}
+
+	rec := s.do(http.MethodPost, "/api/v1/pos/sale-preview", s.bearer(trentonClerkSub), "", previewTicket(trentonBranchID))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the preview must answer the ticket's totals: got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got, want := previewCents(t, s.decodeBody(rec), "total_cents"), int64(30058); got != want {
+		t.Fatalf("the preview priced the ticket (the example total): got %d, want %d", got, want)
+	}
+
+	after := map[string]int64{
+		"orders":          count("orders"),
+		"order_lines":     count("order_lines"),
+		"pos_sale":        count("pos_sale"),
+		"payments":        count("payments"),
+		"order_no_seq":    lastOrderNo(),
+		"idempotency_key": countIdempotencyKeys(t, s, ctx),
+	}
+	for _, table := range []string{"orders", "order_lines", "pos_sale", "payments", "order_no_seq", "idempotency_key"} {
+		if before[table] != after[table] {
+			t.Fatalf("the preview must write nothing: %s moved from %d to %d", table, before[table], after[table])
+		}
+	}
+}
+
+// countIdempotencyKeys counts the replay keys the ring would leave behind:
+// the pos_sale key and every per-leg payment key.
+func countIdempotencyKeys(t *testing.T, s *trentonStack, ctx context.Context) int64 {
+	t.Helper()
+	var n int64
+	if err := s.pool.QueryRow(ctx, `
+		SELECT (SELECT count(*) FROM pos_sale WHERE idempotency_key IS NOT NULL)
+		     + (SELECT count(*) FROM payments WHERE idempotency_key IS NOT NULL)`).Scan(&n); err != nil {
+		t.Fatalf("count idempotency keys: %v", err)
+	}
+	return n
+}
