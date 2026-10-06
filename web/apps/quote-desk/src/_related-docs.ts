@@ -28,19 +28,31 @@ import type { QdClient } from "./qd-client.js";
  * cycle the SAME read, keyed by the quote it was asked on; a new cycle begins with beginCycle(),
  * so a later cycle reads fresh and never joins an older answer. A cycle begins at every quote
  * switch and edit fan out (the edit panel begins it: it is the seam host that re-reads both
- * panels), at a new session (each panel begins one when its client changes), and at the payment
- * panel's own retry of its read. The read answers per caller through that caller's guardedRead,
+ * panels), at a new session (each panel begins one when its client changes), at the payment
+ * panel's own retry of its read, and at the take path's two re-reads (a definite refusal and
+ * the way out of a held key begin their own cycle at the read site, because a payment made
+ * inside a cycle makes that cycle's cached family answer exactly the pre payment truth a
+ * refusal says has moved). The read answers per caller through that caller's guardedRead,
  * so an answer that lands after the person left the quote is dropped for the quote now open, and
  * an older read never lands over a newer one, exactly as before the share: the read outlives a
  * quote switch as a request, and its answer is refused where the quote id moved.
  */
+/** Why the take path begins a cycle of its own: the re-read after a definite refusal, and the read that gates the way out of a held key. */
+export type FamilyTakeReason = "take-refusal" | "take-start-new";
+
 export class FamilyShare {
   private generation = 0;
   private quoteId = "";
   private live: Promise<Result<RelatedDoc[]>> | null = null;
 
-  /** A new read cycle: the next read of a quote is fresh, whatever older cycles answered. */
-  beginCycle(): void {
+  /**
+   * A new read cycle: the next read of a quote is fresh, whatever older cycles answered. The
+   * seam's own begins (a quote switch, an edit fan out, a new session, a read retry) carry no
+   * arguments; the take path's two re-reads name the quote and the reason they began one, which
+   * is provenance at the read site: whatever began the cycle, the cached answer is dropped the
+   * same way, and the next read asks the server again.
+   */
+  beginCycle(quoteId: string = "", reason: FamilyTakeReason | "" = ""): void {
     this.generation += 1;
     this.quoteId = "";
     this.live = null;

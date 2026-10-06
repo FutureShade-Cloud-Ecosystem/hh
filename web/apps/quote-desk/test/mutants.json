@@ -381,8 +381,8 @@
   {
     "id": "wa-cart-after-read",
     "file": "src/quote-workarea.ts",
-    "find": "    await this.loadAll();\n    if (ctx.stale) return;\n    this.quoteChanged();\n  }\n\n  // \u2500\u2500 the workspace",
-    "replace": "    await this.loadAll();\n    this.quoteChanged();\n  }\n\n  // \u2500\u2500 the workspace",
+    "find": "    await this.loadAll();\n    if (ctx.stale) return;\n    this.quoteChanged();\n  }\n\n  // ── the workspace",
+    "replace": "    await this.loadAll();\n    this.quoteChanged();\n  }\n\n  // ── the workspace",
     "test": "guard cart change after read:"
   },
   {
@@ -598,8 +598,8 @@
   {
     "id": "ep-convert-reload",
     "file": "src/edit-panel.ts",
-    "find": "    await this.load();\n    if (ctx.stale) return;\n    this.announceChanged();\n  }\n\n  // \u2500\u2500 delegation",
-    "replace": "    await this.load();\n    this.announceChanged();\n  }\n\n  // \u2500\u2500 delegation",
+    "find": "    await this.load();\n    if (ctx.stale) return;\n    this.announceChanged();\n  }\n\n  // ── delegation",
+    "replace": "    await this.load();\n    this.announceChanged();\n  }\n\n  // ── delegation",
     "test": "guard edit convert reload:"
   },
   {
@@ -1378,9 +1378,9 @@
   {
     "id": "op-start-new-reread",
     "file": "src/order-payment-panel.ts",
-    "find": "    const landed = await this.load();\n    if (!landed || this.quoteId !== ctx.id) return;",
+    "find": "    const landed = await this.load(\"take-start-new\");\n    if (!landed || this.quoteId !== ctx.id) return;",
     "replace": "    if (this.quoteId !== ctx.id) return;",
-    "test": "holds the attempt instead of looping"
+    "test": "Start a new payment unlocks only over a read that landed"
   },
   {
     "id": "op-over-balance",
@@ -1652,7 +1652,7 @@
   {
     "id": "op-stale-balance",
     "file": "src/order-payment-panel.ts",
-    "find": "    this.marked(ctx.id, isDifferentPaymentRefusal(result.error) ? \"held\" : \"kept\", words);\n    // A definite refusal is evidence the server's state moved under the desk (a payment or a\n    // credit landed elsewhere, a balance changed): the family is read again, so the figures say\n    // what the server said at the latest read, and an invoice that is no longer owed leaves the\n    // form. The read is the panel's guarded one (its own row), never applied to another quote.\n    void this.load();",
+    "find": "    this.marked(ctx.id, isDifferentPaymentRefusal(result.error) ? \"held\" : \"kept\", words);\n    // A definite refusal is evidence the server's state moved under the desk (a payment or a\n    // credit landed elsewhere, a balance changed): the family is read again, so the figures say\n    // what the server said at the latest read, and an invoice that is no longer owed leaves the\n    // form. The read is the panel's guarded one (its own row), never applied to another quote, and\n    // it begins its own share cycle at the read site, so the re-read never joins the cycle's cached\n    // family answer (the pre refusal truth the refusal itself says has moved).\n    void this.load(\"take-refusal\");",
     "replace": "    this.marked(ctx.id, isDifferentPaymentRefusal(result.error) ? \"held\" : \"kept\", words);",
     "test": "a credit that moved the order to Paid while the desk held the old Part paid balance is caught: a refusal re-reads and the panel shows Paid"
   },
@@ -1666,8 +1666,15 @@
   {
     "id": "rd-share-stale",
     "file": "src/_related-docs.ts",
-    "find": "  beginCycle(): void {\n    this.generation += 1;\n    this.quoteId = \"\";\n    this.live = null;\n  }",
-    "replace": "  beginCycle(): void {\n    this.generation += 1;\n  }",
+    "find": "  beginCycle(quoteId: string = \"\", reason: FamilyTakeReason | \"\" = \"\"): void {\n    this.generation += 1;\n    this.quoteId = \"\";\n    this.live = null;\n  }",
+    "replace": "  beginCycle(quoteId: string = \"\", reason: FamilyTakeReason | \"\" = \"\"): void {\n    this.generation += 1;\n  }",
     "test": "the seam makes one related documents read per read cycle, shared by the family and the payment panels"
+  },
+  {
+    "id": "rd-take-fresh",
+    "file": "src/order-payment-panel.ts",
+    "find": "    if (reason !== undefined) familyShare.beginCycle(ctx.id, reason);\n",
+    "replace": "",
+    "test": "the take path's re-read is its own share cycle"
   }
 ]

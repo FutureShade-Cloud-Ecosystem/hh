@@ -456,8 +456,13 @@ export class QdOrderPayment extends PanelBase {
    * it. True only when THIS read landed as the newest read of the quote still open: a read that was
    * superseded while it was out, or a panel that left the page, answers false, so a caller that
    * unlocks something on the back of the read (startNew) keeps it locked.
+   *
+   * The take path's re-reads pass their reason (a definite refusal, the way out of a held key): at
+   * the family read site the reason begins the share's cycle, so the re-read asks the server again
+   * instead of joining the cycle's cached family answer, which is the pre payment truth the take
+   * path is re-reading precisely because it has moved.
    */
-  private async load(): Promise<boolean> {
+  private async load(reason?: "take-refusal" | "take-start-new"): Promise<boolean> {
     const client = this.client;
     const ctx = this.ctx;
     if (client === null || ctx.id === "") {
@@ -470,6 +475,7 @@ export class QdOrderPayment extends PanelBase {
     if (ctx.stale) return false;
     this.readError = "";
     const seq = ctx.startRead();
+    if (reason !== undefined) familyShare.beginCycle(ctx.id, reason);
     const answers = await ctx.guardedRead(seq, Promise.all([client.readQuote(ctx.id), familyShare.read(client, ctx.id, "quote")]));
     if (answers === undefined) return false;
     const [view, family] = answers;
@@ -620,8 +626,10 @@ export class QdOrderPayment extends PanelBase {
     // A definite refusal is evidence the server's state moved under the desk (a payment or a
     // credit landed elsewhere, a balance changed): the family is read again, so the figures say
     // what the server said at the latest read, and an invoice that is no longer owed leaves the
-    // form. The read is the panel's guarded one (its own row), never applied to another quote.
-    void this.load();
+    // form. The read is the panel's guarded one (its own row), never applied to another quote, and
+    // it begins its own share cycle at the read site, so the re-read never joins the cycle's cached
+    // family answer (the pre refusal truth the refusal itself says has moved).
+    void this.load("take-refusal");
   }
 
   /** A payment the server took: the attempt is complete, the receipt is the answer, and the views re-read. */
@@ -785,8 +793,10 @@ export class QdOrderPayment extends PanelBase {
     if (ctx.id === "" || ctx.stale) return;
     // The way out is a read the desk heard: a read superseded while it was out (the fan out of an
     // edit, or another read of the quote) is not the server's truth about this attempt, so the
-    // attempt stays held and the way out is offered again over a read that lands.
-    const landed = await this.load();
+    // attempt stays held and the way out is offered again over a read that lands. The read begins
+    // its own share cycle at the read site, so what landed under the held key is asked of the
+    // server, never read from the cycle's cached family answer.
+    const landed = await this.load("take-start-new");
     if (!landed || this.quoteId !== ctx.id) return;
     if (this.readError !== "") return;
     this.book.clear(ctx.id);

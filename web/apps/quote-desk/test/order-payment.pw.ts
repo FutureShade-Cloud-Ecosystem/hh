@@ -713,6 +713,33 @@ test("a credit that moved the order to Paid while the desk held the old Part pai
   await other.close();
 });
 
+test("the take path's re-read is its own share cycle: it asks the server again, so the family read count grows and the server's Paid is shown", async ({ page, context }) => {
+  await signIn(page);
+  const reads = countRequests(page, /GET .*\/quotes\/q-2101\/related-documents$/);
+  await openWithPayment(page, "Q-2101");
+  await expect(pay(page).getByTestId("op-figures")).toContainText("balance CA$37.06");
+  await take(page, "10.00");
+  await expect(pay(page).getByTestId("op-figures")).toContainText("balance CA$27.06");
+  // Another tab credits the whole rest, so the server moves the order to Paid off this desk's screen.
+  const other = await context.newPage();
+  await signIn(other);
+  await openWithPayment(other, "Q-2101");
+  await take(other, "27.06");
+  await expect(pay(other).getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("CA$0.00");
+  await other.close();
+  // The desk still holds its receipt's Part paid balance. It sends the stale figure and the server
+  // refuses it; the refusal's re-read must be a FRESH family read (its own share cycle, never the
+  // cycle's cached answer the payment was made inside): the count of related documents GETs this
+  // page made grows by at least one (the cycle's read plus the take path's fresh one, two at least
+  // over the whole leg), and the panel shows what the server now holds: Paid.
+  const before = reads();
+  await take(page, "27.06");
+  await expect(pay(page).getByTestId("op-error")).toContainText("more than the balance");
+  await expect(pay(page).getByTestId("op-paid")).toContainText("Paid in full");
+  expect(reads() - before).toBeGreaterThanOrEqual(1);
+  expect(reads()).toBeGreaterThanOrEqual(2);
+});
+
 test("the seam makes one related documents read per read cycle, shared by the family and the payment panels", async ({ page }) => {
   await signIn(page);
   const reads = countRequests(page, /GET .*\/quotes\/q-2101\/related-documents$/);
