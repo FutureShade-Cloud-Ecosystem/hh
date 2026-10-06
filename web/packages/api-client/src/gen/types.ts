@@ -5824,6 +5824,7 @@ export type QuoteOrderPaymentRequest = {
   amount_cents: number;
   reference: string;
   idempotency_key: string;
+  fulfillment?: "PICKUP" | "WILL_CALL";
 };
 export type QuoteOrderPaymentResult = {
   order_id: string;

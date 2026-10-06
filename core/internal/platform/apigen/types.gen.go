@@ -6772,10 +6772,11 @@ type QuoteConvertResult struct {
 }
 
 type QuoteOrderPaymentRequest struct {
-	Method         string `json:"method"`
-	AmountCents    int64  `json:"amount_cents"`
-	Reference      string `json:"reference"`
-	IdempotencyKey string `json:"idempotency_key"`
+	Method         string  `json:"method"`
+	AmountCents    int64   `json:"amount_cents"`
+	Reference      string  `json:"reference"`
+	IdempotencyKey string  `json:"idempotency_key"`
+	Fulfillment    *string `json:"fulfillment,omitempty"`
 }
 
 type QuoteOrderPaymentResult struct {

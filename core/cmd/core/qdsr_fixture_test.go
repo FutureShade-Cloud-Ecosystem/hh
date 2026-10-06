@@ -11,6 +11,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -80,6 +82,19 @@ func qdsrPlant(t *testing.T, pool *pgxpool.Pool, accounts ...qdsrAccount) {
 func qdsrGet(t *testing.T, fx *xrFixture, sub, path string) (int, string) {
 	t.Helper()
 	return fx.probe(t, http.MethodGet, path, rgHeaders(t, fx, sub))
+}
+
+// qdsrSend issues one request with a body through the registered surface as the named subject.
+func qdsrSend(t *testing.T, fx *xrFixture, sub, method, path, body string) (int, string) {
+	t.Helper()
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range rgHeaders(t, fx, sub) {
+		req.Header.Set(k, v)
+	}
+	rsp := httptest.NewRecorder()
+	fx.reg.inner.ServeHTTP(rsp, req)
+	return rsp.Code, rsp.Body.String()
 }
 
 // qdsrJSON decodes a body the read answered with 200.
