@@ -81,8 +81,11 @@ test("the header carries a Feedback button, no floating pill, and the button ope
   await expect(page.getByTestId("feedback-kind-bug")).toHaveText("Something broke");
   await expect(page.getByTestId("feedback-kind-feedback")).toHaveText("Polish idea");
   await expect(page.getByTestId("feedback-kind-flag")).toHaveText("Flag for later");
-  await control.click();
+  // The button only opens; the panel's own Close shuts it, and a second press opens it again.
+  await page.getByRole("button", { name: "Close feedback" }).click();
   await expect(page.getByTestId("feedback-panel")).toBeHidden();
+  await control.click();
+  await expect(page.getByTestId("feedback-panel")).toBeVisible();
 });
 
 test("open, type, attach, Send: the stub answers the work item number and the panel clears", async ({ page, request }) => {
@@ -95,6 +98,27 @@ test("open, type, attach, Send: the stub answers the work item number and the pa
   await expect(page.getByTestId("feedback-thumbs")).toHaveCount(0);
   const seen = (await (await request.get("/_stub/feedback")).json()) as { filed: Array<Record<string, unknown>> };
   expect(seen.filed).toEqual([{ type: "feedback", message: "The send channel reads small", screen: "Quote Desk", images: 1 }]);
+});
+
+test("a pick through the picker adds the thumbnail and Send files it", async ({ page, request }) => {
+  await signIn(page);
+  await openPanel(page);
+  await page.getByTestId("feedback-note").fill("Picked from the file picker");
+  await page.getByTestId("feedback-file").setInputFiles({ name: "picked.png", mimeType: "image/png", buffer: PNG });
+  await expect(page.getByTestId("feedback-thumbs").locator("li")).toHaveCount(1);
+  await page.getByTestId("feedback-send").click();
+  await expect(page.getByTestId("feedback-sent")).toHaveText("Sent: HH-1");
+  const seen = (await (await request.get("/_stub/feedback")).json()) as { filed: Array<Record<string, unknown>> };
+  expect(seen.filed).toEqual([{ type: "bug", message: "Picked from the file picker", screen: "Quote Desk", images: 1 }]);
+});
+
+test("when no number comes back the panel reads Sent.", async ({ page }) => {
+  await setMode(page, "no-number");
+  await signIn(page);
+  await openPanel(page);
+  await page.getByTestId("feedback-note").fill("No number expected");
+  await page.getByTestId("feedback-send").click();
+  await expect(page.getByTestId("feedback-sent")).toHaveText("Sent.");
 });
 
 test("a failed send keeps the note and the images and says so", async ({ page, request }) => {

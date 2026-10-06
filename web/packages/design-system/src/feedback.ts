@@ -25,6 +25,10 @@
 // item's number; a failure keeps the note and the images and lets the user
 // retry.
 //
+// NO PILL. A host that opens the widget from its own button mounts it with
+// trigger="external": the pill is hidden and the host calls show() on the
+// element. The panel sits in the same corner lane either way.
+//
 // THE SENDER SEAM. The widget never knows the wire: the mounting app injects
 // a sender (its own API client, its own credential), so the design system
 // gains no transport and no token handling. A missing sender is legal and the
@@ -144,6 +148,9 @@ export class HHFeedback extends HHElement {
     :host([lift]) .pill {
       bottom: calc(22px + 26px + var(--hh-safe-bottom));
     }
+    /* A host that opens the widget from its own button mounts it with
+       trigger="external": no floating pill, the panel opens by show(). */
+    :host([trigger='external']) .pill { display: none; }
     .pill:focus-visible {
       outline: 2px solid var(--hh-focus-ring);
       outline-offset: 2px;
@@ -331,6 +338,8 @@ export class HHFeedback extends HHElement {
   /** The blob each live thumbnail canvas currently shows. A reopen builds new
    * canvases (absent here, so painted again) and a removal that shifts the
    * list repaints the slots whose blob changed. */
+  /** The file inputs already carrying the change listener. */
+  #pickers = new WeakSet<HTMLInputElement>();
   #painted = new WeakMap<HTMLCanvasElement, Blob>();
 
   constructor() {
@@ -345,7 +354,6 @@ export class HHFeedback extends HHElement {
     this.addEventListener('click', this.#onHostClick);
     this.addEventListener('keydown', this.#onKeydown);
     this.addEventListener('input', this.#onInput);
-    this.addEventListener('change', this.#onChange);
     this.addEventListener('dragover', this.#onDragOver);
     this.addEventListener('dragleave', this.#onDragLeave);
     this.addEventListener('drop', this.#onDrop);
@@ -356,7 +364,6 @@ export class HHFeedback extends HHElement {
     this.removeEventListener('click', this.#onHostClick);
     this.removeEventListener('keydown', this.#onKeydown);
     this.removeEventListener('input', this.#onInput);
-    this.removeEventListener('change', this.#onChange);
     this.removeEventListener('dragover', this.#onDragOver);
     this.removeEventListener('dragleave', this.#onDragLeave);
     this.removeEventListener('drop', this.#onDrop);
@@ -371,6 +378,14 @@ export class HHFeedback extends HHElement {
    * painted again, so what is shown is exactly what Send will post. */
   protected override updated(changed: PropertyValues): void {
     super.updated(changed);
+    // The hidden picker's change event is not composed, so it never reaches
+    // the host: the listener rides the input itself, once per fresh input
+    // (each open builds a new one).
+    const picker = this.renderRoot.querySelector('input[type="file"]');
+    if (picker instanceof HTMLInputElement && !this.#pickers.has(picker)) {
+      this.#pickers.add(picker);
+      picker.addEventListener('change', this.#onChange);
+    }
     const note = this.renderRoot.querySelector('[data-testid="feedback-note"]');
     if (note instanceof HTMLTextAreaElement && note.value !== this.#note) note.value = this.#note;
     void this.#paintThumbs();
@@ -453,7 +468,7 @@ export class HHFeedback extends HHElement {
     if (target instanceof HTMLTextAreaElement) this.#note = target.value;
   };
 
-  /** The hidden picker's change lands here. */
+  /** The hidden picker's change lands here (bound on the input itself). */
   readonly #onChange = (event: Event): void => {
     const target = event.composedPath()[0];
     if (target instanceof HTMLInputElement && target.type === 'file') {
@@ -494,6 +509,12 @@ export class HHFeedback extends HHElement {
     event.preventDefault();
     for (const file of Array.from(files)) this.#addImage(file);
   };
+
+  /** Opens the panel: the way a host that owns its own button (trigger
+   * attribute set to external) opens the widget. */
+  show(): void {
+    if (!this.open) this.#toggle();
+  }
 
   #toggle(): void {
     this.open = !this.open;
@@ -722,7 +743,7 @@ export class HHFeedback extends HHElement {
         </button>
 
         ${sent !== null
-          ? html`<p class="status" data-tone="sent" data-testid="feedback-sent" role="status">Sent: ${sent === '' ? 'filed' : sent}</p>`
+          ? html`<p class="status" data-tone="sent" data-testid="feedback-sent" role="status">${sent === '' ? 'Sent.' : `Sent: ${sent}`}</p>`
           : nothing}
         ${this.#error !== ''
           ? html`<p class="status" data-tone="error" data-testid="feedback-error" role="alert">${this.#error}</p>`
