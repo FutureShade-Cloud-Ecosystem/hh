@@ -54,6 +54,7 @@ tags:
   - { name: staff-audit }
   - { name: staff-bankrec }
   - { name: staff-billing }
+  - { name: manager-billing }
   - { name: staff-branches }
   - { name: staff-bistrack }
   - { name: staff-compliance }
@@ -103,6 +104,7 @@ x-access-map:
   staff-audit: { surfaces: [dealer-admin], level: read }
   staff-bankrec: { surfaces: [money-desk], level: read }
   staff-billing: { surfaces: [money-desk], level: read }
+  manager-billing: { surfaces: [money-desk], level: manage }
   staff-bistrack: { surfaces: [buying-and-stock], level: read }
   staff-branches: { surfaces: [counter-till, quote-desk, yard-pick, drive-run, dispatch-board, buying-and-stock, money-desk, manager-home, house-messages, dealer-admin], level: read }
   staff-compliance: { surfaces: [manager-home], level: read }

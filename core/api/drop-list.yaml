@@ -52,3 +52,7 @@ additions:
     reason: "G1 customer-quote public acceptance (D8, D10, D12): typed-name attestation with the 404, 410 and 409 semantics; no ERP source route."
   - route: "GET /api/v1/pos/tax-rate"
     reason: "Row 661: the counter-readable tax rate; the rate the ring binds, read through the ring's own assessor, with the stored round rule beside it; no ERP source route."
+  - route: "GET /api/v1/payments/card-attempts"
+    reason: "Row 813, the card charge design section 4: the manager's reconciliation list over card_charge_attempts (what needs a person, plus the range's ref-carrying rows that are not BOUND); no ERP source route."
+  - route: "POST /api/v1/payments/card-attempts/{id}/resolve"
+    reason: "Row 813, the card charge design section 4: the manager's reason-required audited close of an attempt that needed a person; no ERP source route."
