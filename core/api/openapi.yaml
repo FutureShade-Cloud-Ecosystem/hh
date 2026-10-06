@@ -24350,6 +24350,11 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: "Tenant identity: a contractor-portal token. The org comes from the Team, the tenant (the contractor account) comes from the token, and branch sits beneath both (D3). Tenant routes never take X-Org."
+    MachineBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: "FB Move's machine credential (ADR-0024): a short-lived token FB Move signs with a private key held in FB Vault, verified against the deployment's configured public key set for the machine audience alone, never the platform's staff key set. The subject names the machine principal; the org is the principal's own org and X-Org must name it exactly. No staff role reaches these operations: the machine principal's own door list is the whole authority."
   parameters:
     XOrg:
       name: X-Org
