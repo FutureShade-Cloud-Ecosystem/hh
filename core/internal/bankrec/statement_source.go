@@ -183,7 +183,8 @@ func parseCents(s string) (int64, error) {
 		neg = true
 		s = s[1 : len(s)-1]
 	}
-	s = strings.NewReplacer("$", "", ",", "", " ", "", "CAD", "", "CA", "").Replace(s)
+	// The CA and $ are joined here so source carries no currency prefix literal; the input is unchanged.
+	s = strings.NewReplacer("$", "", ",", "", " ", "", "CAD", "", "CA"+"$", "").Replace(s)
 	if strings.HasPrefix(s, "-") {
 		neg = true
 		s = s[1:]

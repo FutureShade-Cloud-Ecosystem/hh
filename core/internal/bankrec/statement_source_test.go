@@ -134,3 +134,31 @@ func TestParseCents(t *testing.T) {
 		}
 	}
 }
+
+// The parser accepts exactly what it accepted before the display text lost its CA prefix: a
+// CA$ or CAD mark is stripped, a bare CA or a CA inside digits is refused.
+func TestParseCents_CurrencyMarks(t *testing.T) {
+	ok := map[string]int64{
+		"CA$1,234.56":  123456,
+		"$1,234.56":    123456,
+		"-CA$12.00":    -1200,
+		"(CA$12.00)":   -1200,
+		"CA$-12.00":    -1200,
+		"CA$ 5":        500,
+		"1,234.56 CAD": 123456,
+		"CAD 1,234.56": 123456,
+		"-$12.00":      -1200,
+		"(12.00)":      -1200,
+	}
+	for in, want := range ok {
+		got, err := parseCents(in)
+		if err != nil || got != want {
+			t.Errorf("parseCents(%q) = %d, %v; want %d", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"CA", "CA ", "CA 1,234.56", "CA1,234.56", "5CA2", "CA11CA2", "ca$5", "US$5", "USD 5"} {
+		if got, err := parseCents(in); err == nil {
+			t.Errorf("parseCents(%q) = %d, want a refusal", in, got)
+		}
+	}
+}

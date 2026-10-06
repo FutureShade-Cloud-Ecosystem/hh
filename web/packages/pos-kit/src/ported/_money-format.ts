@@ -8,13 +8,13 @@
 // separate axes:
 //
 // 1. thousands separators: 15 had them, 13 did not
-// 2. negatives : `(1,234.00)` in gl/inventory, `-1,234.00` in bankrec/finstmt
-// 3. the prefix : a currency mark on some, a bare `$` in tax-api
+// 2. negatives : parentheses in gl/inventory, a minus sign in bankrec/finstmt
+// 3. the prefix : a currency mark on some, a bare `$` on others
 // 4. the arithmetic : most use toLocaleString; finstmt floors and pads by hand
 //
-// Axis 1 is not a matter of taste. `10870.00` on a receivables screen is wrong, and it was
-// visible: AR printed `10170.00` for the same invoice the invoices screen printed as
-// `10,170.00`. Same money, two screens, two answers, with an accountant reviewing the financial
+// Axis 1 is not a matter of taste. `$10870.00` on a receivables screen is wrong, and it was
+// visible: AR printed `$10170.00` for the same invoice the invoices screen printed as
+// `$10,170.00`. Same money, two screens, two answers, with an accountant reviewing the financial
 // module.
 //
 // Axes 2 and 3 ARE a matter of taste, and specifically somebody else's: whether a credit reads as
