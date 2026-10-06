@@ -396,6 +396,7 @@ var Routes = []Route{
 	{Method: "GET", Path: "/api/v1/pos/returns/lookup", OperationID: "posLookupReturn", Tag: "staff-pos", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"counter-till"}, Level: "read", List: ""},
 	{Method: "GET", Path: "/api/v1/pos/returns/pickups", OperationID: "posListReturnPickups", Tag: "staff-pos", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"dispatch-board"}, Level: "read", List: ""},
 	{Method: "POST", Path: "/api/v1/pos/returns/{id}/pickup", OperationID: "posAdvanceReturnPickup", Tag: "staff-pos", XRole: "requireManager", Bearer: "staff", Addition: false, Surfaces: []string{"dispatch-board"}, Level: "manage", List: ""},
+	{Method: "POST", Path: "/api/v1/pos/sale-preview", OperationID: "posSalePreview", Tag: "staff-pos", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"counter-till"}, Level: "read", List: ""},
 	{Method: "POST", Path: "/api/v1/pos/sales", OperationID: "posCreateSale", Tag: "staff-pos", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"counter-till"}, Level: "work", List: ""},
 	{Method: "GET", Path: "/api/v1/pos/sales", OperationID: "posLookupSales", Tag: "staff-pos", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"counter-till"}, Level: "read", List: ""},
 	{Method: "GET", Path: "/api/v1/pos/sales/{id}", OperationID: "posGetSale", Tag: "staff-pos", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"counter-till"}, Level: "read", List: ""},

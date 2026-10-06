@@ -523,11 +523,17 @@ export class CounterTillApp extends HHElement {
    * silent no-click.
    */
   #popOut(flow: string): void {
-    const popped = window.open(`/?popout=${encodeURIComponent(flow)}`, "ct-popout");
+    const popped = window.open(
+      `${import.meta.env.BASE_URL}?popout=${encodeURIComponent(flow)}`,
+      "ct-popout",
+      `popup=yes,width=${window.outerWidth},height=${window.outerHeight}`,
+    );
     if (popped === null) {
       this.#chromeMessage =
         "The browser blocked the second window: allow pop-ups for this till and press Pop out again.";
       this.requestUpdate();
+    } else {
+      popped.focus();
     }
   }
 

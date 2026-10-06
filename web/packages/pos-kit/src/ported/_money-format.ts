@@ -8,13 +8,13 @@
 // separate axes:
 //
 // 1. thousands separators: 15 had them, 13 did not
-// 2. negatives : `(CA$1,234.00)` in gl/inventory, `-CA$1,234.00` in bankrec/finstmt
-// 3. the prefix : `CA$` almost everywhere, a bare `$` in tax-api
+// 2. negatives : parentheses in gl/inventory, a minus sign in bankrec/finstmt
+// 3. the prefix : a currency mark on some, a bare `$` on others
 // 4. the arithmetic : most use toLocaleString; finstmt floors and pads by hand
 //
-// Axis 1 is not a matter of taste. `CA$10870.00` on a receivables screen is wrong, and it was
-// visible: AR printed `CA$10170.00` for the same invoice the invoices screen printed as
-// `CA$10,170.00`. Same money, two screens, two answers, with an accountant reviewing the financial
+// Axis 1 is not a matter of taste. `$10870.00` on a receivables screen is wrong, and it was
+// visible: AR printed `$10170.00` for the same invoice the invoices screen printed as
+// `$10,170.00`. Same money, two screens, two answers, with an accountant reviewing the financial
 // module.
 //
 // Axes 2 and 3 ARE a matter of taste, and specifically somebody else's: whether a credit reads as
@@ -42,6 +42,16 @@ export function centsAmount(cents: number): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+}
+
+/**
+ * The customer facing money word: `$1,234.00`, and `-$1,234.00` for a negative. No currency
+ * letters: the currency is the dealer's own and stays in the data and the API, never in the
+ * display. Every screen, receipt and message that shows an amount calls this one function.
+ */
+export function formatDollars(cents: number): string {
+  const sign = Number.isFinite(cents) && cents < 0 ? '-' : '';
+  return `${sign}$${centsAmount(cents)}`;
 }
 
 /**

@@ -25,7 +25,7 @@ import {
   sumLineSavingCents,
 } from './ports.ts';
 
-const TOTAL = 11300; // CA$113.00, the sale being settled in most cases below
+const TOTAL = 11300; // $113.00, the sale being settled in most cases below
 
 // ── the seam's own shape: no browser-computed tax or total ────────────────────
 test('the seam serves no ticket tax and no ticket total: the ring states both (row 661)', () => {
@@ -63,7 +63,7 @@ test('one cent short is not ready, and says how much is left', () => {
   );
   assert.equal(s.ready, false);
   assert.equal(s.remainingCents, 1);
-  assert.match(s.problem, /CA\$0\.01 still to tender/);
+  assert.match(s.problem, /\$0\.01 still to tender/);
 });
 
 test('one cent over is not ready, and says by how much', () => {
@@ -77,7 +77,7 @@ test('one cent over is not ready, and says by how much', () => {
   );
   assert.equal(s.ready, false);
   assert.equal(s.remainingCents, -1);
-  assert.match(s.problem, /CA\$0\.01 over-tendered/);
+  assert.match(s.problem, /\$0\.01 over-tendered/);
 });
 
 // ── shape rules, mirroring the server so the cashier never learns them from a 4xx ────────────
@@ -211,8 +211,8 @@ test('cashTenderedPlan answers the change due only when the entry covers the tot
   }
   // Nothing covers an empty ticket.
   assert.equal(cashTenderedPlan(0, '5').sendable, false);
-  // The change preview's own figures, on a worked ticket: a CA$72.32 total
-  // tendered CA$80.00 shows CA$7.68; the exact total shows none; a cent short
+  // The change preview's own figures, on a worked ticket: a $72.32 total
+  // tendered $80.00 shows $7.68; the exact total shows none; a cent short
   // is not sendable and promises nothing.
   assert.deepEqual(cashTenderedPlan(7232, '80.00'), { tenderedCents: 8000, changeDueCents: 768, sendable: true });
   assert.deepEqual(cashTenderedPlan(7232, '72.32'), { tenderedCents: 7232, changeDueCents: 0, sendable: true });
@@ -284,7 +284,7 @@ test('sumLineSavingCents multiplies per line and sums, skipping what the engine 
 });
 
 test('a fractional quantity leaves integer cents: each line rounds as it sums', () => {
-  // One third of a CA$0.72 saving is 24 cents once rounded, never 24.000...,
+  // One third of a $0.72 saving is 24 cents once rounded, never 24.000...,
   // and the formatter never sees a fraction.
   assert.equal(perLineSavingCents(72, 1 / 3), 24);
   // Two half-quantity lines round per line (13 and 13), not once at the end
@@ -307,13 +307,13 @@ test('balanceAfterDepositCents answers the balance, never below zero', () => {
 // ── the refund estimate and the credit headroom, over the lookup's own figures ───────────────
 // The shapes below are the contract's PosReturnableLine: unit_price_cents
 // prices ONE unit and line_total_cents is the whole line's, so a line of two
-// Holland pavers at CA$60.00 each carries unit 6000 and line total 12000.
+// Holland pavers at $60.00 each carries unit 6000 and line total 12000.
 // The estimate multiplies the UNIT price by the picked quantity, per line,
 // rounded per line, exactly as the binding refund does.
 test('refundEstimateCents prices the picked quantity at the unit price, per line', () => {
   const holland = { order_line_id: 'a', unit_price_cents: 6000, tax_cents: 0, qty_sold: 2 };
-  // One of two pavers picked: the binding refund is CA$60.00, and the
-  // estimate says CA$60.00 (one unit), never half of one unit.
+  // One of two pavers picked: the binding refund is $60.00, and the
+  // estimate says $60.00 (one unit), never half of one unit.
   const one = refundEstimateCents([holland], { a: 1 });
   assert.deepEqual(one, { subtotal: 6000, tax: 0, total: 6000 });
   // Both picked: the whole line's own total.
@@ -339,7 +339,7 @@ test('refundEstimateCents spreads the line tax across the sold quantity, rounded
 });
 
 test('refundEstimateCents rounds per line, so fractional picks stay integer cents', () => {
-  // Half of each of two CA$33.33 units rounds per line (1667 and 1667), not
+  // Half of each of two $33.33 units rounds per line (1667 and 1667), not
   // once at the end (which would answer 3333): the reference's discipline.
   const a = { order_line_id: 'a', unit_price_cents: 3333, tax_cents: 0, qty_sold: 2 };
   const b = { order_line_id: 'b', unit_price_cents: 3333, tax_cents: 0, qty_sold: 2 };

@@ -2112,4 +2112,4 @@ func pctStr(bps int64) string {
 	return fmt.Sprintf("%d.%02d%%", whole, frac)
 }
 
-func moneyStr(cents int64) string { return fmt.Sprintf("CA$%d.%02d", cents/100, cents%100) }
+func moneyStr(cents int64) string { return fmt.Sprintf("$%d.%02d", cents/100, cents%100) }

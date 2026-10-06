@@ -68,7 +68,7 @@ test('accordion: a collapsed Customer card says Walk-in when there is no account
 });
 
 test('accordion: a collapsed Items card carries the count AND the running total', () => {
-  assert.equal(summaryFor('items', facts({ lineCount: 3, totalLabel: 'CA$412.90' })), '3 items · CA$412.90');
+  assert.equal(summaryFor('items', facts({ lineCount: 3, totalLabel: '$412.90' })), '3 items · $412.90');
 });
 
 test('accordion: the Items line appends no mark of its own: what the label says is what the terminal handed it', () => {
@@ -76,17 +76,17 @@ test('accordion: the Items line appends no mark of its own: what the label says 
   // was never this module's: the slot carries the terminal's label verbatim
   // (the pre-ring subtotal, the ring's total after), so the pure module has
   // nothing to true here, and this pin holds it that way.
-  assert.equal(summaryFor('items', facts({ lineCount: 2, totalLabel: 'CA$9.00' })), '2 items · CA$9.00');
+  assert.equal(summaryFor('items', facts({ lineCount: 2, totalLabel: '$9.00' })), '2 items · $9.00');
 });
 
 test('accordion: the Items summary counts in English: one item, not 1 items', () => {
-  assert.equal(summaryFor('items', facts({ lineCount: 1, totalLabel: 'CA$88.00' })), '1 item · CA$88.00');
+  assert.equal(summaryFor('items', facts({ lineCount: 1, totalLabel: '$88.00' })), '1 item · $88.00');
 });
 
 test('accordion: an empty ticket says NOTHING rather than "0 items"', () => {
  // A zero here would be chrome pretending to be a fact; the open card's empty state is the honest
  // place for "nothing yet", and it points at the next action.
-  assert.equal(summaryFor('items', facts({ lineCount: 0, totalLabel: 'CA$0.00' })), '');
+  assert.equal(summaryFor('items', facts({ lineCount: 0, totalLabel: '$0.00' })), '');
 });
 
 test('accordion: a collapsed Payment card names the chosen tender, and says nothing before one is chosen', () => {
@@ -106,7 +106,7 @@ test('accordion: every step answers with a string for every state: a summary slo
       for (const rung of bools)
         for (const name of ['', 'Maple Ridge Contracting'])
           for (const tender of ['', 'Cash']) {
-            const out = summaryFor(step, facts({ lineCount: lines, rungDone: rung, customerName: name, tenderLabel: tender, totalLabel: 'CA$1.00', orderNo: 'SO-1' }));
+            const out = summaryFor(step, facts({ lineCount: lines, rungDone: rung, customerName: name, tenderLabel: tender, totalLabel: '$1.00', orderNo: 'SO-1' }));
             assert.equal(typeof out, 'string', `${step} ${JSON.stringify([lines, rung, name, tender])}`);
           }
 });

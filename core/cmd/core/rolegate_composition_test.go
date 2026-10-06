@@ -131,7 +131,7 @@ func xrKnownLevel(s string) bool {
 // census calls staff carries a surface and a level in roleconfig's
 // vocabulary, and no registered route the census does not call staff
 // carries an annotation. This test leans on two things it cannot see: the
-// census half (all 600 document operations annotated, including the 31
+// census half (all 603 document operations annotated, including the 31
 // ledgered routes not yet registered) is the plain TestCensusStaffRoutes-
 // CarrySurfaceAndLevel beside this file, and the fact that the walk's
 // passing means the gate is truly in the chain is the registrar's own
