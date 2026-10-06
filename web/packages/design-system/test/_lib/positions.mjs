@@ -604,6 +604,7 @@ export const IMPORT_ALLOW_LIST = {
     './_lib/sheet.mjs': ['PALETTE_NAMES', 'contrast', 'declaredPairs', 'definedTokens', 'parseDeclarations', 'palette', 'palettes', 'pkgDir', 'readPkg', 'referencedTokens', 'resolveColor', 'shippedStyleFiles', 'sheetBlocks', 'stripComments'],
     './color.mjs': ['contrast', 'oklchToHex', 'parseOklch'],
     '../src/harness-page.js': ['HARNESS_STATES', 'HARNESS_TITLE', 'KITS', 'WIDTHS', 'buildHarnessPage', 'harnessSheets'],
+    '../src/header.js': ['HosAppHeader'],
     '../src/kits/dashboard.js': ['DashboardKit'],
     '../src/kits/guided-flow.js': ['GuidedFlowKit'],
     '../src/kits/inbox.js': ['InboxKit'],
