@@ -62,14 +62,12 @@ const styles = css`
     align-items: center;
     gap: var(--hh-s-12);
   }
-  /* The brand lockup, the ERP shell's own: the HH mark at the left, the
-     product name with the house line under it. The mark is the Hardscape
-     House badge's measured H (decision log rows 953 and 968): mark.svg's
-     geometry inlined, one path in currentColor, so the ink is the sheet's
-     own gold-as-ink token per theme (the badge yellow on the dark page, its
-     dark gold half on the light one). The gold square ground and its
-     near-black square ink went with the plain text: the mark is the H alone
-     over whatever page it sits on, never a filled square carrying an ink. */
+  /* The brand lockup, the front door's own: the Hardscape House badge at
+     the left, the product name with the house line under it. The badge is
+     the yellow square ground (the badge yellow IS --hh-accent), square
+     cornered as the source colourways are, carrying mark.svg's measured H
+     inlined in the ink a gold fill carries (--hh-accent-ink, through
+     currentColor), in both themes (decision log rows 953 and 968). */
   .brand {
     display: flex;
     align-items: center;
@@ -80,7 +78,8 @@ const styles = css`
     width: 30px;
     height: 30px;
     flex: none;
-    color: var(--hh-accent-text);
+    background: var(--hh-accent);
+    color: var(--hh-accent-ink);
   }
   .brand-mark svg {
     width: 100%;
