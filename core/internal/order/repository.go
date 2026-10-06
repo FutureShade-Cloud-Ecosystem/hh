@@ -76,8 +76,8 @@ func (r *Repository) ListOrders(ctx context.Context, customerID string, f Filter
 		cCreated, cNo = f.CursorCreated, f.CursorOrderNo
 	}
 	args = append(args, cCreated, cNo, f.Limit)
-	q := fmt.Sprintf("SELECT %s FROM orders WHERE %s AND ($%d::timestamptz IS NULL OR (created_at, order_no) < ($%d::timestamptz, $%d::text)) ORDER BY created_at DESC, order_no LIMIT $%d",
-		orderColumns, where, len(args)-2, len(args)-2, len(args)-1, len(args))
+	q := fmt.Sprintf("SELECT %s FROM orders WHERE %s AND ($%d::timestamptz IS NULL OR created_at < $%d::timestamptz OR (created_at = $%d::timestamptz AND order_no > $%d::text)) ORDER BY created_at DESC, order_no LIMIT $%d",
+		orderColumns, where, len(args)-2, len(args)-2, len(args)-2, len(args)-1, len(args))
 
 	rows, err := r.pool.Query(ctx, q, args...)
 	if err != nil {

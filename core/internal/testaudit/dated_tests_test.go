@@ -113,6 +113,10 @@ var allowlisted = map[string]exemption{
 		"fiscal year 2099 sentinel period; time.Now().UnixNano() only mints the idempotency key. The assertions are about the source_ref_id filter gate, not about any date."},
 	"internal/gl/list_journals_source_ref_integration_test.go": {[]string{"time.Now()"},
 		"fiscal year 2097 sentinel period; time.Now().UnixNano() only mints unique idempotency keys. The assertions are about source_ref_id filtering, not about any date."},
+	"internal/order/cursor_test.go": {[]string{"time.Now()"},
+		"the 1990-03-15 stamp is a far-PAST sentinel so the same-timestamp order fixtures never collide with a current row; right after, time.Now().UnixNano() only mints the ordcur-... namespace suffix (cursor leg, order + quote sibling sites, rows 804 and 939)."},
+	"internal/quote/cursor_test.go": {[]string{"time.Now()"},
+		"the 1990-03-15 stamp is a far-PAST sentinel so the same-timestamp quote fixtures never collide with a current row; right after, time.Now().UnixNano() only mints the qtecur-... namespace suffix (cursor leg, order + quote sibling sites, rows 804 and 939)."},
 
 	// -- SQL now() lands only in audit columns that nothing reads back ---------------------------
 	"internal/bankrec/integration_test.go": {[]string{"SQL now()"},

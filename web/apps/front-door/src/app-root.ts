@@ -40,7 +40,7 @@
 import { html, css, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
-import { ApiClient, staffDemo } from "@hardscapehouse/api-client";
+import { ApiClient, staffDemo, staffIdentity } from "@hardscapehouse/api-client";
 // The ported icon registry: the one registry, the shared POS kit's own files
 // (moved once out of the Counter Till's app so the box's apps import the same
 // pieces). Only type imports reach the kit's ports from here, so the front
@@ -58,6 +58,7 @@ import {
   validateMint,
   type FrontDoorSession,
 } from "./session.js";
+import { countMarginApprovals } from "./approvals-count.js";
 import { applyTheme } from "./theme.js";
 
 const DEMO_ORG = "hh-demo";
@@ -113,8 +114,8 @@ export class FrontDoorApp extends HHElement {
       }
       /* The brand lockup, the ERP shell's own (hh-rd2's builder list, the
          reference): the HH mark at the left, the product name with the house
-         line under it. Gold is a fill, never an ink, so the mark's "HH" is
-         the near-black ink the gold fill carries; the accent word takes the
+         line under it. Gold is a fill, never an ink, so the mark's H is the
+         near-black ink the gold fill carries; the accent word takes the
          gold-as-ink token, which is dark gold in the light theme. */
       .brand {
         display: flex;
@@ -126,14 +127,20 @@ export class FrontDoorApp extends HHElement {
         width: 30px;
         height: 30px;
         flex: none;
-        display: grid;
-        place-items: center;
-        border-radius: var(--hh-radius-control);
+        /* The Hardscape House badge, on yellow: the square is the badge's
+           gold ground (the badge yellow IS --hh-accent), square cornered as
+           the source colourways are, and the inline mark-only SVG draws the
+           measured H in the ink a gold fill carries, through currentColor.
+           The path is principal/assets/hh-logos/svg/mark.svg, pixel measured
+           from the 3000 px colourways; the design system package carries the
+           same files under assets/hh-badge. */
         background: var(--hh-accent);
         color: var(--hh-accent-ink);
-        font-size: 12px;
-        font-weight: 800;
-        letter-spacing: -0.02em;
+      }
+      .brand-mark svg {
+        width: 100%;
+        height: 100%;
+        display: block;
       }
       .brand-names {
         display: flex;
@@ -508,6 +515,10 @@ export class FrontDoorApp extends HHElement {
       /* The modules the box does not serve yet, grouped under their own word
          and drawn quieter and smaller than the live tiles: present, honest,
          clearly second. */
+      .tile .approval-note {
+        font-size: 12px;
+        color: var(--hh-text-dim);
+      }
       .coming-next {
         margin: var(--hh-s-32) 0 0;
       }
@@ -588,6 +599,10 @@ export class FrontDoorApp extends HHElement {
   #refusals = new Map<string, string>();
   /** The polite region's sentence. Empty is the resting value. */
   #notice = "";
+  /** The staff client carries the session's bearer token. */
+  readonly #staffClient: ApiClient;
+  /** Count of pending margin approvals for the manager, fetched on session adopt. */
+  #approvalCount = 0;
 
   constructor() {
     super();
@@ -599,6 +614,12 @@ export class FrontDoorApp extends HHElement {
     this.#demoClient = new ApiClient({
       baseUrl: "",
       headers: async () => ({ "X-Org": DEMO_ORG }),
+    });
+    this.#staffClient = new ApiClient({
+      baseUrl: "",
+      headers: async () => ({
+        Authorization: `Bearer ${this.#session !== null ? this.#session.token : ""}`,
+      }),
     });
   }
 
@@ -614,6 +635,7 @@ export class FrontDoorApp extends HHElement {
     if (restored !== null) {
       this.#session = restored;
       this.#screen = { kind: "home" };
+      void this.#loadApprovals();
     }
   }
 
@@ -701,6 +723,7 @@ export class FrontDoorApp extends HHElement {
     this.#session = minted;
     this.#screen = { kind: "home" };
     this.#notice = "";
+    void this.#loadApprovals();
     this.requestUpdate();
   }
 
@@ -708,8 +731,29 @@ export class FrontDoorApp extends HHElement {
   #endSession(): void {
     this.#store.clear();
     this.#session = null;
+    this.#approvalCount = 0;
     this.#screen = { kind: "picker" };
     this.#refusals = new Map();
+  }
+
+  /** Fetch pending approval count for the sales manager role. */
+  async #loadApprovals(): Promise<void> {
+    const session = this.#session;
+    if (session === null) return;
+    if (session.roleCode !== "sales_manager") {
+      this.#approvalCount = 0;
+      return;
+    }
+    const count = await countMarginApprovals((cursor) =>
+      staffIdentity.identityListApprovals(this.#staffClient, {
+        status: "PENDING",
+        ...(cursor !== undefined ? { cursor } : {}),
+      }),
+    );
+    // The session changed while the request was out: the answer is for someone else.
+    if (this.#session !== session) return;
+    this.#approvalCount = count ?? 0;
+    this.requestUpdate();
   }
 
   render(): TemplateResult {
@@ -733,7 +777,11 @@ export class FrontDoorApp extends HHElement {
       <header>
         <div class="demo-banner-cell">
           <div class="brand" role="img" aria-label="HH Yard, a Hardscape House product">
-            <span class="brand-mark" aria-hidden="true">HH</span>
+            <span class="brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 3000 3000">
+                <path fill="currentColor" d="M644.94 465.17 H1386.06 A29.15 29.15 0 0 1 1415.21 494.32 V1306.38 A84.79 84.79 0 0 0 1500 1391.17 H2355.05 A29.15 29.15 0 0 1 2384.2 1420.32 V2505.68 A29.15 29.15 0 0 1 2355.05 2534.83 H1613.94 A29.15 29.15 0 0 1 1584.79 2505.68 V1940.1 A84.79 84.79 0 0 0 1415.21 1940.1 V2505.68 A29.15 29.15 0 0 1 1386.06 2534.83 H644.94 A29.15 29.15 0 0 1 615.79 2505.68 V494.32 A29.15 29.15 0 0 1 644.94 465.17 Z M1613.94 465.17 H2355.05 A29.15 29.15 0 0 1 2384.2 494.32 V1192.85 A29.15 29.15 0 0 1 2355.05 1222 H1613.94 A29.15 29.15 0 0 1 1584.79 1192.85 V494.32 A29.15 29.15 0 0 1 1613.94 465.17 Z" />
+              </svg>
+            </span>
             <span class="brand-names">
               <span class="brand-product">HH <span class="accent">Yard</span></span>
               <span class="brand-sub">a Hardscape House product</span>
@@ -852,6 +900,10 @@ export class FrontDoorApp extends HHElement {
   }
 
   #tile(tile: ModuleTile): TemplateResult {
+    const approvalNote =
+      tile.name === "Quote Desk" && this.#approvalCount > 0
+        ? html`<span class="approval-note">${this.#approvalCount} approval${this.#approvalCount === 1 ? "" : "s"} waiting</span>`
+        : nothing;
     return html`
       <button
         type="button"
@@ -864,6 +916,7 @@ export class FrontDoorApp extends HHElement {
         <span class="words">
           <span class="module">${tile.name}</span>
           <span class="what">${tileBlurb(tile)}</span>
+          ${approvalNote}
           <span class="cta" aria-hidden="true">Open the ${tile.name}</span>
         </span>
       </button>
