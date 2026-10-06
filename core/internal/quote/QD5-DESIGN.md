@@ -125,17 +125,19 @@ The counter's invoice header carries a source marker (`metadata.source = COUNTER
 - Lock order, so the lock cannot deadlock: the counter takes the quote's advisory lock first (only the
   counter takes it), then, in a credit order's payment, the order row, then the payments scope
   sequence row, then the invoices scope sequence and the invoice and payment rows. The payments row is
-  taken through the payments module's own lock (`payments.LockPaymentsFeedSeqTx` on the door's
-  transaction) BEFORE the invoice is raised, and the settle's numbering later in the same transaction
-  re-takes a lock that transaction already holds: the door once raised the invoice (the invoices row)
-  and then settled (the payments row), the opposite of every writer that both bills and settles, and
-  the review reproduced the 40P01 that follows between the door and a real register settle at pool 4
-  and 16, on an action whose card charge has already happened. Every writer that takes both scope
-  sequence rows now takes the payments one first:
+  taken through the payments module's shared non incrementing lock (`payments.LockPaymentsSequenceTx`
+  on the door's transaction, the one written order in `payments/LOCK-ORDER.md`, which is the
+  authority for this paragraph) BEFORE the invoice is raised, and the settle's numbering later in the
+  same transaction re-takes a lock that transaction already holds and draws the feed number once (the
+  lock here does not advance the counter, so no number is spent on the door alone): the door once
+  raised the invoice (the invoices row) and then settled (the payments row), the opposite of every
+  writer that both bills and settles, and the review reproduced the 40P01 that follows between the
+  door and a real register settle at pool 4 and 16, on an action whose card charge has already
+  happened. Every writer that takes both scope sequence rows now takes the payments one first:
 
   | writer | payments sequence row | invoices sequence row | order |
   |---|---|---|---|
-  | the counter's door (this action) | `LockPaymentsFeedSeqTx` before the raise, then the settle's own draw | the agreed invoice's raise, then the settle's balance move | payments then invoices (this fold; the raise alone took invoices first) |
+  | the counter's door (this action) | `LockPaymentsSequenceTx` before the raise, then the settle's own draw | the agreed invoice's raise, then the settle's balance move | payments then invoices (this fold; the raise alone took invoices first) |
   | the AR register settle (`billing`'s RecordPayment into `payments`' settleReceipt) | the payment header insert | the invoice balance move | payments then invoices |
   | the payments writer (`payments`' settle, PayWithStamps and the counter receipt) | the payment header insert | the invoice balance move | payments then invoices |
   | the POS ring (the sale transaction: the till tender, then the ring's invoice) | the till payment insert | the ring invoice insert | payments then invoices |
