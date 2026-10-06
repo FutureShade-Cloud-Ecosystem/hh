@@ -27,8 +27,9 @@ import type { QdClient } from "./qd-client.js";
  * twice (the round 1 and round 2 reviews' duplicate read). The share hands both callers of a
  * cycle the SAME read, keyed by the quote it was asked on; a new cycle begins with beginCycle(),
  * so a later cycle reads fresh and never joins an older answer. A cycle begins at every quote
- * switch and edit fan out (the edit panel begins it: it is the seam host that re-reads both
- * panels), at a new session (each panel begins one when its client changes), at the payment
+ * switch and edit fan out (the edit panel begins it: it is the first panel of the detail stack,
+ * and the seam's two readers join the cycle its reload pass begins), at a new session (each panel
+ * begins one when its client changes), at the payment
  * panel's own retry of its read, and at the take path's two re-reads (a definite refusal and
  * the way out of a held key begin their own cycle at the read site, because a payment made
  * inside a cycle makes that cycle's cached family answer exactly the pre payment truth a

@@ -16,8 +16,9 @@
 // HH changes: the panel rides the app's own base (PanelBase), so the read is
 // guarded by the quote context (a family read for a quote left never shows on
 // the next) and the host delegation is by data-action, never a bound click.
-// This desk hosts the panel inside the edit panel's payment seam, where no
-// document can be opened by this surface, so the chips render as labels
+// The builder hosts the panel in the detail's panel stack (the payment seam,
+// beside the edit panel), where no document can be opened by this surface,
+// so the chips render as labels
 // (openKinds is empty: a button that does nothing is worse than a label, the
 // ERP panel's own rule). The kind property keeps the port's two ends (quote
 // or order) so a host that owns document opening can mount it either way.
