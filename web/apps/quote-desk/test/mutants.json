@@ -1472,5 +1472,12 @@
     "find": "  private async doPreview(print: boolean): Promise<void> {\n    if (this.busy) return;\n",
     "replace": "  private async doPreview(print: boolean): Promise<void> {\n",
     "test": "Send Quote is one send"
+  },
+  {
+    "id": "bq-open-list-read",
+    "file": "src/quote-builder.ts",
+    "find": "      void this.loadList(true);\n      return;\n    }\n    this.walk(",
+    "replace": "      return;\n    }\n    this.walk(",
+    "test": "split create:"
   }
 ]

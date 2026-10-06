@@ -456,7 +456,11 @@ export class QdQuoteBuilder extends LitElement {
     // area is not the person's place, and its once per mount resume of a
     // remembered quote stays unheard: the address bar names the person's
     // place now.
-    if (this.route.kind === "list") return;
+    if (this.route.kind === "list") {
+      // A create that answered while the person was already on the list still made a draft: the list reads it in.
+      void this.loadList(true);
+      return;
+    }
     this.walk(event.detail.quoteId === "" ? COMPOSE_ROUTE : quoteRoute(event.detail.quoteId));
     void this.loadList();
   };
@@ -514,6 +518,9 @@ export class QdQuoteBuilder extends LitElement {
       void this.loadMore();
     }
     if (action === "new-quote") {
+      // New quote is always a fresh compose: whatever an abandoned compose left in the work area is cleared first
+      // (the route alone does not change the work area's quote when it was already empty).
+      this.renderRoot.querySelector<HTMLElement & { beginCompose?: () => void }>("qd-quote-workarea")?.beginCompose?.();
       this.walk(COMPOSE_ROUTE);
     }
     if (action === "tab") {

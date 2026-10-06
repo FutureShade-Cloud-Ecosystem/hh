@@ -2559,6 +2559,19 @@ export class QdQuoteWorkarea extends LitElement {
     this.dispatchEvent(new CustomEvent("quote-open", { detail: { quoteId: result.value }, bubbles: true, composed: true }));
   }
 
+  /**
+   * The list's New quote button: the compose page opens clean. The quote on screen is left the way a switch leaves it
+   * (its context is cancelled, so a create still out is dropped and its draft told to the list) and the quote's own
+   * state resets; the route's own change of quote does the same when the work area held one.
+   */
+  beginCompose(): void {
+    this.leaveQuote(this.quoteId);
+    Object.assign(this, freshQuoteState());
+    this.createdQuoteId = "";
+    this.createFailed = false;
+    this.renderRoot.querySelector<HTMLElement & { reset?: () => void }>("hos-customer-picker")?.reset?.();
+  }
+
   /** A new quote starts from nothing: the quote's own state resets, the operator's settings stay. */
   private startNewQuote(): void {
     Object.assign(this, freshQuoteState());

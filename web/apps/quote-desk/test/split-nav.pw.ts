@@ -20,7 +20,7 @@
 //      the right of the title row, and the Sales manager's tabs also carry
 //      Approvals (Sales sees neither Approvals nor Pricing).
 import { expect, test, type Page } from "@playwright/test";
-import { showList } from "./switch-helpers.js";
+import { hold, row, settle, showList } from "./switch-helpers.js";
 
 const SALES = { name: "Sales", exact: true };
 const MANAGER = { name: "Sales manager", exact: true };
@@ -332,4 +332,36 @@ test("split search: the quote page adds lines through the search and add box, no
   await page.getByTestId("search-add-row").first().click();
   await expect(page.getByTestId("qb-line")).toHaveCount(before + 2);
   await expect(box).toBeFocused();
+});
+
+// ── A create still out when the person walks to the list ─────────────────────
+
+test("split create: a create in flight when All quotes is pressed lists its draft, and New quote opens a fresh compose", async ({ page }) => {
+  await signIn(page);
+  await page.getByRole("button", { name: "New quote", exact: true }).click();
+  await expect(page.getByTestId("qb-identity")).toBeVisible();
+  const create = await hold(page, /\/api\/v1\/quotes$/, { method: "POST" });
+  const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
+  await picker.getByPlaceholder("Search name or account #…").fill("Maple");
+  await picker.getByRole("option", { name: /Maple Ridge Contracting/ }).click();
+  await create.asked;
+  await page.getByTestId("qb-all-quotes").click();
+  await expect(page.getByTestId("qd-list-toolbar")).toBeVisible();
+  await create.release();
+  await settle(page);
+  // The draft is on the list when it lands, with no Refresh.
+  await expect(row(page, "Q-1004")).toBeVisible();
+  // New quote is always a fresh compose: the picker is empty and the person can start again.
+  await page.getByRole("button", { name: "New quote", exact: true }).click();
+  await expect(page.getByTestId("qb-title")).toHaveText("New Quote");
+  await expect(page.getByTestId("qb-identity")).toBeVisible();
+  await expect(page.getByTestId("qb-identity-change")).toHaveCount(0);
+  const box = page.getByTestId("qb-identity").locator("hos-customer-picker").getByPlaceholder("Search name or account #…");
+  await expect(box).toBeVisible();
+  await expect(box).toHaveValue("");
+  // And a pick on it makes a second quote of its own (the first draft is not reused).
+  await box.fill("Maple");
+  await page.getByTestId("qb-identity").locator("hos-customer-picker").getByRole("option", { name: /Maple Ridge Contracting/ }).click();
+  await expect(page.getByTestId("qb-context")).toContainText("Q-1005");
+  await expect(page.getByRole("combobox", { name: "Search products by name, code or category" })).toBeVisible();
 });
