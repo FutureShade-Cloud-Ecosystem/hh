@@ -321,6 +321,20 @@ export class QdQuoteWorkarea extends LitElement {
       background: var(--hos-stone-amber, var(--hh-accent));
       color: var(--hos-stone-amber-ink, var(--hh-accent-ink));
       cursor: pointer;
+      /* The plus and the label on one centre line at the design system's icon
+         gap, the mark the label's own size (decision log row 990). */
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: var(--hh-s-8, 8px);
+      line-height: 1;
+    }
+    .newquote > span {
+      display: inline-flex;
+    }
+    .newquote svg {
+      width: 1em;
+      height: 1em;
     }
     .newquote:hover {
       background: var(--hos-stone-amber-hover, var(--hh-accent));
@@ -2743,7 +2757,7 @@ export class QdQuoteWorkarea extends LitElement {
             ${this.helpOpen ? this.renderHelp() : nothing}
           </span>
           <button type="button" class="newquote" data-action="new-quote" data-testid="qb-new-quote">
-            <span aria-hidden="true">${drawIcon(iconForId("pencil:add"), 13)}</span> New Quote
+            <span aria-hidden="true">${drawIcon(iconForId("pencil:add"), 13)}</span>New Quote
           </button>
         </div>
       </div>

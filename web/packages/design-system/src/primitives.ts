@@ -59,6 +59,19 @@ export const baseStyles = css`
     border-radius: var(--hh-radius-control);
     border: 1px solid transparent;
     cursor: pointer;
+    /* One line, centred both ways: a button that carries an icon beside its
+       label draws the two on the same centre line at the design system's icon
+       gap, the icon at the label's own size (1em of the button's font), so the
+       mark is never larger than or higher than the word. */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--hh-s-8);
+  }
+  .btn .icon {
+    flex: none;
+    width: 1em;
+    height: 1em;
   }
   button:focus-visible {
     outline: 2px solid var(--hh-focus-ring);
@@ -222,6 +235,9 @@ export interface ButtonSpec {
   disabled?: boolean;
   /** The action name for the shell to wire; rendered as data-action. */
   action?: string;
+  /** An icon drawn before the label (the state icons' `icon()` markup, a
+   * closed constant): sized to the label and centred on its line by the sheet. */
+  iconMarkup?: Template;
 }
 
 export function button(spec: ButtonSpec): Template {
@@ -230,7 +246,7 @@ export function button(spec: ButtonSpec): Template {
   // bare attribute when true and nothing when false; the nothing sentinel
   // drops data-action when the spec carries none. Only closed-union constants
   // and flags are bound; a caller's values arrive as the label's text.
-  return html`<button type="button" class="btn btn-${kind}" ?disabled=${spec.disabled === true} data-action=${spec.action ?? nothing}>${spec.label}</button>`;
+  return html`<button type="button" class="btn btn-${kind}" ?disabled=${spec.disabled === true} data-action=${spec.action ?? nothing}>${spec.iconMarkup ?? nothing}${spec.label}</button>`;
 }
 
 export interface SelectSpec {

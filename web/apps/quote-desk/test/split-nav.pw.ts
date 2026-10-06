@@ -242,3 +242,71 @@ test("split E: the Sales manager's tabs also carry Approvals, and Sales sees nei
   const salesTabs = page.getByTestId("qd-list-toolbar").locator('[data-control="segmented"][data-field="status-filter"]');
   await expect(salesTabs.getByRole("button", { name: "Approvals", exact: true })).toHaveCount(0);
 });
+
+// ── The New quote button's icon (decision log row 990) ───────────────────────
+
+for (const theme of ["light", "dark"] as const) {
+  for (const [name, size] of [["desktop", { width: 1440, height: 900 }], ["tablet", { width: 768, height: 1024 }]] as const) {
+    test(`split button: the New quote plus is the label's size and centred on its line (${theme}, ${name})`, async ({ page }) => {
+      await page.setViewportSize(size);
+      await signIn(page);
+      await page.evaluate((t) => document.documentElement.setAttribute("data-theme", t), theme);
+      const button = page.getByTestId("qd-list-page").getByRole("button", { name: "New quote", exact: true });
+      await expect(button).toBeVisible();
+      const m = await button.evaluate((el) => {
+        const mark = el.querySelector("svg");
+        const text = [...el.childNodes].find((n) => n.nodeType === Node.TEXT_NODE && (n.textContent ?? "").includes("New quote"));
+        if (mark === null || text === undefined) return null;
+        const range = document.createRange();
+        range.selectNodeContents(text);
+        const t = range.getBoundingClientRect();
+        const i = mark.getBoundingClientRect();
+        const b = el.getBoundingClientRect();
+        return {
+          font: parseFloat(getComputedStyle(el).fontSize),
+          iconW: i.width,
+          iconH: i.height,
+          iconMid: i.top + i.height / 2,
+          textMid: t.top + t.height / 2,
+          boxMid: b.top + b.height / 2,
+          gap: t.left - i.right,
+        };
+      });
+      expect(m, "the button carries a plus icon beside its label").not.toBeNull();
+      const r = m!;
+      expect(Math.abs(r.iconH - r.font), "the icon is the label's height").toBeLessThanOrEqual(0.5);
+      expect(Math.abs(r.iconW - r.font), "the icon is the label's width").toBeLessThanOrEqual(0.5);
+      expect(Math.abs(r.iconMid - r.textMid), "the icon and the label share one centre line").toBeLessThanOrEqual(1);
+      expect(Math.abs(r.iconMid - r.boxMid), "both sit on the button's own centre").toBeLessThanOrEqual(1);
+      expect(Math.abs(r.gap - 8), "the design system's icon gap").toBeLessThanOrEqual(0.5);
+    });
+  }
+}
+
+for (const theme of ["light", "dark"] as const) {
+  for (const [name, size] of [["desktop", { width: 1440, height: 900 }], ["tablet", { width: 768, height: 1024 }]] as const) {
+    test(`split button: the quote page's New Quote plus is the label's size and centred on its line (${theme}, ${name})`, async ({ page }) => {
+      await page.setViewportSize(size);
+      await signIn(page);
+      await page.evaluate((t) => document.documentElement.setAttribute("data-theme", t), theme);
+      await page.getByTestId("qb-list-row").first().click();
+      const button = page.getByTestId("qb-new-quote");
+      await expect(button).toBeVisible();
+      const m = await button.evaluate((el) => {
+        const mark = el.querySelector("svg");
+        const text = [...el.childNodes].find((n) => n.nodeType === Node.TEXT_NODE && (n.textContent ?? "").includes("New Quote"));
+        if (mark === null || text === undefined) return null;
+        const range = document.createRange();
+        range.selectNodeContents(text);
+        const t = range.getBoundingClientRect();
+        const i = mark.getBoundingClientRect();
+        return { font: parseFloat(getComputedStyle(el).fontSize), iconH: i.height, iconMid: i.top + i.height / 2, textMid: t.top + t.height / 2, gap: t.left - i.right };
+      });
+      expect(m, "the button carries a plus icon beside its label").not.toBeNull();
+      const r = m!;
+      expect(Math.abs(r.iconH - r.font), "the icon is the label's height").toBeLessThanOrEqual(0.5);
+      expect(Math.abs(r.iconMid - r.textMid), "the icon and the label share one centre line").toBeLessThanOrEqual(1);
+      expect(Math.abs(r.gap - 8), "the design system's icon gap").toBeLessThanOrEqual(0.5);
+    });
+  }
+}

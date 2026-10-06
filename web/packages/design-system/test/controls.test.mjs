@@ -16,6 +16,7 @@ import assert from 'node:assert/strict';
 import { html } from 'lit';
 
 import { renderTemplate } from './_lib/render.mjs';
+import { icon } from '../src/state-icons.js';
 import { baseStyles, select, dateInput, fieldGroup, button, segmented, textInput } from '../src/primitives.js';
 
 test('the select renders the control face with the shell delegation attributes and no value binding', () => {
@@ -66,6 +67,24 @@ test('the action button stays on the sheet classes, so the controls read as one 
   assert.match(markup, /class="btn btn-primary"/);
   assert.match(markup, /data-action="create"/);
   assert.match(markup, /Create/);
+});
+
+// The button with an icon (decision log row 990): the plus beside "New quote"
+// was drawn larger and higher than the label. The sheet states the fix once:
+// the button is a centred inline flex row at the design system's icon gap and
+// the icon is the label's own size (1em). The bounds themselves are measured
+// in the Quote Desk's real-browser leg.
+test('a button with an icon draws it before the label, and the sheet centres the pair at the label size', () => {
+  const markup = renderTemplate(button({ label: 'New quote', kind: 'primary', action: 'new-quote', iconMarkup: icon('plus') }));
+  assert.match(markup, /<button type="button" class="btn btn-primary"[^>]*>\s*(<!--[^>]*-->)*\s*<svg\b[^>]*class="icon"/);
+  assert.ok(markup.indexOf('<svg') < markup.indexOf('New quote'), 'the icon comes before the label');
+  const sheet = String(baseStyles.cssText ?? baseStyles);
+  const btn = sheet.match(/\n\s*button\s*\{[^}]*\}/);
+  assert.ok(btn !== null, 'the sheet carries the button rule');
+  for (const decl of ['display: inline-flex', 'align-items: center', 'justify-content: center', 'gap: var(--hh-s-8)']) {
+    assert.ok(btn[0].includes(decl), `the button rule states ${decl}`);
+  }
+  assert.match(sheet, /\.btn \.icon\s*\{[^}]*width: 1em;[^}]*height: 1em;/, 'the icon is the label size');
 });
 
 // The segmented control (the quotes list's status tabs, the CP1 split-list

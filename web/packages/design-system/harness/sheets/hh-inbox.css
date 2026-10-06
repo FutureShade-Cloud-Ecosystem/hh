@@ -33,6 +33,19 @@
     border-radius: var(--hh-radius-control);
     border: 1px solid transparent;
     cursor: pointer;
+    /* One line, centred both ways: a button that carries an icon beside its
+       label draws the two on the same centre line at the design system's icon
+       gap, the icon at the label's own size (1em of the button's font), so the
+       mark is never larger than or higher than the word. */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--hh-s-8);
+  }
+  .btn .icon {
+    flex: none;
+    width: 1em;
+    height: 1em;
   }
   button:focus-visible {
     outline: 2px solid var(--hh-focus-ring);

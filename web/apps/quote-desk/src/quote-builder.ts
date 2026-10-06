@@ -52,6 +52,7 @@ import {
 } from "./panel-seams.js";
 import { money } from "@hardscapehouse/pos-kit/src/ported/pos-api.js";
 import { baseStyles, button, chip, segmented, textInput, type ChipTone } from "@hardscapehouse/design-system/src/primitives.js";
+import { icon } from "@hardscapehouse/design-system/src/state-icons.js";
 import {
   expiryLabel,
   quoteErrorMessage,
@@ -343,6 +344,9 @@ export class QdQuoteBuilder extends LitElement {
     // route on a quote page; on the list page it keeps the quote it held
     // (the split is a change of view, never a teardown of the work in it).
     const route = this.route;
+    // The search box's words are the wiring pass's job like its value (the control's face carries no placeholder).
+    const searchBox = this.renderRoot.querySelector<HTMLInputElement>('[data-field="list-search"]');
+    if (searchBox !== null) searchBox.placeholder = "Search by number or customer";
     if (route.kind === "quote") this.lastQuoteId = route.id;
     const openQuoteId = route.kind === "quote" ? route.id : route.kind === "compose" ? "" : this.lastQuoteId;
     const branchId = this.selectedBranch() || this.myBranch;
@@ -591,7 +595,7 @@ export class QdQuoteBuilder extends LitElement {
       <section class="listpage" data-testid="qd-list-page" aria-label="Quotes">
         <div class="titlerow">
           <h1 data-testid="qd-list-title">Quotes</h1>
-          ${button({ label: "New quote", kind: "primary", action: "new-quote" })}
+          ${button({ label: "New quote", kind: "primary", action: "new-quote", iconMarkup: icon("plus") })}
         </div>
         <div class="toolbar" data-testid="qd-list-toolbar">
           <div class="tools">
