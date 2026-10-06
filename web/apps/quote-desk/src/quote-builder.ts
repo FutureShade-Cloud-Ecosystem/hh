@@ -372,11 +372,6 @@ export class QdQuoteBuilder extends LitElement {
       area.quoteId = openQuoteId;
       area.branchId = branchId;
       area.branchName = this.branchDisplayName();
-      // The address bar is the person's place now: the work area's own
-      // resume of a remembered quote stays heard only where a quote page
-      // already names one (which needs no resume); a boot at the list or the
-      // compose page is the person's own ask.
-      area.resumeOpenRef = route.kind === "quote";
     }
     for (const seam of this.renderRoot.querySelectorAll<HTMLElement & Record<string, unknown>>(
       "qd-panel-seam, qd-quote-edit, qd-quote-assist, qd-quote-history, qd-quote-followups, qd-quote-hold-expiry, qd-quote-availability, qd-quote-guard, qd-approvals, qd-quote-settings, qd-floor-refusal",
@@ -507,9 +502,8 @@ export class QdQuoteBuilder extends LitElement {
   private readonly onQuoteOpen = (event: CustomEvent<{ quoteId: string }>): void => {
     // The work area's intents walk the routes: a create hands its quote
     // down, New Quote asks for the compose page. On the list page the work
-    // area is not the person's place, and its once per mount resume of a
-    // remembered quote stays unheard: the address bar names the person's
-    // place now.
+    // area is not the person's place: the address bar names it, so the
+    // intent walks nowhere.
     if (this.route.kind === "list") {
       // A create that answered while the person was already on the list still made a draft: the list reads it in.
       void this.loadList(true);

@@ -650,7 +650,7 @@ test("P3 no empty lock box shows while a policy save is out", async ({ page }) =
   }
 });
 
-test("P3 layout saves reach the server one at a time, so the resume reference is the last quote opened", async ({ page }) => {
+test("P3 layout saves reach the server one at a time, and the row that lands last is the last change made", async ({ page }) => {
   await signIn(page);
   await open(page, "Q-1001");
   await quiet(page);
@@ -659,51 +659,23 @@ test("P3 layout saves reach the server one at a time, so the resume reference is
     if (request.method() === "PUT" && request.url().endsWith("/my-workspace")) sent.push(request.postData() ?? "");
   });
   const first = await hold(page, /\/surfaces\/quotes\.builder\/my-workspace$/, { method: "PUT", times: 1 });
-  await open(page, "Q-1003");
+  const swap = page.getByRole("button", { name: "Swap panels" });
+  await swap.click();
   await first.asked;
-  await open(page, "Q-1001");
-  await open(page, "Q-1003");
+  // Two more changes while the first save is out: each is saved after the debounce, and queues behind the first.
+  await swap.click();
+  await page.waitForTimeout(800);
+  await swap.click();
+  await page.waitForTimeout(800);
   // The first save is still out: no second one is sent beside it.
-  await settle(page);
   expect(sent).toHaveLength(1);
   await first.release();
   await expect.poll(() => sent.length).toBeGreaterThan(1);
   await quiet(page);
-  await page.getByRole("button", { name: "Sign out" }).click();
-  await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Sales", exact: true }).click();
-  // A sign in lands on the list page now (the split-list navigation); the
-  // row the person left behind still remembers the LAST quote opened, and
-  // the saves above are what told it: the last body names Q-1003.
-  await expect(page.getByTestId("qb-list")).toBeVisible();
-  await expect(page).toHaveURL(/#\/quotes$/);
   const mine = (await stubState(page)).workspaceWrites.filter((w) => w.user_id === "demo-account-sales");
-  expect(mine.length).toBeGreaterThan(0);
-  expect(mine[mine.length - 1].body?.open_ref).toBe("q-1003");
-});
-
-test("P3 a late layout answer does not resume the remembered quote while a new quote is being made", async ({ page }) => {
-  await signIn(page);
-  await open(page, "Q-1001");
-  await quiet(page);
-  await page.getByRole("button", { name: "Sign out" }).click();
-  await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
-  const config = await hold(page, /\/surfaces\/quotes\.builder\/config/, { method: "GET", times: 1 });
-  await page.getByRole("button", { name: "Sales", exact: true }).click();
-  await expect(page.getByTestId("qb-list")).toBeVisible();
-  await config.asked;
-  const create = await hold(page, /\/api\/v1\/quotes$/, { method: "POST" });
-  await newQuote(page);
-  const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
-  await picker.getByPlaceholder("Search name or account #…").fill("Fenwick");
-  await picker.getByRole("option", { name: /Fenwick/ }).click();
-  await create.asked;
-  await config.release();
-  await settle(page);
-  // The remembered quote is not opened over the quote being made.
-  await expect(page.getByTestId("qb-context")).not.toContainText("Q-1001");
-  await create.release();
-  await expect(page.getByTestId("qb-context")).toContainText("Q-1004");
+  expect(mine.length).toBeGreaterThan(1);
+  // Three swaps leave the panels swapped, and the last row to land says so.
+  expect(mine[mine.length - 1].body?.arrangement).toBe("PRIMARY_RIGHT");
 });
 
 /** Holds the host's hand down of the new quote id behind a gate the test opens: nothing here is a timer. */

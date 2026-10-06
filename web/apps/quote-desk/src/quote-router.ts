@@ -51,9 +51,10 @@ export function routeIsQuotePage(route: DeskRoute): boolean {
 
 /**
  * The route the address bar names. A quote id is any single path segment
- * after #/quotes/ except the compose word; an empty id, a trailing slash, a
- * doubled id or any other shape is the list, so a mistyped or stale fragment
- * can never strand the person off the desk.
+ * after #/quotes/ except the compose word. Empty segments are ignored, so a
+ * trailing slash names the same page (#/quotes/new/ is the compose page,
+ * #/quotes/ the list); a doubled id or any other shape is the list, so a
+ * mistyped or stale fragment can never strand the person off the desk.
  */
 export function parseRoute(hash: string): DeskRoute {
   const fragment = hash.replace(/^#/, "");

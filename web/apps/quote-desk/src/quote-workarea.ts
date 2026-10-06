@@ -151,14 +151,6 @@ const CREATE_FAILED_SCAN = "The new quote could not be made, so nothing was adde
 export class QdQuoteWorkarea extends LitElement {
   /** The open quote ('' means compose: pick a customer to start one). */
   @property({ attribute: "quote-id" }) quoteId = "";
-  /**
-   * Whether the work area's own resume of a remembered quote is heard. Under
-   * the split-list navigation the address bar names the person's place (the
-   * host wires this false on the list and compose pages), so a boot there is
-   * the person's own ask and the remembered quote does not steal the screen;
-   * a quote page names its quote already, where the resume has nothing to do.
-   */
-  @property({ attribute: false }) resumeOpenRef = true;
   @property({ attribute: "branch-id" }) branchId = "";
   @property({ attribute: "branch-name" }) branchName = "";
 
@@ -209,7 +201,6 @@ export class QdQuoteWorkarea extends LitElement {
   private dragging = false;
   /** After creating a quote the caret goes to the scan box: the next action is always add. */
   private pendingFocusScan = false;
-  private restoreTried = false;
   private wiredOnce = false;
 
   static styles = css`
@@ -1207,12 +1198,6 @@ export class QdQuoteWorkarea extends LitElement {
     if (changed.has("client") && this.client !== null) this.startLoads();
     if (changed.has("quoteId")) {
       this.opening = this.loadAll();
-      // Remember what is open so a refresh resumes it, sent now rather than left to the debounce.
-      if (changed.get("quoteId") !== undefined || this.quoteId) {
-        if (this.store !== null) this.store.state.openRef = this.quoteId;
-        this.store?.scheduleSave();
-        void this.store?.flush();
-      }
     }
   }
 
@@ -1569,7 +1554,6 @@ export class QdQuoteWorkarea extends LitElement {
     this.config = result.value;
     this.store = this.newStore(result.value);
     this.wsEcho++;
-    void this.maybeRestoreOpenQuote(this.store.state.openRef);
   }
 
   private newStore(config: SurfaceConfig | null): WorkspaceStore {
@@ -1578,19 +1562,6 @@ export class QdQuoteWorkarea extends LitElement {
       this.layoutError = line;
     };
     return store;
-  }
-
-  /**
-   * The resume: a refresh mid-quote comes back to the quote, not to compose.
-   * Once per mount, only while nothing is open, and only after the config's
-   * own open ref says one was remembered.
-   */
-  private async maybeRestoreOpenQuote(ref: string): Promise<void> {
-    if (this.restoreTried || !this.resumeOpenRef || ref === "" || this.quoteId !== "") return;
-    this.restoreTried = true;
-    // A quote is being made (or was just made and not yet handed down): that is where the person is going, not the remembered one.
-    if (this.creating !== null || this.createdQuoteId !== "") return;
-    this.dispatchEvent(new CustomEvent("quote-open", { detail: { quoteId: ref }, bubbles: true, composed: true }));
   }
 
   private async loadSalespeople(): Promise<void> {
@@ -2385,7 +2356,6 @@ export class QdQuoteWorkarea extends LitElement {
   }
 
   private wsTouch(): void {
-    if (this.store !== null) this.store.state.openRef = this.quoteId;
     this.store?.scheduleSave();
     this.wsEcho++;
   }
