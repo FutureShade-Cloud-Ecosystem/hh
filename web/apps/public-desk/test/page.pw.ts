@@ -1321,3 +1321,31 @@ for (const [token, status, error] of [
     await expect(page.locator("#name")).toHaveJSProperty("readOnly", true);
   });
 }
+
+// The preview: the same page, handed the staff read of the customer's view. It states plainly that
+// nothing was sent, and offers no accept area and no typed name. The page itself never reads a staff
+// session (the sinks gate holds that), so the Quote Desk fetches the view with its own session and
+// hands the validated view to the element; the test stands in for that host.
+test("a preview shows the band and no way to accept", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(async () => {
+    const view = await (await fetch("/api/public/v1/quotes/q-preview-draft")).json();
+    // The page's own modules, served by Vite; named in variables so the test's typecheck does not resolve them.
+    const clientPath = "/src/quote-client.ts";
+    const pagePath = "/src/quote-public.ts";
+    const { validateQuoteView } = await import(clientPath);
+    await import(pagePath);
+    document.querySelector("pd-quote-public")?.remove();
+    const el = document.createElement("pd-quote-public") as HTMLElement & { showQuote(v: unknown): void };
+    el.showQuote(validateQuoteView(view));
+    document.body.append(el);
+  });
+  const band = page.getByText("Preview: this is what your customer will see. Nothing has been sent.");
+  await expect(band).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Quote #Q-7" })).toBeVisible();
+  await expect(page.locator("#name")).toHaveCount(0);
+  await expect(page.locator("#affirm")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /accept/i })).toHaveCount(0);
+  await expect(page.getByText("Accept this quote")).toHaveCount(0);
+  await expect(page.getByText("is not awaiting acceptance")).toHaveCount(0);
+});

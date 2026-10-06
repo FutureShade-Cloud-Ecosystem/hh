@@ -214,6 +214,15 @@ const QUOTES = {
   },
 };
 
+// A staff preview of the customer's page: the core's preview flag set, acceptable false, the status
+// still DRAFT. It is served to the Quote Desk's own session, never to this page, so the tests hand it
+// to the element directly (see test/page.pw.ts).
+QUOTES["q-preview-draft"] = structuredClone(QUOTES["q-terms-28"]);
+QUOTES["q-preview-draft"].quote_no = "Q-7";
+QUOTES["q-preview-draft"].status = "DRAFT";
+QUOTES["q-preview-draft"].acceptable = false;
+QUOTES["q-preview-draft"].preview = true;
+
 // Fresh copies of the terms quote for the tests whose acceptance really
 // commits in the stub while the answer is lost on the way back.
 for (const token of [

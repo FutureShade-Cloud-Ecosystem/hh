@@ -39,6 +39,8 @@ import {
   type QuoteViewRef,
 } from "./quote-client.js";
 
+// The staff preview's band: said once, plainly, above the page the customer will see.
+const PREVIEW_BAND = "Preview: this is what your customer will see. Nothing has been sent.";
 const LINK_GONE =
   "This link is no longer valid. Quote links expire, and can also be turned off by our team. Please contact us for an up-to-date link.";
 const LINK_GONE_SHORT = "This link is no longer valid. Please contact us for an up-to-date link.";
@@ -99,6 +101,16 @@ export class QuotePublicPage extends HHElement {
       }
       /* Full text ink, NOT the dimmed one: this line sits on the page rather
          than on a card, and it is load bearing information, not decoration. */
+      .previewband {
+        border: 1px solid var(--hh-line);
+        border-left-width: 4px;
+        border-radius: var(--hh-radius-card);
+        background: var(--hh-card);
+        padding: var(--hh-s-12) var(--hh-s-16);
+        margin-bottom: var(--hh-s-16);
+        font-size: 0.9rem;
+        font-weight: 600;
+      }
       .sub {
         color: var(--hh-text);
         font-size: 0.88rem;
@@ -352,6 +364,8 @@ export class QuotePublicPage extends HHElement {
   private readonly acceptKeys = createAcceptKeys();
   private token = "";
   private autoPrint = false;
+  /** True once a host has handed the page its quote: the page then never reads the link or loads. */
+  private hosted = false;
   /**
    * Object URLs minted for thumbnails, keyed by image reference. They live as
    * long as the page does: a reload after a refused accept reuses them and
@@ -384,7 +398,20 @@ export class QuotePublicPage extends HHElement {
     this.renderRoot.addEventListener("input", this.onNameInput);
     this.renderRoot.addEventListener("change", this.onAffirmChange);
     this.renderRoot.addEventListener("click", this.onActionClick);
-    void this.load();
+    if (!this.hosted) void this.load();
+  }
+
+  /**
+   * Render a quote the HOST already holds, instead of loading one by link token. This is how the Quote
+   * Desk shows the staff preview (the contract's customer view read, validated by this app's own
+   * validateQuoteView): the page itself holds no session and reads no credential, so the host fetches
+   * the view with its own session and hands it over. The thumbnails still ride the public image read.
+   */
+  showQuote(view: QuoteViewRef): void {
+    this.hosted = true;
+    this.fatal = "";
+    this.quote = view;
+    void this.fetchThumbs(view);
   }
 
   disconnectedCallback(): void {
@@ -721,6 +748,9 @@ export class QuotePublicPage extends HHElement {
 
   private renderAcceptForm(q: QuoteViewRef): typeof nothing | TemplateResult {
     if (this.accepted) return nothing;
+    // A preview offers no way to accept and says nothing about acceptance: no form, no typed name,
+    // and no "closed" card either, because the band above already says what this page is.
+    if (q.preview) return nothing;
     if (!q.acceptable || this.landed) {
       // The customer reads this alone, with no staff beside them to translate,
       // so the state is SAID, in the same six states said mid-sentence: under
@@ -781,6 +811,7 @@ export class QuotePublicPage extends HHElement {
     if (!q) return html`<p class="sub">Loading your quote…</p>`;
     const withImages = showsImages(q);
     return html`
+      ${q.preview ? html`<div class="previewband" role="status">${PREVIEW_BAND}</div>` : nothing}
       <h1>Quote #${q.quoteNo}</h1>
       <div class="sub">
         Prepared for ${q.customerName} · as of ${this.when(q.asOf)}

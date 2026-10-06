@@ -312,3 +312,10 @@ test("only the server's own key reuse refusal is a key reuse refusal", () => {
   assert.equal(isKeyReuseRefusal({ status: 400, error: "quote: this idempotency key was used for a different acceptance" }), false);
   assert.equal(isKeyReuseRefusal({ error: "quote: this idempotency key was used for a different acceptance" }), false);
 });
+
+test("the preview flag is read only when the core sets it", () => {
+  const base = JSON.parse(JSON.stringify(FULL_VIEW));
+  assert.equal(validateQuoteView(base).preview, false, "a customer's own view carries no preview flag");
+  assert.equal(validateQuoteView({ ...base, preview: true }).preview, true);
+  assert.equal(validateQuoteView({ ...base, preview: "yes" }).preview, false, "only a true boolean counts");
+});
