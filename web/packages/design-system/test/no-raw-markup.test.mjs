@@ -314,11 +314,17 @@ test('the walk finds this package and names the workspace packages it must also 
   // covers beyond this package, so an empty list is a stated fact, not a
   // silence. The Counter Till app is the workspace's first dependent
   // (web/apps/counter-till): its sources are scanned by the gates below. The
-  // Public Desk app (web/apps/public-desk) is the second: the customer's
-  // quote page on a share link token, scanned by the same gates.
+  // Public Desk app (web/apps/public-desk) and the Quote Desk app
+  // (web/apps/quote-desk) follow: the customer's quote page on a share link
+  // token, and the staff quote work area and list, scanned by the same
+  // gates. The sort keeps the lock order stable as dependents join.
   assert.deepEqual(
-    dependentPackages().map((d) => d.name),
-    ['@hardscapehouse/counter-till', '@hardscapehouse/public-desk'],
+    dependentPackages().map((d) => d.name).sort(),
+    [
+      '@hardscapehouse/counter-till',
+      '@hardscapehouse/public-desk',
+      '@hardscapehouse/quote-desk',
+    ],
     'a package now depends on @hardscapehouse/design-system; its sources are scanned below, and this lock must name it deliberately',
   );
 });
