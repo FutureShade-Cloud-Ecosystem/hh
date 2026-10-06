@@ -136,6 +136,10 @@ func (p *spyProcessor) Refund(context.Context, map[string]string, string, string
 	return RefundResult{}, ErrNotImplemented
 }
 
+func (p *spyProcessor) Void(context.Context, map[string]string, string, string, int64) (RefundResult, error) {
+	return RefundResult{}, ErrNotImplemented
+}
+
 func validInput() ChargeInput {
 	return ChargeInput{AmountCents: 12500, PaymentToken: "tok_runtest_4242", IdempotencyKey: "client-uuid", CardType: "CREDIT"}
 }
@@ -731,6 +735,10 @@ func (p *spyRefunder) Refund(_ context.Context, creds map[string]string, mid, re
 		creds["api_key"] = p.mutateKey
 	}
 	return p.res, nil
+}
+
+func (p *spyRefunder) Void(context.Context, map[string]string, string, string, int64) (RefundResult, error) {
+	return RefundResult{}, ErrNotImplemented
 }
 
 // The tx refund resolves the config ON the caller's transaction, exactly

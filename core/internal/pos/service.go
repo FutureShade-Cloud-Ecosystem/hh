@@ -2,6 +2,7 @@ package pos
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // -- injected sibling seams (all interfaces so tests fake them) --------------
@@ -37,6 +39,15 @@ type LineResolver interface {
 type TenderTaker interface {
 	TakeTender(ctx context.Context, tx pgx.Tx, in till.TenderInput) (till.TenderResult, error)
 	RefundTender(ctx context.Context, tx pgx.Tx, in till.RefundInput) (till.RefundResult, error)
+	// CaptureCard captures ONE card leg on the pool, before the sale transaction opens (the card
+	// charge design 3.3): the till re-checks its session rules, then the rail claims the leg,
+	// dispatches and stamps, all committed. pos's capture loop calls this per CARD leg, in seq
+	// order; the typed answers are the till's (ErrCardDeclined and its siblings), and a
+	// CardCaptureCaptured answer is the only one the transaction may bind.
+	CaptureCard(ctx context.Context, in till.CardChargeInput) (till.CardCapture, error)
+	// CompensateCard reverses ONE captured leg of a failed ring, on the pool, after the sale
+	// transaction returned (the design's step 6). pos calls it for every leg the ring captured.
+	CompensateCard(ctx context.Context, attemptID string) (till.CardCompensation, error)
 	// RecordPaymentReceived is the Q-044 post-commit hook: the till writes the PAYMENT_RECEIVED business
 	// record AFTER the caller's money tx commits (never mid-tx, a rollback would orphan the row and a
 	// retry would duplicate it). Exactly-once: a replayed tender carries Inserted=false and records nothing.
@@ -669,329 +680,378 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 	}
 
 	actor := identity.StaffUserIDFromContext(ctx)
+
+	// 5c. The card capture loop (the card charge design 3.3): every CARD leg of the ring is
+	//     captured OUTSIDE the sale transaction, in seq order, before it opens. The claim, the
+	//     dispatch and the stamp are all committed on the pool by the till, so once a card is
+	//     captured the transaction below can only fail on a fault, never on a client-correctable
+	//     refusal (every one of those already ran above, and the ErrNoOpenTill check moved here
+	//     ahead of the first capture). The transaction's CARD branch only BINDS what this loop
+	//     captured; any failure after a capture is compensated and answered in words.
+	//
+	//     A leg that ends anything but CAPTURED stops the DISPATCHING: the remaining legs are
+	//     read read-only (their rows, when a failed ring left any, answer from themselves; a leg
+	//     with no row is never charged for a dead ring), the strongest answer wins, the legs this
+	//     request captured are compensated, and the ring answers 402 for a decline, 409
+	//     card_charge_needs_manager for an unknown, 503 sale_failed_card_reversed when every
+	//     captured leg reached VOIDED.
+	if len(captures) > 0 && in.TillSessionID == "" {
+		return Sale{}, ErrNoOpenTill{}
+	}
+	ring, err := s.captureCardLegs(ctx, in, captures, customerID, actor)
+	if err != nil {
+		return Sale{}, err
+	}
+	if ring.replay != nil {
+		return *ring.replay, nil
+	}
+	if ring.failed() {
+		return s.settleFailedCardRing(ctx, ring)
+	}
+
 	var out Sale
 	// tenderResults holds one entry per CAPTURED leg, out of the tx so the Q-044 PAYMENT_RECEIVED
 	// records can be written POST-COMMIT (a rollback must leave no receipt record; a replay carries
 	// Inserted=false). A single-tender sale puts exactly one entry here, as before.
 	var tenderResults []till.TenderResult
 
-	// 6-12. One atomic tx: order → tender → invoice → allocate → POS facets → events → commit.
-	err = s.store.RunInTx(ctx, func(tx pgx.Tx) error {
-		meta := map[string]any{
-			"sale_type":       saleType,
-			"cash_sale":       in.CashSale,
-			"tax_reason_code": taxReason,
-			"notes":           in.Notes,
-		}
-		if codSale {
-			// Cash on DEMAND: printable/emailable immediately (the FINALIZED invoice below carries the
-			// number customers pay against) but LOCKED from fulfilment until paid, no stock moves at
-			// ring; the later payment/release flow (stubbed at W7) issues the stock.
-			meta["cod"] = true
-			meta["cod_posture"] = "AWAITING_PAYMENT"
-		}
-		if in.CashTenderedCents > 0 {
-			// DIB-488 rev 6 (item F): the tendered amount is a display fact of THIS ring (change due
-			// derives from it), parked in the order metadata so a replay answers verbatim; the money
-			// itself is unchanged (the till captures exactly the total, as always).
-			meta["cash_tendered_cents"] = in.CashTenderedCents
-		}
-		orderID, orderNo, err := s.store.InsertOrder(ctx, tx, orderRow{
-			CustomerID:    customerID,
-			BranchID:      in.BranchID,
-			Status:        "CONFIRMED",
-			Fulfillment:   fulfillmentFor(saleType, in.Fulfilment),
-			RequestedDate: in.RequestedDate,
-			SubtotalCents: subtotal,
-			TaxCents:      tax,
-			TotalCents:    total,
-			CreatedBy:     actor,
-			Metadata:      meta,
-			POJobRef:      poJobRef,         // DIB-488 rev 6 (0168)
-			SalespersonID: in.SalespersonID, // DIB-488 rev 6 (0168)
-			JobAddress:    jobAddress,       // DIB-488 rev 8 (0170)
-			JobReference:  jobReference,     // DIB-488 rev 8 (0170)
-		})
-		if err != nil {
-			return err
-		}
-		lineIDs, err := s.store.InsertOrderLines(ctx, tx, orderID, lines)
-		if err != nil {
-			return err
-		}
-
-		// Stock decrement + COGS trigger, COLLECT_NOW only (DX-01 PARTIAL: COLLECT_LATER/DELIVERED record
-		// zero moves and surface on pending-fulfilment; COD is LOCKED from fulfilment until paid, so it
-		// never matches here, stock issues on the later payment/release, not at ring). The stock decrement
-		// runs in THIS tx (default NoopStock → no moves at scaffold); the order.fulfilled event (frozen
-		// payload {order_id, branch_id, lines: [{product_id, qty_base}]}) posts COGS through the GL
-		// consumer, dormant at scaffold because the swapped inventory CostBasis returns found=false, so no
-		// COGS leg posts and the event is acked quietly.
-		if saleType == SaleCollectNow {
-			stockLines := make([]StockLine, len(lines))
-			fulfilledLines := make([]map[string]any, len(lines))
-			for i, l := range lines {
-				stockLines[i] = StockLine{ProductID: l.ProductID, QtyBase: l.QtyBase}
-				fulfilledLines[i] = map[string]any{"product_id": l.ProductID, "qty_base": l.QtyBase}
+	// 6-12. One atomic tx: order → tender → invoice → allocate → POS facets → events → commit,
+	//       with the bounded rerun on a serialization fault (the design's step 5): the captures
+	//       are unbound, so a rerun binds them, with no void and no second charge.
+	runSaleTx := func() error {
+		return s.store.RunInTx(ctx, func(tx pgx.Tx) error {
+			meta := map[string]any{
+				"sale_type":       saleType,
+				"cash_sale":       in.CashSale,
+				"tax_reason_code": taxReason,
+				"notes":           in.Notes,
 			}
-			if err := s.stockDec().DecrementForSaleTx(ctx, tx, StockDecrementInput{
-				OrderID: orderID, BranchID: in.BranchID, SaleType: saleType, Lines: stockLines,
-			}); err != nil {
-				return err
+			if codSale {
+				// Cash on DEMAND: printable/emailable immediately (the FINALIZED invoice below carries the
+				// number customers pay against) but LOCKED from fulfilment until paid, no stock moves at
+				// ring; the later payment/release flow (stubbed at W7) issues the stock.
+				meta["cod"] = true
+				meta["cod_posture"] = "AWAITING_PAYMENT"
 			}
-			if err := s.store.EmitEvent(ctx, tx, "order.fulfilled", map[string]any{
-				"order_id": orderID, "branch_id": in.BranchID, "lines": fulfilledLines,
-			}); err != nil {
-				return err
+			if in.CashTenderedCents > 0 {
+				// DIB-488 rev 6 (item F): the tendered amount is a display fact of THIS ring (change due
+				// derives from it), parked in the order metadata so a replay answers verbatim; the money
+				// itself is unchanged (the till captures exactly the total, as always).
+				meta["cash_tendered_cents"] = in.CashTenderedCents
 			}
-		}
-
-		// Capture-before-fulfil: take the tender BEFORE the invoice/allocation so a declined card rolls
-		// the whole tx back (no order, no paid invoice). A-03 writes the SINGLE payments row in THIS tx.
-		// An unpaid-at-ring sale with a DEPOSIT captures the deposit through the same seam, the till
-		// stays the sole payments writer and a declined deposit card rolls the whole sale back too.
-		var paymentID, gatewayRef string
-		// Every capture leg runs through the SAME till seam, inside THIS tx. A split therefore writes N
-		// ordinary payments rows and N ordinary drawer movements, the till, the GL and the drawer close
-		// see nothing exotic, only several tenders that happen to belong to one order. Each leg carries
-		// its OWN derived idempotency key (payments.idempotency_key is UNIQUE, so reusing the sale's key
-		// would silently collapse legs 2..n onto leg 1's row and leave the drawer short).
-		if len(captures) > 0 && in.TillSessionID == "" {
-			return ErrNoOpenTill{}
-		}
-		tenderResults = tenderResults[:0]
-		for i := range captures {
-			c := &captures[i]
-			res, err := s.tender.TakeTender(ctx, tx, till.TenderInput{
-				TillSessionID:  in.TillSessionID,
-				Method:         c.Method,
-				AmountCents:    c.AmountCents,
-				CustomerID:     customerID,
-				PaymentToken:   c.PaymentToken,
-				CardType:       c.CardType,
-				SignatureRef:   in.SignatureRef,
-				IdempotencyKey: c.IdemKey,
-				Offline:        in.Offline,
+			orderID, orderNo, err := s.store.InsertOrder(ctx, tx, orderRow{
+				CustomerID:    customerID,
+				BranchID:      in.BranchID,
+				Status:        "CONFIRMED",
+				Fulfillment:   fulfillmentFor(saleType, in.Fulfilment),
+				RequestedDate: in.RequestedDate,
+				SubtotalCents: subtotal,
+				TaxCents:      tax,
+				TotalCents:    total,
+				CreatedBy:     actor,
+				Metadata:      meta,
+				POJobRef:      poJobRef,         // DIB-488 rev 6 (0168)
+				SalespersonID: in.SalespersonID, // DIB-488 rev 6 (0168)
+				JobAddress:    jobAddress,       // DIB-488 rev 8 (0170)
+				JobReference:  jobReference,     // DIB-488 rev 8 (0170)
 			})
 			if err != nil {
-				// Only a REAL gateway decline reads as "card declined" to the cashier. Any other till
-				// failure (session not open, branch access, conflict) surfaces with its own message -
-				// mislabeling them as declines sent cashiers chasing the card when the drawer was the
-				// problem. Wrapped into pos's client-error type so the handler maps it (409, not 500).
-				// A failing leg rolls the WHOLE tx back, so a declined card on leg 2 does not leave
-				// leg 1's cash sitting against an order that was never committed.
-				if c.Method == TenderCard && till.IsCardDeclined(err) {
-					return errCardDeclined
-				}
-				return clientErr(http.StatusConflict, "%s", err.Error())
-			}
-			// The till is the SOLE payments-row writer; its result is the single source of truth for both
-			// the response field and the payment.received event (CARD carries the gateway_ref; cash/cheque
-			// have none → empty, which is correct for them).
-			c.PaymentID = res.PaymentID
-			c.GatewayRef = res.GatewayRef
-			tenderResults = append(tenderResults, res)
-		}
-		// pos_sale's scalar payment_id/gateway_ref keep pointing at the PRIMARY leg (the one whose
-		// method landed in pos_sale.tender), so single-tender readers are unchanged and split readers
-		// get a payment that really is the largest slice of the sale.
-		for _, c := range captures {
-			if c.Method == tender {
-				paymentID, gatewayRef = c.PaymentID, c.GatewayRef
-				break
-			}
-		}
-
-		// Invoice: PAID for a tendered sale; for the unpaid-at-ring postures the invoice FINALIZES now
-		// (COD customers need the invoice number to pay against), PARTIALLY_PAID when a deposit landed.
-		// COD is due on demand (today); ACCOUNT runs on the customer's terms.
-		// Keyed off the MONEY (capturedCents), not the posture, so the split-with-an-ACCOUNT-leg case
-		// lands on PARTIALLY_PAID with the account remainder as its balance, the same place a deposit
-		// lands, because it is the same fact.
-		invStatus := "PAID"
-		balance := int64(0)
-		dueDate := s.now().Format("2006-01-02")
-		if !fullyPaid {
-			invStatus = "FINALIZED"
-			balance = total - capturedCents
-			if capturedCents > 0 {
-				invStatus = "PARTIALLY_PAID"
-			}
-			if !codSale {
-				dueDate = s.now().AddDate(0, 0, cust.PaymentTermsDays).Format("2006-01-02")
-			}
-		}
-		invoiceID, invoiceNo, err := s.store.InsertInvoice(ctx, tx, invoiceRow{
-			CustomerID:    customerID,
-			OrderID:       orderID,
-			BranchID:      in.BranchID,
-			Status:        invStatus,
-			DueDate:       dueDate,
-			SubtotalCents: subtotal,
-			TaxCents:      tax,
-			TotalCents:    total,
-			BalanceCents:  balance,
-			CreatedBy:     actor,
-		})
-		if err != nil {
-			return err
-		}
-		if err := s.store.InsertInvoiceLines(ctx, tx, invoiceID, lineIDs, lines); err != nil {
-			return err
-		}
-
-		// Allocate + AR, driven by the capture list. The actor is stamped as allocated_by on every
-		// allocation (Q-044). `running` is the customer's balance as each row lands, so the subledger
-		// reads as a true running total rather than a set of independently-computed snapshots.
-		//
-		// A fully-captured sale never touches AR: the invoice books PAID, so the running balance is
-		// unchanged and only PAYMENT rows are written (identical to the single-tender behavior this
-		// generalizes). An uncaptured remainder books the INVOICE first, then each capture nets it
-		// down, landing at open + (total − captured), which is exactly the invoice's own balance.
-		running := cust.OpenBalanceCents
-		if !fullyPaid {
-			running += total
-			if err := s.store.InsertCustomerTxn(ctx, tx, customerTxnRow{
-				CustomerID: customerID, TxnType: "INVOICE", AmountCents: total,
-				BalanceAfter: running, SourceType: "invoice", SourceRefID: invoiceID, BranchID: in.BranchID,
-			}); err != nil {
 				return err
 			}
-		}
-		for _, c := range captures {
+			lineIDs, err := s.store.InsertOrderLines(ctx, tx, orderID, lines)
+			if err != nil {
+				return err
+			}
+
+			// Stock decrement + COGS trigger, COLLECT_NOW only (DX-01 PARTIAL: COLLECT_LATER/DELIVERED record
+			// zero moves and surface on pending-fulfilment; COD is LOCKED from fulfilment until paid, so it
+			// never matches here, stock issues on the later payment/release, not at ring). The stock decrement
+			// runs in THIS tx (default NoopStock → no moves at scaffold); the order.fulfilled event (frozen
+			// payload {order_id, branch_id, lines: [{product_id, qty_base}]}) posts COGS through the GL
+			// consumer, dormant at scaffold because the swapped inventory CostBasis returns found=false, so no
+			// COGS leg posts and the event is acked quietly.
+			if saleType == SaleCollectNow {
+				stockLines := make([]StockLine, len(lines))
+				fulfilledLines := make([]map[string]any, len(lines))
+				for i, l := range lines {
+					stockLines[i] = StockLine{ProductID: l.ProductID, QtyBase: l.QtyBase}
+					fulfilledLines[i] = map[string]any{"product_id": l.ProductID, "qty_base": l.QtyBase}
+				}
+				if err := s.stockDec().DecrementForSaleTx(ctx, tx, StockDecrementInput{
+					OrderID: orderID, BranchID: in.BranchID, SaleType: saleType, Lines: stockLines,
+				}); err != nil {
+					return err
+				}
+				if err := s.store.EmitEvent(ctx, tx, "order.fulfilled", map[string]any{
+					"order_id": orderID, "branch_id": in.BranchID, "lines": fulfilledLines,
+				}); err != nil {
+					return err
+				}
+			}
+
+			// Capture-before-fulfil: take the tender BEFORE the invoice/allocation so the money row lands
+			// before the stock is issued. A-03 writes the SINGLE payments row in THIS tx. A CARD tender no
+			// longer charges here: the capture loop above took it on the pool before this transaction
+			// opened, and the till BINDS the attempt to the payments row this loop writes (the card charge
+			// design 3.3), so a rolled-back transaction leaves the capture for the compensator instead of
+			// orphaning a charge nobody recorded. An unpaid-at-ring sale with a DEPOSIT goes through the
+			// same two halves for its deposit leg.
+			var paymentID, gatewayRef string
+			// Every capture leg runs through the SAME till seam, inside THIS tx. A split therefore writes N
+			// ordinary payments rows and N ordinary drawer movements, the till, the GL and the drawer close
+			// see nothing exotic, only several tenders that happen to belong to one order. Each leg carries
+			// its OWN derived idempotency key (payments.idempotency_key is UNIQUE, so reusing the sale's key
+			// would silently collapse legs 2..n onto leg 1's row and leave the drawer short).
+			tenderResults = tenderResults[:0]
+			for i := range captures {
+				c := &captures[i]
+				res, err := s.tender.TakeTender(ctx, tx, till.TenderInput{
+					TillSessionID:  in.TillSessionID,
+					Method:         c.Method,
+					AmountCents:    c.AmountCents,
+					CustomerID:     customerID,
+					PaymentToken:   c.PaymentToken,
+					CardType:       c.CardType,
+					SignatureRef:   in.SignatureRef,
+					IdempotencyKey: c.IdemKey,
+					Offline:        in.Offline,
+					Capture:        till.CardCapture{AttemptID: c.AttemptID, ProcessorRef: c.GatewayRef},
+				})
+				if err != nil {
+					// A CARD failure here is a bind failure, not a decline: the capture loop already took
+					// the money, this transaction fails whole, and the compensation below decides the
+					// answer (the decline answers were all given before the transaction opened). Every
+					// other till failure (session not open, branch access, conflict) surfaces with its own
+					// message for the non-card tenders, wrapped into pos's client-error type so the handler
+					// maps it (409, not 500).
+					if c.Method == TenderCard {
+						return err
+					}
+					return clientErr(http.StatusConflict, "%s", err.Error())
+				}
+				// The till is the SOLE payments-row writer; its result is the single source of truth for both
+				// the response field and the payment.received event (CARD carries the gateway_ref; cash/cheque
+				// have none → empty, which is correct for them).
+				c.PaymentID = res.PaymentID
+				c.GatewayRef = res.GatewayRef
+				tenderResults = append(tenderResults, res)
+			}
+			// pos_sale's scalar payment_id/gateway_ref keep pointing at the PRIMARY leg (the one whose
+			// method landed in pos_sale.tender), so single-tender readers are unchanged and split readers
+			// get a payment that really is the largest slice of the sale.
+			for _, c := range captures {
+				if c.Method == tender {
+					paymentID, gatewayRef = c.PaymentID, c.GatewayRef
+					break
+				}
+			}
+
+			// Invoice: PAID for a tendered sale; for the unpaid-at-ring postures the invoice FINALIZES now
+			// (COD customers need the invoice number to pay against), PARTIALLY_PAID when a deposit landed.
+			// COD is due on demand (today); ACCOUNT runs on the customer's terms.
+			// Keyed off the MONEY (capturedCents), not the posture, so the split-with-an-ACCOUNT-leg case
+			// lands on PARTIALLY_PAID with the account remainder as its balance, the same place a deposit
+			// lands, because it is the same fact.
+			invStatus := "PAID"
+			balance := int64(0)
+			dueDate := s.now().Format("2006-01-02")
 			if !fullyPaid {
-				running -= c.AmountCents
+				invStatus = "FINALIZED"
+				balance = total - capturedCents
+				if capturedCents > 0 {
+					invStatus = "PARTIALLY_PAID"
+				}
+				if !codSale {
+					dueDate = s.now().AddDate(0, 0, cust.PaymentTermsDays).Format("2006-01-02")
+				}
 			}
-			if err := s.store.InsertPaymentAllocation(ctx, tx, c.PaymentID, invoiceID, c.AmountCents, actor); err != nil {
+			invoiceID, invoiceNo, err := s.store.InsertInvoice(ctx, tx, invoiceRow{
+				CustomerID:    customerID,
+				OrderID:       orderID,
+				BranchID:      in.BranchID,
+				Status:        invStatus,
+				DueDate:       dueDate,
+				SubtotalCents: subtotal,
+				TaxCents:      tax,
+				TotalCents:    total,
+				BalanceCents:  balance,
+				CreatedBy:     actor,
+			})
+			if err != nil {
 				return err
 			}
-			if err := s.store.InsertCustomerTxn(ctx, tx, customerTxnRow{
-				CustomerID: customerID, TxnType: "PAYMENT", AmountCents: c.AmountCents,
-				BalanceAfter: running, SourceType: "payment", SourceRefID: c.PaymentID, BranchID: in.BranchID,
+			if err := s.store.InsertInvoiceLines(ctx, tx, invoiceID, lineIDs, lines); err != nil {
+				return err
+			}
+
+			// Allocate + AR, driven by the capture list. The actor is stamped as allocated_by on every
+			// allocation (Q-044). `running` is the customer's balance as each row lands, so the subledger
+			// reads as a true running total rather than a set of independently-computed snapshots.
+			//
+			// A fully-captured sale never touches AR: the invoice books PAID, so the running balance is
+			// unchanged and only PAYMENT rows are written (identical to the single-tender behavior this
+			// generalizes). An uncaptured remainder books the INVOICE first, then each capture nets it
+			// down, landing at open + (total − captured), which is exactly the invoice's own balance.
+			running := cust.OpenBalanceCents
+			if !fullyPaid {
+				running += total
+				if err := s.store.InsertCustomerTxn(ctx, tx, customerTxnRow{
+					CustomerID: customerID, TxnType: "INVOICE", AmountCents: total,
+					BalanceAfter: running, SourceType: "invoice", SourceRefID: invoiceID, BranchID: in.BranchID,
+				}); err != nil {
+					return err
+				}
+			}
+			for _, c := range captures {
+				if !fullyPaid {
+					running -= c.AmountCents
+				}
+				if err := s.store.InsertPaymentAllocation(ctx, tx, c.PaymentID, invoiceID, c.AmountCents, actor); err != nil {
+					return err
+				}
+				if err := s.store.InsertCustomerTxn(ctx, tx, customerTxnRow{
+					CustomerID: customerID, TxnType: "PAYMENT", AmountCents: c.AmountCents,
+					BalanceAfter: running, SourceType: "payment", SourceRefID: c.PaymentID, BranchID: in.BranchID,
+				}); err != nil {
+					return err
+				}
+			}
+
+			// POS facets (idempotency record) + optional relief snapshot.
+			posSaleID, err := s.store.InsertPosSale(ctx, tx, posSaleRow{
+				IdempotencyKey: in.IdempotencyKey, OrderID: orderID, InvoiceID: invoiceID, PaymentID: paymentID,
+				BranchID: in.BranchID, TillSessionID: in.TillSessionID, SaleType: saleType, CashSale: in.CashSale,
+				Tender: tender, TaxReasonCode: taxReason, OfflineOrigin: in.Offline, CreatedBy: actor,
+				SplitTender: isSplit,
+			})
+			if err != nil {
+				return err
+			}
+			// DIB-165: the legs. Written AFTER pos_sale (they reference it) and inside this tx, so the
+			// deferred sum guard in 0100 fires at COMMIT with every leg present.
+			if isSplit {
+				rows := make([]saleTenderRow, 0, len(splitLegs))
+				bySeq := map[int]captureLeg{}
+				for _, c := range captures {
+					bySeq[c.Seq] = c
+				}
+				for _, l := range splitLegs {
+					r := saleTenderRow{Seq: l.Seq, Method: l.Method, AmountCents: l.AmountCents}
+					if c, ok := bySeq[l.Seq]; ok {
+						r.PaymentID, r.GatewayRef, r.TillSessionID = c.PaymentID, c.GatewayRef, in.TillSessionID
+					}
+					rows = append(rows, r)
+				}
+				if err := s.store.InsertSaleTenders(ctx, tx, posSaleID, rows); err != nil {
+					return err
+				}
+			}
+			if in.Relief != nil {
+				// The audit snapshot records the quote the ring bound, in the shape the tax package's W4
+				// recompute reads back: rate_bps the ASSESSED rate, full_hst_cents the STANDARD-rate HST on
+				// the subtotal (flatHST13, bit-identical to the engine's hstOn at 1300; the recompute's
+				// reconstructBase divides this column by the constant 1300, so it must never carry the
+				// assessed rate's tax), on_credit_cents the quote's ON credit, net_collected_cents the
+				// assessed tax the ring actually collected. At the standard rate this row is byte-identical
+				// to the old flat-constant write.
+				if _, err := s.store.InsertTaxSnapshot(ctx, tx, taxSnapshotRow{
+					OrderID: orderID, TaxReasonCode: taxReason, RuleVersion: ruleVersionW4, RateBps: quote.RateBps,
+					FullHSTCents: flatHST13(subtotal), OnCreditCents: quote.OnCreditCents,
+					NetCollectedCents: tax, Automated: false,
+					EvidenceDocID: in.Relief.EvidenceDocID,
+				}); err != nil {
+					return err
+				}
+			}
+
+			// Events (transactional outbox; carry no PII / no card data / no FN identifiers).
+			if err := s.store.EmitEvent(ctx, tx, "pos.sale.committed", map[string]any{
+				"order_id": orderID, "invoice_id": invoiceID, "payment_id": paymentID,
+				"tender": tender, "sale_type": saleType, "branch_id": in.BranchID, "total_cents": total,
 			}); err != nil {
 				return err
 			}
-		}
+			// The invoice ALWAYS finalizes for its full total, so buildInvoiceFinalized posts the accrual
+			// (DR 1100 AR / CR 4000 revenue / CR 2200 HST) off the invoice's own subtotal/tax facts. Each
+			// captured leg then settles its slice of that AR through payment.received (DR 1020 undeposited /
+			// CR 1100). A fully-captured counter sale therefore nets to DR 1020 / CR 4000 / CR 2200 with AR
+			// closing to zero; a split with an account leg leaves exactly the account leg in 1100, which is
+			// the receivable that genuinely exists. Same rules, same builders, no new posting_rules and no
+			// new topic, a split is N ordinary payment.received events, not a new kind of money.
+			if err := s.store.EmitEvent(ctx, tx, "ar.invoice.finalized", map[string]any{
+				"invoice_id": invoiceID, "customer_id": customerID, "total_cents": total, "due_date": dueDate,
+			}); err != nil {
+				return err
+			}
+			for _, c := range captures {
+				if err := s.store.EmitEvent(ctx, tx, "payment.received", map[string]any{
+					"payment_id": c.PaymentID, "order_id": orderID, "amount_cents": c.AmountCents,
+					"method": c.Method, "gateway_ref": c.GatewayRef,
+				}); err != nil {
+					return err
+				}
+			}
+			if in.Relief != nil {
+				if err := s.store.EmitEvent(ctx, tx, "tax.relief.assessed", map[string]any{
+					"order_id": orderID, "reason_code": taxReason, "automated": false,
+				}); err != nil {
+					return err
+				}
+			}
 
-		// POS facets (idempotency record) + optional relief snapshot.
-		posSaleID, err := s.store.InsertPosSale(ctx, tx, posSaleRow{
-			IdempotencyKey: in.IdempotencyKey, OrderID: orderID, InvoiceID: invoiceID, PaymentID: paymentID,
-			BranchID: in.BranchID, TillSessionID: in.TillSessionID, SaleType: saleType, CashSale: in.CashSale,
-			Tender: tender, TaxReasonCode: taxReason, OfflineOrigin: in.Offline, CreatedBy: actor,
-			SplitTender: isSplit,
+			out = Sale{
+				OrderID: orderID, OrderNo: orderNo, InvoiceID: invoiceID, InvoiceNo: invoiceNo,
+				PaymentID: paymentID, GatewayRef: gatewayRef, Tender: tender, SaleType: saleType,
+				SubtotalCents: subtotal, TaxCents: tax, TotalCents: total, DepositCents: deposit,
+				TaxReasonCode: taxReason, Status: "COMMITTED", SplitTender: isSplit,
+				// DIB-488 rev 6: the item-D facts echoed back; item-F change due for the sold panel.
+				POJobRef: poJobRef, SalespersonID: in.SalespersonID, SalespersonName: salespersonName,
+				CashTenderedCents: in.CashTenderedCents,
+				// DIB-488 rev 8 (item 11): the job facts echoed back for the sold panel.
+				JobAddress: jobAddress, JobReference: jobReference,
+			}
+			if in.CashTenderedCents > 0 {
+				out.ChangeDueCents = in.CashTenderedCents - total
+			}
+			if isSplit {
+				bySeq := map[int]captureLeg{}
+				for _, c := range captures {
+					bySeq[c.Seq] = c
+				}
+				for _, l := range splitLegs {
+					r := TenderLegResult{Seq: l.Seq, Method: l.Method, AmountCents: l.AmountCents}
+					if c, ok := bySeq[l.Seq]; ok {
+						r.PaymentID, r.GatewayRef = c.PaymentID, c.GatewayRef
+					}
+					out.Tenders = append(out.Tenders, r)
+				}
+			}
+			return nil
 		})
-		if err != nil {
-			return err
+	}
+	txErr := runSaleTx()
+	for rerun := 0; txErr != nil && rerun < saleTxSerializationReruns && isSerializationFault(txErr); rerun++ {
+		// The transient fault (the design's step 5): the captures are unbound, so the rerun binds
+		// them on a fresh transaction, with no void and no second charge.
+		txErr = runSaleTx()
+	}
+	if txErr != nil {
+		if len(ring.captured) > 0 {
+			// A fault after the captures: compensate and answer in words, never the bare 500 a
+			// rolled-back card ring used to answer (the design's step 6).
+			ring.rank = cardRankReversed
+			return s.settleFailedCardRing(ctx, ring)
 		}
-		// DIB-165: the legs. Written AFTER pos_sale (they reference it) and inside this tx, so the
-		// deferred sum guard in 0100 fires at COMMIT with every leg present.
-		if isSplit {
-			rows := make([]saleTenderRow, 0, len(splitLegs))
-			bySeq := map[int]captureLeg{}
-			for _, c := range captures {
-				bySeq[c.Seq] = c
-			}
-			for _, l := range splitLegs {
-				r := saleTenderRow{Seq: l.Seq, Method: l.Method, AmountCents: l.AmountCents}
-				if c, ok := bySeq[l.Seq]; ok {
-					r.PaymentID, r.GatewayRef, r.TillSessionID = c.PaymentID, c.GatewayRef, in.TillSessionID
-				}
-				rows = append(rows, r)
-			}
-			if err := s.store.InsertSaleTenders(ctx, tx, posSaleID, rows); err != nil {
-				return err
-			}
-		}
-		if in.Relief != nil {
-			// The audit snapshot records the quote the ring bound, in the shape the tax package's W4
-			// recompute reads back: rate_bps the ASSESSED rate, full_hst_cents the STANDARD-rate HST on
-			// the subtotal (flatHST13, bit-identical to the engine's hstOn at 1300; the recompute's
-			// reconstructBase divides this column by the constant 1300, so it must never carry the
-			// assessed rate's tax), on_credit_cents the quote's ON credit, net_collected_cents the
-			// assessed tax the ring actually collected. At the standard rate this row is byte-identical
-			// to the old flat-constant write.
-			if _, err := s.store.InsertTaxSnapshot(ctx, tx, taxSnapshotRow{
-				OrderID: orderID, TaxReasonCode: taxReason, RuleVersion: ruleVersionW4, RateBps: quote.RateBps,
-				FullHSTCents: flatHST13(subtotal), OnCreditCents: quote.OnCreditCents,
-				NetCollectedCents: tax, Automated: false,
-				EvidenceDocID: in.Relief.EvidenceDocID,
-			}); err != nil {
-				return err
-			}
-		}
-
-		// Events (transactional outbox; carry no PII / no card data / no FN identifiers).
-		if err := s.store.EmitEvent(ctx, tx, "pos.sale.committed", map[string]any{
-			"order_id": orderID, "invoice_id": invoiceID, "payment_id": paymentID,
-			"tender": tender, "sale_type": saleType, "branch_id": in.BranchID, "total_cents": total,
-		}); err != nil {
-			return err
-		}
-		// The invoice ALWAYS finalizes for its full total, so buildInvoiceFinalized posts the accrual
-		// (DR 1100 AR / CR 4000 revenue / CR 2200 HST) off the invoice's own subtotal/tax facts. Each
-		// captured leg then settles its slice of that AR through payment.received (DR 1020 undeposited /
-		// CR 1100). A fully-captured counter sale therefore nets to DR 1020 / CR 4000 / CR 2200 with AR
-		// closing to zero; a split with an account leg leaves exactly the account leg in 1100, which is
-		// the receivable that genuinely exists. Same rules, same builders, no new posting_rules and no
-		// new topic, a split is N ordinary payment.received events, not a new kind of money.
-		if err := s.store.EmitEvent(ctx, tx, "ar.invoice.finalized", map[string]any{
-			"invoice_id": invoiceID, "customer_id": customerID, "total_cents": total, "due_date": dueDate,
-		}); err != nil {
-			return err
-		}
-		for _, c := range captures {
-			if err := s.store.EmitEvent(ctx, tx, "payment.received", map[string]any{
-				"payment_id": c.PaymentID, "order_id": orderID, "amount_cents": c.AmountCents,
-				"method": c.Method, "gateway_ref": c.GatewayRef,
-			}); err != nil {
-				return err
-			}
-		}
-		if in.Relief != nil {
-			if err := s.store.EmitEvent(ctx, tx, "tax.relief.assessed", map[string]any{
-				"order_id": orderID, "reason_code": taxReason, "automated": false,
-			}); err != nil {
-				return err
-			}
-		}
-
-		out = Sale{
-			OrderID: orderID, OrderNo: orderNo, InvoiceID: invoiceID, InvoiceNo: invoiceNo,
-			PaymentID: paymentID, GatewayRef: gatewayRef, Tender: tender, SaleType: saleType,
-			SubtotalCents: subtotal, TaxCents: tax, TotalCents: total, DepositCents: deposit,
-			TaxReasonCode: taxReason, Status: "COMMITTED", SplitTender: isSplit,
-			// DIB-488 rev 6: the item-D facts echoed back; item-F change due for the sold panel.
-			POJobRef: poJobRef, SalespersonID: in.SalespersonID, SalespersonName: salespersonName,
-			CashTenderedCents: in.CashTenderedCents,
-			// DIB-488 rev 8 (item 11): the job facts echoed back for the sold panel.
-			JobAddress: jobAddress, JobReference: jobReference,
-		}
-		if in.CashTenderedCents > 0 {
-			out.ChangeDueCents = in.CashTenderedCents - total
-		}
-		if isSplit {
-			bySeq := map[int]captureLeg{}
-			for _, c := range captures {
-				bySeq[c.Seq] = c
-			}
-			for _, l := range splitLegs {
-				r := TenderLegResult{Seq: l.Seq, Method: l.Method, AmountCents: l.AmountCents}
-				if c, ok := bySeq[l.Seq]; ok {
-					r.PaymentID, r.GatewayRef = c.PaymentID, c.GatewayRef
-				}
-				out.Tenders = append(out.Tenders, r)
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return Sale{}, err
+		return Sale{}, txErr
 	}
 
 	// Audit the completed sale post-commit (the Recorder owns the audit_log table; zero-trust).
 	// DIB-488 rev 6 (item D): the PO / job reference and the credited salesperson ride the SAME
-	// record's Extra, the order's audit/activity trail carries who sold it and against what
-	// reference, per the existing Extra idiom (ActPaymentAllocated below). Absent when unused.
+	// record's Extra, the order's audit/activity trail carries the salesperson's ID and the
+	// reference it was sold against, per the existing Extra idiom (ActPaymentAllocated below).
+	// Absent when unused. The trail keeps ids and references only: salesperson_name and
+	// job_address are set here but dropped at the audit chokepoint, a name is read from the id
+	// when shown.
 	var saleExtra map[string]any
 	if poJobRef != "" || in.SalespersonID != "" || jobAddress != "" || jobReference != "" {
 		saleExtra = map[string]any{}
@@ -1057,6 +1117,220 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 		}
 	}
 	return out, nil
+}
+
+// -- the card capture loop, its ring and its compensation (the card charge design 3.3 to 3.7) --
+
+// saleTxSerializationReruns bounds the ring's rerun of the sale transaction on a serialization
+// fault (SQLSTATE 40P01, deadlock_detected, or 40001, serialization_failure): a small fixed
+// number of fresh transactions with the same captures, the original error returned once they are
+// spent (the design's step 5).
+const saleTxSerializationReruns = 2
+
+// The from-row answer ranks: the strongest answer a failed ring gives. A manager item outranks a
+// decline (money may be held), a decline outranks a reversal (the cashier can act on the decline
+// wording), and a clean reversal of every captured leg is the 503 that tells the client to clear
+// its key and ring again.
+const (
+	cardRankNone = iota
+	cardRankReversed
+	cardRankDeclined
+	cardRankManager
+)
+
+// cardRing is the capture loop's outcome for one ring: the legs THIS request captured (unbound
+// until the sale transaction binds them), the strongest from-row answer it met, and, when a leg
+// already belonged to a committed sale, that sale to answer verbatim.
+type cardRing struct {
+	saleKey       string
+	captured      []captureLeg
+	replay        *Sale
+	rank          int
+	managerRefs   []string
+	notDispatched error
+}
+
+// failed reports whether the ring met an answer that stops it reaching the transaction.
+func (r *cardRing) failed() bool { return r.rank > cardRankNone || r.notDispatched != nil }
+
+// shortAttemptRef names an attempt the way a manager reads it: the head of its id.
+func shortAttemptRef(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
+}
+
+// captureCardLegs is the pre-transaction capture loop (the card charge design 3.3): every CARD
+// leg, in seq order, is captured on the pool by the till, and the loop stops dispatching at the
+// first leg that ends anything but CAPTURED. The legs after it are read read-only: their rows,
+// when a failed ring left any, answer from themselves so the strongest answer wins (a same-key
+// retry of a split decline answers the decline, not the reversal of the leg before it), and a leg
+// with no row is never charged for a dead ring. No transaction is held anywhere on this path, so
+// no statement here can wait on a connection a caller holds (decision log row 786).
+func (s *Service) captureCardLegs(ctx context.Context, in SaleInput, captures []captureLeg, customerID, actor string) (*cardRing, error) {
+	ring := &cardRing{saleKey: in.IdempotencyKey}
+	readOnly := false
+	for i := range captures {
+		c := &captures[i]
+		if c.Method != TenderCard {
+			continue
+		}
+		res, err := s.tender.CaptureCard(ctx, till.CardChargeInput{
+			TillSessionID: in.TillSessionID,
+			BranchID:      in.BranchID,
+			CustomerID:    customerID,
+			AmountCents:   c.AmountCents,
+			LegKey:        c.IdemKey,
+			SaleKey:       in.IdempotencyKey,
+			LegSeq:        c.Seq,
+			AccountToken:  c.PaymentToken,
+			CardType:      c.CardType,
+			CreatedBy:     actor,
+			ReadOnly:      readOnly,
+		})
+		if err == nil {
+			switch res.Kind {
+			case till.CardCaptureCaptured:
+				c.AttemptID, c.GatewayRef = res.AttemptID, res.ProcessorRef
+				ring.captured = append(ring.captured, *c)
+				continue
+			case till.CardCaptureBound:
+				// The leg already belongs to a committed sale (normally the pool precheck above
+				// answered first; this is the race it can lose). Answer that sale, verbatim.
+				if sale, found, ferr := s.store.FindSaleByKey(ctx, in.IdempotencyKey); ferr == nil && found {
+					sale.Replayed = true
+					ring.replay = &sale
+					return ring, nil
+				}
+				// BOUND with no sale behind it: a person has to look.
+				ring.rank = cardRankManager
+				ring.managerRefs = append(ring.managerRefs, shortAttemptRef(res.AttemptID))
+			default:
+				// An unclassified capture kind is an unknown outcome (the design's 3.5): when
+				// this ring already holds captures their money may be held with no sale, so
+				// the ring ranks manager and returns for settlement, and the compensator
+				// reverses what it holds. A ring that captured nothing keeps the raw word.
+				if len(ring.captured) == 0 {
+					return nil, clientErr(http.StatusInternalServerError, "pos: the card rail answered an unknown capture kind %q", res.Kind)
+				}
+				ring.rank = cardRankManager
+				if res.AttemptID != "" {
+					ring.managerRefs = append(ring.managerRefs, shortAttemptRef(res.AttemptID))
+				}
+				return ring, nil
+			}
+			readOnly = true
+			continue
+		}
+		ref := shortAttemptRef(res.AttemptID)
+		switch {
+		case errors.Is(err, till.ErrCardLegUnattempted):
+			// A read-only pass over a leg no earlier ring reached: nothing to rank, nothing to
+			// charge, the loop simply moves on.
+			continue
+		case errors.Is(err, till.ErrCardInFlight):
+			if len(ring.captured) == 0 {
+				// The concurrent double submit's loser (the design's 3.7): another request owns the
+				// leg, this ring took no money, and the answer is immediate with nothing to
+				// compensate.
+				return nil, ErrCardChargeInFlight
+			}
+			// A later leg in flight behind earlier captures cannot arise through this sale key's
+			// own legs (a competitor that owns leg N owns leg 1 too, and this ring would have
+			// answered in flight there). If it ever does, the money this ring holds goes to a
+			// person, not to a void.
+			ring.rank = cardRankManager
+			ring.managerRefs = append(ring.managerRefs, ref)
+		case errors.Is(err, till.ErrCardDeclined):
+			if ring.rank < cardRankDeclined {
+				ring.rank = cardRankDeclined
+			}
+		case errors.Is(err, till.ErrCardNeedsManager):
+			ring.rank = cardRankManager
+			ring.managerRefs = append(ring.managerRefs, ref)
+		case errors.Is(err, till.ErrCardReversed), errors.Is(err, till.ErrCardResolved):
+			if ring.rank < cardRankReversed {
+				ring.rank = cardRankReversed
+			}
+		case errors.Is(err, till.ErrCardUnresolvedOnTill):
+			if len(ring.captured) == 0 {
+				return nil, ErrCardChargeUnresolvedOnTill
+			}
+			// The guard refused a later leg while this ring holds earlier captures: the guard's
+			// word would tell the cashier to re-ring, and the captures must go to a person first.
+			ring.rank = cardRankManager
+			ring.managerRefs = append(ring.managerRefs, ref)
+		case errors.Is(err, till.ErrCardNotDispatched):
+			if ring.notDispatched == nil {
+				ring.notDispatched = err
+			}
+		default:
+			// An error nobody classified is an unknown outcome (the design's 3.5): when this
+			// ring already holds captures their money may be held with no sale, so the ring
+			// ranks manager and returns for settlement, and the compensator reverses what it
+			// holds. A ring that captured nothing keeps the raw error.
+			if len(ring.captured) == 0 {
+				return nil, err
+			}
+			ring.rank = cardRankManager
+			if ref != "" {
+				ring.managerRefs = append(ring.managerRefs, ref)
+			}
+			return ring, nil
+		}
+		readOnly = true
+	}
+	return ring, nil
+}
+
+// settleFailedCardRing compensates every leg this request captured and shapes the ring's answer
+// (the card charge design 3.3 step 6): the compensator runs on the pool, after the ring gave up,
+// and the answer is 503 sale_failed_card_reversed when every captured leg reached VOIDED, 409
+// card_charge_needs_manager when any leg reached a state a person has to close (or the
+// compensation itself could not tell), the capture loop's own ranked answer when the ring failed
+// before the transaction (402 for a decline, 409 for an unknown), and the committed sale itself
+// when a compensation finds the commit landed after all (the lost acknowledgement).
+func (s *Service) settleFailedCardRing(ctx context.Context, ring *cardRing) (Sale, error) {
+	for i := range ring.captured {
+		comp, err := s.tender.CompensateCard(ctx, ring.captured[i].AttemptID)
+		if err != nil {
+			// The compensation could not even be attempted: the attempt stays CAPTURED for the
+			// sweep, and a person is told now.
+			ring.managerRefs = append(ring.managerRefs, shortAttemptRef(ring.captured[i].AttemptID))
+			continue
+		}
+		switch comp.Kind {
+		case till.CardCompCommitted:
+			if sale, found, ferr := s.store.FindSaleByKey(ctx, ring.saleKey); ferr == nil && found {
+				sale.Replayed = true
+				return sale, nil
+			}
+			ring.managerRefs = append(ring.managerRefs, shortAttemptRef(comp.AttemptID))
+		case till.CardCompNeedsManager:
+			ring.managerRefs = append(ring.managerRefs, shortAttemptRef(comp.AttemptID))
+		}
+	}
+	if len(ring.managerRefs) > 0 {
+		return Sale{}, ErrCardChargeNeedsManager{Refs: ring.managerRefs}
+	}
+	switch {
+	case ring.notDispatched != nil:
+		return Sale{}, clientErr(http.StatusServiceUnavailable, "pos: the card charge was not dispatched: %s", ring.notDispatched.Error())
+	case ring.rank >= cardRankManager:
+		return Sale{}, ErrCardChargeNeedsManager{}
+	case ring.rank == cardRankDeclined:
+		return Sale{}, ErrCardChargeCardDeclined
+	}
+	return Sale{}, ErrSaleFailedCardReversed
+}
+
+// isSerializationFault reports a transaction error Postgres answers with SQLSTATE 40P01
+// (deadlock_detected) or 40001 (serialization_failure): the two transient faults the ring reruns
+// on a fresh transaction.
+func isSerializationFault(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && (pgErr.Code == "40P01" || pgErr.Code == "40001")
 }
 
 // GetSale returns a committed sale for an operator reopen (US-A19-09). The read carries NO FN-evidence

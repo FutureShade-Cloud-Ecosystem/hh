@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 )
 
 // SaleType mirrors the counter sale fulfilment mode (D-A19-1). COD is the W7 exception: it is a PAYMENT
@@ -363,6 +364,44 @@ func (e ErrCreditBlocked) Error() string { return fmt.Sprintf("pos: credit block
 type ErrNoOpenTill struct{}
 
 func (ErrNoOpenTill) Error() string { return "pos: open a till session first" }
+
+// -- the card charge ring's typed answers (the card charge design 3.3 to 3.7) --
+//
+// A ring that took a card capture never answers a bare 500: the money moved, so the answer names
+// what became of it. The handler maps each of these to the design's word (503
+// sale_failed_card_reversed, 409 card_charge_needs_manager, card_charge_in_flight,
+// card_charge_unresolved_on_till, 402 card_charge_card_declined).
+
+// ErrSaleFailedCardReversed answers a ring whose sale transaction failed after the card was
+// captured and whose every captured leg was then reversed: no money remains and no sale exists;
+// the client clears its key and rings again.
+var ErrSaleFailedCardReversed = errors.New("pos: the sale failed and every card charge it took was reversed")
+
+// ErrCardChargeNeedsManager answers a ring holding a card charge whose outcome, or whose
+// reversal's outcome, could not be told: the money may be held with no sale. A manager has to
+// close the attempt before the card is charged again; Refs names the attempts' short references.
+type ErrCardChargeNeedsManager struct{ Refs []string }
+
+func (e ErrCardChargeNeedsManager) Error() string {
+	if len(e.Refs) == 0 {
+		return "pos: a card charge on this sale has no answer from the card processor, a manager has to check it"
+	}
+	return fmt.Sprintf("pos: a card charge on this sale has no answer from the card processor, a manager has to check it (attempts %s)",
+		strings.Join(e.Refs, ", "))
+}
+
+// ErrCardChargeCardDeclined answers a ring a card leg was declined on: no money moved for that
+// leg, and any card already captured for the sale was reversed (the design's split decline).
+var ErrCardChargeCardDeclined = errors.New("pos: a card leg was declined, any card already charged for this sale was reversed")
+
+// ErrCardChargeUnresolvedOnTill answers the till guard's refusal: an earlier card charge for this
+// amount at this till has no answer yet, under another sale key.
+var ErrCardChargeUnresolvedOnTill = errors.New("pos: an earlier card charge for this amount at this till has no answer yet")
+
+// ErrCardChargeInFlight answers a same-key double submit: the leg's charge is already claimed or
+// captured by another request. The database's unique leg key settled the race; the loser charges
+// nothing and answers this.
+var ErrCardChargeInFlight = errors.New("pos: the card charge for this sale is still in flight")
 
 // ErrUnknownTaxReason aborts a relief ring that named a tax reason the engine refuses to bind (outside
 // the lawful reason universe, the mirror of the snapshot CHECK). It is the exported sentinel the
