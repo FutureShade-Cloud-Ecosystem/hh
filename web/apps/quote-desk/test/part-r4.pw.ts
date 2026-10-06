@@ -144,7 +144,17 @@ test("A P2-1 a panel that has left the page reads nothing when it is asked to re
     if (request.url().includes("/api/")) requests.push(`${request.method()} ${request.url()}`);
   });
   // Each panel is taken off the page with its last quote id still set and asked to re-read, as the builder's fan-out would.
-  for (const tag of tags) {
+  // The related documents panel first, with its quote id moved to another quote: the seam's shared
+  // family read holds no read of that quote, so a detached panel must still issue nothing (the
+  // join must not become a side door round the detached guard).
+  await page.locator("qd-related-docs").evaluate((el) => {
+    el.remove();
+    const panel = el as HTMLElement & { quoteId: string; reload: () => void };
+    panel.quoteId = "q-2102";
+    panel.reload();
+  });
+  const rest = tags.filter((tag) => tag !== "qd-related-docs");
+  for (const tag of rest) {
     await page.locator(tag).evaluate((el) => {
       el.remove();
       (el as HTMLElement & { reload: () => void }).reload();
