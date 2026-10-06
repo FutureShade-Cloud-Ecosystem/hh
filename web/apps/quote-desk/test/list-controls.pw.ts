@@ -33,7 +33,11 @@ test("the quotes card holds no bare native controls", async ({ page }) => {
   const card = await quotesCard(page);
   await expect(card.locator("select:not([data-control])")).toHaveCount(0);
   await expect(card.locator('input[type="date"]:not([data-control])')).toHaveCount(0);
-  await expect(card.locator("button:not(.btn-primary):not(.btn-secondary)")).toHaveCount(0);
+  // The control rows (the filter row and the New quote group's row) hold no
+  // plain button of their own: the list's row buttons are the card's content
+  // and the picker's own control rides inside the kit, so the leg reads the
+  // rows' direct children.
+  await expect(card.locator(".row > button:not(.btn-primary):not(.btn-secondary)")).toHaveCount(0);
   await expect(card.locator("fieldset:not([data-control])")).toHaveCount(0);
 });
 
