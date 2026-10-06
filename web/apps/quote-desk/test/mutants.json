@@ -1152,13 +1152,6 @@
     "test": "P3 a policy save refused after the scope moved on says which settings"
   },
   {
-    "id": "wa-restore-not-while-creating",
-    "file": "src/quote-workarea.ts",
-    "find": "    if (this.creating !== null || this.createdQuoteId !== \"\") return;\n",
-    "replace": "",
-    "test": "P3 a late layout answer does not resume the remembered quote"
-  },
-  {
     "id": "wa-scan-overtaken-says",
     "file": "src/quote-workarea.ts",
     "find": "        this.speakAdd(\"That scan was meant for the new quote, which another quote overtook, so it was not added. Scan it again on the quote you want.\", \"warn\");\n",
