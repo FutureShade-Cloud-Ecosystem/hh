@@ -6,12 +6,12 @@
 -- shows a person's surname on the tour's dispatch login. 0200 is frozen, so the value is rewritten here.
 --
 -- THE FIX. The display name becomes the plain role label the other demo personas carry ("Sales (demo)",
--- "Sales manager (demo)"): "Dispatch (demo)". One UPDATE, one row addressed by its fixed id, matching the
+-- "Sales manager (demo)"): "Dispatch persona (demo)", exactly the label the demo populate step writes (plantedDisplayNames in internal/demo/populate.go), so every build reads the same. One UPDATE, one row addressed by its fixed id, matching the
 -- EXACT value 0200 wrote (the dash in it is the one em dash character, written here as chr(8212) so this file
 -- carries none). A login somebody renamed falls through the guard and is left alone, and a second run
 -- matches nothing and moves no updated_at.
 UPDATE users
-   SET display_name = 'Dispatch (demo)', updated_at = now()
+   SET display_name = 'Dispatch persona (demo)', updated_at = now()
  WHERE id = 'd0200000-0000-4000-9000-000000000001'::uuid
    AND display_name = 'Scrubname0008 Whitlock (demo ' || chr(8212) || ' Dispatch)';
 
@@ -38,7 +38,7 @@ UPDATE msg_channels
 --
 -- 0200's yard persona login, in the dispatch persona's style.
 UPDATE users
-   SET display_name = 'Yard (demo)', updated_at = now()
+   SET display_name = 'Yard persona (demo)', updated_at = now()
  WHERE id = 'd0200000-0000-4000-9000-000000000002'::uuid
    AND display_name = 'Marco Reyes (demo ' || chr(8212) || ' Yard)';
 

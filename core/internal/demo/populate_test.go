@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -739,5 +740,31 @@ func TestPopulate_RefusesEnvironmentMistakes(t *testing.T) {
 				t.Errorf("the refusal does not name %q: %v", tc.wantExt, err)
 			}
 		})
+	}
+}
+
+// Every person's login that migration 0364 rewrites in the default build carries exactly the label the
+// demo populate writes for the same row, so a default build and a demo build read the same. The pairs are
+// read from the migration file (a users UPDATE with its fixed id and the new label), the labels from
+// plantedDisplayNames.
+func TestMigration0364LabelsEqualThePopulatesLabels(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "db", "migrations", "0364_tour_dispatch_persona_surname_goes.sql"))
+	if err != nil {
+		t.Fatalf("reading 0364: %v", err)
+	}
+	re := regexp.MustCompile(`(?s)UPDATE users\s+SET display_name = '([^']+)'.*?WHERE id = '([0-9a-f-]{36})'::uuid`)
+	pairs := re.FindAllStringSubmatch(string(body), -1)
+	if len(pairs) != 3 {
+		t.Fatalf("0364 rewrites %d logins, want 3 (dispatch, yard, demo teammate): the leg is not testing what it says", len(pairs))
+	}
+	want := map[string]string{}
+	for _, p := range plantedDisplayNames {
+		want[p.id] = p.name
+	}
+	for _, p := range pairs {
+		label, id := p[1], p[2]
+		if got, ok := want[id]; !ok || got != label {
+			t.Errorf("0364 labels login %s %q, the populate labels it %q (renamed: %v)", id, label, got, ok)
+		}
 	}
 }

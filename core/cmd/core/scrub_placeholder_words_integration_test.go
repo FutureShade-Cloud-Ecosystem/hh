@@ -288,7 +288,7 @@ var dispatchPersonaRe = regexp.MustCompile(`'Scrubname0008 ([^ ']+) \(demo `)
 
 const (
 	dispatchPersonaID    = "d0200000-0000-4000-9000-000000000001"
-	dispatchPersonaLabel = "Dispatch (demo)"
+	dispatchPersonaLabel = "Dispatch persona (demo)"
 	migration0364File    = "0364_tour_dispatch_persona_surname_goes.sql"
 )
 
@@ -442,7 +442,7 @@ func TestIntegration_NoPlantedDemoPersonNameReadsInAMigratedDatabase(t *testing.
 		}
 	}
 	for id, want := range map[string]string{
-		"d0200000-0000-4000-9000-000000000002": "Yard (demo)",
+		"d0200000-0000-4000-9000-000000000002": "Yard persona (demo)",
 	} {
 		var got string
 		if err := pool.QueryRow(ctx, `SELECT display_name FROM users WHERE id = $1::uuid`, id).Scan(&got); err != nil {
