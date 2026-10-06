@@ -28,6 +28,7 @@ import type {
 import {
   staffCustomer,
   staffIdentity,
+  staffPos,
   staffBranches,
   staffProduct,
   staffQuote,
@@ -435,6 +436,24 @@ export interface StandingRead {
   openBalanceCents: number;
 }
 
+/** The payment door's answer: the payment, the balance now on the invoice, and the order (made by this very action when converted). */
+export interface OrderPaymentAnswer {
+  paymentNo: string;
+  amountCents: number;
+  balanceCents: number;
+  orderId: string;
+  orderNo: string;
+  converted: boolean;
+  replayed: boolean;
+}
+
+/** The counter's account standing read: the past due position and the hold flag, as the server answers them. */
+export interface AccountStandingRead {
+  onHold: boolean;
+  pastDueCents: number | null;
+  oldestBucket: string | null;
+}
+
 export class QdClient {
   readonly #client: ApiClient;
   readonly #callerId: () => string;
@@ -719,7 +738,7 @@ export class QdClient {
   async takeOrderPayment(
     quoteId: string,
     input: { method: "CASH" | "CARD" | "CHEQUE" | "EFT"; amountCents: number; reference: string; idempotencyKey: string },
-  ): Promise<Result<{ paymentNo: string; amountCents: number; balanceCents: number; replayed: boolean }>> {
+  ): Promise<Result<OrderPaymentAnswer>> {
     const result = await this.#client.request<unknown>({
       method: "POST",
       path: "/api/v1/quotes/{id}/order-payment",
@@ -734,8 +753,12 @@ export class QdClient {
     const paymentNo = stringAt(record, "payment_no");
     const amountCents = integerAt(record, "amount_cents");
     const balanceCents = integerAt(record, "balance_cents");
-    if (paymentNo === null || amountCents === null || balanceCents === null) return err("the payment answer is missing its figures");
-    return ok({ paymentNo, amountCents, balanceCents, replayed: record["replayed"] === true });
+    const orderId = stringAt(record, "order_id");
+    const orderNo = stringAt(record, "order_no");
+    if (paymentNo === null || amountCents === null || balanceCents === null || orderId === null || orderNo === null) {
+      return err("the payment answer is missing its figures");
+    }
+    return ok({ paymentNo, amountCents, balanceCents, orderId, orderNo, converted: record["converted"] === true, replayed: record["replayed"] === true });
   }
 
   /**
@@ -757,6 +780,23 @@ export class QdClient {
       return ok({ name: customerName, paymentTermsDays: terms, creditLimitCents: limit, openBalanceCents: open });
     }
     return ok(null);
+  }
+
+  /**
+   * The counter's account standing for one customer: the past due amount, the oldest bucket and the
+   * hold flag. The contract answers the empty object for a walk-in, a current account, a caller it
+   * will not tell and an unreadable read alike, so an absent hold is never a promise of none.
+   */
+  async accountStanding(branchId: string, customerId: string): Promise<Result<AccountStandingRead>> {
+    const result = await staffPos.posAccountStanding(this.#client, { branch_id: branchId, customer_id: customerId });
+    if (!result.ok) return result;
+    const record = result.value as unknown;
+    if (!isRecord(record)) return err("the account standing answer is not readable");
+    return ok({
+      onHold: record["on_hold"] === true,
+      pastDueCents: integerAt(record, "past_due_cents"),
+      oldestBucket: stringAt(record, "oldest_bucket"),
+    });
   }
 
   /**

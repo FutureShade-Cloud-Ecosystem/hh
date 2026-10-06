@@ -17,7 +17,7 @@ import { LitElement, css, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import "./quote-workarea.js";
 import "./quote-convert.js";
-import { convertRouteQuoteId } from "./_quote-convert.js";
+import { CONVERT_NOTICE_EVENT, convertRouteQuoteId } from "./_quote-convert.js";
 import "./panel-seams.js";
 import "./edit-panel.js";
 import "./history-panel.js";
@@ -81,6 +81,8 @@ export class QdQuoteBuilder extends LitElement {
   @state() private detailOpen = false;
   /** The quote the address names on the guided convert surface (#/quotes/<id>/convert), or "" for the desk. */
   @state() private convertQuoteId = convertRouteQuoteId(window.location.hash);
+  /** What a payment settled after the person left the convert surface came to; said on whichever screen they are on. */
+  @state() private convertNotice = "";
   /** The picked account for a new quote, from the picker (never a typed id). */
   private newCustomer: PickerCustomer | null = null;
 
@@ -212,6 +214,18 @@ export class QdQuoteBuilder extends LitElement {
     .away {
       display: none;
     }
+    .convert-notice {
+      display: flex;
+      gap: var(--hh-s-12);
+      align-items: center;
+      justify-content: space-between;
+      margin: var(--hh-s-12) var(--hh-s-16);
+      padding: var(--hh-s-12) var(--hh-s-16);
+      border: 1px solid var(--hh-line);
+      border-radius: var(--hh-radius-control);
+      background: var(--hh-widget);
+      color: var(--hh-text);
+    }
     .seams qd-panel-seam {
       display: block;
     }
@@ -230,6 +244,7 @@ export class QdQuoteBuilder extends LitElement {
     this.renderRoot.addEventListener("quote-open", this.onQuoteOpen as EventListener);
     window.addEventListener(OPEN_SETTINGS_EVENT, this.onOpenSettings);
     window.addEventListener("hashchange", this.onHashChange);
+    window.addEventListener(CONVERT_NOTICE_EVENT, this.onConvertNotice as EventListener);
     this.convertQuoteId = convertRouteQuoteId(window.location.hash);
     this.renderRoot.addEventListener("customer-picked", this.onCustomerPicked as EventListener);
     this.renderRoot.addEventListener("customer-cleared", this.onCustomerCleared as EventListener);
@@ -255,9 +270,15 @@ export class QdQuoteBuilder extends LitElement {
     this.renderRoot.removeEventListener("quote-open", this.onQuoteOpen as EventListener);
     window.removeEventListener(OPEN_SETTINGS_EVENT, this.onOpenSettings);
     window.removeEventListener("hashchange", this.onHashChange);
+    window.removeEventListener(CONVERT_NOTICE_EVENT, this.onConvertNotice as EventListener);
     this.renderRoot.removeEventListener("customer-picked", this.onCustomerPicked as EventListener);
     this.renderRoot.removeEventListener("customer-cleared", this.onCustomerCleared as EventListener);
   }
+
+  /** A conversion's payment settled after the person left its surface: the outcome is said here. */
+  private readonly onConvertNotice = (event: CustomEvent<{ text: string }>): void => {
+    this.convertNotice = event.detail.text;
+  };
 
   /** The route table: the address either names the convert surface for a quote or leaves the desk as it was. */
   private readonly onHashChange = (): void => {
@@ -473,6 +494,9 @@ export class QdQuoteBuilder extends LitElement {
     if (action === "open") {
       this.selected = control.getAttribute("data-quote") ?? "";
     }
+    if (action === "dismiss-convert-notice") {
+      this.convertNotice = "";
+    }
     if (action === "refresh") {
       void this.loadList();
     }
@@ -591,6 +615,12 @@ export class QdQuoteBuilder extends LitElement {
   override render() {
     // The convert route shows its own surface; the desk stays mounted behind it (hidden, never removed), so a write still out for the open quote keeps its late answer.
     return html`
+      ${this.convertNotice === ""
+        ? nothing
+        : html`<div class="convert-notice" role="status" data-testid="qb-convert-notice">
+            <span>${this.convertNotice}</span>
+            <button type="button" class="btn btn-secondary" data-action="dismiss-convert-notice" data-testid="qb-convert-notice-dismiss">Dismiss</button>
+          </div>`}
       ${this.convertQuoteId !== "" ? html`<quote-convert data-testid="qc-host"></quote-convert>` : nothing}
       <div class="${this.convertQuoteId !== "" ? "away" : ""}">${this.renderDesk()}</div>
     `;

@@ -1,9 +1,16 @@
 // The guided Convert to Order surface, #/quotes/<id>/convert (decision log row 993, the row 955
 // surfaces rule). Five steps: Review (the lines, the customer, the total and each line's stock at the
-// branch), Fulfilment (the server's two, Pickup and Will-call), Customer standing (terms and the
-// credit gate, said before confirming so a refusal is never a surprise), an optional Payment (method,
-// amount, reference, one idempotency key) and Confirm, which runs the conversion and then the payment
-// and ends on the done screen. On success the host emits `quote-converted` with { orderId, quoteId }.
+// branch), Fulfilment (the server's two, Pickup and Will-call), Customer standing (the terms and the
+// server's own credit facts, said before confirming so a refusal is never a surprise), a Payment
+// (method, amount, reference, one idempotency key) and Confirm, which ends on the done screen. On
+// success the host emits `quote-converted` with { orderId, quoteId }.
+//
+// Two roads to an order. A customer on credit converts through the plain conversion, and may leave a
+// deposit or a payment, taken after the order exists. A Cash On Demand customer (no credit account;
+// decision log row 999: the order is made, gets its number, and nothing is released until it is
+// paid) is refused by the plain conversion, so the surface goes through the payment door, which
+// converts, bills and takes the whole payment as one action: the payment is required, it is the whole
+// amount the server holds for the quote, and it is never skippable.
 //
 // The server holds every rule: the gate, the totals, the stock and who may convert. This surface
 // reads those answers and words them; the role wall is the quote.convert_order action of the caller's
@@ -15,12 +22,14 @@
 import { html, css, nothing, type PropertyValues, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles, chip, select, type ChipTone } from "@hardscapehouse/design-system/src/primitives.js";
-import type { QdClient, StandingRead } from "./qd-client.js";
+import type { AccountStandingRead, QdClient, StandingRead } from "./qd-client.js";
 import { QB_ACTIONS, effectiveItems, visibleItems } from "./quote-surface.js";
 import { moneyWord, quoteStatusWord, type QuoteView } from "./_quote-edit.js";
 import { qtyLabel, spokenRefusal } from "./_quote-workarea.js";
 import {
+  CONVERT_NOTICE_EVENT,
   CONVERT_STEPS,
+  COD_TERMS_TEXT,
   DELIVERY_NOTE,
   FULFILMENTS,
   MAX_REFERENCE,
@@ -28,9 +37,14 @@ import {
   PAY_METHOD_LABEL,
   QUOTES_ROUTE,
   STEP_LABEL,
+  awayCodNotice,
+  awayNotice,
+  codRefusalWords,
   fulfilmentLabel,
-  newIdempotencyKey,
+  isCashOnDemand,
+  isCodRefusal,
   parsePayAmount,
+  paymentKeyFor,
   refusalWords,
   standingOf,
   stepAfter,
@@ -38,19 +52,14 @@ import {
   stockWords,
   type ConvertStep,
   type Fulfilment,
+  type KeyedIntent,
   type LineStockIn,
   type PayMethod,
+  type Standing,
 } from "./_quote-convert.js";
 
 type Phase = "loading" | "ready" | "no-access" | "not-ready" | "missing" | "failed";
 
-/** The one payment this surface may take: what was typed, validated, and its key. */
-interface PlannedPayment {
-  method: PayMethod;
-  amountCents: number;
-  reference: string;
-  key: string;
-}
 
 export class QuoteConvert extends HHElement {
   static properties = {
@@ -235,14 +244,18 @@ export class QuoteConvert extends HHElement {
   #stockKnown = false;
   #branchLabel = "";
   #standing: StandingRead | null = null;
+  #hold: AccountStandingRead | null = null;
+  /** The plain conversion was refused under the COD policy: the server itself said this customer has no credit account. */
+  #codLearned = false;
   #step: ConvertStep = "review";
   #fulfilment: Fulfilment = "PICKUP";
   #payMethod: PayMethod = "CASH";
   #payAmountRaw = "";
   #payReference = "";
-  #payKey = "";
+  /** The payment last planned and the key it was sent under, kept so the same payment keeps its key. */
+  #keyed: KeyedIntent | null = null;
   #payError = "";
-  #planned: PlannedPayment | null = null;
+  #planned: KeyedIntent | null = null;
   #busy = false;
   #refusal = "";
   #done: { orderId: string; orderNo: string } | null = null;
@@ -339,7 +352,11 @@ export class QuoteConvert extends HHElement {
     }
     this.#phase = "ready";
     this.requestUpdate();
-    const [stock, standing] = await Promise.all([client.availability(quoteId), client.customerStanding(view.customer_id, view.customer_name)]);
+    const [stock, standing, hold] = await Promise.all([
+      client.availability(quoteId),
+      client.customerStanding(view.customer_id, view.customer_name),
+      client.accountStanding(view.branch_id, view.customer_id),
+    ]);
     if (seq !== this.#seq) return;
     if (stock.ok) {
       this.#stockKnown = stock.value.seamWired;
@@ -349,6 +366,9 @@ export class QuoteConvert extends HHElement {
       }
     }
     this.#standing = standing.ok ? standing.value : null;
+    this.#hold = hold.ok ? hold.value : null;
+    // The door takes no fulfilment, so a Cash On Demand order is made as Pickup.
+    if (this.#isCod()) this.#fulfilment = "PICKUP";
     this.requestUpdate();
   }
 
@@ -358,12 +378,14 @@ export class QuoteConvert extends HHElement {
     this.#stockKnown = false;
     this.#branchLabel = "";
     this.#standing = null;
+    this.#hold = null;
+    this.#codLearned = false;
     this.#step = "review";
     this.#fulfilment = "PICKUP";
     this.#payMethod = "CASH";
     this.#payAmountRaw = "";
     this.#payReference = "";
-    this.#payKey = "";
+    this.#keyed = null;
     this.#payError = "";
     this.#planned = null;
     this.#busy = false;
@@ -387,11 +409,11 @@ export class QuoteConvert extends HHElement {
       this.requestUpdate();
     } else if (action === "fulfil") {
       const value = control.getAttribute("data-fulfil");
-      if (value === "PICKUP" || value === "WILL_CALL") {
+      if (value === "PICKUP" || (value === "WILL_CALL" && !this.#isCod())) {
         this.#fulfilment = value;
         this.requestUpdate();
       }
-    } else if (action === "skip-payment") {
+    } else if (action === "skip-payment" && !this.#isCod()) {
       this.#payAmountRaw = "";
       this.#payReference = "";
       this.#planned = null;
@@ -422,20 +444,53 @@ export class QuoteConvert extends HHElement {
     this.requestUpdate();
   }
 
-  /** Validate what the payment step holds. An empty amount is no payment (the step is optional). */
+  /** Cash On Demand: the server's own rule (no credit account), or the server's refusal of the plain conversion having said so. */
+  #isCod(): boolean {
+    return this.#codLearned || isCashOnDemand(this.#standing);
+  }
+
+  #standingNow(): Standing {
+    const read = standingOf(this.#standing, this.#hold);
+    if (this.#codLearned && read.terms !== "COD") {
+      return {
+        terms: "COD",
+        termsText: COD_TERMS_TEXT,
+        gate: "cod",
+        gateText: "The server says this customer has no credit account. The whole payment is taken to create the order, and the server decides.",
+      };
+    }
+    return read;
+  }
+
+  /**
+   * Validate what the payment step holds. A customer on credit may leave it empty (the step is
+   * optional); a Cash On Demand customer pays the whole amount the server holds for the quote, so
+   * there is no amount to type and no way to leave it empty.
+   */
   #plan(): boolean {
     this.#payError = "";
-    if (this.#payAmountRaw.trim() === "") {
-      this.#planned = null;
-      return true;
+    let amountCents: number;
+    if (this.#isCod()) {
+      amountCents = this.#view?.total_cents ?? 0;
+      if (amountCents < 1) {
+        this.#payError = "The amount due could not be read from the quote, so the payment cannot be taken here.";
+        return false;
+      }
+    } else {
+      if (this.#payAmountRaw.trim() === "") {
+        this.#planned = null;
+        return true;
+      }
+      const amount = parsePayAmount(this.#payAmountRaw);
+      if ("error" in amount) {
+        this.#payError = amount.error;
+        return false;
+      }
+      amountCents = amount.cents;
     }
-    const amount = parsePayAmount(this.#payAmountRaw);
-    if ("error" in amount) {
-      this.#payError = amount.error;
-      return false;
-    }
-    if (this.#payKey === "") this.#payKey = newIdempotencyKey();
-    this.#planned = { method: this.#payMethod, amountCents: amount.cents, reference: this.#payReference.trim(), key: this.#payKey };
+    // The key follows the intended payment: the same one keeps its key, a changed one gets a new key.
+    this.#keyed = paymentKeyFor(this.#keyed, { method: this.#payMethod, amountCents, reference: this.#payReference.trim() });
+    this.#planned = this.#keyed;
     return true;
   }
 
@@ -444,7 +499,10 @@ export class QuoteConvert extends HHElement {
     const view = this.#view;
     const quoteId = this.quoteId;
     if (client === null || view === null || this.#busy) return;
+    if (this.#isCod()) return this.#payAndConvert();
     const seq = this.#seq;
+    const quoteNo = view.quote_no;
+    const planned = this.#planned;
     this.#busy = true;
     this.#refusal = "";
     this.requestUpdate();
@@ -454,9 +512,24 @@ export class QuoteConvert extends HHElement {
       this.dispatchEvent(new CustomEvent("quote-converted", { detail: { orderId: result.value.orderId, quoteId }, bubbles: true, composed: true }));
       this.dispatchEvent(new CustomEvent("quote-changed", { detail: { quoteId }, bubbles: true, composed: true }));
     }
-    if (seq !== this.#seq) return;
+    if (seq !== this.#seq) {
+      // The person left while the conversion was out. A payment typed for the order is still taken
+      // (their intent stands) and the outcome is said where they are now, never dropped silently.
+      if (result.ok && planned !== null) await this.#settleAway(client, quoteId, quoteNo, result.value.orderNo, planned);
+      return;
+    }
     this.#busy = false;
     if (!result.ok) {
+      if (isCodRefusal(result.error)) {
+        // The real gate refused the plain conversion under the COD policy: this customer has no
+        // credit account, so the order is made by the payment door with the whole payment.
+        this.#codLearned = true;
+        this.#fulfilment = "PICKUP";
+        this.#payError = "";
+        this.#step = "payment";
+        this.requestUpdate();
+        return;
+      }
       this.#refusal = refusalWords(result.status, result.error);
       this.requestUpdate();
       return;
@@ -464,6 +537,49 @@ export class QuoteConvert extends HHElement {
     this.#done = result.value;
     this.requestUpdate();
     if (this.#planned !== null) await this.#takePayment();
+  }
+
+  /**
+   * The Cash On Demand action: the payment door converts, bills and takes the whole payment as one
+   * transaction, so the order never exists unpaid. The one planned payment carries the one key, so a
+   * try again after a lost answer replays rather than taking the payment twice.
+   */
+  async #payAndConvert(): Promise<void> {
+    const client = this.client;
+    const view = this.#view;
+    const planned = this.#planned;
+    const quoteId = this.quoteId;
+    if (client === null || view === null || planned === null || this.#busy) return;
+    const seq = this.#seq;
+    const quoteNo = view.quote_no;
+    this.#busy = true;
+    this.#refusal = "";
+    this.requestUpdate();
+    const paid = await client.takeOrderPayment(quoteId, {
+      method: planned.method,
+      amountCents: planned.amountCents,
+      reference: planned.reference,
+      idempotencyKey: planned.key,
+    });
+    if (paid.ok) {
+      this.dispatchEvent(new CustomEvent("quote-converted", { detail: { orderId: paid.value.orderId, quoteId }, bubbles: true, composed: true }));
+      this.dispatchEvent(new CustomEvent("quote-changed", { detail: { quoteId }, bubbles: true, composed: true }));
+    }
+    if (seq !== this.#seq) {
+      const words = paid.ok ? "" : codRefusalWords(paid.status, paid.error);
+      this.#announceAway(quoteId, awayCodNotice({ quoteNo, amountCents: planned.amountCents, paid: paid.ok ? paid.value : null, words }));
+      return;
+    }
+    this.#busy = false;
+    if (!paid.ok) {
+      this.#refusal = codRefusalWords(paid.status, paid.error);
+      this.requestUpdate();
+      return;
+    }
+    this.#done = { orderId: paid.value.orderId, orderNo: paid.value.orderNo };
+    this.#paid = paid.value;
+    this.#planned = null;
+    this.requestUpdate();
   }
 
   /** The payment after the order exists; a failure here never undoes the order, and the retry carries the same key. */
@@ -491,6 +607,23 @@ export class QuoteConvert extends HHElement {
       this.#payNote = `The order exists, but the payment was not taken: ${said === "" ? "the server did not accept it" : said}${said.endsWith(".") ? "" : "."} Nothing was charged. Try the payment again, or take it at the counter.`;
     }
     this.requestUpdate();
+  }
+
+  /** The payment for an order made while the person was away: taken under its own key, and the outcome said where they are. */
+  async #settleAway(client: QdClient, quoteId: string, quoteNo: string, orderNo: string, planned: KeyedIntent): Promise<void> {
+    const paid = await client.takeOrderPayment(quoteId, {
+      method: planned.method,
+      amountCents: planned.amountCents,
+      reference: planned.reference,
+      idempotencyKey: planned.key,
+    });
+    const said = paid.ok ? "" : spokenRefusal(paid.error);
+    this.#announceAway(quoteId, awayNotice({ orderNo, quoteNo, amountCents: planned.amountCents, paid: paid.ok ? paid.value : null, said }));
+  }
+
+  /** Tell the desk, wherever the person is now: this element may be gone, so the window carries it. */
+  #announceAway(quoteId: string, text: string): void {
+    window.dispatchEvent(new CustomEvent(CONVERT_NOTICE_EVENT, { detail: { quoteId, text } }));
   }
 
   // ── render ───────────────────────────────────────────────────────────────────
@@ -608,6 +741,7 @@ export class QuoteConvert extends HHElement {
   }
 
   #renderFulfilment(): TemplateResult {
+    const cod = this.#isCod();
     return html`
       <section class="card" data-testid="qc-fulfilment" aria-label="Fulfilment">
         <h3>How will the customer get the order?</h3>
@@ -620,12 +754,16 @@ export class QuoteConvert extends HHElement {
               data-fulfil=${f.value}
               data-testid=${f.value === "PICKUP" ? "qc-fulfil-pickup" : "qc-fulfil-will-call"}
               aria-pressed=${this.#fulfilment === f.value ? "true" : "false"}
+              ?disabled=${cod && f.value === "WILL_CALL"}
             >
               <span class="name">${f.label}</span>
               <span class="hint">${f.hint}</span>
             </button>`,
           )}
         </div>
+        ${cod
+          ? html`<p class="sub" data-testid="qc-fulfil-cod-note">A Cash On Demand order is created and paid in one action, and that action takes no fulfilment choice, so it is created as Pickup.</p>`
+          : nothing}
         <p class="sub" data-testid="qc-delivery-note">${DELIVERY_NOTE}</p>
         ${this.#nav({ back: true, next: "Continue to customer standing" })}
       </section>
@@ -633,30 +771,33 @@ export class QuoteConvert extends HHElement {
   }
 
   #renderStanding(view: QuoteView): TemplateResult {
-    const standing = standingOf(this.#standing, view.total_cents);
-    const tone: ChipTone = standing.gate === "over" ? "stop" : standing.gate === "within" ? "good" : standing.gate === "unknown" ? "watch" : "neutral";
+    const standing = this.#standingNow();
+    const tone: ChipTone = standing.gate === "hold" ? "stop" : standing.gate === "server" ? "neutral" : "watch";
     const gateWord =
-      standing.gate === "over" ? "Over the credit limit" : standing.gate === "within" ? "Credit check: within the limit" : standing.gate === "none" ? "No credit check" : "Credit not reported";
+      standing.gate === "hold" ? "Credit hold reported" : standing.gate === "cod" ? "Cash On Demand" : standing.gate === "server" ? "The server decides at confirm" : "Credit not reported";
     return html`
       <section class="card" data-testid="qc-standing" aria-label="Customer standing">
         <h3>${view.customer_name}: standing before confirming</h3>
         <p data-testid="qc-terms">${standing.termsText}</p>
         <div data-testid="qc-credit-chip">${chip(gateWord, tone)}</div>
-        <p data-testid="qc-credit" class="${standing.gate === "over" ? "bad" : ""}">${standing.gateText}</p>
+        <p data-testid="qc-credit" class="${standing.gate === "hold" ? "bad" : ""}">${standing.gateText}</p>
         ${this.#nav({ back: true, next: "Continue to payment" })}
       </section>
     `;
   }
 
   #renderPayment(): TemplateResult {
-    const cod = standingOf(this.#standing, this.#view?.total_cents ?? 0).terms === "COD";
+    const cod = this.#isCod();
+    const due = this.#view?.total_cents ?? 0;
     return html`
       <section class="card" data-testid="qc-payment" aria-label="Payment">
-        <h3>Take a deposit or a payment (optional)</h3>
-        <p class="sub">The payment is taken against the order once it exists. Leave it empty to take none now.</p>
+        <h3>${cod ? "Take the whole payment" : "Take a deposit or a payment (optional)"}</h3>
         ${cod
-          ? html`<p class="notice" data-testid="qc-pay-cod-note">This customer is on cash on delivery, so payment is due on release. You may take it now, or skip it.</p>`
-          : nothing}
+          ? html`<p class="notice" data-testid="qc-pay-cod-note">
+                This customer is on Cash On Demand${this.#codLearned ? ": the server confirmed there is no credit account" : ""}. The order is made, and gets its number, when the whole payment is taken, and nothing is released until it is paid.
+              </p>
+              <p data-testid="qc-pay-due">Amount due: <strong>${moneyWord(due)}</strong>, the quote's total as the server holds it. The whole amount is taken, never a part.</p>`
+          : html`<p class="sub">The payment is taken against the order once it exists. Leave it empty to take none now.</p>`}
         <div class="fields">
           <label>
             Method
@@ -672,10 +813,12 @@ export class QuoteConvert extends HHElement {
               `,
             })}
           </label>
-          <label>
-            Amount (CA$)
-            <input class="control" data-field="pay-amount" data-testid="qc-pay-amount" inputmode="decimal" autocomplete="off" placeholder="0.00" />
-          </label>
+          ${cod
+            ? nothing
+            : html`<label>
+                Amount (CA$)
+                <input class="control" data-field="pay-amount" data-testid="qc-pay-amount" inputmode="decimal" autocomplete="off" placeholder="0.00" />
+              </label>`}
           <label>
             Reference
             <input class="control" data-field="pay-reference" data-testid="qc-pay-reference" autocomplete="off" maxlength="60" placeholder="Cheque number or trace" />
@@ -684,7 +827,7 @@ export class QuoteConvert extends HHElement {
         ${this.#payError !== "" ? html`<p class="bad" role="alert" data-testid="qc-pay-error">${this.#payError}</p>` : nothing}
         <div class="nav">
           <button type="button" class="btn btn-secondary" data-action="back" data-testid="qc-back">Back</button>
-          <button type="button" class="btn btn-secondary" data-action="skip-payment" data-testid="qc-pay-skip">Skip payment</button>
+          ${cod ? nothing : html`<button type="button" class="btn btn-secondary" data-action="skip-payment" data-testid="qc-pay-skip">Skip payment</button>`}
           <button type="button" class="btn btn-primary" data-action="next" data-testid="qc-next">Continue to confirm</button>
         </div>
       </section>
@@ -692,7 +835,8 @@ export class QuoteConvert extends HHElement {
   }
 
   #renderConfirm(view: QuoteView): TemplateResult {
-    const standing = standingOf(this.#standing, view.total_cents);
+    const standing = this.#standingNow();
+    const cod = this.#isCod();
     const planned = this.#planned;
     return html`
       <section class="card" data-testid="qc-confirm-step" aria-label="Confirm">
@@ -706,13 +850,13 @@ export class QuoteConvert extends HHElement {
           <dd>${fulfilmentLabel(this.#fulfilment)}</dd>
           <dt>Terms</dt>
           <dd>${standing.termsText}</dd>
-          <dt>Payment now</dt>
+          <dt>${cod ? "Payment, taken as the order is made" : "Payment now"}</dt>
           <dd>${planned === null ? "None" : html`${moneyWord(planned.amountCents)} by ${PAY_METHOD_LABEL[planned.method]}${planned.reference === "" ? nothing : html`, reference ${planned.reference}`}`}</dd>
         </dl>
         ${this.#refusal !== "" ? html`<p class="notice stop" role="alert" data-testid="qc-refusal">${this.#refusal}</p>` : nothing}
         <div class="nav">
           <button type="button" class="btn btn-secondary" data-action="back" data-testid="qc-back" ?disabled=${this.#busy}>Back</button>
-          <button type="button" class="btn btn-primary" data-action="confirm" data-testid="qc-confirm" ?disabled=${this.#busy}>Confirm and create the order</button>
+          <button type="button" class="btn btn-primary" data-action="confirm" data-testid="qc-confirm" ?disabled=${this.#busy}>${cod ? "Confirm, take the payment and create the order" : "Confirm and create the order"}</button>
         </div>
       </section>
     `;

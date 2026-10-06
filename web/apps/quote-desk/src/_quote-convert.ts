@@ -16,6 +16,9 @@ export function convertRouteQuoteId(hash: string): string {
   return match === null ? "" : (match[1] ?? "");
 }
 
+/** The window event a payment settled after the person left is announced on, so the desk can say it wherever they are. */
+export const CONVERT_NOTICE_EVENT = "quote-convert-notice";
+
 /** The quotes list's own address, where the done screen sends the person back. */
 export const QUOTES_ROUTE = "#/quotes";
 
@@ -101,52 +104,79 @@ export interface StandingIn {
   openBalanceCents: number;
 }
 
+/** What the counter's account standing read says; an absent field is the read saying nothing. */
+export interface HoldRead {
+  onHold: boolean;
+  pastDueCents: number | null;
+  oldestBucket: string | null;
+}
+
 export interface Standing {
-  /** An account customer pays on terms; a customer with no credit account pays on delivery. */
+  /** An account customer pays on terms; a Cash On Demand customer has no credit account; UNKNOWN where no read answered. */
   terms: "ACCOUNT" | "COD" | "UNKNOWN";
   termsText: string;
-  /** "within" the limit, "over" it (the gate will refuse), "none" for a cash customer, "unknown" where no read answered. */
-  gate: "within" | "over" | "none" | "unknown";
+  /** "hold" where the server reports a credit hold; "server" where the server's own check decides at confirm. */
+  gate: "hold" | "server" | "cod" | "unknown";
   gateText: string;
 }
 
+/** The words for a customer with no credit account (decision log row 999): the order is made, and nothing is released until it is paid. */
+export const COD_TERMS_TEXT = "Cash On Demand: nothing is released until it is paid.";
+
+const SERVER_DECIDES = "The server checks the credit account and any credit hold when you confirm, and the server decides.";
+
 /**
- * The standing before confirming, from the customer read and the quote total. The server's gate has
- * the last word: this is the heads up so a refusal is never a surprise, and it is worded as such.
+ * The server's own rule for a customer with no credit account: a credit limit of nothing. The real
+ * gate refuses such a customer's plain conversion and takes the whole payment at its own door.
  */
-export function standingOf(read: StandingIn | null, totalCents: number): Standing {
+export function isCashOnDemand(read: StandingIn | null): boolean {
+  return read !== null && read.creditLimitCents <= 0;
+}
+
+/**
+ * The standing before confirming, from the server's reads and nothing else: the terms, the limit and
+ * the open balance as the server reports them, and the hold the counter's standing read reports. No
+ * sum is made here and no pass or fail is promised; the server's gate has the last word at confirm.
+ */
+export function standingOf(read: StandingIn | null, hold: HoldRead | null): Standing {
   if (read === null) {
     return {
       terms: "UNKNOWN",
       termsText: "Terms not reported.",
       gate: "unknown",
-      gateText: "The credit position could not be read, so the server's credit check will decide when you confirm.",
+      gateText: `The customer's account could not be read. ${SERVER_DECIDES}`,
     };
   }
-  if (read.creditLimitCents <= 0) {
+  if (isCashOnDemand(read)) {
     return {
       terms: "COD",
-      termsText: "Cash on delivery: no credit account, so payment is due on release.",
-      gate: "none",
-      gateText: "No credit account, so there is no credit limit to check.",
+      termsText: COD_TERMS_TEXT,
+      gate: "cod",
+      gateText: "There is no credit account to check. The whole payment is taken to create the order, and the server decides.",
     };
   }
+  const facts = `Credit limit ${moneyWord(read.creditLimitCents)}, open balance ${moneyWord(read.openBalanceCents)}, as the server reports them.`;
   const termsText = `Account customer, ${read.paymentTermsDays} days.`;
-  const after = read.openBalanceCents + totalCents;
-  if (after > read.creditLimitCents) {
+  if (hold !== null && hold.onHold) {
+    const pastDue = hold.pastDueCents !== null && hold.pastDueCents > 0 ? ` Past due ${moneyWord(hold.pastDueCents)}${hold.oldestBucket === null ? "" : `, oldest ${hold.oldestBucket} days`}.` : "";
     return {
       terms: "ACCOUNT",
       termsText,
-      gate: "over",
-      gateText: `This order would take the account to ${moneyWord(after)} against a limit of ${moneyWord(read.creditLimitCents)}, over by ${moneyWord(after - read.creditLimitCents)}. The server will refuse it at confirm unless the account is brought back within its limit first.`,
+      gate: "hold",
+      gateText: `${facts} The server reports a credit hold on this account.${pastDue} The order is refused while the hold stands, so ask accounts receivable to release it first.`,
     };
   }
   return {
     terms: "ACCOUNT",
     termsText,
-    gate: "within",
-    gateText: `The account stays within its limit: ${moneyWord(after)} against ${moneyWord(read.creditLimitCents)}. The server checks again at confirm.`,
+    gate: "server",
+    gateText: `${facts} The standing read shows nothing against this account, but it answers the same way when it cannot say, so credit holds are not confirmed here. ${SERVER_DECIDES}`,
   };
+}
+
+/** The credit gate's COD policy, as the plain conversion words it: this customer has no credit account. */
+export function isCodRefusal(detail: string): boolean {
+  return /\(COD\)|no credit; cash or card only/i.test(detail);
 }
 
 /**
@@ -166,6 +196,25 @@ export function refusalWords(status: number | undefined, detail: string): string
     return `${said || "This role may not convert quotes."} Nothing was created. Ask a manager to convert it.`;
   }
   return `${said || "The order could not be created."}${said === "" || said.endsWith(".") ? "" : "."} Nothing was created. Try again, and if it keeps failing tell a manager.`;
+}
+
+/**
+ * The refusal of the Cash On Demand action (convert, bill and take the whole payment in one
+ * transaction), in the server's own words: no credit advice, a cash customer has no credit to settle.
+ * A refusal answers whole, so nothing was created and nothing was taken. No answer at all (the
+ * network dropped, the request timed out) is not a refusal: the action may have happened, so the
+ * person is told to try again, which sends the same payment key and so can never take it twice.
+ */
+export function codRefusalWords(status: number | undefined, detail: string): string {
+  if (status === undefined) {
+    return "We could not confirm whether the order was created and the payment taken. Try again: the same payment is sent with the same key, so it can never be taken twice.";
+  }
+  const said = spokenRefusal(detail.trim());
+  const lead = said === "" ? "The server did not accept the order and payment." : `${said}${said.endsWith(".") ? "" : "."}`;
+  if (status >= 500) {
+    return `${lead} We could not confirm whether the order was created and the payment taken. Try again: the same payment is sent with the same key, so it can never be taken twice.`;
+  }
+  return `${lead} Nothing was created and nothing was taken.`;
 }
 
 // ── the payment ────────────────────────────────────────────────────────────────
@@ -194,7 +243,45 @@ export function parsePayAmount(raw: string): { cents: number } | { error: string
   return { cents };
 }
 
-/** A fresh key per intended payment, kept across a retry so a replay posts nothing twice. */
-export function newIdempotencyKey(random: () => string = () => crypto.randomUUID()): string {
-  return random();
+/** What a payment is, to the server: the tender, the amount and the reference. */
+export interface PaymentIntent {
+  method: PayMethod;
+  amountCents: number;
+  reference: string;
+}
+
+/** An intended payment and the one key it is sent under. */
+export interface KeyedIntent extends PaymentIntent {
+  key: string;
+}
+
+/**
+ * The key follows the intended payment: the same tender, amount and reference keep the key they
+ * were first sent under, so a retry of a payment whose answer was lost replays and posts nothing
+ * twice; any change is a new payment and gets a fresh key (the server refuses one key used for two
+ * different payments).
+ */
+export function paymentKeyFor(prev: KeyedIntent | null, intent: PaymentIntent, mint: () => string = () => crypto.randomUUID()): KeyedIntent {
+  const same = prev !== null && prev.method === intent.method && prev.amountCents === intent.amountCents && prev.reference === intent.reference;
+  return { ...intent, key: same ? prev.key : mint() };
+}
+
+/**
+ * What the person is told when the order was made while they were on another screen and the payment
+ * they typed for it was settled after they left: taken, or not taken and why.
+ */
+export function awayNotice(input: { orderNo: string; quoteNo: string; amountCents: number; paid: { paymentNo: string } | null; said?: string }): string {
+  const made = `Order ${input.orderNo} was created from quote ${input.quoteNo}`;
+  if (input.paid !== null) return `${made}, and the payment of ${moneyWord(input.amountCents)} was taken (${input.paid.paymentNo}).`;
+  const said = (input.said ?? "").trim();
+  const why = said === "" ? "the server did not accept it" : said;
+  return `${made}, but the payment of ${moneyWord(input.amountCents)} was not taken: ${why}${why.endsWith(".") ? "" : "."} Nothing was charged. Take it at the counter.`;
+}
+
+/** The Cash On Demand action left behind while the person was away, said plainly. */
+export function awayCodNotice(input: { quoteNo: string; amountCents: number; paid: { orderNo: string; paymentNo: string } | null; words: string }): string {
+  if (input.paid !== null) {
+    return `Order ${input.paid.orderNo} was created from quote ${input.quoteNo}, and the Cash On Demand payment of ${moneyWord(input.amountCents)} was taken (${input.paid.paymentNo}).`;
+  }
+  return `Quote ${input.quoteNo} was not converted and the Cash On Demand payment of ${moneyWord(input.amountCents)} was not taken. ${input.words}`;
 }

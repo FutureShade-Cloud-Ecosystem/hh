@@ -26,6 +26,17 @@ async function arrive(page: Page, quoteId: string, role = "Sales"): Promise<void
   await page.getByRole("button", { name: role, exact: true }).click();
 }
 
+/**
+ * Two clicks on Confirm in one turn of the page, before it has drawn the button disabled: what a fast
+ * double click is, and the case only the surface's own in-flight guard can stop.
+ */
+async function clickTwice(page: Page): Promise<void> {
+  await page.getByTestId("qc-confirm").evaluate((el) => {
+    (el as HTMLButtonElement).click();
+    (el as HTMLButtonElement).click();
+  });
+}
+
 async function next(page: Page): Promise<void> {
   await page.getByTestId("qc-next").click();
 }
@@ -198,7 +209,6 @@ test("D when the customer read is unavailable the refusal names Cash On Demand a
   await expect(page.getByTestId("qc-terms")).toContainText("not reported");
   await next(page);
   await next(page);
-  await next(page);
   await page.getByTestId("qc-confirm").click();
   // The plain convert is refused by the real gate's COD policy; the surface takes the customer to the whole payment.
   await expect(page.getByTestId("qc-payment")).toBeVisible();
@@ -368,7 +378,7 @@ test("idempotency: a double click on Confirm posts the conversion once", async (
   await next(page);
   await next(page);
   const held = await hold(page, /\/api\/v1\/quotes\/q-1003\/convert$/, { method: "POST" });
-  await page.getByTestId("qc-confirm").dblclick({ force: true });
+  await clickTwice(page);
   await held.asked;
   await held.release();
   await expect(page.getByTestId("qc-done")).toBeVisible();
@@ -382,7 +392,7 @@ test("idempotency: a double click on Confirm posts the Cash On Demand payment on
   await next(page);
   await next(page);
   const held = await hold(page, /\/order-payment$/, { method: "POST" });
-  await page.getByTestId("qc-confirm").dblclick({ force: true });
+  await clickTwice(page);
   await held.asked;
   await held.release();
   await expect(page.getByTestId("qc-done")).toBeVisible();
@@ -494,4 +504,26 @@ test("a payment that cannot be taken after the person left is said plainly, not 
   await expect(page.getByTestId("qb-convert-notice")).toContainText("Nothing was charged");
   await expect(page.getByTestId("qb-convert-notice")).toContainText("SO-");
   expect((await state(page)).payments).toHaveLength(0);
+});
+
+test("guard convert cod answer: a Cash On Demand action answered after the person left is said, and no screen is touched", async ({ page }) => {
+  const other = await seed(page, { status: "ACCEPTED", customer_id: "c-fenwick", lines: [{ p: "p-wall-std", q: 4 }] });
+  const id = await arriveCod(page);
+  await next(page);
+  await next(page);
+  await next(page);
+  await next(page);
+  const held = await hold(page, /\/order-payment$/, { method: "POST" });
+  await page.getByTestId("qc-confirm").click();
+  await held.asked;
+  await page.evaluate((quote) => {
+    window.location.hash = `#/quotes/${quote}/convert`;
+  }, other);
+  await expect(page.getByTestId("qc-review")).toBeVisible();
+  await held.release();
+  await expect(page.getByTestId("qb-convert-notice")).toContainText("Cash On Demand payment");
+  await expect(page.getByTestId("qb-convert-notice")).toContainText("was taken");
+  await expect(page.getByTestId("qc-review")).toBeVisible();
+  await expect(page.getByTestId("qc-done")).toHaveCount(0);
+  expect((await state(page)).payments.map((p) => p.quote_id)).toEqual([id]);
 });
