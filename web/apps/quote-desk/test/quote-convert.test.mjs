@@ -132,3 +132,8 @@ test("the payment amount goes through the decimal string to integer cents", () =
   assert.ok("error" in parsePayAmount("-5"));
   assert.ok("error" in parsePayAmount("1.005"));
 });
+
+test("a Cash On Demand refusal says to reload when the quote may have changed", () => {
+  assert.match(codRefusalWords(400, "a customer with no credit account pays the whole agreed total of $10.00"), /reload/i);
+  assert.match(codRefusalWords(409, "convert this quote to an order first"), /reload/i);
+});

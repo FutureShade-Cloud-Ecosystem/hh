@@ -527,3 +527,112 @@ test("guard convert cod answer: a Cash On Demand action answered after the perso
   await expect(page.getByTestId("qc-done")).toHaveCount(0);
   expect((await state(page)).payments.map((p) => p.quote_id)).toEqual([id]);
 });
+
+test("guard convert payment: a payment out after the conversion when the person leaves is said, taken", async ({ page }) => {
+  const other = await seed(page, { status: "ACCEPTED", customer_id: "c-fenwick", lines: [{ p: "p-wall-std", q: 4 }] });
+  await arrive(page, "q-1003");
+  await next(page);
+  await next(page);
+  await next(page);
+  await page.getByTestId("qc-pay-amount").fill("50");
+  await next(page);
+  const held = await hold(page, /\/order-payment$/, { method: "POST" });
+  await page.getByTestId("qc-confirm").click();
+  await expect(page.getByTestId("qc-done-order")).toContainText("SO-");
+  await held.asked;
+  await page.evaluate((id) => {
+    window.location.hash = `#/quotes/${id}/convert`;
+  }, other);
+  await expect(page.getByTestId("qc-review")).toBeVisible();
+  await held.release();
+  await expect(page.getByTestId("qb-convert-notice")).toContainText("payment of CA$50.00 was taken");
+  await expect(page.getByTestId("qb-convert-notice")).toContainText("SO-");
+  await expect(page.getByTestId("qc-done")).toHaveCount(0);
+  expect((await state(page)).payments).toHaveLength(1);
+});
+
+test("guard convert payment: a payment refused after the person left is said as not taken", async ({ page }) => {
+  const other = await seed(page, { status: "ACCEPTED", customer_id: "c-fenwick", lines: [{ p: "p-wall-std", q: 4 }] });
+  await arrive(page, "q-1003");
+  await next(page);
+  await next(page);
+  await next(page);
+  await page.getByTestId("qc-pay-amount").fill("50");
+  await next(page);
+  await refuseDoor(page, "the payments desk is closed");
+  const held = await hold(page, /\/order-payment$/, { method: "POST" });
+  await page.getByTestId("qc-confirm").click();
+  await held.asked;
+  await page.evaluate((id) => {
+    window.location.hash = `#/quotes/${id}/convert`;
+  }, other);
+  await expect(page.getByTestId("qc-review")).toBeVisible();
+  await held.release();
+  await expect(page.getByTestId("qb-convert-notice")).toContainText("was not taken");
+  await expect(page.getByTestId("qb-convert-notice")).toContainText("the payments desk is closed");
+  await expect(page.getByTestId("qb-convert-notice")).toContainText("SO-");
+  expect((await state(page)).payments).toHaveLength(0);
+});
+
+test("idempotency: a Cash On Demand action committed with its answer lost is retried under the same key and taken once", async ({ page }) => {
+  await arriveCod(page);
+  await next(page);
+  await next(page);
+  await next(page);
+  await next(page);
+  let lost = true;
+  await page.route(/\/order-payment$/, async (route) => {
+    if (!lost) {
+      await route.continue();
+      return;
+    }
+    lost = false;
+    await route.fetch();
+    await route.abort();
+  });
+  await page.getByTestId("qc-confirm").click();
+  await expect(page.getByTestId("qc-refusal")).toContainText("could not confirm");
+  await expect(page.getByTestId("qc-done")).toHaveCount(0);
+  await page.getByTestId("qc-confirm").click();
+  await expect(page.getByTestId("qc-done-order")).toContainText("SO-");
+  const seen = await state(page);
+  const posted = seen.posts.filter((p) => p.kind === "order-payment");
+  expect(posted).toHaveLength(2);
+  expect(posted[1]!.key).toBe(posted[0]!.key);
+  expect(seen.payments).toHaveLength(1);
+  expect(seen.conversions).toHaveLength(1);
+});
+
+test("a Cash On Demand refusal tells the person to reload in case the quote changed since the page opened", async ({ page }) => {
+  await arriveCod(page);
+  await refuseDoor(page, "a customer with no credit account pays the whole agreed total of $999.00", 1, 400);
+  await next(page);
+  await next(page);
+  await next(page);
+  await next(page);
+  await page.getByTestId("qc-confirm").click();
+  await expect(page.getByTestId("qc-refusal")).toContainText("pays the whole agreed total");
+  await expect(page.getByTestId("qc-refusal")).toContainText("reload");
+});
+
+test("a conversion that lands after the surface was removed still refreshes the desk's list", async ({ page }) => {
+  await arriveCod(page);
+  await next(page);
+  await next(page);
+  await next(page);
+  await next(page);
+  const held = await hold(page, /\/order-payment$/, { method: "POST" });
+  await page.getByTestId("qc-confirm").click();
+  await held.asked;
+  await page.evaluate(() => {
+    window.location.hash = "#/quotes";
+  });
+  await expect(page.getByTestId("qc-host")).toHaveCount(0);
+  let lists = 0;
+  page.on("request", (r) => {
+    if (r.method() === "GET" && /\/api\/v1\/quotes(\?|$)/.test(r.url())) lists += 1;
+  });
+  await held.release();
+  await expect(page.getByTestId("qb-convert-notice")).toBeVisible();
+  await expect.poll(() => lists).toBeGreaterThan(0);
+});
