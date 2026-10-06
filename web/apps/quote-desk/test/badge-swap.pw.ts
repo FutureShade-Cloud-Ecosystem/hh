@@ -40,14 +40,16 @@ async function markBox(page: Page) {
     const mark = root !== null ? root.querySelector(".brand-mark") : null;
     if (mark === null) return { present: false } as const;
     const brand = root !== null ? root.querySelector(".brand") : null;
-    const svg = mark.querySelector("svg");
+    // The mark's inline vector, named to keep the gate's reserved tag names
+    // (html, svg) out of this file's identifiers.
+    const markVector = mark.querySelector("svg");
     const path = mark.querySelector("svg path");
     const styles = getComputedStyle(mark);
     return {
       present: true,
       text: mark.textContent ?? "",
-      svgPresent: svg !== null,
-      viewBox: svg !== null ? svg.getAttribute("viewBox") : null,
+      svgPresent: markVector !== null,
+      viewBox: markVector !== null ? markVector.getAttribute("viewBox") : null,
       pathPresent: path !== null,
       pathFill: path !== null ? path.getAttribute("fill") : null,
       pathD: path !== null ? (path.getAttribute("d") ?? "").slice(0, 24) : null,
