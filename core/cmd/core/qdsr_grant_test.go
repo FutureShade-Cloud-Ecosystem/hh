@@ -42,6 +42,10 @@ func qdsrPlantOutsideSales(t *testing.T, env *compEnv, pool *pgxpool.Pool) {
 		qdsrGrantOutside, qdsrSubOutsideSales, testkit.OrgNorthID, testkit.BranchNorthAID); err != nil {
 		t.Fatalf("plant outside sales grant: %v", err)
 	}
+	if _, err := pool.Exec(ctx, `INSERT INTO user_branch_grants (user_id, branch_id, org_id) VALUES ($1, $2, $3)
+		ON CONFLICT (user_id, branch_id) DO NOTHING`, qdsrUserOutsideSales, testkit.BranchNorthAID, testkit.OrgNorthID); err != nil {
+		t.Fatalf("plant outside sales branch grant: %v", err)
+	}
 	env.appwrite.setTeam(qdsrSubOutsideSales, "org:"+testkit.OrgNorthSlug)
 }
 

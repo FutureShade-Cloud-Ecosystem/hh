@@ -70,6 +70,13 @@ func TestQDSRCustomerReadByIDCarriesLimitAndBalance(t *testing.T) {
 		t.Fatalf("a global caller reads any branch's account: %s", body)
 	}
 
+	// Reaches the Quote Desk's roles as the search does: outside sales holds the Quote Desk and no
+	// Counter Till cell, and reads the account at its branch.
+	qdsrPlantOutsideSales(t, fx.env, pool)
+	code, body = qdsrGet(t, fx, qdsrSubOutsideSales, path(qdsrClearID))
+	if o := qdsrJSON(t, code, body); o["credit_limit_cents"] != float64(500_000) {
+		t.Fatalf("the Quote Desk sales role reads the account: %s", body)
+	}
 	// The same grants as the search: no counter or quote desk cell, no read.
 	for _, sub := range []string{testkit.SubDriver, xrSubYardTeam} {
 		code, body = qdsrGet(t, fx, sub, path(qdsrClearID))

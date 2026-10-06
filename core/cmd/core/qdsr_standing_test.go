@@ -65,9 +65,18 @@ func TestQDSRAccountStandingAnswersEveryCaseDistinctly(t *testing.T) {
 	if code != http.StatusForbidden {
 		t.Fatalf("another branch answers %d %s, want 403", code, body)
 	}
-	// A role holding no counter or quote desk grant meets the gate's refusal.
-	code, body = qdsrGet(t, fx, testkit.SubDriver, base+"&customer_id="+qdsrClearID)
-	rgRefused(t, "a driver is held off the standing read", code, body)
+	// The Quote Desk surface: outside sales holds Quote Desk and no Counter Till cell, and gets the
+	// answer (Convert to Order asks it before it confirms). Sales roles with a Counter Till cell too.
+	qdsrPlantOutsideSales(t, fx.env, pool)
+	code, body = qdsrGet(t, fx, qdsrSubOutsideSales, base+"&customer_id="+qdsrHeldID)
+	if o := qdsrJSON(t, code, body); o["standing"] != "on_hold" {
+		t.Fatalf("the Quote Desk sales role answers %s, want on_hold", body)
+	}
+	// A role holding neither the Counter Till nor the Quote Desk meets the gate's refusal.
+	for _, sub := range []string{testkit.SubDriver, xrSubYardTeam, xrSubHR} {
+		code, body = qdsrGet(t, fx, sub, base+"&customer_id="+qdsrClearID)
+		rgRefused(t, sub+" is held off the standing read", code, body)
+	}
 
 	// The dealer's balance policy refuses the clerk and still admits the manager.
 	setPolicy := func(v string) {

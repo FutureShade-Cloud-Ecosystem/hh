@@ -13,10 +13,12 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/apigen"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 )
 
@@ -144,6 +146,19 @@ func TestQDSRCategoriesReadPagesByCodeBehindTheDealerAdminGrant(t *testing.T) {
 	for _, sub := range []string{testkit.SubInsideSales, testkit.SubDriver, xrSubYardTeam} {
 		code, body := qdsrGet(t, fx, sub, "/api/v1/product-categories")
 		rgRefused(t, sub+" is held off the categories read", code, body)
+	}
+	// The annotation is exactly the margin policy grid's and the pricing rules read's, from the
+	// document: the Sales manager's Pricing tab picker holds it, a plain Sales role does not.
+	byOp := map[string]apigen.Route{}
+	for _, r := range apigen.Routes {
+		byOp[r.OperationID] = r
+	}
+	cat := byOp["productListCategories"]
+	for _, op := range []string{"pricingListCategoryPolicies", "pricingListRules"} {
+		ref := byOp[op]
+		if cat.XRole != ref.XRole || cat.Level != ref.Level || cat.List != ref.List || strings.Join(cat.Surfaces, ",") != strings.Join(ref.Surfaces, ",") {
+			t.Fatalf("categories annotation %+v differs from %s %+v", cat, op, ref)
+		}
 	}
 	// The pricing read the grant is borrowed from agrees on the same roles.
 	for _, sub := range []string{testkit.SubInsideSales, testkit.SubDriver} {
