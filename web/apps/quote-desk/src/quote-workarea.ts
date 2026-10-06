@@ -1037,8 +1037,10 @@ export class QdQuoteWorkarea extends LitElement {
       display: flex;
       justify-content: center;
       align-items: flex-start;
+      /* The lead-in is the spacing token's own air. No reserved minimum here:
+         a wrapper taller than its card leaves a void between the card and the
+         list under the desk (the compose void legs of compose-void.pw.ts). */
       padding-top: var(--hos-s-48, 48px);
-      min-height: 320px;
     }
     .composecard {
       border: 1px solid var(--hos-line, var(--hh-line));
