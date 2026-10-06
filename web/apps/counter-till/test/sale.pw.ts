@@ -1197,11 +1197,11 @@ test("the split panel shows the typed sum and leaves the settlement to the ring"
   // happens. The shape refusals stay the panel's own.
   // The split panel's own sum line still prints the CA prefix from the till's source (the Counter Till coder carries it).
   await panel.getByTestId("split-amount-0").fill("4.00");
-  await expect(page.getByTestId("split-typed")).toHaveText("CA$4.00 typed so far");
+  await expect(page.getByTestId("split-typed")).toHaveText("$4.00 typed so far");
   await expect(page.getByTestId("split-remaining")).toHaveCount(0);
   await expect(page.getByTestId("split-problem")).toContainText("Every tender needs an amount greater than zero");
   await panel.getByTestId("split-amount-1").fill("0.60");
-  await expect(page.getByTestId("split-typed")).toHaveText("CA$4.60 typed so far");
+  await expect(page.getByTestId("split-typed")).toHaveText("$4.60 typed so far");
   await expect(page.getByTestId("split-problem")).toContainText("at the ring");
   // The ring arms on the shape: whether the legs settle the server's total is
   // the ring's own answer.

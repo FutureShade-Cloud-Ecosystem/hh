@@ -91,7 +91,7 @@ export { parseAmountCents } from '@hardscapehouse/pos-kit/src/ported/ports.js';
 
 /** fmtCents is the local money formatter (same LOCAL STOPGAP posture as pos-api.ts money()). */
 export function fmtCents(cents: number): string {
-  return `CA$${centsAmount(cents)}`;
+  return `$${centsAmount(cents)}`;
 }
 
 /**

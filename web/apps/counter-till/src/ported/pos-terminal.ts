@@ -126,7 +126,7 @@ import {
 // HH note: the margin word routes through the app's reviewed formatMargin
 // (money.ts, half away from zero): the same core figure reads the same word
 // here as everywhere else in HH (1585 bps is 15.9%, not a float's 15.8%).
-import { formatMargin } from "../money.js";
+import { formatMoney, formatMargin } from "../money.js";
 import {
   clockLabel,
   lineWeightLbs,
@@ -163,7 +163,6 @@ import {
   accountStanding, // the Customer step's past-due FACT (role-gated at the marshal layer)
   type AccountStanding,
   resolveLine,
-  money,
   newIdempotencyKey,
   type CartLine,
   type ParkedTicket,
@@ -440,7 +439,7 @@ export class HosPosTerminal extends LitElement {
    * `repriceSeq` is PER SLOT rather than one scalar like `ticketFactsSeq`, and deliberately so: two
    * lines can be in flight at once (a counter picking items off a category board does three adds in
    * well under a second) and a single scalar would let each add cancel the one before it, leaving
-   * the earlier line reading a hard CA$0.00 until tender. Per slot, an add only ever supersedes
+   * the earlier line reading a hard $0.00 until tender. Per slot, an add only ever supersedes
    * ITSELF.
    *
  * `cartGen` is bumped ONLY where the cart is replaced WHOLESALE: new sale, clear, park, resume,
@@ -498,6 +497,12 @@ export class HosPosTerminal extends LitElement {
    * split and follows the person across tills.
    */
   @state() private counterLayout: CounterLayout = 'STEPPER';
+  /**
+   * Row 976: the two panes swapped (the steps pane first). The page that mounts this terminal owns
+   * the choice, because its header carries the swap button beside the theme, and remembers it per
+   * browser; the terminal only draws it.
+   */
+  @property({ type: Boolean }) panesSwapped = false;
   /**
    * The dealer's key roster, resolved server-side (user over dealer over default). Held as data,
    * never as a switch statement: the client's people are BisTrack refugees who will want their old
@@ -1287,19 +1292,77 @@ export class HosPosTerminal extends LitElement {
          top margin would double it. */
       margin-top: 0;
     }
-    :host([data-counter-layout='PANELS']) hos-pos-panels {
+    /* ── TWO PANE LAYOUT (row 976) ─────────────────────────────────────────────────────────────────────
+       Items pane on one side, steps pane on the other. The Items pane fills the full height
+       and scrolls INSIDE itself (the lines table scrolls, the search bar and fulfilment foot stay
+       fixed). The steps pane scrolls INSIDE itself if its content overflows. Portrait tablet
+       (820x1180) stacks: Items on top, steps below. 1024x768 and above keeps two panes.
+       Items starts on the left; the swap control reverses it. */
+    :host([data-counter-layout='PANELS']) .twopane {
+      display: flex;
       flex: 1 1 auto;
       min-height: 0;
+      gap: var(--hos-space-3);
+    }
+    :host([data-counter-layout='PANELS']) .pane {
       display: flex;
       flex-direction: column;
+      min-height: 0;
+      min-width: 0;
+      background: var(--hos-slate-warm);
+      border: 1px solid var(--hos-line);
+      border-radius: var(--hos-radius-card);
+      box-shadow: var(--hos-elev-1);
+      overflow: hidden;
     }
-    /* A step's pinned foot (the fulfilment row): the one row of a panel that
-       must never scroll away. The wrapper matches the body's own side
-       padding so the foot's rows line up with the rows above them; an empty
-       foot slot renders nothing and costs no height. */
-    :host([data-counter-layout='PANELS']) [slot$='-foot'] {
+    :host([data-counter-layout='PANELS']) .pane-items {
+      flex: 1 1 50%;
+    }
+    :host([data-counter-layout='PANELS']) .pane-items-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+    }
+    :host([data-counter-layout='PANELS']) .pane-items-foot {
+      flex: none;
+      border-top: 1px solid var(--hos-line);
       padding: 0 10px 8px;
     }
+    :host([data-counter-layout='PANELS']) .pane-steps {
+      flex: 1 1 50%;
+    }
+    :host([data-counter-layout='PANELS']) .pane-steps hos-pos-flow-steps {
+      flex: none;
+      padding: var(--hos-space-3);
+      border-bottom: 1px solid var(--hos-line);
+    }
+    :host([data-counter-layout='PANELS']) .pane-steps-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      padding: var(--hos-space-3);
+    }
+    :host([data-counter-layout='PANELS']) .pane-steps > .saleutil {
+      flex: none;
+      border-top: 1px solid var(--hos-line);
+    }
+    :host([data-counter-layout='PANELS']) .pane-steps > .txbar {
+      flex: none;
+      border-top: 1px solid var(--hos-line);
+    }
+    /* Portrait tablet (820x1180): the panes stack, the first one on top, both inside the screen. */
+    @media (max-width: 900px) {
+      :host([data-counter-layout='PANELS']) .twopane {
+        flex-direction: column;
+      }
+      :host([data-counter-layout='PANELS']) .pane-items {
+        flex: 3 1 0;
+      }
+      :host([data-counter-layout='PANELS']) .pane-steps {
+        flex: 2 1 0;
+      }
+    }
+    /* Touch: taller tap targets */
     @media (pointer: coarse) {
       .fulfil button,
       .paytiles button,
@@ -2782,6 +2845,21 @@ export class HosPosTerminal extends LitElement {
     this.dataset.counterLayout = this.counterLayout;
   }
 
+  /**
+   * Row 976: tell the mounting page which layout is on, so its header shows the Swap panes button
+   * only while the panels view is. Fires on the first render and on every change after it.
+   */
+  protected updated(changed: Map<PropertyKey, unknown>): void {
+    if (!changed.has('counterLayout')) return;
+    this.dispatchEvent(
+      new CustomEvent('pos-counter-layout', {
+        detail: { layout: this.counterLayout },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
 
   // DIB-195 (opener side): capture the current in-progress order so a pop-out can carry it into
  // the new window. Verbatim client state (a DRAFT: no server sale id yet); the shell stashes
@@ -3077,7 +3155,7 @@ export class HosPosTerminal extends LitElement {
    *
    * Deliberately NOT called from setQty or removeLine. Those change the cart but do not replace it,
    * they already supersede correctly, and cancelling every in-flight answer there would leave a
-   * freshly added line reading a hard CA$0.00 because an unrelated line was deleted.
+   * freshly added line reading a hard $0.00 because an unrelated line was deleted.
    */
   private cartReplaced(): void {
     this.ticketChanged();
@@ -3300,7 +3378,7 @@ export class HosPosTerminal extends LitElement {
       this.scheduleTicketFacts(); // rev 8: a repriced ticket refreshes margin + suggestions
     } catch {
       // rev 5: the line stays unpriced (the server still re-resolves authoritatively at tender
- // time), but it must SAY so: a hard "CA$0.00" where a price failed to resolve reads as a
+ // time), but it must SAY so: a hard "$0.00" where a price failed to resolve reads as a
       // real price until the ring refuses it. priceMissing renders "price pending" instead.
       const cur = this.cart[idx];
       if (!stillOurs() || !cur) return; // same reason: a failure for a line that is gone marks nothing
@@ -3443,7 +3521,7 @@ export class HosPosTerminal extends LitElement {
     return cartSubtotalCents(this.cart);
   }
  // HH note: an empty draft shows the app's blank marker, never a plausible
- // zero (the house rule; the reference showed CA$0.00 here, and HH's rule
+ // zero (the house rule; the reference showed $0.00 here, and HH's rule
  // wins). The summary speaks only when EVERY line is priced: an empty cart, or
  // any line still pending (a just-added line before its price lookup answers,
  // or a line whose reprice failed, which keeps its old total), keeps the whole
@@ -3452,7 +3530,7 @@ export class HosPosTerminal extends LitElement {
     return this.cart.length > 0 && this.cart.every((l) => !l.priceMissing);
   }
   private moneyOrMarker(cents: number): string {
-    return this.hasPricedLine() ? money(cents) : '(not priced)';
+    return this.hasPricedLine() ? formatMoney(cents) : '(not priced)';
   }
 
   // The tax-and-total rows' words are the pure helper ringTaxWords (in
@@ -4099,7 +4177,7 @@ export class HosPosTerminal extends LitElement {
           breakdown: null,
           // Pending until the price lookup answers, the add path's own rule: the summary stays on
           // the marker rather than a zero for a line nobody has priced yet. Without the flag the
-          // resumed ticket painted CA$0.00 totals and margin figures in the instant before the
+          // resumed ticket painted $0.00 totals and margin figures in the instant before the
           // first answer landed (ui3d visual NOTE).
           priceMissing: true,
         });
@@ -4144,6 +4222,20 @@ export class HosPosTerminal extends LitElement {
   }
 
   // ── DIB-488: the tracked flow + the payment tiles ─────────────────────────
+
+  /**
+   * The header chips. In the two-pane view Items is a pane of its own, never a step, so the chips
+   * are Customer, Payment and Summary and F4 / Shift F4 cycle those three.
+   */
+  private headerFlowSteps() {
+    const steps = this.flowSteps();
+    return this.counterLayout === 'PANELS' ? steps.filter((s) => s.id !== 'items') : steps;
+  }
+
+  /** The step the steps pane has open: always one of the three, whatever openStep last held. */
+  private paneStep(): FlowStepId {
+    return this.openStep === 'payment' || this.openStep === 'summary' ? this.openStep : 'customer';
+  }
 
   /** The stepper's steps, derived fresh from the sale data on every render (see _pos-flow.ts). */
   private flowSteps() {
@@ -4351,7 +4443,7 @@ export class HosPosTerminal extends LitElement {
    *
  * WAVE 2 · finding 11: THE SHUT DRAWER IS HANDLED BEFORE THE PRESS, NOT AFTER IT. The button's
    * disabled predicate carried no till term, so a clerk on a register with no session pressed a
-   * fully armed "Complete sale · CA$7,661.40" and was answered by a server refusal in a red
+   * fully armed "Complete sale · $7,661.40" and was answered by a server refusal in a red
  * banner. The state was knowable the whole time: `tillSessionId === ''` is the exact predicate
  * the banner's own repair button tests: so the CTA now names the session in its label and does
    * it here, in that order. The banner and its "Open session now" repair stay exactly as they
@@ -4717,7 +4809,16 @@ export class HosPosTerminal extends LitElement {
     switch (action) {
       case HK_STEP_NEXT:
       case HK_STEP_BACK: {
-        const next = stepAfter(this.openStep, action === HK_STEP_NEXT ? 1 : -1);
+        const dir = action === HK_STEP_NEXT ? 1 : -1;
+        // Two panes: Items is always on screen, so the keys cycle the steps pane's three.
+        if (this.counterLayout === 'PANELS') {
+          const cycle: FlowStepId[] = ['customer', 'payment', 'summary'];
+          const at = cycle.indexOf(this.paneStep());
+          this.openAccordion(cycle[(at + dir + cycle.length) % cycle.length]);
+          return true;
+        }
+        // Default: cycle through all four steps including items
+        const next = stepAfter(this.openStep, dir);
         if (!next) return false;
         this.openAccordion(next);
         return true;
@@ -4887,7 +4988,7 @@ export class HosPosTerminal extends LitElement {
            data every render (deriveFlow); clicking a step scrolls/focuses its panel and locks
            NOTHING: every panel below stays editable at all times. */ ''}
         <hos-pos-flow-steps
-          .steps=${this.flowSteps()}
+          .steps=${this.headerFlowSteps()}
           @pos-flow-goto=${(e: CustomEvent<{ step: FlowStepId }>) => this.onFlowGoto(e.detail.step)}
         ></hos-pos-flow-steps>
         <div class="session">
@@ -5207,23 +5308,19 @@ export class HosPosTerminal extends LitElement {
    * the other layout too.
    */
   private renderFlowPanels() {
-    const steps = this.flowSteps();
-    return html`<div class="flowcol" data-testid="pos-flow-panels">
-      <hos-pos-panels
-        .steps=${steps}
-        .active=${this.openStep}
-        @pos-panel-focus=${(e: CustomEvent<{ step: FlowStepId }>) => (this.openStep = e.detail.step)}
-      >
-        ${steps.map((s) => {
-          const foot = this.renderStepFoot(s.id);
-          return html`
-            <div slot=${s.id}>${this.renderStepBody(s.id)}</div>
-            ${foot === nothing ? nothing : html`<div slot=${s.id + '-foot'}>${foot}</div>`}
-          `;
-        })}
-      </hos-pos-panels>
+    const itemsPane = html`<div class="pane pane-items" data-testid="pos-pane-items">
+      <div class="pane-items-body">${this.renderItemsBody()}</div>
+      <div class="pane-items-foot">${this.renderStepFoot('items')}</div>
+    </div>`;
+    const stepsPane = html`<div class="pane pane-steps" data-testid="pos-pane-steps">
+      <div class="pane-steps-body" data-testid="pos-pane-steps-body">${this.renderStepBody(this.paneStep())}${this.renderStepFoot(this.paneStep())}</div>
       ${this.renderSaleUtilities()}
       ${this.renderTxBar()}
+    </div>`;
+    return html`<div class="flowcol" data-testid="pos-flow-panels">
+      <div class="twopane" data-testid="pos-twopane">
+        ${this.panesSwapped ? html`${stepsPane}${itemsPane}` : html`${itemsPane}${stepsPane}`}
+      </div>
     </div>`;
   }
 
@@ -5283,11 +5380,11 @@ export class HosPosTerminal extends LitElement {
       walkInConfirmed: this.walkInConfirmed,
       lineCount: this.cart.length,
       totalLabel: this.ringDone()
-        ? money(this.doneSale().total_cents)
+        ? formatMoney(this.doneSale().total_cents)
         : this.openStep === 'payment'
           ? ''
           : this.hasPricedLine()
-            ? `subtotal ${money(this.subtotal())}`
+            ? `subtotal ${formatMoney(this.subtotal())}`
             : '(not priced)',
       // DIB-512 (8) · one word per surface. Before the ring the collapsed Payment card says which
       // tender is CHOSEN; after it, salePillLabel decides the counter word for what the sale
@@ -5400,7 +5497,7 @@ ${/* DIB-488: the quieter order facts fold away (native details: no state to des
                 @change=${(e: Event) => (this.jobReference = (e.target as HTMLInputElement).value)}
               />
 
-              <label>Deposit (CA$)</label>
+              <label>Deposit ($)</label>
               <div
                 class="deposit"
                 title=${this.depositAllowed()
@@ -5877,7 +5974,7 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
                loud.
 
                (11) With the till shut the button was fully armed and said "Complete sale ·
-               CA$7,661.40": the refusal existed only AFTER the press, as an error banner with an
+               $7,661.40": the refusal existed only AFTER the press, as an error banner with an
                "Open session now" button in it, testing the very predicate that was knowable before
                the press. Disabling it would be worse (it strands a clerk with no way forward and
                no reason given), so the button keeps its arm and changes its promise: it will open
@@ -5994,7 +6091,7 @@ ${this.ring.state === 'error'
 ${this.ring.state === 'done'
             ? html`${this.renderSoldPanel(this.ring.sale)}
                 ${/* WAVE 2 · finding 13: ORDER ADMINISTRATION IS DISCLOSED, NOT DELETED.
-                   Measured on a real carry-out (#SO-TRT-3 / #INV-2, CA$7,661.40, cash): 58 visible
+                   Measured on a real carry-out (#SO-TRT-3 / #INV-2, $7,661.40, cash): 58 visible
                    strings in this card, of which the sold panel above is the first twelve and is
                    the whole of what a counter person came for: Paid, the amount, the sale and
                    invoice numbers, the tender, Print receipt, Next sale. The other ~46 were order
@@ -6145,11 +6242,11 @@ ${this.receiptMsg ? html`<div class="banner bad" role="alert">${this.receiptMsg}
               >${l.product.name}
               ${p.showSaving
                 ? html`<span class="rbsave" data-testid="readback-saving"
-                    >Save ${money(perLineSavingCents(p.savingCents, l.qty))}${word ? ` · ${word}` : ''}</span
+                    >Save ${formatMoney(perLineSavingCents(p.savingCents, l.qty))}${word ? ` · ${word}` : ''}</span
                   >`
                 : nothing}</span
             >
-            <span class="m">${l.priceMissing ? 'price pending' : money(l.lineTotalCents)}</span>
+            <span class="m">${l.priceMissing ? 'price pending' : formatMoney(l.lineTotalCents)}</span>
           </li>`;
         })}
       </ul>
@@ -6162,7 +6259,7 @@ ${this.receiptMsg ? html`<div class="banner bad" role="alert">${this.receiptMsg}
          arithmetic, summed per line; absent entirely when there is nothing to claim. */ ''}
       ${saving > 0
         ? html`<div class="rbrow saving" data-testid="readback-saving-total">
-            <span>You save</span><span class="m">${money(saving)}</span>
+            <span>You save</span><span class="m">${formatMoney(saving)}</span>
           </div>`
         : nothing}
     </div>`;
@@ -6293,7 +6390,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
   /**
  * rev 8 (item 12): the FOOTER TRANSACTION BAR: the ticket panel's bottom line of truth.
    * "N Items · Total Weight X lbs" always (the blank word when NO line has a weight);
-   * "Margin Y% · Est. Profit CA$Z" segments ONLY while the role-gated server data is present,
+   * "Margin Y% · Est. Profit $Z" segments ONLY while the role-gated server data is present,
    * the policy word allows this caller (P3-10) AND the quick-hide is off. Sits OUTSIDE the
    * panel's internal scroll, so it never leaves view.
    */
@@ -6318,7 +6415,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
         estProfitCents: ticketPriced && marginAllowed ? this.marginData?.est_profit_cents : undefined,
         marginHidden: this.wsMarginHidden,
       },
-      money,
+      formatMoney,
     );
     return html`<div class="txbar" data-testid="pos-txbar">
       ${segs.map(
@@ -6383,7 +6480,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
                 <div class="addonname">${a.name}</div>
                 ${a.size_line ? html`<div class="addonsize">${a.size_line}</div>` : nothing}
                 ${a.list_price_cents !== undefined
-                  ? html`<div class="addonprice">${money(a.list_price_cents)}</div>`
+                  ? html`<div class="addonprice">${formatMoney(a.list_price_cents)}</div>`
                   : nothing}
               </div>
             </div>
@@ -6438,7 +6535,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
           step="0.01"
           inputmode="decimal"
           data-testid="cash-tendered"
-          placeholder="Cash tendered (optional, CA$)"
+          placeholder="Cash tendered (optional, $)"
           aria-label="Cash tendered in dollars: optional; leave empty to ring the exact total"
           title="Type what the customer hands you: the change due is the ring's own answer, stated on the confirmation. Leave empty to ring the exact total."
           .value=${this.cashTenderedDollars}
@@ -6499,9 +6596,9 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
           </div>
           <div class="cfacts">
             <span>Terms <span class="num">${c.payment_terms_days}d</span></span>
-            <span>Available (derived) <span class="num avail">${money(available)}</span></span>
+            <span>Available (derived) <span class="num avail">${formatMoney(available)}</span></span>
             ${c.open_balance_cents > 0
-              ? html`<span>Outstanding <span class="num out">${money(c.open_balance_cents)}</span></span>`
+              ? html`<span>Outstanding <span class="num out">${formatMoney(c.open_balance_cents)}</span></span>`
               : nothing}
             ${/* THE PAST-DUE FACT (N4). The back-office lead starts a counter sale partly because "it
                also gives me an opportunity to ask them to pay their bill": this is the thing that was
@@ -6514,7 +6611,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
               ? html`<span data-testid="cust-past-due"
                   >Past due
                   <span class="num out"
-                    >${money(this.standing.past_due_cents)}${this.standing.oldest_bucket
+                    >${formatMoney(this.standing.past_due_cents)}${this.standing.oldest_bucket
                       ? ` · ${this.standing.oldest_bucket}d`
                       : ''}</span
                   >
@@ -6758,14 +6855,14 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
           ${/* rev 6 (item B): the unit is its own aligned column (mock parity). */ ''}
           <div class="lunit" data-testid="pos-line-unit">${l.uom}</div>
           ${/* rev 8 (item 3): Price and Total are SEPARATE aligned columns now (concept parity);
-             rev 5's honesty stands: an unresolved price says "price pending", never CA$0.00. */ ''}
+             rev 5's honesty stands: an unresolved price says "price pending", never $0.00. */ ''}
           ${l.priceMissing
             ? html`<div class="lprice">price pending</div>
                 <div class="ltot">(not priced)</div>`
             : html`<div class="lprice" title=${l.priceUom && l.priceUom !== l.uom ? `Priced per ${l.priceUom}` : 'Unit price'}>
-                  ${money(l.unitPriceCents)}${l.priceUom && l.priceUom !== l.uom ? ` / ${l.priceUom}` : ''}
+                  ${formatMoney(l.unitPriceCents)}${l.priceUom && l.priceUom !== l.uom ? ` / ${l.priceUom}` : ''}
                 </div>
-                <div class="ltot">${money(l.lineTotalCents)}</div>`}
+                <div class="ltot">${formatMoney(l.lineTotalCents)}</div>`}
           ${/* rev 8 (item 9): line qty × unit weight, lbs: the explicit blank word when the data cannot say. */ ''}
           <div class="lweight" data-testid="pos-line-weight" title=${w === null ? 'No weight on file for this item' : 'Line weight: quantity × unit weight'}>
             ${w === null ? '(none)' : formatLbs(w)}
@@ -6807,7 +6904,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
               ${this.renderStockLine(l)}
             </div>
             ${this.renderQtyStepper(l, i)}
-            <div class="ltot">${l.priceMissing ? 'price pending' : money(l.lineTotalCents)}</div>
+            <div class="ltot">${l.priceMissing ? 'price pending' : formatMoney(l.lineTotalCents)}</div>
             <button class="rm" @click=${() => this.removeLine(i)} title="Remove line" aria-label="Remove ${l.product.name}">
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M4 7h16M10 7V5h4v2M6.5 7l1 13h9l1-13M10 11v6M14 11v6"></path>
@@ -6871,11 +6968,11 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
       ${/* DIB-512 · one word per surface: a settled sale's amountLabel is empty ('Paid' above the
          number already says what it is); only the load-bearing 'Balance due' caption survives. */ ''}
       ${c.amountLabel ? html`<div class="sold-amount-label">${c.amountLabel}</div>` : nothing}
-      <div class="sold-amount">${money(c.amountCents)}</div>
+      <div class="sold-amount">${formatMoney(c.amountCents)}</div>
       ${(sale.change_due_cents ?? 0) > 0 || (sale.cash_tendered_cents ?? 0) > 0
         ? html`<div class="sold-change" data-testid="sold-change-due">
-            Tendered <span class="tnum">${money(sale.cash_tendered_cents ?? 0)}</span>: change due
-            <span class="num">${money(sale.change_due_cents ?? 0)}</span>
+            Tendered <span class="tnum">${formatMoney(sale.cash_tendered_cents ?? 0)}</span>: change due
+            <span class="num">${formatMoney(sale.change_due_cents ?? 0)}</span>
           </div>`
         : nothing}
       ${/* DIB-512 · the Status row is deleted: the card's headline + the panel pill already carry
@@ -6893,7 +6990,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
           ? html`<div class="f" data-testid="sold-simulated-notice"><span class="k">Card</span><span class="v">Simulated card: no card was charged</span></div>`
           : nothing}
         ${(sale.deposit_cents ?? 0) > 0
-          ? html`<div class="f"><span class="k">Deposit</span><span class="v">${money(sale.deposit_cents ?? 0)}</span></div>`
+          ? html`<div class="f"><span class="k">Deposit</span><span class="v">${formatMoney(sale.deposit_cents ?? 0)}</span></div>`
           : nothing}
         ${sale.po_job_ref
           ? html`<div class="f"><span class="k">PO / Job</span><span class="v">${sale.po_job_ref}</span></div>`

@@ -56,11 +56,11 @@ export function dollars(cents: number): string {
 
 /**
  * The ported surface's own money word on a line, the total card and the sold
- * panel: "$5.95". The returns desk (HH's own view) keeps the plain "$"
+ * panel: "CA$5.95". The returns desk (HH's own view) keeps the plain "$"
  * words, so both renderings are mirrored here.
  */
 export function cad(cents: number): string {
-  return `${dollars(cents)}`;
+  return dollars(cents);
 }
 
 /** The column's percent from basis points, as the app's helper rounds it. */

@@ -39,6 +39,7 @@ import {
   type BranchRef,
 } from "./till-client.js";
 import { demoBanner, demoBannerStyles } from "./demo-banner.js";
+import { readPanesSwapped, writePanesSwapped } from "./pane-memory.js";
 import { THEME_LABEL, ThemeController, themeControlLabel, themeStatusText } from "./theme.js";
 import { entryStyles, renderEntry, type FlowsState } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { ReturnsFlow } from "./returns/flow.js";
@@ -101,14 +102,21 @@ export class CounterTillApp extends HHElement {
          terminal's own layout pick, which the terminal reflects as an
          attribute when it changes. The Quote Desk's workarea is the
          reference pattern. */
-      main.on-till {
-        /* The bar's own arithmetic, named once: the surfacebar's min-height
-           plus its bottom margin. */
-        --ct-till-bar: calc(48px + var(--hh-s-8));
-      }
-      main.on-till:has(hos-pos-terminal[data-counter-layout="PANELS"]) .surface {
-        height: calc(100dvh - var(--ct-till-bar));
+      main.on-till:has(hos-pos-terminal[data-counter-layout="PANELS"]) .till-screen {
+        /* The window is a column: the bar takes the height it really has (the badge and the
+           wrapped controls move it, so no guessed pixel figure) and the surface takes the rest.
+           What follows the screen (a notice, the returns desk) flows on below the fold. */
+        display: flex;
+        flex-direction: column;
+        height: 100dvh;
         box-sizing: border-box;
+      }
+      .till-screen > .surfacebar {
+        flex: none;
+      }
+      main.on-till:has(hos-pos-terminal[data-counter-layout="PANELS"]) .till-screen > .surface {
+        flex: 1 1 0;
+        min-height: 0;
       }
       /* The terminal paints its own full-bleed chrome; the app's padding would
          letterbox it, so the mounted surface sits edge to edge. */
@@ -157,6 +165,56 @@ export class CounterTillApp extends HHElement {
       header .title-row {
         gap: var(--hh-s-12);
         margin-left: auto;
+      }
+      /* The till's header badge: same mark and size as the front door's lockup,
+         at the left edge before the Demo pill. Gold is a fill, never an ink. */
+      header .brand,
+      .surfacebar .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+      }
+      header .brand-mark,
+      .surfacebar .brand-mark {
+        width: 30px;
+        height: 30px;
+        flex: none;
+        background: var(--hh-accent);
+        color: var(--hh-accent-ink);
+      }
+      header .brand-mark svg,
+      .surfacebar .brand-mark svg {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+      header .brand-names,
+      .surfacebar .brand-names {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        min-width: 0;
+      }
+      header .brand-product,
+      .surfacebar .brand-product {
+        font-size: 15px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        line-height: 1.05;
+      }
+      header .brand-product .accent,
+      .surfacebar .brand-product .accent {
+        color: var(--hh-accent-text);
+      }
+      header .brand-sub,
+      .surfacebar .brand-sub {
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.055em;
+        line-height: 1.2;
+        color: var(--hh-text-dim);
+        white-space: nowrap;
       }
       header .signed-in {
         margin: 0;
@@ -245,6 +303,9 @@ export class CounterTillApp extends HHElement {
   readonly #theme = new ThemeController(() => this.requestUpdate());
   /** What a screen reader hears after a Theme press: focus stays on the button, so the new name is not re-read. */
   #themeStatus = "";
+  /** Row 976: the till's layout (the terminal reports it) and whether the two panes are swapped. */
+  #counterLayout = "";
+  #panesSwapped = readPanesSwapped();
   #flowsState: FlowsState = { kind: "loading" };
   /** The one flows read this element makes; the pop-out's tap waits for it. */
   #flowsLoaded: Promise<void> = Promise.resolve();
@@ -479,6 +540,11 @@ export class CounterTillApp extends HHElement {
     if (control.getAttribute("data-action") === "choose" && typeof flow === "string" && flow !== "") {
       void this.#chooseFlow(flow);
     }
+    if (control.getAttribute("data-action") === "swap-panes") {
+      this.#panesSwapped = !this.#panesSwapped;
+      writePanesSwapped(this.#panesSwapped);
+      this.requestUpdate();
+    }
     if (control.getAttribute("data-action") === "theme") {
       this.#theme.cycle();
       this.#themeStatus = themeStatusText(this.#theme.choice);
@@ -666,6 +732,47 @@ export class CounterTillApp extends HHElement {
     this.requestUpdate();
   }
 
+  /** The brand lockup for the till header: the same mark and size as the front door. */
+  #brandLockup(): TemplateResult {
+    return html`
+      <div class="brand" data-testid="till-header-badge">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 3000 3000">
+            <path
+              fill="currentColor"
+              d="M644.94 465.17 H1386.06 A29.15 29.15 0 0 1 1415.21 494.32 V1306.38 A84.79 84.79 0 0 0 1500 1391.17 H2355.05 A29.15 29.15 0 0 1 2384.2 1420.32 V2505.68 A29.15 29.15 0 0 1 2355.05 2534.83 H1613.94 A29.15 29.15 0 0 1 1584.79 2505.68 V1940.1 A84.79 84.79 0 0 0 1415.21 1940.1 V2505.68 A29.15 29.15 0 0 1 1386.06 2534.83 H644.94 A29.15 29.15 0 0 1 615.79 2505.68 V494.32 A29.15 29.15 0 0 1 644.94 465.17 Z M1613.94 465.17 H2355.05 A29.15 29.15 0 0 1 2384.2 494.32 V1192.85 A29.15 29.15 0 0 1 2355.05 1222 H1613.94 A29.15 29.15 0 0 1 1584.79 1192.85 V494.32 A29.15 29.15 0 0 1 1613.94 465.17 Z"
+            />
+          </svg>
+        </span>
+        <span class="brand-names">
+          <span class="brand-product">HH <span class="accent">Yard</span></span>
+          <span class="brand-sub">Counter Till</span>
+        </span>
+      </div>
+    `;
+  }
+
+  /** Row 976: the Swap panes icon button, shown only while the till is in its two-pane view. */
+  #swapControl(): TemplateResult | typeof nothing {
+    if (this.#counterLayout !== "PANELS") return nothing;
+    return html`
+      <button
+        type="button"
+        class="btn-secondary icon-btn"
+        data-action="swap-panes"
+        data-testid="swap-panes"
+        aria-label="Swap panes"
+        aria-pressed=${this.#panesSwapped ? "true" : "false"}
+        title="Swap panes"
+      >
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 8h15M15 4l4 4-4 4" />
+          <path d="M20 16H5M9 12l-4 4 4 4" />
+        </svg>
+      </button>
+    `;
+  }
+
   /** The Theme control of the account area: one button, its value beside the word. */
   #themeControl(): TemplateResult {
     const choice = this.#theme.choice;
@@ -696,6 +803,7 @@ export class CounterTillApp extends HHElement {
         ? nothing
         : html`
             <header>
+              ${this.#brandLockup()}
               ${demoPresent ? demoBanner() : nothing}
               <div class="title-row">
                 <h1>Counter Till</h1>
@@ -717,10 +825,13 @@ export class CounterTillApp extends HHElement {
         ${this.#surface === "terminal"
           ? html`
               <h2 class="visually-hidden">Till</h2>
+              <div class="till-screen">
               <div class="surfacebar">
+                ${this.#brandLockup()}
                 ${demoPresent ? demoBanner() : nothing}
                 <p class="signed-in">
                   <span class="role-name" data-testid="signed-in-role">${this.#signedInRoleLabel()}</span>
+                  ${this.#swapControl()}
                   ${this.#themeControl()}
                   <button
                     type="button"
@@ -737,7 +848,14 @@ export class CounterTillApp extends HHElement {
                 </p>
               </div>
               <div class="surface">
-                <hos-pos-terminal></hos-pos-terminal>
+                <hos-pos-terminal
+                  .panesSwapped=${this.#panesSwapped}
+                  @pos-counter-layout=${(e: CustomEvent<{ layout: string }>) => {
+                    this.#counterLayout = e.detail.layout;
+                    this.requestUpdate();
+                  }}
+                ></hos-pos-terminal>
+              </div>
               </div>
               ${this.#chromeMessage === null ? nothing : html`<p class="notice" role="status">${this.#chromeMessage}</p>`}
               ${renderReturns(this.#returns)}
