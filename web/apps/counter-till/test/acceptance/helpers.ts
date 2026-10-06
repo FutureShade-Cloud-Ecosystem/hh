@@ -599,8 +599,17 @@ export async function settle(page: Page): Promise<void> {
   await expect
     .poll(() => inFlight.get(page)?.count ?? 0, { intervals: [100], timeout: 15_000 })
     .toBe(0);
+  // Row 955: Returns is its own surface at #/returns, and the sale surface
+  // (the flow stepper, the session bar's answer) is hidden while it is up
+  // (kept mounted so a ticket in progress is never lost). On Returns the
+  // loaded chrome is the returns desk itself, and the sale's stepper must be
+  // hidden; otherwise a mounted till shows its stepper and the session bar.
+  const returnsUp = await page.getByTestId("returns").isVisible();
   const till = page.locator("hos-pos-flow-steps");
-  if ((await till.count()) > 0) {
+  if (returnsUp) {
+    await expect(page.getByTestId("returns")).toBeVisible();
+    if ((await till.count()) > 0) await expect(till.first()).toBeHidden();
+  } else if ((await till.count()) > 0) {
     await expect(till).toBeVisible();
     await expect(
       page.getByTestId("session-dot").or(page.getByRole("button", { name: "Open Session" })),
