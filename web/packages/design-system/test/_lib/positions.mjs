@@ -566,6 +566,7 @@ export const IMPORT_ALLOW_LIST = {
     'node:path': ['dirname', 'join'],
     'node:url': ['fileURLToPath', 'pathToFileURL'],
     './address.js': ['hhAddress'],
+    './header.js': ['HosAppHeader'],
     './base.js': ['HHElement', 'HHRenderError', 'defineElement'],
     './kits/dashboard.js': ['DashboardKit'],
     './kits/guided-flow.js': ['GuidedFlowKit'],
