@@ -682,9 +682,9 @@ func (r *Repository) ListStaffQuotes(ctx context.Context, global bool, branchIDs
 		       q.updated_at, q.created_at::text,
 		       COALESCE(q.salesperson_id::text, COALESCE(q.created_by::text, ''))
 		  FROM quotes q LEFT JOIN customers c ON c.id = q.customer_id
-		 WHERE %s AND ($%d::timestamptz IS NULL OR (q.created_at, q.quote_no) < ($%d::timestamptz, $%d::text))
+		 WHERE %s AND ($%d::timestamptz IS NULL OR q.created_at < $%d::timestamptz OR (q.created_at = $%d::timestamptz AND q.quote_no > $%d::text))
 		 ORDER BY q.created_at DESC, q.quote_no LIMIT $%d`,
-		where, len(args)-2, len(args)-2, len(args)-1, len(args)), args...)
+		where, len(args)-2, len(args)-2, len(args)-2, len(args)-1, len(args)), args...)
 	if err != nil {
 		return nil, fmt.Errorf("list staff quotes: %w", err)
 	}

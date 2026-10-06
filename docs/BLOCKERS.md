@@ -1570,3 +1570,20 @@ created_at with order numbers 100, 101 and 102 and pages from the first one's pa
 the fix. The two quote sites the follow-up names (`core/internal/quote/repository.go` about line 84 and
 `core/internal/quote/edit_repository.go` about line 588) are not touched by this change. The order package was never in `red=`;
 nothing leaves the integration job's exclusion list.
+
+
+## internal/quote's two list cursors, the billing siblings named above, are closed (decision log rows 804 and 939, the lane grant; appended; the entries above are never edited)
+
+The two quote sites that the billing follow-up's entry (the BLOCKERS commit 8158ea17) names now carry the same two part
+predicate as billing and as the order sibling's closing note above (its fix commit 5bb20be7, this branch):
+`core/internal/quote/repository.go` about line 84 (the tenant read, ListQuotes) and `core/internal/quote/edit_repository.go`
+about lines 685 to 686 (the staff read, ListStaffQuotes). Both lists order `created_at DESC, quote_no ASC` but their cursor
+predicates were the row comparison `(created_at, quote_no) < (cursor timestamp, cursor number)`, descending on both keys: a
+page ending at the first quote of a timestamp skipped every same-timestamp quote with a greater number, and would have
+re-served lower ones. The predicates are now `created_at < cursor OR (created_at = cursor AND quote_no > cursor)` (the staff
+read with the `q.` aliases), PR 178's fix shape. The new red-first legs
+(`TestIntegration_QuoteListCursor_SameTimestampGreaterNumbers` and
+`TestIntegration_StaffQuoteListCursor_SameTimestampGreaterNumbers` in `core/internal/quote/cursor_test.go`) plant three
+quotes at one created_at with quote numbers 100, 101 and 102 and page from the first one's pair: red before the fix with the
+next page empty, green with it, each with a recorded message naming the cursor's position and the missing rows. The quote
+package was never in `red=`; nothing leaves the integration job's exclusion list.
