@@ -105,7 +105,12 @@ export { contrast };
 // excluded, and the anchors below are a floor on discovery, not a ceiling.
 
 const SHIPPED_ROOTS = ['src', 'harness'];
-const SKIP_DIRS = new Set(['node_modules', 'dist', 'test']);
+// 'vendor' is skipped BY NAME, not silently: the vendored capture library's
+// own internals are not this package's style declarations, and these style
+// gates judge what this package ships. The raw-markup gate still walks the
+// vendored bytes (its rule binds any render path in this package, vendored
+// included, which is why the vendored file carries its one patch).
+const SKIP_DIRS = new Set(['node_modules', 'dist', 'test', 'vendor']);
 const SKIP_FILES = /(_ts-js-loader\.mjs|\.test\.|README\.md$)/;
 
 export function shippedStyleFiles() {

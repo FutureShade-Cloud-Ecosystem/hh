@@ -566,8 +566,10 @@ export const IMPORT_ALLOW_LIST = {
     'node:path': ['dirname', 'join'],
     'node:url': ['fileURLToPath', 'pathToFileURL'],
     './address.js': ['hhAddress'],
+    './feedback.js': ['FeedbackImage', 'FeedbackSendRequest', 'FeedbackSendResult', 'FeedbackSender', 'HHFeedback'],
     './header.js': ['HosAppHeader'],
     './base.js': ['HHElement', 'HHRenderError', 'defineElement'],
+    './vendor/modern-screenshot.mjs': ['domToBlob'],
     './kits/dashboard.js': ['DashboardKit'],
     './kits/guided-flow.js': ['GuidedFlowKit'],
     './kits/inbox.js': ['InboxKit'],
@@ -1195,7 +1197,13 @@ export const walkSources = (dir, prefix, out, skipFiles = [], rootDir = dir) => 
       // package's ROOT only, by their full path: a folder of either name
       // anywhere else is walked, so a source file cannot hide inside one.
       // .git is never a source tree, at any depth.
-      if (abs === join(rootDir, 'node_modules') || abs === join(rootDir, 'dist') || entry === '.git') continue;
+      // src/vendor is excluded BY NAME, stated here: it holds the vendored
+      // capture library's own bytes, whose local `svg` names and imports are
+      // the library's internals, not this package's template discipline. The
+      // raw-markup gate (test/no-raw-markup.test.mjs) still walks it: its rule
+      // binds any render path in this package, vendored included, which is why
+      // the vendored file carries its one patch.
+      if (abs === join(rootDir, 'node_modules') || abs === join(rootDir, 'dist') || rel === 'src/vendor' || entry === '.git') continue;
       walkSources(abs, rel, out, skipFiles, rootDir);
     } else if (SOURCE_RE.test(entry) && !skipFiles.includes(rel)) {
       out.push({ rel, abs, text: readFileSync(abs, 'utf8') });
