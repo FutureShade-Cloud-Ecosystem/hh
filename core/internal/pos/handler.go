@@ -34,6 +34,11 @@ func NewHandler(svc *Service, log *slog.Logger) *Handler {
 // queue transitions, admin for the policy write (the till handler's three-guard shape).
 func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("POST /api/v1/pos/sales", g.RequireStaff(h.staff(h.createSale)))
+	// The read-only sale preview (the row 985 item): the sale's own body
+	// without any tender, priced through the ring's own resolver, writing
+	// nothing. Staff only, the same role walls the sale takes, so the
+	// counter sees the total it is about to ring.
+	r.Handle("POST /api/v1/pos/sale-preview", g.RequireStaff(h.staff(h.previewSale)))
 	// DIB-165 past-sale / till-session lookup. The literal path binds ahead of nothing here, it is a
 	// distinct pattern from /sales/{id} under Go's ServeMux rules, so both coexist.
 	r.Handle("GET /api/v1/pos/sales", g.RequireStaff(h.staff(h.lookupSales)))
@@ -316,6 +321,22 @@ func (h *Handler) createSale(w http.ResponseWriter, r *http.Request, caller guar
 	httpx.WriteJSON(w, status, sale)
 }
 
+// previewSale answers the read-only sale preview: the same body the ring
+// takes minus every tender, answered with the totals the ring would compute
+// for it. No row is written; the walls are the sale's own.
+func (h *Handler) previewSale(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in SalePreviewInput
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	out, err := h.svc.SalePreview(r.Context(), in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
 // lookupSales serves the past-sale search (DIB-165). Branch-fenced in the service.
 func (h *Handler) lookupSales(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	q := r.URL.Query()
@@ -508,7 +529,18 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	var nt ErrNoOpenTill
 	var ra ErrRefundApprovalRequired
 	var mgr ErrCardChargeNeedsManager
+	var sm ErrSplitTotalMismatch
 	switch {
+	case errors.As(err, &sm):
+		// The split-tender sum refusal (DIB-165) is a problem body a person
+		// can read: the stable word, the two amounts as integer cents
+		// fields, and the dollar sentence. The till renders from the
+		// fields; no message ever prints cents.
+		httpx.ErrorWith(w, http.StatusUnprocessableEntity, "split_total_mismatch", map[string]any{
+			"tendered_cents": sm.TenderedCents,
+			"total_cents":    sm.TotalCents,
+			"message":        splitMismatchMessage(sm.TenderedCents, sm.TotalCents),
+		})
 	case errors.Is(err, ErrSaleFailedCardReversed):
 		// The sale did not go through and every card charge it took was reversed: the client
 		// clears its key and rings again.

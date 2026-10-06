@@ -538,60 +538,30 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 		return Sale{}, err
 	}
 
-	// 3. Price every line through the counter resolve (the cashier never types a price, and the
-	// price the customer's rules and tiers give is accepted: no margin floor at the till, D48 row
-	// 481, D49). A line that cannot be priced at all (no retail anchor, no uom conversion) is
-	// still a client-correctable 4xx, never a plausible zero.
-	lines := make([]orderLineRow, len(in.Lines))
-	var subtotal int64
-	for i, li := range in.Lines {
-		lp, err := s.pricing.DeriveCounterLinePrice(ctx, pricing.ResolveInput{
-			CustomerID:   customerID,
-			CustomerType: cust.CustomerType,
-			ProductID:    li.ProductID,
-			BranchID:     in.BranchID,
-			QtyEntered:   li.QtyEntered,
-			UOMEntered:   li.UOMEntered,
-		})
-		if err != nil {
-			// A pricing FAILURE (e.g. a walk-in RETAIL line with no retail anchor or no uom conversion
-			// factor) is a client-correctable 4xx, not a server fault. Surface it with the SAME status the
-			// /pricing endpoints return, scoped to the offending line, so the cashier sees a real message.
-			// Before this, the raw pricing sentinel fell through the handler's writeErr default to a bare
-			// HTTP 500 "internal error", and because a walk-in CASH ring resolves RETAIL pricing, a
-			// retail-pricing gap 500'd the whole sale (DIB-197). Every tender hits this same line-pricing
-			// step, so the mapping fixes them all without touching a successfully-priced sale.
-			if st, msg, ok := pricing.ClientStatus(err); ok {
-				return Sale{}, clientErr(st, "line %d: %s", i+1, msg)
-			}
-			return Sale{}, err
-		}
-		lines[i] = orderLineRow{
-			LineNo:         i + 1,
-			ProductID:      li.ProductID,
-			QtyEntered:     li.QtyEntered,
-			UOMEntered:     li.UOMEntered,
-			QtyBase:        lp.QtyBase,
-			UnitPriceCents: lp.UnitPriceCents,
-			PriceUOM:       lp.PriceUOM,
-			LineTotalCents: lp.LineTotalCents,
-		}
-		subtotal += lp.LineTotalCents
-	}
-
-	// 4. Totals, assessed through the TaxAssessor seam (M5 owns the real engine). The default FlatHSTAssessor
-	//    returns flat 13% (D-A19-9), so at scaffold the binding tax is bit-identical to the old flatHST13.
-	//    Relief sets the reason code + snapshot, but the BINDING collected tax stays the assessed value at gate.
+	// 3 and 4. Price every line and assess the totals through the shared
+	// resolver (priceAndAssess, sale_preview.go): the SAME pricing and tax
+	// code path the read-only sale preview answers a ticket with, extracted
+	// here verbatim, never a copy. A line that cannot be priced at all (no
+	// retail anchor, no uom conversion) is still a client-correctable 4xx,
+	// never a plausible zero.
 	taxReason := TaxStdON13
 	if in.Relief != nil && in.Relief.ReasonCode != "" {
 		taxReason = in.Relief.ReasonCode
 	}
-	quote, err := s.taxAssessor().AssessSale(ctx, TaxQuoteInput{BranchID: in.BranchID, SubtotalCents: subtotal, ReasonCode: taxReason})
+	priced, err := s.priceAndAssess(ctx, saleMoneyInput{
+		customerID:   customerID,
+		customerType: cust.CustomerType,
+		branchID:     in.BranchID,
+		lines:        in.Lines,
+		taxReason:    taxReason,
+	})
 	if err != nil {
 		return Sale{}, err
 	}
-	tax := quote.TaxCents
-	total := subtotal + tax
+	lines := priced.lines
+	subtotal := priced.subtotal
+	tax := priced.tax
+	total := priced.total
 
 	// Per-line tax_cents, the largest-remainder split of the header tax over the line totals (writes to the
 	// 0042 order_lines.tax_cents / invoice_lines.tax_cents columns). The parts sum EXACTLY to the header tax,
@@ -955,8 +925,8 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 				// assessed tax the ring actually collected. At the standard rate this row is byte-identical
 				// to the old flat-constant write.
 				if _, err := s.store.InsertTaxSnapshot(ctx, tx, taxSnapshotRow{
-					OrderID: orderID, TaxReasonCode: taxReason, RuleVersion: ruleVersionW4, RateBps: quote.RateBps,
-					FullHSTCents: flatHST13(subtotal), OnCreditCents: quote.OnCreditCents,
+					OrderID: orderID, TaxReasonCode: taxReason, RuleVersion: ruleVersionW4, RateBps: priced.rateBps,
+					FullHSTCents: flatHST13(subtotal), OnCreditCents: priced.onCreditCents,
 					NetCollectedCents: tax, Automated: false,
 					EvidenceDocID: in.Relief.EvidenceDocID,
 				}); err != nil {
