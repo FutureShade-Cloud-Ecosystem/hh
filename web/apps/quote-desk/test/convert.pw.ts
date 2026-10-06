@@ -20,10 +20,17 @@ async function seed(page: Page, body: Record<string, unknown>): Promise<string> 
   return ((await response.json()) as { id: string }).id;
 }
 
-/** Sign in as a role with the route already in the address, the way a link would arrive. */
+/**
+ * Sign in as a role, then walk to the convert route the way a link in the desk would. A sign in
+ * always starts at the list (the split list's rule), so the route is walked to, not arrived at.
+ */
 async function arrive(page: Page, quoteId: string, role = "Sales"): Promise<void> {
-  await page.goto(`/#/quotes/${quoteId}/convert`);
+  await page.goto("/");
   await page.getByRole("button", { name: role, exact: true }).click();
+  await expect(page.getByTestId("qb-list")).toBeVisible();
+  await page.evaluate((id) => {
+    window.location.hash = `#/quotes/${id}/convert`;
+  }, quoteId);
 }
 
 /**
@@ -635,4 +642,15 @@ test("a conversion that lands after the surface was removed still refreshes the 
   await held.release();
   await expect(page.getByTestId("qb-convert-notice")).toBeVisible();
   await expect.poll(() => lists).toBeGreaterThan(0);
+});
+
+test("the convert route sits in the desk's history: back reaches the list, forward the convert screen", async ({ page }) => {
+  await arrive(page, "q-1003");
+  await expect(page.getByTestId("qc-review")).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(/#\/quotes$/);
+  await expect(page.getByTestId("qb-list")).toBeVisible();
+  await expect(page.getByTestId("qc-host")).toHaveCount(0);
+  await page.goForward();
+  await expect(page.getByTestId("qc-review")).toBeVisible();
 });

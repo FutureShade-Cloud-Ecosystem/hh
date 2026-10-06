@@ -2,6 +2,7 @@
 // open now, and a save never goes to the wrong quote: the edit panel and the
 // change history each answer only for the quote that asked.
 import { expect, test, type Page } from "@playwright/test";
+import { showList } from "./switch-helpers.js";
 
 async function signIn(page: Page, role = "Sales"): Promise<void> {
   await page.goto("/");
@@ -10,6 +11,7 @@ async function signIn(page: Page, role = "Sales"): Promise<void> {
 }
 
 async function openQuote(page: Page, text: string): Promise<void> {
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: text }).first().click();
   const detail = page.getByTestId("qb-detail");
   if ((await detail.getAttribute("open")) === null) await page.getByText("Quote detail & admin").click();
@@ -39,7 +41,9 @@ test("the edit panel shows the quote open now when the previous quote's slow rea
     if (route.request().method() === "GET") await new Promise((resolve) => setTimeout(resolve, 900));
     await route.continue();
   });
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Q-1001" }).first().click();
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Q-1003" }).first().click();
   await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1003");
   await page.waitForTimeout(1300);
@@ -56,13 +60,16 @@ test("the history shows no change of the previous quote under the quote open now
   await sand.locator('[data-field="qty"]').fill("6");
   await sand.getByRole("button", { name: "Save" }).click();
   await expect(history(page).getByTestId("qh-group")).toHaveCount(1);
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Q-1003" }).first().click();
   await expect(history(page)).toContainText("No changes yet.");
   await page.route("**/api/v1/quotes/q-1001/edits", async (route) => {
     await new Promise((resolve) => setTimeout(resolve, 900));
     await route.continue();
   });
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Q-1001" }).first().click();
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Q-1003" }).first().click();
   await page.waitForTimeout(1300);
   await expect(history(page)).toContainText("No changes yet.");

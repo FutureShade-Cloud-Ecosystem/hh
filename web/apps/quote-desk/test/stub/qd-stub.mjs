@@ -2087,7 +2087,7 @@ const server = createServer(async (request, response) => {
   if (request.method === "GET" && path === "/api/v1/products/counter-search") {
     const q = (url.searchParams.get("q") ?? "").toLowerCase();
     const hits = PRODUCTS.filter((product) => {
-      const hay = [product.sku, product.name, product.description, ...product.aliases].join(" ").toLowerCase();
+      const hay = [product.sku, product.name, product.category, product.description, ...product.aliases].join(" ").toLowerCase();
       return q === "" || hay.includes(q);
     }).map((product) => ({
       product_id: product.product_id,
@@ -2103,6 +2103,32 @@ const server = createServer(async (request, response) => {
       list_price_cents: product.list_cents,
     }));
     respondJson(response, 200, { items: hits });
+    return;
+  }
+
+  if (request.method === "POST" && path === "/api/v1/pos/counter-prices") {
+    // The customer aware price picture: the server's answer, one entry per asked product. The account's own
+    // rule is the customer's price and retail stands beside it.
+    readBody(request, response, (body) => {
+      const customer = customerById.get(String(body.customer_id ?? ""));
+      const items = Array.isArray(body.items) ? body.items : [];
+      const prices = [];
+      for (const item of items) {
+        const product = productById.get(String(item.product_id ?? ""));
+        if (product === undefined) continue;
+        const off = customer === undefined ? 0 : customer.percent_off;
+        const customerCents = Math.round((product.list_cents * (100 - off)) / 100);
+        prices.push({
+          product_id: product.product_id,
+          price_uom: product.sold_by,
+          retail_cents: product.list_cents,
+          customer_cents: customerCents,
+          saving_cents: product.list_cents - customerCents,
+          basis: off > 0 ? "ACCOUNT" : "",
+        });
+      }
+      respondJson(response, 200, { customer_type: customer === undefined ? "" : customer.customer_type, prices });
+    });
     return;
   }
 

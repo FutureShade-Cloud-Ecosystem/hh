@@ -16,7 +16,8 @@ import assert from 'node:assert/strict';
 import { html } from 'lit';
 
 import { renderTemplate } from './_lib/render.mjs';
-import { baseStyles, select, dateInput, fieldGroup, button } from '../src/primitives.js';
+import { icon } from '../src/state-icons.js';
+import { baseStyles, select, dateInput, fieldGroup, button, segmented, textInput } from '../src/primitives.js';
 
 test('the select renders the control face with the shell delegation attributes and no value binding', () => {
   const markup = renderTemplate(
@@ -66,4 +67,84 @@ test('the action button stays on the sheet classes, so the controls read as one 
   assert.match(markup, /class="btn btn-primary"/);
   assert.match(markup, /data-action="create"/);
   assert.match(markup, /Create/);
+});
+
+// The button with an icon (decision log row 990): the plus beside "New quote"
+// was drawn larger and higher than the label. The sheet states the fix once:
+// the button is a centred inline flex row at the design system's icon gap and
+// the icon is the label's own size (1em). The bounds themselves are measured
+// in the Quote Desk's real-browser leg.
+test('a button with an icon draws it before the label, and the sheet centres the pair at the label size', () => {
+  const markup = renderTemplate(button({ label: 'New quote', kind: 'primary', action: 'new-quote', iconMarkup: icon('plus') }));
+  assert.match(markup, /<button type="button" class="btn btn-primary"[^>]*>\s*(<!--[^>]*-->)*\s*<svg\b[^>]*class="icon"/);
+  assert.ok(markup.indexOf('<svg') < markup.indexOf('New quote'), 'the icon comes before the label');
+  const sheet = String(baseStyles.cssText ?? baseStyles);
+  const btn = sheet.match(/\n\s*button\s*\{[^}]*\}/);
+  assert.ok(btn !== null, 'the sheet carries the button rule');
+  for (const decl of ['display: inline-flex', 'align-items: center', 'justify-content: center', 'gap: var(--hh-s-8)']) {
+    assert.ok(btn[0].includes(decl), `the button rule states ${decl}`);
+  }
+  assert.match(sheet, /\.btn \.icon\s*\{[^}]*width: 1em;[^}]*height: 1em;/, 'the icon is the label size');
+});
+
+// The segmented control (the quotes list's status tabs, the CP1 split-list
+// round): a one of many picker rendered as a joined row of buttons. The
+// pressed state is the segment's own aria-pressed and the sheet's active
+// face, never a value binding on a hidden input; the shell's click
+// delegation reads the pressed segment's data-value.
+test('the segmented control renders a named group of buttons with the pressed one marked', () => {
+  const markup = renderTemplate(
+    segmented({
+      label: 'Filter by status',
+      field: 'status-filter',
+      action: 'tab',
+      testid: 'qd-list-tabs',
+      selected: 'DRAFT',
+      options: [
+        { label: 'All', value: '' },
+        { label: 'Draft', value: 'DRAFT' },
+        { label: 'Sent', value: 'SENT' },
+      ],
+    }),
+  );
+  assert.match(markup, /<div\b[^>]*role="group"/);
+  for (const attr of ['data-control="segmented"', 'data-field="status-filter"', 'data-testid="qd-list-tabs"', 'aria-label="Filter by status"']) {
+    assert.ok(markup.includes(attr), `the segmented control renders ${attr}`);
+  }
+  // Every segment carries its own value and its pressed state; exactly the
+  // selected one is pressed. The attributes are read one by one (the server
+  // render's comment markers sit between them), in the order the template
+  // writes them.
+  assert.ok(markup.includes('data-action="tab"'), 'each segment carries the shell delegation action');
+  const segments = [...markup.matchAll(/<button\s+type="button"\s+class="(seg-btn[^"]*)"\s+data-value="([^"]*)"\s+data-action="tab"\s+aria-pressed="([^"]*)"/g)];
+  assert.equal(segments.length, 3, 'every option renders one segment button');
+  const pressed = segments.filter((m) => m[3] === 'true');
+  assert.deepEqual(pressed.map((m) => m[2]), ['DRAFT'], 'exactly the selected option is pressed');
+  assert.ok(pressed[0][1].includes('seg-on'), 'the pressed segment carries the active face class');
+  const off = segments.find((m) => m[2] === '');
+  assert.equal(off[3], 'false', 'an unselected segment is not pressed');
+  assert.ok(!off[1].includes('seg-on'), 'an unselected segment carries no active face class');
+});
+
+test('a held segment renders the real disabled attribute', () => {
+  const markup = renderTemplate(
+    segmented({ label: 'Filter by status', field: 'status-filter', disabled: true, options: [{ label: 'All', value: '' }] }),
+  );
+  assert.match(markup, /\bdisabled\s*>/, 'the held segment renders the real disabled attribute');
+  // The joined row's own face is on the sheet, so every consumer reads the
+  // same control.
+  const sheet = baseStyles.cssText;
+  assert.ok(sheet.includes('.segmented'), 'the shared sheet holds the segmented row face');
+  assert.ok(sheet.includes('.seg-btn'), 'the shared sheet holds the segment face');
+});
+
+// The text input (the quotes list's search box): the control face on the
+// native text or search input, the value the consumer's wiring-pass job.
+test('the text input renders the control face and its value is nowhere in the markup', () => {
+  const markup = renderTemplate(textInput({ label: 'Search quotes', field: 'list-search', testid: 'qd-list-search', type: 'search' }));
+  assert.match(markup, /<input\b/);
+  for (const attr of ['class="control"', 'data-control="text"', 'type="search"', 'data-field="list-search"', 'data-testid="qd-list-search"', 'aria-label="Search quotes"']) {
+    assert.ok(markup.includes(attr), `the text input renders ${attr}`);
+  }
+  assert.ok(!/[\s"']value=/.test(markup), 'the text input renders no value of its own');
 });

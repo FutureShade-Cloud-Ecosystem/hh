@@ -1,7 +1,7 @@
 // Round 5: the principal's two P2s and the folded P3s (decision row 783). Each test holds an answer back behind a
 // gate, so the order of events is exact and never depends on the machine's speed.
 import { expect, test, type Page } from "@playwright/test";
-import { hold, open, quiet, row, seed, settle, signIn, writes } from "./switch-helpers.js";
+import { hold, open, quiet, row, seed, settle, signIn, writes, showList } from "./switch-helpers.js";
 
 test.beforeEach(async ({ request }) => {
   await request.post("/_stub/reset");
@@ -11,6 +11,7 @@ test.afterAll(async ({ request }) => {
 });
 
 async function openQuoteDetail(page: Page, quoteNo: string): Promise<void> {
+  await showList(page);
   await row(page, quoteNo).click();
   const detail = page.getByTestId("qb-detail");
   if ((await detail.getAttribute("open")) === null) await page.getByText("Quote detail & admin").click();

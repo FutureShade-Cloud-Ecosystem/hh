@@ -1,7 +1,18 @@
 // PR 121 round 4 findings: each test holds one answer back behind a delayed route, so the order of events is exact
 // and does not depend on the machine's speed.
 import { expect, test, type Page } from "@playwright/test";
-import { gate, hold, open, quiet, row, seed, settle, signIn, stubBrowserChannels, writes } from "./switch-helpers.js";
+import { gate, hold, open, quiet, row, seed, settle, signIn, stubBrowserChannels, writes, showList } from "./switch-helpers.js";
+
+async function stubState(page: Page): Promise<{ workspaceWrites: { user_id: string; body: Record<string, unknown> | null }[] }> {
+  const response = await page.request.get("/_stub/state");
+  return (await response.json()) as { workspaceWrites: { user_id: string; body: Record<string, unknown> | null }[] };
+}
+
+/** The compose page under the split-list navigation: the New quote button walks the desk to #/quotes/new. */
+async function newQuote(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "New quote", exact: true }).click();
+  await expect(page.getByTestId("qb-identity")).toBeVisible();
+}
 
 /** A day well after any seeded expiry, built at run time. */
 const FAR_DATE = new Date(Date.now() + 400 * 86_400_000).toISOString().slice(0, 10);
@@ -83,6 +94,7 @@ test("A P2-1 a quantity write still out at sign out sends nothing more under the
 
 test("A P2-1 an edit panel save still out at sign out sends no discount write under the next person's session", async ({ page }) => {
   await signIn(page, "Sales manager");
+  await showList(page);
   await row(page, "Q-1001").click();
   await openDetail(page);
   await expect(page.getByTestId("qe-title")).toContainText("Q-1001");
@@ -110,6 +122,7 @@ test("A P2-1 an edit panel save still out at sign out sends no discount write un
 
 test("A P2-1 an edit panel save refused after sign out reads nothing and opens no dialog under the next person's session", async ({ page }) => {
   await signIn(page, "Sales");
+  await showList(page);
   await row(page, "Q-1001").click();
   await openDetail(page);
   await expect(page.getByTestId("qe-title")).toContainText("Q-1001");
@@ -133,6 +146,7 @@ test("A P2-1 an edit panel save refused after sign out reads nothing and opens n
 
 test("A P2-1 a panel that has left the page reads nothing when it is asked to reload", async ({ page }) => {
   await signIn(page, "Sales manager");
+  await showList(page);
   await row(page, "Q-1001").click();
   await openDetail(page);
   const tags = ["qd-quote-edit", "qd-quote-history", "qd-quote-assist", "qd-quote-followups", "qd-quote-hold-expiry", "qd-quote-availability"];
@@ -177,8 +191,10 @@ test("A P2-2 a terms save slower than the wait bound shows its edit when it land
   const seen = writes(page);
   const put = await hold(page, /\/quotes\/q-1004\/terms$/, { method: "PUT", times: 1 });
   await page.getByTestId("qb-po").fill("PO-SLOW-FLUSH");
+  await showList(page);
   await row(page, "Q-1001").click();
   await put.asked;
+  await showList(page);
   await row(page, "Q-1004").click();
   await expect(page.getByTestId("qb-context")).toContainText("Q-1004");
   // Past the bound: the read went ahead without the save and says so.
@@ -200,8 +216,10 @@ test("A P2-2 a slow terms save that lands after the person has left the quote ag
   await expect(page.getByTestId("qb-po")).toBeVisible();
   const put = await hold(page, /\/quotes\/q-1004\/terms$/, { method: "PUT", times: 1 });
   await page.getByTestId("qb-po").fill("PO-SLOW-FLUSH");
+  await showList(page);
   await row(page, "Q-1001").click();
   await put.asked;
+  await showList(page);
   await row(page, "Q-1004").click();
   await expect(page.getByTestId("qb-error")).toContainText("still being saved", { timeout: 10000 });
   await open(page, "Q-1001");
@@ -221,6 +239,7 @@ const followups = (page: Page) => page.locator("qd-quote-followups");
 const holdExpiry = (page: Page) => page.locator("qd-quote-hold-expiry");
 
 async function openQuote(page: Page, quoteNo: string): Promise<void> {
+  await showList(page);
   await row(page, quoteNo).click();
   await openDetail(page);
   await expect(page.getByTestId("qe-title")).toContainText(quoteNo);
@@ -336,9 +355,8 @@ const LATE_CASES: LateCase[] = [
     url: /\/quotes\/q-1004\/lines$/,
     method: "POST",
     trigger: async (page) => {
-      const scan = page.getByTestId("pos-scan-input");
+      const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
       await scan.fill("PSN-100");
-      await scan.press("Enter");
     },
   },
   {
@@ -509,9 +527,8 @@ test("P3 a draft typed on a line that is gone is dropped, so it does not land on
   await page.getByTestId("qb-line-trash").nth(1).click();
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
   await expect(lines).toHaveCount(1);
-  const scan = page.getByTestId("pos-scan-input");
+  const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scan.fill("PSN-100");
-  await scan.press("Enter");
   await expect(page.getByTestId("qb-line")).toHaveCount(2);
   await expect(lines).toHaveCount(2);
   await expect(lines.nth(1).locator('[data-field="qty"]')).toHaveValue("1");
@@ -569,6 +586,9 @@ test("P3 a read of the acceptance switch begun before a flip does not override t
   await page.request.put("/_stub/general-manager", { data: { member: true } });
   try {
     await signIn(page, "Sales manager");
+    await showList(page);
+    await row(page, "Q-1001").click();
+    await expect(page.getByTestId("qb-context")).toBeVisible();
     await page.getByText("Quote detail & admin").click();
     const settings = page.locator("qd-quote-settings");
     await settings.getByTestId("qa-details").locator("summary").click();
@@ -589,24 +609,30 @@ test("P3 a read of the acceptance switch begun before a flip does not override t
 
 test("P3 a read of the scope rules begun before a switch does not override the switch", async ({ page }) => {
   await signIn(page, "Sales manager");
+  await showList(page);
+  await row(page, "Q-1001").click();
+  await expect(page.getByTestId("qb-context")).toBeVisible();
   await page.getByText("Quote detail & admin").click();
   await page.locator("qd-quote-settings").getByTestId("qr-details").locator("summary").click();
   await expect(page.getByTestId("qr-row")).toHaveCount(7);
-  const row = page.getByTestId("qr-row").filter({ hasText: "WALL_NEEDS_BASE" });
+  const ruleRow = page.getByTestId("qr-row").filter({ hasText: "WALL_NEEDS_BASE" });
   const read = await hold(page, /\/quote-assist\/scope-rules$/, { method: "GET", times: 1, snapshot: true });
   await fanOut(page);
   await read.asked;
-  await row.getByRole("button").click();
-  await expect(row).toHaveAttribute("data-enabled", "false");
+  await ruleRow.getByRole("button").click();
+  await expect(ruleRow).toHaveAttribute("data-enabled", "false");
   await read.release();
   await settle(page);
-  await expect(row).toHaveAttribute("data-enabled", "false");
+  await expect(ruleRow).toHaveAttribute("data-enabled", "false");
 });
 
 test("P3 no empty lock box shows while a policy save is out", async ({ page }) => {
   await page.request.put("/_stub/general-manager", { data: { member: true } });
   try {
     await signIn(page, "Sales manager");
+    await showList(page);
+    await row(page, "Q-1001").click();
+    await expect(page.getByTestId("qb-context")).toBeVisible();
     await page.getByText("Quote detail & admin").click();
     await page.locator("qd-quote-settings").getByTestId("qs-screen").locator("summary").click();
     await expect(page.getByTestId("qs-policy")).toBeVisible();
@@ -644,7 +670,14 @@ test("P3 layout saves reach the server one at a time, so the resume reference is
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Sales", exact: true }).click();
-  await expect(page.getByTestId("qb-context")).toContainText("Q-1003");
+  // A sign in lands on the list page now (the split-list navigation); the
+  // row the person left behind still remembers the LAST quote opened, and
+  // the saves above are what told it: the last body names Q-1003.
+  await expect(page.getByTestId("qb-list")).toBeVisible();
+  await expect(page).toHaveURL(/#\/quotes$/);
+  const mine = (await stubState(page)).workspaceWrites.filter((w) => w.user_id === "demo-account-sales");
+  expect(mine.length).toBeGreaterThan(0);
+  expect(mine[mine.length - 1].body?.open_ref).toBe("q-1003");
 });
 
 test("P3 a late layout answer does not resume the remembered quote while a new quote is being made", async ({ page }) => {
@@ -658,6 +691,7 @@ test("P3 a late layout answer does not resume the remembered quote while a new q
   await expect(page.getByTestId("qb-list")).toBeVisible();
   await config.asked;
   const create = await hold(page, /\/api\/v1\/quotes$/, { method: "POST" });
+  await newQuote(page);
   const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
   await picker.getByPlaceholder("Search name or account #…").fill("Fenwick");
   await picker.getByRole("option", { name: /Fenwick/ }).click();
@@ -704,6 +738,7 @@ async function scanInCompose(page: Page): Promise<void> {
 
 test("P3 a scan made in compose waits for the host to hand the new quote down, however long that takes", async ({ page }) => {
   await signIn(page);
+  await newQuote(page);
   await holdHandoff(page);
   // The create route is held by a gate, so the scan is made while the quote is being made, however slow the page is.
   const create = await hold(page, /\/api\/v1\/quotes$/, { method: "POST" });
@@ -723,6 +758,7 @@ test("P3 a scan made in compose waits for the host to hand the new quote down, h
 
 test("P3 a scan made in compose that another quote overtook says so", async ({ page }) => {
   await signIn(page);
+  await newQuote(page);
   const create = await hold(page, /\/api\/v1\/quotes$/, { method: "POST" });
   const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
   await picker.getByPlaceholder("Search name or account #…").fill("Fenwick");
@@ -739,6 +775,7 @@ test("P3 a scan made in compose that another quote overtook says so", async ({ p
 /** Makes a quote in compose with the hand down held and a scan parked behind it: the state every release case starts from. */
 async function parkedScan(page: Page): Promise<void> {
   await signIn(page);
+  await newQuote(page);
   await holdHandoff(page);
   const create = await hold(page, /\/api\/v1\/quotes$/, { method: "POST" });
   const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
@@ -776,6 +813,7 @@ test("P3 a scan parked in compose is released at sign out, before the session go
 
 test("P3 a scan made in compose says so at once when the create itself is refused", async ({ page }) => {
   await signIn(page);
+  await newQuote(page);
   const create = await hold(page, /\/api\/v1\/quotes$/, { method: "POST", refuse: { status: 500, error: "quote: the quote store is down" } });
   const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
   await picker.getByPlaceholder("Search name or account #…").fill("Fenwick");

@@ -2,7 +2,7 @@
 // behind a delayed route, moves to another quote, lets the answer go and asserts the other quote shows none of it.
 // Take the guard away (test/mutants.json names the exact edit) and the test goes red.
 import { expect, test } from "@playwright/test";
-import { armedHold, countRequests, hold, open, row, seed, settle, signIn, stubBrowserChannels, watchEvent, writes } from "./switch-helpers.js";
+import { armedHold, countRequests, hold, open, row, seed, settle, signIn, stubBrowserChannels, watchEvent, writes, showList } from "./switch-helpers.js";
 
 test.beforeEach(async ({ request }) => {
   await request.post("/_stub/reset");
@@ -17,6 +17,7 @@ test("guard terms read: the terms of the quote just left never land on the quote
   await seed(page, { customer_id: "c-fenwick", terms: fenwickTerms });
   await signIn(page);
   const held = await hold(page, /\/quotes\/q-1004\/terms$/, { method: "GET" });
+  await showList(page);
   await row(page, "Q-1004").click();
   await held.asked;
   await open(page, "Q-1001");
@@ -56,6 +57,7 @@ test("guard terms save answer: a terms save that answers after another quote ope
   await held.asked;
   // The other quote's own terms read is held too, so nothing but the stale answer could fill its boxes.
   const read = await hold(page, /\/quotes\/q-1001\/terms$/, { method: "GET" });
+  await showList(page);
   await row(page, "Q-1001").click();
   await read.asked;
   await expect(page.getByTestId("qb-context")).toContainText("Q-1001");
@@ -73,14 +75,14 @@ test("guard add line: an add that answers after another quote opened says nothin
   await open(page, "Q-1004");
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
   const held = await hold(page, /\/quotes\/q-1004\/lines$/, { method: "POST" });
-  const scan = page.getByTestId("pos-scan-input");
+  const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scan.fill("PSN-100");
-  await scan.press("Enter");
   await held.asked;
   await open(page, "Q-1001");
   await expect(page.getByTestId("qb-line")).toHaveCount(2);
   await held.release();
   await settle(page);
+  await expect(page.getByText("Line added.")).toHaveCount(0);
   await expect(page.getByText("Added Polymeric Locking Sand")).toHaveCount(0);
   await expect(page.getByTestId("qb-error")).toHaveText("");
 });
@@ -167,6 +169,7 @@ test("guard customer search: the account facts found for the quote just left nev
   await seed(page, { customer_id: "c-fenwick" });
   await signIn(page);
   const held = await hold(page, /\/customers\/search/, { method: "GET", match: (request) => request.url().includes("Fenwick") });
+  await showList(page);
   await row(page, "Q-1004").click();
   await held.asked;
   await open(page, "Q-1001");
@@ -182,6 +185,7 @@ test("guard add-ons: the suggestions read for the quote just left never show on 
   await seed(page, { customer_id: "c-fenwick" });
   await signIn(page);
   const held = await hold(page, /\/pos\/addon-suggestions/, { method: "GET", match: (request) => request.url().includes("p-holland-60") });
+  await showList(page);
   await row(page, "Q-1001").click();
   await held.asked;
   const own = page.waitForResponse((r) => r.url().includes("/pos/addon-suggestions") && !r.url().includes("p-holland-60"));
@@ -222,6 +226,7 @@ test("guard scan waits for opening: a scan that waited for the quote being opene
   await signIn(page);
   const seen = writes(page);
   const reads = await hold(page, /\/api\/v1\/quotes\/q-1004$/, { method: "GET" });
+  await showList(page);
   await row(page, "Q-1004").click();
   await reads.asked;
   await page.locator("qd-quote-workarea").evaluate((el) => {
@@ -252,9 +257,8 @@ test("guard cart change after terms save: an add whose terms save answers after 
   await expect(page.getByTestId("qb-po")).toBeVisible();
   // The save is refused, so its late answer announces nothing itself (a success that lands late does, and the open views then refresh on their own).
   const put = await hold(page, /\/api\/v1\/quotes\/q-1004\/terms$/, { method: "PUT", refuse: { status: 500, error: "quote: the terms store is down" } });
-  const scan = page.getByTestId("pos-scan-input");
+  const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scan.fill("PSN-100");
-  await scan.press("Enter");
   await put.asked;
   await open(page, "Q-1001");
   await settle(page);
@@ -274,9 +278,8 @@ test("guard cart change after read: an add whose re-read answers after another q
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
   const gated = await armedHold(page, /\/api\/v1\/quotes\/q-1004$/, "GET");
   gated.arm();
-  const scan = page.getByTestId("pos-scan-input");
+  const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scan.fill("PSN-100");
-  await scan.press("Enter");
   await gated.held.asked;
   gated.disarm();
   await open(page, "Q-1001");
@@ -486,6 +489,7 @@ test("guard customer search error: a failed account search for the quote left do
   await seed(page, { customer_id: "c-fenwick" });
   await signIn(page);
   const held = await hold(page, /\/customers\/search/, { method: "GET", match: (request) => request.url().includes("Fenwick"), refuse: { status: 500, error: "customers: the account search is down" } });
+  await showList(page);
   await row(page, "Q-1004").click();
   await held.asked;
   await open(page, "Q-1001");
@@ -503,6 +507,7 @@ test("guard add-ons error: a failed suggestions read for the quote left does not
     match: (request) => request.url().endsWith("product_ids=p-holland-60"),
     refuse: { status: 500, error: "pos: the suggestions are down" },
   });
+  await showList(page);
   await row(page, "Q-1004").click();
   await held.asked;
   await open(page, "Q-1001");
@@ -519,9 +524,11 @@ test("guard reload flush wait: a read waiting for a terms save is dropped when t
   await expect(page.getByTestId("qb-po")).toBeVisible();
   const put = await hold(page, /\/api\/v1\/quotes\/q-1004\/terms$/, { method: "PUT" });
   await page.getByTestId("qb-po").fill("PO-TYPED-ON-1004");
+  await showList(page);
   await row(page, "Q-1001").click();
   await put.asked;
   // Back on the quote whose save is out: its read waits. The person leaves again before the save answers.
+  await showList(page);
   await row(page, "Q-1004").click();
   await expect(page.getByTestId("qb-context")).toContainText("Q-1004");
   await open(page, "Q-1001");

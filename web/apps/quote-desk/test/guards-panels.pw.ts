@@ -3,7 +3,13 @@
 // behind a delayed route, moves to another quote (or scope, or branch), lets the answer go and asserts none of it
 // shows. Take the guard away (test/mutants.json names the exact edit) and the test goes red.
 import { expect, test, type Page } from "@playwright/test";
-import { armedHold, countRequests, hold, quiet, row, seed, settle, signIn as signInAs, stubBrowserChannels, watchEvent, writes } from "./switch-helpers.js";
+import { armedHold, countRequests, hold, quiet, row, seed, settle, signIn as signInAs, stubBrowserChannels, watchEvent, writes, showList } from "./switch-helpers.js";
+
+/** The compose page under the split-list navigation: the New quote button walks the desk to #/quotes/new. */
+async function newQuote(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "New quote", exact: true }).click();
+  await expect(page.getByTestId("qb-identity")).toBeVisible();
+}
 
 const signIn = (page: Page, role = "Sales manager") => signInAs(page, role);
 
@@ -14,6 +20,7 @@ async function openDetail(page: Page): Promise<void> {
 }
 
 async function openQuote(page: Page, quoteNo: string): Promise<void> {
+  await showList(page);
   await row(page, quoteNo).click();
   await openDetail(page);
   await expect(page.getByTestId("qe-title")).toContainText(quoteNo);
@@ -33,9 +40,11 @@ test.afterAll(async ({ request }) => {
 
 test("guard edit read: the quote read for the quote left never shows on the quote now open", async ({ page }) => {
   await signIn(page);
+  await showList(page);
   await row(page, "Q-1002").click();
   await openDetail(page);
   const slow = await hold(page, /\/api\/v1\/quotes\/q-1001$/, { method: "GET", match: () => true });
+  await showList(page);
   await row(page, "Q-1001").click();
   await slow.asked;
   await openQuote(page, "Q-1003");
@@ -56,9 +65,8 @@ test("guard edit read order: an older read of the quote answered late does not u
   await gated.held.asked;
   gated.disarm();
   // A line is added on the work area: the fan-out reads the quote again and the edit panel shows three lines.
-  const scan = page.getByTestId("pos-scan-input");
+  const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scan.fill("PSN-100");
-  await scan.press("Enter");
   await expect(edit(page).getByTestId("qe-line")).toHaveCount(3);
   await quiet(page);
   await gated.held.release();
@@ -79,6 +87,7 @@ test("guard edit discounts read: the discounts of the quote left never show on t
   await quiet(page);
   // Both the work area's and the edit panel's terms reads of Q-1001 are held; the person leaves once both are out.
   const held = await hold(page, /\/api\/v1\/quotes\/q-1001\/terms$/, { method: "GET" });
+  await showList(page);
   await row(page, "Q-1001").click();
   await expect.poll(() => held.seen.length).toBeGreaterThanOrEqual(2);
   await openQuote(page, "Q-1004");
@@ -120,6 +129,7 @@ test("guard edit links read: the links of the quote left never show on the quote
   await quiet(page);
   const gated = await armedHold(page, /\/api\/v1\/quotes\/q-1001\/share-links$/, "GET");
   gated.arm();
+  await showList(page);
   await row(page, "Q-1001").click();
   await gated.held.asked;
   gated.disarm();
@@ -313,6 +323,7 @@ test("guard history read: the changes of the quote left never show under the quo
   await quiet(page);
   const gated = await armedHold(page, /\/api\/v1\/quotes\/q-1001\/edits$/, "GET");
   gated.arm();
+  await showList(page);
   await row(page, "Q-1001").click();
   await gated.held.asked;
   gated.disarm();
@@ -411,6 +422,7 @@ test("guard assist gaps read: the suggestions for the quote left never show on t
   await quiet(page);
   const gated = await armedHold(page, /\/api\/v1\/quote-assist\/scope-gaps/, "GET");
   gated.arm();
+  await showList(page);
   await row(page, "Q-1001").click();
   await gated.held.asked;
   gated.disarm();
@@ -432,9 +444,8 @@ test("guard assist gaps order: an older suggestions read answered late does not 
   await gated.held.asked;
   gated.disarm();
   // Clear stone is the base: adding it from the work area makes the base suggestion go away.
-  const scan = page.getByTestId("pos-scan-input");
+  const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scan.fill("GRA-CL");
-  await scan.press("Enter");
   await expect(assist(page).getByTestId("qa-gaps")).not.toContainText("Granular base for the paved area");
   await quiet(page);
   await gated.held.release();
@@ -453,6 +464,7 @@ test("guard availability read: the stock read for the quote left never shows on 
   await quiet(page);
   const gated = await armedHold(page, /\/api\/v1\/quotes\/q-1002\/availability$/, "GET");
   gated.arm();
+  await showList(page);
   await row(page, "Q-1002").click();
   await gated.held.asked;
   gated.disarm();
@@ -471,6 +483,7 @@ test("guard follow-ups read: the plan of the quote left never shows on the quote
   await quiet(page);
   const gated = await armedHold(page, /\/api\/v1\/quotes\/q-1002\/followups$/, "GET");
   gated.arm();
+  await showList(page);
   await row(page, "Q-1002").click();
   await gated.held.asked;
   gated.disarm();
@@ -508,6 +521,7 @@ test("guard hold expiry read: the lapse of the quote left never shows on the quo
   await quiet(page);
   const gated = await armedHold(page, /\/api\/v1\/quotes\/q-1001\/hold-expiry$/, "GET");
   gated.arm();
+  await showList(page);
   await row(page, "Q-1001").click();
   await gated.held.asked;
   gated.disarm();
@@ -580,22 +594,28 @@ test("guard list paging: a page asked for before the list was read again is not 
 
 test("guard create selection: a quote made while another was opened does not take the screen from it", async ({ page }) => {
   await signIn(page);
-  const form = page.getByRole("group", { name: "New quote" }).locator("hos-customer-picker");
-  await form.getByPlaceholder("Search name or account #…").fill("Fenwick");
-  await form.getByRole("option", { name: /Fenwick Builders/ }).click();
+  // The compose page is where a new quote is made now: the pick IS the
+  // create (there is no form under the list any more).
+  await newQuote(page);
+  const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
   const post = await hold(page, /\/api\/v1\/quotes$/, { method: "POST" });
-  await page.getByRole("button", { name: "Create", exact: true }).click();
+  await picker.getByPlaceholder("Search name or account #…").fill("Fenwick");
+  await picker.getByRole("option", { name: /Fenwick Builders/ }).click();
   await post.asked;
+  await showList(page);
   await row(page, "Q-1001").click();
   await expect(page.getByTestId("qb-context")).toContainText("Q-1001");
   await post.release();
   await settle(page);
   await expect(page.getByTestId("qb-context")).toContainText("Q-1001");
+  // The made quote joins the list, one page over.
+  await page.getByTestId("qb-all-quotes").click();
   await expect(row(page, "Q-1004")).toBeVisible();
 });
 
 test("guard picker search: a customer search answered for an older word never replaces the newer list", async ({ page }) => {
   await signIn(page);
+  await newQuote(page);
   const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
   const older = await hold(page, /\/api\/v1\/customers\/search/, { method: "GET", times: 1, match: (request) => request.url().includes("q=Maple") });
   await picker.getByPlaceholder("Search name or account #…").fill("Maple");
@@ -614,6 +634,11 @@ test("guard picker search: a customer search answered for an older word never re
 const surface = (page: Page) => page.locator("qd-surface-settings");
 
 async function openScreenSettings(page: Page): Promise<void> {
+  // The disclosure lives on the quote page under the split-list
+  // navigation: open a quote first, then the detail disclosure.
+  await showList(page);
+  await row(page, "Q-1001").click();
+  await expect(page.getByTestId("qb-context")).toBeVisible();
   await page.getByText("Quote detail & admin").click();
   await page.locator("qd-quote-settings").getByTestId("qs-screen").locator("summary").click();
   await expect(page.getByTestId("qs-policy")).toBeVisible();

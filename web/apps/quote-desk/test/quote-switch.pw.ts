@@ -3,7 +3,7 @@
 // delayed route (a gate the test opens), so the order of events is exact and does
 // not depend on the machine's speed.
 import { expect, test } from "@playwright/test";
-import { SALES, gate, open, row, seed, settle, signIn, writes } from "./switch-helpers.js";
+import { SALES, gate, open, row, seed, settle, signIn, writes, showList } from "./switch-helpers.js";
 
 test.beforeEach(async ({ request }) => {
   await request.post("/_stub/reset");
@@ -22,6 +22,7 @@ test("a terms edit typed on one quote is saved to that quote, never to the next 
   await termsRead;
   await page.getByTestId("qb-po").fill("PO-OF-Q1004");
   // At once, before the save has fired: open the other quote.
+  await showList(page);
   await row(page, "Q-1001").click();
   await expect(page.getByTestId("qb-context")).toContainText("Q-1001");
   await expect.poll(() => seen.filter((w) => w.startsWith("PUT")).length).toBeGreaterThan(0);
@@ -52,6 +53,7 @@ test("the terms boxes show the server's values for the open quote, and another q
     await held.opened;
     await route.continue();
   });
+  await showList(page);
   await row(page, "Q-1001").click();
   await expect(page.getByTestId("qb-context")).toContainText("Q-1001");
   const shown = async (): Promise<string[]> =>
@@ -76,7 +78,9 @@ test("a slow read of the quote just left never lands over the quote now open", a
     await held.opened;
     await route.continue();
   });
+  await showList(page);
   await row(page, "Q-1004").click();
+  await showList(page);
   await row(page, "Q-1001").click();
   await expect(page.getByTestId("qb-context")).toContainText("Q-1001");
   await expect(page.getByTestId("qb-line")).toHaveCount(2);
@@ -112,6 +116,7 @@ test("a send in flight when another quote opens texts and links the quote it beg
   });
   await page.getByTestId("qb-send").click();
   await expect.poll(() => seen.filter((w) => w.includes("q-1004/share-links")).length).toBe(1);
+  await showList(page);
   await row(page, "Q-1001").click();
   await expect(page.getByTestId("qb-context")).toContainText("Q-1001");
   const minted = page.waitForResponse((r) => r.url().endsWith("/quotes/q-1004/share-links") && r.request().method() === "POST");
@@ -143,6 +148,7 @@ test("a text answer that lands after another quote opened says nothing on that q
   const asked = page.waitForRequest((r) => r.url().endsWith("/quotes/q-1004/sms-share"));
   await page.getByTestId("qb-send").click();
   await asked;
+  await showList(page);
   await row(page, "Q-1001").click();
   await expect(page.getByTestId("qb-context")).toContainText("Q-1001");
   const answered = page.waitForResponse((r) => r.url().endsWith("/quotes/q-1004/sms-share"));

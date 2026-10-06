@@ -144,7 +144,7 @@
     "file": "src/quote-workarea.ts",
     "find": "        if (this.store !== null) this.store.state.openRef = this.quoteId;\n        this.store?.scheduleSave();",
     "replace": "        this.store?.scheduleSave();",
-    "test": "P2-4 the desk resumes"
+    "test": "P3 layout saves reach the server one at a time"
   },
   {
     "id": "wa-reset-columns-draft",
@@ -161,10 +161,10 @@
     "test": "P3 Reset columns takes"
   },
   {
-    "id": "wa-leave-clears-scan-line",
+    "id": "wa-search-add-quote-id",
     "file": "src/quote-workarea.ts",
-    "find": "?.announce?.(\"\", \"ok\"); // the gun's outcome line is the old quote's\n",
-    "replace": ";\n",
+    "find": "      search.quoteId = this.quoteId;\n",
+    "replace": "",
     "test": "P3 the scan box's outcome line clears"
   },
   {
@@ -736,13 +736,6 @@
     "test": "guard list paging:"
   },
   {
-    "id": "bq-create-selection",
-    "file": "src/quote-builder.ts",
-    "find": "    if (this.selected === onScreen) this.selected = result.value;",
-    "replace": "    this.selected = result.value;",
-    "test": "guard create selection:"
-  },
-  {
     "id": "pk-search-order",
     "file": "src/customer-picker.ts",
     "find": "    if (mine !== this.seq) return;\n    this.loading = false;",
@@ -1159,13 +1152,6 @@
     "test": "P3 a policy save refused after the scope moved on says which settings"
   },
   {
-    "id": "wa-restore-not-while-creating",
-    "file": "src/quote-workarea.ts",
-    "find": "    if (this.creating !== null || this.createdQuoteId !== \"\") return;\n",
-    "replace": "",
-    "test": "P3 a late layout answer does not resume the remembered quote"
-  },
-  {
     "id": "wa-scan-overtaken-says",
     "file": "src/quote-workarea.ts",
     "find": "        this.speakAdd(\"That scan was meant for the new quote, which another quote overtook, so it was not added. Scan it again on the quote you want.\", \"warn\");\n",
@@ -1311,14 +1297,14 @@
     "id": "qb-edit-panel-mounted",
     "file": "src/quote-builder.ts",
     "find": "          <qd-quote-edit data-seam=${SEAM_EDIT_PANEL}></qd-quote-edit>",
-    "replace": "          ${this.selected !== \"\" ? html`<qd-quote-edit data-seam=${SEAM_EDIT_PANEL}></qd-quote-edit>` : nothing}",
+    "replace": "          ${this.openQuoteId() !== \"\" ? html`<qd-quote-edit data-seam=${SEAM_EDIT_PANEL}></qd-quote-edit>` : nothing}",
     "test": "P2-2 leaving through New Quote: a quantity that lands while its panel is gone"
   },
   {
     "id": "qb-followups-panel-mounted",
     "file": "src/quote-builder.ts",
     "find": "          <qd-quote-followups data-seam=${SEAM_FOLLOWUPS}></qd-quote-followups>",
-    "replace": "          ${this.selected !== \"\" ? html`<qd-quote-followups data-seam=${SEAM_FOLLOWUPS}></qd-quote-followups>` : nothing}",
+    "replace": "          ${this.openQuoteId() !== \"\" ? html`<qd-quote-followups data-seam=${SEAM_FOLLOWUPS}></qd-quote-followups>` : nothing}",
     "test": "P2-2 leaving through New Quote: a follow-ups stop that lands while its panel is gone"
   },
   {
@@ -1389,7 +1375,7 @@
     "id": "qb-hold-expiry-unmount",
     "file": "src/quote-builder.ts",
     "find": "            <qd-quote-hold-expiry data-seam=${SEAM_HOLD_EXPIRY}></qd-quote-hold-expiry>\n",
-    "replace": "            ${this.selected === \"\" ? nothing : html`<qd-quote-hold-expiry data-seam=${SEAM_HOLD_EXPIRY}></qd-quote-hold-expiry>`}\n",
+    "replace": "            ${this.openQuoteId() === \"\" ? nothing : html`<qd-quote-hold-expiry data-seam=${SEAM_HOLD_EXPIRY}></qd-quote-hold-expiry>`}\n",
     "test": "P2-2 leaving through New Quote: a re-hold that lands while the hold expiry panel is gone still announces its quote"
   },
   {
@@ -1497,5 +1483,61 @@
     "find": "      this.#announceAway(quoteId, awayNotice({ orderNo, quoteNo, amountCents: planned.amountCents, paid: paid.ok ? paid.value : null, said: paid.ok ? \"\" : spokenRefusal(paid.error) }));\n      return;",
     "replace": "      void orderNo;\n      void quoteNo;\n      return;",
     "test": "guard convert payment: a payment out after the conversion"
+  },
+  {
+    "id": "sa-search-landing",
+    "file": "src/quote-search-add.ts",
+    "find": "    if (seq !== this.seq) return; // a newer keystroke owns the box\n",
+    "replace": "",
+    "test": "a search answer that lands after the box moved on"
+  },
+  {
+    "id": "sa-search-failed",
+    "file": "src/quote-search-add.ts",
+    "find": "      if (seq !== this.seq) return;\n      if (refresh) return;",
+    "replace": "      if (refresh) return;",
+    "test": "a failed search answer that lands after the box moved on"
+  },
+  {
+    "id": "sa-keystroke-seq",
+    "file": "src/quote-search-add.ts",
+    "find": "    this.seq += 1; // every keystroke makes any answer in flight stale, so a code that is only the start of this one never adds\n",
+    "replace": "",
+    "test": "a code that is only the start of what is being typed"
+  },
+  {
+    "id": "sa-price-customer",
+    "file": "src/quote-search-add.ts",
+    "find": "      if (customer !== this.customerId) return;\n",
+    "replace": "",
+    "test": "a price answer for the customer who was switched away from"
+  },
+  {
+    "id": "sa-price-hits",
+    "file": "src/quote-search-add.ts",
+    "find": "      if (hits !== this.hits) return;\n",
+    "replace": "",
+    "test": "a price answer for an older query"
+  },
+  {
+    "id": "sa-enter-flight",
+    "file": "src/quote-search-add.ts",
+    "find": "if (this.timer !== 0 || this.searching) {",
+    "replace": "if (this.timer !== 0) {",
+    "test": "Enter while a search is in flight"
+  },
+  {
+    "id": "sa-enter-carried",
+    "file": "src/quote-search-add.ts",
+    "find": "    this.enterWaiting = false;\n    const term = this.term;",
+    "replace": "    const term = this.term;",
+    "test": "an Enter typed before the word"
+  },
+  {
+    "id": "sa-branch-refresh",
+    "file": "src/quote-search-add.ts",
+    "find": " && this.hits.length > 0 && shouldQuery(this.term)) void this.run(this.term, true);",
+    "replace": " && false) void this.run(this.term, true);",
+    "test": "a branch change reads the rows"
   }
 ]

@@ -32,6 +32,7 @@ import { clearFrontDoorHandoff, readFrontDoorHandoff } from "./demo-account.js";
 import { HOUSE_ZONE, houseDayInZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import { setBranches, wirePorts, clearSessionState, type AuthUser } from "@hardscapehouse/pos-kit/src/ported/ports.js";
 import { QdClient, type BranchRef } from "./qd-client.js";
+import { LIST_ROUTE, parseRoute, routeHash, type DeskRoute } from "./quote-router.js";
 import { THEME_LABEL, ThemeController, themeControlLabel, themeStatusText } from "./theme.js";
 // The builder shell registers the work area and the panel seams.
 import "./quote-builder.js";
@@ -99,6 +100,15 @@ export class QuoteDeskApp extends HHElement {
   #themeStatus = "";
   /** The mounted surface: the entry cards, or the desk. */
   #surface: "entry" | "desk" = "entry";
+  /**
+   * The desk's route, parsed from the address bar (the split-list
+   * navigation): the list page is the desk's landing page, and the quote
+   * pages are the work area's own. The hash is the desk's whole navigation:
+   * the browser's back and forward move between the routes, and the host
+   * wires the parsed route down through the same no-template-binding pass
+   * as the client.
+   */
+  #route: DeskRoute = LIST_ROUTE;
   /** Whether this build is the demo build: the seam rule's own constant (the front door handoff rides it), and the shared header's demo badge rides it too. */
   readonly #demoBuild = import.meta.env.MODE === "demo";
 
@@ -155,6 +165,9 @@ export class QuoteDeskApp extends HHElement {
     // The kits' wiring rule: listen on the HOST and read the control off
     // composedPath(), never an event binding in a template.
     this.addEventListener("click", this.#onHostClick);
+    // The desk's navigation ear: a hash change (a control's walk, the
+    // browser's back or forward) re-reads the address bar.
+    window.addEventListener("hashchange", this.#onHashChange);
     // The system's light setting is honoured from the first paint.
     this.#theme.start();
     void this.#loadFlows();
@@ -174,7 +187,14 @@ export class QuoteDeskApp extends HHElement {
     // The wiring pass: the builder receives the validated client the same
     // way every shared component receives its facts.
     const builder = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("qd-quote-builder");
-    if (builder !== null) builder.client = this.#client;
+    if (builder !== null) {
+      builder.client = this.#client;
+      // The parsed route and the signed in person's role code ride the same
+      // pass: the builder's two screens and the Sales manager's Approvals
+      // tab read them, never a template binding.
+      builder.route = this.#route;
+      builder.roleCode = this.#deskIdentity?.role_code ?? "";
+    }
     // The shared chrome is fed the same way, not through template bindings
     // (the design system's position gate holds this app's templates too):
     // the role's label, the signed-in flag, the demo badge's build flag, and
@@ -203,9 +223,15 @@ export class QuoteDeskApp extends HHElement {
 
   override disconnectedCallback(): void {
     this.removeEventListener("click", this.#onHostClick);
+    window.removeEventListener("hashchange", this.#onHashChange);
     this.#theme.stop();
     super.disconnectedCallback();
   }
+
+  readonly #onHashChange = (): void => {
+    this.#route = parseRoute(location.hash);
+    this.requestUpdate();
+  };
 
   readonly #onHostClick = (event: MouseEvent): void => {
     const control = event
@@ -342,6 +368,12 @@ export class QuoteDeskApp extends HHElement {
     this.#branch = branch.value;
     setBranches([{ id: branch.value.id, name: branch.value.name }]);
     this.#surface = "desk";
+    // A sign in starts at the desk's landing page (decision log row 941):
+    // whatever the address bar carried in (a stale quote fragment, a handoff
+    // boot's address) gives way to the list, written once in place so no
+    // stray history entry is left behind.
+    this.#route = LIST_ROUTE;
+    if (location.hash !== routeHash(LIST_ROUTE)) location.replace(routeHash(LIST_ROUTE));
     this.requestUpdate();
   }
 

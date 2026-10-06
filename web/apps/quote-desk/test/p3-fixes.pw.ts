@@ -58,9 +58,8 @@ test("a scan's add does not re-enable Send while a send is still out", async ({ 
   await page.getByTestId("qb-send").click();
   await asked;
   await expect(page.getByTestId("qb-send")).toBeDisabled();
-  const scan = page.getByTestId("pos-scan-input");
+  const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scan.fill("PSN-100");
-  await scan.press("Enter");
   await expect(page.getByTestId("qb-line")).toHaveCount(3);
   await settle(page);
   await expect(page.getByTestId("qb-send")).toBeDisabled();
