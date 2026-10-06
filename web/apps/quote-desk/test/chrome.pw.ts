@@ -2,9 +2,9 @@
 // header adoption, item 5 of HH-RD2's polish round 2, decision log row 938):
 // the chrome IS the design system's hos-app-header, the front door's shape.
 // The desk keeps one bar: the house lockup and the demo badge, the role's
-// name centred, Switch role and Sign out right; the theme control is the
-// app's own, on the slim row under the bar. These check the bar's shape, not
-// its pixels.
+// name centred, Switch role and Sign out right, and the theme control is the
+// app's own, inside the bar's named theme slot (the item 5 followup). These
+// check the bar's shape, not its pixels.
 import { expect, test, type Page } from "@playwright/test";
 
 // The stub keeps the person's layout row, which now remembers the open quote: every test starts from the seeded world.
@@ -51,18 +51,21 @@ for (const width of [1440, 820]) {
     }
     expect(demoBox.width).toBeLessThan(width - 24);
     expect(demoBox.x).toBeGreaterThan(0);
-    // The theme control rides the app's own row under the bar, inside the viewport.
+    // The theme control rides the header's theme slot, inside the bar and
+    // inside the viewport.
     const toggle = page.getByTestId("theme-control");
     await expect(toggle).toBeVisible();
     const toggleBox = (await toggle.boundingBox())!;
     expect(toggleBox.x + toggleBox.width).toBeLessThanOrEqual(width - 12);
+    expect(toggleBox.y).toBeGreaterThanOrEqual(barBox.y);
+    expect(toggleBox.y + toggleBox.height).toBeLessThanOrEqual(barBox.y + barBox.height + 0.5);
   });
 }
 
 // The theme control (visual review round 1, P2-5): the ERP's light look was
-// unreachable. The app's row under the bar carries the till's cycle (Auto,
-// Light, Dark); the dark sheet is the tokens' default and light is the
-// opt-in data-theme attribute.
+// unreachable. The bar's theme slot carries the till's cycle (Auto, Light,
+// Dark); the dark sheet is the tokens' default and light is the opt-in
+// data-theme attribute.
 test("the theme control cycles Auto, Light, Dark on the document root", async ({ browser }) => {
   const context = await browser.newContext({ colorScheme: "dark" });
   const page = await context.newPage();

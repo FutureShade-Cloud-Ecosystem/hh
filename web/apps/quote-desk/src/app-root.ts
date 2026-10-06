@@ -46,24 +46,23 @@ export class QuoteDeskApp extends HHElement {
         color: var(--hh-text);
       }
       /* The chrome above the work area is the shared header element
-         (hos-app-header); this app keeps only the theme control of its own,
-         on one slim row under the bar. The control's face is the sheet's
-         secondary button at the bar's own compact size. */
-      .chrome-tools {
-        display: flex;
-        justify-content: flex-end;
+         (hos-app-header). The theme control is the app's own, passed into
+         the element's named theme slot: it renders inside the right cluster,
+         after Switch role and Sign out, and nothing sits between the bar and
+         the work area. The control's face is the sheet's secondary button at
+         the bar's own compact size. */
+      .theme-slot {
+        display: inline-flex;
         align-items: center;
-        gap: var(--hh-s-8);
-        padding: var(--hh-s-4) var(--hh-s-20);
       }
-      .chrome-tools button {
+      .theme-slot button {
         min-height: 0;
-        padding: 7px 14px;
-        font-size: 12px;
+        padding: 7px 12px;
+        font-size: 11px;
         line-height: normal;
         white-space: nowrap;
       }
-      .chrome-tools button:hover:not(:disabled) {
+      .theme-slot button:hover:not(:disabled) {
         border-color: var(--hh-accent-text);
         color: var(--hh-accent-text);
       }
@@ -378,10 +377,9 @@ export class QuoteDeskApp extends HHElement {
   render(): TemplateResult {
     return html`
       <p class="visually-hidden" role="status" aria-live="polite" data-testid="theme-status">${this.#themeStatus}</p>
-      <hos-app-header data-testid="qd-bar"></hos-app-header>
-      <div class="chrome-tools">
-        ${this.#themeControl()}
-      </div>
+      <hos-app-header data-testid="qd-bar">
+        <div class="theme-slot" slot="theme">${this.#themeControl()}</div>
+      </hos-app-header>
       <main>
         ${this.#surface === "desk"
           ? html`

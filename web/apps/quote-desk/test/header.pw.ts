@@ -3,12 +3,13 @@
 // front door's shape. The old inline chrome (the QD mark and title bar, the
 // app's own sign-out) is gone: the brand is the house lockup, the centred
 // word rides the element's header-word hook, the right cluster carries
-// Switch role and Sign out under their action names, and the demo banner
-// rides the demo build flag (this harness builds the demo mode, the same
-// seam the front door handoff rides). Switch role ends the session the
-// sign-out way and returns to the front door at / (row 938's wording); the
-// harness serves this app itself at /, so the walk lands on this app's own
-// entry page from a cold boot.
+// Switch role and Sign out under their action names and the app's theme
+// control in the element's named theme slot (the item 5 followup), and the
+// demo banner rides the demo build flag (this harness builds the demo mode,
+// the same seam the front door handoff rides). Switch role ends the session
+// the sign-out way and returns to the front door at / (row 938's wording);
+// the harness serves this app itself at /, so the walk lands on this app's
+// own entry page from a cold boot.
 import { expect, test, type Page } from "@playwright/test";
 
 // The stub keeps the person's layout row, which now remembers the open quote: every test starts from the seeded world.
@@ -61,8 +62,11 @@ test("signed out, the right cluster is hidden and the centred word is the picker
   await expect(page.getByTestId("header-word")).toHaveText("Pick a role");
   await expect(page.getByRole("button", { name: "Switch role" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Sign out", exact: true })).toHaveCount(0);
-  // The old chrome's unsigned shape (the lone theme control in the bar) is gone too.
-  await expect(page.getByTestId("qd-bar").getByTestId("theme-control")).toHaveCount(0);
+  // The theme control keeps its home in the header's theme slot unsigned too
+  // (the front door's own theme switcher is an unsigned control): it never
+  // falls back to a row of its own under the bar.
+  await expect(page.getByTestId("qd-bar").getByTestId("theme-control")).toHaveCount(1);
+  await expect(page.getByTestId("qd-bar").getByTestId("theme-control")).toBeVisible();
 });
 
 test("Switch role ends the session and returns to the front door at /", async ({ page }) => {
@@ -86,4 +90,67 @@ test("Switch role ends the session and returns to the front door at /", async ({
   expect(state.handoff).toBeNull();
   await expect(page.getByTestId("qb-list")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
+});
+
+// The theme control's home (the item 5 followup, the principal's correction
+// to this adoption): the control passes into the shared header's named theme
+// slot and lives INSIDE the element's right cluster, after Switch role and
+// Sign out, behind the thin separator. The bare row under the bar was the
+// regression: the control floated alone between the header and the page's
+// title row. Red first at 1b314b77: the control sat outside the element
+// (its own row, the div between the header and main), and the bounds check
+// found it there.
+test("the theme control lives inside the shared header's right cluster, not on a row of its own", async ({ page }) => {
+  await signIn(page);
+  const header = page.locator("hos-app-header");
+  // The control is the element's slotted content: its wrapper claims the
+  // named theme slot, and the cluster carries it after the two buttons.
+  const control = header.getByTestId("theme-control");
+  await expect(control).toBeVisible();
+  const inside = await page.evaluate(() => {
+    // The header renders inside the app root's shadow tree: the walk goes
+    // through qd-app-root's shadowRoot, not document.querySelector.
+    const appRoot = document.querySelector("qd-app-root");
+    const el = appRoot !== null && appRoot.shadowRoot !== null ? appRoot.shadowRoot.querySelector("hos-app-header") : null;
+    if (el === null || el.shadowRoot === null) return { ok: false } as const;
+    const cluster = el.shadowRoot.querySelector(".controls");
+    if (cluster === null) return { ok: false } as const;
+    const slot = cluster.querySelector('slot[name="theme"]') as HTMLSlotElement | null;
+    const sep = cluster.querySelector(".theme-sep");
+    const signOut = cluster.querySelector('button[data-action="sign-out"]');
+    const control = el.querySelector('[data-testid="theme-control"]');
+    const box = (node: Element) => node.getBoundingClientRect();
+    const controlBox = control !== null ? box(control) : null;
+    const signBox = signOut !== null ? box(signOut) : null;
+    return {
+      ok: true,
+      clusterChildren: [...cluster.children].map((node) => node.tagName.toLowerCase()),
+      slotted:
+        slot !== null &&
+        control !== null &&
+        slot.assignedElements().some((assigned: Element) => assigned.contains(control)),
+      hasSeparator: sep !== null,
+      sameBandAsSignOut:
+        controlBox !== null &&
+        signBox !== null &&
+        Math.abs((controlBox.top + controlBox.bottom) / 2 - (signBox.top + signBox.bottom) / 2) < 12,
+      insideBar: controlBox !== null && controlBox.bottom <= box(el).bottom + 0.5,
+    };
+  });
+  expect(inside.ok).toBe(true);
+  expect(inside.clusterChildren).toEqual(["button", "button", "span", "slot"]);
+  expect(inside.slotted).toBe(true);
+  expect(inside.hasSeparator).toBe(true);
+  expect(inside.sameBandAsSignOut).toBe(true);
+  expect(inside.insideBar).toBe(true);
+  // The bounds test: nothing sits between the header and the page's title
+  // row. The header's next sibling is the page's own main, not a bare
+  // control row.
+  const next = await page.evaluate(() => {
+    const appRoot = document.querySelector("qd-app-root");
+    const el = appRoot !== null && appRoot.shadowRoot !== null ? appRoot.shadowRoot.querySelector("hos-app-header") : null;
+    const sibling = el !== null ? el.nextElementSibling : null;
+    return sibling === null ? null : sibling.tagName.toLowerCase();
+  });
+  expect(next).toBe("main");
 });
