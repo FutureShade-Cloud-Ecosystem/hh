@@ -290,7 +290,8 @@ test('FLOOR (7): a distinct totals card LEADS the Payment step; the subtotal lea
   const body = terminalSrc.slice(terminalSrc.indexOf('private renderPaymentBody()'));
   assert.ok(body.indexOf('data-testid="pos-totals-card"') < body.indexOf('class="paytiles"'),
     'the totals card renders ABOVE the tender tiles inside the payment step');
-  assert.match(terminalSrc, /data-testid="pos-ring-words"/, 'the row that names the ring for the tax and the total');
+  assert.match(terminalSrc, /words: 'pos-ring-words'/, 'the row that names the ring for the tax and the total when the preview cannot be read');
+  assert.match(terminalSrc, /tax: 'pos-preview-tax'[\s\S]*total: 'pos-preview-total'/, 'the preview rows: the server-stated tax and total (row 985)');
   assert.ok(!/\.totalscard \.trow\.grand/.test(terminalSrc), 'no oversized gold Total row: the ring states the total');
 });
 

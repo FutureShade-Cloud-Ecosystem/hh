@@ -265,6 +265,11 @@ const WALK_IN = {
   on_hold: false,
 };
 
+let previewCalls = 0; // how many previews the stub has answered (the legs read it through /_stub/state)
+/** 26600 reads $266.00, the way the contract's refusal sentence speaks. */
+function dollarsWord(cents) {
+  return `$${(cents / 100).toLocaleString("en-CA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
 const HST_RATE_BPS = 1300; // the Ontario rate, as basis points
 
 // The dealer's house zone: the same constant the core itself compiles. The
@@ -1049,6 +1054,7 @@ const server = createServer(async (request, response) => {
       keys: KEYS_SEEN,
       lastReturnBody: LAST_RETURN_BODY,
       sightings: SIGHTINGS,
+      previewCalls,
       returns: [...RETURN_META.entries()].map(([key, meta]) => ({ key, ...meta })),
     });
     return;
@@ -1451,6 +1457,50 @@ const server = createServer(async (request, response) => {
   // price: every line is priced here through the same table the price read
   // answers from. The credit gate runs before any money moves, exactly where
   // the core's own gate sits.
+  if (request.method === "POST" && path === "/api/v1/pos/sale-preview") {
+    // The read-only preview (PR 222): the ring's own subtotal, tax and total for the body, with
+    // nothing written. The tender-less body of a sale; a test that needs it slow holds the route itself.
+    readBody(request, (parsed) => {
+      const branchId = typeof parsed.branch_id === "string" ? parsed.branch_id : "";
+      if (branchId !== callerBranch) {
+        respondJson(response, 403, { error: "that branch is not one your grant reaches" });
+        return;
+      }
+      const lines = Array.isArray(parsed.lines) ? parsed.lines : [];
+      if (lines.length === 0) {
+        respondJson(response, 400, { error: "a sale rings at least one line" });
+        return;
+      }
+      const customer = customerFor(typeof parsed.customer_id === "string" ? parsed.customer_id : "");
+      if (customer === null) {
+        respondJson(response, 400, { error: "that customer is not in this dealer's book" });
+        return;
+      }
+      let subtotal = 0;
+      for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index] ?? {};
+        const productId = typeof line.product_id === "string" ? line.product_id : "";
+        const qty = typeof line.qty_entered === "number" ? line.qty_entered : 0;
+        const resolved = resolveLine(customer.id, productId, branchId);
+        if (resolved === null || qty <= 0) {
+          respondJson(response, 400, { error: `line ${index + 1} could not be priced by the engine` });
+          return;
+        }
+        subtotal += lineTotalCents(resolved.customer_cents, qty);
+      }
+      const tax = taxCents(subtotal);
+      previewCalls += 1;
+      respondJson(response, 200, {
+        subtotal_cents: subtotal,
+        tax_cents: tax,
+        tax_lines: tax > 0 ? [{ reason_code: "STD_ON_HST_13", rate_bps: HST_RATE_BPS, tax_cents: tax }] : [],
+        total_cents: subtotal + tax,
+        tax_reason_code: "STD_ON_HST_13",
+      });
+    });
+    return;
+  }
+
   if (request.method === "POST" && path === "/api/v1/pos/sales") {
     readBody(request, (parsed) => {
       const branchId = typeof parsed.branch_id === "string" ? parsed.branch_id : "";
@@ -1591,7 +1641,14 @@ const server = createServer(async (request, response) => {
           sum += amount;
         }
         if (sum !== total) {
-          respondJson(response, 400, { error: "the legs do not sum exactly to the sale's total" });
+          // The contract's refusal (row 985): the stable word, the two amounts as
+          // integer cents fields, and a sentence in dollars.
+          respondJson(response, 422, {
+            error: "split_total_mismatch",
+            tendered_cents: sum,
+            total_cents: total,
+            message: `The tenders add up to ${dollarsWord(sum)}, but the sale total is ${dollarsWord(total)}.`,
+          });
           return;
         }
         // The core's own capture shape: an ACCOUNT leg captures nothing (its

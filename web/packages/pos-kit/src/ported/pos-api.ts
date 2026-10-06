@@ -199,19 +199,34 @@ export interface SaleError {
   error: string;
   policy?: string;
   line?: number;
+  /** `split_total_mismatch` carries its two amounts as integer cents and a sentence (row 985). */
+  tendered_cents?: number;
+  total_cents?: number;
+  message?: string;
 }
 
 // createSale returns either a SaleResult or a structured SaleError (409 credit/price, 402 decline).
 export async function createSale(body: SalePost): Promise<{ ok: true; sale: SaleResult } | { ok: false; err: SaleError }> {
   const res = await api('/api/v1/pos/sales', { method: 'POST', body: JSON.stringify(body) });
   if (res.ok) return { ok: true, sale: (await res.json()) as SaleResult };
-  let parsed: { error?: string; policy?: string; line?: number } = {};
+  let parsed: { error?: string; policy?: string; line?: number; tendered_cents?: number; total_cents?: number; message?: string } = {};
   try {
     parsed = (await res.json()) as typeof parsed;
   } catch {
     /* non-JSON body */
   }
-  return { ok: false, err: { status: res.status, error: parsed.error ?? 'sale_failed', policy: parsed.policy, line: parsed.line } };
+  return {
+    ok: false,
+    err: {
+      status: res.status,
+      error: parsed.error ?? 'sale_failed',
+      policy: parsed.policy,
+      line: parsed.line,
+      tendered_cents: parsed.tendered_cents,
+      total_cents: parsed.total_cents,
+      message: parsed.message,
+    },
+  };
 }
 
 export async function assessRelief(body: {

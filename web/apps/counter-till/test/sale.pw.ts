@@ -23,6 +23,13 @@
 import { expect, test, type Page, type Response, type Route } from "@playwright/test";
 
 /** The screen-side rendering of integer cents, for comparing against the app. */
+
+/** Row 955: Returns is its own surface; open it from the bar (a no-op when it is already up). */
+async function openReturns(page: Page): Promise<void> {
+  if (!(await page.getByTestId("returns").isVisible())) await page.getByTestId("till-returns-entry").click();
+  await expect(page.getByTestId("returns")).toBeVisible();
+}
+
 function dollars(cents: number): string {
   const negative = cents < 0;
   const magnitude = Math.abs(cents);
@@ -182,23 +189,22 @@ test("a walk-in cash sale of three lines rings, and the sale read equals every f
   // figure the card assembles: the tax and the total are the ring's own
   // answer, named in words, never computed here.
   const totals = page.getByTestId("pos-totals-card");
-  // The card's whole shape: exactly two rows, the Subtotal and the ring-words
-  // row. A third row is a figure the till must not compute (the review's
-  // probe put a plain browser Total row here, and this count is what fails
-  // on it).
-  await expect(totals.locator(".trow")).toHaveCount(2);
+  // The card's whole shape: the Subtotal and, from the server's sale-preview
+  // (row 985), the Tax and the Total. Exactly three rows: a fourth would be a
+  // figure the till computes itself.
+  await expect(totals.getByTestId("pos-preview-total")).toBeVisible();
+  await expect(totals.locator(".trow")).toHaveCount(3);
   await expect(totals).toContainText("Subtotal");
   await expect(totals).toContainText("$64.00");
-  await expect(totals.getByTestId("pos-ring-words")).toContainText("added at the ring");
+  await expect(totals.getByTestId("pos-preview-tax")).toContainText("$8.32");
+  await expect(totals.getByTestId("pos-preview-total")).toContainText("$72.32");
   // The absences are pinned on locators that hold the content (the review's
   // P2-1: the step panel is a shadow slot and sees none of this body), and
   // the positive assertions above prove these locators see the card they
-  // judge: neither the stub's HST figure ($8.32) nor its total ($72.32)
-  // may stand on the card or on the Complete button.
+  // judge: the card carries no estimate mark, and the Complete button names
+  // the server's stated total.
   await expect(totals).not.toContainText("(est.");
-  await expect(totals).not.toContainText("$8.32");
-  await expect(totals).not.toContainText("$72.32");
-  await expect(page.getByTestId("pos-complete-sale")).not.toContainText("$72.32");
+  await expect(page.getByTestId("pos-complete-sale")).toContainText("total $72.32");
   await page.getByLabel("Cash tendered in dollars: optional; leave empty to ring the exact total").fill("80.00");
   await expect(page.getByTestId("cash-change-preview")).toContainText("Change due");
   await expect(page.getByTestId("cash-change-preview")).toContainText("the ring's own answer");
@@ -521,20 +527,20 @@ test("the collapsed Items summary carries the priced lines' subtotal before the 
   await expect(page.getByTestId("step-summary-items")).not.toContainText("(est.");
 });
 
-test("the read-back names the ring, and the confirmation reads the server's figures unmarked", async ({
+test("the read-back states the server's tax and total, and the confirmation reads the server's figures unmarked", async ({
   page,
 }) => {
   await signIn(page, "Sales");
   await searchAndAdd(page, "holland", "Holland Stone 60 mm");
   await searchAndAdd(page, "polymeric", "Polymeric Locking Sand");
-  // The read-back, pre-ring: the priced lines' subtotal ($18.00), the ring
-  // named for the tax and the total, and no estimate mark anywhere on it.
+  // The read-back, pre-ring: the priced lines' subtotal ($18.00), the server's
+  // stated tax and total (row 985), and no estimate mark anywhere on it.
   await openStep(page, "summary");
   const readback = page.getByTestId("pos-readback");
   await expect(readback).toContainText("$18.00");
-  await expect(readback).toContainText("added at the ring");
+  await expect(readback.getByTestId("readback-preview-tax")).toContainText("$2.34");
+  await expect(readback.getByTestId("readback-preview-total")).toContainText("$20.34");
   await expect(readback).not.toContainText("(est.");
-  await expect(readback).not.toContainText("$20.34");
   // The ring: the confirmation carries the server's own figures, unmarked.
   await openStep(page, "payment");
   const ringPost = page.waitForResponse(
@@ -871,17 +877,15 @@ test("a line the account's price cannot answer reads price pending through ordin
   await expect(page.getByTestId("cash-change-preview")).toContainText("the ring's own answer");
   await expect(page.getByTestId("cash-change-preview")).not.toContainText("Less than the total");
   await page.getByTestId("cash-tendered").fill("");
-  // The split panel: no remaining figure anywhere (the total the legs settle
-  // is the server's, at the ring), so the panel shows the typed legs and
-  // words the ring.
+  // The split panel works from the server's total (its sale-preview prices the
+  // pending line itself): Total to split is stated, and the legs over it read
+  // as over, never as settled.
   await page.getByRole("button", { name: "Split" }).click();
   const splitPanel = page.getByTestId("pos-split-panel");
+  await expect(splitPanel.getByTestId("split-total")).toContainText("Total to split $");
   await splitPanel.getByTestId("split-amount-0").fill("5.00");
-  await splitPanel.getByTestId("split-amount-1").fill("5.00");
-  await expect(page.getByTestId("split-remaining")).toHaveCount(0);
-  await expect(page.getByTestId("split-typed")).toContainText("$10.00");
-  await expect(page.getByTestId("split-problem")).toContainText("at the ring");
-  await expect(page.getByTestId("split-problem")).not.toContainText("Settled");
+  await splitPanel.getByTestId("split-amount-1").fill("500.00");
+  await expect(page.getByTestId("split-remaining")).toContainText("Over by $");
   await splitPanel.getByRole("button", { name: "Cancel" }).click();
   await expect(splitPanel).toHaveCount(0);
   await openStep(page, "items");
@@ -909,20 +913,19 @@ test("a line the account's price cannot answer reads price pending through ordin
   await expect(polymeric.locator(".lprice")).toHaveText("$11.48");
   await expect(polymeric.locator(".ltot")).toHaveText("$22.96");
   await expect(page.getByTestId("pos-line-row").filter({ hasText: "price pending" })).toHaveCount(0);
-  // Every line priced: the subtotal returns, and the Complete button names it
-  // as the subtotal with the tax left to the ring: never a total.
+  // Every line priced: the subtotal returns, and the Complete button names the
+  // server's stated total (row 985), or the subtotal with the tax left to the
+  // ring while the preview has not answered.
   await openStep(page, "payment");
   await expect(totals).not.toContainText("(not priced)");
   const cta = page.getByTestId("pos-complete-sale");
-  await expect(cta).toContainText("subtotal $");
-  await expect(cta).toContainText("+ tax at the ring");
+  await expect(cta).toContainText("total $");
   // The exact shape, both session states: nothing can follow the words but
   // the pay key's own keycap chip (the roster's word, aria-hidden, never sale
-  // wording), so a total appended to the button's wording still fails here
-  // (review round 2, R2-P3-1). The chip joined the button after the pin was
-  // written; the pattern admits it by shape, not by the roster's choice of key.
+  // wording). The chip joined the button after the pin was written; the
+  // pattern admits it by shape, not by the roster's choice of key.
   await expect(cta).toHaveText(
-    /^\s*(Open session · then complete|Complete sale) · subtotal (\$[\d,]+\.\d{2}|\(not priced\)) \+ tax at the ring(\s+[A-Za-z0-9+]+)?\s*$/,
+    /^\s*(Open session · then complete|Complete sale) · (total \$[\d,]+\.\d{2}|subtotal (\$[\d,]+\.\d{2}|\(not priced\)) \+ tax at the ring)(\s+[A-Za-z0-9+]+)?\s*$/,
   );
   await expect(cta).not.toContainText("(est.");
 });
@@ -1081,7 +1084,7 @@ test("the split state is a status band, not a disabled button", async ({ page })
   await expect(band).toContainText("Split: compose the legs below");
   // The explanation is visible text, not a hover title only.
   await expect(page.getByTestId("cta-split-why")).toBeVisible();
-  await expect(page.getByTestId("cta-split-why")).toContainText("settle the server's total at the ring");
+  await expect(page.getByTestId("cta-split-why")).toContainText("The legs settle the stated total");
   await expect(band).not.toHaveAttribute("title", /.*/);
   // A statement, not a control: no button, no disabled state to fake.
   expect(await band.evaluate((el) => el.tagName)).not.toBe("BUTTON");
@@ -1111,15 +1114,12 @@ test("a fresh line before its price answers: the split arms on shape and the rin
   await openStep(page, "payment");
   await page.getByRole("button", { name: "Split" }).click();
   const panel = page.getByTestId("pos-split-panel");
-  // No remaining figure and no Rest fill: both were arithmetic over a browser total.
-  await expect(page.getByTestId("split-remaining")).toHaveCount(0);
-  await expect(panel.getByRole("button", { name: "Rest" })).toHaveCount(0);
+  // The server's sale-preview prices the pending line itself, so the panel states the total and
+  // fills the last leg with what is left of it.
+  await expect(panel.getByTestId("split-total")).toHaveText("Total to split $4.52");
   await panel.getByTestId("split-amount-0").fill("4.00");
-  await panel.getByTestId("split-amount-1").fill("0.52");
-  // The typed sum is the operator's own arithmetic; the words name the ring.
-  await expect(page.getByTestId("split-typed")).toContainText("$4.52");
-  await expect(page.getByTestId("split-problem")).toContainText("at the ring");
-  // Armed on shape while the line is still pending: the server prices the line at the ring.
+  await expect(panel.getByTestId("split-amount-1")).toHaveValue("0.52");
+  await expect(page.getByTestId("split-remaining")).toHaveText("Left to assign $0.00");
   await expect(page.getByTestId("split-ring")).toBeEnabled();
   const ringPost = page.waitForResponse(
     (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
@@ -1151,7 +1151,7 @@ test("a split with a card leg carries the simulated word on the confirmation and
   await leg1.fill("0.52");
   // The typed sum shows, and the ring arms on the legs' shape: whether the
   // legs settle the server's total is the ring's own answer.
-  await expect(page.getByTestId("split-typed")).toContainText("$4.52");
+  await expect(page.getByTestId("split-remaining")).toHaveText("Left to assign $0.00");
   await expect(page.getByTestId("split-ring")).toBeEnabled();
   const ringPost = page.waitForResponse(
     (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
@@ -1185,26 +1185,22 @@ test("a split with a card leg carries the simulated word on the confirmation and
   await printed.close();
 });
 
-test("the split panel shows the typed sum and leaves the settlement to the ring", async ({ page }) => {
+test("the split panel states the total to split and what is left to assign", async ({ page }) => {
   await signIn(page, "Sales");
   await searchAndAdd(page, "holland", "Holland Stone 60 mm");
   await openStep(page, "payment");
   await page.getByRole("button", { name: "Split" }).click();
   const panel = page.getByTestId("pos-split-panel");
-  // No remaining figure: the total the legs must settle is the server's, at
-  // the ring. What the panel shows is the typed sum, which is arithmetic over
-  // the operator's own entries, and the words that say where settlement
-  // happens. The shape refusals stay the panel's own.
-  // The split panel's own sum line still prints the CA prefix from the till's source (the Counter Till coder carries it).
+  // The total the legs must settle is the server's (its sale-preview): the panel states it and
+  // the amount left to assign, and the shape refusals stay the panel's own.
+  await expect(panel.getByTestId("split-total")).toHaveText("Total to split $4.52");
   await panel.getByTestId("split-amount-0").fill("4.00");
-  await expect(page.getByTestId("split-typed")).toHaveText("$4.00 typed so far");
-  await expect(page.getByTestId("split-remaining")).toHaveCount(0);
+  await expect(page.getByTestId("split-remaining")).toHaveText("Left to assign $0.00");
+  await panel.getByTestId("split-amount-1").fill("");
+  await expect(page.getByTestId("split-remaining")).toHaveText("Left to assign $0.52");
   await expect(page.getByTestId("split-problem")).toContainText("Every tender needs an amount greater than zero");
-  await panel.getByTestId("split-amount-1").fill("0.60");
-  await expect(page.getByTestId("split-typed")).toHaveText("$4.60 typed so far");
-  await expect(page.getByTestId("split-problem")).toContainText("at the ring");
-  // The ring arms on the shape: whether the legs settle the server's total is
-  // the ring's own answer.
+  await expect(page.getByTestId("split-ring")).toBeDisabled();
+  await panel.getByTestId("split-amount-1").fill("0.52");
   await expect(page.getByTestId("split-ring")).toBeEnabled();
 });
 
@@ -1237,29 +1233,38 @@ test("a short typed cash amount rides the ring and the server refuses it: nothin
   await expect(page.getByTestId("pos-line-row")).toHaveCount(1);
 });
 
-test("a split whose legs miss the total rides the ring and the server refuses it: nothing commits", async ({
+test("a split the server refuses reads its split_total_mismatch in dollars: nothing commits", async ({
   page,
 }) => {
+  // The preview is made to state $4.00 for a sale the ring will total at $4.52, so the legs the
+  // panel arms ($3.00 and $1.00) meet the preview and miss the ring: the server's own refusal.
+  await page.route("**/api/v1/pos/sale-preview", async (route) => {
+    const real = await route.fetch();
+    const body = (await real.json()) as Record<string, unknown>;
+    await route.fulfill({
+      response: real,
+      json: { ...body, subtotal_cents: 400, tax_cents: 0, tax_lines: [], total_cents: 400 },
+    });
+  });
   await signIn(page, "Sales");
   await ensureSession(page);
   await searchAndAdd(page, "holland", "Holland Stone 60 mm");
   await openStep(page, "payment");
   await page.getByRole("button", { name: "Split" }).click();
   const panel = page.getByTestId("pos-split-panel");
-  // $4.00 and $0.40 against a sale the server will total at $4.52: the
-  // legs settle the server's total, and the till computed none to check
-  // against, so the miss is the ring's own refusal.
-  await panel.getByTestId("split-amount-0").fill("4.00");
-  await panel.getByTestId("split-amount-1").fill("0.40");
+  await expect(panel.getByTestId("split-total")).toHaveText("Total to split $4.00");
+  await panel.getByTestId("split-amount-0").fill("3.00");
+  await expect(panel.getByTestId("split-amount-1")).toHaveValue("1.00");
   await expect(page.getByTestId("split-ring")).toBeEnabled();
   const ringPost = page.waitForResponse(
     (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
   );
   await page.getByTestId("split-ring").click();
   const answer = await ringPost;
-  expect(answer.status()).toBe(400);
-  await expect(page.getByRole("alert")).toContainText("the legs do not sum exactly to the sale's total");
-  // Nothing committed, and the panel stays open and armed for the correction.
+  expect(answer.status()).toBe(422);
+  await expect(page.getByRole("alert")).toContainText("The tenders add up to $4.00, but the sale total is $4.52.");
+  await expect(page.getByRole("alert")).not.toContainText("cents");
+  // Nothing committed, and the panel stays open for the correction.
   await expect(page.getByTestId("sold-panel")).toHaveCount(0);
   await expect(page.getByTestId("split-ring")).toBeEnabled();
 });
@@ -1508,6 +1513,7 @@ test("a sale rung at the till is found by the returns desk right after it commit
 
   // The ruled desk below the till finds the just-rung sale by its number and
   // lays out its lines with what is still returnable.
+  await openReturns(page);
   await page.getByLabel("Sale number").fill(String(sale.order_no));
   await page.getByRole("button", { name: "Find sale" }).click();
   await expect(page.getByTestId("returns-sale")).toContainText(String(sale.order_no));
