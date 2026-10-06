@@ -124,8 +124,11 @@ test("P3-1 an older refused pricing read answered late: the pricing log", async 
 
 test("P3-1 a pricing read that answers after the panel closed sends no name or roster lookup: the breaks list", async ({ page }) => {
   await signIn(page);
-  const held = await hold(page, /\/api\/v1\/pricing\/quantity-breaks\?/, { method: "GET", times: 1 });
   await openPricing(page);
+  // The margin tab reads the breaks too (for the Add picker); settle that read, then hold the breaks tab's own.
+  await expect(page.getByTestId("pm-row")).toHaveCount(6);
+  await quiet(page);
+  const held = await hold(page, /\/api\/v1\/pricing\/quantity-breaks\?/, { method: "GET", times: 1 });
   await page.getByTestId("pricing-tab-breaks").click();
   await held.asked;
   await closePricing(page);
