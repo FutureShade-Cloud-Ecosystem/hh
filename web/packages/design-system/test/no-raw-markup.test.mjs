@@ -312,16 +312,20 @@ test('the walk finds this package and names the workspace packages it must also 
   }
   // The dependents are computed, not hard-coded: this records what the gate
   // covers beyond this package, so an empty list is a stated fact, not a
-  // silence. The Counter Till app is the workspace's first dependent
-  // (web/apps/counter-till): its sources are scanned by the gates below. The
-  // Public Desk app (web/apps/public-desk) and the Quote Desk app
-  // (web/apps/quote-desk) follow: the customer's quote page on a share link
-  // token, and the staff quote work area and list, scanned by the same
-  // gates. The sort keeps the lock order stable as dependents join.
+  // silence. The Counter Till app was the workspace's first dependent
+  // (web/apps/counter-till); the demo box's front door (web/apps/front-door),
+  // the Public Desk app (web/apps/public-desk, the customer's quote page on a
+  // share link token) and the Quote Desk app (web/apps/quote-desk, the staff
+  // quote work area and list) follow: all four apps' sources are scanned by
+  // the gates below. The comparison is over the sorted names because the
+  // enumeration is a readdir over the workspace's directories, whose order
+  // is the filesystem's and not a contract: the fact this lock holds is
+  // which packages the gate scans, not the order it met them in.
   assert.deepEqual(
     dependentPackages().map((d) => d.name).sort(),
     [
       '@hardscapehouse/counter-till',
+      '@hardscapehouse/front-door',
       '@hardscapehouse/public-desk',
       '@hardscapehouse/quote-desk',
     ],
