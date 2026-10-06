@@ -42,6 +42,7 @@ import {
   hasAnyEdit,
   isShareable,
   quoteErrorMessage,
+  quoteRefLabel,
   quoteStatusWord,
   shareLinkState,
   shareSentence,
@@ -336,7 +337,8 @@ export class QdQuoteEdit extends PanelBase {
     if (client === null) return;
     const ctx = this.ctx;
     // Taken down when the person presses Save: the discount that follows the quantity is sent under this session on this quote, or not at all.
-    const capture = captureSend(this.sendNow, { quote: ctx, label: "this quote", say: (line) => { this.error = line; } });
+    // The label names the quote itself, so the sender's refusal tells the person which quote to open.
+    const capture = captureSend(this.sendNow, { quote: ctx, label: quoteRefLabel(this.view, ctx.id), say: (line) => { this.error = line; } });
     const rawQty = (this.qtyDraft[line.line_no] ?? line.qty_entered).trim();
     const qtyChanged = rawQty !== line.qty_entered;
     const current = this.discByLine[line.line_no] ?? 0;

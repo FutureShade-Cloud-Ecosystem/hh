@@ -1,9 +1,13 @@
 // The sender's two checks at the unit level: the session (the same client, still attached, the same signed in
 // person) and the quote (the same id and epoch, not left). The screen level story is test/deferred-send.pw.ts.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { captureSend, deferredSend, wasUnsent } from "../src/deferred-send.js";
 import { QuoteContext } from "../src/quote-context.js";
+import { quoteRefLabel } from "../src/_quote-edit.js";
 
 function fakeClient(subject) {
   const client = { who: subject, callerId: () => client.who };
@@ -111,6 +115,27 @@ test("sender quote: a write that follows its own quote is sent after the quote o
   state.now.quote = new QuoteContext("q-2", 2);
   assert.equal((await deferredSend(capture, sendOk(calls))).ok, true);
   assert.deepEqual(calls, ["sent"]);
+});
+
+// The sender's quote refusal line, the edit panel's capture: the label is the quote's own reference, its number or
+// quote # and the id, never "this quote" (the principal's look at round 9, P3-4: the refusal tells the person which
+// quote to open, so it must carry the id).
+test("sender quote: the refusal line names the quote it was asked on, by number or by quote # and id", async () => {
+  const client = fakeClient("sales");
+  const said = [];
+  const asked = new QuoteContext("q-1004", 4);
+  const state = here(client, asked);
+  const withRead = captureSend(state.read, { quote: asked, label: quoteRefLabel({ quote_no: "Q-1004" }, "q-1004"), say: (line) => said.push(line) });
+  state.now.quote = new QuoteContext("q-2", 5);
+  await deferredSend(withRead, sendOk([]));
+  assert.match(said[0], /Q-1004/);
+  const withoutRead = captureSend(state.read, { quote: asked, label: quoteRefLabel(null, "q-9"), say: (line) => said.push(line) });
+  await deferredSend(withoutRead, sendOk([]));
+  assert.match(said[1], /quote #q-9/);
+  // And the edit panel feeds its capture through that helper: the label names the quote, never "this quote".
+  const panel = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "edit-panel.ts"), "utf8");
+  assert.match(panel, /label: quoteRefLabel\(/);
+  assert.doesNotMatch(panel, /label: "this quote"/);
 });
 
 test("sender: an unsent answer is an error result the callers already read as a refusal", async () => {
