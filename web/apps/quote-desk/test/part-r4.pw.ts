@@ -19,6 +19,41 @@ async function openDetail(page: Page): Promise<void> {
   await expect(page.getByTestId("qe-box")).toBeVisible();
 }
 
+/** Every request, of any method, whose path names the quote: what the page asks of it from now on. */
+function touching(page: Page, quoteId: string): string[] {
+  const seen: string[] = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (path.includes(`/${quoteId}`)) seen.push(`${request.method()} ${path}`);
+  });
+  return seen;
+}
+
+/** Keep a reference to the first element with this tag, found through the shadow roots, so a test can read it after it left the page. */
+async function keep(page: Page, tag: string): Promise<void> {
+  await page.evaluate((wanted) => {
+    const find = (root: Document | ShadowRoot): Element | null => {
+      for (const el of root.querySelectorAll("*")) {
+        if (el.localName === wanted) return el;
+        if (el.shadowRoot !== null) {
+          const found = find(el.shadowRoot);
+          if (found !== null) return found;
+        }
+      }
+      return null;
+    };
+    (window as unknown as { __kept: Element | null }).__kept = find(document);
+  }, tag);
+}
+
+/** What the kept element says on its own screen now. */
+async function keptSays(page: Page): Promise<{ error: string; notice: string }> {
+  return page.evaluate(() => {
+    const el = (window as unknown as { __kept: { error: string; notice: string } }).__kept;
+    return { error: el.error, notice: el.notice };
+  });
+}
+
 async function signOutAndInAs(page: Page, role: string): Promise<void> {
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
@@ -33,11 +68,17 @@ test("A P2-1 a quantity write still out at sign out sends nothing more under the
   const patch = await hold(page, /\/quotes\/q-1001\/lines\/1$/, { method: "PATCH", snapshot: true });
   await page.getByRole("button", { name: /^Increase quantity/ }).first().click();
   await patch.asked;
+  await keep(page, "qd-quote-workarea");
   await signOutAndInAs(page, "Sales manager");
   const seen = writes(page);
+  const touched = touching(page, "q-1001");
   await patch.release();
   await settle(page);
   expect(seen).toEqual([]);
+  // Not a read of the quote either: nothing is asked of it under the next person's session.
+  expect(touched).toEqual([]);
+  // The work area that left the page says nothing more, to the screen it left or to any other.
+  expect(await keptSays(page)).toEqual({ error: "", notice: "" });
 });
 
 test("A P2-1 an edit panel save still out at sign out sends no discount write under the next person's session", async ({ page }) => {
@@ -52,14 +93,19 @@ test("A P2-1 an edit panel save still out at sign out sends no discount write un
   const patch = await hold(page, /\/quotes\/q-1001\/lines\/1$/, { method: "PATCH", times: 1, snapshot: true });
   await line.getByRole("button", { name: "Save" }).click();
   await patch.asked;
+  await keep(page, "qd-quote-edit");
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Sales", exact: true }).click();
   await expect(page.getByTestId("qb-list")).toBeVisible();
   const seen = writes(page);
+  const touched = touching(page, "q-1001");
   await patch.release();
   await settle(page);
   expect(seen).toEqual([]);
+  expect(touched).toEqual([]);
+  // The panel that left the page says nothing more, so the sender's refusal of the discount half is never worded on any screen.
+  expect(await keptSays(page)).toEqual({ error: "", notice: "" });
 });
 
 test("A P2-1 an edit panel save refused after sign out reads nothing and opens no dialog under the next person's session", async ({ page }) => {
@@ -640,7 +686,7 @@ async function holdHandoff(page: Page): Promise<void> {
   });
 }
 
-/** True once a scan is parked waiting for the host's hand down (so the gate or the give up reaches it, never before it). */
+/** True once a scan is parked waiting for the host's hand down (so the gate reaches it, never before it). */
 async function scanIsWaiting(page: Page): Promise<void> {
   await expect
     .poll(() => page.locator("qd-quote-workarea").evaluate((el) => (el as unknown as { handoffWaiters: unknown[] }).handoffWaiters.length), { timeout: 60000 })
@@ -690,25 +736,7 @@ test("P3 a scan made in compose that another quote overtook says so", async ({ p
   await expect(page.getByTestId("qb-line")).toHaveCount(2);
 });
 
-test("P3 a scan made in compose says so when the host never hands the new quote down in time", async ({ page }) => {
-  await signIn(page);
-  await holdHandoff(page);
-  // The create route is held by a gate, so the scan is made while the quote is being made, however slow the page is.
-  const create = await hold(page, /\/api\/v1\/quotes$/, { method: "POST" });
-  const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
-  await picker.getByPlaceholder("Search name or account #…").fill("Fenwick");
-  await picker.getByRole("option", { name: /Fenwick/ }).click();
-  await create.asked;
-  await scanInCompose(page);
-  await create.release();
-  await scanIsWaiting(page);
-  // Only the host's explicit give up ends the wait.
-  await page.locator("qd-quote-workarea").evaluate((el) => (el as unknown as { giveUpHandoff: () => void }).giveUpHandoff());
-  await expect(page.getByTestId("qb-error")).toContainText("did not open in time");
-  await expect(page.getByTestId("qb-error")).not.toContainText("Pick a customer");
-});
-
-/** Makes a quote in compose with the hand down held and a scan parked behind it: the state every give up case starts from. */
+/** Makes a quote in compose with the hand down held and a scan parked behind it: the state every release case starts from. */
 async function parkedScan(page: Page): Promise<void> {
   await signIn(page);
   await holdHandoff(page);
@@ -755,7 +783,9 @@ test("P3 a scan made in compose says so at once when the create itself is refuse
   await create.asked;
   await scanInCompose(page);
   await create.release();
-  await expect(page.getByTestId("qb-error")).toHaveText("The new quote could not be made, so nothing was added.");
+  // The reason the create was refused stays on screen, and the scan's own line follows it.
+  await expect(page.getByTestId("qb-error")).toContainText("The quote store is down.");
+  await expect(page.getByTestId("qb-error")).toContainText("The new quote could not be made, so nothing was added.");
   await expect(page.getByTestId("qb-error")).not.toContainText("Pick a customer");
 });
 

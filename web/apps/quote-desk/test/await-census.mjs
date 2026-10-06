@@ -6,7 +6,7 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
-const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
+export const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const srcDir = join(appDir, "src");
 
 const TIMERS = new Set(["setTimeout", "setInterval", "requestAnimationFrame", "queueMicrotask", "requestIdleCallback"]);
@@ -21,7 +21,7 @@ export function* walk(dir, accept) {
 }
 
 /** The name of the method, function or arrow property a node sits in. */
-function symbolOf(node, sf) {
+export function symbolOf(node, sf) {
   for (let n = node.parent; n; n = n.parent) {
     const cls = (c) => (c && ts.isClassLike(c) && c.name ? `${c.name.getText(sf)}.` : "");
     if (ts.isMethodDeclaration(n) || ts.isFunctionDeclaration(n) || ts.isGetAccessor(n) || ts.isSetAccessor(n)) {
@@ -39,7 +39,7 @@ function symbolOf(node, sf) {
 }
 
 /** The program the checker types the src with: the app's own tsconfig, so a promise is known by its type and not by its name. */
-function makeProgram() {
+export function makeProgram() {
   const configPath = join(appDir, "tsconfig.json");
   const read = ts.readConfigFile(configPath, ts.sys.readFile);
   const parsed = ts.parseJsonConfigFileContent(read.config, ts.sys, appDir);

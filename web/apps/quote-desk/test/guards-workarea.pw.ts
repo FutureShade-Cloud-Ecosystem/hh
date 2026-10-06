@@ -231,9 +231,17 @@ test("guard scan waits for opening: a scan that waited for the quote being opene
   });
   await open(page, "Q-1001");
   await expect(page.getByTestId("qb-line")).toHaveCount(2);
+  // A line of the quote now open is already being said: the scan that is dropped must leave it alone.
+  const qty = page.locator("qd-quote-workarea").locator('[data-field="qty"]').first();
+  await qty.fill("0");
+  await qty.blur();
+  await expect(page.getByTestId("qb-error")).toContainText("Quantity must be a positive number.");
   await reads.release();
   await settle(page);
   expect(seen.filter((w) => w.includes("/lines"))).toEqual([]);
+  await expect(page.getByTestId("qb-error")).toContainText("Quantity must be a positive number.");
+  // The sender is the last line of defence and would refuse this write; the screen of the quote now open still must not be told of it.
+  await expect(page.getByText(/was not sent, because you moved/)).toHaveCount(0);
 });
 
 test("guard cart change after terms save: an add whose terms save answers after another quote opened announces nothing", async ({ page }) => {
@@ -453,6 +461,8 @@ test("guard send terms save: a send whose terms save answers after another quote
   await put.release();
   await settle(page);
   expect(seen.filter((w) => w.includes("/share-links") || w.includes("/sms-share"))).toEqual([]);
+  // The sender is the last line of defence and would refuse this write; the screen of the quote now open still must not be told of it.
+  await expect(page.getByText(/was not sent, because you moved/)).toHaveCount(0);
 });
 
 test("guard send reload: a send whose re-read answers after another quote opened announces nothing", async ({ page }) => {

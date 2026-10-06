@@ -16,14 +16,14 @@
   {
     "id": "wa-terms-save",
     "file": "src/quote-workarea.ts",
-    "find": "await ctx.guarded(\n      this.queueTermsPut(ctx.id, () => client.putTerms(ctx.id, termsBody(t))),\n      this.lateWrite(ctx, \"save the quote terms\"),\n    )",
+    "find": "await ctx.guarded(\n      this.queueTermsPut(ctx.id, () => deferredSend(capture, () => client.putTerms(ctx.id, termsBody(t)))),\n      this.lateWrite(ctx, \"save the quote terms\"),\n    )",
     "replace": "await client.putTerms(ctx.id, termsBody(t))",
     "test": "guard terms save answer:"
   },
   {
     "id": "wa-add-line",
     "file": "src/quote-workarea.ts",
-    "find": "await ctx.guarded(client.addLine(ctx.id, p.id, String(qty), p.uom), this.lateWrite(ctx, \"add this line\"))",
+    "find": "await ctx.guarded(deferredSend(capture, () => client.addLine(ctx.id, p.id, String(qty), p.uom)), this.lateWrite(ctx, \"add this line\"))",
     "replace": "await client.addLine(ctx.id, p.id, String(qty), p.uom)",
     "test": "guard add line:"
   },
@@ -479,15 +479,15 @@
   {
     "id": "wa-sms-answer",
     "file": "src/quote-workarea.ts",
-    "find": "const sms = await ctx.guarded(client.shareBySMS(ctx.id), this.lateWrite(ctx, \"send the text\"));",
+    "find": "const sms = await ctx.guarded(deferredSend(capture, () => client.shareBySMS(ctx.id)), this.lateWrite(ctx, \"send the text\"));",
     "replace": "const sms = await client.shareBySMS(ctx.id);",
     "test": "a text answer that lands after another quote opened"
   },
   {
     "id": "wa-ensure-link",
     "file": "src/quote-workarea.ts",
-    "find": "const result = await ctx.guarded(client.mintShareLink(ctx.id), this.lateWrite(ctx, \"create a share link\", LATE_LINK_NOTE));\n    if (result === undefined) throw new StaleQuoteError();",
-    "replace": "const result = await client.mintShareLink(ctx.id);\n    if (result === undefined) throw new StaleQuoteError();",
+    "find": "const result = await ctx.guarded(deferredSend(capture, () => client.mintShareLink(ctx.id)), this.lateWrite(ctx, \"create a share link\", LATE_LINK_NOTE));\n    if (result === undefined || wasUnsent(result)) throw new StaleQuoteError();",
+    "replace": "const result = await client.mintShareLink(ctx.id);\n    if (result === undefined || wasUnsent(result)) throw new StaleQuoteError();",
     "test": "a send in flight when another quote opens"
   },
   {
@@ -640,7 +640,7 @@
   {
     "id": "as-add-guard",
     "file": "src/assist-panel.ts",
-    "find": "const result = await ctx.guarded(client.addLine(ctx.id, p.product_id, p.qty_entered, p.uom_entered), (late) => {\n          if (late.ok) added += 1;\n        });",
+    "find": "const result = await ctx.guarded(deferredSend(capture, () => client.addLine(ctx.id, p.product_id, p.qty_entered, p.uom_entered)), (late) => {\n          if (late.ok) added += 1;\n        });",
     "replace": "const result = await client.addLine(ctx.id, p.product_id, p.qty_entered, p.uom_entered);",
     "test": "P2-1 an add that was out when the person left lands"
   },
@@ -1014,8 +1014,8 @@
   {
     "id": "wa-late-terms",
     "file": "src/quote-workarea.ts",
-    "find": "this.queueTermsPut(ctx.id, () => client.putTerms(ctx.id, termsBody(t))),\n      this.lateWrite(ctx, \"save the quote terms\"),",
-    "replace": "this.queueTermsPut(ctx.id, () => client.putTerms(ctx.id, termsBody(t))),",
+    "find": "this.queueTermsPut(ctx.id, () => deferredSend(capture, () => client.putTerms(ctx.id, termsBody(t)))),\n      this.lateWrite(ctx, \"save the quote terms\"),",
+    "replace": "this.queueTermsPut(ctx.id, () => deferredSend(capture, () => client.putTerms(ctx.id, termsBody(t)))),",
     "test": "B P2-1 work area: a terms save answered after leaving"
   },
   {
@@ -1176,22 +1176,8 @@
     "id": "wa-scan-handoff-wait",
     "file": "src/quote-workarea.ts",
     "find": "const end = await this.handedDown();",
-    "replace": "const end = \"gave-up\" as HandoffEnd;",
+    "replace": "const end = \"create-failed\" as HandoffEnd;",
     "test": "P3 a scan made in compose waits for the host"
-  },
-  {
-    "id": "wa-scan-handoff-timeout-says",
-    "file": "src/quote-workarea.ts",
-    "find": "          this.speakAdd(\"The new quote did not open in time, so that scan was not added. Scan it again once the quote is on screen.\", \"warn\");\n",
-    "replace": "",
-    "test": "P3 a scan made in compose says so when the host never"
-  },
-  {
-    "id": "wa-handoff-give-up",
-    "file": "src/quote-workarea.ts",
-    "find": "    this.releaseHandoffWaiters(\"gave-up\");\n  }",
-    "replace": "  }",
-    "test": "P3 a scan made in compose says so when the host never"
   },
   {
     "id": "wa-handoff-leave-release",
@@ -1217,7 +1203,7 @@
   {
     "id": "wa-handoff-create-failed-says",
     "file": "src/quote-workarea.ts",
-    "find": "        this.speakAdd(CREATE_FAILED_SCAN, \"warn\");\n",
+    "find": "    this.speakAdd(CREATE_FAILED_SCAN, \"warn\");\n",
     "replace": "",
     "test": "P3 a scan made in compose says so at once when the create itself is refused"
   },
@@ -1280,15 +1266,15 @@
   {
     "id": "ws-serialize",
     "file": "src/workspace-store.ts",
-    "find": "    this.#queued = send;\n    if (this.#inFlight !== null) return this.#inFlight;\n",
-    "replace": "    this.#queued = send;\n",
+    "find": "    if (this.#inFlight !== null) return this.#inFlight;\n",
+    "replace": "",
     "test": "P3 layout saves reach the server one at a time"
   },
   {
     "id": "ws-latest-after",
     "file": "src/workspace-store.ts",
-    "find": "      } while (this.#queued !== null);",
-    "replace": "      } while (false);",
+    "find": "        await next.run();\n",
+    "replace": "        await next.run();\n        break;\n",
     "test": "P3 layout saves reach the server one at a time"
   },
   {
@@ -1296,13 +1282,13 @@
     "file": "src/workspace-store.ts",
     "find": "        if (this.#closed) break;\n",
     "replace": "",
-    "test": "P2-1 a queued layout save is never sent under the next person's session"
+    "test": "sign out flush: the layout store is stopped when the flush has run, whatever the page does next"
   },
   {
     "id": "ws-reset-queued",
     "file": "src/workspace-store.ts",
-    "find": "    await this.#enqueue(() => this.#deleteRow());",
-    "replace": "    await this.#deleteRow();",
+    "find": "await this.#enqueue(\"delete\", () => this.#deleteRow(capture, before));",
+    "replace": "await this.#deleteRow(capture, before);",
     "test": "the reset goes through the same queue as the saves",
     "runner": "node",
     "testFile": "test/workspace-store.test.mjs"
@@ -1312,7 +1298,7 @@
     "file": "src/quote-workarea.ts",
     "find": "    // layout is ever sent under the next person's.\n    this.store?.close();",
     "replace": "    // layout is ever sent under the next person's.",
-    "test": "P2-1 a queued layout save is never sent under the next person's session"
+    "test": "layout store: a store stopped by the work area leaving sends nothing more of what it had queued, even when the work area is put back"
   },
   {
     "id": "wa-terms-put-serial",
@@ -1341,6 +1327,109 @@
     "find": "    const named = event.detail?.quoteId;",
     "replace": "    const named = (event.detail as { ref?: string } | undefined)?.ref;",
     "test": "P3-3 the builder reads the changed quote's own id"
+  },
+  {
+    "id": "sender-session",
+    "file": "src/deferred-send.ts",
+    "find": "const sameSession = now.client === capture.client && now.attached && (now.client?.callerId() ?? \"\") === capture.subject;",
+    "replace": "const sameSession = true;",
+    "test": "sender: a terms PUT queued behind a held one is never sent under the next person's session"
+  },
+  {
+    "id": "sender-session-flush",
+    "file": "src/deferred-send.ts",
+    "find": "const sameSession = now.client === capture.client && now.attached && (now.client?.callerId() ?? \"\") === capture.subject;",
+    "replace": "const sameSession = true;",
+    "test": "sender: a terms flush on leaving queued behind a held PUT is never sent under the next person's session"
+  },
+  {
+    "id": "sender-quote",
+    "file": "src/deferred-send.ts",
+    "find": "const sameQuote = capture.follows || (now.quote !== null && now.quote.id === capture.quoteId && now.quote.epoch === capture.epoch && !now.quote.stale);",
+    "replace": "const sameQuote = true;",
+    "test": "sender quote: a write is not sent after the quote context moved, and the person still there is told",
+    "runner": "node",
+    "testFile": "test/deferred-send.test.mjs"
+  },
+  {
+    "id": "sender-quote-id",
+    "file": "src/deferred-send.ts",
+    "find": "now.quote.id === capture.quoteId && ",
+    "replace": "",
+    "test": "refused on another quote's id and sent on the same quote's id",
+    "runner": "node",
+    "testFile": "test/deferred-send.test.mjs"
+  },
+  {
+    "id": "sender-capture-in-closure",
+    "file": "src/quote-workarea.ts",
+    "find": "this.queueTermsPut(ctx.id, () => deferredSend(capture, () => client.putTerms(ctx.id, termsBody(t))))",
+    "replace": "this.queueTermsPut(ctx.id, () => deferredSend(captureSend(this.sendNow, { follows: true }), () => client.putTerms(ctx.id, termsBody(t))))",
+    "test": "no write of the src is sent from a deferred position",
+    "runner": "node",
+    "testFile": "test/write-census.test.mjs"
+  },
+  {
+    "id": "sender-raw-api-deferred",
+    "file": "src/customer-picker.ts",
+    "find": "    this.createBusy = true;\n    this.createError = '';\n    try {",
+    "replace": "    this.createBusy = true;\n    this.createError = '';\n    setTimeout(() => void api('/api/v1/customers', { method: 'POST', body: '{}' }), 0);\n    try {",
+    "test": "no write of the src is sent from a deferred position",
+    "runner": "node",
+    "testFile": "test/write-census.test.mjs"
+  },
+  {
+    "id": "wa-create-failed-keeps-reason",
+    "file": "src/quote-workarea.ts",
+    "find": "    if (reason !== \"\" && this.error === CREATE_FAILED_SCAN) this.error = `${reason.replace(/[.!?]?$/, \".\")} ${CREATE_FAILED_SCAN}`;\n",
+    "replace": "",
+    "test": "P3 a scan made in compose says so at once when the create itself is refused"
+  },
+  {
+    "id": "qb-hold-expiry-unmount",
+    "file": "src/quote-builder.ts",
+    "find": "            <qd-quote-hold-expiry data-seam=${SEAM_HOLD_EXPIRY}></qd-quote-hold-expiry>\n",
+    "replace": "            ${this.selected === \"\" ? nothing : html`<qd-quote-hold-expiry data-seam=${SEAM_HOLD_EXPIRY}></qd-quote-hold-expiry>`}\n",
+    "test": "P2-2 leaving through New Quote: a re-hold that lands while the hold expiry panel is gone still announces its quote"
+  },
+  {
+    "id": "wa-signout-store-close",
+    "file": "src/quote-workarea.ts",
+    "find": "    // be sent once this session has ended, under whoever signs in next.\n    this.store?.close();",
+    "replace": "    // be sent once this session has ended, under whoever signs in next.",
+    "test": "sign out flush: the layout store is stopped when the flush has run, whatever the page does next"
+  },
+  {
+    "id": "sender-capture-hoisted",
+    "file": "src/workspace-store.ts",
+    "find": "    const capture = this.#changed ?? captureSend(this.#now);\n    this.#changed = null;\n    return this.#enqueue(\"save\", () => this.#sendRow(capture));\n  }\n\n  /** The row as it stands, sent whole, under the session it was asked in or not at all. */\n  async #sendRow(capture: SendCapture): Promise<void> {",
+    "replace": "    this.#changed = null;\n    return this.#enqueue(\"save\", () => this.#sendRow());\n  }\n\n  /** The row as it stands, sent whole, under the session it was asked in or not at all. */\n  async #sendRow(): Promise<void> {\n    const capture = this.#changed ?? captureSend(this.#now);",
+    "test": "no write of the src is sent from a deferred position",
+    "runner": "node",
+    "testFile": "test/write-census.test.mjs"
+  },
+  {
+    "id": "sender-capture-inline-helper",
+    "file": "src/quote-workarea.ts",
+    "find": "    const capture = this.captureFor(ctx);\n    // One send at a time: a second press while the first is out would mint a second live link and start the cadence twice.\n    const release = this.holdBusy(ctx);\n    this.sendOpen = false;\n    this.error = \"\";\n    this.notice = \"\";\n    const channels = sendChannels(this.#sendPolicy()).filter((c) => this.sendPick[c]);\n    try {\n      // An edit still waiting on its save goes first: the quote the customer is sent holds what was typed.\n      if (this.termsPendingCount() > 0) {\n        await this.putTermsNow();\n        if (ctx.stale) return;\n        if (this.error !== \"\") return;\n      }\n      await this.ensureLink(ctx, capture); // the core mints a link, moves DRAFT to SENT and starts the cadence; it sends no email (it throws once the quote was left)\n      let smsOk = false;\n      let smsWhy = \"\";\n      const smsChosen = channels.includes(\"SMS\");\n      if (smsChosen) {\n        const sms = await ctx.guarded(deferredSend(capture, () => client.shareBySMS(ctx.id)), this.lateWrite(ctx, \"send the text\"));",
+    "replace": "    // One send at a time: a second press while the first is out would mint a second live link and start the cadence twice.\n    const release = this.holdBusy(ctx);\n    this.sendOpen = false;\n    this.error = \"\";\n    this.notice = \"\";\n    const channels = sendChannels(this.#sendPolicy()).filter((c) => this.sendPick[c]);\n    try {\n      // An edit still waiting on its save goes first: the quote the customer is sent holds what was typed.\n      if (this.termsPendingCount() > 0) {\n        await this.putTermsNow();\n        if (ctx.stale) return;\n        if (this.error !== \"\") return;\n      }\n      await this.ensureLink(ctx, this.captureFor(ctx)); // the core mints a link, moves DRAFT to SENT and starts the cadence; it sends no email (it throws once the quote was left)\n      let smsOk = false;\n      let smsWhy = \"\";\n      const smsChosen = channels.includes(\"SMS\");\n      if (smsChosen) {\n        const sms = await ctx.guarded(deferredSend(this.captureFor(ctx), () => client.shareBySMS(ctx.id)), this.lateWrite(ctx, \"send the text\"));",
+    "test": "no write of the src is sent from a deferred position",
+    "runner": "node",
+    "testFile": "test/write-census.test.mjs"
+  },
+  {
+    "id": "wa-scan-handoff-timeout-says",
+    "file": "src/quote-workarea.ts",
+    "find": "          this.speakAdd(\"The new quote did not open in time, so that scan was not added. Scan it again once the quote is on screen.\", \"warn\");\n",
+    "replace": "",
+    "test": "P3 a scan made in compose says so when the host never"
+  },
+  {
+    "id": "wa-handoff-give-up",
+    "file": "src/quote-workarea.ts",
+    "find": "    this.releaseHandoffWaiters(\"gave-up\");\n  }",
+    "replace": "  }",
+    "test": "P3 a scan made in compose says so when the host never"
   },
   {
     "id": "pm-load-stale-start",

@@ -127,6 +127,14 @@ export function expiryLabel(view: Pick<QuoteView, "valid_until" | "expired"> | n
 }
 
 /**
+ * The words naming a quote in a refusal line: its number, or quote # and its id when no read carried one. The
+ * sender's quote refusal tells the person which quote to open, so it must carry the quote's own reference.
+ */
+export function quoteRefLabel(view: Pick<QuoteView, "quote_no"> | null | undefined, quoteId: string): string {
+  return view?.quote_no ?? `quote #${quoteId}`;
+}
+
+/**
  * quoteErrorMessage maps a failed response to what the operator reads. The
  * server's own sentence is preferred wherever it carries one (403 names the
  * branch or the role, 409 names the frozen state), and nothing here invents

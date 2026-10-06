@@ -11,6 +11,7 @@ import { property, state } from "lit/decorators.js";
 import type { QdClient } from "./qd-client.js";
 import type { Result } from "@hardscapehouse/api-client";
 import { QuoteContext, QuoteScope } from "./quote-context.js";
+import type { SendNow } from "./deferred-send.js";
 
 export type Controls = Record<string, (control: HTMLElement, event: Event) => void>;
 
@@ -53,6 +54,9 @@ export abstract class PanelBase extends LitElement {
     }
     return true;
   }
+
+  /** What this panel holds at the moment a deferred write is sent: the sender compares it with what it took down when the person acted. */
+  protected readonly sendNow = (): SendNow => ({ client: this.client, attached: this.isConnected && !this.detached, quote: this.ctx });
 
   /** Re-read whatever this panel shows. */
   abstract reload(): void;

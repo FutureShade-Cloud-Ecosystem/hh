@@ -42,6 +42,7 @@ import {
   hasAnyEdit,
   isShareable,
   quoteErrorMessage,
+  quoteRefLabel,
   quoteStatusWord,
   shareLinkState,
   shareSentence,
@@ -54,6 +55,7 @@ import {
 import { floorRefusalMessage, openFloorRefusalDialog, parseFloorRefusal } from "./floor-refusal.js";
 import { spokenRefusal } from "./_quote-workarea.js";
 import type { QuoteContext } from "./quote-context.js";
+import { captureSend, deferredSend } from "./deferred-send.js";
 import type { CatalogHit, ComparisonRow, ShareLinkRow } from "./_panel-wire.js";
 import type { Result } from "@hardscapehouse/api-client";
 
@@ -334,6 +336,9 @@ export class QdQuoteEdit extends PanelBase {
     const client = this.client;
     if (client === null) return;
     const ctx = this.ctx;
+    // Taken down when the person presses Save: the discount that follows the quantity is sent under this session on this quote, or not at all.
+    // The label names the quote itself, so the sender's refusal tells the person which quote to open.
+    const capture = captureSend(this.sendNow, { quote: ctx, label: quoteRefLabel(this.view, ctx.id), say: (line) => { this.error = line; } });
     const rawQty = (this.qtyDraft[line.line_no] ?? line.qty_entered).trim();
     const qtyChanged = rawQty !== line.qty_entered;
     const current = this.discByLine[line.line_no] ?? 0;
@@ -375,7 +380,7 @@ export class QdQuoteEdit extends PanelBase {
       await this.write(
         ctx,
         "change this discount",
-        (id) => client.editLine(id, line.line_no, { discPct: n }),
+        (id) => deferredSend(capture, () => client.editLine(id, line.line_no, { discPct: n })),
         { lineNo: line.line_no, discPct: n },
         line.line_no,
       );
