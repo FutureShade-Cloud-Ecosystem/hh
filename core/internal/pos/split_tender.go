@@ -178,6 +178,10 @@ type captureLeg struct {
 	IdemKey      string
 	PaymentToken string
 	CardType     string
+	// AttemptID is the card charge attempt the pre-transaction capture loop claimed for this leg
+	// (CARD only): the sale transaction binds it to the payments row it writes, and the
+	// compensator reverses it when the transaction fails.
+	AttemptID string
 	// filled in by the tx as each leg is captured
 	PaymentID  string
 	GatewayRef string

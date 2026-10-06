@@ -1,23 +1,23 @@
 package main
 
 // card_charge_rotation_test.go pins the rotation ledger against a REAL
-// rolled-back sale (round 1's P2 and P3 1): a credential rotation the live
-// client performs during an in-transaction charge must SURVIVE the sale's
-// rollback, because the processor has already exchanged the old key. The
-// strict host answers 401 to the planted key, serves ONE refresh of it (a
-// second refresh of the same key is refused, the exchange is single-use),
-// declines the charge retried under the fresh key (so sale 1 rolls back
-// with nothing committed), and approves every later charge under the fresh
-// key. On the ledger-shaped core the flusher lands the fresh key through
-// the pool once the rolled-back sale releases the one connection, and sale
-// 2 rings COMMITTED under it. On a core whose write-back rides the sale
-// transaction (round 1's shape) the rollback discards the rotation, the
-// ciphertext never moves, and sale 2 dies at the refused refresh.
+// declined-then-committed pair of sales, re-pointed at the CAPTURE seam the
+// card charge fix moved the charge onto (round 1's P2 and P3 1, the same
+// claims on the new seam): a credential rotation the live client performs
+// during a capture must SURVIVE the declined ring that carried it, because
+// the processor has already exchanged the old key. The strict host answers
+// 401 to the planted key, serves ONE refresh of it (a second refresh of the
+// same key is refused, the exchange is single-use), declines the charge
+// retried under the fresh key (so sale 1 answers the decline with nothing
+// committed), and approves every later charge under the fresh key. On the
+// ledger-shaped core the flusher lands the fresh key through the pool, and
+// sale 2 rings COMMITTED under it. On a core whose write-back rode the sale
+// transaction (round 1's shape) the rollback discarded the rotation, the
+// ciphertext never moved, and sale 2 died at the refused refresh.
 //
-// The leg rides the same one-connection rig as the stall leg: the flusher's
-// pool acquire waits for the sale's connection by construction, which is
-// the ordering the semantics need (the write lands after the ring ends,
-// commit or rollback alike).
+// The leg rides the same one-connection rig as the stall leg: the capture
+// holds no connection while it dispatches, so the flush may land during or
+// after the ring, either way before sale 2 needs the fresh key.
 
 import (
 	"context"
@@ -180,10 +180,11 @@ func TestCardRailWiring_RotationSurvivesARolledBackSale(t *testing.T) {
 	before := rotCiphertext(t, pool)
 
 	// Sale 1: 401 under the old key, one refresh, the retried charge
-	// declines, the sale rolls back with nothing committed.
+	// declines at the CAPTURE (before any transaction opens), the ring
+	// answers the decline with nothing committed.
 	rec1 := postJSON(t, mux, sg, "/api/v1/pos/sales", saleBody(uuidKey(t)))
-	if rec1.Code != http.StatusPaymentRequired {
-		t.Fatalf("sale 1 = %d (%s), want the declined 402", rec1.Code, rec1.Body.String())
+	if rec1.Code != http.StatusPaymentRequired || !strings.Contains(rec1.Body.String(), "card_charge_card_declined") {
+		t.Fatalf("sale 1 = %d (%s), want the capture seam's declined 402", rec1.Code, rec1.Body.String())
 	}
 
 	// The flusher: the fresh key lands through the pool once the rolled
