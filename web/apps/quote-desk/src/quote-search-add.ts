@@ -88,6 +88,8 @@ export class QuoteSearchAdd extends HHElement {
 
   private timer = 0;
   private seq = 0;
+  /** Enter was pressed while the current word's answer was still to come: add its first row when it lands. */
+  private enterWaiting = false;
 
   constructor() {
     super();
@@ -281,9 +283,11 @@ export class QuoteSearchAdd extends HHElement {
       this.active = Math.min(shown.length - 1, Math.max(0, this.active + step));
     } else if (event.key === "Enter") {
       event.preventDefault();
-      if (this.timer !== 0) {
-        // The answer is still being waited for: ask now, then add what is highlighted once it lands.
-        void this.run(this.term, true);
+      if (this.timer !== 0 || this.searching) {
+        // The answer for this word is still to come, and the rows on screen are an older word's: never add one of
+        // them. Ask now (when the pause is still running) and add this word's first row once its answer lands.
+        this.enterWaiting = true;
+        if (this.timer !== 0) void this.run(this.term, false);
         return;
       }
       const hit = shown[this.active];
@@ -313,11 +317,13 @@ export class QuoteSearchAdd extends HHElement {
   private schedule(): void {
     if (this.timer !== 0) clearTimeout(this.timer);
     this.timer = 0;
+    this.seq += 1; // every keystroke makes any answer in flight stale, so a code that is only the start of this one never adds
+    this.enterWaiting = false;
     const term = this.term;
     if (!shouldQuery(term)) {
-      this.seq += 1; // any answer in flight is now stale
       this.hits = [];
       this.quotes = {};
+      this.pricing = false;
       this.searching = false;
       this.failed = false;
       return;
@@ -326,7 +332,8 @@ export class QuoteSearchAdd extends HHElement {
     this.timer = window.setTimeout(() => void this.run(term, false), DEBOUNCE_MS);
   }
 
-  private async run(term: string, addOnArrival: boolean): Promise<void> {
+  /** `refresh` re-reads the rows already shown (a branch change): same word, nothing added, the highlight kept. */
+  private async run(term: string, refresh: boolean): Promise<void> {
     if (this.timer !== 0) clearTimeout(this.timer);
     this.timer = 0;
     if (!shouldQuery(term)) return;
@@ -336,6 +343,7 @@ export class QuoteSearchAdd extends HHElement {
       hits = await counterSearch(term, this.branchId, ROWS * 2);
     } catch {
       if (seq !== this.seq) return;
+      if (refresh) return; // the rows on screen stay as they were when only their stock could not be read again
       this.hits = [];
       this.quotes = {};
       this.failed = true;
@@ -346,15 +354,20 @@ export class QuoteSearchAdd extends HHElement {
     this.hits = hits;
     this.failed = false;
     this.searching = false;
-    this.active = 0;
-    // A code typed exactly adds at once, the way a scan does.
-    const exact = exactCodeHit(hits, term);
-    if (exact !== null) {
-      this.add(exact);
-      return;
+    this.active = refresh ? Math.min(this.active, Math.max(0, hits.length - 1)) : 0;
+    const enter = this.enterWaiting;
+    this.enterWaiting = false;
+    if (!refresh) {
+      // A code typed exactly adds at once, the way a scan does (this answer is for the word as it stands: every
+      // keystroke since would have dropped it above).
+      const exact = exactCodeHit(hits, term);
+      if (exact !== null) {
+        this.add(exact);
+        return;
+      }
     }
     void this.loadPrices(hits);
-    if (addOnArrival && hits.length > 0) this.add(hits[0]);
+    if (enter && hits.length > 0) this.add(hits[0]);
   }
 
   /** The customer's price picture for the rows on screen: the server's figures, best effort. */
@@ -364,7 +377,9 @@ export class QuoteSearchAdd extends HHElement {
       this.quotes = {};
       return;
     }
-    const seq = this.seq;
+    // The answer belongs to the customer and the rows it was asked for; either moving on makes it stale.
+    const customer = this.customerId;
+    const asked = (): boolean => customer === this.customerId && hits === this.hits;
     this.pricing = true;
     try {
       const { prices } = await counterPrices(
@@ -372,14 +387,15 @@ export class QuoteSearchAdd extends HHElement {
         this.customerId,
         rows.map((hit) => ({ product_id: hit.product_id, qty_entered: 1, uom_entered: sellUnit(hit) })),
       );
-      if (seq !== this.seq) return;
+      if (customer !== this.customerId) return;
+      if (hits !== this.hits) return;
       const map: Record<string, CounterQuote> = {};
       for (const quote of prices) if (quote && typeof quote.product_id === "string") map[quote.product_id] = quote;
       this.quotes = map;
     } catch {
-      if (seq === this.seq) this.quotes = {};
+      if (asked()) this.quotes = {};
     } finally {
-      if (seq === this.seq) this.pricing = false;
+      if (asked()) this.pricing = false;
     }
   }
 
@@ -397,8 +413,10 @@ export class QuoteSearchAdd extends HHElement {
     this.timer = 0;
     this.seq += 1;
     this.term = "";
+    this.enterWaiting = false;
     this.hits = [];
     this.quotes = {};
+    this.pricing = false;
     this.searching = false;
     this.failed = false;
     this.active = 0;
@@ -422,6 +440,8 @@ export class QuoteSearchAdd extends HHElement {
   protected override updated(changed: PropertyValues): void {
     // A customer arriving (or leaving) re-prices what is on screen.
     if (changed.has("customerId") && changed.get("customerId") !== undefined && this.hits.length > 0) void this.loadPrices(this.hits);
+    // A branch change reads the rows again: their stock is the new branch's.
+    if (changed.has("branchId") && changed.get("branchId") !== undefined && this.hits.length > 0 && shouldQuery(this.term)) void this.run(this.term, true);
     // The highlighted row is the input's active descendant (ids are set here: the template binds none).
     const field = this.input();
     const rows = this.renderRoot.querySelectorAll<HTMLElement>('[data-testid="search-add-row"]');

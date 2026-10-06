@@ -1887,7 +1887,7 @@ const server = createServer(async (request, response) => {
   if (request.method === "GET" && path === "/api/v1/products/counter-search") {
     const q = (url.searchParams.get("q") ?? "").toLowerCase();
     const hits = PRODUCTS.filter((product) => {
-      const hay = [product.sku, product.name, product.description, ...product.aliases].join(" ").toLowerCase();
+      const hay = [product.sku, product.name, product.category, product.description, ...product.aliases].join(" ").toLowerCase();
       return q === "" || hay.includes(q);
     }).map((product) => ({
       product_id: product.product_id,
