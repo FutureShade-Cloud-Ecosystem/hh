@@ -713,6 +713,26 @@ test("a credit that moved the order to Paid while the desk held the old Part pai
   await other.close();
 });
 
+test("the stub door says the core's words for another payment on a paid order: The order is paid in full.", async ({ request }) => {
+  // The door is a staff route: the stub's own mint shape, sales' account and the demo org header.
+  const claims = Buffer.from(JSON.stringify({ iss: "hh-demo-stub", sub: "demo-account-sales", aud: "staff" }), "utf8").toString("base64url");
+  const bearer = `Bearer ${Buffer.from(JSON.stringify({ alg: "ES256", typ: "JWT" }), "utf8").toString("base64url")}.${claims}.c3R1Yi1zaWduYXR1cmUtYnl0ZXM`;
+  const headers = { authorization: bearer, "x-org": "hh-demo" };
+  // The first payment converts the cash quote and takes the whole total; the order is paid.
+  const first = await request.post("/api/v1/quotes/q-2102/order-payment", {
+    headers,
+    data: { method: "CASH", amount_cents: 6328, reference: "", idempotency_key: "stub-paid-full-1" },
+  });
+  expect(first.ok()).toBeTruthy();
+  // Another payment on the paid order, a new key: the core says the order is paid, never a balance of $0.00.
+  const second = await request.post("/api/v1/quotes/q-2102/order-payment", {
+    headers,
+    data: { method: "CASH", amount_cents: 1000, reference: "", idempotency_key: "stub-paid-full-2" },
+  });
+  expect(second.status()).toBe(400);
+  expect(await second.json()).toMatchObject({ error: "The order is paid in full." });
+});
+
 test("a payment still out at sign out is kept as a known attempt for the next sign in, so it cannot be taken twice", async ({ page, context }) => {
   await signIn(page);
   await openWithPayment(page, "Q-2101");

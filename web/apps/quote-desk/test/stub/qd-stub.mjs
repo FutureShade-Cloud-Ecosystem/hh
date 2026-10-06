@@ -2007,6 +2007,12 @@ const server = createServer(async (request, response) => {
       }
       const invoice = raiseAgreedInvoice(order);
       if (cash && amount !== invoice.balance_cents) {
+        if (invoice.balance_cents === 0) {
+          // The core's own words for the paid order (order_payment.go): the order is paid, never a
+          // balance of $0.00 asked for. One wording for the state, here and in the core.
+          respondJson(response, 400, { error: "The order is paid in full." });
+          return;
+        }
         if (invoice.balance_cents === invoice.total_cents) {
           respondJson(response, 400, { error: `a customer with no credit account pays the whole agreed total of ${coreMoney(invoice.total_cents)}` });
         } else {
