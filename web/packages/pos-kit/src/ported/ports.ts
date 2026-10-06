@@ -58,6 +58,12 @@ export interface PortHost {
   user(): AuthUser | null;
   /** The live bearer, only ever to hand a session across a window boundary. */
   token(): string;
+  /**
+   * The drawn product tile for a category in a theme (the design system's product tiles), or
+   * null when the category has none. Optional: a host that does not wire it leaves a product
+   * with no real picture on the stacked-stone glyph.
+   */
+  productTile?(category: string, theme: 'light' | 'dark'): string | null;
 }
 
 /** True when the host has been wired and carries a live session. */
@@ -73,6 +79,11 @@ let host: PortHost | null = null;
  */
 export function wirePorts(wired: PortHost): void {
   host = wired;
+}
+
+/** The host's drawn tile for a category, or null: unwired, or a category the tiles do not know. */
+export function productTile(category: string, theme: 'light' | 'dark'): string | null {
+  return host?.productTile?.(category, theme) ?? null;
 }
 
 // ---------------------------------------------------------------------------

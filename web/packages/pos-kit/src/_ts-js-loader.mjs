@@ -27,6 +27,13 @@ register(
         }
       } catch {}
     }
+    // A deep import of a sibling workspace package's source (the same runtime-correct .js
+    // spelling): try the .ts file the specifier names.
+    if (specifier.startsWith('@hardscapehouse/') && specifier.endsWith('.js')) {
+      try {
+        return await next(specifier.slice(0, -3) + '.ts', context);
+      } catch {}
+    }
     return next(specifier, context);
   }
 `),
