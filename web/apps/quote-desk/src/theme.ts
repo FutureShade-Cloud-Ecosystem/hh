@@ -11,8 +11,9 @@
 // The choice rests in this tab's memory only. The reference persists it in
 // local storage; this app's committed sink gate (test/sinks.test.mjs) refuses
 // every storage path (custody is memory per tab), so a reload and a sign-out
-// both start on Auto, and Auto is the system's own answer. Said here so no
-// one adds a storage call to "finish" the port.
+// both start on Auto in a default build and on Light in a demo build, and Auto
+// is the system's own answer. Said here so no one adds a storage call to
+// "finish" the port.
 
 export type ThemeChoice = "auto" | "light" | "dark";
 
@@ -54,7 +55,7 @@ const LIGHT_QUERY = "(prefers-color-scheme: light)";
 
 /** Holds the choice, applies it to the document root, and follows the system while Auto. */
 export class ThemeController {
-  #choice: ThemeChoice = "auto";
+  #choice: ThemeChoice = import.meta.env.MODE === "demo" ? "light" : "auto";
   #query: MediaQueryList | null = null;
   readonly #onSystemChange = (): void => this.apply();
   readonly #onChange: () => void;
