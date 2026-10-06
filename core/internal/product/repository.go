@@ -451,8 +451,26 @@ func (r *Repository) GetBaseUOM(ctx context.Context, productID string) (string, 
 // base units one fromUOM represents (the base UOM is 1). Read as text to preserve
 // DECIMAL(19,8) scale, then parsed. ErrNoConversion when the factor is absent.
 func (r *Repository) ConvertUOM(ctx context.Context, productID, fromUOM string) (float64, error) {
+	s, err := r.ConvertUOMExact(ctx, productID, fromUOM)
+	if err != nil {
+		return 0, err
+	}
+	f, perr := strconv.ParseFloat(s, 64)
+	if perr != nil {
+		return 0, fmt.Errorf("convert uom %q for %q: bad factor %q: %w", fromUOM, productID, s, perr)
+	}
+	return f, nil
+}
+
+// ConvertUOMExact returns product_uoms.qty_in_base for (productID, fromUOM) as the exact
+// DECIMAL(19,8) text the row carries (the base UOM is 1). The narrow read seam behind the
+// float64 ConvertUOM, for the pricing resolver's exact line-total path (decision log row 820):
+// a float64 keeps about 15 to 17 significant digits, the column keeps 19, and the resolver
+// rounds a line's cents ONCE against the exact factor. ErrNoConversion when the factor is
+// absent, the same sentinel ConvertUOM carries.
+func (r *Repository) ConvertUOMExact(ctx context.Context, productID, fromUOM string) (string, error) {
 	if r.pool == nil {
-		return 0, errNoDB
+		return "", errNoDB
 	}
 	var s string
 	err := r.pool.QueryRow(ctx,
@@ -460,13 +478,9 @@ func (r *Repository) ConvertUOM(ctx context.Context, productID, fromUOM string) 
 		productID, fromUOM).Scan(&s)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return 0, ErrNoConversion
+			return "", ErrNoConversion
 		}
-		return 0, fmt.Errorf("convert uom %q for %q: %w", fromUOM, productID, err)
+		return "", fmt.Errorf("convert uom %q for %q: %w", fromUOM, productID, err)
 	}
-	f, perr := strconv.ParseFloat(s, 64)
-	if perr != nil {
-		return 0, fmt.Errorf("convert uom %q for %q: bad factor %q: %w", fromUOM, productID, s, perr)
-	}
-	return f, nil
+	return s, nil
 }

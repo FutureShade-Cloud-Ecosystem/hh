@@ -182,14 +182,26 @@ type ReserveResult struct {
 
 // ResolveAllocationPolicy returns the branch's configured policy, or the system default when the
 // branch has no row. An empty branchID resolves to the system default too, a caller with no branch
-// context gets defined behaviour rather than a lookup on ".
+// context gets defined behaviour rather than a lookup on ". The read runs on the POOL (nil tx): the
+// HTTP surface calling this holds no transaction.
 func (s *Service) ResolveAllocationPolicy(ctx context.Context, branchID string) (AllocationPolicy, error) {
+	return s.resolveAllocationPolicyTx(ctx, nil, branchID)
+}
+
+// resolveAllocationPolicyTx is the transaction-aware core of the policy read; nil tx means the pool,
+// the seam's stated convention. The reserve path passes ITS transaction so the policy read joins the
+// connection the caller already holds: on the pool it would ask for a SECOND connection while the
+// caller keeps its first, and pool-size in-flight reservations each doing that pin every connection
+// of the pool and wait for one more, a client-side hold Postgres cannot see (no lock is waited on
+// at all; the sessions sit idle in transaction) while the process stalls to the action timeout. The
+// row locks a reservation holds play no part in the stall; they only make the scenario realistic.
+func (s *Service) resolveAllocationPolicyTx(ctx context.Context, tx pgx.Tx, branchID string) (AllocationPolicy, error) {
 	def := DefaultAllocationPolicy()
 	def.BranchID = branchID
 	if branchID == "" {
 		return def, nil
 	}
-	p, found, err := s.db().AllocationPolicy(ctx, branchID)
+	p, found, err := s.db().AllocationPolicy(ctx, tx, branchID)
 	if err != nil || !found {
 		return def, err
 	}
@@ -221,7 +233,11 @@ func (s *Service) ReserveTx(ctx context.Context, tx pgx.Tx, in ReserveInput) (Re
 		in.LocationID = in.BranchID
 	}
 
-	policy, err := s.ResolveAllocationPolicy(ctx, in.BranchID)
+	// The policy read runs INSIDE the caller's tx, for the same reason the overdraft guard below
+	// does: a pool read here asks for a SECOND connection while the caller keeps its first, and
+	// pool-size in-flight reservations doing that together pin the whole pool with no connection
+	// left to answer any of them.
+	policy, err := s.resolveAllocationPolicyTx(ctx, tx, in.BranchID)
 	if err != nil {
 		return ReserveResult{}, err
 	}

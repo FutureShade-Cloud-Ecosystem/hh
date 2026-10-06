@@ -9,6 +9,8 @@ package billing
 import (
 	"context"
 	"fmt"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // OrderHasFinalizedInvoice reports whether the order has at least one invoice whose finalize
@@ -22,18 +24,33 @@ import (
 // A read failure is returned, never swallowed: the caller must not treat an unreadable predicate as
 // permission to cancel (fail closed).
 func (r *Repository) OrderHasFinalizedInvoice(ctx context.Context, orderID string) (bool, error) {
+	return r.OrderHasFinalizedInvoiceTx(ctx, nil, orderID)
+}
+
+// OrderHasFinalizedInvoiceTx is OrderHasFinalizedInvoice joined to the caller's transaction (nil tx means
+// the pool). The order module runs the predicate inside its own order transaction; reading through the
+// pool there would take a second connection while the first is still held, and pool-size callers in
+// flight together would starve each other (no lock is waited on, so the database cannot see it). Satisfies
+// order.FinalizedInvoiceTxReader structurally.
+func (r *Repository) OrderHasFinalizedInvoiceTx(ctx context.Context, tx pgx.Tx, orderID string) (bool, error) {
 	if r.pool == nil {
 		// No pool means we cannot prove absence. Report the error so the order service fails closed
 		// rather than reading a bare false as "no money attached".
 		return false, fmt.Errorf("billing: no database configured for the order cancel predicate")
 	}
-	var exists bool
-	err := r.pool.QueryRow(ctx, `
+	const q = `
 		SELECT EXISTS (
 			SELECT 1 FROM invoices
 			WHERE order_id = $1::uuid
 			  AND status IN ('FINALIZED','PARTIALLY_PAID','PAID')
-		)`, orderID).Scan(&exists)
+		)`
+	var exists bool
+	var err error
+	if tx != nil {
+		err = tx.QueryRow(ctx, q, orderID).Scan(&exists)
+	} else {
+		err = r.pool.QueryRow(ctx, q, orderID).Scan(&exists)
+	}
 	if err != nil {
 		return false, fmt.Errorf("check finalized invoice for order %q: %w", orderID, err)
 	}

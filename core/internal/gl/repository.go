@@ -66,7 +66,30 @@ func (r *Repository) PostingAccounts(ctx context.Context, eventType, branchID st
 	if r.pool == nil {
 		return nil, errNoDB
 	}
-	rows, err := r.pool.Query(ctx,
+	return postingAccountsOn(ctx, r.pool, eventType, branchID)
+}
+
+// PostingAccountsTx is PostingAccounts read through the caller's transaction, so a caller that already holds a
+// connection never asks the shared pool for a second one. A nil tx is refused: silently falling back to the
+// pool would hide exactly the second acquisition this variant exists to remove.
+func (r *Repository) PostingAccountsTx(ctx context.Context, tx pgx.Tx, eventType, branchID string) (map[string]string, error) {
+	if tx == nil {
+		return nil, errNilTx
+	}
+	return postingAccountsOn(ctx, tx, eventType, branchID)
+}
+
+// errNilTx refuses a transaction variant called without a transaction.
+var errNilTx = errors.New("gl: transaction variant called without a transaction")
+
+// rowQuerier is the read surface a pool and a transaction share.
+type rowQuerier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+func postingAccountsOn(ctx context.Context, q rowQuerier, eventType, branchID string) (map[string]string, error) {
+	rows, err := q.Query(ctx,
 		`SELECT line_role, account_code::text, (branch_id IS NOT NULL) AS is_branch
 		 FROM posting_rules
 		 WHERE event_type = $1 AND is_active
@@ -232,6 +255,76 @@ func (r *Repository) InsertJournal(ctx context.Context, d journalDraft) (string,
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	id, created, err := r.insertJournalIn(ctx, tx, d, func() (string, bool) {
+		// A concurrent insert won the idempotency race, return the winner. The violation has
+		// already aborted this transaction, so nothing more can be read through it; roll it back
+		// FIRST to hand its connection back, then read on the pool. Reading the pool while the
+		// transaction still held its connection let pool-size callers each pin one connection
+		// and wait for another (connection starvation by second acquisition, no lock involved).
+		// The deferred Rollback above becomes a no-op on the closed transaction.
+		_ = tx.Rollback(ctx)
+		existing, found, ferr := r.journalIDByKey(ctx, d.IdempotencyKey)
+		return existing, ferr == nil && found
+	})
+	if err != nil || !created {
+		return id, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		if isCheckViolation(err) {
+			return "", false, errUnbalanced
+		}
+		return "", false, fmt.Errorf("gl: commit journal: %w", err)
+	}
+	return id, true, nil
+}
+
+// InsertJournalTx is InsertJournal inside the caller's transaction: the idempotency pre-read, the period,
+// account and counter reads and the header and line inserts all ride tx, so a caller that already holds a
+// connection never asks the shared pool for a second one, and the journal commits or rolls back with the
+// caller. The journal's statements run under a savepoint (a nested Begin), so a refusal (closed period,
+// unknown or inactive account, a constraint violation) rolls back only the journal and leaves the caller's
+// transaction usable; the caller decides what to do with the error. The deferred balance trigger (0021)
+// fires when the CALLER commits, not here; PostExternalTx pre-validates balance so a caller sees
+// errUnbalanced before it gets that far. A nil tx is refused rather than falling back to the pool.
+func (r *Repository) InsertJournalTx(ctx context.Context, tx pgx.Tx, d journalDraft) (string, bool, error) {
+	if tx == nil {
+		return "", false, errNilTx
+	}
+	if d.IdempotencyKey != "" {
+		if id, found, err := journalIDByKeyOn(ctx, tx, d.IdempotencyKey); err != nil {
+			return "", false, err
+		} else if found {
+			return id, false, nil
+		}
+	}
+
+	sp, err := tx.Begin(ctx)
+	if err != nil {
+		return "", false, fmt.Errorf("gl: begin journal savepoint: %w", err)
+	}
+	defer func() { _ = sp.Rollback(ctx) }()
+
+	id, created, err := r.insertJournalIn(ctx, sp, d, func() (string, bool) {
+		// The violation aborted the savepoint only. Roll it back so the caller's transaction is usable
+		// again, then read the winner through that same transaction.
+		_ = sp.Rollback(ctx)
+		existing, found, ferr := journalIDByKeyOn(ctx, tx, d.IdempotencyKey)
+		return existing, ferr == nil && found
+	})
+	if err != nil || !created {
+		return id, false, err
+	}
+	if err := sp.Commit(ctx); err != nil {
+		return "", false, fmt.Errorf("gl: release journal savepoint: %w", err)
+	}
+	return id, true, nil
+}
+
+// insertJournalIn is the journal write shared by InsertJournal and InsertJournalTx: period, account and
+// counter resolution, then the header and lines, all on tx. onDup runs when the header insert loses an
+// idempotency race and returns the winner's id; found=false falls through to the original error. A
+// created=false, nil-error return means onDup supplied the winner and tx is no longer usable for a commit.
+func (r *Repository) insertJournalIn(ctx context.Context, tx pgx.Tx, d journalDraft, onDup func() (string, bool)) (string, bool, error) {
 	// THE HOUSE ZONE, not the instant's own. `OccurredAt` defaults to the service clock, so before
 	// this the month a posting landed in was decided by the server's timezone, and on a UTC server
 	// that files a 9pm Ontario sale into tomorrow, and a 9pm sale on the 31st into next month's
@@ -239,7 +332,7 @@ func (r *Repository) InsertJournal(ctx context.Context, d journalDraft) (string,
 	// already answered the same question the same way.
 	y, m := fiscalYearMonth(d.OccurredAt)
 	var periodID, pstatus string
-	err = tx.QueryRow(ctx, `SELECT id::text, status FROM fiscal_periods WHERE year = $1 AND month = $2`, y, m).Scan(&periodID, &pstatus)
+	err := tx.QueryRow(ctx, `SELECT id::text, status FROM fiscal_periods WHERE year = $1 AND month = $2`, y, m).Scan(&periodID, &pstatus)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", false, clientErr(422, "gl: no fiscal period for %04d-%02d", y, m)
 	}
@@ -295,8 +388,7 @@ func (r *Repository) InsertJournal(ctx context.Context, d journalDraft) (string,
 		nullStr(d.CreatedBy), d.IdempotencyKey, nullStr(d.ApprovedBy), nullStr(d.ReversesJournalID)).Scan(&id)
 	if err != nil {
 		if isUniqueViolation(err) && d.IdempotencyKey != "" {
-			// A concurrent insert won the idempotency race, return the winner.
-			if existing, found, ferr := r.journalIDByKey(ctx, d.IdempotencyKey); ferr == nil && found {
+			if existing, found := onDup(); found {
 				return existing, false, nil
 			}
 		}
@@ -312,12 +404,6 @@ func (r *Repository) InsertJournal(ctx context.Context, d journalDraft) (string,
 		}
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		if isCheckViolation(err) {
-			return "", false, errUnbalanced
-		}
-		return "", false, fmt.Errorf("gl: commit journal: %w", err)
-	}
 	return id, true, nil
 }
 
@@ -329,8 +415,12 @@ func nullCents(v int64) any {
 }
 
 func (r *Repository) journalIDByKey(ctx context.Context, key string) (string, bool, error) {
+	return journalIDByKeyOn(ctx, r.pool, key)
+}
+
+func journalIDByKeyOn(ctx context.Context, q rowQuerier, key string) (string, bool, error) {
 	var id string
-	err := r.pool.QueryRow(ctx, `SELECT id::text FROM gl_journals WHERE idempotency_key = $1 AND idempotency_key <> ''`, key).Scan(&id)
+	err := q.QueryRow(ctx, `SELECT id::text FROM gl_journals WHERE idempotency_key = $1 AND idempotency_key <> ''`, key).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", false, nil
 	}

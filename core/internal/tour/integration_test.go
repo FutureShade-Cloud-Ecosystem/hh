@@ -32,9 +32,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 
+	coreid "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -135,22 +137,50 @@ func clearProgressFor(t *testing.T, pool *pgxpool.Pool, userIDs ...string) {
 // the kit's real Guards behind a wrapper that injects the kit bearer on
 // every request; the platform gate under test lives in the service, and
 // identity's own suite owns the door.
+//
+// The wrapper drives BOTH halves of the production request path, because production reads
+// neither the token nor any context a test may have pre-stamped for authority. The guard
+// resolves whatever the kit's authority stub last resolved (identity.SessionCeiling refuses an
+// authority with no resolved role, so a stub left at its zero value is a 503, fail closed), so
+// call() sets it from the request's `who` through SetAuthority. And the handler's staff stamp
+// (caller_stamp.go) rebuilds the bridged StaffContext from the guard's resolved caller plus the
+// handler's user linker, exactly as the composition root wires it (wire_tops.go registers the
+// tour handler WithUserLinker over users.platform_user_id), so intMux supplies a linker too.
+// A context stamped by the test itself is overwritten by that stamp, which is why none is
+// stamped here: everything the service reads about the caller arrived through the guard.
 type tourMux struct {
 	mux    *http.ServeMux
 	bearer string
+	sg     *testkit.StaffGuards
+	// who is the caller of the request in flight. call() sets it before the request runs, and
+	// both halves of the production path read it: the guard through SetAuthority, the linker as
+	// the users.id it answers with.
+	who identity.StaffContext
 }
 
-func (m tourMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (m *tourMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Header.Set("Authorization", "Bearer "+m.bearer)
 	r.Header.Set("X-Org", testkit.OrgNorthSlug)
 	m.mux.ServeHTTP(w, r)
 }
 
-func intMux(t *testing.T, pool *pgxpool.Pool) tourMux {
+func intMux(t *testing.T, pool *pgxpool.Pool) *tourMux {
 	sg := testkit.NewStaffGuards(t)
+	m := &tourMux{sg: sg}
+	// The linker stands in for the composition root's users.platform_user_id read. The kit
+	// bearer admits one subject, so the platform user id is the same on every request and the
+	// caller of THIS request is the one call() planted last; ok false (no planted user) leaves
+	// the stamp authority-only and every id-consuming read fails closed, the same posture
+	// production's nil linker has.
+	link := identity.UserIDLinker(func(_ context.Context, _ string) (string, bool) {
+		id := m.who.UserID
+		return id, id != ""
+	})
 	mux := http.NewServeMux()
-	NewHandler(NewService(NewRepository(pool))).RegisterRoutes(mux, sg.Guards)
-	return tourMux{mux: mux, bearer: sg.Bearer(t)}
+	NewHandler(NewService(NewRepository(pool))).WithUserLinker(link).RegisterRoutes(mux, sg.Guards)
+	m.mux = mux
+	m.bearer = sg.Bearer(t)
+	return m
 }
 
 func as(userID, role string) identity.StaffContext {
@@ -158,15 +188,34 @@ func as(userID, role string) identity.StaffContext {
 		Tier: identity.TierLeadership, Scope: identity.ScopeGlobal, Status: "ACTIVE"}
 }
 
-func call(t *testing.T, mux tourMux, method, path, body string, who identity.StaffContext) *httptest.ResponseRecorder {
+func call(t *testing.T, mux *tourMux, method, path, body string, who identity.StaffContext) *httptest.ResponseRecorder {
 	t.Helper()
+	// THE GUARD RESOLVES THE CALLER; THE TEST DOES NOT STAMP ONE. The authority the stub resolves
+	// is the StaffAuthority shape the real resolver reads off staff_role: the canonical role id
+	// behind the role code (FromAuthority walks this same mapping table forward to bridge, so
+	// resolving its lookup half here is the exact round trip), the tier, and the canonical scope.
+	canonical, ok := identity.CanonicalForERPCode(who.RoleCode)
+	if !ok {
+		t.Fatalf("call: %q is not a role code the identity bridge maps", who.RoleCode)
+	}
+	branches := make([]string, 0, len(who.Branches))
+	for b := range who.Branches {
+		branches = append(branches, b)
+	}
+	sort.Strings(branches)
+	mux.sg.SetAuthority(coreid.StaffAuthority{
+		RoleID:   canonical,
+		Tier:     int(who.Tier),
+		Scope:    identity.CanonicalScope(who.Scope),
+		Branches: branches,
+	})
+	mux.who = who
 	var r *http.Request
 	if body == "" {
 		r = httptest.NewRequest(method, path, nil)
 	} else {
 		r = httptest.NewRequest(method, path, strings.NewReader(body))
 	}
-	r = r.WithContext(identity.ContextWithStaff(r.Context(), who))
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, r)
 	return w
@@ -539,7 +588,7 @@ func TestIntegration_Progress_WriteReadRestartAndOwnership(t *testing.T) {
 	}
 }
 
-func readTour(t *testing.T, mux tourMux, who identity.StaffContext) Tour {
+func readTour(t *testing.T, mux *tourMux, who identity.StaffContext) Tour {
 	t.Helper()
 	w := call(t, mux, http.MethodGet, "/api/v1/tour", "", who)
 	if w.Code != http.StatusOK {

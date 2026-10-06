@@ -58,6 +58,10 @@ func (f *fakeStockCounter) WeightedAvgCostCents(ctx context.Context, productID, 
 	return 500, nil
 }
 
+func (f *fakeStockCounter) WeightedAvgCostCentsTx(ctx context.Context, tx pgx.Tx, productID, branchID string) (int64, error) {
+	return 500, nil
+}
+
 func (f *fakeStockCounter) PostCountAdjustmentTx(ctx context.Context, tx pgx.Tx, productID, locationID, branchID string, qtyDelta float64, unitCostCents int64, reason string) (string, error) {
 	return "", nil
 }
@@ -394,4 +398,8 @@ func cycleSyncCreate(t *testing.T, f *cycleSyncFixture, payload map[string]any) 
 	}
 	t.Fatalf("sync create: the new sheet never pulled at seq %d", *res[0].Seq)
 	return ""
+}
+
+func (s *fakeStockCounter) SnapshotOnHandTx(ctx context.Context, _ pgx.Tx, branchID string) ([]Snapshot, error) {
+	return s.SnapshotOnHand(ctx, branchID)
 }

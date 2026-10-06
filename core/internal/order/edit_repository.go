@@ -75,11 +75,14 @@ func lockOrderForEdit(ctx context.Context, tx pgx.Tx, orderID string, allowedFro
 // standing DESIGN CONSTRAINT for future work, AR-finalization in particular: any path that attaches
 // money to an already-existing order MUST hold that order's row lock while doing so, or this guarantee
 // (and the DIB-191 cancel predicate that shares it) silently weakens.
-func runPrecheck(ctx context.Context, hooks lineEditHooks, taxCents int64) error {
+//
+// The precheck joins the guarded write's own transaction (withPrecheckTx), so its invoice read does not
+// take a second pool connection while this transaction still holds one.
+func runPrecheck(ctx context.Context, tx pgx.Tx, hooks lineEditHooks, taxCents int64) error {
 	if hooks.precheck == nil {
 		return nil
 	}
-	return hooks.precheck(ctx, taxCents)
+	return hooks.precheck(withPrecheckTx(ctx, tx), taxCents)
 }
 
 // recomputeTotals rewrites the order's money from its CURRENT lines, inside the caller's transaction,
@@ -257,7 +260,7 @@ func (r *Repository) UpdateLineGuarded(ctx context.Context, w lineEditWrite, hoo
 	if err != nil {
 		return LineSnapshot{}, LineSnapshot{}, OrderTotals{}, status, err
 	}
-	if err = runPrecheck(ctx, hooks, taxCents); err != nil {
+	if err = runPrecheck(ctx, tx, hooks, taxCents); err != nil {
 		return LineSnapshot{}, LineSnapshot{}, OrderTotals{}, status, err
 	}
 	// The pre-image, read under the same lock so it is the true value the edit replaced.
@@ -320,7 +323,7 @@ func (r *Repository) InsertLineGuarded(ctx context.Context, w lineEditWrite, hoo
 	if err != nil {
 		return LineSnapshot{}, OrderTotals{}, status, err
 	}
-	if err = runPrecheck(ctx, hooks, taxCents); err != nil {
+	if err = runPrecheck(ctx, tx, hooks, taxCents); err != nil {
 		return LineSnapshot{}, OrderTotals{}, status, err
 	}
 	after, err = scanLineSnapshot(tx.QueryRow(ctx, fmt.Sprintf(
@@ -375,7 +378,7 @@ func (r *Repository) DeleteLineGuarded(ctx context.Context, orderID string, line
 	if err != nil {
 		return LineSnapshot{}, OrderTotals{}, status, err
 	}
-	if err = runPrecheck(ctx, hooks, taxCents); err != nil {
+	if err = runPrecheck(ctx, tx, hooks, taxCents); err != nil {
 		return LineSnapshot{}, OrderTotals{}, status, err
 	}
 	// Distinguish "no such line" (404) from "line is in use" (409): the conditional delete returns no
@@ -509,7 +512,7 @@ func (r *Repository) UpdateStatusFromChecked(ctx context.Context, orderID, newSt
 		return oldStatus, ErrIllegalTransition // not a legal source for this move (forward-only)
 	}
 	if precheck != nil {
-		if err := precheck(ctx); err != nil {
+		if err := precheck(withPrecheckTx(ctx, tx)); err != nil {
 			return oldStatus, err // e.g. ErrCancelBlocked / ErrCancelUnverifiable, refuses under the lock
 		}
 	}
