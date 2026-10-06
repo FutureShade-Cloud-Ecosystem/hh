@@ -282,7 +282,7 @@ func TestUnitLoadRefusesAPaddedCode(t *testing.T) {
 		t.Helper()
 		r, err := e.door.UpsertBatch(ctx, load.Batch{OrgID: fxUnitOrgID, SourceSystem: fxUnitSource,
 			BatchID: batchID, Caller: fxUnitActorID,
-			Items:   []load.Item{unitItem("UU-PAD", code, "Fixture Padded Unit", "count")}})
+			Items: []load.Item{unitItem("UU-PAD", code, "Fixture Padded Unit", "count")}})
 		if err != nil {
 			t.Fatalf("padded code batch %s: %v", batchID, err)
 		}

@@ -96,6 +96,17 @@ var allowlist = []allowlistEntry{
 	},
 	{
 		module: "billing",
+		file:   "core/internal/billing/load_receivables.go",
+		tables: []string{"locations"},
+		writes: []string{"scope_sequences"},
+		// HH-LOAD-1 LD-11: the open receivables import writer checks the
+		// named branch belongs to the loading org (a read of the locations
+		// anchor, the same anchor the counter receipt reads) and stamps seq
+		// through the 0213 allocator the module's other writers use.
+		reason: "the receivables import writer reads the branch's org through the locations anchor and draws the invoices feed seq through the 0213 allocator; its own invoices and customer_transactions rows are billing's",
+	},
+	{
+		module: "billing",
 		file:   "core/internal/billing/ar_landing_store.go",
 		tables: []string{"credit_holds", "customer_contacts", "customers"},
 		// the file's own header: every read here is a projection for the

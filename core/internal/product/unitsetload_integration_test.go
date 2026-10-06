@@ -703,7 +703,7 @@ func TestUnitSetRefusesOneCodeTwiceUnderTheDatabaseFold(t *testing.T) {
 	} {
 		r, err := e.door.UpsertBatch(ctx, load.Batch{OrgID: fxSetOrgID, SourceSystem: fxSetSource,
 			BatchID: probe.batch, Caller: fxSetActorID,
-			Items:   []load.Item{setItem("US-1", probe.rows...)}})
+			Items: []load.Item{setItem("US-1", probe.rows...)}})
 		if err != nil {
 			t.Fatalf("duplicate batch %s: %v", probe.batch, err)
 		}
