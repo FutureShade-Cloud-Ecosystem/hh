@@ -102,20 +102,19 @@ export class CounterTillApp extends HHElement {
          terminal's own layout pick, which the terminal reflects as an
          attribute when it changes. The Quote Desk's workarea is the
          reference pattern. */
-      main.on-till:has(hos-pos-terminal[data-counter-layout="PANELS"]) {
+      main.on-till:has(hos-pos-terminal[data-counter-layout="PANELS"]) .till-screen {
         /* The window is a column: the bar takes the height it really has (the badge and the
-           wrapped controls move it, so no guessed pixel figure), the surface takes the rest, and
-           anything after it (a notice, the returns desk) flows on past the fold. */
+           wrapped controls move it, so no guessed pixel figure) and the surface takes the rest.
+           What follows the screen (a notice, the returns desk) flows on below the fold. */
         display: flex;
         flex-direction: column;
         height: 100dvh;
         box-sizing: border-box;
-        padding-bottom: 0;
       }
-      main.on-till:has(hos-pos-terminal[data-counter-layout="PANELS"]) > * {
+      .till-screen > .surfacebar {
         flex: none;
       }
-      main.on-till:has(hos-pos-terminal[data-counter-layout="PANELS"]) > .surface {
+      main.on-till:has(hos-pos-terminal[data-counter-layout="PANELS"]) .till-screen > .surface {
         flex: 1 1 0;
         min-height: 0;
       }
@@ -820,6 +819,7 @@ export class CounterTillApp extends HHElement {
         ${this.#surface === "terminal"
           ? html`
               <h2 class="visually-hidden">Till</h2>
+              <div class="till-screen">
               <div class="surfacebar">
                 ${this.#brandLockup()}
                 ${demoPresent ? demoBanner() : nothing}
@@ -849,6 +849,7 @@ export class CounterTillApp extends HHElement {
                     this.requestUpdate();
                   }}
                 ></hos-pos-terminal>
+              </div>
               </div>
               ${this.#chromeMessage === null ? nothing : html`<p class="notice" role="status">${this.#chromeMessage}</p>`}
               ${renderReturns(this.#returns)}
