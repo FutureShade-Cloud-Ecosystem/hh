@@ -4912,6 +4912,10 @@ type PosAccountStanding struct {
 	OnHold       *bool   `json:"on_hold,omitempty"`
 }
 
+type PosPaymentGrant struct {
+	CanTakePayment bool `json:"can_take_payment"`
+}
+
 type PosAddonSuggestion struct {
 	ProductId      string  `json:"product_id"`
 	Sku            string  `json:"sku"`

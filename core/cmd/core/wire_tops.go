@@ -128,6 +128,9 @@ type topsSpine struct {
 	cardRail      *payment.Service
 	cardCharger   cardChargerAdapter
 	cardRefunder  posCardRefunderAdapter
+	// posHandler is held so the composition root can register the payment grant read, which needs
+	// the role gate built after the module wiring (pos/grant.go).
+	posHandler *pos.Handler
 }
 
 // feedbackActorNames resolves a linked ERP user id to the display name and
@@ -648,6 +651,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		cardRail:      paySvc,
 		cardCharger:   cardCharger,
 		cardRefunder:  cardRefunder,
+		posHandler:    posHandler,
 	}
 }
 

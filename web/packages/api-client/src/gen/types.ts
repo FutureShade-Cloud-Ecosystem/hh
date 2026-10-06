@@ -4190,6 +4190,9 @@ export type PosAccountStanding = {
   oldest_bucket?: "30" | "60" | "90+";
   on_hold?: boolean;
 };
+export type PosPaymentGrant = {
+  can_take_payment: boolean;
+};
 export type PosAddonSuggestion = {
   product_id: string;
   sku: string;

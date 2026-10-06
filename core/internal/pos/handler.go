@@ -20,6 +20,8 @@ type Handler struct {
 	userLink identity.UserIDLinker
 	svc      *Service
 	log      *slog.Logger
+	// grants answers the payment grant read (grant.go); nil answers it unavailable.
+	grants GrantReader
 }
 
 // NewHandler wires the service.

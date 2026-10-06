@@ -14689,6 +14689,39 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /api/v1/pos/payment-grant:
+    get:
+      operationId: posPaymentGrant
+      tags:
+        - staff-pos
+      summary: Read whether the caller holds the grant the till's payment routes require
+      description: "One question a client asks before it offers to take a payment: does the signed-in user hold the grant the till sale and the payment on a converted quote's order both need (Counter Till at Work)? The answer is the role gate's own, the same walk over the caller's whole row of roles and the dealer's configuration, taken for the access the document annotates on those payment routes, so it moves with them. A caller holding the Counter Till or the Quote Desk at read is answered, true or false; a caller with neither meets the gate's 403. It is a fact about grants only, never an authorisation: the payment routes still gate every call."
+      x-addition: the grant check the Quote Desk asks before it offers payment; no ERP source route
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - counter-till
+          - quote-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: Whether the caller holds the payment grant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosPaymentGrant"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: The grant could not be read
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/pos/addon-suggestions:
     get:
       operationId: posAddonSuggestions
@@ -40163,6 +40196,14 @@ components:
         on_hold:
           type: boolean
           description: Mirrors the credit gate; enforcement happens at the ring, not here
+    PosPaymentGrant:
+      type: object
+      description: Whether the caller holds the grant the till's payment routes require
+      required:
+        - can_take_payment
+      properties:
+        can_take_payment:
+          type: boolean
     PosAddonSuggestion:
       type: object
       description: One suggestion tile. list_price_cents is display only; the add path re-prices through the engine.
