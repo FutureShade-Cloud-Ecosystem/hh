@@ -975,6 +975,17 @@ export type UomViewPage = {
   next_cursor?: string | null;
   limit?: number;
 };
+export type CategoryView = {
+  id: string;
+  code: string;
+  name: string;
+  is_active: boolean;
+};
+export type CategoryViewPage = {
+  items: CategoryView[];
+  next_cursor?: string | null;
+  limit?: number;
+};
 export type ProductPage = {
   items: Product[];
   next_cursor?: string | null;

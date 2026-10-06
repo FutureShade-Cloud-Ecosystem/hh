@@ -1131,6 +1131,19 @@ type UomViewPage struct {
 	Limit      *int32    `json:"limit,omitempty"`
 }
 
+type CategoryView struct {
+	Id       string `json:"id"`
+	Code     string `json:"code"`
+	Name     string `json:"name"`
+	IsActive bool   `json:"is_active"`
+}
+
+type CategoryViewPage struct {
+	Items      []CategoryView `json:"items"`
+	NextCursor *string        `json:"next_cursor,omitempty"`
+	Limit      *int32         `json:"limit,omitempty"`
+}
+
 type ProductPage struct {
 	Items      []Product `json:"items"`
 	NextCursor *string   `json:"next_cursor,omitempty"`

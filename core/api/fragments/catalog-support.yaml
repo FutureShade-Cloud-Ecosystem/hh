@@ -960,6 +960,45 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  # --- product: the staff read of the product categories ---------------------
+  /api/v1/product-categories:
+    get:
+      operationId: productListCategories
+      tags: [staff-product]
+      summary: Read the product categories
+      description: >-
+        One cursor page of the caller's org's categories in code order, the
+        code the stable ordering key (unique), each as id, code, name and
+        is_active. Retired categories are returned and marked, because a
+        margin policy or an override can still name one. Dealer Admin at
+        read, the grant the pricing reads use: the route serves the pricing
+        screens, a named exception to this tag's default. A cursor the core
+        did not mint is a 400.
+      x-addition: "the staff read of the product categories for the pricing screens (the Quote Desk server reads); no ERP source route"
+      x-role: requireStaff
+      x-access:
+        surfaces: [dealer-admin]
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: One cursor page of the categories
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CategoryViewPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: The category read is not wired on this deployment
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   # --- customer: staff account reads and the SMS consent record --------------
   /api/v1/customers/search:
     get:
@@ -1711,6 +1750,26 @@ components:
         items:
           type: array
           items: { $ref: "#/components/schemas/UomView" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    CategoryView:
+      type: object
+      description: One row of the product categories
+      required: [id, code, name, is_active]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        is_active: { type: boolean }
+
+    CategoryViewPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/CategoryView" }
         next_cursor: { type: [string, "null"] }
         limit: { type: integer, format: int32 }
 
