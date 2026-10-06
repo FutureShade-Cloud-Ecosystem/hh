@@ -54,7 +54,7 @@ export const baseStyles = css`
     font-family: inherit;
     font-size: var(--hh-s-16);
     line-height: 1;
-    min-height: 44px;
+    min-height: var(--hh-h-input);
     padding: 0 var(--hh-s-20);
     border-radius: var(--hh-radius-control);
     border: 1px solid transparent;
@@ -86,11 +86,48 @@ export const baseStyles = css`
   /* THE disabled rule, stated once: a token swap, never a fade. Filled kinds
      drop their fill and go grey; the grey pair clears AA in both halves. */
   button:disabled,
-  button:disabled:hover {
+  button:disabled:hover,
+  .control:disabled {
     background: var(--hh-disabled-fill);
     color: var(--hh-disabled-ink);
     border-color: var(--hh-disabled-line);
     cursor: default;
+  }
+  /* The form controls: the same face the button carries (height, radius, the
+     focus ring, the disabled swap above), so a form row reads as one system.
+     The VALUE of a control is the consumer's wiring-pass job, never a binding:
+     the shell sets it in its own update pass, as the quote desk already does. */
+  .control {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-12);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid var(--hh-control-line);
+    background: var(--hh-card);
+    color: var(--hh-text);
+  }
+  select.control {
+    padding-inline-end: var(--hh-s-20);
+  }
+  .control:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  /* The named group: the fieldset keeps its legend (the group's accessible
+     name) and the legend is set as the group's visible heading. */
+  .field-group {
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-control);
+    margin: 0;
+    padding: var(--hh-s-12);
+  }
+  .field-group-heading {
+    font-family: inherit;
+    font-size: var(--hh-s-12);
+    color: var(--hh-text-dim);
+    padding: 0 var(--hh-s-4);
   }
 
   .spinner-wrap {
@@ -159,6 +196,90 @@ export function button(spec: ButtonSpec): Template {
   // drops data-action when the spec carries none. Only closed-union constants
   // and flags are bound; a caller's values arrive as the label's text.
   return html`<button type="button" class="btn btn-${kind}" ?disabled=${spec.disabled === true} data-action=${spec.action ?? nothing}>${spec.label}</button>`;
+}
+
+export interface SelectSpec {
+  /** The control's accessible name. */
+  label: string;
+  /** The field name for the shell's change delegation; rendered as data-field. */
+  field?: string;
+  /** The screen test hook; rendered as data-testid. */
+  testid?: string;
+  disabled?: boolean;
+  /** The select's static options, when the caller's own template holds them
+   * (closed constants). Options a server answers for stay the consumer's
+   * wiring-pass job, as do the control's value and its selection. */
+  content?: Template;
+}
+
+/** The design system's select: the native control carrying the control face
+ * and the shell's delegation attributes, with no value binding anywhere.
+ *
+ * The two shapes are deliberate: a select whose options stay Lit's own (the
+ * static content) and a BARE select with no child part at all. A shell that
+ * fills a select's options by hand in its wiring pass sets the element's
+ * textContent, which ejects a child part's marker nodes and kills the next
+ * render; the bare shape leaves the element with nothing for Lit to mourn. */
+export function select(spec: SelectSpec): Template {
+  if (spec.content === undefined) {
+    return html`<select
+      class="control"
+      data-control="select"
+      data-field=${spec.field ?? nothing}
+      data-testid=${spec.testid ?? nothing}
+      aria-label=${spec.label}
+      ?disabled=${spec.disabled === true}
+    ></select>`;
+  }
+  return html`<select
+    class="control"
+    data-control="select"
+    data-field=${spec.field ?? nothing}
+    data-testid=${spec.testid ?? nothing}
+    aria-label=${spec.label}
+    ?disabled=${spec.disabled === true}
+  >${spec.content}</select>`;
+}
+
+export interface DateInputSpec {
+  /** The control's accessible name. */
+  label: string;
+  /** The field name for the shell's change delegation; rendered as data-field. */
+  field?: string;
+  /** The screen test hook; rendered as data-testid. */
+  testid?: string;
+  disabled?: boolean;
+}
+
+/** The design system's date input: the native date control carrying the
+ * control face. The value is the consumer's wiring-pass job, never a binding. */
+export function dateInput(spec: DateInputSpec): Template {
+  return html`<input
+    class="control"
+    data-control="date"
+    type="date"
+    data-field=${spec.field ?? nothing}
+    data-testid=${spec.testid ?? nothing}
+    aria-label=${spec.label}
+    ?disabled=${spec.disabled === true}
+  />`;
+}
+
+export interface FieldGroupSpec {
+  /** The group's visible heading; the legend carries it as the group's
+   * accessible name, so the group needs no second label. */
+  heading: string;
+  /** The group's controls. */
+  content: Template;
+}
+
+/** The design system's named field group: the fieldset keeps its legend (the
+ * group's accessible name) and the legend is set as the group's heading. */
+export function fieldGroup(spec: FieldGroupSpec): Template {
+  return html`<fieldset class="field-group" data-control="field-group">
+    <legend class="field-group-heading">${spec.heading}</legend>
+    ${spec.content}
+  </fieldset>`;
 }
 
 /** The motion half of the loading pattern. The WORD lives in the state
