@@ -204,6 +204,22 @@ test("the census classifies the picker's customer create: an immediate write on 
   );
 });
 
+// A client write method that only delegates to another write method writes as the one it calls (review PR 121
+// round 9, P3-1): the chained name belongs in the write set, with the inner call's verb, and a deferred call of it
+// is a violation. The shape is a subclass here because the probe cannot edit the client itself; the census reads
+// the family the same way, so a method added to qd-client.ts that returns this.putTerms(...) is credited too.
+const CHAINED_PUT = `import { QdClient } from "./qd-client.js";\n\nclass Chained extends QdClient {\n  putTermsChained(id: string, input: Parameters<QdClient["putTerms"]>[1]): ReturnType<QdClient["putTerms"]> {\n    return this.putTerms(id, input);\n  }\n}\n\nexport async function save(c: Chained) { await Promise.resolve(); await c.putTermsChained("q", {} as never); }`;
+
+test("the write census credits a chained client write method: a deferred call of it is a violation", () => {
+  const rows = writeCensusOfText(CHAINED_PUT);
+  const row = rows.find((candidate) => candidate.call === "putTermsChained");
+  assert.ok(row !== undefined, `the census found no row for the chained method: ${JSON.stringify(rows)}`);
+  assert.equal(row.verb, "PUT");
+  assert.equal(row.channel, "client");
+  assert.equal(row.way, "VIOLATION");
+  assert.match(row.reason, /after an await/);
+});
+
 const ALLOWED = [
   ["a write in the same tick as the person's action", `${HEAD}class A { client: QdClient | null = null; m(id: string) { return this.client?.putTerms(id, {} as never); } }`, "immediate"],
   [

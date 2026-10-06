@@ -52,7 +52,7 @@ function enclosingFunction(node) {
 /** The write methods of the client: name to HTTP method, derived from qd-client.ts and the generated operations it calls. */
 export function writeMethods(program) {
   const checker = program.getTypeChecker();
-  const sf = program.getSourceFile(join(srcDir, "qd-client.ts"));
+  const family = clientFamily(program, checker);
   const found = new Map();
   const verbOf = (decl) => {
     let verb = null;
@@ -62,29 +62,93 @@ export function writeMethods(program) {
     })(decl);
     return verb;
   };
-  (function visit(n) {
-    if (ts.isClassDeclaration(n) && n.name?.text === "QdClient") {
-      for (const member of n.members) {
-        if (!ts.isMethodDeclaration(member) || member.body === undefined) continue;
-        const verbs = new Set();
-        (function calls(c) {
-          if (ts.isCallExpression(c)) {
-            const symbol = checker.getSymbolAtLocation(ts.isPropertyAccessExpression(c.expression) ? c.expression.name : c.expression);
-            for (const decl of symbol?.declarations ?? []) {
-              if (ts.isFunctionDeclaration(decl) && decl.getSourceFile().fileName.includes("/api-client/")) {
-                const verb = verbOf(decl);
-                if (verb !== null && WRITE_VERBS.has(verb)) verbs.add(verb);
-              }
+  // The verbs each member of the family writes with directly, and the family members it delegates to: a method
+  // whose body calls another write method of the family writes as the one it calls (review PR 121 round 9, P3-1).
+  const verbsByDecl = new Map();
+  const chains = [];
+  for (const cls of family) {
+    for (const member of cls.members) {
+      if (!ts.isMethodDeclaration(member) || member.body === undefined) continue;
+      const verbs = new Set();
+      (function calls(c) {
+        if (ts.isCallExpression(c)) {
+          const symbol = checker.getSymbolAtLocation(ts.isPropertyAccessExpression(c.expression) ? c.expression.name : c.expression);
+          for (const decl of symbol?.declarations ?? []) {
+            if (ts.isFunctionDeclaration(decl) && decl.getSourceFile().fileName.includes("/api-client/")) {
+              const verb = verbOf(decl);
+              if (verb !== null && WRITE_VERBS.has(verb)) verbs.add(verb);
+            } else if (ts.isMethodDeclaration(decl) && family.has(decl.parent) && decl !== member) {
+              chains.push([member, decl]);
             }
           }
-          ts.forEachChild(c, calls);
-        })(member.body);
-        if (verbs.size > 0) found.set(member.name.getText(), [...verbs].sort().join("/"));
+        }
+        ts.forEachChild(c, calls);
+      })(member.body);
+      if (verbs.size > 0) verbsByDecl.set(member, verbs);
+    }
+  }
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [from, to] of chains) {
+      const verbs = verbsByDecl.get(from) ?? new Set();
+      for (const verb of verbsByDecl.get(to) ?? []) {
+        if (!verbs.has(verb)) {
+          verbs.add(verb);
+          changed = true;
+        }
+      }
+      if (verbs.size > 0) verbsByDecl.set(from, verbs);
+    }
+  }
+  for (const [member, verbs] of verbsByDecl) {
+    const name = member.name.getText();
+    const merged = found.get(name) ?? new Set();
+    for (const verb of verbs) merged.add(verb);
+    found.set(name, merged);
+  }
+  return new Map([...found].map(([name, verbs]) => [name, [...verbs].sort().join("/")]));
+}
+
+const familyCache = new WeakMap();
+
+/** The client family: QdClient itself and every class that extends it, followed transitively; a subclass's write methods write too. */
+function clientFamily(program, checker) {
+  const cached = familyCache.get(program);
+  if (cached !== undefined) return cached;
+  const files = new Set([program.getSourceFile(join(srcDir, "qd-client.ts"))]);
+  for (const file of program.getSourceFiles()) {
+    if (file.fileName.startsWith(appDir) && !file.fileName.includes("/node_modules/")) files.add(file);
+  }
+  const classes = [];
+  for (const file of files) {
+    if (file === undefined) continue;
+    (function find(n) {
+      if (ts.isClassDeclaration(n)) classes.push(n);
+      ts.forEachChild(n, find);
+    })(file);
+  }
+  const family = new Set(classes.filter((cls) => cls.name?.text === "QdClient"));
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const cls of classes) {
+      if (family.has(cls)) continue;
+      const inherits = (cls.heritageClauses ?? []).some((clause) =>
+        clause.types.some((t) => {
+          let symbol = checker.getSymbolAtLocation(t.expression);
+          if (symbol !== undefined && symbol.flags & ts.SymbolFlags.Alias) symbol = checker.getAliasedSymbol(symbol);
+          return (symbol?.declarations ?? []).some((decl) => ts.isClassDeclaration(decl) && family.has(decl));
+        }),
+      );
+      if (inherits) {
+        family.add(cls);
+        changed = true;
       }
     }
-    ts.forEachChild(n, visit);
-  })(sf);
-  return found;
+  }
+  familyCache.set(program, family);
+  return family;
 }
 
 /** The declaration a call's callee resolves to, or undefined. */
@@ -369,6 +433,7 @@ function captureTakenAtSend(send, checker, env) {
 export function writeCensus(program, sourceFiles) {
   const checker = program.getTypeChecker();
   const methods = writeMethods(program);
+  const family = clientFamily(program, checker);
   const files = [...walk(srcDir, (name) => name.endsWith(".ts") && !name.endsWith(".d.ts"))].sort().map((f) => program.getSourceFile(f));
   const env = { checker, files: [...new Set([...files, ...sourceFiles])] };
   const rows = [];
@@ -387,7 +452,7 @@ export function writeCensus(program, sourceFiles) {
       if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && methods.has(n.expression.name.text)) {
         const decl = calleeDeclaration(checker, n);
         const owner = decl?.parent;
-        if (owner !== undefined && ts.isClassDeclaration(owner) && owner.name?.text === "QdClient") {
+        if (owner !== undefined && ts.isClassDeclaration(owner) && family.has(owner)) {
           write = { name: n.expression.name.text, verb: methods.get(n.expression.name.text), channel: CLIENT_CHANNEL };
         }
       }
