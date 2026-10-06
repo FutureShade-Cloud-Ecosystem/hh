@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/product"
+	"github.com/jackc/pgx/v5"
 )
 
 // - error taxonomy (mirrors internal/product) -
@@ -47,6 +48,10 @@ var (
 	// id that does not exist (Postgres 23503). It maps to a friendly 422 instead of leaking the
 	// FK violation as a generic 500 (finding #10).
 	errFKViolation = errors.New("pricing: referenced entity does not exist")
+	// errNoTxAudit: this service's store cannot append audit rows ON a
+	// caller's transaction (a DB-free fake), so the transactional append
+	// refuses rather than silently dropping the row it was asked to ride.
+	errNoTxAudit = errors.New("pricing: this store cannot append audit rows on a transaction")
 )
 
 // bps bounds for a discount/markup basis-point value. 0..10000 = 0%..100%; anything outside
@@ -158,11 +163,21 @@ type salesScanStore interface {
 	LowMarginSalesLines(ctx context.Context, from, to time.Time, branchID string) ([]LowMarginSaleLine, error)
 }
 
+// txAuditStore is the transactional half of the audit append: the same row
+// AppendAudit writes, executed on a caller-supplied transaction. Auto-wired
+// from the pgx *Repository like the seams above; a DB-free fake leaves it
+// nil and RecordFloorDecisionTx answers errNoTxAudit instead of pretending
+// the row landed somewhere.
+type txAuditStore interface {
+	AppendAuditTx(ctx context.Context, tx pgx.Tx, e AuditEntry) error
+}
+
 // Service holds the pricing business logic.
 type Service struct {
 	store pricingStore
 	batch batchStore     // A-08 price-batch/import/change-log seam (nil until WithBatchStore)
 	scan  salesScanStore // D-PA-3 low-margin live-sales feed (nil until WithSalesScanStore)
+	txAud txAuditStore   // transactional audit append (auto-wired; nil on DB-free fakes)
 	// W4-A optional seams. All three are FLAG-OFF by default: nil means the corresponding step does
 	// not run and the resolver behaves exactly as it did in W3. That is what lets every pre-existing
 	// resolver test keep passing against a fake that has never heard of promotions.
@@ -202,6 +217,12 @@ func NewService(store pricingStore) *Service {
 	// DB-free fakes that don't leave s.scan nil, so LowMarginScan returns a friendly errNoDB.
 	if sc, ok := store.(salesScanStore); ok {
 		s.scan = sc
+	}
+	// The transactional audit append wires the same way: the pgx *Repository
+	// carries it, DB-free fakes don't, so RecordFloorDecisionTx fails loud on
+	// a store that cannot ride a transaction rather than dropping the row.
+	if ta, ok := store.(txAuditStore); ok {
+		s.txAud = ta
 	}
 	// W4-A seams auto-wire the same way: the pgx *Repository implements all three, so production
 	// needs no extra With… call and main.go's pricing block stays a single constructor chain.

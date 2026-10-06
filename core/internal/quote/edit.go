@@ -298,11 +298,36 @@ type quoteEditHooks struct {
 	// change whose hold never landed is a quote holding a quantity nobody quoted, and the visibility
 	// surface stops being believed the first time anyone notices. nil = the reservation seam is off.
 	holds func(ctx context.Context, tx pgx.Tx) error
+	// pricing runs LAST before commit, on the SAME tx (plan 4.2): the
+	// pricing log rows the write owes, written on the write's own
+	// transaction so a commit with no row cannot happen and a rolled back
+	// write leaves no row. lineNo is fed by the write (the add derives it
+	// inside the lock); changed says whether the write actually moved the
+	// line, and an idempotent rewrite (the standing discount re-asserted,
+	// the standing quantity repriced to the same figures) writes no row.
+	// nil = this write owes no pricing log row.
+	pricing func(ctx context.Context, tx pgx.Tx, lineNo int, changed bool) error
 }
 
 // quoteDateHooks is the record-only hook for the valid_until write.
 type quoteDateHooks struct {
 	record func(ctx context.Context, tx pgx.Tx, before, after string) error
+}
+
+// quoteDiscountHooks is the record closure the discount write threads into
+// its guarded write (plan 4.2): the discount before and after and the line
+// total, on the write's own transaction, the same trail the other line
+// writes use. The percents and the line's net total are passed explicitly:
+// the discount is the one column a QuoteLineSnapshot does not carry, and a
+// half-populated snapshot invites a confident wrong read.
+type quoteDiscountHooks struct {
+	record func(ctx context.Context, tx pgx.Tx, lineNo, beforeDisc, afterDisc int, beforeTotal, afterTotal int64, totals QuoteTotals) error
+	// pricing is the pricing log row the discount write owes, on the same
+	// transaction as the record above (plan 4.2): the BYPASS row for a
+	// cleared below floor price, the UPDATE row for a below rule above
+	// floor write, none for an idempotent re-assertion of the standing
+	// discount. nil = this write owes no pricing log row.
+	pricing func(ctx context.Context, tx pgx.Tx, lineNo int, changed bool) error
 }
 
 // - expiry (D2) -
@@ -514,8 +539,13 @@ func nameQuoteField(err error, field QuoteEditField) error {
 
 // priceLine resolves the pre-tax price trio for (product, qty, uom) at today's rates through the SAME
 // pricing seam the POS ring, the order edit and the portal reorder use. The quote module does not own
-// UOM factor math or price derivation, so it asks pricing rather than reimplementing either; that also
-// keeps the A-20 margin gate live on a quoted line, so a staff quote cannot quietly go out below floor.
+// UOM factor math or price derivation, so it asks pricing rather than reimplementing either.
+//
+// A line at its RULE PRICE is accepted wherever the floor sits (plan 4.1, defect D1, CP0-3 answer A):
+// the price is the dealer's own rule, the salesperson has nothing to ask for, and the till prices the
+// same line the same way. The resolver's margin and floor figures are KEPT on the returned breakdown,
+// so the write's caller can log the below floor rule price for the pricing editors; the floor question
+// itself is asked only by the two writes that put a line below its rule price (floor.go).
 //
 // A nil seam FAILS CLOSED (ErrEditNotConfigured → 503): quoting a line at a stale or zero price would be
 // worse than refusing the edit.
@@ -541,9 +571,6 @@ func (s *StaffService) priceLine(ctx context.Context, customerID, branchID, prod
 	if err != nil {
 		return pricing.LinePrice{}, httpx.BadRequestf("cannot price this line: %v", err)
 	}
-	if bd.Blocked {
-		return pricing.LinePrice{}, &PriceBlockedError{Policy: bd.BlockPolicy}
-	}
 	if bd.QtyBase > maxQuoteQty {
 		return pricing.LinePrice{}, httpx.BadRequestf(
 			"resulting base quantity exceeds the %d maximum for a quote line", maxQuoteQty)
@@ -555,17 +582,6 @@ func (s *StaffService) priceLine(ctx context.Context, customerID, branchID, prod
 		QtyBase:        bd.QtyBase,
 		Breakdown:      bd,
 	}, nil
-}
-
-// PriceBlockedError is returned when pricing a quote line lands below the margin floor. Carries the
-// policy so the 409 can name it. A legitimate business refusal, not a fault.
-type PriceBlockedError struct{ Policy string }
-
-func (e *PriceBlockedError) Error() string {
-	if e.Policy == "" {
-		return "quote: line is below the margin floor"
-	}
-	return fmt.Sprintf("quote: line is below the margin floor (%s)", e.Policy)
 }
 
 // - quantity helpers -

@@ -301,7 +301,10 @@ func (e *BadTermsRefError) Error() string {
 // re-discounted to the new percent, half-up once, and the totals fold up. A floor plan carries the
 // decision's verdict (floor.go): the gross it priced (a mismatch under the lock refuses the write),
 // the approval consumed on this transaction, and the clearing stamped into the line's metadata.
-func (r *Repository) UpdateLineDiscountGuarded(ctx context.Context, quoteID string, lineNo, discPct int, allowedFrom []string, actorID string, plan floorWritePlan) (QuoteEditResult, error) {
+// The record hook runs on the same transaction (plan 4.2): the discount
+// before and after and the line total land on the quote's change trail,
+// the trail the other line writes use, atomic with the write.
+func (r *Repository) UpdateLineDiscountGuarded(ctx context.Context, quoteID string, lineNo, discPct int, allowedFrom []string, actorID string, plan floorWritePlan, hooks quoteDiscountHooks) (QuoteEditResult, error) {
 	if r.pool == nil {
 		return QuoteEditResult{}, errNoDB
 	}
@@ -366,11 +369,20 @@ func (r *Repository) UpdateLineDiscountGuarded(ctx context.Context, quoteID stri
 	if err != nil {
 		return QuoteEditResult{}, err
 	}
+	if hooks.record != nil {
+		if err := hooks.record(ctx, tx, lineNo, beforePct, discPct, before, after.LineTotalCents, totals); err != nil {
+			return QuoteEditResult{}, err
+		}
+	}
+	// The BYPASS or UPDATE row the floor decision owes rides the same
+	// transaction as the trail above (plan 4.2); a re-assertion of the
+	// standing discount owes no row.
+	if err := runPricingLog(ctx, hooks.pricing, tx, lineNo, beforePct != discPct); err != nil {
+		return QuoteEditResult{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return QuoteEditResult{}, fmt.Errorf("commit quote line discount: %w", err)
 	}
-	_ = beforePct
-	_ = before
 	return QuoteEditResult{Line: &after, Totals: totals, Status: status}, nil
 }
 
