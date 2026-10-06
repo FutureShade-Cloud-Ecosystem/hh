@@ -401,3 +401,55 @@ func TestIntegration_NoFirstNamePlaceholderReadsBesideASurnameInAMigratedDatabas
 		t.Errorf("after migrate, a scrub placeholder for a first name is followed by a surname in: %s", strings.Join(bad, ", "))
 	}
 }
+
+// plantedPersonNames reads, from the frozen migrations, every full name the demo planted on a login
+// (0200's yard persona), a fleet driver (0093) or a DM title between demo staff (0052). They are read at
+// run time so this file never carries one.
+func plantedPersonNames(t *testing.T) []string {
+	t.Helper()
+	read := func(file string) string {
+		b, err := os.ReadFile(filepath.Join("..", "..", "db", "migrations", file))
+		if err != nil {
+			t.Fatalf("reading %s: %v", file, err)
+		}
+		return string(b)
+	}
+	var names []string
+	for _, m := range regexp.MustCompile(`'([A-Z][a-z]+ [A-Z][a-z]+) \(demo `).FindAllStringSubmatch(read("0200_tour_demo_personas.sql"), -1) {
+		names = append(names, m[1])
+	}
+	for _, m := range regexp.MustCompile(`'([A-Z][a-z]+ [A-Z][a-z]+)',\s+'613-`).FindAllStringSubmatch(read("0093_dispatch_demo_fleet.sql"), -1) {
+		names = append(names, m[1])
+	}
+	for _, m := range regexp.MustCompile(`'DM',NULL,NULL,'([^']+)'`).FindAllStringSubmatch(read("0052_messaging_demo_seed.sql"), -1) {
+		names = append(names, strings.Split(m[1], ", ")...)
+	}
+	if len(names) != 8 {
+		t.Fatalf("found %d planted person names in 0200, 0093 and 0052, want 8: the leg is not testing what it says", len(names))
+	}
+	return names
+}
+
+// No demo login, driver or DM title in a migrated database may carry a person's name: the principal cannot
+// tell whether a full name is a real person, and the other demo rows are role labels. Failures name the
+// table and column only.
+func TestIntegration_NoPlantedDemoPersonNameReadsInAMigratedDatabase(t *testing.T) {
+	ctx := context.Background()
+	pool := freshMigratedDB(t, "demopersonnames")
+	for _, n := range plantedPersonNames(t) {
+		if bad := columnsMatching(t, ctx, pool, `~*`, `\m`+n+`\M`); len(bad) != 0 {
+			t.Errorf("after migrate, a demo person's full name still reads in: %s", strings.Join(bad, ", "))
+		}
+	}
+	for id, want := range map[string]string{
+		"d0200000-0000-4000-9000-000000000002": "Yard (demo)",
+	} {
+		var got string
+		if err := pool.QueryRow(ctx, `SELECT display_name FROM users WHERE id = $1::uuid`, id).Scan(&got); err != nil {
+			t.Fatalf("reading login %s: %v", id, err)
+		}
+		if got != want {
+			t.Errorf("login %s = %q, want %q", id, got, want)
+		}
+	}
+}
