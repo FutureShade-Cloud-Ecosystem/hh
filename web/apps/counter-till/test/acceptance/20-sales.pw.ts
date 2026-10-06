@@ -172,18 +172,27 @@ test("tender and receipt: cash with change due, held against the core's own read
 }, testInfo) => {
   await signIn(page, "Sales");
   await searchAndAdd(page, "DEMO-EDGE-ALU", "Aluminum Edging 8ft (demo)");
-  // The pre-ring payment step, held against the core's own prices: the card's
-  // shape is exactly the Subtotal row and the row naming the ring (row 661),
-  // and the core's tax and total figures stand nowhere on it once this sale's
-  // own answer is read below. This is the proof behind the testers' page's
-  // sentence that until a sale is rung the till shows the lines' prices and
-  // their subtotal.
+  // The pre-ring payment step, held against the core's own prices (rows 985
+  // and 661, round 7): the card's shape is the Subtotal row, then the Tax and
+  // Total rows the server's sale-preview states (three rows, never the
+  // browser's own arithmetic, never the old "added at the ring" words), and
+  // below, once the sale is rung and read, the core's own tax and total for
+  // this sale must equal what the card showed before the ring. This is the
+  // proof behind the testers' page's sentence that before the ring the till
+  // shows the lines' prices, their subtotal, and the server's tax and total.
   await openStep(page, "payment");
   const preRingCard = page.getByTestId("pos-totals-card");
-  await expect(preRingCard.locator(".trow")).toHaveCount(2);
+  await expect(preRingCard.getByTestId("pos-preview-total")).toBeVisible();
+  await expect(preRingCard.locator(".trow")).toHaveCount(3);
   await expect(preRingCard).toContainText("Subtotal");
-  await expect(preRingCard).toContainText("added at the ring");
+  await expect(preRingCard.getByTestId("pos-preview-tax")).toContainText("Tax");
+  await expect(preRingCard.getByTestId("pos-preview-total")).toContainText("Total");
+  await expect(preRingCard.getByTestId("pos-preview-pending")).toHaveCount(0);
+  await expect(preRingCard.getByTestId("pos-ring-words")).toHaveCount(0);
+  await expect(preRingCard).not.toContainText("added at the ring");
   await expect(preRingCard).not.toContainText("(est.");
+  const previewTax = (await preRingCard.getByTestId("pos-preview-tax").innerText()).replace(/^Tax\s*/, "").trim();
+  const previewTotal = (await preRingCard.getByTestId("pos-preview-total").innerText()).replace(/^Total\s*/, "").trim();
   // The cash tile words the ring instead of computing a change figure: the
   // proof behind the testers' page's sentence that before the ring the till
   // states no change figure, even with an amount typed.
@@ -199,6 +208,9 @@ test("tender and receipt: cash with change due, held against the core's own read
   await expect(sold).toContainText(String(sale.order_no));
   await expect(sold).toContainText(String(sale.invoice_no));
   await expect(sold).toContainText(cad(total));
+  // What the card showed before the ring is the core's own figure for this sale.
+  expect(previewTax).toBe(cad(sale.tax_cents as number));
+  expect(previewTotal).toBe(cad(total));
   await expect(sold.getByTestId("sold-change-due")).toContainText(dollars(6000));
   await expect(sold.getByTestId("sold-change-due")).toContainText(dollars(6000 - total));
   // The confirmation shows the total; the subtotal and the tax are the
@@ -262,11 +274,12 @@ test("tender and receipt: cash with change due, held against the core's own read
   await reprinted.close();
   // A cash confirmation carries no card notice.
   await expect(sold.getByTestId("sold-simulated-notice")).toHaveCount(0);
-  // The ring's advance closed the payment step; reopened, the pre-ring card
-  // is the same template, so the core's own figures judge it where it lives:
-  // the browser's one assembly (the subtotal) equals the core's, and the
-  // core's tax and total for THIS sale stand nowhere on the card (the
-  // positive pins before the ring prove this locator sees what it judges).
+  // The ring's advance closed the payment step; reopened, the card is the
+  // same template with the preview rows dropped once the ring is done, so the
+  // core's own figures judge it where it lives: the browser's one assembly
+  // (the subtotal) equals the core's, and the core's tax and total for THIS
+  // sale stand nowhere on the card (the pre-ring pins above prove this
+  // locator sees what it judges).
   await openStep(page, "payment");
   await expect(preRingCard).toContainText(cad(sale.subtotal_cents as number));
   await expect(preRingCard).not.toContainText(cad(sale.tax_cents as number));
