@@ -3071,6 +3071,51 @@ export type InvCountReconRunPage = {
   next_cursor?: string | null;
   limit?: number;
 };
+export type LoadKeyRef = {
+  kind: string;
+  legacy_id: string;
+};
+export type LoadKeysResolveRequest = {
+  source_system: string;
+  items: LoadKeyRef[];
+};
+export type LoadKeyResolution = {
+  kind: string;
+  legacy_id: string;
+  hh_id: string | null;
+};
+export type LoadKeysResolveCounts = {
+  found: number;
+  missing: number;
+};
+export type LoadKeysResolveResult = {
+  items: LoadKeyResolution[];
+  counts: LoadKeysResolveCounts;
+};
+export type LoadBatchItemOutcome = {
+  legacy_id: string;
+  status: "created" | "updated" | "unchanged" | "refused";
+  hh_id?: string | null;
+  reason?: string | null;
+  field?: string | null;
+  detail?: string | null;
+};
+export type LoadBatchCounts = {
+  created: number;
+  updated: number;
+  unchanged: number;
+  refused: number;
+};
+export type LoadBatchView = {
+  batch_id: string;
+  source_system: string;
+  kind: string;
+  caller: string;
+  state: "RECORDED";
+  counts: LoadBatchCounts;
+  items: LoadBatchItemOutcome[];
+  created_at: string;
+};
 export type MessagingChannel = {
   id: string;
   kind: "BRANCH" | "TEAM" | "TOPIC" | "DM" | "APPROVAL";
@@ -5689,6 +5734,29 @@ export type QuoteConvertRequest = {
 export type QuoteConvertResult = {
   order_id: string;
   order_no: string;
+};
+export type QuoteOrderPaymentRequest = {
+  method: "CASH" | "CARD" | "CHEQUE" | "EFT";
+  amount_cents: number;
+  reference: string;
+  idempotency_key: string;
+};
+export type QuoteOrderPaymentResult = {
+  order_id: string;
+  order_no: string;
+  invoice_id: string;
+  invoice_no: string;
+  invoice_total_cents: number;
+  payment_id: string;
+  payment_no: string;
+  method: string;
+  amount_cents: number;
+  received_at: string;
+  reference: string;
+  received_by: string;
+  balance_cents: number;
+  replayed: boolean;
+  converted: boolean;
 };
 export type QuoteRelatedDocument = {
   kind: "QUOTE" | "ORDER" | "INVOICE";

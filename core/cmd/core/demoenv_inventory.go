@@ -23,12 +23,16 @@ var demoEnvDenyPrefixes = []string{
 
 // demoEnvDenyNames are the single environment names refused outright on
 // a demo box: the SMS provider selection, the live card processor's
-// endpoint, the message bus and the statement notices switch.
+// endpoint, the message bus, the statement notices switch, and the load
+// doors switch (the doors are a dealer deployment's decision, never a
+// demo box's; the machine credential names beside the switch are classed
+// allowed, the doors off relaxation ignores them with one warning).
 var demoEnvDenyNames = []string{
 	"SMS_PROVIDER",
 	"HOS_CARD_BASE_URL",
 	"NATS_URL",
 	"HOS_STATEMENT_NOTICES",
+	"CORE_LOAD_DOORS",
 }
 
 // demoEnvCardProcessorVar and demoEnvCardProcessorValue: the card

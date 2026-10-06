@@ -3638,6 +3638,59 @@ type InvCountReconRunPage struct {
 	Limit      *int32             `json:"limit,omitempty"`
 }
 
+type LoadKeyRef struct {
+	Kind     string `json:"kind"`
+	LegacyId string `json:"legacy_id"`
+}
+
+type LoadKeysResolveRequest struct {
+	SourceSystem string       `json:"source_system"`
+	Items        []LoadKeyRef `json:"items"`
+}
+
+type LoadKeyResolution struct {
+	Kind     string  `json:"kind"`
+	LegacyId string  `json:"legacy_id"`
+	HhId     *string `json:"hh_id"`
+}
+
+type LoadKeysResolveCounts struct {
+	Found   int32 `json:"found"`
+	Missing int32 `json:"missing"`
+}
+
+type LoadKeysResolveResult struct {
+	Items  []LoadKeyResolution   `json:"items"`
+	Counts LoadKeysResolveCounts `json:"counts"`
+}
+
+type LoadBatchItemOutcome struct {
+	LegacyId string  `json:"legacy_id"`
+	Status   string  `json:"status"`
+	HhId     *string `json:"hh_id,omitempty"`
+	Reason   *string `json:"reason,omitempty"`
+	Field    *string `json:"field,omitempty"`
+	Detail   *string `json:"detail,omitempty"`
+}
+
+type LoadBatchCounts struct {
+	Created   int32 `json:"created"`
+	Updated   int32 `json:"updated"`
+	Unchanged int32 `json:"unchanged"`
+	Refused   int32 `json:"refused"`
+}
+
+type LoadBatchView struct {
+	BatchId      string                 `json:"batch_id"`
+	SourceSystem string                 `json:"source_system"`
+	Kind         string                 `json:"kind"`
+	Caller       string                 `json:"caller"`
+	State        string                 `json:"state"`
+	Counts       LoadBatchCounts        `json:"counts"`
+	Items        []LoadBatchItemOutcome `json:"items"`
+	CreatedAt    time.Time              `json:"created_at"`
+}
+
 type MessagingChannel struct {
 	Id          string     `json:"id"`
 	Kind        string     `json:"kind"`
@@ -6618,6 +6671,31 @@ type QuoteConvertRequest struct {
 type QuoteConvertResult struct {
 	OrderId string `json:"order_id"`
 	OrderNo string `json:"order_no"`
+}
+
+type QuoteOrderPaymentRequest struct {
+	Method         string `json:"method"`
+	AmountCents    int64  `json:"amount_cents"`
+	Reference      string `json:"reference"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+type QuoteOrderPaymentResult struct {
+	OrderId           string    `json:"order_id"`
+	OrderNo           string    `json:"order_no"`
+	InvoiceId         string    `json:"invoice_id"`
+	InvoiceNo         string    `json:"invoice_no"`
+	InvoiceTotalCents int64     `json:"invoice_total_cents"`
+	PaymentId         string    `json:"payment_id"`
+	PaymentNo         string    `json:"payment_no"`
+	Method            string    `json:"method"`
+	AmountCents       int64     `json:"amount_cents"`
+	ReceivedAt        time.Time `json:"received_at"`
+	Reference         string    `json:"reference"`
+	ReceivedBy        string    `json:"received_by"`
+	BalanceCents      int64     `json:"balance_cents"`
+	Replayed          bool      `json:"replayed"`
+	Converted         bool      `json:"converted"`
 }
 
 type QuoteRelatedDocument struct {

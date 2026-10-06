@@ -42,6 +42,8 @@ tags:
     description: Offline sync pull and push per declared scope (context 4.5)
   - name: operator
     description: Org-scoped operator endpoints the launcher section consumes (D4)
+  - name: load
+    description: "The load doors: the machine surface FB Move's loads arrive through, registered only where a deployment's configuration switches them on"
   - name: staff-assist
   - name: staff-audit
   - name: staff-bankrec
@@ -10859,6 +10861,79 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/load/batches/{id}:
+    get:
+      operationId: loadGetBatch
+      tags:
+        - load
+      summary: Read one load batch by the caller's batch id
+      description: The counts by outcome and the per item outcomes the batch first recorded, so a replayed submission can be answered from the record. The id is the caller's own batch id, not an HH uuid.
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: HH-LOAD-1 load doors; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+      responses:
+        "200":
+          description: The recorded batch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadBatchView"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The batch id is recorded under more than one source system in this org; the read refuses rather than guess
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/load/keys/resolve:
+    post:
+      operationId: loadResolveKeys
+      tags:
+        - load
+      summary: Resolve legacy keys to HH ids
+      description: "A list body of legacy keys in, one resolution per item out: the HH row the key names within the org and source system, or null where the name is not yet recorded, with the found and missing counts. Read semantics; writes nothing. A list over the bound refuses with 400."
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: HH-LOAD-1 load doors; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadKeysResolveRequest"
+      responses:
+        "200":
+          description: One resolution per item, with the counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadKeysResolveResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/messaging/channels:
     get:
       operationId: messagingListChannels
@@ -19142,6 +19217,50 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/QuoteConvertResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/quotes/{id}/order-payment:
+    post:
+      operationId: quoteTakeOrderPayment
+      tags:
+        - staff-quote
+      summary: Take payment at the counter on a converted quote's order
+      description: "The counter's payment door on the quote desk. For a converted quote in the caller's branch it finds the order the quote became, raises that order's invoice at the agreed totals if none exists (every line at its agreed total, plus the delivery fee and its tax for a delivery quote, so the invoice equals the quote's agreed total), and records the payment through the payments settle with the caller stamped as the receiver. Billing the order again when it leaves the yard returns the same document. A customer with a credit account may pay a part (a deposit); a customer with no credit account pays the whole of what the invoice still owes (on a fresh order, the whole agreed total), and for such a customer an ACCEPTED quote is converted, billed and paid as one action: the conversion, the invoice and the payment are written in one transaction, so either all three exist or none does, and a cash customer's order never exists unpaid. For a customer with a credit account the order already exists when the payment is taken; the invoice and the payment are then written together, so a payment that fails leaves no invoice and no balance behind. The Yard manager is admitted at the cash customer's one action, on an accepted quote only; the separate conversion of a quote keeps its selling role rule. An order that already has an invoice raised another way (by shipment group, say) is refused with a 409 and nothing is raised, so the order is never billed twice. The counter's invoice does not move the order out of the yard: it is confirmed, picked and handed over as usual, and is invoiced when it leaves. A replayed idempotency_key posts nothing and answers the first payment; the same key with a different method or amount is a 409. The role rule is Work or above on the Counter Till at the order's branch."
+      x-addition: the counter's payment door on a converted quote's order (plan 1.1, QD-5); no ERP source route
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - counter-till
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteOrderPaymentRequest"
+      responses:
+        "200":
+          description: The payment, the invoice and the balance (also a replay of the first result)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteOrderPaymentResult"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -35498,6 +35617,161 @@ components:
         limit:
           type: integer
           format: int32
+    LoadKeyRef:
+      type: object
+      required:
+        - kind
+        - legacy_id
+      properties:
+        kind:
+          type: string
+          minLength: 1
+          maxLength: 64
+        legacy_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+    LoadKeysResolveRequest:
+      type: object
+      required:
+        - source_system
+        - items
+      properties:
+        source_system:
+          type: string
+          minLength: 1
+          maxLength: 64
+        items:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            $ref: "#/components/schemas/LoadKeyRef"
+    LoadKeyResolution:
+      type: object
+      required:
+        - kind
+        - legacy_id
+        - hh_id
+      properties:
+        kind:
+          type: string
+        legacy_id:
+          type: string
+        hh_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+    LoadKeysResolveCounts:
+      type: object
+      required:
+        - found
+        - missing
+      properties:
+        found:
+          type: integer
+          format: int32
+        missing:
+          type: integer
+          format: int32
+    LoadKeysResolveResult:
+      type: object
+      required:
+        - items
+        - counts
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/LoadKeyResolution"
+        counts:
+          $ref: "#/components/schemas/LoadKeysResolveCounts"
+    LoadBatchItemOutcome:
+      type: object
+      required:
+        - legacy_id
+        - status
+      properties:
+        legacy_id:
+          type: string
+        status:
+          type: string
+          enum:
+            - created
+            - updated
+            - unchanged
+            - refused
+        hh_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+        reason:
+          type:
+            - string
+            - "null"
+        field:
+          type:
+            - string
+            - "null"
+        detail:
+          type:
+            - string
+            - "null"
+    LoadBatchCounts:
+      type: object
+      required:
+        - created
+        - updated
+        - unchanged
+        - refused
+      properties:
+        created:
+          type: integer
+          format: int32
+        updated:
+          type: integer
+          format: int32
+        unchanged:
+          type: integer
+          format: int32
+        refused:
+          type: integer
+          format: int32
+    LoadBatchView:
+      type: object
+      required:
+        - batch_id
+        - source_system
+        - kind
+        - caller
+        - state
+        - counts
+        - items
+        - created_at
+      properties:
+        batch_id:
+          type: string
+        source_system:
+          type: string
+        kind:
+          type: string
+        caller:
+          type: string
+        state:
+          type: string
+          enum:
+            - RECORDED
+        counts:
+          $ref: "#/components/schemas/LoadBatchCounts"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/LoadBatchItemOutcome"
+        created_at:
+          type: string
+          format: date-time
     MessagingChannel:
       type: object
       description: One conversation surface. unread_count, mentioned and latest_at are populated only in the list-my-channels projection; they are per-caller, not intrinsic to the channel.
@@ -44874,6 +45148,95 @@ components:
           format: uuid
         order_no:
           type: string
+    QuoteOrderPaymentRequest:
+      type: object
+      description: One payment taken at the counter. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8). The tender is one of the four the payments settle accepts; the key makes a repeat post nothing.
+      required:
+        - method
+        - amount_cents
+        - reference
+        - idempotency_key
+      properties:
+        method:
+          type: string
+          enum:
+            - CASH
+            - CARD
+            - CHEQUE
+            - EFT
+        amount_cents:
+          type: integer
+          format: int64
+          minimum: 1
+        reference:
+          type: string
+          description: Cheque number, EFT trace or terminal reference as given; may be empty for cash
+        idempotency_key:
+          type: string
+          minLength: 1
+          maxLength: 64
+    QuoteOrderPaymentResult:
+      type: object
+      description: "What the till's receipt needs: the payment, the invoice it settled against, the order and the balance now on the invoice. On a replay the payment fields (the reference and the receiver included) are the first payment's as stored, and replayed is true."
+      required:
+        - order_id
+        - order_no
+        - invoice_id
+        - invoice_no
+        - invoice_total_cents
+        - payment_id
+        - payment_no
+        - method
+        - amount_cents
+        - received_at
+        - reference
+        - received_by
+        - balance_cents
+        - replayed
+        - converted
+      properties:
+        order_id:
+          type: string
+          format: uuid
+        order_no:
+          type: string
+        invoice_id:
+          type: string
+          format: uuid
+        invoice_no:
+          type: string
+        invoice_total_cents:
+          type: integer
+          format: int64
+        payment_id:
+          type: string
+          format: uuid
+        payment_no:
+          type: string
+        method:
+          type: string
+        amount_cents:
+          type: integer
+          format: int64
+        received_at:
+          type: string
+          format: date-time
+        reference:
+          type: string
+        received_by:
+          type: string
+          format: uuid
+          description: The staff member who took the payment
+        balance_cents:
+          type: integer
+          format: int64
+          description: The invoice's balance after this payment (live on a replay)
+        replayed:
+          type: boolean
+          description: True when this request posted nothing and answers the first payment
+        converted:
+          type: boolean
+          description: True when this action also converted the quote (a customer with no credit)
     QuoteRelatedDocument:
       type: object
       description: One normalized row of a quote's document family. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8).
