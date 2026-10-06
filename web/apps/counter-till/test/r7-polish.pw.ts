@@ -115,3 +115,32 @@ for (const [width, height] of SIZES) {
     expect(g.scrollWidth).toBeLessThanOrEqual(g.innerWidth);
   });
 }
+
+/** The branch's drawer, found or opened: a ring needs an open till session. */
+async function ensureSession(page: Page): Promise<void> {
+  const dot = page.getByTestId("session-dot");
+  const openButton = page.getByRole("button", { name: "Open Session", exact: true });
+  await expect(dot.or(openButton).first()).toBeVisible({ timeout: 10_000 });
+  if (await dot.isVisible()) return;
+  await openButton.click({ timeout: 3_000 }).catch(() => undefined);
+  await expect(dot).toContainText("Open");
+}
+
+test("the Paid card of a split sale says each leg with its amount", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page);
+  await pickLayout(page, "panels");
+  await ensureSession(page);
+  await addLine(page, "holland", "Holland Stone 60 mm");
+  await page.locator("hos-pos-flow-steps").first().getByRole("button", { name: /Payment/ }).click();
+  await page.getByRole("button", { name: "Split" }).click();
+  const panel = page.getByTestId("pos-split-panel");
+  await panel.getByLabel("Tender 1 method").selectOption({ label: "Cash" });
+  await panel.getByLabel("Tender 2 method").selectOption({ label: "Card" });
+  await panel.getByTestId("split-amount-0").fill("1.00");
+  await expect(panel.getByTestId("split-amount-1")).toHaveValue("3.52");
+  await panel.getByTestId("split-ring").click();
+  const sold = page.getByTestId("sold-panel");
+  await expect(sold).toBeVisible();
+  await expect(sold).toContainText("Split: Cash $1.00 and Card $3.52");
+});
