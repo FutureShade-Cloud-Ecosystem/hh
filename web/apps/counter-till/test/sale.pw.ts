@@ -23,6 +23,13 @@
 import { expect, test, type Page, type Response, type Route } from "@playwright/test";
 
 /** The screen-side rendering of integer cents, for comparing against the app. */
+
+/** Row 955: Returns is its own surface; open it from the bar (a no-op when it is already up). */
+async function openReturns(page: Page): Promise<void> {
+  if (!(await page.getByTestId("returns").isVisible())) await page.getByTestId("till-returns-entry").click();
+  await expect(page.getByTestId("returns")).toBeVisible();
+}
+
 function dollars(cents: number): string {
   const negative = cents < 0;
   const magnitude = Math.abs(cents);
@@ -1508,6 +1515,7 @@ test("a sale rung at the till is found by the returns desk right after it commit
 
   // The ruled desk below the till finds the just-rung sale by its number and
   // lays out its lines with what is still returnable.
+  await openReturns(page);
   await page.getByLabel("Sale number").fill(String(sale.order_no));
   await page.getByRole("button", { name: "Find sale" }).click();
   await expect(page.getByTestId("returns-sale")).toContainText(String(sale.order_no));

@@ -504,6 +504,12 @@ export class HosPosTerminal extends LitElement {
    */
   @property({ type: Boolean }) panesSwapped = false;
   /**
+   * Row 955: the till's Returns is its own surface. While it is up the sale stays mounted (nothing
+   * on the ticket is lost) but the page hides it, and this flag keeps the sale's keys quiet: F12
+   * must never ring a sale nobody can see.
+   */
+  @property({ type: Boolean, reflect: true }) paused = false;
+  /**
    * The dealer's key roster, resolved server-side (user over dealer over default). Held as data,
    * never as a switch statement: the client's people are BisTrack refugees who will want their old
    * keys, and a roster compiled into a component is a roster nobody can change.
@@ -4781,7 +4787,7 @@ export class HosPosTerminal extends LitElement {
    * counter expects everything it types to go.
    */
   private onPosKey = (e: KeyboardEvent): void => {
-    if (e.defaultPrevented) return;
+    if (e.defaultPrevented || this.paused) return;
     const action = resolveHotkey(chordFromEvent(e), this.hotkeyRoster);
     if (!action) return;
     // THE COUNTER OWNS A KEY ITS OWN LEGEND ADVERTISES, available or not. The two halves of that
