@@ -661,6 +661,32 @@ test("a mixed grouping is rejected on input with the grouping words, never sent"
   await expect(pay(page).getByTestId("op-preview")).toHaveText("Taking CA$1,000,000.00 by Cash");
 });
 
+test("Start a new payment unlocks only over a read that landed: a read superseded while it was out keeps the attempt held", async ({ page }) => {
+  await signIn(page);
+  await openWithPayment(page, "Q-2101");
+  await page.request.put("/_stub/payment-key-crossed", { data: { crossed: true } });
+  await take(page, "10.00", "AUTH 1", "CARD");
+  await expect(pay(page).getByTestId("op-start-new")).toBeVisible();
+  // The way out starts with a read of the quote and its family; the read is held behind a gate.
+  const gated = await armedHold(page, /\/api\/v1\/quotes\/q-2101\/related-documents$/, "GET", { times: 2, snapshot: true });
+  gated.arm();
+  await pay(page).getByTestId("op-start-new").click();
+  await expect.poll(() => gated.held.seen.length).toBe(1);
+  // A newer read of the same quote begins while the way out's read is still out (the builder's fan
+  // out re-reads the seam's panels): it supersedes the way out's read.
+  await pay(page).evaluate((el) =>
+    el.dispatchEvent(new CustomEvent("quote-changed", { detail: { quoteId: "q-2101" }, bubbles: true, composed: true })),
+  );
+  await expect.poll(() => gated.held.seen.length).toBe(2);
+  gated.held.release();
+  await settle(page);
+  // The way out's read never landed (a newer read answered first), so the attempt is still held:
+  // the form stays locked to it, and the way out is offered again.
+  await expect(pay(page).getByTestId("op-start-new")).toBeVisible();
+  await expect(pay(page).locator('[data-field="amount"]')).toBeDisabled();
+  await expect(pay(page).locator('[data-field="amount"]')).toHaveValue("10.00");
+});
+
 test("a payment still out at sign out is kept as a known attempt for the next sign in, so it cannot be taken twice", async ({ page, context }) => {
   await signIn(page);
   await openWithPayment(page, "Q-2101");

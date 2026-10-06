@@ -439,36 +439,41 @@ export class QdOrderPayment extends PanelBase {
     void this.load();
   }
 
-  /** One read of the quote's state and its document family: the offer and the figures all come from it. */
-  private async load(): Promise<void> {
+  /**
+   * One read of the quote's state and its document family: the offer and the figures all come from
+   * it. True only when THIS read landed as the newest read of the quote still open: a read that was
+   * superseded while it was out, or a panel that left the page, answers false, so a caller that
+   * unlocks something on the back of the read (startNew) keeps it locked.
+   */
+  private async load(): Promise<boolean> {
     const client = this.client;
     const ctx = this.ctx;
     if (client === null || ctx.id === "") {
       this.status = "";
       this.family = [];
       this.loaded = false;
-      return;
+      return false;
     }
     // A cancelled context issues no more requests: the panel left the page (sign out) and a read of its is not this session's.
-    if (ctx.stale) return;
+    if (ctx.stale) return false;
     this.readError = "";
     const seq = ctx.startRead();
     const answers = await ctx.guardedRead(seq, Promise.all([client.readQuote(ctx.id), client.relatedDocuments(ctx.id, "quote")]));
-    if (answers === undefined) return;
+    if (answers === undefined) return false;
     const [view, family] = answers;
     if (!view.ok) {
       this.status = "";
       this.family = [];
       this.loaded = false;
       this.readError = spokenRefusal(quoteErrorMessage(view.status, view.error, "read this quote for its payment"));
-      return;
+      return false;
     }
     if (!family.ok) {
       this.family = [];
       this.loaded = false;
       this.readError = "The quote's related documents could not be read, so the payment figures below them are not known.";
       this.status = view.value.status;
-      return;
+      return false;
     }
     this.status = view.value.status;
     this.quoteNos.set(ctx.id, view.value.quote_no);
@@ -479,6 +484,7 @@ export class QdOrderPayment extends PanelBase {
       this.lateNotes.delete(ctx.id);
       this.notice = late;
     }
+    return true;
   }
 
   /** The order rows of the family: what the quote became, as the server holds it. */
@@ -760,8 +766,11 @@ export class QdOrderPayment extends PanelBase {
     if (this.busy || this.attempt?.phase !== "held") return;
     const ctx = this.ctx;
     if (ctx.id === "" || ctx.stale) return;
-    await this.load();
-    if (this.quoteId !== ctx.id) return;
+    // The way out is a read the desk heard: a read superseded while it was out (the fan out of an
+    // edit, or another read of the quote) is not the server's truth about this attempt, so the
+    // attempt stays held and the way out is offered again over a read that lands.
+    const landed = await this.load();
+    if (!landed || this.quoteId !== ctx.id) return;
     if (this.readError !== "") return;
     this.book.clear(ctx.id);
     const rec = this.record(ctx.id);

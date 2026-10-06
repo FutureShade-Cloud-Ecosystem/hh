@@ -1378,7 +1378,7 @@
   {
     "id": "op-start-new-reread",
     "file": "src/order-payment-panel.ts",
-    "find": "    await this.load();\n    if (this.quoteId !== ctx.id) return;",
+    "find": "    const landed = await this.load();\n    if (!landed || this.quoteId !== ctx.id) return;",
     "replace": "    if (this.quoteId !== ctx.id) return;",
     "test": "holds the attempt instead of looping"
   },
