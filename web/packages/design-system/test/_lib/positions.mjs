@@ -615,7 +615,10 @@ export const IMPORT_ALLOW_LIST = {
     '../src/state.js': ['KIT_STATES', 'STATE_META', 'kitShell', 'stateIndicator'],
   },
   harness: {
-    'node:fs': ['mkdirSync', 'readFileSync', 'writeFileSync'],
+    // readdirSync and statSync joined the build when the type pass made it
+    // copy the vendored face beside the pages (it walks src/fonts and proves
+    // each entry is a file); a reviewer sees the names arrive here.
+    'node:fs': ['mkdirSync', 'readFileSync', 'readdirSync', 'statSync', 'writeFileSync'],
     'node:http': ['createServer'],
     'node:net': ['default'],
     'node:path': ['dirname', 'join'],

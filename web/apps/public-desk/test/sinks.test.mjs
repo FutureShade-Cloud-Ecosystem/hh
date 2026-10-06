@@ -66,8 +66,12 @@ test("no source of the page names a credential header", () => {
 test("the scan covers the entry page and every stylesheet, not the TypeScript alone", () => {
   const scanned = [...sources(srcDir)].map((path) => relative(appDir, path));
   assert.ok(scanned.includes("index.html"), "index.html (its inline script) must be scanned");
-  assert.ok(scanned.includes(join("src", "fonts.css")), "src/fonts.css must be scanned");
   assert.ok(scanned.some((path) => path.endsWith(".ts")), "the TypeScript must still be scanned");
+  // The type pass (row 942) took the app's own stylesheet with the vendored
+  // Outfit: the face and the tokens now ride the design system's token sheet
+  // through main.ts's import, so no css file of this app remains to scan and
+  // the hold is that none comes back.
+  assert.ok(!scanned.some((path) => path.endsWith(".css")), "no stylesheet of this app's own may ship");
 });
 
 test("the entry page tells the browser to send no referrer", () => {

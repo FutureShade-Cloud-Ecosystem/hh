@@ -168,23 +168,27 @@ test("the page stands on the token's pale ground so the white cards lift off it"
   expect(ground.card).toBe("rgb(255, 255, 255)");
 });
 
-test("the page's UI face is Outfit itself, self-hosted, not a system fallback", async ({ page }) => {
+test("the page's UI face is the shared Inter itself, self-hosted from the bundle, not a system fallback", async ({ page }) => {
   await page.goto(`/?t=${GOOD_TOKEN}`);
   await expect(page.getByRole("heading", { name: "Quote #Q-25" })).toBeVisible();
   // document.fonts is the closest provable check, and load() is the honest
   // half of it: it answers with the faces it actually MATCHED, so an absent
   // @font-face (check()'s vacuous true) fails here as an empty answer. The
-  // three weights are the ones the page renders: body, labels and button, title.
+  // three weights are the ones the page renders: body, labels and button,
+  // title. The face is the design system's shared Inter now (the type pass,
+  // row 942): the token sheet this app imports carries the @font-face rules
+  // and the vendored bytes, so the load proves the shared face reached the
+  // customer document through the bundle alone.
   const faces = await page.evaluate(async () => {
     const out: Record<string, boolean> = {};
-    for (const weight of ["400", "600", "700"]) {
-      const matched = await document.fonts.load(`${weight} 16px Outfit`);
+    for (const weight of ["400", "500", "600", "700"]) {
+      const matched = await document.fonts.load(`${weight} 16px Inter`);
       out[weight] = matched.length > 0 && matched.every((face) => face.status === "loaded");
     }
     await document.fonts.ready;
     return out;
   });
-  expect(faces).toEqual({ 400: true, 600: true, 700: true });
+  expect(faces).toEqual({ 400: true, 500: true, 600: true, 700: true });
 });
 
 test("the line table never overflows its card or the page, with thumbnails, at phone and tablet widths", async ({ page }) => {
