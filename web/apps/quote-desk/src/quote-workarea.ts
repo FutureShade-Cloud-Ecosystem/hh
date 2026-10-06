@@ -328,14 +328,18 @@ export class QdQuoteWorkarea extends LitElement {
       flex-direction: column;
       gap: var(--hos-s-4, 4px);
     }
-    /* The workspace: each panel scrolls internally; the right panel pins its
-       totals and actions at the foot. */
+    /* The workspace: each panel keeps its own scroll zone, and the row stands
+       at least at the viewport budget. The row is a floor, not a cap (demo
+       polish round 2): a fixed height cut the summary panel's terms fields
+       mid input when the pinned foot outgrew the budget, so the panel now
+       honors its natural height and the page's outer scroll takes the
+       overflow. The zones still scroll if a panel's content outgrows the
+       row some other way. */
     .workspace {
       display: grid;
       gap: 0;
       align-items: stretch;
-      height: calc(100vh - var(--qb-chrome, 250px));
-      min-height: 430px;
+      min-height: max(calc(100vh - var(--qb-chrome, 250px)), 430px);
     }
     .panel {
       border: 1px solid var(--hos-line, var(--hh-line));
@@ -802,6 +806,13 @@ export class QdQuoteWorkarea extends LitElement {
       background: var(--hos-slate-warm, var(--hh-card));
       color: var(--hos-text, var(--hh-text));
     }
+    /* The terms fields stand at the design system's control face height, the
+       row's one height (demo polish round 2): a shorter wiring let the fields
+       card sit under the token and read as a cut row even unclipped. */
+    .fields input,
+    .fields select {
+      min-height: var(--hh-h-input, 44px);
+    }
     .fulfil {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -1037,8 +1048,10 @@ export class QdQuoteWorkarea extends LitElement {
       display: flex;
       justify-content: center;
       align-items: flex-start;
+      /* The lead-in is the spacing token's own air. No reserved minimum here:
+         a wrapper taller than its card leaves a void between the card and the
+         list under the desk (the compose void legs of compose-void.pw.ts). */
       padding-top: var(--hos-s-48, 48px);
-      min-height: 320px;
     }
     .composecard {
       border: 1px solid var(--hos-line, var(--hh-line));
@@ -3044,10 +3057,13 @@ export class QdQuoteWorkarea extends LitElement {
         <div class="scrollzone">
           ${this.renderIdentity()}
           ${this.view !== null ? this.renderFieldsCard() : nothing}
-          ${this.view !== null ? this.renderFulfilment() : nothing}
           ${this.view !== null ? this.renderTermsStrip() : nothing}
         </div>
         <div class="foot">
+          <!-- The fulfilment tiles ride the pinned foot, never the scroll zone: a card left to scroll loses its
+               box behind this foot (the floor zero legs of fulfil-tiles.pw.ts), and the pick must stay on screen
+               at every count of the quote's items. -->
+          ${this.view !== null ? this.renderFulfilment() : nothing}
           ${this.view !== null ? this.renderTotalsCard() : nothing}
           ${this.view !== null ? this.renderActions() : nothing}
           ${this.renderOutcomeLines()}

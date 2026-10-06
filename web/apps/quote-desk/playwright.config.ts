@@ -53,7 +53,13 @@ export default defineConfig({
       env: { QD_STUB_PORT: stubPort },
     },
     {
-      command: `npx --no-install vite --port ${appPort} --strictPort --host 127.0.0.1`,
+      // The demo mode flag is the seam rule (decision log rows 893 and 899,
+      // the till's own harness the shape): the front door's handoff exists
+      // only where the demo is compiled in, so this harness serves the app
+      // the way the demo image builds it. A plain dev server has no adopt
+      // path at all (the reader resolves to the empty stub), and the
+      // handoff spec below would never leave the entry page.
+      command: `npx --no-install vite --mode demo --port ${appPort} --strictPort --host 127.0.0.1`,
       url: `http://127.0.0.1:${appPort}/`,
       reuseExistingServer: false,
       cwd: appDir,

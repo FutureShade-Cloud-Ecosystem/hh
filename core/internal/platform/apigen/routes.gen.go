@@ -10,7 +10,7 @@ type Route struct {
 	OperationID string   // the contract operationId
 	Tag         string   // the operation's single tag
 	XRole       string   // the x-role gate spelling
-	Bearer      string   // staff, tenant, staff-or-tenant, or public
+	Bearer      string   // staff, tenant, machine, staff-or-tenant, or public
 	Addition    bool     // the operation carries x-addition (no ERP source route)
 	Surfaces    []string // the x-access surfaces it serves (staff operations only)
 	Level       string   // the x-access level it needs (staff operations only)
@@ -294,6 +294,15 @@ var Routes = []Route{
 	{Method: "GET", Path: "/api/v1/lien/jobs/{id}/documents", OperationID: "lienListJobDocuments", Tag: "staff-lien", XRole: "requireManager", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "read", List: ""},
 	{Method: "POST", Path: "/api/v1/lien/jobs/{id}/sync", OperationID: "lienSyncJobHoldbacks", Tag: "staff-lien", XRole: "requireManager", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "manage", List: ""},
 	{Method: "GET", Path: "/api/v1/lien/triage", OperationID: "lienGetTriage", Tag: "staff-lien", XRole: "requireManager", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "read", List: ""},
+	{Method: "GET", Path: "/api/v1/load/batches/{id}", OperationID: "loadGetBatch", Tag: "load", XRole: "machine", Bearer: "machine", Addition: true, Surfaces: nil, Level: "", List: ""},
+	{Method: "PUT", Path: "/api/v1/load/branches", OperationID: "loadMapBranches", Tag: "load", XRole: "machine", Bearer: "machine", Addition: true, Surfaces: nil, Level: "", List: ""},
+	{Method: "PUT", Path: "/api/v1/load/categories", OperationID: "loadUpsertCategories", Tag: "load", XRole: "machine", Bearer: "machine", Addition: true, Surfaces: nil, Level: "", List: ""},
+	{Method: "POST", Path: "/api/v1/load/keys/resolve", OperationID: "loadResolveKeys", Tag: "load", XRole: "machine", Bearer: "machine", Addition: true, Surfaces: nil, Level: "", List: ""},
+	{Method: "PUT", Path: "/api/v1/load/products/unit-sets", OperationID: "loadPutUnitSets", Tag: "load", XRole: "machine", Bearer: "machine", Addition: true, Surfaces: nil, Level: "", List: ""},
+	{Method: "PUT", Path: "/api/v1/load/receivables", OperationID: "loadUpsertReceivables", Tag: "load", XRole: "machine", Bearer: "machine", Addition: true, Surfaces: nil, Level: "", List: ""},
+	{Method: "PUT", Path: "/api/v1/load/suppliers", OperationID: "loadUpsertSuppliers", Tag: "load", XRole: "machine", Bearer: "machine", Addition: true, Surfaces: nil, Level: "", List: ""},
+	{Method: "PUT", Path: "/api/v1/load/units", OperationID: "loadUpsertUnits", Tag: "load", XRole: "machine", Bearer: "machine", Addition: true, Surfaces: nil, Level: "", List: ""},
+	{Method: "PUT", Path: "/api/v1/load/users", OperationID: "loadMapUsers", Tag: "load", XRole: "machine", Bearer: "machine", Addition: true, Surfaces: nil, Level: "", List: ""},
 	{Method: "GET", Path: "/api/v1/messaging/channels", OperationID: "messagingListChannels", Tag: "staff-messaging", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"house-messages"}, Level: "read", List: ""},
 	{Method: "GET", Path: "/api/v1/messaging/channels/{id}/house-queue", OperationID: "messagingListHouseQueue", Tag: "staff-messaging", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"house-messages"}, Level: "read", List: ""},
 	{Method: "GET", Path: "/api/v1/messaging/channels/{id}/messages", OperationID: "messagingListMessages", Tag: "staff-messaging", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"house-messages"}, Level: "read", List: ""},
@@ -355,6 +364,8 @@ var Routes = []Route{
 	{Method: "PUT", Path: "/api/v1/orders/{id}/shipments", OperationID: "orderPlanShipments", Tag: "staff-order", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"dispatch-board"}, Level: "work", List: ""},
 	{Method: "POST", Path: "/api/v1/orders/{id}/shipments/invoice", OperationID: "orderInvoiceShipments", Tag: "staff-order", XRole: "requireManager", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "manage", List: ""},
 	{Method: "POST", Path: "/api/v1/orders/{id}/shipments/invoice-policy", OperationID: "orderSetInvoicePolicy", Tag: "staff-order", XRole: "requireManager", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "manage", List: ""},
+	{Method: "GET", Path: "/api/v1/payments/card-attempts", OperationID: "paymentListCardAttempts", Tag: "staff-billing", XRole: "requireManager", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "read", List: ""},
+	{Method: "POST", Path: "/api/v1/payments/card-attempts/{id}/resolve", OperationID: "paymentResolveCardAttempt", Tag: "manager-billing", XRole: "requireManager", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "manage", List: ""},
 	{Method: "GET", Path: "/api/v1/payments/config", OperationID: "paymentGetConfig", Tag: "staff-payment", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"counter-till", "dealer-admin"}, Level: "read", List: ""},
 	{Method: "PUT", Path: "/api/v1/payments/config", OperationID: "paymentPutConfig", Tag: "staff-payment", XRole: "requireAdmin", Bearer: "staff", Addition: false, Surfaces: []string{"dealer-admin"}, Level: "admin", List: ""},
 	{Method: "GET", Path: "/api/v1/platform/hotkeys", OperationID: "settingsGetPlatformHotkeys", Tag: "staff-settings", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"counter-till", "quote-desk", "yard-pick", "drive-run", "dispatch-board", "buying-and-stock", "money-desk", "manager-home", "house-messages", "dealer-admin"}, Level: "read", List: ""},
@@ -663,6 +674,7 @@ var Routes = []Route{
 	{Method: "GET", Path: "/api/v1/tour", OperationID: "tourGet", Tag: "staff-tour", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"counter-till", "quote-desk", "yard-pick", "drive-run", "dispatch-board", "buying-and-stock", "money-desk", "manager-home", "house-messages", "dealer-admin"}, Level: "read", List: ""},
 	{Method: "PUT", Path: "/api/v1/tour/progress", OperationID: "tourPutProgress", Tag: "staff-tour", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"counter-till", "quote-desk", "yard-pick", "drive-run", "dispatch-board", "buying-and-stock", "money-desk", "manager-home", "house-messages", "dealer-admin"}, Level: "work", List: ""},
 	{Method: "DELETE", Path: "/api/v1/tour/progress/{chapter_key}", OperationID: "tourRestartChapter", Tag: "staff-tour", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"counter-till", "quote-desk", "yard-pick", "drive-run", "dispatch-board", "buying-and-stock", "money-desk", "manager-home", "house-messages", "dealer-admin"}, Level: "work", List: ""},
+	{Method: "GET", Path: "/api/v1/uoms", OperationID: "productListUnits", Tag: "staff-product", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"dealer-admin"}, Level: "read", List: ""},
 	{Method: "GET", Path: "/api/v1/warranty/board", OperationID: "warrantyGetBoard", Tag: "staff-warranty", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"manager-home"}, Level: "read", List: ""},
 	{Method: "GET", Path: "/api/v1/warranty/claims", OperationID: "warrantyListClaims", Tag: "staff-warranty", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"manager-home"}, Level: "read", List: ""},
 	{Method: "POST", Path: "/api/v1/warranty/claims", OperationID: "warrantyCreateClaim", Tag: "staff-warranty", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"counter-till"}, Level: "work", List: ""},

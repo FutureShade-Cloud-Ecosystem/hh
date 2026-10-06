@@ -28,12 +28,15 @@ import (
 const tsFmt = `'YYYY-MM-DD"T"HH24:MI:SSOF'`
 
 // AllocationPolicy reads a branch's configured policy. found=false → caller uses the system default.
-func (r *Repository) AllocationPolicy(ctx context.Context, branchID string) (AllocationPolicy, bool, error) {
-	if r.pool == nil {
+// tx joins the caller's transaction (nil tx = the pool, the seam's convention): the reserve path
+// passes its tx so the read runs on the connection the caller already holds and never asks the
+// pool for a second one mid transaction.
+func (r *Repository) AllocationPolicy(ctx context.Context, tx pgx.Tx, branchID string) (AllocationPolicy, bool, error) {
+	if r.pool == nil && tx == nil {
 		return AllocationPolicy{}, false, errNoDB
 	}
 	var p AllocationPolicy
-	err := r.pool.QueryRow(ctx, `
+	err := r.q(tx).QueryRow(ctx, `
 		SELECT branch_id::text, order_mode, quote_mode, order_ttl_hours, quote_ttl_hours
 		  FROM branch_allocation_policy WHERE branch_id = $1`, branchID).
 		Scan(&p.BranchID, &p.OrderMode, &p.QuoteMode, &p.OrderTTLHours, &p.QuoteTTLHours)

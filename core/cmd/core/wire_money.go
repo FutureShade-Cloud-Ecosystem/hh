@@ -73,7 +73,8 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	approvals := identity.NewApprovals(identity.NewApprovalRepository(pool))
 
 	// A-18 (W2): product catalogue, then A-07 (W3): pricing over it.
-	productSvc := product.NewService(product.NewRepository(pool))
+	productRepo := product.NewRepository(pool)
+	productSvc := product.NewService(productRepo).WithUomReader(productRepo)
 	productHandler := product.NewHandler(productSvc, log).WithUserLinker(link)
 	productHandler.RegisterRoutes(r, g)
 	productHandler.RegisterSearchRoute(r, g)
@@ -283,6 +284,11 @@ type glRuleAdapter struct{ svc *gl.Service }
 
 func (a glRuleAdapter) ResolveRule(ctx context.Context, eventType, lineRole, branchID string) (string, error) {
 	return a.svc.ResolveRule(ctx, eventType, lineRole, branchID)
+}
+
+// ResolveRuleTx is ResolveRule read through the caller's transaction (purchasing PostBill).
+func (a glRuleAdapter) ResolveRuleTx(ctx context.Context, tx pgx.Tx, eventType, lineRole, branchID string) (string, error) {
+	return a.svc.ResolveRuleTx(ctx, tx, eventType, lineRole, branchID)
 }
 
 // invGLPoster satisfies inventory's GL poster over gl's external posting
@@ -728,6 +734,13 @@ type quoteCounterPayer struct{ repo *payments.Repository }
 
 func (a quoteCounterPayer) KeyTakenTx(ctx context.Context, tx pgx.Tx, key string) (bool, error) {
 	return a.repo.ReceiptKeyTakenTx(ctx, tx, key)
+}
+
+// LockPaymentsSequenceTx binds the door's sequence order seam to the payments module's shared
+// non incrementing lock on the caller's transaction (payments/LOCK-ORDER.md), the same adapter
+// belt as the other two methods.
+func (a quoteCounterPayer) LockPaymentsSequenceTx(ctx context.Context, tx pgx.Tx) error {
+	return a.repo.LockPaymentsSequenceTx(ctx, tx)
 }
 
 func (a quoteCounterPayer) TakePaymentTx(ctx context.Context, tx pgx.Tx, in quote.CounterReceiptInput) (quote.CounterReceipt, error) {

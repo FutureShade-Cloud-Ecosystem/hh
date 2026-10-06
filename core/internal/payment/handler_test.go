@@ -40,6 +40,21 @@ func (f *fakeConfigStore) Configure(_ context.Context, processor, mid, currency,
 	return nil
 }
 
+// The config tests exercise no attempt route, so the attempt seam answers
+// inert zero values here; the manager route tests use fakeAttemptStore
+// (handler_manager_list_test.go), which plants rows and records calls.
+func (f *fakeConfigStore) ListOpen(context.Context, ListQuery) ([]Attempt, error) {
+	return nil, nil
+}
+
+func (f *fakeConfigStore) Resolve(context.Context, string, string, string, string) (Attempt, bool, error) {
+	return Attempt{}, false, nil
+}
+
+func (f *fakeConfigStore) getByID(context.Context, string) (Attempt, bool, error) {
+	return Attempt{}, false, nil
+}
+
 // Guards-swap carry note (HH-3.2 fold): the ERP's X-Test-Role guard doubles
 // became the kit's real Guards over the DB-free harness, with the resolved
 // authority set per leg, so the RBAC halves prove the actual constructor each

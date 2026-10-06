@@ -38,7 +38,7 @@ test("the entry page shows the demo role cards and the desk opens on the Sales t
   await expect(page.getByRole("button", SALES)).toBeVisible();
   await expect(page.getByRole("button", { name: "Sales manager", exact: true })).toBeVisible();
   await signIn(page);
-  await expect(page.getByTestId("signed-in-role")).toHaveText("Sales");
+  await expect(page.getByTestId("header-word")).toHaveText("Sales");
   // The desk is the builder: the work area above, the list under it.
   await expect(page.getByTestId("qb-title")).toBeVisible();
   await expect(page.getByTestId("qb-list")).toBeVisible();

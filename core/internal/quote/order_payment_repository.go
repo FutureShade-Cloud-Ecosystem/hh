@@ -10,10 +10,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // OrderPaymentFactsTx reads the quote's status, owner, branch, figures, lines sum, the customer's
@@ -71,17 +69,6 @@ func (r *Repository) InOrderPaymentTx(ctx context.Context, quoteID string, fn fu
 	if r.pool == nil {
 		return errNoDB
 	}
-	// Admission: at most pool size minus one actions hold a connection at once, so one connection is
-	// always free for the nested pool read the stock seam makes while a conversion holds this
-	// transaction (inventory's allocation policy lookup is on the pool, not the transaction). Without
-	// it a burst of conversions as large as the pool would each wait for a connection no one can free.
-	gate := paymentGate(r.pool)
-	select {
-	case gate <- struct{}{}:
-		defer func() { <-gate }()
-	case <-ctx.Done():
-		return fmt.Errorf("order payment: waiting for a connection: %w", ctx.Err())
-	}
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("order payment: begin: %w", err)
@@ -98,21 +85,6 @@ func (r *Repository) InOrderPaymentTx(ctx context.Context, quoteID string, fn fu
 		return fmt.Errorf("order payment: commit: %w", err)
 	}
 	return nil
-}
-
-// paymentGates holds one admission gate per pool, sized pool max minus one (at least one).
-var paymentGates sync.Map // *pgxpool.Pool -> chan struct{}
-
-func paymentGate(pool *pgxpool.Pool) chan struct{} {
-	if g, ok := paymentGates.Load(pool); ok {
-		return g.(chan struct{})
-	}
-	n := int(pool.Config().MaxConns) - 1
-	if n < 1 {
-		n = 1
-	}
-	g, _ := paymentGates.LoadOrStore(pool, make(chan struct{}, n))
-	return g.(chan struct{})
 }
 
 // txCtxKey carries the door's transaction to the conversion, which the quote package owns and which is
