@@ -28,7 +28,10 @@
 # The till serves only its /till/ prefix (the root build the box carried
 # before the front door is gone with the root line it occupied); the front
 # door builds once for the root, and its tiles hand each module its own
-# prefixed app through the session the front door mints.
+# prefixed app through the session the front door mints. Both staff apps
+# (the till and the Quote Desk) build with --mode demo, the only Vite mode
+# whose build keeps the front door handoff's adopt reader compiled in; a
+# default build ships the empty stub in its place (rows 893 and 899).
 
 FROM golang:1.27-alpine AS core-build
 WORKDIR /src/core
@@ -49,7 +52,7 @@ RUN npm ci
 WORKDIR /src/web/apps/counter-till
 RUN npx vite build --mode demo --base=/till/ --outDir dist-till
 WORKDIR /src/web/apps/quote-desk
-RUN npx vite build --base=/quote/
+RUN npx vite build --mode demo --base=/quote/
 WORKDIR /src/web/apps/public-desk
 RUN npx vite build --base=/q/
 WORKDIR /src/web/apps/front-door
