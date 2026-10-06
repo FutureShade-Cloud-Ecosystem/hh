@@ -37,6 +37,7 @@
 //   GET  /api/v1/products/search                 -> ProductSearchResults
 //   GET  /api/v1/customers/search                -> PosCustomer[]
 //   GET  /api/v1/pos/salespeople                 -> PosSalespersonPage
+//   GET  /api/v1/pos/account-standing            -> PosAccountStanding ({} unless a hold is on file)
 //   GET  /api/v1/pos/addon-suggestions           -> { suggestions: [] }
 //   GET  /api/v1/products?active=true            -> PosProduct[]
 //   GET  /api/v1/products/counter-search         -> ProductCounterSearchResults
@@ -253,7 +254,24 @@ const CUSTOMERS = [
     open_balance_cents: 0,
     percent_off: 0,
   },
+  // An account inside its limit that sits on an active credit hold: the server's gate
+  // refuses its order whatever the limit says (core/internal/till/holds.go).
+  {
+    id: "c-held",
+    account_no: "C05",
+    name: "Held Account Builders",
+    customer_type: "CONTRACTOR",
+    payment_terms_days: 30,
+    credit_limit_cents: 900000,
+    open_balance_cents: 0,
+    percent_off: 0,
+  },
 ];
+
+// The account standing the counter reads for a customer: the past due and the hold flag.
+// Every other customer answers the empty object, exactly as the contract's read does for
+// a walk-in, a current account and a caller it will not tell.
+const HELD_STANDINGS = new Map([["c-held", { past_due_cents: 12000, oldest_bucket: "60", on_hold: true }]]);
 
 const customerById = new Map(CUSTOMERS.map((c) => [c.id, c]));
 
@@ -298,6 +316,11 @@ const conversions = [];
 // The order payments seen: the body and the Idempotency-Key header each carried, and the first answer per key.
 const payments = [];
 const paymentsByKey = new Map();
+// Every post to the conversion and the payment door as it arrived, replays and refusals included:
+// the conversions and payments lists above hold only what was taken.
+const posts = [];
+// A one-shot refusal of the payment door: the next `count` posts answer this and write nothing.
+const doorRefusal = { count: 0, status: 409, error: "" };
 
 // ---------------------------------------------------------------------------
 // The third coder's panels' world: the assist key switch, the follow-up
@@ -922,6 +945,29 @@ function respondJson(response, status, payload, extraHeaders = {}) {
   response.end(JSON.stringify(payload));
 }
 
+// The credit gate's words, as the core's CreditRefusalMessage writes them (credit.go).
+function dollars(cents) {
+  const whole = String(Math.floor(cents / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return `$${whole}.${String(cents % 100).padStart(2, "0")}`;
+}
+
+function creditRefusal(quote) {
+  const buyer = customerById.get(quote.customer_id);
+  if (buyer === undefined) return null;
+  const tail = "the quote is unchanged and no order was created; accounts receivable can release or override the hold";
+  if (HELD_STANDINGS.get(buyer.id)?.on_hold === true) {
+    return `this conversion was refused by a credit policy (customer is on an active credit hold), ${tail}`;
+  }
+  if (buyer.credit_limit_cents <= 0) {
+    return `this customer cannot buy on account right now (account has no credit; cash or card only (COD)), ${tail}`;
+  }
+  if (buyer.open_balance_cents + quote.total_cents > buyer.credit_limit_cents) {
+    const over = buyer.open_balance_cents + quote.total_cents - buyer.credit_limit_cents;
+    return `this order is ${dollars(quote.total_cents)} against a ${dollars(buyer.credit_limit_cents)} credit limit with ${dollars(buyer.open_balance_cents)} already owing (order would put the balance ${over} cents over the ${buyer.credit_limit_cents} cents limit), ${tail}`;
+  }
+  return null;
+}
+
 function readBody(request, response, next) {
   let body = "";
   request.on("data", (chunk) => {
@@ -974,7 +1020,7 @@ const server = createServer(async (request, response) => {
   // the cost list switch the wrong-role page flips. Test scaffolding; no
   // contract path shares the namespace.
   if (path === "/_stub/state") {
-    respondJson(response, 200, { workspaceWrites, itemsWrites, policyWrites, decisions, conversions, payments, switches: { ...switches } });
+    respondJson(response, 200, { workspaceWrites, itemsWrites, policyWrites, decisions, conversions, payments, posts, switches: { ...switches } });
     return;
   }
   // Test scaffolding: one more quote with the given status, customer, lines and terms, so a race probe
@@ -992,6 +1038,16 @@ const server = createServer(async (request, response) => {
     readBody(request, response, (body) => {
       switches.convertWall = body.on === true;
       respondJson(response, 200, { convertWall: switches.convertWall });
+    });
+    return;
+  }
+  // The payment door refuses its next `count` posts with this answer and writes nothing.
+  if (path === "/_stub/door-refusal" && request.method === "PUT") {
+    readBody(request, response, (body) => {
+      doorRefusal.count = Number(body.count ?? 1);
+      doorRefusal.status = Number(body.status ?? 409);
+      doorRefusal.error = String(body.error ?? "");
+      respondJson(response, 200, { ...doorRefusal });
     });
     return;
   }
@@ -1093,6 +1149,8 @@ const server = createServer(async (request, response) => {
     conversions.length = 0;
     payments.length = 0;
     paymentsByKey.clear();
+    posts.length = 0;
+    doorRefusal.count = 0;
     switches.convertWall = false;
     feedbackFiled.length = 0;
     feedbackMode.value = "ok";
@@ -1688,14 +1746,19 @@ const server = createServer(async (request, response) => {
       respondJson(response, 404, { error: "no quote with that id" });
       return;
     }
+    posts.push({ kind: "convert", quote_id: quote.id, key: null });
     readBody(request, response, (body) => {
       if (quote.status !== "ACCEPTED") {
         respondJson(response, 409, { error: `quote: this quote is ${quote.status.toLowerCase()}, only an accepted quote converts` });
         return;
       }
-      const buyer = customerById.get(quote.customer_id);
-      if (buyer !== undefined && buyer.credit_limit_cents > 0 && buyer.open_balance_cents + quote.total_cents > buyer.credit_limit_cents) {
-        respondJson(response, 409, { error: "quote: credit policy: this account is over its credit limit, so the order was not created" });
+      // The plain conversion books the order unpaid, so it draws on the account: the real gate
+      // (credit.go checkCredit with termsAreCredit true) refuses a customer with no credit at
+      // all under the COD policy, an over-limit account under the credit policy, and any held
+      // account whatever its limit.
+      const refused = creditRefusal(quote);
+      if (refused !== null) {
+        respondJson(response, 409, { error: refused });
         return;
       }
       quote.status = "CONVERTED";
@@ -1715,17 +1778,64 @@ const server = createServer(async (request, response) => {
     }
     readBody(request, response, (body) => {
       const key = String(body.idempotency_key ?? "");
-      const first = paymentsByKey.get(key);
-      if (first !== undefined) {
-        respondJson(response, 200, { ...first, replayed: true });
+      posts.push({ kind: "order-payment", quote_id: quote.id, key, header: request.headers["idempotency-key"] ?? null });
+      if (doorRefusal.count > 0) {
+        doorRefusal.count -= 1;
+        respondJson(response, doorRefusal.status, { error: doorRefusal.error });
         return;
       }
-      if (quote.status !== "CONVERTED") {
-        respondJson(response, 409, { error: "quote: only a converted quote's order takes a payment here" });
+      // The door's own checks, in the order the service makes them (order_payment.go).
+      if (!["CASH", "CARD", "CHEQUE", "EFT"].includes(body.method)) {
+        respondJson(response, 400, { error: "method must be one of CASH, CARD, CHEQUE, EFT" });
         return;
       }
-      if (!["CASH", "CARD", "CHEQUE", "EFT"].includes(body.method) || !Number.isInteger(body.amount_cents) || body.amount_cents < 1 || key === "") {
-        respondJson(response, 400, { error: "payment: a method, a positive amount and an idempotency key are required" });
+      if (!/^[A-Za-z0-9._:-]{1,64}$/.test(key)) {
+        respondJson(response, 400, { error: "a payment needs an idempotency key of 1 to 64 letters, digits, dot, colon, dash or underscore" });
+        return;
+      }
+      if (!Number.isInteger(body.amount_cents) || body.amount_cents <= 0) {
+        respondJson(response, 400, { error: "the payment amount must be more than zero" });
+        return;
+      }
+      const stored = paymentsByKey.get(`${quote.id}:${key}`);
+      if (stored !== undefined) {
+        if (stored.method !== body.method || stored.amount_cents !== body.amount_cents) {
+          respondJson(response, 409, { error: "this idempotency key took a different payment; use a new key for a new payment" });
+          return;
+        }
+        respondJson(response, 200, { ...stored, replayed: true });
+        return;
+      }
+      const buyer = customerById.get(quote.customer_id);
+      const cash = buyer !== undefined && buyer.credit_limit_cents <= 0;
+      let converted = false;
+      if (quote.status === "ACCEPTED") {
+        if (!cash) {
+          respondJson(response, 409, { error: "convert this quote to an order first; a customer with a credit account converts through the conversion door and then pays" });
+          return;
+        }
+        if (body.amount_cents !== quote.total_cents) {
+          respondJson(response, 400, { error: `a customer with no credit account pays the whole agreed total of ${dollars(quote.total_cents)}, a balance left on the invoice would be credit the customer does not have` });
+          return;
+        }
+        // The cash customer's one action converts, bills and pays together: the conversion is
+        // judged as a paid sale, so the COD policy does not refuse it. It takes no fulfilment.
+        quote.status = "CONVERTED";
+        quote.fulfilment = "PICKUP";
+        conversions.push({ quote_id: quote.id, fulfillment: null });
+        converted = true;
+      } else if (quote.status !== "CONVERTED") {
+        respondJson(response, 409, { error: `this quote is ${quote.status.toLowerCase()}; only a converted quote's order takes a payment` });
+        return;
+      }
+      const paidBefore = payments.filter((p) => p.quote_id === quote.id).reduce((sum, p) => sum + p.body.amount_cents, 0);
+      const owing = quote.total_cents - paidBefore;
+      if (cash && body.amount_cents !== owing) {
+        respondJson(response, 400, owing === 0 ? { error: "The order is paid in full." } : { error: `a customer with no credit account pays the whole balance of ${dollars(owing)}` });
+        return;
+      }
+      if (body.amount_cents > owing) {
+        respondJson(response, 400, { error: `the payment is more than the balance of ${dollars(owing)}` });
         return;
       }
       const result = {
@@ -1738,14 +1848,14 @@ const server = createServer(async (request, response) => {
         payment_no: `PAY-${payments.length + 1}`,
         method: body.method,
         amount_cents: body.amount_cents,
-        received_at: "2026-01-01T00:00:00Z",
+        received_at: new Date(0).toISOString(),
         reference: String(body.reference ?? ""),
         received_by: "stub",
-        balance_cents: quote.total_cents - body.amount_cents,
+        balance_cents: owing - body.amount_cents,
         replayed: false,
-        converted: false,
+        converted,
       };
-      paymentsByKey.set(key, result);
+      paymentsByKey.set(`${quote.id}:${key}`, result);
       payments.push({ quote_id: quote.id, body, header: request.headers["idempotency-key"] ?? null });
       respondJson(response, 200, result);
     });
@@ -2030,6 +2140,11 @@ const server = createServer(async (request, response) => {
     const q = (url.searchParams.get("q") ?? "").toLowerCase();
     const rows = CUSTOMERS.filter((customer) => customer.name.toLowerCase().includes(q) || customer.account_no.toLowerCase().includes(q));
     respondJson(response, 200, rows);
+    return;
+  }
+
+  if (request.method === "GET" && path === "/api/v1/pos/account-standing") {
+    respondJson(response, 200, HELD_STANDINGS.get(url.searchParams.get("customer_id") ?? "") ?? {});
     return;
   }
 

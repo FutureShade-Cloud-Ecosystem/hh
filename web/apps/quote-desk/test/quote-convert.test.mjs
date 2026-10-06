@@ -3,7 +3,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  awayNotice,
+  codRefusalWords,
   convertRouteQuoteId,
+  isCodRefusal,
+  paymentKeyFor,
   parsePayAmount,
   refusalWords,
   standingOf,
@@ -38,20 +42,74 @@ test("a short line warns that the order waits; an unreported grade is never none
   assert.equal(stockWords(null, "Trenton").kind, "unknown");
 });
 
-test("the standing reads terms and whether the credit gate will pass", () => {
-  assert.equal(standingOf(null, 100).gate, "unknown");
-  const cod = standingOf({ name: "A", paymentTermsDays: 0, creditLimitCents: 0, openBalanceCents: 0 }, 5000);
+test("the standing states the server's facts and does no arithmetic of its own", () => {
+  const unknown = standingOf(null, null);
+  assert.equal(unknown.terms, "UNKNOWN");
+  assert.match(unknown.gateText, /server/);
+  const cod = standingOf({ name: "A", paymentTermsDays: 0, creditLimitCents: 0, openBalanceCents: 0 }, null);
   assert.equal(cod.terms, "COD");
-  assert.equal(cod.gate, "none");
-  assert.match(cod.termsText, /due on release/);
-  const within = standingOf({ name: "A", paymentTermsDays: 30, creditLimitCents: 500000, openBalanceCents: 125000 }, 10000);
-  assert.equal(within.gate, "within");
-  assert.match(within.termsText, /30 days/);
-  const over = standingOf({ name: "A", paymentTermsDays: 30, creditLimitCents: 100000, openBalanceCents: 95000 }, 10000);
-  assert.equal(over.gate, "over");
-  assert.match(over.gateText, /over by CA\$/);
-  // Landing exactly on the limit is within it.
-  assert.equal(standingOf({ name: "A", paymentTermsDays: 30, creditLimitCents: 100000, openBalanceCents: 90000 }, 10000).gate, "within");
+  assert.equal(cod.termsText, "Cash On Demand: nothing is released until it is paid.");
+  assert.doesNotMatch(cod.termsText + cod.gateText, /cash on delivery|due on release|no credit check/i);
+  const account = standingOf({ name: "A", paymentTermsDays: 30, creditLimitCents: 500000, openBalanceCents: 125000 }, null);
+  assert.equal(account.terms, "ACCOUNT");
+  assert.match(account.termsText, /30 days/);
+  assert.match(account.gateText, /CA\$5,000\.00/);
+  assert.match(account.gateText, /CA\$1,250\.00/);
+  assert.doesNotMatch(account.gateText, /within|over by/);
+  // An account at its limit is stated, never judged: the server decides at confirm.
+  const full = standingOf({ name: "A", paymentTermsDays: 30, creditLimitCents: 100000, openBalanceCents: 95000 }, null);
+  assert.doesNotMatch(full.gateText, /within|over by/);
+  const held = standingOf({ name: "A", paymentTermsDays: 30, creditLimitCents: 100000, openBalanceCents: 0 }, { onHold: true, pastDueCents: 12000, oldestBucket: "60" });
+  assert.equal(held.gate, "hold");
+  assert.match(held.gateText, /credit hold/);
+  assert.match(held.gateText, /CA\$120\.00/);
+  // No hold on file is not a promise that there is none: the read cannot tell the two apart.
+  const quiet = standingOf({ name: "A", paymentTermsDays: 30, creditLimitCents: 100000, openBalanceCents: 0 }, { onHold: false, pastDueCents: null, oldestBucket: null });
+  assert.equal(quiet.gate, "server");
+  assert.doesNotMatch(quiet.gateText, /no hold|clear/i);
+});
+
+test("a Cash On Demand refusal is said in the server's words with no credit advice", () => {
+  const door = codRefusalWords(409, "quote: this quote is cancelled; only a converted quote's order takes a payment");
+  assert.match(door, /only a converted quote's order takes a payment/);
+  assert.match(door, /Nothing was created and nothing was taken/);
+  assert.doesNotMatch(door, /credit hold|settle the account|manager release/i);
+  assert.match(codRefusalWords(400, "a customer with no credit account pays the whole agreed total of $10.00"), /whole agreed total/);
+  // No answer at all: the action may or may not have happened, and trying again is safe.
+  const lost = codRefusalWords(undefined, "network down");
+  assert.match(lost, /could not confirm/i);
+  assert.match(lost, /same payment/i);
+  assert.doesNotMatch(lost, /Nothing was created/);
+});
+
+test("the real gate's COD refusal is told apart from a credit one", () => {
+  assert.equal(isCodRefusal("this customer cannot buy on account right now (account has no credit; cash or card only (COD)), the quote is unchanged"), true);
+  assert.equal(isCodRefusal("this order is $9.00 against a $5.00 credit limit with $0.00 already owing"), false);
+  assert.equal(isCodRefusal(""), false);
+});
+
+test("the idempotency key follows the intended payment", () => {
+  let n = 0;
+  const mint = () => `key-${++n}`;
+  const fifty = { method: "CASH", amountCents: 5000, reference: "till 2" };
+  const first = paymentKeyFor(null, fifty, mint);
+  assert.equal(first.key, "key-1");
+  // The same payment again keeps its key, so a replay posts nothing twice.
+  assert.equal(paymentKeyFor(first, { ...fifty }, mint).key, "key-1");
+  // Any change of what is intended is a new payment with a new key.
+  assert.equal(paymentKeyFor(first, { ...fifty, method: "CARD" }, mint).key, "key-2");
+  assert.equal(paymentKeyFor(first, { ...fifty, amountCents: 6000 }, mint).key, "key-3");
+  assert.equal(paymentKeyFor(first, { ...fifty, reference: "" }, mint).key, "key-4");
+});
+
+test("a payment settled after the person left is said in plain words", () => {
+  const taken = awayNotice({ orderNo: "SO-1", quoteNo: "Q-7", amountCents: 5000, paid: { paymentNo: "PAY-3" } });
+  assert.match(taken, /SO-1/);
+  assert.match(taken, /payment of CA\$50\.00 was taken/);
+  const not = awayNotice({ orderNo: "SO-1", quoteNo: "Q-7", amountCents: 5000, paid: null, said: "the payments desk is closed" });
+  assert.match(not, /was not taken/);
+  assert.match(not, /Nothing was charged/);
+  assert.match(not, /the payments desk is closed/);
 });
 
 test("a refusal is plain words with what to do next", () => {

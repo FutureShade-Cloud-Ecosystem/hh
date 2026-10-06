@@ -30,8 +30,32 @@ async function next(page: Page): Promise<void> {
   await page.getByTestId("qc-next").click();
 }
 
-async function state(page: Page): Promise<{ conversions: Array<{ quote_id: string; fulfillment: string | null }>; payments: Array<{ quote_id: string; body: Record<string, unknown>; header: string | null }> }> {
-  return (await (await page.request.get("/_stub/state")).json()) as never;
+interface Seen {
+  conversions: Array<{ quote_id: string; fulfillment: string | null }>;
+  payments: Array<{ quote_id: string; body: Record<string, unknown>; header: string | null }>;
+  posts: Array<{ kind: string; quote_id: string; key: string | null }>;
+}
+
+/** "CA$1,234.56" in integer cents, read off the screen the way a person reads it. */
+function centsOf(text: string): number {
+  const match = /(\d[\d,]*)\.(\d{2})/.exec(text);
+  if (match === null) throw new Error(`no amount in "${text}"`);
+  return Number((match[1] ?? "").replace(/,/g, "")) * 100 + Number(match[2]);
+}
+
+async function refuseDoor(page: Page, error: string, count = 1, status = 409): Promise<void> {
+  await page.request.put("/_stub/door-refusal", { data: { count, status, error } });
+}
+
+/** A cash customer's accepted quote, signed in on the convert route. */
+async function arriveCod(page: Page): Promise<string> {
+  const id = await seed(page, { status: "ACCEPTED", customer_id: "c-walkin", lines: [{ p: "p-wall-std", q: 4 }] });
+  await arrive(page, id);
+  return id;
+}
+
+async function state(page: Page): Promise<Seen> {
+  return (await (await page.request.get("/_stub/state")).json()) as Seen;
 }
 
 test("A review lists every line with its quantity and total, the customer, and warns where stock is short", async ({ page }) => {
@@ -74,7 +98,12 @@ test("C standing renders the terms and the credit status before confirming", asy
   await next(page);
   await expect(page.getByTestId("qc-standing")).toBeVisible();
   await expect(page.getByTestId("qc-terms")).toContainText("30 days");
-  await expect(page.getByTestId("qc-credit")).toContainText("within");
+  // The facts are the server's own, said as facts; the screen does no sum of its own.
+  await expect(page.getByTestId("qc-credit")).toContainText("CA$5,000.00");
+  await expect(page.getByTestId("qc-credit")).toContainText("CA$1,250.00");
+  await expect(page.getByTestId("qc-credit")).toContainText("the server decides");
+  await expect(page.getByTestId("qc-credit")).not.toContainText("within");
+  await expect(page.getByTestId("qc-credit")).not.toContainText("over by");
   await shot(page, "after-convert-standing-step-desktop");
 });
 
@@ -83,7 +112,10 @@ test("C a known over-limit customer is told before confirming, and the refusal a
   await arrive(page, id);
   await next(page);
   await next(page);
-  await expect(page.getByTestId("qc-credit")).toContainText("over");
+  // The screen never promises a pass or announces a failure it computed: it shows the server's figures.
+  await expect(page.getByTestId("qc-credit")).toContainText("CA$1,000.00");
+  await expect(page.getByTestId("qc-credit")).not.toContainText("over by");
+  await expect(page.getByTestId("qc-credit")).not.toContainText("within");
   await next(page);
   await next(page);
   await page.getByTestId("qc-confirm").click();
@@ -95,20 +127,112 @@ test("C a known over-limit customer is told before confirming, and the refusal a
   await expect(page.getByTestId("qc-done")).toHaveCount(0);
 });
 
-test("D the payment step is skippable for a COD account, which is told payment is due on release", async ({ page }) => {
-  const id = await seed(page, { status: "ACCEPTED", customer_id: "c-walkin", lines: [{ p: "p-wall-std", q: 4 }] });
+test("D a Cash On Demand customer pays the whole amount through the payment door, never a plain convert, never a skip", async ({ page }) => {
+  await arriveCod(page);
+  const total = centsOf(await page.getByTestId("qc-total").innerText());
+  await next(page);
+  // The door takes no fulfilment, so the order is made as Pickup and Will-call is not offered.
+  await expect(page.getByTestId("qc-fulfil-will-call")).toBeDisabled();
+  await expect(page.getByTestId("qc-fulfil-cod-note")).toContainText("Pickup");
+  await next(page);
+  await expect(page.getByTestId("qc-terms")).toContainText("Cash On Demand");
+  await expect(page.getByTestId("qc-terms")).toContainText("nothing is released until it is paid");
+  await expect(page.getByTestId("qc-credit")).not.toContainText("No credit check");
+  await expect(page.getByTestId("qc-credit-chip")).not.toContainText("No credit check");
+  await next(page);
+  await expect(page.getByTestId("qc-payment")).toBeVisible();
+  await expect(page.getByTestId("qc-pay-cod-note")).toContainText("Cash On Demand");
+  await expect(page.getByTestId("qc-pay-cod-note")).toContainText("nothing is released until it is paid");
+  await expect(page.getByTestId("qc-pay-due")).toContainText("CA$");
+  expect(centsOf(await page.getByTestId("qc-pay-due").innerText())).toBe(total);
+  await expect(page.getByTestId("qc-pay-skip")).toHaveCount(0);
+  await expect(page.getByTestId("qc-pay-amount")).toHaveCount(0);
+  await shot(page, "after-convert-cod-payment-step-desktop");
+  await next(page);
+  await expect(page.getByTestId("qc-confirm-step")).toContainText("Cash On Demand");
+  await expect(page.getByTestId("qc-confirm")).toContainText("take the payment");
+  await page.getByTestId("qc-confirm").click();
+  await expect(page.getByTestId("qc-done-order")).toContainText("SO-");
+  await expect(page.getByTestId("qc-done-payment")).toContainText("taken");
+  await shot(page, "after-convert-cod-done-screen-desktop");
+  const seen = await state(page);
+  // The one action the real server accepts: no plain convert was ever sent.
+  expect(seen.posts.map((p) => p.kind)).toEqual(["order-payment"]);
+  expect(seen.payments).toHaveLength(1);
+  expect(seen.payments[0]!.body.amount_cents).toBe(total);
+  expect(seen.conversions).toHaveLength(1);
+});
+
+test("D Cash On Demand is never worded as cash on delivery or due on release", async ({ page }) => {
+  await arriveCod(page);
+  await next(page);
+  await next(page);
+  await next(page);
+  const text = (await page.locator("body").innerText()).toLowerCase();
+  expect(text).not.toContain("cash on delivery");
+  expect(text).not.toContain("due on release");
+  await expect(page.getByTestId("qc-pay-cod-note")).toContainText("nothing is released until it is paid");
+});
+
+test("D a Cash On Demand refusal is said in the server's words, with no credit hold advice and nothing taken", async ({ page }) => {
+  await arriveCod(page);
+  await refuseDoor(page, "this quote is cancelled; only a converted quote's order takes a payment");
+  await next(page);
+  await next(page);
+  await next(page);
+  await next(page);
+  await page.getByTestId("qc-confirm").click();
+  const refusal = page.getByTestId("qc-refusal");
+  await expect(refusal).toContainText("only a converted quote's order takes a payment");
+  await expect(refusal).toContainText("Nothing was created and nothing was taken");
+  await expect(refusal).not.toContainText("credit hold");
+  await expect(refusal).not.toContainText("settle the account");
+  await expect(page.getByTestId("qc-done")).toHaveCount(0);
+});
+
+test("D when the customer read is unavailable the refusal names Cash On Demand and leads to the payment, not credit advice", async ({ page }) => {
+  await page.route(/\/api\/v1\/customers\/search/, (route) => route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "down" }) }));
+  await arriveCod(page);
+  await next(page);
+  await next(page);
+  await expect(page.getByTestId("qc-terms")).toContainText("not reported");
+  await next(page);
+  await next(page);
+  await next(page);
+  await page.getByTestId("qc-confirm").click();
+  // The plain convert is refused by the real gate's COD policy; the surface takes the customer to the whole payment.
+  await expect(page.getByTestId("qc-payment")).toBeVisible();
+  await expect(page.getByTestId("qc-pay-cod-note")).toContainText("Cash On Demand");
+  await expect(page.getByTestId("qc-pay-skip")).toHaveCount(0);
+  await expect(page.locator("body")).not.toContainText("credit hold");
+  await next(page);
+  await page.getByTestId("qc-confirm").click();
+  await expect(page.getByTestId("qc-done-order")).toContainText("SO-");
+  const kinds = (await state(page)).posts.map((p) => p.kind);
+  expect(kinds).toEqual(["convert", "order-payment"]);
+});
+
+test("C a credit hold the server reports is shown, and the server's refusal at confirm is in its words", async ({ page }) => {
+  const id = await seed(page, { status: "ACCEPTED", customer_id: "c-held", lines: [{ p: "p-wall-std", q: 4 }] });
   await arrive(page, id);
   await next(page);
   await next(page);
-  await expect(page.getByTestId("qc-terms")).toContainText("Cash on delivery");
+  await expect(page.getByTestId("qc-credit")).toContainText("credit hold");
+  await expect(page.getByTestId("qc-credit")).toContainText("CA$120.00");
   await next(page);
-  await expect(page.getByTestId("qc-payment")).toBeVisible();
-  await expect(page.getByTestId("qc-pay-cod-note")).toContainText("due on release");
-  await page.getByTestId("qc-pay-skip").click();
-  await expect(page.getByTestId("qc-confirm-step")).toBeVisible();
+  await next(page);
   await page.getByTestId("qc-confirm").click();
-  await expect(page.getByTestId("qc-done-order")).toContainText("SO-");
-  expect((await state(page)).payments).toHaveLength(0);
+  await expect(page.getByTestId("qc-refusal")).toContainText("credit policy");
+  await expect(page.getByTestId("qc-refusal")).toContainText("Nothing was created");
+});
+
+test("C a customer with no hold on file is not told the account is clear", async ({ page }) => {
+  await arrive(page, "q-1003");
+  await next(page);
+  await next(page);
+  await expect(page.getByTestId("qc-credit")).not.toContainText("clear");
+  await expect(page.getByTestId("qc-credit")).not.toContainText("no hold");
+  await expect(page.getByTestId("qc-credit")).toContainText("holds");
 });
 
 test("D paying fifty dollars cash posts the payment with its idempotency key", async ({ page }) => {
@@ -233,4 +357,141 @@ test("guard convert answer: a conversion answered after another quote's route op
   await expect(page.getByTestId("qc-review")).toBeVisible();
   await expect(page.getByTestId("qc-done")).toHaveCount(0);
   expect((await state(page)).conversions).toEqual([{ quote_id: "q-1003", fulfillment: "PICKUP" }]);
+});
+
+// ── the idempotency the surface relies on ──────────────────────────────────────
+
+test("idempotency: a double click on Confirm posts the conversion once", async ({ page }) => {
+  await arrive(page, "q-1003");
+  await next(page);
+  await next(page);
+  await next(page);
+  await next(page);
+  const held = await hold(page, /\/api\/v1\/quotes\/q-1003\/convert$/, { method: "POST" });
+  await page.getByTestId("qc-confirm").dblclick({ force: true });
+  await held.asked;
+  await held.release();
+  await expect(page.getByTestId("qc-done")).toBeVisible();
+  expect((await state(page)).posts.filter((p) => p.kind === "convert")).toHaveLength(1);
+});
+
+test("idempotency: a double click on Confirm posts the Cash On Demand payment once", async ({ page }) => {
+  await arriveCod(page);
+  await next(page);
+  await next(page);
+  await next(page);
+  await next(page);
+  const held = await hold(page, /\/order-payment$/, { method: "POST" });
+  await page.getByTestId("qc-confirm").dblclick({ force: true });
+  await held.asked;
+  await held.release();
+  await expect(page.getByTestId("qc-done")).toBeVisible();
+  expect((await state(page)).posts.filter((p) => p.kind === "order-payment")).toHaveLength(1);
+});
+
+test("idempotency: a payment whose answer was lost is retried under the same key and is taken once", async ({ page }) => {
+  await arrive(page, "q-1003");
+  await next(page);
+  await next(page);
+  await next(page);
+  await page.getByTestId("qc-pay-amount").fill("50");
+  await next(page);
+  // The server takes the payment and the answer is lost on the way back.
+  let lost = true;
+  await page.route(/\/order-payment$/, async (route) => {
+    if (!lost) {
+      await route.continue();
+      return;
+    }
+    lost = false;
+    await route.fetch();
+    await route.abort();
+  });
+  await page.getByTestId("qc-confirm").click();
+  await expect(page.getByTestId("qc-pay-note")).toContainText("was not taken");
+  await expect(page.getByTestId("qc-done-order")).toContainText("SO-");
+  await page.getByTestId("qc-retry-payment").click();
+  await expect(page.getByTestId("qc-done-payment")).toContainText("taken");
+  const seen = await state(page);
+  const posted = seen.posts.filter((p) => p.kind === "order-payment");
+  expect(posted).toHaveLength(2);
+  expect(posted[0]!.key).not.toBeNull();
+  expect(posted[1]!.key).toBe(posted[0]!.key);
+  expect(seen.payments).toHaveLength(1);
+});
+
+test("idempotency: the same intended payment keeps its key, a fresh intended payment gets a new one", async ({ page }) => {
+  await arriveCod(page);
+  await refuseDoor(page, "the server could not take this just now", 2, 500);
+  await next(page);
+  await next(page);
+  await next(page);
+  await next(page);
+  await page.getByTestId("qc-confirm").click();
+  await expect(page.getByTestId("qc-refusal")).toBeVisible();
+  // The same payment tried again: the same key.
+  await page.getByTestId("qc-confirm").click();
+  await expect(page.getByTestId("qc-refusal")).toBeVisible();
+  await expect.poll(async () => (await state(page)).posts.length).toBe(2);
+  // A different intended payment (another tender): a new key.
+  await page.getByTestId("qc-back").click();
+  await page.getByTestId("qc-pay-method").selectOption("CARD");
+  await next(page);
+  await page.getByTestId("qc-confirm").click();
+  await expect(page.getByTestId("qc-done-order")).toContainText("SO-");
+  const keys = (await state(page)).posts.map((p) => p.key);
+  expect(keys).toHaveLength(3);
+  expect(keys[1]).toBe(keys[0]);
+  expect(keys[2]).not.toBe(keys[0]);
+  expect((await state(page)).payments[0]!.body.method).toBe("CARD");
+});
+
+// ── leaving while the conversion is in flight ──────────────────────────────────
+
+test("a payment typed for the order is still taken, and said, when the person leaves while the conversion is out", async ({ page }) => {
+  const other = await seed(page, { status: "ACCEPTED", customer_id: "c-fenwick", lines: [{ p: "p-wall-std", q: 4 }] });
+  await arrive(page, "q-1003");
+  await next(page);
+  await next(page);
+  await next(page);
+  await page.getByTestId("qc-pay-amount").fill("50");
+  await next(page);
+  const held = await hold(page, /\/api\/v1\/quotes\/q-1003\/convert$/, { method: "POST" });
+  await page.getByTestId("qc-confirm").click();
+  await held.asked;
+  await page.evaluate((id) => {
+    window.location.hash = `#/quotes/${id}/convert`;
+  }, other);
+  await expect(page.getByTestId("qc-review")).toBeVisible();
+  await held.release();
+  await expect(page.getByTestId("qb-convert-notice")).toContainText("payment of CA$50.00 was taken");
+  await expect(page.getByTestId("qb-convert-notice")).toContainText("SO-");
+  const seen = await state(page);
+  expect(seen.payments).toHaveLength(1);
+  expect(seen.payments[0]!.body.amount_cents).toBe(5000);
+  // The screen the person landed on is not the old quote's done screen.
+  await expect(page.getByTestId("qc-done")).toHaveCount(0);
+});
+
+test("a payment that cannot be taken after the person left is said plainly, not dropped", async ({ page }) => {
+  const other = await seed(page, { status: "ACCEPTED", customer_id: "c-fenwick", lines: [{ p: "p-wall-std", q: 4 }] });
+  await arrive(page, "q-1003");
+  await next(page);
+  await next(page);
+  await next(page);
+  await page.getByTestId("qc-pay-amount").fill("50");
+  await next(page);
+  await refuseDoor(page, "the payments desk is closed");
+  const held = await hold(page, /\/api\/v1\/quotes\/q-1003\/convert$/, { method: "POST" });
+  await page.getByTestId("qc-confirm").click();
+  await held.asked;
+  await page.evaluate((id) => {
+    window.location.hash = `#/quotes/${id}/convert`;
+  }, other);
+  await expect(page.getByTestId("qc-review")).toBeVisible();
+  await held.release();
+  await expect(page.getByTestId("qb-convert-notice")).toContainText("was not taken");
+  await expect(page.getByTestId("qb-convert-notice")).toContainText("Nothing was charged");
+  await expect(page.getByTestId("qb-convert-notice")).toContainText("SO-");
+  expect((await state(page)).payments).toHaveLength(0);
 });
