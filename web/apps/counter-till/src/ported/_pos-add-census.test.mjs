@@ -32,10 +32,14 @@ const surfaces = [...sources.entries()]
   .filter(([rel, code]) => rel !== '_pos-add-dedupe.ts' && code.includes('this.adder.add('))
   .map(([rel]) => rel)
   .sort();
+// HH note: the product grid moved into @hardscapehouse/pos-kit
+// (web/packages/pos-kit, src/ported); the grid's half of this census moved
+// with it and runs there as this tree's own census copy. The app tree keeps
+// these two surfaces.
 assert.deepEqual(
   surfaces,
-  ['pos-hot-list.ts', 'pos-product-grid.ts', 'pos-search-drop.ts'],
-  'the three surfaces that dispatch an add through the shared guard',
+  ['pos-hot-list.ts', 'pos-search-drop.ts'],
+  'the two surfaces left in this tree that dispatch an add through the shared guard',
 );
 
 // 2 · each takes the rule from the shared module rather than restating it,
@@ -44,7 +48,14 @@ assert.deepEqual(
 // hang off no longer exists).
 for (const rel of surfaces) {
   const code = sources.get(rel);
-  assert.match(code, /from '\.\/_pos-add-dedupe\.js'/, `${rel} must import the rule, not copy it`);
+  // The shared rule itself moved into @hardscapehouse/pos-kit, so the
+  // surfaces here import it by the kit's deep path; either spelling must be
+  // an import, never a local copy.
+  assert.match(
+    code,
+    /from '(?:\.\/|@hardscapehouse\/pos-kit\/src\/ported\/)_pos-add-dedupe\.js'/,
+    `${rel} must import the rule, not copy it`,
+  );
   assert.match(code, /this\.adder\.ticketAt\(/, `${rel} must hand the ticket generation to the guard`);
 }
 

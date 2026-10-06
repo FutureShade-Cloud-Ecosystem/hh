@@ -3,7 +3,7 @@
 // W6 M5 Tax Engine client helpers. Thin typed wrappers over the staff API (Bearer JWT via api()). All money is
 // integer cents; fmtCents is the single money renderer. Card identifiers are MASKED-only: the raw number never
 // exists on this surface (the backend never serializes it).
-import { api, BRANCHES, branchName } from './ports.js';
+import { api, BRANCHES, branchName } from '@hardscapehouse/pos-kit/src/ported/ports.js';
 
 export { BRANCHES, branchName };
 
