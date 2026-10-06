@@ -248,7 +248,7 @@ func gapOp(kind, key string, payload map[string]any, base *int64) apigen.SyncPus
 func gapNote(row map[string]any) string {
 	from := fmt.Sprint(row["detail"])
 	if from == "" || from == "<nil>" {
-		return "fx margin note"
+		return "fx credit note"
 	}
 	return from + " (revised)"
 }
@@ -272,8 +272,8 @@ func TestGapApprovalsContractBattery(t *testing.T) {
 		Create: func(id string) map[string]any {
 			fields := map[string]any{
 				"branch_id":   testkit.BranchNorthAID,
-				"policy_type": "MARGIN_BELOW_MINIMUM",
-				"detail":      "fx margin note",
+				"policy_type": "CREDIT_LIMIT_EXCEEDED",
+				"detail":      "fx credit note",
 			}
 			if id != "" {
 				fields["id"] = id
@@ -432,7 +432,7 @@ func TestGapApprovalsFences(t *testing.T) {
 
 	res := gapPush(t, f.engine, info, north, []apigen.SyncPushOperation{
 		gapOp("create", uuid.NewString(), map[string]any{
-			"branch_id": testkit.BranchSouthAID, "policy_type": "MARGIN_BELOW_MINIMUM", "detail": "fx south note",
+			"branch_id": testkit.BranchSouthAID, "policy_type": "CREDIT_LIMIT_EXCEEDED", "detail": "fx south note",
 		}, nil),
 	})
 	if res[0].Status != "rejected" || !strings.Contains(*res[0].Error, "not in this organisation") {
@@ -441,7 +441,7 @@ func TestGapApprovalsFences(t *testing.T) {
 
 	created := gapPush(t, f.engine, info, south, []apigen.SyncPushOperation{
 		gapOp("create", uuid.NewString(), map[string]any{
-			"branch_id": testkit.BranchSouthAID, "policy_type": "MARGIN_BELOW_MINIMUM", "detail": "fx south note",
+			"branch_id": testkit.BranchSouthAID, "policy_type": "CREDIT_LIMIT_EXCEEDED", "detail": "fx south note",
 		}, nil),
 	})
 	if created[0].Status != "applied" {
@@ -829,17 +829,30 @@ func TestGapWalkthroughs(t *testing.T) {
 	staff := sync.ScopeFilter{OrgID: testkit.OrgNorthID, Actor: testkit.SubSalesManager}
 	alpha := sync.ScopeFilter{OrgID: testkit.OrgNorthID, TenantID: testkit.TenantAlphaID, Tenant: true, Actor: testkit.SubPortalAdminAlpha}
 
-	// APPROVALS: the clerk files the override from the yard phone, the
-	// manager decides on the train, the replay changes nothing, and a
-	// decision the desk already made is what the device is told to
-	// show.
+	// APPROVALS: the clerk's margin override from the yard phone is the
+	// quote desk's to file and the door refuses it with the rail's own
+	// words (D7); the credit exception is the caller's own, the manager
+	// decides it on the train, the replay changes nothing, and a decision
+	// the desk already made is what the device is told to show.
 	res := gapPush(t, f.engine, appr, clerk, []apigen.SyncPushOperation{
 		gapOp("create", uuid.NewString(), map[string]any{
 			"branch_id": testkit.BranchNorthAID, "policy_type": "MARGIN_BELOW_MINIMUM", "detail": "fixture walkthrough note",
 		}, nil),
 	})
+	if res[0].Status != "rejected" || !strings.Contains(*res[0].Error, "filed by the quote desk") {
+		t.Fatalf("walkthrough margin filing: %+v err %v", res[0], res[0].Error)
+	}
+	t.Logf("approvals 1: the clerk's pushed margin filing was refused: the quote desk files those for a quote line")
+	res = gapPush(t, f.engine, appr, clerk, []apigen.SyncPushOperation{
+		gapOp("create", uuid.NewString(), map[string]any{
+			"branch_id": testkit.BranchNorthAID, "policy_type": "CREDIT_LIMIT_EXCEEDED", "detail": "fixture walkthrough note",
+		}, nil),
+	})
+	if res[0].Status != "applied" {
+		t.Fatalf("walkthrough filing: %+v err %v", res[0], res[0].Error)
+	}
 	id := createdID(t, f, "approvals", clerk, *res[0].Seq)
-	t.Logf("approvals 1: the clerk filed override %s from the device, applied at seq %d", id, *res[0].Seq)
+	t.Logf("approvals 1b: the clerk filed the credit exception %s from the device, applied at seq %d", id, *res[0].Seq)
 	list, err := f.engine.Pull(ctx, appr, gm, 0, 50)
 	if err != nil {
 		t.Fatalf("gm pull: %v", err)

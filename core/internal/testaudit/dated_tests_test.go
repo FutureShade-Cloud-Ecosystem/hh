@@ -69,6 +69,8 @@ type exemption struct {
 // Keys are paths relative to the backend module root, slash-separated.
 var allowlisted = map[string]exemption{
 	// -- real clock is used for UNIQUENESS, never as a date --------------------------------------
+	"internal/quote/qd1_ownership_integration_test.go": {[]string{"time.Now()"},
+		"time.Now().UnixNano() only mints unique row tags; every date compared is the test's own fixed `now`, passed explicitly (the edit_integration_test.go pattern)."},
 	"internal/quote/edit_integration_test.go": {[]string{"time.Now()"},
 		"time.Now().UnixNano() only mints unique row tags; every date compared is the test's own fixed `now`, passed explicitly."},
 	"internal/quote/dib491_acceptcontrols_integration_test.go": {[]string{"time.Now()"},
