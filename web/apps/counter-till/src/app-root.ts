@@ -90,6 +90,9 @@ export class CounterTillApp extends HHElement {
         display: flex;
         align-items: center;
         gap: var(--hh-s-12);
+        /* The bar's controls wrap onto a second line at phone width instead of widening the page. */
+        flex-wrap: wrap;
+        min-width: 0;
       }
       .role-name {
         margin: 0;
@@ -636,6 +639,10 @@ export class CounterTillApp extends HHElement {
       this.#theme.cycle();
       this.#themeStatus = themeStatusText(this.#theme.choice);
     }
+    if (control.getAttribute("data-action") === "feedback") {
+      const widget = this.renderRoot.querySelector("hh-feedback");
+      if (widget instanceof HHFeedback) widget.show();
+    }
     if (control.getAttribute("data-action") === "sign-out") {
       void this.#signOut();
     }
@@ -860,6 +867,21 @@ export class CounterTillApp extends HHElement {
     `;
   }
 
+  /** The Feedback control of the bar: opens the shared widget's panel. */
+  #feedbackControl(): TemplateResult {
+    return html`
+      <button
+        type="button"
+        class="btn-secondary"
+        data-action="feedback"
+        data-testid="feedback-button"
+        title="Send feedback about this screen"
+      >
+        Feedback
+      </button>
+    `;
+  }
+
   /** The Theme control of the account area: one button, its value beside the word. */
   #themeControl(): TemplateResult {
     const choice = this.#theme.choice;
@@ -895,11 +917,12 @@ export class CounterTillApp extends HHElement {
               <div class="title-row">
                 <h1>Counter Till</h1>
                 ${this.#till === null
-                  ? html`<p class="signed-in">${this.#themeControl()}</p>`
+                  ? html`<p class="signed-in">${this.#themeControl()}${this.#feedbackControl()}</p>`
                   : html`
                       <p class="signed-in">
                         <span class="role-name" data-testid="signed-in-role">${this.#signedInRoleLabel()}</span>
                         ${this.#themeControl()}
+                        ${this.#feedbackControl()}
                         <button type="button" class="btn-secondary" data-action="sign-out" ?disabled=${this.#busy}>
                           Sign out
                         </button>
@@ -923,6 +946,7 @@ export class CounterTillApp extends HHElement {
                     : html`<a class="btn-secondary nav-link" href="#/returns" data-testid="till-returns-entry">Returns</a>`}
                   ${this.#route === "sale" ? this.#swapControl() : nothing}
                   ${this.#themeControl()}
+                  ${this.#feedbackControl()}
                   <button
                     type="button"
                     class="btn-secondary"
@@ -949,10 +973,11 @@ export class CounterTillApp extends HHElement {
             `
           : renderEntry({ flows: this.#flowsState, busy: this.#busy, message: this.#message })}
       </main>
-      <!-- The feedback pill, lifted (the lift attribute) so it sits wholly
-           above the pinned hotkey legend: the lane the ported terminal's
-           bottom padding reserves counts that lift (--hos-fab-lift). -->
-      <hh-feedback screen="Counter Till" lift></hh-feedback>
+      <!-- The feedback widget: the shared panel, opened by the bar's Feedback
+           button (trigger external: no floating pill, so nothing of the
+           till's own surface is ever under it). The lift attribute keeps the
+           open panel above the pinned hotkey legend. -->
+      <hh-feedback screen="Counter Till" trigger="external" lift></hh-feedback>
     `;
   }
 

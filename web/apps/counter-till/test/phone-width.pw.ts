@@ -152,6 +152,13 @@ test("at 390 the page itself holds the viewport with a priced line: no sideways 
   await expectDocumentHolds(page);
 });
 
+test("at 390 the bar's controls, Feedback included, wrap and never widen the page", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await signIn(page);
+  await expect(page.getByTestId("feedback-button")).toBeVisible();
+  await expectDocumentHolds(page);
+});
+
 test("at desktop width the line table keeps its weight column and needs no sideways scroll", async ({
   page,
 }) => {
