@@ -75,9 +75,8 @@ test("guard add line: an add that answers after another quote opened says nothin
   await open(page, "Q-1004");
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
   const held = await hold(page, /\/quotes\/q-1004\/lines$/, { method: "POST" });
-  const scan = page.getByTestId("pos-scan-input");
+  const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scan.fill("PSN-100");
-  await scan.press("Enter");
   await held.asked;
   await open(page, "Q-1001");
   await expect(page.getByTestId("qb-line")).toHaveCount(2);
@@ -257,9 +256,8 @@ test("guard cart change after terms save: an add whose terms save answers after 
   await expect(page.getByTestId("qb-po")).toBeVisible();
   // The save is refused, so its late answer announces nothing itself (a success that lands late does, and the open views then refresh on their own).
   const put = await hold(page, /\/api\/v1\/quotes\/q-1004\/terms$/, { method: "PUT", refuse: { status: 500, error: "quote: the terms store is down" } });
-  const scan = page.getByTestId("pos-scan-input");
+  const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scan.fill("PSN-100");
-  await scan.press("Enter");
   await put.asked;
   await open(page, "Q-1001");
   await settle(page);
@@ -279,9 +277,8 @@ test("guard cart change after read: an add whose re-read answers after another q
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
   const gated = await armedHold(page, /\/api\/v1\/quotes\/q-1004$/, "GET");
   gated.arm();
-  const scan = page.getByTestId("pos-scan-input");
+  const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scan.fill("PSN-100");
-  await scan.press("Enter");
   await gated.held.asked;
   gated.disarm();
   await open(page, "Q-1001");

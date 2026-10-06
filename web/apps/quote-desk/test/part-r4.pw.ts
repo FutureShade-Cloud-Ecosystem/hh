@@ -355,9 +355,8 @@ const LATE_CASES: LateCase[] = [
     url: /\/quotes\/q-1004\/lines$/,
     method: "POST",
     trigger: async (page) => {
-      const scan = page.getByTestId("pos-scan-input");
+      const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
       await scan.fill("PSN-100");
-      await scan.press("Enter");
     },
   },
   {
@@ -528,9 +527,8 @@ test("P3 a draft typed on a line that is gone is dropped, so it does not land on
   await page.getByTestId("qb-line-trash").nth(1).click();
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
   await expect(lines).toHaveCount(1);
-  const scan = page.getByTestId("pos-scan-input");
+  const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scan.fill("PSN-100");
-  await scan.press("Enter");
   await expect(page.getByTestId("qb-line")).toHaveCount(2);
   await expect(lines).toHaveCount(2);
   await expect(lines.nth(1).locator('[data-field="qty"]')).toHaveValue("1");

@@ -57,9 +57,8 @@ async function sendWithPick(page: Page, pick: "pickup" | "delivery"): Promise<vo
     await page.getByTestId("qb-fulfil-delivery").click();
     await expect(page.getByTestId("qb-fulfil-delivery")).toHaveAttribute("aria-pressed", "true");
   }
-  const scanInput = page.getByTestId("pos-scan-input");
+  const scanInput = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scanInput.fill("PSN-100");
-  await scanInput.press("Enter");
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
   await page.getByTestId("qb-send").click();
   await expect(page.getByTestId("qb-status")).toContainText("Sent");

@@ -161,10 +161,10 @@
     "test": "P3 Reset columns takes"
   },
   {
-    "id": "wa-leave-clears-scan-line",
+    "id": "wa-search-add-quote-id",
     "file": "src/quote-workarea.ts",
-    "find": "?.announce?.(\"\", \"ok\"); // the gun's outcome line is the old quote's\n",
-    "replace": ";\n",
+    "find": "      search.quoteId = this.quoteId;\n",
+    "replace": "",
     "test": "P3 the scan box's outcome line clears"
   },
   {

@@ -24,9 +24,8 @@ test("a draft says what it is above Save, and a sent quote no longer does", asyn
   const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
   await picker.getByPlaceholder("Search name or account #…").fill("Maple");
   await picker.getByRole("option", { name: /Maple Ridge Contracting/ }).click();
-  const scan = page.getByTestId("pos-scan-input");
+  const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scan.fill("PSN-100");
-  await scan.press("Enter");
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
   const hint = page.getByTestId("qb-draft-hint");
   await expect(hint).toHaveText("A draft is a quote you have not sent yet.");

@@ -36,7 +36,7 @@
 // brought back onto the fields in the same pass.
 import { LitElement, css, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import "@hardscapehouse/pos-kit/src/ported/pos-scan-box.js";
+import "./quote-search-add.js";
 import "@hardscapehouse/pos-kit/src/ported/pos-product-grid.js";
 import "@hardscapehouse/pos-kit/src/ported/product-thumb.js";
 import "@hardscapehouse/pos-kit/src/ported/pos-flow-steps.js";
@@ -1156,7 +1156,7 @@ export class QdQuoteWorkarea extends LitElement {
     this.renderRoot.addEventListener("pointercancel", this.onDividerPointerUp as EventListener);
     this.renderRoot.addEventListener("pointerdown", this.onOutsidePointerDown, true);
     this.renderRoot.addEventListener("pos-term-changed", this.onTermChanged as EventListener);
-    this.renderRoot.addEventListener("pos-scan-resolved", this.onScanResolved as EventListener);
+    this.renderRoot.addEventListener("quote-line-add", this.onLineAdd as EventListener);
     this.renderRoot.addEventListener("pos-add-product", this.onAddProduct as EventListener);
     this.renderRoot.addEventListener("pos-flow-goto", this.onFlowGoto as EventListener);
     this.renderRoot.addEventListener("customer-picked", this.onCustomerPicked as EventListener);
@@ -1177,7 +1177,7 @@ export class QdQuoteWorkarea extends LitElement {
     this.renderRoot.removeEventListener("pointercancel", this.onDividerPointerUp as EventListener);
     this.renderRoot.removeEventListener("pointerdown", this.onOutsidePointerDown, true);
     this.renderRoot.removeEventListener("pos-term-changed", this.onTermChanged as EventListener);
-    this.renderRoot.removeEventListener("pos-scan-resolved", this.onScanResolved as EventListener);
+    this.renderRoot.removeEventListener("quote-line-add", this.onLineAdd as EventListener);
     this.renderRoot.removeEventListener("pos-add-product", this.onAddProduct as EventListener);
     this.renderRoot.removeEventListener("pos-flow-goto", this.onFlowGoto as EventListener);
     this.renderRoot.removeEventListener("customer-picked", this.onCustomerPicked as EventListener);
@@ -1240,7 +1240,6 @@ export class QdQuoteWorkarea extends LitElement {
     this.error = "";
     this.notice = "";
     this.floorSpoken = "";
-    this.renderRoot.querySelector<HTMLElement & { announce?: (msg: string, kind: "ok") => void }>("hos-pos-scan-box")?.announce?.("", "ok"); // the gun's outcome line is the old quote's
     this.busyHolds = 0;
     this.busy = false;
     this.sendOpen = false;
@@ -1388,9 +1387,11 @@ export class QdQuoteWorkarea extends LitElement {
   }
 
   private wireShared(): void {
-    const scan = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("hos-pos-scan-box");
-    if (scan !== null) {
-      scan.branchId = this.branchId;
+    const search = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("quote-search-add");
+    if (search !== null) {
+      search.branchId = this.branchId;
+      search.customerId = this.view?.customer_id ?? this.customer?.id ?? "";
+      search.quoteId = this.quoteId;
     }
     const grid = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("hos-pos-product-grid");
     if (grid !== null) {
@@ -1798,7 +1799,7 @@ export class QdQuoteWorkarea extends LitElement {
         break;
       case "add-another":
         this.focusScan();
-        this.renderRoot.querySelector("hos-pos-scan-box")?.scrollIntoView({ behavior: "smooth", block: "center" });
+        this.renderRoot.querySelector("quote-search-add")?.scrollIntoView({ behavior: "smooth", block: "center" });
         this.notice = "Ready for the next item.";
         break;
       case "addon-add": {
@@ -1989,8 +1990,9 @@ export class QdQuoteWorkarea extends LitElement {
     this.term = event.detail.term;
   };
 
-  private readonly onScanResolved = (event: CustomEvent<{ product: PosProduct }>): void => {
-    void this.addProduct({ id: event.detail.product.id, uom: event.detail.product.base_uom, name: event.detail.product.name });
+  /** The search and add box's pick: the line goes in at quantity 1 in the product's sell unit. */
+  private readonly onLineAdd = (event: CustomEvent<{ productId: string; unit: string }>): void => {
+    void this.addProduct({ id: event.detail.productId, uom: event.detail.unit });
   };
 
   private readonly onAddProduct = (event: CustomEvent<{ product: PosProduct }>): void => {
@@ -2018,7 +2020,7 @@ export class QdQuoteWorkarea extends LitElement {
   // ── quote mutations ────────────────────────────────────────────────────────
 
   private focusScan(): void {
-    const box = this.renderRoot.querySelector<HTMLElement & { focusInput?: () => void }>("hos-pos-scan-box");
+    const box = this.renderRoot.querySelector<HTMLElement & { focusInput?: () => void }>("quote-search-add");
     box?.focusInput?.();
   }
 
@@ -2027,7 +2029,7 @@ export class QdQuoteWorkarea extends LitElement {
    * when it is mounted, the notice lines otherwise.
    */
   private speakAdd(msg: string, kind: "ok" | "warn" | "err"): void {
-    const box = this.renderRoot.querySelector<HTMLElement & { announce?: (msg: string, kind: "ok" | "warn" | "err") => void }>("hos-pos-scan-box");
+    const box = this.renderRoot.querySelector<HTMLElement & { announce?: (msg: string, kind: "ok" | "warn" | "err") => void }>("quote-search-add");
     if (box?.announce) {
       box.announce(msg, kind);
     } else if (kind === "ok") {
@@ -2806,7 +2808,7 @@ export class QdQuoteWorkarea extends LitElement {
             </button>
           </span>
         </div>
-        <hos-pos-scan-box unified defer-outcome autofocus-scan></hos-pos-scan-box>
+        <quote-search-add></quote-search-add>
         <div class="scrollzone">
           <div class="gridwrap">
             <hos-pos-product-grid></hos-pos-product-grid>

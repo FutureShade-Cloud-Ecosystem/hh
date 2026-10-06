@@ -310,3 +310,26 @@ for (const theme of ["light", "dark"] as const) {
     });
   }
 }
+
+// ── The search and add box replaces the scan box (decision log row 991) ──────
+
+test("split search: the quote page adds lines through the search and add box, not the scan box", async ({ page }) => {
+  await signIn(page);
+  await page.getByTestId("qb-list-row").first().click();
+  await expect(page.getByTestId("qb-context")).toBeVisible();
+  const where = await page.evaluate(() => {
+    const area = document.querySelector("qd-app-root")?.shadowRoot?.querySelector("qd-quote-builder")?.shadowRoot?.querySelector("qd-quote-workarea")?.shadowRoot;
+    return { search: area?.querySelectorAll("quote-search-add").length ?? -1, scan: area?.querySelectorAll("hos-pos-scan-box").length ?? -1 };
+  });
+  expect(where.scan, "no scan box on the quote page").toBe(0);
+  expect(where.search, "one search and add box on the quote page").toBe(1);
+  const box = page.getByRole("combobox", { name: "Search products by name, code or category" });
+  const before = await page.getByTestId("qb-line").count();
+  // A code typed exactly adds at once; a name search adds on a click.
+  await box.fill("PSN-100");
+  await expect(page.getByTestId("qb-line")).toHaveCount(before + 1);
+  await box.fill("holland");
+  await page.getByTestId("search-add-row").first().click();
+  await expect(page.getByTestId("qb-line")).toHaveCount(before + 2);
+  await expect(box).toBeFocused();
+});

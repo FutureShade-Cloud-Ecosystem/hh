@@ -22,9 +22,8 @@ async function startQuote(page: Page, customer = "Maple", option = /Maple Ridge 
   const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
   await picker.getByPlaceholder("Search name or account #…").fill(customer);
   await picker.getByRole("option", { name: option }).click();
-  const scan = page.getByTestId("pos-scan-input");
+  const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scan.fill("PSN-100");
-  await scan.press("Enter");
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
 }
 

@@ -72,9 +72,8 @@ test("the stepper tracks the quote: compose, picked, lines, sent", async ({ page
   await expect(products).not.toHaveClass(/complete/);
 
   // Add a line through the scan box: the resolution is the add.
-  const scanInput = page.getByTestId("pos-scan-input");
+  const scanInput = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scanInput.fill("PSN-100");
-  await scanInput.press("Enter");
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
   await expect(products).toHaveClass(/complete/);
   const review = page.getByRole("navigation", { name: "Quote sections" }).getByRole("button", { name: "Review & Send" });
@@ -94,11 +93,10 @@ test("lines are added and removed, and the core does not renumber: the remaining
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByRole("option", { name: /Maple Ridge Contracting/ }).click();
   await expect(page.getByTestId("qb-line")).toHaveCount(0);
 
-  const scanInput = page.getByTestId("pos-scan-input");
+  const scanInput = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scanInput.fill("PSN-100");
-  await scanInput.press("Enter");
+  await expect(page.getByTestId("qb-line")).toHaveCount(1);
   await scanInput.fill("WAT-STD");
-  await scanInput.press("Enter");
   await expect(page.getByTestId("qb-line")).toHaveCount(2);
   await expect(page.getByTestId("qb-lines")).toContainText("Polymeric Locking Sand");
   await expect(page.getByTestId("qb-lines")).toContainText("Retaining Wall Stone, Standard");
@@ -115,9 +113,8 @@ test("a discount above the floor lands and shows the discount row; below the flo
   await newQuote(page);
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByPlaceholder("Search name or account #…").fill("Maple");
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByRole("option", { name: /Maple Ridge Contracting/ }).click();
-  const scanInput = page.getByTestId("pos-scan-input");
+  const scanInput = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scanInput.fill("PSN-100");
-  await scanInput.press("Enter");
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
 
   // Five percent stays above the floor for this product and account: the
@@ -158,9 +155,8 @@ test("margin surfaces render only when the server sends them", async ({ page }) 
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByPlaceholder("Search name or account #…").fill("Maple");
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByRole("option", { name: /Maple Ridge Contracting/ }).click();
 
-  const scan = page.getByTestId("pos-scan-input");
+  const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scan.fill("PSN-100");
-  await scan.press("Enter");
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
 
   // On the cost list (the shipped configuration): the margin pill shows, and
@@ -243,7 +239,7 @@ test("a quote the server offers no edit on shows no edit control", async ({ page
   await expect(page.getByTestId("qb-line-qty")).toHaveCount(0);
   await expect(page.getByTestId("qb-line-disc")).toHaveCount(0);
   await expect(page.getByTestId("qb-line-trash")).toHaveCount(0);
-  await expect(page.locator("hos-pos-scan-box")).toHaveCount(1);
+  await expect(page.locator("quote-search-add")).toHaveCount(1);
 });
 
 test("the Sales manager clears the floor itself, and the clearing is stamped on the line", async ({ page }) => {
@@ -251,9 +247,8 @@ test("the Sales manager clears the floor itself, and the clearing is stamped on 
   await newQuote(page);
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByPlaceholder("Search name or account #…").fill("Fenwick");
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByRole("option", { name: /Fenwick Builders/ }).click();
-  const scanInput = page.getByTestId("pos-scan-input");
+  const scanInput = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scanInput.fill("PSN-100");
-  await scanInput.press("Enter");
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
   const disc = page.getByTestId("qb-line-disc");
   // The same fifteen percent the Sales login was refused: the manager's own

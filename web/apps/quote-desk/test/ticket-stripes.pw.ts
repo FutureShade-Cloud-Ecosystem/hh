@@ -26,10 +26,10 @@ for (const width of [1440, 820]) {
     const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
     await picker.getByPlaceholder("Search name or account #…").fill("Maple");
     await picker.getByRole("option", { name: /Maple Ridge Contracting/ }).click();
-    for (const sku of ["PSN-100", "WAT-STD"]) {
-      const scan = page.getByTestId("pos-scan-input");
+    for (const [at, sku] of ["PSN-100", "WAT-STD"].entries()) {
+      const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
       await scan.fill(sku);
-      await scan.press("Enter");
+      await expect(page.getByTestId("qb-line")).toHaveCount(at + 1);
     }
     await expect(page.getByTestId("qb-line")).toHaveCount(2);
     const paint = (index: number) =>

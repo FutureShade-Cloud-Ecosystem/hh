@@ -82,9 +82,8 @@ test("a scan right after the customer is picked waits for the quote's read and a
   await picker.getByPlaceholder("Search name or account #…").fill("Maple");
   await picker.getByRole("option", { name: /Maple Ridge Contracting/ }).click();
   const readSeen = page.waitForRequest((r) => /\/quotes\/q-1004$/.test(r.url()));
-  const scan = page.getByTestId("pos-scan-input");
+  const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scan.fill("PSN-100");
-  await scan.press("Enter");
   await readSeen;
   await settle(page);
   await expect(page.getByTestId("qb-line")).toHaveCount(0);
