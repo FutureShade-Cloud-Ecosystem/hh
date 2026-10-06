@@ -42,6 +42,12 @@ test('the resolver maps the catalogue vocabulary to tiles, and never guesses', (
     Mulch: 'mulch', Soil: 'soil', Topsoil: 'soil',
     Accessories: 'accessories', ACCESSORY: 'accessories', Edging: 'accessories', Jointing: 'accessories', Lighting: 'accessories',
   };
+  // Mixed names: the finished good wins over the material it is made of or sits on.
+  Object.assign(cases, {
+    'Natural Stone Pavers': 'pavers', 'Stone Wall': 'walls', 'Pavers & Stone': 'pavers',
+    'Wall Base': 'walls', 'Steps & Sand': 'steps', 'Stone Steps': 'steps', 'Aggregate Base': 'aggregates',
+    'Bedding Sand': 'sand-and-base', 'Crushed Stone': 'aggregates', 'Patio Slabs': 'pavers',
+  });
   for (const [name, key] of Object.entries(cases)) assert.equal(productTileKey(name), key, name);
   for (const name of ['', '  ', 'Bulk', 'Gift cards', undefined, null]) assert.equal(productTileKey(name), null, String(name));
   assert.ok(productTileUrl('Paver', 'light').endsWith('/pavers.svg'));

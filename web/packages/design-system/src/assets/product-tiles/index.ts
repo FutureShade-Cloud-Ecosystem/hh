@@ -23,7 +23,9 @@ export type ProductTileKey =
 export type ProductTileTheme = 'light' | 'dark';
 
 // One literal URL per file: the bundler only rewrites `new URL('<literal>', import.meta.url)`.
-const TILES: Record<ProductTileKey, Record<ProductTileTheme, string>> = {
+// The table is built inside a function, not at module load, so a build whose code never asks for
+// a tile (the till's default build, where the resolver is not wired) drops the drawings with it.
+const tiles = (): Record<ProductTileKey, Record<ProductTileTheme, string>> => ({
   pavers: {
     light: new URL('./pavers.svg', import.meta.url).href,
     dark: new URL('./pavers-dark.svg', import.meta.url).href,
@@ -56,22 +58,33 @@ const TILES: Record<ProductTileKey, Record<ProductTileTheme, string>> = {
     light: new URL('./accessories.svg', import.meta.url).href,
     dark: new URL('./accessories-dark.svg', import.meta.url).href,
   },
-};
+});
 
-export const PRODUCT_TILE_KEYS = Object.keys(TILES) as ProductTileKey[];
+export const PRODUCT_TILE_KEYS: readonly ProductTileKey[] = [
+  'pavers',
+  'walls',
+  'steps',
+  'sand-and-base',
+  'aggregates',
+  'mulch',
+  'soil',
+  'accessories',
+];
 
 // The words each tile answers to, read from a category name split into lower case words. Order
-// matters: the first tile with a matching word wins, so "Slabs & Steps" is steps and "Bedding
-// Sand" is sand and base. The words come from the catalogue's own vocabulary (its category names
-// and the application values the seeds file products under).
+// matters: the first tile with a matching word wins, so the order is by specificity. The finished
+// goods (walls, pavers, steps) come first, so "Stone Wall", "Natural Stone Pavers" and "Pavers &
+// Stone" are walls and pavers and not aggregates, and "Steps & Sand" is steps; the bulk materials
+// follow, then the accessories. The words come from the catalogue's own vocabulary (its category
+// names and the application values the seeds file products under).
 const WORDS: ReadonlyArray<readonly [ProductTileKey, readonly string[]]> = [
-  ['sand-and-base', ['sand', 'base', 'bedding', 'drainage']],
-  ['aggregates', ['aggregate', 'aggregates', 'stone', 'gravel', 'screenings']],
+  ['walls', ['wall', 'walls', 'coping']],
+  ['pavers', ['paver', 'pavers', 'patio']],
+  ['steps', ['step', 'steps', 'slab', 'slabs', 'slabstep']],
   ['mulch', ['mulch']],
   ['soil', ['soil', 'topsoil']],
-  ['walls', ['wall', 'walls', 'coping']],
-  ['steps', ['step', 'steps', 'slab', 'slabs', 'slabstep']],
-  ['pavers', ['paver', 'pavers', 'patio']],
+  ['aggregates', ['aggregate', 'aggregates', 'stone', 'gravel', 'screenings']],
+  ['sand-and-base', ['sand', 'base', 'bedding', 'drainage']],
   ['accessories', ['accessory', 'accessories', 'edging', 'jointing', 'sealing', 'lighting', 'landscape']],
 ];
 
@@ -88,5 +101,5 @@ export function productTileKey(category: string | undefined | null): ProductTile
 /** The URL of the tile for a category in a theme, or null when the category has no tile. */
 export function productTileUrl(category: string | undefined | null, theme: ProductTileTheme): string | null {
   const key = productTileKey(category);
-  return key === null ? null : TILES[key][theme];
+  return key === null ? null : tiles()[key][theme];
 }

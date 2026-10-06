@@ -6281,7 +6281,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
           const qty = this.addonQty.get(a.product_id) ?? String(a.default_qty);
           return html`<div class="addontile" data-testid="addon-tile" data-sku=${a.sku}>
             <div class="addontop">
-              <hos-product-thumb .productId=${a.product_id} .hasImage=${a.has_image} alt="" .size=${44}></hos-product-thumb>
+              <hos-product-thumb .productId=${a.product_id} .hasImage=${a.has_image} .category=${a.application ?? ''} alt="" .size=${44}></hos-product-thumb>
               <div class="addonmain">
                 <div class="addonname">${a.name}</div>
                 ${a.size_line ? html`<div class="addonsize">${a.size_line}</div>` : nothing}
@@ -6651,7 +6651,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
           data-testid="pos-line-row"
           data-flash=${i === this.flashIdx ? '1' : nothing}
         >
-          <hos-product-thumb .productId=${l.product.id} .alt=${l.product.name} .size=${36}></hos-product-thumb>
+          <hos-product-thumb .productId=${l.product.id} .alt=${l.product.name} .category=${l.product.application} .size=${36}></hos-product-thumb>
           <div class="lmain">
             <div class="lname">${l.product.name}</div>
             <div class="lsku">${l.product.sku}</div>
