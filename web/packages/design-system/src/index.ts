@@ -31,6 +31,13 @@ export type { KitState, DesignedState } from './state.js';
 export { baseStyles, button, select, dateInput, fieldGroup, textInput, segmented, chip, row, spinner } from './primitives.js';
 export { STATE_ICONS, icon } from './state-icons.js';
 export { HosAppHeader } from './header.js';
+export { HHFeedback } from './feedback.js';
+export type {
+  FeedbackImage,
+  FeedbackSendRequest,
+  FeedbackSendResult,
+  FeedbackSender,
+} from './feedback.js';
 
 export { ScanConfirmKit } from './kits/scan-and-confirm.js';
 export { ListDetailKit } from './kits/list-detail.js';
