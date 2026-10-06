@@ -31,11 +31,7 @@ import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
 import { ApiClient } from "@hardscapehouse/api-client";
 import { AuthController, SessionStore, authHeaderProvider } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
-import {
-  clearFrontDoorHandoff,
-  readFrontDoorHandoff,
-  type StorageLike,
-} from "./demo-account.js";
+import { clearFrontDoorHandoff, readFrontDoorHandoff } from "./demo-account.js";
 import {
   TillClient,
   HOUSE_ZONE,
@@ -378,36 +374,32 @@ export class CounterTillApp extends HHElement {
 
   /**
    * The front door's handoff (HH-DEMO-1 D2 polish, item 6): the front door
-   * mints the demo session and holds it for the box under its own
-   * sessionStorage key; when this app boots from a module tile's navigation,
+   * mints the demo session and holds it for the box under its own session
+   * storage key; when this app boots from a module tile's navigation,
    * the record is read, handed to AuthController.adopt (custody takes the
    * token into private memory and rewrites the display mirror itself), and
-   * the key is cleared in the same step, so a later visit to this app never
+   * the key is dropped in the same step, so a later visit to this app never
    * re-adopts a spent handoff. The clerk facts the chrome and the receipt
    * read ride the same record (the front door validated the mint already;
    * this read validates the record again before custody sees any of it). An
-   * absent key is the ordinary direct visit; an unusable or refused record
-   * is dropped and the entry page with the cards comes up, the till's
-   * ordinary way in. A pop-out window skips this: its own ?popout flow signs
-   * in by the cards route above.
+   * absent or unusable record is the ordinary direct visit; the entry page
+   * with the cards comes up, the till's ordinary way in. A pop-out window
+   * skips this: its own ?popout flow signs in by the cards route above. The
+   * storage touch rides the auth package's throw-safe mirror, this app's
+   * sink gate's one sanctioned accessor.
    */
   async #adoptFromFrontDoor(): Promise<void> {
     if (this.#sessions.current !== null) return;
-    const storage = (globalThis as { sessionStorage?: StorageLike }).sessionStorage;
-    if (storage === undefined) return;
-    const read = readFrontDoorHandoff(storage, Date.now());
+    const read = readFrontDoorHandoff();
     if (read.kind === "absent") return;
-    if (read.kind === "unusable") {
-      clearFrontDoorHandoff(storage);
-      return;
-    }
+    clearFrontDoorHandoff();
+    if (read.kind === "unusable") return;
     const handed = read.session;
     const adopted = this.#controller.adopt({
       token: handed.token,
       tokenExpiresAtMs: handed.tokenExpiresAtMs,
       user: handed.user,
     });
-    clearFrontDoorHandoff(storage);
     if (!adopted) return;
     this.#clerkUserId = handed.user.userId;
     this.#clerkRoleCode = handed.roleCode;

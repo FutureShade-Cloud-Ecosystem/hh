@@ -64,9 +64,9 @@ function handoffRecord(overrides = {}) {
 
 test("the front door's handoff reads ready when the record validates whole", () => {
   const storage = handoffStorage();
-  assert.equal(readFrontDoorHandoff(storage, NOW).kind, "absent", "no record is absent");
+  assert.equal(readFrontDoorHandoff({ storage, now: () => NOW }).kind, "absent", "no record is absent");
   storage.setItem(FRONT_DOOR_SESSION_KEY, JSON.stringify(handoffRecord()));
-  const read = readFrontDoorHandoff(storage, NOW);
+  const read = readFrontDoorHandoff({ storage, now: () => NOW });
   assert.equal(read.kind, "ready");
   assert.equal(read.session.flow, "sales");
   assert.equal(read.session.user.userId, "demo-account-sales");
@@ -76,24 +76,28 @@ test("the front door's handoff reads ready when the record validates whole", () 
 test("a corrupt, short or expired handoff record is unusable, never a session", () => {
   const storage = handoffStorage();
   storage.setItem(FRONT_DOOR_SESSION_KEY, "{not json");
-  assert.equal(readFrontDoorHandoff(storage, NOW).kind, "unusable", "not json");
+  assert.equal(
+    readFrontDoorHandoff({ storage, now: () => NOW }).kind,
+    "absent",
+    "not json reads as absent: the mirror answers undefined for an unreadable record",
+  );
   storage.setItem(FRONT_DOOR_SESSION_KEY, JSON.stringify({ token: "x" }));
-  assert.equal(readFrontDoorHandoff(storage, NOW).kind, "unusable", "a record with one field");
+  assert.equal(readFrontDoorHandoff({ storage, now: () => NOW }).kind, "unusable", "a record with one field");
   storage.setItem(FRONT_DOOR_SESSION_KEY, JSON.stringify(handoffRecord({ tokenExpiresAtMs: NOW - 1 })));
-  assert.equal(readFrontDoorHandoff(storage, NOW).kind, "unusable", "an expired mint is not a session");
+  assert.equal(readFrontDoorHandoff({ storage, now: () => NOW }).kind, "unusable", "an expired mint is not a session");
   storage.setItem(FRONT_DOOR_SESSION_KEY, JSON.stringify(handoffRecord({ tier: "three" })));
-  assert.equal(readFrontDoorHandoff(storage, NOW).kind, "unusable", "a tier that is not a number");
+  assert.equal(readFrontDoorHandoff({ storage, now: () => NOW }).kind, "unusable", "a tier that is not a number");
   storage.setItem(FRONT_DOOR_SESSION_KEY, JSON.stringify(handoffRecord({ user: { userId: "u" } })));
-  assert.equal(readFrontDoorHandoff(storage, NOW).kind, "unusable", "a short user block");
+  assert.equal(readFrontDoorHandoff({ storage, now: () => NOW }).kind, "unusable", "a short user block");
 });
 
 test("the handoff clear drops the key and nothing else", () => {
   const storage = handoffStorage();
   storage.setItem(FRONT_DOOR_SESSION_KEY, JSON.stringify(handoffRecord()));
   storage.setItem("hh-auth.session.v2", JSON.stringify({ v: 2, userId: "u", email: "e", name: "n" }));
-  clearFrontDoorHandoff(storage);
+  clearFrontDoorHandoff({ storage });
   assert.equal(storage.getItem(FRONT_DOOR_SESSION_KEY), null, "the handoff key is gone");
   assert.notEqual(storage.getItem("hh-auth.session.v2"), null, "the custody mirror is not touched");
-  clearFrontDoorHandoff(storage);
+  clearFrontDoorHandoff({ storage });
   assert.equal(storage.getItem(FRONT_DOOR_SESSION_KEY), null, "a second clear is quiet");
 });
