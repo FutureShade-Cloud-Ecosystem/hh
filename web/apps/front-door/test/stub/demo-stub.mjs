@@ -57,6 +57,10 @@ const USERS = {
 let refusal = null;
 let lastOrg = "";
 let mints = 0;
+let pendingApprovalCount = 3;
+let approvalsShape = "array";
+let extraApprovals = 0;
+let approvalsDelayMs = 0;
 
 function base64Url(value) {
   return Buffer.from(JSON.stringify(value), "utf8")
@@ -131,7 +135,58 @@ const server = createServer(async (request, response) => {
     refusal = null;
     lastOrg = "";
     mints = 0;
+    pendingApprovalCount = 3;
+    approvalsShape = "array";
+    extraApprovals = 0;
+    approvalsDelayMs = 0;
     sendJson(response, 200, { reset: true });
+    return;
+  }
+
+  if (path === "/_stub/set-approvals" && request.method === "POST") {
+    const body = await readBody(request);
+    if (body === null || typeof body !== "object" || typeof body.count !== "number") {
+      sendJson(response, 400, { error: "set approvals with { count: number }" });
+      return;
+    }
+    pendingApprovalCount = Math.max(0, body.count);
+    // shape "array" is the bare array the core really sends; "page" is the contract's page object.
+    approvalsShape = body.shape === "page" ? "page" : "array";
+    // extra rows that are not pending margin requests and must not be counted.
+    extraApprovals = typeof body.extra === "number" ? Math.max(0, body.extra) : 0;
+    approvalsDelayMs = typeof body.delayMs === "number" ? Math.max(0, body.delayMs) : 0;
+    sendJson(response, 200, { count: pendingApprovalCount });
+    return;
+  }
+
+  if (path === "/api/v1/staff/approvals" && request.method === "GET") {
+    if (approvalsDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, approvalsDelayMs));
+    const row = (id, policy, status) => ({
+      id,
+      status,
+      requested_by: "demo-account-sales-manager",
+      branch_id: "demo-branch",
+      policy_type: policy,
+      detail: "Demo approval",
+    });
+    const items = Array.from({ length: pendingApprovalCount }, (_, i) => row(`approval-${i + 1}`, "MARGIN_BELOW_MINIMUM", "PENDING"));
+    for (let i = 0; i < extraApprovals; i += 1) {
+      items.push(row(`other-${i + 1}`, "CREDIT_LIMIT_EXCEEDED", "PENDING"));
+      items.push(row(`decided-${i + 1}`, "MARGIN_BELOW_MINIMUM", "APPROVED"));
+    }
+    if (approvalsShape === "page") {
+      // Two pages, so the cursor is followed: the first holds one row.
+      const cursor = url.searchParams.get("cursor");
+      if (items.length > 1 && cursor === null) {
+        sendJson(response, 200, { items: items.slice(0, 1), next_cursor: "p2", limit: 1 });
+      } else if (items.length > 1) {
+        sendJson(response, 200, { items: items.slice(1), next_cursor: null, limit: 20 });
+      } else {
+        sendJson(response, 200, { items, next_cursor: null, limit: 20 });
+      }
+      return;
+    }
+    sendJson(response, 200, items);
     return;
   }
 

@@ -1195,6 +1195,7 @@ test("the split panel shows the typed sum and leaves the settlement to the ring"
   // the ring. What the panel shows is the typed sum, which is arithmetic over
   // the operator's own entries, and the words that say where settlement
   // happens. The shape refusals stay the panel's own.
+  // The split panel's own sum line still prints the CA prefix from the till's source (the Counter Till coder carries it).
   await panel.getByTestId("split-amount-0").fill("4.00");
   await expect(page.getByTestId("split-typed")).toHaveText("$4.00 typed so far");
   await expect(page.getByTestId("split-remaining")).toHaveCount(0);

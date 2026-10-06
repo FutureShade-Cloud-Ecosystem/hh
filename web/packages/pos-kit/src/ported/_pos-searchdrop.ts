@@ -109,7 +109,7 @@ export interface CounterQuote {
 
 /** What a price cell may show. Every flag is a fact about the SERVER's answer, never a computation. */
 export interface PricePicture {
- /** Nothing can be said: render no price at all (never CA$0.00). */
+ /** Nothing can be said: render no price at all (never $0.00). */
   unpriceable: boolean;
   /** The customer's own price. */
   customerCents: number;
@@ -139,7 +139,7 @@ export interface PricePicture {
  *
  * retail struck through only when the customer is genuinely paying less. A walk-in paying
  * retail must not see their own price crossed out beside itself.
- * saving only when the server sent one. There is no "you save CA$0.00" state, because a
+ * saving only when the server sent one. There is no "you save $0.00" state, because a
  * zero saving is not a saving and a badge that says so trains people to ignore badges.
  * bulk only when a break exists that BEATS what they are getting now, and it is worded by
  * the caller as an opportunity: it is a quantity they have not bought yet.

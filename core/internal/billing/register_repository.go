@@ -330,7 +330,7 @@ func (r *Repository) RegisterCountsFor(ctx context.Context, asOf time.Time, dueS
 
 // SelectionTotals sums the OUTSTANDING balance of an explicit selection, server-side.
 //
-// The bulk bar's "3 selected · CA$X" figure is read from here rather than added up in the browser for
+// The bulk bar's "3 selected · $X" figure is read from here rather than added up in the browser for
 // one reason: the operator is about to act on that number, and the action will read the balances
 // again from this table. A figure summed on a stale row set would let somebody create a statement for
 // an amount nobody can reproduce.

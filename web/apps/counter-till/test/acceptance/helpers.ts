@@ -56,7 +56,7 @@ export function dollars(cents: number): string {
 
 /**
  * The ported surface's own money word on a line, the total card and the sold
- * panel: "CA$5.95". The returns desk (HH's own view) keeps the plain "$"
+ * panel: "$5.95". The returns desk (HH's own view) keeps the plain "$"
  * words, so both renderings are mirrored here.
  */
 export function cad(cents: number): string {

@@ -40,7 +40,7 @@
 import { html, css, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
-import { ApiClient, staffDemo } from "@hardscapehouse/api-client";
+import { ApiClient, staffDemo, staffIdentity } from "@hardscapehouse/api-client";
 // The ported icon registry: the one registry, the shared POS kit's own files
 // (moved once out of the Counter Till's app so the box's apps import the same
 // pieces). Only type imports reach the kit's ports from here, so the front
@@ -58,6 +58,7 @@ import {
   validateMint,
   type FrontDoorSession,
 } from "./session.js";
+import { countMarginApprovals } from "./approvals-count.js";
 import { applyTheme } from "./theme.js";
 
 const DEMO_ORG = "hh-demo";
@@ -514,6 +515,10 @@ export class FrontDoorApp extends HHElement {
       /* The modules the box does not serve yet, grouped under their own word
          and drawn quieter and smaller than the live tiles: present, honest,
          clearly second. */
+      .tile .approval-note {
+        font-size: 12px;
+        color: var(--hh-text-dim);
+      }
       .coming-next {
         margin: var(--hh-s-32) 0 0;
       }
@@ -594,6 +599,10 @@ export class FrontDoorApp extends HHElement {
   #refusals = new Map<string, string>();
   /** The polite region's sentence. Empty is the resting value. */
   #notice = "";
+  /** The staff client carries the session's bearer token. */
+  readonly #staffClient: ApiClient;
+  /** Count of pending margin approvals for the manager, fetched on session adopt. */
+  #approvalCount = 0;
 
   constructor() {
     super();
@@ -605,6 +614,12 @@ export class FrontDoorApp extends HHElement {
     this.#demoClient = new ApiClient({
       baseUrl: "",
       headers: async () => ({ "X-Org": DEMO_ORG }),
+    });
+    this.#staffClient = new ApiClient({
+      baseUrl: "",
+      headers: async () => ({
+        Authorization: `Bearer ${this.#session !== null ? this.#session.token : ""}`,
+      }),
     });
   }
 
@@ -620,6 +635,7 @@ export class FrontDoorApp extends HHElement {
     if (restored !== null) {
       this.#session = restored;
       this.#screen = { kind: "home" };
+      void this.#loadApprovals();
     }
   }
 
@@ -707,6 +723,7 @@ export class FrontDoorApp extends HHElement {
     this.#session = minted;
     this.#screen = { kind: "home" };
     this.#notice = "";
+    void this.#loadApprovals();
     this.requestUpdate();
   }
 
@@ -714,8 +731,29 @@ export class FrontDoorApp extends HHElement {
   #endSession(): void {
     this.#store.clear();
     this.#session = null;
+    this.#approvalCount = 0;
     this.#screen = { kind: "picker" };
     this.#refusals = new Map();
+  }
+
+  /** Fetch pending approval count for the sales manager role. */
+  async #loadApprovals(): Promise<void> {
+    const session = this.#session;
+    if (session === null) return;
+    if (session.roleCode !== "sales_manager") {
+      this.#approvalCount = 0;
+      return;
+    }
+    const count = await countMarginApprovals((cursor) =>
+      staffIdentity.identityListApprovals(this.#staffClient, {
+        status: "PENDING",
+        ...(cursor !== undefined ? { cursor } : {}),
+      }),
+    );
+    // The session changed while the request was out: the answer is for someone else.
+    if (this.#session !== session) return;
+    this.#approvalCount = count ?? 0;
+    this.requestUpdate();
   }
 
   render(): TemplateResult {
@@ -862,6 +900,10 @@ export class FrontDoorApp extends HHElement {
   }
 
   #tile(tile: ModuleTile): TemplateResult {
+    const approvalNote =
+      tile.name === "Quote Desk" && this.#approvalCount > 0
+        ? html`<span class="approval-note">${this.#approvalCount} approval${this.#approvalCount === 1 ? "" : "s"} waiting</span>`
+        : nothing;
     return html`
       <button
         type="button"
@@ -874,6 +916,7 @@ export class FrontDoorApp extends HHElement {
         <span class="words">
           <span class="module">${tile.name}</span>
           <span class="what">${tileBlurb(tile)}</span>
+          ${approvalNote}
           <span class="cta" aria-hidden="true">Open the ${tile.name}</span>
         </span>
       </button>

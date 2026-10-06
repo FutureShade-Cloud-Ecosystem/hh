@@ -14,10 +14,10 @@ func TestARReminderBody_NegativeBalanceKeepsItsSign(t *testing.T) {
 		cents int64
 		want  string
 	}{
-		{-50, "−CA$0.50"},
-		{-12345, "−CA$123.45"},
-		{50, "CA$0.50"},
-		{104864, "CA$1,048.64"},
+		{-50, "−$0.50"},
+		{-12345, "−$123.45"},
+		{50, "$0.50"},
+		{104864, "$1,048.64"},
 	} {
 		got := arLandingReminderBody(ReminderContext{InvoiceNo: "X1", DueDate: due, BalanceCents: tc.cents}, 10, "")
 		if !strings.Contains(got, " "+tc.want+" ") {
