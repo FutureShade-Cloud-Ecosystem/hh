@@ -224,6 +224,10 @@ export class QuoteSearchAdd extends HHElement {
       .added {
         margin-top: var(--hh-s-4);
         font-size: 13px;
+        line-height: 1.4;
+        /* The line keeps its height when it is empty, so the rows under the box never move when it fills or clears
+           (a second press of a button under the pointer must land on the same button). */
+        min-height: 1.4em;
         color: var(--hh-success);
       }
     `,
