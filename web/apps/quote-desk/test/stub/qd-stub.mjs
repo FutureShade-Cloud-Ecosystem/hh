@@ -230,6 +230,29 @@ const CUSTOMERS = [
     open_balance_cents: 0,
     percent_off: 10,
   },
+  // The convert surface's two standings: an account sitting near its limit (the
+  // gate refuses an order that carries it over) and a cash customer with no
+  // credit account at all (terms are cash on delivery).
+  {
+    id: "c-granite",
+    account_no: "C03",
+    name: "Granite Overlimit Co",
+    customer_type: "CONTRACTOR",
+    payment_terms_days: 30,
+    credit_limit_cents: 100000,
+    open_balance_cents: 95000,
+    percent_off: 0,
+  },
+  {
+    id: "c-walkin",
+    account_no: "C04",
+    name: "Walkin Cash Customer",
+    customer_type: "RETAIL",
+    payment_terms_days: 0,
+    credit_limit_cents: 0,
+    open_balance_cents: 0,
+    percent_off: 0,
+  },
 ];
 
 const customerById = new Map(CUSTOMERS.map((c) => [c.id, c]));
@@ -255,7 +278,7 @@ const HST_RATE_BPS = 1300;
 // approvalsShape: "page" is the contract's IdentityApprovalPage, "bare" is what
 // the core's handler writes today (a bare array), "paged" is the page object
 // split into pages of one row with next_cursor.
-const switches = { callerOnCostList: true, callerIsGeneralManager: false, floorRaiseBps: 0, approvalsShape: "page", quotePageSize: 0 };
+const switches = { convertWall: false, callerOnCostList: true, callerIsGeneralManager: false, floorRaiseBps: 0, approvalsShape: "page", quotePageSize: 0 };
 
 // Every write the stub sees, for the suite's layout save assertions. The
 // ledger is test scaffolding: no contract path reads it.
@@ -268,6 +291,9 @@ const shareLinks = new Map();
 const floorRequests = new Map(); // `${quoteId}:${lineNo}` -> request row
 // The conversions seen, for the suite's fulfilment assertion (scaffolding).
 const conversions = [];
+// The order payments seen: the body and the Idempotency-Key header each carried, and the first answer per key.
+const payments = [];
+const paymentsByKey = new Map();
 
 // ---------------------------------------------------------------------------
 // The third coder's panels' world: the assist key switch, the follow-up
@@ -944,7 +970,7 @@ const server = createServer(async (request, response) => {
   // the cost list switch the wrong-role page flips. Test scaffolding; no
   // contract path shares the namespace.
   if (path === "/_stub/state") {
-    respondJson(response, 200, { workspaceWrites, itemsWrites, policyWrites, decisions, conversions, switches: { ...switches } });
+    respondJson(response, 200, { workspaceWrites, itemsWrites, policyWrites, decisions, conversions, payments, switches: { ...switches } });
     return;
   }
   // Test scaffolding: one more quote with the given status, customer, lines and terms, so a race probe
@@ -954,6 +980,14 @@ const server = createServer(async (request, response) => {
       const lines = Array.isArray(body.lines) && body.lines.length > 0 ? body.lines : [{ p: "p-wall-std", q: 4 }];
       const made = seedQuote(typeof body.status === "string" ? body.status : "DRAFT", String(body.customer_id ?? "c-fenwick"), String(body.owner_flow ?? "sales"), lines, body.terms ?? {});
       respondJson(response, 200, { id: made.id, quote_no: made.quote_no });
+    });
+    return;
+  }
+  // The role wall: a role curation that withholds the convert action from the caller's profile.
+  if (path === "/_stub/convert-wall" && request.method === "PUT") {
+    readBody(request, response, (body) => {
+      switches.convertWall = body.on === true;
+      respondJson(response, 200, { convertWall: switches.convertWall });
     });
     return;
   }
@@ -1023,6 +1057,9 @@ const server = createServer(async (request, response) => {
     policyWrites.length = 0;
     decisions.length = 0;
     conversions.length = 0;
+    payments.length = 0;
+    paymentsByKey.clear();
+    switches.convertWall = false;
     acceptance.allow_multi_accept = false;
     resetPolicy();
     resetScopeRules();
@@ -1620,10 +1657,61 @@ const server = createServer(async (request, response) => {
         respondJson(response, 409, { error: `quote: this quote is ${quote.status.toLowerCase()}, only an accepted quote converts` });
         return;
       }
+      const buyer = customerById.get(quote.customer_id);
+      if (buyer !== undefined && buyer.credit_limit_cents > 0 && buyer.open_balance_cents + quote.total_cents > buyer.credit_limit_cents) {
+        respondJson(response, 409, { error: "quote: credit policy: this account is over its credit limit, so the order was not created" });
+        return;
+      }
       quote.status = "CONVERTED";
       quote.fulfilment = body.fulfillment === "WILL_CALL" ? "WILL_CALL" : "PICKUP";
       conversions.push({ quote_id: quote.id, fulfillment: body.fulfillment ?? null });
       respondJson(response, 201, { order_id: `o-${quote.id}`, order_no: `SO-${quote.id.slice(-4)}` });
+    });
+    return;
+  }
+
+  match = /^\/api\/v1\/quotes\/([^/]+)\/order-payment$/.exec(path);
+  if (match !== null && request.method === "POST") {
+    const quote = quoteOr404(match[1]);
+    if (quote === null) {
+      respondJson(response, 404, { error: "no quote with that id" });
+      return;
+    }
+    readBody(request, response, (body) => {
+      const key = String(body.idempotency_key ?? "");
+      const first = paymentsByKey.get(key);
+      if (first !== undefined) {
+        respondJson(response, 200, { ...first, replayed: true });
+        return;
+      }
+      if (quote.status !== "CONVERTED") {
+        respondJson(response, 409, { error: "quote: only a converted quote's order takes a payment here" });
+        return;
+      }
+      if (!["CASH", "CARD", "CHEQUE", "EFT"].includes(body.method) || !Number.isInteger(body.amount_cents) || body.amount_cents < 1 || key === "") {
+        respondJson(response, 400, { error: "payment: a method, a positive amount and an idempotency key are required" });
+        return;
+      }
+      const result = {
+        order_id: `o-${quote.id}`,
+        order_no: `SO-${quote.id.slice(-4)}`,
+        invoice_id: `i-${quote.id}`,
+        invoice_no: `INV-${quote.id.slice(-4)}`,
+        invoice_total_cents: quote.total_cents,
+        payment_id: `pay-${payments.length + 1}`,
+        payment_no: `PAY-${payments.length + 1}`,
+        method: body.method,
+        amount_cents: body.amount_cents,
+        received_at: "2026-01-01T00:00:00Z",
+        reference: String(body.reference ?? ""),
+        received_by: "stub",
+        balance_cents: quote.total_cents - body.amount_cents,
+        replayed: false,
+        converted: false,
+      };
+      paymentsByKey.set(key, result);
+      payments.push({ quote_id: quote.id, body, header: request.headers["idempotency-key"] ?? null });
+      respondJson(response, 200, result);
     });
     return;
   }
@@ -1772,7 +1860,9 @@ const server = createServer(async (request, response) => {
       // 0140), never admin; the app offers the settings entry to everyone and
       // the server answers who may write.
       profile: caller.account.role_code === "sales_manager" ? "manager" : "staff",
-      role_items: roleItemsByProfile.get(asked ?? profileOf(caller)) ?? [],
+      role_items: switches.convertWall
+        ? [{ kind: "action", id: "quote.convert_order", position: 0, visible: false }]
+        : (roleItemsByProfile.get(asked ?? profileOf(caller)) ?? []),
       user_items: myItems.get(userId) ?? [],
       workspace: { ...workspace, open_ref: workspace.open_ref === "" ? undefined : workspace.open_ref },
       policy,
