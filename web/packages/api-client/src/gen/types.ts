@@ -964,6 +964,17 @@ export type Product = {
   list_price_cents?: number | null;
   list_price_uom?: string;
 };
+export type UomView = {
+  code: string;
+  name: string;
+  dimension: "count" | "area" | "weight" | "volume" | "length";
+  is_active: boolean;
+};
+export type UomViewPage = {
+  items: UomView[];
+  next_cursor?: string | null;
+  limit?: number;
+};
 export type ProductPage = {
   items: Product[];
   next_cursor?: string | null;
