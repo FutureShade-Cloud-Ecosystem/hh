@@ -13,7 +13,10 @@ package pos
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
+	"strings"
 	"sync"
 	"testing"
 
@@ -169,4 +172,96 @@ func TestTypedNameProvider_ReadsRaceTheBindUnderRepeatedFills(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+// TestTypedNameProvider_NilStoreRebindsRaceTheBoundRefusals pins the bind lock on the store field
+// itself, the field the round 1 review's P1 turned the tx capture's insert through (the row 834
+// finding: with the tx capture reading the live store field again, no leg went red, so the closed
+// behavior was unpinned). The trick is the fill's own "only when nil" rule: bound with a NIL store,
+// every re-bind rewrites p.store (nil over nil is still a write), so the race phase carries a
+// standing stream of store-field rewrites against both capture paths' snapshot reads. On the locked
+// tree every rewrite takes the same mutex the reads snapshot under and the leg is green; with the
+// bind's lock missing (the round 1 closed shape, and the shape main still ships) the rewrites are
+// unsynchronized writes racing both capture paths and the race detector fails the run.
+//
+// The leg also pins the exact outcome shape of an unbound provider, asserted after the race phase:
+// the tx capture refuses with the not-bound 500 BEFORE it touches any store (no ref, no trail row,
+// and therefore no pool acquisition of any kind, the row 786 shape), and the pool capture answers
+// honestly for an unbound capture, a ref and a trail row each, with nothing persisted anywhere.
+func TestTypedNameProvider_NilStoreRebindsRaceTheBoundRefusals(t *testing.T) {
+	rec := &raceRecorder{}
+	p := NewTypedNameSignatureProvider(plainSealer{})
+	p.bind(nil, rec, nil) // bound with a NIL store: bind keeps rewriting that nil on every re-bind
+
+	// The same barrier the first-capture leg uses: every goroutine parks at the line first, so the
+	// re-binds and the capture-path reads overlap instead of queuing behind one another.
+	start := make(chan struct{})
+	loops := 20
+	poolCount := raceContenders * loops
+	var wg sync.WaitGroup
+	refs := make([]string, poolCount)
+	poolErrs := make([]error, poolCount)
+	txErrs := make([]error, poolCount)
+	for i := 0; i < raceContenders; i++ {
+		wg.Add(3)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < loops; j++ {
+				p.bind(nil, rec, nil)
+			}
+		}()
+		go func(k int) {
+			defer wg.Done()
+			for j := 0; j < loops; j++ {
+				refs[k*loops+j], poolErrs[k*loops+j] = p.CaptureTyped(typedCtx(), okAttestation())
+			}
+		}(i)
+		go func(k int) {
+			defer wg.Done()
+			for j := 0; j < loops; j++ {
+				_, txErrs[k*loops+j] = p.CaptureTypedTx(typedCtx(), &sealedCaptureTx{}, okAttestation())
+			}
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	// The tx capture on an unbound provider must refuse with the not-bound 500, mint no ref and
+	// write no trail row: the refusal runs before any store touch, so a capture inside a
+	// transaction can never answer success for evidence that persisted nowhere.
+	for i, err := range txErrs {
+		if err == nil {
+			t.Fatalf("tx capture %d on an unbound provider must be refused, got success", i)
+		}
+		var ce clientError
+		if !errors.As(err, &ce) || ce.status != http.StatusInternalServerError {
+			t.Fatalf("tx capture %d refusal must be the not-bound 500, got %v", i, err)
+		}
+		if !strings.Contains(ce.msg, "not bound to a store") {
+			t.Fatalf("tx capture %d refusal must name the missing store, got %q", i, ce.msg)
+		}
+	}
+	// The pool capture on an unbound provider must answer with its own ref and land its trail row,
+	// the unbound semantics the pool path has always carried, now pinned against the rewrite storm.
+	seen := map[string]bool{}
+	for i, ref := range refs {
+		if poolErrs[i] != nil {
+			t.Fatalf("pool capture %d on an unbound provider must answer, got %v", i, poolErrs[i])
+		}
+		if ref == "" {
+			t.Fatalf("pool capture %d must return its ref", i)
+		}
+		if seen[ref] {
+			t.Fatalf("every pool capture mints its own ref, %q came back twice", ref)
+		}
+		seen[ref] = true
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if rec.records != poolCount {
+		t.Fatalf("the trail must carry one row per pool capture, got %d, want %d", rec.records, poolCount)
+	}
+	if rec.txWrites != 0 {
+		t.Fatalf("a refused tx capture must write no trail row, got %d", rec.txWrites)
+	}
 }
