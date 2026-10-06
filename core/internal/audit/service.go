@@ -520,13 +520,14 @@ var allowedExtraKeys = map[string]bool{
 	// The load frame's one-audit-row-per-batch row (HH-LOAD-1, ADR-0024)
 	// joins the allowlist openly, the customer-quote precedent: kind,
 	// source system and batch id are code-shaped words and keys, never a
-	// record value, and the four counts are ints, which pass unredacted
+	// record value, and the five counts are ints, which pass unredacted
 	// by construction. The row's actor is the machine principal, a system
 	// actor on the uuid actor_id column.
 	"load_kind":      true, // the door's registry kind
 	"load_batch_id":  true, // the caller's batch id (a key, not a value)
 	"load_source":    true, // the source system word
 	"load_created":   true, // the batch's created count
+	"load_attached":  true, // the batch's attached count (the map doors)
 	"load_updated":   true, // the batch's updated count
 	"load_unchanged": true, // the batch's unchanged count
 	"load_refused":   true, // the batch's refused count
