@@ -34,6 +34,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
@@ -273,6 +274,14 @@ func (s *Service) WithApprovalFiler(f ApprovalFiler) *Service { s.approvalFiler 
 // returns the journal id. bankrec's clearing journals go through here. FROZEN signature; A-01 fills the body.
 func (s *Service) PostExternal(ctx context.Context, in ExternalJournal) (journalID string, err error) {
 	return s.postExternal(ctx, in)
+}
+
+// PostExternalTx is PostExternal through the caller's transaction: the same validation, the same idempotency
+// key, but every read and write rides tx, so a caller that holds a connection (purchasing PostBill) does not
+// ask the shared pool for a second one and the journal commits or rolls back with the caller. Additive: the
+// FROZEN PostExternal signature is untouched.
+func (s *Service) PostExternalTx(ctx context.Context, tx pgx.Tx, in ExternalJournal) (journalID string, err error) {
+	return s.postExternalTx(ctx, tx, in)
 }
 
 // GLBalanceCents returns the balance of an account for a period/branch, read from v_gl_account_balances.

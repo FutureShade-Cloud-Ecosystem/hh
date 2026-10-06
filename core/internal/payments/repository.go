@@ -12,6 +12,61 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
+// THE ONE MONEY LOCK ORDER.
+//
+// Every writer that touches a payment, an invoice balance or a feed counter takes its rows in this
+// one order, and a writer that skips a step still keeps the order of the steps it takes:
+//
+//  1. the order row (a writer that works on one order),
+//  2. the payments sequence row (scope_sequences, scope payments), taken WITHOUT advancing it by
+//     LockPaymentsSequenceTx, or by the settle's own incrementing statement where the writer inserts
+//     a payment and has no earlier use for the lock,
+//  3. the existing invoice rows (FOR NO KEY UPDATE; a writer that walks the rows an already-written
+//     payment allocated, the reversal and till MarkNSF, takes them in ascending id order),
+//  4. the invoices sequence row (scope_sequences, scope invoices).
+//
+// The payments counter comes before every invoice because the settle holds an invoice while it
+// waits for the counter, and any writer that holds the counter on its way to that same invoice would
+// otherwise close a cycle (a 40P01 that aborts one side, and on the card path the card is already
+// charged). The cycle was real between the register settle and ReversePayment before this order was
+// written down.
+//
+// The invoice rows are FOR NO KEY UPDATE, not FOR UPDATE, because a FOR UPDATE conflicts with the
+// FOR KEY SHARE a foreign key check takes: a POS return's pos_returns INSERT holds the returned
+// sale's invoice share before its refund rail draws the payments counter, and a payments writer
+// holding the counter while its FOR UPDATE waits on that share closes a cycle. NO KEY UPDATE still
+// conflicts with every invoice UPDATE and with the account credit's FOR UPDATE, so nothing
+// serialises more weakly against real writers, and no writer deletes invoices or changes their
+// keys, so nothing relied on the key conflict. The one writer outside the order's letter is that
+// POS return (key share before the counter); it is safe for exactly this reason, and till MarkNSF
+// taking the counter too means every payments-walking writer now serialises there against every
+// other, whatever order each names its invoices in.
+//
+// Writers and where each sits in the order (LOCK-ORDER.md carries the same table with the reasoning):
+//   - the register's RecordPayment, which reaches the counter's RecordReceipt: steps 2, 3, 4 (lockAndTotal).
+//   - the counter's RecordReceipt: steps 2, 3, 4 (lockAndTotal).
+//   - PayWithStamps and PayWithIntent, and Pay over them, the portal and card settle: steps 2, 3, 4.
+//   - ReversePayment: the payment row, then steps 2 (its reversing insert and the original's stamp)
+//     and 3 (its allocated invoice rows, taken explicitly FOR NO KEY UPDATE in ascending id order
+//     before the first counter draw; the contra allocation's foreign key share lock covers only the
+//     invoice the loop has reached), 4. Among writers that take a counter or an invoice, the payment row is first only for NSF and the reversal.
+//   - the POS ring: stock rows, then step 2 (the tender's payment insert), then step 4 (a new
+//     invoice). It never touches an existing invoice.
+//   - the POS return with a cash or card refund: the per-sale advisory lock and the returned order
+//     lines, then the invoice KEY SHARE (the pos_returns foreign key), then step 2 (the refund
+//     payment's insert). The share before the counter is the one exception, safe because no
+//     payments-walking writer's invoice lock conflicts with a share. An account credit return takes
+//     the share, then the invoice FOR UPDATE, then step 4 (it writes no payments row).
+//   - the group and whole-order invoice writers: the order row its caller locked, then step 4 only
+//     (a new invoice).
+//   - the quote counter door, once it lands: the order row, LockPaymentsSequenceTx, then steps 3
+//     and 4 on its own transaction.
+//   - till MarkNSF: the payment row, then step 2 (LockPaymentsSequenceTx, not advancing: the
+//     serialising lock, it writes no payments feed row), then steps 3 (its allocated invoice rows
+//     in ascending id order, FOR NO KEY UPDATE) and 4.
+//
+// Reads, and the outbox observer, take none of these rows.
+
 var errNoDB = errors.New("payments: database not configured")
 
 // methodColumns is the canonical public SELECT list for a stored method (kept in one place
@@ -376,7 +431,7 @@ func (r *Repository) allocationsByPayment(ctx context.Context, paymentIDs []stri
 
 // Pay records ONE settled charge across N invoices in a single transaction (the
 // all-or-nothing split that designs away card partial-failure, sec. 4.2). Each invoice is
-// re-read FOR UPDATE and its balance re-validated against the allocation before any write,
+// re-read FOR NO KEY UPDATE and its balance re-validated against the allocation before any write,
 // so a balance that moved between the charge decision and settlement aborts the whole tx.
 func (r *Repository) Pay(ctx context.Context, customerID, method, gatewayRef string, allocs []Allocation) (Payment, error) {
 	return r.PayWithIntent(ctx, customerID, method, gatewayRef, allocs, "")
@@ -522,12 +577,50 @@ RETURNING id::text, payment_no::text, customer_id::text, method, amount_cents, s
 // was inline here, in the same order, against the same tx. The existing payments unit and integration
 // suites are the proof, and they pass unchanged.
 
+// lockPaymentsSequenceSQL takes the payments feed counter row WITHOUT advancing it: the upsert writes
+// the value it already holds, so the row lock is taken and no feed number is used up. The insert arm
+// seeds a missing row at 0, not at the column default of 1, so the settle's own increment that
+// follows in the same transaction still hands out the first number, 1.
+const lockPaymentsSequenceSQL = `INSERT INTO scope_sequences (scope, next_value) VALUES ('payments', 0)
+	ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value`
+
+// LockPaymentsSequenceTx takes the payments sequence row on the caller's transaction, without
+// advancing it. It is the first money lock every payments writer takes after the order row (see the
+// lock order at the top of this file), exported so a writer that settles through its own transaction,
+// the quote counter door, can take the same lock at the same place in the same order and so cannot
+// close a cycle with a settle, a reversal or a refund.
+func (r *Repository) LockPaymentsSequenceTx(ctx context.Context, tx pgx.Tx) error {
+	if _, err := tx.Exec(ctx, lockPaymentsSequenceSQL); err != nil {
+		return fmt.Errorf("payments: lock payments sequence: %w", err)
+	}
+	return nil
+}
+
 // lockAndTotal locks + re-validates every requested invoice, sums the settled amount and captures a
 // branch for the payment header (payments.branch_id is NOT NULL).
 //
 // The payable ceiling is balance − holdback floored at zero: the Bill 60 legally-retained portion is
 // not collectable and must be excluded before any pay slice (§4.2 #7).
+//
+// The payments sequence row is taken FIRST, before any invoice row, and WITHOUT advancing it (the
+// settle's own INSERT draws its feed number later, once). That is the one money lock order written at
+// the top of this file: every other writer that takes both the payments counter and an invoice takes
+// the counter first, so a settle can never hold an invoice while it waits on a counter row another
+// writer holds on its way to that same invoice.
+//
+// The invoice row is taken FOR NO KEY UPDATE, not FOR UPDATE. The settle only writes non key columns,
+// so this still conflicts with every other invoice writer's row lock (any UPDATE of the row, and the
+// POS account credit's explicit FOR UPDATE) and serialises against each of them exactly as before.
+// What it no longer conflicts with is a FOR KEY SHARE, the lock a foreign key check takes: a POS
+// return's INSERT INTO pos_returns holds the returned sale's invoice key share before its refund
+// rail draws the payments counter, and a settle holding the counter while it waits on a FOR UPDATE
+// that the key share blocks closes a cycle (the return's refund rail then waits on the counter). With
+// NO KEY UPDATE the settle never waits on the return's share at all: no writer deletes invoices or
+// changes their keys, so the share is never something the settle needs to hold back.
 func lockAndTotal(ctx context.Context, tx pgx.Tx, customerID string, allocs []Allocation) (int64, string, error) {
+	if _, err := tx.Exec(ctx, lockPaymentsSequenceSQL); err != nil {
+		return 0, "", fmt.Errorf("pay: lock payments sequence: %w", err)
+	}
 	var total int64
 	var branchID string
 	for _, a := range allocs {
@@ -535,7 +628,7 @@ func lockAndTotal(ctx context.Context, tx pgx.Tx, customerID string, allocs []Al
 		var invBranch string
 		err := tx.QueryRow(ctx,
 			`SELECT balance_cents, holdback_cents, branch_id::text
-			 FROM invoices WHERE id = $2 AND customer_id = $1 FOR UPDATE`,
+			 FROM invoices WHERE id = $2 AND customer_id = $1 FOR NO KEY UPDATE`,
 			customerID, a.InvoiceID).Scan(&balance, &holdback, &invBranch)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
