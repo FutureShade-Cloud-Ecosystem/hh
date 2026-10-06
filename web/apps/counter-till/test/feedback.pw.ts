@@ -17,15 +17,16 @@ test("the pill renders in the reserved lane and opens the panel", async ({ page 
   const pill = page.getByTestId("feedback-pill");
   await expect(pill).toBeVisible();
 
-  // The lane: about 22px off the bottom, and the pill's own height is the
-  // 38px the terminal's bottom padding reserves (--hos-fab-size).
+  // The lane: lifted 48px off the bottom (22px inset plus the 26px lift that
+  // clears the 35px legend), and the pill's own height is the 38px the
+  // terminal's bottom padding reserves (--hos-fab-size).
   const box = await pill.boundingBox();
   const height = page.viewportSize()?.height ?? 720;
   expect(box).not.toBeNull();
   if (box !== null) {
     const inset = height - (box.y + box.height);
-    expect(inset).toBeGreaterThanOrEqual(16);
-    expect(inset).toBeLessThanOrEqual(30);
+    expect(inset).toBeGreaterThanOrEqual(44);
+    expect(inset).toBeLessThanOrEqual(52);
     expect(Math.round(box.height)).toBeGreaterThanOrEqual(36);
     expect(Math.round(box.height)).toBeLessThanOrEqual(40);
   }
@@ -73,3 +74,67 @@ test("the pill covers no working control: the legend's dismiss stays clear", asy
     expect(panelOverlaps).toBe(false);
   }
 });
+
+for (const size of [
+  { width: 1440, height: 900 },
+  { width: 1024, height: 768 },
+]) {
+  test(`the pill is the topmost element at its corners at ${size.width}x${size.height}, legend shown`, async ({ page }) => {
+    await page.setViewportSize(size);
+    await signIn(page);
+    await expect(page.locator("hos-pos-hotkey-legend")).toBeVisible();
+    const pill = page.getByTestId("feedback-pill");
+    await expect(pill).toBeVisible();
+    // The deep hit walks every shadow root the way a pointer does.
+    const bad = await pill.evaluate((button) => {
+      const deepHit = (x: number, y: number): Element | null => {
+        let hit = document.elementFromPoint(x, y);
+        while (hit?.shadowRoot) {
+          const inner = hit.shadowRoot.elementFromPoint(x, y);
+          if (inner === null || inner === hit) break;
+          hit = inner;
+        }
+        return hit;
+      };
+      const box = button.getBoundingClientRect();
+      // The corner probes sit 8px in, inside the pill's rounding.
+      const inset = 8;
+      const points: Array<[string, number, number]> = [
+        ["top-left", box.left + inset, box.top + inset],
+        ["top-right", box.right - inset, box.top + inset],
+        ["bottom-left", box.left + inset, box.bottom - inset],
+        ["bottom-right", box.right - inset, box.bottom - inset],
+        ["centre", box.left + box.width / 2, box.top + box.height / 2],
+      ];
+      const out: string[] = [];
+      for (const [name, x, y] of points) {
+        const hit = deepHit(x, y);
+        if (hit === null || !(hit === button || button.contains(hit))) {
+          out.push(`${name} at ${Math.round(x)},${Math.round(y)} is ${hit?.tagName ?? "nothing"}`);
+        }
+      }
+      // A pinned bar can paint over the pill while passing every pointer
+      // through (the legend is pointer-events: none), so the hit test alone
+      // cannot see it: no other fixed element's box may meet the pill's box.
+      const fixed: Element[] = [];
+      const walk = (root: Document | ShadowRoot): void => {
+        for (const el of Array.from(root.querySelectorAll("*"))) {
+          if (getComputedStyle(el).position === "fixed") fixed.push(el);
+          if (el.shadowRoot !== null) walk(el.shadowRoot);
+        }
+      };
+      walk(document);
+      for (const el of fixed) {
+        if (el === button || el.contains(button) || button.contains(el)) continue;
+        if (el.closest("hh-feedback") !== null) continue;
+        const other = el.getBoundingClientRect();
+        if (other.width === 0 || other.height === 0) continue;
+        const meets =
+          other.left < box.right && other.right > box.left && other.top < box.bottom && other.bottom > box.top;
+        if (meets) out.push(`a fixed ${el.tagName.toLowerCase()} (${Math.round(other.height)}px tall) meets the pill's box`);
+      }
+      return out;
+    });
+    expect(bad).toEqual([]);
+  });
+}

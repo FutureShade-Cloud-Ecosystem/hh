@@ -743,11 +743,10 @@ export class CounterTillApp extends HHElement {
             `
           : renderEntry({ flows: this.#flowsState, busy: this.#busy, message: this.#message })}
       </main>
-      <!-- The feedback pill: the lane the ported terminal's bottom padding
-           already reserves (its --hos-fab-inset and --hos-fab-size are this
-           pill's own 22px and 38px), over the hotkey legend's right end,
-           which keeps its dismiss control clear of the corner for it. -->
-      <hh-feedback screen="Counter Till"></hh-feedback>
+      <!-- The feedback pill, lifted (the lift attribute) so it sits wholly
+           above the pinned hotkey legend: the lane the ported terminal's
+           bottom padding reserves counts that lift (--hos-fab-lift). -->
+      <hh-feedback screen="Counter Till" lift></hh-feedback>
     `;
   }
 
