@@ -57,6 +57,7 @@ const USERS = {
 let refusal = null;
 let lastOrg = "";
 let mints = 0;
+let pendingApprovalCount = 3;
 
 function base64Url(value) {
   return Buffer.from(JSON.stringify(value), "utf8")
@@ -131,7 +132,36 @@ const server = createServer(async (request, response) => {
     refusal = null;
     lastOrg = "";
     mints = 0;
+    pendingApprovalCount = 3;
     sendJson(response, 200, { reset: true });
+    return;
+  }
+
+  if (path === "/_stub/set-approvals" && request.method === "POST") {
+    const body = await readBody(request);
+    if (body === null || typeof body !== "object" || typeof body.count !== "number") {
+      sendJson(response, 400, { error: "set approvals with { count: number }" });
+      return;
+    }
+    pendingApprovalCount = Math.max(0, body.count);
+    sendJson(response, 200, { count: pendingApprovalCount });
+    return;
+  }
+
+  if (path === "/api/v1/staff/approvals" && request.method === "GET") {
+    const items = Array.from({ length: pendingApprovalCount }, (_, i) => ({
+      id: `approval-${i + 1}`,
+      status: "PENDING",
+      requested_by: "demo-account-sales-manager",
+      branch_id: "demo-branch",
+      policy_type: "MARGIN",
+      detail: "Demo approval",
+    }));
+    sendJson(response, 200, {
+      items,
+      next_cursor: null,
+      limit: 20,
+    });
     return;
   }
 
