@@ -4185,6 +4185,7 @@ export type PosHotkeys = {
   keys: PosHotkey[];
 };
 export type PosAccountStanding = {
+  standing: "walk_in" | "clear" | "past_due" | "on_hold";
   past_due_cents?: number;
   oldest_bucket?: "30" | "60" | "90+";
   on_hold?: boolean;

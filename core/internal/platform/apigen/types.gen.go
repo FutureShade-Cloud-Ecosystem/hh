@@ -4906,6 +4906,7 @@ type PosHotkeys struct {
 }
 
 type PosAccountStanding struct {
+	Standing     string  `json:"standing"`
 	PastDueCents *int64  `json:"past_due_cents,omitempty"`
 	OldestBucket *string `json:"oldest_bucket,omitempty"`
 	OnHold       *bool   `json:"on_hold,omitempty"`

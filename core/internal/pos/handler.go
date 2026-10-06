@@ -567,6 +567,11 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		// shape: what failed, what it means for the ticket. Never a bare 500,
 		// and never a 200 with a zero rate.
 		httpx.Error(w, http.StatusServiceUnavailable, ErrTaxRailUnavailable.Error())
+	case errors.Is(err, ErrStandingUnavailable):
+		// The standing could not be read (a seam unwired, an AR, hold or policy read failed): the
+		// 503 the caller can act on, with the cause in the log. Never a 200 that reads as "clear".
+		h.log.Error("pos: account standing unavailable", "path", r.URL.Path, "err", err)
+		httpx.Error(w, http.StatusServiceUnavailable, ErrStandingUnavailable.Error())
 	case errors.As(err, &cb):
 		httpx.ErrorWith(w, http.StatusConflict, "credit_blocked", map[string]any{"policy": cb.Policy, "queue": "staff_approvals"})
 	case errors.As(err, &ra):

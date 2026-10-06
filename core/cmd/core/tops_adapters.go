@@ -1144,3 +1144,20 @@ func (a posAgingAdapter) CustomerAging(ctx context.Context, customerID string) (
 		OnHold:       row.OnHold,
 	}, nil
 }
+
+// posAccountAdapter answers the counter's standing read whether an account exists, over the
+// customer module's own resolver. An account the customer module does not know is false, not an
+// error, so an unknown id is a 404 at the route and never a "clear" account.
+type posAccountAdapter struct{ svc *customer.Service }
+
+func (a posAccountAdapter) AccountExists(ctx context.Context, customerID string) (bool, error) {
+	_, err := a.svc.ResolveAccount(ctx, customerID)
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, customer.ErrNotFound):
+		return false, nil
+	default:
+		return false, err
+	}
+}

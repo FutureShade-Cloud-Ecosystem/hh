@@ -374,7 +374,9 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	w3bStatementSvc := billing.NewStatementService(billingRepo).WithAudit(auditSvc)
 	billing.NewMonthEndHandler(w3bCreditSvc, w3bStatementSvc, log).
 		WithUserLinker(link).RegisterRoutes(r, g)
-	posSvc.WithAgingReader(posAgingAdapter{svc: w3bCreditSvc})
+	posSvc.WithAgingReader(posAgingAdapter{svc: w3bCreditSvc}).
+		WithHoldReader(ops.tillRepo).
+		WithAccountChecker(posAccountAdapter{svc: customerSvc})
 
 	arLandingRepo := billing.NewARLandingRepository(pool)
 	arLandingSvc := billing.NewARLandingService(arLandingRepo).
