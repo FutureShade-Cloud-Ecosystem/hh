@@ -4867,7 +4867,8 @@ export class HosPosTerminal extends LitElement {
    * counter expects everything it types to go.
    */
   private onPosKey = (e: KeyboardEvent): void => {
-    if (e.defaultPrevented || this.paused) return;
+    if (e.defaultPrevented) return;
+    if (this.paused) return; // Returns is up: the hidden sale's keys stay quiet (row 955)
     const action = resolveHotkey(chordFromEvent(e), this.hotkeyRoster);
     if (!action) return;
     // THE COUNTER OWNS A KEY ITS OWN LEGEND ADVERTISES, available or not. The two halves of that
