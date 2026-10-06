@@ -168,6 +168,8 @@ export class QdQuoteWorkarea extends LitElement {
   @property({ attribute: false }) client: QdClient | null = null;
 
   @state() private view: QuoteView | null = null;
+  /** The quote id whose first read failed with nothing to show: the page says it could not be opened (never a new quote shell). */
+  @state() private unreadable = "";
   @state() private terms: TermsRef | null = null;
   @state() private config: SurfaceConfig | null = null;
   @state() private glance: GlanceIn | null = null;
@@ -235,7 +237,8 @@ export class QdQuoteWorkarea extends LitElement {
     }
     /* The way home sits at the left of the title row: a quiet link, not a
        control, so the title stays the row's own anchor. */
-    .topbar .backlink {
+    .topbar .backlink,
+    .composecard .backlink {
       display: inline-flex;
       align-items: center;
       gap: 4px;
@@ -248,7 +251,8 @@ export class QdQuoteWorkarea extends LitElement {
       cursor: pointer;
       white-space: nowrap;
     }
-    .topbar .backlink:hover {
+    .topbar .backlink:hover,
+    .composecard .backlink:hover {
       color: var(--hos-stone-amber-text, var(--hh-accent-text));
     }
     .headid .pagetitle {
@@ -1244,6 +1248,7 @@ export class QdQuoteWorkarea extends LitElement {
     this.busy = false;
     this.sendOpen = false;
     this.view = null;
+    this.unreadable = "";
     this.terms = null;
     this.glance = null;
     this.customer = null; // the card shows nothing of the old account until the new one is read
@@ -1637,9 +1642,15 @@ export class QdQuoteWorkarea extends LitElement {
     if (view === undefined) return this.supersededBy(ctx, seq);
     if (!view.ok) {
       this.error = "Could not read this quote.";
+      if (this.view === null) {
+        this.unreadable = ctx.id;
+        this.announceRead(ctx.id, "", false);
+      }
       return;
     }
     this.view = view.value;
+    this.unreadable = "";
+    this.announceRead(ctx.id, view.value.quote_no, true);
     const late = this.lateNotes.get(ctx.id);
     if (late !== undefined) {
       this.lateNotes.delete(ctx.id);
@@ -1687,6 +1698,11 @@ export class QdQuoteWorkarea extends LitElement {
     if (glance.ok) this.glance = glance.value;
     void this.loadAddons(ctx, seq);
     void this.hydrateCustomer(ctx, seq);
+  }
+
+  /** Tells the host which quote the page holds (its number, or that it could not be read): the host's page title follows it. */
+  private announceRead(quoteId: string, quoteNo: string, ok: boolean): void {
+    this.dispatchEvent(new CustomEvent("quote-read", { detail: { quoteId, quoteNo, ok }, bubbles: true, composed: true }));
   }
 
   /** A read that was dropped because a newer read of the same quote began finishes when that newer read does; one dropped because the quote was left finishes at once. */
@@ -2756,7 +2772,7 @@ export class QdQuoteWorkarea extends LitElement {
           <span aria-hidden="true">${drawIcon(iconForId("pencil:left"), 12)}</span> All quotes
         </button>
         <div class="headid">
-          <h1 class="pagetitle" data-testid="qb-title">${v !== null ? "Quote" : "New Quote"}</h1>
+          <h1 class="pagetitle" tabindex="-1" data-testid="qb-title">${this.quoteId !== "" ? "Quote" : "New Quote"}</h1>
           <div class="pagectx" data-testid="qb-context">
             ${this.branchName === "" ? "Yard" : this.branchName}${v !== null ? html` · ${v.quote_no}` : nothing}
           </div>
@@ -3513,7 +3529,23 @@ export class QdQuoteWorkarea extends LitElement {
     </div>`;
   }
 
+  /** The page for a quote that could not be opened: a plain way back, none of the new quote's controls. */
+  private renderUnreadable() {
+    return html`<div class="composewrap">
+      <div class="composecard" data-testid="qb-unreadable">
+        <h1 class="pagetitle" tabindex="-1" data-testid="qb-title">This quote could not be opened</h1>
+        <p class="pagectx">It may not exist, or you may not be allowed to see it.</p>
+        <button type="button" class="backlink" data-action="all-quotes" data-testid="qb-all-quotes">
+          <span aria-hidden="true">${drawIcon(iconForId("pencil:left"), 12)}</span> All quotes
+        </button>
+      </div>
+    </div>`;
+  }
+
   override render() {
+    if (this.quoteId !== "" && this.view === null && this.unreadable === this.quoteId) {
+      return this.renderUnreadable();
+    }
     if (this.quoteId === "") {
       return html`
         ${this.renderTopbar()}

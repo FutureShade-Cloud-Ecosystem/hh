@@ -1476,8 +1476,8 @@
   {
     "id": "bq-open-list-read",
     "file": "src/quote-builder.ts",
-    "find": "      void this.loadList(true);\n      return;\n    }\n    this.walk(",
-    "replace": "      return;\n    }\n    this.walk(",
+    "find": "      void this.loadList(true);\n      return;\n    }\n    this.createWalk",
+    "replace": "      return;\n    }\n    this.createWalk",
     "test": "split create:"
   },
   {
@@ -1500,5 +1500,19 @@
     "find": "      if (at >= 0 && at < ROWS) this.active = at;\n",
     "replace": "      if (at >= 0 && at < ROWS) this.active = at;\n      if (exact !== null) { this.add(exact); return; }\n",
     "test": "a person who pauses on a full code"
+  },
+  {
+    "id": "wa-unreadable-page",
+    "file": "src/quote-workarea.ts",
+    "find": "        this.unreadable = ctx.id;\n",
+    "replace": "",
+    "test": "split page: a quote id that cannot be read"
+  },
+  {
+    "id": "bq-route-focus",
+    "file": "src/quote-builder.ts",
+    "find": "    if (changed.has(\"route\") && changed.get(\"route\") !== undefined) void this.focusHeading();\n",
+    "replace": "",
+    "test": "split page: each route sets the document title"
   }
 ]

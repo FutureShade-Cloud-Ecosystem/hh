@@ -434,3 +434,49 @@ test("split floor: a refusal that answers after the person left for the list ope
   await expect(page.getByTestId("fr-reason")).toHaveCount(0);
   expect(writes.filter((w) => w.includes("approval"))).toEqual([]);
 });
+
+// ── Focus, title and an unreadable quote on a route change ───────────────────
+
+/** The id of the deepest focused element's nearest heading test id (the page's heading takes focus on a route change). */
+async function focusedTestId(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    let el: Element | null = document.activeElement;
+    while (el?.shadowRoot?.activeElement) el = el.shadowRoot.activeElement;
+    return el?.getAttribute("data-testid") ?? el?.localName ?? "";
+  });
+}
+
+test("split page: each route sets the document title and moves focus to the page's heading", async ({ page }) => {
+  await signIn(page);
+  await expect(page).toHaveTitle("Quotes");
+  await page.getByTestId("qb-list-row").filter({ hasText: "Q-1001" }).first().click();
+  await expect(page).toHaveTitle("Q-1001");
+  await expect.poll(() => focusedTestId(page)).toBe("qb-title");
+  await page.getByTestId("qb-all-quotes").click();
+  await expect(page).toHaveTitle("Quotes");
+  await expect.poll(() => focusedTestId(page)).toBe("qd-list-title");
+  await page.getByRole("button", { name: "New quote", exact: true }).click();
+  await expect(page).toHaveTitle("New quote");
+  await expect.poll(() => focusedTestId(page)).toBe("qb-title");
+  // A create's own walk to its new quote leaves the caret in the search box (the next act is adding lines).
+  const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
+  await picker.getByPlaceholder("Search name or account #…").fill("Maple");
+  await picker.getByRole("option", { name: /Maple Ridge Contracting/ }).click();
+  await expect(page.getByRole("combobox", { name: "Search products by name, code or category" })).toBeFocused();
+  await page.goBack();
+  await expect(page).toHaveTitle("New quote");
+  await page.goBack();
+  await expect(page).toHaveTitle("Quotes");
+});
+
+test("split page: a quote id that cannot be read says so with a way back, never a New Quote shell", async ({ page }) => {
+  await signIn(page);
+  await page.goto("/#/quotes/nope");
+  await expect(page.getByTestId("qb-title")).toHaveText("This quote could not be opened");
+  await expect(page).toHaveTitle("This quote could not be opened");
+  await expect(page.getByRole("combobox", { name: "Search products by name, code or category" })).toHaveCount(0);
+  await expect(page.getByTestId("qb-identity")).toHaveCount(0);
+  await page.getByTestId("qb-all-quotes").click();
+  await expect(page).toHaveURL(/#\/quotes$/);
+  await expect(page.getByTestId("qd-list-toolbar")).toBeVisible();
+});

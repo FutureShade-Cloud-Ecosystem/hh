@@ -316,6 +316,7 @@ export class QdQuoteBuilder extends LitElement {
     this.renderRoot.addEventListener("quote-changed", this.onQuoteChanged as EventListener);
     this.renderRoot.addEventListener("quote-open", this.onQuoteOpen as EventListener);
     this.renderRoot.addEventListener("all-quotes", this.onAllQuotes as EventListener);
+    this.renderRoot.addEventListener("quote-read", this.onQuoteRead as EventListener);
     this.renderRoot.addEventListener(FLOOR_REFUSAL_DROPPED_EVENT, this.onRefusalDropped as EventListener);
     window.addEventListener(OPEN_SETTINGS_EVENT, this.onOpenSettings);
   }
@@ -345,16 +346,20 @@ export class QdQuoteBuilder extends LitElement {
     this.renderRoot.removeEventListener("quote-changed", this.onQuoteChanged as EventListener);
     this.renderRoot.removeEventListener("quote-open", this.onQuoteOpen as EventListener);
     this.renderRoot.removeEventListener("all-quotes", this.onAllQuotes as EventListener);
+    this.renderRoot.removeEventListener("quote-read", this.onQuoteRead as EventListener);
     this.renderRoot.removeEventListener(FLOOR_REFUSAL_DROPPED_EVENT, this.onRefusalDropped as EventListener);
     window.removeEventListener(OPEN_SETTINGS_EVENT, this.onOpenSettings);
   }
 
-  protected override updated(): void {
+  protected override updated(changed: Map<string, unknown>): void {
     // The wiring pass: the work area, the picker's own panels and the
     // approvals panel receive their facts. The work area's quote follows the
     // route on a quote page; on the list page it keeps the quote it held
     // (the split is a change of view, never a teardown of the work in it).
     const route = this.route;
+    // The page's own title, and (on a change of route, never on the first draw) the page's heading takes focus.
+    document.title = this.pageTitle();
+    if (changed.has("route") && changed.get("route") !== undefined) void this.focusHeading();
     // The search box's words are the wiring pass's job like its value (the control's face carries no placeholder).
     const searchBox = this.renderRoot.querySelector<HTMLInputElement>('[data-field="list-search"]');
     if (searchBox !== null) searchBox.placeholder = "Search by number or customer";
@@ -510,9 +515,49 @@ export class QdQuoteBuilder extends LitElement {
       void this.loadList(true);
       return;
     }
+    this.createWalk = event.detail.quoteId !== "";
     this.walk(event.detail.quoteId === "" ? COMPOSE_ROUTE : quoteRoute(event.detail.quoteId));
     void this.loadList();
   };
+
+  /** Set by the walk a create makes (the work area's own hand down), so the heading does not take the caret from the search box. */
+  private createWalk = false;
+
+  /** The quote the work area last read (or failed to read): the page title and the unreadable page follow it. */
+  private lastRead = { id: "", no: "", ok: true };
+
+  private readonly onQuoteRead = (event: CustomEvent<{ quoteId: string; quoteNo: string; ok: boolean }>): void => {
+    this.lastRead = { id: event.detail.quoteId, no: event.detail.quoteNo, ok: event.detail.ok };
+    document.title = this.pageTitle();
+  };
+
+  /** The document title of the page the route names. */
+  private pageTitle(): string {
+    const route = this.route;
+    if (route.kind === "list") return "Quotes";
+    if (route.kind === "compose") return "New quote";
+    if (this.lastRead.id === route.id) return this.lastRead.ok ? this.lastRead.no : "This quote could not be opened";
+    const row = this.rows.find((r) => r.id === route.id);
+    return row?.quoteNo ?? "Quote";
+  }
+
+  /** A route change moves the person to the new page: its heading takes focus, so the keyboard and a screen reader start there. */
+  private async focusHeading(): Promise<void> {
+    // The walk a create makes to its new quote is not the person's own: the work area puts the caret in the search box.
+    if (this.createWalk) {
+      this.createWalk = false;
+      return;
+    }
+    if (this.route.kind === "list") {
+      await this.updateComplete;
+      this.renderRoot.querySelector<HTMLElement>('[data-testid="qd-list-title"]')?.focus();
+      return;
+    }
+    const area = this.renderRoot.querySelector<HTMLElement & { updateComplete?: Promise<unknown> }>("qd-quote-workarea");
+    await this.updateComplete;
+    await area?.updateComplete;
+    area?.shadowRoot?.querySelector<HTMLElement>('[data-testid="qb-title"]')?.focus();
+  }
 
   /** A refusal for a quote that is not on screen: said on the list, never as a dialog over another quote. */
   private readonly onRefusalDropped = (event: CustomEvent<{ quoteId: string; lineNo: number }>): void => {
@@ -658,7 +703,7 @@ export class QdQuoteBuilder extends LitElement {
     return html`
       <section class="listpage" data-testid="qd-list-page" aria-label="Quotes">
         <div class="titlerow">
-          <h1 data-testid="qd-list-title">Quotes</h1>
+          <h1 tabindex="-1" data-testid="qd-list-title">Quotes</h1>
           ${button({ label: "New quote", kind: "primary", action: "new-quote", iconMarkup: icon("plus") })}
         </div>
         ${this.listNotice !== "" ? html`<p class="empty" role="status" style="margin: 0 0 10px" data-testid="qd-list-notice">${this.listNotice}</p>` : nothing}
