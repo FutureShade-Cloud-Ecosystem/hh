@@ -1641,5 +1641,12 @@
     "test": "lowercase letters and any non digit, non separator input are refused in the desk's own words, never sent",
     "runner": "node",
     "testFile": "test/order-payment.test.mjs"
+  },
+  {
+    "id": "op-amount-mixed",
+    "file": "src/_order-payment.ts",
+    "find": "  if (comma && space) return GROUPING_WORDS;",
+    "replace": "  if (false) return GROUPING_WORDS;",
+    "test": "a mixed grouping is rejected on input with the grouping words, never sent"
   }
 ]

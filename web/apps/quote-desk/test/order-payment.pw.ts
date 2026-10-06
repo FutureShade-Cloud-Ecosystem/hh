@@ -647,6 +647,20 @@ test("an amount that is not a number this desk can send is refused before any po
   expect(seen.filter((line) => line.includes("order-payment"))).toEqual([]);
 });
 
+test("a mixed grouping is rejected on input with the grouping words, never sent", async ({ page }) => {
+  await signIn(page);
+  await openWithPayment(page, "Q-2101");
+  const seen = writes(page);
+  await pay(page).locator('[data-field="amount"]').fill("1,000 000");
+  await expect(pay(page).getByTestId("op-preview")).toHaveCount(0);
+  await pay(page).getByTestId("op-take").click();
+  await expect(pay(page).getByTestId("op-error")).toHaveText("Type the digits and use one separator every three digits, like 1,000.50.");
+  expect(seen.filter((line) => line.includes("order-payment"))).toEqual([]);
+  // One kind of separator throughout is still read as the figure it is.
+  await pay(page).locator('[data-field="amount"]').fill("1,000,000.00");
+  await expect(pay(page).getByTestId("op-preview")).toHaveText("Taking CA$1,000,000.00 by Cash");
+});
+
 test("a payment still out at sign out is kept as a known attempt for the next sign in, so it cannot be taken twice", async ({ page, context }) => {
   await signIn(page);
   await openWithPayment(page, "Q-2101");

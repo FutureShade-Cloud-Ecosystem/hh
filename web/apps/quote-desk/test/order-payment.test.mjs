@@ -8,6 +8,7 @@ import { test } from "node:test";
 import {
   AttemptBook,
   COMMA_WORDS,
+  GROUPING_WORDS,
   OVERSAFE_WORDS,
   TENDER_METHODS,
   convertedNote,
@@ -179,6 +180,16 @@ test("lowercase letters and any non digit, non separator input are refused in th
   }
   // A decimal comma or space in the fraction keeps the words that teach the point.
   assert.deepEqual(parseTypedAmount("1.234,50"), { cents: null, problem: COMMA_WORDS });
+});
+
+test("a mixed grouping is not what the parser does: it is refused in the grouping words, never sent", () => {
+  // Space grouping after a comma (or a comma after spaces) is not a figure the desk reads.
+  for (const bad of ["1,000 000", "1 000,000", "1,000 000.00"]) {
+    assert.deepEqual(parseTypedAmount(bad), { cents: null, problem: GROUPING_WORDS }, bad);
+  }
+  // One kind of separator, groups of exactly three, is valid in either kind.
+  assert.deepEqual(parseTypedAmount("1,000,000.00"), { cents: 100000000, problem: "" });
+  assert.deepEqual(parseTypedAmount("1 000 000"), { cents: 100000000, problem: "" });
 });
 
 test("an amount above Number.MAX_SAFE_INTEGER cents is refused, never rounded through a float", () => {
