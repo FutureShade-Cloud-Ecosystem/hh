@@ -10,25 +10,21 @@
 // The placeholder words are deliberate: "(not priced)" says the number is not
 // known yet. It never renders "$0.00" for what is merely unanswered.
 
+import { formatDollars } from "@hardscapehouse/pos-kit/src/ported/_money-format.js";
+
 export const MONEY_PLACEHOLDER = "(not priced)";
 export const MARGIN_PLACEHOLDER = "(no margin)";
 
 /**
  * Format integer cents as the counter's money string: 1968 becomes "$19.68",
- * -311 becomes "-$3.11". The split is integer arithmetic on the absolute
- * value, so no float ever touches the figure. Anything that is not an integer
+ * -311 becomes "-$3.11", through pos-kit's shared formatDollars. Anything that is not an integer
  * (a field the core left out, a glance that answered nothing) renders the
  * explicit placeholder.
  */
 export function formatMoney(cents: number | null | undefined): string {
   if (typeof cents !== "number" || !Number.isInteger(cents)) return MONEY_PLACEHOLDER;
-  const negative = cents < 0;
-  const magnitude = negative ? -cents : cents;
-  const whole = Math.floor(magnitude / 100);
-  const remainder = magnitude - whole * 100;
-  const wholePart = whole.toLocaleString("en-CA");
-  const fraction = String(remainder).padStart(2, "0");
-  return `${negative ? "-" : ""}$${wholePart}.${fraction}`;
+  // One formatter for the whole till: the shared dollar word, placeholders kept here for the unknown.
+  return formatDollars(cents);
 }
 
 /**
