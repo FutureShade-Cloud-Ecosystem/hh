@@ -227,7 +227,7 @@ code="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/")"
 
 page="$(curl -s -u "demo:$PHRASE" "$BASE/")"
 case "$page" in
-	*ct-app-root*) pass "the app's first page serves with the phrase" ;;
+	*fd-app-root*) pass "the app's first page serves with the phrase" ;;
 	*) fail "the app's first page did not serve (no app markup in the answer)" ;;
 esac
 
