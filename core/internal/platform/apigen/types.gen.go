@@ -4025,7 +4025,8 @@ type FeedbackSubmission struct {
 }
 
 type FeedbackResult struct {
-	IssueId string `json:"issue_id"`
+	IssueId     string  `json:"issue_id"`
+	IssueNumber *string `json:"issue_number,omitempty"`
 }
 
 type OrderViewLine struct {

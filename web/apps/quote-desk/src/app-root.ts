@@ -20,7 +20,11 @@ import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
 // itself; the app feeds it through the wiring pass below, the same
 // no-template-binding discipline the builder's client rides.
 import "@hardscapehouse/design-system/src/header.js";
-import { ApiClient } from "@hardscapehouse/api-client";
+import { ApiClient, staffFeedback } from "@hardscapehouse/api-client";
+import {
+  HHFeedback,
+  type FeedbackSender,
+} from "@hardscapehouse/design-system/src/feedback.js";
 import { AuthController, SessionStore, authHeaderProvider } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { entryStyles, renderEntry, type FlowsState } from "@hardscapehouse/pos-kit/src/ported/entry.js";
@@ -143,6 +147,22 @@ export class QuoteDeskApp extends HHElement {
       activeOrg: () => DEMO_ORG,
     });
     const client = new ApiClient({ baseUrl: "", headers: staffHeaders });
+    // The feedback widget's sender rides the staff client: the feedback
+    // route is staff guarded and the desk's own custody holds the bearer.
+    this.#feedbackSender = async (request) => {
+      const answer = await staffFeedback.feedbackCreateMultipart(client, {
+        type: request.type,
+        message: request.message,
+        screen: request.screen,
+        url: request.url,
+        user_agent: request.userAgent,
+        images: request.images.map((image) => image.blob),
+      });
+      if (answer.ok) {
+        return { ok: true, issueNumber: answer.value.issue_number ?? "" };
+      }
+      return { ok: false, error: answer.error };
+    };
     // The demo adapter's own client carries no staff bearer: the demo routes
     // are pre-auth by design (the tap a role sign-in).
     const demoClient = new ApiClient({
@@ -164,6 +184,9 @@ export class QuoteDeskApp extends HHElement {
       token: () => this.#sessions.current?.token ?? "",
     });
   }
+
+  /** The feedback widget's sender; built once beside the staff client. */
+  #feedbackSender: FeedbackSender = async () => ({ ok: false, error: "not ready" });
 
   override connectedCallback(): void {
     super.connectedCallback();
@@ -207,6 +230,18 @@ export class QuoteDeskApp extends HHElement {
       header.demo = this.#demoBuild;
       header.theme = document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
     }
+    // The feedback widget's sender rides the property the same way, never a
+    // template binding: the widget's own seam.
+    const feedback = this.renderRoot.querySelector("hh-feedback");
+    if (feedback instanceof HHFeedback && feedback.send !== this.#feedbackSender) {
+      feedback.send = this.#feedbackSender;
+    }
+  }
+
+  /** The desk carries no floating pill: the bar's Feedback button opens the shared panel by the widget's show(). */
+  #showFeedback(): void {
+    const feedback = this.renderRoot.querySelector("hh-feedback");
+    if (feedback instanceof HHFeedback) feedback.show();
   }
 
   override disconnectedCallback(): void {
@@ -241,6 +276,9 @@ export class QuoteDeskApp extends HHElement {
         this.#view = next;
         this.requestUpdate();
       }
+    }
+    if (control.getAttribute("data-action") === "feedback") {
+      this.#showFeedback();
     }
     if (control.getAttribute("data-action") === "theme") {
       this.#theme.cycle();
@@ -423,6 +461,15 @@ export class QuoteDeskApp extends HHElement {
     return this.#deskIdentity !== null && this.#deskIdentity.tier <= 2;
   }
 
+  /** The Feedback control of the bar: opens the shared widget's panel. */
+  #feedbackControl(): TemplateResult {
+    return html`
+      <button type="button" class="btn-secondary" data-action="feedback" data-testid="feedback-control" title="Send feedback about this screen">
+        Feedback
+      </button>
+    `;
+  }
+
   /** The Theme control of the bar: one button, its value beside the word. */
   #themeControl(): TemplateResult {
     const choice = this.#theme.choice;
@@ -478,6 +525,7 @@ export class QuoteDeskApp extends HHElement {
     return html`
       <p class="visually-hidden" role="status" aria-live="polite" data-testid="theme-status">${this.#themeStatus}</p>
       <hos-app-header data-testid="qd-bar">
+        <div class="theme-slot" slot="theme">${this.#feedbackControl()}</div>
         <div class="theme-slot" slot="theme">${this.#themeControl()}</div>
       </hos-app-header>
       ${this.#surface === "desk" ? this.#deskTabs() : nothing}
@@ -493,6 +541,9 @@ export class QuoteDeskApp extends HHElement {
             `
           : renderEntry({ flows: this.#flowsState, busy: this.#busy, message: this.#message })}
       </main>
+      <!-- The feedback widget (Feature Polish): the shared panel, opened by
+           the bar's Feedback button (trigger external: no floating pill). -->
+      <hh-feedback screen="Quote Desk" trigger="external"></hh-feedback>
     `;
   }
 }
