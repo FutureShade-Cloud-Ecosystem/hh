@@ -98,9 +98,15 @@ export class QdQuoteGuard extends PanelBase {
     if (changed.has("client") || changed.has("branchId")) this.reload();
   }
 
-  protected override firstUpdated(): void {
-    this.syncValue('[data-field="price"]', DEFAULT_PRICE);
-    this.syncValue('[data-field="cost"]', DEFAULT_COST);
+  /** The two boxes are drawn only while a quote is open, so each is given its default the first time it exists, and never again (what the person typed stays). */
+  protected override updated(): void {
+    for (const [field, value] of [["price", DEFAULT_PRICE], ["cost", DEFAULT_COST]] as const) {
+      const input = this.renderRoot.querySelector<HTMLInputElement>(`[data-field="${field}"]`);
+      if (input !== null && input.dataset["seeded"] !== "1") {
+        input.dataset["seeded"] = "1";
+        this.syncValue(`[data-field="${field}"]`, value);
+      }
+    }
   }
 
   reload(): void {
@@ -174,6 +180,8 @@ export class QdQuoteGuard extends PanelBase {
   }
 
   override render() {
+    // Check Quote is a check of the quote on screen: with no quote (compose) nothing is drawn, as every other quote panel does.
+    if (this.quoteId === "") return nothing;
     return html`
       <div class="box" data-testid="qg-box">
         <h3>Check Quote</h3>

@@ -146,6 +146,9 @@ export class QdQuoteBuilder extends LitElement {
       flex-direction: column;
       gap: 12px;
     }
+    .stack[data-compose="true"] {
+      display: none;
+    }
     .row {
       display: flex;
       gap: 8px;
@@ -572,13 +575,15 @@ export class QdQuoteBuilder extends LitElement {
                quote): a panel taken off the page loses the late answers of writes still out for the quote it left,
                its announcement dies with it and the panel that comes back is never told what landed. Leaving a quote
                for another quote was already this way, and New Quote takes that same proven path. -->
-          <qd-quote-edit data-seam=${SEAM_EDIT_PANEL}></qd-quote-edit>
-          <qd-quote-assist data-seam=${SEAM_ASSIST}></qd-quote-assist>
-          <qd-quote-history data-seam=${SEAM_HISTORY}></qd-quote-history>
-          <qd-quote-followups data-seam=${SEAM_FOLLOWUPS}></qd-quote-followups>
-          <qd-quote-hold-expiry data-seam=${SEAM_HOLD_EXPIRY}></qd-quote-hold-expiry>
-          <qd-quote-availability data-seam=${SEAM_AVAILABILITY}></qd-quote-availability>
-          <qd-quote-guard></qd-quote-guard>
+          <div class="stack" data-testid="qb-quote-panels" data-compose=${this.selected === "" ? "true" : "false"}>
+            <qd-quote-edit data-seam=${SEAM_EDIT_PANEL}></qd-quote-edit>
+            <qd-quote-assist data-seam=${SEAM_ASSIST}></qd-quote-assist>
+            <qd-quote-history data-seam=${SEAM_HISTORY}></qd-quote-history>
+            <qd-quote-followups data-seam=${SEAM_FOLLOWUPS}></qd-quote-followups>
+            <qd-quote-hold-expiry data-seam=${SEAM_HOLD_EXPIRY}></qd-quote-hold-expiry>
+            <qd-quote-availability data-seam=${SEAM_AVAILABILITY}></qd-quote-availability>
+            <qd-quote-guard></qd-quote-guard>
+          </div>
           <qd-approvals data-seam=${SEAM_APPROVALS}></qd-approvals>
           <qd-quote-settings data-seam=${SEAM_SETTINGS}></qd-quote-settings>
         </div>
