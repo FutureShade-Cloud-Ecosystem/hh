@@ -52,6 +52,7 @@ var _ multiAcceptWriter = (*dib491Store)(nil)
 func dib491Svc(store *dib491Store, caller identity.StaffContext) (*StaffService, *recordingTxRecorder) {
 	rec := &recordingTxRecorder{}
 	svc := NewStaffService(store).
+		WithRoleConfig(qTestRoleConfig()).
 		withCaller(func(context.Context) (identity.StaffContext, bool) { return caller, true })
 	svc.WithAudit(rec)
 	return svc, rec

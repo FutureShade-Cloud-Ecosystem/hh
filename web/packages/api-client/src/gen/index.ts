@@ -26,6 +26,7 @@ export * as staffAssist from "./staff-assist.js";
 export * as staffAudit from "./staff-audit.js";
 export * as staffBankrec from "./staff-bankrec.js";
 export * as staffBilling from "./staff-billing.js";
+export * as managerBilling from "./manager-billing.js";
 export * as staffBranches from "./staff-branches.js";
 export * as staffBistrack from "./staff-bistrack.js";
 export * as staffCompliance from "./staff-compliance.js";

@@ -58,6 +58,14 @@ const (
 	gapInvoiceDeclineID = "3ef10000-0000-4000-8000-00000000b101"
 )
 
+// gapInvoiceWriterKey is the InvoiceWriter's own idempotency key over
+// the lane's dedicated order (invoice_writer.go's order-invoice:<order>
+// shape). Every writer-minted document this lane's tests raise is the
+// ONE document that key converges on, so the cleanup can name the
+// lane's invoices exactly and never reach into another package's
+// '#INV-' rows on the shared gate.
+const gapInvoiceWriterKey = "order-invoice:" + gapOrderID
+
 // gapOrderSource adapts the order module's invoice facts onto the
 // billing seam, the same six-line conversion the composition root's
 // adapter carries (order's shapes and billing's are deliberately not
@@ -197,11 +205,16 @@ func openGapPool(t *testing.T) *pgxpool.Pool {
 		exec(`DELETE FROM payment_intents WHERE customer_id IN ($1::uuid, $2::uuid)`,
 			testkit.TenantAlphaID, testkit.TenantBetaID)
 		// The allocations RESTRICT invoice deletes, so they go first
-		// (every allocation this lane's documents carry, including
-		// another package's residue against a writer-minted row).
+		// (every allocation this lane's documents carry). Scoped to the
+		// lane's own documents, the seeded payables by id and the writer
+		// document by its convergence key: a sweep of every '#INV-'
+		// invoice_no would reach into other packages' leftovers on the
+		// shared gate, where one foreign reference (the POS sale legs
+		// leave returns that RESTRICT their invoices) fails the whole
+		// statement and the swallow below hides the failure.
 		exec(`DELETE FROM payment_allocations WHERE invoice_id IN
-			(SELECT id FROM invoices WHERE invoice_no LIKE '#INV-%' OR id IN ($1::uuid, $2::uuid))`,
-			gapInvoicePayID, gapInvoiceDeclineID)
+			(SELECT id FROM invoices WHERE idempotency_key = $3 OR id IN ($1::uuid, $2::uuid))`,
+			gapInvoicePayID, gapInvoiceDeclineID, gapInvoiceWriterKey)
 		// Scoped to this lane's tenants: a bare seq predicate would
 		// sweep other packages' residue, and a SETTLED intent's ON
 		// DELETE SET NULL then violates the settled-has-payment CHECK
@@ -210,8 +223,15 @@ func openGapPool(t *testing.T) *pgxpool.Pool {
 			testkit.TenantAlphaID, testkit.TenantBetaID)
 		exec(`DELETE FROM customer_transactions WHERE customer_id IN ($1::uuid, $2::uuid)`,
 			testkit.TenantAlphaID, testkit.TenantBetaID)
-		exec(`DELETE FROM invoices WHERE invoice_no LIKE '#INV-%' OR id IN ($1::uuid, $2::uuid)`,
-			gapInvoicePayID, gapInvoiceDeclineID)
+		// Scoped to the lane's own documents, for the same reason: a
+		// blocked sweep leaves the lane's writer document behind, and
+		// the order delete below then severs that document's order link
+		// through invoices.order_id's ON DELETE SET NULL, stranding a
+		// keyed document with no order for the next test's push to
+		// converge on. Deleting only the lane's rows cannot be blocked,
+		// so the lane's world comes down whole every time.
+		exec(`DELETE FROM invoices WHERE idempotency_key = $3 OR id IN ($1::uuid, $2::uuid)`,
+			gapInvoicePayID, gapInvoiceDeclineID, gapInvoiceWriterKey)
 		exec(`DELETE FROM order_lines WHERE id = $1::uuid`, gapOrderLineID)
 		exec(`DELETE FROM orders WHERE id = $1::uuid`, gapOrderID)
 		exec(`DELETE FROM scope_sequences WHERE scope IN ('approvals', 'invoices', 'payments')`)
@@ -248,7 +268,7 @@ func gapOp(kind, key string, payload map[string]any, base *int64) apigen.SyncPus
 func gapNote(row map[string]any) string {
 	from := fmt.Sprint(row["detail"])
 	if from == "" || from == "<nil>" {
-		return "fx margin note"
+		return "fx credit note"
 	}
 	return from + " (revised)"
 }
@@ -272,8 +292,8 @@ func TestGapApprovalsContractBattery(t *testing.T) {
 		Create: func(id string) map[string]any {
 			fields := map[string]any{
 				"branch_id":   testkit.BranchNorthAID,
-				"policy_type": "MARGIN_BELOW_MINIMUM",
-				"detail":      "fx margin note",
+				"policy_type": "CREDIT_LIMIT_EXCEEDED",
+				"detail":      "fx credit note",
 			}
 			if id != "" {
 				fields["id"] = id
@@ -432,7 +452,7 @@ func TestGapApprovalsFences(t *testing.T) {
 
 	res := gapPush(t, f.engine, info, north, []apigen.SyncPushOperation{
 		gapOp("create", uuid.NewString(), map[string]any{
-			"branch_id": testkit.BranchSouthAID, "policy_type": "MARGIN_BELOW_MINIMUM", "detail": "fx south note",
+			"branch_id": testkit.BranchSouthAID, "policy_type": "CREDIT_LIMIT_EXCEEDED", "detail": "fx south note",
 		}, nil),
 	})
 	if res[0].Status != "rejected" || !strings.Contains(*res[0].Error, "not in this organisation") {
@@ -441,7 +461,7 @@ func TestGapApprovalsFences(t *testing.T) {
 
 	created := gapPush(t, f.engine, info, south, []apigen.SyncPushOperation{
 		gapOp("create", uuid.NewString(), map[string]any{
-			"branch_id": testkit.BranchSouthAID, "policy_type": "MARGIN_BELOW_MINIMUM", "detail": "fx south note",
+			"branch_id": testkit.BranchSouthAID, "policy_type": "CREDIT_LIMIT_EXCEEDED", "detail": "fx south note",
 		}, nil),
 	})
 	if created[0].Status != "applied" {
@@ -745,12 +765,18 @@ func TestGapPaymentsLegs(t *testing.T) {
 	}
 	assertGapEq(t, "payment replay convergence", snap1, gapSnap(t, f, info, alpha))
 	var n int
+	// Scoped to THIS invoice: the gate database is shared, and other packages' fixtures (the POS
+	// sale legs, for one) leave keyed payment rows of their own that have nothing to do with the
+	// request under test. "One charge, one settlement set" is a claim about the invoice's payments.
 	if err := f.pool.QueryRow(ctx,
-		`SELECT count(*) FROM payments WHERE idempotency_key IS NOT NULL AND idempotency_key <> ''`).Scan(&n); err != nil {
+		`SELECT count(*) FROM payments p
+		  WHERE p.idempotency_key IS NOT NULL AND p.idempotency_key <> ''
+		    AND EXISTS (SELECT 1 FROM payment_allocations a WHERE a.payment_id = p.id AND a.invoice_id = $1::uuid)`,
+		gapInvoicePayID).Scan(&n); err != nil {
 		t.Fatalf("count keyed payments: %v", err)
 	}
 	if n != 1 {
-		t.Fatalf("%d keyed payment rows, want exactly the one", n)
+		t.Fatalf("%d keyed payment rows against the invoice, want exactly the one", n)
 	}
 
 	// The decline is data: the 13-cent payable answers the rejected
@@ -829,17 +855,30 @@ func TestGapWalkthroughs(t *testing.T) {
 	staff := sync.ScopeFilter{OrgID: testkit.OrgNorthID, Actor: testkit.SubSalesManager}
 	alpha := sync.ScopeFilter{OrgID: testkit.OrgNorthID, TenantID: testkit.TenantAlphaID, Tenant: true, Actor: testkit.SubPortalAdminAlpha}
 
-	// APPROVALS: the clerk files the override from the yard phone, the
-	// manager decides on the train, the replay changes nothing, and a
-	// decision the desk already made is what the device is told to
-	// show.
+	// APPROVALS: the clerk's margin override from the yard phone is the
+	// quote desk's to file and the door refuses it with the rail's own
+	// words (D7); the credit exception is the caller's own, the manager
+	// decides it on the train, the replay changes nothing, and a decision
+	// the desk already made is what the device is told to show.
 	res := gapPush(t, f.engine, appr, clerk, []apigen.SyncPushOperation{
 		gapOp("create", uuid.NewString(), map[string]any{
 			"branch_id": testkit.BranchNorthAID, "policy_type": "MARGIN_BELOW_MINIMUM", "detail": "fixture walkthrough note",
 		}, nil),
 	})
+	if res[0].Status != "rejected" || !strings.Contains(*res[0].Error, "filed by the quote desk") {
+		t.Fatalf("walkthrough margin filing: %+v err %v", res[0], res[0].Error)
+	}
+	t.Logf("approvals 1: the clerk's pushed margin filing was refused: the quote desk files those for a quote line")
+	res = gapPush(t, f.engine, appr, clerk, []apigen.SyncPushOperation{
+		gapOp("create", uuid.NewString(), map[string]any{
+			"branch_id": testkit.BranchNorthAID, "policy_type": "CREDIT_LIMIT_EXCEEDED", "detail": "fixture walkthrough note",
+		}, nil),
+	})
+	if res[0].Status != "applied" {
+		t.Fatalf("walkthrough filing: %+v err %v", res[0], res[0].Error)
+	}
 	id := createdID(t, f, "approvals", clerk, *res[0].Seq)
-	t.Logf("approvals 1: the clerk filed override %s from the device, applied at seq %d", id, *res[0].Seq)
+	t.Logf("approvals 1b: the clerk filed the credit exception %s from the device, applied at seq %d", id, *res[0].Seq)
 	list, err := f.engine.Pull(ctx, appr, gm, 0, 50)
 	if err != nil {
 		t.Fatalf("gm pull: %v", err)

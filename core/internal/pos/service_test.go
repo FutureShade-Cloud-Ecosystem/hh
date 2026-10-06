@@ -292,6 +292,11 @@ func (f *fakeStore) InsertSignature(_ context.Context, sig signatureRow) (string
 	return "sig-row-1", nil
 }
 
+func (f *fakeStore) InsertSignatureTx(_ context.Context, _ pgx.Tx, sig signatureRow) (string, error) {
+	f.signatures = append(f.signatures, sig)
+	return "sig-row-tx", nil
+}
+
 // -- W7 counter-v2 fakes -----------------------------------------------------
 
 func (f *fakeStore) ReadPosPolicy(_ context.Context, branchID string) (PosPolicy, error) {
@@ -657,6 +662,13 @@ type fakeTender struct {
 	called     bool
 	last       till.TenderInput
 
+	// The capture seam's double: a canned capture per card leg (the id derives from the leg key
+	// so a split's legs bind distinctly), a canned decline when captureErr is set, and the
+	// compensations the failure paths run, recorded.
+	captureErr   error
+	captureCalls []till.CardChargeInput
+	compCalls    []string
+
 	refundPaymentID string
 	refundErr       error
 	refundCalled    bool
@@ -681,6 +693,29 @@ func (t *fakeTender) GetSession(_ context.Context, id string) (till.SessionDetai
 		return till.SessionDetail{}, t.sessionErr
 	}
 	return till.SessionDetail{TillSession: till.TillSession{ID: id, BranchID: t.sessionBranch, Status: "OPEN"}}, nil
+}
+
+// CaptureCard is the pre-transaction capture double: one canned capture per leg, keyed by the leg
+// key so a split binds distinctly, unless the test set a decline or another typed refusal.
+func (t *fakeTender) CaptureCard(_ context.Context, in till.CardChargeInput) (till.CardCapture, error) {
+	if in.ReadOnly {
+		return till.CardCapture{}, till.ErrCardLegUnattempted
+	}
+	t.captureCalls = append(t.captureCalls, in)
+	if t.captureErr != nil {
+		return till.CardCapture{AttemptID: "att-fake-" + in.LegKey}, t.captureErr
+	}
+	return till.CardCapture{
+		Kind:         till.CardCaptureCaptured,
+		AttemptID:    "att-fake-" + in.LegKey,
+		ProcessorRef: t.gatewayRef,
+	}, nil
+}
+
+// CompensateCard is the compensation double: every captured leg reverses cleanly.
+func (t *fakeTender) CompensateCard(_ context.Context, attemptID string) (till.CardCompensation, error) {
+	t.compCalls = append(t.compCalls, attemptID)
+	return till.CardCompensation{Kind: till.CardCompVoided, AttemptID: attemptID}, nil
 }
 
 func (t *fakeTender) TakeTender(_ context.Context, _ pgx.Tx, in till.TenderInput) (till.TenderResult, error) {
@@ -1120,16 +1155,21 @@ func TestSale_Card_StubCaptures_GatewayRefPersisted(t *testing.T) {
 
 func TestSale_Card_Declined_RollsBackEverything(t *testing.T) {
 	h := newHarness()
-	h.tender.err = fmt.Errorf("%w: gateway refused", till.ErrCardDeclined)
+	// The decline arrives at the CAPTURE, before the transaction opens; the ring answers the
+	// decline word and persists nothing (no order, no invoice, no pos_sale, no tender taken).
+	h.tender.captureErr = fmt.Errorf("%w: gateway refused", till.ErrCardDeclined)
 	in := baseInput()
 	in.Tender = TenderCard
 	_, err := h.svc.Sale(context.Background(), in)
-	if !errors.Is(err, errCardDeclined) {
-		t.Fatalf("want errCardDeclined, got %v", err)
+	if !errors.Is(err, ErrCardChargeCardDeclined) {
+		t.Fatalf("want ErrCardChargeCardDeclined, got %v", err)
 	}
 	if len(h.store.orders) != 0 || len(h.store.invoices) != 0 || len(h.store.posSales) != 0 {
 		t.Fatalf("declined card must persist NOTHING: o=%d i=%d p=%d",
 			len(h.store.orders), len(h.store.invoices), len(h.store.posSales))
+	}
+	if len(h.tender.takes) != 0 {
+		t.Fatalf("a declined capture must take no tender at all; takes=%d", len(h.tender.takes))
 	}
 }
 

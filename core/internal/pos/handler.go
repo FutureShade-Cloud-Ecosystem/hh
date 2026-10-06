@@ -499,13 +499,34 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 }
 
 // writeErr maps the POS error taxonomy to HTTP. The till has no price_blocked answer (D48 row
-// 481, D49): the counter resolve never blocks a line, so there is nothing to map.
+// 481, D49): the counter resolve never blocks a line, so there is nothing to map. A ring that
+// took a card capture answers with the card charge design's words (3.3 to 3.7), never the bare
+// 500 a rolled-back card ring used to carry.
 func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	var ce clientError
 	var cb ErrCreditBlocked
 	var nt ErrNoOpenTill
 	var ra ErrRefundApprovalRequired
+	var mgr ErrCardChargeNeedsManager
 	switch {
+	case errors.Is(err, ErrSaleFailedCardReversed):
+		// The sale did not go through and every card charge it took was reversed: the client
+		// clears its key and rings again.
+		httpx.Error(w, http.StatusServiceUnavailable, "sale_failed_card_reversed")
+	case errors.As(err, &mgr):
+		// The money may be held with no sale: the attempts' short references ride beside the
+		// word so the manager knows which rows to read.
+		httpx.ErrorWith(w, http.StatusConflict, "card_charge_needs_manager",
+			map[string]any{"attempts": mgr.Refs})
+	case errors.Is(err, ErrCardChargeCardDeclined):
+		// A card leg was declined, any card already charged for the sale was reversed (the
+		// design's split decline answer).
+		httpx.Error(w, http.StatusPaymentRequired, "card_charge_card_declined")
+	case errors.Is(err, ErrCardChargeUnresolvedOnTill):
+		httpx.Error(w, http.StatusConflict, "card_charge_unresolved_on_till")
+	case errors.Is(err, ErrCardChargeInFlight):
+		// The same-key double submit's loser: keep the key, ring again shortly.
+		httpx.Error(w, http.StatusConflict, "card_charge_in_flight")
 	case errors.Is(err, ErrTaxRailUnavailable):
 		// The tax rail is down (the engine reports no standard rate row in
 		// effect): nothing tax-bound can be answered untaxed (a sale, a

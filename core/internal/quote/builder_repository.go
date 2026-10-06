@@ -6,11 +6,13 @@ package quote
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -296,8 +298,13 @@ func (e *BadTermsRefError) Error() string {
 
 // UpdateLineDiscountGuarded writes one line's discount under the quote row lock: the stored gross
 // (pre_discount_total_cents, falling back to the line total for never-discounted legacy lines) is
-// re-discounted to the new percent, half-up once, and the totals fold up.
-func (r *Repository) UpdateLineDiscountGuarded(ctx context.Context, quoteID string, lineNo, discPct int, allowedFrom []string, actorID string) (QuoteEditResult, error) {
+// re-discounted to the new percent, half-up once, and the totals fold up. A floor plan carries the
+// decision's verdict (floor.go): the gross it priced (a mismatch under the lock refuses the write),
+// the approval consumed on this transaction, and the clearing stamped into the line's metadata.
+// The record hook runs on the same transaction (plan 4.2): the discount
+// before and after and the line total land on the quote's change trail,
+// the trail the other line writes use, atomic with the write.
+func (r *Repository) UpdateLineDiscountGuarded(ctx context.Context, quoteID string, lineNo, discPct int, allowedFrom []string, actorID string, plan floorWritePlan, hooks quoteDiscountHooks) (QuoteEditResult, error) {
 	if r.pool == nil {
 		return QuoteEditResult{}, errNoDB
 	}
@@ -316,24 +323,43 @@ func (r *Repository) UpdateLineDiscountGuarded(ctx context.Context, quoteID stri
 	}
 	var gross, before int64
 	var beforePct int
+	var rowID string
 	err = tx.QueryRow(ctx, `
-		SELECT CASE WHEN pre_discount_total_cents > 0 THEN pre_discount_total_cents ELSE line_total_cents END,
+		SELECT id::text,
+		       CASE WHEN pre_discount_total_cents > 0 THEN pre_discount_total_cents ELSE line_total_cents END,
 		       line_total_cents, disc_pct
 		  FROM quote_lines WHERE quote_id = $1 AND line_no = $2 FOR UPDATE`, quoteID, lineNo).
-		Scan(&gross, &before, &beforePct)
+		Scan(&rowID, &gross, &before, &beforePct)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return QuoteEditResult{}, ErrLineNotFound
 	}
 	if err != nil {
 		return QuoteEditResult{}, fmt.Errorf("read quote line for discount: %w", err)
 	}
+	if plan.expectedGross != 0 && plan.expectedGross != gross {
+		// The floor decision priced a gross the lock no longer sees; refuse
+		// rather than discount figures nobody decided on.
+		return QuoteEditResult{}, errFloorStateChanged
+	}
+	if plan.lineID != "" && plan.lineID != rowID {
+		// The decision priced a row the lock no longer sees: the number was
+		// reused inside the evaluation window (P2-A). Refuse BEFORE any
+		// approval is consumed, so a swap cannot spend a decision that
+		// belongs to a row that is gone.
+		return QuoteEditResult{}, errFloorStateChanged
+	}
+	if err := runFloorPlan(ctx, tx, &plan); err != nil {
+		return QuoteEditResult{}, err
+	}
 	net := (gross*int64(100-discPct) + 50) / 100
 	var after QuoteLineSnapshot
 	err = tx.QueryRow(ctx, fmt.Sprintf(`
 		UPDATE quote_lines SET disc_pct = $3, pre_discount_total_cents = $4, line_total_cents = $5,
+		       metadata = CASE WHEN $6::jsonb IS NULL THEN metadata
+		                       ELSE metadata || jsonb_build_object('floor_clear', $6::jsonb) END,
 		       updated_at = now()
 		 WHERE quote_id = $1 AND line_no = $2
-		 RETURNING %s`, editLineColumns), quoteID, lineNo, discPct, gross, net).
+		 RETURNING %s`, editLineColumns), quoteID, lineNo, discPct, gross, net, stampClearingJSON(plan.clearing)).
 		Scan(&after.LineNo, &after.ProductID, &after.QtyEntered, &after.QtyBase,
 			&after.UnitPriceCents, &after.LineTotalCents)
 	if err != nil {
@@ -343,11 +369,20 @@ func (r *Repository) UpdateLineDiscountGuarded(ctx context.Context, quoteID stri
 	if err != nil {
 		return QuoteEditResult{}, err
 	}
+	if hooks.record != nil {
+		if err := hooks.record(ctx, tx, lineNo, beforePct, discPct, before, after.LineTotalCents, totals); err != nil {
+			return QuoteEditResult{}, err
+		}
+	}
+	// The BYPASS or UPDATE row the floor decision owes rides the same
+	// transaction as the trail above (plan 4.2); a re-assertion of the
+	// standing discount owes no row.
+	if err := runPricingLog(ctx, hooks.pricing, tx, lineNo, beforePct != discPct); err != nil {
+		return QuoteEditResult{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return QuoteEditResult{}, fmt.Errorf("commit quote line discount: %w", err)
 	}
-	_ = beforePct
-	_ = before
 	return QuoteEditResult{Line: &after, Totals: totals, Status: status}, nil
 }
 
@@ -389,4 +424,69 @@ func (r *Repository) ReadQuoteMarginRows(ctx context.Context, quoteID string) (s
 		out = append(out, m)
 	}
 	return branchID, out, rows.Err()
+}
+
+// runFloorPlan runs the plan's approval consumption on the write's
+// transaction, before the mutation: an approval that cannot be consumed
+// refuses the write, so a below floor price never lands on a request that
+// is not standing.
+func runFloorPlan(ctx context.Context, tx pgx.Tx, plan *floorWritePlan) error {
+	if plan == nil || plan.consume == nil {
+		return nil
+	}
+	_, found, err := plan.consume(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if !found {
+		if plan.refusal != nil {
+			return plan.refusal
+		}
+		return &FloorRefusalError{Policy: string(identity.PolicyMargin)}
+	}
+	return nil
+}
+
+// LineFloorState reads one line's floor facts (floor.go's seam): the line's
+// OWN row id (the approval's binding; a line number is reused by the next
+// line added after a delete, the row id never is), the stored discount, the
+// rule unit price, the pre-discount gross, the price uom, and the line's
+// stamped clearing (nil when none).
+func (r *Repository) LineFloorState(ctx context.Context, quoteID string, lineNo int) (string, int, int64, int64, string, *floorClearingStamp, error) {
+	if r.pool == nil {
+		return "", 0, 0, 0, "", nil, errNoDB
+	}
+	if !looksLikeUUID(quoteID) {
+		return "", 0, 0, 0, "", nil, ErrNotFound
+	}
+	var lineID string
+	var discPct int
+	var unitPrice, gross int64
+	var priceUOM string
+	var metadata []byte
+	err := r.pool.QueryRow(ctx, `
+		SELECT id::text, disc_pct, unit_price_cents, price_uom::text,
+		       CASE WHEN pre_discount_total_cents > 0 THEN pre_discount_total_cents ELSE line_total_cents END,
+		       metadata
+		  FROM quote_lines WHERE quote_id = $1 AND line_no = $2`, quoteID, lineNo).
+		Scan(&lineID, &discPct, &unitPrice, &priceUOM, &gross, &metadata)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", 0, 0, 0, "", nil, ErrLineNotFound
+	}
+	if err != nil {
+		return "", 0, 0, 0, "", nil, fmt.Errorf("read quote line floor state: %w", err)
+	}
+	var clearing *floorClearingStamp
+	if len(metadata) > 0 {
+		var m map[string]json.RawMessage
+		if json.Unmarshal(metadata, &m) == nil {
+			if raw, ok := m["floor_clear"]; ok {
+				var c floorClearingStamp
+				if json.Unmarshal(raw, &c) == nil {
+					clearing = &c
+				}
+			}
+		}
+	}
+	return lineID, discPct, unitPrice, gross, priceUOM, clearing, nil
 }

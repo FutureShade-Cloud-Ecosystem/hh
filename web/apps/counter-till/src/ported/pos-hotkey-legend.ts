@@ -2,7 +2,7 @@
 
 import { LitElement, css, html, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
-import { focusRing } from './styles/focus-ring.js';
+import { focusRing } from '@hardscapehouse/pos-kit/src/ported/styles/focus-ring.js';
 import { legendKeys, type PosHotkey, type HotkeyState } from './_pos-hotkeys.js';
 
 /**

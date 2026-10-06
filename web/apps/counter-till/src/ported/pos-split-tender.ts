@@ -2,9 +2,9 @@
 
 import { LitElement, css, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import { focusRing } from './styles/focus-ring.js';
-import { drawIcon, iconForId } from './_icon-consumer.js';
-import { plainDollars } from './_money-format.js'; // HH note: the display spelling lives in the named helper (CLOSURE.md)
+import { focusRing } from '@hardscapehouse/pos-kit/src/ported/styles/focus-ring.js';
+import { drawIcon, iconForId } from '@hardscapehouse/pos-kit/src/ported/_icon-consumer.js';
+import { plainDollars } from '@hardscapehouse/pos-kit/src/ported/_money-format.js'; // HH note: the display spelling lives in the named helper (CLOSURE.md)
 import {
   evaluateSplit,
   autoFillRemainder,

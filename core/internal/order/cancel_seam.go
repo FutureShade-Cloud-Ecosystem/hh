@@ -18,7 +18,11 @@
 // unreachable in a correct deploy. Note the offer side is softer: see canOfferCancel.
 package order
 
-import "context"
+import (
+	"context"
+
+	"github.com/jackc/pgx/v5"
+)
 
 // FinalizedInvoiceReader reports whether an order has an invoice that has left DRAFT, i.e. one whose
 // finalize transaction has already run (FINALIZED / PARTIALLY_PAID / PAID). A VOID invoice does NOT
@@ -30,6 +34,38 @@ type FinalizedInvoiceReader interface {
 // CommittedSaleReader reports whether an order has a COMMITTED pos_sale. A VOIDED sale does not count.
 type CommittedSaleReader interface {
 	OrderHasCommittedPOSSale(ctx context.Context, orderID string) (bool, error)
+}
+
+// FinalizedInvoiceTxReader is the transaction-joining variant of FinalizedInvoiceReader. The precheck
+// runs INSIDE the order transaction, so a reader that asked the shared pool for its own connection would
+// hold two connections per caller, and pool-size callers in flight together would starve each other with
+// no lock waited on. A reader that implements this reads through the caller's tx instead (nil tx means
+// the pool, the shape of the tree's other store seams). Production's billing repository implements both;
+// a reader that implements only FinalizedInvoiceReader still works and keeps the pool read.
+type FinalizedInvoiceTxReader interface {
+	OrderHasFinalizedInvoiceTx(ctx context.Context, tx pgx.Tx, orderID string) (bool, error)
+}
+
+// CommittedSaleTxReader is the same transaction-joining variant for CommittedSaleReader.
+type CommittedSaleTxReader interface {
+	OrderHasCommittedPOSSaleTx(ctx context.Context, tx pgx.Tx, orderID string) (bool, error)
+}
+
+// precheckTxKey carries the order transaction a precheck runs inside. The guarded writes hand their
+// precheck a bare context (the precheck closures are shared with the unit fakes and the portal's
+// stores), so the open transaction rides the context, the tree's rule for spanning a transaction across
+// services. Only the repository's own guarded writes set it, via withPrecheckTx.
+type precheckTxKey struct{}
+
+// withPrecheckTx marks ctx as running inside tx, for assertCancellable to join.
+func withPrecheckTx(ctx context.Context, tx pgx.Tx) context.Context {
+	return context.WithValue(ctx, precheckTxKey{}, tx)
+}
+
+// precheckTx returns the transaction the precheck runs inside, or nil (an HTTP read, the offer side).
+func precheckTx(ctx context.Context) pgx.Tx {
+	tx, _ := ctx.Value(precheckTxKey{}).(pgx.Tx)
+	return tx
 }
 
 // WithCancelGuards injects the two cancel-predicate readers (billingRepo + posRepo in main.go).
@@ -55,14 +91,26 @@ func (s *Service) assertCancellable(ctx context.Context, orderID string) error {
 	if !s.CancelGuardsWired() {
 		return ErrCancelUnverifiable
 	}
-	hasInvoice, err := s.cancelInvoices.OrderHasFinalizedInvoice(ctx, orderID)
+	tx := precheckTx(ctx)
+	var hasInvoice bool
+	var err error
+	if r, ok := s.cancelInvoices.(FinalizedInvoiceTxReader); ok && tx != nil {
+		hasInvoice, err = r.OrderHasFinalizedInvoiceTx(ctx, tx, orderID)
+	} else {
+		hasInvoice, err = s.cancelInvoices.OrderHasFinalizedInvoice(ctx, orderID)
+	}
 	if err != nil {
 		return err
 	}
 	if hasInvoice {
 		return ErrCancelBlocked
 	}
-	hasSale, err := s.cancelSales.OrderHasCommittedPOSSale(ctx, orderID)
+	var hasSale bool
+	if r, ok := s.cancelSales.(CommittedSaleTxReader); ok && tx != nil {
+		hasSale, err = r.OrderHasCommittedPOSSaleTx(ctx, tx, orderID)
+	} else {
+		hasSale, err = s.cancelSales.OrderHasCommittedPOSSale(ctx, orderID)
+	}
 	if err != nil {
 		return err
 	}

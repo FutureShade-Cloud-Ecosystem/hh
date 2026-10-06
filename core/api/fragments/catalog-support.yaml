@@ -318,6 +318,38 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  # --- product: the staff read of the unit catalogue ------------------------
+  /api/v1/uoms:
+    get:
+      operationId: productListUnits
+      tags: [staff-product]
+      summary: Read the unit catalogue
+      description: >-
+        The staff read of the load doors' catalogue (HH-LOAD-1 LD-3): one
+        cursor page of the unit rows in code order, the code the stable
+        ordering key. Dealer Admin at read: the route serves the dealer
+        admin surface, a named exception to this tag's default. The
+        catalogue is the deployment wide vocabulary, so the read carries
+        the X-Org the staff surface takes and no per row org.
+      x-role: requireStaff
+      x-access:
+        surfaces: [dealer-admin]
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: One cursor page of the catalogue
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UomViewPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
   # --- product: the faceted catalogue and the counter surface ---------------
   /api/v1/products:
     get:
@@ -542,7 +574,7 @@ paths:
         answers an empty list, never an error.
       x-role: requireStaff
       x-access:
-        surfaces: [counter-till]
+        surfaces: [counter-till, quote-desk]
         level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -580,7 +612,7 @@ paths:
         is a 404, not an empty search result.
       x-role: requireStaff
       x-access:
-        surfaces: [counter-till]
+        surfaces: [counter-till, quote-desk]
         level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -1626,6 +1658,28 @@ components:
         list_price_uom:
           type: string
           description: The unit list_price_cents is denominated in, carried only with it
+
+    UomView:
+      type: object
+      description: One row of the unit catalogue
+      required: [code, name, dimension, is_active]
+      properties:
+        code: { type: string }
+        name: { type: string }
+        dimension:
+          type: string
+          enum: [count, area, weight, volume, length]
+        is_active: { type: boolean }
+
+    UomViewPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/UomView" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
 
     ProductPage:
       type: object

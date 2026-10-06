@@ -680,6 +680,9 @@
       "sales_manager",
       "branch_manager"
     ],
+    "quote_floor_branch_approvers": [
+      "sales_manager"
+    ],
     "delivery_date_committers": [
       "yard_manager",
       "logistics_manager",

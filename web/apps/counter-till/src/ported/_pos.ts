@@ -8,9 +8,9 @@
 // customer and the ticket total: keyed by the server ticket id. It is consulted on resume
 // (restore the customer: DIB-246) and by the parked list (show who + how much: DIB-247).
 
-import type { PosCustomer } from './pos-customer-strip.js';
-import type { CartLine } from './pos-api.js';
-import { balanceAfterDepositCents } from './ports.js';
+import type { PosCustomer } from '@hardscapehouse/pos-kit/src/ported/pos-customer-strip.js';
+import type { CartLine } from '@hardscapehouse/pos-kit/src/ported/pos-api.js';
+import { balanceAfterDepositCents } from '@hardscapehouse/pos-kit/src/ported/ports.js';
 
 // One parked ticket's client-side display snapshot, captured in parkCurrent() before the order
 // is reset. `customer` is the full account (or null for walk-in); `subtotalCents` is the ticket's
@@ -305,12 +305,12 @@ export function accountTypeTag(customerType: string): string {
 }
 
 /** One parsed answer for the optional cash-tendered quick entry (rev 6, item F). */
-export type { CashTenderedPlan } from './ports.js';
+export type { CashTenderedPlan } from '@hardscapehouse/pos-kit/src/ported/ports.js';
 
 // HH note: the reference parsed the typed dollars through a float and computed the change due
 // here. HH's rule is that the core computes money, so the computation is left out of the port
 // and the seam lives in ports.ts with the reference's signature (CLOSURE.md names it).
-export { cashTenderedPlan } from './ports.js';
+export { cashTenderedPlan } from '@hardscapehouse/pos-kit/src/ported/ports.js';
 
 /**
  * counterRingMessage: the ring-failure line as the COUNTER should read it. ringErrorMessage()

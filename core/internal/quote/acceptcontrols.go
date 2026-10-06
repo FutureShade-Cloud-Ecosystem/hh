@@ -35,6 +35,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 )
 
 // SettingAllowMultiAccept is the system_settings key (0162). Absent = false: the restrictive default
@@ -152,8 +153,10 @@ func (s *StaffService) multiAcceptOn(ctx context.Context) bool {
 	return on
 }
 
-// settingsAdmin resolves the caller and applies the Tier-1 GLOBAL gate shared by both settings
-// endpoints. The route registration is requireStaff (the coarse first line); this is the authority.
+// settingsAdmin resolves the caller and applies the settings' role rule of
+// CP0-5 answer A: the Sales manager (whoever holds Manage on the Quote
+// Desk) and the General Manager. Reading the acceptance settings opens to
+// both; saving follows the same rule through settingsWriter.
 func (s *StaffService) settingsAdmin(ctx context.Context) (identity.StaffContext, error) {
 	caller, err := s.caller(ctx)
 	if err != nil {
@@ -162,10 +165,55 @@ func (s *StaffService) settingsAdmin(ctx context.Context) (identity.StaffContext
 	if caller.Status != identity.StatusActive {
 		return identity.StaffContext{}, ErrForbidden
 	}
-	if !caller.IsAdmin() {
+	if !s.holdsQuoteSettingsAuthority(caller) {
 		return identity.StaffContext{}, &NotSettingsAdminError{RoleCode: caller.RoleCode}
 	}
 	return caller, nil
+}
+
+// settingsWriter applies the write half of the settings' role rule (CP0-5
+// answer A): a branch row is written by a caller holding Manage on the
+// Quote Desk, in a branch it reaches; the NULL dealer default row is the
+// General Manager's alone.
+func (s *StaffService) settingsWriter(ctx context.Context, branchID string) (identity.StaffContext, error) {
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return identity.StaffContext{}, err
+	}
+	if caller.Status != identity.StatusActive {
+		return identity.StaffContext{}, ErrForbidden
+	}
+	if !s.holdsQuoteSettingsAuthority(caller) {
+		return identity.StaffContext{}, &NotSettingsAdminError{RoleCode: caller.RoleCode}
+	}
+	if branchID != "" {
+		// A branch row: Manage on the Quote Desk (the Sales manager under
+		// the decided default), in a branch the caller reaches. The General
+		// Manager holds Read and writes the dealer default alone.
+		if s.quoteDeskLevel(caller) != roleconfig.LevelManage || !caller.CanAccessBranch(branchID) {
+			return identity.StaffContext{}, &NotSettingsAdminError{RoleCode: caller.RoleCode}
+		}
+		return caller, nil
+	}
+	// The dealer default row: the General Manager alone under the decided
+	// default (a Manage caller keeps its branch rows).
+	if canonicalRole(caller.RoleCode) != roleconfig.RoleGeneralManager {
+		return identity.StaffContext{}, &NotSettingsAdminError{RoleCode: caller.RoleCode}
+	}
+	return caller, nil
+}
+
+// holdsQuoteSettingsAuthority answers whether the caller is one of the two
+// roles CP0-5 answer A names: a caller holding Manage on the Quote Desk
+// (the Sales manager) or the General Manager.
+func (s *StaffService) holdsQuoteSettingsAuthority(caller identity.StaffContext) bool {
+	if s.roles == nil {
+		return false
+	}
+	if s.quoteDeskLevel(caller).AtLeast(roleconfig.LevelManage) {
+		return true
+	}
+	return canonicalRole(caller.RoleCode) == roleconfig.RoleGeneralManager
 }
 
 // AcceptanceSettings reads the effective switch. Admin-gated like the write: the setting is an
@@ -195,8 +243,13 @@ func (s *StaffService) AcceptanceSettings(ctx context.Context) (AcceptanceSettin
 // that EXISTS with a NULL subject beats a searchable subject on a row that does not (autohold.go's
 // policyEntityID lesson). Re-asserting the current value is not an error: a UI switch re-posts its
 // state, and refusing the no-op turns a double-click into a red banner.
+//
+// The write's rule: the switch is DEALER WIDE (one row, no branch axis), so
+// CP0-5 answer A gives it to the General Manager alone. settingsWriter's
+// empty branch arm holds that, never settingsAdmin, which would let a Sales
+// manager flip what every branch reads.
 func (s *StaffService) SetAllowMultiAccept(ctx context.Context, allow bool, reason string) (AcceptanceSettings, error) {
-	caller, err := s.settingsAdmin(ctx)
+	caller, err := s.settingsWriter(ctx, "")
 	if err != nil {
 		return AcceptanceSettings{}, err
 	}

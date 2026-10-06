@@ -213,6 +213,21 @@ func (s *SyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key str
 // Load reads one sheet by id under the org fence; a sheet outside the
 // caller's org is the same as an absent one.
 func (s *SyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
+	return s.load(ctx, s.pool, f, id)
+}
+
+// sheetQuerier is the read surface a pool and a transaction share, so one
+// loader body serves the public Load (the pool) and the callers that
+// already hold a transaction (their own connection).
+type sheetQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// load is Load over a querier. A caller inside a transaction passes the
+// transaction, so the read rides the connection it already holds instead
+// of asking the shared pool for a second one (connection starvation by
+// second acquisition when pool-size callers do this together).
+func (s *SyncStore) load(ctx context.Context, db sheetQuerier, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
 	where, args, ok := cycleScopePredicate(f)
 	if !ok || !cycleLooksLikeUUID(id) {
 		return sync.RowState{}, false, nil
@@ -220,7 +235,7 @@ func (s *SyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sy
 	q := fmt.Sprintf(`SELECT %s FROM count_sheets WHERE id = $2::uuid AND %s`,
 		syncSheetColumns, where)
 	args = append(args, id)
-	r, err := scanSyncSheet(s.pool.QueryRow(ctx, q, args...))
+	r, err := scanSyncSheet(db.QueryRow(ctx, q, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, false, nil
 	}
@@ -335,7 +350,7 @@ func (s *SyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, 
 		RETURNING `+syncSheetColumns,
 		id, branchID, scope, notes, seq, key))
 	if errors.Is(err, pgx.ErrNoRows) {
-		if _, own, _ := s.Load(ctx, f, id); own {
+		if _, own, _ := s.load(ctx, tx, f, id); own {
 			return sync.RowState{}, sync.ErrRowExists
 		}
 		return sync.RowState{}, sync.ErrRowNotFound
@@ -474,7 +489,7 @@ func (s *SyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key strin
 		if s.stock == nil {
 			return sync.RowState{}, cycleRefused(errors.New("inventory snapshot seam not wired"))
 		}
-		snaps, err := s.stock.SnapshotOnHand(ctx, branchID)
+		snaps, err := s.stock.SnapshotOnHandTx(ctx, tx, branchID)
 		if err != nil {
 			return sync.RowState{}, fmt.Errorf("invcount: snapshot read: %w", err)
 		}
