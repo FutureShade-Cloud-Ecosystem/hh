@@ -61,6 +61,8 @@ export interface LiveRole {
    * contract words, never decorated.
    */
   readonly label: string;
+  /** The card's one line of what the role does, the till's entry words. */
+  readonly line: string;
   /** The registry id the card draws. */
   readonly icon: string;
   /** The modules the role opens, as the card's chips and the home's tiles. */
@@ -81,6 +83,7 @@ export const LIVE_ROLES: readonly LiveRole[] = [
     id: "inside_sales",
     flow: "sales",
     label: "Sales",
+    line: "The counter sale flow.",
     icon: "lucide:receipt",
     tiles: [TILL_TILE, QUOTE_TILE],
   },
@@ -88,6 +91,7 @@ export const LIVE_ROLES: readonly LiveRole[] = [
     id: "sales_manager",
     flow: "sales-manager",
     label: "Sales manager",
+    line: "The counter plus approvals and margins.",
     icon: "lucide:badge-check",
     tiles: [TILL_TILE, QUOTE_TILE, MANAGER_HOME_TILE, DEALER_ADMIN_TILE, HOUSE_MESSAGES_TILE],
   },
