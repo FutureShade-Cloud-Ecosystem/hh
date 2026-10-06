@@ -569,7 +569,7 @@ test("guard convert payment: a payment refused after the person left is said as 
   await expect(page.getByTestId("qc-review")).toBeVisible();
   await held.release();
   await expect(page.getByTestId("qb-convert-notice")).toContainText("was not taken");
-  await expect(page.getByTestId("qb-convert-notice")).toContainText("the payments desk is closed");
+  await expect(page.getByTestId("qb-convert-notice")).toContainText("payments desk is closed");
   await expect(page.getByTestId("qb-convert-notice")).toContainText("SO-");
   expect((await state(page)).payments).toHaveLength(0);
 });

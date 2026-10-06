@@ -1490,5 +1490,12 @@
     "test": "the idempotency key follows the intended payment",
     "runner": "node",
     "testFile": "test/quote-convert.test.mjs"
+  },
+  {
+    "id": "qc-take-away",
+    "file": "src/quote-convert.ts",
+    "find": "      this.#announceAway(quoteId, awayNotice({ orderNo, quoteNo, amountCents: planned.amountCents, paid: paid.ok ? paid.value : null, said: paid.ok ? \"\" : spokenRefusal(paid.error) }));\n      return;",
+    "replace": "      void orderNo;\n      void quoteNo;\n      return;",
+    "test": "guard convert payment: a payment out after the conversion"
   }
 ]

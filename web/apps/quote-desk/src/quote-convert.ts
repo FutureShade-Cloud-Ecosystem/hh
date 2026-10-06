@@ -589,16 +589,23 @@ export class QuoteConvert extends HHElement {
     const planned = this.#planned;
     if (client === null || planned === null || this.#busy) return;
     const seq = this.#seq;
+    const quoteId = this.quoteId;
+    const quoteNo = this.#view?.quote_no ?? "";
+    const orderNo = this.#done?.orderNo ?? "";
     this.#busy = true;
     this.#payNote = "";
     this.requestUpdate();
-    const paid = await client.takeOrderPayment(this.quoteId, {
+    const paid = await client.takeOrderPayment(quoteId, {
       method: planned.method,
       amountCents: planned.amountCents,
       reference: planned.reference,
       idempotencyKey: planned.key,
     });
-    if (seq !== this.#seq) return;
+    if (seq !== this.#seq) {
+      // The person left while the payment was out: the outcome is said on the desk, never dropped.
+      this.#announceAway(quoteId, awayNotice({ orderNo, quoteNo, amountCents: planned.amountCents, paid: paid.ok ? paid.value : null, said: paid.ok ? "" : spokenRefusal(paid.error) }));
+      return;
+    }
     this.#busy = false;
     if (paid.ok) {
       this.#paid = paid.value;
@@ -622,7 +629,11 @@ export class QuoteConvert extends HHElement {
     this.#announceAway(quoteId, awayNotice({ orderNo, quoteNo, amountCents: planned.amountCents, paid: paid.ok ? paid.value : null, said }));
   }
 
-  /** Tell the desk, wherever the person is now: this element may be gone, so the window carries it. */
+  /**
+   * Tell the desk, wherever the person is now. This element may be gone, and events from a detached
+   * element reach nobody, so the window carries it; the desk shows the notice and refreshes its
+   * list for the quote (the same work the bubbling quote-changed does while the surface is mounted).
+   */
   #announceAway(quoteId: string, text: string): void {
     window.dispatchEvent(new CustomEvent(CONVERT_NOTICE_EVENT, { detail: { quoteId, text } }));
   }

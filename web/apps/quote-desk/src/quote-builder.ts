@@ -276,8 +276,10 @@ export class QdQuoteBuilder extends LitElement {
   }
 
   /** A conversion's payment settled after the person left its surface: the outcome is said here. */
-  private readonly onConvertNotice = (event: CustomEvent<{ text: string }>): void => {
+  private readonly onConvertNotice = (event: CustomEvent<{ quoteId: string; text: string }>): void => {
     this.convertNotice = event.detail.text;
+    // The surface may be gone, and its quote-changed with it: the list is refreshed from here.
+    this.onQuoteChanged(new CustomEvent("quote-changed", { detail: { quoteId: event.detail.quoteId } }));
   };
 
   /** The route table: the address either names the convert surface for a quote or leaves the desk as it was. */

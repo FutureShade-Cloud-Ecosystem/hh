@@ -214,7 +214,8 @@ export function codRefusalWords(status: number | undefined, detail: string): str
   if (status >= 500) {
     return `${lead} We could not confirm whether the order was created and the payment taken. Try again: the same payment is sent with the same key, so it can never be taken twice.`;
   }
-  return `${lead} Nothing was created and nothing was taken.`;
+  const reload = status === 400 || status === 409 ? " If the quote was changed since this page opened, reload the page and try again." : "";
+  return `${lead} Nothing was created and nothing was taken.${reload}`;
 }
 
 // ── the payment ────────────────────────────────────────────────────────────────
