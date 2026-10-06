@@ -1287,7 +1287,7 @@
   {
     "id": "op-read-guard",
     "file": "src/order-payment-panel.ts",
-    "find": "const answers = await ctx.guardedRead(seq, Promise.all([client.readQuote(ctx.id), client.relatedDocuments(ctx.id, \"quote\")]));\n    if (answers === undefined) return;",
+    "find": "const answers = await ctx.guardedRead(seq, Promise.all([client.readQuote(ctx.id), client.relatedDocuments(ctx.id, \"quote\")]));\n    if (answers === undefined) return false;",
     "replace": "const answers = await Promise.all([client.readQuote(ctx.id), client.relatedDocuments(ctx.id, \"quote\")]);",
     "test": "guard payment read:"
   },
@@ -1301,7 +1301,7 @@
   {
     "id": "op-load-stale",
     "file": "src/order-payment-panel.ts",
-    "find": "    // A cancelled context issues no more requests: the panel left the page (sign out) and a read of its is not this session's.\n    if (ctx.stale) return;\n",
+    "find": "    // A cancelled context issues no more requests: the panel left the page (sign out) and a read of its is not this session's.\n    if (ctx.stale) return false;\n",
     "replace": "",
     "test": "A P2-1 a panel that has left the page reads nothing"
   },
