@@ -213,8 +213,24 @@ export interface SelectSpec {
 }
 
 /** The design system's select: the native control carrying the control face
- * and the shell's delegation attributes, with no value binding anywhere. */
+ * and the shell's delegation attributes, with no value binding anywhere.
+ *
+ * The two shapes are deliberate: a select whose options stay Lit's own (the
+ * static content) and a BARE select with no child part at all. A shell that
+ * fills a select's options by hand in its wiring pass sets the element's
+ * textContent, which ejects a child part's marker nodes and kills the next
+ * render; the bare shape leaves the element with nothing for Lit to mourn. */
 export function select(spec: SelectSpec): Template {
+  if (spec.content === undefined) {
+    return html`<select
+      class="control"
+      data-control="select"
+      data-field=${spec.field ?? nothing}
+      data-testid=${spec.testid ?? nothing}
+      aria-label=${spec.label}
+      ?disabled=${spec.disabled === true}
+    ></select>`;
+  }
   return html`<select
     class="control"
     data-control="select"
@@ -222,7 +238,7 @@ export function select(spec: SelectSpec): Template {
     data-testid=${spec.testid ?? nothing}
     aria-label=${spec.label}
     ?disabled=${spec.disabled === true}
-  >${spec.content ?? nothing}</select>`;
+  >${spec.content}</select>`;
 }
 
 export interface DateInputSpec {
