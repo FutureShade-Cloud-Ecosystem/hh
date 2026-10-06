@@ -498,6 +498,12 @@ export class HosPosTerminal extends LitElement {
    */
   @state() private counterLayout: CounterLayout = 'STEPPER';
   /**
+   * Row 976: the two panes swapped (the steps pane first). The page that mounts this terminal owns
+   * the choice, because its header carries the swap button beside the theme, and remembers it per
+   * browser; the terminal only draws it.
+   */
+  @property({ type: Boolean }) panesSwapped = false;
+  /**
    * The dealer's key roster, resolved server-side (user over dealer over default). Held as data,
    * never as a switch statement: the client's people are BisTrack refugees who will want their old
    * keys, and a roster compiled into a component is a roster nobody can change.
@@ -1286,19 +1292,77 @@ export class HosPosTerminal extends LitElement {
          top margin would double it. */
       margin-top: 0;
     }
-    :host([data-counter-layout='PANELS']) hos-pos-panels {
+    /* ── TWO PANE LAYOUT (row 976) ─────────────────────────────────────────────────────────────────────
+       Items pane on one side, steps pane on the other. The Items pane fills the full height
+       and scrolls INSIDE itself (the lines table scrolls, the search bar and fulfilment foot stay
+       fixed). The steps pane scrolls INSIDE itself if its content overflows. Portrait tablet
+       (820x1180) stacks: Items on top, steps below. 1024x768 and above keeps two panes.
+       Items starts on the left; the swap control reverses it. */
+    :host([data-counter-layout='PANELS']) .twopane {
+      display: flex;
       flex: 1 1 auto;
       min-height: 0;
+      gap: var(--hos-space-3);
+    }
+    :host([data-counter-layout='PANELS']) .pane {
       display: flex;
       flex-direction: column;
+      min-height: 0;
+      min-width: 0;
+      background: var(--hos-slate-warm);
+      border: 1px solid var(--hos-line);
+      border-radius: var(--hos-radius-card);
+      box-shadow: var(--hos-elev-1);
+      overflow: hidden;
     }
-    /* A step's pinned foot (the fulfilment row): the one row of a panel that
-       must never scroll away. The wrapper matches the body's own side
-       padding so the foot's rows line up with the rows above them; an empty
-       foot slot renders nothing and costs no height. */
-    :host([data-counter-layout='PANELS']) [slot$='-foot'] {
+    :host([data-counter-layout='PANELS']) .pane-items {
+      flex: 1 1 50%;
+    }
+    :host([data-counter-layout='PANELS']) .pane-items-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+    }
+    :host([data-counter-layout='PANELS']) .pane-items-foot {
+      flex: none;
+      border-top: 1px solid var(--hos-line);
       padding: 0 10px 8px;
     }
+    :host([data-counter-layout='PANELS']) .pane-steps {
+      flex: 1 1 50%;
+    }
+    :host([data-counter-layout='PANELS']) .pane-steps hos-pos-flow-steps {
+      flex: none;
+      padding: var(--hos-space-3);
+      border-bottom: 1px solid var(--hos-line);
+    }
+    :host([data-counter-layout='PANELS']) .pane-steps-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      padding: var(--hos-space-3);
+    }
+    :host([data-counter-layout='PANELS']) .pane-steps > .saleutil {
+      flex: none;
+      border-top: 1px solid var(--hos-line);
+    }
+    :host([data-counter-layout='PANELS']) .pane-steps > .txbar {
+      flex: none;
+      border-top: 1px solid var(--hos-line);
+    }
+    /* Portrait tablet (820x1180): the panes stack, the first one on top, both inside the screen. */
+    @media (max-width: 900px) {
+      :host([data-counter-layout='PANELS']) .twopane {
+        flex-direction: column;
+      }
+      :host([data-counter-layout='PANELS']) .pane-items {
+        flex: 3 1 0;
+      }
+      :host([data-counter-layout='PANELS']) .pane-steps {
+        flex: 2 1 0;
+      }
+    }
+    /* Touch: taller tap targets */
     @media (pointer: coarse) {
       .fulfil button,
       .paytiles button,
@@ -2781,6 +2845,21 @@ export class HosPosTerminal extends LitElement {
     this.dataset.counterLayout = this.counterLayout;
   }
 
+  /**
+   * Row 976: tell the mounting page which layout is on, so its header shows the Swap panes button
+   * only while the panels view is. Fires on the first render and on every change after it.
+   */
+  protected updated(changed: Map<PropertyKey, unknown>): void {
+    if (!changed.has('counterLayout')) return;
+    this.dispatchEvent(
+      new CustomEvent('pos-counter-layout', {
+        detail: { layout: this.counterLayout },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
 
   // DIB-195 (opener side): capture the current in-progress order so a pop-out can carry it into
  // the new window. Verbatim client state (a DRAFT: no server sale id yet); the shell stashes
@@ -4144,6 +4223,20 @@ export class HosPosTerminal extends LitElement {
 
   // ── DIB-488: the tracked flow + the payment tiles ─────────────────────────
 
+  /**
+   * The header chips. In the two-pane view Items is a pane of its own, never a step, so the chips
+   * are Customer, Payment and Summary and F4 / Shift F4 cycle those three.
+   */
+  private headerFlowSteps() {
+    const steps = this.flowSteps();
+    return this.counterLayout === 'PANELS' ? steps.filter((s) => s.id !== 'items') : steps;
+  }
+
+  /** The step the steps pane has open: always one of the three, whatever openStep last held. */
+  private paneStep(): FlowStepId {
+    return this.openStep === 'payment' || this.openStep === 'summary' ? this.openStep : 'customer';
+  }
+
   /** The stepper's steps, derived fresh from the sale data on every render (see _pos-flow.ts). */
   private flowSteps() {
     return deriveFlow({
@@ -4716,7 +4809,16 @@ export class HosPosTerminal extends LitElement {
     switch (action) {
       case HK_STEP_NEXT:
       case HK_STEP_BACK: {
-        const next = stepAfter(this.openStep, action === HK_STEP_NEXT ? 1 : -1);
+        const dir = action === HK_STEP_NEXT ? 1 : -1;
+        // Two panes: Items is always on screen, so the keys cycle the steps pane's three.
+        if (this.counterLayout === 'PANELS') {
+          const cycle: FlowStepId[] = ['customer', 'payment', 'summary'];
+          const at = cycle.indexOf(this.paneStep());
+          this.openAccordion(cycle[(at + dir + cycle.length) % cycle.length]);
+          return true;
+        }
+        // Default: cycle through all four steps including items
+        const next = stepAfter(this.openStep, dir);
         if (!next) return false;
         this.openAccordion(next);
         return true;
@@ -4886,7 +4988,7 @@ export class HosPosTerminal extends LitElement {
            data every render (deriveFlow); clicking a step scrolls/focuses its panel and locks
            NOTHING: every panel below stays editable at all times. */ ''}
         <hos-pos-flow-steps
-          .steps=${this.flowSteps()}
+          .steps=${this.headerFlowSteps()}
           @pos-flow-goto=${(e: CustomEvent<{ step: FlowStepId }>) => this.onFlowGoto(e.detail.step)}
         ></hos-pos-flow-steps>
         <div class="session">
@@ -5206,23 +5308,19 @@ export class HosPosTerminal extends LitElement {
    * the other layout too.
    */
   private renderFlowPanels() {
-    const steps = this.flowSteps();
-    return html`<div class="flowcol" data-testid="pos-flow-panels">
-      <hos-pos-panels
-        .steps=${steps}
-        .active=${this.openStep}
-        @pos-panel-focus=${(e: CustomEvent<{ step: FlowStepId }>) => (this.openStep = e.detail.step)}
-      >
-        ${steps.map((s) => {
-          const foot = this.renderStepFoot(s.id);
-          return html`
-            <div slot=${s.id}>${this.renderStepBody(s.id)}</div>
-            ${foot === nothing ? nothing : html`<div slot=${s.id + '-foot'}>${foot}</div>`}
-          `;
-        })}
-      </hos-pos-panels>
+    const itemsPane = html`<div class="pane pane-items" data-testid="pos-pane-items">
+      <div class="pane-items-body">${this.renderItemsBody()}</div>
+      <div class="pane-items-foot">${this.renderStepFoot('items')}</div>
+    </div>`;
+    const stepsPane = html`<div class="pane pane-steps" data-testid="pos-pane-steps">
+      <div class="pane-steps-body" data-testid="pos-pane-steps-body">${this.renderStepBody(this.paneStep())}${this.renderStepFoot(this.paneStep())}</div>
       ${this.renderSaleUtilities()}
       ${this.renderTxBar()}
+    </div>`;
+    return html`<div class="flowcol" data-testid="pos-flow-panels">
+      <div class="twopane" data-testid="pos-twopane">
+        ${this.panesSwapped ? html`${stepsPane}${itemsPane}` : html`${itemsPane}${stepsPane}`}
+      </div>
     </div>`;
   }
 

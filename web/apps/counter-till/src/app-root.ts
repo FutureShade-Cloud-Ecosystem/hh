@@ -39,6 +39,7 @@ import {
   type BranchRef,
 } from "./till-client.js";
 import { demoBanner, demoBannerStyles } from "./demo-banner.js";
+import { readPanesSwapped, writePanesSwapped } from "./pane-memory.js";
 import { THEME_LABEL, ThemeController, themeControlLabel, themeStatusText } from "./theme.js";
 import { entryStyles, renderEntry, type FlowsState } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { ReturnsFlow } from "./returns/flow.js";
@@ -101,14 +102,22 @@ export class CounterTillApp extends HHElement {
          terminal's own layout pick, which the terminal reflects as an
          attribute when it changes. The Quote Desk's workarea is the
          reference pattern. */
-      main.on-till {
-        /* The bar's own arithmetic, named once: the surfacebar's min-height
-           plus its bottom margin. */
-        --ct-till-bar: calc(48px + var(--hh-s-8));
-      }
-      main.on-till:has(hos-pos-terminal[data-counter-layout="PANELS"]) .surface {
-        height: calc(100dvh - var(--ct-till-bar));
+      main.on-till:has(hos-pos-terminal[data-counter-layout="PANELS"]) {
+        /* The window is a column: the bar takes the height it really has (the badge and the
+           wrapped controls move it, so no guessed pixel figure), the surface takes the rest, and
+           anything after it (a notice, the returns desk) flows on past the fold. */
+        display: flex;
+        flex-direction: column;
+        height: 100dvh;
         box-sizing: border-box;
+        padding-bottom: 0;
+      }
+      main.on-till:has(hos-pos-terminal[data-counter-layout="PANELS"]) > * {
+        flex: none;
+      }
+      main.on-till:has(hos-pos-terminal[data-counter-layout="PANELS"]) > .surface {
+        flex: 1 1 0;
+        min-height: 0;
       }
       /* The terminal paints its own full-bleed chrome; the app's padding would
          letterbox it, so the mounted surface sits edge to edge. */
@@ -295,6 +304,9 @@ export class CounterTillApp extends HHElement {
   readonly #theme = new ThemeController(() => this.requestUpdate());
   /** What a screen reader hears after a Theme press: focus stays on the button, so the new name is not re-read. */
   #themeStatus = "";
+  /** Row 976: the till's layout (the terminal reports it) and whether the two panes are swapped. */
+  #counterLayout = "";
+  #panesSwapped = readPanesSwapped();
   #flowsState: FlowsState = { kind: "loading" };
   /** The one flows read this element makes; the pop-out's tap waits for it. */
   #flowsLoaded: Promise<void> = Promise.resolve();
@@ -529,6 +541,11 @@ export class CounterTillApp extends HHElement {
     if (control.getAttribute("data-action") === "choose" && typeof flow === "string" && flow !== "") {
       void this.#chooseFlow(flow);
     }
+    if (control.getAttribute("data-action") === "swap-panes") {
+      this.#panesSwapped = !this.#panesSwapped;
+      writePanesSwapped(this.#panesSwapped);
+      this.requestUpdate();
+    }
     if (control.getAttribute("data-action") === "theme") {
       this.#theme.cycle();
       this.#themeStatus = themeStatusText(this.#theme.choice);
@@ -730,6 +747,27 @@ export class CounterTillApp extends HHElement {
     `;
   }
 
+  /** Row 976: the Swap panes icon button, shown only while the till is in its two-pane view. */
+  #swapControl(): TemplateResult | typeof nothing {
+    if (this.#counterLayout !== "PANELS") return nothing;
+    return html`
+      <button
+        type="button"
+        class="btn-secondary icon-btn"
+        data-action="swap-panes"
+        data-testid="swap-panes"
+        aria-label="Swap panes"
+        aria-pressed=${this.#panesSwapped ? "true" : "false"}
+        title="Swap panes"
+      >
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 8h15M15 4l4 4-4 4" />
+          <path d="M20 16H5M9 12l-4 4 4 4" />
+        </svg>
+      </button>
+    `;
+  }
+
   /** The Theme control of the account area: one button, its value beside the word. */
   #themeControl(): TemplateResult {
     const choice = this.#theme.choice;
@@ -787,6 +825,7 @@ export class CounterTillApp extends HHElement {
                 ${demoPresent ? demoBanner() : nothing}
                 <p class="signed-in">
                   <span class="role-name" data-testid="signed-in-role">${this.#signedInRoleLabel()}</span>
+                  ${this.#swapControl()}
                   ${this.#themeControl()}
                   <button
                     type="button"
@@ -803,7 +842,13 @@ export class CounterTillApp extends HHElement {
                 </p>
               </div>
               <div class="surface">
-                <hos-pos-terminal></hos-pos-terminal>
+                <hos-pos-terminal
+                  .panesSwapped=${this.#panesSwapped}
+                  @pos-counter-layout=${(e: CustomEvent<{ layout: string }>) => {
+                    this.#counterLayout = e.detail.layout;
+                    this.requestUpdate();
+                  }}
+                ></hos-pos-terminal>
               </div>
               ${this.#chromeMessage === null ? nothing : html`<p class="notice" role="status">${this.#chromeMessage}</p>`}
               ${renderReturns(this.#returns)}

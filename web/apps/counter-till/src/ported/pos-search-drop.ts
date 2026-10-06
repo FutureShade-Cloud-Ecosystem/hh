@@ -4,7 +4,8 @@ import { LitElement, css, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { focusRing } from '@hardscapehouse/pos-kit/src/ported/styles/focus-ring.js';
 import '@hardscapehouse/pos-kit/src/ported/product-thumb.js';
-import { counterSearch, counterPrices, counterHitToProduct, money, type CounterHit } from '@hardscapehouse/pos-kit/src/ported/pos-api.js';
+import { counterSearch, counterPrices, counterHitToProduct, type CounterHit } from '@hardscapehouse/pos-kit/src/ported/pos-api.js';
+import { money } from './_till-dollars.js';
 import {
   DROP_ROWS,
   dropView,

@@ -30,10 +30,19 @@ test("no source of the app carries a place a credential could rest in or surface
   const offenders = [];
   for (const path of sources(srcDir)) {
     const rel = relative(srcDir, path);
+    // The one allowed storage file holds the two-pane swap flag and nothing else (checked below).
+    if (rel === "pane-memory.ts") continue;
     const lines = readFileSync(path, "utf8").split("\n");
     lines.forEach((line, index) => {
       if (SINK.test(line)) offenders.push(`${rel}:${index + 1}: ${line.trim()}`);
     });
   }
   assert.deepEqual(offenders, []);
+});
+
+test("the one file allowed to touch storage holds only the pane swap flag", () => {
+  const text = readFileSync(join(srcDir, "pane-memory.ts"), "utf8");
+  assert.equal([...text.matchAll(/getItem|setItem/g)].length, 2);
+  assert.match(text, /const KEY = "hh-till-panes-swapped";/);
+  assert.doesNotMatch(text, /token|credential|approver|secret|password/i);
 });
