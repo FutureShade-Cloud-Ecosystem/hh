@@ -26,7 +26,7 @@ func fakePlane(t *testing.T) (*httptest.Server, *[]map[string]any) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/workspaces/ws/projects/proj/modules/", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"results": []map[string]string{{"id": "mod-1", "name": "Feedback"}}})
+			"results": []map[string]string{{"id": "mod-1", "name": "Feature Polish"}}})
 	})
 	mux.HandleFunc("POST /api/v1/workspaces/ws/projects/proj/issues/", func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
@@ -59,31 +59,36 @@ func testService(base string) *Service {
 func TestFileCreatesPlaneIssue(t *testing.T) {
 	srv, issues := fakePlane(t)
 	s := testService(srv.URL)
-	id, err := s.File(context.Background(), Submission{
+	filed, err := s.File(context.Background(), Submission{
 		Kind: KindBug, Message: "POS till drawer maths off by a cent\nsteps: ...",
 		Screen: "pos", ActorID: "u-1", ActorRole: "GM",
 	})
 	if err != nil {
 		t.Fatalf("File: %v", err)
 	}
-	if id != "issue-1" {
-		t.Fatalf("id = %q", id)
+	if filed.ID != "issue-1" {
+		t.Fatalf("id = %q", filed.ID)
 	}
 	if len(*issues) != 1 {
 		t.Fatalf("issues filed = %d", len(*issues))
 	}
 	got := (*issues)[0]
-	if got["name"] != "[bug] POS till drawer maths off by a cent" {
-		t.Errorf("title = %q", got["name"])
+	title, _ := got["name"].(string)
+	if title != "[bug] POS till drawer maths off by a cent - GM" {
+		t.Errorf("title = %q", title)
 	}
 	if got["priority"] != "high" {
 		t.Errorf("priority = %q (bug must be high)", got["priority"])
 	}
 	desc, _ := got["description_html"].(string)
-	for _, want := range []string{"screen: pos", "actor: u-1 (GM)", "via ERP feedback widget"} {
+	for _, want := range []string{"screen: pos", "actor: GM", "via ERP feedback widget"} {
 		if !strings.Contains(desc, want) {
 			t.Errorf("description missing %q", want)
 		}
+	}
+	// The row 949 rule: the raw user id never reaches the work item.
+	if strings.Contains(desc, "u-1") || strings.Contains(title, "u-1") {
+		t.Errorf("the raw user id reached the work item: %q / %q", title, desc)
 	}
 }
 
@@ -159,7 +164,7 @@ func fakePlaneWithAttach(t *testing.T, rec *attachRecord) *Service {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/workspaces/ws/projects/proj/modules/", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"results": []map[string]string{{"id": "mod-1", "name": "Feedback"}}})
+			"results": []map[string]string{{"id": "mod-1", "name": "Feature Polish"}}})
 	})
 	mux.HandleFunc("POST /api/v1/workspaces/ws/projects/proj/issues/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-API-Key") != "test-key" {
@@ -231,15 +236,15 @@ func TestAttachImageRoundTrip(t *testing.T) {
 	rec := &attachRecord{}
 	s := fakePlaneWithAttach(t, rec)
 	img := pngBytes(1000)
-	id, err := s.File(context.Background(), Submission{
+	filed, err := s.File(context.Background(), Submission{
 		Kind: KindBug, Message: "with a shot", ActorID: "u-1", ActorRole: "GM",
-		Image: img, ImageName: "shot.png", ImageType: "image/png",
+		Images: []Image{{Data: img, Name: "shot.png"}},
 	})
 	if err != nil {
 		t.Fatalf("File: %v", err)
 	}
-	if id != "issue-1" {
-		t.Fatalf("id = %q", id)
+	if filed.ID != "issue-1" {
+		t.Fatalf("id = %q", filed.ID)
 	}
 	if rec.presign != 1 || rec.upload != 1 || rec.confirm != 1 {
 		t.Fatalf("calls presign=%d upload=%d confirm=%d (want 1/1/1)", rec.presign, rec.upload, rec.confirm)
@@ -259,15 +264,15 @@ func TestAttachImageBestEffort(t *testing.T) {
 	// Upload leg fails → the issue MUST still be filed (attach is best-effort).
 	rec := &attachRecord{uploadFail: true}
 	s := fakePlaneWithAttach(t, rec)
-	id, err := s.File(context.Background(), Submission{
+	filed, err := s.File(context.Background(), Submission{
 		Kind: KindBug, Message: "shot fails to upload", ActorID: "u-1",
-		Image: pngBytes(600), ImageName: "shot.png",
+		Images: []Image{{Data: pngBytes(600), Name: "shot.png"}},
 	})
 	if err != nil {
 		t.Fatalf("attach failure must not fail File: %v", err)
 	}
-	if id != "issue-1" {
-		t.Fatalf("id = %q, filed issue lost on attach error", id)
+	if filed.ID != "issue-1" {
+		t.Fatalf("id = %q, filed issue lost on attach error", filed.ID)
 	}
 	if rec.confirm != 0 {
 		t.Errorf("confirm called %d times despite failed upload", rec.confirm)
@@ -280,17 +285,17 @@ func TestAttachImageServerValidation(t *testing.T) {
 
 	// Client CLAIMS image/png but the bytes are text, server sniffs and rejects,
 	// never reaching presign.
-	err := s.attachImage(context.Background(), "issue-1", Submission{
-		Image:     []byte("this is definitely not an image, just plain ascii text"),
-		ImageType: "image/png", ImageName: "lie.png",
+	err := s.attachImage(context.Background(), "issue-1", Image{
+		Data: []byte("this is definitely not an image, just plain ascii text"),
+		Name: "lie.png",
 	})
 	if err == nil {
 		t.Error("non-image bytes must be rejected by server sniff")
 	}
 
 	// Oversized (> 5 MB) is rejected before any presign.
-	err = s.attachImage(context.Background(), "issue-1", Submission{
-		Image: pngBytes(maxImageBytes + 1), ImageName: "huge.png",
+	err = s.attachImage(context.Background(), "issue-1", Image{
+		Data: pngBytes(maxImageBytes + 1), Name: "huge.png",
 	})
 	if err == nil {
 		t.Error("oversized image must be rejected")

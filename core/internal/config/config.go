@@ -82,6 +82,11 @@ type Config struct {
 	PlaneAPIKey    string
 	PlaneProject   string // Plane project id (workspace slug is part of the URL)
 	PlaneWorkspace string // Plane workspace slug, e.g. futurebuild
+	// PlaneFeedbackModule is the NAME of the module feedback work items are
+	// grouped under, resolved against the board's own module list (never an
+	// id: the module id is a board side detail the server never writes). The
+	// default matches the module the house created for this purpose.
+	PlaneFeedbackModule string
 
 	// StaffBaseURL is the ERP SPA origin used to build admin-generated password-reset
 	// links (DIB-186): "<StaffBaseURL>/?reset_token=<raw>". No secret; the raw token is
@@ -162,20 +167,21 @@ func Load() Config {
 		portalDef, erpDef = "http://localhost:5173/portal.html", "http://localhost:5173"
 	}
 	return Config{
-		EnvUnset:        envUnset,
-		Port:            intEnv("PORT", 8080),
-		DatabaseURL:     strEnv("DATABASE_URL", DevDatabaseURLDefault),
-		NATSURL:         strEnv("NATS_URL", ""),
-		JWKSURL:         strEnv("JWKS_URL", ""),
-		Env:             env,
-		PaymentVaultKey: strEnv("PAYMENT_VAULT_KEY", ""),
-		PortalBaseURL:   strEnv("PORTAL_BASE_URL", portalDef),
-		PlaneAPIURL:     strEnv("PLANE_API_URL", ""),
-		PlaneAPIKey:     strEnv("PLANE_API_KEY", ""),
-		PlaneProject:    strEnv("PLANE_PROJECT_ID", ""),
-		PlaneWorkspace:  strEnv("PLANE_WORKSPACE_SLUG", ""),
-		StaffBaseURL:    strEnv("ERP_BASE_URL", erpDef),
-		DemoMode:        boolEnv("DEMO_MODE", false),
+		EnvUnset:            envUnset,
+		Port:                intEnv("PORT", 8080),
+		DatabaseURL:         strEnv("DATABASE_URL", DevDatabaseURLDefault),
+		NATSURL:             strEnv("NATS_URL", ""),
+		JWKSURL:             strEnv("JWKS_URL", ""),
+		Env:                 env,
+		PaymentVaultKey:     strEnv("PAYMENT_VAULT_KEY", ""),
+		PortalBaseURL:       strEnv("PORTAL_BASE_URL", portalDef),
+		PlaneAPIURL:         strEnv("PLANE_API_URL", ""),
+		PlaneAPIKey:         strEnv("PLANE_API_KEY", ""),
+		PlaneProject:        strEnv("PLANE_PROJECT_ID", ""),
+		PlaneWorkspace:      strEnv("PLANE_WORKSPACE_SLUG", ""),
+		PlaneFeedbackModule: strEnv("PLANE_FEEDBACK_MODULE", "Feature Polish"),
+		StaffBaseURL:        strEnv("ERP_BASE_URL", erpDef),
+		DemoMode:            boolEnv("DEMO_MODE", false),
 
 		BisTrackEndpoint: strEnv("BISTRACK_ENDPOINT", ""),
 		BisTrackAPIKey:   strEnv("BISTRACK_API_KEY", ""),
