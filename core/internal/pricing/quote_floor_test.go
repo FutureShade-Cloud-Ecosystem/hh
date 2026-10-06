@@ -159,6 +159,34 @@ func TestRecordFloorDecision_WritesBypassRow(t *testing.T) {
 	}
 }
 
+// The transactional record on a store that cannot ride a transaction (a
+// DB-free fake) refuses rather than pretending the row landed: this path's
+// callers return the error, a silent drop here would be a committed write
+// with no log row, the exact loss the transactional path exists to close.
+func TestRecordFloorDecisionTx_RefusesWithoutATxStore(t *testing.T) {
+	st := &fakeStore{
+		listPrice: &ListPrice{ProductID: "blu60", ListPriceCents: 10000, PriceUOM: "EA"},
+	}
+	s := newSvc(st, "pavers")
+	err := s.RecordFloorDecisionTx(context.Background(), nil, FloorRecord{
+		UserID: "u1", QuoteID: "q1", ProductID: "blu60",
+		RuleUnitCents: 10000, NetUnitCents: 9000, DiscPct: 10,
+		MarginBps: 5555, FloorBps: 2000, Action: "UPDATE",
+	})
+	if err == nil || err != errNoTxAudit {
+		t.Fatalf("a store with no transactional append must refuse, got %v", err)
+	}
+	if len(st.audits) != 0 {
+		t.Fatalf("nothing may reach the pool append on this path, got %+v", st.audits)
+	}
+
+	// The drop-don't-fail discipline on the CHECK-guarded columns is the
+	// record's own: an unknown action writes nothing and errors nowhere.
+	if err := s.RecordFloorDecisionTx(context.Background(), nil, FloorRecord{Action: "WEIRD"}); err != nil {
+		t.Fatalf("an unknown action drops its row and reports nothing, got %v", err)
+	}
+}
+
 // P2-2 (round 3): a failed category read must refuse the decision. The seam
 // once swallowed the error, left the category id empty and answered from the
 // 1200 default, so a transient catalog error accepted a discount the

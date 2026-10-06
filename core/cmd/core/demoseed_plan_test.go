@@ -46,6 +46,10 @@ func testInput(t *testing.T) planInput {
 			personaDispatch: "9e70a000-0000-4000-9000-00000000ad01",
 			personaYard:     "9e70a000-0000-4000-9000-00000000ad02",
 			personaDriver:   "9e70a000-0000-4000-9000-00000000ad03",
+			// The two demo role logins the demo populate plants after the first apply (the quote
+			// world's owners). Present here so every invariant in this file runs over the quote rows.
+			personaQuoteSales:   "9e70a000-0000-4000-9000-00000000ad11",
+			personaQuoteManager: "9e70a000-0000-4000-9000-00000000ad12",
 		},
 		// A stub sealer: these tests are about the plan's shape, and the real sealer's AES nonce is
 		// random by design (see TestPlan_OnlyTheSealedBytesDifferBetweenRuns for that half).
@@ -753,7 +757,7 @@ func TestPlan_EveryClaimedTaskNamesWhoClaimedIt(t *testing.T) {
 // with no person on it.
 func TestPlan_BuildsWithoutAnyDemoLogins(t *testing.T) {
 	with := testInput(t)
-	linked, _, err := buildPlan(with)
+	linked, linkedSum, err := buildPlan(with)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -771,8 +775,12 @@ func TestPlan_BuildsWithoutAnyDemoLogins(t *testing.T) {
 		personBound[demoID("approval:"+a.Key)] = true
 		personBound[demoID("freightraise:"+a.Key)] = true
 	}
+	// The quote world exists only while both demo role logins resolve (demoseed_quotes.go).
+	for _, id := range linkedSum.QuoteRowIDs {
+		personBound[id] = true
+	}
 	if len(linked)-len(bare) != len(personBound) {
-		t.Fatalf("the plan lost %d rows when the logins went away; only the %d approval rows should go",
+		t.Fatalf("the plan lost %d rows when the logins went away; only the %d person-bound rows should go",
 			len(linked)-len(bare), len(personBound))
 	}
 
@@ -982,6 +990,11 @@ func TestPlan_AnApprovalIsWaitingOnSomebodyElse(t *testing.T) {
 		f := fieldMap(r)
 		if f["status"] != "PENDING" {
 			t.Errorf("approval %v is %v, ListApprovals is asked for PENDING", r.vals[0], f["status"])
+			continue
+		}
+		// This test is about the freight raises. The quote world's floor request is a different
+		// policy with its own requester and its own proof (demoseed_quotes_plan_test.go).
+		if f["policy_type"] != "FREIGHT_ABOVE_QUOTE" {
 			continue
 		}
 		policy := identity.PolicyType(fmt.Sprint(f["policy_type"]))

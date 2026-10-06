@@ -10,11 +10,30 @@
 // an empty base URL. The proxy port comes from CT_STUB_PORT so the Playwright
 // harness and a hand-run dev server can point at the same stub.
 import { defineConfig } from "vite";
+import { fileURLToPath } from "node:url";
 
 const stubPort = process.env.CT_STUB_PORT ?? "4827";
 const appPort = process.env.CT_APP_PORT ?? "4826";
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
+  // The seam rule (decision log rows 893 and 899): the front door's handoff
+  // reader is compiled in only on the demo build. Every other mode, dev
+  // included, resolves the empty stub (src/demo-account.default.ts) in place
+  // of the app's demo-account module, so the key name and the reader cannot
+  // enter a default build's module graph whatever the tree shaker keeps;
+  // app-root.ts's demo mode gate holds the adopt call out the same way. The
+  // demo image and the Playwright harness both ask for the demo mode.
+  resolve:
+    mode === "demo"
+      ? {}
+      : {
+          alias: [
+            {
+              find: /^\.\/demo-account\.js$/,
+              replacement: fileURLToPath(new URL("./src/demo-account.default.ts", import.meta.url)),
+            },
+          ],
+        },
   server: {
     port: Number(appPort),
     strictPort: true,
@@ -34,4 +53,4 @@ export default defineConfig({
   build: {
     outDir: "dist",
   },
-});
+}));

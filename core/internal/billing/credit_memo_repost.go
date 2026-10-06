@@ -163,6 +163,7 @@ func (w *InvoiceWriter) findCreditMemosWithoutJournals(ctx context.Context, limi
 		       COALESCE(i.finalized_at, i.created_at)
 		  FROM invoices i
 		 WHERE i.doc_type = 'CREDIT_MEMO'
+		   AND i.source_kind <> 'IMPORT'
 		   AND NOT EXISTS (
 		         SELECT 1 FROM gl_journals j
 		          WHERE j.idempotency_key = 'ar.credit_memo.issued:' || i.id::text)

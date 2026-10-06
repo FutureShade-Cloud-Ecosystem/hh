@@ -5,11 +5,15 @@
 //	go run ./cmd/demoseed -apply -now 2026-09-01T09:00:00Z   # pin the clock
 //
 // THE CONSTRAINT THIS COMMAND WAS BUILT AROUND. Staging carries real homework from live testers and
-// must never be wiped, reset, truncated or reseeded. So: nothing here deletes, nothing updates,
-// nothing truncates, and nothing mints from a shared sequence. Every write is an INSERT with an
-// explicit deterministic id and ON CONFLICT DO NOTHING (ids.go explains the derivation; apply.go is
-// the only writer and can express no other statement kind). Running it twice produces the same
-// world: the second run's inserts all conflict, create nothing, and report `created=0`.
+// must never be wiped, reset, truncated or reseeded. So: nothing here deletes, nothing truncates,
+// and nothing mints from a shared sequence. Every write is an INSERT with an explicit deterministic
+// id and ON CONFLICT DO NOTHING (ids.go explains the derivation; apply.go is the only writer and
+// can express no other statement kind). The ONE exception is the scrub-name rename pass (the
+// demoseed_scrubname pair, demo build only): fixed-id UPDATEs of customers.name that rename the
+// migration-planted demo customers off their scrub placeholders, each statement naming the exact
+// placeholder it renames, so nothing outside the fixed list moves and a second run matches no row
+// (that pair's header holds the full reasoning). Running it twice produces the same world: the
+// second run's inserts all conflict, create nothing, and report `created=0`.
 //
 // -plan IS THE DEFAULT. A command that can write to staging should not do so because somebody
 // pressed enter with no arguments. -apply is required, and it is the only flag that writes.
@@ -134,6 +138,10 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 	fmt.Fprintf(out, "  branches       %s\n", branchLine(branches))
 	fmt.Fprintf(out, "  demo logins    %s\n", personaLine(personas))
 	fmt.Fprintf(out, "  POD sealing    %s\n", sealMode(keyed))
+	// The rename pass is the demo build's (the scrubname pair): the demo build's plan
+	// says how many migration-planted customers -apply renames, the default build's
+	// says nothing because it carries no rename at all.
+	scrubNamesPlan(out)
 	fmt.Fprintf(out, "  plan           %d rows across %d tables, dated %s … %s\n\n",
 		summary.Rows, len(summary.ByTable), summary.FirstDate, summary.LastDate)
 	writeSummary(out, summary)
@@ -158,13 +166,26 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 		_ = tx.Rollback(ctx)
 		return fmt.Errorf("demoseed: nothing was written: %w", err)
 	}
+	// The one write the INSERT-only applier cannot express: the migration-planted demo
+	// customers' scrub placeholder names (the scrubname pair). The symbol resolves at
+	// build time: the real rename in the demo build, a no-op stub in the default build,
+	// which writes no customers.name row from this call. Inside the same transaction,
+	// so the world still lands all-or-nothing.
+	renamed, err := renameScrubbedDemoCustomers(ctx, tx, now)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		return fmt.Errorf("demoseed: nothing was written: %w", err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("demoseed: commit: %w", err)
 	}
 
 	fmt.Fprintf(out, "\napplied: %d proposed · %d created · %d already present\n",
 		res.Proposed, res.Created, res.Skipped)
-	if res.Created == 0 {
+	if renamed > 0 {
+		fmt.Fprintf(out, "renamed:  %d migration-planted demo customer(s) off their scrub placeholder names\n", renamed)
+	}
+	if res.Created == 0 && renamed == 0 {
 		fmt.Fprintln(out, "the demo world was already complete, this run changed nothing.")
 	}
 	for _, t := range sortedKeys(res.ByTable) {
@@ -186,6 +207,18 @@ func writeSummary(out *os.File, s planSummary) {
 	fmt.Fprintln(out, "  will-call")
 	for _, l := range s.WillCall {
 		fmt.Fprintf(out, "    %s\n", l)
+	}
+	if len(s.Quotes) == 0 {
+		fmt.Fprintln(out, "  quotes       none, the two demo role logins are not on this database yet (apply again after the demo populate)")
+	} else {
+		fmt.Fprintln(out, "  quotes")
+		for _, l := range s.Quotes {
+			fmt.Fprintf(out, "    %s\n", l)
+		}
+		fmt.Fprintln(out, "  quote share links")
+		for _, l := range s.QuoteLinks {
+			fmt.Fprintf(out, "    %s\n", l)
+		}
 	}
 	// THE ONLY ROWS THAT GROW PER DEPLOY, printed rather than described, because "which rows are
 	// day-keyed" is a question about THIS run's plan and an operator should not have to read ids.go

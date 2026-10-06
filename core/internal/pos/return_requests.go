@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
@@ -222,15 +223,18 @@ func (s *Service) ListReturnRequests(ctx context.Context, status string) ([]Retu
 }
 
 // ApproveReturnRequest executes the request through the EXISTING return rail: ACCOUNT_CREDIT,
-// Restock=true, the branch's pos_policy restocking fee, attributed to the staff approver (the rail stamps
-// created_by from this ctx and audits RETURN_COMPLETED).
+// Restock=true, the branch's pos_policy restocking fee, attributed to the staff approver (the rail
+// stamps created_by from this ctx and audits RETURN_COMPLETED after the decision commits).
 //
 // Decisions are SERIALIZED on the request row: the decision tx takes FOR UPDATE on return_requests and
 // re-checks PENDING under the lock, so a concurrent reject cannot land while the rail is committing
-// money. The rail runs its own tx (money commits before the decision row), the rail's idempotency key
-// is derived from the request id, so a crash between the committed return and the decision update
-// replays, not re-refunds, on re-approve; a decided request is a 409. Over-return/other rail refusals
-// surface unchanged and leave the request PENDING.
+// money. The rail's transactional body (returnInTx) rides THIS decision tx, so the money and the
+// decision commit atomically: the old crash between the committed return and the decision update has
+// no window any more. The rail's idempotency key is derived from the request id, so a return already
+// committed under the reserved key with the request still PENDING (the old shape's crash row) replays,
+// not re-refunds, on re-approve, and reject still refuses it; a decided request is a 409.
+// Over-return/other rail refusals surface unchanged and leave the request PENDING (the whole tx rolls
+// back, money included).
 func (s *Service) ApproveReturnRequest(ctx context.Context, requestID string) (ReturnRequest, error) {
 	if requestID == "" {
 		return ReturnRequest{}, errBadRequest
@@ -253,6 +257,27 @@ func (s *Service) ApproveReturnRequest(ctx context.Context, requestID string) (R
 	for i, ln := range rr.Lines {
 		lines[i] = ReturnLineInput{OrderLineID: ln.OrderLineID, QtyBase: ln.QtyBase, ReasonCode: rr.ReasonCode}
 	}
+	// The rail's pre-transaction work (validation, the sale's context, the branch wall, the replay
+	// pre-check) runs here while no connection is held. The rail's transactional body below runs on
+	// THIS decision tx: the old shape called s.Return, which opened its OWN transaction on the pool
+	// while this tx held one, so pool-size concurrent approvals each waited for a second connection
+	// the pool could never give and the process stalled until the action timeouts. Carried on the one
+	// transaction, the return and the decision commit atomically or not at all.
+	plan, err := s.prepareReturn(ctx, ReturnInput{
+		IdempotencyKey: reservedRequestKeyPrefix + rr.ID, // replay-safe: re-approving after a crash replays the SAME return
+		OrderID:        rr.OrderID,
+		Lines:          lines,
+		RefundMethod:   RefundAccountCredit,
+		Reason:         "portal return " + rr.RequestNo + " (" + rr.ReasonCode + ")",
+		Restock:        true,
+		FeeBps:         policy.RestockingFeeBps,
+		internalRail:   true,
+	})
+	if err != nil {
+		return ReturnRequest{}, err
+	}
+	var ret Return
+	replayed := plan.preReplayed
 	err = s.store.RunInTx(ctx, func(tx pgx.Tx) error {
 		status, found, err := s.store.LockReturnRequestStatus(ctx, tx, rr.ID)
 		if err != nil {
@@ -264,20 +289,20 @@ func (s *Service) ApproveReturnRequest(ctx context.Context, requestID string) (R
 		if status != RequestPending {
 			return clientErr(http.StatusConflict, "pos: request %s is already %s", rr.RequestNo, status)
 		}
-		// The rail commits in its OWN tx while this tx holds the request-row lock, the lock is what
-		// keeps a concurrent reject from recording REJECTED on top of the committed money.
-		ret, err := s.Return(ctx, ReturnInput{
-			IdempotencyKey: reservedRequestKeyPrefix + rr.ID, // replay-safe: re-approving after a crash replays the SAME return
-			OrderID:        rr.OrderID,
-			Lines:          lines,
-			RefundMethod:   RefundAccountCredit,
-			Reason:         "portal return " + rr.RequestNo + " (" + rr.ReasonCode + ")",
-			Restock:        true,
-			FeeBps:         policy.RestockingFeeBps,
-			internalRail:   true,
-		})
-		if err != nil {
-			return err
+		// The rail rides THIS tx (returnInTx), the request-row lock is what keeps a concurrent reject
+		// from recording REJECTED on top of the committing money: nothing outside this tx can see the
+		// return until the decision commits with it.
+		if plan.preReplayed {
+			// The replay pre-check already found the request's committed return (a crash row from the
+			// old shape, money under the reserved key with the request still PENDING): converge onto
+			// it, the rail body does not run again.
+			ret = plan.preReplay
+		} else {
+			var rerr error
+			ret, replayed, _, rerr = s.returnInTx(ctx, tx, plan)
+			if rerr != nil {
+				return rerr
+			}
 		}
 		// The replayed/committed return MUST be this request's own rail execution. A foreign return
 		// squatting on the reserved key must never be stamped as the decision, refuse loudly (500,
@@ -293,6 +318,16 @@ func (s *Service) ApproveReturnRequest(ctx context.Context, requestID string) (R
 	})
 	if err != nil {
 		return ReturnRequest{}, err
+	}
+	// The rail's RETURN_COMPLETED audit rides AFTER the decision tx commits: inside the tx it would
+	// ask the pool for a connection while this tx holds one, the very second acquisition this shape
+	// removes. A replayed answer writes none, the same shape as the rail's own post-commit hook.
+	if !replayed {
+		s.record(ctx, audit.SensitiveAccess{
+			Action: audit.ActReturnCompleted, EntityType: "pos.return", EntityID: ret.ReturnID,
+			ActorID: plan.actor, BranchID: plan.oc.BranchID, Purpose: "POS_RETURN", Reason: RefundAccountCredit,
+			Extra: map[string]any{"return_no": ret.ReturnNo, "total_cents": ret.TotalCents},
+		})
 	}
 	out, found, err := s.store.GetReturnRequest(ctx, rr.ID)
 	if err != nil {
@@ -341,8 +376,11 @@ func (s *Service) RejectReturnRequest(ctx context.Context, requestID, reason str
 			return clientErr(http.StatusConflict, "pos: request %s is already %s", rr.RequestNo, status)
 		}
 		// Crash-divergence probe: money already committed under this request's rail key means the
-		// request must converge APPROVED, never REJECTED.
-		if _, found, err := s.store.FindReturnByKey(ctx, reservedRequestKeyPrefix+rr.ID); err != nil {
+		// request must converge APPROVED, never REJECTED. The probe reads ON this decision tx
+		// (FindReturnByKeyTx): through the pool it would ask for a second connection while this tx
+		// holds one, and pool-size concurrent rejects each waited for a connection the pool could
+		// never give, the same starvation the approval rail carried.
+		if _, found, err := s.store.FindReturnByKeyTx(ctx, tx, reservedRequestKeyPrefix+rr.ID); err != nil {
 			return err
 		} else if found {
 			return clientErr(http.StatusConflict,

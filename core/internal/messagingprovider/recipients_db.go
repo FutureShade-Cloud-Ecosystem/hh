@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // recipients_db.go, the REAL RecipientResolver (Wave 3, Swarm D). It replaces the Wave 2 default that
@@ -129,24 +131,92 @@ func (r *ConsentResolver) DispatchRecipient(ctx context.Context, orderID string)
 // number that is not E.164. The CALLER cannot tell those apart, deliberately: a producer that could
 // distinguish "opted out" from "no row" would eventually branch on it.
 func (r *ConsentResolver) CustomerRecipient(ctx context.Context, customerID string) (Recipient, error) {
-	prefs, found, err := r.prefs.Get(ctx, customerID)
-	if err != nil {
-		return Recipient{}, err
-	}
-	if !found || !prefs.Sendable() {
-		r.declined(customerID, found, prefs)
-		return Recipient{}, ErrNoRecipient
-	}
+	return r.ReadConsent(ctx, customerID).Recipient()
+}
 
-	name := ""
+// ConsentRead is one customer's consent facts. A read through the pool (ReadConsent) is a SNAPSHOT:
+// answerable later without touching the database again, which is what lets a caller take it before it
+// opens a transaction (the reads never ask the shared pool for a second connection while the first is
+// held). The snapshot is not the decision. A caller that decides inside a transaction re-reads it
+// through that transaction with RefreshOn, and the refreshed read answers the same two questions
+// MaySendAt and CustomerRecipient answer.
+//
+// A read error is carried, not returned, so it surfaces only at the point the answer is used, where a
+// direct read would have failed.
+type ConsentRead struct {
+	r          *ConsentResolver
+	customerID string
+	prefs      SMSPrefs
+	found      bool
+	name       string
+	err        error
+}
+
+// ReadConsent reads the consent row and, for a sendable customer, the greeting name. It is the pool
+// half of CustomerRecipient; Recipient is the decision half. The result is a snapshot, see
+// ConsentRead and RefreshOn.
+func (r *ConsentResolver) ReadConsent(ctx context.Context, customerID string) ConsentRead {
+	c := ConsentRead{r: r, customerID: customerID}
+	c.prefs, c.found, c.err = r.prefs.Get(ctx, customerID)
+	if c.err != nil || !c.found || !c.prefs.Sendable() {
+		return c
+	}
 	if r.src != nil {
-		if c, cerr := r.src.ContactForCustomer(ctx, customerID); cerr == nil {
-			name = c.Name
+		if contact, cerr := r.src.ContactForCustomer(ctx, customerID); cerr == nil {
+			c.name = contact.Name
 		}
 		// A failed name lookup is not a reason to withhold a message the customer consented to. We
 		// greet them with "Hi" and send it.
 	}
-	return Recipient{Name: name, Phone: prefs.PhoneE164}, nil
+	return c
+}
+
+// RefreshOn re-reads the consent row on the caller's transaction and returns the refreshed read. It
+// exists because the pool snapshot can go stale in the interval between the read and the queue: a
+// STOP, an opt-out, or a phone number change that commits in that interval must be honoured at the
+// moment the notice is queued, and only a read on the deciding transaction can see it. The re-read
+// rides the transaction (getOn takes the tx as its querier), so it never asks the shared pool for a
+// second connection while the transaction holds the first.
+//
+// The greeting name read with the snapshot is KEPT: the contact seam is a different module's fact and
+// has no transaction of this one to ride. Everything the consent row answers is re-decided from the
+// FRESH row: sendability, quiet hours and the phone number. A failed re-read is carried as the read
+// error, so it surfaces when the answer is used and nothing is sent on a consent fact nobody could
+// read.
+func (c ConsentRead) RefreshOn(ctx context.Context, tx pgx.Tx) ConsentRead {
+	fresh := c
+	prefs, found, err := getOn(ctx, tx, c.customerID)
+	if err != nil {
+		fresh.err = err
+		return fresh
+	}
+	// A successful re-read supersedes the snapshot completely, its carried error included: the fresh
+	// row is what decides.
+	fresh.prefs, fresh.found, fresh.err = prefs, found, nil
+	return fresh
+}
+
+// Recipient is CustomerRecipient's answer from the facts already read.
+func (c ConsentRead) Recipient() (Recipient, error) {
+	if c.err != nil {
+		return Recipient{}, c.err
+	}
+	if !c.found || !c.prefs.Sendable() {
+		c.r.declined(c.customerID, c.found, c.prefs)
+		return Recipient{}, ErrNoRecipient
+	}
+	return Recipient{Name: c.name, Phone: c.prefs.PhoneE164}, nil
+}
+
+// MaySendAt is the resolver's MaySendAt answer from the facts already read.
+func (c ConsentRead) MaySendAt(t time.Time) (bool, time.Time, error) {
+	if c.err != nil {
+		return false, time.Time{}, c.err
+	}
+	if !c.found || !c.prefs.Sendable() {
+		return false, time.Time{}, nil
+	}
+	return true, c.prefs.QuietHours().NextOpen(t), nil
 }
 
 // MaySendAt reports whether a customer may be texted at instant t, and, when not, the earliest

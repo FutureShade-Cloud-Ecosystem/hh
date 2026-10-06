@@ -141,6 +141,20 @@ func runHoldsAfterInsert(ctx context.Context, hooks quoteEditHooks, tx pgx.Tx) e
 	return runHolds(ctx, hooks, tx)
 }
 
+// runPricingLog invokes the pricing log hook on the tx, the LAST step
+// before commit: the pricing log rows a write owes ride the same
+// transaction as the mutation, the totals and the trail, so a commit with
+// no row cannot happen and a rolled back write leaves no row (plan 4.2).
+// changed is the write's own verdict on whether it moved the line, so an
+// idempotent rewrite writes no row. A nil hook means this write owes no
+// pricing log row.
+func runPricingLog(ctx context.Context, hook func(context.Context, pgx.Tx, int, bool) error, tx pgx.Tx, lineNo int, changed bool) error {
+	if hook == nil {
+		return nil
+	}
+	return hook(ctx, tx, lineNo, changed)
+}
+
 // - guarded writes -
 
 // UpdateLineGuarded changes one line's quantity + price under the lock. A
@@ -251,6 +265,9 @@ func (r *Repository) UpdateLineGuarded(ctx context.Context, w quoteEditWrite, pl
 	if err = runHolds(ctx, hooks, tx); err != nil {
 		return before, after, totals, status, err
 	}
+	if err = runPricingLog(ctx, hooks.pricing, tx, w.LineNo, before != after); err != nil {
+		return before, after, totals, status, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return before, after, totals, status, fmt.Errorf("commit quote line edit: %w", err)
 	}
@@ -312,6 +329,12 @@ func (r *Repository) InsertLineGuarded(ctx context.Context, w quoteEditWrite, ho
 		return after, totals, status, err
 	}
 	if err = runRecord(ctx, hooks, tx, QuoteLineSnapshot{}, after, totals); err != nil {
+		return after, totals, status, err
+	}
+	// The pricing log row (a below floor rule price, CP0-3 answer A) is
+	// named by the line the insert derived under the lock; a new line is a
+	// change by definition.
+	if err = runPricingLog(ctx, hooks.pricing, tx, after.LineNo, true); err != nil {
 		return after, totals, status, err
 	}
 	if err := tx.Commit(ctx); err != nil {

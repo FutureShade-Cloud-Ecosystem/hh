@@ -438,16 +438,21 @@ func (s *Service) Void(ctx context.Context, id string) error {
 	// the COGS credit so the reversing journal still balances against the full payable reversal.
 	//
 	// Crash-durability (L8 REGRESSION fix): the reversing capitalize (subledger reversal) + the reversing GL
-	// journal + the status flip to VOIDED are MONEY-ATOMIC, all committed together, or none. The GL seam is not
-	// tx-aware (postExternal opens its own connection), so we cannot enlist it in this pgx.Tx; instead we do the
-	// capitalize inside the tx, then post the idempotent journal STILL INSIDE the tx closure (BEFORE commit), then
-	// flip status, and only then return (→ commit). If postJournal fails, the whole tx ROLLS BACK: the subledger
-	// reversal is undone and the doc stays un-VOIDED, so a retry re-runs the full void with CR 1200 booked exactly
-	// once. This restores master's "no post → doc stays voidable" durability while keeping the corrected amount.
-	// The old order (capitalize+flip committed first, THEN post) could strand a reversed subledger with NO journal
-	// when the post failed, and the alreadyVoided guard then short-circuited the retry, permanent GL/subledger
-	// divergence. Because the journal now posts before the VOIDED commit, alreadyVoided can only see a doc whose
-	// journal was already durably posted, so it never short-circuits an un-posted reversal.
+	// journal + the status flip to VOIDED are MONEY-ATOMIC, all committed together, or none. The GL seam is
+	// tx-aware (PostJournalTx over gl.Service.PostExternalTx), so the idempotent journal posts INSIDE this
+	// pgx.Tx and commits or rolls back WITH the void: the atomicity argument is true by construction, not by
+	// ordering. If any step fails, the whole tx ROLLS BACK, the journal and the subledger reversal are undone,
+	// the doc stays un-VOIDED, and a retry re-runs the full void with CR 1200 booked exactly once. Riding the
+	// void's own transaction also removes the second pool acquisition: the pool variant of the post opens its
+	// own transaction while this closure holds one, so pool-size concurrent voids each held a connection and
+	// waited for a second from the same pool until the action timeout (connection starvation by second
+	// acquisition; no row lock need be involved, Postgres only sees idle-in-transaction sessions). The older
+	// orders failed in opposite directions: posting after the capitalize+flip commit could strand a reversed
+	// subledger with NO journal, and the alreadyVoided guard then short-circuited the retry, permanent
+	// GL/subledger divergence; posting inside the closure but through the pool variant committed the journal in
+	// its own transaction, so a failure after the post (the flip, the commit) orphaned a journal for a doc that
+	// stayed un-VOIDED. Because the journal now commits only with the VOIDED flip, alreadyVoided can only see a
+	// doc whose journal was already durably posted, so it never short-circuits an un-posted reversal.
 	return s.repo.WithinTx(ctx, func(tx pgx.Tx) error {
 		locked, err := s.repo.LockForUpdateTx(ctx, tx, id)
 		if err != nil {
@@ -505,10 +510,10 @@ func (s *Service) Void(ctx context.Context, id string) error {
 		if cogsCredit != 0 {
 			rev = append(rev, glLine{acct: acctCOGS, credit: cogsCredit, memo: "reverse sold-through COGS"})
 		}
-		// Post the reversing journal (idempotent on its key) BEFORE we commit the reversal + flip. A failure here
-		// returns an error, rolling back the capitalize + the (not-yet-written) status flip, the doc stays
-		// voidable and a retry re-posts the deduped journal and completes the void.
-		journalRef, err := s.postJournal(ctx, glJournal{
+		// Post the reversing journal (idempotent on its key) through THIS transaction, before the flip: a failure
+		// here returns an error, rolling back the capitalize, the journal and the (not-yet-written) status flip
+		// together, the doc stays voidable and a retry re-posts the deduped journal and completes the void.
+		journalRef, err := s.postJournalTx(ctx, tx, glJournal{
 			key:    "landedcost.void:" + id,
 			source: glSourceAdjustment,
 			refID:  id,
@@ -597,6 +602,29 @@ func (s *Service) postJournal(ctx context.Context, j glJournal) (string, error) 
 		lines[i] = GLLine{AccountCode: l.acct, DebitCents: l.debit, CreditCents: l.credit, Memo: l.memo}
 	}
 	return s.gl.PostJournal(ctx, GLJournal{
+		Source:         j.source,
+		SourceRefID:    j.refID,
+		IdempotencyKey: j.key,
+		Memo:           j.memo,
+		BranchID:       j.branch,
+		Lines:          lines,
+	})
+}
+
+// postJournalTx is postJournal through the caller's transaction (idempotent on j.key): the journal's reads and
+// writes ride tx, so a caller already holding a pool connection (Void's WithinTx closure, with the header and
+// allocation row locks) never asks the shared pool for a second one, and the journal commits or rolls back with
+// the caller's transaction. apply / retroAdjust post OUTSIDE their transactions (between two WithinTx calls)
+// and stay on the pool variant. A nil GL seam or an empty/zero journal is a legitimate no-op (returns "").
+func (s *Service) postJournalTx(ctx context.Context, tx pgx.Tx, j glJournal) (string, error) {
+	if s.gl == nil || len(j.lines) == 0 {
+		return "", nil
+	}
+	lines := make([]GLLine, len(j.lines))
+	for i, l := range j.lines {
+		lines[i] = GLLine{AccountCode: l.acct, DebitCents: l.debit, CreditCents: l.credit, Memo: l.memo}
+	}
+	return s.gl.PostJournalTx(ctx, tx, GLJournal{
 		Source:         j.source,
 		SourceRefID:    j.refID,
 		IdempotencyKey: j.key,
