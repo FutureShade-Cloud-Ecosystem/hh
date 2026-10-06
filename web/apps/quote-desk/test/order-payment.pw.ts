@@ -731,3 +731,29 @@ test("a retry is marked in flight: returning to the quote while it is out holds 
   expect(keys).toHaveLength(2);
   expect(keys[0]).toBe(keys[1]);
 });
+
+test("Paid in full is not said beside an attempt whose outcome is not known: the owed nothing is said with the attempt's status, and the retry stays offered", async ({ page }) => {
+  await signIn(page);
+  await openWithPayment(page, "Q-2101");
+  await page.request.put("/_stub/payment-ghost", { data: { ghost: true } });
+  await take(page, "37.06");
+  await expect(pay(page).getByTestId("op-unknown")).toContainText("not known");
+  // The ghost took the full amount, so the server's invoice is paid; a switch away and back is the
+  // re-read that shows it. The attempt is still open, so the paid state is not said beside it: the
+  // panel says the owed nothing with the attempt's status, and keeps the retry that asks the server
+  // for the payment's receipt.
+  await page.getByTestId("qb-list-row").filter({ hasText: "Q-1001" }).first().click();
+  await expect(page.getByTestId("qe-title")).toContainText("Q-1001");
+  await page.getByTestId("qb-list-row").filter({ hasText: "Q-2101" }).first().click();
+  await expect(pay(page).getByTestId("op-box")).toBeVisible();
+  await expect(pay(page).getByTestId("op-unknown")).toContainText("not known");
+  await expect(pay(page).getByTestId("op-paid")).toHaveCount(0);
+  await expect(pay(page).getByTestId("op-take")).toBeEnabled();
+  await expect(pay(page).getByTestId("op-paid-unknown")).toContainText("nothing is owed");
+  await expect(pay(page).getByTestId("op-paid-unknown")).toContainText("not known");
+  // The retry fetches the receipt by replay and ends the attempt; only then is Paid in full said.
+  await pay(page).getByTestId("op-take").click();
+  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("CA$37.06");
+  await expect(pay(page).getByTestId("op-paid")).toContainText("Paid in full");
+  await expect(pay(page).getByTestId("op-paid-unknown")).toHaveCount(0);
+});

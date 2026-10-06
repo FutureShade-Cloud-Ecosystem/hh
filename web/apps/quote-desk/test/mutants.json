@@ -1424,7 +1424,7 @@
   {
     "id": "op-paid-state",
     "file": "src/order-payment-panel.ts",
-    "find": "    return this.loaded && this.readError === \"\" && this.paymentBalance === 0;",
+    "find": "    return this.loaded && this.readError === \"\" && this.paymentBalance === 0 && this.attempt === null;",
     "replace": "    return false;",
     "test": "shows a Paid in full state in place of the form"
   },
@@ -1625,5 +1625,12 @@
     "find": "      this.book.mark(ctx.id, \"in-flight\");\n      const inflight = this.book.attempt(ctx.id);\n      if (inflight !== null) {\n        this.attempt = inflight;\n        this.record(ctx.id).attempt = inflight;\n      }",
     "replace": "",
     "test": "a retry is marked in flight: returning to the quote while it is out holds the button, so two retries never race"
+  },
+  {
+    "id": "op-paid-known",
+    "file": "src/order-payment-panel.ts",
+    "find": "return this.loaded && this.readError === \"\" && this.paymentBalance === 0 && this.attempt === null;",
+    "replace": "return this.loaded && this.readError === \"\" && this.paymentBalance === 0;",
+    "test": "Paid in full is not said beside an attempt whose outcome is not known: the owed nothing is said with the attempt's status, and the retry stays offered"
   }
 ]

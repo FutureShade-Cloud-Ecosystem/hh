@@ -325,9 +325,19 @@ export class QdOrderPayment extends PanelBase {
     return parsed.cents === null ? "" : `Taking ${moneyWord(parsed.cents)} by ${tenderWord(this.tender)}`;
   }
 
-  /** True when the invoice is read as owing nothing: the form gives way to a Paid in full state. */
+  /** True when the invoice is read as owing nothing and no attempt is open: the form gives way to a Paid in full state. */
   private get paidInFull(): boolean {
-    return this.loaded && this.readError === "" && this.paymentBalance === 0;
+    return this.loaded && this.readError === "" && this.paymentBalance === 0 && this.attempt === null;
+  }
+
+  /**
+   * True when the invoice is read as owing nothing but an attempt is still open (its outcome is
+   * not known, or it is still out): the paid state is not said beside an open attempt, because
+   * the attempt may still change the invoice. The panel says the owed nothing with the attempt's
+   * status and keeps the retry, which asks the server for that payment's receipt by replay.
+   */
+  private get paidWhileAttemptOpen(): boolean {
+    return !this.paidInFull && this.loaded && this.readError === "" && this.paymentBalance === 0 && this.attempt !== null;
   }
 
   protected override willUpdate(changed: Map<string, unknown>): void {
@@ -860,6 +870,14 @@ export class QdOrderPayment extends PanelBase {
           ? html`<p class="paid" data-testid="op-paid">
               Paid in full: nothing is owed on this invoice, so no payment is taken here${this.receipt !== null ? ". The receipt below is the payment that settled it." : "."}
             </p>`
+          : nothing}
+        ${this.paidWhileAttemptOpen
+          ? html`<p class="paid" data-testid="op-paid-unknown">
+              The invoice is Paid: nothing is owed on it. The outcome of the payment above is not known, so the desk still holds its attempt: the retry below asks the server for that payment's receipt, and nothing is posted a second time.
+            </p>`
+          : nothing}
+        ${this.paidInFull
+          ? nothing
           : html`
             <div class="tenders" role="group" aria-label="Payment method" data-testid="op-tenders">
           ${TENDER_METHODS.map(
