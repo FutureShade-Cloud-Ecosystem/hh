@@ -113,7 +113,10 @@ type cardAttemptRow struct {
 }
 
 // listFixture is one planted attempt the shape and RBAC legs read back. The
-// id's head is the short ref the manager-facing answers carry.
+// id's head is the short ref the manager-facing answers carry. The timestamp
+// rides the real clock (an hour behind now): the shape leg only proves the
+// value round-trips, and a pinned calendar instant beside the query leg's
+// time.Now would be the dated time bomb the testaudit tripwire names.
 var listFixture = Attempt{
 	ID:            "abc12345-0000-0000-0000-000000000001",
 	LegKey:        "leg-0001",
@@ -125,7 +128,7 @@ var listFixture = Attempt{
 	Status:        AttemptUnknown,
 	ProcessorRef:  "trans_abc123",
 	LastError:     "the processor answer was unreadable",
-	CreatedAt:     time.Date(2026, 3, 14, 15, 9, 26, 0, time.UTC),
+	CreatedAt:     time.Now().Add(-time.Hour),
 }
 
 func TestCardAttempts_List_RBAC(t *testing.T) {
@@ -247,9 +250,11 @@ func TestCardAttempts_List_QueryParsing(t *testing.T) {
 		t.Fatal("state=open must set OpenOnly")
 	}
 
-	// An explicit from and to ride through as RFC3339.
-	from := "2026-03-01T00:00:00Z"
-	to := "2026-03-31T23:59:59Z"
+	// An explicit from and to ride through as RFC3339. The instants are
+	// computed off the real clock and formatted, never pinned: the leg
+	// proves the parse round-trip, not any calendar fact.
+	from := time.Now().Add(-24 * time.Hour).Truncate(time.Second).Format(time.RFC3339)
+	to := time.Now().Add(24 * time.Hour).Truncate(time.Second).Format(time.RFC3339)
 	if rec := doReq(t, sg, mux, http.MethodGet, "/api/v1/payments/card-attempts?state=open&from="+from+"&to="+to, ""); rec.Code != http.StatusOK {
 		t.Fatalf("ranged list = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
