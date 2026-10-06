@@ -33,6 +33,7 @@ does by setting the property). The reviewers are asked to rule on whether those 
 
 | File | Symbol | Kind | Count | Ruling | Guard or reason | Mutants | Tests |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| app-root.ts | QuoteDeskApp.constructor | await | 1 | SAFE | The feedback widget's sender awaiting the bridge's own route: no quote is open or touched by it, and the closure runs only from the widget's Send button. | - | - |
 | app-root.ts | QuoteDeskApp.#adoptFromFrontDoor | await | 1 | SAFE | Adopts the front door's handed session (demo build only) and starts the desk. No quote is open or touched; the desk is not mounted until it ends, and an absent or unusable handoff never reaches the await. | - | - |
 | app-root.ts | QuoteDeskApp.#chooseFlow | await | 2 | SAFE | Demo sign in: opens the session and reads the first branch. No quote is open or touched; the desk is not mounted until it ends. | - | - |
 | app-root.ts | QuoteDeskApp.#initDesk | await | 2 | SAFE | Reads the signed in user and the one branch after sign in. Not tied to a quote; the desk is not mounted until it ends. | - | - |

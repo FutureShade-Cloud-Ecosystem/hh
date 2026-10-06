@@ -65,18 +65,20 @@ for (const width of [1440, 820]) {
 // The theme control (visual review round 1, P2-5): the ERP's light look was
 // unreachable. The bar's theme slot carries the till's cycle (Auto, Light,
 // Dark); the dark sheet is the tokens' default and light is the opt-in
-// data-theme attribute.
-test("the theme control cycles Auto, Light, Dark on the document root", async ({ browser }) => {
+// data-theme attribute. This suite serves a demo mode build (playwright.config.ts
+// runs vite --mode demo), and a demo build starts on Light (decision log row
+// 978), so the cycle here runs Light, Dark, Auto. That a default build starts
+// on Auto is proved on the shipped bundle by test/demo-light-default.test.mjs,
+// which builds both ways; the two together cover both starting states.
+test("the theme control starts on Light in the demo build and cycles Light, Dark, Auto", async ({ browser }) => {
   const context = await browser.newContext({ colorScheme: "dark" });
   const page = await context.newPage();
   await page.goto("/");
   await page.getByRole("button", { name: "Sales", exact: true }).click();
   await expect(page.getByTestId("qb-list")).toBeVisible();
   const toggle = page.getByTestId("theme-control");
-  await expect(toggle).toHaveText("Theme: Auto");
   const root = page.locator("html");
-  await expect(root).not.toHaveAttribute("data-theme", /.+/);
-  await toggle.click();
+  // The system is dark, so a light root can only be the demo build's own start.
   await expect(toggle).toHaveText("Theme: Light");
   await expect(root).toHaveAttribute("data-theme", "light");
   // The desk itself re-themes: the page ground is light.
@@ -88,14 +90,27 @@ test("the theme control cycles Auto, Light, Dark on the document root", async ({
   await expect(root).not.toHaveAttribute("data-theme", /.+/);
   await toggle.click();
   await expect(toggle).toHaveText("Theme: Auto");
+  await expect(root).not.toHaveAttribute("data-theme", /.+/);
+  await toggle.click();
+  await expect(toggle).toHaveText("Theme: Light");
   await context.close();
 });
 
+// Reached through the cycle, because the demo build starts pinned on Light and
+// a light root at load would pass without Auto following anything.
 test("Auto follows the system's light setting", async ({ browser }) => {
-  const context = await browser.newContext({ colorScheme: "light" });
+  const context = await browser.newContext({ colorScheme: "dark" });
   const page = await context.newPage();
   await page.goto("/");
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await page.getByRole("button", { name: "Sales", exact: true }).click();
+  const toggle = page.getByTestId("theme-control");
+  await toggle.click();
+  await toggle.click();
+  await expect(toggle).toHaveText("Theme: Auto");
+  const root = page.locator("html");
+  await expect(root).not.toHaveAttribute("data-theme", /.+/);
+  await page.emulateMedia({ colorScheme: "light" });
+  await expect(root).toHaveAttribute("data-theme", "light");
   await context.close();
 });
 
