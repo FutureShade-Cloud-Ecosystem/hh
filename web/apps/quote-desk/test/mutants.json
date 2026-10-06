@@ -1423,5 +1423,19 @@
     "find": "    await this.#signOut();\n    window.location.assign(\"/\");",
     "replace": "    window.location.assign(\"/\");",
     "test": "Switch role ends the session and returns to the front door at /"
+  },
+  {
+    "id": "qc-load-order",
+    "file": "src/quote-convert.ts",
+    "find": "    if (seq !== this.#seq) return;\n    if (stock.ok) {",
+    "replace": "    if (stock.ok) {",
+    "test": "guard convert load order:"
+  },
+  {
+    "id": "qc-convert-answer",
+    "file": "src/quote-convert.ts",
+    "find": "    if (seq !== this.#seq) return;\n    this.#busy = false;\n    if (!result.ok) {\n      this.#refusal",
+    "replace": "    this.#busy = false;\n    if (!result.ok) {\n      this.#refusal",
+    "test": "guard convert answer:"
   }
 ]

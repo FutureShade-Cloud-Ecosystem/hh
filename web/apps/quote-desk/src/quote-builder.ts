@@ -16,6 +16,8 @@
 import { LitElement, css, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import "./quote-workarea.js";
+import "./quote-convert.js";
+import { convertRouteQuoteId } from "./_quote-convert.js";
 import "./panel-seams.js";
 import "./edit-panel.js";
 import "./history-panel.js";
@@ -77,6 +79,8 @@ export class QdQuoteBuilder extends LitElement {
   @state() private newBranch = "";
   @state() private newExpiry = "";
   @state() private detailOpen = false;
+  /** The quote the address names on the guided convert surface (#/quotes/<id>/convert), or "" for the desk. */
+  @state() private convertQuoteId = convertRouteQuoteId(window.location.hash);
   /** The picked account for a new quote, from the picker (never a typed id). */
   private newCustomer: PickerCustomer | null = null;
 
@@ -205,6 +209,9 @@ export class QdQuoteBuilder extends LitElement {
     }
     /* The detail disclosure's seam rows: nothing shows today, so the row
        keeps its own height at zero until a panel lands in the seam. */
+    .away {
+      display: none;
+    }
     .seams qd-panel-seam {
       display: block;
     }
@@ -222,6 +229,8 @@ export class QdQuoteBuilder extends LitElement {
     this.renderRoot.addEventListener("quote-changed", this.onQuoteChanged as EventListener);
     this.renderRoot.addEventListener("quote-open", this.onQuoteOpen as EventListener);
     window.addEventListener(OPEN_SETTINGS_EVENT, this.onOpenSettings);
+    window.addEventListener("hashchange", this.onHashChange);
+    this.convertQuoteId = convertRouteQuoteId(window.location.hash);
     this.renderRoot.addEventListener("customer-picked", this.onCustomerPicked as EventListener);
     this.renderRoot.addEventListener("customer-cleared", this.onCustomerCleared as EventListener);
   }
@@ -245,11 +254,24 @@ export class QdQuoteBuilder extends LitElement {
     this.renderRoot.removeEventListener("quote-changed", this.onQuoteChanged as EventListener);
     this.renderRoot.removeEventListener("quote-open", this.onQuoteOpen as EventListener);
     window.removeEventListener(OPEN_SETTINGS_EVENT, this.onOpenSettings);
+    window.removeEventListener("hashchange", this.onHashChange);
     this.renderRoot.removeEventListener("customer-picked", this.onCustomerPicked as EventListener);
     this.renderRoot.removeEventListener("customer-cleared", this.onCustomerCleared as EventListener);
   }
 
+  /** The route table: the address either names the convert surface for a quote or leaves the desk as it was. */
+  private readonly onHashChange = (): void => {
+    this.convertQuoteId = convertRouteQuoteId(window.location.hash);
+  };
+
   protected override updated(): void {
+    // The guided convert surface receives its facts the same way (its branch is the open quote's, or the quote's own once it reads).
+    const convert = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("quote-convert");
+    if (convert !== null) {
+      convert.client = this.client;
+      convert.quoteId = this.convertQuoteId;
+      convert.branchName = this.branchDisplayName();
+    }
     // The wiring pass: the work area and the picker receive their facts.
     const area = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("qd-quote-workarea");
     if (area !== null) {
@@ -567,6 +589,14 @@ export class QdQuoteBuilder extends LitElement {
   }
 
   override render() {
+    // The convert route shows its own surface; the desk stays mounted behind it (hidden, never removed), so a write still out for the open quote keeps its late answer.
+    return html`
+      ${this.convertQuoteId !== "" ? html`<quote-convert data-testid="qc-host"></quote-convert>` : nothing}
+      <div class="${this.convertQuoteId !== "" ? "away" : ""}">${this.renderDesk()}</div>
+    `;
+  }
+
+  private renderDesk() {
     return html`
       ${this.error !== "" ? html`<header><span class="err" role="alert">${this.error}</span></header>` : nothing}
       <qd-quote-workarea></qd-quote-workarea>

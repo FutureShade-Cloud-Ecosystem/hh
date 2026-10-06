@@ -4,6 +4,7 @@
 // is a short line (clear stone, three asked, two at the branch); the seeded ones carry the standings.
 import { expect, test, type Page } from "@playwright/test";
 import { shot } from "./shot.js";
+import { hold } from "./switch-helpers.js";
 
 test.use({ viewport: { width: 1440, height: 900 } });
 
@@ -197,4 +198,39 @@ test("F a quote that cannot convert yet says so and offers no steps", async ({ p
   await arrive(page, "q-1001");
   await expect(page.getByTestId("qc-not-ready")).toContainText("only an accepted quote");
   await expect(page.getByTestId("qc-next")).toHaveCount(0);
+});
+
+test("guard convert load order: a stock read that answers after another quote's route opened never shows on it", async ({ page }) => {
+  const other = await seed(page, { status: "ACCEPTED", customer_id: "c-fenwick", lines: [{ p: "p-wall-std", q: 4 }] });
+  const held = await hold(page, /\/api\/v1\/quotes\/q-1003\/availability$/, { method: "GET" });
+  await arrive(page, "q-1003");
+  await held.asked;
+  await page.evaluate((id) => {
+    window.location.hash = `#/quotes/${id}/convert`;
+  }, other);
+  await expect(page.getByTestId("qc-line")).toContainText("Wall");
+  await held.release();
+  // The late answer is for the clear stone line of the quote left; the first line here is the wall stone.
+  await expect(page.getByTestId("qc-line")).toHaveCount(1);
+  await expect(page.getByTestId("qc-line-warning")).toHaveCount(0);
+});
+
+test("guard convert answer: a conversion answered after another quote's route opened leaves that route's screen alone", async ({ page }) => {
+  const other = await seed(page, { status: "ACCEPTED", customer_id: "c-fenwick", lines: [{ p: "p-wall-std", q: 4 }] });
+  await arrive(page, "q-1003");
+  await next(page);
+  await next(page);
+  await next(page);
+  await next(page);
+  const held = await hold(page, /\/api\/v1\/quotes\/q-1003\/convert$/, { method: "POST" });
+  await page.getByTestId("qc-confirm").click();
+  await held.asked;
+  await page.evaluate((id) => {
+    window.location.hash = `#/quotes/${id}/convert`;
+  }, other);
+  await expect(page.getByTestId("qc-review")).toBeVisible();
+  await held.release();
+  await expect(page.getByTestId("qc-review")).toBeVisible();
+  await expect(page.getByTestId("qc-done")).toHaveCount(0);
+  expect((await state(page)).conversions).toEqual([{ quote_id: "q-1003", fulfillment: "PICKUP" }]);
 });

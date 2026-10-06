@@ -26,6 +26,7 @@ import type {
   QuoteLineAvailability,
 } from "@hardscapehouse/api-client";
 import {
+  staffCustomer,
   staffIdentity,
   staffBranches,
   staffProduct,
@@ -426,6 +427,14 @@ function validateEditOutcome(value: unknown): EditOutcome | null {
 
 const MAX_APPROVAL_PAGES = 40;
 
+/** The account facts the standing step reads off the customer search. */
+export interface StandingRead {
+  name: string;
+  paymentTermsDays: number;
+  creditLimitCents: number;
+  openBalanceCents: number;
+}
+
 export class QdClient {
   readonly #client: ApiClient;
   readonly #callerId: () => string;
@@ -686,6 +695,68 @@ export class QdClient {
     const orderNo = stringAt(record, "order_no");
     if (orderId === null || orderNo === null) return err("the conversion answer is missing its order number");
     return ok({ orderId, orderNo });
+  }
+
+  /**
+   * The guided surface's conversion: the chosen fulfilment rides explicitly, both of the contract's
+   * two values (the bare button's convertBody sends only Will-call and leaves Pickup to the default).
+   */
+  async convertWithFulfilment(quoteId: string, fulfillment: "PICKUP" | "WILL_CALL"): Promise<Result<{ orderId: string; orderNo: string }>> {
+    const result = await staffQuote.quoteConvertQuote(this.#client, quoteId, { fulfillment });
+    if (!result.ok) return result;
+    const record = result.value as unknown;
+    if (!isRecord(record)) return err("the conversion answer is not readable");
+    const orderId = stringAt(record, "order_id");
+    const orderNo = stringAt(record, "order_no");
+    if (orderId === null || orderNo === null) return err("the conversion answer is missing its order number");
+    return ok({ orderId, orderNo });
+  }
+
+  /**
+   * One payment against the converted quote's order. The contract's key rides the body, and the same
+   * key rides the Idempotency-Key header, so a retry of this one payment posts nothing twice.
+   */
+  async takeOrderPayment(
+    quoteId: string,
+    input: { method: "CASH" | "CARD" | "CHEQUE" | "EFT"; amountCents: number; reference: string; idempotencyKey: string },
+  ): Promise<Result<{ paymentNo: string; amountCents: number; balanceCents: number; replayed: boolean }>> {
+    const result = await this.#client.request<unknown>({
+      method: "POST",
+      path: "/api/v1/quotes/{id}/order-payment",
+      pathParams: { id: quoteId },
+      body: { method: input.method, amount_cents: input.amountCents, reference: input.reference, idempotency_key: input.idempotencyKey },
+      idempotencyKey: input.idempotencyKey,
+      operationId: "quoteTakeOrderPayment",
+    });
+    if (!result.ok) return result;
+    const record = result.value;
+    if (!isRecord(record)) return err("the payment answer is not readable");
+    const paymentNo = stringAt(record, "payment_no");
+    const amountCents = integerAt(record, "amount_cents");
+    const balanceCents = integerAt(record, "balance_cents");
+    if (paymentNo === null || amountCents === null || balanceCents === null) return err("the payment answer is missing its figures");
+    return ok({ paymentNo, amountCents, balanceCents, replayed: record["replayed"] === true });
+  }
+
+  /**
+   * The customer's credit posture for the standing step, from the customer search the desk already
+   * speaks (the account's terms, limit and open balance). The row is matched by id; an answer with no
+   * such row is null, never a guess.
+   */
+  async customerStanding(customerId: string, customerName: string): Promise<Result<StandingRead | null>> {
+    const result = await staffCustomer.customerSearch(this.#client, { q: customerName, limit: 20 });
+    if (!result.ok) return result;
+    const rows = result.value as unknown;
+    if (!Array.isArray(rows)) return err("the customer search answer is not readable");
+    for (const row of rows) {
+      if (!isRecord(row) || stringAt(row, "id") !== customerId) continue;
+      const terms = integerAt(row, "payment_terms_days");
+      const limit = integerAt(row, "credit_limit_cents");
+      const open = integerAt(row, "open_balance_cents");
+      if (terms === null || limit === null || open === null) return err("the customer's credit facts are not readable");
+      return ok({ name: customerName, paymentTermsDays: terms, creditLimitCents: limit, openBalanceCents: open });
+    }
+    return ok(null);
   }
 
   /**
