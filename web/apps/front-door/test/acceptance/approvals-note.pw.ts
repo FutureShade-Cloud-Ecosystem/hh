@@ -7,12 +7,13 @@
 // zero. The count comes from GET /api/v1/staff/approvals with status PENDING,
 // which the demo stub serves.
 //
-// Red first: these three legs fail on origin/main (where the note is not built)
-// and pass on the demo/approvals-note branch.
+// The stub answers the bare array the core really sends. One leg answers the
+// contract's page object over two pages, and one mixes in rows the Quote Desk's
+// Approvals tab does not list (another kind, and a decided margin row).
 import { expect, test, type Page } from "@playwright/test";
 
-async function stubSetApprovals(page: Page, count: number): Promise<void> {
-  const res = await page.request.post("/_stub/set-approvals", { data: { count } });
+async function stubSetApprovals(page: Page, count: number, more: { shape?: "array" | "page"; extra?: number; delayMs?: number } = {}): Promise<void> {
+  const res = await page.request.post("/_stub/set-approvals", { data: { count, ...more } });
   expect(res.ok()).toBe(true);
 }
 
@@ -68,4 +69,34 @@ test("the Sales role does not see the note regardless of approval count", async 
   const quoteDeskTile = page.getByRole("button", { name: "Quote Desk", exact: true });
   await expect(quoteDeskTile).toBeVisible();
   await expect(quoteDeskTile).not.toContainText("approvals waiting");
+});
+
+test("the count reads the contract's page object and follows its cursor", async ({ page }) => {
+  await stubSetApprovals(page, 3, { shape: "page" });
+  await signInSalesManager(page);
+  await expect(page.getByRole("button", { name: "Quote Desk", exact: true })).toContainText("3 approvals waiting");
+});
+
+test("the count is the pending margin kind only, the Quote Desk's own number", async ({ page }) => {
+  await stubSetApprovals(page, 2, { extra: 4 });
+  await signInSalesManager(page);
+  await expect(page.getByRole("button", { name: "Quote Desk", exact: true })).toContainText("2 approvals waiting");
+});
+
+test("the count is the same for the page object with other kinds mixed in", async ({ page }) => {
+  await stubSetApprovals(page, 2, { shape: "page", extra: 3 });
+  await signInSalesManager(page);
+  await expect(page.getByRole("button", { name: "Quote Desk", exact: true })).toContainText("2 approvals waiting");
+});
+
+test("a late approvals answer after the role changed is dropped", async ({ page }) => {
+  await stubSetApprovals(page, 3, { delayMs: 1500 });
+  await page.getByRole("button", { name: "Sales manager", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Counter Till", exact: true })).toBeVisible();
+  // Switch role while the approvals request is still out, then sign in as Sales.
+  await page.getByRole("button", { name: /switch role/i }).click();
+  await signInSales(page);
+  // Let the late answer land, then check the Sales home never shows the note.
+  await page.waitForTimeout(2500);
+  await expect(page.getByRole("button", { name: "Quote Desk", exact: true })).not.toContainText("approvals waiting");
 });

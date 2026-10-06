@@ -58,6 +58,7 @@ import {
   validateMint,
   type FrontDoorSession,
 } from "./session.js";
+import { countMarginApprovals } from "./approvals-count.js";
 import { applyTheme } from "./theme.js";
 
 const DEMO_ORG = "hh-demo";
@@ -730,6 +731,7 @@ export class FrontDoorApp extends HHElement {
   #endSession(): void {
     this.#store.clear();
     this.#session = null;
+    this.#approvalCount = 0;
     this.#screen = { kind: "picker" };
     this.#refusals = new Map();
   }
@@ -742,12 +744,15 @@ export class FrontDoorApp extends HHElement {
       this.#approvalCount = 0;
       return;
     }
-    const result = await staffIdentity.identityListApprovals(this.#staffClient, { status: "PENDING" });
-    if (result.ok) {
-      this.#approvalCount = result.value.items.length;
-    } else {
-      this.#approvalCount = 0;
-    }
+    const count = await countMarginApprovals((cursor) =>
+      staffIdentity.identityListApprovals(this.#staffClient, {
+        status: "PENDING",
+        ...(cursor !== undefined ? { cursor } : {}),
+      }),
+    );
+    // The session changed while the request was out: the answer is for someone else.
+    if (this.#session !== session) return;
+    this.#approvalCount = count ?? 0;
     this.requestUpdate();
   }
 
