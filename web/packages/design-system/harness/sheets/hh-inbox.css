@@ -60,11 +60,48 @@
   /* THE disabled rule, stated once: a token swap, never a fade. Filled kinds
      drop their fill and go grey; the grey pair clears AA in both halves. */
   button:disabled,
-  button:disabled:hover {
+  button:disabled:hover,
+  .control:disabled {
     background: var(--hh-disabled-fill);
     color: var(--hh-disabled-ink);
     border-color: var(--hh-disabled-line);
     cursor: default;
+  }
+  /* The form controls: the same face the button carries (height, radius, the
+     focus ring, the disabled swap above), so a form row reads as one system.
+     The VALUE of a control is the consumer's wiring-pass job, never a binding:
+     the shell sets it in its own update pass, as the quote desk already does. */
+  .control {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: 44px;
+    padding: 0 var(--hh-s-12);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid var(--hh-control-line);
+    background: var(--hh-card);
+    color: var(--hh-text);
+  }
+  select.control {
+    padding-inline-end: var(--hh-s-20);
+  }
+  .control:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  /* The named group: the fieldset keeps its legend (the group's accessible
+     name) and the legend is set as the group's visible heading. */
+  .field-group {
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-control);
+    margin: 0;
+    padding: var(--hh-s-12);
+  }
+  .field-group-heading {
+    font-family: inherit;
+    font-size: var(--hh-s-12);
+    color: var(--hh-text-dim);
+    padding: 0 var(--hh-s-4);
   }
 
   .spinner-wrap {
