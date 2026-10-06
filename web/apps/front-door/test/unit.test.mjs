@@ -191,3 +191,51 @@ test("the catalog holds the eleven coming roles, each with its matrix modules", 
   const hr = COMING_ROLES.find((role) => role.id === "hr");
   assert.deepEqual(hr.modules, ["House Messages", "Dealer Admin"]);
 });
+
+// The approvals note's count: the core's bare array, the contract's page
+// object, the margin kind only, pending only, every cursor followed.
+import { countMarginApprovals, readApprovalsPage } from "../src/approvals-count.js";
+
+const row = (policy_type, status) => ({ id: "a", requested_by: "u", branch_id: "b", policy_type, detail: "d", status });
+const pageOf = (pages) => async (cursor) => ({ ok: true, value: pages[cursor ?? ""] });
+
+test("the count reads the core's bare array", async () => {
+  const n = await countMarginApprovals(pageOf({ "": [row("MARGIN_BELOW_MINIMUM", "PENDING"), row("MARGIN_BELOW_MINIMUM", "PENDING")] }));
+  assert.equal(n, 2);
+});
+
+test("the count reads the contract's page object and follows every cursor", async () => {
+  const n = await countMarginApprovals(
+    pageOf({
+      "": { items: [row("MARGIN_BELOW_MINIMUM", "PENDING")], next_cursor: "c2" },
+      c2: { items: [row("MARGIN_BELOW_MINIMUM", "PENDING")], next_cursor: "c3" },
+      c3: { items: [row("MARGIN_BELOW_MINIMUM", "PENDING")], next_cursor: null },
+    }),
+  );
+  assert.equal(n, 3);
+});
+
+test("the count is the margin kind and pending only", async () => {
+  const n = await countMarginApprovals(
+    pageOf({
+      "": [
+        row("MARGIN_BELOW_MINIMUM", "PENDING"),
+        row("MARGIN_BELOW_MINIMUM", "APPROVED"),
+        row("CREDIT_LIMIT_EXCEEDED", "PENDING"),
+        row("FREIGHT_ABOVE_QUOTE", "PENDING"),
+      ],
+    }),
+  );
+  assert.equal(n, 1);
+});
+
+test("an unreadable answer, a bad row, a failed page or a repeated cursor yields no count", async () => {
+  assert.equal(await countMarginApprovals(pageOf({ "": "nope" })), null);
+  assert.equal(await countMarginApprovals(pageOf({ "": [{ policy_type: 1, status: "PENDING" }] })), null);
+  assert.equal(await countMarginApprovals(async () => ({ ok: false })), null);
+  assert.equal(
+    await countMarginApprovals(pageOf({ "": { items: [], next_cursor: "x" }, x: { items: [], next_cursor: "x" } })),
+    null,
+  );
+  assert.equal(readApprovalsPage({ items: [], next_cursor: 5 }), null);
+});
