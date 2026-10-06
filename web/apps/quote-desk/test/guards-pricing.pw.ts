@@ -15,6 +15,8 @@ test.afterAll(async ({ request }) => {
 });
 
 const PAVERS = "ca700000-0000-4000-9000-000000000001";
+const WALLS = "ca700000-0000-4000-9000-000000000002";
+const SLABS = "ca700000-0000-4000-9000-000000000003";
 const MAPLE = "c0000000-0000-4000-9000-000000000001";
 
 /** A new tier rule on Pavers at a depth that leaves a margin: the form filled, the Save pressed. */
@@ -178,6 +180,42 @@ test("P3-1 a confirmed save that lands after the panel closed logs no confirmati
   const state = await pricingState(page);
   expect(state.writes).toHaveLength(1);
   expect(state.confirmations).toHaveLength(0);
+});
+
+// ── the Add category row ──
+
+test("P3-1 the Add category save is bound to the category and numbers picked when it began", async ({ page }) => {
+  await setMode(page, { drop_policies: [WALLS, SLABS], rule_categories: [WALLS, SLABS] });
+  await signIn(page);
+  await openPricing(page);
+  await page.getByTestId("pm-add-category").selectOption(WALLS);
+  await page.getByTestId("pm-add-target").fill("30");
+  await page.getByTestId("pm-add-floor").fill("20");
+  const held = await hold(page, /\/api\/v1\/pricing\/floor-preview$/, { method: "POST", times: 1 });
+  await page.getByTestId("pm-add-save").click();
+  await held.asked;
+  // The picker moves on while the floor check is out; the save still goes for the category it began with.
+  await page.getByTestId("pm-add-category").selectOption(SLABS);
+  await held.release();
+  await settle(page);
+  const state = await pricingState(page);
+  expect(state.policies.find((p) => p.category_id === WALLS)).toMatchObject({ margin_target_bps: 3000, margin_floor_bps: 2000 });
+  expect(state.policies.find((p) => p.category_id === SLABS)).toBeUndefined();
+});
+
+test("P3-1 an older read of the categories the pricing proves, answered late, does not shrink the Add picker", async ({ page }) => {
+  await setMode(page, { drop_policies: [WALLS], rule_categories: [WALLS] });
+  await signIn(page);
+  const held = await hold(page, /\/api\/v1\/pricing\/rules(\?|$)/, { method: "GET", times: 1, snapshot: true });
+  await openPricing(page);
+  await held.asked;
+  // Slabs gains a rule while the first read is out; the reload sees it, and the first read's older answer lands last.
+  await setMode(page, { drop_policies: [SLABS], rule_categories: [SLABS] });
+  await page.locator("qd-pricing-panel").evaluate((el) => (el as HTMLElement & { reload: () => void }).reload());
+  await expect(page.getByTestId("pm-add-category").locator("option:not([value=''])")).toHaveText(["Retaining Walls", "Slabs & Steps"]);
+  await held.release();
+  await settle(page);
+  await expect(page.getByTestId("pm-add-category").locator("option:not([value=''])")).toHaveText(["Retaining Walls", "Slabs & Steps"]);
 });
 
 // ── two quick Edit clicks ──

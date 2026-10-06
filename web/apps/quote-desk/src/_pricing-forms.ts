@@ -505,10 +505,15 @@ export function policyDirty(p: PolicyRow, d: PolicyDraft): boolean {
   return d.target !== saved.target || d.floor !== saved.floor || d.enforce !== saved.enforce;
 }
 
+/** The server's bound on a margin figure: 0 to 10000 basis points, so 0% to 100%. */
+const MAX_MARGIN_BPS = 10000;
+
 export function policySave(d: PolicyDraft): FormOutcome<PricingCategoryPolicyWrite> {
+  if (d.target.trim().startsWith("-") || d.floor.trim().startsWith("-")) return fail("Target and floor must be between 0% and 100%.");
   const target = pctToBps(d.target);
   const floor = pctToBps(d.floor);
   if (target === null || floor === null) return fail("Enter target and floor as percentages with at most two decimals.");
+  if (target > MAX_MARGIN_BPS || floor > MAX_MARGIN_BPS) return fail("Target and floor must be between 0% and 100%.");
   if (floor > target) return fail("The floor must be at or below the target.");
   return good({ margin_target_bps: target, margin_floor_bps: floor, margin_enforcement_disabled: !d.enforce });
 }

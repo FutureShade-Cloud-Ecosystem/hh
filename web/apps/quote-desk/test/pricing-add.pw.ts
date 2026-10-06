@@ -51,7 +51,7 @@ test("A: the manager sees an Add category row under Pavers and Bulk", async ({ p
   await expect(page.getByTestId("pm-add-row")).toBeVisible();
   const picker = page.getByTestId("pm-add-category");
   // The picker lists exactly the categories that have no policy yet.
-  await expect(picker.locator("option:not([value=''])")).toHaveText(["Retaining Walls", "Slabs & Steps", "Aggregates", "Accessories"]);
+  await expect(picker.locator("option:not([value=''])")).toHaveText(["Accessories", "Aggregates", "Retaining Walls", "Slabs & Steps"]);
   await expect(page.getByTestId("pm-add-target")).toBeVisible();
   await expect(page.getByTestId("pm-add-floor")).toBeVisible();
   await expect(page.getByTestId("pm-add-enforce")).toBeChecked();
@@ -82,7 +82,7 @@ test("A: Save sends the PUT and the new row joins the grid, editable in place", 
   expect(state.policies.find((p) => p.category_id === WALLS)).toMatchObject({ margin_target_bps: 3150, margin_floor_bps: 2000, margin_enforcement_disabled: false });
   expect(state.audit.some((r) => r.entity_type === "category_policy" && r.entity_id === WALLS && r.action === "CREATE")).toBe(true);
   // The category left the picker, and the row edits and saves in place like the others.
-  await expect(page.getByTestId("pm-add-category").locator("option:not([value=''])")).toHaveText(["Slabs & Steps", "Aggregates", "Accessories"]);
+  await expect(page.getByTestId("pm-add-category").locator("option:not([value=''])")).toHaveText(["Accessories", "Aggregates", "Slabs & Steps"]);
   await row.locator('input[data-field="target-' + WALLS + '"]').fill("33");
   await expect(row.getByTestId("pm-save")).toHaveClass(/primary/);
   await row.getByTestId("pm-save").click();
@@ -133,7 +133,7 @@ test("A: a category dropped from the grid is offered back because a rule and a b
   await signIn(page);
   await openPricing(page);
   await expect(page.getByTestId("pm-row")).toHaveCount(1);
-  await expect(page.getByTestId("pm-add-category").locator("option:not([value=''])")).toHaveText(["Pavers", "Accessories"]);
+  await expect(page.getByTestId("pm-add-category").locator("option:not([value=''])")).toHaveText(["Accessories", "Pavers"]);
 });
 
 test("A: a category the server no longer holds is refused in its words, and nothing is added", async ({ page }) => {
@@ -203,11 +203,11 @@ test("A: a refused add is shown in the row, never silently", async ({ page }) =>
   await expect(page.getByTestId("pm-row")).toHaveCount(2);
 });
 
-test("A: with every category covered the add row says so and offers no picker", async ({ page }) => {
+test("A: with every category the reads prove covered the add row says so and offers no picker", async ({ page }) => {
   await signIn(page);
   await openPricing(page);
   await expect(page.getByTestId("pm-row")).toHaveCount(6);
-  await expect(page.getByTestId("pm-add-none")).toHaveText("Every category has a margin policy.");
+  await expect(page.getByTestId("pm-add-none")).toHaveText("Every category the pricing knows of has a margin policy.");
   await expect(page.getByTestId("pm-add-category")).toHaveCount(0);
   await expect(page.getByTestId("pm-add-save")).toHaveCount(0);
 });

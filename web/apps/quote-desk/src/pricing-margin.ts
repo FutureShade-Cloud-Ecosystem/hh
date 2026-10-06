@@ -13,6 +13,11 @@
 // warning; the saved category joins the grid as a row edited in place. The server has no
 // route to remove a policy, so no row carries a Remove.
 //
+// The contract has no categories read, and the server refuses (422) a policy for a category
+// missing from the catalogue. So the picker offers only the categories the pricing reads
+// themselves prove exist: a policy, a rule or a quantity break scoped to one (each holds a
+// foreign key to the catalogue). No category id is built in; a refusal shows the server's words.
+//
 // HH changes: the list and the write go through PricingClient (every answer read field by
 // field); the floor warning is new; the unmapped category fallback stays a short id.
 import { html, nothing } from "lit";
@@ -21,7 +26,7 @@ import { err, ok } from "@hardscapehouse/api-client";
 import { PricingTabBase } from "./pricing-tab-base.js";
 import { pricingStyles } from "./pricing-styles.js";
 import { spokenRefusal } from "./_quote-workarea.js";
-import { CATEGORY_NAMES, categoryLabel, formatPct, isKnownCategory } from "./_pricing-shared.js";
+import { categoryLabel, formatPct, isKnownCategory } from "./_pricing-shared.js";
 import { policyDirty, policyDraftFromRow, policySave, type PolicyDraft } from "./_pricing-forms.js";
 import type { PolicyRow } from "./_pricing-wire.js";
 
@@ -34,6 +39,8 @@ export class QdPricingMargin extends PricingTabBase {
 
   @state() private rows: PolicyRow[] = [];
   @state() private drafts: Record<string, PolicyDraft> = {};
+  /** Category ids the rules and quantity breaks name: each exists in the catalogue, so each may be given a policy. */
+  @state() private proven: string[] = [];
   @state() private loading = true;
   @state() private loadError = "";
   @state() private savingId = "";
@@ -74,6 +81,18 @@ export class QdPricingMargin extends PricingTabBase {
     const drafts: Record<string, PolicyDraft> = {};
     for (const r of result.value) drafts[r.categoryId] = policyDraftFromRow(r);
     this.drafts = drafts;
+    await this.loadProven(pricing, ctx, seq);
+  }
+
+  /** The categories the rules and breaks are scoped to. A read that fails adds none: the picker only ever offers what was proven. */
+  private async loadProven(pricing: NonNullable<typeof this.pricing>, ctx: typeof this.ctx, seq: number): Promise<void> {
+    const reads = await ctx.guarded(Promise.all([pricing.listRules({ scope: "", customerType: "", categoryId: "" }), pricing.listBreaks()]));
+    if (reads === undefined || seq !== this.loadSeq) return;
+    const ids = new Set<string>();
+    const [rules, breaks] = reads;
+    if (rules.ok) for (const r of rules.value) if (r.categoryId !== undefined && r.categoryId !== "") ids.add(r.categoryId);
+    if (breaks.ok) for (const b of breaks.value) if (b.categoryId !== undefined && b.categoryId !== "") ids.add(b.categoryId);
+    this.proven = [...ids];
   }
 
   /** The pricing client arrives after the first connect on the host's wiring pass. */
@@ -102,10 +121,10 @@ export class QdPricingMargin extends PricingTabBase {
     if (action === "add-save") void this.saveAdd();
   }
 
-  /** The categories the contract names that hold no policy yet: the Add row's picker. */
+  /** The categories the pricing reads prove exist that hold no policy yet: the Add row's picker. */
   private uncovered(): string[] {
     const held = new Set(this.rows.map((r) => r.categoryId));
-    return Object.keys(CATEGORY_NAMES).filter((id) => !held.has(id));
+    return this.proven.filter((id) => !held.has(id)).sort((a, b) => categoryLabel(a).localeCompare(categoryLabel(b)) || a.localeCompare(b));
   }
 
   protected override onFieldInput(field: string, control: HTMLElement): void {
@@ -340,7 +359,7 @@ export class QdPricingMargin extends PricingTabBase {
                     ${this.canEdit && uncovered.length > 0 ? this.renderAddRow(uncovered) : nothing}
                   </tbody>
                 </table>
-                ${this.canEdit && uncovered.length === 0 && this.rows.length > 0 ? html`<p class="msg" data-testid="pm-add-none">Every category has a margin policy.</p>` : nothing}
+                ${this.canEdit && uncovered.length === 0 && this.rows.length > 0 ? html`<p class="msg" data-testid="pm-add-none">Every category the pricing knows of has a margin policy.</p>` : nothing}
                 ${this.rows.length === 0 ? html`<p class="msg">No category policy rows yet. Seed the catalogue categories first.</p>` : nothing}
               `}
       </div>
