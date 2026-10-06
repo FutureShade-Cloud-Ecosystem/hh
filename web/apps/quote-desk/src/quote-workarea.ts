@@ -3044,10 +3044,13 @@ export class QdQuoteWorkarea extends LitElement {
         <div class="scrollzone">
           ${this.renderIdentity()}
           ${this.view !== null ? this.renderFieldsCard() : nothing}
-          ${this.view !== null ? this.renderFulfilment() : nothing}
           ${this.view !== null ? this.renderTermsStrip() : nothing}
         </div>
         <div class="foot">
+          <!-- The fulfilment tiles ride the pinned foot, never the scroll zone: a card left to scroll loses its
+               box behind this foot (the floor zero legs of fulfil-tiles.pw.ts), and the pick must stay on screen
+               at every count of the quote's items. -->
+          ${this.view !== null ? this.renderFulfilment() : nothing}
           ${this.view !== null ? this.renderTotalsCard() : nothing}
           ${this.view !== null ? this.renderActions() : nothing}
           ${this.renderOutcomeLines()}
