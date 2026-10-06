@@ -20,6 +20,6 @@ test('relief applied: the engine-assessed rate is named in words, never multipli
   assert.equal(ringTaxWords(650), 'relief assessed at 6.50%: added at the ring');
   // Words only: no figure of money, no percent sign doubled into a sum.
   const words = ringTaxWords(1300);
-  assert.ok(!/CA\$/i.test(words), 'no money figure rides the relief words');
+  assert.ok(!/\$/.test(words), 'no money figure rides the relief words');
   assert.ok(!words.includes('+'), 'no addition rides the relief words');
 });

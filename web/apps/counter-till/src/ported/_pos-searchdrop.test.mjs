@@ -136,7 +136,7 @@ test('price: a walk-in paying retail sees ONE price: no struck-through copy of t
   assert.equal(p.unpriceable, false);
   assert.equal(p.customerCents, 1000);
   assert.equal(p.showRetail, false, 'retail equals their price; showing both twice says it twice');
-  assert.equal(p.showSaving, false, 'and there is no "you save CA$0.00" state');
+  assert.equal(p.showSaving, false, 'and there is no "you save $0.00" state');
 });
 
 test('price: an account paying less shows retail struck AND the saving, with the server\'s basis', () => {
@@ -173,7 +173,7 @@ test('price: the bulk break STACKS on top and is only shown while it is still an
   assert.equal(pricePicture(quote({ next_break_qty: 20, next_break_unit_cents: 800 })).showBreak, false);
 });
 
-test('price: an unpriceable product renders NO price: never CA$0.00, never a zero somebody sells at', () => {
+test('price: an unpriceable product renders NO price: never $0.00, never a zero somebody sells at', () => {
   for (const q of [null, undefined, quote({ unpriceable: true }), quote({ retail_cents: 0, customer_cents: 0 })]) {
     assert.equal(pricePicture(q).unpriceable, true);
   }

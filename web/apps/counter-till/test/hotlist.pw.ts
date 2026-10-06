@@ -27,7 +27,7 @@ test("the hot list shows its curated groups, drills into one and adds from a til
   const tile = page.getByTestId("hot-item");
   await expect(tile).toHaveCount(1);
   await expect(tile).toContainText("Holland Stone 60 mm");
-  await expect(page.getByTestId("hot-price")).toHaveText("CA$4.00");
+  await expect(page.getByTestId("hot-price")).toHaveText("$4.00");
   await tile.click();
   await expect(page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" })).toHaveCount(1);
 });
