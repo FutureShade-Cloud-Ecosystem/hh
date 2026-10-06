@@ -214,3 +214,22 @@ test("layout store: a store stopped by the work area leaving sends nothing more 
   // The same person is back on the page, so the sender would let it go: only the store's own stop keeps it unsent.
   expect(ws.bodies.filter((body) => body.includes('"primary_collapsed":true'))).toEqual([]);
 });
+
+// The compose create (the one write the census rules immediate although a later turn sends it) is disposed by the
+// picker listener's teardown: the pick that asked for it left the page with the person, so an answer that lands
+// after a sign out makes nothing, and the one send on the wire is the one the person who picked asked for.
+test("sender: the compose create held across a sign out is never re-sent and opens no quote under the next person", async ({ page }) => {
+  await signIn(page, "Sales");
+  const creates = record(page, /\/api\/v1\/quotes$/);
+  const create = await hold(page, /\/api\/v1\/quotes$/, { method: "POST", times: 1 });
+  const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
+  await picker.getByPlaceholder("Search name or account #…").fill("Fenwick");
+  await picker.getByRole("option", { name: /Fenwick/ }).click();
+  await create.asked;
+  await signOutThenIn(page, "Sales manager");
+  await quiet(page);
+  await create.release();
+  await settle(page);
+  expect(creates.sent).toEqual([`POST /api/v1/quotes as ${SALES}`]);
+  await expect(page.getByTestId("qb-list")).toBeVisible();
+});
