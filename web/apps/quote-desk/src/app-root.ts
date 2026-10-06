@@ -387,7 +387,13 @@ export class QuoteDeskApp extends HHElement {
     this.#deskUserId = null;
     this.#deskIdentity = null;
     this.#branch = null;
-    this.#message = sent ? null : "Signing out did not wait for every unsent change: saving timed out, so a change you made last may not have been saved.";
+    // What the listeners waited for, took or kept is said on the entry page, with the timeout line
+    // first when the bound ran out before every wait had answered.
+    const timeoutLine =
+      "Signing out did not wait for every unsent change: saving timed out, so a change you made last may not have been saved.";
+    const notes = detail.notes ?? [];
+    const lines = sent ? notes : [timeoutLine, ...notes];
+    this.#message = lines.length > 0 ? lines.join(" ") : null;
     this.#view = "quotes";
     this.#surface = "entry";
     // The shared surface's session-owned module state goes with the session.

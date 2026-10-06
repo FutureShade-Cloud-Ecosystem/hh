@@ -139,6 +139,10 @@ test("the quotes list follows next_cursor behind a Load more control", async ({ 
   await expect(rows).toHaveCount(2);
   await page.getByTestId("qb-list-more").click();
   await expect(rows).toHaveCount(3);
+  await page.getByTestId("qb-list-more").click();
+  await expect(rows).toHaveCount(4);
+  await page.getByTestId("qb-list-more").click();
+  await expect(rows).toHaveCount(5);
   await expect(page.getByTestId("qb-list-more")).toHaveCount(0);
 });
 

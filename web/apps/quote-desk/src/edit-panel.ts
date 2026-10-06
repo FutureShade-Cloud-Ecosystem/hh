@@ -23,7 +23,7 @@ import { customElement, state } from "lit/decorators.js";
 import { money } from "@hardscapehouse/pos-kit/src/ported/pos-api.js";
 import { nextActive } from "@hardscapehouse/pos-kit/src/ported/_customer-picker.js";
 import "./panel-seams.js";
-import { SEAM_PAYMENT } from "./panel-seams.js";
+import { familyShare } from "./_related-docs.js";
 import { PanelBase } from "./panel-base.js";
 import { panelStyles } from "./panel-styles.js";
 import {
@@ -160,6 +160,12 @@ export class QdQuoteEdit extends PanelBase {
   }
 
   reload(): void {
+    // One family read per reload pass for the seam's two readers: the pass
+    // begins the share's cycle, so both panels' loads join one fresh read.
+    // The builder's fan-out reaches this panel first (it is the first panel
+    // of the detail stack), then the seam's two panels, which join the cycle
+    // this began.
+    familyShare.beginCycle();
     void this.load();
   }
 
@@ -728,13 +734,6 @@ export class QdQuoteEdit extends PanelBase {
     this.renderRoot.querySelectorAll<HTMLElement>("[data-opt]").forEach((li) => {
       li.id = `qe-${li.getAttribute("data-opt")}-opt-${li.getAttribute("data-index")}`;
     });
-    const seam = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("qd-panel-seam");
-    if (seam !== null) {
-      seam.quoteId = this.quoteId;
-      seam.branchId = this.branchId;
-      // The converted order's id, once this quote has been converted ("" before): what QD-5's payment step needs.
-      seam.orderId = this.converted?.orderId ?? "";
-    }
   }
 
   // ── render ────────────────────────────────────────────────────────────────
@@ -1009,6 +1008,13 @@ export class QdQuoteEdit extends PanelBase {
   }
 
   override render() {
+    // Compose draws none of this panel: without a quote the render is nothing
+    // at all, the app head's own decided behaviour (compose shows none of the
+    // quote panels). The payment seam's two panels are hosted by the builder
+    // in the detail's compose gated stack, not here, so they stay mounted
+    // through New Quote (hidden, not absent) while this element draws
+    // nothing: a payment still out keeps its element, its context and its
+    // record, and late answers still have somewhere to land.
     if (this.quoteId === "") return nothing;
     const view = this.view;
     if (view === null) {
@@ -1031,7 +1037,6 @@ export class QdQuoteEdit extends PanelBase {
           : html`<p class="frozen" data-testid="qe-frozen">${frozenSentence(view)}</p>`}
         ${this.renderShare(view)}
         ${this.renderConvert(view)}
-        <qd-panel-seam data-seam=${SEAM_PAYMENT} data-seam-label="Related documents and the order's payment (QD-5)"></qd-panel-seam>
         ${this.renderCompare()}
         <p class="err" role="alert" data-testid="qe-error">${this.error}</p>
         <p class="ok" role="status" aria-live="polite" aria-atomic="true" data-testid=${this.notice === LINK_CREATED_NOTICE ? nothing : "qe-notice"}>${this.notice === LINK_CREATED_NOTICE ? "" : this.notice}</p>
