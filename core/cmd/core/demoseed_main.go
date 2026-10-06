@@ -5,11 +5,15 @@
 //	go run ./cmd/demoseed -apply -now 2026-09-01T09:00:00Z   # pin the clock
 //
 // THE CONSTRAINT THIS COMMAND WAS BUILT AROUND. Staging carries real homework from live testers and
-// must never be wiped, reset, truncated or reseeded. So: nothing here deletes, nothing updates,
-// nothing truncates, and nothing mints from a shared sequence. Every write is an INSERT with an
-// explicit deterministic id and ON CONFLICT DO NOTHING (ids.go explains the derivation; apply.go is
-// the only writer and can express no other statement kind). Running it twice produces the same
-// world: the second run's inserts all conflict, create nothing, and report `created=0`.
+// must never be wiped, reset, truncated or reseeded. So: nothing here deletes, nothing truncates,
+// and nothing mints from a shared sequence. Every write is an INSERT with an explicit deterministic
+// id and ON CONFLICT DO NOTHING (ids.go explains the derivation; apply.go is the only writer and
+// can express no other statement kind). The ONE exception is the scrub-name rename pass (the
+// demoseed_scrubname pair, demo build only): fixed-id UPDATEs of customers.name that rename the
+// migration-planted demo customers off their scrub placeholders, each statement naming the exact
+// placeholder it renames, so nothing outside the fixed list moves and a second run matches no row
+// (that pair's header holds the full reasoning). Running it twice produces the same world: the
+// second run's inserts all conflict, create nothing, and report `created=0`.
 //
 // -plan IS THE DEFAULT. A command that can write to staging should not do so because somebody
 // pressed enter with no arguments. -apply is required, and it is the only flag that writes.
