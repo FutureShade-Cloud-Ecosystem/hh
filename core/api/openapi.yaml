@@ -2938,6 +2938,7 @@ paths:
       x-access:
         surfaces:
           - counter-till
+          - quote-desk
         level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -2982,6 +2983,7 @@ paths:
       x-access:
         surfaces:
           - counter-till
+          - quote-desk
         level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -8919,11 +8921,12 @@ paths:
       tags:
         - staff-identity
       summary: Approve or reject a pending approval request
-      description: "Decide authority is enforced in the service per policy: the rail policies (MARGIN_BELOW_MINIMUM, JE_OVER_THRESHOLD, FREIGHT_ABOVE_QUOTE) are decidable only by the ruled leadership role set, credit policies by leadership tier. Separation of duties bars the requester from deciding their own request. A decision on a JE or freight subject bridges into the owning module inside the same transaction. Deciding an already-decided request returns 409."
+      description: "Decide authority is enforced in the service per policy: the rail policies (MARGIN_BELOW_MINIMUM, JE_OVER_THRESHOLD, FREIGHT_ABOVE_QUOTE) are decidable by the ruled leadership role set, with the margin floor's authority from the dealer's role configuration (a branch scoped Quote Desk manager decides floor requests of its own branch, beside the dealer wide approvers); credit policies by leadership tier. Separation of duties bars the requester from deciding their own request. A decision on a JE or freight subject bridges into the owning module inside the same transaction. Deciding an already-decided request returns 409."
       x-role: requireStaff
       x-access:
         surfaces:
           - manager-home
+          - quote-desk
         level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -13890,6 +13893,7 @@ paths:
       x-access:
         surfaces:
           - counter-till
+          - quote-desk
         level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -14092,6 +14096,7 @@ paths:
       x-access:
         surfaces:
           - counter-till
+          - quote-desk
         level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -15865,6 +15870,7 @@ paths:
         surfaces:
           - dealer-admin
         level: read
+        list: cost_visibility
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -19021,7 +19027,13 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          $ref: "#/components/responses/Conflict"
+          description: The typed floor refusal when the write would put the line below the margin floor and the caller holds no clearing and no approved request, or the frozen status refusal
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/QuoteFloorRefusal"
+                  - $ref: "#/components/schemas/Error"
     delete:
       operationId: quoteRemoveQuoteLine
       tags:
@@ -19190,6 +19202,62 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/quotes/{id}/lines/{lineNo}/floor-approval:
+    post:
+      operationId: quoteRequestFloorApproval
+      tags:
+        - staff-quote
+      summary: File an approval request for a quote line discount below the margin floor
+      description: "For a line the caller may edit whose asked discount lands below the margin floor, files one approval request bound to that quote, that line and that discount. The server builds the subject and the detail from its own figures; the caller supplies neither. A caller who may clear the floor itself is told so and no request is filed. A line not below the floor is a 409: nothing to approve."
+      x-addition: the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - quote-desk
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema:
+            type: string
+        - name: lineNo
+          in: path
+          required: true
+          description: The quote line number, a positive integer
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteFloorApprovalRequest"
+      responses:
+        "201":
+          description: The filed request's state, or the word that the caller may clear the floor itself
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteFloorApprovalAnswer"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The asked discount does not land below the floor, nothing to approve
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/quotes/{id}/related-documents:
     get:
       operationId: quoteQuoteRelatedDocuments
@@ -19286,12 +19354,13 @@ paths:
       tags:
         - staff-quote
       summary: Flip the dealer's multi-acceptance switch
-      description: "Admin-gated in the service (Tier-1 global), audited in both directions. allow_multi_accept is required: a body that omits it is refused rather than read as false, because this one field decides whether a duplicate order can be minted."
+      description: "The switch is dealer wide, so CP0-5 answer A gives the write to the General Manager alone: the rule runs in the service, in words, and any other caller is refused with 403 naming the role. The gate sits at read so the General Manager (Read on the Quote Desk) reaches the service. Every flip is audited in both directions. allow_multi_accept is required: a body that omits it is refused rather than read as false, because this one field decides whether a duplicate order can be minted."
       x-role: requireStaff
       x-access:
         surfaces:
           - quote-desk
-        level: manage
+        level: read
+        reason: The dealer wide switch is the General Manager's alone under CP0-5 answer A, and that rule runs in the service in words; the gate must let the General Manager (Read on the Quote Desk) through to it.
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -19349,12 +19418,13 @@ paths:
       tags:
         - staff-quote
       summary: Write the dealer or branch quote-builder policy
-      description: Admin-gated in the service (Tier-1 global), exactly like the acceptance settings. Out-of-bounds knobs are refused in words with 422 before any database CHECK can fire; the 422 body is the shared Error envelope.
+      description: "The CP0-5 answer A rule runs in the service, in words: a caller holding Manage on the Quote Desk writes a branch row it reaches (the Sales manager under the decided default), and the General Manager alone writes the NULL dealer default row; any other caller is refused with 403 naming the role. The gate therefore sits at read, so both named roles reach the service (the General Manager holds Read on the Quote Desk). Out-of-bounds knobs are refused in words with 422 before any database CHECK can fire; the 422 body is the shared Error envelope."
       x-role: requireStaff
       x-access:
         surfaces:
           - quote-desk
-        level: manage
+        level: read
+        reason: The CP0-5 answer A rule runs in the service in words (Manage writes a branch row it reaches, the General Manager the dealer default), so the gate must let both named roles through; the General Manager holds Read on the Quote Desk.
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -44363,6 +44433,13 @@ components:
         updated_at:
           type: string
           format: date-time
+        owner_id:
+          type: string
+          format: uuid
+          description: The quote's owner (the salesperson when one is set, else the creator)
+        owner_name:
+          type: string
+          description: The owner's display name; absent when unknown
     QuoteSummaryPage:
       type: object
       description: One cursor page of the staff quote list. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8).
@@ -44440,6 +44517,13 @@ components:
         can_convert:
           type: boolean
           description: Whether this caller may convert this quote to an order right now
+        owner_id:
+          type: string
+          format: uuid
+          description: The quote's owner (the salesperson when one is set, else the creator); absent when neither is stamped
+        owner_name:
+          type: string
+          description: The owner's display name; absent when unknown
         lines:
           type: array
           items:
@@ -44494,6 +44578,12 @@ components:
         line_total_cents:
           type: integer
           format: int64
+        rule_price_below_floor:
+          type: boolean
+          description: "For callers on the cost and margin list: the line's rule price itself sits below the margin floor. Absent for every other caller and when the floor could not be evaluated."
+        floor_cleared_by:
+          type: string
+          description: Who cleared a below floor price on this line (the clearing stamped when the price went through); absent when the line was never cleared
     QuoteCreateRequest:
       type: object
       description: The staff create payload. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8).
@@ -45568,7 +45658,7 @@ components:
           type: boolean
     QuoteBranchStock:
       type: object
-      description: The four-bucket view of one product at one branch. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8).
+      description: "The four-bucket view of one product at one branch. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8). avg_cost_cents is gated by the dealer's cost_visibility list: it is present for callers on the list and absent otherwise, never zero, never null."
       required:
         - product_id
         - branch_id
@@ -45579,7 +45669,6 @@ components:
         - in_transit_base
         - available_base
         - soft_held_base
-        - avg_cost_cents
       properties:
         product_id:
           type: string
@@ -45605,6 +45694,7 @@ components:
         avg_cost_cents:
           type: integer
           format: int64
+          description: Present only for callers the cost_visibility list allows, absent otherwise
     QuoteBranchStockList:
       type: object
       description: One product's stock at every branch, plus the seam flag. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8).
@@ -46003,6 +46093,89 @@ components:
       properties:
         enabled:
           type: boolean
+    QuoteFloorApprovalRequest:
+      type: object
+      description: The request door's body (the discount asked for and a bounded free text note). The subject and the detail are the server's own, built from its figures.
+      required:
+        - disc_pct
+      properties:
+        disc_pct:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 100
+          description: The discount percent asked for
+        note:
+          type: string
+          maxLength: 500
+          description: A bounded free text note riding the request
+    QuoteFloorRequestState:
+      type: object
+      description: One filed floor request's state
+      required:
+        - id
+        - status
+        - line_no
+        - disc_pct
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+            - PENDING
+            - APPROVED
+            - REJECTED
+        line_no:
+          type: integer
+          format: int32
+        disc_pct:
+          type: integer
+          format: int32
+    QuoteFloorApprovalAnswer:
+      type: object
+      description: "The request door's answer: the filed (or already standing) request's state, or the word that the caller may clear the floor itself and no request was filed."
+      required:
+        - filed
+        - may_clear_itself
+      properties:
+        filed:
+          type: boolean
+        may_clear_itself:
+          type: boolean
+        request:
+          $ref: "#/components/schemas/QuoteFloorRequestState"
+    QuoteFloorRefusal:
+      type: object
+      description: "The typed 409 a below floor write answers: the policy, who may approve, whether a manager of the branch may set it, the caller's pending or approved request if any, and the margin and floor figures for callers on the cost and margin list only."
+      required:
+        - policy
+        - approver_roles
+        - manager_may_set
+      properties:
+        policy:
+          type: string
+        approver_roles:
+          type: array
+          description: The roles who may approve, the branch's Sales manager among them
+          items:
+            type: string
+        manager_may_set:
+          type: boolean
+          description: Whether a manager of the branch may set the price itself
+        existing_request:
+          $ref: "#/components/schemas/QuoteFloorRequestState"
+        margin_bps:
+          type: integer
+          format: int64
+          description: The margin at the asked discount; present for cost list callers only
+        floor_bps:
+          type: integer
+          format: int64
+          description: The margin floor; present for cost list callers only
+      x-error:
+        status: 409
     ReportingColumn:
       type: object
       description: One entry in a template's explicit column allowlist. kind decides how the value is read, totalled and rendered; total marks a column that rolls into the report's totals row.

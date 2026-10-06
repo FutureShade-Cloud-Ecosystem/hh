@@ -116,8 +116,10 @@ func (w5aRetail) CustomerType(context.Context, string) (string, error) { return 
 // carries an FK on created_by (0115), which in production is always satisfied by the guard-stamped
 // caller.
 func w5aStaffCtx() context.Context {
+	// A Branch manager at Work (plan 3.3); the W5A fixtures' quotes are
+	// created by this caller, so it owns them.
 	return identity.ContextWithStaff(context.Background(), identity.StaffContext{
-		UserID: w5aUser, Status: identity.StatusActive, Tier: identity.TierManager,
+		UserID: w5aUser, RoleCode: "BRANCH_MANAGER", Status: identity.StatusActive, Tier: identity.TierManager,
 		Scope: identity.ScopeBranch, Branches: map[string]bool{w5aTrenton: true},
 	})
 }
@@ -133,6 +135,8 @@ func w5aStaffSvc(t *testing.T, pool *pgxpool.Pool) (*StaffService, *Repository) 
 		WithPricing(w5aFixedPricer{}).
 		WithCostBasis(w5aCostBasis{}).
 		WithCustomerType(w5aRetail{}).
+		WithRoleConfig(qTestRoleConfig()).
+		WithFloorArbiter(&unitFloorArbiter{}).
 		WithStockReserver(w5aInvReserver{svc: invSvc}).
 		WithAvailability(w5aAvail{svc: invSvc})
 	repo.WithStockReserver(w5aInvReserver{svc: invSvc})
@@ -159,9 +163,9 @@ func w5aSeedQuote(t *testing.T, pool *pgxpool.Pool) (cust, qid string) {
 		t.Fatalf("seed customer: %v", err)
 	}
 	if err := pool.QueryRow(ctx, `
-		INSERT INTO quotes (quote_no, customer_id, branch_id, status, valid_until)
-		VALUES ($1, $2::uuid, $3::uuid, 'DRAFT', CURRENT_DATE + 14) RETURNING id::text`,
-		fmt.Sprintf("#W5AQ-%d", stamp), cust, w5aTrenton).Scan(&qid); err != nil {
+		INSERT INTO quotes (quote_no, customer_id, branch_id, status, valid_until, created_by, salesperson_id)
+		VALUES ($1, $2::uuid, $3::uuid, 'DRAFT', CURRENT_DATE + 14, $4::uuid, $4::uuid) RETURNING id::text`,
+		fmt.Sprintf("#W5AQ-%d", stamp), cust, w5aTrenton, w5aUser).Scan(&qid); err != nil {
 		t.Fatalf("seed quote: %v", err)
 	}
 	t.Cleanup(func() {

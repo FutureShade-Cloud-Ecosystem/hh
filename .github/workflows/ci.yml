@@ -7,6 +7,7 @@ on:
       - main
       - 'qa/**'
       - 'till/**'
+      - 'quote/**'
 
 # Why till/** sits on the push trigger (the W5 review's P2-3): the
 # pull_request event cannot run when the pull request's merge ref cannot
