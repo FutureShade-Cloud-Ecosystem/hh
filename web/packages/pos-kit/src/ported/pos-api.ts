@@ -2,7 +2,7 @@
 
 // A-19 POS client helpers. Thin typed wrappers over the staff API (Bearer JWT via api()).
 import { api, getSessionToken } from './ports.js';
-import { centsAmount } from './_money-format.js';
+import { formatDollars } from './_money-format.js';
 import { asRows } from './_response-shape.js'; // loader-boundary coercion (DIB-471): no ad-hoc arrays
 import type { CounterQuote } from './_pos-searchdrop.js';
 import type { PriceBreakdown } from './price-breakdown.js';
@@ -48,7 +48,7 @@ export interface CartLine {
   priceUom: string;
   lineTotalCents: number;
   breakdown: PriceBreakdown | null;
- /** rev 5: pricing/resolve failed for this line: render "price pending", never a hard CA$0.00. */
+ /** rev 5: pricing/resolve failed for this line: render "price pending", never a hard $0.00. */
   priceMissing?: boolean;
 }
 
@@ -114,7 +114,7 @@ export interface StockGlance {
 // Money via a clearly-flagged LOCAL STOPGAP: swap for M8 fmt.ts the moment it lands (mirrors
 // price-breakdown.ts:34 / D-A07-7).
 export function money(cents: number): string {
-  return `CA$${centsAmount(cents)}`; // LOCAL STOPGAP
+  return formatDollars(Math.abs(cents)); // magnitude only, as before; the caller owns any sign
 }
 
 // HH note: the reference fetched the catalogue here with a bare browser call, no bearer and no

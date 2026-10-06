@@ -25,9 +25,9 @@
    THE GOLD RULE (carried unchanged). The brand gold #FFC313 is a SURFACE, never
    an ink. Every gold fill carries the near-black --hh-accent-ink #0B1725 in
    BOTH themes, never white: white on gold measures 1.61:1. On light surfaces
-   the gold ROLE as ink is carried by dark-gold #8A6500 (--hh-accent-text),
+   the gold ROLE as ink is carried by dark-gold #896400 (--hh-accent-text),
    which is what the brand's own site does; it is also the focus ring, which is
-   why a keyboard ring is visible in Light Mode (a gold ring there is 1.50:1 and
+   why a keyboard ring is visible in Light Mode (a gold ring there is 1.35:1 and
    fails WCAG 1.4.11).
 
    THE MEASURED BARS (carried unchanged). 4.5:1 (WCAG AA) for anything read as
@@ -65,7 +65,7 @@
      boundary as a shape at 3:1, and --hh-line above is a hairline (1.41:1 on
      the dark page), not a boundary. --hh-control-line is declared in BOTH
      halves to clear 3:1 against the page AND the card (dark: 3.50 and 3.12;
-     light: 4.31 and 4.62); the secondary button's border takes it. */
+     light: 3.89 and 4.62); the secondary button's border takes it. */
   --hh-control-line: #5A7086;
 
   /* ── inks ──────────────────────────────────────────────────────────────────
@@ -112,8 +112,10 @@
   /* ── the solid success fill, per theme (the DIB-468 pattern, carried) ───────
      Same ruling on green: --hh-success above is text ink; a solid green badge
      under the near-black accent ink is a second role and gets a second token.
-     The accent ink is 9.89:1 on the dark fill and 5.35:1 on the light one, and
-     both fills clear 3:1 against the page and the card. Use --hh-success for
+     The accent ink is 9.89:1 on the dark fill and 4.53:1 on the light one, and
+     both fills clear 3:1 against the page and the card (the row 987 page is
+     darker, and the light fill stepped from #319E69 to #2C9060 to keep its
+     boundary: 3.36:1 on the page, 3.99:1 on the card). Use --hh-success for
      green text and borders, --hh-success-fill for solid fills. */
   --hh-success-fill: #58D69B;
 
@@ -123,9 +125,12 @@
      test/kits.test.mjs. The LIGHT values are this sheet's one deliberate
      deviation from the ERP values: #2E8B57 and #C77A15 measure 3.96:1 and
      3.14:1 as text on the light surfaces, under the 4.5 bar, so they are
-     darkened to #1F7A48 and #9A5F0C (4.76:1 and 4.67:1 on the worst light
+     darkened to #1E7544 and #955B0B (4.79:1 and 4.66:1 on the worst light
      surface), the ERP's own treatment for a value that misses AA by a little:
-     the value is adjusted minimally rather than the bar softened. */
+     the value is adjusted minimally rather than the bar softened. The row 987
+     surfaces (the page at #E7ECF1, the widget ground darker with it) pushed
+     the previous #1F7A48 and #9A5F0C back under the bar on the page itself
+     (4.49:1 and 4.40:1), so each takes one more minimal step. */
   --hh-state-good: #5CC48A;
   --hh-state-watch: #F0A93A;
   --hh-state-stop: #F07C6C;
@@ -293,18 +298,21 @@
    fonts, the spacing grid, the radii, the z scale and the layout contract are
    theme-invariant ON PURPOSE and are re-valued by no block. */
 :root[data-theme="light"] {
-  --hh-page: #F5F7FA;
+  --hh-page: #E7ECF1;
   --hh-card: #FFFFFF;
-  --hh-line: #DBE3EA;
+  --hh-line: #BCC8D4;
   --hh-control-line: #6B7683;
   --hh-text: #0B1725;
-  --hh-text-dim: #5C6B7A;
+  --hh-text-dim: #566471;
   --hh-row: transparent;
   --hh-row-alt: color-mix(in srgb, var(--hh-text) 5%, transparent);
 
-  /* Gold as INK flips; the fill does not. #FFC313 as text is 1.50:1 on the light
-     page; dark-gold #8A6500 is 4.96:1 there, and it carries the focus ring. */
-  --hh-accent-text: #8A6500;
+  /* Gold as INK flips; the fill does not. #FFC313 as text is 1.35:1 on the light
+     page; dark-gold #896400 is 4.55:1 there, and it carries the focus ring. The
+     row 987 page is darker than the one #8A6500 was measured on (4.96:1 there,
+     4.48:1 on the new page, under AA), so the ink re-holds: this is the lightest
+     dark-gold that clears 4.5:1 on the page, the card and the widget ground. */
+  --hh-accent-text: #896400;
   --hh-focus-ring: var(--hh-accent-text);
 
   --hh-danger: #AB1C31;
@@ -312,9 +320,9 @@
   --hh-danger-fill-ink: #FFFFFF;
   --hh-info: #14497B;
   --hh-success: #0F6C43;
-  --hh-success-fill: #319E69;
-  --hh-state-good: #1F7A48;
-  --hh-state-watch: #9A5F0C;
+  --hh-success-fill: #2C9060;
+  --hh-state-good: #1E7544;
+  --hh-state-watch: #955B0B;
   --hh-state-stop: #C0392B;
 
   --hh-disabled-fill: #E3E9EF;
@@ -323,26 +331,36 @@
 
   /* The widget layer's light half: a warm grey ground under a pure white card,
      because a cool ground under a white card reads as two whites. The lift is
-     the shadow, not a second surface. */
-  --hh-ground: #F3F2EE;
+     the shadow, not a second surface. Decision log row 987 steps the ground
+     darker with the page and the shadow up with elev-1. The ground stops at
+     #EDEBE6, short of the row's indicative #E6E4DE: the hh-pro identity is
+     carried verbatim and is held at AA on every surface, and on #E6E4DE it
+     reads 4.36:1; #EDEBE6 is the darkest ground that keeps it (4.65:1) and
+     the stop state ink with it (4.56:1). The shadow's two alphas scale by
+     elev-1's own step (its largest alpha went 0.06 to 0.10, a factor of 5/3:
+     0.05 to 0.08, 0.26 to 0.43), so the front door's role cards lift like
+     the rest; the hairline steps to .14 with them. */
+  --hh-ground: #EDEBE6;
   --hh-widget: #FFFFFF;
   --hh-widget-raised: #FFFFFF;
-  --hh-hairline: rgba(0,0,0,.06);
+  --hh-hairline: rgba(0,0,0,.14);
   --hh-track: rgba(0,0,0,.06);
-  --hh-widget-shadow: 0 1px 2px rgba(0,0,0,.05), 0 14px 34px -16px rgba(0,0,0,.26);
+  --hh-widget-shadow: 0 1px 2px rgba(0,0,0,.08), 0 14px 34px -16px rgba(0,0,0,.43);
 
   --hh-scrim: rgba(7, 24, 39, 0.42);
 
-  /* Light elevation: navy shadows, not black ones. A black shadow on a #F5F7FA
-     page reads as a smudge rather than a lift. */
-  --hh-elev-1: 0 1px 2px rgba(7, 24, 39, 0.06);
+  /* Light elevation: navy shadows, not black ones. A black shadow on a light
+     page reads as a smudge rather than a lift. Decision log row 987 gives
+     elev-1 the ERP's two-layer shape: a 3px ambient at 0.10 over the 1px
+     contact at 0.06, so a card's edge reads on the darker page. */
+  --hh-elev-1: 0 1px 3px rgba(7, 24, 39, 0.10), 0 1px 2px rgba(7, 24, 39, 0.06);
   --hh-elev-2: 0 12px 30px rgba(7, 24, 39, 0.06);
   --hh-elev-3: 0 24px 60px rgba(7, 24, 39, 0.16);
 
   --hh-color-scheme: light;
 
   /* The base brand's on-ink flips because the IDENTITY flips: in light the brand
-     identity is dark-gold #8A6500, and the ink that sits ON it is white (5.33:1).
+     identity is dark-gold #896400, and the ink that sits ON it is white (5.40:1).
      The FILL's ink does NOT follow: --brand-fill-on stays the invariant accent
      ink, declared in :root and re-valued by no block. */
   --brand-on: #FFFFFF;
@@ -359,9 +377,10 @@
    control is the dealer blue, not the house gold. The identity flips per theme,
    so --brand-on is declared in both blocks: white ink on the deep blue in
    light, the dark surface ink on the light blue in dark. Measured against this
-   package's canvases: the light identity is 5.16:1 on the light page and its
-   white on-ink clears AA on the identity fill; the dark identity is 6.60:1 on
-   the dark page and its on-ink 7.03:1 on the fill. */
+   package's canvases: the light identity is 4.66:1 on the light page (and
+   4.65:1 on the widget ground, which is why the row 987 ground stops where it
+   does) and its white on-ink clears AA on the identity fill; the dark
+   identity is 6.60:1 on the dark page and its on-ink 7.03:1 on the fill. */
 :root[data-brand="hh-pro"] {
   --brand: oklch(70% 0.17 255);
   --brand-hover: oklch(76% 0.17 255);

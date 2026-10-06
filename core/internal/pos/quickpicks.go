@@ -77,7 +77,7 @@ type QuickPick struct {
 	Subcategory string `json:"subcategory,omitempty"`
 	// Price is the CUSTOMER's price picture for one unit, retail, their price, the saving. Absent
 	// when the waterfall could not price the product: a tile with no price is honest, a tile
-	// showing CA$0.00 is a sale nobody wants to ring.
+	// showing $0.00 is a sale nobody wants to ring.
 	Price *pricing.CounterQuote `json:"price,omitempty"`
 }
 
