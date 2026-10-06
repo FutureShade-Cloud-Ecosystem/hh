@@ -27,6 +27,7 @@ import {
   type QuoteMoney,
 } from "./_quote-public.js";
 import { createAcceptKeys } from "./accept-key.js";
+import { DEALER_NAME } from "./dealer.js";
 import { formatMoney, quoteStatusPhrase, withFullStop } from "./format.js";
 import {
   envelopeOnlyFetch,
@@ -79,6 +80,22 @@ export class QuotePublicPage extends HHElement {
       h1 {
         font-size: 1.3rem;
         margin: 0 0 var(--hh-s-4);
+      }
+      /* The dealer's header band, the page's first element in every state: the
+         one mark of WHO is speaking, the name carried from the app's own data
+         (src/dealer.ts) over a hairline, so a printed or screenshotted page
+         says whose quote it is before anything else. */
+      header.dealer {
+        display: flex;
+        align-items: baseline;
+        border-bottom: 1px solid var(--hh-line);
+        padding: 0 0 var(--hh-s-12);
+        margin-bottom: var(--hh-s-20);
+      }
+      header.dealer .dealer-name {
+        font-size: 1.05rem;
+        font-weight: 700;
+        letter-spacing: 0.01em;
       }
       /* Full text ink, NOT the dimmed one: this line sits on the page rather
          than on a card, and it is load bearing information, not decoration. */
@@ -257,20 +274,34 @@ export class QuotePublicPage extends HHElement {
       .closed .gone {
         margin: 0;
       }
-      .thumb {
+      /* The line's image cell, EVERY line the same while images are on: the
+         cell is always the one visible box (the till's line-thumb shape), and
+         a line without a photo shows the drawn no-photo mark in it, never an
+         empty box (an empty box is indistinguishable from an image still
+         loading) and never a missing cell. */
+      .thumbslot {
+        display: grid;
+        place-items: center;
         width: 36px;
         height: 36px;
-        object-fit: cover;
-        border-radius: var(--hh-radius-control);
         border: 1px solid var(--hh-line);
+        border-radius: var(--hh-radius-control);
+        background: var(--hh-card);
+        overflow: hidden;
+      }
+      .thumb {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
         display: block;
       }
-      /* The slot a thumbnail paints into: the cell holds its 36px box before
-         the image lands, so the row does not shift. */
-      .thumbslot {
-        display: block;
-        width: 36px;
-        height: 36px;
+      /* The no-photo mark: the stacked-stone silhouette the till's thumbnail
+         component draws, in the dimmed ink (an absence, so it must not
+         compete with the item name beside it). */
+      .thumbmark {
+        width: 60%;
+        height: 60%;
+        color: var(--hh-text-dim);
       }
       .discnote {
         font-size: 0.76rem;
@@ -640,9 +671,23 @@ export class QuotePublicPage extends HHElement {
     </div>`;
   }
 
+  /**
+   * The no-photo mark in a line's image cell: the till's line-thumb convention
+   * (the product thumbnail component's drawn stone-stack fallback), ported.
+   * The cell is always the same box; a line with a photo shows the photo, a
+   * line without one shows this mark, so "no photo on file" is unmistakable
+   * and never reads as an image that has not loaded yet.
+   */
+  private renderThumbMark(): TemplateResult {
+    return html`<svg class="thumbmark" viewBox="0 0 24 24" fill="none" aria-hidden="true" role="presentation">
+      <rect x="2" y="14" width="20" height="5" rx="1" stroke="currentColor" stroke-width="1.5" />
+      <rect x="4" y="9" width="16" height="5" rx="1" stroke="currentColor" stroke-width="1.5" />
+      <rect x="7" y="4" width="10" height="5" rx="1" stroke="currentColor" stroke-width="1.5" />
+    </svg>`;
+  }
+
   /** The success mark: the design system's done-marker check, success ink. */
-  private renderOkMark(): TemplateResult {
-    return html`<svg
+  private renderOkMark(): TemplateResult {    return html`<svg
       class="okmark"
       viewBox="0 0 24 24"
       fill="none"
@@ -719,6 +764,13 @@ export class QuotePublicPage extends HHElement {
   }
 
   render(): TemplateResult {
+    // The dealer's header band opens EVERY state of the page: whose quote
+    // this is does not depend on the quote having loaded (or on the link
+    // being alive).
+    return html`<header class="dealer"><span class="dealer-name">${DEALER_NAME}</span></header>${this.renderBody()}`;
+  }
+
+  private renderBody(): TemplateResult {
     if (this.fatal) {
       return html`<div class="card refusal">
         <h2>Quote link unavailable</h2>
@@ -751,7 +803,9 @@ export class QuotePublicPage extends HHElement {
               ${q.lines.map(
                 (l) => html`<tr>
                   ${withImages
-                    ? html`<td><span class="thumbslot" data-thumb=${l.imageRef}></span></td>`
+                    ? html`<td>
+                        <span class="thumbslot" data-thumb=${l.imageRef}>${l.imageRef ? nothing : this.renderThumbMark()}</span>
+                      </td>`
                     : nothing}
                   <td class="item">
                     ${l.description}
