@@ -23,7 +23,7 @@
 // vocabulary. The kit's user override is whole-or-absent PER KIND, so writing a panel row cannot
 // disturb the person's key roster (kind `action`) or their curated tiles (kind `chip`).
 
-import { asRows } from './_response-shape.js';
+import { asRows } from '@hardscapehouse/pos-kit/src/ported/_response-shape.js';
 
 /** The surface these rows are filed under: the same one the roster and the tiles use. */
 export const POS_COUNTER_SURFACE_ID = 'pos.counter';
