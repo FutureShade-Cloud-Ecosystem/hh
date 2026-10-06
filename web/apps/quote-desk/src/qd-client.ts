@@ -34,6 +34,7 @@ import {
   staffSettings,
 } from "@hardscapehouse/api-client";
 import { convertBody, type QuoteView } from "./_quote-edit.js";
+import type { RelatedDoc } from "./_related-docs.js";
 import type { QuoteFieldChange } from "./_quote-history.js";
 import {
   readAcceptance,
@@ -424,6 +425,98 @@ function validateEditOutcome(value: unknown): EditOutcome | null {
   return { subtotalCents, totalCents, status };
 }
 
+/** A quote's document family as the client proves it: a row that cannot prove its fields refuses the whole list. */
+function readFamily(value: unknown): RelatedDoc[] | null {
+  if (!isRecord(value)) return null;
+  const items = value["items"];
+  if (!Array.isArray(items)) return null;
+  const rows: RelatedDoc[] = [];
+  for (const item of items) {
+    if (!isRecord(item)) return null;
+    const kind = stringAt(item, "kind");
+    const id = stringAt(item, "id");
+    const number = stringAt(item, "number");
+    const status = stringAt(item, "status");
+    const date = stringAt(item, "date");
+    const totalCents = integerAt(item, "total_cents");
+    if (kind === null || id === null || number === null || status === null || date === null || totalCents === null) return null;
+    rows.push({
+      kind,
+      id,
+      number,
+      status,
+      date,
+      totalCents,
+      ...(typeof item["parent_id"] === "string" ? { parentId: item["parent_id"] } : {}),
+      ...(typeof item["origin"] === "string" ? { origin: item["origin"] } : {}),
+      ...(typeof item["accept_seq"] === "number" && Number.isInteger(item["accept_seq"]) ? { acceptSeq: item["accept_seq"] } : {}),
+      ...(item["self"] === true ? { self: true } : {}),
+    });
+  }
+  return rows;
+}
+
+/** The receipt the payment door answers, field for field: a missing field refuses it rather than defaulting. */
+export interface OrderPaymentAnswer {
+  orderId: string;
+  orderNo: string;
+  invoiceId: string;
+  invoiceNo: string;
+  invoiceTotalCents: number;
+  paymentId: string;
+  paymentNo: string;
+  method: string;
+  amountCents: number;
+  receivedAt: string;
+  reference: string;
+  receivedBy: string;
+  balanceCents: number;
+  replayed: boolean;
+  converted: boolean;
+}
+
+function readPaymentAnswer(value: unknown): OrderPaymentAnswer | null {
+  if (!isRecord(value)) return null;
+  const orderId = stringAt(value, "order_id");
+  const orderNo = stringAt(value, "order_no");
+  const invoiceId = stringAt(value, "invoice_id");
+  const invoiceNo = stringAt(value, "invoice_no");
+  const invoiceTotalCents = integerAt(value, "invoice_total_cents");
+  const paymentId = stringAt(value, "payment_id");
+  const paymentNo = stringAt(value, "payment_no");
+  const method = stringAt(value, "method");
+  const amountCents = integerAt(value, "amount_cents");
+  const receivedAt = stringAt(value, "received_at");
+  const receivedBy = stringAt(value, "received_by");
+  const balanceCents = integerAt(value, "balance_cents");
+  const replayed = booleanAt(value, "replayed");
+  const converted = booleanAt(value, "converted");
+  if (
+    orderId === null || orderNo === null || invoiceId === null || invoiceNo === null || invoiceTotalCents === null ||
+    paymentId === null || paymentNo === null || method === null || amountCents === null || receivedAt === null ||
+    receivedBy === null || balanceCents === null || replayed === null || converted === null
+  ) {
+    return null;
+  }
+  return {
+    orderId,
+    orderNo,
+    invoiceId,
+    invoiceNo,
+    invoiceTotalCents,
+    paymentId,
+    paymentNo,
+    method,
+    amountCents,
+    receivedAt,
+    reference: typeof value["reference"] === "string" ? value["reference"] : "",
+    receivedBy,
+    balanceCents,
+    replayed,
+    converted,
+  };
+}
+
 const MAX_APPROVAL_PAGES = 40;
 
 export class QdClient {
@@ -686,6 +779,46 @@ export class QdClient {
     const orderNo = stringAt(record, "order_no");
     if (orderId === null || orderNo === null) return err("the conversion answer is missing its order number");
     return ok({ orderId, orderNo });
+  }
+
+  /**
+   * The document family of a quote or of one of its orders: the quote, the
+   * order or orders it became and their invoices, as normalized rows. Asking
+   * from either end returns the same family; the row the caller asked from
+   * carries self. One unreadable row refuses the whole list rather than show
+   * it short.
+   */
+  async relatedDocuments(id: string, end: "quote" | "order" = "quote"): Promise<Result<RelatedDoc[]>> {
+    const result =
+      end === "order"
+        ? await staffQuote.quoteOrderRelatedDocuments(this.#client, id)
+        : await staffQuote.quoteQuoteRelatedDocuments(this.#client, id);
+    if (!result.ok) return result;
+    const rows = readFamily(result.value);
+    return rows === null ? err("the related documents list is not readable") : ok(rows);
+  }
+
+  /**
+   * The counter's payment door (quoteTakeOrderPayment): take payment on a
+   * converted quote's order or, for a customer with no credit account, the
+   * one action that converts, invoices and pays in full. The idempotency key
+   * is the caller's attempt key; a replay answers the first payment. The
+   * client holds no money rule: the server decides amounts, and its refusal
+   * comes back in its own words.
+   */
+  async takeOrderPayment(
+    quoteId: string,
+    input: { method: "CASH" | "CARD" | "CHEQUE" | "EFT"; amountCents: number; reference: string; idempotencyKey: string },
+  ): Promise<Result<OrderPaymentAnswer>> {
+    const result = await staffQuote.quoteTakeOrderPayment(this.#client, quoteId, {
+      method: input.method,
+      amount_cents: input.amountCents,
+      reference: input.reference,
+      idempotency_key: input.idempotencyKey,
+    });
+    if (!result.ok) return result;
+    const answer = readPaymentAnswer(result.value);
+    return answer === null ? err("the payment answer is not readable") : ok(answer);
   }
 
   /**

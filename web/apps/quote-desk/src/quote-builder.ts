@@ -18,6 +18,8 @@ import { customElement, property, state } from "lit/decorators.js";
 import "./quote-workarea.js";
 import "./panel-seams.js";
 import "./edit-panel.js";
+import "./related-docs-panel.js";
+import "./order-payment-panel.js";
 import "./history-panel.js";
 import "./settings-panel.js";
 import "./assist-panel.js";
@@ -35,6 +37,7 @@ import {
   SEAM_FOLLOWUPS,
   SEAM_HISTORY,
   SEAM_HOLD_EXPIRY,
+  SEAM_PAYMENT,
   SEAM_SETTINGS,
 } from "./panel-seams.js";
 import { money } from "@hardscapehouse/pos-kit/src/ported/pos-api.js";
@@ -265,9 +268,11 @@ export class QdQuoteBuilder extends LitElement {
     }
     // The seam rows and the panels mounted in their place receive the open
     // quote the same way: the edit panel, the change history and the settings
-    // also take the validated client.
+    // also take the validated client. The payment seam's two panels ride the
+    // same pass (the edit panel, first of the stack, begins the family share's
+    // cycle on its own reload; the seam's panels join it after).
     for (const seam of this.renderRoot.querySelectorAll<HTMLElement & Record<string, unknown>>(
-      "qd-panel-seam, qd-quote-edit, qd-quote-history, qd-quote-settings, qd-quote-assist, qd-quote-followups, qd-quote-hold-expiry, qd-quote-availability, qd-quote-guard, qd-approvals, qd-floor-refusal",
+      "qd-panel-seam, qd-quote-edit, qd-related-docs, qd-order-payment, qd-quote-history, qd-quote-settings, qd-quote-assist, qd-quote-followups, qd-quote-hold-expiry, qd-quote-availability, qd-quote-guard, qd-approvals, qd-floor-refusal",
     )) {
       seam.quoteId = this.selected;
       seam.branchId = this.selectedBranch() || this.newBranch;
@@ -428,7 +433,7 @@ export class QdQuoteBuilder extends LitElement {
   private reloadDetailPanels(): void {
     this.renderRoot
       ?.querySelectorAll<HTMLElement & { reload?: () => void }>(
-        "qd-quote-workarea, qd-panel-seam, qd-quote-edit, qd-quote-history, qd-quote-settings, qd-quote-assist, qd-quote-followups, qd-quote-hold-expiry, qd-quote-availability, qd-quote-guard, qd-approvals",
+        "qd-quote-workarea, qd-panel-seam, qd-quote-edit, qd-related-docs, qd-order-payment, qd-quote-history, qd-quote-settings, qd-quote-assist, qd-quote-followups, qd-quote-hold-expiry, qd-quote-availability, qd-quote-guard, qd-approvals",
       )
       .forEach((el) => el.reload?.());
   }
@@ -581,9 +586,14 @@ export class QdQuoteBuilder extends LitElement {
           <!-- The panels stay mounted through New Quote (compose shows none of them, each returns nothing for no
                quote): a panel taken off the page loses the late answers of writes still out for the quote it left,
                its announcement dies with it and the panel that comes back is never told what landed. Leaving a quote
-               for another quote was already this way, and New Quote takes that same proven path. -->
+               for another quote was already this way, and New Quote takes that same proven path. The payment seam's
+               two panels ride the same gate (hidden, not absent, at compose) right after the edit panel. -->
           <div class="stack" data-testid="qb-quote-panels" data-compose=${this.selected === "" ? "true" : "false"}>
             <qd-quote-edit data-seam=${SEAM_EDIT_PANEL}></qd-quote-edit>
+            <div data-seam=${SEAM_PAYMENT} data-seam-label="Related documents and the order's payment (QD-5)">
+              <qd-related-docs></qd-related-docs>
+              <qd-order-payment></qd-order-payment>
+            </div>
             <qd-quote-assist data-seam=${SEAM_ASSIST}></qd-quote-assist>
             <qd-quote-history data-seam=${SEAM_HISTORY}></qd-quote-history>
             <qd-quote-followups data-seam=${SEAM_FOLLOWUPS}></qd-quote-followups>

@@ -62,8 +62,12 @@ test("the panel shows the quote's lines with the controls the server offers", as
   await expect(panel(page).locator('[data-field="expiry"]')).toBeVisible();
   await expect(panel(page).getByText("Add a line", { exact: true })).toBeVisible();
   await expect(panel(page).getByRole("button", { name: "Create link to copy" })).toBeVisible();
-  // The QD-5 seam is hosted under the convert control, empty.
-  await expect(panel(page).locator('[data-seam="payment"]')).toBeAttached();
+  // The QD-5 seam rides the detail's panel stack beside this panel (the compose pattern),
+  // mounted with both of its panels.
+  const seam = page.locator('[data-seam="payment"]');
+  await expect(seam).toBeAttached();
+  await expect(seam.locator("qd-related-docs")).toBeAttached();
+  await expect(seam.locator("qd-order-payment")).toBeAttached();
 });
 
 test("a notice or a refusal does not follow the person to another quote", async ({ page }) => {
