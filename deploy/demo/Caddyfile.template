@@ -40,6 +40,9 @@
 
 :__GATE_PORT__
 
+# Never indexed, gate open or shut (decision log row 981).
+header X-Robots-Tag "noindex, nofollow"
+
 handle /api/v1/demo/* {
 	basic_auth {
 		demo __GATE_HASH__

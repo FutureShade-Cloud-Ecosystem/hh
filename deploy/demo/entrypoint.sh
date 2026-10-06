@@ -52,12 +52,23 @@ fail() { echo "entrypoint: $*" >&2; exit 1; }
 # value reaches Caddy's configuration generation alone, through the shell
 # variable captured below, which is never exported.
 # --------------------------------------------------------------------------
+# An operator may open the gate on purpose (decision log row 981: Colton,
+# "remove the password to access the demo - the dibbits portal is already
+# password protected"): the runtime value DEMO_GATE=open, and nothing else,
+# serves every page and the mint without the phrase. Absent or any other
+# value, the gate stays shut and the hash is required exactly as before, so
+# a missing setting can never open a box.
+GATE_MODE="$(printenv DEMO_GATE || true)"
+unset DEMO_GATE
 HASH_VALUE="$(printenv DEMO_GATE_BCRYPT_HASH || true)"
 unset DEMO_GATE_BCRYPT_HASH
-if [ -z "$HASH_VALUE" ]; then
+if [ "$GATE_MODE" = "open" ]; then
+	log "the phrase gate is OPEN (DEMO_GATE=open): every page and the demo mint answer without the phrase"
+	HASH_VALUE=""
+elif [ -z "$HASH_VALUE" ]; then
 	fail "DEMO_GATE_BCRYPT_HASH is not set: the phrase gate asks for the shared phrase on every page and on the mint, and the image refuses to start without the phrase's hash"
 fi
-case "$HASH_VALUE" in
+[ "$GATE_MODE" = "open" ] || case "$HASH_VALUE" in
 	'$2a$'*|'$2b$'*|'$2y$'*) ;;
 	*)
 		fail "DEMO_GATE_BCRYPT_HASH does not look like a bcrypt hash: the gate wants the hash of the phrase and not the phrase itself; make the hash from the phrase kept in the vault, and set only the hash"
@@ -282,7 +293,12 @@ done
 export XDG_CONFIG_HOME=/dev/shm/caddy-config
 export XDG_DATA_HOME=/dev/shm/caddy-data
 
-GATE_CONFIG="$(sed -e "s|__GATE_PORT__|${GATE_PORT}|g" \
+# An open gate drops every basic_auth block (each is three lines: the opener,
+# the one account line, the closing brace); a shut gate keeps them all.
+GATE_STRIP=""
+[ "$GATE_MODE" = "open" ] && GATE_STRIP='/basic_auth {/,/}/d'
+GATE_CONFIG="$(sed -e "$GATE_STRIP" \
+                    -e "s|__GATE_PORT__|${GATE_PORT}|g" \
                     -e "s|__UPSTREAM__|${UPSTREAM}|g" \
                     -e "s|__GATE_HASH__|${HASH_VALUE}|g" \
                     /srv/templates/Caddyfile.template)"
