@@ -15,7 +15,7 @@ import {
   showsImages,
   totalsBlock,
 } from "../src/_quote-public.js";
-import { formatMoney, quoteStatusPhrase, withFullStop } from "../src/format.js";
+import { formatMoney, plainDay, plainWhen, quoteNumberLabel, quoteStatusPhrase, withFullStop } from "../src/format.js";
 import { createHash } from "node:crypto";
 import { createAcceptKeys, deriveAcceptKey } from "../src/accept-key.js";
 import { isKeyReuseRefusal, validateAcceptance, validateQuoteView } from "../src/quote-client.js";
@@ -311,6 +311,20 @@ test("only the server's own key reuse refusal is a key reuse refusal", () => {
   assert.equal(isKeyReuseRefusal({ status: 409, error: "This quote has already been accepted." }), false);
   assert.equal(isKeyReuseRefusal({ status: 400, error: "quote: this idempotency key was used for a different acceptance" }), false);
   assert.equal(isKeyReuseRefusal({ error: "quote: this idempotency key was used for a different acceptance" }), false);
+});
+
+test("the quote number carries its mark once, whichever way the core serves it", () => {
+  assert.equal(quoteNumberLabel("#Q-6"), "#Q-6");
+  assert.equal(quoteNumberLabel("Q-6"), "#Q-6");
+  assert.equal(quoteNumberLabel("##Q-6"), "#Q-6");
+});
+
+test("a moment and a day read in the page's own words, never as raw stamps", () => {
+  assert.match(plainWhen("2026-10-06T19:49:47Z"), /^[A-Z][a-z]+ \d{1,2}, \d{4} at \d{1,2}:\d{2} [ap]\.m\.$/);
+  assert.equal(plainWhen("not a time"), "not a time", "an unreadable stamp is shown as it arrived, never invented");
+  assert.equal(plainDay("2026-10-27"), "October 27, 2026");
+  assert.equal(plainDay("2026-02-31"), "2026-02-31", "a day that does not exist is shown as it arrived");
+  assert.equal(plainDay("soon"), "soon");
 });
 
 test("the preview flag is read only when the core sets it", () => {

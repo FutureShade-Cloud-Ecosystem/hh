@@ -28,7 +28,7 @@ import {
 } from "./_quote-public.js";
 import { createAcceptKeys } from "./accept-key.js";
 import { DEALER_NAME } from "./dealer.js";
-import { formatMoney, quoteStatusPhrase, withFullStop } from "./format.js";
+import { formatMoney, plainDay, plainWhen, quoteNumberLabel, quoteStatusPhrase, withFullStop } from "./format.js";
 import {
   envelopeOnlyFetch,
   isDeadLinkAnswer,
@@ -648,8 +648,7 @@ export class QuotePublicPage extends HHElement {
   }
 
   private when(iso: string): string {
-    const d = new Date(iso);
-    return Number.isNaN(d.getTime()) ? iso : d.toLocaleString("en-CA");
+    return plainWhen(iso);
   }
 
   /**
@@ -682,7 +681,7 @@ export class QuotePublicPage extends HHElement {
       ${delivery
         ? html`<p class="note">
             <b>Delivery</b> to ${q.deliveryAddress || "the address on file"}${q.requestedDate
-              ? html` · requested ${q.requestedDate}`
+              ? html` · requested ${plainDay(q.requestedDate)}`
               : nothing}${(q.deliveryFeeCents ?? 0) > 0
               ? html` · delivery fee ${formatMoney(q.deliveryFeeCents ?? 0)} (included in the total)`
               : nothing}
@@ -763,7 +762,7 @@ export class QuotePublicPage extends HHElement {
         ${this.keyReused ? html`<p class="gone">${KEY_REUSED}</p>` : nothing}
         <p class="gone">
           ${q.expired && !acceptedElsewhere
-            ? `This quote expired on ${q.validUntil} and can no longer be accepted online. Please contact us for an updated quote.`
+            ? `This quote expired on ${plainDay(q.validUntil ?? "")} and can no longer be accepted online. Please contact us for an updated quote.`
             : `This quote is ${quoteStatusPhrase(q.status)} and is not awaiting acceptance.`}
         </p>
       </div>`;
@@ -812,10 +811,10 @@ export class QuotePublicPage extends HHElement {
     const withImages = showsImages(q);
     return html`
       ${q.preview ? html`<div class="previewband" role="status">${PREVIEW_BAND}</div>` : nothing}
-      <h1>Quote #${q.quoteNo}</h1>
+      <h1>Quote ${quoteNumberLabel(q.quoteNo)}</h1>
       <div class="sub">
-        Prepared for ${q.customerName} · as of ${this.when(q.asOf)}
-        ${q.validUntil ? html` · ${q.expired ? "expired" : "valid until"} ${q.validUntil}` : nothing}
+        Prepared for ${q.customerName} · last updated ${this.when(q.asOf)}
+        ${q.validUntil ? html` · ${q.expired ? "expired" : "valid until"} ${plainDay(q.validUntil)}` : nothing}
       </div>
       <div class="card">
         <div class="tablewrap">

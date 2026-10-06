@@ -1322,6 +1322,19 @@ for (const [token, status, error] of [
   });
 }
 
+// The page's two small faults: the quote number once, and the time in the page's own words.
+test("the title shows the quote number once, and the time is plain words", async ({ page }) => {
+  await page.goto("/?t=q-hash-6");
+  await expect(page.getByRole("heading", { name: "Quote #Q-6" })).toBeVisible();
+  await expect(page.getByText("##Q-6")).toHaveCount(0);
+  const sub = page.locator(".sub").first();
+  await expect(sub).toContainText("Prepared for Fenwick Builders Ltd");
+  await expect(sub).toContainText(/last updated [A-Z][a-z]+ \d{1,2}, \d{4} at \d{1,2}:\d{2} [ap]\.m\./);
+  await expect(sub).not.toContainText("as of");
+  await expect(sub).not.toContainText(/\d{4}-\d{2}-\d{2}/);
+  await expect(sub).not.toContainText(/\d:\d{2}:\d{2}/);
+});
+
 // The preview: the same page, handed the staff read of the customer's view. It states plainly that
 // nothing was sent, and offers no accept area and no typed name. The page itself never reads a staff
 // session (the sinks gate holds that), so the Quote Desk fetches the view with its own session and
