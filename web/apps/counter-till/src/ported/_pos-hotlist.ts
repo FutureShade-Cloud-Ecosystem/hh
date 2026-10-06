@@ -19,7 +19,7 @@
 // from the ticket. A curated tile that vanished because a column was blank would be the worst kind
 // of silent configuration failure: the dealer set it, and it is simply not there.
 
-import type { HotPick } from './pos-api.js';
+import type { HotPick } from '@hardscapehouse/pos-kit/src/ported/pos-api.js';
 
 /** Tiles shown at one level. The flat grid's old cap, applied where it belongs: per level. */
 export const HOT_LEVEL_MAX = 12;

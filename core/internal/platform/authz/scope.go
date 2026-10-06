@@ -33,11 +33,27 @@ type TenantScope struct {
 	ExpiresAt      time.Time
 }
 
+// MachineScope is the request scope of a verified machine credential
+// (ADR-0024): the machine principal the token's subject names, the org
+// that principal belongs to (the X-Org selection proved equal to it), and
+// the credential's window. It carries no role, no tier and no branch: a
+// machine principal's doors are its own list on its own record, read by
+// the machine gate at admission, never by a caller.
+type MachineScope struct {
+	PrincipalID string
+	Name        string
+	OrgSlug     string
+	OrgID       string
+	IssuedAt    time.Time
+	ExpiresAt   time.Time
+}
+
 // requestScope is the single context slot for request scope. At most one
 // kind is ever set: a request is one bearer class or it is refused.
 type requestScope struct {
-	staff  *StaffScope
-	tenant *TenantScope
+	staff   *StaffScope
+	tenant  *TenantScope
+	machine *MachineScope
 }
 
 type scopeCtxKey struct{}
@@ -54,6 +70,12 @@ func WithStaffScope(ctx context.Context, scope StaffScope) context.Context {
 // present.
 func WithTenantScope(ctx context.Context, scope TenantScope) context.Context {
 	return context.WithValue(ctx, scopeCtxKey{}, &requestScope{tenant: &scope})
+}
+
+// WithMachineScope stamps the machine scope, replacing any scope already
+// present.
+func WithMachineScope(ctx context.Context, scope MachineScope) context.Context {
+	return context.WithValue(ctx, scopeCtxKey{}, &requestScope{machine: &scope})
 }
 
 // StaffScopeFrom reports the staff scope of the request. ok is false
@@ -78,4 +100,14 @@ func TenantScopeFrom(ctx context.Context) (scope TenantScope, ok bool) {
 		return TenantScope{}, false
 	}
 	return *rs.tenant, true
+}
+
+// MachineScopeFrom reports the machine scope of the request, with the
+// same fail-closed contract as StaffScopeFrom.
+func MachineScopeFrom(ctx context.Context) (scope MachineScope, ok bool) {
+	rs, _ := ctx.Value(scopeCtxKey{}).(*requestScope)
+	if rs == nil || rs.machine == nil {
+		return MachineScope{}, false
+	}
+	return *rs.machine, true
 }

@@ -295,20 +295,31 @@ func (s *Store) StampVoided(ctx context.Context, id, kind, ref string) (Attempt,
 // StampVoidUnknown records a reversal whose answer was lost: VOIDING to VOID_UNKNOWN. The stamp
 // APPENDS to last_error rather than replacing it: on a late capture over a manager's close the
 // column already carries the folded decision, and the second manager who reads this needs-a-person
-// row must find both stories on it. On every normal compensation path the column is empty here, so
-// the append writes exactly the diagnostic (the CASE keeps a leading separator off the empty case).
+// row must find both stories on it. The KEPT PREFIX of the old text is bounded to the cap minus
+// the incoming diagnostic and its "; " separator (two runes), so a column the StampLateCapture
+// fold filled to the cap still lands the newest story: the old text is truncated, never the
+// concatenation (A2's round 3 P3). The old text's whole first decision is still on the row: the
+// fold's manager note lives whole in resolution_note_full. On every normal compensation path the
+// column is empty here, so the append writes exactly the diagnostic (the CASE keeps a leading
+// separator off the empty case, byte identical to the old overwrite). GREATEST(0, ...) keeps the
+// bound at zero when the diagnostic itself fills the cap (a negative left() trims from the end).
 func (s *Store) StampVoidUnknown(ctx context.Context, id, lastErr string) (Attempt, bool, error) {
 	return s.poolMove(ctx, id, []string{AttemptVoiding},
-		`status = 'VOID_UNKNOWN', last_error = left(CASE WHEN last_error = '' THEN $3 ELSE last_error || '; ' || $3 END, `+strconv.Itoa(maxLastErrorRunes)+`)`,
+		`status = 'VOID_UNKNOWN', last_error = left(CASE WHEN last_error = '' THEN $3
+		   ELSE left(last_error, GREATEST(0, `+strconv.Itoa(maxLastErrorRunes)+` - char_length($3) - 2)) || '; ' || $3 END,
+		  `+strconv.Itoa(maxLastErrorRunes)+`)`,
 		SanitizeLastError(lastErr))
 }
 
 // StampVoidDeclined records a reversal Run refused: VOIDING to VOID_DECLINED. The customer's money
 // is held with no sale until a manager reverses it at the processor. Like StampVoidUnknown it
-// appends, never replaces, so a folded manager decision survives the refused end too.
+// appends, never replaces, and bounds the kept prefix of the old text the same way, so a folded
+// manager decision survives the refused end and the refusal's own cause always lands with it.
 func (s *Store) StampVoidDeclined(ctx context.Context, id, lastErr string) (Attempt, bool, error) {
 	return s.poolMove(ctx, id, []string{AttemptVoiding},
-		`status = 'VOID_DECLINED', last_error = left(CASE WHEN last_error = '' THEN $3 ELSE last_error || '; ' || $3 END, `+strconv.Itoa(maxLastErrorRunes)+`)`,
+		`status = 'VOID_DECLINED', last_error = left(CASE WHEN last_error = '' THEN $3
+		   ELSE left(last_error, GREATEST(0, `+strconv.Itoa(maxLastErrorRunes)+` - char_length($3) - 2)) || '; ' || $3 END,
+		  `+strconv.Itoa(maxLastErrorRunes)+`)`,
 		SanitizeLastError(lastErr))
 }
 

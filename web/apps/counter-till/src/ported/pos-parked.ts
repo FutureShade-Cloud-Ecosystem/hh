@@ -2,11 +2,11 @@
 
 import { LitElement, css, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import { discardParked, listParked, money, resumeParked, type ParkedTicket } from './pos-api.js';
+import { discardParked, listParked, money, resumeParked, type ParkedTicket } from '@hardscapehouse/pos-kit/src/ported/pos-api.js';
 import { resumeDiscardMessage } from './_pos.js';
 import type { ParkedInfo } from './_pos.js';
-import { focusRing } from './styles/focus-ring.js';
-import { ModalFocus } from './modal-focus.js';
+import { focusRing } from '@hardscapehouse/pos-kit/src/ported/styles/focus-ring.js';
+import { ModalFocus } from '@hardscapehouse/pos-kit/src/ported/modal-focus.js';
 
 /**
  * W7 parked-tickets modal (POS_COUNTER_V2 §5): the PARKED list for the branch (ticket no, customer,

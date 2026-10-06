@@ -25,11 +25,14 @@ import {
   rowStep,
   pricePicture,
   basisWord,
-} from './_pos-searchdrop.ts';
+} from '@hardscapehouse/pos-kit/src/ported/_pos-searchdrop.ts';
 
+// The scan box moved into @hardscapehouse/pos-kit (web/packages/pos-kit,
+// src/ported, same name); the search drop and the terminal stayed here.
+const kitPorted = new URL('../../../../packages/pos-kit/src/ported/', import.meta.url);
 const dropSrc = readFileSync(new URL('./pos-search-drop.ts', import.meta.url), 'utf8');
 const terminalSrc = readFileSync(new URL('./pos-terminal.ts', import.meta.url), 'utf8');
-const scanSrc = readFileSync(new URL('./pos-scan-box.ts', import.meta.url), 'utf8');
+const scanSrc = readFileSync(new URL('pos-scan-box.ts', kitPorted), 'utf8');
 
 const hit = (n) => ({ product_id: `p${n}`, sku: `SKU${n}`, name: `Product ${n}`, base_uom: 'EA', has_image: false, match_reason: 'NAME' });
 const many = (n) => Array.from({ length: n }, (_, i) => hit(i + 1));

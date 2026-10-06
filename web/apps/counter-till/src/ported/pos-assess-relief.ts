@@ -2,12 +2,12 @@
 
 import { LitElement, css, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import { assessRelief, type ReliefOutcome } from './pos-api.js';
+import { assessRelief, type ReliefOutcome } from '@hardscapehouse/pos-kit/src/ported/pos-api.js';
 import './pos-signature.js';
-import { focusRing } from './styles/focus-ring.js';
-import { ModalFocus } from './modal-focus.js';
+import { focusRing } from '@hardscapehouse/pos-kit/src/ported/styles/focus-ring.js';
+import { ModalFocus } from '@hardscapehouse/pos-kit/src/ported/modal-focus.js';
 import { taxReasonWord } from './tax-api.js';
-import { plainDollars } from './_money-format.js';
+import { plainDollars } from '@hardscapehouse/pos-kit/src/ported/_money-format.js';
 
 // HH note: display formatting of a server-computed figure, through the ported
 // surface's named display helper (CLOSURE.md names it); the local wrapper the

@@ -556,6 +556,11 @@ func (s *ApprovalsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key
 		// The client-chosen id is taken: inside the caller's org the
 		// collision is the caller's own fact, outside it the answer is
 		// not-found so existence never leaks across the fence.
+		// Nothing was written, so the transaction ends first: the
+		// read-back goes through the pool, and asking it for a second
+		// connection while this one is held starves the pool once
+		// pool-size creates collide.
+		_ = tx.Rollback(ctx)
 		if _, own, _ := s.Load(ctx, f, id); own {
 			return sync.RowState{}, sync.ErrRowExists
 		}
@@ -625,6 +630,17 @@ func (s *ApprovalsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, 
 		return sync.RowState{}, fmt.Errorf("identity: an approvals update declares a decision (status) or a note (detail), nothing else: %w", sync.ErrOpRefused)
 	}
 
+	// The decider's linked user and authority are read BEFORE the
+	// transaction opens: both go through the pool (the linker and the
+	// repository), and a second connection asked for while the decide
+	// transaction holds the first starves the pool once pool-size
+	// decisions are in flight. The errors are carried to the point the
+	// decide arm used to raise them, so the refusal order is unchanged.
+	var auth decideAuthority
+	if decide {
+		auth = s.decideAuthorityFor(ctx, f)
+	}
+
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return sync.RowState{}, fmt.Errorf("identity: begin approvals sync write: %w", err)
@@ -632,14 +648,39 @@ func (s *ApprovalsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, 
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	if decide {
-		return s.writeDecision(ctx, tx, f, id, key, fields)
+		return s.writeDecision(ctx, tx, f, id, key, fields, auth)
 	}
 	return s.writeNote(ctx, tx, f, id, key, fields)
 }
 
+// decideAuthority is the decider's linked user and the authority read for
+// it, taken before the decide transaction opens. userID is empty when the
+// caller has no linked staff user; err is the authority read's error.
+type decideAuthority struct {
+	userID string
+	caller StaffContext
+	err    error
+}
+
+// decideAuthorityFor links the caller and, when linked, reads its authority
+// in the filter's org, both through the pool (no transaction held).
+func (s *ApprovalsSyncStore) decideAuthorityFor(ctx context.Context, f sync.ScopeFilter) decideAuthority {
+	var a decideAuthority
+	if s.link != nil && f.Actor != "" {
+		if uid, ok := s.link(ctx, f.Actor); ok {
+			a.userID = uid
+		}
+	}
+	if a.userID != "" {
+		a.caller, a.err = s.resolve(ctx, a.userID, f.OrgID)
+	}
+	return a
+}
+
 // writeDecision is the decide arm: the module's own rules, then the
-// rail's own CAS stamp.
-func (s *ApprovalsSyncStore) writeDecision(ctx context.Context, tx pgx.Tx, f sync.ScopeFilter, id, key string, fields map[string]any) (sync.RowState, error) {
+// rail's own CAS stamp. The decider's authority arrives already read (auth):
+// nothing in this arm asks the pool for a connection while tx holds one.
+func (s *ApprovalsSyncStore) writeDecision(ctx context.Context, tx pgx.Tx, f sync.ScopeFilter, id, key string, fields map[string]any, auth decideAuthority) (sync.RowState, error) {
 	status, _ := fields["status"].(string)
 	approve := status == string(ApprovalApproved)
 	if !approve && status != string(ApprovalRejected) {
@@ -649,12 +690,7 @@ func (s *ApprovalsSyncStore) writeDecision(ctx context.Context, tx pgx.Tx, f syn
 
 	// The caller's authority, resolved the way the rail resolves a
 	// projection caller: the linked ERP user, then ResolveStaff.
-	decider := ""
-	if s.link != nil && f.Actor != "" {
-		if uid, ok := s.link(ctx, f.Actor); ok {
-			decider = uid
-		}
-	}
+	decider := auth.userID
 	if decider == "" {
 		return sync.RowState{}, fmt.Errorf("identity: a pushed decision needs the caller's linked staff user: %w", sync.ErrOpRefused)
 	}
@@ -676,9 +712,9 @@ func (s *ApprovalsSyncStore) writeDecision(ctx context.Context, tx pgx.Tx, f syn
 		return sync.RowState{}, fmt.Errorf("identity: a %s decision moves money at the desk, not through a replayed outbox: %w",
 			r.req.Policy, sync.ErrOpRefused)
 	}
-	caller, err := s.resolve(ctx, decider, f.OrgID)
-	if err != nil {
-		return sync.RowState{}, err
+	caller := auth.caller
+	if auth.err != nil {
+		return sync.RowState{}, auth.err
 	}
 	// The module's own validation: authority, four-eyes, PENDING. The
 	// margin arm's authority is the CONFIGURED floor set the rail holds

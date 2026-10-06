@@ -238,9 +238,15 @@ func TestRegistrarPanicsOnAnUnknownCensusWord(t *testing.T) {
 // to serve. A census word this table does not name fails the walk: a word
 // invented tomorrow must be classified here before the suite passes.
 var censusWalkExpected = map[string]string{
-	"requireStaff":                          "wrapped",
-	"requireManager":                        "wrapped",
-	"requireAdmin":                          "wrapped",
+	"requireStaff":   "wrapped",
+	"requireManager": "wrapped",
+	"requireAdmin":   "wrapped",
+	// machine (ADR-0024, HH-LOAD-1 LD-2 census ruling): machine routes
+	// read wrapped once they exist (LD-1's fragment brought them), the
+	// walk harness carrying a machine gate to prove it: an
+	// uncredentialled request at a machine route answers the machine
+	// gate's own 401, the same class as the staff tier words.
+	"machine":                               "wrapped",
 	"public":                                "passed",
 	"tenant":                                "passed",
 	"scope-member":                          "passed",
@@ -258,17 +264,28 @@ var censusWalkExpected = map[string]string{
 // TestRegistrarCensusWalkClassifiesEveryWord registers every route in the
 // real census through the wrapper over the recording inner and classifies
 // each word by what happened: wrapped means the stored handler answers
-// the gate's staff refusal for a request with no credential at all (the
-// role gate is in the chain), passed means the stored handler answers its
-// own teapot (nothing wrapped it), refused means the attach panicked
-// naming the pattern and the word. Each census word must land in exactly
-// the class the expected table names, on the real table the parity and
-// x-role suites walk beside this.
+// the gate's unauthenticated refusal for a request with no credential at
+// all (the role gate, or the machine gate for the machine word, is in the
+// chain), passed means the stored handler answers its own teapot (nothing
+// wrapped it), refused means the attach panicked naming the pattern and
+// the word. The harness carries the machine gate beside the role gate,
+// the census ruling's own shape: without it the machine rows refuse the
+// attach, which is the doors-off wiring's contract, never the walk's.
+// Each census word must land in exactly the class the expected table
+// names, on the real table the parity and x-role suites walk beside this.
 func TestRegistrarCensusWalkClassifiesEveryWord(t *testing.T) {
-	_, g, _ := newRegistrarFixture(t)
+	mf := newMachineFixture(t)
+	cfg, err := roleconfig.Default()
+	if err != nil {
+		t.Fatalf("roleconfig.Default: %v", err)
+	}
+	g, err := NewRoleGate(mf.gate, &fakeRolesSource{roles: []string{"inside_sales"}}, cfg)
+	if err != nil {
+		t.Fatalf("NewRoleGate: %v", err)
+	}
 	index := censusIndex()
 	inner := &recordingInner{handlers: map[string]http.Handler{}}
-	reg, err := newRoleGateRegistrarWithCensus(inner, g, index)
+	reg, err := newRoleGateRegistrarWithCensusAndMachineGate(inner, g, mf.machineGate, index)
 	if err != nil {
 		t.Fatalf("constructor: %v", err)
 	}
