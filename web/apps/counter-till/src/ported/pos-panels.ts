@@ -77,14 +77,25 @@ export class HosPosPanels extends LitElement {
   static styles = [
     focusRing,
     css`
-    :host { display: block; }
+    /* A column so the grid takes what the chrome above and below it does
+       not: the mounting column (the terminal's panels view) hands this host
+       a definite height, the reset bar keeps its natural row, and the
+       surface flexes into the rest. The host carries min-height: 0 so a
+       flex parent may shrink it below its content (the surface's own
+       overflow takes the overflow from there). */
+    :host { display: flex; flex-direction: column; min-height: 0; }
     /* The panel surface scrolls rather than squeezing: a person who drags a panel past the edge of
        a big layout meant to put it there, and a surface that silently re-tiled under them would be
-       taking the arrangement back. */
+       taking the arrangement back.
+       The height is the flex chain's, not a viewport arithmetic: the old
+       calc(100vh - 230px) guessed three chrome heights at once and was
+       wrong at every width it did not guess (the fill work's finding). The
+       measured area drives the tiling through the ResizeObserver below, so
+       the default 2x2 tracks whatever the chain hands down. */
     .surface {
       position: relative;
-      min-height: 420px;
-      height: calc(100vh - 230px);
+      flex: 1 1 auto;
+      min-height: 0;
       overflow: auto;
       border: 1px solid var(--hos-line);
       border-radius: var(--hos-radius-card);
@@ -94,7 +105,7 @@ export class HosPosPanels extends LitElement {
       display: flex;
       align-items: center;
       justify-content: flex-end;
-      margin-bottom: 8px;
+      margin-bottom: 6px;
     }
     .reset {
       background: transparent;
@@ -173,7 +184,17 @@ export class HosPosPanels extends LitElement {
     .body {
       flex: 1 1 auto;
       overflow: auto;
-      padding: 10px;
+      padding: 8px 10px;
+      /* The zone's own floor: a panel the person dragged short still shows
+         its head and a sliver of the work, and the zone takes the rest. */
+      min-height: 0;
+    }
+    /* The pinned foot: rows that must never scroll away with the body (the
+       Items panel's fulfilment area). No padding of its own: an empty foot
+       slot renders nothing and costs no height, and the slotted wrapper
+       (styled by the terminal, which owns its content) brings the spacing. */
+    .foot {
+      flex: 0 0 auto;
     }
     /* The edges are AT the border, not outside it: a handle at -3px sits outside a clipped box and
        cannot be hit at all: the floating assistant shipped exactly that bug once. */
@@ -341,6 +362,7 @@ export class HosPosPanels extends LitElement {
         <span class="title">${s.label}</span>
       </div>
       <div class="body"><slot name=${s.id}></slot></div>
+      <div class="foot"><slot name=${s.id + '-foot'}></slot></div>
       <div class="e e-r" @pointerdown=${(e: PointerEvent) => this.onDown(e, s.id, { right: true })}></div>
       <div class="e e-b" @pointerdown=${(e: PointerEvent) => this.onDown(e, s.id, { bottom: true })}></div>
       <div class="e e-br" @pointerdown=${(e: PointerEvent) => this.onDown(e, s.id, { right: true, bottom: true })}></div>

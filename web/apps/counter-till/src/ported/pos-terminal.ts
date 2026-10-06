@@ -1,6 +1,6 @@
 // Ported from hardscapeos_dibbits master 87d7941b app/src/pos-terminal.ts; adapted for HH.
 
-import { LitElement, css, html, nothing } from 'lit';
+import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { ifDefined } from 'lit/directives/if-defined.js';
 import { api, BRANCHES, branchName, getCurrentUser, isAdmin } from '@hardscapehouse/pos-kit/src/ported/ports.js';
@@ -750,7 +750,15 @@ export class HosPosTerminal extends LitElement {
     focusRing,
     css`
     :host {
-      display: block;
+      /* A column, so the panels view can hand its grid the space the chrome
+         above it does not take (the stepper column flows on as it did: a
+         flex child with no flex grows keeps its natural page height). The
+         height is a percentage of the box the mounting page gave this
+         element, which resolves to auto there, so nothing changes for the
+         stepper. */
+      display: flex;
+      flex-direction: column;
+      height: 100%;
       font-family: var(--hos-font-ui);
       color: var(--hos-text);
       background: var(--hos-deep-earth);
@@ -769,6 +777,12 @@ export class HosPosTerminal extends LitElement {
          980 was chosen against a pane that was itself capped at 1000, so it left 844px of a 1920
          screen dead INSIDE the pane. 1180 is the same argument re-costed against the real pane. */
       --pos-column-max: 1180px;
+      /* The pinned hotkey legend's own lane (pos-hotkey-legend.ts sits fixed
+         at the window's bottom, measured 35px; --hos-safe-bottom lifts it on
+         a device with a home indicator). The panels view's column ends above
+         it so the footer bars are never covered. Local for the same reason
+         as --pos-column-max: one surface's number. */
+      --pos-legend-lane: calc(35px + var(--hos-safe-bottom));
     }
     /* ── THE HEADER SITS ON THE MEASURE OF THE WORK IT HEADS ─────────────────────────────────────
        Measured before this rule existed: at 1920 the page title started at x=104 and the first
@@ -1226,6 +1240,65 @@ export class HosPosTerminal extends LitElement {
         padding-left: var(--hos-space-3);
         padding-right: var(--hos-space-3);
       }
+    }
+    /* ── THE PANELS VIEW IS A SCREEN, NOT A PAGE ─────────────────────────────────────────────────
+       The detached layout's 2x2 grid fills the window: the width between the
+       page's 16px gutters (the Quote Desk's workarea measure, mirrored) and
+       the height below this surface's own header down to the pinned bottom
+       bars, with the hotkey legend's lane kept clear under them. The stepper
+       column above keeps the capped measure and the page scroll it has
+       always had; every rule here is scoped to the panels pick through the
+       host attribute willUpdate reflects, so the two modes cannot leak into
+       each other.
+
+       THE GEOMETRY IS THE FLEX COLUMN'S, not a viewport arithmetic: the page
+       that mounts this terminal hands the surface a definite height (the
+       window below its own bar; see the mounting app's rules), this column
+       takes the header's natural height off the top and the legend lane off
+       the bottom, and the grid flexes into whatever remains. The old
+       height: calc(100vh - 230px) guessed three chrome heights in one
+       literal and was wrong at every width it did not guess; this reads the
+       real boxes instead. The Quote Desk's workarea is the reference: full
+       measure, panels stretching, each panel's own zone scrolling only what
+       truly overflows. */
+    :host([data-counter-layout='PANELS']) .topbarin {
+      /* The header sits on the grid's measure, not the stepper column's: a
+         title that does not line up with the thing it titles is a second,
+         invisible column (the argument the .topbarin rule above makes). */
+      width: auto;
+      margin: 0;
+      padding-left: var(--hos-space-4);
+      padding-right: var(--hos-space-4);
+    }
+    :host([data-counter-layout='PANELS']) .flowcol {
+      width: auto;
+      margin: 0;
+      min-width: 0;
+      min-height: 0;
+      flex: 1 1 auto;
+      gap: var(--hos-space-2);
+      /* The tightest honest vertical padding: every pixel above and below
+         the grid is a pixel the panels do not get, and the fill is the
+         point of this layout. */
+      padding: var(--hos-space-1) var(--hos-space-4) var(--pos-legend-lane);
+    }
+    :host([data-counter-layout='PANELS']) .txbar {
+      /* The column's gap is the separation now; the page-measure rule's own
+         top margin would double it. */
+      margin-top: 0;
+    }
+    :host([data-counter-layout='PANELS']) hos-pos-panels {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    /* A step's pinned foot (the fulfilment row): the one row of a panel that
+       must never scroll away. The wrapper matches the body's own side
+       padding so the foot's rows line up with the rows above them; an empty
+       foot slot renders nothing and costs no height. */
+    :host([data-counter-layout='PANELS']) [slot$='-foot'] {
+      padding: 0 10px 8px;
     }
     @media (pointer: coarse) {
       .fulfil button,
@@ -2702,6 +2775,11 @@ export class HosPosTerminal extends LitElement {
       this.restored = true;
       this.applySnapshot(this.restore);
     }
+    // The layout pick rides the host as an attribute so the page that mounts
+    // this terminal (and this element's own stylesheet) can scope the panels
+    // view's screen-filling rules to it: the stepper column keeps the page
+    // measure and the page scroll it has today.
+    this.dataset.counterLayout = this.counterLayout;
   }
 
 
@@ -5102,7 +5180,7 @@ export class HosPosTerminal extends LitElement {
           .summary=${this.stepSummary(s.id, facts)}
           @pos-step-toggle=${() => this.toggleStep(s.id)}
         >
-          ${open ? this.renderStepBody(s.id) : nothing}
+          ${open ? html`${this.renderStepBody(s.id)}${this.renderStepFoot(s.id)}` : nothing}
         </hos-pos-step-card>`;
       })}
       ${this.renderSaleUtilities()}
@@ -5136,7 +5214,13 @@ export class HosPosTerminal extends LitElement {
         .active=${this.openStep}
         @pos-panel-focus=${(e: CustomEvent<{ step: FlowStepId }>) => (this.openStep = e.detail.step)}
       >
-        ${steps.map((s) => html`<div slot=${s.id}>${this.renderStepBody(s.id)}</div>`)}
+        ${steps.map((s) => {
+          const foot = this.renderStepFoot(s.id);
+          return html`
+            <div slot=${s.id}>${this.renderStepBody(s.id)}</div>
+            ${foot === nothing ? nothing : html`<div slot=${s.id + '-foot'}>${foot}</div>`}
+          `;
+        })}
       </hos-pos-panels>
       ${this.renderSaleUtilities()}
       ${this.renderTxBar()}
@@ -5490,7 +5574,20 @@ ${/* DIB-488: the quieter order facts fold away (native details: no state to des
             </div>
             ${this.presentation === 'LINES' ? this.renderLinesTable() : this.renderCardLines()}`}
       ${this.renderAddonsStrip()}
+            `;
+  }
 
+  /**
+   * STEP 2's pinned foot: the fulfilment area, the one part of a step that
+   * must never scroll away. The panels view renders it below the Items
+   * panel's scroll zone (the Quote Desk's foot pattern), and the stepper's
+   * open card renders it after the body in the same order it always stood,
+   * so the two layouts carry one markup and one switch (the rule the panels
+   * host states: a step rendered by two paths is a step that drifts).
+   */
+  private renderStepFoot(step: FlowStepId): TemplateResult | typeof nothing {
+    if (step !== 'items') return nothing;
+    return html`
 ${/* Fulfilment: the EXISTING sale types (counter / will-call / delivered / COD with its
    policy gate: the M3 will-call machinery), worn as tiles instead of a select. */ ''}
             <label id="fulfil-label">Fulfilment</label>
