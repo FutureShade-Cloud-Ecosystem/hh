@@ -4677,6 +4677,29 @@ type PosSale struct {
 	Tenders           *[]PosTenderLegResult `json:"tenders,omitempty"`
 }
 
+type PosSalePreviewInput struct {
+	BranchId   string             `json:"branch_id"`
+	CustomerId string             `json:"customer_id"`
+	SaleType   *string            `json:"sale_type,omitempty"`
+	Fulfilment *string            `json:"fulfilment,omitempty"`
+	Relief     *PosReliefDecision `json:"relief,omitempty"`
+	Lines      []PosLineInput     `json:"lines"`
+}
+
+type PosSalePreview struct {
+	SubtotalCents int64                   `json:"subtotal_cents"`
+	TaxCents      int64                   `json:"tax_cents"`
+	TaxLines      []PosSalePreviewTaxLine `json:"tax_lines"`
+	TotalCents    int64                   `json:"total_cents"`
+	TaxReasonCode string                  `json:"tax_reason_code"`
+}
+
+type PosSalePreviewTaxLine struct {
+	ReasonCode string `json:"reason_code"`
+	RateBps    int32  `json:"rate_bps"`
+	TaxCents   int64  `json:"tax_cents"`
+}
+
 type PosSaleView struct {
 	OrderId       string                `json:"order_id"`
 	OrderNo       string                `json:"order_no"`

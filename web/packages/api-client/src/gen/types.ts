@@ -3983,6 +3983,26 @@ export type PosSale = {
   split_tender?: boolean;
   tenders?: PosTenderLegResult[];
 };
+export type PosSalePreviewInput = {
+  branch_id: string;
+  customer_id: string;
+  sale_type?: "COLLECT_NOW" | "COLLECT_LATER" | "DELIVERED" | "COD";
+  fulfilment?: "PICKUP" | "WILL_CALL" | "DELIVERY";
+  relief?: PosReliefDecision;
+  lines: PosLineInput[];
+};
+export type PosSalePreview = {
+  subtotal_cents: number;
+  tax_cents: number;
+  tax_lines: PosSalePreviewTaxLine[];
+  total_cents: number;
+  tax_reason_code: "STD_ON_HST_13" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "MANUAL_TAX_REVIEW" | "RELIEF_DECLINED_EVIDENCE";
+};
+export type PosSalePreviewTaxLine = {
+  reason_code: string;
+  rate_bps: number;
+  tax_cents: number;
+};
 export type PosSaleView = {
   order_id: string;
   order_no: string;

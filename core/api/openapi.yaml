@@ -14192,6 +14192,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "409":
           $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/PosSplitTotalMismatch"
     get:
       operationId: posLookupSales
       tags:
@@ -14277,6 +14279,40 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/pos/sale-preview:
+    post:
+      operationId: posSalePreview
+      tags:
+        - staff-pos
+      summary: Read the totals the ring would compute for this ticket, writing nothing
+      description: "The read-only sale preview. The body is the sale's own (lines, customer, branch, sale type, fulfilment, relief) without any tender, and the answer is the server-resolved subtotal, each tax line and the total in integer cents, exactly as the ring would compute them for that body: the preview prices the ticket through the ring's own pricing and tax resolver, never a copy. Writes nothing: no order, no hold, no number used, no replay key. Staff only, the same role walls the sale takes. A ticket that collects no tax shows no tax line and its total is its subtotal."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - counter-till
+        level: read
+        reason: prices a ticket through the ring's own resolver and writes nothing
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosSalePreviewInput"
+      responses:
+        "200":
+          description: The ticket's own subtotal, tax lines and total, as the ring computes them
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosSalePreview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/pos/assess-relief:
     post:
       operationId: posAssessRelief
@@ -25088,6 +25124,26 @@ components:
                   approval:
                     description: Present exactly when the error string is "refund_approval_required", the approval refusal; the route's other 409 refusals answer the plain envelope without the key.
                     $ref: "#/components/schemas/PosRefundApproval"
+    PosSplitTotalMismatch:
+      description: "The split-tender sum refusal, and the body is the Error envelope carrying the amounts beside it. The refusal names itself in the error string \"split_total_mismatch\": the submitted legs do not sum exactly to the sale total, and only that refusal carries the two cents fields and the message key, so the till's screen can show both amounts without parsing a sentence. A client discriminates on the error string, never on the keys' absence. The message speaks dollars and plain words; no message ever prints cents."
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Error"
+              - type: object
+                properties:
+                  tendered_cents:
+                    type: integer
+                    format: int64
+                    description: What the submitted legs sum to
+                  total_cents:
+                    type: integer
+                    format: int64
+                    description: The sale total the legs must settle exactly
+                  message:
+                    type: string
+                    description: The dollar sentence, for example "The tenders add up to $266.00, but the sale total is $300.58."
   schemas:
     Error:
       type: object
@@ -39297,6 +39353,89 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PosTenderLegResult"
+    PosSalePreviewInput:
+      type: object
+      description: "The read-only preview body: the sale's own facts without any tender, no replay key and no drawer. Every price is resolved server-side exactly as the ring resolves it for the same body."
+      required:
+        - branch_id
+        - customer_id
+        - lines
+      properties:
+        branch_id:
+          type: string
+          format: uuid
+        customer_id:
+          type: string
+          description: Empty resolves to the house walk-in
+        sale_type:
+          type: string
+          enum:
+            - COLLECT_NOW
+            - COLLECT_LATER
+            - DELIVERED
+            - COD
+        fulfilment:
+          type: string
+          enum:
+            - PICKUP
+            - WILL_CALL
+            - DELIVERY
+          description: COD only; other sale types carry fulfilment in sale_type
+        relief:
+          $ref: "#/components/schemas/PosReliefDecision"
+        lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/PosLineInput"
+    PosSalePreview:
+      type: object
+      description: "The preview answer: the ticket's own totals in integer cents, exactly as the ring computes them for the same body. A ticket that collects no tax shows no tax line and its total is its subtotal."
+      required:
+        - subtotal_cents
+        - tax_cents
+        - tax_lines
+        - total_cents
+        - tax_reason_code
+      properties:
+        subtotal_cents:
+          type: integer
+          format: int64
+        tax_cents:
+          type: integer
+          format: int64
+          description: The sum of the tax lines
+        tax_lines:
+          type: array
+          description: Empty when the ticket collects no tax
+          items:
+            $ref: "#/components/schemas/PosSalePreviewTaxLine"
+        total_cents:
+          type: integer
+          format: int64
+        tax_reason_code:
+          type: string
+          enum:
+            - STD_ON_HST_13
+            - ON_FN_POS_8
+            - FED_S87_VENDOR_DELIVERY
+            - MANUAL_TAX_REVIEW
+            - RELIEF_DECLINED_EVIDENCE
+    PosSalePreviewTaxLine:
+      type: object
+      description: One tax line the ring would bind for the body
+      required:
+        - reason_code
+        - rate_bps
+        - tax_cents
+      properties:
+        reason_code:
+          type: string
+        rate_bps:
+          type: integer
+          format: int32
+        tax_cents:
+          type: integer
+          format: int64
     PosSaleView:
       type: object
       description: The operator-reopen read; no evidence identifiers, no granular flow log

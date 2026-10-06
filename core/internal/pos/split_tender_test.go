@@ -74,6 +74,37 @@ func TestSale_SplitTender_SumMustEqualTotal(t *testing.T) {
 	}
 }
 
+// TestSale_SplitTender_SumRefusalIsAReadableProblemBody pins the refusal's
+// problem body (the row 985 item): the typed refusal carries the two
+// amounts as integer cents fields, and the sentence speaks dollars, never
+// cents. The handler writes the body from these fields (the stable word
+// split_total_mismatch beside them); the integration leg at Trenton reads
+// the served body end to end.
+func TestSale_SplitTender_SumRefusalIsAReadableProblemBody(t *testing.T) {
+	err := checkTenderSum([]TenderLeg{
+		{Seq: 1, Method: TenderCash, AmountCents: 10000},
+		{Seq: 2, Method: TenderCash, AmountCents: 16600},
+	}, 30058)
+	var sm ErrSplitTotalMismatch
+	if !errors.As(err, &sm) {
+		t.Fatalf("the sum refusal must be the typed mismatch, got %T (%v)", err, err)
+	}
+	if sm.TenderedCents != 26600 || sm.TotalCents != 30058 {
+		t.Fatalf("the refusal carries both amounts in cents: %+v", sm)
+	}
+	if got, want := splitMismatchMessage(sm.TenderedCents, sm.TotalCents),
+		"The tenders add up to $266.00, but the sale total is $300.58."; got != want {
+		t.Fatalf("the message is the dollar sentence:\n  got  %q\n  want %q", got, want)
+	}
+	if strings.Contains(splitMismatchMessage(sm.TenderedCents, sm.TotalCents), "cents") {
+		t.Fatal("no message ever prints cents")
+	}
+	// The thousands shape a bigger ticket takes.
+	if got, want := splitMismatchDollars(126600), "$1,266.00"; got != want {
+		t.Fatalf("a four-figure amount keeps its comma: got %q, want %q", got, want)
+	}
+}
+
 // TestSale_SplitTender_ExactSumCommits is the positive arm of the same guard: the boundary value
 // passes. Without it, a mutation that refuses EVERY split would still pass the test above.
 func TestSale_SplitTender_ExactSumCommits(t *testing.T) {
