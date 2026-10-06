@@ -196,7 +196,7 @@ func (s *Service) ListPayments(ctx context.Context, customerID string) ([]Paymen
 // Ordering (sec. 4.2): the amount and Run customer are derived server-side and never trusted
 // from the client; ONE Charge runs for the summed balance; on OutcomeApproved the payment
 // row + N allocations + N customer_transactions are written in one store.Pay transaction
-// (which re-validates balances FOR UPDATE); OutcomeDeclined maps to ErrDeclined; the
+// (which re-validates balances FOR NO KEY UPDATE); OutcomeDeclined maps to ErrDeclined; the
 // transient OutcomeRetry maps to ErrChargePending and persists nothing.
 //
 // Idempotency (DIB-415, and read the ORDER carefully, it is the whole guarantee): the key is
@@ -382,7 +382,7 @@ func (s *Service) pay(ctx context.Context, customerID string, req PayRequest, st
 	}
 
 	// Atomic settle: payment row + N allocations + N customer_transactions + balance recompute + the
-	// intent's SETTLED stamp, all in ONE transaction (invoices re-validated FOR UPDATE). The sync
+	// intent's SETTLED stamp, all in ONE transaction (invoices re-validated FOR NO KEY UPDATE). The sync
 	// stamps ride the same settle when the door carries them.
 	if stamps.RowID != "" || stamps.ClientKey != "" {
 		settler, ok := s.store.(stampedSettler)

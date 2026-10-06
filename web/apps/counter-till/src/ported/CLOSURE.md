@@ -2,6 +2,20 @@ DOC-ID: COUNTER-TILL-PORTED-CLOSURE-r1
 
 # The POS surface port: the closure map
 
+WHERE THE FILES LIVE NOW: the pieces the Quote Desk work area reuses (the
+scan box, the product grid, the product thumb, the flow steps, the customer
+picker, the workspace geometry, the icon registry and money format helpers,
+the demo way in, and the closed dependencies they cannot run without, the
+seam file ports.ts and the endpoint module pos-api.ts among them) moved into
+the shared package @hardscapehouse/pos-kit (web/packages/pos-kit), file
+names mirrored under its src/ported/, its README naming the move set and its
+own copies of the tree gates whose coverage moved with the files. The
+tables below name the files as they stood when the port closed; a name in
+the tables without a file in this directory is a kit file now, under the
+same name. This directory keeps the till only remainder (the sale ring's
+surface, tenders, receipts, parked tickets, the returns dialog, the lookup,
+the counter settings, the hotkeys and their rosters).
+
 WIRED (the second UI parity work item): the surface is mounted.
 
 Two rulings close reference entries in the mount (lead rulings 15 and 16):

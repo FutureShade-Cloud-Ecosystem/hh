@@ -504,7 +504,8 @@ func TestIntegration_DIB491_Setting_DefaultAndRoundTrip(t *testing.T) {
 	// The admin surface round-trips and audits.
 	svc, _, _ := intSvc(t, pool, time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC))
 	admin := identity.StaffContext{
-		UserID: seedUserID, Tier: identity.TierLeadership, Scope: identity.ScopeGlobal,
+		// CP0-5 answer A: the General Manager saves the acceptance settings.
+		UserID: seedUserID, RoleCode: "GENERAL_MANAGER", Tier: identity.TierLeadership, Scope: identity.ScopeGlobal,
 		Status: identity.StatusActive,
 	}
 	t.Cleanup(func() {

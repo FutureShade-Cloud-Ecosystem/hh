@@ -6477,6 +6477,8 @@ type QuoteSummary struct {
 	TaxCents      int64     `json:"tax_cents"`
 	TotalCents    int64     `json:"total_cents"`
 	UpdatedAt     time.Time `json:"updated_at"`
+	OwnerId       *string   `json:"owner_id,omitempty"`
+	OwnerName     *string   `json:"owner_name,omitempty"`
 }
 
 type QuoteSummaryPage struct {
@@ -6496,6 +6498,8 @@ type QuoteView struct {
 	Expired        bool            `json:"expired"`
 	EditableFields []string        `json:"editable_fields"`
 	CanConvert     bool            `json:"can_convert"`
+	OwnerId        *string         `json:"owner_id,omitempty"`
+	OwnerName      *string         `json:"owner_name,omitempty"`
 	Lines          []QuoteViewLine `json:"lines"`
 	SubtotalCents  int64           `json:"subtotal_cents"`
 	TaxCents       int64           `json:"tax_cents"`
@@ -6504,15 +6508,17 @@ type QuoteView struct {
 }
 
 type QuoteViewLine struct {
-	LineNo         int32  `json:"line_no"`
-	ProductId      string `json:"product_id"`
-	Description    string `json:"description"`
-	QtyEntered     string `json:"qty_entered"`
-	UomEntered     string `json:"uom_entered"`
-	QtyBase        string `json:"qty_base"`
-	UnitPriceCents int64  `json:"unit_price_cents"`
-	PriceUom       string `json:"price_uom"`
-	LineTotalCents int64  `json:"line_total_cents"`
+	LineNo              int32   `json:"line_no"`
+	ProductId           string  `json:"product_id"`
+	Description         string  `json:"description"`
+	QtyEntered          string  `json:"qty_entered"`
+	UomEntered          string  `json:"uom_entered"`
+	QtyBase             string  `json:"qty_base"`
+	UnitPriceCents      int64   `json:"unit_price_cents"`
+	PriceUom            string  `json:"price_uom"`
+	LineTotalCents      int64   `json:"line_total_cents"`
+	RulePriceBelowFloor *bool   `json:"rule_price_below_floor,omitempty"`
+	FloorClearedBy      *string `json:"floor_cleared_by,omitempty"`
 }
 
 type QuoteCreateRequest struct {
@@ -6879,7 +6885,7 @@ type QuoteBranchStock struct {
 	InTransitBase float64 `json:"in_transit_base"`
 	AvailableBase float64 `json:"available_base"`
 	SoftHeldBase  float64 `json:"soft_held_base"`
-	AvgCostCents  int64   `json:"avg_cost_cents"`
+	AvgCostCents  *int64  `json:"avg_cost_cents,omitempty"`
 }
 
 type QuoteBranchStockList struct {
@@ -7012,6 +7018,33 @@ type QuoteAssistScopeRuleList struct {
 
 type QuoteAssistScopeRulePatch struct {
 	Enabled bool `json:"enabled"`
+}
+
+type QuoteFloorApprovalRequest struct {
+	DiscPct int32   `json:"disc_pct"`
+	Note    *string `json:"note,omitempty"`
+}
+
+type QuoteFloorRequestState struct {
+	Id      string `json:"id"`
+	Status  string `json:"status"`
+	LineNo  int32  `json:"line_no"`
+	DiscPct int32  `json:"disc_pct"`
+}
+
+type QuoteFloorApprovalAnswer struct {
+	Filed          bool                    `json:"filed"`
+	MayClearItself bool                    `json:"may_clear_itself"`
+	Request        *QuoteFloorRequestState `json:"request,omitempty"`
+}
+
+type QuoteFloorRefusal struct {
+	Policy          string                  `json:"policy"`
+	ApproverRoles   []string                `json:"approver_roles"`
+	ManagerMaySet   bool                    `json:"manager_may_set"`
+	ExistingRequest *QuoteFloorRequestState `json:"existing_request,omitempty"`
+	MarginBps       *int64                  `json:"margin_bps,omitempty"`
+	FloorBps        *int64                  `json:"floor_bps,omitempty"`
 }
 
 type ReportingColumn struct {

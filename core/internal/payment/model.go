@@ -52,7 +52,37 @@ type Processor interface {
 	// the SEAM only: RunPaymentsStub + RunPaymentsClient return (RefundResult{}, ErrNotImplemented).
 	// The real impl is W5/A-05 (NSF/reversals), additive, no interface or migration change needed.
 	Refund(ctx context.Context, creds map[string]string, merchantID string, processorRef string, amountCents int64) (RefundResult, error)
+	// Void reverses a prior full-amount capture with action "void" on the void-or-refund endpoint. It is
+	// shaped like Refund (same arguments, same result type, the per-dispatch key in creds["__idem"]) and
+	// is the card charge compensation's first move; the compensation falls back to Refund when a void is
+	// declined. The principal co-signed this addition (decision log row 817).
+	Void(ctx context.Context, creds map[string]string, merchantID string, processorRef string, amountCents int64) (RefundResult, error)
 }
+
+// ErrProcessorOutcomeUnknown marks a processor call whose outcome cannot be told: the money may or may not
+// have moved. A transport error, the deadline, a 5xx, a non-401 4xx, an unreadable body, result B and any
+// unrecognised result wrap it. Callers must never charge again on it, only hold the attempt for a person
+// (additive; no signature changed).
+var ErrProcessorOutcomeUnknown = errors.New("payment: processor outcome unknown")
+
+// ErrProcessorDeclined marks a processor's explicit decline (Run result C): no money moved.
+var ErrProcessorDeclined = errors.New("payment: processor declined")
+
+// DeclineError is a processor's decline with its response code and text. It reads as ErrProcessorDeclined
+// under errors.Is, and the Service reads the code from it with errors.As.
+type DeclineError struct{ RespCode, RespText string }
+
+func (e *DeclineError) Error() string {
+	return ErrProcessorDeclined.Error() + " (" + e.RespCode + "): " + e.RespText
+}
+
+// Is makes a DeclineError match the ErrProcessorDeclined sentinel.
+func (e *DeclineError) Is(target error) bool { return target == ErrProcessorDeclined }
+
+// ErrProcessorNotDispatched marks a failure before the processor could have acted on the request (a
+// missing credential, merchant id or host, or a refused key refresh): no money moved and a retry after the
+// cause is fixed is safe.
+var ErrProcessorNotDispatched = errors.New("payment: processor request not dispatched")
 
 // -- the till-facing service shapes (NOT the raw Processor, the vault stays inside) --
 

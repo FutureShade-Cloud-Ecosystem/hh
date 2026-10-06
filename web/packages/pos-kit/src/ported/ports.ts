@@ -26,7 +26,7 @@
 //      plausible answer. An honest refusal beats a quiet zero at a counter.
 
 import { centsAmount } from "./_money-format.js";
-import { DEMO_CARD_TOKEN, HOUSE_ZONE, houseDayInZone } from "../till-client.js";
+import { DEMO_CARD_TOKEN, HOUSE_ZONE, houseDayInZone } from "./host-facts.js";
 
 /**
  * The port seam every unwired host call raises. The message names the seam so
@@ -161,7 +161,7 @@ export function getSessionToken(): string {
 // The demo card token: the fixed demo token this app sends on a card tender.
 // The reference carried its own simulator's token spelling; the host rewrites
 // any card token the ported surface sends onto the app's own constant, so the
-// wire carries the one token the reviewed rule pins (till-client.ts names it).
+// wire carries the one token the reviewed rule pins (host-facts.ts names it: the constant moved here from the app's till-client.ts with this package).
 // DEMO ONLY, DELIBERATELY: this whole app is the demo's till (the served
 // phrase gate holds the demo box), and the rewrite below is part of that
 // demo's wiring. The day a real rail serves this surface, this rewrite is

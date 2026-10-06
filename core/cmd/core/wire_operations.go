@@ -34,6 +34,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/messaging"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/messagingprovider"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/planflow"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
@@ -444,6 +445,13 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		WithAudit(auditSvc).
 		WithLogger(log).
 		WithSLANotifier(unionSLANotifier{svc: messagingSvc, log: log})
+
+	// The card attempt sweep's alerter (the card charge design section 4, packet C): the sweep
+	// posts its operator items to the escalations channel through THIS binding, set ONCE at
+	// process start beside the warranty sweep's own post, never per call. The attempt row stays
+	// the system of record; the post is visibility.
+	payment.AlertFunc = cardAttemptEscalations{svc: messagingSvc}.post
+
 	warranty.NewHandler(warrantySvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 	warrantyW5Handler := warranty.NewHandler(warrantySvc, log).WithUserLinker(link)
 	warrantyW5Handler.RegisterW5Routes(r, g)
@@ -592,15 +600,25 @@ func (a invcountGLPoster) PostJournal(ctx context.Context, in invcount.GLJournal
 }
 
 // landedGLPoster satisfies landedcost.GLPoster over glSvc.PostExternal
-// (the capitalization / retro-split journal).
+// (the capitalization / retro-split journal) and glSvc.PostExternalTx
+// (the Void reversing journal through the void's own transaction).
 type landedGLPoster struct{ svc *gl.Service }
 
-func (a landedGLPoster) PostJournal(ctx context.Context, in landedcost.GLJournal) (string, error) {
-	lines := make([]gl.ExternalLine, len(in.Lines))
-	for i, l := range in.Lines {
+func landedGLExtLines(in []landedcost.GLLine) []gl.ExternalLine {
+	lines := make([]gl.ExternalLine, len(in))
+	for i, l := range in {
 		lines[i] = gl.ExternalLine{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo}
 	}
-	return a.svc.PostExternal(ctx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, Lines: lines})
+	return lines
+}
+
+func (a landedGLPoster) PostJournal(ctx context.Context, in landedcost.GLJournal) (string, error) {
+	return a.svc.PostExternal(ctx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, Lines: landedGLExtLines(in.Lines)})
+}
+
+// PostJournalTx is PostJournal through the caller's transaction (gl.Service.PostExternalTx).
+func (a landedGLPoster) PostJournalTx(ctx context.Context, tx pgx.Tx, in landedcost.GLJournal) (string, error) {
+	return a.svc.PostExternalTx(ctx, tx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, Lines: landedGLExtLines(in.Lines)})
 }
 
 // warrantyGLPoster satisfies warranty.GLPoster over glSvc.PostExternal
@@ -1048,7 +1066,11 @@ func (a taskOrderAdvanceAdapter) AdvanceOrder(ctx context.Context, orderID, targ
 type invCountAdapter struct{ svc *inventory.Service }
 
 func (a invCountAdapter) SnapshotOnHand(ctx context.Context, branchID string) ([]invcount.Snapshot, error) {
-	snaps, err := a.svc.SnapshotOnHand(ctx, branchID)
+	return a.SnapshotOnHandTx(ctx, nil, branchID)
+}
+
+func (a invCountAdapter) SnapshotOnHandTx(ctx context.Context, tx pgx.Tx, branchID string) ([]invcount.Snapshot, error) {
+	snaps, err := a.svc.SnapshotOnHandTx(ctx, tx, branchID)
 	if err != nil {
 		return nil, err
 	}
@@ -1060,7 +1082,11 @@ func (a invCountAdapter) SnapshotOnHand(ctx context.Context, branchID string) ([
 }
 
 func (a invCountAdapter) WeightedAvgCostCents(ctx context.Context, productID, branchID string) (int64, error) {
-	return a.svc.WeightedAvgCostCents(ctx, productID, branchID)
+	return a.WeightedAvgCostCentsTx(ctx, nil, productID, branchID)
+}
+
+func (a invCountAdapter) WeightedAvgCostCentsTx(ctx context.Context, tx pgx.Tx, productID, branchID string) (int64, error) {
+	return a.svc.WeightedAvgCostCentsTx(ctx, tx, productID, branchID)
 }
 
 func (a invCountAdapter) PostCountAdjustmentTx(ctx context.Context, tx pgx.Tx, productID, locationID, branchID string, qtyDelta float64, unitCostCents int64, reason string) (string, error) {
@@ -1253,6 +1279,18 @@ func (a w4cGLPoster) PostJournal(ctx context.Context, in purchasing.GLJournal) (
 	})
 }
 
+// PostJournalTx is PostJournal through the caller's transaction (gl.Service.PostExternalTx).
+func (a w4cGLPoster) PostJournalTx(ctx context.Context, tx pgx.Tx, in purchasing.GLJournal) (string, error) {
+	lines := make([]gl.ExternalLine, len(in.Lines))
+	for i, l := range in.Lines {
+		lines[i] = gl.ExternalLine{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo}
+	}
+	return a.svc.PostExternalTx(ctx, tx, gl.ExternalJournal{
+		Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey,
+		Memo: in.Memo, BranchID: in.BranchID, Lines: lines,
+	})
+}
+
 // unionPOCreator adapts inventory's POCreator seam onto purchasing's
 // CreatePO; the caller's context carries the staff identity, so
 // purchasing's own branch fence applies.
@@ -1326,6 +1364,19 @@ func (u unionSLANotifier) NotifySLABreach(ctx context.Context, in warranty.SLABr
 	}
 	_, _, err := u.svc.PostEventToChannelSlug(ctx, "escalations", "warranty-sla:"+in.AlertID, body,
 		messaging.EventRef{Topic: in.Topic, Entity: "warranty_claim:" + in.ClaimID, Summary: body}, false)
+	return err
+}
+
+// cardAttemptEscalations is the card attempt sweep's alerter over messaging's escalations
+// channel, the unionSLANotifier precedent (the card charge design section 4): it is what
+// payment.AlertFunc is bound to, once at process start, and its signature is the seam's. The
+// event key arrives already shaped card-attempt:<id>:<status>, so one state of one attempt
+// posts once; the body is the sweep's money facts, never a token or a customer name.
+type cardAttemptEscalations struct{ svc *messaging.Service }
+
+func (a cardAttemptEscalations) post(ctx context.Context, key, body string) error {
+	_, _, err := a.svc.PostEventToChannelSlug(ctx, "escalations", key, body,
+		messaging.EventRef{Topic: "payment.card_attempt", Entity: key, Summary: body}, false)
 	return err
 }
 

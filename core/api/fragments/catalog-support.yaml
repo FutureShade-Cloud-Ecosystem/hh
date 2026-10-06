@@ -542,7 +542,7 @@ paths:
         answers an empty list, never an error.
       x-role: requireStaff
       x-access:
-        surfaces: [counter-till]
+        surfaces: [counter-till, quote-desk]
         level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -580,7 +580,7 @@ paths:
         is a 404, not an empty search result.
       x-role: requireStaff
       x-access:
-        surfaces: [counter-till]
+        surfaces: [counter-till, quote-desk]
         level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"

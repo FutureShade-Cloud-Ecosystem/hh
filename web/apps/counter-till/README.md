@@ -6,8 +6,14 @@ demo adapter behind the auth package's `AccountSurface` seam, the api-client
 sending `X-Org: hh-demo`), a chrome with the Demo banner, the role's name, a
 Pop out control and sign out, and then the ported POS terminal as the till:
 the surface carried over from the older product and wired to HH's contract
-(`src/ported/`, its seams implemented in `src/ported/ports.ts`, the closure
-map in `src/ported/CLOSURE.md`). The terminal works in both its modes: the
+(the closure map in `src/ported/CLOSURE.md`). The pieces the Quote Desk work
+area reuses, with the seam file (`ports.ts`) and the endpoint module
+(`pos-api.ts`) they cannot run without, moved into the shared package
+`@hardscapehouse/pos-kit` (web/packages/pos-kit); this app imports them from
+there by deep path, and this directory keeps the till only remainder. The
+house zone, the house day conversion and the demo card token moved with them
+(`host-facts.ts`) and `src/till-client.ts` re-exports the same three
+names. The terminal works in both its modes: the
 linear flow (the Customer, Items, Payment and Summary accordion) and the
 detached multi-card layout (the counter view menu's layout pick, persisted on
 the workspace row, with the pop-out opening the same till on a second window

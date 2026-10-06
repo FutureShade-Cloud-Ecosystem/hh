@@ -211,7 +211,17 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { $ref: "#/components/responses/Conflict" }
+        "409":
+          description: >-
+            The typed floor refusal when the write would put the line below
+            the margin floor and the caller holds no clearing and no
+            approved request, or the frozen status refusal
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/QuoteFloorRefusal"
+                  - $ref: "#/components/schemas/Error"
     delete:
       operationId: quoteRemoveQuoteLine
       tags: [staff-quote]
@@ -356,6 +366,59 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/quotes/{id}/lines/{lineNo}/floor-approval:
+    post:
+      operationId: quoteRequestFloorApproval
+      tags: [staff-quote]
+      summary: File an approval request for a quote line discount below the margin floor
+      description: >-
+        For a line the caller may edit whose asked discount lands below the
+        margin floor, files one approval request bound to that quote, that
+        line and that discount. The server builds the subject and the
+        detail from its own figures; the caller supplies neither. A caller
+        who may clear the floor itself is told so and no request is filed.
+        A line not below the floor is a 409: nothing to approve.
+      x-addition: "the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route"
+      x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema: { type: string }
+        - name: lineNo
+          in: path
+          required: true
+          description: The quote line number, a positive integer
+          schema: { type: integer, format: int32, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteFloorApprovalRequest"
+      responses:
+        "201":
+          description: The filed request's state, or the word that the caller may clear the floor itself
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteFloorApprovalAnswer"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The asked discount does not land below the floor, nothing to approve
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /api/v1/quotes/{id}/related-documents:
     get:
       operationId: quoteQuoteRelatedDocuments
@@ -445,14 +508,23 @@ paths:
       tags: [staff-quote]
       summary: Flip the dealer's multi-acceptance switch
       description: >-
-        Admin-gated in the service (Tier-1 global), audited in both
-        directions. allow_multi_accept is required: a body that omits it is
-        refused rather than read as false, because this one field decides
-        whether a duplicate order can be minted.
+        The switch is dealer wide, so CP0-5 answer A gives the write to the
+        General Manager alone: the rule runs in the service, in words, and
+        any other caller is refused with 403 naming the role. The gate
+        sits at read so the General Manager (Read on the Quote Desk)
+        reaches the service. Every flip is audited in both directions.
+        allow_multi_accept is required: a body that omits it is refused
+        rather than read as false, because this one field decides whether
+        a duplicate order can be minted.
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk]
-        level: manage
+        level: read
+        reason: >-
+          The dealer wide switch is the General Manager's alone under
+          CP0-5 answer A, and that rule runs in the service in words; the
+          gate must let the General Manager (Read on the Quote Desk)
+          through to it.
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -507,14 +579,24 @@ paths:
       tags: [staff-quote]
       summary: Write the dealer or branch quote-builder policy
       description: >-
-        Admin-gated in the service (Tier-1 global), exactly like the
-        acceptance settings. Out-of-bounds knobs are refused in words with 422
-        before any database CHECK can fire; the 422 body is the shared Error
-        envelope.
+        The CP0-5 answer A rule runs in the service, in words: a caller
+        holding Manage on the Quote Desk writes a branch row it reaches
+        (the Sales manager under the decided default), and the General
+        Manager alone writes the NULL dealer default row; any other caller
+        is refused with 403 naming the role. The gate therefore sits at
+        read, so both named roles reach the service (the General Manager
+        holds Read on the Quote Desk). Out-of-bounds knobs are refused in
+        words with 422 before any database CHECK can fire; the 422 body is
+        the shared Error envelope.
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk]
-        level: manage
+        level: read
+        reason: >-
+          The CP0-5 answer A rule runs in the service in words (Manage
+          writes a branch row it reaches, the General Manager the dealer
+          default), so the gate must let both named roles through; the
+          General Manager holds Read on the Quote Desk.
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -774,6 +856,26 @@ paths:
         the quote row lock. A 409 names why the quote is not awaiting
         acceptance, including the order a first acceptance became when
         multi-accept is off.
+        An optional Idempotency-Key header (a UUID) makes a retry safe: a
+        request that timed out at the client may still have committed, so
+        every retry of one acceptance carries the same key. A repeat under
+        the same key, on the same quote and share link, answers the first
+        outcome with the same confirmation, writes nothing, and does so
+        whatever the quote's status is by then, multi-accept on or off. The
+        same key with a different typed name is a 409 on a live link and a
+        410 on a dead one. A retry through a
+        link that was revoked or has expired since the first attempt still
+        answers that first outcome with a 200 when the acceptance under the
+        key is found for that link, and is a 410 when none is found. The
+        lookup waits for an attempt still in flight, and an attempt whose link
+        died before it took the quote lock is refused with the same 410, so a
+        keyed 410 is never followed by a commit under that key: no acceptance
+        exists under this key for this link at that moment and none is
+        recorded under it afterwards. Otherwise the answer is the one a live
+        link gives (a 400 when accepted is false or absent, a 500 when the
+        lookup fails) except that an empty or over long typed name is a 410 on
+        a dead link. A malformed
+        key is a 400. Without the header the acceptance behaves as it always has.
       x-role: public
       security: []
       parameters:
@@ -782,6 +884,13 @@ paths:
           required: true
           description: The share-link token; it is the credential
           schema: { type: string }
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: >-
+            A UUID chosen once per acceptance and resent unchanged on every
+            retry of it. Scoped to the quote and the share link.
+          schema: { type: string, format: uuid }
       requestBody:
         required: true
         content:
@@ -1266,6 +1375,13 @@ components:
         tax_cents: { type: integer, format: int64 }
         total_cents: { type: integer, format: int64 }
         updated_at: { type: string, format: date-time }
+        owner_id:
+          type: string
+          format: uuid
+          description: The quote's owner (the salesperson when one is set, else the creator)
+        owner_name:
+          type: string
+          description: The owner's display name; absent when unknown
     QuoteSummaryPage:
       type: object
       description: >-
@@ -1310,6 +1426,15 @@ components:
         can_convert:
           type: boolean
           description: Whether this caller may convert this quote to an order right now
+        owner_id:
+          type: string
+          format: uuid
+          description: >-
+            The quote's owner (the salesperson when one is set, else the
+            creator); absent when neither is stamped
+        owner_name:
+          type: string
+          description: The owner's display name; absent when unknown
         lines:
           type: array
           items: { $ref: "#/components/schemas/QuoteViewLine" }
@@ -1341,6 +1466,18 @@ components:
         unit_price_cents: { type: integer, format: int64 }
         price_uom: { type: string }
         line_total_cents: { type: integer, format: int64 }
+        rule_price_below_floor:
+          type: boolean
+          description: >-
+            For callers on the cost and margin list: the line's rule price
+            itself sits below the margin floor. Absent for every other
+            caller and when the floor could not be evaluated.
+        floor_cleared_by:
+          type: string
+          description: >-
+            Who cleared a below floor price on this line (the clearing
+            stamped when the price went through); absent when the line was
+            never cleared
     QuoteCreateRequest:
       type: object
       description: >-
@@ -2092,7 +2229,10 @@ components:
       description: >-
         The four-bucket view of one product at one branch. The staff quote
         resource is the canonical dealer_quote (DECISIONS.md D8).
-      required: [product_id, branch_id, branch_code, branch_name, on_hand_base, reserved_base, in_transit_base, available_base, soft_held_base, avg_cost_cents]
+        avg_cost_cents is gated by the dealer's cost_visibility list: it is
+        present for callers on the list and absent otherwise, never zero,
+        never null.
+      required: [product_id, branch_id, branch_code, branch_name, on_hand_base, reserved_base, in_transit_base, available_base, soft_held_base]
       properties:
         product_id: { type: string, format: uuid }
         branch_id: { type: string, format: uuid }
@@ -2105,7 +2245,10 @@ components:
         soft_held_base:
           type: number
           description: Carried and rendered even though it does not gate, because soft interest is worth seeing
-        avg_cost_cents: { type: integer, format: int64 }
+        avg_cost_cents:
+          type: integer
+          format: int64
+          description: Present only for callers the cost_visibility list allows, absent otherwise
     QuoteBranchStockList:
       type: object
       description: >-
@@ -2390,3 +2533,72 @@ components:
       required: [enabled]
       properties:
         enabled: { type: boolean }
+    QuoteFloorApprovalRequest:
+      type: object
+      description: >-
+        The request door's body (the discount asked for and a bounded free
+        text note). The subject and the detail are the server's own, built
+        from its figures.
+      required: [disc_pct]
+      properties:
+        disc_pct:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 100
+          description: The discount percent asked for
+        note:
+          type: string
+          maxLength: 500
+          description: A bounded free text note riding the request
+    QuoteFloorRequestState:
+      type: object
+      description: One filed floor request's state
+      required: [id, status, line_no, disc_pct]
+      properties:
+        id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [PENDING, APPROVED, REJECTED]
+        line_no: { type: integer, format: int32 }
+        disc_pct: { type: integer, format: int32 }
+    QuoteFloorApprovalAnswer:
+      type: object
+      description: >-
+        The request door's answer: the filed (or already standing) request's
+        state, or the word that the caller may clear the floor itself and no
+        request was filed.
+      required: [filed, may_clear_itself]
+      properties:
+        filed: { type: boolean }
+        may_clear_itself: { type: boolean }
+        request:
+          $ref: "#/components/schemas/QuoteFloorRequestState"
+    QuoteFloorRefusal:
+      type: object
+      description: >-
+        The typed 409 a below floor write answers: the policy, who may
+        approve, whether a manager of the branch may set it, the caller's
+        pending or approved request if any, and the margin and floor
+        figures for callers on the cost and margin list only.
+      required: [policy, approver_roles, manager_may_set]
+      properties:
+        policy: { type: string }
+        approver_roles:
+          type: array
+          description: The roles who may approve, the branch's Sales manager among them
+          items: { type: string }
+        manager_may_set:
+          type: boolean
+          description: Whether a manager of the branch may set the price itself
+        existing_request:
+          $ref: "#/components/schemas/QuoteFloorRequestState"
+        margin_bps:
+          type: integer
+          format: int64
+          description: The margin at the asked discount; present for cost list callers only
+        floor_bps:
+          type: integer
+          format: int64
+          description: The margin floor; present for cost list callers only
+      x-error: { status: 409 }

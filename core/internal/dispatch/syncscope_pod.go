@@ -164,6 +164,21 @@ func (s *PODSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key 
 
 // Load reads one POD record by id under the org predicate.
 func (s *PODSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
+	return s.load(ctx, s.pool, f, id)
+}
+
+// podQuerier is the read surface a pool and a transaction share, so one
+// loader body serves the public Load (the pool) and the callers that
+// already hold a transaction (their own connection).
+type podQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// load is Load over a querier. A caller inside a transaction passes the
+// transaction, so the read rides the connection it already holds instead
+// of asking the shared pool for a second one (connection starvation by
+// second acquisition when pool-size callers do this together).
+func (s *PODSyncStore) load(ctx context.Context, db podQuerier, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
 	where, args, ok := podScopePredicate(f)
 	if !ok || !looksLikeUUID(id) {
 		return sync.RowState{}, false, nil
@@ -171,7 +186,7 @@ func (s *PODSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) 
 	q := podSyncQuery + `
 		WHERE p.id = $2::uuid AND ` + where
 	args = append(args, id)
-	r, err := scanSyncPod(s.pool.QueryRow(ctx, q, args...))
+	r, err := scanSyncPod(db.QueryRow(ctx, q, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, false, nil
 	}
@@ -286,7 +301,7 @@ func (s *PODSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key strin
 		id, stopID, branchID, strings.ToLower(strings.TrimSpace(contentType)), len(data), data,
 		strings.TrimSpace(caption), actor, seq, key).Scan(&rowID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		if _, own, _ := s.Load(ctx, f, id); own {
+		if _, own, _ := s.load(ctx, tx, f, id); own {
 			return sync.RowState{}, sync.ErrRowExists
 		}
 		return sync.RowState{}, sync.ErrRowNotFound
