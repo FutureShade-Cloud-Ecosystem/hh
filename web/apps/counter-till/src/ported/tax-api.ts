@@ -3,14 +3,13 @@
 // W6 M5 Tax Engine client helpers. Thin typed wrappers over the staff API (Bearer JWT via api()). All money is
 // integer cents; fmtCents is the single money renderer. Card identifiers are MASKED-only: the raw number never
 // exists on this surface (the backend never serializes it).
+import { formatDollars } from '@hardscapehouse/pos-kit/src/ported/_money-format.js';
 import { api, BRANCHES, branchName } from '@hardscapehouse/pos-kit/src/ported/ports.js';
 
 export { BRANCHES, branchName };
 
 export function fmtCents(cents: number): string {
-  const sign = cents < 0 ? '-' : '';
-  const abs = Math.abs(cents);
-  return `${sign}$${(abs / 100).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return formatDollars(cents);
 }
 
 export function fmtBps(bps: number): string {

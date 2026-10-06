@@ -116,6 +116,39 @@ export class CounterTillApp extends HHElement {
         height: 100dvh;
         box-sizing: border-box;
       }
+      .surface[data-hidden="true"] {
+        display: none !important;
+      }
+      /* Returns is its own screen: it takes what the bar leaves and scrolls inside itself. */
+      .till-screen > .returns {
+        flex: 1 1 0;
+        min-height: 0;
+        overflow-y: auto;
+        margin-top: 0;
+        padding-top: var(--hh-s-16);
+      }
+      /* The Returns link wears the bar's button face (an anchor takes none of the button rules). */
+      .nav-link {
+        display: inline-flex;
+        align-items: center;
+        text-decoration: none;
+        font-family: inherit;
+        font-size: 11px;
+        line-height: normal;
+        padding: 7px 12px;
+        border: 1px solid var(--hh-control-line);
+        border-radius: var(--hh-radius-control);
+        color: var(--hh-text-dim);
+        background: transparent;
+      }
+      .nav-link:hover {
+        border-color: var(--hh-accent-text);
+        color: var(--hh-accent-text);
+      }
+      .nav-link:focus-visible {
+        outline: 2px solid var(--hh-focus-ring);
+        outline-offset: 2px;
+      }
       .till-screen > .surfacebar {
         flex: none;
       }
@@ -203,7 +236,7 @@ export class CounterTillApp extends HHElement {
       }
       header .brand-product,
       .surfacebar .brand-product {
-        font-size: 15px;
+        font-size: 16px;
         font-weight: 700;
         letter-spacing: -0.02em;
         line-height: 1.05;
@@ -339,6 +372,20 @@ export class CounterTillApp extends HHElement {
    * multi-card layout, the terminal's own choice to switch).
    */
   #surface: "entry" | "terminal" = "entry";
+  /**
+   * Row 955: which surface of the till is up. The sale is the till; Returns is its own surface at
+   * `#/returns`, reached by the Returns link in the bar (a plain anchor: no script writes the
+   * address). The sale stays mounted while Returns is up, so a ticket in progress is never lost.
+   */
+  #route: "sale" | "returns" = "sale";
+  readonly #onHashChange = (): void => {
+    this.#route = this.#readRoute();
+    this.requestUpdate();
+  };
+
+  #readRoute(): "sale" | "returns" {
+    return new URL(window.location.href).hash.startsWith("#/returns") ? "returns" : "sale";
+  }
   /** A refusal in words for the chrome while the terminal is mounted (the pop-out's, say). */
   #chromeMessage: string | null = null;
 
@@ -440,12 +487,17 @@ export class CounterTillApp extends HHElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    this.#route = this.#readRoute();
+    window.addEventListener("hashchange", this.#onHashChange);
     // The kits' wiring rule, carried for this app's own templates: listen on
     // the HOST and read the control off composedPath(), never @click in a
     // template and never event.target.closest, because the shadow boundary
     // retargets the target to this element (the design system's README holds
     // both halves). Click is composed, so the host hears it.
     this.addEventListener("click", this.#onHostClick);
+    // The terminal reports which layout it is in (composed, so the host hears it): the design
+    // system's position gate allows no @ binding here, so the listener lives in code.
+    this.addEventListener("pos-counter-layout", this.#onCounterLayout as EventListener);
     // The returns desk's fields ride the same host delegation: one input
     // listener on the host, the control read off composedPath() by its
     // data-field name, so a re-render strands no listener. The inputs are
@@ -528,7 +580,9 @@ export class CounterTillApp extends HHElement {
 
   disconnectedCallback(): void {
     this.removeEventListener("click", this.#onHostClick);
+    this.removeEventListener("pos-counter-layout", this.#onCounterLayout as EventListener);
     this.removeEventListener("input", this.#onHostInput);
+    window.removeEventListener("hashchange", this.#onHashChange);
     this.#theme.stop();
     super.disconnectedCallback();
   }
@@ -554,6 +608,11 @@ export class CounterTillApp extends HHElement {
       this.#returns.setRestock(control.checked);
     }
     if (field === "reason-code") this.#returns.setReasonCode(control.value);
+  };
+
+  readonly #onCounterLayout = (event: CustomEvent<{ layout: string }>): void => {
+    this.#counterLayout = event.detail.layout;
+    this.requestUpdate();
   };
 
   /** The feedback widget's sender; built once beside the staff client. */
@@ -859,7 +918,10 @@ export class CounterTillApp extends HHElement {
                 ${demoPresent ? demoBanner() : nothing}
                 <p class="signed-in">
                   <span class="role-name" data-testid="signed-in-role">${this.#signedInRoleLabel()}</span>
-                  ${this.#swapControl()}
+                  ${this.#route === "returns"
+                    ? html`<a class="btn-secondary nav-link" href="#/" data-testid="till-sale-entry">Back to the sale</a>`
+                    : html`<a class="btn-secondary nav-link" href="#/returns" data-testid="till-returns-entry">Returns</a>`}
+                  ${this.#route === "sale" ? this.#swapControl() : nothing}
                   ${this.#themeControl()}
                   <button
                     type="button"
@@ -875,18 +937,15 @@ export class CounterTillApp extends HHElement {
                   </button>
                 </p>
               </div>
-              <div class="surface">
+              <div class="surface" data-hidden="${this.#route === "returns" ? "true" : "false"}">
                 <hos-pos-terminal
-                  .panesSwapped=${this.#panesSwapped}
-                  @pos-counter-layout=${(e: CustomEvent<{ layout: string }>) => {
-                    this.#counterLayout = e.detail.layout;
-                    this.requestUpdate();
-                  }}
+                  data-paused="${this.#route === "returns" ? "true" : "false"}"
+                  data-panes-swapped="${this.#panesSwapped ? "true" : "false"}"
                 ></hos-pos-terminal>
               </div>
+              ${this.#route === "returns" ? renderReturns(this.#returns) : nothing}
               </div>
               ${this.#chromeMessage === null ? nothing : html`<p class="notice" role="status">${this.#chromeMessage}</p>`}
-              ${renderReturns(this.#returns)}
             `
           : renderEntry({ flows: this.#flowsState, busy: this.#busy, message: this.#message })}
       </main>

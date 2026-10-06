@@ -61,11 +61,44 @@ var scrubRenames = []scrubRename{
 	{"c5700000-0000-4000-9000-000000000007", "WTY-HOMEOWNER", "Scrubbed Party 0005", "S. Marchand (demo homeowner)"},
 }
 
+// scrubTextRename is one migration-planted persona-facing text value (a role title, the title of
+// a seeded conversation, the body of a seeded message) carrying a Scrubname token, addressed by
+// the table, the fixed id of the row, and the exact literal the migration writes.
+type scrubTextRename struct {
+	table, column, id, fromText, toText string
+	// stamped says the table has an updated_at to move; messages do not, and their edited_at
+	// would paint an edited mark on a message nobody edited.
+	stamped bool
+}
+
+// scrubTextRenames, every such value a demo screen shows. The role titles are what the feedback
+// note's sender line prints beside the persona's display name ("Sales (demo) (Inside Sales)"),
+// so they are job titles, not people. The conversation is the seeded DM between the two demo
+// accounts the populate names "Platform admin (demo)" and "Demo teammate (demo)", and its one
+// message addresses the second. Table and column come from this fixed list only, never from
+// input; the ids are the rows' own and the WHERE names the literal, so a second run matches
+// nothing and a hand-edited row is left alone.
+var scrubTextRenames = []scrubTextRename{
+	{"roles", "name", "e7000000-0000-4000-9000-000000000001", "Scrubname0012 Scrubname0019", "General Manager", true},
+	{"roles", "name", "e7000000-0000-4000-9000-000000000002", "Scrubname0010 Scrubname0007", "Financial Controller", true},
+	{"roles", "name", "e7000000-0000-4000-9000-000000000004", "Branch Scrubname0019", "Branch Manager", true},
+	{"roles", "name", "e7000000-0000-4000-9000-000000000005", "Procurement Scrubname0019", "Procurement Manager", true},
+	{"roles", "name", "e7000000-0000-4000-9000-000000000006", "Scrubname0027 Scrubname0019", "Sales Manager", true},
+	{"roles", "name", "e7000000-0000-4000-9000-000000000007", "Yard Scrubname0019", "Yard Manager", true},
+	{"roles", "name", "e7000000-0000-4000-9000-000000000008", "Logistics Scrubname0019", "Logistics Manager", true},
+	{"roles", "name", "e7000000-0000-4000-9000-000000000010", "Scrubname0014 Scrubname0027", "Inside Sales", true},
+	{"roles", "name", "e7000000-0000-4000-9000-000000000011", "Outside Scrubname0027", "Outside Sales", true},
+	{"msg_channels", "name", "a6000000-0000-4000-9000-0000000000d1", "Scrubname0005, Scrubname0008 Reyes", "Platform admin (demo), Demo teammate (demo)", true},
+	{"msg_messages", "body", "b6000000-0000-4000-9000-0000000000d1",
+		"Hey Scrubname0008 \u2014 sending you the Techo-Bloc restock ETA once the yard confirms.",
+		"Hey Demo teammate, sending you the Techo-Bloc restock ETA once the yard confirms.", false},
+}
+
 // scrubNamesPlan prints the plan's one-line account of the rename pass: how many
 // migration-planted demo customers -apply renames off their scrub placeholders. The
 // default build's side of the pair prints nothing, because that build carries no rename.
 func scrubNamesPlan(out *os.File) {
-	fmt.Fprintf(out, "  scrub names    %d migration-planted demo customers renamed off their placeholders with -apply\n", len(scrubRenames))
+	fmt.Fprintf(out, "  scrub names    %d migration-planted demo customers and %d role titles, conversation titles and messages renamed off their placeholders with -apply\n", len(scrubRenames), len(scrubTextRenames))
 }
 
 // renameScrubbedDemoCustomers renames the migration-planted demo customers inside the apply
@@ -79,6 +112,18 @@ func renameScrubbedDemoCustomers(ctx context.Context, tx txExec, now time.Time) 
 			r.toName, now, r.id, r.fromName)
 		if err != nil {
 			return renamed, fmt.Errorf("demoseed: renaming %s (%s) off its scrub placeholder: %w", r.account, r.id, err)
+		}
+		renamed += int(tag.RowsAffected())
+	}
+	for _, r := range scrubTextRenames {
+		set, args := r.column+` = $1`, []any{r.toText, r.id, r.fromText}
+		if r.stamped {
+			set, args = set+`, updated_at = $4`, append(args, now)
+		}
+		tag, err := tx.Exec(ctx,
+			`UPDATE `+r.table+` SET `+set+` WHERE id = $2::uuid AND `+r.column+` = $3`, args...)
+		if err != nil {
+			return renamed, fmt.Errorf("demoseed: renaming %s.%s (%s) off its scrub placeholder: %w", r.table, r.column, r.id, err)
 		}
 		renamed += int(tag.RowsAffected())
 	}

@@ -30,6 +30,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -120,6 +121,78 @@ func snOffenders(names []string) []string {
 	return bad
 }
 
+// snTokenRe is the other placeholder family: the word-level token the scrub pass left where it
+// swapped a name or a common word ("Scrubname0014 Scrubname0027" for a role title, "Hey
+// Scrubname0008" in a seeded message). It is searched for anywhere in a value, not anchored.
+var snTokenRe = regexp.MustCompile(`Scrubname[0-9]+`)
+
+// snTokenAllowed is every text column the migrations leave a Scrubname token in that no persona,
+// customer, contact or staff record reaches: the scrub swapped common words inside report,
+// ledger, dashboard-gallery and tour copy ("Scrubname0027 by Branch", "Scrubname0027 Revenue"),
+// which are not names of anybody and are shared with every build, so they are out of this
+// pass's reach. users.display_name is listed because the demo populate (a separate step, run
+// after this seed, internal/demo/populate.go) renames those rows; this probe runs the seed only.
+// Anything NOT listed here and carrying a token fails the probe, so a new migration that plants
+// a scrub-named persona, channel or message cannot slip through.
+var snTokenAllowed = map[string]bool{
+	"gl_accounts.name": true, "v_gl_detail.account_name": true, "v_gl_account_balances.account_name": true,
+	"v_trial_balance.account_name": true, "v_income_statement.account_name": true,
+	"report_templates.name": true, "report_templates.legacy_name": true,
+	"platform_tour_steps.line":        true,
+	"dashboard_gallery_entries.title": true,
+	"dashboard_gallery_entries.blurb": true,
+	"dashboard_profile_widgets.title": true,
+	"users.display_name":              true,
+}
+
+// snTokenOffenders scans every text column of every base table and returns "table.column: value"
+// for each value carrying a Scrubname token in a column outside the allow-list.
+func snTokenOffenders(t *testing.T, ctx context.Context, pool *pgxpool.Pool) []string {
+	t.Helper()
+	cols, err := pool.Query(ctx, `
+		SELECT c.table_name, c.column_name
+		  FROM information_schema.columns c
+		  JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+		 WHERE c.table_schema = 'public' AND t.table_type = 'BASE TABLE'
+		   AND c.data_type IN ('text', 'character varying')
+		 ORDER BY 1, 2`)
+	if err != nil {
+		t.Fatalf("listing text columns: %v", err)
+	}
+	type tc struct{ table, col string }
+	var all []tc
+	for cols.Next() {
+		var x tc
+		if err := cols.Scan(&x.table, &x.col); err != nil {
+			t.Fatalf("scanning a column: %v", err)
+		}
+		all = append(all, x)
+	}
+	cols.Close()
+	var bad []string
+	for _, x := range all {
+		if snTokenAllowed[x.table+"."+x.col] {
+			continue
+		}
+		rows, err := pool.Query(ctx, `SELECT `+pgx.Identifier{x.col}.Sanitize()+` FROM `+pgx.Identifier{x.table}.Sanitize()+
+			` WHERE `+pgx.Identifier{x.col}.Sanitize()+` ~ 'Scrubname[0-9]+'`)
+		if err != nil {
+			t.Fatalf("scanning %s.%s: %v", x.table, x.col, err)
+		}
+		for rows.Next() {
+			var v string
+			if err := rows.Scan(&v); err != nil {
+				t.Fatalf("scanning a value of %s.%s: %v", x.table, x.col, err)
+			}
+			if snTokenRe.MatchString(v) {
+				bad = append(bad, x.table+"."+x.col+": "+v)
+			}
+		}
+		rows.Close()
+	}
+	return bad
+}
+
 func TestDemoWorld_NoCustomerNamedLikeAScrubPlaceholder(t *testing.T) {
 	dsn := os.Getenv(tillDemoDBEnvVar)
 	if dsn == "" {
@@ -159,6 +232,12 @@ func TestDemoWorld_NoCustomerNamedLikeAScrubPlaceholder(t *testing.T) {
 	if bad := snOffenders(snCustomerNames(t, ctx, pool)); len(bad) != 0 {
 		t.Errorf("after the demoseed ran, %d customer(s) still carry scrub placeholder names: %s",
 			len(bad), strings.Join(bad, ", "))
+	}
+
+	// 4b. no persona-facing text (a role title, a conversation's title or a seeded message) still
+	// reads a Scrubname token.
+	if bad := snTokenOffenders(t, ctx, pool); len(bad) != 0 {
+		t.Errorf("after the demoseed ran, %d value(s) still carry a Scrubname token:\n  %s", len(bad), strings.Join(bad, "\n  "))
 	}
 
 	// 5. the traced record itself: the island's customer reads a demo name, not the placeholder.

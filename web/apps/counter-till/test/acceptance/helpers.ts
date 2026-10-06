@@ -682,3 +682,9 @@ export async function shotParts(
   await composer.screenshot({ path: join(shotDir(testInfo), `${name}.png`), fullPage: true });
   await composer.close();
 }
+
+/** Row 955: Returns is its own surface; open it from the bar (a no-op when it is already up). */
+export async function openReturns(page: Page): Promise<void> {
+  if (!(await page.getByTestId("returns").isVisible())) await page.getByTestId("till-returns-entry").click();
+  await expect(page.getByTestId("returns")).toBeVisible();
+}

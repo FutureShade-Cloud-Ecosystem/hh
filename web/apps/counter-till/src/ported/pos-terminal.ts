@@ -174,6 +174,7 @@ import {
   type StockGlance,
 } from '@hardscapehouse/pos-kit/src/ported/pos-api.js';
 import './pos-panels.js';
+import { previewBody, previewKey, readPreview, splitMismatchWords, type PreviewState } from './_pos-preview.js';
 import { focusRing } from '@hardscapehouse/pos-kit/src/ported/styles/focus-ring.js';
 import { ModalFocus } from '@hardscapehouse/pos-kit/src/ported/modal-focus.js';
 // ── DIB-434 ── the global "+ Sale" quick action arrives here as an INTENT, and the in-progress
@@ -500,9 +501,24 @@ export class HosPosTerminal extends LitElement {
   /**
    * Row 976: the two panes swapped (the steps pane first). The page that mounts this terminal owns
    * the choice, because its header carries the swap button beside the theme, and remembers it per
-   * browser; the terminal only draws it.
+   * browser; the terminal only draws it. It arrives as the `data-panes-swapped` attribute ("true" or "false").
    */
-  @property({ type: Boolean }) panesSwapped = false;
+  @property({ attribute: 'data-panes-swapped', converter: (value: string | null) => value === 'true' }) panesSwapped = false;
+  /**
+   * Row 955: the till's Returns is its own surface. While it is up the sale stays mounted (nothing
+   * on the ticket is lost) but the page hides it, and this flag keeps the sale's keys quiet: F12
+   * must never ring a sale nobody can see.
+   */
+  @property({ attribute: 'data-paused', converter: (value: string | null) => value === 'true' }) paused = false;
+  /**
+   * Row 985: the ticket's tax and total as the ring will compute them, read from the server's
+   * sale-preview and refreshed (debounced) when the lines, the customer or the fulfilment change.
+   * While it loads the screen says pending; it is never a number the browser worked out.
+   */
+  @state() private preview: PreviewState = { kind: 'idle' };
+  private previewAsked = '';
+  private previewDirty = false;
+  private previewTimer: ReturnType<typeof setTimeout> | null = null;
   /**
    * The dealer's key roster, resolved server-side (user over dealer over default). Held as data,
    * never as a switch statement: the client's people are BisTrack refugees who will want their old
@@ -1316,6 +1332,25 @@ export class HosPosTerminal extends LitElement {
     }
     :host([data-counter-layout='PANELS']) .pane-items {
       flex: 1 1 50%;
+      /* The table below answers to the PANE's width, not the window's: a narrow Items pane drops
+         the Weight column the way the phone width does, so the remove control stays inside it. */
+      container-type: inline-size;
+    }
+    @container (max-width: 640px) {
+      .pane-items .linegrid {
+        grid-template-columns:
+          36px minmax(110px, 1fr) auto minmax(28px, auto) minmax(52px, auto) minmax(64px, auto)
+          28px;
+      }
+      .pane-items .linegrid.withmargin {
+        grid-template-columns:
+          36px minmax(110px, 1fr) auto minmax(28px, auto) minmax(52px, auto) minmax(64px, auto)
+          minmax(40px, auto) 28px;
+      }
+      .pane-items .linehead span:nth-child(7),
+      .pane-items .linerow .lweight {
+        display: none;
+      }
     }
     :host([data-counter-layout='PANELS']) .pane-items-body {
       flex: 1 1 auto;
@@ -1488,13 +1523,13 @@ export class HosPosTerminal extends LitElement {
       display: grid;
       grid-template-columns:
         36px minmax(110px, 1fr) auto minmax(28px, auto) minmax(52px, auto) minmax(64px, auto)
-        minmax(52px, auto) 24px;
+        minmax(52px, auto) 28px;
       column-gap: 7px;
     }
     .linegrid.withmargin {
       grid-template-columns:
         36px minmax(110px, 1fr) auto minmax(28px, auto) minmax(52px, auto) minmax(64px, auto)
-        minmax(52px, auto) minmax(40px, auto) 24px;
+        minmax(52px, auto) minmax(40px, auto) 28px;
     }
     /* P3-7: below the desktop breakpoint the eight (nine with margin) tracks
        cannot fit the card: the table ran past its card's right edge and took
@@ -1506,12 +1541,12 @@ export class HosPosTerminal extends LitElement {
       .linegrid {
         grid-template-columns:
           36px minmax(110px, 1fr) auto minmax(28px, auto) minmax(52px, auto) minmax(64px, auto)
-          24px;
+          28px;
       }
       .linegrid.withmargin {
         grid-template-columns:
           36px minmax(110px, 1fr) auto minmax(28px, auto) minmax(52px, auto) minmax(64px, auto)
-          minmax(40px, auto) 24px;
+          minmax(40px, auto) 28px;
       }
       .linehead span:nth-child(7),
       .linerow .lweight {
@@ -2842,6 +2877,48 @@ export class HosPosTerminal extends LitElement {
     // view's screen-filling rules to it: the stepper column keeps the page
     // measure and the page scroll it has today.
     this.dataset.counterLayout = this.counterLayout;
+    this.noteTicketForPreview();
+  }
+
+  /** Row 985: notice a change in what the preview depends on, and mark the totals pending at once. */
+  private noteTicketForPreview(): void {
+    const key = previewKey(this.previewRequest());
+    if (key === this.previewAsked) return;
+    this.previewAsked = key;
+    this.previewDirty = true;
+    this.preview = key === '' ? { kind: 'idle' } : { kind: 'pending' };
+  }
+
+  private previewRequest() {
+    return previewBody({
+      branchId: this.branchId,
+      customerId: this.customer?.id ?? '',
+      saleType: this.saleType,
+      fulfilment: this.fulfilment,
+      lines: this.cart.map((l) => ({ productId: l.product.id, qty: l.qty, uom: l.uom })),
+    });
+  }
+
+  /** Ask the server for the totals once the ticket has been still for a beat. */
+  private schedulePreview(): void {
+    if (this.previewTimer !== null) clearTimeout(this.previewTimer);
+    const asked = this.previewAsked;
+    const body = this.previewRequest();
+    if (asked === '' || body === null) return;
+    this.previewTimer = setTimeout(() => {
+      this.previewTimer = null;
+      void (async () => {
+        let next: PreviewState;
+        try {
+          const res = await api('/api/v1/pos/sale-preview', { method: 'POST', body: JSON.stringify(body) });
+          next = res.ok ? readPreview(await res.json()) : { kind: 'unavailable' };
+        } catch {
+          next = { kind: 'unavailable' };
+        }
+        // An answer for a ticket that has since changed is dropped: the newer ask owns the screen.
+        if (this.previewAsked === asked) this.preview = next;
+      })();
+    }, 250);
   }
 
   /**
@@ -2849,6 +2926,10 @@ export class HosPosTerminal extends LitElement {
    * only while the panels view is. Fires on the first render and on every change after it.
    */
   protected updated(changed: Map<PropertyKey, unknown>): void {
+    if (this.previewDirty) {
+      this.previewDirty = false;
+      this.schedulePreview();
+    }
     if (!changed.has('counterLayout')) return;
     this.dispatchEvent(
       new CustomEvent('pos-counter-layout', {
@@ -3003,6 +3084,7 @@ export class HosPosTerminal extends LitElement {
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
+    if (this.previewTimer !== null) clearTimeout(this.previewTimer);
     if (this.timer) window.clearInterval(this.timer);
     if (this.clockTimer) window.clearInterval(this.clockTimer); // rev 8: the header clock dies with the mount
     if (this.ticketFactsTimer) window.clearTimeout(this.ticketFactsTimer); // rev 8: no orphan facts read
@@ -3750,6 +3832,11 @@ export class HosPosTerminal extends LitElement {
         };
         return;
       }
+      // Row 985: the split's sum refusal speaks from its fields, in dollars, never raw cents.
+      if (res.err.status === 422 && res.err.error === 'split_total_mismatch') {
+        this.ring = { state: 'error', msg: splitMismatchWords(res.err, formatMoney) };
+        return;
+      }
       this.ring = { state: 'error', msg: counterRingMessage(res.err) };
     } catch {
       this.ring = { state: 'error', msg: 'Network error: retry; the sale is replay-safe.' };
@@ -4228,7 +4315,10 @@ export class HosPosTerminal extends LitElement {
    */
   private headerFlowSteps() {
     const steps = this.flowSteps();
-    return this.counterLayout === 'PANELS' ? steps.filter((s) => s.id !== 'items') : steps;
+    // Renumbered from 1: the chips count the steps pane's three, not the stepper's four.
+    return this.counterLayout === 'PANELS'
+      ? steps.filter((s) => s.id !== 'items').map((s, i) => ({ ...s, n: i + 1 }))
+      : steps;
   }
 
   /** The step the steps pane has open: always one of the three, whatever openStep last held. */
@@ -4778,6 +4868,7 @@ export class HosPosTerminal extends LitElement {
    */
   private onPosKey = (e: KeyboardEvent): void => {
     if (e.defaultPrevented) return;
+    if (this.paused) return; // Returns is up: the hidden sale's keys stay quiet (row 955)
     const action = resolveHotkey(chordFromEvent(e), this.hotkeyRoster);
     if (!action) return;
     // THE COUNTER OWNS A KEY ITS OWN LEGEND ADVERTISES, available or not. The two halves of that
@@ -5823,6 +5914,25 @@ ${/* Fulfilment: the EXISTING sale types (counter / will-call / delivered / COD 
   }
 
   /**
+   * Row 985: the Tax and Total rows. Ready: the server's figures. Pending: the word, never a
+   * number. Unavailable (the preview could not be read): the old honest words, the ring states both.
+   */
+  private renderPreviewRows(
+    rowClass: string,
+    ids: { tax: string; total: string; pending: string; words: string },
+  ): TemplateResult {
+    const p = this.preview;
+    if (p.kind === 'ready') {
+      return html`<div class="${rowClass}" data-testid=${ids.tax}><span>Tax</span><span class="num m">${formatMoney(p.taxCents)}</span></div>
+        <div class="${rowClass} previewtotal" data-testid=${ids.total}><span>Total</span><span class="num m">${formatMoney(p.totalCents)}</span></div>`;
+    }
+    if (p.kind === 'pending') {
+      return html`<div class="${rowClass}" data-testid=${ids.pending} aria-busy="true"><span>Tax and total</span><span class="num m">pending</span></div>`;
+    }
+    return html`<div class="${rowClass} ringwords" data-testid=${ids.words}><span>Tax and total</span><span class="m">${ringTaxWords(this.reliefRateBps)}</span></div>`;
+  }
+
+  /**
  * STEP 3 · PAYMENT: the totals card, the tender tiles and the one gold commit.
    *
    * The totals card stays adjacent to the tender it justifies (it is the figure the clerk reads out
@@ -5843,9 +5953,12 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
               : nothing}
             <div class="totals">
               <div class="trow"><span>Subtotal</span><span class="num">${this.moneyOrMarker(this.subtotal())}</span></div>
-              ${this.ringDone()
-                ? nothing
-                : html`<div class="trow ringwords" data-testid="pos-ring-words"><span>Tax and total</span><span>${ringTaxWords(this.reliefRateBps)}</span></div>`}
+              ${this.ringDone() ? nothing : this.renderPreviewRows('trow', {
+                    tax: 'pos-preview-tax',
+                    total: 'pos-preview-total',
+                    pending: 'pos-preview-pending',
+                    words: 'pos-ring-words',
+                  })}
             </div>
           </section>
 
@@ -5994,9 +6107,11 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
                       ? `Sale complete: ${this.doneSale().order_no}`
                       : this.ringBusy()
                         ? 'Ringing…'
-                        : this.tillSessionId === ''
-                          ? `Open session · then complete · subtotal ${this.moneyOrMarker(this.subtotal())} + tax at the ring`
-                          : `Complete sale · subtotal ${this.moneyOrMarker(this.subtotal())} + tax at the ring`}
+                        : this.preview.kind === 'ready' && this.hasPricedLine()
+                          ? `${this.tillSessionId === '' ? 'Open session · then complete' : 'Complete sale'} · total ${formatMoney(this.preview.totalCents)}`
+                          : this.tillSessionId === ''
+                            ? `Open session · then complete · subtotal ${this.moneyOrMarker(this.subtotal())} + tax at the ring`
+                            : `Complete sale · subtotal ${this.moneyOrMarker(this.subtotal())} + tax at the ring`}
                     ${!this.ringDone() && this.payKeycap()
                       ? html`<span class="keycap" data-testid="pay-hotkey-chip" aria-hidden="true"
                           >${this.payKeycap()}</span
@@ -6018,7 +6133,9 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
                          have). */ ''}
                     ${this.cart.length === 0
                     ? 'Add a line before splitting the tender.'
-                    : "The legs settle the server's total at the ring; the panel below rings the split."}</span
+                    : this.preview.kind === 'ready'
+                      ? 'The legs settle the stated total; the panel below rings the split.'
+                      : 'The total is pending: the panel below arms when it arrives.'}</span
                   >
                 </p>`}
 
@@ -6032,7 +6149,7 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
                input's default true is never a lie here). */ ''}
           ${this.showSplit && this.cart.length > 0
             ? html`<hos-pos-split-tender
-                .totalCents=${null}
+                .totalCents=${this.preview.kind === 'ready' ? this.preview.totalCents : null}
                 .hasCustomer=${!!this.customer}
                 .customerName=${this.customer?.name ?? ''}
                 .busy=${this.ringBusy()}
@@ -6252,7 +6369,12 @@ ${this.receiptMsg ? html`<div class="banner bad" role="alert">${this.receiptMsg}
       <div class="rbrow"><span>${fulfilmentLabel(this.saleType)}</span><span></span></div>
       ${this.requestedDate ? html`<div class="rbrow"><span>Requested</span><span>${this.requestedDate}</span></div>` : nothing}
       <div class="rbrow"><span>Subtotal</span><span class="m">${this.moneyOrMarker(this.subtotal())}</span></div>
-      <div class="rbrow" data-testid="readback-ring-words"><span>Tax and total</span><span class="m">${ringTaxWords(this.reliefRateBps)}</span></div>
+      ${this.renderPreviewRows('rbrow', {
+        tax: 'readback-preview-tax',
+        total: 'readback-preview-total',
+        pending: 'readback-preview-pending',
+        words: 'readback-ring-words',
+      })}
       <div class="rbrow"><span>${tenderLabel(this.payMethod || 'CASH')}</span><span></span></div>
       ${/* "how much am I saving?": the client's words for the thing customers always ask. Server
          arithmetic, summed per line; absent entirely when there is nothing to claim. */ ''}

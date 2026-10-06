@@ -239,7 +239,9 @@ test("F4 and Shift F4 cycle Customer, Payment, Summary in the steps pane; Items 
   await twoPaneWithTicket(page);
 
   // The header chips are the three steps.
-  await expect(page.locator("hos-pos-flow-steps").first().locator("button")).toHaveCount(3);
+  const chips = page.locator("hos-pos-flow-steps").first().locator("button");
+  await expect(chips).toHaveCount(3);
+  await expect(chips).toHaveText([/1\s*Customer/, /2\s*Payment/, /3\s*Summary/]);
   const steps = page.getByTestId("pos-pane-steps");
   const customer = steps.getByTestId("pos-customer-mode");
   const payment = steps.getByTestId("pos-paytiles");
@@ -308,17 +310,13 @@ test("the header badge sits at the left edge before the Demo pill, at the front 
   }
 });
 
-// Scope: the text on screen (a closed disclosure paints nothing, so it is not read). The Browse
-// products grid is pos-kit's own component and prints its list prices through pos-kit's formatter,
-// which the dollar change in pos-kit owns; this leg widens to it when that lands.
-test("no CA$ in any text the till shows", async ({ page }) => {
+test("no CA$ in any text the till renders, hidden disclosures included", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await twoPaneWithTicket(page);
   const text = await page.evaluate(() => {
     const walk = (root: ParentNode): string[] => {
       const out: string[] = [];
       for (const el of root.querySelectorAll("*:not(style):not(script)")) {
-        if (!el.checkVisibility()) continue;
         for (const n of el.childNodes) if (n.nodeType === 3) out.push(n.textContent ?? "");
         for (const attr of ["title", "aria-label", "placeholder"]) out.push(el.getAttribute(attr) ?? "");
         if (el.shadowRoot) out.push(...walk(el.shadowRoot));
@@ -329,4 +327,45 @@ test("no CA$ in any text the till shows", async ({ page }) => {
   });
   expect(text.match(/.{0,60}CA\$.{0,40}/g)).toBeNull();
   expect(text).toMatch(/\$\d[\d,]*\.\d{2}/);
+});
+
+const ALL_SIZES: Array<[number, number]> = [
+  [1440, 900],
+  [1920, 1080],
+  [1024, 768],
+  [820, 1180],
+];
+
+for (const [width, height] of ALL_SIZES) {
+  test(`every line's remove button sits whole inside the Items pane at ${width}x${height}`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    await twoPaneWithTicket(page);
+    const pane = (await box(page, "pos-pane-items"))!;
+    // The first line sits at the top of the pane at every size, so its box is read as it is drawn.
+    const b = (await page.locator("[data-testid='pos-pane-items'] button.rm").first().boundingBox())!;
+    expect(b.x).toBeGreaterThanOrEqual(pane.x - 0.5);
+    expect(b.x + b.width).toBeLessThanOrEqual(pane.right + 0.5);
+    // And the lines table never scrolls sideways inside the pane.
+    const sideways = await page.evaluate(() => {
+      const walk = (root: ParentNode): Element[] => {
+        const out: Element[] = [];
+        for (const el of root.querySelectorAll("*")) {
+          out.push(el);
+          if (el.shadowRoot) out.push(...walk(el.shadowRoot));
+        }
+        return out;
+      };
+      const body = walk(document).find((el) => el.matches(".pane-items-body"));
+      return body ? body.scrollWidth - body.clientWidth : -1;
+    });
+    expect(sideways).toBeLessThanOrEqual(0);
+  });
+}
+
+test("the badge's product name is 16px, the front door's lockup size", async ({ page }) => {
+  await signIn(page);
+  const size = await page.getByTestId("till-header-badge").locator(".brand-product").evaluate(
+    (el) => getComputedStyle(el).fontSize,
+  );
+  expect(size).toBe("16px");
 });

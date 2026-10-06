@@ -1,6 +1,6 @@
 // Ported from hardscapeos_dibbits master 87d7941b app/src/_pos-split.ts; adapted for HH.
 
-import { centsAmount } from '@hardscapehouse/pos-kit/src/ported/_money-format.js';
+import { formatDollars } from '@hardscapehouse/pos-kit/src/ported/_money-format.js';
 // _pos-split.ts: pure, DOM-free split-tender words and shapes for the counter (DIB-165).
 //
 // The server refuses a split whose legs do not sum EXACTLY to the sale total, and migration 0100's
@@ -89,9 +89,9 @@ export { autoFillRemainder } from '@hardscapehouse/pos-kit/src/ported/ports.js';
  */
 export { parseAmountCents } from '@hardscapehouse/pos-kit/src/ported/ports.js';
 
-/** fmtCents is the local money formatter (same LOCAL STOPGAP posture as pos-api.ts money()). */
+/** fmtCents is the split panel's money word: the shared dollar formatter, no currency letters (row 980). */
 export function fmtCents(cents: number): string {
-  return `$${centsAmount(cents)}`;
+  return formatDollars(cents);
 }
 
 /**

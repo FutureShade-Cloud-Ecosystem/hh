@@ -15,12 +15,19 @@
 // $60.00, the full Wall block line is $360.00 over the $250.00 approval
 // amount, the second cash sale's line the same again, the first card sale's
 // edger $89.00, and the second card sale's sandstone edger $75.00.
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 // The stub's open drawer at the demo branch, by its own id (the uuid helper's
 // spelling of 90001): the Z report is read through the same /api proxy the
 // app uses, under a bearer the stub's own demo mint issued, exactly as the
 // real gate would ask one.
+
+/** Row 955: Returns is its own surface; open it from the bar (a no-op when it is already up). */
+async function openReturns(page: Page): Promise<void> {
+  if (!(await page.getByTestId("returns").isVisible())) await page.getByTestId("till-returns-entry").click();
+  await expect(page.getByTestId("returns")).toBeVisible();
+}
+
 const DRAWER_SESSION_ID = "00000000-0000-4000-8000-000000090001";
 const HOLLAND_LINE = "Quantity to return: Holland paver, bevelled, each";
 const WALLBLOCK_LINE = "Quantity to return: Wall block, charcoal, each";
@@ -28,6 +35,7 @@ const EDGER_LINE = "Quantity to return: Garden edger, grey, each";
 const SANDSTONE_LINE = "Quantity to return: Garden edger, sandstone, each";
 
 async function findSale(page: Page, orderNo: string): Promise<void> {
+  await openReturns(page);
   await page.getByLabel("Sale number").fill(orderNo);
   await page.getByRole("button", { name: "Find sale" }).click();
   await expect(page.getByTestId("returns-sale")).toContainText(orderNo);
@@ -319,6 +327,7 @@ test("a plain refusal without the approval key shows its own words and opens no 
 
 test("an unknown sale number is refused in words and lays out nothing", async ({ page }) => {
   await signIn(page, "Sales");
+  await openReturns(page);
   await page.getByLabel("Sale number").fill("CT-9999");
   await page.getByRole("button", { name: "Find sale" }).click();
   await expect(page.getByTestId("returns-notice")).toContainText(
@@ -334,6 +343,7 @@ for (const scheme of ["dark", "light"] as const) {
   test(`the desk's find input keeps the control boundary at 3:1 (${scheme})`, async ({ page }) => {
     await page.emulateMedia({ colorScheme: scheme });
     await signIn(page, "Sales");
+    await openReturns(page);
     const input = page.getByLabel("Sale number");
     await expect(input).toBeVisible();
     const read = await input.evaluate((el) => {
@@ -374,18 +384,21 @@ for (const scheme of ["dark", "light"] as const) {
   test(`disabled Find sale and Add share the till's disabled rule (${scheme})`, async ({ page }) => {
     await page.emulateMedia({ colorScheme: scheme });
     await signIn(page, "Sales");
-    const find = page.getByRole("button", { name: "Find sale" });
-    await expect(find).toBeDisabled();
     const head = page.getByTestId("step-head-items");
     if ((await head.getAttribute("aria-expanded")) !== "true") await head.click();
     const add = page.getByRole("button", { name: "Add", exact: true });
     await expect(add).toBeDisabled();
-    for (const button of [find, add]) {
-      const shape = await button.evaluate((node) => {
+    // Add lives on the sale screen and Find sale on the Returns surface (row 955): read each where it is.
+    const disabledShape = (button: Locator) =>
+      button.evaluate((node) => {
         const style = getComputedStyle(node);
         return { background: style.backgroundColor, opacity: style.opacity, cursor: style.cursor };
       });
-      expect(shape).toEqual({ background: "rgba(0, 0, 0, 0)", opacity: "1", cursor: "not-allowed" });
-    }
+    const rule = { background: "rgba(0, 0, 0, 0)", opacity: "1", cursor: "not-allowed" };
+    expect(await disabledShape(add)).toEqual(rule);
+    await openReturns(page);
+    const find = page.getByRole("button", { name: "Find sale" });
+    await expect(find).toBeDisabled();
+    expect(await disabledShape(find)).toEqual(rule);
   });
 }

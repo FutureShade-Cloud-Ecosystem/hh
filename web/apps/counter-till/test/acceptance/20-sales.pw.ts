@@ -5,6 +5,7 @@
 // Driven against the demo image's own app and core; every figure the screen
 // shows is held against what the core answers through its own reads, and a
 // screenshot names every screen.
+import { openReturns } from "./helpers.js";
 import type { Page } from "@playwright/test";
 import {
   expect,
@@ -379,6 +380,7 @@ test("a return within 250.00: refunded in cash, and the drawer's expected cash d
   const before = await expectedCash(page, bearer, drawerId);
   const zPath = `/api/v1/till/sessions/${drawerId}/zreport`;
   const zBefore = await apiPicture(page, bearer, zPath);
+  await openReturns(page);
   await page.getByLabel("Sale number").fill(orderNo);
   await page.getByRole("button", { name: "Find sale" }).click();
   await expect(page.getByTestId("returns-sale")).toContainText(orderNo);
@@ -431,6 +433,7 @@ test("a return above 250.00: refused with the amount and approvers named, comple
   const rung = await ringCash(page, "900.00");
   const orderNo = rung.order_no;
 
+  await openReturns(page);
   await page.getByLabel("Sale number").fill(orderNo);
   await page.getByRole("button", { name: "Find sale" }).click();
   await expect(page.getByTestId("returns-sale")).toContainText(orderNo);
@@ -506,6 +509,7 @@ test("a return above 250.00: refused with the amount and approvers named, comple
 
 test("a Kingston sale: refused in words before anything lays out", async ({ page }, testInfo) => {
   await signIn(page, "Sales");
+  await openReturns(page);
   await page.getByLabel("Sale number").fill(SEEDED.kingstonSale);
   await page.getByRole("button", { name: "Find sale" }).click();
   await expect(page.getByTestId("returns-notice")).toContainText("The lookup was refused");
