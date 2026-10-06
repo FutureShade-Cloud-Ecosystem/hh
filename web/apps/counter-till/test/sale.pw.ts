@@ -1084,7 +1084,7 @@ test("the split state is a status band, not a disabled button", async ({ page })
   await expect(band).toContainText("Split: compose the legs below");
   // The explanation is visible text, not a hover title only.
   await expect(page.getByTestId("cta-split-why")).toBeVisible();
-  await expect(page.getByTestId("cta-split-why")).toContainText("settle the server's total at the ring");
+  await expect(page.getByTestId("cta-split-why")).toContainText("The legs settle the stated total");
   await expect(band).not.toHaveAttribute("title", /.*/);
   // A statement, not a control: no button, no disabled state to fake.
   expect(await band.evaluate((el) => el.tagName)).not.toBe("BUTTON");
