@@ -30,3 +30,21 @@ const AttemptGrace = 5 * time.Minute
 // post, and a test pins the posts precisely by swapping the var. The error answer is the
 // adapter's: the sweep logs a failed post and moves on, the row is the record.
 var AlertFunc func(ctx context.Context, key, body string) error = func(context.Context, string, string) error { return nil }
+
+// SweepResult is one pass's report: what the pass found, what it moved, and what it left for the
+// next pass or a person. The jobs registration maps it onto the run's row.
+type SweepResult struct {
+	Examined       int // the in-flight rows past grace the pass looked at
+	ToUnknown      int // CHARGING to UNKNOWN, no processor call
+	Voided         int // CAPTURED the sweep reversed clean (the void, or the refund fallback)
+	ToVoidUnknown  int // a reversal whose answer is lost, or a stale VOIDING closed: an operator item
+	ToVoidDeclined int // a reversal the processor refused: an operator item
+	Lost           int // rows another writer moved first (the bind won the race, a manager closed)
+}
+
+// SweepCardAttempts is the jobs runner's payment.card_attempt_sweep body (the card charge design
+// section 4's crash windows). now is the clock, injected: production passes time.Now, a test
+// passes a controllable one.
+func (s *Service) SweepCardAttempts(ctx context.Context, now func() time.Time) (SweepResult, error) {
+	return SweepResult{}, nil
+}
