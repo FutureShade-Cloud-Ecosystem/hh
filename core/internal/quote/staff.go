@@ -114,6 +114,10 @@ type StaffService struct {
 	// fails closed: no request is filed and no approval is consumed.
 	floorRail FloorApprovalRail
 
+	// invoicer and payer are the QD-5 money door's seams (order_payment.go); nil fails the door closed.
+	invoicer OrderInvoicer
+	payer    CounterPayer
+
 	// callerFrom resolves the trusted, server-stamped acting staff member. Defaults to the identity
 	// guard-stamped caller; tests override it via withCaller. Mirrors order.Service.callerFrom.
 	callerFrom func(context.Context) (identity.StaffContext, bool)

@@ -5690,6 +5690,29 @@ export type QuoteConvertResult = {
   order_id: string;
   order_no: string;
 };
+export type QuoteOrderPaymentRequest = {
+  method: "CASH" | "CARD" | "CHEQUE" | "EFT";
+  amount_cents: number;
+  reference: string;
+  idempotency_key: string;
+};
+export type QuoteOrderPaymentResult = {
+  order_id: string;
+  order_no: string;
+  invoice_id: string;
+  invoice_no: string;
+  invoice_total_cents: number;
+  payment_id: string;
+  payment_no: string;
+  method: string;
+  amount_cents: number;
+  received_at: string;
+  reference: string;
+  received_by: string;
+  balance_cents: number;
+  replayed: boolean;
+  converted: boolean;
+};
 export type QuoteRelatedDocument = {
   kind: "QUOTE" | "ORDER" | "INVOICE";
   id: string;

@@ -255,11 +255,17 @@ func (r *Repository) Convert(ctx context.Context, customerID, quoteID string, op
 		return ConvertResult{}, err
 	}
 
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return ConvertResult{}, fmt.Errorf("convert quote %q: begin: %w", quoteID, err)
+	// QD-5: when the payment door carries its transaction, the conversion runs on it and commits with
+	// it (or not at all); every other caller gets the transaction of its own, exactly as before.
+	tx, carried := txFrom(ctx)
+	if !carried {
+		var err error
+		tx, err = r.pool.Begin(ctx)
+		if err != nil {
+			return ConvertResult{}, fmt.Errorf("convert quote %q: begin: %w", quoteID, err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Lock the quote row and verify it is convertible. quote_no rides along for the provenance row
 	// (DIB-491), read under the same lock so the snapshot cannot tear against the INSERT below.
@@ -299,7 +305,11 @@ func (r *Repository) Convert(ctx context.Context, customerID, quoteID string, op
 	if err != nil {
 		return ConvertResult{}, err
 	}
-	if err := r.checkCredit(ctx, facts); err != nil {
+	if opt.paidAtCounter && facts.TotalCents != opt.paidTotalCents {
+		// The payment was validated against a total the lock no longer sees: refuse, write nothing.
+		return ConvertResult{}, &OrderPaymentConflictError{Msg: "the quote's total changed while the payment was being taken; read it again"}
+	}
+	if err := r.checkCredit(ctx, tx, facts, !opt.paidAtCounter); err != nil {
 		return ConvertResult{}, err
 	}
 
@@ -322,9 +332,14 @@ func (r *Repository) Convert(ctx context.Context, customerID, quoteID string, op
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO order_lines
 			(order_id, line_no, product_id, description, qty_entered, uom_entered, qty_base,
-			 unit_price_cents, price_uom, line_total_cents)
-		 SELECT $1, line_no, product_id, description, qty_entered, uom_entered, qty_base,
-			 unit_price_cents, price_uom, line_total_cents
+			 unit_price_cents, price_uom, line_total_cents, metadata)
+		 SELECT $1, line_no, product_id,
+			 CASE WHEN disc_pct > 0 THEN description || ' (' || disc_pct::text || '% off)' ELSE description END,
+			 qty_entered, uom_entered, qty_base,
+			 unit_price_cents, price_uom, line_total_cents,
+			 CASE WHEN disc_pct > 0
+			      THEN jsonb_build_object('disc_pct', disc_pct, 'pre_discount_total_cents', pre_discount_total_cents)
+			      ELSE '{}'::jsonb END
 		 FROM quote_lines WHERE quote_id=$2 ORDER BY line_no`,
 		res.OrderID, quoteID); err != nil {
 		return ConvertResult{}, fmt.Errorf("convert quote %q: copy lines: %w", quoteID, err)
@@ -362,8 +377,10 @@ func (r *Repository) Convert(ctx context.Context, customerID, quoteID string, op
 		return ConvertResult{}, err
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return ConvertResult{}, fmt.Errorf("convert quote %q: commit: %w", quoteID, err)
+	if !carried {
+		if err := tx.Commit(ctx); err != nil {
+			return ConvertResult{}, fmt.Errorf("convert quote %q: commit: %w", quoteID, err)
+		}
 	}
 	return res, nil
 }
