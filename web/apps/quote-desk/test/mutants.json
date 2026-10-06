@@ -1584,5 +1584,61 @@
     "find": "      { kind: \"category_policy\", categoryId: id, write },\n      async () => {\n        const result = await pricing.upsertPolicy(id, write);\n        if (!result.ok) return err(result.error, result.status);\n        savedRow = result.value;\n        return ok(id);\n      },\n      () => {\n        const saved = savedRow;\n        if (saved !== null) {\n          this.rows = [...this.rows",
     "replace": "      { kind: \"category_policy\", categoryId: id, write },\n      async () => {\n        const result = await pricing.upsertPolicy(this.addDraft.category, write);\n        if (!result.ok) return err(result.error, result.status);\n        savedRow = result.value;\n        return ok(id);\n      },\n      () => {\n        const saved = savedRow;\n        if (saved !== null) {\n          this.rows = [...this.rows",
     "test": "P3-1 the Add category save is bound to the category and numbers picked when it began"
+  },
+  {
+    "id": "sa-search-landing",
+    "file": "src/quote-search-add.ts",
+    "find": "    if (seq !== this.seq) return; // a newer keystroke owns the box\n",
+    "replace": "",
+    "test": "a search answer that lands after the box moved on"
+  },
+  {
+    "id": "sa-search-failed",
+    "file": "src/quote-search-add.ts",
+    "find": "      if (seq !== this.seq) return;\n      if (refresh) return;",
+    "replace": "      if (refresh) return;",
+    "test": "a failed search answer that lands after the box moved on"
+  },
+  {
+    "id": "sa-keystroke-seq",
+    "file": "src/quote-search-add.ts",
+    "find": "    this.seq += 1; // every keystroke makes any answer in flight stale, so a code that is only the start of this one never adds\n",
+    "replace": "",
+    "test": "a code that is only the start of what is being typed"
+  },
+  {
+    "id": "sa-price-customer",
+    "file": "src/quote-search-add.ts",
+    "find": "      if (customer !== this.customerId) return;\n",
+    "replace": "",
+    "test": "a price answer for the customer who was switched away from"
+  },
+  {
+    "id": "sa-price-hits",
+    "file": "src/quote-search-add.ts",
+    "find": "      if (hits !== this.hits) return;\n",
+    "replace": "",
+    "test": "a price answer for an older query"
+  },
+  {
+    "id": "sa-enter-flight",
+    "file": "src/quote-search-add.ts",
+    "find": "if (this.timer !== 0 || this.searching) {",
+    "replace": "if (this.timer !== 0) {",
+    "test": "Enter while a search is in flight"
+  },
+  {
+    "id": "sa-enter-carried",
+    "file": "src/quote-search-add.ts",
+    "find": "    this.enterWaiting = false;\n    const term = this.term;",
+    "replace": "    const term = this.term;",
+    "test": "an Enter typed before the word"
+  },
+  {
+    "id": "sa-branch-refresh",
+    "file": "src/quote-search-add.ts",
+    "find": " && this.hits.length > 0 && shouldQuery(this.term)) void this.run(this.term, true);",
+    "replace": " && false) void this.run(this.term, true);",
+    "test": "a branch change reads the rows"
   }
 ]

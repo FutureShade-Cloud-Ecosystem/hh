@@ -105,7 +105,7 @@ export { contrast };
 // excluded, and the anchors below are a floor on discovery, not a ceiling.
 
 const SHIPPED_ROOTS = ['src', 'harness'];
-const SKIP_DIRS = new Set(['node_modules', 'dist', 'test']);
+const SKIP_DIRS = new Set(['node_modules', 'dist', 'test', 'vendor']);
 const SKIP_FILES = /(_ts-js-loader\.mjs|\.test\.|README\.md$)/;
 
 export function shippedStyleFiles() {

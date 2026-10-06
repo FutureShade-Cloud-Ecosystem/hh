@@ -10,4 +10,5 @@ import "@hardscapehouse/design-system/src/tokens.css";
 // --hh-font-ui's first name never resolves and every user sees a fallback.
 import "./fonts.css";
 import "@hardscapehouse/pos-kit/src/ported/styles/tokens.css";
+import "./index.js";
 import "./app-root.js";

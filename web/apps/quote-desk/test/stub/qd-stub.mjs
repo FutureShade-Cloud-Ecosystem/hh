@@ -263,6 +263,10 @@ const HST_RATE_BPS = 1300;
 // approvalsShape: "page" is the contract's IdentityApprovalPage, "bare" is what
 // the core's handler writes today (a bare array), "paged" is the page object
 // split into pages of one row with next_cursor.
+// The feedback route (the contract's staff-feedback create): the answer mode
+// the suite flips, and the submissions seen, for the sender's assertions.
+const feedbackFiled = [];
+const feedbackMode = { value: "ok" };
 const switches = { callerOnCostList: true, callerIsGeneralManager: false, floorRaiseBps: 0, approvalsShape: "page", quotePageSize: 0 };
 
 // Every write the stub sees, for the suite's layout save assertions. The
@@ -1018,6 +1022,36 @@ const server = createServer(async (request, response) => {
     });
     return;
   }
+  if (path === "/_stub/feedback-mode" && request.method === "PUT") {
+    readBody(request, response, (body) => {
+      feedbackMode.value = ["fail", "no-number"].includes(body.mode) ? body.mode : "ok";
+      respondJson(response, 200, { mode: feedbackMode.value });
+    });
+    return;
+  }
+  if (path === "/_stub/feedback" && request.method === "GET") {
+    respondJson(response, 200, { filed: feedbackFiled });
+    return;
+  }
+  // The feedback route: a multipart body, kept raw (the readBody helper parses JSON).
+  if (path === "/api/v1/feedback" && request.method === "POST") {
+    const chunks = [];
+    request.on("data", (chunk) => chunks.push(chunk));
+    request.on("end", () => {
+      const text = Buffer.concat(chunks).toString("latin1");
+      const field = (name) => {
+        const match = new RegExp(`name="${name}"\\r\\n\\r\\n([^\\r]*)`).exec(text);
+        return match === null ? "" : match[1];
+      };
+      if (feedbackMode.value === "fail") {
+        respondJson(response, 502, { error: "the board is not answering" });
+        return;
+      }
+      feedbackFiled.push({ type: field("type"), message: field("message"), screen: field("screen"), images: (text.match(/name="images"/g) ?? []).length });
+      respondJson(response, 201, feedbackMode.value === "no-number" ? {} : { issue_number: `HH-${feedbackFiled.length}` });
+    });
+    return;
+  }
   // Put the whole in-memory world back to its seeded state, so a suite that
   // changes quotes, policy or switches leaves the next one a clean stub.
   if (path === "/_stub/reset" && request.method === "POST") {
@@ -1033,6 +1067,8 @@ const server = createServer(async (request, response) => {
     policyWrites.length = 0;
     decisions.length = 0;
     conversions.length = 0;
+    feedbackFiled.length = 0;
+    feedbackMode.value = "ok";
     acceptance.allow_multi_accept = false;
     resetPricing();
     resetPolicy();
@@ -1865,7 +1901,7 @@ const server = createServer(async (request, response) => {
   if (request.method === "GET" && path === "/api/v1/products/counter-search") {
     const q = (url.searchParams.get("q") ?? "").toLowerCase();
     const hits = PRODUCTS.filter((product) => {
-      const hay = [product.sku, product.name, product.description, ...product.aliases].join(" ").toLowerCase();
+      const hay = [product.sku, product.name, product.category, product.description, ...product.aliases].join(" ").toLowerCase();
       return q === "" || hay.includes(q);
     }).map((product) => ({
       product_id: product.product_id,
@@ -1881,6 +1917,32 @@ const server = createServer(async (request, response) => {
       list_price_cents: product.list_cents,
     }));
     respondJson(response, 200, { items: hits });
+    return;
+  }
+
+  if (request.method === "POST" && path === "/api/v1/pos/counter-prices") {
+    // The customer aware price picture: the server's answer, one entry per asked product. The account's own
+    // rule is the customer's price and retail stands beside it.
+    readBody(request, response, (body) => {
+      const customer = customerById.get(String(body.customer_id ?? ""));
+      const items = Array.isArray(body.items) ? body.items : [];
+      const prices = [];
+      for (const item of items) {
+        const product = productById.get(String(item.product_id ?? ""));
+        if (product === undefined) continue;
+        const off = customer === undefined ? 0 : customer.percent_off;
+        const customerCents = Math.round((product.list_cents * (100 - off)) / 100);
+        prices.push({
+          product_id: product.product_id,
+          price_uom: product.sold_by,
+          retail_cents: product.list_cents,
+          customer_cents: customerCents,
+          saving_cents: product.list_cents - customerCents,
+          basis: off > 0 ? "ACCOUNT" : "",
+        });
+      }
+      respondJson(response, 200, { customer_type: customer === undefined ? "" : customer.customer_type, prices });
+    });
     return;
   }
 
