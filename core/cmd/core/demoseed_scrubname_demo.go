@@ -1,5 +1,12 @@
-// scrubname.go, the demo world's one non-INSERT write: migration-planted demo customers lose
-// their scrub placeholder names, here and only here.
+//go:build demo
+
+// demoseed_scrubname_demo.go, the demo build's side of the scrub-name seam: the demo
+// world's one non-INSERT write, migration-planted demo customers losing their scrub
+// placeholder names, here and only here. The default build's side is
+// demoseed_scrubname_default.go, a no-op stub, so a default binary carries no rename
+// path at all (demoseed dispatches in every build, so the pair, not the entrypoint, is
+// what holds the gate); demoseed_scrubname_build_test.go reads both builds' binaries
+// and proves it.
 //
 // WHY THIS IS IN THE SEED AND NOT IN A MIGRATION (the principal's ruling, decision log row
 // 925). The scrub pass renamed live customer data before it reached this repository, and the
@@ -31,6 +38,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 )
 
@@ -51,6 +59,13 @@ var scrubRenames = []scrubRename{
 	{"c5700000-0000-4000-9000-000000000001", "WTY-QUINTE", "Scrubbed Party 0007", "Quinte Exteriors (demo)"},
 	{"c5700000-0000-4000-9000-000000000003", "WTY-LIMESTONE", "Scrubbed Party 0006", "Limestone City Landscaping (demo)"},
 	{"c5700000-0000-4000-9000-000000000007", "WTY-HOMEOWNER", "Scrubbed Party 0005", "S. Marchand (demo homeowner)"},
+}
+
+// scrubNamesPlan prints the plan's one-line account of the rename pass: how many
+// migration-planted demo customers -apply renames off their scrub placeholders. The
+// default build's side of the pair prints nothing, because that build carries no rename.
+func scrubNamesPlan(out *os.File) {
+	fmt.Fprintf(out, "  scrub names    %d migration-planted demo customers renamed off their placeholders with -apply\n", len(scrubRenames))
 }
 
 // renameScrubbedDemoCustomers renames the migration-planted demo customers inside the apply

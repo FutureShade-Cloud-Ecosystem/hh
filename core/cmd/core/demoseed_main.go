@@ -134,7 +134,10 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 	fmt.Fprintf(out, "  branches       %s\n", branchLine(branches))
 	fmt.Fprintf(out, "  demo logins    %s\n", personaLine(personas))
 	fmt.Fprintf(out, "  POD sealing    %s\n", sealMode(keyed))
-	fmt.Fprintf(out, "  scrub names    %d migration-planted demo customers renamed off their placeholders with -apply\n", len(scrubRenames))
+	// The rename pass is the demo build's (the scrubname pair): the demo build's plan
+	// says how many migration-planted customers -apply renames, the default build's
+	// says nothing because it carries no rename at all.
+	scrubNamesPlan(out)
 	fmt.Fprintf(out, "  plan           %d rows across %d tables, dated %s … %s\n\n",
 		summary.Rows, len(summary.ByTable), summary.FirstDate, summary.LastDate)
 	writeSummary(out, summary)
@@ -160,8 +163,10 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 		return fmt.Errorf("demoseed: nothing was written: %w", err)
 	}
 	// The one write the INSERT-only applier cannot express: the migration-planted demo
-	// customers' scrub placeholder names (scrubname.go). Inside the same transaction, so the
-	// world still lands all-or-nothing.
+	// customers' scrub placeholder names (the scrubname pair). The symbol resolves at
+	// build time: the real rename in the demo build, a no-op stub in the default build,
+	// which writes no customers.name row from this call. Inside the same transaction,
+	// so the world still lands all-or-nothing.
 	renamed, err := renameScrubbedDemoCustomers(ctx, tx, now)
 	if err != nil {
 		_ = tx.Rollback(ctx)
