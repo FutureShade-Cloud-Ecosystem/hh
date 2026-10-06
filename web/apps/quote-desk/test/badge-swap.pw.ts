@@ -81,9 +81,10 @@ test("the shared header's brand mark is the inline mark.svg H with fill currentC
   expect((mark.pathD ?? "").trim().startsWith("M644.94 465.17 H1386.06")).toBe(true);
   // The regression this round removes: the square's plain text letter pair.
   expect(mark.text).not.toContain("HH");
-  // The gold square ground is gone with the text: the mark is the H alone on
-  // the page, the colourway per theme, not a filled square carrying an ink.
-  expect(mark.markBackground).toBe("rgba(0, 0, 0, 0)");
+  // The ground is the front door's badge square: the badge yellow, square
+  // cornered, carrying the H in the near black ink.
+  expect(mark.markBackground).toBe("rgb(255, 195, 19)");
+  expect(mark.markColour).toBe("rgb(11, 23, 37)");
   // The lockup's own contract is unchanged: one image, the house name, and
   // the front door's geometry (the 30px mark, the 10px lockup gap).
   expect(mark.lockupRole).toBe("img");
@@ -119,28 +120,18 @@ test("the Quote Desk's landing carries the badge favicon links and serves the se
   }
 });
 
-// Item D: the mark's ink is the sheet's per-theme token, yellow on the dark
-// page (the on navy colourway's H, the badge yellow itself).
-test("under the dark theme the mark's fill resolves to the badge yellow; light takes the token's light half", async ({
-  page,
-}) => {
+// Item D: the badge is the same yellow square carrying the near black H in
+// both themes, as the front door's lockup draws it.
+test("the mark is the near black H on the badge yellow square under both themes", async ({ page }) => {
   await signIn(page);
-  await page.evaluate(() => {
-    document.documentElement.setAttribute("data-theme", "dark");
-  });
-  const dark = await markBox(page);
-  expect(dark.pathFill).toBe("currentColor");
-  // The badge yellow is the accent ink on the dark page: rgb(255, 195, 19).
-  expect(dark.fillComputed).toBe("rgb(255, 195, 19)");
-  expect(dark.markColour).toBe("rgb(255, 195, 19)");
-  await page.evaluate(() => {
-    document.documentElement.setAttribute("data-theme", "light");
-  });
-  const light = await markBox(page);
-  // The same token's light half: the sheet's readable accent ink on the
-  // light page, dark gold rgb(138, 101, 0). The sheet has no ink token that
-  // is navy on light and yellow on dark; this is the pair it does carry, and
-  // the report says so rather than inventing a token the sheet never had.
-  expect(light.fillComputed).toBe("rgb(138, 101, 0)");
-  expect(light.markColour).toBe("rgb(138, 101, 0)");
+  for (const theme of ["dark", "light"]) {
+    await page.evaluate((t) => {
+      document.documentElement.setAttribute("data-theme", t);
+    }, theme);
+    const box = await markBox(page);
+    expect(box.pathFill, theme).toBe("currentColor");
+    expect(box.fillComputed, theme).toBe("rgb(11, 23, 37)");
+    expect(box.markColour, theme).toBe("rgb(11, 23, 37)");
+    expect(box.markBackground, theme).toBe("rgb(255, 195, 19)");
+  }
 });
