@@ -12,7 +12,9 @@ package main
 // demoEnvDenyPrefixes are the environment prefixes a demo box must not
 // carry: the Plane feedback bridge, the BisTrack sync, the SMS provider,
 // the assist provider and the live payment gateway. Any variable under
-// one of them refuses the boot: the demo talks to nothing.
+// one of them refuses the boot, except the five exact Plane bridge names
+// listed in demoEnvPlaneBridgeAllowNames below: the demo talks to nothing
+// else.
 var demoEnvDenyPrefixes = []string{
 	"PLANE_",
 	"BISTRACK_",

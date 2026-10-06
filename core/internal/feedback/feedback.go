@@ -127,9 +127,9 @@ type Service struct {
 	moduleName string
 
 	mu         sync.Mutex
-	moduleID   string // resolved-once cache for moduleName
-	labelID    string // resolved-once cache for the feedback label ("" = none yet)
-	projectTag string // resolved-once cache for the project identifier
+	moduleID   string                 // resolved-once cache for moduleName
+	labelID    string                 // resolved-once cache for the feedback label ("" = none yet)
+	projectTag string                 // resolved-once cache for the project identifier
 	buckets    map[string][]time.Time // per-user submission timestamps (rate limit)
 }
 
@@ -288,9 +288,9 @@ func (s *Service) File(ctx context.Context, sub Submission) (Filed, error) {
 	filed := Filed{ID: made.ID, Number: s.workItemNumber(ctx, made.SequenceID)}
 	if err := s.req(ctx, http.MethodPost, "/modules/"+moduleID+"/module-issues/",
 		map[string]any{"issues": []string{made.ID}}, nil); err != nil {
-		// The issue exists; module attach failing should not lose the submission.
+		// The issue exists; module attach failing should not lose the submission,
+		// and it must not drop the screenshots either: they attach below.
 		s.log.Warn("feedback: module attach failed", "issue", made.ID, "err", err)
-		return filed, nil
 	}
 
 	// Best-effort image attachments, each its own. The issue is already filed;

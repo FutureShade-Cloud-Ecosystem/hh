@@ -130,18 +130,14 @@ type topsSpine struct {
 	cardRefunder  posCardRefunderAdapter
 }
 
-// wireTops constructs and registers the tops modules over the money spine
-// and the operations spine, in the pin's order, closing every seam whose
-// owner lands here. It returns the tops spine the worker role consumes.
-// Nothing here starts anything: the dispatchers, the jobs runner, the
-// retention sweep and the reconciler are worker-role loops (D37), and the
-// sms belt's dispatcher is built beside them in the worker.
 // feedbackActorNames resolves a linked ERP user id to the display name and
 // role label the feedback work item names the submitter by (the row 949
 // rule: the board records under one bridge user, so the item's text is the
 // only place the sender is named, and the raw id never reaches it). A nil
 // pool (scaffold) or an unlinked user answers not-ok and the item names the
-// role alone; neither ever refuses the submission.
+// role alone; neither ever refuses the submission. A user with several roles
+// is named by the earliest granted, the role name breaking a tie, so the same
+// user always reads the same.
 func feedbackActorNames(pool *pgxpool.Pool) feedback.ActorNames {
 	if pool == nil {
 		return nil
@@ -154,6 +150,7 @@ func feedbackActorNames(pool *pgxpool.Pool) feedback.ActorNames {
 			  LEFT JOIN user_roles ur ON ur.user_id = u.id
 			  LEFT JOIN roles r ON r.id = ur.role_id
 			 WHERE u.id = $1::uuid AND u.deleted_at IS NULL
+			 ORDER BY ur.created_at ASC NULLS LAST, r.name ASC
 			 LIMIT 1`, userID).Scan(&displayName, &roleName)
 		if err != nil {
 			return "", "", false
@@ -162,6 +159,12 @@ func feedbackActorNames(pool *pgxpool.Pool) feedback.ActorNames {
 	}
 }
 
+// wireTops constructs and registers the tops modules over the money spine
+// and the operations spine, in the pin's order, closing every seam whose
+// owner lands here. It returns the tops spine the worker role consumes.
+// Nothing here starts anything: the dispatchers, the jobs runner, the
+// retention sweep and the reconciler are worker-role loops (D37), and the
+// sms belt's dispatcher is built beside them in the worker.
 func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog.Logger, spine *moneySpine, ops *operationsSpine, cfg config.Config, sharedSmsBelt *smsBelt) *topsSpine {
 	link := linkedUserID(pool)
 	auditSvc := spine.auditSvc

@@ -39,12 +39,13 @@ type polishPlane struct {
 	modules []map[string]string // GET /modules/ results: id + name
 	labels  []map[string]string // GET /issue-labels/ results: id + name
 
-	moduleCreates  int // POST /modules/ (the bridge must never)
-	labelCreates   int // POST /issue-labels/ (the bridge must never)
-	issues         []map[string]any
-	moduleAttaches []string // the module id each issue was attached to
-	sequenceID     int      // answered on issue create (0 to omit)
-	projectIdent   string   // answered on the project detail read
+	moduleCreates     int // POST /modules/ (the bridge must never)
+	labelCreates      int // POST /issue-labels/ (the bridge must never)
+	issues            []map[string]any
+	moduleAttaches    []string // the module id each issue was attached to
+	moduleAttachFails bool     // answer the module attach with a 500
+	sequenceID        int      // answered on issue create (0 to omit)
+	projectIdent      string   // answered on the project detail read
 
 	presigns, uploads, confirms int
 	uploadBytes                 [][]byte
@@ -110,7 +111,12 @@ func newPolishPlane(t *testing.T) *polishPlane {
 	mux.HandleFunc("POST /api/v1/workspaces/ws/projects/proj/modules/{module}/module-issues/", func(w http.ResponseWriter, r *http.Request) {
 		p.mu.Lock()
 		p.moduleAttaches = append(p.moduleAttaches, r.PathValue("module"))
+		fails := p.moduleAttachFails
 		p.mu.Unlock()
+		if fails {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{})
 	})
 	// The attachment flow, one asset per presign so three images make three.
@@ -479,5 +485,32 @@ func TestHandlerStampsActorAndAnswersNumber(t *testing.T) {
 	}
 	if p.uploads != 2 {
 		t.Fatalf("uploads=%d, want one per attached image", p.uploads)
+	}
+}
+
+// A module attach that fails must not drop the screenshots: the work item
+// exists, so the images still attach and the number is still answered, and
+// the failure is logged.
+func TestModuleAttachFailureStillAttachesTheImages(t *testing.T) {
+	p := newPolishPlane(t)
+	p.moduleAttachFails = true
+	var logs bytes.Buffer
+	svc := p.service("")
+	svc.log = slog.New(slog.NewTextHandler(&logs, nil))
+	filed, err := svc.File(context.Background(), Submission{
+		Kind: KindBug, Message: "module attach will fail", ActorID: "u-1", ActorRole: "GM",
+		Images: polishImages(2),
+	})
+	if err != nil {
+		t.Fatalf("File: %v", err)
+	}
+	if filed.Number != "HH-42" {
+		t.Errorf("number = %q, want HH-42", filed.Number)
+	}
+	if p.presigns != 2 || p.uploads != 2 || p.confirms != 2 {
+		t.Fatalf("presign=%d upload=%d confirm=%d, want 2/2/2 although the module attach failed", p.presigns, p.uploads, p.confirms)
+	}
+	if !strings.Contains(logs.String(), "module attach failed") {
+		t.Errorf("the module attach failure was not logged: %q", logs.String())
 	}
 }
