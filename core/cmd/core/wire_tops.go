@@ -208,16 +208,18 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// the selector chose, and the config handler whose simulated flag reads
 	// that service. The same vault returns for pos's signature providers,
 	// its other consumer.
-	paySvc, payVault := buildCardRail(r, g, pool, cfg, link, log)
+	paySvc, payStore, payVault := buildCardRail(r, g, pool, cfg, link, log)
 
 	// The card rail's two seam adapters, each built ONCE over the service
 	// the selector chose and handed to its seam from this one value: the
-	// till's charger here, the pos refunder further down. The same values
-	// ride the spine as the wiring witnesses, so the card rail test pins
-	// the handoff itself: what charges and what refunds is the rail the
-	// selector chose, not a sibling construction (the HH-178 shape again
-	// would fail the test, not only the reader).
-	cardCharger := cardChargerAdapter{svc: paySvc}
+	// till's capture rail here (over the service for the captures and the
+	// compensations, over the store for the read-only retry pass), the pos
+	// refunder further down. The same values ride the spine as the wiring
+	// witnesses, so the card rail test pins the handoff itself: what
+	// charges and what refunds is the rail the selector chose, not a
+	// sibling construction (the HH-178 shape again would fail the test, not
+	// only the reader).
+	cardCharger := cardChargerAdapter{svc: paySvc, store: payStore}
 	cardRefunder := posCardRefunderAdapter{svc: paySvc}
 
 	// A-03 till: the CARD branch's charger seam closes here (payment has
@@ -626,7 +628,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 // a charge would go, is worse than no payment rail); the selector's own
 // guard keeps its meaning unchanged (DIB-416): production still refuses to
 // boot on a simulated rail.
-func buildCardRail(r httpx.Registrar, g *guards.Guards, pool *pgxpool.Pool, cfg config.Config, link identity.UserIDLinker, log *slog.Logger) (*payment.Service, *payment.Vault) {
+func buildCardRail(r httpx.Registrar, g *guards.Guards, pool *pgxpool.Pool, cfg config.Config, link identity.UserIDLinker, log *slog.Logger) (*payment.Service, *payment.Store, *payment.Vault) {
 	payVault, err := payment.NewVault(cfg.PaymentVaultKey)
 	if err != nil {
 		panic("payment vault init failed: " + err.Error())
@@ -640,5 +642,8 @@ func buildCardRail(r httpx.Registrar, g *guards.Guards, pool *pgxpool.Pool, cfg 
 	}
 	paySvc := payment.NewService(payStore, cardProc)
 	payment.NewHandler(payStore, log).WithUserLinker(link).WithSimulated(paySvc.Simulated()).RegisterRoutes(r, g)
-	return paySvc, payVault
+	// The store returns beside the service: the till's capture adapter reads
+	// the attempt rows through it on the seam's read-only arm, the same
+	// store the service's own captures write.
+	return paySvc, payStore, payVault
 }

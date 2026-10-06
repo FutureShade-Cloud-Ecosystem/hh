@@ -76,6 +76,12 @@ var (
 	// ErrAttemptNotCaptured: BindTx matched no CAPTURED row; the sweep or the compensator took the
 	// attempt (or it is already bound), so the sale's transaction must fail.
 	ErrAttemptNotCaptured = errors.New("payment: the attempt is no longer captured")
+	// ErrCaptureBadCharge: the charge input itself is invalid (no account token, or a non positive
+	// amount). Capture refuses it before the claim, so nothing was claimed, nothing was dispatched
+	// and no money moved; the leg is the caller's own malformation. It is the capture surface's
+	// exported word for errBadCharge (the same error, which the store's own charge path keeps
+	// returning unexported); the adapter is the one place that translates it.
+	ErrCaptureBadCharge = errBadCharge
 )
 
 // CaptureInput is one card leg. AccountToken is the client-tokenized instrument: it goes to the

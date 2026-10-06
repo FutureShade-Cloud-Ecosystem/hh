@@ -434,23 +434,43 @@ func (f *fakeStore) InvoicePayments(_ context.Context, invoiceID string) (Invoic
 	return InvoicePayments{InvoiceID: invoiceID, Items: []InvoicePaymentRecord{}}, true, nil
 }
 
-// - fake CardCharger (deterministic; NO live call, the gable payment_test mock pattern) -
+// - fake CardCharger (deterministic; NO live call, the gable payment_test mock pattern), on the
+// capture seam: Capture answers from canned state, BindTx records the bind it was handed,
+// Compensate answers a clean reversal -
 
 type fakeCharger struct {
-	result     ChargeResult
-	err        error
-	calls      int
-	lastAmount int64
-	lastToken  string
-	lastRef    string
+	capture CardCapture
+	err     error
+	decline bool
+
+	captureCalls int
+	bindCalls    int
+	compCalls    int
+	last         CardChargeInput
+	lastBind     CardBind
 }
 
-func (c *fakeCharger) Charge(_ context.Context, _ pgx.Tx, amountCents int64, token, ref string) (ChargeResult, error) {
-	c.calls++
-	c.lastAmount = amountCents
-	c.lastToken = token
-	c.lastRef = ref
-	return c.result, c.err
+func (c *fakeCharger) Capture(_ context.Context, in CardChargeInput) (CardCapture, error) {
+	c.captureCalls++
+	c.last = in
+	if c.decline {
+		return CardCapture{AttemptID: "att-fake"}, ErrCardDeclined
+	}
+	if c.err != nil {
+		return CardCapture{AttemptID: "att-fake"}, c.err
+	}
+	return c.capture, nil
+}
+
+func (c *fakeCharger) BindTx(_ context.Context, _ pgx.Tx, b CardBind) error {
+	c.bindCalls++
+	c.lastBind = b
+	return nil
+}
+
+func (c *fakeCharger) Compensate(_ context.Context, attemptID string) (CardCompensation, error) {
+	c.compCalls++
+	return CardCompensation{Kind: CardCompVoided, AttemptID: attemptID}, nil
 }
 
 // - fake StaffContext threading -
@@ -590,8 +610,8 @@ func TestTakeTender_Cash_WritesPaymentRow(t *testing.T) {
 	if res.GatewayRef != "" {
 		t.Fatalf("cash tender must carry no gateway_ref, got %q", res.GatewayRef)
 	}
-	if charger.calls != 0 {
-		t.Fatalf("cash must not call the card rail; calls=%d", charger.calls)
+	if charger.captureCalls != 0 || charger.bindCalls != 0 {
+		t.Fatalf("cash must not call the card rail; capture=%d bind=%d", charger.captureCalls, charger.bindCalls)
 	}
 }
 
@@ -610,7 +630,7 @@ func TestTakeTender_Cash_OfflineFirstClass(t *testing.T) {
 	if !store.payments[res.PaymentID].OfflineCaptured {
 		t.Fatal("offline_captured must be true")
 	}
-	if charger.calls != 0 {
+	if charger.captureCalls != 0 || charger.bindCalls != 0 {
 		t.Fatal("offline cash must not call the card rail")
 	}
 }
@@ -651,20 +671,95 @@ func TestTakeTender_AmountNonPositive_Rejected(t *testing.T) {
 	wantStatus(t, err, 422)
 }
 
-func TestTakeTender_Card_CapturesAndPersistsGatewayRef(t *testing.T) {
+func TestCaptureCard_CapturesThroughTheRailAfterTheSessionRules(t *testing.T) {
 	store := newFakeStore()
-	charger := &fakeCharger{result: ChargeResult{ProcessorRef: "rp_sim_abc", Status: ChargeCaptured}}
+	charger := &fakeCharger{capture: CardCapture{Kind: CardCaptureCaptured, AttemptID: "att-1", ProcessorRef: "rp_sim_abc"}}
+	svc := newTestSvc(store, charger)
+	ctx := ctxWith(context.Background(), staffAt("u-sarah", trenton))
+	sid := openSession(t, store, trenton)
+
+	res, err := svc.CaptureCard(ctx, CardChargeInput{
+		TillSessionID: sid, BranchID: trenton, AmountCents: 12000,
+		LegKey: "k", SaleKey: "sale-1", LegSeq: 1, AccountToken: "tok_xyz", CardType: CardCredit,
+	})
+	if err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+	if charger.captureCalls != 1 {
+		t.Fatalf("the rail must be called once; calls=%d", charger.captureCalls)
+	}
+	if res.AttemptID != "att-1" || res.ProcessorRef != "rp_sim_abc" || res.Kind != CardCaptureCaptured {
+		t.Fatalf("unexpected capture answer: %+v", res)
+	}
+	// The session rules ran first: the leg the rail received names the drawer's own branch and
+	// session, the amount, the leg key and the token, and nothing else.
+	if charger.last.TillSessionID != sid || charger.last.AmountCents != 12000 ||
+		charger.last.AccountToken != "tok_xyz" || charger.last.LegKey != "k" || charger.last.BranchID != trenton {
+		t.Fatalf("the rail received the wrong leg: %+v", charger.last)
+	}
+	// A capture writes no payments row; the row comes from the transaction's bind.
+	if store.insertCalls != 0 {
+		t.Fatalf("the capture must not write a payments row; insertCalls=%d", store.insertCalls)
+	}
+}
+
+func TestCaptureCard_ClosedSessionRefused(t *testing.T) {
+	store := newFakeStore()
+	charger := &fakeCharger{capture: CardCapture{Kind: CardCaptureCaptured, AttemptID: "att-1", ProcessorRef: "rp_1"}}
+	svc := newTestSvc(store, charger)
+	ctx := ctxWith(context.Background(), staffAt("u-sarah", trenton))
+	sid := openSession(t, store, trenton)
+	store.sessions[sid].Status = StatusClosed
+
+	_, err := svc.CaptureCard(ctx, CardChargeInput{TillSessionID: sid, AmountCents: 100, LegKey: "k", SaleKey: "s", LegSeq: 1})
+	wantStatus(t, err, 409)
+	if charger.captureCalls != 0 {
+		t.Fatalf("a closed drawer must reach no rail; calls=%d", charger.captureCalls)
+	}
+}
+
+func TestCaptureCard_Declined_NoMoneyMovesHere(t *testing.T) {
+	store := newFakeStore()
+	charger := &fakeCharger{decline: true}
+	svc := newTestSvc(store, charger)
+	ctx := ctxWith(context.Background(), staffAt("u-sarah", trenton))
+	sid := openSession(t, store, trenton)
+
+	_, err := svc.CaptureCard(ctx, CardChargeInput{
+		TillSessionID: sid, AmountCents: 12000, LegKey: "k", SaleKey: "s", LegSeq: 1, AccountToken: "tok",
+	})
+	if !IsCardDeclined(err) {
+		t.Fatalf("the rail's decline must surface as the till's declined answer; got %v", err)
+	}
+	if store.insertCalls != 0 {
+		t.Fatalf("a declined capture must not write a RECEIVED row; insertCalls=%d", store.insertCalls)
+	}
+}
+
+func TestTakeTender_Card_BindsTheCaptureAndPersistsItsRef(t *testing.T) {
+	store := newFakeStore()
+	charger := &fakeCharger{}
 	svc := newTestSvc(store, charger)
 	ctx := ctxWith(context.Background(), staffAt("u-sarah", trenton))
 	sid := openSession(t, store, trenton)
 
 	res, err := svc.TakeTender(ctx, nil, TenderInput{TillSessionID: sid, Method: MethodCard, AmountCents: 12000,
-		PaymentToken: "tok_xyz", CardType: CardCredit, IdempotencyKey: "k"})
+		PaymentToken: "tok_xyz", CardType: CardCredit, IdempotencyKey: "k",
+		Capture: CardCapture{AttemptID: "att-9", ProcessorRef: "rp_sim_abc"}})
 	if err != nil {
-		t.Fatalf("card capture: %v", err)
+		t.Fatalf("card tender: %v", err)
 	}
-	if charger.calls != 1 {
-		t.Fatalf("charger must be called once; calls=%d", charger.calls)
+	// The till charges nothing on this path: the capture came in on the tender, and the only rail
+	// call is the bind, once, naming this tender's own facts.
+	if charger.captureCalls != 0 {
+		t.Fatalf("TakeTender must not capture; captureCalls=%d", charger.captureCalls)
+	}
+	if charger.bindCalls != 1 {
+		t.Fatalf("the bind must ride the transaction once; bindCalls=%d", charger.bindCalls)
+	}
+	if charger.lastBind.AttemptID != "att-9" || charger.lastBind.PaymentID != res.PaymentID ||
+		charger.lastBind.LegKey != "k" || charger.lastBind.TillSessionID != sid || charger.lastBind.AmountCents != 12000 {
+		t.Fatalf("the bind names the wrong facts: %+v", charger.lastBind)
 	}
 	p := store.payments[res.PaymentID]
 	if p.GatewayRef != "rp_sim_abc" || p.Status != PaymentReceived || p.CardType != CardCredit {
@@ -677,43 +772,24 @@ func TestTakeTender_Card_CapturesAndPersistsGatewayRef(t *testing.T) {
 	}
 }
 
-func TestTakeTender_Card_Declined_NoReceivedRow(t *testing.T) {
+func TestTakeTender_Card_NoCaptureRefused(t *testing.T) {
 	store := newFakeStore()
-	charger := &fakeCharger{result: ChargeResult{Status: ChargeFailed}}
+	charger := &fakeCharger{}
 	svc := newTestSvc(store, charger)
 	ctx := ctxWith(context.Background(), staffAt("u-sarah", trenton))
 	sid := openSession(t, store, trenton)
 
 	_, err := svc.TakeTender(ctx, nil, TenderInput{TillSessionID: sid, Method: MethodCard, AmountCents: 12000,
 		PaymentToken: "tok", CardType: CardCredit, IdempotencyKey: "k"})
-	wantStatus(t, err, 402)
-	if store.insertCalls != 0 {
-		t.Fatalf("declined card must not write a RECEIVED row; insertCalls=%d", store.insertCalls)
-	}
-}
-
-func TestTakeTender_Card_CaptureBeforeReturn(t *testing.T) {
-	store := newFakeStore()
-	charger := &fakeCharger{result: ChargeResult{ProcessorRef: "rp_1", Status: ChargeCaptured}}
-	svc := newTestSvc(store, charger)
-	ctx := ctxWith(context.Background(), staffAt("u-sarah", trenton))
-	sid := openSession(t, store, trenton)
-
-	res, err := svc.TakeTender(ctx, nil, TenderInput{TillSessionID: sid, Method: MethodCard, AmountCents: 100,
-		PaymentToken: "tok", CardType: CardCredit, IdempotencyKey: "k"})
-	if err != nil {
-		t.Fatalf("card: %v", err)
-	}
-	// On a successful return, the capture has already happened and its ref is on the persisted row AND the
-	// returned result (the single source of truth for the gateway_ref).
-	if charger.calls != 1 || store.payments[res.PaymentID].GatewayRef != "rp_1" || res.GatewayRef != "rp_1" {
-		t.Fatalf("capture must complete before success: calls=%d row.ref=%q result.ref=%q", charger.calls, store.payments[res.PaymentID].GatewayRef, res.GatewayRef)
+	wantStatus(t, err, 409)
+	if store.insertCalls != 0 || charger.bindCalls != 0 {
+		t.Fatalf("a CARD tender with no capture must write nothing and bind nothing; insertCalls=%d bindCalls=%d", store.insertCalls, charger.bindCalls)
 	}
 }
 
 func TestTakeTender_Card_Offline_Blocked(t *testing.T) {
 	store := newFakeStore()
-	charger := &fakeCharger{result: ChargeResult{Status: ChargeCaptured}}
+	charger := &fakeCharger{}
 	svc := newTestSvc(store, charger)
 	ctx := ctxWith(context.Background(), staffAt("u-sarah", trenton))
 	sid := openSession(t, store, trenton)
@@ -723,21 +799,22 @@ func TestTakeTender_Card_Offline_Blocked(t *testing.T) {
 	if !errors.Is(err, errOffline) {
 		t.Fatalf("card offline must be blocked (errOffline); got %v", err)
 	}
-	if charger.calls != 0 {
+	if charger.captureCalls != 0 || charger.bindCalls != 0 {
 		t.Fatal("blocked offline card must not call the rail")
 	}
 }
 
 func TestTakeTender_NeverLogsToken(t *testing.T) {
 	store := newFakeStore()
-	charger := &fakeCharger{result: ChargeResult{ProcessorRef: "rp_ref", Status: ChargeCaptured}}
+	charger := &fakeCharger{}
 	svc := newTestSvc(store, charger)
 	ctx := ctxWith(context.Background(), staffAt("u-sarah", trenton))
 	sid := openSession(t, store, trenton)
 
 	const token = "tok_secret_PAN"
 	res, err := svc.TakeTender(ctx, nil, TenderInput{TillSessionID: sid, Method: MethodCard, AmountCents: 100,
-		PaymentToken: token, CardType: CardCredit, IdempotencyKey: "k"})
+		PaymentToken: token, CardType: CardCredit, IdempotencyKey: "k",
+		Capture: CardCapture{AttemptID: "att-t", ProcessorRef: "rp_ref"}})
 	if err != nil {
 		t.Fatalf("card: %v", err)
 	}
@@ -751,7 +828,7 @@ func TestTakeTender_NeverLogsToken(t *testing.T) {
 
 func TestTakeTender_Split_TwoPaymentsOneSession(t *testing.T) {
 	store := newFakeStore()
-	charger := &fakeCharger{result: ChargeResult{ProcessorRef: "rp", Status: ChargeCaptured}}
+	charger := &fakeCharger{}
 	svc := newTestSvc(store, charger)
 	ctx := ctxWith(context.Background(), staffAt("u-sarah", trenton))
 	sid := openSession(t, store, trenton)
@@ -761,7 +838,7 @@ func TestTakeTender_Split_TwoPaymentsOneSession(t *testing.T) {
 		t.Fatalf("cash: %v", err)
 	}
 	card, err := svc.TakeTender(ctx, nil, TenderInput{TillSessionID: sid, Method: MethodCard, AmountCents: 10000,
-		PaymentToken: "tok", CardType: CardCredit, IdempotencyKey: "k2"})
+		PaymentToken: "tok", CardType: CardCredit, IdempotencyKey: "k2", Capture: CardCapture{AttemptID: "att-x", ProcessorRef: "rp"}})
 	if err != nil {
 		t.Fatalf("card: %v", err)
 	}
@@ -807,13 +884,13 @@ func TestTakeTender_InCallerTx_RollsBackWithSale(t *testing.T) {
 
 func TestTakeTender_SignatureRef_Persisted(t *testing.T) {
 	store := newFakeStore()
-	charger := &fakeCharger{result: ChargeResult{ProcessorRef: "rp", Status: ChargeCaptured}}
+	charger := &fakeCharger{}
 	svc := newTestSvc(store, charger)
 	ctx := ctxWith(context.Background(), staffAt("u-sarah", trenton))
 	sid := openSession(t, store, trenton)
 
 	res, err := svc.TakeTender(ctx, nil, TenderInput{TillSessionID: sid, Method: MethodCard, AmountCents: 100,
-		PaymentToken: "tok", CardType: CardCredit, SignatureRef: "sig-ref-9", IdempotencyKey: "k"})
+		PaymentToken: "tok", CardType: CardCredit, SignatureRef: "sig-ref-9", IdempotencyKey: "k", Capture: CardCapture{AttemptID: "att-x", ProcessorRef: "rp"}})
 	if err != nil {
 		t.Fatalf("card: %v", err)
 	}
@@ -825,13 +902,13 @@ func TestTakeTender_SignatureRef_Persisted(t *testing.T) {
 func TestTakeTender_Card_PersistsCardType(t *testing.T) {
 	for _, ct := range []string{CardCredit, CardDebit, CardPrepaid, CardUnknown} {
 		store := newFakeStore()
-		charger := &fakeCharger{result: ChargeResult{ProcessorRef: "rp", Status: ChargeCaptured}}
+		charger := &fakeCharger{}
 		svc := newTestSvc(store, charger)
 		ctx := ctxWith(context.Background(), staffAt("u-sarah", trenton))
 		sid := openSession(t, store, trenton)
 
 		res, err := svc.TakeTender(ctx, nil, TenderInput{TillSessionID: sid, Method: MethodCard, AmountCents: 100,
-			PaymentToken: "tok", CardType: ct, IdempotencyKey: "k-" + ct})
+			PaymentToken: "tok", CardType: ct, IdempotencyKey: "k-" + ct, Capture: CardCapture{AttemptID: "att-x", ProcessorRef: "rp"}})
 		if err != nil {
 			t.Fatalf("card %s: %v", ct, err)
 		}
@@ -847,7 +924,7 @@ func TestTakeTender_Card_PersistsCardType(t *testing.T) {
 
 func TestTakeTender_PendingStatus_ValidButUnused(t *testing.T) {
 	store := newFakeStore()
-	charger := &fakeCharger{result: ChargeResult{ProcessorRef: "rp", Status: ChargeCaptured}}
+	charger := &fakeCharger{}
 	svc := newTestSvc(store, charger)
 	ctx := ctxWith(context.Background(), staffAt("u-sarah", trenton))
 	sid := openSession(t, store, trenton)
@@ -856,7 +933,7 @@ func TestTakeTender_PendingStatus_ValidButUnused(t *testing.T) {
 	if _, err := svc.TakeTender(ctx, nil, TenderInput{TillSessionID: sid, Method: MethodCash, AmountCents: 100, IdempotencyKey: "k1"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.TakeTender(ctx, nil, TenderInput{TillSessionID: sid, Method: MethodCard, AmountCents: 100, PaymentToken: "t", CardType: CardCredit, IdempotencyKey: "k2"}); err != nil {
+	if _, err := svc.TakeTender(ctx, nil, TenderInput{TillSessionID: sid, Method: MethodCard, AmountCents: 100, PaymentToken: "t", CardType: CardCredit, IdempotencyKey: "k2", Capture: CardCapture{AttemptID: "att-p", ProcessorRef: "rp_p"}}); err != nil {
 		t.Fatal(err)
 	}
 	for id, p := range store.payments {
