@@ -522,6 +522,35 @@ test("the page carries the dealer's header: the dealer's name is visible at the 
   await expect(header).toContainText(DEALER_NAME);
 });
 
+test("every line shows the same image cell: the photo or the no-photo mark, never an empty box", async ({ page }) => {
+  // Images are ON and the two lines differ on purpose: the first carries a
+  // product photo, the second carries none, the exact shape the staging
+  // defect showed (an empty box on one line, nothing on the next).
+  await page.goto("/?t=q-mixed-images-29");
+  await expect(page.getByRole("heading", { name: "Quote #Q-29" })).toBeVisible();
+  const rows = page.locator("tbody tr");
+  await expect(rows).toHaveCount(2);
+  // The first line shows the product's photo, through the image read.
+  await expect(rows.nth(0).locator("img.thumb")).toBeVisible();
+  // The second line shows the SAME cell treatment with the drawn no-photo
+  // mark: never an empty box (indistinguishable from an image still loading)
+  // and never a missing cell.
+  await expect(rows.nth(1).locator("svg.thumbmark")).toBeVisible();
+  await expect(rows.nth(1).locator("img.thumb")).toHaveCount(0);
+  // And no image cell on any line is left bare: every one is the same drawn
+  // box with either the photo or the mark in it.
+  const cells = await page.evaluate(() => {
+    const root = document.querySelector("pd-quote-public")?.shadowRoot;
+    return Array.from(root?.querySelectorAll("tbody tr") ?? []).map((row) => {
+      const box = row.querySelector("td .thumbslot");
+      if (box === null) return "missing";
+      const marked = box.querySelector("img.thumb, svg.thumbmark") !== null;
+      return getComputedStyle(box).borderTopWidth !== "0px" && marked ? "boxed" : "bare";
+    });
+  });
+  expect(cells, "every line's image cell is the same visible box, photo or mark").toEqual(["boxed", "boxed"]);
+});
+
 test("the accept button takes the design system's accent token, not a brand override blue", async ({ page }) => {
   // A quote that is still open: the demo quote is accepted by an earlier test.
   await page.goto("/?t=q-terms-28");
