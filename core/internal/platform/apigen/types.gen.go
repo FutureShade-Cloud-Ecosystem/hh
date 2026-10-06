@@ -882,6 +882,25 @@ type PaymentsReversalResult struct {
 	ReopenedInvoices  []string `json:"reopened_invoices"`
 }
 
+type PaymentCardAttemptSummary struct {
+	Ref           string    `json:"ref"`
+	Id            string    `json:"id"`
+	Status        string    `json:"status"`
+	AmountCents   int64     `json:"amount_cents"`
+	BranchId      string    `json:"branch_id"`
+	TillSessionId string    `json:"till_session_id"`
+	CreatedAt     time.Time `json:"created_at"`
+	SaleKey       string    `json:"sale_key"`
+	ChargeRef     string    `json:"charge_ref"`
+	ReversalRef   string    `json:"reversal_ref"`
+	LastError     string    `json:"last_error"`
+}
+
+type PaymentCardAttemptResolve struct {
+	Resolution string `json:"resolution"`
+	Note       string `json:"note"`
+}
+
 type AssistArgSpec struct {
 	Name     string `json:"name"`
 	Label    string `json:"label"`

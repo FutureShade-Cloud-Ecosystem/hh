@@ -1312,6 +1312,98 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
 
+  # --- payment: the two manager routes over the card charge attempts (the
+  # card charge design's section 4). Both are RequireManager and are
+  # registered by the payment handler's RegisterRoutes beside the config
+  # routes (the wire_tops call site, where the handler receives the user
+  # linker the audited close resolves through).
+  /api/v1/payments/card-attempts:
+    get:
+      operationId: paymentListCardAttempts
+      tags: [staff-billing]
+      summary: List the card charge attempts that need a person
+      description: >-
+        The list a person reconciling a Run settlement report reads: every
+        trans_id with no sale behind it, and why. With state=open it answers
+        every attempt that needs a person (UNKNOWN, VOID_UNKNOWN,
+        VOID_DECLINED), whatever its date; from and to (RFC3339) bound the
+        second arm, every attempt in the range that carries a charge ref and
+        is not BOUND. A missing from and to default from to the seven day
+        window, so the range arm is bounded whatever the caller sends.
+        Newest first, bounded at 500 rows.
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: state
+          in: query
+          required: false
+          description: open selects the attempts that need a person
+          schema: { type: string, enum: [open] }
+        - name: from
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: The attempt rows, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PaymentCardAttemptSummary"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/payments/card-attempts/{id}/resolve:
+    post:
+      operationId: paymentResolveCardAttempt
+      tags: [manager-billing]
+      summary: Close one card charge attempt that needed a person
+      description: >-
+        Reason-required and audited: the resolution must be NOT_CHARGED or
+        REVERSED_AT_PROCESSOR and the note non-empty, and the close carries
+        the caller's own user id as the resolver. The row stays and its leg
+        key never charges again. An unknown id answers 404; a BOUND attempt
+        (its sale exists) answers 409; a VOID_* row cannot close as
+        NOT_CHARGED (400, the pairing refusal); a row that moves between the
+        read and the close answers 409.
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentCardAttemptResolve"
+      responses:
+        "200":
+          description: The resolved row's summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentCardAttemptSummary"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
 components:
   schemas:
     # --- the register (billing/register_model.go) -----------------------------
@@ -2463,3 +2555,49 @@ components:
           type: array
           description: The invoices the reversal put back onto the AR book
           items: { type: string, format: uuid }
+
+    # --- payment: the card charge attempts ---------------------------------------
+    PaymentCardAttemptSummary:
+      type: object
+      description: >-
+        One manager-readable attempt row: the reconciliation facts (amount,
+        branch, till session, time, sale key) beside the charge's own answers
+        (status, the charge and reversal refs, the bounded diagnostic). ref
+        is the id's short form, the name the needs-manager answers carry; id
+        is the whole value, the resolve route's path parameter. The row never
+        carries a leg key, a note or a resolver: it is the reconciliation
+        view, not the row's every column.
+      required: [ref, id, status, amount_cents, branch_id, till_session_id, created_at, sale_key, charge_ref, reversal_ref, last_error]
+      properties:
+        ref: { type: string }
+        id: { type: string, format: uuid }
+        status:
+          type: string
+          description: The attempt row's stored state
+          enum: [CHARGING, CAPTURED, DECLINED, UNKNOWN, BOUND, VOIDING, VOIDED, VOID_UNKNOWN, VOID_DECLINED, RESOLVED]
+        amount_cents: { type: integer, format: int64 }
+        branch_id: { type: string, format: uuid }
+        till_session_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        sale_key: { type: string, format: uuid }
+        charge_ref:
+          type: string
+          description: The processor's charge reference; empty until an answer carried one
+        reversal_ref:
+          type: string
+          description: The processor's reversal reference; empty until an answer carried one
+        last_error:
+          type: string
+          description: The bounded, redacted diagnostic; never a token, a credential or a card number
+
+    PaymentCardAttemptResolve:
+      type: object
+      description: The manager's close of an attempt that needed a person
+      required: [resolution, note]
+      properties:
+        resolution:
+          type: string
+          enum: [NOT_CHARGED, REVERSED_AT_PROCESSOR]
+        note:
+          type: string
+          description: Mandatory; what the manager found at the processor
