@@ -21,6 +21,9 @@
 //   POST /api/v1/quotes/{id}/share-links         -> QuoteMintedShareLink
 //   POST /api/v1/quotes/{id}/sms-share           -> QuoteSMSShareResult | 409
 //   POST /api/v1/quotes/{id}/convert             -> QuoteConvertResult | 409
+//   GET  /api/v1/quotes/{id}/related-documents   -> QuoteRelatedDocumentList
+//   GET  /api/v1/orders/{id}/related-documents   -> QuoteRelatedDocumentList
+//   POST /api/v1/quotes/{id}/order-payment       -> QuoteOrderPaymentResult | 400 | 403 | 404 | 409
 //   POST /api/v1/quotes/{id}/lines/{n}/floor-approval -> QuoteFloorApprovalAnswer
 //   GET/PUT/DELETE /api/v1/surfaces/quotes.builder/my-workspace  -> the workspace row
 //   GET/PUT/DELETE /api/v1/surfaces/quotes.builder/my-items      -> the column curation
@@ -233,6 +236,19 @@ const CUSTOMERS = [
     open_balance_cents: 0,
     percent_off: 10,
   },
+  {
+    // The customer with no credit account: every conversion draws on credit
+    // at the plain door, so for this account the QD-5 door is the whole
+    // counter action (convert, invoice, pay in full).
+    id: "c-quarry-lane",
+    account_no: "C03",
+    name: "Quarry Lane Paving",
+    customer_type: "CONTRACTOR",
+    payment_terms_days: 0,
+    credit_limit_cents: 0,
+    open_balance_cents: 0,
+    percent_off: 0,
+  },
 ];
 
 const customerById = new Map([
@@ -263,7 +279,7 @@ const HST_RATE_BPS = 1300;
 // approvalsShape: "page" is the contract's IdentityApprovalPage, "bare" is what
 // the core's handler writes today (a bare array), "paged" is the page object
 // split into pages of one row with next_cursor.
-const switches = { callerOnCostList: true, callerIsGeneralManager: false, floorRaiseBps: 0, approvalsShape: "page", quotePageSize: 0 };
+const switches = { callerOnCostList: true, callerIsGeneralManager: false, floorRaiseBps: 0, approvalsShape: "page", quotePageSize: 0, paymentRoleRefused: false, paymentGhost: false, paymentKeyCrossed: false };
 
 // Every write the stub sees, for the suite's layout save assertions. The
 // ledger is test scaffolding: no contract path reads it.
@@ -276,6 +292,85 @@ const shareLinks = new Map();
 const floorRequests = new Map(); // `${quoteId}:${lineNo}` -> request row
 // The conversions seen, for the suite's fulfilment assertion (scaffolding).
 const conversions = [];
+
+// ---------------------------------------------------------------------------
+// The QD-5 world: the orders a quote became, their invoices, and the payments
+// the counter door took. The stub stands in for the core's one transaction:
+// the conversion (for a customer with no credit), the invoice and the payment
+// are written together here, and the door's refusals carry the core's own
+// sentences so the panel's words are tested against them.
+// ---------------------------------------------------------------------------
+
+const orders = new Map(); // order id -> { id, order_no, quote_id, status, origin, accept_seq, total_cents, created_at }
+const invoices = new Map(); // invoice id -> { id, invoice_no, order_id, quote_id, status, total_cents, balance_cents, source, created_at }
+const payments = new Map(); // namespaced key -> the stored answer (for a replay)
+let orderCounter = 2000;
+let invoiceCounter = 3000;
+let paymentCounter = 4000;
+
+/** The core's own money word (quote/credit.go): "$1,234.00", a minus when negative. */
+function coreMoney(cents) {
+  const neg = cents < 0;
+  const abs = Math.abs(cents);
+  const whole = String(Math.floor(abs / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return `${neg ? "-" : ""}$${whole}.${String(abs % 100).padStart(2, "0")}`;
+}
+
+/** The orders a quote became, in the order they were minted. */
+function ordersOf(quoteId) {
+  return [...orders.values()].filter((o) => o.quote_id === quoteId);
+}
+
+/** The live invoices of one order. */
+function invoicesOf(orderId) {
+  return [...invoices.values()].filter((i) => i.order_id === orderId && i.status !== "VOID");
+}
+
+function newOrder(quote, origin) {
+  orderCounter += 1;
+  const order = {
+    id: `o-${orderCounter}`,
+    order_no: `SO-${String(orderCounter).padStart(4, "0")}`,
+    quote_id: quote.id,
+    status: "DRAFT",
+    origin,
+    accept_seq: ordersOf(quote.id).length + 1,
+    total_cents: quote.total_cents,
+    created_at: new Date().toISOString(),
+  };
+  orders.set(order.id, order);
+  return order;
+}
+
+/** Raise the order's agreed invoice at the whole order key: the document when it exists, else what would be raised. */
+function agreedInvoiceOf(order) {
+  const live = invoicesOf(order.id);
+  return live.length > 0 ? live[0] : null;
+}
+
+function raiseAgreedInvoice(order, source = "COUNTER") {
+  const existing = agreedInvoiceOf(order);
+  if (existing !== null) return existing;
+  invoiceCounter += 1;
+  const invoice = {
+    id: `inv-${invoiceCounter}`,
+    invoice_no: `INV-${String(invoiceCounter).padStart(4, "0")}`,
+    order_id: order.id,
+    quote_id: order.quote_id,
+    status: "FINALIZED",
+    total_cents: order.total_cents,
+    balance_cents: order.total_cents,
+    source,
+    created_at: new Date().toISOString(),
+  };
+  invoices.set(invoice.id, invoice);
+  return invoice;
+}
+
+/** The payment key the core namespaces by quote, so a key used on one quote can never replay another's. */
+function paymentKeyOf(quoteId, key) {
+  return `quote-order-payment:${quoteId}:${key}`;
+}
 
 // ---------------------------------------------------------------------------
 // The third coder's panels' world: the assist key switch, the follow-up
@@ -539,13 +634,13 @@ function totalsOf(quote) {
 let quoteCounter = 1000;
 const quotes = new Map(); // id -> quote row
 
-function seedQuote(status, customerId, ownerFlow, lines, terms = {}) {
-  quoteCounter += 1;
-  const id = `q-${quoteCounter}`;
+function seedQuote(status, customerId, ownerFlow, lines, terms = {}, fixed = null) {
+  if (fixed === null) quoteCounter += 1;
+  const id = fixed !== null ? fixed.id : `q-${quoteCounter}`;
   const customer = customerById.get(customerId);
   const quote = {
     id,
-    quote_no: `Q-${quoteCounter}`,
+    quote_no: fixed !== null ? fixed.quoteNo : `Q-${quoteCounter}`,
     // stored under the id the search answers, so the workarea's account match hits
     // whichever form (core uuid or short label) the caller seeded with
     customer_id: customer.id,
@@ -554,6 +649,7 @@ function seedQuote(status, customerId, ownerFlow, lines, terms = {}) {
     status,
     valid_until: "",
     expired: false,
+    created_at: new Date().toISOString(),
     owner_id: USERS[ownerFlow].user_id,
     owner_name: USERS[ownerFlow].display_name,
     owner_flow: ownerFlow,
@@ -587,12 +683,25 @@ function seedQuote(status, customerId, ownerFlow, lines, terms = {}) {
 function seedWorld() {
   quoteCounter = 1000;
   quotes.clear();
+  orders.clear();
+  invoices.clear();
+  payments.clear();
+  orderCounter = 2000;
+  invoiceCounter = 3000;
+  paymentCounter = 4000;
   seedQuote("DRAFT", "c-maple-ridge", "sales", [
     { p: "p-holland-60", q: 120 },
     { p: "p-polymer-sand", q: 2 },
   ]);
   seedQuote("SENT", "c-fenwick", "sales-manager", [{ p: "p-wall-std", q: 10 }]);
   seedQuote("ACCEPTED", "c-maple-ridge", "sales", [{ p: "p-clear-stone", q: 3 }]);
+  // The QD-5 world, seeded on fixed ids past the dynamic range so a test's
+  // own seeded quotes keep their numbers (the first dynamic seed stays 1004):
+  // a credit customer's converted quote with its order (the deposit path),
+  // and a cash customer's accepted quote (the one action).
+  const converted = seedQuote("CONVERTED", "c-maple-ridge", "sales", [{ p: "p-holland-60", q: 10 }], {}, { id: "q-2101", quoteNo: "Q-2101" });
+  newOrder(converted, "COUNTER");
+  seedQuote("ACCEPTED", "c-quarry-lane", "sales", [{ p: "p-polymer-sand", q: 4 }], {}, { id: "q-2102", quoteNo: "Q-2102" });
 }
 seedWorld();
 
@@ -1018,6 +1127,63 @@ const server = createServer(async (request, response) => {
     });
     return;
   }
+  // The QD-5 peeks: the role gate's refusal (the core gate answers the RBAC
+  // 403 body "Forbidden"), the ghost answer (the payment is taken and stored
+  // but the answer is a 500, so the desk reads an unknown outcome and a retry
+  // with the same key replays it), a foreign invoice raised another way (the
+  // door's 409 names who can record the payment), and a second order for a
+  // multi acceptance quote (the door's 409 names the order's own document).
+  if (path === "/_stub/payment-role" && request.method === "PUT") {
+    readBody(request, response, (body) => {
+      switches.paymentRoleRefused = body.refused === true;
+      respondJson(response, 200, { refused: switches.paymentRoleRefused });
+    });
+    return;
+  }
+  if (path === "/_stub/payment-ghost" && request.method === "PUT") {
+    readBody(request, response, (body) => {
+      switches.paymentGhost = body.ghost === true;
+      respondJson(response, 200, { ghost: switches.paymentGhost });
+    });
+    return;
+  }
+  if (path === "/_stub/payment-key-crossed" && request.method === "PUT") {
+    // The crossed key: the next payment's key has ALREADY taken a different
+    // payment (another tab, an earlier post this desk never saw the answer
+    // of): the phantom CARD 5.00 is stored and applied under that key, so
+    // the post is answered with the core's 409 sentence and the family read
+    // shows what landed.
+    readBody(request, response, (body) => {
+      switches.paymentKeyCrossed = body.crossed === true;
+      respondJson(response, 200, { crossed: switches.paymentKeyCrossed });
+    });
+    return;
+  }
+  if (path === "/_stub/foreign-invoice" && request.method === "POST") {
+    readBody(request, response, (body) => {
+      const quote = quoteOr404(String(body.quote_id ?? ""));
+      const quoteOrders = quote === null ? [] : ordersOf(quote.id);
+      if (quote === null || quoteOrders.length === 0) {
+        respondJson(response, 404, { error: "no converted quote with an order" });
+        return;
+      }
+      const invoice = raiseAgreedInvoice(quoteOrders[0], "SHIPMENT_GROUP");
+      respondJson(response, 200, { invoice_no: invoice.invoice_no });
+    });
+    return;
+  }
+  if (path === "/_stub/plant-order" && request.method === "POST") {
+    readBody(request, response, (body) => {
+      const quote = quoteOr404(String(body.quote_id ?? ""));
+      if (quote === null) {
+        respondJson(response, 404, { error: "no quote with that id" });
+        return;
+      }
+      const order = newOrder(quote, body.origin === "PORTAL" ? "PORTAL" : "COUNTER");
+      respondJson(response, 200, { order_id: order.id, order_no: order.order_no });
+    });
+    return;
+  }
   // Put the whole in-memory world back to its seeded state, so a suite that
   // changes quotes, policy or switches leaves the next one a clean stub.
   if (path === "/_stub/reset" && request.method === "POST") {
@@ -1042,6 +1208,9 @@ const server = createServer(async (request, response) => {
     switches.floorRaiseBps = 0;
     switches.approvalsShape = "page";
     switches.quotePageSize = 0;
+    switches.paymentRoleRefused = false;
+    switches.paymentGhost = false;
+    switches.paymentKeyCrossed = false;
     respondJson(response, 200, { reset: true });
     return;
   }
@@ -1634,10 +1803,262 @@ const server = createServer(async (request, response) => {
         respondJson(response, 409, { error: `quote: this quote is ${quote.status.toLowerCase()}, only an accepted quote converts` });
         return;
       }
+      // The credit gate: every plain conversion draws on credit, so a customer
+      // with no credit account is refused as cash only (the core's COD policy
+      // wording); their path to money is the QD-5 one action.
+      const customer = customerById.get(quote.customer_id);
+      if ((customer?.credit_limit_cents ?? 0) <= 0) {
+        respondJson(response, 409, {
+          error:
+            "this customer cannot buy on account right now (account has no credit; cash or card only (COD)), the quote is unchanged and no order was created; accounts receivable can release or override the hold",
+        });
+        return;
+      }
       quote.status = "CONVERTED";
       quote.fulfilment = body.fulfillment === "WILL_CALL" ? "WILL_CALL" : "PICKUP";
       conversions.push({ quote_id: quote.id, fulfillment: body.fulfillment ?? null });
-      respondJson(response, 201, { order_id: `o-${quote.id}`, order_no: `SO-${quote.id.slice(-4)}` });
+      const order = newOrder(quote, "COUNTER");
+      respondJson(response, 201, { order_id: order.id, order_no: order.order_no });
+    });
+    return;
+  }
+
+  // ── QD-5: the document family reads and the counter payment door ──────────
+
+  /** The family rows of a quote: itself, the orders it became, and every order's invoices. */
+  function familyOf(quote, selfKind, selfId) {
+    const rows = [
+      {
+        kind: "QUOTE",
+        id: quote.id,
+        number: quote.quote_no,
+        status: quote.status,
+        date: quote.created_at ?? quote.updated_at ?? new Date().toISOString(),
+        total_cents: quote.total_cents,
+        ...(selfKind === "QUOTE" ? { self: true } : {}),
+      },
+    ];
+    for (const order of ordersOf(quote.id)) {
+      rows.push({
+        kind: "ORDER",
+        id: order.id,
+        number: order.order_no,
+        status: order.status,
+        date: order.created_at,
+        total_cents: order.total_cents,
+        parent_id: quote.id,
+        origin: order.origin,
+        accept_seq: order.accept_seq,
+        ...(selfKind === "ORDER" && selfId === order.id ? { self: true } : {}),
+      });
+      for (const invoice of invoicesOf(order.id)) {
+        rows.push({
+          kind: "INVOICE",
+          id: invoice.id,
+          number: invoice.invoice_no,
+          status: invoice.status,
+          date: invoice.created_at,
+          total_cents: invoice.total_cents,
+          parent_id: order.id,
+        });
+      }
+    }
+    return rows;
+  }
+
+  match = /^\/api\/v1\/quotes\/([^/]+)\/related-documents$/.exec(path);
+  if (match !== null && request.method === "GET") {
+    const quote = quoteOr404(match[1]);
+    if (quote === null) {
+      respondJson(response, 404, { error: "no quote with that id" });
+      return;
+    }
+    respondJson(response, 200, { items: familyOf(quote, "QUOTE", quote.id) });
+    return;
+  }
+
+  match = /^\/api\/v1\/orders\/([^/]+)\/related-documents$/.exec(path);
+  if (match !== null && request.method === "GET") {
+    const order = [...orders.values()].find((o) => o.id === match[1] || o.order_no === match[1]);
+    if (order === undefined) {
+      respondJson(response, 404, { error: "no order with that id" });
+      return;
+    }
+    const quote = quotes.get(order.quote_id);
+    if (quote === undefined) {
+      respondJson(response, 404, { error: "no quote with that id" });
+      return;
+    }
+    respondJson(response, 200, { items: familyOf(quote, "ORDER", order.id) });
+    return;
+  }
+
+  const paymentTenders = new Set(["CASH", "CARD", "CHEQUE", "EFT"]);
+  const paymentKeyPattern = /^[A-Za-z0-9._:-]{1,64}$/;
+
+  match = /^\/api\/v1\/quotes\/([^/]+)\/order-payment$/.exec(path);
+  if (match !== null && request.method === "POST") {
+    // The gate's own refusal, exactly as the core's role gate answers it.
+    if (switches.paymentRoleRefused) {
+      respondJson(response, 403, { error: "Forbidden" });
+      return;
+    }
+    const quote = quoteOr404(match[1]);
+    if (quote === null) {
+      respondJson(response, 404, { error: "no quote with that id" });
+      return;
+    }
+    readBody(request, response, (body) => {
+      const method = String(body.method ?? "").trim().toUpperCase();
+      const reference = String(body.reference ?? "").trim();
+      const key = String(body.idempotency_key ?? "");
+      const amount = body.amount_cents;
+      if (!paymentTenders.has(method)) {
+        respondJson(response, 400, { error: "method must be one of CASH, CARD, CHEQUE, EFT" });
+        return;
+      }
+      if (!paymentKeyPattern.test(key)) {
+        respondJson(response, 400, { error: "a payment needs an idempotency key of 1 to 64 letters, digits, dot, colon, dash or underscore" });
+        return;
+      }
+      if (!Number.isInteger(amount) || amount <= 0) {
+        respondJson(response, 400, { error: "the payment amount must be more than zero" });
+        return;
+      }
+      if (reference.length > 80) {
+        respondJson(response, 400, { error: "the payment reference is limited to 80 characters" });
+        return;
+      }
+      const customer = customerById.get(quote.customer_id);
+      const cash = (customer?.credit_limit_cents ?? 0) <= 0;
+      const namespaced = paymentKeyOf(quote.id, key);
+      let converted = false;
+      let order;
+      if (quote.status === "CONVERTED") {
+        const quoteOrders = ordersOf(quote.id);
+        if (quoteOrders.length === 0) {
+          respondJson(response, 409, { error: "this quote is converted but no order is recorded against it; look it up before taking payment" });
+          return;
+        }
+        if (quoteOrders.length > 1) {
+          respondJson(response, 409, { error: `this quote became ${quoteOrders.length} orders; take the payment from the order's own document` });
+          return;
+        }
+        order = quoteOrders[0];
+      } else if (quote.status === "ACCEPTED") {
+        if (!cash) {
+          respondJson(response, 409, { error: "convert this quote to an order first; a customer with a credit account converts through the conversion door and then pays" });
+          return;
+        }
+        if (amount !== quote.total_cents) {
+          respondJson(response, 400, {
+            error: `a customer with no credit account pays the whole agreed total of ${coreMoney(quote.total_cents)}, a balance left on the invoice would be credit the customer does not have`,
+          });
+          return;
+        }
+        quote.status = "CONVERTED";
+        order = newOrder(quote, "COUNTER");
+        converted = true;
+      } else {
+        respondJson(response, 409, { error: `this quote is ${quote.status.toLowerCase()}; only a converted quote's order takes a payment` });
+        return;
+      }
+      // The replay is told apart first and answered with the stored payment, so a replay is never refused for a
+      // balance it has since moved.
+      const stored = payments.get(namespaced);
+      if (stored === undefined && switches.paymentKeyCrossed) {
+        // The crossed key: this key already took a DIFFERENT payment than the one posted. The
+        // phantom is a real stored CARD 5.00 applied to the invoice, so a later family read
+        // shows what landed and only a NEW key can take another payment.
+        const crossedInvoice = raiseAgreedInvoice(order);
+        paymentCounter += 1;
+        crossedInvoice.balance_cents -= 500;
+        crossedInvoice.status = crossedInvoice.balance_cents === 0 ? "PAID" : "PARTIALLY_PAID";
+        payments.set(namespaced, {
+          method: "CARD",
+          amount_cents: 500,
+          answer: {
+            order_id: order.id,
+            order_no: order.order_no,
+            invoice_id: crossedInvoice.id,
+            invoice_no: crossedInvoice.invoice_no,
+            invoice_total_cents: crossedInvoice.total_cents,
+            payment_id: `pay-${paymentCounter}`,
+            payment_no: `P-${String(paymentCounter).padStart(4, "0")}`,
+            method: "CARD",
+            amount_cents: 500,
+            received_at: new Date().toISOString(),
+            reference: "CROSSED",
+            received_by: userId,
+            balance_cents: crossedInvoice.balance_cents,
+            replayed: false,
+            converted: false,
+          },
+        });
+        respondJson(response, 409, { error: "this idempotency key took a different payment; use a new key for a new payment" });
+        return;
+      }
+      if (stored !== undefined) {
+        if (stored.method !== method || stored.amount_cents !== amount) {
+          respondJson(response, 409, { error: "this idempotency key took a different payment; use a new key for a new payment" });
+          return;
+        }
+        const live = agreedInvoiceOf(order);
+        respondJson(response, 200, {
+          ...stored.answer,
+          balance_cents: live !== null ? live.balance_cents : stored.answer.balance_cents,
+          replayed: true,
+        });
+        return;
+      }
+      // An invoice raised another way refuses the whole action: the order is never billed twice.
+      const foreign = invoicesOf(order.id).find((i) => i.source !== "COUNTER");
+      if (foreign !== undefined) {
+        respondJson(response, 409, {
+          error: `this order is already invoiced as ${foreign.invoice_no} by another route, so the counter cannot bill it again; hand the customer to Payables and receivables, or to the General Manager or Financial controller, who record the payment against that invoice`,
+        });
+        return;
+      }
+      const invoice = raiseAgreedInvoice(order);
+      if (cash && amount !== invoice.balance_cents) {
+        if (invoice.balance_cents === invoice.total_cents) {
+          respondJson(response, 400, { error: `a customer with no credit account pays the whole agreed total of ${coreMoney(invoice.total_cents)}` });
+        } else {
+          respondJson(response, 400, { error: `a customer with no credit account pays the whole balance of ${coreMoney(invoice.balance_cents)}` });
+        }
+        return;
+      }
+      if (amount > invoice.balance_cents) {
+        respondJson(response, 400, { error: `the payment is more than the balance of ${coreMoney(invoice.balance_cents)}` });
+        return;
+      }
+      paymentCounter += 1;
+      invoice.balance_cents -= amount;
+      invoice.status = invoice.balance_cents === 0 ? "PAID" : "PARTIALLY_PAID";
+      const answer = {
+        order_id: order.id,
+        order_no: order.order_no,
+        invoice_id: invoice.id,
+        invoice_no: invoice.invoice_no,
+        invoice_total_cents: invoice.total_cents,
+        payment_id: `pay-${paymentCounter}`,
+        payment_no: `P-${String(paymentCounter).padStart(4, "0")}`,
+        method,
+        amount_cents: amount,
+        received_at: new Date().toISOString(),
+        reference,
+        received_by: userId,
+        balance_cents: invoice.balance_cents,
+        replayed: false,
+        converted,
+      };
+      payments.set(namespaced, { method, amount_cents: amount, answer });
+      // The ghost: the payment was taken and stored, but the answer never reaches the desk.
+      if (switches.paymentGhost) {
+        respondJson(response, 500, { error: "internal" });
+        return;
+      }
+      respondJson(response, 200, answer);
     });
     return;
   }

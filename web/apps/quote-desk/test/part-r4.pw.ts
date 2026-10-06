@@ -135,7 +135,8 @@ test("A P2-1 a panel that has left the page reads nothing when it is asked to re
   await signIn(page, "Sales manager");
   await row(page, "Q-1001").click();
   await openDetail(page);
-  const tags = ["qd-quote-edit", "qd-quote-history", "qd-quote-assist", "qd-quote-followups", "qd-quote-hold-expiry", "qd-quote-availability"];
+  // The payment seam's panels live inside the edit panel's shadow root, so they are taken off first: removing the host would take them with it.
+  const tags = ["qd-related-docs", "qd-order-payment", "qd-quote-edit", "qd-quote-history", "qd-quote-assist", "qd-quote-followups", "qd-quote-hold-expiry", "qd-quote-availability"];
   for (const tag of tags) await expect(page.locator(tag)).toHaveCount(1);
   await quiet(page);
   const requests: string[] = [];
