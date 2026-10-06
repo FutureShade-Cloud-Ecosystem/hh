@@ -38,6 +38,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tax"
@@ -372,5 +373,42 @@ func TestIntegration_Trenton_SalePreview_RoleWalls(t *testing.T) {
 	}
 	if body := s.decodeBody(rec); body["error"] != "a sale needs at least one line" {
 		t.Fatalf("an empty body must be refused in words: %v", body)
+	}
+}
+
+// Leg D: the split refusal is a problem body a person can read. The
+// live-demo example: tenders of 100.00 and 166.00 (26600 cents) against the
+// 300.58 total (30058 cents). The refusal answers the stable word
+// split_total_mismatch, the two amounts as integer cents fields, and a
+// message in dollars and plain words; no message ever prints cents. Red on
+// main: the refusal is the raw cents sentence.
+func TestIntegration_Trenton_SplitRefusal_ReadableBody(t *testing.T) {
+	s := previewWiredStack(t)
+	body := ringTicket(trentonBranchID, s.trentonTill, nil)
+	body["tenders"] = []map[string]any{
+		{"method": "CASH", "amount_cents": 10000},
+		{"method": "CASH", "amount_cents": 16600},
+	}
+
+	rec := s.do(http.MethodPost, "/api/v1/pos/sales", s.bearer(trentonClerkSub), "", body)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("a split that does not settle the total must be refused: got %d: %s", rec.Code, rec.Body.String())
+	}
+	refusal := s.decodeBody(rec)
+	if refusal["error"] != "split_total_mismatch" {
+		t.Fatalf("the refusal's stable word is split_total_mismatch: %v", refusal["error"])
+	}
+	if got := previewCents(t, refusal, "tendered_cents"); got != 26600 {
+		t.Fatalf("the refusal carries the tendered cents: got %d (%v)", got, refusal["tendered_cents"])
+	}
+	if got := previewCents(t, refusal, "total_cents"); got != 30058 {
+		t.Fatalf("the refusal carries the total cents: got %d (%v)", got, refusal["total_cents"])
+	}
+	message, ok := refusal["message"].(string)
+	if !ok || message != "The tenders add up to $266.00, but the sale total is $300.58." {
+		t.Fatalf("the refusal's message is the dollar sentence: %v", refusal["message"])
+	}
+	if strings.Contains(message, "cents") {
+		t.Fatalf("no message ever prints cents: %q", message)
 	}
 }
