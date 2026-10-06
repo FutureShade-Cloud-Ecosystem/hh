@@ -100,7 +100,7 @@ export class HosPosReturn extends LitElement {
     textarea {
       width: 100%;
       box-sizing: border-box;
-      background: var(--hos-deep-earth);
+      background: var(--hos-field);
       color: var(--hos-text);
       border: 1px solid var(--hos-line);
       border-radius: var(--hos-radius-control);

@@ -2217,7 +2217,7 @@ export class HosPosTerminal extends LitElement {
       font-family: var(--hos-font-mono);
       width: 44px;
       text-align: center;
-      background: var(--hos-deep-earth);
+      background: var(--hos-field);
       border: 1px solid var(--hos-line);
       color: var(--hos-text);
       border-radius: var(--hos-radius-control);
@@ -2328,7 +2328,7 @@ export class HosPosTerminal extends LitElement {
     input,
     textarea {
       width: 100%;
-      background: var(--hos-deep-earth);
+      background: var(--hos-field);
       color: var(--hos-text);
       border: 1px solid var(--hos-control-line);
       border-radius: var(--hos-radius-control);

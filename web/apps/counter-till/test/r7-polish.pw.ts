@@ -144,3 +144,72 @@ test("the Paid card of a split sale says each leg with its amount", async ({ pag
   await expect(sold).toBeVisible();
   await expect(sold).toContainText("Split: Cash $1.00 and Card $3.52");
 });
+
+/** Choose the theme through the bar's cycling control until its label says it. */
+async function pickTheme(page: Page, word: "Light" | "Dark"): Promise<void> {
+  const control = page.getByTestId("theme-control");
+  for (let turn = 0; turn < 3; turn += 1) {
+    if (((await control.innerText()) ?? "").includes(word)) break;
+    await control.click();
+  }
+  await expect(control).toContainText(word);
+}
+
+test("light theme: panes and cards have an edge that reads, and every input shares one white fill", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page);
+  await pickLayout(page, "panels");
+  await addLine(page, "holland", "Holland Stone 60 mm");
+  await pickTheme(page, "Light");
+  const read = await page.evaluate(() => {
+    const walk = (root: ParentNode, out: Element[]): Element[] => {
+      for (const el of root.querySelectorAll("*")) {
+        out.push(el);
+        if (el.shadowRoot) walk(el.shadowRoot, out);
+      }
+      return out;
+    };
+    const all = walk(document, []);
+    const rgb = (text: string): number[] => (text.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
+    const lum = (c: number[]): number => {
+      const [r, g, b] = c.map((v) => {
+        const s = v / 255;
+        return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+      });
+      return 0.2126 * (r ?? 0) + 0.7152 * (g ?? 0) + 0.0722 * (b ?? 0);
+    };
+    const ratio = (a: number[], b: number[]): number => {
+      const [hi, lo] = [Math.max(lum(a), lum(b)), Math.min(lum(a), lum(b))];
+      return (hi + 0.05) / (lo + 0.05);
+    };
+    const pane = all.find((el) => (el as HTMLElement).dataset?.testid === "pos-pane-items") as HTMLElement;
+    const paneStyle = getComputedStyle(pane);
+    const edge = ratio(rgb(paneStyle.borderTopColor), rgb(paneStyle.backgroundColor));
+    const fills = new Set<string>();
+    let inputs = 0;
+    for (const el of all) {
+      if (!el.matches("input:not([type=hidden]):not([type=checkbox]):not([type=radio]), select, textarea")) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) continue;
+      inputs += 1;
+      fills.add(getComputedStyle(el).backgroundColor);
+    }
+    const strip = all.find((el) => el.matches(".strip"));
+    return { edge, inputs, fills: [...fills], pane: paneStyle.backgroundColor, strip: strip ? getComputedStyle(strip).backgroundColor : "" };
+  });
+  expect(read.edge).toBeGreaterThanOrEqual(2.5);
+  expect(read.inputs).toBeGreaterThan(1);
+  expect(read.fills).toEqual(["rgb(255, 255, 255)"]);
+  // The selected customer's field-like strip takes the same white.
+  expect(read.strip).toBe("rgb(255, 255, 255)");
+});
+
+test("dark theme keeps its inset fields: the input fill is the page's deep tone", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page);
+  await pickLayout(page, "panels");
+  await pickTheme(page, "Dark");
+  const fill = await page.getByTestId("pos-scan-input").evaluate((el) => getComputedStyle(el).backgroundColor);
+  expect(fill).toBe("rgb(7, 24, 39)");
+  await pickTheme(page, "Light");
+});

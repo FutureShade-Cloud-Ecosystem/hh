@@ -75,7 +75,7 @@ export class HosPosLookup extends LitElement {
       }
       input,
       select {
-        background: var(--hos-deep-earth);
+        background: var(--hos-field);
         color: var(--hos-text);
         border: 1px solid var(--hos-line);
         border-radius: 8px;

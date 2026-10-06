@@ -59,6 +59,9 @@
   --hh-page: #071827;
   --hh-card: #0B2338;
   --hh-line: #253441;
+  /* The one input fill (round 7): dark keeps the page's own deep tone, so a field sits inset in
+     its card as it always has; the light half re-values it, see there. */
+  --hh-field: #071827;
 
   /* ── control boundary ──────────────────────────────────────────────────────
      The outline a NON-FILLED control is seen by: WCAG 1.4.11 judges a control's
@@ -300,7 +303,15 @@
 :root[data-theme="light"] {
   --hh-page: #E7ECF1;
   --hh-card: #FFFFFF;
-  --hh-line: #BCC8D4;
+  /* Round 7: the line was #BCC8D4 (1.70:1 on the card, 1.43:1 on the page) and the cards, panes
+     and rows it edges barely read. #94A4B4 is 2.55:1 on the white card and 2.15:1 on the page.
+     The page stays put: the ink holds below (text-dim, accent-text, the state inks) are
+     measured against it, so a darker page would break them; the separation comes from the line
+     and the shadow. The input fill is ONE light treatment, the card white: a field on a white
+     card is white with its boundary, never a grey slab, and a field on the page ground is a
+     white field. */
+  --hh-line: #94A4B4;
+  --hh-field: #FFFFFF;
   --hh-control-line: #6B7683;
   --hh-text: #0B1725;
   --hh-text-dim: #566471;
@@ -343,7 +354,7 @@
   --hh-ground: #EDEBE6;
   --hh-widget: #FFFFFF;
   --hh-widget-raised: #FFFFFF;
-  --hh-hairline: rgba(0,0,0,.14);
+  --hh-hairline: rgba(0,0,0,.22);
   --hh-track: rgba(0,0,0,.06);
   --hh-widget-shadow: 0 1px 2px rgba(0,0,0,.08), 0 14px 34px -16px rgba(0,0,0,.43);
 
@@ -353,7 +364,7 @@
      page reads as a smudge rather than a lift. Decision log row 987 gives
      elev-1 the ERP's two-layer shape: a 3px ambient at 0.10 over the 1px
      contact at 0.06, so a card's edge reads on the darker page. */
-  --hh-elev-1: 0 1px 3px rgba(7, 24, 39, 0.10), 0 1px 2px rgba(7, 24, 39, 0.06);
+  --hh-elev-1: 0 1px 3px rgba(7, 24, 39, 0.16), 0 1px 2px rgba(7, 24, 39, 0.10);
   --hh-elev-2: 0 12px 30px rgba(7, 24, 39, 0.06);
   --hh-elev-3: 0 24px 60px rgba(7, 24, 39, 0.16);
 
