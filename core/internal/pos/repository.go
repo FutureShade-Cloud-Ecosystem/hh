@@ -422,7 +422,18 @@ func (r *Repository) EmitEvent(ctx context.Context, tx pgx.Tx, topic string, pay
 	return err
 }
 
+// InsertSignature writes the signature row on the SHARED POOL: the standalone capture's insert.
 func (r *Repository) InsertSignature(ctx context.Context, sig signatureRow) (string, error) {
+	return r.InsertSignatureTx(ctx, nil, sig)
+}
+
+// InsertSignatureTx is InsertSignature joined to the caller's transaction (nil tx means the pool,
+// the shape of the tree's other store seams). This is the module's ONE pos_signature insert: the
+// standalone capture and the tx capture (the dispatch pickups confirm, through the provider) both
+// persist through it, so the two copies the tx path used to carry inline (an edit to one silently
+// diverging from the other) cannot come back, and a signature row reads the same however it was
+// captured.
+func (r *Repository) InsertSignatureTx(ctx context.Context, tx pgx.Tx, sig signatureRow) (string, error) {
 	if r.pool == nil {
 		return "", errNoPool
 	}
@@ -430,8 +441,14 @@ func (r *Repository) InsertSignature(ctx context.Context, sig signatureRow) (str
 INSERT INTO pos_signature (purpose, ref_type, ref_id, signature_enc, provider, captured_by)
 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id::text`
 	var id string
-	err := r.pool.QueryRow(ctx, q, sig.Purpose, sig.RefType, sig.RefID, sig.SignatureEnc, sig.Provider,
-		nullStr(sig.CapturedBy)).Scan(&id)
+	var err error
+	if tx != nil {
+		err = tx.QueryRow(ctx, q, sig.Purpose, sig.RefType, sig.RefID, sig.SignatureEnc, sig.Provider,
+			nullStr(sig.CapturedBy)).Scan(&id)
+	} else {
+		err = r.pool.QueryRow(ctx, q, sig.Purpose, sig.RefType, sig.RefID, sig.SignatureEnc, sig.Provider,
+			nullStr(sig.CapturedBy)).Scan(&id)
+	}
 	return id, err
 }
 

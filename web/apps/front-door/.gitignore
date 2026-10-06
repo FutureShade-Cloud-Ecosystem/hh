@@ -1,0 +1,3 @@
+# Playwright's run artifacts stay beside the app, out of git.
+test-results/
+playwright-report/

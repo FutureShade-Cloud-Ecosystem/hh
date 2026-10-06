@@ -760,6 +760,23 @@ export type PaymentsReversalResult = {
   same_day: boolean;
   reopened_invoices: string[];
 };
+export type PaymentCardAttemptSummary = {
+  ref: string;
+  id: string;
+  status: "CHARGING" | "CAPTURED" | "DECLINED" | "UNKNOWN" | "BOUND" | "VOIDING" | "VOIDED" | "VOID_UNKNOWN" | "VOID_DECLINED" | "RESOLVED";
+  amount_cents: number;
+  branch_id: string;
+  till_session_id: string;
+  created_at: string;
+  sale_key: string;
+  charge_ref: string;
+  reversal_ref: string;
+  last_error: string;
+};
+export type PaymentCardAttemptResolve = {
+  resolution: "NOT_CHARGED" | "REVERSED_AT_PROCESSOR";
+  note: string;
+};
 export type AssistArgSpec = {
   name: string;
   label: string;
@@ -5639,6 +5656,8 @@ export type QuoteSummary = {
   tax_cents: number;
   total_cents: number;
   updated_at: string;
+  owner_id?: string;
+  owner_name?: string;
 };
 export type QuoteSummaryPage = {
   items: QuoteSummary[];
@@ -5656,6 +5675,8 @@ export type QuoteView = {
   expired: boolean;
   editable_fields: ("line_qty" | "line_add" | "line_remove" | "valid_until")[];
   can_convert: boolean;
+  owner_id?: string;
+  owner_name?: string;
   lines: QuoteViewLine[];
   subtotal_cents: number;
   tax_cents: number;
@@ -5672,6 +5693,8 @@ export type QuoteViewLine = {
   unit_price_cents: number;
   price_uom: string;
   line_total_cents: number;
+  rule_price_below_floor?: boolean;
+  floor_cleared_by?: string;
 };
 export type QuoteCreateRequest = {
   customer_id: string;
@@ -5756,6 +5779,29 @@ export type QuoteConvertRequest = {
 export type QuoteConvertResult = {
   order_id: string;
   order_no: string;
+};
+export type QuoteOrderPaymentRequest = {
+  method: "CASH" | "CARD" | "CHEQUE" | "EFT";
+  amount_cents: number;
+  reference: string;
+  idempotency_key: string;
+};
+export type QuoteOrderPaymentResult = {
+  order_id: string;
+  order_no: string;
+  invoice_id: string;
+  invoice_no: string;
+  invoice_total_cents: number;
+  payment_id: string;
+  payment_no: string;
+  method: string;
+  amount_cents: number;
+  received_at: string;
+  reference: string;
+  received_by: string;
+  balance_cents: number;
+  replayed: boolean;
+  converted: boolean;
 };
 export type QuoteRelatedDocument = {
   kind: "QUOTE" | "ORDER" | "INVOICE";
@@ -5994,7 +6040,7 @@ export type QuoteBranchStock = {
   in_transit_base: number;
   available_base: number;
   soft_held_base: number;
-  avg_cost_cents: number;
+  avg_cost_cents?: number;
 };
 export type QuoteBranchStockList = {
   branches: QuoteBranchStock[];
@@ -6109,6 +6155,29 @@ export type QuoteAssistScopeRuleList = {
 };
 export type QuoteAssistScopeRulePatch = {
   enabled: boolean;
+};
+export type QuoteFloorApprovalRequest = {
+  disc_pct: number;
+  note?: string;
+};
+export type QuoteFloorRequestState = {
+  id: string;
+  status: "PENDING" | "APPROVED" | "REJECTED";
+  line_no: number;
+  disc_pct: number;
+};
+export type QuoteFloorApprovalAnswer = {
+  filed: boolean;
+  may_clear_itself: boolean;
+  request?: QuoteFloorRequestState;
+};
+export type QuoteFloorRefusal = {
+  policy: string;
+  approver_roles: string[];
+  manager_may_set: boolean;
+  existing_request?: QuoteFloorRequestState;
+  margin_bps?: number;
+  floor_bps?: number;
 };
 export type ReportingColumn = {
   name: string;

@@ -74,20 +74,27 @@ func TestIntegration_ListJournals_SourceRefID_HandlerGate(t *testing.T) {
 		}
 	}
 
-	// (2) valid source_ref_id → 200, and every returned row is the matching journal.
+	// (2) valid source_ref_id → 200, and every returned row is the matching journal. The
+	// contract's GlJournalPage (core/api/openapi.yaml, core/api/fragments/gl.yaml) carries
+	// items, next_cursor and limit and no total: cursor pagination learns whether a further
+	// page exists from limit+1 rows, never from a count query, so the envelope has no count
+	// field and a complete last page reports next_cursor null.
 	rr := get(url.Values{"source_ref_id": {ref}})
 	if rr.Code != http.StatusOK {
 		t.Fatalf("live valid source_ref_id: want 200, got %d (body %s)", rr.Code, rr.Body.String())
 	}
 	var page struct {
-		Items []Journal `json:"items"`
-		Total int       `json:"total"`
+		Items      []Journal `json:"items"`
+		NextCursor *string   `json:"next_cursor"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &page); err != nil {
 		t.Fatalf("decode page: %v", err)
 	}
-	if page.Total != 1 || len(page.Items) != 1 {
-		t.Fatalf("filter by source_ref_id must return exactly the 1 matching journal, got total=%d items=%d", page.Total, len(page.Items))
+	if len(page.Items) != 1 {
+		t.Fatalf("filter by source_ref_id must return exactly the 1 matching journal, got items=%d (body %s)", len(page.Items), rr.Body.String())
+	}
+	if page.NextCursor != nil {
+		t.Fatalf("the single matching journal is the whole filtered set, so next_cursor must be null, got %q", *page.NextCursor)
 	}
 	if page.Items[0].ID != id || page.Items[0].SourceRefID != ref {
 		t.Fatalf("filtered row must be journal %s with source_ref_id %s, got %+v", id, ref, page.Items[0])

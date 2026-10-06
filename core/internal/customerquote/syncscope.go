@@ -166,11 +166,26 @@ func (s *SyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key str
 // outside the caller's tenant is the same as an absent one (existence
 // never leaks).
 func (s *SyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
+	return s.load(ctx, s.store.pool, f, id)
+}
+
+// quoteQuerier is the read surface a pool and a transaction share, so
+// one loader body serves the public Load (the pool) and the callers
+// that already hold a transaction (their own connection).
+type quoteQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// load is Load over a querier. A caller inside a transaction passes the
+// transaction, so the read rides the connection it already holds instead
+// of asking the shared pool for a second one (connection starvation by
+// second acquisition when pool-size callers do this together).
+func (s *SyncStore) load(ctx context.Context, q quoteQuerier, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
 	where, ok := tenantPredicate(f)
 	if !ok || !looksLikeUUID(id) {
 		return sync.RowState{}, false, nil
 	}
-	r, err := scanQuoteSync(s.store.pool.QueryRow(ctx, fmt.Sprintf(
+	r, err := scanQuoteSync(q.QueryRow(ctx, fmt.Sprintf(
 		`SELECT %s FROM customer_quote WHERE id = $3::uuid AND %s`,
 		quoteSyncColumns, where), f.TenantID, f.OrgID, id))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -320,7 +335,7 @@ func (s *SyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, 
 		id, f.OrgID, f.TenantID, markupBpsOrCarried(in.MarkupBps), mustJSON(in.Lines), mustJSON(in.LabourLines),
 		mustJSON(in.OverheadLines), in.HideLinePrices, mustJSON(in.Customer), validUntil, horizon, seq, key))
 	if errors.Is(err, pgx.ErrNoRows) {
-		if _, own, _ := s.Load(ctx, f, id); own {
+		if _, own, _ := s.load(ctx, tx, f, id); own {
 			return sync.RowState{}, sync.ErrRowExists
 		}
 		return sync.RowState{}, sync.ErrRowNotFound

@@ -2,10 +2,10 @@
 
 import { LitElement, css, html, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
-import { focusRing } from './styles/focus-ring.js';
-import { drawIcon, iconForId } from './_icon-consumer.js';
+import { focusRing } from '@hardscapehouse/pos-kit/src/ported/styles/focus-ring.js';
+import { drawIcon, iconForId } from '@hardscapehouse/pos-kit/src/ported/_icon-consumer.js';
 import { headerId, panelId } from './_pos-accordion.js';
-import type { FlowStepId } from './_pos-flow.js';
+import type { FlowStepId } from '@hardscapehouse/pos-kit/src/ported/_pos-flow.js';
 
 /**
  * hos-pos-step-card: ONE step of the counter's single-column accordion.

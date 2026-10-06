@@ -15,7 +15,7 @@
 // client applies is a gate a client can be made to skip, and this one decides whether a yard hand
 // sees a till button. The only thing this module decides is WHERE an action goes once clicked.
 
-import { hashTargetFor } from './ports.js';
+import { hashTargetFor } from '@hardscapehouse/pos-kit/src/ported/ports.js';
 
 /** One registered quick action, exactly as the server sends it. */
 export interface QuickAction {

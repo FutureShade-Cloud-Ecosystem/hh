@@ -259,7 +259,7 @@ func postCountedSheet(ctx context.Context, st countStore, sc StockCounter, gp GL
 				if ln.VarianceBase == 0 {
 					continue
 				}
-				avg, cerr := sc.WeightedAvgCostCents(ctx, ln.ProductID, sheet.BranchID)
+				avg, cerr := sc.WeightedAvgCostCentsTx(ctx, tx, ln.ProductID, sheet.BranchID)
 				if cerr != nil {
 					return cerr
 				}

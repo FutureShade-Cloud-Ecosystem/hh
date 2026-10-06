@@ -335,7 +335,7 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 	r.Handle("GET /api/v1/tenant/config", g.Public(tenantconfig.New(tenantconfig.Default())))
 
 	belt := buildSmsBelt(pool, log)
-	money := wireMoney(r, pool, g, log, cfg.StaffBaseURL)
+	money := wireMoney(r, pool, g, log, cfg.StaffBaseURL, roleCfg)
 	ops := wireOperations(r, pool, g, log, money, getenv("CORE_STREAM_TICKET_KEY"), belt.outbox)
 	tops := wireTops(r, pool, g, log, money, ops, cfg, belt)
 

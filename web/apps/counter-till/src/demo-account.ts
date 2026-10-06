@@ -1,211 +1,134 @@
-// The demo adapter: this app's AccountSurface for the auth package's seam
-// (web/packages/auth/src/client.ts), over the core's two demo routes. The auth
-// package is unchanged: it injects the surface, this class is that injection.
+// The front door's handoff, read on the till's side (HH-DEMO-1 D2 polish,
+// item 6). The front door mints the demo session and holds it for the box in
+// its own key in the tab's session storage; when the visitor opens a module
+// tile the till boots at this app and lands signed in as that role, with no
+// second picker.
 //
-// What the demo means here, per the plan's demo sign-in (row 480): a person
-// taps a role card, the app asks `POST /api/v1/demo/session` with the flow
-// name and nothing else, and the mint answers a token and the staff user
-// block. The adapter holds that mint in memory and answers the seam's
-// operations from it; the app hands the mint to AuthController.adopt, whose
-// custody keeps the token in private memory and nothing anywhere else. There
-// is no platform session behind the demo: the mint lives only in this tab,
-// so a reload resumes nothing and the entry page comes back.
+// THE TWO KEYS, AND WHY THE TILL READS ONLY ONE. The front door writes the
+// minted session whole, token included, under its own key
+// "hh-demo.front-door.session.v1", and the display profile alone under the
+// till custody's mirror key "hh-auth.session.v2" (the auth package's
+// SESSION_MIRROR_KEY). The till's custody (@hardscapehouse/auth) keeps every
+// token in private memory and NEVER reads a credential back from storage:
+// the mirror carries the profile alone, and a payload it cannot validate it
+// drops. So the handoff's one usable artifact is the front door's own key,
+// and the seam is exactly three moves, all this app's: read that key here,
+// hand the session to AuthController.adopt (custody takes the token into
+// private memory and rewrites the display mirror itself), and drop the key
+// in the same step. Nothing in the auth package changes, and nothing here
+// writes a token anywhere: the key is read and removed, never echoed or
+// logged.
 //
-// Everything is validated, never cast: the mint's user block is the staff
-// login user block (core/api/openapi.yaml, IdentityUser), read field by field,
-// and the token's expiry is read from its own exp claim, because the mint
-// response carries no expiry field. A mint that lacks a token, a usable user
-// block, or a readable expiry is refused as data, like every other refusal in
-// this app.
-import { err, ok, type ApiClient, type DemoFlow, type DemoSessionResponse, type Result } from "@hardscapehouse/api-client";
-import { staffDemo } from "@hardscapehouse/api-client";
-import type { AccountSurface, AccountUser } from "@hardscapehouse/auth";
+// THE STORAGE TOUCH RIDES THE ONE SANCTIONED HELPER. This app's committed
+// sink gate (test/sinks.test.mjs) keeps every word of a storage accessor out
+// of this app's sources: the credential is memory and nothing else. The read
+// and the drop therefore go through the auth package's ThrowSafeMirror over
+// the front door's key, the same throw-safe, probed, degraded-aware accessor
+// the custody's own mirror rides; where storage is blocked the mirror
+// degrades, the read answers absent, and the entry page with the cards comes
+// up, which is the till's ordinary way in.
+//
+// Every read is validated field by field, never cast, exactly the front
+// door's own parse discipline on the same record: a hand-edited, corrupt or
+// expired entry reads as unusable, never as a session with fields it does
+// not carry.
+//
+// The theme is untouched by this seam: it is a data-theme attribute on the
+// document root, and the till's own theme controller keeps cycling Auto,
+// Light and Dark over an adopted session exactly as over a minted one.
+import { ThrowSafeMirror, type StorageLike } from "@hardscapehouse/auth";
 
-/** A mint answer in custody's own shape: exactly what AuthController.adopt takes. */
-export interface MintedSession {
-  token: string;
-  tokenExpiresAtMs: number;
-  user: AccountUser;
-  /**
-   * The role code the mint's user block states (IdentityUser requires it):
-   * the server's own word about the account, carried for the receipt's
-   * display wording. Nothing gates a request on it.
-   */
-  roleCode: string;
-  /**
-   * The rest of the mint's IdentityUser block, validated field by field:
-   * role_name, tier and scope. The ported surface's session facts read these
-   * (the role's name for the chrome, the tier and scope for the
-   * platform-admin gate's shape), so the block is carried whole rather than
-   * re-asked for.
-   */
-  identity: { roleName: string; tier: number; scope: string };
+/** The front door's own session record key: the mint, token included. */
+export const FRONT_DOOR_SESSION_KEY = "hh-demo.front-door.session.v1";
+
+/** The front door's validated record, in the shape the till's boot takes. */
+export interface FrontDoorHandoff {
+  readonly token: string;
+  readonly tokenExpiresAtMs: number;
+  /** The demo flow id the mint was asked for ("sales", "sales-manager"). */
+  readonly flow: string;
+  /** The role label on the card the visitor tapped, the chrome's word. */
+  readonly roleLabel: string;
+  readonly user: { userId: string; email: string; name: string };
+  readonly roleCode: string;
+  readonly roleName: string;
+  readonly tier: number;
+  readonly scope: string;
+}
+
+export type FrontDoorHandoffRead =
+  | { kind: "absent" }
+  | { kind: "unusable" }
+  | { kind: "ready"; session: FrontDoorHandoff };
+
+/**
+ * Read the front door's key without touching it: "absent" when there is no
+ * readable record, "unusable" when a record is there but fails a read (a
+ * field missing, or the token past its expiry), "ready" with the validated
+ * session otherwise. The injected storage double is for the tests; without
+ * one the mirror resolves the tab's own session storage. Nothing here
+ * throws on a hostile or blocked accessor: the mirror degrades to memory,
+ * which reads as absent.
+ */
+export function readFrontDoorHandoff(options?: {
+  storage?: StorageLike;
+  now?: () => number;
+}): FrontDoorHandoffRead {
+  const mirror = new ThrowSafeMirror(FRONT_DOOR_SESSION_KEY, options?.storage);
+  const parsed = mirror.read();
+  if (parsed === undefined) return { kind: "absent" };
+  const now = options?.now ?? Date.now;
+  const session = parseRecord(parsed, now());
+  return session === null ? { kind: "unusable" } : { kind: "ready", session };
+}
+
+/** Drop the front door's key. Never throws; the key was maybe never there. */
+export function clearFrontDoorHandoff(options?: { storage?: StorageLike }): void {
+  new ThrowSafeMirror(FRONT_DOOR_SESSION_KEY, options?.storage).clear();
 }
 
 /**
- * A minted approver credential: the token for the one return call that may
- * carry it, plus the approver's display name for the receipt. This is not a
- * session: the adapter stores nothing of it, custody never sees it, and the
- * caller drops the token after the one call.
+ * The record, read field by field: the same fields the front door wrote, in
+ * the same validation the front door reads its own storage back with. A
+ * record whose token has expired is unusable: a stale mint is not a session.
  */
-export interface ApproverCredential {
-  token: string;
-  approverName: string;
-  expiresAtMs: number;
-}
-
-/** The demo routes' listing and minting, plus the seam the auth package injects. */
-export class DemoAccount implements AccountSurface {
-  readonly #client: ApiClient;
-  #mint: MintedSession | null = null;
-
-  constructor(options: { client: ApiClient }) {
-    this.#client = options.client;
-  }
-
-  /**
-   * The role cards: the flows route's rows, or the refusal. An error here is
-   * the no-demo page's whole story: a default-build core or a non-demo box
-   * answers nothing, so there are no cards.
-   */
-  async listFlows(): Promise<Result<DemoFlow[]>> {
-    const result = await staffDemo.demoListFlows(this.#client);
-    if (!result.ok) return result;
-    return ok(result.value.flows);
-  }
-
-  /** Mint a session for one flow name from the cards. */
-  async chooseFlow(flow: string): Promise<Result<MintedSession>> {
-    const result = await staffDemo.demoCreateSession(this.#client, { flow });
-    if (!result.ok) return result;
-    const minted = validateMint(result.value, Date.now());
-    if (minted === null) {
-      return err("the mint's answer is not a usable session: no token, no usable user block, or no readable expiry in the token");
-    }
-    this.#mint = minted;
-    return ok({ ...minted });
-  }
-
-  /**
-   * The approver's credential for a return above the amount (D49): the same
-   * demo mint, asked for the approver flow's card in the Manager approval
-   * dialog. This mint is NOT adopted: the clerk's session is never replaced,
-   * and this adapter stores nothing of the answer. The token rides back to
-   * the caller, which holds it in memory for the one call and drops it.
-   */
-  async mintApproverCredential(flow: string): Promise<Result<ApproverCredential>> {
-    const result = await staffDemo.demoCreateSession(this.#client, { flow });
-    if (!result.ok) return result;
-    const minted = validateMint(result.value, Date.now());
-    if (minted === null) {
-      return err("the approver mint's answer is not a usable session: no token, no usable user block, or no readable expiry in the token");
-    }
-    return ok({ token: minted.token, approverName: minted.user.name, expiresAtMs: minted.tokenExpiresAtMs });
-  }
-
-  // The seam's remaining operations, answered from the held mint. The two
-  // platform sign-ins refuse: the demo has no password and no OAuth flow
-  // behind its cards, and a fake of either would sign nobody in.
-  async createEmailPasswordSession(): Promise<AccountUser> {
-    throw new Error("the demo signs in by tapping a role; there is no password sign-in behind the demo cards");
-  }
-
-  async createOAuth2Session(): Promise<void> {
-    throw new Error("the demo signs in by tapping a role; there is no platform OAuth flow behind the demo cards");
-  }
-
-  async getSession(): Promise<AccountUser> {
-    const mint = this.#mint;
-    if (mint === null) {
-      throw new Error("no demo session to resume: the mint lives only in this tab's memory, tap a role again");
-    }
-    return { ...mint.user };
-  }
-
-  async createJWT(): Promise<{ jwt: string; expiresAtMs: number }> {
-    const mint = this.#mint;
-    if (mint === null) {
-      throw new Error("no demo session to present: tap a role first");
-    }
-    return { jwt: mint.token, expiresAtMs: mint.tokenExpiresAtMs };
-  }
-
-  async deleteSession(): Promise<void> {
-    this.#mint = null;
-  }
-}
-
-/** Field-by-field, never a cast: the staff login user block this app needs. */
-function userFromMint(raw: unknown): {
-  user: AccountUser;
-  roleCode: string;
-  identity: { roleName: string; tier: number; scope: string };
-} | null {
+function parseRecord(raw: unknown, now: number): FrontDoorHandoff | null {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
   const record = raw as Record<string, unknown>;
-  const userId = record["user_id"];
-  const email = record["email"];
-  const name = record["display_name"];
-  const roleCode = record["role_code"];
-  const roleName = record["role_name"];
+  const token = record["token"];
+  const tokenExpiresAtMs = record["tokenExpiresAtMs"];
+  const flow = record["flow"];
+  const roleLabel = record["roleLabel"];
+  const roleCode = record["roleCode"];
+  const roleName = record["roleName"];
   const tier = record["tier"];
   const scope = record["scope"];
-  if (typeof userId !== "string" || userId === "") return null;
-  if (typeof email !== "string") return null;
-  if (typeof name !== "string") return null;
+  if (typeof token !== "string" || token === "") return null;
+  if (typeof tokenExpiresAtMs !== "number" || !Number.isFinite(tokenExpiresAtMs)) return null;
+  if (typeof flow !== "string" || flow === "") return null;
+  if (typeof roleLabel !== "string" || roleLabel === "") return null;
   if (typeof roleCode !== "string" || roleCode === "") return null;
-  if (typeof roleName !== "string") return null;
+  if (typeof roleName !== "string" || roleName === "") return null;
   if (typeof tier !== "number" || !Number.isInteger(tier)) return null;
   if (typeof scope !== "string" || scope === "") return null;
-  return {
-    user: { userId, email, name },
-    roleCode,
-    identity: { roleName, tier, scope },
-  };
-}
-
-/**
- * The mint response carries no expiry field, so the token's own exp claim is
- * the one source: a JSON Web Token's middle segment, decoded. A token that is
- * not JWT shaped, or whose exp is missing or unreadable, refuses: custody
- * requires an expiry, and adopting a token with an unknown life is exactly the
- * confident wrong answer this codebase does not give.
- */
-function expiryFromToken(token: string, now: number): number | null {
-  const parts = token.split(".");
-  if (parts.length !== 3) return null;
-  let payload: unknown;
-  try {
-    payload = JSON.parse(decodeBase64Url(parts[1]));
-  } catch {
-    return null;
-  }
-  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return null;
-  const exp = (payload as Record<string, unknown>)["exp"];
-  if (typeof exp !== "number" || !Number.isFinite(exp)) return null;
-  const expiresAtMs = exp * 1000;
-  return expiresAtMs > now ? expiresAtMs : null;
-}
-
-function decodeBase64Url(segment: string): string {
-  const padded = segment.replace(/-/g, "+").replace(/_/g, "/");
-  const binary = atob(padded + "=".repeat((4 - (padded.length % 4)) % 4));
-  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-  return new TextDecoder().decode(bytes);
-}
-
-function validateMint(response: DemoSessionResponse, now: number): MintedSession | null {
-  const token = response.token;
-  if (typeof token !== "string" || token === "") return null;
-  const mintedUser = userFromMint(response.user);
-  if (mintedUser === null) return null;
-  const tokenExpiresAtMs = expiryFromToken(token, now);
-  if (tokenExpiresAtMs === null) return null;
+  const user = record["user"];
+  if (user === null || typeof user !== "object" || Array.isArray(user)) return null;
+  const userRecord = user as Record<string, unknown>;
+  const userId = userRecord["userId"];
+  const email = userRecord["email"];
+  const name = userRecord["name"];
+  if (typeof userId !== "string" || userId === "") return null;
+  if (typeof email !== "string" || typeof name !== "string") return null;
+  if (tokenExpiresAtMs <= now) return null;
   return {
     token,
     tokenExpiresAtMs,
-    user: mintedUser.user,
-    roleCode: mintedUser.roleCode,
-    identity: mintedUser.identity,
+    flow,
+    roleLabel,
+    roleCode,
+    roleName,
+    tier,
+    scope,
+    user: { userId, email, name },
   };
 }
