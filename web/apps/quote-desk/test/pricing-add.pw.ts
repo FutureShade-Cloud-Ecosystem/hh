@@ -65,17 +65,17 @@ test("A: Save sends the PUT and the new row joins the grid, editable in place", 
   await twoPolicies(page);
   await page.getByTestId("pm-add-category").selectOption(WALLS);
   await page.getByTestId("pm-add-target").fill("31.5");
-  await page.getByTestId("pm-add-floor").fill("22");
+  await page.getByTestId("pm-add-floor").fill("20");
   await page.getByTestId("pm-add-save").click();
   await expect(page.getByTestId("pm-row")).toHaveCount(3);
   const row = page.locator('tr[data-category-id="' + WALLS + '"]');
   await expect(row.getByTestId("pm-category")).toHaveText("Retaining Walls");
   await expect(row.locator('input[data-field="target-' + WALLS + '"]')).toHaveValue("31.50");
-  await expect(row.locator('input[data-field="floor-' + WALLS + '"]')).toHaveValue("22.00");
+  await expect(row.locator('input[data-field="floor-' + WALLS + '"]')).toHaveValue("20.00");
   await expect(row.locator('input[type="checkbox"]')).toBeChecked();
   await expect(page.getByTestId("pm-saved")).toBeVisible();
   const state = await pricingState(page);
-  expect(state.policies.find((p) => p.category_id === WALLS)).toMatchObject({ margin_target_bps: 3150, margin_floor_bps: 2200, margin_enforcement_disabled: false });
+  expect(state.policies.find((p) => p.category_id === WALLS)).toMatchObject({ margin_target_bps: 3150, margin_floor_bps: 2000, margin_enforcement_disabled: false });
   expect(state.audit.some((r) => r.entity_type === "category_policy" && r.entity_id === WALLS && r.action === "CREATE")).toBe(true);
   // The category left the picker, and the row edits and saves in place like the others.
   await expect(page.getByTestId("pm-add-category").locator("option:not([value=''])")).toHaveText(["Slabs & Steps", "Aggregates", "Accessories"]);
@@ -83,7 +83,7 @@ test("A: Save sends the PUT and the new row joins the grid, editable in place", 
   await expect(row.getByTestId("pm-save")).toHaveClass(/primary/);
   await row.getByTestId("pm-save").click();
   await expect(page.getByTestId("pm-saved")).toBeVisible();
-  expect((await pricingState(page)).policies.find((p) => p.category_id === WALLS)).toMatchObject({ margin_target_bps: 3300, margin_floor_bps: 2200 });
+  expect((await pricingState(page)).policies.find((p) => p.category_id === WALLS)).toMatchObject({ margin_target_bps: 3300, margin_floor_bps: 2000 });
 });
 
 test("A: the Enforce box unticked saves the category with enforcement off", async ({ page }) => {
