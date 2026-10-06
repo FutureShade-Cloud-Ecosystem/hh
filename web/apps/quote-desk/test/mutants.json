@@ -1424,7 +1424,7 @@
   {
     "id": "op-paid-state",
     "file": "src/order-payment-panel.ts",
-    "find": "    return this.loaded && this.readError === \"\" && this.paymentBalance === 0 && this.attempt === null;",
+    "find": "    return this.loaded && this.readError === \"\" && this.paymentBalance === 0 && !this.attemptOpen;",
     "replace": "    return false;",
     "test": "shows a Paid in full state in place of the form"
   },
@@ -1629,7 +1629,7 @@
   {
     "id": "op-paid-known",
     "file": "src/order-payment-panel.ts",
-    "find": "return this.loaded && this.readError === \"\" && this.paymentBalance === 0 && this.attempt === null;",
+    "find": "return this.loaded && this.readError === \"\" && this.paymentBalance === 0 && !this.attemptOpen;",
     "replace": "return this.loaded && this.readError === \"\" && this.paymentBalance === 0;",
     "test": "Paid in full is not said beside an attempt whose outcome is not known: the owed nothing is said with the attempt's status, and the retry stays offered"
   },
@@ -1648,5 +1648,12 @@
     "find": "  if (comma && space) return GROUPING_WORDS;",
     "replace": "  if (false) return GROUPING_WORDS;",
     "test": "a mixed grouping is rejected on input with the grouping words, never sent"
+  },
+  {
+    "id": "op-stale-balance",
+    "file": "src/order-payment-panel.ts",
+    "find": "    this.marked(ctx.id, isDifferentPaymentRefusal(result.error) ? \"held\" : \"kept\", words);\n    // A definite refusal is evidence the server's state moved under the desk (a payment or a\n    // credit landed elsewhere, a balance changed): the family is read again, so the figures say\n    // what the server said at the latest read, and an invoice that is no longer owed leaves the\n    // form. The read is the panel's guarded one (its own row), never applied to another quote.\n    void this.load();",
+    "replace": "    this.marked(ctx.id, isDifferentPaymentRefusal(result.error) ? \"held\" : \"kept\", words);",
+    "test": "a credit that moved the order to Paid while the desk held the old Part paid balance is caught: a refusal re-reads and the panel shows Paid"
   }
 ]

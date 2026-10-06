@@ -687,6 +687,32 @@ test("Start a new payment unlocks only over a read that landed: a read supersede
   await expect(pay(page).locator('[data-field="amount"]')).toHaveValue("10.00");
 });
 
+test("a credit that moved the order to Paid while the desk held the old Part paid balance is caught: a refusal re-reads and the panel shows Paid", async ({ page, context }) => {
+  await signIn(page);
+  await openWithPayment(page, "Q-2101");
+  await take(page, "10.00");
+  await expect(pay(page).getByTestId("op-figures")).toContainText("balance CA$27.06");
+  // On another tab, a credit of the whole rest moves the order to Paid; this desk's only balance
+  // figure is its last receipt's, and nothing crosses the tabs to tell it.
+  const other = await context.newPage();
+  await signIn(other);
+  await openWithPayment(other, "Q-2101");
+  const credit = await hold(other, /\/api\/v1\/quotes\/q-2101\/order-payment$/, { method: "POST" });
+  await take(other, "27.06");
+  await credit.asked;
+  await credit.release();
+  await expect(pay(other).getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("CA$0.00");
+  // The desk still shows the figures of its last read: Part paid, the receipt's balance.
+  await expect(pay(page).getByTestId("op-figures")).toContainText("balance CA$27.06");
+  // The desk tries the receipt's figure: the server refuses it in its own words, and the desk
+  // answers the refusal with a re-read, so the panel shows what the server now holds: Paid.
+  await take(page, "27.06");
+  await expect(pay(page).getByTestId("op-error")).toContainText("more than the balance");
+  await expect(pay(page).getByTestId("op-paid")).toContainText("Paid in full");
+  await expect(pay(page).getByTestId("op-take")).toHaveCount(0);
+  await other.close();
+});
+
 test("a payment still out at sign out is kept as a known attempt for the next sign in, so it cannot be taken twice", async ({ page, context }) => {
   await signIn(page);
   await openWithPayment(page, "Q-2101");

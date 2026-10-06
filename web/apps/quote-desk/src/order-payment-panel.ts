@@ -325,19 +325,29 @@ export class QdOrderPayment extends PanelBase {
     return parsed.cents === null ? "" : `Taking ${moneyWord(parsed.cents)} by ${tenderWord(this.tender)}`;
   }
 
-  /** True when the invoice is read as owing nothing and no attempt is open: the form gives way to a Paid in full state. */
-  private get paidInFull(): boolean {
-    return this.loaded && this.readError === "" && this.paymentBalance === 0 && this.attempt === null;
+  /** True while an attempt is pending or its outcome is not known: what it may still change is not decided. */
+  private get attemptOpen(): boolean {
+    const phase = this.attempt?.phase;
+    return phase === "in-flight" || phase === "not-known";
   }
 
   /**
-   * True when the invoice is read as owing nothing but an attempt is still open (its outcome is
-   * not known, or it is still out): the paid state is not said beside an open attempt, because
-   * the attempt may still change the invoice. The panel says the owed nothing with the attempt's
-   * status and keeps the retry, which asks the server for that payment's receipt by replay.
+   * True when the invoice is read as owing nothing and every attempt on the order is known: none
+   * is out or not known (a refused attempt is decided, and a held key is decided too). The form
+   * then gives way to a Paid in full state.
+   */
+  private get paidInFull(): boolean {
+    return this.loaded && this.readError === "" && this.paymentBalance === 0 && !this.attemptOpen;
+  }
+
+  /**
+   * True when the invoice is read as owing nothing but an attempt is pending or not known: the
+   * paid state is not said beside an open attempt, because the attempt may still change the
+   * invoice. The panel says the owed nothing with the attempt's status and keeps the retry, which
+   * asks the server for that payment's receipt by replay.
    */
   private get paidWhileAttemptOpen(): boolean {
-    return !this.paidInFull && this.loaded && this.readError === "" && this.paymentBalance === 0 && this.attempt !== null;
+    return !this.paidInFull && this.loaded && this.readError === "" && this.paymentBalance === 0 && this.attemptOpen;
   }
 
   protected override willUpdate(changed: Map<string, unknown>): void {
@@ -605,6 +615,11 @@ export class QdOrderPayment extends PanelBase {
     }
     const words = paymentRefusalWords(result.status, result.error);
     this.marked(ctx.id, isDifferentPaymentRefusal(result.error) ? "held" : "kept", words);
+    // A definite refusal is evidence the server's state moved under the desk (a payment or a
+    // credit landed elsewhere, a balance changed): the family is read again, so the figures say
+    // what the server said at the latest read, and an invoice that is no longer owed leaves the
+    // form. The read is the panel's guarded one (its own row), never applied to another quote.
+    void this.load();
   }
 
   /** A payment the server took: the attempt is complete, the receipt is the answer, and the views re-read. */
