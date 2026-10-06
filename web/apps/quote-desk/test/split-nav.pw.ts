@@ -369,3 +369,22 @@ test("split create: a create in flight when All quotes is pressed lists its draf
   await expect(page.getByTestId("qb-context")).toContainText("Q-1005");
   await expect(page.getByRole("combobox", { name: "Search products by name, code or category" })).toBeVisible();
 });
+
+// ── The search finds a quote on any page ─────────────────────────────────────
+
+test("split search pages: a search reads on through the pages and finds a quote past the first page", async ({ page, request }) => {
+  await request.put("/_stub/quote-page-size", { data: { size: 1 } });
+  await signIn(page, MANAGER);
+  await expect(page.getByTestId("qb-list-row")).toHaveCount(1);
+  const first = (await page.getByTestId("qb-list-row").first().textContent()) ?? "";
+  const other = ["Q-1001", "Q-1002", "Q-1003"].find((no) => !first.includes(no)) as string;
+  const search = page.getByTestId("qd-list-toolbar").locator('[data-field="list-search"]');
+  await search.fill(other);
+  await expect(page.getByTestId("qb-list-row")).toHaveCount(1);
+  await expect(page.getByTestId("qb-list-row").first()).toContainText(other);
+  // A word nothing matches says so only once every page has been read.
+  await search.fill("zzzz-nothing");
+  await expect(page.getByTestId("qb-list")).toHaveText("No quotes.");
+  await expect(page.getByTestId("qb-list-more")).toHaveCount(0);
+  await request.put("/_stub/quote-page-size", { data: { size: 0 } });
+});

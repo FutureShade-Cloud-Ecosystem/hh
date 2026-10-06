@@ -1479,5 +1479,12 @@
     "find": "      void this.loadList(true);\n      return;\n    }\n    this.walk(",
     "replace": "      return;\n    }\n    this.walk(",
     "test": "split create:"
+  },
+  {
+    "id": "bq-search-reads-on",
+    "file": "src/quote-builder.ts",
+    "find": "      this.search = control.value;\n      void this.searchAllPages();\n",
+    "replace": "      this.search = control.value;\n",
+    "test": "split search pages:"
   }
 ]

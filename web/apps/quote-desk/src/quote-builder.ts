@@ -120,8 +120,10 @@ export class QdQuoteBuilder extends LitElement {
   @state() private error = "";
   @state() private busy = false;
   @state() private statusFilter = "";
-  /** The toolbar's search: filters the rows the server already answered, by number or customer. */
+  /** The toolbar's search, by number or customer. The list read takes no search word, so a search reads on through the pages (searchAllPages) and filters what is loaded. */
   @state() private search = "";
+  /** True while a search is reading the later pages: the empty answer waits for it. */
+  @state() private searching = false;
   @state() private branches: BranchRow[] = [];
   /** The branch this login reaches (the person's own branch): the work area's fallback branch for a new quote. */
   @state() private myBranch = "";
@@ -404,7 +406,41 @@ export class QdQuoteBuilder extends LitElement {
     }
     this.rows = rows;
     this.nextCursor = cursor;
+    void this.searchAllPages();
   }
+
+  /**
+   * The list read takes no search word, so a search finds a quote on any page by reading on: while the box holds a word
+   * and the server has a next page, the pages are read and added under the rows (the filter then shows what matches).
+   * Another list read that begins meanwhile takes over (listSeq) and restarts this when it lands, so no page of an
+   * older list is ever added to a newer one.
+   */
+  private async searchAllPages(): Promise<void> {
+    const client = this.client;
+    if (client === null) return;
+    // The newest call is the one that reads on: a call that finds a newer one gone ahead of it stops.
+    const gen = ++this.searchGen;
+    this.searching = this.search.trim() !== "" && this.nextCursor !== "";
+    try {
+      for (let page = 0; page < MAX_LIST_PAGES && this.search.trim() !== "" && this.nextCursor !== ""; page += 1) {
+        const seq = ++this.listSeq;
+        const result = await client.listQuotes(this.statusFilter, this.nextCursor);
+        if (seq !== this.listSeq || gen !== this.searchGen) return;
+        if (!result.ok) {
+          this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "search the quotes"));
+          return;
+        }
+        const known = new Set(this.rows.map((r) => r.id));
+        this.rows = [...this.rows, ...result.value.rows.filter((r) => !known.has(r.id))];
+        this.nextCursor = result.value.nextCursor ?? "";
+      }
+    } finally {
+      if (gen === this.searchGen) this.searching = false;
+    }
+  }
+
+  /** The newest search read's number. */
+  private searchGen = 0;
 
   /** The next page of the same list is added under the rows already shown. */
   private async loadMore(): Promise<void> {
@@ -424,6 +460,7 @@ export class QdQuoteBuilder extends LitElement {
     const known = new Set(this.rows.map((r) => r.id));
     this.rows = [...this.rows, ...result.value.rows.filter((r) => !known.has(r.id))];
     this.nextCursor = result.value.nextCursor ?? "";
+    void this.searchAllPages();
   }
 
   private async loadBranches(): Promise<void> {
@@ -546,6 +583,7 @@ export class QdQuoteBuilder extends LitElement {
     if (!(control instanceof HTMLInputElement)) return;
     if (control.getAttribute("data-field") === "list-search") {
       this.search = control.value;
+      void this.searchAllPages();
     }
   };
 
@@ -588,7 +626,7 @@ export class QdQuoteBuilder extends LitElement {
     return this.roleCode === "sales_manager" ? [...STATUS_TABS, APPROVALS_TAB] : STATUS_TABS;
   }
 
-  /** The rows the search leaves (by number or customer): a filter of the page the server answered, never a second read. */
+  /** The rows the search leaves (by number or customer): a filter of what has been read (a search reads on through the pages first). */
   private visibleRows(): QuoteRow[] {
     const needle = this.search.trim().toLowerCase();
     if (needle === "") return this.rows;
@@ -623,7 +661,7 @@ export class QdQuoteBuilder extends LitElement {
         </div>
         <div class="listmain" data-open=${this.approvalsOpen ? "false" : "true"}>
           ${rows.length === 0
-            ? html`<p class="empty" style="margin-top: 10px" data-testid="qb-list">No quotes.</p>`
+            ? html`<p class="empty" style="margin-top: 10px" data-testid="qb-list">${this.searching ? "Searching all the quotes…" : "No quotes."}</p>`
             : html`<ul style="margin-top: 0" data-testid="qb-list">
                 ${rows.map(
                   (r) => html`<li>
