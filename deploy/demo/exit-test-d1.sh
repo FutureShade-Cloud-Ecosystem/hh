@@ -233,7 +233,9 @@ fi
 # --------------------------------------------------------------------------
 echo "== a quote seeded by QD-6 opens at /q/<id>"
 
-list="$(curl -s -H "Authorization: Bearer $SALES_TOKEN" -H 'X-Org: hh-demo' \
+# The seed's SENT quote is owned by the Sales manager persona (the seed's
+# Q2, DEMO prefixed), so the manager's bearer reads it and mints its link.
+list="$(curl -s -H "Authorization: Bearer $MGR_TOKEN" -H 'X-Org: hh-demo' \
 	"$BASE/api/v1/quotes")"
 # The seed's SENT quote: the row whose quote number ends in -Q2. The id sits
 # beside the quote number in the same row of the list's JSON.
@@ -252,7 +254,7 @@ if [ -n "$SEEDED_ID" ]; then
 	[ "$code" = "200" ] && pass "/q/<seeded id> serves the page behind the gate" \
 		|| fail "/q/<seeded id> answered $code, want 200"
 
-	link="$(curl -s -X POST -H "Authorization: Bearer $SALES_TOKEN" -H 'X-Org: hh-demo' \
+	link="$(curl -s -X POST -H "Authorization: Bearer $MGR_TOKEN" -H 'X-Org: hh-demo' \
 		"$BASE/api/v1/quotes/$SEEDED_ID/share-links")"
 	TOKEN="$(printf '%s' "$link" | sed 's/.*"token":"\([^"]*\)".*/\1/')"
 	case "$link" in

@@ -62,7 +62,7 @@ handle /healthz {
 }
 
 # The three app prefixes (D1). Each is its own handle before the catch-all,
-# with the prefix's own root and its own try_files fallback, so every SPA's
+# with one shared root and each prefix's own try_files fallback, so every SPA's
 # history mode rewrite returns that app's index.html and no other's. The
 # gate carries onto every page handle unchanged: the same phrase opens the
 # landing, the till, the Quote Desk and the customer's quote page, which is
@@ -74,7 +74,7 @@ handle /till/* {
 	basic_auth {
 		demo __GATE_HASH__
 	}
-	root * /srv/app/till
+	root * /srv/app
 	try_files {path} /till/index.html
 	file_server
 }
@@ -83,7 +83,7 @@ handle /quote/* {
 	basic_auth {
 		demo __GATE_HASH__
 	}
-	root * /srv/app/quote
+	root * /srv/app
 	try_files {path} /quote/index.html
 	file_server
 }
@@ -92,7 +92,7 @@ handle /q/* {
 	basic_auth {
 		demo __GATE_HASH__
 	}
-	root * /srv/app/q
+	root * /srv/app
 	try_files {path} /q/index.html
 	file_server
 }

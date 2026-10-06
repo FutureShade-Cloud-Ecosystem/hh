@@ -20,7 +20,16 @@ test("compose draws none of the quote panels and leaves no blank gap in the deta
     const root = builder.shadowRoot as ShadowRoot;
     const panels = tags.map((tag) => {
       const el = root.querySelector(tag) as HTMLElement | null;
-      const drawn = el === null ? [] : [...(el.shadowRoot?.children ?? [])].filter((c) => c.tagName !== "STYLE").map((c) => c.tagName);
+      // The payment seam's wrapper (the merge of the Quote Desk's two app
+      // lines, D1's assembly): the edit panel keeps the seam mounted through
+      // compose on purpose, order-payment.pw.ts pins that, and its panels
+      // render nothing for no quote, so the fold skips the wrapper itself and
+      // still holds every quoted panel to drawing nothing.
+      const drawn = el === null
+        ? []
+        : [...(el.shadowRoot?.children ?? [])]
+            .filter((c) => c.tagName !== "STYLE" && !(c instanceof HTMLElement && "seam" in c.dataset))
+            .map((c) => c.tagName);
       return { tag, mounted: el !== null, height: el?.getBoundingClientRect().height ?? -1, drawn };
     });
     const seams = root.querySelector(".seams") as HTMLElement;
