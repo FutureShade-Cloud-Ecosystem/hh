@@ -198,6 +198,28 @@ test("an amount above Number.MAX_SAFE_INTEGER cents is refused, never rounded th
   assert.deepEqual(parseTypedAmount("90071992547409.91"), { cents: 9007199254740991, problem: "" });
 });
 
+test("the desk's own sentences speak one money word and one word for the owed figure", () => {
+  // The figures line names the balance with the desk's money word, never a bare dollar figure and
+  // never "total" for the owed figure; the agreed total is named only for the pre invoice bound.
+  const quote = doc("QUOTE", "ACCEPTED", 6328);
+  const withBalance = figuresLine(quote, null, [], 6328, 0);
+  assert.ok(withBalance.includes("balance CA$63.28"), withBalance);
+  // Every dollar sign in a desk sentence is a CA dollar: no bare $ figure beside the CA$ one.
+  const figures = withBalance.match(/CA\$\d[\d,.]*/g) ?? [];
+  assert.ok(figures.length >= 2, withBalance);
+  assert.equal((withBalance.match(/\$/g) ?? []).length, figures.length, withBalance);
+  assert.ok(!/[^a-z]total[^a-z]/.test(withBalance.split(", the agreed total")[1] ?? ""), withBalance);
+  const line = figuresLine(null, doc("ORDER", "CONVERTED", 3706), [doc("INVOICE", "PARTIALLY_PAID", 3706)], 2706, 1);
+  assert.ok(line.includes("balance CA$27.06"), line);
+  const lineFigures = line.match(/CA\$\d[\d,.]*/g) ?? [];
+  assert.equal((line.match(/\$/g) ?? []).length, lineFigures.length, line);
+  const afterDocuments = line.split("\u00b7").slice(1).join("\u00b7");
+  assert.ok(!/[^a-z]total[^a-z]/.test(afterDocuments), line);
+  // The not carried arm says the server holds it; it never invents a figure.
+  const carried = figuresLine(null, doc("ORDER", "CONVERTED", 3706), [doc("INVOICE", "PARTIALLY_PAID", 3706)], null, 1);
+  assert.ok(carried.includes("not carried by this read"), carried);
+});
+
 test("the figures line names the documents in their own words and the balance when the reads carry it", () => {
   const quote = doc("QUOTE", "ACCEPTED", 6328);
   // Before any order: the agreed total is the bound.
