@@ -22,15 +22,19 @@ import {
   marginPctLabel,
   txbarSegments,
   resolveCuratedChips,
-} from './_pos-rev8.ts';
-import { defaultView, resolveWorkspaceView, workspaceSaveBody, workspaceSaveBodyV8, mergeWorkspaceForSave, WORKSPACE_FIELDS } from './_pos-workspace.ts';
+} from '@hardscapehouse/pos-kit/src/ported/_pos-rev8.ts';
+import { defaultView, resolveWorkspaceView, workspaceSaveBody, workspaceSaveBodyV8, mergeWorkspaceForSave, WORKSPACE_FIELDS } from '@hardscapehouse/pos-kit/src/ported/_pos-workspace.ts';
 
 const money = (c) => `CA$${(c / 100).toFixed(2)}`;
 
+// The scan box, the grid and the picker moved into @hardscapehouse/pos-kit
+// (web/packages/pos-kit, src/ported, same names); the terminal stayed here.
+// The kit is this app's dependency, so the reads follow the files across.
+const kitPorted = new URL('../../../../packages/pos-kit/src/ported/', import.meta.url);
 const terminalSrc = readFileSync(fileURLToPath(new URL('./pos-terminal.ts', import.meta.url)), 'utf8');
-const scanSrc = readFileSync(fileURLToPath(new URL('./pos-scan-box.ts', import.meta.url)), 'utf8');
-const gridSrc = readFileSync(fileURLToPath(new URL('./pos-product-grid.ts', import.meta.url)), 'utf8');
-const pickerSrc = readFileSync(fileURLToPath(new URL('./pos-customer-picker.ts', import.meta.url)), 'utf8');
+const scanSrc = readFileSync(fileURLToPath(new URL('pos-scan-box.ts', kitPorted)), 'utf8');
+const gridSrc = readFileSync(fileURLToPath(new URL('pos-product-grid.ts', kitPorted)), 'utf8');
+const pickerSrc = readFileSync(fileURLToPath(new URL('pos-customer-picker.ts', kitPorted)), 'utf8');
 
 // ── item 1 · the scanner-vs-typist classifier ───────────────────────────────────────────────────
 

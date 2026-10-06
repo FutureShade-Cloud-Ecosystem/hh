@@ -1,6 +1,6 @@
 // Ported from hardscapeos_dibbits master 87d7941b app/src/_pos-split.ts; adapted for HH.
 
-import { centsAmount } from './_money-format.js';
+import { centsAmount } from '@hardscapehouse/pos-kit/src/ported/_money-format.js';
 // _pos-split.ts: pure, DOM-free split-tender words and shapes for the counter (DIB-165).
 //
 // The server refuses a split whose legs do not sum EXACTLY to the sale total, and migration 0100's
@@ -51,7 +51,7 @@ export const MAX_SPLIT_LEGS = 6;
  * lives in ports.ts with the reference's signature (CLOSURE.md names it); the cashier still reads
  * the same state, from the host's answer.
  */
-export { evaluateSplit } from './ports.js';
+export { evaluateSplit } from '@hardscapehouse/pos-kit/src/ported/ports.js';
 
 /**
  * splitDraftRead is the panel's pre-ring read: the legs' typed sum and the
@@ -63,7 +63,7 @@ export { evaluateSplit } from './ports.js';
  * HH note: the typed sum is the operator's arithmetic over the operator's own
  * entries, hosted in the seam file like every other sum (CLOSURE.md names it).
  */
-export { splitDraftRead } from './ports.js';
+export { splitDraftRead } from '@hardscapehouse/pos-kit/src/ported/ports.js';
 
 /**
  * autoFillRemainder is the ergonomics that makes a split usable at a counter: the cashier types the
@@ -74,7 +74,7 @@ export { splitDraftRead } from './ports.js';
  * HH note: the remainder is the total less money already typed, which is the core's arithmetic in
  * HH; the seam lives in ports.ts (CLOSURE.md names it).
  */
-export { autoFillRemainder } from './ports.js';
+export { autoFillRemainder } from '@hardscapehouse/pos-kit/src/ported/ports.js';
 
 /**
  * parseAmountCents turns what the cashier typed into cents, or NaN when it is not a number.
@@ -87,7 +87,7 @@ export { autoFillRemainder } from './ports.js';
  * HH note: the reference multiplied the typed decimal through a float; the house rule converts
  * through the decimal string, so the parse is a host seam (ports.ts, named in CLOSURE.md).
  */
-export { parseAmountCents } from './ports.js';
+export { parseAmountCents } from '@hardscapehouse/pos-kit/src/ported/ports.js';
 
 /** fmtCents is the local money formatter (same LOCAL STOPGAP posture as pos-api.ts money()). */
 export function fmtCents(cents: number): string {

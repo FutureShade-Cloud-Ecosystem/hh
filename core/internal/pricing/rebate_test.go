@@ -174,6 +174,21 @@ func TestAccrualFor_TheThreeBases(t *testing.T) {
 			t.Fatalf("note must name the per-unit basis, got %q", note)
 		}
 	})
+
+	t.Run("AMT_PER_UNIT accrues the exact half cent the float arm drops", func(t *testing.T) {
+		// WHY 4.1 AND NOT ANOTHER 12.5. 12.5 is exact in binary, so the case above passes on the
+		// float multiply too and cannot tell the exact arm (rebate.go, the row 820 arm) from the
+		// float one it replaced. 4.1 is not binary-exact: the float product lands at
+		// 61.499999999999993 and half-up answers 61, a cent under-claimed against the
+		// manufacturer, while the exact rational 4.1 × 15 = 61.5 rounds away from zero to 62.
+		// This subtest is the bite for that arm: reverting the accrual to the float multiply
+		// turns it red at 61.
+		p := RebateProgram{Basis: RebateAmtPerUnit, RateCentsPerUnit: p64(15)}
+		cents, _, _ := accrualFor(p, RebateSaleLine{QtyBase: 4.1, SaleCents: 9100, ExtCostCents: 6200})
+		if cents != 62 { // 4.1 × 15 = 61.5 exactly → half away from zero → 62
+			t.Fatalf("4.1 units × 15 cents = 61.5 exactly (half away from zero 62, the float's 61.499999999999993 answers 61), got %d", cents)
+		}
+	})
 }
 
 func TestAccrualFor_RoundingIsHalfUpNotTruncation(t *testing.T) {

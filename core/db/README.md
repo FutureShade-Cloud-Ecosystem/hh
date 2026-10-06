@@ -21,6 +21,8 @@ Scrubbed, in comments as well as in SQL values: customer names, individual names
 
 ## The freeze
 
+**Lifted by D50.** `SCHEMA-FROZEN` is removed, so `ci`'s freeze check passes inert (it passes when the marker is absent). Migrations stay forward-only and numbered, a merged migration is never edited, and the principal assigns each cycle a block of numbers. The paragraph below is kept as the record of the freeze that was.
+
 At Phase A sign-off, `SCHEMA-FROZEN` lands here, naming the commit at which the migration set froze. From then on `ci` fails any pull request whose diff touches `migrations/` after that commit. One door: HH-3.7 ports ERP migrations landing on `master` above the baseline, each a human decision of ported or deferred recorded in `PORTED.md`, and the pull request carrying that entry is the only one permitted to move the marker. The freeze is proven real: the verifier adds a migration on a scratch branch and shows `ci` fails.
 
 ## The replacement map

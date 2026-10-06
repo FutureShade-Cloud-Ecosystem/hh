@@ -22,6 +22,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/product"
 )
 
@@ -150,8 +152,11 @@ func (s *Service) EvaluateLineFloor(ctx context.Context, in FloorQuestion) (Floo
 // FloorRecord is one pricing log row for a quote line floor decision: a
 // BYPASS row when a clearing or an approval let a below floor price through
 // (the honoured override's shape), an UPDATE row for a below rule above
-// floor price (the row QD-2 completes). One call site, RecordFloorDecision,
-// writes both.
+// floor price (plan 4.2), and an UPDATE row for a line accepted at a rule
+// price that itself sits below the floor (CP0-3 answer A, no discount
+// asked, the rule and the net the same price). The record paths write them:
+// RecordFloorDecision best effort on the pool, RecordFloorDecisionTx on the
+// write's own transaction, which is where the quote floor seam's rows go.
 type FloorRecord struct {
 	UserID     string
 	QuoteID    string
@@ -172,7 +177,9 @@ type FloorRecord struct {
 // RecordFloorDecision writes one FloorRecord to pricing_audit_log, the same
 // best effort append the resolver's own bypass rows ride (an audit blip
 // never fails the quote write; the quote's own change trail is the
-// transactional record).
+// transactional record). Callers that need the row to RIDE a mutating write
+// use RecordFloorDecisionTx below, which is what the quote floor seam's
+// plan 4.2 rows go through.
 // entityIDOf names the row's entity: the category when the answer carried
 // one, else the product. entity_id is NOT NULL, so the fallback keeps the
 // row rather than losing it to a discarded INSERT error.
@@ -181,6 +188,25 @@ func entityIDOf(rec FloorRecord) string {
 		return rec.CategoryID
 	}
 	return rec.ProductID
+}
+
+// floorAuditEntry renders one FloorRecord as its pricing_audit_log row, the
+// single shape both record paths write so the pool append and the
+// transactional append can never disagree about what a row carries.
+func floorAuditEntry(rec FloorRecord) AuditEntry {
+	return AuditEntry{
+		EntityType: "margin_enforcement",
+		// entity_id is NOT NULL: the record's own fallback keeps the row.
+		EntityID:      entityIDOf(rec),
+		Action:        rec.Action,
+		FieldName:     fmt.Sprintf("line_%d", rec.LineNo),
+		OldValue:      fmt.Sprintf("rule %d at %d%%", rec.RuleUnitCents, rec.DiscPct),
+		NewValue:      fmt.Sprintf("net %d margin %d floor %d", rec.NetUnitCents, rec.MarginBps, rec.FloorBps),
+		UserID:        rec.UserID,
+		RefEntityType: RefQuote,
+		RefEntityID:   rec.QuoteID,
+		BypassReason:  rec.BypassReason,
+	}
 }
 
 func (s *Service) RecordFloorDecision(ctx context.Context, rec FloorRecord) {
@@ -193,17 +219,25 @@ func (s *Service) RecordFloorDecision(ctx context.Context, rec FloorRecord) {
 		// row, so the bad reason surfaces in the caller's tests.
 		return
 	}
-	_ = s.store.AppendAudit(ctx, AuditEntry{
-		EntityType: "margin_enforcement",
-		// entity_id is NOT NULL: the record's own fallback keeps the row.
-		EntityID:      entityIDOf(rec),
-		Action:        rec.Action,
-		FieldName:     fmt.Sprintf("line_%d", rec.LineNo),
-		OldValue:      fmt.Sprintf("rule %d at %d%%", rec.RuleUnitCents, rec.DiscPct),
-		NewValue:      fmt.Sprintf("net %d margin %d floor %d", rec.NetUnitCents, rec.MarginBps, rec.FloorBps),
-		UserID:        rec.UserID,
-		RefEntityType: RefQuote,
-		RefEntityID:   rec.QuoteID,
-		BypassReason:  rec.BypassReason,
-	})
+	_ = s.store.AppendAudit(ctx, floorAuditEntry(rec))
+}
+
+// RecordFloorDecisionTx writes one FloorRecord to pricing_audit_log ON the
+// caller's transaction: the row commits with the write that owes it and
+// rolls back with it, so a commit with no log row cannot happen and a
+// rolled back write leaves no row (plan 4.2). The drop-don't-fail discipline
+// on the CHECK-guarded columns is the same as RecordFloorDecision's, but the
+// INSERT's own error is RETURNED: a failed append must fail the write it
+// rides, not vanish the way the pool append can.
+func (s *Service) RecordFloorDecisionTx(ctx context.Context, tx pgx.Tx, rec FloorRecord) error {
+	if rec.Action != "BYPASS" && rec.Action != "UPDATE" {
+		return nil
+	}
+	if rec.Action == "BYPASS" && !validBypassReasons[rec.BypassReason] {
+		return nil
+	}
+	if s.txAud == nil {
+		return errNoTxAudit
+	}
+	return s.txAud.AppendAuditTx(ctx, tx, floorAuditEntry(rec))
 }

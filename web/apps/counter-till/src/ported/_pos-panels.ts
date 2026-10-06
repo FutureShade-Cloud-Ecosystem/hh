@@ -25,8 +25,8 @@
 // second puts a panel off the side of it. So the boxes live in the host's store beside the floating
 // assistant's, and every read is clamped to the box it is being read INTO.
 
-import type { FlowStepId } from './_pos-flow.js';
-import { clearPanelLayoutRaw, readPanelLayoutRaw, writePanelLayoutRaw } from './ports.js';
+import type { FlowStepId } from '@hardscapehouse/pos-kit/src/ported/_pos-flow.js';
+import { clearPanelLayoutRaw, readPanelLayoutRaw, writePanelLayoutRaw } from '@hardscapehouse/pos-kit/src/ported/ports.js';
 
 /** One panel's box, in pixels relative to the panel area's top-left. */
 export interface PanelBox {

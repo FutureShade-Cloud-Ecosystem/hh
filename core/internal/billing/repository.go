@@ -61,8 +61,8 @@ func (r *Repository) ListInvoices(ctx context.Context, customerID string, f Filt
 	}
 	args = append(args, cIssue, cNo, f.Limit)
 	q := fmt.Sprintf(
-		"SELECT %s FROM invoices WHERE %s AND ($%d::date IS NULL OR (issue_date, invoice_no) < ($%d::date, $%d::text)) ORDER BY issue_date DESC, invoice_no LIMIT $%d",
-		invoiceColumns, where, len(args)-2, len(args)-2, len(args)-1, len(args),
+		"SELECT %s FROM invoices WHERE %s AND ($%d::date IS NULL OR issue_date < $%d::date OR (issue_date = $%d::date AND invoice_no > $%d::text)) ORDER BY issue_date DESC, invoice_no LIMIT $%d",
+		invoiceColumns, where, len(args)-2, len(args)-2, len(args)-2, len(args)-1, len(args),
 	)
 	rows, err := r.pool.Query(ctx, q, args...)
 	if err != nil {

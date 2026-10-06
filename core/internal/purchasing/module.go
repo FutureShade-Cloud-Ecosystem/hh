@@ -115,13 +115,19 @@ type LandedCostDraft struct {
 }
 
 // GLPoster posts a balanced journal through the GL provider (main.go adapter over *gl.Service.PostExternal).
+// PostJournalTx is the same post through the caller's transaction (adapter over *gl.Service.PostExternalTx):
+// PostBill holds the bill's transaction while it posts, so it takes this one, and the journal commits or
+// rolls back with the bill instead of asking the shared pool for a second connection.
 type GLPoster interface {
 	PostJournal(ctx context.Context, in GLJournal) (string, error)
+	PostJournalTx(ctx context.Context, tx pgx.Tx, in GLJournal) (string, error)
 }
 
 // RuleResolver resolves a posting-rule role to an account code (main.go adapter over *gl.Service.ResolveRule).
+// ResolveRuleTx reads the rule through the caller's transaction (adapter over *gl.Service.ResolveRuleTx).
 type RuleResolver interface {
 	ResolveRule(ctx context.Context, eventType, lineRole, branchID string) (string, error)
+	ResolveRuleTx(ctx context.Context, tx pgx.Tx, eventType, lineRole, branchID string) (string, error)
 }
 
 // GLJournal + GLLine mirror gl.ExternalJournal by value so purchasing does not import gl's internals.

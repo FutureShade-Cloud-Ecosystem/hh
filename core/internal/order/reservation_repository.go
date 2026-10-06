@@ -73,7 +73,7 @@ func (r *Repository) UpdateStatusFromTx(ctx context.Context, orderID, newStatus 
 		return oldStatus, ErrIllegalTransition
 	}
 	if precheck != nil {
-		if err := precheck(ctx); err != nil {
+		if err := precheck(withPrecheckTx(ctx, tx)); err != nil {
 			return oldStatus, err
 		}
 	}
