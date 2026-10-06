@@ -1557,3 +1557,16 @@ integration job's own command with sync included, after every package that prece
 `.github/workflows/ci.yml`. One corner recorded by the coder: if a production path ever deleted an order that already has a
 document, the writer would converge on the old document with its link NULL (0009's own choice); nothing in the job order
 exercises that.
+
+## internal/order's list cursor, the billing sibling named above, is closed (decision log rows 804 and 836, the lane grant; appended; the entries above are never edited)
+
+`core/internal/order/repository.go` (about line 79), the first of the three sibling sites the billing entry's follow-up names, now
+carries the same two part predicate as billing. The list orders `created_at DESC, order_no ASC` but the old cursor predicate was the
+row comparison `(created_at, order_no) < (cursor timestamp, cursor number)`, descending on both keys: a page ending at the first
+order of a timestamp skipped every same-timestamp order with a greater number, and would have re-served lower ones. The predicate is
+now `created_at < cursor OR (created_at = cursor AND order_no > cursor)`, PR 178's fix shape. The new red-first leg
+(`TestIntegration_OrderListCursor_SameTimestampGreaterNumbers` in `core/internal/order/cursor_test.go`) plants three orders at one
+created_at with order numbers 100, 101 and 102 and pages from the first one's pair: red on main with the next page empty, green with
+the fix. The two quote sites the follow-up names (`core/internal/quote/repository.go` about line 84 and
+`core/internal/quote/edit_repository.go` about line 588) are not touched by this change. The order package was never in `red=`;
+nothing leaves the integration job's exclusion list.
