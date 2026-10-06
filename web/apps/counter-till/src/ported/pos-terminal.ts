@@ -500,9 +500,9 @@ export class HosPosTerminal extends LitElement {
   /**
    * Row 976: the two panes swapped (the steps pane first). The page that mounts this terminal owns
    * the choice, because its header carries the swap button beside the theme, and remembers it per
-   * browser; the terminal only draws it.
+   * browser; the terminal only draws it. It arrives as the `panes-swapped` attribute.
    */
-  @property({ type: Boolean }) panesSwapped = false;
+  @property({ type: Boolean, attribute: 'panes-swapped' }) panesSwapped = false;
   /**
    * The dealer's key roster, resolved server-side (user over dealer over default). Held as data,
    * never as a switch statement: the client's people are BisTrack refugees who will want their old
@@ -1317,6 +1317,25 @@ export class HosPosTerminal extends LitElement {
     }
     :host([data-counter-layout='PANELS']) .pane-items {
       flex: 1 1 50%;
+      /* The table below answers to the PANE's width, not the window's: a narrow Items pane drops
+         the Weight column the way the phone width does, so the remove control stays inside it. */
+      container-type: inline-size;
+    }
+    @container (max-width: 640px) {
+      .pane-items .linegrid {
+        grid-template-columns:
+          36px minmax(110px, 1fr) auto minmax(28px, auto) minmax(52px, auto) minmax(64px, auto)
+          28px;
+      }
+      .pane-items .linegrid.withmargin {
+        grid-template-columns:
+          36px minmax(110px, 1fr) auto minmax(28px, auto) minmax(52px, auto) minmax(64px, auto)
+          minmax(40px, auto) 28px;
+      }
+      .pane-items .linehead span:nth-child(7),
+      .pane-items .linerow .lweight {
+        display: none;
+      }
     }
     :host([data-counter-layout='PANELS']) .pane-items-body {
       flex: 1 1 auto;
@@ -1489,13 +1508,13 @@ export class HosPosTerminal extends LitElement {
       display: grid;
       grid-template-columns:
         36px minmax(110px, 1fr) auto minmax(28px, auto) minmax(52px, auto) minmax(64px, auto)
-        minmax(52px, auto) 24px;
+        minmax(52px, auto) 28px;
       column-gap: 7px;
     }
     .linegrid.withmargin {
       grid-template-columns:
         36px minmax(110px, 1fr) auto minmax(28px, auto) minmax(52px, auto) minmax(64px, auto)
-        minmax(52px, auto) minmax(40px, auto) 24px;
+        minmax(52px, auto) minmax(40px, auto) 28px;
     }
     /* P3-7: below the desktop breakpoint the eight (nine with margin) tracks
        cannot fit the card: the table ran past its card's right edge and took
@@ -1507,12 +1526,12 @@ export class HosPosTerminal extends LitElement {
       .linegrid {
         grid-template-columns:
           36px minmax(110px, 1fr) auto minmax(28px, auto) minmax(52px, auto) minmax(64px, auto)
-          24px;
+          28px;
       }
       .linegrid.withmargin {
         grid-template-columns:
           36px minmax(110px, 1fr) auto minmax(28px, auto) minmax(52px, auto) minmax(64px, auto)
-          minmax(40px, auto) 24px;
+          minmax(40px, auto) 28px;
       }
       .linehead span:nth-child(7),
       .linerow .lweight {

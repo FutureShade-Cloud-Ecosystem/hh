@@ -198,7 +198,7 @@ export class CounterTillApp extends HHElement {
       }
       header .brand-product,
       .surfacebar .brand-product {
-        font-size: 15px;
+        font-size: 16px;
         font-weight: 700;
         letter-spacing: -0.02em;
         line-height: 1.05;
@@ -421,6 +421,9 @@ export class CounterTillApp extends HHElement {
     // retargets the target to this element (the design system's README holds
     // both halves). Click is composed, so the host hears it.
     this.addEventListener("click", this.#onHostClick);
+    // The terminal reports which layout it is in (composed, so the host hears it): the design
+    // system's position gate allows no @ binding here, so the listener lives in code.
+    this.addEventListener("pos-counter-layout", this.#onCounterLayout as EventListener);
     // The returns desk's fields ride the same host delegation: one input
     // listener on the host, the control read off composedPath() by its
     // data-field name, so a re-render strands no listener. The inputs are
@@ -503,6 +506,7 @@ export class CounterTillApp extends HHElement {
 
   disconnectedCallback(): void {
     this.removeEventListener("click", this.#onHostClick);
+    this.removeEventListener("pos-counter-layout", this.#onCounterLayout as EventListener);
     this.removeEventListener("input", this.#onHostInput);
     this.#theme.stop();
     super.disconnectedCallback();
@@ -529,6 +533,11 @@ export class CounterTillApp extends HHElement {
       this.#returns.setRestock(control.checked);
     }
     if (field === "reason-code") this.#returns.setReasonCode(control.value);
+  };
+
+  readonly #onCounterLayout = (event: CustomEvent<{ layout: string }>): void => {
+    this.#counterLayout = event.detail.layout;
+    this.requestUpdate();
   };
 
   readonly #onHostClick = (event: MouseEvent): void => {
@@ -848,13 +857,7 @@ export class CounterTillApp extends HHElement {
                 </p>
               </div>
               <div class="surface">
-                <hos-pos-terminal
-                  .panesSwapped=${this.#panesSwapped}
-                  @pos-counter-layout=${(e: CustomEvent<{ layout: string }>) => {
-                    this.#counterLayout = e.detail.layout;
-                    this.requestUpdate();
-                  }}
-                ></hos-pos-terminal>
+                <hos-pos-terminal panes-swapped=${this.#panesSwapped ? "true" : nothing}></hos-pos-terminal>
               </div>
               </div>
               ${this.#chromeMessage === null ? nothing : html`<p class="notice" role="status">${this.#chromeMessage}</p>`}

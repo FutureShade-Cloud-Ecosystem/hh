@@ -328,3 +328,44 @@ test("no CA$ in any text the till renders, hidden disclosures included", async (
   expect(text.match(/.{0,60}CA\$.{0,40}/g)).toBeNull();
   expect(text).toMatch(/\$\d[\d,]*\.\d{2}/);
 });
+
+const ALL_SIZES: Array<[number, number]> = [
+  [1440, 900],
+  [1920, 1080],
+  [1024, 768],
+  [820, 1180],
+];
+
+for (const [width, height] of ALL_SIZES) {
+  test(`every line's remove button sits whole inside the Items pane at ${width}x${height}`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    await twoPaneWithTicket(page);
+    const pane = (await box(page, "pos-pane-items"))!;
+    // The first line sits at the top of the pane at every size, so its box is read as it is drawn.
+    const b = (await page.locator("[data-testid='pos-pane-items'] button.rm").first().boundingBox())!;
+    expect(b.x).toBeGreaterThanOrEqual(pane.x - 0.5);
+    expect(b.x + b.width).toBeLessThanOrEqual(pane.right + 0.5);
+    // And the lines table never scrolls sideways inside the pane.
+    const sideways = await page.evaluate(() => {
+      const walk = (root: ParentNode): Element[] => {
+        const out: Element[] = [];
+        for (const el of root.querySelectorAll("*")) {
+          out.push(el);
+          if (el.shadowRoot) out.push(...walk(el.shadowRoot));
+        }
+        return out;
+      };
+      const body = walk(document).find((el) => el.matches(".pane-items-body"));
+      return body ? body.scrollWidth - body.clientWidth : -1;
+    });
+    expect(sideways).toBeLessThanOrEqual(0);
+  });
+}
+
+test("the badge's product name is 16px, the front door's lockup size", async ({ page }) => {
+  await signIn(page);
+  const size = await page.getByTestId("till-header-badge").locator(".brand-product").evaluate(
+    (el) => getComputedStyle(el).fontSize,
+  );
+  expect(size).toBe("16px");
+});
