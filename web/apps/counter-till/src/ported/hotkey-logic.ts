@@ -26,9 +26,9 @@
 // reloads, F3 still finds: and a hotkey a role may not use behaves exactly like a key that was
 // never bound. No error, no toast: a keystroke is not a place to explain an authorisation model.
 
-import { asRows } from './_response-shape.js';
-import { SCREEN_GATE, canSeeGate, visibleModuleKeys, type AccessRole } from './ports.js';
-import { isNavModuleKey, isNavUnitKey, type NavModuleKey, type NavUnitKey } from './ports.js';
+import { asRows } from '@hardscapehouse/pos-kit/src/ported/_response-shape.js';
+import { SCREEN_GATE, canSeeGate, visibleModuleKeys, type AccessRole } from '@hardscapehouse/pos-kit/src/ported/ports.js';
+import { isNavModuleKey, isNavUnitKey, type NavModuleKey, type NavUnitKey } from '@hardscapehouse/pos-kit/src/ported/ports.js';
 import { INTENT_POS_NEW_TICKET } from './quick-action-registry.js';
 
 /** One dealer-level row, as the API sends it: a canonical chord bound to a named action. */

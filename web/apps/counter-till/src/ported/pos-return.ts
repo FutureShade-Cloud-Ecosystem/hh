@@ -9,11 +9,11 @@ import {
   newIdempotencyKey,
   type ReturnLookup,
   type ReturnResult,
-} from './pos-api.js';
-import { focusRing } from './styles/focus-ring.js';
-import { ModalFocus } from './modal-focus.js';
+} from '@hardscapehouse/pos-kit/src/ported/pos-api.js';
+import { focusRing } from '@hardscapehouse/pos-kit/src/ported/styles/focus-ring.js';
+import { ModalFocus } from '@hardscapehouse/pos-kit/src/ported/modal-focus.js';
 import { rowStripe } from './styles/row-stripe.js';
-import { refundEstimateCents } from './ports.js';
+import { refundEstimateCents } from '@hardscapehouse/pos-kit/src/ported/ports.js';
 
 /**
  * W7 POS return modal (POS_COUNTER_V2 §4): enter the original order no → the returnable lines (qty

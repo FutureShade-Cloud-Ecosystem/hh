@@ -242,6 +242,9 @@ func TestIntegration_Compliance_HTTPSurface_ServesAndIsManagerGated(t *testing.T
 	mux := http.NewServeMux()
 	NewHandler(svc, slog.Default()).RegisterRoutes(mux, sg.Guards)
 
+	// The kit's guards are the real ones: a request with no staff bearer is refused 401 before the
+	// authority is ever consulted, so every call carries the bearer the double admits.
+	bearer := sg.Bearer(t)
 	do := func(method, path, body string) *httptest.ResponseRecorder {
 		var r *http.Request
 		if body == "" {
@@ -250,6 +253,8 @@ func TestIntegration_Compliance_HTTPSurface_ServesAndIsManagerGated(t *testing.T
 			r = httptest.NewRequest(method, path, jsonBody(body))
 			r.Header.Set("Content-Type", "application/json")
 		}
+		r.Header.Set("Authorization", "Bearer "+bearer)
+		r.Header.Set("X-Org", testkit.OrgNorthSlug)
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, r)
 		return w
@@ -310,14 +315,37 @@ func TestIntegration_Compliance_HTTPSurface_ServesAndIsManagerGated(t *testing.T
 	}
 
 	// -- the wiring itself --------------------------------------------------------------------
-	// Guards-swap carry note (HH-3.2 fold): which constructor each compliance
-	// route sits behind is the registrar's own source (RequireManager on every
-	// route, pinned by the build); the load-bearing half stays behavioral:
-	// when the resolved authority drops below the manager rung, the handler
-	// never runs.
+	// Guards-swap carry note (HH-3.2 fold): which constructor each compliance route sits behind is the
+	// registrar's own source, and the build does NOT pin it (RequireStaff and RequireManager share a
+	// signature), so the load-bearing half is behavioral and covers EVERY route: when the resolved
+	// authority drops below the manager rung the handler never runs, on all four method and path pairs
+	// (the review-status upsert is the consequential one: it flips the shared DRAFT or APPROVED banner),
+	// and a call with no bearer at all is refused 401 before any authority is read.
 	sg.SetAuthority(coreid.StaffAuthority{RoleID: "inside_sales", Tier: 3, Scope: "global"})
-	if w := do("GET", "/api/v1/compliance/calendar", ""); w.Code != http.StatusForbidden {
-		t.Fatalf("a frontline authority must be refused the route, got %d", w.Code)
+	for _, tc := range []struct{ method, path, body string }{
+		{"GET", "/api/v1/compliance/calendar", ""},
+		{"GET", "/api/v1/compliance/upcoming?horizon_days=30", ""},
+		{"GET", "/api/v1/compliance/review-status?subject_type=LIEN_JOB&subject_id=" + subject, ""},
+		{"PUT", "/api/v1/compliance/review-status",
+			fmt.Sprintf(`{"subject_type":"LIEN_JOB","subject_id":%q,"state":"APPROVED","banner_text":"Not allowed"}`, subject)},
+	} {
+		if w := do(tc.method, tc.path, tc.body); w.Code != http.StatusForbidden {
+			t.Fatalf("a frontline authority must be refused %s %s, got %d", tc.method, tc.path, w.Code)
+		}
+	}
+	// The refused upsert wrote nothing: the row the manager upsert left is still the APPROVED one.
+	sg.SetAuthority(coreid.StaffAuthority{RoleID: "payables_receivables", Tier: 2, Scope: "global"})
+	kept := do("GET", "/api/v1/compliance/review-status?subject_type=LIEN_JOB&subject_id="+subject, "")
+	if err := json.Unmarshal(kept.Body.Bytes(), &rs); err != nil || rs.BannerText != "Reviewed" {
+		t.Fatalf("a refused upsert must leave the banner as the manager set it: %+v err %v", rs, err)
+	}
+	// No bearer at all: 401 before the authority is consulted (the class that made this test red).
+	anon := httptest.NewRequest("GET", "/api/v1/compliance/calendar", nil)
+	anon.Header.Set("X-Org", testkit.OrgNorthSlug)
+	aw := httptest.NewRecorder()
+	mux.ServeHTTP(aw, anon)
+	if aw.Code != http.StatusUnauthorized {
+		t.Fatalf("a call with no bearer must be refused 401, got %d", aw.Code)
 	}
 }
 

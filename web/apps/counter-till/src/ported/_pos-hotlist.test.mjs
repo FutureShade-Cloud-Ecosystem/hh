@@ -33,7 +33,12 @@ import {
 const code = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/<!--[\s\S]*?-->/g, '');
 const listSrc = code(readFileSync(new URL('./pos-hot-list.ts', import.meta.url), 'utf8'));
 const terminalSrc = readFileSync(new URL('./pos-terminal.ts', import.meta.url), 'utf8');
-const thumbSrc = readFileSync(new URL('./product-thumb.ts', import.meta.url), 'utf8');
+// The product thumb moved into @hardscapehouse/pos-kit (web/packages/pos-kit,
+// src/ported, same name) with the grid that mounts it beside the tiles.
+const thumbSrc = readFileSync(
+  new URL('../../../../packages/pos-kit/src/ported/product-thumb.ts', import.meta.url),
+  'utf8',
+);
 const treeSrc = code(readFileSync(new URL('./_pos-hotlist.ts', import.meta.url), 'utf8'));
 
 const p = (id, name, category, subcategory, over = {}) => ({
