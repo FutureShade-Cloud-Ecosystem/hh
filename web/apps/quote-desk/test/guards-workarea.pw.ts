@@ -77,6 +77,7 @@ test("guard add line: an add that answers after another quote opened says nothin
   const held = await hold(page, /\/quotes\/q-1004\/lines$/, { method: "POST" });
   const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scan.fill("PSN-100");
+  await scan.press("Enter");
   await held.asked;
   await open(page, "Q-1001");
   await expect(page.getByTestId("qb-line")).toHaveCount(2);
@@ -259,6 +260,7 @@ test("guard cart change after terms save: an add whose terms save answers after 
   const put = await hold(page, /\/api\/v1\/quotes\/q-1004\/terms$/, { method: "PUT", refuse: { status: 500, error: "quote: the terms store is down" } });
   const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scan.fill("PSN-100");
+  await scan.press("Enter");
   await put.asked;
   await open(page, "Q-1001");
   await settle(page);
@@ -280,6 +282,7 @@ test("guard cart change after read: an add whose re-read answers after another q
   gated.arm();
   const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scan.fill("PSN-100");
+  await scan.press("Enter");
   await gated.held.asked;
   gated.disarm();
   await open(page, "Q-1001");

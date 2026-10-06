@@ -28,6 +28,7 @@ async function openTicket(page: Page, role: string): Promise<void> {
   for (const [at, sku] of ["PSN-100", "WAT-STD"].entries()) {
     const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
     await scan.fill(sku);
+    await scan.press("Enter");
     await expect(page.getByTestId("qb-line")).toHaveCount(at + 1);
   }
   await expect(page.getByTestId("qb-line")).toHaveCount(2);

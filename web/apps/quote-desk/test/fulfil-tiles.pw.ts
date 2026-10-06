@@ -86,6 +86,7 @@ test("floor-zero-no-clipped-pickup", async ({ page }) => {
   // The state stays true under the count the demo shipped: one line, sent.
   const scanInput = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scanInput.fill("PSN-100");
+  await scanInput.press("Enter");
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
   await page.getByTestId("qb-send").click();
   await expect(page.getByTestId("qb-status")).toContainText("Sent");
@@ -99,6 +100,7 @@ test("floor-zero-no-clipped-delivery", async ({ page }) => {
   await expectTileUnclipped(page, "qb-fulfil-delivery", "Delivery");
   const scanInput = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scanInput.fill("PSN-100");
+  await scanInput.press("Enter");
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
   await page.getByTestId("qb-send").click();
   await expect(page.getByTestId("qb-status")).toContainText("Sent");

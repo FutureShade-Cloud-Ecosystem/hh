@@ -30,6 +30,7 @@ test("P2-1 a scan on an open quote while a new quote is being created goes to th
   await expect(page.getByTestId("qb-line")).toHaveCount(2);
   const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scan.fill("PSN-100");
+  await scan.press("Enter");
   // The scan lands on the open quote at once; it does not wait for a create it has no part in.
   await expect(page.getByTestId("qb-line")).toHaveCount(3);
   await create.release();
@@ -236,6 +237,7 @@ test("P3 the scan box's outcome line clears when another quote opens", async ({ 
   await open(page, "Q-1001");
   const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scan.fill("PSN-100");
+  await scan.press("Enter");
   await expect(page.getByTestId("search-add-status")).toContainText("Added Polymeric Locking Sand");
   await open(page, "Q-1004");
   await expect(page.getByTestId("search-add-status")).toHaveText("");
@@ -254,6 +256,7 @@ test("P3 reads of one quote land in the order they were asked: an older read ans
   armed = false;
   const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scan.fill("PSN-100");
+  await scan.press("Enter");
   await expect(page.getByTestId("qb-line")).toHaveCount(3);
   // Every other read the add set going has landed before the older one is let go.
   await quiet(page);

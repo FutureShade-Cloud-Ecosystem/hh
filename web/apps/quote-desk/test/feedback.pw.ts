@@ -34,6 +34,7 @@ async function openQuote(page: Page): Promise<void> {
   await picker.getByRole("option", { name: /Maple Ridge Contracting/ }).click();
   const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scan.fill("PSN-100");
+  await scan.press("Enter");
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
   await page.evaluate(() => window.scrollTo(0, 0));
 }

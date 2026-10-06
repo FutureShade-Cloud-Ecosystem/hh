@@ -1493,5 +1493,12 @@
     "find": "    if (!this.onQuotePage || (detail.quoteId !== \"\" && detail.quoteId !== this.quoteId)) {",
     "replace": "    if (false) {",
     "test": "split floor:"
+  },
+  {
+    "id": "sa-no-add-on-pause",
+    "file": "src/quote-search-add.ts",
+    "find": "      if (at >= 0 && at < ROWS) this.active = at;\n",
+    "replace": "      if (at >= 0 && at < ROWS) this.active = at;\n      if (exact !== null) { this.add(exact); return; }\n",
+    "test": "a person who pauses on a full code"
   }
 ]

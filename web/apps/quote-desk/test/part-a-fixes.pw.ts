@@ -24,6 +24,7 @@ async function startQuote(page: Page, customer = "Maple", option = /Maple Ridge 
   await picker.getByRole("option", { name: option }).click();
   const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scan.fill("PSN-100");
+  await scan.press("Enter");
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
 }
 

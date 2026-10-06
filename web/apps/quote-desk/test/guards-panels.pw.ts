@@ -67,6 +67,7 @@ test("guard edit read order: an older read of the quote answered late does not u
   // A line is added on the work area: the fan-out reads the quote again and the edit panel shows three lines.
   const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scan.fill("PSN-100");
+  await scan.press("Enter");
   await expect(edit(page).getByTestId("qe-line")).toHaveCount(3);
   await quiet(page);
   await gated.held.release();
@@ -446,6 +447,7 @@ test("guard assist gaps order: an older suggestions read answered late does not 
   // Clear stone is the base: adding it from the work area makes the base suggestion go away.
   const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scan.fill("GRA-CL");
+  await scan.press("Enter");
   await expect(assist(page).getByTestId("qa-gaps")).not.toContainText("Granular base for the paved area");
   await quiet(page);
   await gated.held.release();

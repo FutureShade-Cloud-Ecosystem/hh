@@ -329,8 +329,9 @@ test("split search: the quote page adds lines through the search and add box, no
   expect(where.search, "one search and add box on the quote page").toBe(1);
   const box = page.getByRole("combobox", { name: "Search products by name, code or category" });
   const before = await page.getByTestId("qb-line").count();
-  // A code typed exactly adds at once; a name search adds on a click.
+  // A code adds on Enter; a name search adds on a click; a pause adds nothing.
   await box.fill("PSN-100");
+  await box.press("Enter");
   await expect(page.getByTestId("qb-line")).toHaveCount(before + 1);
   await box.fill("holland");
   await page.getByTestId("search-add-row").first().click();
@@ -406,6 +407,7 @@ test("split floor: a refusal that answers after the person left for the list ope
   await picker.getByPlaceholder("Search name or account #…").fill("Maple");
   await picker.getByRole("option", { name: /Maple Ridge Contracting/ }).click();
   await page.getByRole("combobox", { name: "Search products by name, code or category" }).fill("PSN-100");
+  await page.getByRole("combobox", { name: "Search products by name, code or category" }).press("Enter");
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
   const writes: string[] = [];
   page.on("request", (r) => {
