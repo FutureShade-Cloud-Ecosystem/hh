@@ -1030,6 +1030,39 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/customers/{id}:
+    get:
+      operationId: customerGetAccount
+      tags: [staff-customer]
+      summary: Read one customer account by id, credit limit and balance included
+      description: >-
+        The resolved account the create and address writes answer, with the
+        credit limit and the current balance (the latest ledger running
+        balance, the same basis as the search's open balance; an account with
+        no ledger rows answers 0). Behind the search's own grants. An account
+        homed to a branch the caller's grants do not reach is a 404, the same
+        answer as an id nobody has, never a 403 that would confirm it exists.
+        A global caller reaches every branch. The walk-in house account and an
+        inactive account are returned as stored, is_active says which.
+      x-addition: "the staff read of one customer account by id with its credit limit and balance (the Quote Desk server reads); no ERP source route"
+      x-role: requireStaff
+      x-access:
+        surfaces: [counter-till, quote-desk]
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The account with its credit limit and current balance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerAccount"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /api/v1/customers/{id}/billing-address:
     put:
       operationId: customerUpdateBillingAddress
