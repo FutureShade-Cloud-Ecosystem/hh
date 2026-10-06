@@ -328,14 +328,18 @@ export class QdQuoteWorkarea extends LitElement {
       flex-direction: column;
       gap: var(--hos-s-4, 4px);
     }
-    /* The workspace: each panel scrolls internally; the right panel pins its
-       totals and actions at the foot. */
+    /* The workspace: each panel keeps its own scroll zone, and the row stands
+       at least at the viewport budget. The row is a floor, not a cap (demo
+       polish round 2): a fixed height cut the summary panel's terms fields
+       mid input when the pinned foot outgrew the budget, so the panel now
+       honors its natural height and the page's outer scroll takes the
+       overflow. The zones still scroll if a panel's content outgrows the
+       row some other way. */
     .workspace {
       display: grid;
       gap: 0;
       align-items: stretch;
-      height: calc(100vh - var(--qb-chrome, 250px));
-      min-height: 430px;
+      min-height: max(calc(100vh - var(--qb-chrome, 250px)), 430px);
     }
     .panel {
       border: 1px solid var(--hos-line, var(--hh-line));
@@ -801,6 +805,13 @@ export class QdQuoteWorkarea extends LitElement {
       border-radius: var(--hos-radius-control, 6px);
       background: var(--hos-slate-warm, var(--hh-card));
       color: var(--hos-text, var(--hh-text));
+    }
+    /* The terms fields stand at the design system's control face height, the
+       row's one height (demo polish round 2): a shorter wiring let the fields
+       card sit under the token and read as a cut row even unclipped. */
+    .fields input,
+    .fields select {
+      min-height: var(--hh-h-input, 44px);
     }
     .fulfil {
       display: grid;

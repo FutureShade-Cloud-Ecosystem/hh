@@ -54,7 +54,7 @@ export const baseStyles = css`
     font-family: inherit;
     font-size: var(--hh-s-16);
     line-height: 1;
-    min-height: 44px;
+    min-height: var(--hh-h-input);
     padding: 0 var(--hh-s-20);
     border-radius: var(--hh-radius-control);
     border: 1px solid transparent;
@@ -101,7 +101,7 @@ export const baseStyles = css`
     font-family: inherit;
     font-size: var(--hh-s-16);
     line-height: 1;
-    min-height: 44px;
+    min-height: var(--hh-h-input);
     padding: 0 var(--hh-s-12);
     border-radius: var(--hh-radius-control);
     border: 1px solid var(--hh-control-line);
