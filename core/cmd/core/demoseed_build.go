@@ -13,12 +13,7 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
-	"image"
-	"image/color"
-	"image/draw"
-	"image/png"
 	"sort"
 	"strconv"
 	"time"
@@ -215,45 +210,7 @@ func (b *builder) customers() {
 	))
 }
 
-// -- §3 products, images, stock -------------------------------------------------------------------
-
-// The photographed products carry a GENERATED swatch, not a placeholder. The till's tile trusts
-// has_image: with the flag up it renders the bytes and never falls back to the glyph, so bytes
-// that fail to decode, or decode into a blank square, are a demo that looks broken at the counter.
-// Each photographed product draws in its own flat colour, picked to read as the material its name
-// names, and the colours are visibly different from each other, which is what stops four tiles
-// from reading as one product wearing another's likeness.
-var swatchColour = map[string][3]uint8{
-	"P01": {54, 54, 58},    // Holland Paver, Charcoal: charcoal grey
-	"P02": {203, 166, 118}, // Brussels Dimensional, Sandstone: sandstone tan
-	"P04": {122, 122, 126}, // Retaining Wall Block: mid grey
-	"P08": {199, 193, 180}, // Concrete Sand: pale stone grey
-}
-
-// swatchSize is the edge of the square. Large enough that the thumbnail route has real pixels to
-// scale, small enough that four swatches cost a few hundred bytes, far under the 1 MiB cap the
-// product_images CHECK enforces.
-const swatchSize = 64
-
-// productSwatchPNG draws one product's swatch: a solid square of its colour, encoded as a PNG. It
-// is a pure function of the product key, no clock, no randomness, no asset on disk, so the same
-// key encodes to the same bytes on every build, which is what lets a re-run recognise the rows it
-// already planted. An unlisted key renders neutral grey rather than failing the seed; the swatch
-// tests hold every photographed product to a distinct picture, so a collision cannot pass quietly.
-func productSwatchPNG(productKey string) []byte {
-	c, ok := swatchColour[productKey]
-	if !ok {
-		c = [3]uint8{128, 128, 128}
-	}
-	img := image.NewRGBA(image.Rect(0, 0, swatchSize, swatchSize))
-	fill := color.RGBA{R: c[0], G: c[1], B: c[2], A: 0xff}
-	draw.Draw(img, img.Bounds(), &image.Uniform{fill}, image.Point{}, draw.Src)
-	var buf bytes.Buffer
-	if err := png.Encode(&buf, img); err != nil {
-		panic("demoseed: encoding a product swatch: " + err.Error())
-	}
-	return buf.Bytes()
-}
+// -- §3 products, stock --------------------------------------------------------------------------
 
 func (b *builder) products() {
 	for _, p := range demoProducts {
@@ -271,6 +228,7 @@ func (b *builder) products() {
 			"name", p.Name,
 			"description", "Seeded demo catalogue item.",
 			"category_id", catID,
+			"application", p.Application,
 			"base_uom", p.UOM,
 			"price_uom", p.UOM,
 			"weight_per_unit_kg", p.WeightKg,
@@ -290,20 +248,6 @@ func (b *builder) products() {
 				"product_id", demoID("product:"+p.Key),
 				"uom_code", "PLT", "qty_in_base", fmt.Sprintf("%d", p.SkidQty), "is_base", false,
 				"created_at", b.agoDays(180), "updated_at", b.agoDays(180),
-			))
-		}
-		if p.Image {
-			swatch := productSwatchPNG(p.Key)
-			b.add(insert("product_images", "(id)",
-				"id", demoID("image:"+p.Key),
-				"product_id", demoID("product:"+p.Key),
-				"content_type", "image/png",
-				"byte_size", len(swatch),
-				"image_bytes", swatch,
-				"alt_text", p.Name,
-				"sort_order", 0,
-				"checksum", demoID("image:" + p.Key)[:12],
-				"created_at", b.agoDays(180),
 			))
 		}
 	}

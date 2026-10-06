@@ -370,6 +370,7 @@ export class HosPosHotList extends LitElement {
         <hos-product-thumb
           .productId=${thumb?.product_id ?? ''}
           .hasImage=${thumb?.has_image ?? false}
+          .category=${thumb?.category ?? ''}
           alt=""
           .size=${52}
         ></hos-product-thumb>
@@ -386,7 +387,7 @@ export class HosPosHotList extends LitElement {
       tabindex=${this.roveIdx === i ? '0' : '-1'}
       @click=${() => this.add(p)}
     >
-      <hos-product-thumb .productId=${p.product_id} .hasImage=${p.has_image} alt="" .size=${52}></hos-product-thumb>
+      <hos-product-thumb .productId=${p.product_id} .hasImage=${p.has_image} .category=${p.category} alt="" .size=${52}></hos-product-thumb>
       <span class="name">${p.name}</span>
       ${p.size_line ? html`<span class="sub">${p.size_line}</span>` : nothing}
       ${pic.unpriceable

@@ -27,6 +27,7 @@
 // without it, so no call ever leaves this app unresolved.
 import { html, css, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
+import { productTileUrl } from "@hardscapehouse/design-system/src/assets/product-tiles/index.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
 import { ApiClient } from "@hardscapehouse/api-client";
 import { AuthController, SessionStore, authHeaderProvider } from "@hardscapehouse/auth";
@@ -331,6 +332,7 @@ export class CounterTillApp extends HHElement {
       houseDay: () => houseDayInZone(HOUSE_ZONE),
       user: () => this.#clerkIdentity,
       token: () => this.#sessions.current?.token ?? "",
+      productTile: productTileUrl,
     });
   }
 
