@@ -18,10 +18,11 @@
 # still answers, and /healthz answers unauthenticated for the platform.
 #
 # The handle blocks are ordered most specific first: the demo mint routes,
-# then every other api route, then the health leg, then everything else,
-# which is the app. The core answers /api/v1/* itself (staff routes 401
+# then every other api route, then the health leg, then the three app
+# prefixes (D1: /till/*, /quote/*, /q/*), then everything else, which is the
+# landing app. The core answers /api/v1/* itself (staff routes 401
 # without a bearer, the public legs answer as on any box), and Caddy adds
-# nothing to those; the app is the only thing Caddy serves from disk.
+# nothing to those; the apps are the only things Caddy serves from disk.
 #
 # The forwarded address discipline (W2's review, routed here): the demo
 # mint's per-address limit must see the address the client really came
@@ -58,6 +59,42 @@ handle /healthz {
 	reverse_proxy __UPSTREAM__ {
 		header_up X-Forwarded-For "{remote_host}"
 	}
+}
+
+# The three app prefixes (D1). Each is its own handle before the catch-all,
+# with the prefix's own root and its own try_files fallback, so every SPA's
+# history mode rewrite returns that app's index.html and no other's. The
+# gate carries onto every page handle unchanged: the same phrase opens the
+# landing, the till, the Quote Desk and the customer's quote page, which is
+# why one demo sign in carries across the box. The customer's quote page is
+# read by a customer through a share link token, and the token is that
+# page's credential in the deeper sense; the box's phrase gate still gates
+# the page itself, exactly like every other page here.
+handle /till/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app/till
+	try_files {path} /till/index.html
+	file_server
+}
+
+handle /quote/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app/quote
+	try_files {path} /quote/index.html
+	file_server
+}
+
+handle /q/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app/q
+	try_files {path} /q/index.html
+	file_server
 }
 
 handle {

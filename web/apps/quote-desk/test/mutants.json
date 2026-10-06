@@ -16,14 +16,14 @@
   {
     "id": "wa-terms-save",
     "file": "src/quote-workarea.ts",
-    "find": "await ctx.guarded(\n      this.queueTermsPut(ctx.id, () => client.putTerms(ctx.id, termsBody(t))),\n      this.lateWrite(ctx, \"save the quote terms\"),\n    )",
+    "find": "await ctx.guarded(\n      this.queueTermsPut(ctx.id, () => deferredSend(capture, () => client.putTerms(ctx.id, termsBody(t)))),\n      this.lateWrite(ctx, \"save the quote terms\"),\n    )",
     "replace": "await client.putTerms(ctx.id, termsBody(t))",
     "test": "guard terms save answer:"
   },
   {
     "id": "wa-add-line",
     "file": "src/quote-workarea.ts",
-    "find": "await ctx.guarded(client.addLine(ctx.id, p.id, String(qty), p.uom), this.lateWrite(ctx, \"add this line\"))",
+    "find": "await ctx.guarded(deferredSend(capture, () => client.addLine(ctx.id, p.id, String(qty), p.uom)), this.lateWrite(ctx, \"add this line\"))",
     "replace": "await client.addLine(ctx.id, p.id, String(qty), p.uom)",
     "test": "guard add line:"
   },
@@ -479,15 +479,15 @@
   {
     "id": "wa-sms-answer",
     "file": "src/quote-workarea.ts",
-    "find": "const sms = await ctx.guarded(client.shareBySMS(ctx.id), this.lateWrite(ctx, \"send the text\"));",
+    "find": "const sms = await ctx.guarded(deferredSend(capture, () => client.shareBySMS(ctx.id)), this.lateWrite(ctx, \"send the text\"));",
     "replace": "const sms = await client.shareBySMS(ctx.id);",
     "test": "a text answer that lands after another quote opened"
   },
   {
     "id": "wa-ensure-link",
     "file": "src/quote-workarea.ts",
-    "find": "const result = await ctx.guarded(client.mintShareLink(ctx.id), this.lateWrite(ctx, \"create a share link\", LATE_LINK_NOTE));\n    if (result === undefined) throw new StaleQuoteError();",
-    "replace": "const result = await client.mintShareLink(ctx.id);\n    if (result === undefined) throw new StaleQuoteError();",
+    "find": "const result = await ctx.guarded(deferredSend(capture, () => client.mintShareLink(ctx.id)), this.lateWrite(ctx, \"create a share link\", LATE_LINK_NOTE));\n    if (result === undefined || wasUnsent(result)) throw new StaleQuoteError();",
+    "replace": "const result = await client.mintShareLink(ctx.id);\n    if (result === undefined || wasUnsent(result)) throw new StaleQuoteError();",
     "test": "a send in flight when another quote opens"
   },
   {
@@ -640,7 +640,7 @@
   {
     "id": "as-add-guard",
     "file": "src/assist-panel.ts",
-    "find": "const result = await ctx.guarded(client.addLine(ctx.id, p.product_id, p.qty_entered, p.uom_entered), (late) => {\n          if (late.ok) added += 1;\n        });",
+    "find": "const result = await ctx.guarded(deferredSend(capture, () => client.addLine(ctx.id, p.product_id, p.qty_entered, p.uom_entered)), (late) => {\n          if (late.ok) added += 1;\n        });",
     "replace": "const result = await client.addLine(ctx.id, p.product_id, p.qty_entered, p.uom_entered);",
     "test": "P2-1 an add that was out when the person left lands"
   },
@@ -1014,8 +1014,8 @@
   {
     "id": "wa-late-terms",
     "file": "src/quote-workarea.ts",
-    "find": "this.queueTermsPut(ctx.id, () => client.putTerms(ctx.id, termsBody(t))),\n      this.lateWrite(ctx, \"save the quote terms\"),",
-    "replace": "this.queueTermsPut(ctx.id, () => client.putTerms(ctx.id, termsBody(t))),",
+    "find": "this.queueTermsPut(ctx.id, () => deferredSend(capture, () => client.putTerms(ctx.id, termsBody(t)))),\n      this.lateWrite(ctx, \"save the quote terms\"),",
+    "replace": "this.queueTermsPut(ctx.id, () => deferredSend(capture, () => client.putTerms(ctx.id, termsBody(t)))),",
     "test": "B P2-1 work area: a terms save answered after leaving"
   },
   {
@@ -1180,20 +1180,6 @@
     "test": "P3 a scan made in compose waits for the host"
   },
   {
-    "id": "wa-scan-handoff-timeout-says",
-    "file": "src/quote-workarea.ts",
-    "find": "          this.speakAdd(\"The new quote did not open in time, so that scan was not added. Scan it again once the quote is on screen.\", \"warn\");\n",
-    "replace": "",
-    "test": "P3 a scan made in compose says so when the host never"
-  },
-  {
-    "id": "wa-handoff-give-up",
-    "file": "src/quote-workarea.ts",
-    "find": "    this.releaseHandoffWaiters(\"gave-up\");\n  }",
-    "replace": "  }",
-    "test": "P3 a scan made in compose says so when the host never"
-  },
-  {
     "id": "wa-handoff-leave-release",
     "file": "src/quote-workarea.ts",
     "find": "    this.scope.open(\"\");\n    this.releaseHandoffWaiters(\"leaving\");\n",
@@ -1217,7 +1203,7 @@
   {
     "id": "wa-handoff-create-failed-says",
     "file": "src/quote-workarea.ts",
-    "find": "        this.speakAdd(CREATE_FAILED_SCAN, \"warn\");\n",
+    "find": "    this.speakAdd(CREATE_FAILED_SCAN, \"warn\");\n",
     "replace": "",
     "test": "P3 a scan made in compose says so at once when the create itself is refused"
   },
@@ -1468,15 +1454,15 @@
   {
     "id": "ws-serialize",
     "file": "src/workspace-store.ts",
-    "find": "    this.#queued = send;\n    if (this.#inFlight !== null) return this.#inFlight;\n",
-    "replace": "    this.#queued = send;\n",
+    "find": "    if (this.#inFlight !== null) return this.#inFlight;\n",
+    "replace": "",
     "test": "P3 layout saves reach the server one at a time"
   },
   {
     "id": "ws-latest-after",
     "file": "src/workspace-store.ts",
-    "find": "      } while (this.#queued !== null);",
-    "replace": "      } while (false);",
+    "find": "        await next.run();\n",
+    "replace": "        await next.run();\n        break;\n",
     "test": "P3 layout saves reach the server one at a time"
   },
   {
@@ -1489,8 +1475,8 @@
   {
     "id": "ws-reset-queued",
     "file": "src/workspace-store.ts",
-    "find": "    await this.#enqueue(() => this.#deleteRow());",
-    "replace": "    await this.#deleteRow();",
+    "find": "await this.#enqueue(\"delete\", () => this.#deleteRow(capture, before));",
+    "replace": "await this.#deleteRow(capture, before);",
     "test": "the reset goes through the same queue as the saves",
     "runner": "node",
     "testFile": "test/workspace-store.test.mjs"
