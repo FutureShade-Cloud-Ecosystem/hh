@@ -133,6 +133,9 @@ type PublicQuoteView struct {
 	// Acceptable is whether this link may still be used to accept: the quote is SENT, not expired, and
 	// the link is live. Drives whether the accept form renders at all.
 	Acceptable bool `json:"acceptable"`
+	// Preview is true only on the staff preview of the customer's page (CustomerViewPreview). The
+	// public token read never sets it, so the customer's payload is unchanged.
+	Preview bool `json:"preview,omitempty"`
 
 	// - DIB-506: the terms the work area put on the quote, customer-visible by design -
 	// All omitempty: a quote whose terms were never touched serves the exact pre-0173 payload.
@@ -385,12 +388,9 @@ func (s *StaffService) resolveLive(ctx context.Context, rawToken string) (ShareL
 	return link, quoteID, nil
 }
 
-// PublicQuoteByToken serves the customer-facing quote view for a live token, and logs the view.
-func (s *StaffService) PublicQuoteByToken(ctx context.Context, rawToken string) (PublicQuoteView, error) {
-	link, quoteID, err := s.resolveLive(ctx, rawToken)
-	if err != nil {
-		return PublicQuoteView{}, err
-	}
+// customerView builds the customer's page for a quote: the one code path behind both the token read
+// and the staff preview, so the two cannot drift. It writes nothing.
+func (s *StaffService) customerView(ctx context.Context, quoteID string) (PublicQuoteView, error) {
 	view, err := s.shares.PublicQuote(ctx, quoteID)
 	if err != nil {
 		return PublicQuoteView{}, err
@@ -404,6 +404,19 @@ func (s *StaffService) PublicQuoteByToken(ctx context.Context, rawToken string) 
 	view.Acceptable = view.Status == "SENT" && !view.Expired
 	if !view.Acceptable && (view.Status == "ACCEPTED" || view.Status == "CONVERTED") && !view.Expired {
 		view.Acceptable = s.multiAcceptOn(ctx)
+	}
+	return view, nil
+}
+
+// PublicQuoteByToken serves the customer-facing quote view for a live token, and logs the view.
+func (s *StaffService) PublicQuoteByToken(ctx context.Context, rawToken string) (PublicQuoteView, error) {
+	link, quoteID, err := s.resolveLive(ctx, rawToken)
+	if err != nil {
+		return PublicQuoteView{}, err
+	}
+	view, err := s.customerView(ctx, quoteID)
+	if err != nil {
+		return PublicQuoteView{}, err
 	}
 	// R4: log every view against the token. Best-effort, a logging failure must not deny a customer
 	// the quote they were legitimately sent.
@@ -563,4 +576,42 @@ func (s *StaffService) recordAcceptance(ctx context.Context, tx pgx.Tx, quoteID,
 		return 0, nil
 	}
 	return seq, nil
+}
+
+// CustomerViewPreview is the staff read of the customer's page by quote id: the same view a link
+// holder gets (customerView), without minting a link, moving the quote's status, scheduling a
+// follow-up or logging a view. "Sent and shared are the same act" holds for Copy link and Send; a
+// preview is neither, so it never sends. Acceptable is always false and Preview is true, so the page
+// can band it and offer no accept. Gated like the other staff quote reads: an active staff caller
+// with access to the quote's branch.
+func (s *StaffService) CustomerViewPreview(ctx context.Context, quoteID string) (PublicQuoteView, error) {
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return PublicQuoteView{}, err
+	}
+	if caller.Status != identity.StatusActive {
+		return PublicQuoteView{}, ErrForbidden
+	}
+	if s.shares == nil {
+		return PublicQuoteView{}, ErrForbidden
+	}
+	rGlobal, rBranches := callerBranchScope(caller)
+	quoteID, err = s.store.ResolveQuoteID(ctx, quoteID, rGlobal, rBranches)
+	if err != nil {
+		return PublicQuoteView{}, err
+	}
+	_, branchID, _, _, err := s.store.QuoteEditHeader(ctx, quoteID)
+	if err != nil {
+		return PublicQuoteView{}, err
+	}
+	if !caller.CanAccessBranch(branchID) {
+		return PublicQuoteView{}, ErrForbidden
+	}
+	view, err := s.customerView(ctx, quoteID)
+	if err != nil {
+		return PublicQuoteView{}, err
+	}
+	view.Acceptable = false
+	view.Preview = true
+	return view, nil
 }

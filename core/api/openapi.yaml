@@ -20236,6 +20236,39 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/quotes/{id}/customer-view:
+    get:
+      operationId: quoteCustomerViewPreview
+      tags:
+        - staff-quote
+      summary: Preview the customer's page for a quote, without sending it
+      description: The same view a share-link holder reads (QuotePublicView, built by the same code path), by quote id. It never mints a link, never moves the quote's status, never schedules a follow-up and never logs a view. The acceptable flag is always false and preview is true, so the page can say plainly that nothing has been sent and offer no way to accept.
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - quote-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The customer's view of the quote, marked as a preview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuotePublicView"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/quotes/{id}/share-links/{linkId}:
     delete:
       operationId: quoteRevokeShareLink
@@ -46533,6 +46566,9 @@ components:
         acceptable:
           type: boolean
           description: Whether this link may still be used to accept; drives whether the accept form renders
+        preview:
+          type: boolean
+          description: True only on the staff preview of the page; nothing has been sent and acceptable is false
         customer_notes:
           type: string
         deposit_required:
