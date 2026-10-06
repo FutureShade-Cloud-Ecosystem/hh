@@ -60,7 +60,7 @@ export function dollars(cents: number): string {
  * words, so both renderings are mirrored here.
  */
 export function cad(cents: number): string {
-  return `CA${dollars(cents)}`;
+  return dollars(cents);
 }
 
 /** The column's percent from basis points, as the app's helper rounds it. */

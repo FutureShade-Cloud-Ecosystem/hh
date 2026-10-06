@@ -68,7 +68,7 @@ test('accordion: a collapsed Customer card says Walk-in when there is no account
 });
 
 test('accordion: a collapsed Items card carries the count AND the running total', () => {
-  assert.equal(summaryFor('items', facts({ lineCount: 3, totalLabel: 'CA$412.90' })), '3 items · CA$412.90');
+  assert.equal(summaryFor('items', facts({ lineCount: 3, totalLabel: '$412.90' })), '3 items · $412.90');
 });
 
 test('accordion: the Items line appends no mark of its own: what the label says is what the terminal handed it', () => {
@@ -76,7 +76,7 @@ test('accordion: the Items line appends no mark of its own: what the label says 
   // was never this module's: the slot carries the terminal's label verbatim
   // (the pre-ring subtotal, the ring's total after), so the pure module has
   // nothing to true here, and this pin holds it that way.
-  assert.equal(summaryFor('items', facts({ lineCount: 2, totalLabel: 'CA$9.00' })), '2 items · CA$9.00');
+  assert.equal(summaryFor('items', facts({ lineCount: 2, totalLabel: '$9.00' })), '2 items · $9.00');
 });
 
 test('accordion: the Items summary counts in English: one item, not 1 items', () => {
