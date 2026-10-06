@@ -15,6 +15,18 @@
 // did. The demo banner is off by default: a build without the demo banner is
 // the production build's default.
 //
+// The theme slot (the item 5 followup): a host's own theme controls (the
+// till's Auto/Light/Dark cycle) ride the NAMED slot "theme" inside the right
+// cluster, after Switch role and Sign out, behind a thin separator. The
+// element does not define the controls; it accepts them, so every app keeps
+// its own switcher and none changes shape. The slot renders only when light
+// DOM children claim it by name: an unused slot leaves no empty placeholder
+// and no separator, the cluster staying exactly the two buttons. The claim
+// is read off the host's own children at connect and watched from connect to
+// disconnect (a host may slot its controls after the element mounts, the
+// template-binding discipline every adopting app rides); the server render
+// has no light DOM, so it carries the bare cluster and nothing else.
+//
 // Theming rides the document, not the template: the theme property applies
 // the sheet's own contract to the document root (data-theme="light" opts
 // into the light half; dark is the sheet's default, the attribute's
@@ -110,6 +122,22 @@ const styles = css`
     align-items: center;
     gap: var(--hh-s-8);
   }
+  /* The thin divider between the cluster's own buttons and a host's slotted
+     theme controls: the sheet's hairline role, stretched to the cluster's
+     height, never a tokenless grey. */
+  .controls .theme-sep {
+    width: 1px;
+    align-self: stretch;
+    background: var(--hh-line);
+  }
+  /* The host's controls keep their own face (the element accepts them, it
+     does not define them); the slot lays them out in the cluster's own row
+     and rhythm. */
+  .controls slot[name='theme'] {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+  }
   @media (max-width: 480px) {
     header {
       grid-template-columns: 1fr;
@@ -197,6 +225,35 @@ export class HosAppHeader extends HHElement {
     this.theme = '';
   }
 
+  /** Whether light DOM children claim the theme slot by name. */
+  #themeSlotted = false;
+  /** Watches the host's children for a theme-slot claim, from connect to disconnect. */
+  #themeObserver: MutationObserver | null = null;
+
+  /** Reads the theme-slot claim off the host's own children and re-renders on a change. */
+  #syncThemeSlot(): void {
+    const claimed = Array.from(this.children).some((el) => el.slot === 'theme');
+    if (claimed !== this.#themeSlotted) {
+      this.#themeSlotted = claimed;
+      this.requestUpdate();
+    }
+  }
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    this.#syncThemeSlot();
+    if (typeof MutationObserver === 'function') {
+      this.#themeObserver = new MutationObserver(() => this.#syncThemeSlot());
+      this.#themeObserver.observe(this, { childList: true, subtree: true, attributeFilter: ['slot'] });
+    }
+  }
+
+  override disconnectedCallback(): void {
+    this.#themeObserver?.disconnect();
+    this.#themeObserver = null;
+    super.disconnectedCallback();
+  }
+
   /** The theme input is a document concern: the sheet's own attribute
    * contract, applied when the property changes and only in a document
    * (the server render never runs the update loop). */
@@ -211,6 +268,15 @@ export class HosAppHeader extends HHElement {
   render(): Template {
     const signedIn = this.signedIn === true;
     const word = signedIn && this.roleLabel !== '' ? this.roleLabel : DEFAULT_WORD;
+    // The separator sits BETWEEN the buttons and the slotted controls: with
+    // no buttons (unsigned) there is nothing to separate, with no slotted
+    // content there is nothing to divide; it renders only when both halves
+    // are present.
+    const themeSep =
+      signedIn && this.#themeSlotted
+        ? html`<span class="theme-sep" aria-hidden="true"></span>`
+        : nothing;
+    const themeSlot = this.#themeSlotted ? html`<slot name="theme"></slot>` : nothing;
     return html`
       <header>
         <div class="demo-banner-cell">
@@ -238,6 +304,8 @@ export class HosAppHeader extends HHElement {
                 <button type="button" class="btn-secondary" data-action="sign-out">Sign out</button>
               `
             : nothing}
+          ${themeSep}
+          ${themeSlot}
         </div>
       </header>
     `;
