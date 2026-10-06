@@ -525,7 +525,15 @@ export class QdOrderPayment extends PanelBase {
     let reference: string;
     if (kept !== null && (kept.phase === "not-known" || kept.phase === "held")) {
       // The retry of an open attempt: exactly the figures it was made with, and its key, so
-      // the server replays the first result and nothing is posted a second time.
+      // the server replays the first result and nothing is posted a second time. The retry is
+      // marked in flight BEFORE it is sent, so a person who leaves and comes back while it is
+      // out finds the attempt still out, its button held, and no third POST can be opened.
+      this.book.mark(ctx.id, "in-flight");
+      const inflight = this.book.attempt(ctx.id);
+      if (inflight !== null) {
+        this.attempt = inflight;
+        this.record(ctx.id).attempt = inflight;
+      }
       key = kept.key;
       cents = kept.amountCents;
       tender = kept.tender;

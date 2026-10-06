@@ -704,3 +704,30 @@ test("sign out waits for a payment that lands inside the bound and says on the e
   await expect(page.locator("p.notice")).toContainText("was taken");
   await expect(page.locator("p.notice")).toContainText("CA$10.00");
 });
+
+test("a retry is marked in flight: returning to the quote while it is out holds the button, so two retries never race", async ({ page }) => {
+  await signIn(page);
+  await openWithPayment(page, "Q-2101");
+  await page.request.put("/_stub/payment-ghost", { data: { ghost: true } });
+  await take(page, "10.00", "AUTH 9", "CARD");
+  await expect(pay(page).getByTestId("op-unknown")).toContainText("not known");
+  // The retry POST is held: while it is out, the attempt is in flight wherever the person looks.
+  const retry = await hold(page, /\/api\/v1\/quotes\/q-2101\/order-payment$/, { method: "POST" });
+  await pay(page).getByTestId("op-take").click();
+  await retry.asked;
+  await page.getByTestId("qb-list-row").filter({ hasText: "Q-1001" }).first().click();
+  await expect(page.getByTestId("qe-title")).toContainText("Q-1001");
+  await page.getByTestId("qb-list-row").filter({ hasText: "Q-2101" }).first().click();
+  await expect(pay(page).getByTestId("op-box")).toBeVisible();
+  // The attempt is still out for this quote: the button is held on return, so no third POST can
+  // be opened beside the retry that is still out.
+  await expect(pay(page).getByTestId("op-take")).toBeDisabled();
+  await retry.release();
+  await settle(page);
+  const receipt = pay(page).getByTestId("op-receipt");
+  await expect(receipt.getByTestId("op-receipt-amount")).toHaveText("CA$10.00");
+  await expect(receipt.getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("CA$27.06");
+  const keys = await postedKeys(page);
+  expect(keys).toHaveLength(2);
+  expect(keys[0]).toBe(keys[1]);
+});

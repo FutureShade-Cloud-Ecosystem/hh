@@ -1618,5 +1618,12 @@
     "find": "this.posting.set(ctx.id, posting);",
     "replace": "",
     "test": "sign out waits for a payment that lands inside the bound and says on the entry page that it was taken"
+  },
+  {
+    "id": "op-retry-mark",
+    "file": "src/order-payment-panel.ts",
+    "find": "      this.book.mark(ctx.id, \"in-flight\");\n      const inflight = this.book.attempt(ctx.id);\n      if (inflight !== null) {\n        this.attempt = inflight;\n        this.record(ctx.id).attempt = inflight;\n      }",
+    "replace": "",
+    "test": "a retry is marked in flight: returning to the quote while it is out holds the button, so two retries never race"
   }
 ]
