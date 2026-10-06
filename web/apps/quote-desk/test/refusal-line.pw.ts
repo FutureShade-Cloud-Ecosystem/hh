@@ -2,7 +2,7 @@
 // below-floor discount speaks the plain message in the outcome line and opens
 // the refusal dialog with the same words; the line stayed after the dialog
 // closed, repeating it. The line now goes when the dialog closes.
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 /** The compose page under the split-list navigation: the New quote button walks the desk to #/quotes/new. */
 async function newQuote(page: Page): Promise<void> {

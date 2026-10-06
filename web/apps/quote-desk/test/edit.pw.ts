@@ -297,8 +297,6 @@ test("a caller the server offers nothing sees no edit control, only the reasons"
   await page.evaluate(() => {
     location.hash = "#/quotes/q-1002";
   });
-  await showList(page);
-  await row(page, "Q-1001").click();
   await expect(page.getByTestId("qb-context")).toBeVisible();
   await page.getByText("Quote detail & admin").click();
   await expect(page.getByTestId("qe-box")).toBeVisible();

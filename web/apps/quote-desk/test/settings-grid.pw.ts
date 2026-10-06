@@ -2,7 +2,7 @@
 // in the grid and Save policy touched the row above. The four switches now
 // share a row of their own, and Save policy has its own breathing room.
 import { expect, test } from "@playwright/test";
-import { showList } from "./switch-helpers.js";
+import { row, showList } from "./switch-helpers.js";
 
 // The stub keeps the person's layout row, which now remembers the open quote: every test starts from the seeded world.
 test.beforeEach(async ({ request }) => {

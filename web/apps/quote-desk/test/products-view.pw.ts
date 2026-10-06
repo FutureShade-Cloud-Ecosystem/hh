@@ -1,7 +1,7 @@
 // The Cards and Rows toggle beside Products (visual review round 1, P3): the
 // ERP's products panel carries a two-way view control, and the shared grid
 // already renders both presentations; the desk gave no way to reach Rows.
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 /** The compose page under the split-list navigation: the New quote button walks the desk to #/quotes/new. */
 async function newQuote(page: Page): Promise<void> {

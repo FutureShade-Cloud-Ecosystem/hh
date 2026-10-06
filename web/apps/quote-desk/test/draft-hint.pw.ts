@@ -1,6 +1,6 @@
 // The draft line above Save (visual review round 1, P3): the ERP says what a
 // draft is above the actions; the desk did not.
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 /** The compose page under the split-list navigation: the New quote button walks the desk to #/quotes/new. */
 async function newQuote(page: Page): Promise<void> {

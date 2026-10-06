@@ -180,7 +180,9 @@ test("margin surfaces render only when the server sends them", async ({ page }) 
   await page.request.put("/_stub/cost-list", { data: { member: false } });
   await page.reload();
   await page.getByRole("button", SALES).click();
-  // The desk resumes the quote that was open (the resume ref is the open quote), so its line is already there.
+  // A sign in lands on the list (the split-list navigation): the quote just made is a row, and opening it brings its line back.
+  await expect(page.getByTestId("qb-list")).toBeVisible();
+  await page.getByTestId("qb-list-row").filter({ hasText: "Q-1004" }).first().click();
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
   await expect(page.getByTestId("qb-margin-pill")).toHaveCount(0);
   expect(await page.getByTestId("qb-lines").locator('th[data-column="line.unit_cost"]').count()).toBe(0);

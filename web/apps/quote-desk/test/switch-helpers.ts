@@ -25,9 +25,13 @@ export function row(page: Page, quoteNo: string) {
  * there (nothing). The split-list navigation's own walk.
  */
 export async function showList(page: Page): Promise<void> {
-  if (await page.getByTestId("qb-list-row").first().isVisible()) return;
-  if (await page.getByTestId("qb-all-quotes").isVisible()) {
-    await page.getByTestId("qb-all-quotes").click();
+  // Read the address, not the rows: right after a row's click the old rows can still be on screen for a frame, and
+  // right after a sign in the address still names the quote until the desk writes the list's.
+  const back = page.getByTestId("qb-all-quotes");
+  const onList = () => /^#?\/?(quotes\/?)?$/.test(new URL(page.url()).hash);
+  await expect.poll(async () => onList() || (await back.isVisible())).toBe(true);
+  if (!onList()) {
+    await back.click();
     await expect(page.getByTestId("qd-list-toolbar")).toBeVisible();
     return;
   }

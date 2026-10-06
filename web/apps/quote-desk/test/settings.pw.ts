@@ -10,7 +10,7 @@
 // off-list caller gets the server's sentence in place of the screen's
 // controls. The stub's world is put back at both ends of the file.
 import { expect, test, type Page } from "@playwright/test";
-import { showList } from "./switch-helpers.js";
+import { row, showList } from "./switch-helpers.js";
 
 async function signIn(page: Page, role = "Sales manager"): Promise<void> {
   await page.goto("/");
@@ -221,18 +221,18 @@ test("the scope rule table lists every rule, switches one off and keeps it liste
   await settings(page).getByTestId("qr-details").locator("summary").click();
   await expect(page.getByTestId("qr-row")).toHaveCount(7);
   await expect(page.getByTestId("qr-summary")).toContainText("7 of 7 rules are on.");
-  const row = page.getByTestId("qr-row").filter({ hasText: "WALL_NEEDS_BASE" });
-  await expect(row).toContainText("WALL");
-  await expect(row).toContainText("BASE");
-  await row.getByRole("button").click();
-  await expect(row).toHaveAttribute("data-enabled", "false");
-  await expect(row.getByRole("button")).toHaveText("Off");
+  const ruleRow = page.getByTestId("qr-row").filter({ hasText: "WALL_NEEDS_BASE" });
+  await expect(ruleRow).toContainText("WALL");
+  await expect(ruleRow).toContainText("BASE");
+  await ruleRow.getByRole("button").click();
+  await expect(ruleRow).toHaveAttribute("data-enabled", "false");
+  await expect(ruleRow.getByRole("button")).toHaveText("Off");
   await expect(page.getByTestId("qr-row")).toHaveCount(7);
   await expect(page.getByTestId("qr-summary")).toContainText("6 of 7 rules are on.");
   await expect(page.getByText("A switched-off rule stays listed")).toBeVisible();
   // There is no way to edit the wording, categories or order from this table.
   await expect(page.getByTestId("qr-table").locator("input")).toHaveCount(0);
-  await row.getByRole("button").click();
+  await ruleRow.getByRole("button").click();
   await expect(page.getByTestId("qr-summary")).toContainText("7 of 7 rules are on.");
 });
 

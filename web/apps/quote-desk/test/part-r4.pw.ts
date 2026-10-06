@@ -617,15 +617,15 @@ test("P3 a read of the scope rules begun before a switch does not override the s
   await page.getByText("Quote detail & admin").click();
   await page.locator("qd-quote-settings").getByTestId("qr-details").locator("summary").click();
   await expect(page.getByTestId("qr-row")).toHaveCount(7);
-  const row = page.getByTestId("qr-row").filter({ hasText: "WALL_NEEDS_BASE" });
+  const ruleRow = page.getByTestId("qr-row").filter({ hasText: "WALL_NEEDS_BASE" });
   const read = await hold(page, /\/quote-assist\/scope-rules$/, { method: "GET", times: 1, snapshot: true });
   await fanOut(page);
   await read.asked;
-  await row.getByRole("button").click();
-  await expect(row).toHaveAttribute("data-enabled", "false");
+  await ruleRow.getByRole("button").click();
+  await expect(ruleRow).toHaveAttribute("data-enabled", "false");
   await read.release();
   await settle(page);
-  await expect(row).toHaveAttribute("data-enabled", "false");
+  await expect(ruleRow).toHaveAttribute("data-enabled", "false");
 });
 
 test("P3 no empty lock box shows while a policy save is out", async ({ page }) => {

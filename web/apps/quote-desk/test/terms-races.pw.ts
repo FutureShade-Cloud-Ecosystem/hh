@@ -71,6 +71,8 @@ test("a terms save answer that was out when the person kept typing does not land
 
 test("a scan right after the customer is picked waits for the quote's read and adds the line", async ({ page }) => {
   await signIn(page);
+  await page.getByRole("button", { name: "New quote", exact: true }).click();
+  await expect(page.getByTestId("qb-identity")).toBeVisible();
   const held = gate();
   await page.route(/\/api\/v1\/quotes\/q-1004$/, async (route) => {
     await held.opened;

@@ -1,6 +1,6 @@
 // PR 121 round 3, Part A findings: each test holds one answer back behind a delayed route, so the order of events
 // is exact and does not depend on the machine's speed.
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { gate, hold, open, quiet, row, seed, settle, signIn, writes, showList } from "./switch-helpers.js";
 
 /** The compose page under the split-list navigation: the New quote button walks the desk to #/quotes/new. */

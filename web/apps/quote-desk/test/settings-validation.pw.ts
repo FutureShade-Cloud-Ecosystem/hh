@@ -3,7 +3,7 @@
 // Save policy, with nothing marking the field. It now sits beside Save policy
 // and the field carries aria-invalid and a red border.
 import { expect, test, type Page } from "@playwright/test";
-import { showList } from "./switch-helpers.js";
+import { row, showList } from "./switch-helpers.js";
 
 async function openScreenSettings(page: Page): Promise<void> {
   await page.goto("/");
