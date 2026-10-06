@@ -1,6 +1,9 @@
 package payment
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // The card attempt sweep (the card charge design section 4): the body behind the jobs runner's
 // payment.card_attempt_sweep registration. The crash windows are the cases where no sale
@@ -15,3 +18,15 @@ import "time"
 // can hold an attempt: a request still inside its ring is never past grace, so the sweep can
 // never race it and a late bind's guarded move is the one that loses.
 const AttemptGrace = 5 * time.Minute
+
+// AlertFunc is the card attempt sweep's escalation seam (the card charge design section 4): the
+// sweep calls it once per operator-item state it moves a row to (UNKNOWN, VOID_UNKNOWN or
+// VOID_DECLINED, never VOIDED and never an in-flight status), with the event key
+// card-attempt:<id>:<status> and a body naming the money facts a person reconciling a settlement
+// report needs: the amount, the branch, the till session, the time, the sale key and the charge
+// ref. Never a token, a credential, a PAN or a customer name. cmd/core binds it to messaging's
+// escalations channel once at process start, the warranty sweep's precedent; the default is the
+// no-op below, so an unwired seam keeps the sweep's guarded moves and drops only the visibility
+// post, and a test pins the posts precisely by swapping the var. The error answer is the
+// adapter's: the sweep logs a failed post and moves on, the row is the record.
+var AlertFunc func(ctx context.Context, key, body string) error = func(context.Context, string, string) error { return nil }
