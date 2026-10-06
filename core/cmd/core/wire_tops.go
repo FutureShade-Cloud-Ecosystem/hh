@@ -136,6 +136,32 @@ type topsSpine struct {
 // Nothing here starts anything: the dispatchers, the jobs runner, the
 // retention sweep and the reconciler are worker-role loops (D37), and the
 // sms belt's dispatcher is built beside them in the worker.
+// feedbackActorNames resolves a linked ERP user id to the display name and
+// role label the feedback work item names the submitter by (the row 949
+// rule: the board records under one bridge user, so the item's text is the
+// only place the sender is named, and the raw id never reaches it). A nil
+// pool (scaffold) or an unlinked user answers not-ok and the item names the
+// role alone; neither ever refuses the submission.
+func feedbackActorNames(pool *pgxpool.Pool) feedback.ActorNames {
+	if pool == nil {
+		return nil
+	}
+	return func(ctx context.Context, userID string) (name, role string, ok bool) {
+		var displayName, roleName string
+		err := pool.QueryRow(ctx, `
+			SELECT u.display_name, COALESCE(r.name, '')
+			  FROM users u
+			  LEFT JOIN user_roles ur ON ur.user_id = u.id
+			  LEFT JOIN roles r ON r.id = ur.role_id
+			 WHERE u.id = $1::uuid AND u.deleted_at IS NULL
+			 LIMIT 1`, userID).Scan(&displayName, &roleName)
+		if err != nil {
+			return "", "", false
+		}
+		return displayName, roleName, true
+	}
+}
+
 func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog.Logger, spine *moneySpine, ops *operationsSpine, cfg config.Config, sharedSmsBelt *smsBelt) *topsSpine {
 	link := linkedUserID(pool)
 	auditSvc := spine.auditSvc
@@ -399,10 +425,18 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithSource(messagingprovider.NewPgARAging(pool))
 
 	// #16 in-app feedback, wired only when the Plane bridge is fully
-	// configured; the key stays server-side.
+	// configured; the key stays server-side. The module comes from the
+	// configured NAME (resolved against the board's module list, never an
+	// id), and the work item names the submitter through the actor-name
+	// resolver over the linked row, so the raw user id never reaches the
+	// board (the row 949 rule).
 	if cfg.PlaneAPIURL != "" && cfg.PlaneAPIKey != "" && cfg.PlaneProject != "" && cfg.PlaneWorkspace != "" {
-		feedbackSvc := feedback.New(cfg.PlaneAPIURL, cfg.PlaneWorkspace, cfg.PlaneProject, cfg.PlaneAPIKey)
-		feedback.NewHandler(feedbackSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
+		feedbackSvc := feedback.New(cfg.PlaneAPIURL, cfg.PlaneWorkspace, cfg.PlaneProject, cfg.PlaneAPIKey).
+			WithModule(cfg.PlaneFeedbackModule)
+		feedback.NewHandler(feedbackSvc, log).
+			WithUserLinker(link).
+			WithActorNames(feedbackActorNames(pool)).
+			RegisterRoutes(r, g)
 		log.Info("feedback: Plane bridge wired", "project", cfg.PlaneProject)
 	} else {
 		log.Info("feedback: Plane bridge not configured - /api/v1/feedback not wired")
