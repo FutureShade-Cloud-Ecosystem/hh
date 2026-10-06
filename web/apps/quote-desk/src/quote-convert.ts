@@ -542,14 +542,15 @@ export class QuoteConvert extends HHElement {
   /**
    * The Cash On Demand action: the payment door converts, bills and takes the whole payment as one
    * transaction, so the order never exists unpaid. The one planned payment carries the one key, so a
-   * try again after a lost answer replays rather than taking the payment twice.
+   * try again after a lost answer replays rather than taking the payment twice. Only #confirm calls
+   * it, and #confirm has already stopped a second click while one is out.
    */
   async #payAndConvert(): Promise<void> {
     const client = this.client;
     const view = this.#view;
     const planned = this.#planned;
     const quoteId = this.quoteId;
-    if (client === null || view === null || planned === null || this.#busy) return;
+    if (client === null || view === null || planned === null) return;
     const seq = this.#seq;
     const quoteNo = view.quote_no;
     this.#busy = true;

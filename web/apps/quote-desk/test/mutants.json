@@ -1467,13 +1467,6 @@
     "test": "guard convert cod answer:"
   },
   {
-    "id": "qc-busy-cod",
-    "file": "src/quote-convert.ts",
-    "find": "planned === null || this.#busy) return;\n    const seq = this.#seq;\n    const quoteNo",
-    "replace": "planned === null) return;\n    const seq = this.#seq;\n    const quoteNo",
-    "test": "idempotency: a double click on Confirm posts the Cash On Demand payment once"
-  },
-  {
     "id": "qc-learn-cod",
     "file": "src/quote-convert.ts",
     "find": "        this.#codLearned = true;",
