@@ -1,5 +1,5 @@
 // Shared helpers for the pricing panel's browser suites: sign in as a role card, open the
-// pricing screen from the desk bar, and move between its tabs.
+// pricing screen from the desk's tab strip, and move between its tabs.
 import { expect, type Locator, type Page } from "@playwright/test";
 
 export async function signIn(page: Page, role = "Sales manager"): Promise<void> {
@@ -9,7 +9,7 @@ export async function signIn(page: Page, role = "Sales manager"): Promise<void> 
 }
 
 export async function openPricing(page: Page): Promise<void> {
-  await page.getByTestId("pricing-toggle").click();
+  await page.getByTestId("desk-tab-pricing").click();
   await expect(page.getByTestId("pricing-panel")).toBeVisible();
 }
 

@@ -1,8 +1,8 @@
 // QD-4: one deterministic test for each guard of the pricing panel. Each holds one answer back behind a
-// delayed route, closes the panel (the Pricing toggle swaps it away, unmounting the tab and cancelling its
-// context) or signs out, lets the answer go, and asserts none of it lands: no follow-up request from the
-// dead panel, no confirmation write under a session that has ended, no late list over a newer one. Take
-// the guard away (test/mutants.json names the exact edit) and the test goes red.
+// delayed route, closes the panel (the Quotes desk tab swaps it away, unmounting the tab and cancelling
+// its context) or signs out, lets the answer go, and asserts none of it lands: no follow-up request from
+// the dead panel, no confirmation write under a session that has ended, no late list over a newer one.
+// Take the guard away (test/mutants.json names the exact edit) and the test goes red.
 import { expect, test, type Page } from "@playwright/test";
 import { countRequests, hold, quiet, settle } from "./switch-helpers.js";
 import { openPricing, openTab, pricingState, setMode, signIn } from "./pricing-helpers";
@@ -27,9 +27,9 @@ async function saveNewPaversRule(page: Page, percent: string): Promise<void> {
   await page.getByTestId("pr-save").click();
 }
 
-/** The Pricing toggle leaves the pricing screen the way a dispatched click does, past the open backdrop. */
+/** The Quotes desk tab leaves the pricing screen the way a dispatched click does, past the open backdrop. */
 async function closePricing(page: Page): Promise<void> {
-  await page.getByTestId("pricing-toggle").dispatchEvent("click");
+  await page.getByTestId("desk-tab-quotes").dispatchEvent("click");
   await expect(page.getByTestId("pricing-panel")).toHaveCount(0);
 }
 
@@ -66,8 +66,8 @@ test("P3-1 a pricing tab that has left the page reads nothing when it is asked t
     await reloadRemovedPanel(page);
     await settle(page);
     expect(seen(), `${tab} asked a dead panel's read`).toBe(before);
-    // Put the desk back the way the toggle leaves it, so the next part opens its own panel.
-    await page.getByTestId("pricing-toggle").click();
+    // Put the desk back the way the Quotes tab leaves it, so the next part opens its own panel.
+    await page.getByTestId("desk-tab-quotes").click();
     await expect(page.getByTestId("pricing-panel")).toHaveCount(0);
   }
 });

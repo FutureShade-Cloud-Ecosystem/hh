@@ -144,7 +144,7 @@ export class QdPricingPanel extends PanelBase {
 
   /**
    * HOOK for every path that leaves the pricing screen or its tab (the tab switch here, the
-   * desk's Quotes toggle and the first press of its sign out): true when the leave must wait,
+   * desk's Quotes tab and the first press of its sign out): true when the leave must wait,
    * because a price is saved and its floor confirmation is not yet in the pricing log. The
    * first call says so on screen and holds; the next goes through. Sign out itself waits for
    * the floor work still out and sends the owed confirmation: onSignOut registers the active

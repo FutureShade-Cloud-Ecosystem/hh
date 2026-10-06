@@ -1822,5 +1822,13 @@
     "file": "src/order-payment-panel.ts",
     "find": "    if (reason !== undefined) familyShare.beginCycle(ctx.id, reason);\n",
     "replace": "",
-    "test": "the take path's re-read is its own share cycle"  }
+    "test": "the take path's re-read is its own share cycle"
+  },
+  {
+    "id": "app-switch-role-ends-session",
+    "file": "src/app-root.ts",
+    "find": "    await this.#signOut();\n    window.location.assign(\"/\");",
+    "replace": "    window.location.assign(\"/\");",
+    "test": "Switch role ends the session and returns to the front door at /"
+  }
 ]

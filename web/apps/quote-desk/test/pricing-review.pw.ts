@@ -251,16 +251,16 @@ test("a tab switch holds once while the log row is owed, then goes", async ({ pa
   await expect(page.getByTestId("pricing-tab-audit")).toHaveAttribute("aria-selected", "true");
 });
 
-test("the Quotes toggle holds once while the log row is owed, then goes", async ({ page }) => {
+test("the Quotes desk tab holds once while the log row is owed, then goes", async ({ page }) => {
   await openRules(page);
   await setMode(page, { fail_confirm: true });
   await saveNewPaversRule(page, "40");
   await page.getByTestId("floor-confirm").click();
   await expect(page.getByTestId("floor-retry-log")).toBeVisible();
-  await page.getByTestId("pricing-toggle").dispatchEvent("click");
+  await page.getByTestId("desk-tab-quotes").dispatchEvent("click");
   await expect(page.getByTestId("pricing-leave-warning")).toBeVisible();
   await expect(page.getByTestId("pricing-panel")).toBeVisible();
-  await page.getByTestId("pricing-toggle").dispatchEvent("click");
+  await page.getByTestId("desk-tab-quotes").dispatchEvent("click");
   await expect(page.getByTestId("pricing-panel")).toHaveCount(0);
 });
 
