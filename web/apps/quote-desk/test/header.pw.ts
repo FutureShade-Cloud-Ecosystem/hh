@@ -143,14 +143,19 @@ test("the theme control lives inside the shared header's right cluster, not on a
   expect(inside.hasSeparator).toBe(true);
   expect(inside.sameBandAsSignOut).toBe(true);
   expect(inside.insideBar).toBe(true);
-  // The bounds test: nothing sits between the header and the page's title
-  // row. The header's next sibling is the page's own main, not a bare
-  // control row.
-  const next = await page.evaluate(() => {
+  // The bounds test: nothing unnamed sits between the header and the page's
+  // title row. The one sanctioned element there on the desk surface is the
+  // desk tab strip (Quotes for every desk user, the manager's Pricing tab,
+  // decision log rows 975 and 977): the header's next sibling is that nav,
+  // and the nav's own next sibling is the page's main. A bare control row
+  // (the regression this test was red on) is neither of those.
+  const between = await page.evaluate(() => {
     const appRoot = document.querySelector("qd-app-root");
     const el = appRoot !== null && appRoot.shadowRoot !== null ? appRoot.shadowRoot.querySelector("hos-app-header") : null;
-    const sibling = el !== null ? el.nextElementSibling : null;
-    return sibling === null ? null : sibling.tagName.toLowerCase();
+    const strip = el !== null ? el.nextElementSibling : null;
+    return strip === null
+      ? null
+      : { tag: strip.tagName.toLowerCase(), id: strip.getAttribute("data-testid"), after: strip.nextElementSibling === null ? null : strip.nextElementSibling.tagName.toLowerCase() };
   });
-  expect(next).toBe("main");
+  expect(between).toEqual({ tag: "nav", id: "desk-tabs", after: "main" });
 });
