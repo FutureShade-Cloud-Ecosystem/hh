@@ -119,6 +119,11 @@ export class CounterTillApp extends HHElement {
         height: 100dvh;
         box-sizing: border-box;
       }
+      /* The screen is the window, so the main's own foot padding would push the page 20px past it:
+         the Panels screen carries none (the stepper keeps its breathing room under a long page). */
+      main.on-till:has(hos-pos-terminal[data-counter-layout="PANELS"]) {
+        padding-bottom: 0;
+      }
       .surface[data-hidden="true"] {
         display: none !important;
       }

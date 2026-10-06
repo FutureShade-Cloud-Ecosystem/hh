@@ -1,5 +1,5 @@
 // Round 7 polish, the till's own legs: the Feedback control covers no working control in any
-// layout. Geometry is read through the shadow chain, the way a person sees it: boxes on screen.
+// layout, and the Panels screen is the window with no page scroll. Geometry is read through the shadow chain, the way a person sees it: boxes on screen.
 import { expect, test, type Page } from "@playwright/test";
 
 const SIZES: Array<[number, number]> = [
@@ -98,5 +98,20 @@ for (const [width, height] of SIZES) {
     // The panel it opens leaves the page's controls where they were.
     await page.getByTestId("feedback-button").click();
     await expect(page.getByTestId("feedback-panel")).toBeVisible();
+  });
+
+  test(`the Panels view has no page scroll at ${width}x${height} for a short ticket`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    await signIn(page);
+    await pickLayout(page, "panels");
+    await addLine(page, "holland", "Holland Stone 60 mm");
+    const g = await page.evaluate(() => ({
+      scrollHeight: document.documentElement.scrollHeight,
+      innerHeight: window.innerHeight,
+      scrollWidth: document.documentElement.scrollWidth,
+      innerWidth: window.innerWidth,
+    }));
+    expect(g.scrollHeight).toBeLessThanOrEqual(g.innerHeight);
+    expect(g.scrollWidth).toBeLessThanOrEqual(g.innerWidth);
   });
 }
