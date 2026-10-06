@@ -25,19 +25,19 @@ func TestSweepLeg6c_BindRaceLeavesTheBoundRowAlone(t *testing.T) {
 	fx := newAttemptFx(t)
 	a := fx.claim(fx.in(2500))
 	fx.force(a.ID, AttemptCaptured)
-	if _, err := fx.helper.Exec(context.Background(),
+	base := time.Now().Add(-time.Hour)
+	clock := func() time.Time { return base }
+
+	ctx := context.Background()
+	if _, err := fx.helper.Exec(ctx,
 		`UPDATE card_charge_attempts SET updated_at = $2 WHERE id = $1::uuid`,
-		a.ID, time.Now().Add(-2*AttemptGrace)); err != nil {
+		a.ID, base.Add(-2*AttemptGrace)); err != nil {
 		t.Fatalf("backdate the planted row: %v", err)
 	}
 	payID := fx.newPayment()
 
 	proc := &sweepProc{}
 	svc := NewService(fx.store, proc)
-	base := time.Now().Add(-time.Hour)
-	clock := func() time.Time { return base }
-
-	ctx := context.Background()
 	tx, err := fx.helper.Begin(ctx)
 	if err != nil {
 		t.Fatalf("begin the live bind: %v", err)

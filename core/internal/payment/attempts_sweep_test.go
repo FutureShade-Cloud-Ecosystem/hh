@@ -56,6 +56,7 @@ type sweepFx struct {
 	pool                  *pgxpool.Pool
 	branch, user, session string
 	merchant              string
+	planted               int
 }
 
 func newSweepFx(t *testing.T) *sweepFx {
@@ -95,8 +96,12 @@ func newSweepFx(t *testing.T) *sweepFx {
 // bypassing the store exactly the way the process death the sweep closes would leave it.
 func (fx *sweepFx) plant(status, ref string, at time.Time) Attempt {
 	fx.t.Helper()
-	in := ClaimInput{LegKey: uuid.NewString(), SaleKey: uuid.NewString(), LegSeq: 1, AmountCents: 2500,
-		BranchID: fx.branch, TillSessionID: fx.session, CardType: "CREDIT", Processor: "run_payments",
+	// One amount per planted row: the till guard blocks a second unresolved attempt for the
+	// same amount at the same session, which is exactly what the legs plant side by side.
+	fx.planted++
+	in := ClaimInput{LegKey: uuid.NewString(), SaleKey: uuid.NewString(), LegSeq: 1,
+		AmountCents: int64(2500 + 100*fx.planted),
+		BranchID:    fx.branch, TillSessionID: fx.session, CardType: "CREDIT", Processor: "run_payments",
 		CreatedBy: fx.user}
 	a, created, err := fx.store.Claim(context.Background(), in)
 	if err != nil || !created {
