@@ -11,7 +11,7 @@
 // The pure parts (route, refusal messages, the window write/print) live in receipt-print-logic.ts
 // and are unit-tested there.
 
-import { api } from './ports.js';
+import { api } from '@hardscapehouse/pos-kit/src/ported/ports.js';
 import {
   printReceiptInto,
   receiptErrorMessage,
@@ -19,7 +19,7 @@ import {
   type PrintOutcome,
   type ReceiptFormat,
   type ReceiptWindow,
-} from './receipt-print-logic.js';
+} from '@hardscapehouse/pos-kit/src/ported/receipt-print-logic.js';
 
 export {
   printReceiptInto,
@@ -28,7 +28,7 @@ export {
   type PrintOutcome,
   type ReceiptFormat,
   type ReceiptWindow,
-} from './receipt-print-logic.js';
+} from '@hardscapehouse/pos-kit/src/ported/receipt-print-logic.js';
 
 /** Fetch the server-rendered receipt document (staff-gated; the token rides on api()). */
 export async function fetchReceiptHTML(saleId: string, format: ReceiptFormat = 'roll'): Promise<string> {
@@ -54,5 +54,5 @@ export async function printReceipt(
 // HH note: the reference opened the blank window by hand here; the host owns the window
 // surgery around printing, so the opener is a seam (ports.ts, named in CLOSURE.md), same
 // signature, same injected shape in printReceipt.
-import { openBlankWindow } from './ports.js';
+import { openBlankWindow } from '@hardscapehouse/pos-kit/src/ported/ports.js';
 export { openBlankWindow };

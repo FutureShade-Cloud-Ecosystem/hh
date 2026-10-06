@@ -69,7 +69,7 @@ conflict; the share was never something these writers needed to hold back.
 | POS return, cash or card refund (the till refund rail) | per-sale advisory lock, returned order lines, invoice `FOR KEY SHARE` (the `pos_returns` foreign key), payments counter (the refund payment's insert) | the one exception, safe as written above |
 | POS return to account credit | per-sale advisory lock, returned order lines, invoice `FOR KEY SHARE` (the `pos_returns` foreign key), invoice `FOR UPDATE` (ApplyCreditToInvoice), invoices counter | yes: no payments row, and the share and the FOR UPDATE are one writer's own sequence |
 | Group and whole-order invoice writers | the order row its caller locked, invoices counter (a new invoice) | yes: no payments row, no existing invoice |
-| Quote counter door (once it lands) | order row, `LockPaymentsSequenceTx`, existing invoice row (`FOR NO KEY UPDATE`), invoices counter | yes |
+| Quote counter door (QD-5, PR 120) | order row, `LockPaymentsSequenceTx`, existing invoice row (`FOR NO KEY UPDATE`), invoices counter | yes |
 | Till `MarkNSF` | payment row, payments counter (not advancing: the serialising lock, it writes no payments feed row), every allocated invoice row `FOR NO KEY UPDATE` ascending, invoice re-opens (invoices counter +1 each) | yes |
 | Outbox observer | pool read after commit | takes none of these rows |
 

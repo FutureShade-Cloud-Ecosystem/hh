@@ -92,7 +92,7 @@ func resolveCategories(ctx context.Context, pool *pgxpool.Pool) (map[string]stri
 // for (0090:47 "a driver MAY be a staff user … and may not be"), not a degraded one.
 func resolvePersonas(ctx context.Context, pool *pgxpool.Pool) (map[string]string, error) {
 	rows, err := pool.Query(ctx,
-		`SELECT email::text, id::text FROM users WHERE email = ANY($1)`, demoPersonaEmails)
+		`SELECT email::text, id::text FROM users WHERE email = ANY($1)`, resolvablePersonaEmails())
 	if err != nil {
 		return nil, fmt.Errorf("demoseed: reading demo personas: %w", err)
 	}

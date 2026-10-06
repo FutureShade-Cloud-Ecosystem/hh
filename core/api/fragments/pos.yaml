@@ -238,7 +238,7 @@ paths:
       description: Id and display name only; no email, no role.
       x-role: requireStaff
       x-access:
-        surfaces: [counter-till]
+        surfaces: [counter-till, quote-desk]
         level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -409,7 +409,7 @@ paths:
         ticket or an empty answer returns an empty list, never an error.
       x-role: requireStaff
       x-access:
-        surfaces: [counter-till]
+        surfaces: [counter-till, quote-desk]
         level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"

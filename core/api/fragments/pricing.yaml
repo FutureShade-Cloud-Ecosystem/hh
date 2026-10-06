@@ -420,6 +420,7 @@ paths:
       x-access:
         surfaces: [dealer-admin]
         level: read
+        list: cost_visibility
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"

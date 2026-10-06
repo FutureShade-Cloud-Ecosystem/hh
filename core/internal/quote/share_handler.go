@@ -93,7 +93,7 @@ func (h *StaffHandler) publicAccept(w http.ResponseWriter, r *http.Request) {
 		h.writeShareErr(w, err)
 		return
 	}
-	res, err := h.svc.AcceptByToken(r.Context(), r.PathValue("token"), body.TypedName, body.Accepted)
+	res, err := h.svc.AcceptByTokenKeyed(r.Context(), r.PathValue("token"), body.TypedName, body.Accepted, r.Header.Get("Idempotency-Key"))
 	if err != nil {
 		h.writeShareErr(w, err)
 		return
@@ -115,6 +115,8 @@ func (h *StaffHandler) writeShareErr(w http.ResponseWriter, err error) {
 		// A token that never existed. 404 with no detail: an unauthenticated caller learns nothing.
 		httpx.Error(w, http.StatusNotFound, "not found")
 	case errors.Is(err, ErrNotAcceptable):
+		httpx.Error(w, http.StatusConflict, err.Error())
+	case errors.Is(err, ErrIdempotencyKeyReused):
 		httpx.Error(w, http.StatusConflict, err.Error())
 	case errors.Is(err, ErrEmptyQuote):
 		httpx.Error(w, http.StatusConflict, err.Error())

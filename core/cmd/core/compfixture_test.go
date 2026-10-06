@@ -129,7 +129,24 @@ type compEnv struct {
 	keySrv   *testkit.KeyServer
 	appwrite *appwriteFake
 	dsn      string
+	values   map[string]string
 	getenv   func(string) string
+}
+
+// set adds or overrides one environment value the composition reads:
+// the tests that flip a switch use it.
+func (e *compEnv) set(k, v string) {
+	e.values[k] = v
+}
+
+// fixturePool opens a pool on the fixture database, for the tests that
+// plant fixture rows beside the kit's own; the caller closes it.
+func (e *compEnv) fixturePool() *pgxpool.Pool {
+	pool, err := pgxpool.New(context.Background(), e.dsn)
+	if err != nil {
+		panic("compfixture: fixture pool: " + err.Error())
+	}
+	return pool
 }
 
 // newCompEnv builds the environment and the fixture rows. It skips the
@@ -186,7 +203,8 @@ func newCompEnv(t *testing.T) *compEnv {
 		customerquote.EnvKeyID:   fixtureAcceptanceKeyID,
 		customerquote.EnvKey:     hex.EncodeToString(rawKey),
 	}
-	env.getenv = func(k string) string { return values[k] }
+	env.values = values
+	env.getenv = func(k string) string { return env.values[k] }
 	return env
 }
 

@@ -20,9 +20,9 @@
 // Shift+F12 still opens dev tools; bind F3 to search and Ctrl+F3 is still Find. Plus, every action
 // on the legend has a visible control: a key is a shortcut, never the only way.
 
-import { asRows } from './_response-shape.js';
-import type { FlowStepId } from './_pos-flow.js';
-import { FLOW_ORDER } from './_pos-flow.js';
+import { asRows } from '@hardscapehouse/pos-kit/src/ported/_response-shape.js';
+import type { FlowStepId } from '@hardscapehouse/pos-kit/src/ported/_pos-flow.js';
+import { FLOW_ORDER } from '@hardscapehouse/pos-kit/src/ported/_pos-flow.js';
 
 /** One bound key, as the server sends it. */
 export interface PosHotkey {

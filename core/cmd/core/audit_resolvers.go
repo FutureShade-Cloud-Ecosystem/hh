@@ -39,7 +39,7 @@ type auditQuoteBranchResolver struct {
 // BranchOf implements audit.EntityBranchResolver over quote.Repository.QuoteEditHeader, the same
 // read the quote edit history branch-scopes on.
 func (a auditQuoteBranchResolver) BranchOf(ctx context.Context, entityID string) (string, bool, error) {
-	_, branchID, _, err := a.repo.QuoteEditHeader(ctx, entityID)
+	_, branchID, _, _, err := a.repo.QuoteEditHeader(ctx, entityID)
 	if errors.Is(err, quote.ErrNotFound) {
 		return "", false, nil
 	}

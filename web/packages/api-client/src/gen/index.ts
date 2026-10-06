@@ -21,6 +21,7 @@ export * as tenantAddresses from "./tenant-addresses.js";
 export * as publicApi from "./public.js";
 export * as sync from "./sync.js";
 export * as operator from "./operator.js";
+export * as load from "./load.js";
 export * as staffAssist from "./staff-assist.js";
 export * as staffAudit from "./staff-audit.js";
 export * as staffBankrec from "./staff-bankrec.js";
