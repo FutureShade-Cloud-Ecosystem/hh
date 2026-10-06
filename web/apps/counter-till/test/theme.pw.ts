@@ -1,19 +1,16 @@
-// The theme choice in the account area: the system's light setting is honoured
-// from the first paint (no choice made yet is Auto), and the Theme control
-// cycles Auto, Light and Dark on the document root. The dark sheet is the
-// tokens' own default, so Dark is the absence of the attribute.
+// The theme choice in the account area: in a demo build the till starts on
+// Light, the control cycles Light, Dark and Auto on the document root, and
+// Auto follows the system's light setting. The dark sheet is the tokens' own
+// default, so Dark is the absence of the attribute.
 import { expect, test } from "@playwright/test";
 
 test.describe("with the system on light", () => {
   test.use({ colorScheme: "light" });
 
-  test("Auto follows the system, and the control cycles Light, Dark, Auto", async ({ page }) => {
+  test("the demo build starts on Light and the control cycles Dark, Auto, Light", async ({ page }) => {
     await page.goto("/");
     const root = page.locator("html");
     const control = page.getByTestId("theme-control");
-    await expect(control).toContainText("Theme: Auto");
-    await expect(root).toHaveAttribute("data-theme", "light");
-    await control.click();
     await expect(control).toContainText("Theme: Light");
     await expect(root).toHaveAttribute("data-theme", "light");
     await control.click();
@@ -22,24 +19,27 @@ test.describe("with the system on light", () => {
     await control.click();
     await expect(control).toContainText("Theme: Auto");
     await expect(root).toHaveAttribute("data-theme", "light");
+    await control.click();
+    await expect(control).toContainText("Theme: Light");
+    await expect(root).toHaveAttribute("data-theme", "light");
   });
 });
 
 test.describe("with the system on dark", () => {
   test.use({ colorScheme: "dark" });
 
-  test("Auto is the dark sheet, Light pins the light one, and the control is on the till too", async ({
+  test("the demo build starts on Light, Light pins the light sheet, and the control is on the till too", async ({
     page,
   }) => {
     await page.goto("/");
     const root = page.locator("html");
-    await expect(root).not.toHaveAttribute("data-theme", /.*/);
+    await expect(root).toHaveAttribute("data-theme", "light");
     await page.getByRole("button", { name: "Sales", exact: true }).click();
     await expect(page.getByTestId("pos-page-title")).toHaveText("New Counter Sale");
     const control = page.getByTestId("theme-control");
     await expect(control).toBeVisible();
     await control.click();
-    await expect(root).toHaveAttribute("data-theme", "light");
+    await expect(root).not.toHaveAttribute("data-theme", /.*/);
   });
 });
 
@@ -49,7 +49,12 @@ test.describe("live behaviour", () => {
   test("Auto follows a system colour-scheme change made while the page is open", async ({ page }) => {
     await page.goto("/");
     const root = page.locator("html");
-    await expect(page.getByTestId("theme-control")).toContainText("Theme: Auto");
+    const control = page.getByTestId("theme-control");
+    await expect(control).toContainText("Theme: Light");
+    await expect(root).toHaveAttribute("data-theme", "light");
+    await control.click();
+    await control.click();
+    await expect(control).toContainText("Theme: Auto");
     await expect(root).toHaveAttribute("data-theme", "light");
     await page.emulateMedia({ colorScheme: "dark" });
     await expect(root).not.toHaveAttribute("data-theme", /.*/);
@@ -65,8 +70,8 @@ test.describe("live behaviour", () => {
     await expect(status).toHaveAttribute("aria-live", "polite");
     await expect(status).toHaveText("");
     await page.getByTestId("theme-control").click();
-    await expect(status).toHaveText("Theme is now Light.");
-    await page.getByTestId("theme-control").click();
     await expect(status).toHaveText("Theme is now Dark.");
+    await page.getByTestId("theme-control").click();
+    await expect(status).toHaveText("Theme is now Auto, following the system.");
   });
 });
