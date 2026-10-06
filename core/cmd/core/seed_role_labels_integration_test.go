@@ -3,14 +3,16 @@
 // seed_role_labels_integration_test.go: the ruling is that every demo login and persona carries a role
 // label, never a person's name (nobody can tell an invented name from a real one). Migration 0364 did that
 // for the rows the migrations plant; this file holds `core seed`, whose embedded SQL plants the "(sample)"
-// logins, to the same rule.
+// logins, to the same rule, and holds 0364 to being a one-time rewrite.
 //
 //	Run: DATABASE_URL='postgres://.../postgres?sslmode=disable' \
-//	     go test -tags integration ./cmd/core/ -run 'SeedRoleLabels' -count=1
+//	     go test -tags integration ./cmd/core/ -run 'SeedRoleLabels|Migration0364SecondRun' -count=1
 package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -93,6 +95,52 @@ func TestIntegration_SeedRoleLabelsNoPersonNameInASeededDatabase(t *testing.T) {
 		}
 		if got != want {
 			t.Errorf("login %s = %q, want %q", id, got, want)
+		}
+	}
+}
+
+// tableDigest is one md5 over every row of a table, every column included (updated_at too), so a second
+// run that touches a row for any reason moves it.
+func tableDigest(t *testing.T, ctx context.Context, pool *pgxpool.Pool, table string) string {
+	t.Helper()
+	var sum string
+	if err := pool.QueryRow(ctx, `SELECT coalesce(md5(string_agg(x::text, '|' ORDER BY x.id::text)), 'empty') FROM `+table+` x`).Scan(&sum); err != nil {
+		t.Fatalf("digesting %s: %v", table, err)
+	}
+	return sum
+}
+
+// Migration 0364 is a one-time rewrite: a second run matches nothing and moves no row, updated_at included.
+// The control makes the digest earn its keep: on a database built WITHOUT 0364 the first run must change
+// the three tables, so an unchanged digest after the second run is not the digest being blind.
+func TestIntegration_Migration0364SecondRunChangesNothing(t *testing.T) {
+	ctx := context.Background()
+	pool := freshMigratedDBWithout(t, "mig0364twice", migration0364File)
+	body, err := os.ReadFile(filepath.Join("..", "..", "db", "migrations", migration0364File))
+	if err != nil {
+		t.Fatalf("reading %s: %v", migration0364File, err)
+	}
+	tables := []string{"users", "dispatch_drivers", "msg_channels"}
+	digest := func() map[string]string {
+		d := map[string]string{}
+		for _, tb := range tables {
+			d[tb] = tableDigest(t, ctx, pool, tb)
+		}
+		return d
+	}
+	before := digest()
+	mustExec(t, ctx, pool, string(body))
+	first := digest()
+	for _, tb := range tables {
+		if first[tb] == before[tb] {
+			t.Errorf("control: the first run of 0364 left %s unchanged, so the digest cannot tell a change", tb)
+		}
+	}
+	mustExec(t, ctx, pool, string(body))
+	second := digest()
+	for _, tb := range tables {
+		if second[tb] != first[tb] {
+			t.Errorf("a second run of 0364 changed rows in %s", tb)
 		}
 	}
 }

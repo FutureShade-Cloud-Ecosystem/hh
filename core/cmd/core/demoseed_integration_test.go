@@ -410,6 +410,13 @@ func mustExec(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sql string,
 // been seeded would prove nothing at all.
 func freshMigratedDB(t *testing.T, suffix string) *pgxpool.Pool {
 	t.Helper()
+	return freshMigratedDBWithout(t, suffix, "")
+}
+
+// freshMigratedDBWithout is freshMigratedDB with one migration file left unapplied (by file name; "" skips
+// none), for a test that needs the database as it stood just before that file.
+func freshMigratedDBWithout(t *testing.T, suffix, skip string) *pgxpool.Pool {
+	t.Helper()
 	base, ok := os.LookupEnv("DATABASE_URL")
 	if !ok {
 		t.Skip("DATABASE_URL is unset, demoseed's integration tests need a Postgres to build a database on")
@@ -442,6 +449,9 @@ func freshMigratedDB(t *testing.T, suffix string) *pgxpool.Pool {
 	}
 	sort.Strings(files)
 	for _, f := range files {
+		if skip != "" && filepath.Base(f) == skip {
+			continue
+		}
 		body, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatalf("reading %s: %v", f, err)
