@@ -102,7 +102,10 @@ export class FrontDoorApp extends HHElement {
          nothing jumps. */
       header {
         display: grid;
-        grid-template-columns: 1fr auto 1fr;
+        /* The side tracks never shrink under their content (round 7: on Manager Home the longer
+           role word left the lockup's track too narrow and the Demo badge dropped under the
+           logo); they still share what is left equally, so the word stays centred when it can. */
+        grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr);
         align-items: center;
         gap: var(--hh-s-12);
         box-sizing: border-box;
@@ -112,7 +115,7 @@ export class FrontDoorApp extends HHElement {
       }
       .demo-banner-cell {
         display: flex;
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
         align-items: center;
         gap: var(--hh-s-12);
       }
@@ -182,14 +185,23 @@ export class FrontDoorApp extends HHElement {
         align-items: center;
         gap: var(--hh-s-8);
       }
-      @media (max-width: 480px) {
+      /* Too narrow for one row (the lockup, the badge, the word and the controls need about
+         1000px): the zones stack and centre, and the badge may wrap under the lockup here. */
+      @media (max-width: 1000px) {
         header {
           grid-template-columns: 1fr;
           justify-items: center;
         }
         .demo-banner-cell {
           justify-self: center;
+          flex-wrap: wrap;
+          justify-content: center;
         }
+        .controls {
+          justify-self: center;
+        }
+      }
+      @media (max-width: 480px) {
         /* The band needs the room more than the house line does; the mark
            and the product name stay, the part that identifies the app. */
         .brand-sub {
