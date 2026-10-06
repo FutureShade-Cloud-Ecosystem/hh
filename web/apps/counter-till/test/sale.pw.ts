@@ -1197,11 +1197,11 @@ test("the split panel shows the typed sum and leaves the settlement to the ring"
   // happens. The shape refusals stay the panel's own.
   // The split panel's own sum line still prints the CA prefix from the till's source (the Counter Till coder carries it).
   await panel.getByTestId("split-amount-0").fill("4.00");
-  await expect(page.getByTestId("split-typed")).toHaveText("CA$4.00 typed so far");
+  await expect(page.getByTestId("split-typed")).toHaveText("$4.00 typed so far");
   await expect(page.getByTestId("split-remaining")).toHaveCount(0);
   await expect(page.getByTestId("split-problem")).toContainText("Every tender needs an amount greater than zero");
   await panel.getByTestId("split-amount-1").fill("0.60");
-  await expect(page.getByTestId("split-typed")).toHaveText("CA$4.60 typed so far");
+  await expect(page.getByTestId("split-typed")).toHaveText("$4.60 typed so far");
   await expect(page.getByTestId("split-problem")).toContainText("at the ring");
   // The ring arms on the shape: whether the legs settle the server's total is
   // the ring's own answer.
@@ -1292,8 +1292,10 @@ test("an empty draft shows the blank marker in the detached layout too", async (
   await page.getByTestId("pos-view").click();
   await page.getByTestId("pos-layout-panels").click();
   await expect(page.getByTestId("pos-flow-panels")).toBeVisible();
-  // The Panels payment panel paints from the first render: the same honest
-  // marker, never a zero.
+  // The two-pane view holds Payment as a step in the steps pane (it is no longer a panel on
+  // screen from the first render), so the Payment chip opens it; then the same honest marker,
+  // never a zero.
+  await page.locator("hos-pos-flow-steps").first().getByRole("button", { name: /Payment/ }).click();
   const totals = page.getByTestId("pos-totals-card");
   await expect(totals).toContainText("(not priced)");
   await expect(totals).not.toContainText("$0.00");

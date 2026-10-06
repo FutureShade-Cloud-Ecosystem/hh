@@ -436,7 +436,7 @@ export class HosPosSearchDrop extends LitElement {
   private renderPrice(h: CounterHit) {
     const p = pricePicture(this.quotes[h.product_id]);
     if (p.unpriceable) {
-      // Never CA$0.00, and never a blank cell that reads as a missing column: the row says it will
+      // Never $0.00, and never a blank cell that reads as a missing column: the row says it will
  // price on the ticket, which is true: addProduct resolves the line server-side.
       return html`<span class="price"><span class="none">prices on add</span></span>`;
     }
