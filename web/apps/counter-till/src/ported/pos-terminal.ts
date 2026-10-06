@@ -6106,10 +6106,10 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
                       ? `Sale complete: ${this.doneSale().order_no}`
                       : this.ringBusy()
                         ? 'Ringing…'
-                        : this.tillSessionId === ''
-                          ? `Open session · then complete · subtotal ${this.moneyOrMarker(this.subtotal())} + tax at the ring`
-                          : this.preview.kind === 'ready'
-                            ? `Complete sale · total ${formatMoney(this.preview.totalCents)}`
+                        : this.preview.kind === 'ready' && this.hasPricedLine()
+                          ? `${this.tillSessionId === '' ? 'Open session · then complete' : 'Complete sale'} · total ${formatMoney(this.preview.totalCents)}`
+                          : this.tillSessionId === ''
+                            ? `Open session · then complete · subtotal ${this.moneyOrMarker(this.subtotal())} + tax at the ring`
                             : `Complete sale · subtotal ${this.moneyOrMarker(this.subtotal())} + tax at the ring`}
                     ${!this.ringDone() && this.payKeycap()
                       ? html`<span class="keycap" data-testid="pay-hotkey-chip" aria-hidden="true"

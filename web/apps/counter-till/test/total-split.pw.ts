@@ -16,6 +16,16 @@ async function signIn(page: Page): Promise<void> {
   await expect(page.getByTestId("pos-twopane")).toBeVisible();
 }
 
+/** The branch's drawer, found or opened: a ring needs an open till session. */
+async function ensureSession(page: Page): Promise<void> {
+  const dot = page.getByTestId("session-dot");
+  const openButton = page.getByRole("button", { name: "Open Session", exact: true });
+  await expect(dot.or(openButton).first()).toBeVisible({ timeout: 10_000 });
+  if (await dot.isVisible()) return;
+  await openButton.click({ timeout: 3_000 }).catch(() => undefined);
+  await expect(dot).toContainText("Open");
+}
+
 async function addLine(page: Page, query: string, hit: string): Promise<void> {
   await page.getByTestId("pos-scan-input").fill(query);
   const row = page.getByTestId("drop-row").filter({ hasText: hit }).first();
@@ -45,6 +55,7 @@ test.afterEach(async ({ page }) => {
 
 test("Payment shows Tax and Total from the server's preview, and Summary reads the same figures", async ({ page }) => {
   await signIn(page);
+  await ensureSession(page);
   await addLine(page, "holland", "Holland Stone 60 mm");
   await openPaymentStep(page);
   const totals = page.getByTestId("pos-totals-card");
@@ -76,7 +87,7 @@ test("while the preview loads the rows say pending and no figure is guessed, the
   const totals = page.getByTestId("pos-totals-card");
   await expect(totals.getByTestId("pos-preview-pending")).toContainText("pending");
   await expect(totals.getByTestId("pos-preview-total")).toHaveCount(0);
-  await expect(page.getByTestId("pos-complete-sale")).not.toContainText("total $");
+  await expect(page.getByTestId("pos-complete-sale")).not.toContainText(/·\s*total \$/);
   release();
   await expect(totals.getByTestId("pos-preview-total")).toContainText("$4.52");
   await expect(totals.getByTestId("pos-preview-pending")).toHaveCount(0);
@@ -127,6 +138,7 @@ test("the split works from the server's total: Total to split, Left to assign, t
   page,
 }) => {
   await signIn(page);
+  await ensureSession(page);
   await addLine(page, "holland", "Holland Stone 60 mm");
   await openPaymentStep(page);
   await page.getByRole("button", { name: "Split" }).click();
