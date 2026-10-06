@@ -501,19 +501,45 @@ test("a definite refusal is final whatever the re-read does: the page's own sent
   await expect(page.getByText("Quote link unavailable")).toHaveCount(0);
 });
 
-test("the page wears the manifest's brand: hh-pro pins the action fill to the dealer blue, not the house gold", async ({ page }) => {
+test("the accept button takes the design system's accent token, not a brand override blue", async ({ page }) => {
   // A quote that is still open: the demo quote is accepted by an earlier test.
   await page.goto("/?t=q-terms-28");
-  await expect(page.locator("html")).toHaveAttribute("data-brand", "hh-pro");
-  // The computed colour may come back in a wide-gamut syntax; a canvas
-  // pixel turns it into plain sRGB channels.
-  const [r, , b] = await page.getByRole("button", { name: "Accept quote" }).evaluate((node) => {
-    const ctx = document.createElement("canvas").getContext("2d") as CanvasRenderingContext2D;
-    ctx.fillStyle = getComputedStyle(node).backgroundColor;
-    ctx.fillRect(0, 0, 1, 1);
-    return Array.from(ctx.getImageData(0, 0, 1, 1).data);
+  await expect(page.getByRole("button", { name: "Accept quote" })).toBeVisible();
+  // The page pins no brand override, so the base brand layer stands and the
+  // pressable fill is the design system's own accent, the same accent the
+  // Quote Desk staff app presses.
+  await expect(page.locator("html")).not.toHaveAttribute("data-brand", "hh-pro");
+  // The accent token's value is resolved LIVE from the token sheet the page
+  // loads (it is theme-invariant, so the light half this page pins declares
+  // the same value), never a literal here; the button's computed fill may
+  // come back in a wide-gamut syntax, so both go through a canvas pixel into
+  // plain sRGB channels before they are compared, with a small tolerance for
+  // the colour conversion.
+  const sampled = await page.evaluate(() => {
+    const pixelOf = (colour: string): Array<number> => {
+      const ctx = document.createElement("canvas").getContext("2d") as CanvasRenderingContext2D;
+      ctx.fillStyle = colour;
+      ctx.fillRect(0, 0, 1, 1);
+      return Array.from(ctx.getImageData(0, 0, 1, 1).data).slice(0, 3);
+    };
+    const accent = getComputedStyle(document.documentElement).getPropertyValue("--hh-accent").trim();
+    const button = document.querySelector("pd-quote-public")?.shadowRoot?.querySelector<HTMLButtonElement>(
+      "button[data-action=accept]",
+    );
+    return {
+      accent,
+      accentPixel: pixelOf(accent),
+      fill: button ? getComputedStyle(button).backgroundColor : null,
+      fillPixel: button ? pixelOf(getComputedStyle(button).backgroundColor) : null,
+    };
   });
-  expect(b).toBeGreaterThan(r);
+  expect(sampled.fill, "the accept button must have a computed background").not.toBeNull();
+  for (let channel = 0; channel < 3; channel += 1) {
+    expect(
+      Math.abs((sampled.fillPixel as Array<number>)[channel] - sampled.accentPixel[channel]),
+      `channel ${channel}: the accept button's fill must be the accent token ${sampled.accent} (it sampled ${sampled.fill})`,
+    ).toBeLessThanOrEqual(2);
+  }
 });
 
 // The core keeps an ACCEPTED quote acceptable when multi-accept is on
