@@ -144,7 +144,12 @@ function structLines(s, where) {
       let base = goType(p, `${where}.${name}`);
       if (base === null) base = inlineStruct(p, `${where}.${name}`);
       const typ = nullable || !required.has(name) ? pointer(base) : base;
-      const omitempty = !required.has(name) || nullable ? ",omitempty" : "";
+      // omitempty rides only on a property the document does not
+      // require: a required nullable property is a pointer without it,
+      // so an absent value serializes as an explicit null and the
+      // contract's required key stays in the payload (the same rule the
+      // mapping pin above states).
+      const omitempty = !required.has(name) ? ",omitempty" : "";
       lines.push(`	${field} ${typ} \`json:"${name}${omitempty}"\``);
     }
   };
@@ -307,7 +312,7 @@ routesOut.push(`	Path        string // the path template exactly as documented`)
 routesOut.push(`	OperationID string // the contract operationId`);
 routesOut.push(`	Tag         string // the operation's single tag`);
 routesOut.push(`	XRole       string // the x-role gate spelling`);
-routesOut.push(`	Bearer      string // staff, tenant, staff-or-tenant, or public`);
+routesOut.push(`	Bearer      string // staff, tenant, machine, staff-or-tenant, or public`);
 routesOut.push(`	Addition    bool   // the operation carries x-addition (no ERP source route)`);
 routesOut.push(`	Surfaces    []string // the x-access surfaces it serves (staff operations only)`);
 routesOut.push(`	Level       string   // the x-access level it needs (staff operations only)`);
@@ -328,12 +333,18 @@ const bearerOf = (op) => {
   if (names.has("StaffBearer") && names.has("TenantBearer")) return "staff-or-tenant";
   if (names.has("TenantBearer")) return "tenant";
   if (names.has("StaffBearer")) return "staff";
+  // MachineBearer (ADR-0024, HH-LOAD-1 LD-2): FB Move's machine
+  // credential audience, its own bearer class beside the two platform
+  // classes. It never dual-lists: the doors are the machine class alone.
+  if (names.has("MachineBearer")) return "machine";
   return [...names].sort().join("+");
 };
 
 // accessOf maps one operation's x-access block to its census spelling:
 // the surfaces and level the role gate reads. Non-staff operations carry
-// no block and census them as nil and empty.
+// no block and census them as nil and empty; the machine word (ADR-0024)
+// is one of those: its wall is the machine principal's door list, not
+// the role configuration.
 const STAFF_ROLES = new Set(["requireStaff", "requireManager", "requireAdmin"]);
 const accessOf = (op) => {
   if (!STAFF_ROLES.has(op["x-role"] ?? "")) return ["nil", `""`, `""`];
