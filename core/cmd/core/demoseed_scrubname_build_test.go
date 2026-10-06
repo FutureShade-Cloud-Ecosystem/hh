@@ -41,6 +41,8 @@ var scrubRenameSignatures = []string{
 	`UPDATE customers SET name = $1, updated_at = $2 WHERE id = $3::uuid AND name = $4`,
 	"Scrubbed Party 0004",
 	"Riverside Walkway Contracting (demo)",
+	"Scrubname0014 Scrubname0027",
+	"Platform admin (demo), Demo teammate (demo)",
 }
 
 // buildCoreBinary builds this package the named way into its own scratch file and
