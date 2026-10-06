@@ -35,7 +35,7 @@ import (
 
 // money formats integer cents for a customer-facing document, WITH thousands grouping.
 //
-// The grouping matters more here than anywhere else on the screen: "CA$10486.40" and "CA$1048.64"
+// The grouping matters more here than anywhere else on the screen: "$10486.40" and "$1048.64"
 // differ by one character in a column somebody is going to read across a desk, and a printed invoice
 // is the one artefact nobody can hover over to check. The register renders the same figures the same
 // way, so the paper and the screen agree character for character.
@@ -44,7 +44,7 @@ func money(cents int64) string {
 	if neg {
 		cents = -cents
 	}
-	s := fmt.Sprintf("CA$%s.%02d", group(cents/100), cents%100)
+	s := fmt.Sprintf("$%s.%02d", group(cents/100), cents%100)
 	if neg {
 		return "−" + s
 	}

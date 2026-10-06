@@ -371,9 +371,9 @@ func TestExportParity_TheXlsxAgreesWithTheCsvExceptTheDeliberateBlanks(t *testin
 		}
 	}
 
-	// And the money is still a bare decimal in the CSV, never "CA$".
+	// And the money is still a bare decimal in the CSV, never "$".
 	joined := strings.Join(csvHeader, "|") + "|" + strings.Join(csvBody[0], "|")
-	if strings.Contains(joined, "CA$") || strings.Contains(joined, "$") {
+	if strings.Contains(joined, "$") {
 		t.Errorf("csv money must be a bare decimal for spreadsheets, got: %s", joined)
 	}
 }

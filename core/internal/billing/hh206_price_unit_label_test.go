@@ -15,11 +15,11 @@ func TestUnitPriceLabel(t *testing.T) {
 		cents      int64
 		want       string
 	}{
-		{"priced per SF, sold in PC", "PC", "SF", 1476, "CA$14.76 / SF"},
-		{"same unit", "SF", "SF", 1476, "CA$14.76"},
-		{"units differ only in case", "pc", "PC", 1476, "CA$14.76"},
-		{"empty price unit is a guard, not a label", "PC", "", 1476, "CA$14.76"},
-		{"priced per M2, sold in SF", "SF", "M2", 99, "CA$0.99 / M2"},
+		{"priced per SF, sold in PC", "PC", "SF", 1476, "$14.76 / SF"},
+		{"same unit", "SF", "SF", 1476, "$14.76"},
+		{"units differ only in case", "pc", "PC", 1476, "$14.76"},
+		{"empty price unit is a guard, not a label", "PC", "", 1476, "$14.76"},
+		{"priced per M2, sold in SF", "SF", "M2", 99, "$0.99 / M2"},
 	} {
 		got := unitPriceLabel(DetailLine{UOMEntered: tc.uom, PriceUOM: tc.price, UnitPriceCents: tc.cents})
 		if got != tc.want {
@@ -42,13 +42,13 @@ func TestRenderInvoiceHTML_PrintsThePriceUnitAndEscapesIt(t *testing.T) {
 		},
 	}
 	html := renderInvoiceHTML(d, "x")
-	if !strings.Contains(html, "CA$14.76 / SF") {
+	if !strings.Contains(html, "$14.76 / SF") {
 		t.Fatalf("the per-SF unit price on a line sold in PC must print its unit; got:\n%s", html)
 	}
-	if strings.Contains(html, "CA$18.00 /") {
+	if strings.Contains(html, "$18.00 /") {
 		t.Fatal("a line priced and sold in the same unit must print its price without a unit suffix")
 	}
-	if !strings.Contains(html, "CA$5.00 / &lt;b&gt;") || strings.Contains(html, "<b>") {
+	if !strings.Contains(html, "$5.00 / &lt;b&gt;") || strings.Contains(html, "<b>") {
 		t.Fatal("the price unit must be HTML escaped, never injected")
 	}
 }

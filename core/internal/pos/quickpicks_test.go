@@ -352,7 +352,7 @@ func TestQuickPicks_AnUnpriceableTileShowsNoPriceRatherThanZero(t *testing.T) {
 		t.Fatalf("the tile still renders, it is tappable and the add re-prices: %+v", out.Items)
 	}
 	if out.Items[0].Price != nil {
-		t.Fatalf("no price is no claim, never CA$0.00: %+v", out.Items[0].Price)
+		t.Fatalf("no price is no claim, never $0.00: %+v", out.Items[0].Price)
 	}
 }
 

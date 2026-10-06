@@ -4,7 +4,7 @@
 //
 // An account reminder with no invoice named picks the OLDEST open document. A credit memo is an
 // open document with a negative balance, so when it was the oldest the reminder dunned a credit and
-// the body printed its absolute value: a customer told that CA$0.50 was due.
+// the body printed its absolute value: a customer told that $0.50 was due.
 //
 // Run: DATABASE_URL=... go test -tags integration ./internal/billing/... -run HH195 -count=1
 package billing
@@ -80,10 +80,10 @@ func TestIntegrationHH195_AccountReminderNeverDunsACreditMemo(t *testing.T) {
 		t.Fatalf("sent %d messages, want 1", len(snd.msgs))
 	}
 	body := snd.msgs[0].Body
-	if strings.Contains(body, "CM-195-") || strings.Contains(body, "CA$0.50") {
+	if strings.Contains(body, "CM-195-") || strings.Contains(body, "$0.50") {
 		t.Errorf("reminder duns the credit memo: %q", body)
 	}
-	if !strings.Contains(body, "INV-195-"+suffix) || !strings.Contains(body, "CA$123.45") {
+	if !strings.Contains(body, "INV-195-"+suffix) || !strings.Contains(body, "$123.45") {
 		t.Errorf("reminder does not name the invoice and its balance: %q", body)
 	}
 }
