@@ -463,7 +463,7 @@ func TestPlan_CoversTheDistributionsTheTilesNeed(t *testing.T) {
 		t.Errorf("shortages must include an open one and a settled one: %d open, %d resolved", open, resolved)
 	}
 
-	// D · counter: customers across every pricing type, and products both with and without a photo.
+	// D · counter: customers across every pricing type, and products across every family the tiles draw.
 	types := map[string]int{}
 	for _, c := range demoCustomers {
 		types[c.Type]++
@@ -473,16 +473,12 @@ func TestPlan_CoversTheDistributionsTheTilesNeed(t *testing.T) {
 			t.Errorf("no %s customer, that pricing path has nothing to render", ty)
 		}
 	}
-	withPhoto, without := 0, 0
+	// Every demo product carries the family its drawn tile is chosen by; the demo plants no
+	// photographs (the design system's product tiles are the pictures).
 	for _, p := range demoProducts {
-		if p.Image {
-			withPhoto++
-		} else {
-			without++
+		if p.Application == "" {
+			t.Errorf("%s carries no Application, so the counter has no family to choose its tile by", p.Key)
 		}
-	}
-	if withPhoto == 0 || without == 0 {
-		t.Errorf("products must include both photographed and unphotographed: %d / %d", withPhoto, without)
 	}
 }
 

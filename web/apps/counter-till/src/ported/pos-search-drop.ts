@@ -417,7 +417,7 @@ export class HosPosSearchDrop extends LitElement {
       @focus=${() => (this.roveIdx = i)}
       @click=${() => this.add(h)}
     >
-      <hos-product-thumb .productId=${h.product_id} .hasImage=${h.has_image} alt="" .size=${34}></hos-product-thumb>
+      <hos-product-thumb .productId=${h.product_id} .hasImage=${h.has_image} .category=${h.application ?? ''} alt="" .size=${34}></hos-product-thumb>
       <span class="id">
         <span class="name">${h.name}</span>
         <span class="meta"

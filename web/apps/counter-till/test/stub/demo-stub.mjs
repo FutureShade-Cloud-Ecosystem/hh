@@ -911,6 +911,9 @@ function counterHit(product, branchId) {
     sku: product.sku,
     name: product.name,
     description: product.description,
+    // The real counter search carries the product's application word; the
+    // thumb chooses its drawn tile by it.
+    application: product.category,
     base_uom: product.base_uom,
     sold_by: product.sold_by,
     has_image: false,
@@ -923,7 +926,7 @@ function counterHit(product, branchId) {
 // The catalogue list read the browse grid fills from: every row enriched with
 // the retail anchor and the per-branch on-hand (the list read's own contract:
 // absent-is-honest, and the demo world carries both), the featured flag, and
-// no image (the thumb placeholder is the honest tile).
+// no image (the category's drawn tile is the picture).
 function productRow(product) {
   return {
     id: product.product_id,
