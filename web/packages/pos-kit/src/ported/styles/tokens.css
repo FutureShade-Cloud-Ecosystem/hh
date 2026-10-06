@@ -51,7 +51,11 @@
   --hos-row: var(--hh-row);
   --hos-row-alt: var(--hh-row-alt);
 
-  /* Type. The faces are the base sheet's stacks; no webfont ships here. */
+  /* Type. The faces are the base sheet's stacks, which the type pass (row
+     942) set to Inter first for BOTH roles: the aliases below resolve to
+     Inter through --hh-font-ui and --hh-font-mono, and the vendored face and
+     the tabular figures rule ship with the base sheet this sheet rides; no
+     webfont ships here and none is needed. */
   --hos-font-ui: var(--hh-font-ui);
   --hos-font-mono: var(--hh-font-mono);
   --hos-color-scheme: var(--hh-color-scheme);

@@ -566,6 +566,7 @@ export const IMPORT_ALLOW_LIST = {
     'node:path': ['dirname', 'join'],
     'node:url': ['fileURLToPath', 'pathToFileURL'],
     './address.js': ['hhAddress'],
+    './header.js': ['HosAppHeader'],
     './base.js': ['HHElement', 'HHRenderError', 'defineElement'],
     './kits/dashboard.js': ['DashboardKit'],
     './kits/guided-flow.js': ['GuidedFlowKit'],
@@ -603,6 +604,7 @@ export const IMPORT_ALLOW_LIST = {
     './_lib/sheet.mjs': ['PALETTE_NAMES', 'contrast', 'declaredPairs', 'definedTokens', 'parseDeclarations', 'palette', 'palettes', 'pkgDir', 'readPkg', 'referencedTokens', 'resolveColor', 'shippedStyleFiles', 'sheetBlocks', 'stripComments'],
     './color.mjs': ['contrast', 'oklchToHex', 'parseOklch'],
     '../src/harness-page.js': ['HARNESS_STATES', 'HARNESS_TITLE', 'KITS', 'WIDTHS', 'buildHarnessPage', 'harnessSheets'],
+    '../src/header.js': ['HosAppHeader'],
     '../src/kits/dashboard.js': ['DashboardKit'],
     '../src/kits/guided-flow.js': ['GuidedFlowKit'],
     '../src/kits/inbox.js': ['InboxKit'],
@@ -613,7 +615,10 @@ export const IMPORT_ALLOW_LIST = {
     '../src/state.js': ['KIT_STATES', 'STATE_META', 'kitShell', 'stateIndicator'],
   },
   harness: {
-    'node:fs': ['mkdirSync', 'readFileSync', 'writeFileSync'],
+    // readdirSync and statSync joined the build when the type pass made it
+    // copy the vendored face beside the pages (it walks src/fonts and proves
+    // each entry is a file); a reviewer sees the names arrive here.
+    'node:fs': ['mkdirSync', 'readFileSync', 'readdirSync', 'statSync', 'writeFileSync'],
     'node:http': ['createServer'],
     'node:net': ['default'],
     'node:path': ['dirname', 'join'],
