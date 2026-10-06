@@ -3,3 +3,5 @@ test-results/
 playwright-report/
 # The acceptance run's screenshots: produced on demand, carried by no commit.
 acceptance-screens/
+# The no-default-adopt build gate builds both ways into its own scratch root.
+test/.no-default-adopt-build/
