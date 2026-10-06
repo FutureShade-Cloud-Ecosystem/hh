@@ -760,6 +760,23 @@ export type PaymentsReversalResult = {
   same_day: boolean;
   reopened_invoices: string[];
 };
+export type PaymentCardAttemptSummary = {
+  ref: string;
+  id: string;
+  status: "CHARGING" | "CAPTURED" | "DECLINED" | "UNKNOWN" | "BOUND" | "VOIDING" | "VOIDED" | "VOID_UNKNOWN" | "VOID_DECLINED" | "RESOLVED";
+  amount_cents: number;
+  branch_id: string;
+  till_session_id: string;
+  created_at: string;
+  sale_key: string;
+  charge_ref: string;
+  reversal_ref: string;
+  last_error: string;
+};
+export type PaymentCardAttemptResolve = {
+  resolution: "NOT_CHARGED" | "REVERSED_AT_PROCESSOR";
+  note: string;
+};
 export type AssistArgSpec = {
   name: string;
   label: string;

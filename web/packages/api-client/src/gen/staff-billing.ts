@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { BillingAPContact, BillingAPContactRead, BillingARLanding, BillingAgingPage, BillingAutoHoldRequest, BillingAutoHoldSetting, BillingCreditHoldPage, BillingDispatchGateResult, BillingDisputeInput, BillingDisputeResolveRequest, BillingDisputeView, BillingEvaluationResult, BillingHoldOverrideRequest, BillingHoldOverrideResult, BillingHoldReleaseRequest, BillingInvoiceDetail, BillingInvoiceSendRequest, BillingLandingPolicy, BillingPaperPathPage, BillingPaperPathResolveRequest, BillingPaperPathSweepResult, BillingPolicyChangePage, BillingPromiseInput, BillingPromiseView, BillingReceiptInput, BillingReceiptResult, BillingRegisterPage, BillingRegisterPolicy, BillingRegisterSelectionRequest, BillingRegisterSelectionResult, BillingRegisterStatementsRequest, BillingReminderInput, BillingReminderResult, BillingReminderSend, BillingReminderSendPage, BillingSendReminderInput, BillingStatement, BillingStatementBatch, BillingStatementRunRequest, BillingStatementRunResult } from "./types.js";
+import type { BillingAPContact, BillingAPContactRead, BillingARLanding, BillingAgingPage, BillingAutoHoldRequest, BillingAutoHoldSetting, BillingCreditHoldPage, BillingDispatchGateResult, BillingDisputeInput, BillingDisputeResolveRequest, BillingDisputeView, BillingEvaluationResult, BillingHoldOverrideRequest, BillingHoldOverrideResult, BillingHoldReleaseRequest, BillingInvoiceDetail, BillingInvoiceSendRequest, BillingLandingPolicy, BillingPaperPathPage, BillingPaperPathResolveRequest, BillingPaperPathSweepResult, BillingPolicyChangePage, BillingPromiseInput, BillingPromiseView, BillingReceiptInput, BillingReceiptResult, BillingRegisterPage, BillingRegisterPolicy, BillingRegisterSelectionRequest, BillingRegisterSelectionResult, BillingRegisterStatementsRequest, BillingReminderInput, BillingReminderResult, BillingReminderSend, BillingReminderSendPage, BillingSendReminderInput, BillingStatement, BillingStatementBatch, BillingStatementRunRequest, BillingStatementRunResult, PaymentCardAttemptSummary } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -581,5 +581,20 @@ export async function billingGetStatementRun(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "billingGetStatementRun",
+  });
+}
+
+export async function paymentListCardAttempts(
+  client: ApiClient,
+  opts?: { state?: "open"; from?: string; to?: string },
+  call?: ApiCallOptions
+): Promise<Result<PaymentCardAttemptSummary[]>> {
+  return client.request<PaymentCardAttemptSummary[]>({
+    method: "GET",
+    path: "/api/v1/payments/card-attempts",
+    query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "paymentListCardAttempts",
   });
 }
