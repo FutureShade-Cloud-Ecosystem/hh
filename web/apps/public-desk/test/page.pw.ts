@@ -12,6 +12,7 @@
 // names deliberately.
 import { createHash } from "node:crypto";
 import { expect, test, type Page, type Response } from "@playwright/test";
+import { DEALER_NAME } from "../src/dealer.js";
 
 const GOOD_TOKEN = "q-demo-25";
 
@@ -499,6 +500,26 @@ test("a definite refusal is final whatever the re-read does: the page's own sent
   await expect(page.getByRole("alert")).toHaveText(CANNOT_ACCEPT);
   await expectFormKept(page);
   await expect(page.getByText("Quote link unavailable")).toHaveCount(0);
+});
+
+test("the page carries the dealer's header: the dealer's name is visible at the top, from the app's own data", async ({ page }) => {
+  await page.goto(`/?t=${GOOD_TOKEN}`);
+  await expect(page.getByRole("heading", { name: "Quote #Q-25" })).toBeVisible();
+  // The header band is the page's first element, and the name it carries is
+  // the dealer name's source of truth in the app, imported here so the test
+  // pins the structure, never a duplicated literal.
+  const header = page.locator("pd-quote-public header.dealer");
+  const name = page.locator("pd-quote-public header.dealer .dealer-name");
+  await expect(name).toHaveText(DEALER_NAME);
+  await expect(name).toBeVisible();
+  const boxes = await page.evaluate(() => {
+    const root = document.querySelector("pd-quote-public")?.shadowRoot;
+    const pick = (selector: string): number | null => root?.querySelector(selector)?.getBoundingClientRect().top ?? null;
+    return { header: pick("header.dealer"), h1: pick("h1") };
+  });
+  expect(boxes.h1, "the quote heading must exist").not.toBeNull();
+  expect(boxes.header, "the dealer header must sit above the quote heading").toBeLessThan(boxes.h1!);
+  await expect(header).toContainText(DEALER_NAME);
 });
 
 test("the accept button takes the design system's accent token, not a brand override blue", async ({ page }) => {

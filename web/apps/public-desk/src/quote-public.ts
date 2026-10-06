@@ -27,6 +27,7 @@ import {
   type QuoteMoney,
 } from "./_quote-public.js";
 import { createAcceptKeys } from "./accept-key.js";
+import { DEALER_NAME } from "./dealer.js";
 import { formatMoney, quoteStatusPhrase, withFullStop } from "./format.js";
 import {
   envelopeOnlyFetch,
@@ -79,6 +80,22 @@ export class QuotePublicPage extends HHElement {
       h1 {
         font-size: 1.3rem;
         margin: 0 0 var(--hh-s-4);
+      }
+      /* The dealer's header band, the page's first element in every state: the
+         one mark of WHO is speaking, the name carried from the app's own data
+         (src/dealer.ts) over a hairline, so a printed or screenshotted page
+         says whose quote it is before anything else. */
+      header.dealer {
+        display: flex;
+        align-items: baseline;
+        border-bottom: 1px solid var(--hh-line);
+        padding: 0 0 var(--hh-s-12);
+        margin-bottom: var(--hh-s-20);
+      }
+      header.dealer .dealer-name {
+        font-size: 1.05rem;
+        font-weight: 700;
+        letter-spacing: 0.01em;
       }
       /* Full text ink, NOT the dimmed one: this line sits on the page rather
          than on a card, and it is load bearing information, not decoration. */
@@ -719,6 +736,13 @@ export class QuotePublicPage extends HHElement {
   }
 
   render(): TemplateResult {
+    // The dealer's header band opens EVERY state of the page: whose quote
+    // this is does not depend on the quote having loaded (or on the link
+    // being alive).
+    return html`<header class="dealer"><span class="dealer-name">${DEALER_NAME}</span></header>${this.renderBody()}`;
+  }
+
+  private renderBody(): TemplateResult {
     if (this.fatal) {
       return html`<div class="card refusal">
         <h2>Quote link unavailable</h2>
