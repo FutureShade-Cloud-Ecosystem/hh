@@ -307,6 +307,12 @@ func dispatchPersonaSurname(t *testing.T) string {
 
 // surnameOffenders scans every text-like column of every base table for the surname as a whole word.
 func surnameOffenders(t *testing.T, ctx context.Context, pool *pgxpool.Pool, surname string) []string {
+	return columnsMatching(t, ctx, pool, `~*`, `\m`+surname+`\M`)
+}
+
+// columnsMatching returns "table.column" for every text-like column holding a value that matches the
+// Postgres regex under the given operator.
+func columnsMatching(t *testing.T, ctx context.Context, pool *pgxpool.Pool, op, re string) []string {
 	t.Helper()
 	cols, err := pool.Query(ctx, `
 		SELECT c.table_name, c.column_name
@@ -335,7 +341,7 @@ func surnameOffenders(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sur
 	for _, x := range all {
 		col, tbl := pgx.Identifier{x.col}.Sanitize(), pgx.Identifier{x.table}.Sanitize()
 		var n int
-		if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+tbl+` WHERE `+col+`::text ~* $1`, `\m`+surname+`\M`).Scan(&n); err != nil {
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+tbl+` WHERE `+col+`::text `+op+` $1`, re).Scan(&n); err != nil {
 			t.Fatalf("scanning %s.%s: %v", x.table, x.col, err)
 		}
 		if n > 0 {
@@ -377,5 +383,21 @@ func TestIntegration_DispatchPersonaMigrationLeavesARenamedLoginAlone(t *testing
 	}
 	if got != "Night dispatcher" {
 		t.Errorf("a renamed login was overwritten: %q", got)
+	}
+}
+
+// firstNameWords are the common words PR 235 restored after a placeholder; a placeholder followed by one of
+// them is not a first name beside a surname.
+const firstNameWords = `Revenue|Analysis|Manager|Controller|Sales|Statements`
+
+// A placeholder that stands for a first name, followed by a capitalised word that is not one of those, is
+// a first name beside an unscrubbed surname (a second placeholder is a scrubbed surname, fine). No value in a migrated database may read like that, in any
+// text column (a user's display name, a conversation title, a message, a JSON document). The offenders
+// are reported by table and column only, so a failure never prints the surname.
+func TestIntegration_NoFirstNamePlaceholderReadsBesideASurnameInAMigratedDatabase(t *testing.T) {
+	pool := freshMigratedDB(t, "firstnamepair")
+	bad := columnsMatching(t, context.Background(), pool, "~", `Scrubname[0-9]+ (?!Scrubname|(`+firstNameWords+`)\M)[A-Z][a-z]+`)
+	if len(bad) != 0 {
+		t.Errorf("after migrate, a scrub placeholder for a first name is followed by a surname in: %s", strings.Join(bad, ", "))
 	}
 }
