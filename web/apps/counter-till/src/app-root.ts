@@ -857,7 +857,7 @@ export class CounterTillApp extends HHElement {
                 </p>
               </div>
               <div class="surface">
-                <hos-pos-terminal panes-swapped=${this.#panesSwapped ? "true" : nothing}></hos-pos-terminal>
+                <hos-pos-terminal data-panes-swapped="${this.#panesSwapped ? "true" : "false"}"></hos-pos-terminal>
               </div>
               </div>
               ${this.#chromeMessage === null ? nothing : html`<p class="notice" role="status">${this.#chromeMessage}</p>`}

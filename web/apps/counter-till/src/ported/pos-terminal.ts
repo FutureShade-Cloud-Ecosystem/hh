@@ -500,9 +500,9 @@ export class HosPosTerminal extends LitElement {
   /**
    * Row 976: the two panes swapped (the steps pane first). The page that mounts this terminal owns
    * the choice, because its header carries the swap button beside the theme, and remembers it per
-   * browser; the terminal only draws it. It arrives as the `panes-swapped` attribute.
+   * browser; the terminal only draws it. It arrives as the `data-panes-swapped` attribute ("true" or "false").
    */
-  @property({ type: Boolean, attribute: 'panes-swapped' }) panesSwapped = false;
+  @property({ attribute: 'data-panes-swapped', converter: (value: string | null) => value === 'true' }) panesSwapped = false;
   /**
    * The dealer's key roster, resolved server-side (user over dealer over default). Held as data,
    * never as a switch statement: the client's people are BisTrack refugees who will want their old
