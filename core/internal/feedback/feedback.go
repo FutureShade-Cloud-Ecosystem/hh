@@ -1,6 +1,6 @@
 // Package feedback bridges in-app staff feedback to the Dibbits Plane board
 // (#16 / IMP-038): a widget in the ERP shell POSTs bug/feedback/flag submissions
-// here, and each becomes a Plane issue in the project's "Feedback" module -
+// here, and each becomes a Plane issue in the project's Feature Polish module -
 // closing client-observation → tracked-work without anyone leaving the app.
 //
 // The Plane API key lives server-side only (config); the frontend never sees
@@ -20,6 +20,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +41,47 @@ var priorityOf = map[Kind]string{
 	KindFlag:     "medium",
 }
 
+// DefaultModuleName is the module feedback is grouped under when the operator
+// has not said otherwise (PLANE_FEEDBACK_MODULE). The module is resolved by
+// its NAME against the board's own module list, never by a hard coded id: the
+// id is a board side detail this server never writes.
+const DefaultModuleName = "Feature Polish"
+
+// feedbackLabelName is the project label applied to every work item WHEN the
+// project already carries a label of that name. The bridge never creates it:
+// a missing label files the item untagged rather than reaching for a write it
+// was never granted.
+const feedbackLabelName = "feedback"
+
+// maxImagesPerSubmission bounds how many screenshots one submission carries.
+const maxImagesPerSubmission = 3
+
+// maxImageBytes bounds one accepted image attachment (matches the client + the
+// multipart body cap in the handler).
+const maxImageBytes = 5 << 20
+
+// maxTotalImageBytes bounds every image of one submission together: two full
+// captures and a smaller third fit, three full size ones do not. A submission
+// is a note with evidence, not an archive, and the total bound bites below the
+// per image bound times three on purpose.
+const maxTotalImageBytes = 10 << 20
+
+// allowedImageType is the server-enforced allow-list, checked against the SNIFFED
+// content type (http.DetectContentType), not the client-declared MIME.
+var allowedImageType = map[string]string{
+	"image/png":  ".png",
+	"image/jpeg": ".jpg",
+	"image/webp": ".webp",
+}
+
+// Image is one screenshot of a submission, read server side from the multipart
+// body (never from client-controlled JSON). Data is the raw bytes; Name is
+// advisory (the server re-sniffs the real content type before trusting it).
+type Image struct {
+	Data []byte
+	Name string
+}
+
 // Submission is what the widget sends plus the server-resolved actor.
 type Submission struct {
 	Kind    Kind   `json:"type"`
@@ -52,28 +94,25 @@ type Submission struct {
 	// Server-stamped:
 	ActorID   string `json:"-"`
 	ActorRole string `json:"-"`
-	// Optional image attachment (screenshot). Server-only: these are filled from
-	// the multipart "image" part, NEVER from client-controlled JSON, so they carry
-	// no json tags. Image is the raw bytes; ImageName/ImageType are advisory (the
-	// server re-sniffs the real content type before trusting it).
-	Image     []byte `json:"-"`
-	ImageName string `json:"-"`
-	ImageType string `json:"-"`
+	// ActorName and ActorRoleName name the submitter in the work item by
+	// display name and role (the row 949 rule: every note records under one
+	// board user, so the item's text is the only place the sender is named;
+	// the raw ActorID never reaches the board). Both may be empty when no
+	// linked row resolves, and the item then names the role alone.
+	ActorName     string `json:"-"`
+	ActorRoleName string `json:"-"`
+	// Images are the attached screenshots, server-only: filled from the
+	// multipart "images" parts, NEVER from client-controlled JSON, so they
+	// carry no json tags. A legacy single "image" part lands here too.
+	Images []Image `json:"-"`
 }
 
-// moduleName is the Plane module feedback issues are grouped under.
-const moduleName = "Feedback"
-
-// maxImageBytes bounds an accepted image attachment (matches the client + the
-// multipart body cap in the handler).
-const maxImageBytes = 5 << 20
-
-// allowedImageType is the server-enforced allow-list, checked against the SNIFFED
-// content type (http.DetectContentType), not the client-declared MIME.
-var allowedImageType = map[string]string{
-	"image/png":  ".png",
-	"image/jpeg": ".jpg",
-	"image/webp": ".webp",
+// Filed is a submission that became a board work item: its id and, when the
+// board answered one, the number a person reads (the project's identifier and
+// the issue's sequence, the panel's "Sent: HH-42" line).
+type Filed struct {
+	ID     string
+	Number string
 }
 
 // Service files submissions to Plane. Safe for concurrent use.
@@ -84,9 +123,14 @@ type Service struct {
 	now  func() time.Time
 	log  *slog.Logger
 
-	mu       sync.Mutex
-	moduleID string                 // resolved-once cache
-	buckets  map[string][]time.Time // per-user submission timestamps (rate limit)
+	// moduleName is the module feedback is grouped under, resolved by name.
+	moduleName string
+
+	mu         sync.Mutex
+	moduleID   string                 // resolved-once cache for moduleName
+	labelID    string                 // resolved-once cache for the feedback label ("" = none yet)
+	projectTag string                 // resolved-once cache for the project identifier
+	buckets    map[string][]time.Time // per-user submission timestamps (rate limit)
 }
 
 // rateLimit is the max submissions per user per window.
@@ -99,8 +143,9 @@ const (
 // workspace slug, project the Plane project id.
 func New(baseURL, slug, project, key string) *Service {
 	return &Service{
-		base: strings.TrimRight(baseURL, "/") + "/workspaces/" + slug + "/projects/" + project,
-		key:  key,
+		base:       strings.TrimRight(baseURL, "/") + "/workspaces/" + slug + "/projects/" + project,
+		key:        key,
+		moduleName: DefaultModuleName,
 		// 30s (up from 15s): the presigned attachment upload leg streams up to 5 MB,
 		// which can outrun a tighter deadline on a slow uplink.
 		http:    &http.Client{Timeout: 30 * time.Second},
@@ -108,6 +153,15 @@ func New(baseURL, slug, project, key string) *Service {
 		log:     slog.Default(),
 		buckets: map[string][]time.Time{},
 	}
+}
+
+// WithModule sets the module feedback is grouped under, resolved by its name
+// against the board's module list. An empty name keeps the default.
+func (s *Service) WithModule(name string) *Service {
+	if trimmed := strings.TrimSpace(name); trimmed != "" {
+		s.moduleName = trimmed
+	}
+	return s
 }
 
 // ErrRateLimited is returned when a user exceeds rateLimit per rateWindow.
@@ -120,23 +174,76 @@ type PlaneError struct{ Err error }
 func (e PlaneError) Error() string { return "plane upstream: " + e.Err.Error() }
 func (e PlaneError) Unwrap() error { return e.Err }
 
+// actorWords renders the submitter for the work item's text: the display name
+// and the role (the role label when one resolved, else the role code). When no
+// display name resolved the role carries the line alone; the raw user id is
+// never returned, so it can never reach the board (the row 949 rule).
+func (sub Submission) actorWords() string {
+	role := sub.ActorRoleName
+	if role == "" {
+		role = sub.ActorRole
+	}
+	if sub.ActorName == "" {
+		return role
+	}
+	if role == "" {
+		return sub.ActorName
+	}
+	return sub.ActorName + " (" + role + ")"
+}
+
+// validateImages enforces the image bounds on the server side: at most three
+// images, each within the per image bound, all together within the total
+// bound, each sniffing as an allowed image type. It runs before anything
+// reaches the board, so an oversized or misnamed upload is a plain 400 rather
+// than a half filed submission.
+func validateImages(images []Image) error {
+	if len(images) > maxImagesPerSubmission {
+		return fmt.Errorf("too_many_images: at most %d images per submission", maxImagesPerSubmission)
+	}
+	total := 0
+	for i, img := range images {
+		if len(img.Data) == 0 {
+			return fmt.Errorf("image %d is empty", i+1)
+		}
+		if len(img.Data) > maxImageBytes {
+			return fmt.Errorf("image %d is too large: %d bytes (max %d)", i+1, len(img.Data), maxImageBytes)
+		}
+		total += len(img.Data)
+		if total > maxTotalImageBytes {
+			return fmt.Errorf("images exceed the %d byte total bound", maxTotalImageBytes)
+		}
+		sniff := img.Data
+		if len(sniff) > 512 {
+			sniff = sniff[:512]
+		}
+		if _, ok := allowedImageType[http.DetectContentType(sniff)]; !ok {
+			return fmt.Errorf("image %d is not a PNG, JPEG or WebP", i+1)
+		}
+	}
+	return nil
+}
+
 // File validates, rate-limits, and creates the Plane issue. Returns the new
-// issue's id.
-func (s *Service) File(ctx context.Context, sub Submission) (string, error) {
+// issue's id and its readable number.
+func (s *Service) File(ctx context.Context, sub Submission) (Filed, error) {
 	sub.Message = strings.TrimSpace(sub.Message)
 	if sub.Message == "" {
-		return "", fmt.Errorf("message is required")
+		return Filed{}, fmt.Errorf("message is required")
 	}
 	if _, ok := priorityOf[sub.Kind]; !ok {
-		return "", fmt.Errorf("type must be one of bug, feedback, flag")
+		return Filed{}, fmt.Errorf("type must be one of bug, feedback, flag")
+	}
+	if err := validateImages(sub.Images); err != nil {
+		return Filed{}, err
 	}
 	if !s.allow(sub.ActorID) {
-		return "", ErrRateLimited
+		return Filed{}, ErrRateLimited
 	}
 
-	moduleID, err := s.ensureModule(ctx)
+	moduleID, err := s.resolveModule(ctx)
 	if err != nil {
-		return "", PlaneError{err}
+		return Filed{}, PlaneError{err}
 	}
 
 	first := sub.Message
@@ -146,12 +253,16 @@ func (s *Service) File(ctx context.Context, sub Submission) (string, error) {
 	if len(first) > 80 {
 		first = first[:80] + "…"
 	}
+	actor := sub.actorWords()
 	title := fmt.Sprintf("[%s] %s", sub.Kind, first)
+	if actor != "" {
+		title += " - " + actor
+	}
 
 	desc := fmt.Sprintf(
-		"<p>%s</p><p><em>screen: %s · actor: %s (%s) · url: %s · ua: %s · submitted: %s · via ERP feedback widget</em></p>",
+		"<p>%s</p><p><em>screen: %s · actor: %s · url: %s · ua: %s · submitted: %s · via ERP feedback widget</em></p>",
 		html.EscapeString(sub.Message), html.EscapeString(sub.Screen),
-		html.EscapeString(sub.ActorID), html.EscapeString(sub.ActorRole),
+		html.EscapeString(actor),
 		html.EscapeString(sub.URL), html.EscapeString(sub.UserAgent),
 		s.now().UTC().Format(time.RFC3339))
 
@@ -160,31 +271,113 @@ func (s *Service) File(ctx context.Context, sub Submission) (string, error) {
 		"description_html": desc,
 		"priority":         priorityOf[sub.Kind],
 	}
+	// The project's existing "feedback" label rides the item when present. The
+	// lookup is best effort and cached: a board without the label (or a label
+	// list the board refuses to list) files untagged rather than failing the
+	// tester's report.
+	if labelID := s.feedbackLabel(ctx); labelID != "" {
+		issue["label_ids"] = []string{labelID}
+	}
 	var made struct {
-		ID string `json:"id"`
+		ID         string `json:"id"`
+		SequenceID int64  `json:"sequence_id"`
 	}
 	if err := s.req(ctx, http.MethodPost, "/issues/", issue, &made); err != nil {
-		return "", PlaneError{err}
+		return Filed{}, PlaneError{err}
 	}
+	filed := Filed{ID: made.ID, Number: s.workItemNumber(ctx, made.SequenceID)}
 	if err := s.req(ctx, http.MethodPost, "/modules/"+moduleID+"/module-issues/",
 		map[string]any{"issues": []string{made.ID}}, nil); err != nil {
-		// The issue exists; module attach failing should not lose the submission.
+		// The issue exists; module attach failing should not lose the submission,
+		// and it must not drop the screenshots either: they attach below.
 		s.log.Warn("feedback: module attach failed", "issue", made.ID, "err", err)
-		return made.ID, nil
 	}
 
-	// Best-effort image attachment. The issue is already filed; an attachment
-	// failure must NEVER lose the tester's report (mirrors the module-attach
-	// fallback above), so we log and still return the issue id.
-	if len(sub.Image) > 0 {
-		if err := s.attachImage(ctx, made.ID, sub); err != nil {
+	// Best-effort image attachments, each its own. The issue is already filed;
+	// an attachment failure must NEVER lose the tester's report (mirrors the
+	// module-attach fallback above), so we log and still return the issue.
+	for _, img := range sub.Images {
+		if err := s.attachImage(ctx, made.ID, img); err != nil {
 			s.log.Warn("feedback: image attach failed", "issue", made.ID, "err", err)
 		}
 	}
-	return made.ID, nil
+	return filed, nil
 }
 
-// attachImage uploads sub.Image to the Plane issue as a real binary attachment
+// workItemNumber renders the number a person reads on the board: the project's
+// own identifier and the issue's sequence (HH-42). Both halves are cached,
+// best-effort reads; a board that answers neither leaves the number empty, and
+// the id never stands in for it.
+func (s *Service) workItemNumber(ctx context.Context, sequence int64) string {
+	if sequence <= 0 {
+		return ""
+	}
+	ident := s.projectIdentifier(ctx)
+	if ident == "" {
+		return strconv.FormatInt(sequence, 10)
+	}
+	return ident + "-" + strconv.FormatInt(sequence, 10)
+}
+
+// projectIdentifier resolves (and caches) the project's identifier, the prefix
+// of every work item's readable number. Best effort: an unreadable identifier
+// answers empty and the number degrades to the bare sequence.
+func (s *Service) projectIdentifier(ctx context.Context) string {
+	s.mu.Lock()
+	cached := s.projectTag
+	s.mu.Unlock()
+	if cached != "" {
+		return cached
+	}
+	var proj struct {
+		Identifier string `json:"identifier"`
+	}
+	if err := s.req(ctx, http.MethodGet, "/", nil, &proj); err != nil {
+		s.log.Warn("feedback: project identifier unreadable", "err", err)
+		return ""
+	}
+	if ident := strings.TrimSpace(proj.Identifier); ident != "" {
+		s.mu.Lock()
+		s.projectTag = ident
+		s.mu.Unlock()
+		return ident
+	}
+	return ""
+}
+
+// feedbackLabel resolves (and caches) the project's existing "feedback" label
+// id, or "" when the project has no such label. It never creates the label and
+// never fails the submission: any refusal on this read is a board without the
+// label as far as the caller is concerned, and a later submission looks again.
+func (s *Service) feedbackLabel(ctx context.Context) string {
+	s.mu.Lock()
+	cached := s.labelID
+	s.mu.Unlock()
+	if cached != "" {
+		return cached
+	}
+	var page struct {
+		Results []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"results"`
+	}
+	if err := s.req(ctx, http.MethodGet, "/issue-labels/", nil, &page); err != nil {
+		s.log.Warn("feedback: label lookup failed, filing untagged", "err", err)
+		return ""
+	}
+	for _, l := range page.Results {
+		if l.Name == feedbackLabelName {
+			s.mu.Lock()
+			s.labelID = l.ID
+			s.mu.Unlock()
+			return l.ID
+		}
+	}
+	return ""
+}
+
+// attachImage uploads one image to the Plane issue as a real binary attachment
 // via Plane's 3-step presign → upload → confirm flow. Best-effort: callers keep
 // the filed issue even when this errors.
 //
@@ -197,15 +390,15 @@ func (s *Service) File(ctx context.Context, sub Submission) (string, error) {
 //     part "file". No X-API-Key (it is a presigned request). Expect 204.
 //  3. CONFIRM  PATCH …/issue-attachments/{asset_id}/ {"is_uploaded":true} → 204,
 //     which flips the row visible in the issue's Attachments panel.
-func (s *Service) attachImage(ctx context.Context, issueID string, sub Submission) error {
+func (s *Service) attachImage(ctx context.Context, issueID string, img Image) error {
 	// Server-side re-validation, do NOT trust the client-declared type/size.
-	if len(sub.Image) == 0 {
+	if len(img.Data) == 0 {
 		return fmt.Errorf("empty image")
 	}
-	if len(sub.Image) > maxImageBytes {
-		return fmt.Errorf("image too large: %d bytes (max %d)", len(sub.Image), maxImageBytes)
+	if len(img.Data) > maxImageBytes {
+		return fmt.Errorf("image too large: %d bytes (max %d)", len(img.Data), maxImageBytes)
 	}
-	sniff := sub.Image
+	sniff := img.Data
 	if len(sniff) > 512 {
 		sniff = sniff[:512]
 	}
@@ -214,7 +407,7 @@ func (s *Service) attachImage(ctx context.Context, issueID string, sub Submissio
 	if !ok {
 		return fmt.Errorf("unsupported image type: %s", ct)
 	}
-	name := attachmentName(sub.ImageName, ext)
+	name := attachmentName(img.Name, ext)
 
 	// 1) presign, POST gets the project_id injection in s.req, which is harmless.
 	var presign struct {
@@ -225,7 +418,7 @@ func (s *Service) attachImage(ctx context.Context, issueID string, sub Submissio
 		AssetID string `json:"asset_id"`
 	}
 	if err := s.req(ctx, http.MethodPost, "/issues/"+issueID+"/issue-attachments/",
-		map[string]any{"name": name, "type": ct, "size": len(sub.Image)}, &presign); err != nil {
+		map[string]any{"name": name, "type": ct, "size": len(img.Data)}, &presign); err != nil {
 		return fmt.Errorf("presign: %w", err)
 	}
 	if presign.UploadData.URL == "" || presign.AssetID == "" {
@@ -233,7 +426,7 @@ func (s *Service) attachImage(ctx context.Context, issueID string, sub Submissio
 	}
 
 	// 2) upload to the presigned foreign host (no X-API-Key).
-	if err := s.uploadPresigned(ctx, presign.UploadData.URL, presign.UploadData.Fields, name, ct, sub.Image); err != nil {
+	if err := s.uploadPresigned(ctx, presign.UploadData.URL, presign.UploadData.Fields, name, ct, img.Data); err != nil {
 		return fmt.Errorf("upload: %w", err)
 	}
 
@@ -303,7 +496,7 @@ func attachmentName(provided, ext string) string {
 
 // atLimit reports whether user has already exhausted their submission budget for
 // the current window, WITHOUT recording anything. The multipart handler uses it
-// to turn a flooding caller away before buffering a ~5 MB body; File's allow()
+// to turn a flooding caller away before buffering a large body; File's allow()
 // stays the single place that records a submission, so this read-only peek never
 // double-counts a permitted request.
 func (s *Service) atLimit(user string) bool {
@@ -338,10 +531,14 @@ func (s *Service) allow(user string) bool {
 	return true
 }
 
-// ensureModule resolves (or creates) the "Feedback" module once and caches it.
-func (s *Service) ensureModule(ctx context.Context) (string, error) {
+// resolveModule resolves the configured module NAME against the board's module
+// list and caches it. It never creates a module: a name that does not resolve
+// is a clear refusal and no work item is made, because a misnamed variable must
+// not scatter feedback into a freshly made module nobody reads.
+func (s *Service) resolveModule(ctx context.Context) (string, error) {
 	s.mu.Lock()
 	cached := s.moduleID
+	name := s.moduleName
 	s.mu.Unlock()
 	if cached != "" {
 		return cached, nil
@@ -355,27 +552,15 @@ func (s *Service) ensureModule(ctx context.Context) (string, error) {
 	if err := s.req(ctx, http.MethodGet, "/modules/", nil, &page); err != nil {
 		return "", err
 	}
-	id := ""
 	for _, m := range page.Results {
-		if m.Name == moduleName {
-			id = m.ID
-			break
+		if m.Name == name {
+			s.mu.Lock()
+			s.moduleID = m.ID
+			s.mu.Unlock()
+			return m.ID, nil
 		}
 	}
-	if id == "" {
-		var made struct {
-			ID string `json:"id"`
-		}
-		if err := s.req(ctx, http.MethodPost, "/modules/",
-			map[string]any{"name": moduleName}, &made); err != nil {
-			return "", err
-		}
-		id = made.ID
-	}
-	s.mu.Lock()
-	s.moduleID = id
-	s.mu.Unlock()
-	return id, nil
+	return "", fmt.Errorf("module %q is not on the board: set PLANE_FEEDBACK_MODULE to an existing module's name (or create the module on the board) and try again", name)
 }
 
 // req performs one Plane API call. Plane CE quirk: POST bodies must carry the

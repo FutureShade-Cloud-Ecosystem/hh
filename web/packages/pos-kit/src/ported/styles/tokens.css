@@ -156,10 +156,13 @@
   --hos-pane-columns: var(--hh-pane-columns);
 
   /* LOCAL (flagged): the feedback pill's reserved lane, measured as
-     inset + pill + inset, so a surface's last row can keep itself clear. */
+     inset + pill + inset, so a surface's last row can keep itself clear. The
+     till lifts the pill by --hos-fab-lift so it sits wholly above the pinned
+     hotkey legend (35px) instead of under it; the lane counts that lift. */
   --hos-fab-inset: 22px;
   --hos-fab-size: 38px;
-  --hos-fab-lane: calc(var(--hos-fab-size) + var(--hos-fab-inset) * 2);
+  --hos-fab-lift: 26px;
+  --hos-fab-lane: calc(var(--hos-fab-size) + var(--hos-fab-inset) * 2 + var(--hos-fab-lift));
 
   /* Elevation: dark lifts with the surface step and keeps shadows for raised
      surfaces; the scrim puts the page behind a dialog. */

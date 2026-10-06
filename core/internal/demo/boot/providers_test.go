@@ -8,7 +8,13 @@ import (
 )
 
 var deny = ProviderDeny{
-	Prefixes:    []string{"PLANE_", "BISTRACK_", "TWILIO_", "HOS_PAYMENT_", "HOS_ASSIST_"},
+	Prefixes: []string{"PLANE_", "BISTRACK_", "TWILIO_", "HOS_PAYMENT_", "HOS_ASSIST_"},
+	// The feedback bridge's own five (the Feature Polish ruling): the one
+	// outbound a demo box may carry, by exact name.
+	PrefixExceptions: []string{
+		"PLANE_API_URL", "PLANE_API_KEY", "PLANE_PROJECT_ID",
+		"PLANE_WORKSPACE_SLUG", "PLANE_FEEDBACK_MODULE",
+	},
 	Names:       []string{"SMS_PROVIDER", "HOS_CARD_BASE_URL", "NATS_URL", "HOS_STATEMENT_NOTICES"},
 	CardVar:     "HOS_CARD_PROCESSOR",
 	CardAllowed: "stub",
@@ -23,7 +29,6 @@ func TestRefuseProviderVarsRefusals(t *testing.T) {
 		environ []string
 		want    string
 	}{
-		{"plane bridge", []string{"PLANE_API_URL=https://pm.example", "HOME=/root"}, "PLANE_API_URL"},
 		{"plane prefix on any suffix", []string{"PLANE_SOMETHING_NEW=1"}, "PLANE_SOMETHING_NEW"},
 		{"bistrack pair", []string{"BISTRACK_API_KEY=x"}, "BISTRACK_API_KEY"},
 		{"twilio credential", []string{"TWILIO_AUTH_TOKEN=x"}, "TWILIO_AUTH_TOKEN"},
@@ -44,6 +49,22 @@ func TestRefuseProviderVarsRefusals(t *testing.T) {
 		if !strings.Contains(err.Error(), c.want) {
 			t.Fatalf("%s: refusal %q does not name %s", c.name, err, c.want)
 		}
+	}
+}
+
+// The feedback bridge's five exact names pass the gate (the Feature Polish
+// ruling): the one outbound a demo box may carry, and only these five - any
+// other PLANE_ name still refuses, which the refusal table above holds.
+func TestRefuseProviderVarsAcceptsTheFeedbackBridge(t *testing.T) {
+	environ := []string{
+		"PLANE_API_URL=https://pm.example",
+		"PLANE_API_KEY=bridge-key",
+		"PLANE_PROJECT_ID=bridge-project",
+		"PLANE_WORKSPACE_SLUG=ws",
+		"PLANE_FEEDBACK_MODULE=Feature Polish",
+	}
+	if err := RefuseProviderVars(environ, deny); err != nil {
+		t.Fatalf("the feedback bridge's variables refused: %v", err)
 	}
 }
 
