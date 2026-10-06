@@ -134,6 +134,7 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 	fmt.Fprintf(out, "  branches       %s\n", branchLine(branches))
 	fmt.Fprintf(out, "  demo logins    %s\n", personaLine(personas))
 	fmt.Fprintf(out, "  POD sealing    %s\n", sealMode(keyed))
+	fmt.Fprintf(out, "  scrub names    %d migration-planted demo customers renamed off their placeholders with -apply\n", len(scrubRenames))
 	fmt.Fprintf(out, "  plan           %d rows across %d tables, dated %s … %s\n\n",
 		summary.Rows, len(summary.ByTable), summary.FirstDate, summary.LastDate)
 	writeSummary(out, summary)
@@ -158,13 +159,24 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 		_ = tx.Rollback(ctx)
 		return fmt.Errorf("demoseed: nothing was written: %w", err)
 	}
+	// The one write the INSERT-only applier cannot express: the migration-planted demo
+	// customers' scrub placeholder names (scrubname.go). Inside the same transaction, so the
+	// world still lands all-or-nothing.
+	renamed, err := renameScrubbedDemoCustomers(ctx, tx, now)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		return fmt.Errorf("demoseed: nothing was written: %w", err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("demoseed: commit: %w", err)
 	}
 
 	fmt.Fprintf(out, "\napplied: %d proposed · %d created · %d already present\n",
 		res.Proposed, res.Created, res.Skipped)
-	if res.Created == 0 {
+	if renamed > 0 {
+		fmt.Fprintf(out, "renamed:  %d migration-planted demo customer(s) off their scrub placeholder names\n", renamed)
+	}
+	if res.Created == 0 && renamed == 0 {
 		fmt.Fprintln(out, "the demo world was already complete, this run changed nothing.")
 	}
 	for _, t := range sortedKeys(res.ByTable) {
