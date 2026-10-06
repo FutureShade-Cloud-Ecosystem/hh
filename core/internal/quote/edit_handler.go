@@ -51,9 +51,16 @@ func (h *StaffHandler) RegisterStaffRoutes(r httpx.Registrar, g *guards.Guards) 
 	// Registering this at requireManager instead would have been the wrong gate, inside/outside
 	// sales are Tier-3 frontline roles and they are the people who do this.
 	r.Handle("POST /api/v1/quotes/{id}/convert", g.RequireStaff(h.staff(h.convertQuote)))
+	r.Handle("POST /api/v1/quotes/{id}/order-payment", g.RequireStaff(h.staff(h.takeOrderPayment)))
 	// DIB-59 comparison. A POST because the alternates are a request BODY, not a filter, but it is a
 	// strictly read-only operation: it writes nothing, to any table, including pricing_audit_log.
 	r.Handle("POST /api/v1/quotes/{id}/lines/{lineNo}/compare", g.RequireStaff(h.staff(h.compareLine)))
+	// The quote floor's request door (plan 1.1): for a line the caller may
+	// edit whose asked discount lands below the floor, one approval request
+	// bound to that quote, that line and that discount. requireStaff is the
+	// coarse first line only; the edit ladder and the floor decision run in
+	// the service, where the caller is actually resolved.
+	r.Handle("POST /api/v1/quotes/{id}/lines/{lineNo}/floor-approval", g.RequireStaff(h.staff(h.requestFloorApproval)))
 	// DIB-491, the related-documents lineage read (lineage.go): a quote's document family as
 	// normalized rows, askable from EITHER end of the quote→order link. The orders route lives here
 	// because the read model is the quote family, the same "one namespace for the operator, whatever
@@ -248,6 +255,31 @@ func (h *StaffHandler) removeLine(w http.ResponseWriter, r *http.Request, _ guar
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
+// requestFloorApproval is the request door (plan 1.1). The body carries
+// the discount asked for and a bounded free text note; the subject and the
+// detail are the server's own.
+func (h *StaffHandler) requestFloorApproval(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+	lineNo, err := lineNoParam(r)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	var body struct {
+		DiscPct int    `json:"disc_pct"`
+		Note    string `json:"note"`
+	}
+	if err := decodeBody(w, r, &body); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	ans, err := h.svc.RequestFloorApproval(r.Context(), r.PathValue("id"), lineNo, body.DiscPct, body.Note)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, ans)
+}
+
 func (h *StaffHandler) compareLine(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
 	lineNo, err := lineNoParam(r)
 	if err != nil {
@@ -300,6 +332,31 @@ func (h *StaffHandler) convertQuote(w http.ResponseWriter, r *http.Request, _ gu
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, res)
+}
+
+// takeOrderPayment is the QD-5 counter door: take payment on a converted quote's order (or, for a
+// customer with no credit, convert and pay as one action). The body is required: a payment with no
+// tender, amount and key is not a payment.
+func (h *StaffHandler) takeOrderPayment(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+	var body struct {
+		Method         string `json:"method"`
+		AmountCents    int64  `json:"amount_cents"`
+		Reference      string `json:"reference"`
+		IdempotencyKey string `json:"idempotency_key"`
+	}
+	if err := decodeBody(w, r, &body); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	res, err := h.svc.TakeOrderPayment(r.Context(), r.PathValue("id"), OrderPaymentInput{
+		Method: body.Method, AmountCents: body.AmountCents, Reference: body.Reference,
+		IdempotencyKey: body.IdempotencyKey,
+	})
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
 // - DIB-491: related documents + acceptance settings -
@@ -369,13 +426,18 @@ func (h *StaffHandler) setAcceptanceSettings(w http.ResponseWriter, r *http.Requ
 func (h *StaffHandler) writeErr(w http.ResponseWriter, err error) {
 	var notEditable *NotEditableError
 	var expired *QuoteExpiredError
-	var priceBlocked *PriceBlockedError
 	var badRequest httpx.BadRequestError
 	var creditBlocked ErrCreditBlocked
 	var notSelling *NotSellingRoleError
 	var alreadyAccepted *AlreadyAcceptedError
 	var notSettingsAdmin *NotSettingsAdminError
+	var notOwner *NotQuoteOwnerError
+	var floorRefusal *FloorRefusalError
+	var nothingToApprove *NothingToApproveError
+	var paymentConflict *OrderPaymentConflictError
 	switch {
+	case errors.As(err, &paymentConflict):
+		httpx.Error(w, http.StatusConflict, paymentConflict.Error())
 	// - DIB-483 / M3-G7B: the credit refusal keeps its REASON -
 	// This case sits ABOVE the generic ErrInvalidTransition case below, and the ordering is the
 	// entire fix. ErrCreditBlocked.Unwrap() returns ErrInvalidTransition on purpose (it is how the
@@ -394,6 +456,18 @@ func (h *StaffHandler) writeErr(w http.ResponseWriter, err error) {
 		httpx.Error(w, http.StatusConflict, alreadyAccepted.Error())
 	case errors.As(err, &notSettingsAdmin):
 		httpx.Error(w, http.StatusForbidden, notSettingsAdmin.Error())
+	case errors.As(err, &notOwner):
+		// Plan 3.3: name the way forward, never a bare 403.
+		httpx.Error(w, http.StatusForbidden, notOwner.Error())
+	case errors.As(err, &floorRefusal):
+		// The typed 409: the policy, who may approve, the branch manager
+		// way forward, the caller's standing request, and the figures for
+		// callers on the cost list.
+		httpx.WriteJSON(w, http.StatusConflict, floorRefusal)
+	case errors.As(err, &nothingToApprove):
+		httpx.Error(w, http.StatusConflict, nothingToApprove.Error())
+	case errors.Is(err, errFloorStateChanged):
+		httpx.Error(w, http.StatusConflict, errFloorStateChanged.Error())
 	case errors.As(err, &notSelling):
 		httpx.Error(w, http.StatusForbidden, notSelling.Error())
 	case errors.As(err, &notEditable):
@@ -402,8 +476,6 @@ func (h *StaffHandler) writeErr(w http.ResponseWriter, err error) {
 	case errors.As(err, &expired):
 		// D2b: name the date AND the way forward, not a bare "expired".
 		httpx.Error(w, http.StatusConflict, expired.Error())
-	case errors.As(err, &priceBlocked):
-		httpx.Error(w, http.StatusConflict, priceBlocked.Error())
 	case errors.As(err, &badRequest):
 		httpx.Error(w, http.StatusBadRequest, badRequest.Error())
 	case errors.Is(err, ErrInvalidTransition):

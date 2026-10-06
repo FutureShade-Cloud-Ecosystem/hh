@@ -44,10 +44,12 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync"
 )
 
@@ -56,6 +58,118 @@ import (
 // own repository writes draw from too so desk and device share one
 // feed.
 const approvalsSyncScope = "approvals"
+
+// publishedFloor is the margin floor's decide authority the sync door
+// decides with. The composition root wires the rail with the dealer's
+// configured set (Approvals.WithFloorApprovers, built from whatever role
+// configuration document the root loaded), and it constructs this store
+// on a wire the configuration does not pass, so the root PUBLISHES the
+// set it gave the rail (PublishFloorApprovers, beside the rail's own
+// wiring) and every pushed decision reads it: the desk's door and the
+// device's door hold one authority by construction, never a second copy
+// of the mapping. The carried default answers until the root runs, the
+// same default the rail itself holds before its own wiring.
+var publishedFloor = func() *atomic.Pointer[FloorApprovers] {
+	p := &atomic.Pointer[FloorApprovers]{}
+	d := defaultFloorApprovers()
+	p.Store(&d)
+	return p
+}()
+
+// PublishFloorApprovers publishes the configured margin floor decide
+// authority for the sync door: the set the composition root gave the
+// rail. A zero set publishes nothing and the carried default stands, the
+// same fail posture the rail's own WithFloorApprovers holds.
+func PublishFloorApprovers(f FloorApprovers) {
+	if len(f.DealerWide) == 0 && len(f.OwnBranch) == 0 {
+		return
+	}
+	publishedFloor.Store(&f)
+}
+
+// syncFloorApprovers reads the published authority.
+func syncFloorApprovers() FloorApprovers {
+	if f := publishedFloor.Load(); f != nil {
+		return *f
+	}
+	return defaultFloorApprovers()
+}
+
+// publishedApprovalRoles is the dealer's role configuration the sync door
+// holds its REST routes' role gate with (the round 4 audit): the filing
+// route needs Work and the decide route Manage on named surfaces, a wall the
+// door lacked. The composition root PUBLISHES the configuration it gave the
+// role gate (PublishApprovalRoles, beside PublishFloorApprovers), and the
+// door reads it. Until the root runs the decided default answers, the same
+// carried-default posture the floor set holds above; a configuration that
+// cannot be loaded leaves no level for anyone and the door refuses.
+var publishedApprovalRoles = func() *atomic.Pointer[roleconfig.Config] {
+	p := &atomic.Pointer[roleconfig.Config]{}
+	if d, err := roleconfig.Default(); err == nil {
+		p.Store(d)
+	}
+	return p
+}()
+
+// PublishApprovalRoles publishes the role configuration for the approvals
+// sync door's role walls. A nil configuration unpublishes: no level, every
+// filing and decision refused.
+func PublishApprovalRoles(c *roleconfig.Config) { publishedApprovalRoles.Store(c) }
+
+// The role walls the REST routes carry (the contract's x-access): filing an
+// approval needs Work on one of three surfaces, deciding one needs Manage on
+// one of two. The sync door holds the same two walls.
+var (
+	approvalFileSurfaces   = []string{"counter-till", "quote-desk", "manager-home"}
+	approvalDecideSurfaces = []string{"manager-home", "quote-desk"}
+)
+
+// callerHoldsLevel resolves the caller's authority and answers the route
+// gate's admission rule for it (holdsLevel). An unlinked caller or an
+// unreadable authority fails closed.
+func (s *ApprovalsSyncStore) callerHoldsLevel(ctx context.Context, f sync.ScopeFilter, level roleconfig.Level, surfaces []string, what string) (StaffContext, error) {
+	uid := ""
+	if s.link != nil && f.Actor != "" {
+		if u, ok := s.link(ctx, f.Actor); ok {
+			uid = u
+		}
+	}
+	if uid == "" {
+		return StaffContext{}, fmt.Errorf("identity: a pushed %s needs the caller's linked staff user: %w", what, sync.ErrOpRefused)
+	}
+	caller, err := s.resolve(ctx, uid, f.OrgID)
+	if err != nil {
+		return StaffContext{}, err
+	}
+	if err := holdsLevel(caller, level, surfaces, what); err != nil {
+		return StaffContext{}, err
+	}
+	return caller, nil
+}
+
+// holdsLevel is the route gate's admission rule for one resolved caller: an
+// active user whose role holds at least level on at least one of the
+// surfaces. The platform super admin passes the level check, as the gate
+// passes the platform roles. Everything else fails closed: a role with no
+// ERP name, a role the configuration does not know, an unpublished door.
+func holdsLevel(caller StaffContext, level roleconfig.Level, surfaces []string, what string) error {
+	if caller.Status != StatusActive {
+		return fmt.Errorf("identity: the caller is not an active staff user: %w", sync.ErrOpRefused)
+	}
+	if caller.RoleCode == RoleSuperAdmin {
+		return nil
+	}
+	if cfg := publishedApprovalRoles.Load(); cfg != nil {
+		if canonical, ok := CanonicalForERPCode(caller.RoleCode); ok {
+			for _, surface := range surfaces {
+				if lvl, err := cfg.Level(canonical, surface); err == nil && lvl.AtLeast(level) {
+					return nil
+				}
+			}
+		}
+	}
+	return fmt.Errorf("identity: the caller's role may not %s: %w", what, sync.ErrOpRefused)
+}
 
 // approvalsSeqCTE is the data-modifying CTE the rail's single-statement
 // write paths prepend to draw a fresh approvals seq atomically in the
@@ -82,10 +196,14 @@ func allocateApprovalsSeqTx(ctx context.Context, tx pgx.Tx) (int64, error) {
 
 // approvalSyncColumns is the rail's own card projection (the columns
 // ListApprovals selects, amount out of the data JSONB exactly as the
-// rail reads it) plus the two sync legs.
+// rail reads it) plus the two sync legs. line_id rides along so a pushed
+// decision holds the decide path's branch arm rule (P2-C): the device
+// decides exactly what the desk decides.
 const approvalSyncColumns = `a.id::text, a.requested_by::text, a.branch_id::text, a.policy_type, a.detail,
 	COALESCE(a.subject_ref,''), COALESCE((a.data->>'amount_cents')::bigint, 0),
+	COALESCE(a.data->>'line_id',''),
 	a.status, COALESCE(a.decided_by::text,''),
+	` + requesterRoleHead + `a.requested_by` + requesterRoleTail + `,
 	a.seq, (a.deleted_at IS NOT NULL) AS deleted`
 
 // approvalSyncRow is one scanned row plus its sync legs.
@@ -95,12 +213,12 @@ type approvalSyncRow struct {
 	deleted bool
 }
 
-// scanApprovalSync reads the 11-target row.
+// scanApprovalSync reads the 12-target row.
 func scanApprovalSync(row interface{ Scan(dest ...any) error }) (approvalSyncRow, error) {
 	var r approvalSyncRow
 	var policy, status string
 	if err := row.Scan(&r.req.ID, &r.req.RequestedBy, &r.req.BranchID, &policy, &r.req.Detail,
-		&r.req.SubjectRef, &r.req.AmountCents, &status, &r.req.DecidedBy,
+		&r.req.SubjectRef, &r.req.AmountCents, &r.req.LineID, &status, &r.req.DecidedBy, &r.req.RequesterRole,
 		&r.seq, &r.deleted); err != nil {
 		return approvalSyncRow{}, err
 	}
@@ -171,41 +289,96 @@ const approvalSyncQuery = `SELECT ` + approvalSyncColumns + `
 
 // Pull returns the page of approval changes past since, live rows and
 // tombstones in seq order, at most limit rows total, under the org
-// fence.
+// fence. A floor request is a live row only for a caller that could
+// decide it or filed it (P2-3, round 3): its detail carries the margin
+// figures and this door has no money gate. Rows the caller may not read
+// are skipped and the page keeps filling, so a hidden row never shortens
+// a page that has a follower. A tombstone names an id alone and stays.
 func (s *ApprovalsSyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, limit int) ([]sync.Entity, []sync.Tombstone, error) {
 	where, args, ok := approvalScopePredicate(f)
 	if !ok {
 		return []sync.Entity{}, []sync.Tombstone{}, nil
 	}
-	rows, err := s.pool.Query(ctx, approvalSyncQuery+`
-		WHERE `+where+` AND a.seq IS NOT NULL AND a.seq > $2
-		ORDER BY a.seq ASC
-		LIMIT $3`, append(args, since, limit)...)
-	if err != nil {
-		return nil, nil, fmt.Errorf("identity: approvals sync pull: %w", err)
-	}
-	defer rows.Close()
+	reader := s.readerFor(ctx, f)
 	items := []sync.Entity{}
 	tombstones := []sync.Tombstone{}
-	for rows.Next() {
-		r, err := scanApprovalSync(rows)
+	for {
+		rows, err := s.pool.Query(ctx, approvalSyncQuery+`
+			WHERE `+where+` AND a.seq IS NOT NULL AND a.seq > $2
+			ORDER BY a.seq ASC
+			LIMIT $3`, append(append([]any{}, args...), since, limit)...)
 		if err != nil {
-			return nil, nil, fmt.Errorf("identity: approvals sync pull scan: %w", err)
+			return nil, nil, fmt.Errorf("identity: approvals sync pull: %w", err)
 		}
-		if r.deleted {
-			tombstones = append(tombstones, sync.Tombstone{ID: r.req.ID, Seq: r.seq})
-			continue
+		scanned := 0
+		for rows.Next() {
+			r, err := scanApprovalSync(rows)
+			if err != nil {
+				rows.Close()
+				return nil, nil, fmt.Errorf("identity: approvals sync pull scan: %w", err)
+			}
+			scanned++
+			since = r.seq
+			if r.deleted {
+				tombstones = append(tombstones, sync.Tombstone{ID: r.req.ID, Seq: r.seq})
+			} else {
+				if !reader(r.req) {
+					continue
+				}
+				data, err := approvalData(r.req)
+				if err != nil {
+					rows.Close()
+					return nil, nil, err
+				}
+				items = append(items, sync.Entity{ID: r.req.ID, Seq: r.seq, Data: data})
+			}
+			if len(items)+len(tombstones) >= limit {
+				break
+			}
 		}
-		data, err := approvalData(r.req)
-		if err != nil {
-			return nil, nil, err
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, nil, fmt.Errorf("identity: approvals sync pull: %w", err)
 		}
-		items = append(items, sync.Entity{ID: r.req.ID, Seq: r.seq, Data: data})
+		if len(items)+len(tombstones) >= limit || scanned < limit {
+			return items, tombstones, nil
+		}
 	}
-	if err := rows.Err(); err != nil {
-		return nil, nil, fmt.Errorf("identity: approvals sync pull: %w", err)
+}
+
+// readerFor resolves the caller's authority once and answers, per request,
+// whether the REST list would show the caller that request (the census
+// round): the list route's own wall (Work on the counter, the Quote Desk or
+// Manager Home), the list's branch reach (a dealer wide caller reads every
+// branch, a scoped one only its granted branches, none when it holds none),
+// and the floor card rule (mayReadRequestWith under the published floor
+// set). One addition to the list: a caller always reads back its own filings,
+// whatever branch they sit in, so a device holds what it pushed (the rail
+// does not fence the filing branch by reach). A caller with no linked user,
+// an unreadable authority or a role the list route refuses reads nothing:
+// the door fails closed.
+func (s *ApprovalsSyncStore) readerFor(ctx context.Context, f sync.ScopeFilter) func(ApprovalRequest) bool {
+	fa := syncFloorApprovers()
+	var caller StaffContext
+	resolved := false
+	if s.link != nil && f.Actor != "" {
+		if uid, ok := s.link(ctx, f.Actor); ok && uid != "" {
+			if c, err := s.resolve(ctx, uid, f.OrgID); err == nil {
+				caller = c
+				resolved = holdsLevel(c, roleconfig.LevelWork, approvalFileSurfaces, "read approval requests") == nil
+			}
+		}
 	}
-	return items, tombstones, nil
+	return func(r ApprovalRequest) bool {
+		if !resolved {
+			return false
+		}
+		own := caller.UserID != "" && r.RequestedBy == caller.UserID
+		if caller.Scope != ScopeGlobal && !caller.Branches[r.BranchID] && !own {
+			return false
+		}
+		return mayReadRequestWith(fa, caller, r)
+	}
 }
 
 // FindApplied resolves one idempotency key to the row it applied,
@@ -225,6 +398,11 @@ func (s *ApprovalsSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter
 		return sync.RowState{}, false, fmt.Errorf("identity: approvals sync find applied: %w", err)
 	}
 	rs, err := approvalStateOf(r)
+	if err == nil && !r.deleted && !s.readerFor(ctx, f)(r.req) {
+		// The engine never reads Data on a replay, but the projection of a
+		// card the caller may not read leaves nothing through this door.
+		rs.Data = nil
+	}
 	return rs, true, err
 }
 
@@ -244,6 +422,13 @@ func (s *ApprovalsSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id st
 		return sync.RowState{}, false, fmt.Errorf("identity: approvals sync load: %w", err)
 	}
 	rs, err := approvalStateOf(r)
+	if err == nil && !r.deleted && !s.readerFor(ctx, f)(r.req) {
+		// The row exists and the engine still needs its id and seq (the
+		// stale check, the write's own refusal words), but its projection
+		// travels in a conflict envelope: a card the caller may not read
+		// carries no data out of this door (P2-3, round 3).
+		rs.Data = nil
+	}
 	return rs, true, err
 }
 
@@ -266,12 +451,18 @@ func approvalCreateFields(fields map[string]any) error {
 
 // approvalCallerPolicy pins the caller-facing policy set: the two
 // system-only policies (a JE card, a freight card) are filed by the
-// ledger and the dispatch gate, and the module's own CreateApproval
-// refuses them with these words; the sync door refuses identically.
+// ledger and the dispatch gate, and the margin floor is the quote
+// module's own (D7, filed through FileFloorApproval, which binds the
+// quote, the line and the discount from its own state); the module's own
+// CreateApproval refuses all three with these words and the sync door
+// refuses identically, so no door files a card whose subject and detail
+// are the filer's own choosing.
 func approvalCallerPolicy(p PolicyType) error {
 	switch p {
-	case PolicyMargin, PolicyCredit, PolicyCOD:
+	case PolicyCredit, PolicyCOD:
 		return nil
+	case PolicyMargin:
+		return fmt.Errorf("identity: margin approvals are filed by the quote desk for a quote line, not directly: %w", sync.ErrOpRefused)
 	case PolicyJEThreshold:
 		return fmt.Errorf("identity: JE approvals are filed by the ledger, not directly: %w", sync.ErrOpRefused)
 	case PolicyFreightAboveQuote:
@@ -319,6 +510,11 @@ func (s *ApprovalsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key
 	if !approvalBranchInOrg(ctx, s, branchID, f.OrgID) {
 		return sync.RowState{}, fmt.Errorf("identity: the branch is not in this organisation: %w", sync.ErrOpRefused)
 	}
+	// The filing route's own wall (Work on the counter, the Quote Desk or
+	// Manager Home): a role the route answers 403 files nothing from here.
+	if _, err := s.callerHoldsLevel(ctx, f, roleconfig.LevelWork, approvalFileSurfaces, "file an approval request"); err != nil {
+		return sync.RowState{}, err
+	}
 	detail, _ := fields["detail"].(string)
 	subject, _ := fields["subject_ref"].(string)
 	if strings.TrimSpace(subject) != "" && len(strings.TrimSpace(subject)) > 256 {
@@ -360,6 +556,11 @@ func (s *ApprovalsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key
 		// The client-chosen id is taken: inside the caller's org the
 		// collision is the caller's own fact, outside it the answer is
 		// not-found so existence never leaks across the fence.
+		// Nothing was written, so the transaction ends first: the
+		// read-back goes through the pool, and asking it for a second
+		// connection while this one is held starves the pool once
+		// pool-size creates collide.
+		_ = tx.Rollback(ctx)
 		if _, own, _ := s.Load(ctx, f, id); own {
 			return sync.RowState{}, sync.ErrRowExists
 		}
@@ -429,6 +630,17 @@ func (s *ApprovalsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, 
 		return sync.RowState{}, fmt.Errorf("identity: an approvals update declares a decision (status) or a note (detail), nothing else: %w", sync.ErrOpRefused)
 	}
 
+	// The decider's linked user and authority are read BEFORE the
+	// transaction opens: both go through the pool (the linker and the
+	// repository), and a second connection asked for while the decide
+	// transaction holds the first starves the pool once pool-size
+	// decisions are in flight. The errors are carried to the point the
+	// decide arm used to raise them, so the refusal order is unchanged.
+	var auth decideAuthority
+	if decide {
+		auth = s.decideAuthorityFor(ctx, f)
+	}
+
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return sync.RowState{}, fmt.Errorf("identity: begin approvals sync write: %w", err)
@@ -436,14 +648,39 @@ func (s *ApprovalsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, 
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	if decide {
-		return s.writeDecision(ctx, tx, f, id, key, fields)
+		return s.writeDecision(ctx, tx, f, id, key, fields, auth)
 	}
 	return s.writeNote(ctx, tx, f, id, key, fields)
 }
 
+// decideAuthority is the decider's linked user and the authority read for
+// it, taken before the decide transaction opens. userID is empty when the
+// caller has no linked staff user; err is the authority read's error.
+type decideAuthority struct {
+	userID string
+	caller StaffContext
+	err    error
+}
+
+// decideAuthorityFor links the caller and, when linked, reads its authority
+// in the filter's org, both through the pool (no transaction held).
+func (s *ApprovalsSyncStore) decideAuthorityFor(ctx context.Context, f sync.ScopeFilter) decideAuthority {
+	var a decideAuthority
+	if s.link != nil && f.Actor != "" {
+		if uid, ok := s.link(ctx, f.Actor); ok {
+			a.userID = uid
+		}
+	}
+	if a.userID != "" {
+		a.caller, a.err = s.resolve(ctx, a.userID, f.OrgID)
+	}
+	return a
+}
+
 // writeDecision is the decide arm: the module's own rules, then the
-// rail's own CAS stamp.
-func (s *ApprovalsSyncStore) writeDecision(ctx context.Context, tx pgx.Tx, f sync.ScopeFilter, id, key string, fields map[string]any) (sync.RowState, error) {
+// rail's own CAS stamp. The decider's authority arrives already read (auth):
+// nothing in this arm asks the pool for a connection while tx holds one.
+func (s *ApprovalsSyncStore) writeDecision(ctx context.Context, tx pgx.Tx, f sync.ScopeFilter, id, key string, fields map[string]any, auth decideAuthority) (sync.RowState, error) {
 	status, _ := fields["status"].(string)
 	approve := status == string(ApprovalApproved)
 	if !approve && status != string(ApprovalRejected) {
@@ -453,12 +690,7 @@ func (s *ApprovalsSyncStore) writeDecision(ctx context.Context, tx pgx.Tx, f syn
 
 	// The caller's authority, resolved the way the rail resolves a
 	// projection caller: the linked ERP user, then ResolveStaff.
-	decider := ""
-	if s.link != nil && f.Actor != "" {
-		if uid, ok := s.link(ctx, f.Actor); ok {
-			decider = uid
-		}
-	}
+	decider := auth.userID
 	if decider == "" {
 		return sync.RowState{}, fmt.Errorf("identity: a pushed decision needs the caller's linked staff user: %w", sync.ErrOpRefused)
 	}
@@ -480,13 +712,23 @@ func (s *ApprovalsSyncStore) writeDecision(ctx context.Context, tx pgx.Tx, f syn
 		return sync.RowState{}, fmt.Errorf("identity: a %s decision moves money at the desk, not through a replayed outbox: %w",
 			r.req.Policy, sync.ErrOpRefused)
 	}
-	caller, err := s.resolve(ctx, decider, f.OrgID)
-	if err != nil {
-		return sync.RowState{}, err
+	caller := auth.caller
+	if auth.err != nil {
+		return sync.RowState{}, auth.err
 	}
-	// The module's own validation: authority, four-eyes, PENDING.
-	if err := r.req.Decide(caller, approve); err != nil {
+	// The module's own validation: authority, four-eyes, PENDING. The
+	// margin arm's authority is the CONFIGURED floor set the rail holds
+	// (D11, published by the composition root), so a pushed decision and
+	// a desk decision hold one authority: the branch's configured Sales
+	// manager decides from the device exactly what it decides at the desk.
+	if err := r.req.DecideWithFloor(caller, approve, syncFloorApprovers()); err != nil {
 		return sync.RowState{}, fmt.Errorf("identity: %w: %w", sync.ErrOpRefused, err)
+	}
+	// The decide route's own wall (Manage on Manager Home or the Quote
+	// Desk) beside the module's rules above: HR holds the leadership tier
+	// the credit rule admits, and the route refuses it.
+	if err := holdsLevel(caller, roleconfig.LevelManage, approvalDecideSurfaces, "decide an approval request"); err != nil {
+		return sync.RowState{}, err
 	}
 	seq, err := allocateApprovalsSeqTx(ctx, tx)
 	if err != nil {
@@ -540,12 +782,12 @@ func (s *ApprovalsSyncStore) writeNote(ctx context.Context, tx pgx.Tx, f sync.Sc
 		return sync.RowState{}, fmt.Errorf("identity: a pushed note needs the caller's linked staff user: %w", sync.ErrOpRefused)
 	}
 
-	var fromDetail, fromStatus, fromRequester string
+	var fromDetail, fromStatus, fromRequester, fromPolicy string
 	err := tx.QueryRow(ctx, `
-		SELECT a.detail, a.status, a.requested_by::text FROM permission_approval_requests a
+		SELECT a.detail, a.status, a.requested_by::text, a.policy_type FROM permission_approval_requests a
 		 WHERE a.id = $1::uuid AND a.deleted_at IS NULL
 		   AND EXISTS (SELECT 1 FROM locations l WHERE l.id = a.branch_id AND l.org_id = $2::uuid)
-		 FOR UPDATE OF a`, id, f.OrgID).Scan(&fromDetail, &fromStatus, &fromRequester)
+		 FOR UPDATE OF a`, id, f.OrgID).Scan(&fromDetail, &fromStatus, &fromRequester, &fromPolicy)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, sync.ErrRowNotFound
 	}
@@ -557,6 +799,14 @@ func (s *ApprovalsSyncStore) writeNote(ctx context.Context, tx pgx.Tx, f sync.Sc
 	}
 	if fromStatus != string(ApprovalPending) {
 		return sync.RowState{}, fmt.Errorf("identity: a decided request is not editable: %w", sync.ErrOpRefused)
+	}
+	// A floor request's detail (and the subject it is bound to) is the
+	// quote desk's own record, built from the server's figures at filing
+	// (D7): the approver reads words the server checked, so the requester
+	// cannot replace them through this door, whatever note rights a plain
+	// filing carries.
+	if PolicyType(fromPolicy) == PolicyMargin {
+		return sync.RowState{}, fmt.Errorf("identity: the floor request's detail is the quote desk's own record, not an editable note: %w", sync.ErrOpRefused)
 	}
 	if detail == fromDetail {
 		// The declared note is already the request's note (a superseded
@@ -602,16 +852,56 @@ func (s *ApprovalsSyncStore) writeNote(ctx context.Context, tx pgx.Tx, f sync.Sc
 // drive-run design note: the last live key still dedups after the
 // delete, and the delete itself is idempotent through the engine's
 // already-tombstoned arm.
+//
+// A withdrawal is the REQUESTER's own act (P2-A, round 4). The tombstone
+// takes effect (the lists, the decide path and the floor consumption all
+// ignore a deleted row), so a door fenced by org alone let any staff
+// member cancel another's request, or an approved clearing the seller had
+// not yet used. The requester may withdraw its own request in any state
+// except one whose approval has been consumed: a used up approval is a
+// record the sale already stands on, refused as the door refuses
+// elsewhere. Every other caller is refused in every state.
 func (s *ApprovalsSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, key string) (sync.RowState, error) {
 	if _, _, ok := approvalScopePredicate(f); !ok {
 		return sync.RowState{}, sync.ErrOpRefused
 	}
 	_ = key
+	writer := ""
+	if s.link != nil && f.Actor != "" {
+		if uid, ok := s.link(ctx, f.Actor); ok {
+			writer = uid
+		}
+	}
+	if writer == "" {
+		return sync.RowState{}, fmt.Errorf("identity: a pushed withdrawal needs the caller's linked staff user: %w", sync.ErrOpRefused)
+	}
+	if !approvalLooksLikeUUID(id) {
+		return sync.RowState{}, sync.ErrRowNotFound
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return sync.RowState{}, fmt.Errorf("identity: begin approvals sync delete: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	var fromRequester string
+	var consumed bool
+	err = tx.QueryRow(ctx, `
+		SELECT a.requested_by::text, (a.data->>'used') IS NOT NULL FROM permission_approval_requests a
+		 WHERE a.id = $1::uuid AND a.deleted_at IS NULL
+		   AND EXISTS (SELECT 1 FROM locations l WHERE l.id = a.branch_id AND l.org_id = $2::uuid)
+		 FOR UPDATE OF a`, id, f.OrgID).Scan(&fromRequester, &consumed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return sync.RowState{}, sync.ErrRowNotFound
+	}
+	if err != nil {
+		return sync.RowState{}, fmt.Errorf("identity: lock approval %q for sync delete: %w", id, err)
+	}
+	if fromRequester != writer {
+		return sync.RowState{}, fmt.Errorf("identity: only the requester may withdraw a request: %w", sync.ErrOpRefused)
+	}
+	if consumed {
+		return sync.RowState{}, fmt.Errorf("identity: a used up approval is a record, not withdrawable: %w", sync.ErrOpRefused)
+	}
 	seq, err := allocateApprovalsSeqTx(ctx, tx)
 	if err != nil {
 		return sync.RowState{}, err
@@ -621,7 +911,7 @@ func (s *ApprovalsSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id,
 		UPDATE permission_approval_requests a SET
 			deleted_at = now(),
 			seq        = $3
-		WHERE a.id = $1::uuid AND a.deleted_at IS NULL
+		WHERE a.id = $1::uuid AND a.deleted_at IS NULL AND (a.data->>'used') IS NULL
 		  AND EXISTS (SELECT 1 FROM locations l WHERE l.id = a.branch_id AND l.org_id = $2::uuid)
 		RETURNING (a.deleted_at IS NOT NULL)`, id, f.OrgID, seq).Scan(&deleted)
 	if errors.Is(err, pgx.ErrNoRows) {

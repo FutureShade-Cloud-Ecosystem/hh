@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
 )
 
 var errNoDB = errors.New("till: database not configured")
@@ -616,6 +619,34 @@ func (r *Repository) MarkNSF(ctx context.Context, in nsfReverseInput) (nsfRevers
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return nsfReverseResult{}, err
+	}
+	// The payments counter row comes next, taken WITHOUT advancing it, before any invoice row. The
+	// settle draws this same row first, so the two writers can never interleave their invoice rows:
+	// the bounce walks its rows in ascending id order and the settle locks the order the caller
+	// named, and two writers taking the same rows in opposite orders is a deadlock waiting for its
+	// interleaving. MarkNSF writes no payments feed row, so for the bounce this lock is purely the
+	// serialising one. It is the payments module's own non advancing upsert (the till package can
+	// import it; payments imports nothing here), run on this transaction.
+	if err := payments.NewRepository(nil).LockPaymentsSequenceTx(ctx, tx); err != nil {
+		return nsfReverseResult{}, fmt.Errorf("till: lock payments sequence: %w", err)
+	}
+	// The re-open's UPDATE draws the invoices sequence row while it computes the new row, so the
+	// invoice rows must already be held before that statement runs: a settle holding the invoice and
+	// waiting on the counter otherwise meets the bounce head on and one side is aborted with a 40P01.
+	// The rows are taken in ascending id order, the one order every multi-invoice writer uses (the
+	// money lock order recorded in payments/LOCK-ORDER.md), and FOR NO KEY UPDATE, not FOR UPDATE:
+	// the bounce writes no key column, and a FOR UPDATE would conflict with the FOR KEY SHARE a POS
+	// return's foreign key check holds on the returned sale's invoice while the return waits on this
+	// transaction's payments counter, closing the same cycle the settle's lock once did.
+	lockIDs := make([]string, 0, len(allocs))
+	for _, a := range allocs {
+		lockIDs = append(lockIDs, a.inv)
+	}
+	slices.Sort(lockIDs)
+	for _, id := range lockIDs {
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM invoices WHERE id = $1 FOR NO KEY UPDATE`, id); err != nil {
+			return nsfReverseResult{}, fmt.Errorf("till: lock invoice %s: %w", id, err)
+		}
 	}
 	for _, a := range allocs {
 		// The re-open stamps the invoices feed seq beside the move

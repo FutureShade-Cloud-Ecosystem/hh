@@ -149,7 +149,7 @@ type store interface {
 	OnHandFor(ctx context.Context, productID string) ([]OnHand, error)
 	RecentMoves(ctx context.Context, productID, branchID string, limit int) ([]StockMove, error)
 	PendingFulfilments(ctx context.Context, branchID string) ([]PendingFulfilment, error)
-	SnapshotOnHand(ctx context.Context, branchID string) ([]CountSnapshot, error)
+	SnapshotOnHand(ctx context.Context, tx pgx.Tx, branchID string) ([]CountSnapshot, error)
 	ReceivedLinesForPO(ctx context.Context, poID string) ([]ReceivedLine, error)
 }
 

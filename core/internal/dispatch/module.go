@@ -72,6 +72,15 @@ type OrderFulfiller interface {
 // this module to fabricate them, which is the exact stub behaviour DIB-386 deleted.
 type SignatureCapturer interface {
 	CaptureTyped(ctx context.Context, in TypedAttestation) (signatureRef string, err error)
+
+	// CaptureTypedTx is the same capture riding the CALLER'S transaction. A confirm that already
+	// holds a transaction (the pickups sync Write) must capture through it, a pool capture there
+	// would be a second acquisition while the transaction holds its connection (connection
+	// starvation at pool size, and rows that commit outside the confirm they belong to). It is on
+	// this interface rather than a second one because it is the same question: a capturer that
+	// cannot ride the caller's transaction says so here, at compile time of its wiring, instead of
+	// a write path discovering it mid-transaction.
+	CaptureTypedTx(ctx context.Context, tx pgx.Tx, in TypedAttestation) (signatureRef string, err error)
 }
 
 // PickCompletionReader is the RACK-TAG seam, and it exists to reverse a dependency that was pointing

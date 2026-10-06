@@ -110,7 +110,7 @@ type BranchStock struct {
 	InTransitBase float64 `json:"in_transit_base"`
 	AvailableBase float64 `json:"available_base"`
 	SoftHeldBase  float64 `json:"soft_held_base"`
-	AvgCostCents  int64   `json:"avg_cost_cents"`
+	AvgCostCents  int64   `json:"avg_cost_cents,omitempty"`
 }
 
 // AvailabilityReader is the consumer-declared half of inventory's published QuoteAvailabilityReader.

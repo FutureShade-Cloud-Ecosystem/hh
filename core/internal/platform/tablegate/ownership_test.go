@@ -298,6 +298,7 @@ var migrationTopics = map[string]string{
 	"0215_identity_audit":                  "MULTI",
 	"0320_load_key_registry":               "load",
 	"0321_fb_moves_machine_principal":      "identity",
+	"0361_card_charge_attempts":            "payment",
 }
 
 // multiTopicSplits states the per-object attribution inside the five
@@ -373,6 +374,7 @@ var ownedObjects = map[string]string{
 	"bistrack_id_map":                 "bistrack",          // 0079_bistrack_sync
 	"branch_allocation_policy":        "inventory",         // 0115_stock_reservations
 	"branch_transit_days":             "inventory",         // 0158_transfer_eta_transit_days
+	"card_charge_attempts":            "payment",           // 0361_card_charge_attempts
 	"change_order_lines":              "order",             // 0125_order_change_orders
 	"change_orders":                   "order",             // 0125_order_change_orders
 	"commission_rules":                "reporting",         // 0144_commission_rules

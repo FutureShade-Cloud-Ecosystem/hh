@@ -121,7 +121,7 @@ func TestCatalogueInStockWiring_FilterAnswersTheStockedProductOnly(t *testing.T)
 	mux := http.NewServeMux()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	sg := testkit.NewStaffGuards(t)
-	wireMoney(mux, pool, sg.Guards, log, "")
+	wireMoney(mux, pool, sg.Guards, log, "", mustRoleConfigForWire())
 
 	on := url.Values{"q": {tag}, "in_stock_only": {"true"}, "branch_id": {branchID}}
 	if got := listCatalogueIDs(t, mux, on); !sameIDs(got, stocked) {

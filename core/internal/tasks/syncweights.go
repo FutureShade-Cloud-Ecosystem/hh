@@ -135,13 +135,28 @@ func (s *WeightSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, k
 // Load reads one NEED_WEIGHT row by id under the org predicate; a row
 // outside the caller's org is the same as an absent one.
 func (s *WeightSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
+	return s.load(ctx, s.pool, f, id)
+}
+
+// weightQuerier is the read surface a pool and a transaction share, so one
+// loader body serves the public Load (the pool) and the callers that
+// already hold a transaction (their own connection).
+type weightQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// load is Load over a querier. A caller inside a transaction passes the
+// transaction, so the read rides the connection it already holds instead
+// of asking the shared pool for a second one (connection starvation by
+// second acquisition when pool-size callers do this together).
+func (s *WeightSyncStore) load(ctx context.Context, db weightQuerier, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
 	where, args, ok := weightScopePredicate(f)
 	if !ok || !looksLikeUUID(id) {
 		return sync.RowState{}, false, nil
 	}
 	q := fmt.Sprintf(`SELECT %s FROM tasks WHERE id = $2::uuid AND %s`, syncColumns, where)
 	args = append(args, id)
-	r, err := scanSyncRow(s.pool.QueryRow(ctx, q, args...))
+	r, err := scanSyncRow(db.QueryRow(ctx, q, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, false, nil
 	}
@@ -244,7 +259,7 @@ func (s *WeightSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key st
 	if errors.Is(err, pgx.ErrNoRows) {
 		// The client-chosen id is taken; WHERE it is taken decides the
 		// refusal, existence never leaking across the scope boundary.
-		if _, own, _ := s.Load(ctx, f, id); own {
+		if _, own, _ := s.load(ctx, tx, f, id); own {
 			return sync.RowState{}, sync.ErrRowExists
 		}
 		return sync.RowState{}, sync.ErrRowNotFound

@@ -64,3 +64,7 @@ additions:
     reason: "HH-LOAD-1 load doors: the product category upsert, the parent named by legacy key, behind the load doors deployment switch; no ERP source route."
   - route: "PUT /api/v1/load/suppliers"
     reason: "HH-LOAD-1 load doors: the supplier upsert with its contact through the purchasing contact store, behind the load doors deployment switch; no ERP source route."
+  - route: "POST /api/v1/quotes/{id}/lines/{lineNo}/floor-approval"
+    reason: "The quote floor's request door (plan 1.1): files one approval request bound to that quote, that line and that discount; the ERP's margin request was a generic identity filing with no line binding; no ERP source route."
+  - route: "POST /api/v1/quotes/{id}/order-payment"
+    reason: "The counter's payment door on a converted quote's order (plan 1.1, QD-5): raises the order's invoice at the agreed totals and settles the payment through the payments settle; the ERP's one payment route is the register's record-payment against an existing invoice and no route finds the order a quote became; no ERP source route."
