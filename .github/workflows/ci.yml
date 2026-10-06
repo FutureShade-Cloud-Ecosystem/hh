@@ -277,12 +277,46 @@ jobs:
           # held before this job existed, and till_b4_gate stays migrated
           # above for the lane that adapts the fixture.
         run: go test ./... -count=1 -p 1
+      # The demo world proofs (TestDemoWorld_Quotes, TestDemoWorld_CounterTill)
+      # gate on their own throwaway Postgres: a database made fresh here for
+      # the next step alone and shared with no other leg. The proofs build
+      # and drop their own databases beside it on this service.
+      - name: Create the fresh database for the demo world proofs
+        run: |
+          set -euo pipefail
+          psql "$BASE/postgres?sslmode=disable" -v ON_ERROR_STOP=1 \
+            -c 'CREATE DATABASE hh_demo_world_proof'
       - name: Demo tag suite with the gate variable set
         working-directory: core
         env:
           DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5599/till_base?sslmode=disable
           HH_CORE_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5599/till_core_gate?sslmode=disable
+          HH_TILL_DEMO_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5599/hh_demo_world_proof?sslmode=disable
         run: go test -tags demo ./... -count=1 -p 1
+      # The step above runs quiet, so a skipped world proof would hide in it.
+      # This one runs the two proofs alone, verbosely, and fails unless both
+      # PASS and neither SKIPs, so the log shows them passing. It reuses the
+      # fresh database from the step before the suite: the proofs build and
+      # drop their own databases beside it, so a second run does not collide.
+      - name: Demo world proofs, verbose, and not skipped
+        working-directory: core
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5599/till_base?sslmode=disable
+          HH_CORE_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5599/till_core_gate?sslmode=disable
+          HH_TILL_DEMO_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5599/hh_demo_world_proof?sslmode=disable
+        run: |
+          set -euo pipefail
+          go test -tags demo ./cmd/core -run 'TestDemoWorld_(Quotes|CounterTill)$' -count=1 -v 2>&1 | tee "$RUNNER_TEMP/demo-world-proofs.txt"
+          if grep -q -e '--- SKIP' "$RUNNER_TEMP/demo-world-proofs.txt"; then
+            echo "a demo world proof was skipped" >&2
+            exit 1
+          fi
+          for name in TestDemoWorld_Quotes TestDemoWorld_CounterTill; do
+            if ! grep -q -e "--- PASS: $name " "$RUNNER_TEMP/demo-world-proofs.txt"; then
+              echo "$name did not pass" >&2
+              exit 1
+            fi
+          done
       # The integration tag suite runs in its own job beside this one
       # (HH-191): the composition fixture's migration glob, the break
       # that kept the suite out of this job, is fixed there, along with

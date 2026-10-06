@@ -10,7 +10,7 @@ type Route struct {
 	OperationID string   // the contract operationId
 	Tag         string   // the operation's single tag
 	XRole       string   // the x-role gate spelling
-	Bearer      string   // staff, tenant, staff-or-tenant, or public
+	Bearer      string   // staff, tenant, machine, staff-or-tenant, or public
 	Addition    bool     // the operation carries x-addition (no ERP source route)
 	Surfaces    []string // the x-access surfaces it serves (staff operations only)
 	Level       string   // the x-access level it needs (staff operations only)
