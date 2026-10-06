@@ -1392,8 +1392,8 @@
   {
     "id": "op-amount-comma",
     "file": "src/_order-payment.ts",
-    "find": "  if (separators) return { cents: null, problem: COMMA_WORDS };",
-    "replace": "",
+    "find": "  if (/[,\\s]/.test(fraction)) return COMMA_WORDS;",
+    "replace": "  if (false) return COMMA_WORDS;",
     "test": "a decimal comma or a loose space is refused with the words that teach the point",
     "runner": "node",
     "testFile": "test/order-payment.test.mjs"
@@ -1632,5 +1632,14 @@
     "find": "return this.loaded && this.readError === \"\" && this.paymentBalance === 0 && this.attempt === null;",
     "replace": "return this.loaded && this.readError === \"\" && this.paymentBalance === 0;",
     "test": "Paid in full is not said beside an attempt whose outcome is not known: the owed nothing is said with the attempt's status, and the retry stays offered"
+  },
+  {
+    "id": "op-amount-junk",
+    "file": "src/_order-payment.ts",
+    "find": "  if (/[^0-9, ]/.test(whole)) return NOT_NUMBER_WORDS;",
+    "replace": "  if (false) return NOT_NUMBER_WORDS;",
+    "test": "lowercase letters and any non digit, non separator input are refused in the desk's own words, never sent",
+    "runner": "node",
+    "testFile": "test/order-payment.test.mjs"
   }
 ]

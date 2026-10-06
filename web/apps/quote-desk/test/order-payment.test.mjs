@@ -170,6 +170,17 @@ test("a decimal comma or a loose space is refused with the words that teach the 
   assert.deepEqual(parseTypedAmount("40.00"), { cents: 4000, problem: "" });
 });
 
+test("lowercase letters and any non digit, non separator input are refused in the desk's own words, never sent", () => {
+  // The desk's own words for what is not a number at all: letters, signs, a second point, unicode
+  // digits, any junk, wherever it sits (in the fraction, in the whole, or after valid grouping).
+  const words = "The amount is not a number this desk can send: type dollars and cents, like 40.00.";
+  for (const bad of ["1,000.50abc", "5a", "1e3", "+5", "1.0.0", "1,000.5x", "40.00abc", "1a,000.00", "5;00", "１２３", "1 234a.00"]) {
+    assert.deepEqual(parseTypedAmount(bad), { cents: null, problem: words }, bad);
+  }
+  // A decimal comma or space in the fraction keeps the words that teach the point.
+  assert.deepEqual(parseTypedAmount("1.234,50"), { cents: null, problem: COMMA_WORDS });
+});
+
 test("an amount above Number.MAX_SAFE_INTEGER cents is refused, never rounded through a float", () => {
   assert.deepEqual(parseTypedAmount("90071992547409.93"), { cents: null, problem: OVERSAFE_WORDS });
   assert.deepEqual(parseTypedAmount("99999999999999999999"), { cents: null, problem: OVERSAFE_WORDS });

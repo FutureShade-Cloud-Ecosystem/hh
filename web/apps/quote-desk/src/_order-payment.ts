@@ -76,20 +76,52 @@ export interface TypedAmount {
 /** The words that teach the point, for a comma or a space that is not thousands grouping. */
 export const COMMA_WORDS = "Use a point for cents, for example 12.50.";
 
+/** The words that teach the grouping: one kind of separator, every three digits. */
+export const GROUPING_WORDS = "Type the digits and use one separator every three digits, like 1,000.50.";
+
+/** The words for an amount that is not a number this desk can send. */
+export const NOT_NUMBER_WORDS = "The amount is not a number this desk can send: type dollars and cents, like 40.00.";
+
 /** The words for an amount no counter can name exactly in integer cents. */
 export const OVERSAFE_WORDS = "The amount is larger than this desk can send.";
 
-export function parseTypedAmount(raw: string): TypedAmount {
+/**
+ * The desk's own shape check, in front of the shared pos-kit parse: what was typed must be digits,
+ * with at most one decimal point, a fraction of one or two digits, and (left of the point) digits
+ * with at most one kind of thousands separator in groups of exactly three. Lowercase letters,
+ * signs, unicode digits, a second point, any junk, are refused here in the desk's own words, so
+ * the refusal is never silent and never the shared helper's NaN leaking through: a decimal comma
+ * or a space in the fraction keeps the words that teach the point; junk that is not a number at
+ * all gets the not a number words; a mixed grouping (a comma and a space in one figure) gets the
+ * grouping words. An empty box is not a problem here: the panel does not send one.
+ */
+export function typedAmountProblem(raw: string): string {
   const t = raw.trim();
-  const pointAt = t.indexOf(".");
-  const whole = pointAt === -1 ? t : t.slice(0, pointAt);
-  const fraction = pointAt === -1 ? "" : t.slice(pointAt + 1);
-  const separators =
-    /[,\s]/.test(fraction) ||
-    (/[,\s]/.test(whole) && !/^[0-9]{1,3}([, ][0-9]{3})*$/.test(whole.replace(/\$/g, "")));
-  if (separators) return { cents: null, problem: COMMA_WORDS };
-  const cents = typedCents(t);
-  if (cents === null) return { cents: null, problem: "The amount is not a number this desk can send: type dollars and cents, like 40.00." };
+  if (t === "") return "";
+  const body = t.startsWith("$") ? t.slice(1) : t;
+  const pointAt = body.indexOf(".");
+  if (pointAt !== -1 && body.indexOf(".", pointAt + 1) !== -1) return NOT_NUMBER_WORDS;
+  const whole = pointAt === -1 ? body : body.slice(0, pointAt);
+  const fraction = pointAt === -1 ? "" : body.slice(pointAt + 1);
+  if (/[,\s]/.test(fraction)) return COMMA_WORDS;
+  if (/[^0-9]/.test(fraction) || fraction.length > 2) return NOT_NUMBER_WORDS;
+  if (/[^0-9, ]/.test(whole)) return NOT_NUMBER_WORDS;
+  if (whole === "") return "";
+  const comma = whole.includes(",");
+  const space = whole.includes(" ");
+  if (comma && space) return GROUPING_WORDS;
+  if (comma || space) {
+    const sep = comma ? "," : " ";
+    if (!new RegExp(`^[0-9]{1,3}(${sep}[0-9]{3})*$`).test(whole)) return COMMA_WORDS;
+  }
+  return "";
+}
+
+export function parseTypedAmount(raw: string): TypedAmount {
+  const problem = typedAmountProblem(raw);
+  if (problem !== "") return { cents: null, problem };
+  const cents = typedCents(raw.trim());
+  if (cents === null) return { cents: null, problem: NOT_NUMBER_WORDS };
   if (cents > Number.MAX_SAFE_INTEGER) return { cents: null, problem: OVERSAFE_WORDS };
   return { cents, problem: "" };
 }
