@@ -121,6 +121,13 @@ func translateCaptureError(err error) error {
 		return till.ErrCardUnresolvedOnTill
 	case errors.Is(err, payment.ErrCaptureNotDispatched):
 		return till.ErrCardNotDispatched
+	case errors.Is(err, payment.ErrCaptureBadCharge):
+		// A malformed leg (no account token, a non positive amount) is refused before the
+		// claim: nothing was claimed, nothing was dispatched and no money moved, the same
+		// truth the seam's ErrCardNotDispatched carries across the boundary. The
+		// invalid-charge word rides the text so the cashier's typed answer names the leg's
+		// own fault instead of a bare 500.
+		return fmt.Errorf("%w: card_charge_invalid_token (%s)", till.ErrCardNotDispatched, err)
 	case errors.Is(err, payment.ErrCaptureNeedsManager), errors.Is(err, payment.ErrCaptureAnswerUnrecorded):
 		return till.ErrCardNeedsManager
 	}

@@ -1207,7 +1207,18 @@ func (s *Service) captureCardLegs(ctx context.Context, in SaleInput, captures []
 				ring.rank = cardRankManager
 				ring.managerRefs = append(ring.managerRefs, shortAttemptRef(res.AttemptID))
 			default:
-				return nil, clientErr(http.StatusInternalServerError, "pos: the card rail answered an unknown capture kind %q", res.Kind)
+				// An unclassified capture kind is an unknown outcome (the design's 3.5): when
+				// this ring already holds captures their money may be held with no sale, so
+				// the ring ranks manager and returns for settlement, and the compensator
+				// reverses what it holds. A ring that captured nothing keeps the raw word.
+				if len(ring.captured) == 0 {
+					return nil, clientErr(http.StatusInternalServerError, "pos: the card rail answered an unknown capture kind %q", res.Kind)
+				}
+				ring.rank = cardRankManager
+				if res.AttemptID != "" {
+					ring.managerRefs = append(ring.managerRefs, shortAttemptRef(res.AttemptID))
+				}
+				return ring, nil
 			}
 			readOnly = true
 			continue
@@ -1255,7 +1266,18 @@ func (s *Service) captureCardLegs(ctx context.Context, in SaleInput, captures []
 				ring.notDispatched = err
 			}
 		default:
-			return nil, err
+			// An error nobody classified is an unknown outcome (the design's 3.5): when this
+			// ring already holds captures their money may be held with no sale, so the ring
+			// ranks manager and returns for settlement, and the compensator reverses what it
+			// holds. A ring that captured nothing keeps the raw error.
+			if len(ring.captured) == 0 {
+				return nil, err
+			}
+			ring.rank = cardRankManager
+			if ref != "" {
+				ring.managerRefs = append(ring.managerRefs, ref)
+			}
+			return ring, nil
 		}
 		readOnly = true
 	}
