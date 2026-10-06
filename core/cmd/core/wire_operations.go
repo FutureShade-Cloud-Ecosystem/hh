@@ -34,6 +34,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/messaging"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/messagingprovider"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/planflow"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
@@ -444,6 +445,13 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		WithAudit(auditSvc).
 		WithLogger(log).
 		WithSLANotifier(unionSLANotifier{svc: messagingSvc, log: log})
+
+	// The card attempt sweep's alerter (the card charge design section 4, packet C): the sweep
+	// posts its operator items to the escalations channel through THIS binding, set ONCE at
+	// process start beside the warranty sweep's own post, never per call. The attempt row stays
+	// the system of record; the post is visibility.
+	payment.AlertFunc = cardAttemptEscalations{svc: messagingSvc}.post
+
 	warranty.NewHandler(warrantySvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 	warrantyW5Handler := warranty.NewHandler(warrantySvc, log).WithUserLinker(link)
 	warrantyW5Handler.RegisterW5Routes(r, g)
@@ -1356,6 +1364,19 @@ func (u unionSLANotifier) NotifySLABreach(ctx context.Context, in warranty.SLABr
 	}
 	_, _, err := u.svc.PostEventToChannelSlug(ctx, "escalations", "warranty-sla:"+in.AlertID, body,
 		messaging.EventRef{Topic: in.Topic, Entity: "warranty_claim:" + in.ClaimID, Summary: body}, false)
+	return err
+}
+
+// cardAttemptEscalations is the card attempt sweep's alerter over messaging's escalations
+// channel, the unionSLANotifier precedent (the card charge design section 4): it is what
+// payment.AlertFunc is bound to, once at process start, and its signature is the seam's. The
+// event key arrives already shaped card-attempt:<id>:<status>, so one state of one attempt
+// posts once; the body is the sweep's money facts, never a token or a customer name.
+type cardAttemptEscalations struct{ svc *messaging.Service }
+
+func (a cardAttemptEscalations) post(ctx context.Context, key, body string) error {
+	_, _, err := a.svc.PostEventToChannelSlug(ctx, "escalations", key, body,
+		messaging.EventRef{Topic: "payment.card_attempt", Entity: key, Summary: body}, false)
 	return err
 }
 

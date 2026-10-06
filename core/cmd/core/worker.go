@@ -182,19 +182,33 @@ func worker(getenv func(string) string) error {
 		}).
 		// The card charge attempt sweep (the card charge design section 4): its
 		// schedule row is planted by migration 0361 and enabled, so the handler
-		// must exist or the runner records an unknown job on every claim.
-		// Packet B registers the name and the rail it will read; the sweep body
-		// (the grace window, the guarded moves, the escalation posts) lands
-		// with packet C over the payment service the graph exposes.
+		// must exist or the runner records an unknown job on every claim. The
+		// body is the payment package's SweepCardAttempts over the card rail the
+		// graph wired: the grace window keeps every live ring out of its hands,
+		// and every action is a guarded transition on one row, so overlapping
+		// runs, or a second worker, cannot act twice. A pass between claims reads
+		// one partial index, which is what keeps it cheap at the schedule's own
+		// cadence; the schedule's interval is the schedule row's, not the
+		// handler's, to set.
 		Register("payment.card_attempt_sweep", func(jobCtx context.Context) (jobs.Result, error) {
 			if graph.tops.cardRail == nil {
 				return jobs.Result{Skipped: true, Detail: map[string]any{
 					"reason": "the card rail service is not wired; nothing to sweep",
 				}}, nil
 			}
-			return jobs.Result{Skipped: true, Detail: map[string]any{
-				"reason": "the card attempt sweep body lands with the next packet of this fix; the schedule is registered so the runner sees its handler",
-			}}, nil
+			res, err := graph.tops.cardRail.SweepCardAttempts(jobCtx, time.Now)
+			if err != nil {
+				return jobs.Result{RowsRead: int64(res.Examined)}, err
+			}
+			return jobs.Result{
+				RowsRead:    int64(res.Examined),
+				RowsWritten: int64(res.ToUnknown + res.Voided + res.ToVoidUnknown + res.ToVoidDeclined),
+				Detail: map[string]any{
+					"to_unknown": res.ToUnknown, "voided": res.Voided,
+					"to_void_unknown": res.ToVoidUnknown, "to_void_declined": res.ToVoidDeclined,
+					"lost": res.Lost,
+				},
+			}, nil
 		})
 	go jobRunner.Run(ctx) // single instance, no leader election
 
