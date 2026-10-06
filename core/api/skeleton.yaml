@@ -50,6 +50,7 @@ tags:
   - { name: public, description: "Pre-auth surfaces: quote share acceptance, will-call confirm, warranty intake, billing open pixels" }
   - { name: sync, description: "Offline sync pull and push per declared scope (context 4.5)" }
   - { name: operator, description: "Org-scoped operator endpoints the launcher section consumes (D4)" }
+  - { name: load, description: "The load doors: the machine surface FB Move's loads arrive through, registered only where a deployment's configuration switches them on" }
   - { name: staff-assist }
   - { name: staff-audit }
   - { name: staff-bankrec }
