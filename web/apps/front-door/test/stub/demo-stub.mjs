@@ -16,6 +16,8 @@
 //   POST /_stub/refuse        -> arm a refusal: { status, error, flows }
 //   POST /_stub/refuse-feedback -> arm the board refusal the next feedback
 //                                submission answers, once per arming
+//   POST /_stub/feedback-numberless -> the next feedback answers carry no
+//                                issue_number, until the next reset
 //   POST /_stub/reset         -> clear the armed refusals and the ledgers
 //
 // The mint answers a JWT-shaped token so the app's expiry read (the token's
@@ -73,6 +75,7 @@ let approvalsDelayMs = 0;
 // multipart body and its images counted, so the acceptance spec asserts what
 // the widget actually sent without ever reaching a real board.
 let feedbackRefusal = null;
+let feedbackNumberless = false;
 let lastFeedback = null;
 
 function base64Url(value) {
@@ -133,6 +136,12 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  if (path === "/_stub/feedback-numberless" && request.method === "POST") {
+    feedbackNumberless = true;
+    sendJson(response, 200, { armed: true });
+    return;
+  }
+
   if (path === "/_stub/refuse-feedback" && request.method === "POST") {
     const body = await readBody(request);
     if (body === null || typeof body !== "object" || typeof body.error !== "string") {
@@ -164,6 +173,7 @@ const server = createServer(async (request, response) => {
   if (path === "/_stub/reset" && request.method === "POST") {
     refusal = null;
     feedbackRefusal = null;
+    feedbackNumberless = false;
     lastFeedback = null;
     lastOrg = "";
     mints = 0;
@@ -204,7 +214,7 @@ const server = createServer(async (request, response) => {
       sendJson(response, armed.status, { error: armed.error });
       return;
     }
-    sendJson(response, 201, { issue_id: "issue-stub-1", issue_number: "HH-42" });
+    sendJson(response, 201, feedbackNumberless ? { issue_id: "issue-stub-1" } : { issue_id: "issue-stub-1", issue_number: "HH-42" });
     return;
   }
 

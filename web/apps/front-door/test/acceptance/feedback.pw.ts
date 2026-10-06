@@ -259,3 +259,59 @@ for (const size of [
     expect(await pillIsTopmost(page)).toEqual([]);
   });
 }
+
+test("a file picked through the hidden picker becomes a thumbnail and is sent", async ({ page }) => {
+  await page.goto("/");
+  await openPanel(page);
+  await page.getByTestId("feedback-note").fill("A picked image.");
+  const image = pngFile();
+  // The picker's change event is not composed, so the widget listens on the
+  // input itself; setInputFiles fires the real change.
+  await page.getByTestId("feedback-file").setInputFiles({ name: image.name, mimeType: image.type, buffer: image.buffer });
+  await expect(page.getByTestId("feedback-thumbs").locator("li")).toHaveCount(1);
+  await page.getByTestId("feedback-send").click();
+  await expect(page.getByTestId("feedback-sent")).toHaveText("Sent: HH-42");
+  const peek = await stubPeek(page);
+  expect(peek.feedback?.fields["images"]).toBe(1);
+});
+
+test("a send answered with no work item number reads Sent. and not Sent: filed", async ({ page }) => {
+  await page.goto("/");
+  await openPanel(page);
+  await page.request.post("/_stub/feedback-numberless");
+  await page.getByTestId("feedback-note").fill("No number comes back.");
+  await page.getByTestId("feedback-send").click();
+  await expect(page.getByTestId("feedback-sent")).toHaveText("Sent.");
+});
+
+test("trigger=external hides the pill and open() opens the panel for the host's own button", async ({ page }) => {
+  await page.goto("/");
+  await expect(pill(page)).toBeVisible();
+  // The widget is mounted by the app; flip it to the external trigger the way
+  // a host that owns its own button would mount it.
+  await page.evaluate(() => {
+    const widget = document.querySelector("fd-app-root")?.shadowRoot?.querySelector("hh-feedback") as
+      | (HTMLElement & { open?: unknown })
+      | null;
+    widget?.setAttribute("trigger", "external");
+  });
+  await expect(pill(page)).toBeHidden();
+  await expect(page.getByTestId("feedback-panel")).toHaveCount(0);
+  await page.evaluate(() => {
+    const widget = document.querySelector("fd-app-root")?.shadowRoot?.querySelector("hh-feedback") as
+      | (HTMLElement & { show: () => void })
+      | null;
+    widget?.show();
+  });
+  await expect(page.getByTestId("feedback-panel")).toBeVisible();
+  // The panel still sends, and Escape still closes it.
+  await page.getByTestId("feedback-note").fill("From an external button.");
+  await page.getByTestId("feedback-send").click();
+  await expect(page.getByTestId("feedback-sent")).toHaveText("Sent: HH-42");
+  // The send button gave up focus while it worked; Escape is heard from
+  // inside the widget, so put focus back in the note first.
+  await page.getByTestId("feedback-note").focus();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("feedback-panel")).toHaveCount(0);
+  await expect(pill(page)).toBeHidden();
+});
