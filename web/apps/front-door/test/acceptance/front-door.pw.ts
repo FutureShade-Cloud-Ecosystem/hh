@@ -73,17 +73,28 @@ test("the picker renders the two live cards and the eleven coming rows", async (
   const sales = page.getByRole("button", { name: "Sales", exact: true });
   await expect(sales).toBeVisible();
   await expect(sales).toBeEnabled();
+  // The live cards lead: one line of what the role does and the call to act.
+  await expect(sales).toContainText("The counter sale flow.");
+  await expect(sales).toContainText("Sign in as Sales");
   await expect(sales).toContainText("Counter Till");
   await expect(sales).toContainText("Quote Desk");
 
   const manager = page.getByRole("button", { name: "Sales manager", exact: true });
   await expect(manager).toBeVisible();
   await expect(manager).toBeEnabled();
+  await expect(manager).toContainText("The counter plus approvals and margins.");
+  await expect(manager).toContainText("Sign in as Sales manager");
   await expect(manager).toContainText("Manager Home");
   await expect(manager).toContainText("Dealer Admin");
   await expect(manager).toContainText("House Messages");
 
+  // Coming recedes: the disclosure starts collapsed and opens to today's
+  // list, unchanged, its rows disabled with their muted chips.
+  const disclosure = page.getByTestId("coming-disclosure");
+  await expect(disclosure).toContainText("Eleven more roles are coming");
   const coming = page.getByRole("list", { name: "Coming roles" });
+  await expect(coming).not.toBeVisible();
+  await disclosure.getByText("Eleven more roles are coming").click();
   await expect(coming).toBeVisible();
   await expect(coming.getByRole("listitem")).toHaveCount(11);
   for (const label of COMING_LABELS) {
@@ -100,7 +111,9 @@ test("the picker renders the two live cards and the eleven coming rows", async (
   ).not.toContainText("Counter Till");
 });
 
-test("the header carries the demo badge and the Pick a role word when not signed in", async ({ page }) => {
+test("the header carries the brand, the demo badge and the Pick a role word when not signed in", async ({ page }) => {
+  const brand = page.getByRole("img", { name: "HH Yard, a Hardscape House product" });
+  await expect(brand).toBeVisible();
   const badge = page.getByRole("note");
   await expect(badge).toBeVisible();
   await expect(badge).toContainText("Demo");
@@ -113,7 +126,14 @@ test("the header carries the demo badge and the Pick a role word when not signed
 
 test("a Sales sign in shows the two tiles and mints through the demo org", async ({ page }) => {
   await signIn(page, "Sales");
-  await expect(page.getByRole("button", { name: "Counter Till", exact: true })).toBeVisible();
+  // The headline reads naturally: the role's name as the title, the walk's
+  // line under it.
+  await expect(page.getByTestId("home-title")).toHaveText("Sales");
+  await expect(page.getByText("Open a module to walk it", { exact: true })).toBeVisible();
+  // The live tiles lead with the call to open.
+  const till = page.getByRole("button", { name: "Counter Till", exact: true });
+  await expect(till).toBeVisible();
+  await expect(till).toContainText("Open the Counter Till");
   await expect(page.getByRole("button", { name: "Quote Desk", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Manager Home", exact: true })).toHaveCount(0);
   await expect(page.getByTestId("header-word")).toHaveText("Sales");
@@ -130,6 +150,8 @@ test("a Sales manager sign in shows the five tiles", async ({ page }) => {
   for (const name of ["Counter Till", "Quote Desk", "Manager Home", "Dealer Admin", "House Messages"]) {
     await expect(page.getByRole("button", { name, exact: true })).toBeVisible();
   }
+  // The manager's not-yet modules recede under their own word.
+  await expect(page.getByRole("heading", { name: "Coming next" })).toBeVisible();
   await expect(page.getByTestId("header-word")).toHaveText("Sales manager");
   expect(await storedFlow(page)).toBe("sales-manager");
 });
