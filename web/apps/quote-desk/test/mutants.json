@@ -1486,5 +1486,12 @@
     "find": "      this.search = control.value;\n      void this.searchAllPages();\n",
     "replace": "      this.search = control.value;\n",
     "test": "split search pages:"
+  },
+  {
+    "id": "fr-ignore-off-page",
+    "file": "src/floor-refusal-dialog.ts",
+    "find": "    if (!this.onQuotePage || (detail.quoteId !== \"\" && detail.quoteId !== this.quoteId)) {",
+    "replace": "    if (false) {",
+    "test": "split floor:"
   }
 ]

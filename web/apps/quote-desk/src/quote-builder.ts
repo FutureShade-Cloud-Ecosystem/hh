@@ -60,6 +60,7 @@ import {
 } from "./_quote-edit.js";
 import { spokenRefusal } from "./_quote-workarea.js";
 import { OPEN_SETTINGS_EVENT } from "./panel-seams.js";
+import { FLOOR_REFUSAL_DROPPED_EVENT } from "./floor-refusal.js";
 import {
   COMPOSE_ROUTE,
   LIST_ROUTE,
@@ -122,6 +123,8 @@ export class QdQuoteBuilder extends LitElement {
   @state() private statusFilter = "";
   /** The toolbar's search, by number or customer. The list read takes no search word, so a search reads on through the pages (searchAllPages) and filters what is loaded. */
   @state() private search = "";
+  /** What the list says about a refusal that answered for a quote the person had left (the dialog was not opened for it). */
+  @state() private listNotice = "";
   /** True while a search is reading the later pages: the empty answer waits for it. */
   @state() private searching = false;
   @state() private branches: BranchRow[] = [];
@@ -313,6 +316,7 @@ export class QdQuoteBuilder extends LitElement {
     this.renderRoot.addEventListener("quote-changed", this.onQuoteChanged as EventListener);
     this.renderRoot.addEventListener("quote-open", this.onQuoteOpen as EventListener);
     this.renderRoot.addEventListener("all-quotes", this.onAllQuotes as EventListener);
+    this.renderRoot.addEventListener(FLOOR_REFUSAL_DROPPED_EVENT, this.onRefusalDropped as EventListener);
     window.addEventListener(OPEN_SETTINGS_EVENT, this.onOpenSettings);
   }
 
@@ -322,7 +326,10 @@ export class QdQuoteBuilder extends LitElement {
     if (changed.has("client") && this.client !== null) this.startLoads();
     // A quote page takes the approvals view with it: coming back to the list
     // shows the rows, not the view the person left behind.
-    if (changed.has("route") && routeIsQuotePage(this.route)) this.approvalsOpen = false;
+    if (changed.has("route") && routeIsQuotePage(this.route)) {
+      this.approvalsOpen = false;
+      this.listNotice = "";
+    }
   }
 
   private startLoads(): void {
@@ -338,6 +345,7 @@ export class QdQuoteBuilder extends LitElement {
     this.renderRoot.removeEventListener("quote-changed", this.onQuoteChanged as EventListener);
     this.renderRoot.removeEventListener("quote-open", this.onQuoteOpen as EventListener);
     this.renderRoot.removeEventListener("all-quotes", this.onAllQuotes as EventListener);
+    this.renderRoot.removeEventListener(FLOOR_REFUSAL_DROPPED_EVENT, this.onRefusalDropped as EventListener);
     window.removeEventListener(OPEN_SETTINGS_EVENT, this.onOpenSettings);
   }
 
@@ -372,6 +380,9 @@ export class QdQuoteBuilder extends LitElement {
       seam.branchId = branchId;
       if (seam.tagName !== "QD-PANEL-SEAM") seam.client = this.client;
     }
+    // The floor refusal dialog opens only on a quote page: the hidden work area's late answers open nothing.
+    const refusal = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("qd-floor-refusal");
+    if (refusal !== null) refusal.onQuotePage = routeIsQuotePage(route);
   }
 
   // ── loading ────────────────────────────────────────────────────────────────
@@ -501,6 +512,13 @@ export class QdQuoteBuilder extends LitElement {
     }
     this.walk(event.detail.quoteId === "" ? COMPOSE_ROUTE : quoteRoute(event.detail.quoteId));
     void this.loadList();
+  };
+
+  /** A refusal for a quote that is not on screen: said on the list, never as a dialog over another quote. */
+  private readonly onRefusalDropped = (event: CustomEvent<{ quoteId: string; lineNo: number }>): void => {
+    const row = this.rows.find((r) => r.id === event.detail.quoteId);
+    const name = row?.quoteNo ?? "a quote you left";
+    this.listNotice = `A change to line ${event.detail.lineNo} of ${name} was refused: it is below the margin floor. Nothing was changed or sent for approval. Open the quote to ask for approval.`;
   };
 
   private readonly onAllQuotes = (): void => {
@@ -643,6 +661,7 @@ export class QdQuoteBuilder extends LitElement {
           <h1 data-testid="qd-list-title">Quotes</h1>
           ${button({ label: "New quote", kind: "primary", action: "new-quote", iconMarkup: icon("plus") })}
         </div>
+        ${this.listNotice !== "" ? html`<p class="empty" role="status" style="margin: 0 0 10px" data-testid="qd-list-notice">${this.listNotice}</p>` : nothing}
         <div class="toolbar" data-testid="qd-list-toolbar">
           <div class="tools">
             ${textInput({ label: "Search quotes", field: "list-search", type: "search" })}

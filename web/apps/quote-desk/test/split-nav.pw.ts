@@ -388,3 +388,47 @@ test("split search pages: a search reads on through the pages and finds a quote 
   await expect(page.getByTestId("qb-list-more")).toHaveCount(0);
   await request.put("/_stub/quote-page-size", { data: { size: 0 } });
 });
+
+// ── A late floor refusal for a quote the person left ─────────────────────────
+
+/** Whether the floor refusal dialog holds itself open (a hidden screen's dialog does not show, but it would on the next quote). */
+async function dialogOpen(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    const dialog = document.querySelector("qd-app-root")?.shadowRoot?.querySelector("qd-quote-builder")?.shadowRoot?.querySelector("qd-floor-refusal") as (HTMLElement & { open?: boolean }) | null;
+    return dialog?.open === true;
+  });
+}
+
+test("split floor: a refusal that answers after the person left for the list opens no dialog, files nothing, and is said on the list", async ({ page }) => {
+  await signIn(page);
+  await page.getByRole("button", { name: "New quote", exact: true }).click();
+  const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
+  await picker.getByPlaceholder("Search name or account #…").fill("Maple");
+  await picker.getByRole("option", { name: /Maple Ridge Contracting/ }).click();
+  await page.getByRole("combobox", { name: "Search products by name, code or category" }).fill("PSN-100");
+  await expect(page.getByTestId("qb-line")).toHaveCount(1);
+  const writes: string[] = [];
+  page.on("request", (r) => {
+    if (r.method() !== "GET" && r.url().includes("/api/v1/")) writes.push(`${r.method()} ${new URL(r.url()).pathname}`);
+  });
+  const patch = await hold(page, /\/quotes\/q-1004\/lines\/1$/, { method: "PATCH" });
+  const disc = page.getByTestId("qb-line-disc");
+  await disc.fill("15");
+  await disc.blur();
+  await patch.asked;
+  await page.getByTestId("qb-all-quotes").click();
+  await expect(page.getByTestId("qd-list-toolbar")).toBeVisible();
+  await patch.release();
+  await settle(page);
+  // Nothing opened a dialog (it would show over the next quote), and the list says what happened.
+  expect(await dialogOpen(page), "no dialog is held open behind the list").toBe(false);
+  await expect(page.getByTestId("qd-list-notice")).toContainText("Q-1004");
+  await expect(page.getByTestId("qd-list-notice")).toContainText("margin floor");
+  // The next quote shows no dialog either, and no approval was filed.
+  await row(page, "Q-1001").click();
+  await expect(page.getByTestId("qb-context")).toContainText("Q-1001");
+  await settle(page);
+  expect(await dialogOpen(page), "no dialog over the next quote").toBe(false);
+  await expect(page.getByTestId("fr-reason")).toHaveCount(0);
+  expect(writes.filter((w) => w.includes("approval"))).toEqual([]);
+});
