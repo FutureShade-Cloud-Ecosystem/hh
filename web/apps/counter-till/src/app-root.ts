@@ -126,10 +126,27 @@ export class CounterTillApp extends HHElement {
         margin-top: 0;
         padding-top: var(--hh-s-16);
       }
+      /* The Returns link wears the bar's button face (an anchor takes none of the button rules). */
       .nav-link {
         display: inline-flex;
         align-items: center;
         text-decoration: none;
+        font-family: inherit;
+        font-size: 11px;
+        line-height: normal;
+        padding: 7px 12px;
+        border: 1px solid var(--hh-control-line);
+        border-radius: var(--hh-radius-control);
+        color: var(--hh-text-dim);
+        background: transparent;
+      }
+      .nav-link:hover {
+        border-color: var(--hh-accent-text);
+        color: var(--hh-accent-text);
+      }
+      .nav-link:focus-visible {
+        outline: 2px solid var(--hh-focus-ring);
+        outline-offset: 2px;
       }
       .till-screen > .surfacebar {
         flex: none;

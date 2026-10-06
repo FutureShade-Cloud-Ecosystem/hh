@@ -6133,7 +6133,9 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
                          have). */ ''}
                     ${this.cart.length === 0
                     ? 'Add a line before splitting the tender.'
-                    : "The legs settle the server's total at the ring; the panel below rings the split."}</span
+                    : this.preview.kind === 'ready'
+                      ? 'The legs settle the stated total; the panel below rings the split.'
+                      : "The legs settle the server's total at the ring; the panel below rings the split."}</span
                   >
                 </p>`}
 

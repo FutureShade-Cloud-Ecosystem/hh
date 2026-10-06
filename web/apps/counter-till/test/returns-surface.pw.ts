@@ -16,6 +16,13 @@ test("the sale screen carries only the sale: no returns desk under it, and the p
   await signIn(page);
   await expect(page.getByTestId("returns")).toHaveCount(0);
   await expect(page.getByTestId("till-returns-entry")).toBeVisible();
+  // The entry wears the bar's button face like Pop out beside it: a bordered, padded box.
+  const face = await page.getByTestId("till-returns-entry").evaluate((el) => {
+    const s = getComputedStyle(el);
+    return { border: s.borderTopWidth, padding: parseFloat(s.paddingLeft) };
+  });
+  expect(face.border).toBe("1px");
+  expect(face.padding).toBeGreaterThanOrEqual(8);
   expect(await pageScrolls(page)).toBe(false);
 });
 
