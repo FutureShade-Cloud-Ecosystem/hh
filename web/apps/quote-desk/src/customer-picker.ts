@@ -98,6 +98,12 @@ export class HosCustomerPicker extends LitElement {
         background: var(--hos-deep-earth);
         color: var(--hos-text);
         min-width: 15rem;
+        /* The row's one control height (demo polish round 2): the search
+           input stands at the design system's input height token, the same
+           height the branch select, the expiry date input and the Create
+           button beside it carry, instead of shrinking to its content. */
+        box-sizing: border-box;
+        min-height: var(--hh-h-input, 44px);
       }
       /* The chosen account, shown as a chip in place of the raw uuid the field used to hold. */
       .chosen {
