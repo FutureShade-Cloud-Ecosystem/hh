@@ -323,6 +323,69 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/quotes/{id}/order-payment:
+    post:
+      operationId: quoteTakeOrderPayment
+      tags: [staff-quote]
+      summary: Take payment at the counter on a converted quote's order
+      description: >-
+        The counter's payment door on the quote desk. For a converted quote
+        in the caller's branch it finds the order the quote became, raises
+        that order's invoice at the agreed totals if none exists (every line
+        at its agreed total, plus the delivery fee and its tax for a delivery
+        quote, so the invoice equals the quote's agreed total), and records
+        the payment through the payments settle with the caller stamped as
+        the receiver. Billing the order again when it leaves the yard returns
+        the same document. A customer with a credit account may pay a part
+        (a deposit); a customer with no credit account pays the whole of what
+        the invoice still owes (on a fresh order, the whole agreed total),
+        and for such a customer an ACCEPTED quote is converted, billed and
+        paid as one action: the conversion, the invoice and the payment
+        are written in one transaction, so either all three exist or none
+        does, and a cash customer's order never exists unpaid. For a customer
+        with a credit account the order already exists when the payment is
+        taken; the invoice and the payment are then written together, so a
+        payment that fails leaves no invoice and no balance behind. The
+        Yard manager is admitted at the cash customer's one action, on an
+        accepted quote only; the separate conversion of a quote keeps its
+        selling role rule. An order that already has an invoice raised another
+        way (by shipment group, say) is refused with a 409 and nothing is
+        raised, so the order is never billed twice. The counter's invoice does
+        not move the order out of the yard: it is confirmed, picked and handed
+        over as usual, and is invoiced when it leaves. A replayed
+        idempotency_key posts nothing and answers the first payment; the same
+        key with a different method or amount is a 409. The role rule is Work
+        or above on the Counter Till at the order's branch.
+      x-addition: "the counter's payment door on a converted quote's order (plan 1.1, QD-5); no ERP source route"
+      x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteOrderPaymentRequest"
+      responses:
+        "200":
+          description: The payment, the invoice and the balance (also a replay of the first result)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteOrderPaymentResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
   /api/v1/quotes/{id}/lines/{lineNo}/compare:
     post:
       operationId: quoteCompareQuoteLine
@@ -1703,6 +1766,63 @@ components:
       properties:
         order_id: { type: string, format: uuid }
         order_no: { type: string }
+    QuoteOrderPaymentRequest:
+      type: object
+      description: >-
+        One payment taken at the counter. The staff quote resource is the
+        canonical dealer_quote (DECISIONS.md D8). The tender is one of the
+        four the payments settle accepts; the key makes a repeat post
+        nothing.
+      required: [method, amount_cents, reference, idempotency_key]
+      properties:
+        method:
+          type: string
+          enum: [CASH, CARD, CHEQUE, EFT]
+        amount_cents:
+          type: integer
+          format: int64
+          minimum: 1
+        reference:
+          type: string
+          description: Cheque number, EFT trace or terminal reference as given; may be empty for cash
+        idempotency_key:
+          type: string
+          minLength: 1
+          maxLength: 64
+    QuoteOrderPaymentResult:
+      type: object
+      description: >-
+        What the till's receipt needs: the payment, the invoice it settled
+        against, the order and the balance now on the invoice. On a replay
+        the payment fields (the reference and the receiver included) are the
+        first payment's as stored, and replayed is true.
+      required: [order_id, order_no, invoice_id, invoice_no, invoice_total_cents, payment_id, payment_no, method, amount_cents, received_at, reference, received_by, balance_cents, replayed, converted]
+      properties:
+        order_id: { type: string, format: uuid }
+        order_no: { type: string }
+        invoice_id: { type: string, format: uuid }
+        invoice_no: { type: string }
+        invoice_total_cents: { type: integer, format: int64 }
+        payment_id: { type: string, format: uuid }
+        payment_no: { type: string }
+        method: { type: string }
+        amount_cents: { type: integer, format: int64 }
+        received_at: { type: string, format: date-time }
+        reference: { type: string }
+        received_by:
+          type: string
+          format: uuid
+          description: The staff member who took the payment
+        balance_cents:
+          type: integer
+          format: int64
+          description: The invoice's balance after this payment (live on a replay)
+        replayed:
+          type: boolean
+          description: True when this request posted nothing and answers the first payment
+        converted:
+          type: boolean
+          description: True when this action also converted the quote (a customer with no credit)
     QuoteRelatedDocument:
       type: object
       description: >-

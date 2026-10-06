@@ -60,6 +60,13 @@ const (
 // heard of this field produces the identical row it produced before DIB-483.
 type ConvertOptions struct {
 	Fulfillment string
+
+	// paidAtCounter and paidTotalCents are QD-5's: the order is paid in full, at the agreed total,
+	// in the same counter action (order_payment.go), so the credit gate judges it as a cash sale.
+	// Unexported on purpose: only this package's payment door can set them, never the portal door,
+	// the plain staff door or a request body. The conversion re-asserts the total under its lock.
+	paidAtCounter  bool
+	paidTotalCents int64
 }
 
 // normalizeFulfillment grades the caller's choice. It is case- and space-forgiving (a counter user
@@ -135,11 +142,23 @@ func runConvert(ctx context.Context, store convertStore, rec audit.Recorder,
 		if f != "" {
 			extra["fulfillment"] = f
 		}
-		_ = rec.Record(ctx, audit.SensitiveAccess{
+		entry := audit.SensitiveAccess{
 			Action: audit.ActOrderStatusChanged, EntityType: "order", EntityID: res.OrderID,
 			ActorID: actor, Purpose: "ORDER_STATUS_TRANSITION", Reason: "quote_converted",
 			Extra: extra,
-		})
+		}
+		// QD-5: a conversion that runs on the payment door's transaction writes its history row on that
+		// transaction too, so the order and its history exist together or not at all, and a failure
+		// here aborts the action. Every other conversion stays best-effort and post-commit.
+		if tx, ok := txFrom(ctx); ok {
+			if tr, ok := rec.(txRecorder); ok {
+				if err := tr.RecordTx(ctx, tx, entry); err != nil {
+					return ConvertResult{}, fmt.Errorf("convert quote %q: record the order's creation: %w", quoteID, err)
+				}
+				return res, nil
+			}
+		}
+		_ = rec.Record(ctx, entry)
 	}
 	return res, nil
 }
