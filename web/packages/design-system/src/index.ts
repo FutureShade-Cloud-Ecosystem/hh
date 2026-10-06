@@ -28,7 +28,7 @@ export {
   stateStyles,
 } from './state.js';
 export type { KitState, DesignedState } from './state.js';
-export { baseStyles, button, chip, row, spinner } from './primitives.js';
+export { baseStyles, button, select, dateInput, fieldGroup, chip, row, spinner } from './primitives.js';
 export { STATE_ICONS, icon } from './state-icons.js';
 
 export { ScanConfirmKit } from './kits/scan-and-confirm.js';
