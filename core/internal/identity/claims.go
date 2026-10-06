@@ -17,14 +17,18 @@ var (
 // BearerClass is the audience class of a credential, resolved from verified
 // claims before any authorization decision (ADR-0020: the bearer class is
 // resolved first, so the X-Org rule can be bearer-conditioned). A verified
-// token always classifies as staff or tenant; ClassNone names the state of
-// a request with no credential at all.
+// token classifies as staff, tenant or machine; ClassNone names the state of
+// a request with no credential at all. The machine class is ADR-0020's
+// addendum's third configured value (ADR-0024): it exists only where a
+// deployment configures the machine audience and its own key set, and it
+// never rides the platform key set.
 type BearerClass int
 
 const (
 	ClassNone BearerClass = iota
 	ClassStaff
 	ClassTenant
+	ClassMachine
 )
 
 // String names the class for operational text (metrics, test failures);
@@ -35,6 +39,8 @@ func (c BearerClass) String() string {
 		return "staff"
 	case ClassTenant:
 		return "tenant"
+	case ClassMachine:
+		return "machine"
 	default:
 		return "none"
 	}
@@ -49,10 +55,13 @@ func (c BearerClass) String() string {
 type Token struct {
 	// Class is the bearer classification.
 	Class BearerClass
-	// Subject is the platform user id (the JWT sub).
+	// Subject is the platform user id (the JWT sub). On the machine class
+	// it names the machine principal (its id, ADR-0024): the principal
+	// record, not the token, carries the org, the name and the doors.
 	Subject string
 	// TenantID is the contractor account linkage, carried only by tenant
-	// class tokens (ADR-0016 C33: tenant from the token).
+	// class tokens (ADR-0016 C33: tenant from the token). No other class
+	// reads or carries it, the machine class included.
 	TenantID string
 	// IssuedAt is the JWT iat.
 	IssuedAt time.Time

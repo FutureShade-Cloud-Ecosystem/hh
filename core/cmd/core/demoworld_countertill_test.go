@@ -283,7 +283,12 @@ func demoseedRun(t *testing.T, dsn string) demoseedPlanOutput {
 		t.Fatalf("demoseed -plan output is missing its clock line, the one figure the world's clock assertions hang off:\n%s", planOut)
 	}
 
-	applyOut := runRole("-apply")
+	// The apply is pinned to the plan's own clock: each invocation reads the wall clock
+	// once, and the world's clock assertions hang off the plan's printed clock, so an
+	// unpinned apply that starts in the next wall second stamps the day's counter sale
+	// rows past the clock the assertions read. The -now pin is the command's own
+	// determinism mechanism, and it holds every row to the clock the plan printed.
+	applyOut := runRole("-apply", "-now", parsed.clock.Format(time.RFC3339))
 	var proposed, created, skipped int
 	for _, line := range strings.Split(applyOut, "\n") {
 		if n, err := fmt.Sscanf(line, "applied: %d proposed · %d created · %d already present",

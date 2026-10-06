@@ -846,6 +846,13 @@ func TestQD5_ACashCustomerOnAFreshOrderStillPaysTheWholeAgreedTotal(t *testing.T
 	if _, err := e.svc.TakeOrderPayment(e.counter(), q.QuoteID, pay("CASH", q.Total, "k-fresh-ok")); err != nil {
 		t.Fatalf("the whole agreed total: %v", err)
 	}
+	// Once the whole invoice is paid, nothing is owed: a later payment with a new key is refused in
+	// words that say the order is paid, not in words that ask a cashier for a balance of nothing.
+	_, err := e.svc.TakeOrderPayment(e.counter(), q.QuoteID, pay("CASH", 500, "k-after-paid"))
+	wantBadRequest(t, "another payment on a paid order", err)
+	if !strings.Contains(err.Error(), "The order is paid in full.") {
+		t.Fatalf("a paid order must be said to be paid in full, not asked for a balance of $0.00: %v", err)
+	}
 }
 
 // dollars renders cents the way the door's refusals do.

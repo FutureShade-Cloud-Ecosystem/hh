@@ -127,6 +127,64 @@ func (s *Service) caller(ctx context.Context) (identity.StaffContext, error) {
 	return c, nil
 }
 
+// - CaptureCard, the pre-transaction card capture (the keystone's other half) -
+
+// CaptureCard captures ONE card leg at the counter, before the caller's sale transaction opens
+// (the card charge design 3.3): the till re-checks its own session rules on the pool (the OPEN
+// drawer, the caller's branch access, the positive amount, the ring's branch being the drawer's),
+// then hands the leg to the card rail. The claim, the dispatch and the stamp are the rail's, all
+// committed on the pool; no transaction is held anywhere on this path, so nothing here can wait
+// on a connection a caller holds (decision log row 786). The typed answers are the seam's
+// (ErrCardDeclined and its siblings); the capture is returned with the attempt row's id and the
+// processor ref, which the sale transaction later binds through TakeTender.
+func (s *Service) CaptureCard(ctx context.Context, in CardChargeInput) (CardCapture, error) {
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return CardCapture{}, err
+	}
+	if in.AmountCents <= 0 {
+		return CardCapture{}, unprocessable("till: amount_cents must be > 0")
+	}
+	if s.charger == nil {
+		return CardCapture{}, clientErr(503, "till: card rail not configured")
+	}
+	sess, err := s.store.GetSession(ctx, in.TillSessionID)
+	if err != nil {
+		return CardCapture{}, err
+	}
+	if sess.Status != StatusOpen {
+		return CardCapture{}, clientErr(409, "till: session %s is not OPEN", sess.ID)
+	}
+	if !caller.CanAccessBranch(sess.BranchID) {
+		return CardCapture{}, forbidden("till: caller cannot access branch %s", sess.BranchID)
+	}
+	if in.BranchID != "" && in.BranchID != sess.BranchID {
+		return CardCapture{}, clientErr(409, "till: session %s belongs to another branch", sess.ID)
+	}
+	// The attempt row records the session's own branch, the one fact the ring and the drawer
+	// agree on (the DIB-389 equality above is what makes them the same value).
+	in.BranchID = sess.BranchID
+	return s.charger.Capture(ctx, in)
+}
+
+// CompensateCard reverses ONE captured leg of a failed ring (the card charge design 3.3 step 6),
+// on the pool: the rail owns the guarded CAPTURED to VOIDING move, the void, and the refund
+// fallback. Called by pos after the sale transaction failed; never inside a transaction. The
+// answer says whether no money remains (VOIDED), the sale's commit landed after all (COMMITTED,
+// answer the sale and void nothing), or a person has to look (NEEDS_MANAGER).
+func (s *Service) CompensateCard(ctx context.Context, attemptID string) (CardCompensation, error) {
+	if _, err := s.caller(ctx); err != nil {
+		return CardCompensation{}, err
+	}
+	if s.charger == nil {
+		return CardCompensation{}, clientErr(503, "till: card rail not configured")
+	}
+	if attemptID == "" {
+		return CardCompensation{}, unprocessable("till: card compensation needs the attempt id")
+	}
+	return s.charger.Compensate(ctx, attemptID)
+}
+
 // - TakeTender, the payments-row write (the keystone seam) -
 
 // TakeTender records ONE tender against an open drawer and returns the persisted payment id + the opaque
@@ -190,13 +248,14 @@ func (s *Service) TakeTender(ctx context.Context, tx pgx.Tx, in TenderInput) (Te
 		if s.charger == nil {
 			return TenderResult{}, clientErr(503, "till: card rail not configured")
 		}
-		res, cerr := s.charger.Charge(ctx, tx, in.AmountCents, in.PaymentToken, in.IdempotencyKey)
-		// Capture-before-stock: the charge completes BEFORE we persist a RECEIVED row / return success.
-		if cerr != nil || res.Status == ChargeFailed {
-			// No RECEIVED row is committed for a failed/declined charge; the drawer is unaffected.
-			return TenderResult{}, fmt.Errorf("%w: %v", errCardDeclined, cerr)
+		// The capture already happened, on the pool, before this transaction opened (the ring's
+		// capture loop). A CARD tender that arrives without one is a caller bug, refused here
+		// before any row is written; the gateway_ref this row persists is the capture's own
+		// processor ref, never a value this transaction minted.
+		if in.Capture.AttemptID == "" || in.Capture.ProcessorRef == "" {
+			return TenderResult{}, clientErr(409, "till: a CARD tender must carry the capture its ring took before the sale transaction")
 		}
-		row.GatewayRef = res.ProcessorRef
+		row.GatewayRef = in.Capture.ProcessorRef
 		row.CardType = in.CardType // the 0027 column; "" → NULL for non-card (never reached here)
 	default:
 		return TenderResult{}, unprocessable("till: unknown tender method %q", in.Method)
@@ -208,6 +267,23 @@ func (s *Service) TakeTender(ctx context.Context, tx pgx.Tx, in TenderInput) (Te
 	id, paymentNo, inserted, err := s.store.InsertPayment(ctx, tx, row)
 	if err != nil {
 		return TenderResult{}, err
+	}
+	// 4b. The bind (the card charge design 3.3): the attempt this tender's capture stamped moves
+	//     CAPTURED to BOUND on THIS transaction, guarded on the status, the amount, the till
+	//     session and the leg key, so the bind commits or rolls back with the sale. A zero-row
+	//     bind (the sweep or the compensator took the attempt, or the tender disagrees with the
+	//     capture on its own facts) fails the transaction, and the caller's compensation decides
+	//     the answer. Everything the bind touches rides tx; nothing asks the pool (row 786).
+	if in.Method == MethodCard {
+		if err := s.charger.BindTx(ctx, tx, CardBind{
+			AttemptID:     in.Capture.AttemptID,
+			PaymentID:     id,
+			LegKey:        in.IdempotencyKey,
+			TillSessionID: sess.ID,
+			AmountCents:   in.AmountCents,
+		}); err != nil {
+			return TenderResult{}, err
+		}
 	}
 	// Q-044: the explicit "payment received" record is NOT written here. Mid-tx recording orphaned an
 	// audit row when the caller's tx rolled back AND duplicated it on a rollback-retry (the fresh

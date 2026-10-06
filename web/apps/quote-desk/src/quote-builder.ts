@@ -38,6 +38,7 @@ import {
   SEAM_SETTINGS,
 } from "./panel-seams.js";
 import { money } from "@hardscapehouse/pos-kit/src/ported/pos-api.js";
+import { baseStyles, button, dateInput, fieldGroup, select } from "@hardscapehouse/design-system/src/primitives.js";
 import "./customer-picker.js";
 import type { PickerCustomer } from "@hardscapehouse/pos-kit/src/ported/_customer-picker.js";
 import {
@@ -79,7 +80,12 @@ export class QdQuoteBuilder extends LitElement {
   /** The picked account for a new quote, from the picker (never a typed id). */
   private newCustomer: PickerCustomer | null = null;
 
-  static styles = css`
+  // The design system's shared sheet comes first: the list card's controls
+  // (the status filter, the New quote group) take the control face from it,
+  // and this element's own rules below win where they speak.
+  static styles = [
+    baseStyles,
+    css`
     :host {
       display: block;
       padding: 14px;
@@ -182,7 +188,11 @@ export class QdQuoteBuilder extends LitElement {
       cursor: pointer;
     }
     button:disabled {
-      opacity: 0.5;
+      /* The design system's disabled rule, not a fade: a held control drops
+         its fill and goes grey through the tokens (AGENTS.md). */
+      background: var(--hh-disabled-fill, var(--hos-slate-warm, var(--hh-card)));
+      color: var(--hh-disabled-ink, var(--hos-text-dim, var(--hh-text-dim)));
+      border-color: var(--hh-disabled-line, var(--hos-line, var(--hh-line)));
       cursor: default;
     }
     .err {
@@ -193,23 +203,13 @@ export class QdQuoteBuilder extends LitElement {
       color: var(--hos-text-dim, var(--hh-text-dim));
       font-size: 0.83rem;
     }
-    fieldset {
-      border: 1px solid var(--hos-line, var(--hh-line));
-      border-radius: 6px;
-      margin: 10px 0 0;
-      padding: 8px 10px;
-    }
-    legend {
-      font-size: 0.78rem;
-      color: var(--hos-text-dim, var(--hh-text-dim));
-      padding: 0 4px;
-    }
     /* The detail disclosure's seam rows: nothing shows today, so the row
        keeps its own height at zero until a panel lands in the seam. */
     .seams qd-panel-seam {
       display: block;
     }
-  `;
+  `,
+  ];
 
   override connectedCallback(): void {
     super.connectedCallback();
@@ -505,16 +505,21 @@ export class QdQuoteBuilder extends LitElement {
       <div class="box">
         <h3>Quotes</h3>
         <div class="row">
-          <select aria-label="Filter by status" data-field="status-filter" data-testid="qb-list-filter">
-            <option value="">All statuses</option>
-            <option value="DRAFT">Draft</option>
-            <option value="SENT">Sent</option>
-            <option value="ACCEPTED">Accepted</option>
-            <option value="CONVERTED">Converted</option>
-            <option value="EXPIRED">Expired</option>
-            <option value="LOST">Lost</option>
-          </select>
-          <button type="button" data-action="refresh" ?disabled=${this.busy}>Refresh</button>
+          ${select({
+            label: "Filter by status",
+            field: "status-filter",
+            testid: "qb-list-filter",
+            content: html`
+              <option value="">All statuses</option>
+              <option value="DRAFT">Draft</option>
+              <option value="SENT">Sent</option>
+              <option value="ACCEPTED">Accepted</option>
+              <option value="CONVERTED">Converted</option>
+              <option value="EXPIRED">Expired</option>
+              <option value="LOST">Lost</option>
+            `,
+          })}
+          ${button({ label: "Refresh", kind: "secondary", action: "refresh", disabled: this.busy })}
         </div>
         ${this.rows.length === 0
           ? html`<p class="empty" style="margin-top: 10px" data-testid="qb-list">No quotes.</p>`
@@ -541,15 +546,17 @@ export class QdQuoteBuilder extends LitElement {
         ${this.nextCursor !== ""
           ? html`<div class="row"><button type="button" data-action="more" data-testid="qb-list-more" ?disabled=${this.busy}>Load more quotes</button></div>`
           : nothing}
-        <fieldset>
-          <legend>New quote</legend>
-          <div class="row">
-            <hos-customer-picker></hos-customer-picker>
-            <select aria-label="Branch" data-field="new-branch"></select>
-            <input type="date" aria-label="Expiry date" data-field="new-expiry" />
-            <button type="button" data-action="create" ?disabled=${this.busy}>Create</button>
-          </div>
-        </fieldset>
+        ${fieldGroup({
+          heading: "New quote",
+          content: html`
+            <div class="row">
+              <hos-customer-picker></hos-customer-picker>
+              ${select({ label: "Branch", field: "new-branch" })}
+              ${dateInput({ label: "Expiry date", field: "new-expiry" })}
+              ${button({ label: "Create", kind: "primary", action: "create", disabled: this.busy })}
+            </div>
+          `,
+        })}
       </div>
     `;
   }

@@ -1,9 +1,10 @@
 // The wrong role proof (plan 3.4, ledger rows 11 and 12; QD-4): the app never decides a
-// role rule. The Pricing button is on every signed in desk; the server answers. The Sales
-// manager sees the panel. The Inside Sales login, which the server's gate refuses, is shown
-// the server's refusal and no controls. A login the server lets read but not write loses its
-// controls the moment a write is refused, with the prices still readable. A log the cost and
-// margin list refuses is refused on its own tab only.
+// role rule alone. The Pricing desk tab is the manager's (role levels r3: tier 2 reaches
+// it, tier 3 does not); a salesperson has no tab and the desk asks the pricing routes
+// nothing. A login the pricing routes refuse anyway is shown the server's refusal and no
+// controls. A login the server lets read but not write loses its controls the moment a
+// write is refused, with the prices still readable. A log the cost and margin list
+// refuses is refused on its own tab only.
 import { expect, test } from "@playwright/test";
 import { shot } from "./shot";
 import { openPricing, openTab, setMode, signIn } from "./pricing-helpers";
@@ -30,9 +31,19 @@ test("the Sales manager sees the panel: five tabs, the rows and the controls", a
   await expect(page.getByTestId("pr-new")).toBeVisible();
 });
 
-test("a role off the list is shown the server's refusal and no controls", async ({ page }) => {
+test("a salesperson has no Pricing tab, and the desk asks the pricing routes nothing", async ({ page }) => {
   await signIn(page, "Sales");
-  await expect(page.getByTestId("pricing-toggle")).toBeVisible();
+  await expect(page.getByTestId("desk-tabs")).toBeVisible();
+  await expect(page.getByTestId("desk-tab-quotes")).toBeVisible();
+  await expect(page.getByTestId("desk-tab-pricing")).toHaveCount(0);
+  const state = await (await page.request.get("/_stub/pricing-state")).json();
+  expect(state.writes).toHaveLength(0);
+  expect(state.previews).toHaveLength(0);
+});
+
+test("a login the pricing routes refuse is shown the server's refusal and no controls", async ({ page }) => {
+  await signIn(page, "Sales manager");
+  await setMode(page, { fail_next: { kind: "list", status: 403, message: "Forbidden" } });
   await openPricing(page);
   await expect(page.getByTestId("pricing-denied")).toBeVisible();
   await expect(page.getByTestId("pricing-denied-words")).toHaveText("The server answered: Forbidden");
@@ -45,14 +56,15 @@ test("a role off the list is shown the server's refusal and no controls", async 
   await shot(page.getByTestId("pricing-panel"), "pricing-refused");
 });
 
-test("the refused role has made no pricing write, and the quotes screen still works for it", async ({ page }) => {
-  await signIn(page, "Sales");
+test("the refused login has made no pricing write, and the quotes screen still works for it", async ({ page }) => {
+  await signIn(page, "Sales manager");
+  await setMode(page, { fail_next: { kind: "list", status: 403, message: "Forbidden" } });
   await openPricing(page);
   await expect(page.getByTestId("pricing-denied")).toBeVisible();
   const state = await (await page.request.get("/_stub/pricing-state")).json();
   expect(state.writes).toHaveLength(0);
   expect(state.previews).toHaveLength(0);
-  await page.getByTestId("pricing-toggle").click();
+  await page.getByTestId("desk-tab-quotes").click();
   await expect(page.getByTestId("qb-list")).toBeVisible();
 });
 

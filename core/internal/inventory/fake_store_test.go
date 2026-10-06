@@ -207,7 +207,9 @@ func (f *fakeStore) RecentMoves(context.Context, string, string, int) ([]StockMo
 func (f *fakeStore) PendingFulfilments(context.Context, string) ([]PendingFulfilment, error) {
 	return nil, nil
 }
-func (f *fakeStore) SnapshotOnHand(context.Context, string) ([]CountSnapshot, error) { return nil, nil }
+func (f *fakeStore) SnapshotOnHand(context.Context, pgx.Tx, string) ([]CountSnapshot, error) {
+	return nil, nil
+}
 func (f *fakeStore) ReceivedLinesForPO(context.Context, string) ([]ReceivedLine, error) {
 	return nil, nil
 }
@@ -260,7 +262,7 @@ func defaultRules() fakeRules {
 
 // AllocationPolicy, the fake defaults every branch to the SYSTEM default (found=false) unless a
 // test seeds policies, so a unit test only has to think about policy when policy is what it is testing.
-func (f *fakeStore) AllocationPolicy(_ context.Context, branchID string) (AllocationPolicy, bool, error) {
+func (f *fakeStore) AllocationPolicy(_ context.Context, _ pgx.Tx, branchID string) (AllocationPolicy, bool, error) {
 	p, ok := f.policies[branchID]
 	return p, ok, nil
 }

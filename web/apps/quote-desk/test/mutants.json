@@ -1563,5 +1563,12 @@
     "find": "    if (fresh === undefined || seq !== this.editSeq) return;",
     "replace": "    if (fresh === undefined) return;",
     "test": "two quick Edit clicks on the quantity breaks tab open the later one"
+  },
+  {
+    "id": "app-switch-role-ends-session",
+    "file": "src/app-root.ts",
+    "find": "    await this.#signOut();\n    window.location.assign(\"/\");",
+    "replace": "    window.location.assign(\"/\");",
+    "test": "Switch role ends the session and returns to the front door at /"
   }
 ]

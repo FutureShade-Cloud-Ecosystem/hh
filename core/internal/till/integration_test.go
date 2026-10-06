@@ -12,6 +12,7 @@ package till
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 
@@ -45,14 +46,36 @@ func intPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-// stubCharger wraps the deterministic RunPaymentsStub as a till.CardCharger (no live call, no config
-// row needed): it mirrors what the main.go cardChargerAdapter does over payment.Service, minus the
-// vault, the stub returns a stable captured ref for any positive amount + token.
+// stubCharger wraps the deterministic RunPaymentsStub as a till.CardCharger (no live call, no
+// config row, no attempt table): it mirrors the capture seam's shape over the stub processor,
+// returning a stable captured ref for any positive amount + token. The bind arm accepts the facts
+// it is handed (the real adapter guards them against the attempt row, which this stub does not
+// keep), and the compensation arm answers a clean reversal.
 type stubCharger struct{ proc payment.Processor }
 
-func (s stubCharger) Charge(ctx context.Context, _ pgx.Tx, amountCents int64, token, ref string) (ChargeResult, error) {
-	res, err := s.proc.Charge(ctx, map[string]string{"api_key": "stub", "currency": "CAD"}, "MID-TEST", amountCents, token)
-	return ChargeResult{ProcessorRef: res.ProcessorRef, Status: res.Status}, err
+func (s stubCharger) Capture(ctx context.Context, in CardChargeInput) (CardCapture, error) {
+	if in.ReadOnly {
+		return CardCapture{}, ErrCardLegUnattempted
+	}
+	res, err := s.proc.Charge(ctx, map[string]string{"api_key": "stub", "currency": "CAD"}, "MID-TEST", in.AmountCents, in.AccountToken)
+	if err != nil {
+		return CardCapture{}, err
+	}
+	if res.Status != "captured" {
+		return CardCapture{}, ErrCardDeclined
+	}
+	return CardCapture{Kind: CardCaptureCaptured, AttemptID: "att-stub-" + in.LegKey, ProcessorRef: res.ProcessorRef}, nil
+}
+
+func (s stubCharger) BindTx(_ context.Context, _ pgx.Tx, b CardBind) error {
+	if b.AttemptID == "" || b.PaymentID == "" {
+		return errors.New("stub charger: the bind arrived without its attempt or payment id")
+	}
+	return nil
+}
+
+func (s stubCharger) Compensate(_ context.Context, attemptID string) (CardCompensation, error) {
+	return CardCompensation{Kind: CardCompVoided, AttemptID: attemptID}, nil
 }
 
 func realSvc(pool *pgxpool.Pool) *Service {
@@ -165,7 +188,8 @@ func TestIntegration_CashIdempotency(t *testing.T) {
 	}
 }
 
-// I3, TakeTender CARD via the stub → gateway_ref + card_type RECEIVED on the real 0027 column.
+// I3, the card two-half: CaptureCard on the pool (the stub's captured ref), then TakeTender in a
+// real pgx tx binding that capture → gateway_ref + card_type RECEIVED on the real 0027 column.
 func TestIntegration_CardViaStub(t *testing.T) {
 	ctx := context.Background()
 	pool := intPool(t)
@@ -179,15 +203,23 @@ func TestIntegration_CardViaStub(t *testing.T) {
 	}
 	t.Cleanup(func() { cleanupSession(pool, sid) })
 
+	key := "itest-card-" + sid
+	cap, err := svc.CaptureCard(cctx, CardChargeInput{
+		TillSessionID: sid, BranchID: branchID, AmountCents: 12000,
+		LegKey: key, SaleKey: key, LegSeq: 1, AccountToken: "tok_itest", CardType: CardCredit,
+	})
+	if err != nil {
+		t.Fatalf("capture: %v", err)
+	}
 	pid := takeInTx(t, pool, svc, cctx, TenderInput{TillSessionID: sid, Method: MethodCard, AmountCents: 12000,
-		PaymentToken: "tok_itest", CardType: CardCredit, IdempotencyKey: "itest-card-" + sid})
+		PaymentToken: "tok_itest", CardType: CardCredit, IdempotencyKey: key, Capture: cap})
 
 	var status, cardType, gatewayRef string
 	if err := pool.QueryRow(ctx, `SELECT status, card_type, gateway_ref FROM payments WHERE id = $1`, pid).Scan(&status, &cardType, &gatewayRef); err != nil {
 		t.Fatalf("read card payment: %v", err)
 	}
-	if status != PaymentReceived || cardType != CardCredit || gatewayRef == "" {
-		t.Fatalf("card row wrong: status=%s card_type=%s ref=%q", status, cardType, gatewayRef)
+	if status != PaymentReceived || cardType != CardCredit || gatewayRef == "" || gatewayRef != cap.ProcessorRef {
+		t.Fatalf("card row wrong: status=%s card_type=%s ref=%q (captured %q)", status, cardType, gatewayRef, cap.ProcessorRef)
 	}
 }
 

@@ -98,6 +98,12 @@ type planSummary struct {
 	// per deploy, and the plan tests need to hold every OTHER id still while the clock moves. A key
 	// that ever appears here and should not is the whole failure mode this list exists to expose.
 	DayKeys []string
+	// The quote world (demoseed_quotes.go): one line per quote, one per share link a tester can open,
+	// and the id of every row the section wrote (the rows that exist only while both demo role logins
+	// resolve).
+	Quotes      []string
+	QuoteLinks  []string
+	QuoteRowIDs []string
 }
 
 // -- the catalogue of demo entities, as tables ----------------------------------------------------

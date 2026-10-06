@@ -928,11 +928,11 @@ func TestIntegration_LowMarginScan(t *testing.T) {
 	if crit.Level != "critical" {
 		t.Errorf("SO-DPA3-CRIT level = %q, want critical", crit.Level)
 	}
-	if crit.MarginBps != 1564 {
-		t.Errorf("SO-DPA3-CRIT margin_bps = %d, want 1564 ((850-717)*1e4/850)", crit.MarginBps)
+	if crit.MarginBps != 1552 {
+		t.Errorf("SO-DPA3-CRIT margin_bps = %d, want 1552 ((850-718)*1e4/850)", crit.MarginBps)
 	}
-	if crit.CostInPriceUOMCents != 717 {
-		t.Errorf("SO-DPA3-CRIT cost/SF = %d, want 717 (175 × 4.10, float path)", crit.CostInPriceUOMCents)
+	if crit.CostInPriceUOMCents != 718 {
+		t.Errorf("SO-DPA3-CRIT cost/SF = %d, want 718 (175 x 4.10 = 717.5 exact, half away from zero)", crit.CostInPriceUOMCents)
 	}
 	if crit.SKU != "DBS-UL-BRUSSELS" || crit.ProductName == "" {
 		t.Errorf("SO-DPA3-CRIT must carry sku+name from the join, got sku=%q name=%q", crit.SKU, crit.ProductName)
@@ -945,8 +945,8 @@ func TestIntegration_LowMarginScan(t *testing.T) {
 	if warn.Level != "warn" {
 		t.Errorf("SO-DPA3-WARN level = %q, want warn", warn.Level)
 	}
-	if warn.MarginBps != 2646 {
-		t.Errorf("SO-DPA3-WARN margin_bps = %d, want 2646 ((975-717)*1e4/975)", warn.MarginBps)
+	if warn.MarginBps != 2635 {
+		t.Errorf("SO-DPA3-WARN margin_bps = %d, want 2635 ((975-718)*1e4/975)", warn.MarginBps)
 	}
 
 	// The healthy 1400¢/SF line on the WARN order must NOT surface, only the 975¢/SF WARN line does.

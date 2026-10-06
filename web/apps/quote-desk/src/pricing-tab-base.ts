@@ -78,7 +78,7 @@ export abstract class PricingTabBase extends PanelBase {
   protected abstract closeTopDialog(): boolean;
 
   /**
-   * HOOK for the app's leaving paths (the panel's tab switch, the desk's Quotes toggle, and
+   * HOOK for the app's leaving paths (the panel's tab switch, the desk's Quotes tab, and
    * the first press of the sign out): true while a price is saved and its floor confirmation
    * is not yet in the pricing log, so leaving would lose the row. The panel asks this before
    * a leave; sign out itself also waits for the floor work still out and sends the owed

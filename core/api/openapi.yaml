@@ -42,10 +42,13 @@ tags:
     description: Offline sync pull and push per declared scope (context 4.5)
   - name: operator
     description: Org-scoped operator endpoints the launcher section consumes (D4)
+  - name: load
+    description: "The load doors: the machine surface FB Move's loads arrive through, registered only where a deployment's configuration switches them on"
   - name: staff-assist
   - name: staff-audit
   - name: staff-bankrec
   - name: staff-billing
+  - name: manager-billing
   - name: staff-branches
   - name: staff-bistrack
   - name: staff-compliance
@@ -102,6 +105,10 @@ x-access-map:
     surfaces:
       - money-desk
     level: read
+  manager-billing:
+    surfaces:
+      - money-desk
+    level: manage
   staff-bistrack:
     surfaces:
       - buying-and-stock
@@ -2305,6 +2312,98 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/payments/card-attempts:
+    get:
+      operationId: paymentListCardAttempts
+      tags:
+        - staff-billing
+      summary: List the card charge attempts that need a person
+      description: "The list a person reconciling a Run settlement report reads: every trans_id with no sale behind it, and why. With state=open it answers every attempt that needs a person (UNKNOWN, VOID_UNKNOWN, VOID_DECLINED), whatever its date; from and to (RFC3339) bound the second arm, every attempt in the range that carries a charge ref and is not BOUND. A missing from and to default from to the seven day window, so the range arm is bounded whatever the caller sends. Newest first, bounded at 500 rows."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: state
+          in: query
+          required: false
+          description: open selects the attempts that need a person
+          schema:
+            type: string
+            enum:
+              - open
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: The attempt rows, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PaymentCardAttemptSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/payments/card-attempts/{id}/resolve:
+    post:
+      operationId: paymentResolveCardAttempt
+      tags:
+        - manager-billing
+      summary: Close one card charge attempt that needed a person
+      description: "Reason-required and audited: the resolution must be NOT_CHARGED or REVERSED_AT_PROCESSOR and the note non-empty, and the close carries the caller's own user id as the resolver. The row stays and its leg key never charges again. An unknown id answers 404; a BOUND attempt (its sale exists) answers 409; a VOID_* row cannot close as NOT_CHARGED (400, the pairing refusal); a row that moves between the read and the close answers 409."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentCardAttemptResolve"
+      responses:
+        "200":
+          description: The resolved row's summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentCardAttemptSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/assist/commands:
     get:
       operationId: assistListCommands
@@ -2675,6 +2774,35 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AssistSettingResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/uoms:
+    get:
+      operationId: productListUnits
+      tags:
+        - staff-product
+      summary: Read the unit catalogue
+      description: "The staff read of the load doors' catalogue (HH-LOAD-1 LD-3): one cursor page of the unit rows in code order, the code the stable ordering key. Dealer Admin at read: the route serves the dealer admin surface, a named exception to this tag's default. The catalogue is the deployment wide vocabulary, so the read carries the X-Org the staff surface takes and no per row org."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - dealer-admin
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: One cursor page of the catalogue
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UomViewPage"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -10859,6 +10987,393 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/load/batches/{id}:
+    get:
+      operationId: loadGetBatch
+      tags:
+        - load
+      summary: Read one load batch by the caller's batch id
+      description: The counts by outcome and the per item outcomes the batch first recorded, so a replayed submission can be answered from the record. The id is the caller's own batch id, not an HH uuid.
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: HH-LOAD-1 load doors; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+      responses:
+        "200":
+          description: The recorded batch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadBatchView"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The batch id is recorded under more than one source system in this org; the read refuses rather than guess
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/load/keys/resolve:
+    post:
+      operationId: loadResolveKeys
+      tags:
+        - load
+      summary: Resolve legacy keys to HH ids
+      description: "A list body of legacy keys in, one resolution per item out: the HH row the key names within the org and source system, or null where the name is not yet recorded, with the found and missing counts. Read semantics; writes nothing. A list over the bound refuses with 400."
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: HH-LOAD-1 load doors; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadKeysResolveRequest"
+      responses:
+        "200":
+          description: One resolution per item, with the counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadKeysResolveResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/load/branches:
+    put:
+      operationId: loadMapBranches
+      tags:
+        - load
+      summary: Attach the dealer's branch keys to HH's existing branches
+      description: "One item per legacy branch key. The record names one field, the yard code of an existing branch row; a name not yet recorded binds to that row and answers attached, a replay answers unchanged, and a record that would re-point a recorded name at a second row refuses as a key conflict. A code that answers no branch row refuses naming the field. No branch is ever created. The read assumes one deployment per dealer: it carries no org predicate (the single org assumption of the plan's reading 3)."
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: HH-LOAD-1 load doors; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadSubmitRequest"
+      responses:
+        "200":
+          description: One outcome per item and the batch's counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadSubmitResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The batch id is recorded under another door; the submission is a collision of two doors' batch namespaces, not a replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "The batch contended with another in flight batch on shared names and Postgres rolled it back whole: nothing of it stands, and resubmitting the whole batch is safe. The one answer a caller may retry the batch on, never a per item outcome."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/load/users:
+    put:
+      operationId: loadMapUsers
+      tags:
+        - load
+      summary: Attach the dealer's user and sales rep keys to existing staff rows
+      description: "One item per legacy user key. The record names one field, the verified login email of an existing staff row; a name not yet recorded binds to that row and answers attached, a replay answers unchanged. An email that answers no staff row refuses naming the field, never a value. No user is ever created. Any staff row that is not deleted attaches, suspended and deactivated staff included, so a former rep's key still resolves; the attach grants nothing. The read assumes one deployment per dealer: it carries no org predicate (the plan's reading 3)."
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: HH-LOAD-1 load doors; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadSubmitRequest"
+      responses:
+        "200":
+          description: One outcome per item and the batch's counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadSubmitResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The batch id is recorded under another door; the submission is a collision of two doors' batch namespaces, not a replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "The batch contended with another in flight batch on shared names and Postgres rolled it back whole: nothing of it stands, and resubmitting the whole batch is safe. The one answer a caller may retry the batch on, never a per item outcome."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/load/categories:
+    put:
+      operationId: loadUpsertCategories
+      tags:
+        - load
+      summary: Upsert product categories, the parent named by legacy key
+      description: One item per category. The record names the code and the name; the parent, named by legacy key, arrives as a reference of kind category and resolves against the registry before any write, so a parent not yet loaded refuses naming the kind and the key. A parent chain that would return to the row the item names refuses as a cycle, and one deeper than the bound the catalogue serves refuses as too deep, each with nothing of the write standing. A code a staff member already made attaches to that row and takes the load's stamps. A changed code on a recorded legacy key updates that row in place; a code another row carries refuses as a key conflict naming both keys. A row another org owns refuses naming the kind and the key; its org is never overwritten.
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: HH-LOAD-1 load doors; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadSubmitRequest"
+      responses:
+        "200":
+          description: One outcome per item and the batch's counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadSubmitResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The batch id is recorded under another door; the submission is a collision of two doors' batch namespaces, not a replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "The batch contended with another in flight batch on shared names and Postgres rolled it back whole: nothing of it stands, and resubmitting the whole batch is safe. The one answer a caller may retry the batch on, never a per item outcome."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/load/suppliers:
+    put:
+      operationId: loadUpsertSuppliers
+      tags:
+        - load
+      summary: Upsert the supplier record with its terms, remit address and ordering contact
+      description: "One item per supplier. The legacy id is the vendor number, the source's natural key; the record names the supplier name and, named, the payment terms in days, the EDI flag, the remit address, the active flag, the metadata, and the ordering contact (contact name, email, phone) through the purchasing module's own contact store. A contact that names neither an email nor a phone refuses naming the field, as do negative payment terms. A reload whose record names no contact removes the loaded contact: the record is the whole truth. A row another org owns refuses naming the kind and the key; its org is never overwritten."
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: HH-LOAD-1 load doors; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadSubmitRequest"
+      responses:
+        "200":
+          description: One outcome per item and the batch's counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadSubmitResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The batch id is recorded under another door; the submission is a collision of two doors' batch namespaces, not a replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "The batch contended with another in flight batch on shared names and Postgres rolled it back whole: nothing of it stands, and resubmitting the whole batch is safe. The one answer a caller may retry the batch on, never a per item outcome."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/load/units:
+    put:
+      operationId: loadUpsertUnits
+      tags:
+        - load
+      summary: Upsert the unit catalogue, a unit that already stands attached
+      description: "One item per unit. The record names the code, the name and the dimension, one of count, area, weight, volume and length. A code the catalogue does not carry answers created; a unit already standing with the same code and dimension answers attached and takes the load's stamps, a seeded row included (the plan's section 2: records that already exist are attached, never created twice); the same code under another dimension refuses naming the field, and the caller's pack maps repeat or clashing source codes to unique HH codes (the plan's reading 4); a dimension the catalogue does not carry refuses naming the field; a row another org owns refuses naming the kind and the key, its org never overwritten. No unit is ever deleted. The catalogue is the deployment wide vocabulary (the plan's reading 3): the unit's identity is its code, the catalogue carries no uuid column, and the registry names a unit by the code's derived row id, stable across deployments. The read assumes one deployment per dealer: it carries no org predicate on the catalogue rows."
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: HH-LOAD-1 load doors; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadSubmitRequest"
+      responses:
+        "200":
+          description: One outcome per item and the batch's counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadSubmitResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The batch id is recorded under another door; the submission is a collision of two doors' batch namespaces, not a replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "The batch contended with another in flight batch on shared names and Postgres rolled it back whole: nothing of it stands, and resubmitting the whole batch is safe. The one answer a caller may retry the batch on, never a per item outcome."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/load/products/unit-sets:
+    put:
+      operationId: loadPutUnitSets
+      tags:
+        - load
+      summary: Replace a product's unit set atomically, the product named by legacy key
+      description: "One item per product's unit set. The product arrives as a reference of kind product and resolves against the registry before any write, so a name not yet loaded refuses as a missing reference naming the kind and the key; the product door itself is a later item, so until it lands the registry is the only way a product name stands. The record's rows are the set, each naming the code, the factor as decimal text only (a factor that arrives as a number refuses naming factor_type: the door never re-spells a float), the base flag and, if named, the role hints. The set REPLACES the product's rows atomically, the old set deleted and the new inserted inside the item's transaction: exactly one base row at factor one, and that base row the product's own base unit (products.base_uom, compared the way CITEXT compares); every factor positive and at scale eight or under, a factor beyond that refused naming the legacy key and the field, never a value, never rounded (the plan's section 8 point 3); every code naming a catalogue unit; the product's price unit inside the set; no unit removed while a price, break, rule, override or stock row still names it (the list price, the pricing rules and the quantity break headers and items of the product and of the product's category, matched the way the price resolver matches them so a row carrying a product beside the category still applies, the customer category overrides priced in the unit, the promotions' fixed prices, the clearance prices, the supplier skus, the product's rounding rule, the stock moves and the pricing conversion edges; the category scoped and store wide promotions and the tier default rules are deliberately beyond this check: a unit mismatch leaves such a promotion inert rather than failing a resolve, and a rule that applies to every product is no one product's row to hold); and the decimal round trip holding on every conversion against the representation the price resolver reads: factors are exact only to what the resolver reads, and a factor the float read would corrupt is refused (the plan's risk 1, stated honestly). The open document lines (open quotes and orders, open purchase order lines, transfers in transit) are deliberately not read: the plan's load order loads unit sets before any document exists, and the document reload is LD-12's follow up. Nothing of a refused replace stands."
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: HH-LOAD-1 load doors; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadSubmitRequest"
+      responses:
+        "200":
+          description: One outcome per item and the batch's counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadSubmitResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The batch id is recorded under another door; the submission is a collision of two doors' batch namespaces, not a replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "The batch contended with another in flight batch on shared names and Postgres rolled it back whole: nothing of it stands, and resubmitting the whole batch is safe. The one answer a caller may retry the batch on, never a per item outcome."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/load/receivables:
+    put:
+      operationId: loadUpsertReceivables
+      tags:
+        - load
+      summary: Load one batch of open receivable items
+      description: "The open receivables door (HH-LOAD-1 LD-11): each open item of the caller's AR extract lands as an imported invoice or credit memo, with the source document number beside HH's own, the issue and due dates as recorded, and the open amount in whole cents, one receivables ledger row per item in date order per customer so aging survives. Unapplied cash loads as a negative item and lands as a credit memo. An item whose issue_date is after the load day (the day the batch's transaction runs, UTC) refuses the batch naming the issue_date field, never a value: a postdated document would sit above HH's own sales in the ledger readers and understate the balance, so the extract carries none; an item dated the load day itself lands. The batch is all or nothing: one refused item refuses the batch and nothing lands, and the refusing item is named in the 422 body. A replayed batch id returns the outcomes it first recorded and writes nothing (the replay must carry exactly the recorded items, in any order: a subset, a superset or a changed item refuses with 409 before any outcome is built); a batch that contended with another batch on shared names rolled back whole and answers 503 with Retry-After: resubmit the whole batch (money batches re-run whole; the id was never recorded). An item restated on a later batch updates its document in place, with three refusals that name their own reason: sign_changed (the restated amount changed sign; a source item that changed sign is a different document), target_worked_in_hh (HH has worked the loaded document since it loaded, so a reload never overwrites it), and update_target_missing (the registry names a document that is truly gone). One worked item refuses the whole reload, so FB Move's reload must exclude items HH has worked. No journal, no finalized event, no customer message, reminder or credit sweep is triggered by a load: the imported document emits none of the events those paths hang off. Money is integer cents, never a float: an open amount that is not exact whole cents refuses with 400 naming the item and the field."
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: HH-LOAD-1 LD-11 open receivables; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadReceivablesUpsertRequest"
+      responses:
+        "200":
+          description: The batch's counts by outcome and one outcome per item, in the body's own item order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadReceivablesResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The batch id is recorded under another door, or the replay carries an item the played batch never recorded or whose content differs from what it recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: The batch refused whole; the refusing item's legacy id, reason, field and detail ride the Error envelope, keys and fields only, never a record value
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: The batch contended with another in flight batch and rolled back whole, nothing landed and the id was never recorded; Retry-After names the pause, and the caller resubmits the whole batch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/messaging/channels:
     get:
       operationId: messagingListChannels
@@ -13660,6 +14175,12 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "402":
+          description: "A card leg was declined: no money moved for that leg and any card already charged for this sale was reversed. The error word card_charge_card_declined names the card case beside the till's own decline word; the client clears its key and may re-ring."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "403":
           $ref: "#/components/responses/Forbidden"
         "409":
@@ -24474,6 +24995,11 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: "Tenant identity: a contractor-portal token. The org comes from the Team, the tenant (the contractor account) comes from the token, and branch sits beneath both (D3). Tenant routes never take X-Org."
+    MachineBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: "FB Move's machine credential (ADR-0024): a short-lived token FB Move signs with a private key held in FB Vault, verified against the deployment's configured public key set for the machine audience alone, never the platform's staff key set. The subject names the machine principal; the org is the principal's own org and X-Org must name it exactly. No staff role reaches these operations: the machine principal's own door list is the whole authority."
   parameters:
     XOrg:
       name: X-Org
@@ -27472,6 +27998,80 @@ components:
           items:
             type: string
             format: uuid
+    PaymentCardAttemptSummary:
+      type: object
+      description: "One manager-readable attempt row: the reconciliation facts (amount, branch, till session, time, sale key) beside the charge's own answers (status, the charge and reversal refs, the bounded diagnostic). ref is the id's short form, the name the needs-manager answers carry; id is the whole value, the resolve route's path parameter. The row never carries a leg key, a note or a resolver: it is the reconciliation view, not the row's every column."
+      required:
+        - ref
+        - id
+        - status
+        - amount_cents
+        - branch_id
+        - till_session_id
+        - created_at
+        - sale_key
+        - charge_ref
+        - reversal_ref
+        - last_error
+      properties:
+        ref:
+          type: string
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          description: The attempt row's stored state
+          enum:
+            - CHARGING
+            - CAPTURED
+            - DECLINED
+            - UNKNOWN
+            - BOUND
+            - VOIDING
+            - VOIDED
+            - VOID_UNKNOWN
+            - VOID_DECLINED
+            - RESOLVED
+        amount_cents:
+          type: integer
+          format: int64
+        branch_id:
+          type: string
+          format: uuid
+        till_session_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        sale_key:
+          type: string
+          format: uuid
+        charge_ref:
+          type: string
+          description: The processor's charge reference; empty until an answer carried one
+        reversal_ref:
+          type: string
+          description: The processor's reversal reference; empty until an answer carried one
+        last_error:
+          type: string
+          description: The bounded, redacted diagnostic; never a token, a credential or a card number
+    PaymentCardAttemptResolve:
+      type: object
+      description: The manager's close of an attempt that needed a person
+      required:
+        - resolution
+        - note
+      properties:
+        resolution:
+          type: string
+          enum:
+            - NOT_CHARGED
+            - REVERSED_AT_PROCESSOR
+        note:
+          type: string
+          description: Mandatory; what the manager found at the processor
     AssistArgSpec:
       type: object
       required:
@@ -28071,6 +28671,45 @@ components:
         list_price_uom:
           type: string
           description: The unit list_price_cents is denominated in, carried only with it
+    UomView:
+      type: object
+      description: One row of the unit catalogue
+      required:
+        - code
+        - name
+        - dimension
+        - is_active
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        dimension:
+          type: string
+          enum:
+            - count
+            - area
+            - weight
+            - volume
+            - length
+        is_active:
+          type: boolean
+    UomViewPage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/UomView"
+        next_cursor:
+          type:
+            - string
+            - "null"
+        limit:
+          type: integer
+          format: int32
     ProductPage:
       type: object
       required:
@@ -35617,6 +36256,290 @@ components:
         limit:
           type: integer
           format: int32
+    LoadReceivablesRecord:
+      type: object
+      description: "One open item's record, the carried facts only, never recomputed: source_doc_no (the source document number, one to 128 characters, required), issue_date and due_date (strict calendar days as YYYY-MM-DD, both required, landed as recorded), open_amount_cents (the open amount in whole cents, required, non-zero: a negative amount is unapplied cash and lands as a credit memo; a value that is not an exact integer refuses the batch naming the item), and the optional source_job_key and source_address_key (the source job and address legacy keys, which ride on the record until their homes exist). The record is closed: a field outside these six refuses, so two records that differ anywhere the door cannot land also cannot hash alike."
+      additionalProperties: true
+    LoadReceivablesItem:
+      type: object
+      required:
+        - legacy_id
+        - requires
+        - record
+      properties:
+        legacy_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        derived_key:
+          type:
+            - string
+            - "null"
+          format: uuid
+          description: The caller's name-based uuid over the same four parts; empty leaves the row's idempotency column untouched
+        requires:
+          type: array
+          description: "The item's references by legacy key: exactly one customer and one branch. The source job and address keys ride on the record instead; they have no registry homes yet."
+          items:
+            $ref: "#/components/schemas/LoadKeyRef"
+        record:
+          $ref: "#/components/schemas/LoadReceivablesRecord"
+    LoadReceivablesUpsertRequest:
+      type: object
+      required:
+        - source_system
+        - batch_id
+        - items
+      properties:
+        source_system:
+          type: string
+          minLength: 1
+          maxLength: 64
+        batch_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        items:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            $ref: "#/components/schemas/LoadReceivablesItem"
+    LoadReceivablesResult:
+      type: object
+      required:
+        - batch_id
+        - counts
+        - items
+      properties:
+        batch_id:
+          type: string
+        counts:
+          $ref: "#/components/schemas/LoadBatchCounts"
+        items:
+          type: array
+          description: One outcome per item, in the request body's own item order
+          items:
+            $ref: "#/components/schemas/LoadBatchItemOutcome"
+    LoadKeyRef:
+      type: object
+      required:
+        - kind
+        - legacy_id
+      properties:
+        kind:
+          type: string
+          minLength: 1
+          maxLength: 64
+        legacy_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+    LoadKeysResolveRequest:
+      type: object
+      required:
+        - source_system
+        - items
+      properties:
+        source_system:
+          type: string
+          minLength: 1
+          maxLength: 64
+        items:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            $ref: "#/components/schemas/LoadKeyRef"
+    LoadKeyResolution:
+      type: object
+      required:
+        - kind
+        - legacy_id
+        - hh_id
+      properties:
+        kind:
+          type: string
+        legacy_id:
+          type: string
+        hh_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+    LoadKeysResolveCounts:
+      type: object
+      required:
+        - found
+        - missing
+      properties:
+        found:
+          type: integer
+          format: int32
+        missing:
+          type: integer
+          format: int32
+    LoadKeysResolveResult:
+      type: object
+      required:
+        - items
+        - counts
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/LoadKeyResolution"
+        counts:
+          $ref: "#/components/schemas/LoadKeysResolveCounts"
+    LoadBatchItemOutcome:
+      type: object
+      required:
+        - legacy_id
+        - status
+      properties:
+        legacy_id:
+          type: string
+        status:
+          type: string
+          enum:
+            - created
+            - attached
+            - updated
+            - unchanged
+            - refused
+        hh_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+        reason:
+          type:
+            - string
+            - "null"
+        field:
+          type:
+            - string
+            - "null"
+        detail:
+          type:
+            - string
+            - "null"
+    LoadBatchCounts:
+      type: object
+      required:
+        - created
+        - attached
+        - updated
+        - unchanged
+        - refused
+      properties:
+        created:
+          type: integer
+          format: int32
+        attached:
+          type: integer
+          format: int32
+        updated:
+          type: integer
+          format: int32
+        unchanged:
+          type: integer
+          format: int32
+        refused:
+          type: integer
+          format: int32
+    LoadSubmitItem:
+      type: object
+      required:
+        - legacy_id
+        - record
+      properties:
+        legacy_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        derived_key:
+          type:
+            - string
+            - "null"
+          format: uuid
+        record:
+          type: object
+          additionalProperties: true
+        requires:
+          type: array
+          maxItems: 64
+          items:
+            $ref: "#/components/schemas/LoadKeyRef"
+    LoadSubmitRequest:
+      type: object
+      required:
+        - source_system
+        - batch_id
+        - items
+      properties:
+        source_system:
+          type: string
+          minLength: 1
+          maxLength: 64
+        batch_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        items:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            $ref: "#/components/schemas/LoadSubmitItem"
+    LoadSubmitResult:
+      type: object
+      required:
+        - batch_id
+        - counts
+        - items
+      properties:
+        batch_id:
+          type: string
+        counts:
+          $ref: "#/components/schemas/LoadBatchCounts"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/LoadBatchItemOutcome"
+    LoadBatchView:
+      type: object
+      required:
+        - batch_id
+        - source_system
+        - kind
+        - caller
+        - state
+        - counts
+        - items
+        - created_at
+      properties:
+        batch_id:
+          type: string
+        source_system:
+          type: string
+        kind:
+          type: string
+        caller:
+          type: string
+        state:
+          type: string
+          enum:
+            - RECORDED
+        counts:
+          $ref: "#/components/schemas/LoadBatchCounts"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/LoadBatchItemOutcome"
+        created_at:
+          type: string
+          format: date-time
     MessagingChannel:
       type: object
       description: One conversation surface. unread_count, mentioned and latest_at are populated only in the list-my-channels projection; they are per-caller, not intrinsic to the channel.

@@ -1463,3 +1463,97 @@ table's own narrowness test (an unlisted name refused even inside the
 prefix) keeps biting everywhere else. If the lead or a reviewer rules the
 edit out of bounds for this lane, it reverts as one line and the decision it
 forces is whether the discard notification may reach its host at all.
+
+## gl is back in the integration job (decision log row 802, appended; the entries above are never edited)
+
+The two red tests the HH-191 entry and its round 2 correction record for internal/gl are repaired and the package
+rejoins the integration job's run (the `gl` word leaves `red=` in `.github/workflows/ci.yml`). Neither was a code
+defect; both were stale tests, repaired test only, zero production lines:
+- `TestIntegration_ListJournals_SourceRefID_HandlerGate`: the contract's `GlJournalPage` is a cursor page (items,
+  next_cursor, limit) with no `total`, and the handler runs no count query; the test decoded a `total` the wire never
+  carries. The page was always right. It now pins the contract's page (the matching journal, and `next_cursor` null on a
+  complete last page).
+- `TestIntegration_M2C1_DemoSeed_StagingTieOutTies`: migration 0221 deliberately posts 0056's four demonstration
+  journals back out as POSTED reversing entries, so the June closing balance of every fixture account nets to zero and
+  the static fixture cannot tie. The test is now `TestIntegration_M2C1_DemoSeed_RetiredSeedNetsZero` and pins the
+  retirement; the tie-out machinery stays proven by `bistrack_tieout_integration_test.go`.
+The packages still excluded after this change, and why, are in the stand-in's red list reading in the pull request body.
+
+## internal/billing is back in the integration job (decision log row 804, appended; the entries above are never edited)
+
+`TestIntegration_Billing_ListInvoices_TenantFenceFilterAndPaging` was red for a REAL production defect, not a stale test and not a
+tenant leak (the tenant fence assertions all passed). The invoice list orders `issue_date DESC, invoice_no ASC` but its cursor
+predicate was the row comparison `(issue_date, invoice_no) < (cursor date, cursor no)`, which is a descending comparison on both
+keys: after a page ending at one invoice, every other invoice of the SAME issue date with a greater invoice number was skipped,
+so a customer paging the portal's AR list lost those invoices. The predicate is now `issue_date < d OR (issue_date = d AND
+invoice_no > no)`, matching the ordering. The test (unchanged) is the red proof on main and green with the fix; the package is
+green alone and the `billing` word leaves `red=` in `.github/workflows/ci.yml`.
+
+## internal/assist/adapters is back in the integration job (decision log row 804, appended; the entries above are never edited)
+
+`TestIntegration_AScopedUserCannotReachAnotherBranch` was red only on the stock lookup's branch row name: the test asserted a
+display name with a comma, while migration 0003 plants the dealer name, an em dash and the city. Every fence assertion in the
+test passed on main (the order, raw id, customer and payment cases and the Kingston mirror), so this was a stale test and not a
+leak. The assertion now requires the row to be Trenton's and never Kingston's; a production bite (the adapter naming the wrong
+branch) turns it red. The package is green alone and the `assist/adapters` word leaves `red=` in `.github/workflows/ci.yml`.
+
+## internal/compliance is back in the integration job (decision log row 804, appended; the entries above are never edited)
+
+`TestIntegration_Compliance_HTTPSurface_ServesAndIsManagerGated` read 401 because the test drove the kit's real guards without a
+bearer: after the guards swap the route is refused "Missing or invalid credentials" before the authority is consulted, which is
+the guard doing its job and not a leak (an unauthenticated call reaches nothing). The test now sends the staff bearer and the
+X-Org header the kit's double admits. The fence legs bite: with the calendar route moved behind the staff guard instead of the
+manager guard, the frontline authority leg reads 200 and the test fails; restored byte identical. The package is green alone and
+the `compliance` word leaves `red=` in `.github/workflows/ci.yml`.
+
+## internal/messaging is back in the integration job (decision log row 804, appended; the entries above are never edited)
+
+`TestIntegration_PaymentFacts_ResolveTheOrderThroughAllocations` was red for a REAL defect in the payment notice, not a stale
+test: the notice wants the branch's SHORT name ("Taken at Kingston; the order is Trenton's."), and the query's own comment says
+the city half is the part after the em dash, the way the house slug convention derives it (0136). The SQL split on an ASCII hyphen,
+which migration 0003's names (the dealer name, an em dash, the city) never contain, so every notice spelled out the whole legal
+name twice. The split now uses the em dash (`chr(8212)`); a name with none still falls back whole. The test is unchanged: red on
+main, green with the fix; the package is green alone and the `messaging` word leaves `red=` in `.github/workflows/ci.yml`.
+
+## internal/tour is back in the integration job (decision log row 804, appended; the entries above are never edited)
+
+The four tour surface legs read 503 "authorization dependencies unavailable" because the test drove the kit's real guards without
+the authority they resolve: the kit's default authority has no role, the session ceiling refuses an empty role, and the guard
+fails closed. That is the guard working, not a leak, and the recorded diagnosis (the harness not wiring the tour's on-state) was
+partly wrong. The handler also rebuilds the request's staff context from the guard's caller plus a user linker (as production
+wiring does), so the test's own pre-stamped context was ignored. The test helpers now set the authority per caller and give the
+handler a linker, test only; every assertion keeps its meaning. A production bite (the platform-admin gate in the service
+disabled) turns the 403 legs red; restored byte identical. The package is green alone and the `tour` word leaves `red=` in
+`.github/workflows/ci.yml`.
+
+
+The billing entry above, a follow-up (decision log row 804, review round 1): the old predicate also RE-SERVED same-day invoices with a
+LOWER number whenever a page ended mid date beyond the first invoice of that date, as well as skipping those with a greater one. The
+same descending row comparison against an ascending tiebreak is written at three other sites that this change does not touch:
+`core/internal/order/repository.go` (about line 79), `core/internal/quote/repository.go` (about line 84) and
+`core/internal/quote/edit_repository.go` (about line 588). The quote files belong to the Quote Desk lane; each needs the same two-part
+predicate (`key < cursor OR (key = cursor AND tiebreak > cursor tiebreak)`) wherever its ORDER BY mixes directions. Not exercised
+against a database here; found by reading.
+
+
+The compliance entry above, corrected (decision log row 804, review round 1): the fence leg was one route of four when that entry
+said "legs". The test now refuses the frontline authority on all four routes (the calendar, upcoming, the review-status read and
+the review-status upsert, which also proves the refused upsert wrote nothing) and asserts a call with no bearer is refused 401.
+Moving any one of the four routes from the manager guard to the staff guard turns the test red (three production bites run, each
+restored byte identical).
+
+## internal/sync is back in the integration job (decision log row 804, appended; the entries above are never edited)
+
+The sync gap legs were red only in the job's order, and the polluter is internal/pos. The cause, observed on a real gate: the gap
+fixture's cleanup swept every invoice whose number starts `#INV-`, which on a gate the POS package had run on includes POS's own
+invoices, and `pos_returns.invoice_id ON DELETE RESTRICT` blocked the whole statement. The cleanup helper ignored the error, so the
+fixture's writer document survived its own cleanup; the fixture then deleted its order, which set that document's `order_id` to
+NULL (migration 0009's ON DELETE SET NULL); the walkthrough's push converged on the stranded document by its writer key and the
+test's read of (order, seq) found nothing. Separately the payments leg counted every keyed payment on the gate. Both were fixture
+assumptions about a shared gate (test only, no production change): the cleanup now names only the fixture's own documents (the
+seeded payables by id and the writer document by its convergence key) and the payments count is scoped to the invoice under test.
+Run alone the package was already green on a fresh gate (and green twice on one gate, which the older note here doubted). The
+integration job's own command with sync included, after every package that precedes it, passes; the `sync` word leaves `red=` in
+`.github/workflows/ci.yml`. One corner recorded by the coder: if a production path ever deleted an order that already has a
+document, the writer would converge on the old document with its link NULL (0009's own choice); nothing in the job order
+exercises that.

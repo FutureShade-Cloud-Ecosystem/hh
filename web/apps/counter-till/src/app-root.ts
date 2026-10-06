@@ -31,6 +31,7 @@ import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
 import { ApiClient } from "@hardscapehouse/api-client";
 import { AuthController, SessionStore, authHeaderProvider } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
+import { clearFrontDoorHandoff, readFrontDoorHandoff } from "./demo-account.js";
 import {
   TillClient,
   HOUSE_ZONE,
@@ -360,11 +361,65 @@ export class CounterTillApp extends HHElement {
     // credential (this app's custody is memory per tab by design, and its
     // committed sink gate refuses every storage and channel path a handshake
     // would dial). The flow table answers first (its label is the role's name
-    // in the chrome), then the flow runs.
+    // in the chrome), then the flow runs. A window that is not a pop-out,
+    // on a demo build, takes the front door's handoff instead: the mint the
+    // front door held for the box lands signed in, no second picker. The
+    // seam rule (decision log row 893) keeps that read a demo seam: Vite
+    // substitutes MODE at build time, so this branch exists only in a build
+    // that asked for the demo mode, and a default build carries no adopt
+    // path at all (test/no-default-adopt.test.mjs reads the built files).
     const popped = new URLSearchParams(window.location.search).get("popout");
     if (typeof popped === "string" && popped !== "") {
       void this.#flowsLoaded.then(() => this.#chooseFlow(popped));
+    } else if (import.meta.env.MODE === "demo") {
+      void this.#adoptFromFrontDoor();
     }
+  }
+
+  /**
+   * The front door's handoff (HH-DEMO-1 D2 polish, item 6): the front door
+   * mints the demo session and holds it for the box under its own session
+   * storage key; when this app boots from a module tile's navigation,
+   * the record is read, handed to AuthController.adopt (custody takes the
+   * token into private memory and rewrites the display mirror itself), and
+   * the key is dropped in the same step, so a later visit to this app never
+   * re-adopts a spent handoff. The clerk facts the chrome and the receipt
+   * read ride the same record (the front door validated the mint already;
+   * this read validates the record again before custody sees any of it). An
+   * absent or unusable record is the ordinary direct visit; the entry page
+   * with the cards comes up, the till's ordinary way in. A pop-out window
+   * skips this: its own ?popout flow signs in by the cards route above. The
+   * storage touch rides the auth package's throw-safe mirror, this app's
+   * sink gate's one sanctioned accessor.
+   */
+  async #adoptFromFrontDoor(): Promise<void> {
+    if (this.#sessions.current !== null) return;
+    const read = readFrontDoorHandoff();
+    if (read.kind === "absent") return;
+    clearFrontDoorHandoff();
+    if (read.kind === "unusable") return;
+    const handed = read.session;
+    const adopted = this.#controller.adopt({
+      token: handed.token,
+      tokenExpiresAtMs: handed.tokenExpiresAtMs,
+      user: handed.user,
+    });
+    if (!adopted) return;
+    this.#clerkUserId = handed.user.userId;
+    this.#clerkRoleCode = handed.roleCode;
+    this.#clerkIdentity = {
+      user_id: handed.user.userId,
+      email: handed.user.email,
+      display_name: handed.user.name,
+      role_code: handed.roleCode,
+      role_name: handed.roleName,
+      tier: handed.tier,
+      scope: handed.scope,
+    };
+    this.#till = { label: handed.roleLabel };
+    this.#activeFlow = handed.flow;
+    this.requestUpdate();
+    await this.#initTill();
   }
 
   disconnectedCallback(): void {

@@ -70,22 +70,23 @@ ON CONFLICT (code) DO NOTHING;
 
 -- ───────────────────────── products (~30, real manufacturers) ─────────────────────────
 -- base_uom = stocking unit; price_uom = how it's sold. pieces_per_sf / pallet_count drive UoM rows below.
--- pieces_per_sf is pieces per SQUARE FOOT (92903.04 sq mm per SF, over length x width of dimensions_lwh),
--- never per square metre: a 600x600 slab is 0.2581, not 2.78 (HH-207).
+-- pieces_per_sf is pieces per SQUARE FOOT (92903.04 sq mm per SF) over the sold face of dimensions_lwh:
+-- length x width for pavers and slabs, length x HEIGHT for a wall (application 'Wall', the width is the
+-- depth into the wall). Never per square metre: a 600x600 slab is 0.2581, not 2.78 (HH-207).
 INSERT INTO products (id, sku, name, category_id, base_uom, price_uom, manufacturer, collection, color, finish, application, dimensions_lwh, pallet_count, weight_per_unit_kg, pieces_per_sf) VALUES
  ('a7000000-0000-4000-9000-000000000001','DBS-TB-BLU60','Techo-Bloc Blu 60 Slab','ca700000-0000-4000-9000-000000000003','PC','SF','Techo Bloc','Blu','Greyed Nickel','Smooth','Patio','600x600x60',40,18.0,0.2581),
- ('a7000000-0000-4000-9000-000000000002','DBS-TB-ABERDEEN','Techo-Bloc Aberdeen Wall','ca700000-0000-4000-9000-000000000002','PC','SF','Techo Bloc','Aberdeen','Shale Grey','Tumbled','Wall','280x150x100',60,16.5,5.14),
+ ('a7000000-0000-4000-9000-000000000002','DBS-TB-ABERDEEN','Techo-Bloc Aberdeen Wall','ca700000-0000-4000-9000-000000000002','PC','SF','Techo Bloc','Aberdeen','Shale Grey','Tumbled','Wall','280x150x100',60,16.5,3.3180),
  ('a7000000-0000-4000-9000-000000000003','DBS-TB-BOREALIS','Techo-Bloc Borealis Step','ca700000-0000-4000-9000-000000000003','PC','EA','Techo Bloc','Borealis','Onyx Black','Textured','Step','1219x356x152',12,95.0,NULL),
- ('a7000000-0000-4000-9000-000000000004','DBS-TB-MINICRETA','Techo-Bloc Mini-Creta Wall','ca700000-0000-4000-9000-000000000002','PC','SF','Techo Bloc','Mini-Creta','Chocolate Brown','Tumbled','Wall','200x150x100',72,8.2,6.00),
+ ('a7000000-0000-4000-9000-000000000004','DBS-TB-MINICRETA','Techo-Bloc Mini-Creta Wall','ca700000-0000-4000-9000-000000000002','PC','SF','Techo Bloc','Mini-Creta','Chocolate Brown','Tumbled','Wall','200x150x100',72,8.2,4.6452),
  ('a7000000-0000-4000-9000-000000000005','DBS-UL-BRUSSELS','Unilock Brussels Block','ca700000-0000-4000-9000-000000000001','PC','SF','Unilock','Brussels Block','Sierra','Tumbled','Paver','200x150x60',50,4.1,4.10),
- ('a7000000-0000-4000-9000-000000000006','DBS-UL-ILCAMPO','Unilock Il Campo Paver','ca700000-0000-4000-9000-000000000001','PC','SF','Unilock','Il Campo','Granite','Antiqued','Paver','300x300x60',45,9.8,1.55),
- ('a7000000-0000-4000-9000-000000000007','DBS-UL-SERIES3000','Unilock Series 3000','ca700000-0000-4000-9000-000000000001','PC','SF','Unilock','Series 3000','Natural','Smooth','Paver','300x150x80',40,7.2,2.07),
+ ('a7000000-0000-4000-9000-000000000006','DBS-UL-ILCAMPO','Unilock Il Campo Paver','ca700000-0000-4000-9000-000000000001','PC','SF','Unilock','Il Campo','Granite','Antiqued','Paver','300x300x60',45,9.8,1.0323),
+ ('a7000000-0000-4000-9000-000000000007','DBS-UL-SERIES3000','Unilock Series 3000','ca700000-0000-4000-9000-000000000001','PC','SF','Unilock','Series 3000','Natural','Smooth','Paver','300x150x80',40,7.2,2.0645),
  ('a7000000-0000-4000-9000-000000000008','DBS-PM-MELVILLE','Permacon Melville Slab','ca700000-0000-4000-9000-000000000003','PC','SF','Permacon','Melville','Sand','Smooth','Patio','600x400x50',48,16.0,0.3871),
- ('a7000000-0000-4000-9000-000000000009','DBS-PM-LAFITT','Permacon Lafitt Paver','ca700000-0000-4000-9000-000000000001','PC','SF','Permacon','Lafitt','Range Grey','Textured','Paver','400x200x50',55,7.5,3.10),
- ('a7000000-0000-4000-9000-000000000010','DBS-PM-MAGNUMSTONE','Permacon Magnumstone Wall','ca700000-0000-4000-9000-000000000002','PC','SF','Permacon','Magnumstone','Beige','Rock-face','Wall','450x300x200',16,38.0,2.40),
- ('a7000000-0000-4000-9000-000000000011','DBS-OAKS-VINTAGE','Oaks Vintage Paver','ca700000-0000-4000-9000-000000000001','PC','SF','Oaks','Vintage','Burnt Sienna','Tumbled','Paver','230x153x60',48,4.4,3.55),
- ('a7000000-0000-4000-9000-000000000012','DBS-OAKS-PROMA','Oaks Proma Wall','ca700000-0000-4000-9000-000000000002','PC','SF','Oaks','Proma','Charcoal','Smooth','Wall','290x200x150',54,12.0,3.45),
- ('a7000000-0000-4000-9000-000000000013','DBS-BWS-ANTICO','Best Way Stone Antico Paver','ca700000-0000-4000-9000-000000000001','PC','SF','Best Way Stone','Antico','Beige Cream','Tumbled','Paver','210x140x60',50,3.9,5.10),
+ ('a7000000-0000-4000-9000-000000000009','DBS-PM-LAFITT','Permacon Lafitt Paver','ca700000-0000-4000-9000-000000000001','PC','SF','Permacon','Lafitt','Range Grey','Textured','Paver','400x200x50',55,7.5,1.1613),
+ ('a7000000-0000-4000-9000-000000000010','DBS-PM-MAGNUMSTONE','Permacon Magnumstone Wall','ca700000-0000-4000-9000-000000000002','PC','SF','Permacon','Magnumstone','Beige','Rock-face','Wall','450x300x200',16,38.0,1.0323),
+ ('a7000000-0000-4000-9000-000000000011','DBS-OAKS-VINTAGE','Oaks Vintage Paver','ca700000-0000-4000-9000-000000000001','PC','SF','Oaks','Vintage','Burnt Sienna','Tumbled','Paver','230x153x60',48,4.4,2.6400),
+ ('a7000000-0000-4000-9000-000000000012','DBS-OAKS-PROMA','Oaks Proma Wall','ca700000-0000-4000-9000-000000000002','PC','SF','Oaks','Proma','Charcoal','Smooth','Wall','290x200x150',54,12.0,2.1357),
+ ('a7000000-0000-4000-9000-000000000013','DBS-BWS-ANTICO','Best Way Stone Antico Paver','ca700000-0000-4000-9000-000000000001','PC','SF','Best Way Stone','Antico','Beige Cream','Tumbled','Paver','210x140x60',50,3.9,3.1600),
  ('a7000000-0000-4000-9000-000000000014','DBS-BWS-TREVISTA','Best Way Stone Trevista Slab','ca700000-0000-4000-9000-000000000003','PC','SF','Best Way Stone','Trevista','Grey','Smooth','Patio','600x300x50',40,21.0,0.5161),
  ('a7000000-0000-4000-9000-000000000015','DBS-BANAS-COPING','Banas Sandstone Coping','ca700000-0000-4000-9000-000000000003','PC','LF','Banas Stone','Sandstone','Autumn Brown','Natural','Coping','900x300x50',30,18.0,NULL),
  ('a7000000-0000-4000-9000-000000000016','DBS-BANAS-STEP','Banas Natural Step','ca700000-0000-4000-9000-000000000003','PC','EA','Banas Stone','Natural','Raj Green','Natural','Step','1200x350x150',8,140.0,NULL),
@@ -107,8 +108,8 @@ INSERT INTO products (id, sku, name, category_id, base_uom, price_uom, manufactu
  ('a7000000-0000-4000-9000-000000000025','DBS-INLITE-LED','In-Lite LED Path Light','ca700000-0000-4000-9000-000000000005','EA','EA','In-Lite','Lighting','Black','Matte','Lighting','-',NULL,0.6,NULL),
  ('a7000000-0000-4000-9000-000000000026','DBS-RYMAR-TURF','Rymar Artificial Turf 40mm','ca700000-0000-4000-9000-000000000005','SF','SF','Rymar Grass','Turf','Green','-','Landscape','-',NULL,2.2,NULL),
  ('a7000000-0000-4000-9000-000000000027','DBS-GEO-FABRIC','Geotextile Fabric Roll','ca700000-0000-4000-9000-000000000005','EA','EA','Soleno','Geotextile','Black','Woven','Base','-',NULL,15.0,NULL),
- ('a7000000-0000-4000-9000-000000000028','DBS-TB-HYDR','Techo-Bloc Hydr Eco Paver','ca700000-0000-4000-9000-000000000001','PC','SF','Techo Bloc','Hydr','Champlain Grey','Permeable','Paver','225x112x80',44,4.0,3.95),
- ('a7000000-0000-4000-9000-000000000029','DBS-UL-THORNBURY','Unilock Thornbury Wall','ca700000-0000-4000-9000-000000000002','PC','SF','Unilock','Thornbury','Coffee','Weathered','Wall','280x200x100',48,11.5,3.57),
+ ('a7000000-0000-4000-9000-000000000028','DBS-TB-HYDR','Techo-Bloc Hydr Eco Paver','ca700000-0000-4000-9000-000000000001','PC','SF','Techo Bloc','Hydr','Champlain Grey','Permeable','Paver','225x112x80',44,4.0,3.6866),
+ ('a7000000-0000-4000-9000-000000000029','DBS-UL-THORNBURY','Unilock Thornbury Wall','ca700000-0000-4000-9000-000000000002','PC','SF','Unilock','Thornbury','Coffee','Weathered','Wall','280x200x100',48,11.5,3.3180),
  ('a7000000-0000-4000-9000-000000000030','DBS-PM-BORANJA','Permacon Boranja Slab','ca700000-0000-4000-9000-000000000003','PC','SF','Permacon','Boranja','Grey','Smooth','Patio','600x600x60',36,20.0,0.2581)
 ON CONFLICT (sku) DO NOTHING;
 
@@ -290,7 +291,7 @@ ON CONFLICT (invoice_no) DO NOTHING;
 INSERT INTO invoice_lines (invoice_id, line_no, product_id, description, qty_entered, uom_entered, qty_base, unit_price_cents, price_uom, line_total_cents) VALUES
  ('19000000-0000-4000-9000-000000000001',1,'a7000000-0000-4000-9000-000000000005','Brussels Block paver',1000,'SF',4100,300,'SF',300000),
  ('19000000-0000-4000-9000-000000000001',2,'a7000000-0000-4000-9000-000000000023','Gator polymeric sand',5,'BAG',5,2500,'BAG',12500),
- ('19000000-0000-4000-9000-000000000002',1,'a7000000-0000-4000-9000-000000000010','Magnumstone wall',1500,'SF',3600,600,'SF',900000)
+ ('19000000-0000-4000-9000-000000000002',1,'a7000000-0000-4000-9000-000000000010','Magnumstone wall',1500,'SF',1548.45,600,'SF',900000)
 ON CONFLICT DO NOTHING;
 -- One open purchase order to a real vendor
 INSERT INTO purchase_orders (id, po_no, vendor_id, branch_id, status, expected_at, freight_cents, created_by)

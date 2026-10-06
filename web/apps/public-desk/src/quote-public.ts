@@ -1,0 +1,837 @@
+// The customer's quote page, reached by an opaque share-link token in the URL,
+// BEFORE any authentication: no session, no nav shell, no toast host, so every
+// message is surfaced inline. It never attaches a credential: the page's
+// client is built with an empty base URL and no header provider at all, and
+// the token in the link is the credential.
+//
+// A port of the older product's customer quote page, never from scratch: the
+// structure, the states and the words carry over, mapped onto this
+// repository's design system tokens. The acceptance is a TYPED NAME
+// ATTESTATION, not a signature: there is deliberately no drawing pad here, and
+// what an acceptance records is stated on the page in plain words, so the
+// customer knows exactly what they are giving.
+//
+// The page is light theme, pinned in index.html before any stylesheet: a
+// customer document must look identical to everyone and must print correctly,
+// so there is no theme preference to read.
+import { css, html, nothing, type TemplateResult } from "lit";
+import { state } from "lit/decorators.js";
+import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
+import { baseStyles, button } from "@hardscapehouse/design-system/src/primitives.js";
+import { ApiClient } from "@hardscapehouse/api-client";
+import {
+  acceptanceAmountPhrase,
+  acceptanceRefusal,
+  showsImages,
+  totalsBlock,
+  type QuoteMoney,
+} from "./_quote-public.js";
+import { createAcceptKeys } from "./accept-key.js";
+import { DEALER_NAME } from "./dealer.js";
+import { formatMoney, quoteStatusPhrase, withFullStop } from "./format.js";
+import {
+  envelopeOnlyFetch,
+  isDeadLinkAnswer,
+  isDefiniteRefusal,
+  isKeyReuseRefusal,
+  PublicQuoteClient,
+  type AcceptanceRef,
+  type QuoteViewRef,
+} from "./quote-client.js";
+
+const LINK_GONE =
+  "This link is no longer valid. Quote links expire, and can also be turned off by our team. Please contact us for an up-to-date link.";
+const LINK_GONE_SHORT = "This link is no longer valid. Please contact us for an up-to-date link.";
+const NOT_FOUND = "We could not find this quote. Please check the link you were sent.";
+const LOAD_FAILED = "We could not load this quote right now. Please try again shortly.";
+// Said ONLY after the server's own definite refusal. Every other failure is an
+// unknown outcome: the retry carries the same idempotency key, so it is safe.
+const NOT_RECORDED = "Your acceptance was not recorded.";
+// "With the same name": the key is the token plus the typed name, so a new name is a
+// new acceptance. The name field is locked while the outcome is unknown.
+const UNCONFIRMED =
+  "We could not confirm whether your acceptance was recorded. Trying again with the same name is safe: it will not be recorded twice.";
+const NAME_LOCKED =
+  "Your name is kept as you first entered it until we know whether your acceptance was recorded, so a retry counts as the same acceptance. Reload this page to change it; a different name may record a second acceptance.";
+// The core words its refusals for staff ("convert it at the counter", "ask an administrator"), so
+// the customer only ever reads these sentences, chosen by status, never the server's text.
+const CANNOT_ACCEPT = "This quote cannot be accepted right now. Please contact us.";
+const CHECK_FIELDS = "Please check your full name and the confirmation, then try again.";
+const REFUSED_GENERIC = "We could not accept this quote right now. Please contact us.";
+const REPEAT_NOTE =
+  "This quote was already accepted. Accepting again through this link with the same name confirms the earlier acceptance; a different name records another acceptance.";
+const KEY_REUSED =
+  "This quote was already accepted with a different name on this attempt, so nothing more was recorded.";
+
+export class QuotePublicPage extends HHElement {
+  static styles = [
+    baseStyles,
+    css`
+      :host {
+        display: block;
+        /* The reference's finish: one reading column, centred, at the width
+           the reference page finishes at. */
+        max-width: 780px;
+        margin: 0 auto;
+        padding: var(--hh-s-24) var(--hh-s-16) var(--hh-s-64);
+        font-family: var(--hh-font-ui);
+        color: var(--hh-text);
+      }
+      h1 {
+        font-size: 1.3rem;
+        margin: 0 0 var(--hh-s-4);
+      }
+      /* The dealer's header band, the page's first element in every state: the
+         one mark of WHO is speaking, the name carried from the app's own data
+         (src/dealer.ts) over a hairline, so a printed or screenshotted page
+         says whose quote it is before anything else. */
+      header.dealer {
+        display: flex;
+        align-items: baseline;
+        border-bottom: 1px solid var(--hh-line);
+        padding: 0 0 var(--hh-s-12);
+        margin-bottom: var(--hh-s-20);
+      }
+      header.dealer .dealer-name {
+        font-size: 1.05rem;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+      }
+      /* Full text ink, NOT the dimmed one: this line sits on the page rather
+         than on a card, and it is load bearing information, not decoration. */
+      .sub {
+        color: var(--hh-text);
+        font-size: 0.88rem;
+        margin-bottom: var(--hh-s-20);
+      }
+      .card {
+        border: 1px solid var(--hh-line);
+        border-radius: var(--hh-radius-card);
+        padding: var(--hh-s-16) var(--hh-s-20);
+        background: var(--hh-card);
+        margin-bottom: var(--hh-s-16);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.88rem;
+      }
+      /* The phone guard's last resort: if the table's own minimum still cannot
+         fit (an unusually wide face on some visitor's machine), it scrolls
+         INSIDE the card rather than pushing the card past the viewport. */
+      .tablewrap {
+        overflow-x: auto;
+      }
+      /* The reading column: the item names the line and must never be crushed
+         to nothing by the figure columns' minimums. */
+      th.item,
+      td.item {
+        min-width: 6rem;
+      }
+      /* The phone fold: at the design system's small breakpoint the UoM column
+         (redundant with the item's own words for a customer) folds away, so
+         the thumbnail column plus four columns fit a 390px card. CSS mirrors
+         the px of --hh-bp-sm, the sheet's own convention. */
+      @media (max-width: 480px) {
+        th.uom,
+        td.uom {
+          display: none;
+        }
+      }
+      th {
+        text-align: left;
+        color: var(--hh-text-dim);
+        font-weight: 600;
+        border-bottom: 1px solid var(--hh-line);
+        padding: var(--hh-s-8) var(--hh-s-4);
+      }
+      td {
+        padding: var(--hh-s-8) var(--hh-s-4);
+        border-bottom: 1px solid var(--hh-line);
+      }
+      td.num,
+      th.num {
+        text-align: right;
+      }
+      /* The row stripe, ported: the design system's row pair on the body's
+         rows, header and totals excluded by the child combinator, zero
+         specificity so any row state wins by existing. */
+      :where(tbody > tr) {
+        background: var(--hh-row);
+      }
+      :where(tbody > tr:nth-child(even)) {
+        background: var(--hh-row-alt);
+      }
+      .totals {
+        margin-top: var(--hh-s-12);
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: var(--hh-s-4);
+        font-size: 0.9rem;
+      }
+      .totals .grand {
+        font-size: 1.05rem;
+        font-weight: 700;
+      }
+      .totals .taxnote {
+        color: var(--hh-text-dim);
+        font-size: 0.78rem;
+        font-weight: 400;
+        margin-top: var(--hh-s-2);
+      }
+      label {
+        display: block;
+        font-size: 0.86rem;
+        margin-bottom: var(--hh-s-4);
+        font-weight: 600;
+      }
+      input[type="text"] {
+        font: inherit;
+        box-sizing: border-box;
+        width: 100%;
+        max-width: 22rem;
+        padding: var(--hh-s-8);
+        border: 1px solid var(--hh-line);
+        border-radius: var(--hh-radius-control);
+        background: var(--hh-card);
+        color: var(--hh-text);
+      }
+      .check {
+        display: flex;
+        align-items: flex-start;
+        gap: var(--hh-s-8);
+        margin: var(--hh-s-16) 0;
+        font-size: 0.88rem;
+        line-height: 1.45;
+      }
+      /* The attestation is a sentence, not a field title: regular weight. */
+      .check-label {
+        font-weight: 400;
+      }
+      /* Shadow roots do not inherit the document's focus rule: the accept
+         button must show the same ring as every staff surface, and this page
+         is often driven by keyboard. */
+      button:focus-visible,
+      input:focus-visible,
+      textarea:focus-visible,
+      [tabindex]:focus-visible {
+        outline: 2px solid var(--hh-focus-ring);
+        outline-offset: 2px;
+      }
+      /* The button itself is the design system's primitive (.btn-primary, and its
+         disabled swap) from baseStyles; only the label's weight is this page's. */
+      .btn {
+        font-weight: 600;
+      }
+      .err {
+        color: var(--hh-danger);
+        font-size: 0.9rem;
+        margin-top: var(--hh-s-12);
+      }
+      .note {
+        color: var(--hh-text-dim);
+        font-size: 0.78rem;
+        margin-top: var(--hh-s-12);
+        line-height: 1.5;
+      }
+      .card-h2 {
+        font-size: 1rem;
+        margin: 0 0 var(--hh-s-12);
+      }
+      .ok h2 {
+        font-size: 1.05rem;
+        margin: 0 0 var(--hh-s-8);
+      }
+      /* The success mark rides the heading's words (colour never encodes
+         state alone): the design system's done-marker path in the success
+         ink, sized to the text it sits beside. */
+      .okmark {
+        width: 1.05em;
+        height: 1.05em;
+        color: var(--hh-success);
+        vertical-align: -0.14em;
+        margin-right: var(--hh-s-8);
+      }
+      .ok .sub {
+        margin-bottom: var(--hh-s-12);
+      }
+      .gone {
+        font-size: 0.95rem;
+        line-height: 1.55;
+      }
+      /* The refusal's own anatomy: the dead link is a DELIBERATE page, so it
+         carries a heading like every other card and clears the viewport top
+         with room of its own, not the host padding alone. */
+      .refusal {
+        margin-top: var(--hh-s-24);
+      }
+      .refusal h2,
+      .closed h2 {
+        margin: 0 0 var(--hh-s-8);
+      }
+      .refusal .gone,
+      .closed .gone {
+        margin: 0;
+      }
+      /* The line's image cell, EVERY line the same while images are on: the
+         cell is always the one visible box (the till's line-thumb shape), and
+         a line without a photo shows the drawn no-photo mark in it, never an
+         empty box (an empty box is indistinguishable from an image still
+         loading) and never a missing cell. */
+      .thumbslot {
+        display: grid;
+        place-items: center;
+        width: 36px;
+        height: 36px;
+        border: 1px solid var(--hh-line);
+        border-radius: var(--hh-radius-control);
+        background: var(--hh-card);
+        overflow: hidden;
+      }
+      .thumb {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+      /* The no-photo mark: the stacked-stone silhouette the till's thumbnail
+         component draws, in the dimmed ink (an absence, so it must not
+         compete with the item name beside it). */
+      .thumbmark {
+        width: 60%;
+        height: 60%;
+        color: var(--hh-text-dim);
+      }
+      .discnote {
+        font-size: 0.76rem;
+        color: var(--hh-text-dim);
+      }
+      .termsfacts {
+        border-top: 1px solid var(--hh-line);
+        margin-top: var(--hh-s-12);
+      }
+      .termsfacts p {
+        margin: var(--hh-s-8) 0 0;
+      }
+    `,
+  ];
+
+  @state()
+  private quote: QuoteViewRef | null = null;
+  @state()
+  private accepted: AcceptanceRef | null = null;
+  @state()
+  private error = "";
+  @state()
+  private fatal = "";
+  @state()
+  private busy = false;
+  /** A failed accept whose re-read proved the acceptance landed: the page ends on the accepted state. */
+  @state()
+  private landed = false;
+  /** The server said this acceptance's key was used for a different typed name. */
+  @state()
+  private keyReused = false;
+  @state()
+  private typedName = "";
+  /**
+   * The first attempt's name while its outcome is UNKNOWN, else null. The key is the token plus
+   * the typed name, so only this name keeps a retry the same acceptance: the field is read only
+   * and every retry sends this name and its key. Cleared when the outcome becomes known.
+   */
+  @state()
+  private lockedName: string | null = null;
+  @state()
+  private affirmed = false;
+  /** Line thumbnails fetched through the image read, by image reference. */
+  @state()
+  private thumbs: Map<string, string> = new Map();
+
+  private readonly client: PublicQuoteClient;
+  private readonly acceptKeys = createAcceptKeys();
+  private token = "";
+  private autoPrint = false;
+  /**
+   * Object URLs minted for thumbnails, keyed by image reference. They live as
+   * long as the page does: a reload after a refused accept reuses them and
+   * fetches only the references it has not seen, so no image ever points at a
+   * revoked URL. They are all revoked together when the page goes.
+   */
+  private thumbUrls: Map<string, string> = new Map();
+  /** Bumped when the page goes, so a fetch still running knows its URLs are orphans. */
+  private epoch = 0;
+
+  constructor() {
+    super();
+    // Same origin, same origin relative calls, and no header provider at all:
+    // a customer on a share link holds no credential to attach.
+    this.client = new PublicQuoteClient(new ApiClient({ baseUrl: "", fetch: envelopeOnlyFetch }));
+  }
+
+  connectedCallback(): void {
+    super.connectedCallback();
+    const params = new URLSearchParams(location.search);
+    this.token = params.get("t") ?? "";
+    // The staff print action opens this page and asks the browser to print it
+    // once the quote has rendered. Guarded: a failed load never opens an
+    // empty print dialog.
+    this.autoPrint = params.get("print") === "1";
+    // The design system's position gate holds the template allow table at
+    // zero event and property bindings, so the controls stay static and this
+    // root delegates: the kits' own data-action pattern, and id-keyed reads
+    // for the two inputs.
+    this.renderRoot.addEventListener("input", this.onNameInput);
+    this.renderRoot.addEventListener("change", this.onAffirmChange);
+    this.renderRoot.addEventListener("click", this.onActionClick);
+    void this.load();
+  }
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this.renderRoot.removeEventListener("input", this.onNameInput);
+    this.renderRoot.removeEventListener("change", this.onAffirmChange);
+    this.renderRoot.removeEventListener("click", this.onActionClick);
+    this.revokeThumbs();
+  }
+
+  private onNameInput = (event: Event): void => {
+    const target = event.target as HTMLInputElement;
+    if (target.id === "name") this.typedName = target.value;
+  };
+
+  private onAffirmChange = (event: Event): void => {
+    const target = event.target as HTMLInputElement;
+    if (target.id === "affirm") this.affirmed = target.checked;
+  };
+
+  private onActionClick = (event: Event): void => {
+    const action = (event.target as HTMLElement).closest("[data-action]");
+    if (action !== null && action.getAttribute("data-action") === "accept") void this.accept();
+  };
+
+  /**
+   * The name lock is applied here, not bound in the template (the design system's template
+   * gate allows no property bindings): the field reads only, and shows the locked name.
+   */
+  private syncNameLock(): void {
+    const input = this.renderRoot.querySelector<HTMLInputElement>("#name");
+    if (input === null) return;
+    const locked = this.lockedName !== null;
+    if (input.readOnly !== locked) input.readOnly = locked;
+    if (this.lockedName !== null && input.value !== this.lockedName) input.value = this.lockedName;
+  }
+
+  /** Fire the one-shot print once the loaded quote has painted. */
+  updated(): void {
+    this.syncNameLock();
+    if (this.autoPrint && this.quote) {
+      this.autoPrint = false;
+      try {
+        window.print();
+      } catch {
+        // printing refused: the page itself is the fallback
+      }
+    }
+    this.paintThumbs();
+  }
+
+  /**
+   * The thumbnails paint outside the templates: an object URL is a blob
+   * scheme, which the design system's address rule (one helper, http and
+   * https and scheme free only) refuses to bind, so the slot renders in the
+   * template and the image element is built here, one per slot, idempotent.
+   */
+  private paintThumbs(): void {
+    const slots = this.renderRoot.querySelectorAll<HTMLSpanElement>("[data-thumb]");
+    for (const slot of slots) {
+      const ref = slot.getAttribute("data-thumb");
+      const url = ref !== null && ref !== "" ? (this.thumbs.get(ref) ?? null) : null;
+      const existing = slot.querySelector("img");
+      if (url !== null && existing !== null && existing.getAttribute("src") !== url) {
+        existing.src = url;
+      } else if (url !== null && existing === null) {
+        const img = document.createElement("img");
+        img.className = "thumb";
+        img.src = url;
+        img.alt = "";
+        img.loading = "lazy";
+        img.width = 36;
+        img.height = 36;
+        slot.append(img);
+      } else if (url === null && existing !== null) {
+        existing.remove();
+      }
+    }
+  }
+
+  private revokeThumbs(): void {
+    this.epoch += 1;
+    for (const url of this.thumbUrls.values()) URL.revokeObjectURL(url);
+    this.thumbUrls = new Map();
+    this.thumbs = new Map();
+  }
+
+  /**
+   * Load the quote. A REFRESH (after a refused accept) never replaces the page
+   * the customer is looking at: only a dead link does, any other failure
+   * leaves the quote and the typed name where they are.
+   */
+  private async load(refresh = false, holdGone = false): Promise<boolean | "gone"> {
+    if (!this.token) {
+      this.fatal = "This link is missing its access code. Please use the full link you were sent.";
+      return false;
+    }
+    const result = await this.client.viewQuote(this.token);
+    if (!result.ok) {
+      if (refresh && result.status !== 410 && result.status !== 404) return false;
+      // A dead link on the re-read of an unknown outcome is not shown yet: the caller learns the
+      // outcome first (the core replays a keyed accept through a dead link).
+      if (holdGone && result.status === 410) return "gone";
+      // Gone, not found: the link EXISTED and died, or it never did. Say
+      // which, and say what to do next.
+      this.fatal = result.status === 410 ? LINK_GONE : result.status === 404 ? NOT_FOUND : LOAD_FAILED;
+      return false;
+    }
+    this.quote = result.value;
+    void this.fetchThumbs(this.quote);
+    return true;
+  }
+
+  private async fetchThumbs(q: QuoteViewRef): Promise<void> {
+    if (!showsImages(q)) return;
+    const refs = new Set(q.lines.map((l) => l.imageRef).filter((ref): ref is string => ref !== null));
+    const epoch = this.epoch;
+    for (const ref of refs) {
+      if (this.thumbUrls.has(ref)) continue;
+      const result = await this.client.productImage(ref);
+      // The page went while the image was in flight: nothing may keep a URL
+      // that the page's own revoke has already passed over.
+      if (epoch !== this.epoch || !result.ok || this.thumbUrls.has(ref)) continue;
+      // The bytes the image read answers are a fresh ArrayBuffer view; the
+      // type is only wider than the platform's BlobPart.
+      const url = URL.createObjectURL(new Blob([result.value as unknown as BlobPart]));
+      this.thumbUrls.set(ref, url);
+      // Each thumbnail paints as it lands, not all together at the end.
+      this.thumbs = new Map(this.thumbUrls);
+    }
+  }
+
+  private async accept(): Promise<void> {
+    if (this.busy) return;
+    const refusal = acceptanceRefusal(this.lockedName ?? this.typedName, this.affirmed);
+    if (refusal !== null) {
+      this.error = refusal;
+      return;
+    }
+    this.busy = true;
+    this.error = "";
+    const before = this.quote?.status;
+    try {
+      // While an outcome is unknown the first attempt's name is the only name ever sent, so the
+      // key is the same one and the server answers a repeat with the first outcome.
+      const typedName = this.lockedName ?? this.typedName.trim();
+      const key = await this.acceptKeys.keyFor(this.token, typedName);
+      const result = await this.client.acceptQuote(this.token, typedName, key);
+      if (!result.ok) {
+        if (result.status === 410) {
+          this.fatal = LINK_GONE_SHORT;
+          return;
+        }
+        if (isKeyReuseRefusal(result)) {
+          // The server holds an acceptance under this very key with another
+          // typed name: the quote WAS accepted. Re-read, then end on the
+          // accepted state whatever the re-read says.
+          await this.load(true);
+          if (this.fatal !== "") return;
+          this.keyReused = true;
+          this.landed = true;
+          this.error = "";
+          return;
+        }
+        if (isDefiniteRefusal(result)) {
+          // The server's own refusal, in its envelope: this attempt recorded nothing, and the
+          // outcome is known, so the name unlocks. The words are the page's own, by status.
+          this.lockedName = null;
+          if (result.status === 409) {
+            // The quote may have been accepted by an earlier attempt or another tab: ask it.
+            await this.load(true);
+            if (this.fatal !== "") return;
+            const now = this.quote;
+            if (now !== null && (now.status === "ACCEPTED" || now.status === "CONVERTED")) {
+              this.landed = true;
+              this.error = "";
+              return;
+            }
+            this.error = CANNOT_ACCEPT;
+            return;
+          }
+          const sentence = result.status === 400 ? CHECK_FIELDS : result.status === 404 ? NOT_FOUND : REFUSED_GENERIC;
+          this.error = `${sentence} ${NOT_RECORDED}`;
+          return;
+        }
+        // Anything else may hide a recorded acceptance (a proxy's page after
+        // the core committed, a body lost on the way back, a request that
+        // timed out here and commits there later), so the outcome is UNKNOWN.
+        // A re-read showing SENT does not prove nothing was recorded, so the
+        // page never says it; the retry carries the same key and name, so it is safe.
+        this.lockedName = typedName;
+        const reread = await this.load(true, true);
+        if (reread === "gone") {
+          await this.learnThroughDeadLink(typedName, key);
+          return;
+        }
+        if (this.fatal !== "") return;
+        const now = this.quote;
+        if (reread && now !== null && before === "SENT" && (now.status === "ACCEPTED" || now.status === "CONVERTED")) {
+          // The acceptance landed. With multi-accept on the core keeps an
+          // accepted quote acceptable, so the page ends on the accepted
+          // state itself rather than offering the form again.
+          this.landed = true;
+          this.error = "";
+          return;
+        }
+        this.error = UNCONFIRMED;
+        return;
+      }
+      this.accepted = result.value;
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  /**
+   * The re-read of an unknown outcome found the link dead. The core replays a keyed accept through
+   * a dead link (a 200 is the first outcome, read only; a 410 means nothing was recorded under this
+   * key), so the same keyed accept is sent once to learn which.
+   */
+  private async learnThroughDeadLink(typedName: string, key: string): Promise<void> {
+    const result = await this.client.acceptQuote(this.token, typedName, key);
+    if (result.ok) {
+      this.accepted = result.value;
+      return;
+    }
+    // Only the core's own 410 proves nothing was recorded under this key. Anything else (a proxy,
+    // a timeout, a lost answer) leaves the outcome unknown, and the customer is told so.
+    if (isDeadLinkAnswer(result)) {
+      this.fatal = LINK_GONE;
+      return;
+    }
+    this.error = UNCONFIRMED;
+  }
+
+  private when(iso: string): string {
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? iso : d.toLocaleString("en-CA");
+  }
+
+  /**
+   * The ONE place the totals block is drawn. Both the quote itself and the
+   * acceptance echo render through here, from the same pure decision, so the
+   * two surfaces cannot drift apart on the question of whether HST is already
+   * in the number.
+   */
+  private renderTotals(m: QuoteMoney): TemplateResult {
+    const block = totalsBlock(m);
+    return html`
+      <div class="totals">
+        ${block.rows.map((r) => (r.grand ? html`<span class="grand">${r.label}</span>` : html`<span>${r.label}</span>`))}
+        ${block.note ? html`<span class="taxnote">${block.note}</span>` : nothing}
+      </div>
+    `;
+  }
+
+  /**
+   * The terms the quote carries, spoken to the customer: the delivery, the
+   * deposit ask, and the staff notes. Every row is conditional: an untouched
+   * quote prints none of this.
+   */
+  private renderTermsFacts(q: QuoteViewRef): typeof nothing | TemplateResult {
+    const delivery = q.fulfillment === "DELIVERY";
+    const deposit = q.depositRequired === true && (q.depositCents ?? 0) > 0;
+    const notes = (q.customerNotes ?? "").trim();
+    if (!delivery && !deposit && !notes) return nothing;
+    return html`<div class="termsfacts">
+      ${delivery
+        ? html`<p class="note">
+            <b>Delivery</b> to ${q.deliveryAddress || "the address on file"}${q.requestedDate
+              ? html` · requested ${q.requestedDate}`
+              : nothing}${(q.deliveryFeeCents ?? 0) > 0
+              ? html` · delivery fee ${formatMoney(q.deliveryFeeCents ?? 0)} (included in the total)`
+              : nothing}
+          </p>`
+        : nothing}
+      ${deposit
+        ? html`<p class="note">
+            <b>Deposit</b>: a ${q.depositPct ?? 0}% deposit of ${formatMoney(q.depositCents ?? 0)} is required to
+            schedule this work.
+          </p>`
+        : nothing}
+      ${notes ? html`<p class="note"><b>Notes</b>: ${notes}</p>` : nothing}
+    </div>`;
+  }
+
+  /**
+   * The no-photo mark in a line's image cell: the till's line-thumb convention
+   * (the product thumbnail component's drawn stone-stack fallback), ported.
+   * The cell is always the same box; a line with a photo shows the photo, a
+   * line without one shows this mark, so "no photo on file" is unmistakable
+   * and never reads as an image that has not loaded yet.
+   */
+  private renderThumbMark(): TemplateResult {
+    return html`<svg class="thumbmark" viewBox="0 0 24 24" fill="none" aria-hidden="true" role="presentation">
+      <rect x="2" y="14" width="20" height="5" rx="1" stroke="currentColor" stroke-width="1.5" />
+      <rect x="4" y="9" width="16" height="5" rx="1" stroke="currentColor" stroke-width="1.5" />
+      <rect x="7" y="4" width="10" height="5" rx="1" stroke="currentColor" stroke-width="1.5" />
+    </svg>`;
+  }
+
+  /** The success mark: the design system's done-marker check, success ink. */
+  private renderOkMark(): TemplateResult {    return html`<svg
+      class="okmark"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="3"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+      role="presentation"
+    >
+      <path d="M5 12l5 5 9-10" />
+    </svg>`;
+  }
+
+  private renderAccepted(a: AcceptanceRef): TemplateResult {
+    // The confirmation ECHOES the totals, so the customer's own record of what
+    // they agreed to does not depend on their having read the page carefully
+    // before clicking.
+    return html`
+      <div class="card ok">
+        <h2>${this.renderOkMark()}Thank you: quote ${a.quoteNo} accepted</h2>
+        <p class="sub">${withFullStop(`Accepted by ${a.typedName} on ${this.when(a.acceptedAt)}`)}</p>
+        ${this.renderTotals(a)}
+        <p class="note">
+          We have recorded your acceptance and our team will be in touch. Please keep this page or the confirmation for
+          your records.
+        </p>
+      </div>
+    `;
+  }
+
+  private renderAcceptForm(q: QuoteViewRef): typeof nothing | TemplateResult {
+    if (this.accepted) return nothing;
+    if (!q.acceptable || this.landed) {
+      // The customer reads this alone, with no staff beside them to translate,
+      // so the state is SAID, in the same six states said mid-sentence: under
+      // a heading, so the closed door reads deliberate rather than broken. An
+      // ACCEPTED quote is not a refusal at all: it is the customer's own
+      // earlier action, acknowledged under the success mark.
+      const acceptedElsewhere = q.status === "ACCEPTED" || this.landed;
+      return html`<div class="card closed">
+        <h2>${acceptedElsewhere ? this.renderOkMark() : nothing}${acceptedElsewhere ? "Already accepted" : "Acceptance closed"}</h2>
+        ${this.keyReused ? html`<p class="gone">${KEY_REUSED}</p>` : nothing}
+        <p class="gone">
+          ${q.expired && !acceptedElsewhere
+            ? `This quote expired on ${q.validUntil} and can no longer be accepted online. Please contact us for an updated quote.`
+            : `This quote is ${quoteStatusPhrase(q.status)} and is not awaiting acceptance.`}
+        </p>
+      </div>`;
+    }
+    return html`
+      <div class="card">
+        <h2 class="card-h2">Accept this quote</h2>
+        ${q.status === "ACCEPTED" || q.status === "CONVERTED" ? html`<p class="note">${REPEAT_NOTE}</p>` : nothing}
+        <label for="name">Your full name</label>
+        <input id="name" type="text" autocomplete="name" />
+        ${this.lockedName !== null ? html`<p class="note">${NAME_LOCKED}</p>` : nothing}
+        <div class="check">
+          <input id="affirm" type="checkbox" />
+          <label for="affirm" class="check-label">
+            ${withFullStop(
+              `I accept this quote for ${acceptanceAmountPhrase(q)} and confirm I am authorised to do so on behalf of ${q.customerName}`,
+            )}
+          </label>
+        </div>
+        ${button({ label: this.busy ? "Recording…" : "Accept quote", action: "accept", disabled: this.busy })}
+        ${this.error ? html`<p class="err" role="alert">${this.error}</p>` : nothing}
+        <p class="note">
+          Accepting records your typed name, the date and time, and the link you used. This is an electronic acceptance:
+          we do not collect a handwritten signature.
+        </p>
+      </div>
+    `;
+  }
+
+  render(): TemplateResult {
+    // The dealer's header band opens EVERY state of the page: whose quote
+    // this is does not depend on the quote having loaded (or on the link
+    // being alive).
+    return html`<header class="dealer"><span class="dealer-name">${DEALER_NAME}</span></header>${this.renderBody()}`;
+  }
+
+  private renderBody(): TemplateResult {
+    if (this.fatal) {
+      return html`<div class="card refusal">
+        <h2>Quote link unavailable</h2>
+        <p class="gone">${this.fatal}</p>
+      </div>`;
+    }
+    const q = this.quote;
+    if (!q) return html`<p class="sub">Loading your quote…</p>`;
+    const withImages = showsImages(q);
+    return html`
+      <h1>Quote #${q.quoteNo}</h1>
+      <div class="sub">
+        Prepared for ${q.customerName} · as of ${this.when(q.asOf)}
+        ${q.validUntil ? html` · ${q.expired ? "expired" : "valid until"} ${q.validUntil}` : nothing}
+      </div>
+      <div class="card">
+        <div class="tablewrap">
+          <table>
+            <thead>
+              <tr>
+                ${withImages ? html`<th></th>` : nothing}
+                <th class="item">Item</th>
+                <th class="num">Qty</th>
+                <th class="uom">UoM</th>
+                <th class="num">Unit</th>
+                <th class="num">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${q.lines.map(
+                (l) => html`<tr>
+                  ${withImages
+                    ? html`<td>
+                        <span class="thumbslot" data-thumb=${l.imageRef}>${l.imageRef ? nothing : this.renderThumbMark()}</span>
+                      </td>`
+                    : nothing}
+                  <td class="item">
+                    ${l.description}
+                    ${(l.discPct ?? 0) > 0 ? html`<div class="discnote">${l.discPct}% discount applied</div>` : nothing}
+                  </td>
+                  <td class="num">${l.qtyEntered}</td>
+                  <td class="uom">${l.uomEntered}</td>
+                  <td class="num">${formatMoney(l.unitPriceCents)}</td>
+                  <td class="num">${formatMoney(l.lineTotalCents)}</td>
+                </tr>`,
+              )}
+            </tbody>
+          </table>
+        </div>
+        ${this.renderTermsFacts(q)}
+        ${this.renderTotals(q)}
+      </div>
+      ${this.accepted ? this.renderAccepted(this.accepted) : this.renderAcceptForm(q)}
+    `;
+  }
+}
+
+defineElement("pd-quote-public", QuotePublicPage);
+
+declare global {
+  interface HTMLElementTagNameMap {
+    "pd-quote-public": QuotePublicPage;
+  }
+}

@@ -11,6 +11,7 @@ package printing
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -28,11 +29,27 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// stubCharger is the deterministic card seam (no live processor call), the pos integration idiom.
+// stubCharger is the deterministic card capture seam (no live processor call, no attempt table),
+// the pos integration idiom on the capture shape: a canned capture, an accepting bind, a clean
+// reversal.
 type stubCharger struct{}
 
-func (stubCharger) Charge(_ context.Context, _ pgx.Tx, _ int64, _, _ string) (till.ChargeResult, error) {
-	return till.ChargeResult{ProcessorRef: "rp_stub_captured", Status: "captured"}, nil
+func (stubCharger) Capture(_ context.Context, in till.CardChargeInput) (till.CardCapture, error) {
+	if in.ReadOnly {
+		return till.CardCapture{}, till.ErrCardLegUnattempted
+	}
+	return till.CardCapture{Kind: till.CardCaptureCaptured, AttemptID: "att-stub-" + in.LegKey, ProcessorRef: "rp_stub_captured"}, nil
+}
+
+func (stubCharger) BindTx(_ context.Context, _ pgx.Tx, b till.CardBind) error {
+	if b.AttemptID == "" || b.PaymentID == "" {
+		return errors.New("stub charger: the bind arrived without its attempt or payment id")
+	}
+	return nil
+}
+
+func (stubCharger) Compensate(_ context.Context, attemptID string) (till.CardCompensation, error) {
+	return till.CardCompensation{Kind: till.CardCompVoided, AttemptID: attemptID}, nil
 }
 
 // realPosSvc composes the real POS service so these tests ring a REAL sale, a receipt for a sale
