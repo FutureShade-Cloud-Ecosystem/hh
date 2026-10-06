@@ -63,10 +63,13 @@ const styles = css`
     gap: var(--hh-s-12);
   }
   /* The brand lockup, the ERP shell's own: the HH mark at the left, the
-     product name with the house line under it. Gold is a fill, never an ink,
-     so the mark's "HH" is the near-black ink the gold fill carries; the
-     accent word takes the gold-as-ink token, which is dark gold in the light
-     theme. */
+     product name with the house line under it. The mark is the Hardscape
+     House badge's measured H (decision log rows 953 and 968): mark.svg's
+     geometry inlined, one path in currentColor, so the ink is the sheet's
+     own gold-as-ink token per theme (the badge yellow on the dark page, its
+     dark gold half on the light one). The gold square ground and its
+     near-black square ink went with the plain text: the mark is the H alone
+     over whatever page it sits on, never a filled square carrying an ink. */
   .brand {
     display: flex;
     align-items: center;
@@ -77,14 +80,12 @@ const styles = css`
     width: 30px;
     height: 30px;
     flex: none;
-    display: grid;
-    place-items: center;
-    border-radius: var(--hh-radius-control);
-    background: var(--hh-accent);
-    color: var(--hh-accent-ink);
-    font-size: var(--hh-s-12);
-    font-weight: 800;
-    letter-spacing: -0.02em;
+    color: var(--hh-accent-text);
+  }
+  .brand-mark svg {
+    width: 100%;
+    height: 100%;
+    display: block;
   }
   .brand-names {
     display: flex;
@@ -281,7 +282,14 @@ export class HosAppHeader extends HHElement {
       <header>
         <div class="demo-banner-cell">
           <div class="brand" role="img" aria-label=${BRAND_LABEL}>
-            <span class="brand-mark" aria-hidden="true">HH</span>
+            <span class="brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 3000 3000">
+                <path
+                  fill="currentColor"
+                  d="M644.94 465.17 H1386.06 A29.15 29.15 0 0 1 1415.21 494.32 V1306.38 A84.79 84.79 0 0 0 1500 1391.17 H2355.05 A29.15 29.15 0 0 1 2384.2 1420.32 V2505.68 A29.15 29.15 0 0 1 2355.05 2534.83 H1613.94 A29.15 29.15 0 0 1 1584.79 2505.68 V1940.1 A84.79 84.79 0 0 0 1415.21 1940.1 V2505.68 A29.15 29.15 0 0 1 1386.06 2534.83 H644.94 A29.15 29.15 0 0 1 615.79 2505.68 V494.32 A29.15 29.15 0 0 1 644.94 465.17 Z M1613.94 465.17 H2355.05 A29.15 29.15 0 0 1 2384.2 494.32 V1192.85 A29.15 29.15 0 0 1 2355.05 1222 H1613.94 A29.15 29.15 0 0 1 1584.79 1192.85 V494.32 A29.15 29.15 0 0 1 1613.94 465.17 Z"
+                />
+              </svg>
+            </span>
             <span class="brand-names">
               <span class="brand-product">HH <span class="accent">Yard</span></span>
               <span class="brand-sub">a Hardscape House product</span>
