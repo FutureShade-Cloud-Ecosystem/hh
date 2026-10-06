@@ -50,21 +50,28 @@ async function postedKeys(page: Page): Promise<string[]> {
   });
 }
 
-test.beforeEach(async ({ page, request }) => {
-  await request.post("/_stub/reset");
-  // Every payment post's body is recorded from the page, so key equality is asserted on what left the browser.
-  await page.addInitScript(() => {
+/** Record the payment posts' keys from a page. A second tab of the context needs its own watcher. */
+function watchKeys(page: Page): void {
+  page.addInitScript(() => {
+    const w = window as unknown as { __payKeys?: string[] };
+    if (w.__payKeys !== undefined) return;
     const original = window.fetch.bind(window);
     window.fetch = (...args: Parameters<typeof fetch>) => {
       const [input, init] = args;
       if (init?.method === "POST" && String(input).includes("/order-payment")) {
         const body = JSON.parse(String(init.body ?? "{}")) as { idempotency_key?: string };
-        const w = window as unknown as { __payKeys?: string[] };
-        if (body.idempotency_key !== undefined) w.__payKeys = [...(w.__payKeys ?? []), body.idempotency_key];
+        const seen = window as unknown as { __payKeys?: string[] };
+        if (body.idempotency_key !== undefined) seen.__payKeys = [...(seen.__payKeys ?? []), body.idempotency_key];
       }
       return original(...args);
     };
   });
+}
+
+test.beforeEach(async ({ page, request }) => {
+  await request.post("/_stub/reset");
+  // Every payment post's body is recorded from the page, so key equality is asserted on what left the browser.
+  watchKeys(page);
 });
 
 test.afterAll(async ({ request }) => {
@@ -638,4 +645,62 @@ test("an amount that is not a number this desk can send is refused before any po
   await pay(page).getByTestId("op-take").click();
   await expect(pay(page).getByTestId("op-error")).toContainText("not a number this desk can send");
   expect(seen.filter((line) => line.includes("order-payment"))).toEqual([]);
+});
+
+test("a payment still out at sign out is kept as a known attempt for the next sign in, so it cannot be taken twice", async ({ page, context }) => {
+  await signIn(page);
+  await openWithPayment(page, "Q-2101");
+  const held = await hold(page, /\/api\/v1\/quotes\/q-2101\/order-payment$/, { method: "POST" });
+  await take(page, "10.00", "AUTH 9", "CARD");
+  await held.asked;
+  // The person signs out while the payment is out: the sign out waits a bound for it, goes on
+  // without the answer, and the entry page says the payment is kept, not dropped.
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible({ timeout: 15000 });
+  await expect(page.locator("p.notice")).toContainText("kept as a known attempt");
+  // The answer lands after the session ended: the server took the payment, nobody heard it.
+  await held.release();
+  // Another tab rings a deliberate sale of its own meanwhile; the kept attempt's answer must still
+  // be the first outcome, not a second row behind it.
+  const other = await context.newPage();
+  watchKeys(other);
+  await signIn(other);
+  await openWithPayment(other, "Q-2101");
+  await take(other, "5.00", "", "CARD");
+  await expect(pay(other).getByTestId("op-receipt-amount")).toHaveText("CA$5.00");
+  // The next sign in on the page the payment was kept on meets it as a known attempt (the entry
+  // the sign out landed on: no reload, so the kept attempt is the same page's memory, as kept).
+  await page.getByRole("button", { name: "Sales", exact: true }).click();
+  await expect(page.getByTestId("qb-list")).toBeVisible();
+  await openWithPayment(page, "Q-2101");
+  await expect(pay(page).getByTestId("op-unknown")).toContainText("not known");
+  await expect(pay(page).locator('[data-field="amount"]')).toBeDisabled();
+  await expect(pay(page).locator('[data-field="amount"]')).toHaveValue("10.00");
+  // The retry is the kept attempt: the same key, so the server replays the first result.
+  await pay(page).getByTestId("op-take").click();
+  const receipt = pay(page).getByTestId("op-receipt");
+  await expect(receipt.getByTestId("op-receipt-amount")).toHaveText("CA$10.00");
+  // One ghost payment, not two: the balance carries the ghost's 10 and the tab's deliberate 5,
+  // and the replay note says nothing was posted a second time.
+  await expect(receipt.getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("CA$22.06");
+  await expect(pay(page).getByTestId("op-replayed-note")).toContainText("nothing was posted a second time");
+  const first = await postedKeys(page);
+  expect(first).toHaveLength(2);
+  expect(first[0]).toBe(first[1]);
+  await other.close();
+});
+
+test("sign out waits for a payment that lands inside the bound and says on the entry page that it was taken", async ({ page }) => {
+  await signIn(page);
+  await openWithPayment(page, "Q-2101");
+  const held = await hold(page, /\/api\/v1\/quotes\/q-2101\/order-payment$/, { method: "POST" });
+  await take(page, "10.00", "AUTH 9", "CARD");
+  await held.asked;
+  await page.getByRole("button", { name: "Sign out" }).click();
+  // The flush is waiting on the payment: a release inside the bound is heard before the session
+  // ends, and the person who is leaving is told the payment was taken, with its figures.
+  await held.release();
+  await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible({ timeout: 15000 });
+  await expect(page.locator("p.notice")).toContainText("was taken");
+  await expect(page.locator("p.notice")).toContainText("CA$10.00");
 });

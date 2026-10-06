@@ -101,6 +101,8 @@ export const SIGN_OUT_EVENT = "qd-sign-out";
 
 export interface SignOutDetail {
   waits: Promise<void>[];
+  /** Lines the entry page says to the person who is leaving: work that was awaited, taken or kept as the session ended. */
+  notes?: string[];
 }
 
 /** How long a wait on unsent work lasts before the host goes on without it. */

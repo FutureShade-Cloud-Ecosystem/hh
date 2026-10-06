@@ -57,17 +57,22 @@ import {
   figuresLine,
   isDifferentPaymentRefusal,
   isUnknownOutcome,
+  keepLeftoverAttempt,
+  leftoverAttemptNote,
+  leftoverTakenNote,
   parseTypedAmount,
   paymentRefusalWords,
   paymentTargetBalance,
   receiptRows,
   replayedNote,
+  takeLeftoverAttempt,
   tenderWord,
   unknownOutcomeNote,
   type PaymentAttempt,
   type TenderMethod,
 } from "./_order-payment.js";
 import type { OrderPaymentAnswer } from "./qd-client.js";
+import { SIGN_OUT_EVENT, UNSENT_WAIT_MS, waitUpTo, type SignOutDetail } from "./quote-context.js";
 import type { QuoteContext } from "./quote-context.js";
 import type { Result } from "@hardscapehouse/api-client";
 import { spokenRefusal } from "./_quote-workarea.js";
@@ -142,6 +147,12 @@ export class QdOrderPayment extends PanelBase {
 
   /** What a late write changed that the screen cannot show, said to the person who comes back, by quote. */
   private readonly lateNotes = new Map<string, string>();
+
+  /** The POST still out for a quote, by quote id: what a sign out waits on, bounded. */
+  private readonly posting = new Map<string, Promise<Result<OrderPaymentAnswer>>>();
+
+  /** The quote numbers of the quotes this session read, for the entry page's words at sign out. */
+  private readonly quoteNos = new Map<string, string>();
 
   static styles = [
     panelStyles,
@@ -322,9 +333,13 @@ export class QdOrderPayment extends PanelBase {
   protected override willUpdate(changed: Map<string, unknown>): void {
     if (changed.has("client")) {
       // A new client is a new session: no payment, key or receipt of the last one is this one's.
+      // The attempts a sign out kept are NOT cleared: the next session meets them as known
+      // attempts, through restore().
       this.book.clearAll();
       this.byQuote.clear();
       this.lateNotes.clear();
+      this.posting.clear();
+      this.quoteNos.clear();
     }
     if (changed.has("quoteId") || changed.has("client")) {
       const left = changed.has("quoteId") ? (changed.get("quoteId") as string | undefined) : undefined;
@@ -374,6 +389,24 @@ export class QdOrderPayment extends PanelBase {
     this.receiptEarlier = rec?.receiptEarlier ?? false;
     this.error = rec?.refusal ?? "";
     this.attempt = rec?.attempt ?? null;
+    // An attempt a previous session left on this quote at sign out rejoins the book here: the same
+    // key, so a retry replays the server's first outcome instead of posting a second payment. Its
+    // own figures come with it, so the fields are locked to what was actually sent.
+    if (this.attempt === null && id !== "") {
+      const leftover = takeLeftoverAttempt(id);
+      if (leftover !== null) {
+        this.book.restore(id, leftover);
+        this.attempt = leftover;
+        const rec = this.record(id);
+        rec.attempt = leftover;
+        rec.tender = leftover.tender;
+        rec.amountRaw = leftover.amountRaw;
+        rec.reference = leftover.reference;
+        this.tender = leftover.tender;
+        this.amountRaw = leftover.amountRaw;
+        this.reference = leftover.reference;
+      }
+    }
     this.busy = this.attempt?.phase === "in-flight";
     this.unknown = this.attempt?.phase === "not-known" ? unknownOutcomeNote() : "";
   }
@@ -428,6 +461,7 @@ export class QdOrderPayment extends PanelBase {
       return;
     }
     this.status = view.value.status;
+    this.quoteNos.set(ctx.id, view.value.quote_no);
     this.family = family.value;
     this.loaded = true;
     const late = this.lateNotes.get(ctx.id);
@@ -529,10 +563,10 @@ export class QdOrderPayment extends PanelBase {
     this.error = "";
     this.notice = "";
     this.unknown = "";
-    const result = await ctx.guarded(
-      client.takeOrderPayment(ctx.id, { method: tender, amountCents: cents, reference, idempotencyKey: key }),
-      (late) => this.lateAnswer(ctx, late),
-    );
+    const posting = client.takeOrderPayment(ctx.id, { method: tender, amountCents: cents, reference, idempotencyKey: key });
+    this.posting.set(ctx.id, posting);
+    const result = await ctx.guarded(posting, (late) => this.lateAnswer(ctx, late));
+    this.posting.delete(ctx.id);
     // The quote the person moved to meanwhile owns the screen now: this answer says nothing on it.
     if (result === undefined) return;
     this.busy = false;
@@ -620,6 +654,82 @@ export class QdOrderPayment extends PanelBase {
     }
     // When the quote the answer belongs to is the one open now, the screen says it at once.
     if (this.quoteId === ctx.id) this.refreshLive(ctx.id);
+  }
+
+  // ── sign out: the payment still out is waited for, bounded, and never dropped ──────────────
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    window.addEventListener(SIGN_OUT_EVENT, this.onSignOut);
+  }
+
+  override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    window.removeEventListener(SIGN_OUT_EVENT, this.onSignOut);
+  }
+
+  /** The quote's number as the session read it, or its id when no read named it. */
+  private quoteNoOf(quoteId: string): string {
+    return this.quoteNos.get(quoteId) ?? quoteId;
+  }
+
+  /** Sign out: the payments still out join the host's bounded waits, and what they leave is said on the entry page. */
+  private readonly onSignOut = (event: Event): void => {
+    const detail = (event as CustomEvent<SignOutDetail>).detail;
+    detail.waits.push(this.flushAtSignOut(detail));
+  };
+
+  /**
+   * Wait, bounded the way the layout store's flush is bounded, for every payment still out; keep
+   * what no answer decided for the next sign in; say on the entry page what was taken and what is
+   * kept. A payment whose answer lands inside the bound was heard before the session ended; one
+   * that does not answer is kept as a known attempt with its key, so the next sign in's retry
+   * replays the server's first outcome instead of posting a second payment.
+   */
+  private async flushAtSignOut(detail: SignOutDetail): Promise<void> {
+    const outs = this.book.out();
+    const waits = outs.map((row) => this.waitOneAtSignOut(detail, row.quoteId, row.attempt));
+    await Promise.all(waits);
+    for (const { quoteId, attempt } of this.book.unsettled()) {
+      keepLeftoverAttempt(quoteId, attempt);
+      detail.notes = [...(detail.notes ?? []), leftoverAttemptNote(this.quoteNoOf(quoteId), attempt)];
+    }
+  }
+
+  /**
+   * One payment still out, waited for inside the bound. Heard inside it: the entry page says it was
+   * taken, or a definite refusal ends the attempt (a held one is kept, with its words). Not heard:
+   * the attempt stays as it is, and the keep below hands it to the next sign in.
+   */
+  private async waitOneAtSignOut(detail: SignOutDetail, quoteId: string, attempt: PaymentAttempt): Promise<void> {
+    const posting = this.posting.get(quoteId);
+    if (posting === undefined) {
+      this.book.mark(quoteId, "not-known");
+      return;
+    }
+    const finished = await waitUpTo(UNSENT_WAIT_MS, posting);
+    if (!finished) {
+      // The bound ran out with the payment still out: the session ends not knowing, which is the
+      // not-known phase for whoever signs in next (a retry there replays; it never posts twice).
+      this.book.mark(quoteId, "not-known");
+      return;
+    }
+    const answer = await posting;
+    if (answer.ok) {
+      this.book.clear(quoteId);
+      detail.notes = [...(detail.notes ?? []), leftoverTakenNote(this.quoteNoOf(quoteId), answer.value)];
+      return;
+    }
+    if (isUnknownOutcome(answer.status)) {
+      this.book.mark(quoteId, "not-known");
+      return;
+    }
+    if (isDifferentPaymentRefusal(answer.error ?? "")) {
+      this.book.mark(quoteId, "held");
+      return;
+    }
+    // A plain refusal decided the attempt: nothing is owed to it, and the session ends with it.
+    this.book.clear(quoteId);
   }
 
   /**

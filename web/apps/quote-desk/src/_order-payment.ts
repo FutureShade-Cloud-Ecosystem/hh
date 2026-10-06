@@ -224,6 +224,71 @@ export class AttemptBook {
   clearAll(): void {
     this.attempts.clear();
   }
+
+  /** An attempt kept across a sign out rejoins the book for its quote: the same key, so a retry replays the first outcome. */
+  restore(quoteId: string, attempt: PaymentAttempt): void {
+    this.attempts.set(quoteId, attempt);
+  }
+
+  /** Every attempt still out, with the quote it belongs to: what a sign out waits for. */
+  out(): Array<{ quoteId: string; attempt: PaymentAttempt }> {
+    const rows: Array<{ quoteId: string; attempt: PaymentAttempt }> = [];
+    for (const [quoteId, attempt] of this.attempts) {
+      if (attempt.phase === "in-flight") rows.push({ quoteId, attempt });
+    }
+    return rows;
+  }
+
+  /** Every attempt whose outcome no answer decided (not known, held, or still out): what a sign out keeps for the next sign in. */
+  unsettled(): Array<{ quoteId: string; attempt: PaymentAttempt }> {
+    const rows: Array<{ quoteId: string; attempt: PaymentAttempt }> = [];
+    for (const [quoteId, attempt] of this.attempts) {
+      if (attempt.phase !== "kept") rows.push({ quoteId, attempt });
+    }
+    return rows;
+  }
+}
+
+// ── the attempts a sign out keeps for the next sign in ──────────────────────
+
+/**
+ * The attempts that were still out, or whose outcome no answer had decided,
+ * when a session ended. They are kept HERE, past the session, so the next
+ * sign in meets them as known attempts with the same idempotency key: a retry
+ * then replays the server's first outcome instead of posting a second
+ * payment. Page memory only: a reload of the page ends the session and these
+ * with it.
+ */
+const leftoverAttempts = new Map<string, PaymentAttempt>();
+
+/** Keep a quote's attempt past the session that made it. */
+export function keepLeftoverAttempt(quoteId: string, attempt: PaymentAttempt): void {
+  leftoverAttempts.set(quoteId, { ...attempt });
+}
+
+/** The quote's kept attempt, moved out: the next session owns it now. */
+export function takeLeftoverAttempt(quoteId: string): PaymentAttempt | null {
+  const attempt = leftoverAttempts.get(quoteId);
+  if (attempt === undefined) return null;
+  leftoverAttempts.delete(quoteId);
+  return attempt;
+}
+
+/** The entry page's words for a payment whose outcome no answer decided when the person signed out. */
+export function leftoverAttemptNote(quoteNo: string, attempt: PaymentAttempt): string {
+  const figures = `a payment of ${moneyWord(attempt.amountCents)} by ${tenderWord(attempt.tender)} on ${quoteNo}`;
+  if (attempt.phase === "held") {
+    return `When you signed out, the server had said this key took a different payment: ${figures} is kept as a known attempt for the next sign in, and a new payment starts after a fresh read.`;
+  }
+  return `When you signed out, ${figures} was still out, or its outcome was not known. It is kept as a known attempt, not dropped: the next sign in finds it with the same key, and trying again is safe, because the server answers with the first outcome and never posts a second payment.`;
+}
+
+/** The entry page's words for a payment the server took while the person was signing out. */
+export function leftoverTakenNote(
+  quoteNo: string,
+  answer: { amountCents: number; method: string; paymentNo: string },
+): string {
+  return `As you signed out, a payment of ${moneyWord(answer.amountCents)} by ${tenderWord(answer.method)} on ${quoteNo} was taken and recorded by the server as ${answer.paymentNo}. It was not dropped, and it was not asked for twice.`;
 }
 
 /**

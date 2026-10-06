@@ -128,8 +128,8 @@
   {
     "id": "app-signout-says-timeout",
     "file": "src/app-root.ts",
-    "find": "this.#message = sent ? null :",
-    "replace": "this.#message = true ? null :",
+    "find": "const lines = sent ? notes : [timeoutLine, ...notes];",
+    "replace": "const lines = true ? notes : [timeoutLine, ...notes];",
     "test": "P2-2 sign out is bounded"
   },
   {
@@ -381,8 +381,8 @@
   {
     "id": "wa-cart-after-read",
     "file": "src/quote-workarea.ts",
-    "find": "    await this.loadAll();\n    if (ctx.stale) return;\n    this.quoteChanged();\n  }\n\n  // ── the workspace",
-    "replace": "    await this.loadAll();\n    this.quoteChanged();\n  }\n\n  // ── the workspace",
+    "find": "    await this.loadAll();\n    if (ctx.stale) return;\n    this.quoteChanged();\n  }\n\n  // \u2500\u2500 the workspace",
+    "replace": "    await this.loadAll();\n    this.quoteChanged();\n  }\n\n  // \u2500\u2500 the workspace",
     "test": "guard cart change after read:"
   },
   {
@@ -598,8 +598,8 @@
   {
     "id": "ep-convert-reload",
     "file": "src/edit-panel.ts",
-    "find": "    await this.load();\n    if (ctx.stale) return;\n    this.announceChanged();\n  }\n\n  // ── delegation",
-    "replace": "    await this.load();\n    this.announceChanged();\n  }\n\n  // ── delegation",
+    "find": "    await this.load();\n    if (ctx.stale) return;\n    this.announceChanged();\n  }\n\n  // \u2500\u2500 delegation",
+    "replace": "    await this.load();\n    this.announceChanged();\n  }\n\n  // \u2500\u2500 delegation",
     "test": "guard edit convert reload:"
   },
   {
@@ -1308,15 +1308,15 @@
   {
     "id": "op-pay-answer",
     "file": "src/order-payment-panel.ts",
-    "find": "    const result = await ctx.guarded(\n      client.takeOrderPayment(ctx.id, { method: tender, amountCents: cents, reference, idempotencyKey: key }),\n      (late) => this.lateAnswer(ctx, late),\n    );",
-    "replace": "    const result = await client.takeOrderPayment(ctx.id, { method: tender, amountCents: cents, reference, idempotencyKey: key });",
+    "find": "    const result = await ctx.guarded(posting, (late) => this.lateAnswer(ctx, late));",
+    "replace": "    const result = await posting;",
     "test": "a payment that lands after the person left"
   },
   {
     "id": "op-late-announce",
     "file": "src/order-payment-panel.ts",
-    "find": "      (late) => this.lateAnswer(ctx, late),",
-    "replace": "      undefined,",
+    "find": "(late) => this.lateAnswer(ctx, late));",
+    "replace": "undefined);",
     "test": "a payment that lands after the person left"
   },
   {
@@ -1329,8 +1329,8 @@
   {
     "id": "op-kept-restore",
     "file": "src/order-payment-panel.ts",
-    "find": "    this.attempt = rec?.attempt ?? null;\n    this.busy = this.attempt?.phase === \"in-flight\";",
-    "replace": "    this.attempt = null as PaymentAttempt | null;\n    this.busy = false;",
+    "find": "    this.attempt = rec?.attempt ?? null;",
+    "replace": "    this.attempt = null as PaymentAttempt | null;",
     "test": "kept for its quote across switches"
   },
   {
@@ -1604,5 +1604,19 @@
     "test": "no write of the src is sent from a deferred position",
     "runner": "node",
     "testFile": "test/write-census.test.mjs"
+  },
+  {
+    "id": "op-signout-kept",
+    "file": "src/order-payment-panel.ts",
+    "find": "    for (const { quoteId, attempt } of this.book.unsettled()) {\n      keepLeftoverAttempt(quoteId, attempt);\n      detail.notes = [...(detail.notes ?? []), leftoverAttemptNote(this.quoteNoOf(quoteId), attempt)];\n    }",
+    "replace": "",
+    "test": "a payment still out at sign out is kept as a known attempt for the next sign in, so it cannot be taken twice"
+  },
+  {
+    "id": "op-signout-wait",
+    "file": "src/order-payment-panel.ts",
+    "find": "this.posting.set(ctx.id, posting);",
+    "replace": "",
+    "test": "sign out waits for a payment that lands inside the bound and says on the entry page that it was taken"
   }
 ]
