@@ -280,3 +280,176 @@ func TestIntegration_ScrubPlaceholderMigrationTwiceChangesNothing(t *testing.T) 
 		t.Error("a second run of 0363 changed rows, it must match nothing once the words are back")
 	}
 }
+
+// The dispatch persona's surname. The scrub pass took the first name out of the tour's dispatch login
+// (0200) and left the surname, which is a person's name and must not read on any screen. The surname is
+// read from the frozen 0200 file at run time, so this file never carries it.
+var dispatchPersonaRe = regexp.MustCompile(`'Scrubname0008 ([^ ']+) \(demo `)
+
+const (
+	dispatchPersonaID    = "d0200000-0000-4000-9000-000000000001"
+	dispatchPersonaLabel = "Dispatch persona (demo)"
+	migration0364File    = "0364_tour_dispatch_persona_surname_goes.sql"
+)
+
+func dispatchPersonaSurname(t *testing.T) string {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join("..", "..", "db", "migrations", "0200_tour_demo_personas.sql"))
+	if err != nil {
+		t.Fatalf("reading migration 0200: %v", err)
+	}
+	m := dispatchPersonaRe.FindSubmatch(body)
+	if m == nil {
+		t.Fatal("0200 no longer plants the dispatch persona's scrub-named login, the leg is not testing anything")
+	}
+	return string(m[1])
+}
+
+// surnameOffenders scans every text-like column of every base table for the surname as a whole word.
+func surnameOffenders(t *testing.T, ctx context.Context, pool *pgxpool.Pool, surname string) []string {
+	return columnsMatching(t, ctx, pool, `~*`, `\m`+surname+`\M`)
+}
+
+// columnsMatching returns "table.column" for every text-like column holding a value that matches the
+// Postgres regex under the given operator.
+func columnsMatching(t *testing.T, ctx context.Context, pool *pgxpool.Pool, op, re string) []string {
+	t.Helper()
+	cols, err := pool.Query(ctx, `
+		SELECT c.table_name, c.column_name
+		  FROM information_schema.columns c
+		  JOIN information_schema.tables x ON x.table_schema = c.table_schema AND x.table_name = c.table_name
+		 WHERE c.table_schema = 'public' AND x.table_type = 'BASE TABLE'
+		   AND c.data_type IN ('text', 'character varying', 'json', 'jsonb', 'ARRAY', 'USER-DEFINED')
+		 ORDER BY 1, 2`)
+	if err != nil {
+		t.Fatalf("listing text columns: %v", err)
+	}
+	type tc struct{ table, col string }
+	var all []tc
+	for cols.Next() {
+		var x tc
+		if err := cols.Scan(&x.table, &x.col); err != nil {
+			t.Fatalf("scanning a column: %v", err)
+		}
+		all = append(all, x)
+	}
+	cols.Close()
+	if len(all) < 100 {
+		t.Fatalf("only %d text-like columns found, the scan is not looking at the schema", len(all))
+	}
+	var bad []string
+	for _, x := range all {
+		col, tbl := pgx.Identifier{x.col}.Sanitize(), pgx.Identifier{x.table}.Sanitize()
+		var n int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+tbl+` WHERE `+col+`::text `+op+` $1`, re).Scan(&n); err != nil {
+			t.Fatalf("scanning %s.%s: %v", x.table, x.col, err)
+		}
+		if n > 0 {
+			bad = append(bad, x.table+"."+x.col)
+		}
+	}
+	return bad
+}
+
+func TestIntegration_DispatchPersonaSurnameNeverReadsInAMigratedDatabase(t *testing.T) {
+	ctx := context.Background()
+	pool := freshMigratedDB(t, "dispatchsurname")
+	if bad := surnameOffenders(t, ctx, pool, dispatchPersonaSurname(t)); len(bad) != 0 {
+		t.Errorf("after migrate, the dispatch persona's surname still reads in: %s", strings.Join(bad, ", "))
+	}
+	var got string
+	if err := pool.QueryRow(ctx, `SELECT display_name FROM users WHERE id = $1::uuid`, dispatchPersonaID).Scan(&got); err != nil {
+		t.Fatalf("reading the dispatch persona: %v", err)
+	}
+	if got != dispatchPersonaLabel {
+		t.Errorf("dispatch persona display name = %q, want %q", got, dispatchPersonaLabel)
+	}
+}
+
+// A login somebody renamed is theirs: the migration matches the exact planted value only, and a second
+// run changes nothing.
+func TestIntegration_DispatchPersonaMigrationLeavesARenamedLoginAlone(t *testing.T) {
+	ctx := context.Background()
+	pool := freshMigratedDB(t, "dispatchedit")
+	body, err := os.ReadFile(filepath.Join("..", "..", "db", "migrations", migration0364File))
+	if err != nil {
+		t.Fatalf("reading migration %s: %v", migration0364File, err)
+	}
+	mustExec(t, ctx, pool, `UPDATE users SET display_name = 'Night dispatcher' WHERE id = $1::uuid`, dispatchPersonaID)
+	mustExec(t, ctx, pool, string(body))
+	var got string
+	if err := pool.QueryRow(ctx, `SELECT display_name FROM users WHERE id = $1::uuid`, dispatchPersonaID).Scan(&got); err != nil {
+		t.Fatalf("reading the dispatch persona: %v", err)
+	}
+	if got != "Night dispatcher" {
+		t.Errorf("a renamed login was overwritten: %q", got)
+	}
+}
+
+// firstNameWords are the common words PR 235 restored after a placeholder; a placeholder followed by one of
+// them is not a first name beside a surname.
+const firstNameWords = `Revenue|Analysis|Manager|Controller|Sales|Statements`
+
+// A placeholder that stands for a first name, followed by a capitalised word that is not one of those, is
+// a first name beside an unscrubbed surname (a second placeholder is a scrubbed surname, fine). No value in a migrated database may read like that, in any
+// text column (a user's display name, a conversation title, a message, a JSON document). The offenders
+// are reported by table and column only, so a failure never prints the surname.
+func TestIntegration_NoFirstNamePlaceholderReadsBesideASurnameInAMigratedDatabase(t *testing.T) {
+	pool := freshMigratedDB(t, "firstnamepair")
+	bad := columnsMatching(t, context.Background(), pool, "~", `Scrubname[0-9]+ (?!Scrubname|(`+firstNameWords+`)\M)[A-Z][a-z]+`)
+	if len(bad) != 0 {
+		t.Errorf("after migrate, a scrub placeholder for a first name is followed by a surname in: %s", strings.Join(bad, ", "))
+	}
+}
+
+// plantedPersonNames reads, from the frozen migrations, every full name the demo planted on a login
+// (0200's yard persona), a fleet driver (0093) or a DM title between demo staff (0052). They are read at
+// run time so this file never carries one.
+func plantedPersonNames(t *testing.T) []string {
+	t.Helper()
+	read := func(file string) string {
+		b, err := os.ReadFile(filepath.Join("..", "..", "db", "migrations", file))
+		if err != nil {
+			t.Fatalf("reading %s: %v", file, err)
+		}
+		return string(b)
+	}
+	var names []string
+	for _, m := range regexp.MustCompile(`'([A-Z][a-z]+ [A-Z][a-z]+) \(demo `).FindAllStringSubmatch(read("0200_tour_demo_personas.sql"), -1) {
+		names = append(names, m[1])
+	}
+	for _, m := range regexp.MustCompile(`'([A-Z][a-z]+ [A-Z][a-z]+)',\s+'613-`).FindAllStringSubmatch(read("0093_dispatch_demo_fleet.sql"), -1) {
+		names = append(names, m[1])
+	}
+	for _, m := range regexp.MustCompile(`'DM',NULL,NULL,'([^']+)'`).FindAllStringSubmatch(read("0052_messaging_demo_seed.sql"), -1) {
+		names = append(names, strings.Split(m[1], ", ")...)
+	}
+	if len(names) != 8 {
+		t.Fatalf("found %d planted person names in 0200, 0093 and 0052, want 8: the leg is not testing what it says", len(names))
+	}
+	return names
+}
+
+// No demo login, driver or DM title in a migrated database may carry a person's name: the principal cannot
+// tell whether a full name is a real person, and the other demo rows are role labels. Failures name the
+// table and column only.
+func TestIntegration_NoPlantedDemoPersonNameReadsInAMigratedDatabase(t *testing.T) {
+	ctx := context.Background()
+	pool := freshMigratedDB(t, "demopersonnames")
+	for _, n := range plantedPersonNames(t) {
+		if bad := columnsMatching(t, ctx, pool, `~*`, `\m`+n+`\M`); len(bad) != 0 {
+			t.Errorf("after migrate, a demo person's full name still reads in: %s", strings.Join(bad, ", "))
+		}
+	}
+	for id, want := range map[string]string{
+		"d0200000-0000-4000-9000-000000000002": "Yard persona (demo)",
+	} {
+		var got string
+		if err := pool.QueryRow(ctx, `SELECT display_name FROM users WHERE id = $1::uuid`, id).Scan(&got); err != nil {
+			t.Fatalf("reading login %s: %v", id, err)
+		}
+		if got != want {
+			t.Errorf("login %s = %q, want %q", id, got, want)
+		}
+	}
+}
