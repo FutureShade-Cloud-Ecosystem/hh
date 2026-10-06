@@ -86,6 +86,14 @@ export class QdApprovals extends PanelBase {
       .detail {
         margin: 8px 0 0;
       }
+      .detail .open {
+        color: inherit;
+        text-decoration: none;
+      }
+      .detail .open:hover,
+      .detail .open:focus-visible {
+        text-decoration: underline;
+      }
       .actions {
         display: flex;
         gap: 8px;
@@ -209,7 +217,7 @@ export class QdApprovals extends PanelBase {
           <span class="pill">${label}</span>
           <span class="pill ${tone}" data-testid="ap-status">${decisionWord(row.status)}</span>
         </div>
-        <p class="detail" data-testid="ap-detail">${detail}</p>
+        <p class="detail" data-testid="ap-detail"><a class="open" href=${`#/approvals/${encodeURIComponent(row.id)}`} data-testid="ap-open">${detail}</a></p>
         ${offer
           ? html`<div class="actions">
               <button type="button" class="primary" data-action="approve" data-id=${row.id} ?disabled=${this.busyId !== ""} data-testid="ap-approve">Approve<span class="sr"> ${detail}</span></button>

@@ -84,3 +84,36 @@ export function requesterStateWords(status: string): string {
 export function isDecidable(status: string): boolean {
   return status === "PENDING";
 }
+
+/** What the server's own request sentence names: the line asked about, the discount, the margin and the floor, each only if the sentence says it. */
+export interface RequestFigures {
+  lineNo: number | null;
+  discountPct: number | null;
+  marginPct: number | null;
+  floorPct: number | null;
+  /** How far the asked margin sits under the floor, in percentage points; null unless both are named and the margin is under. */
+  gapPct: number | null;
+}
+
+/**
+ * parseRequestDetail reads the figures out of the request's sentence ("Quote Q-1001, line 2, Holland 60, 10% discount,
+ * margin 9.1% against a floor of 20.0%"), after any basis points are spoken as percent. The request carries no
+ * separate fields for them, so the sentence is the only source; a figure the sentence does not name stays null and
+ * is never computed here (the margin gate is the server's: a caller off the cost list gets no margin in it).
+ */
+export function parseRequestDetail(detail: string): RequestFigures {
+  const text = humanizeBps(detail || "");
+  const num = (m: RegExpMatchArray | null): number | null => (m === null ? null : Number(m[1]));
+  const lineNo = num(text.match(/\bline\s+(\d+)\b/i));
+  const discountPct = num(text.match(/(-?\d+(?:\.\d+)?)%\s+discount/i));
+  const marginPct = num(text.match(/margin\s+(-?\d+(?:\.\d+)?)%/i));
+  const floorPct = num(text.match(/floor of\s+(-?\d+(?:\.\d+)?)%/i));
+  const gapPct = marginPct !== null && floorPct !== null && marginPct < floorPct ? Math.round((floorPct - marginPct) * 10) / 10 : null;
+  return { lineNo, discountPct, marginPct, floorPct, gapPct };
+}
+
+/** The quote id a request's subject names ("quote:<id>"), or "" for any other subject. */
+export function quoteIdOfSubject(subjectRef: string | undefined): string {
+  const m = /^quote:(.+)$/.exec(subjectRef ?? "");
+  return m === null ? "" : m[1]!;
+}

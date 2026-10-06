@@ -60,3 +60,20 @@ test("isDecidable is true only for a pending row, the server decides the rest", 
   assert.equal(isDecidable("APPROVED"), false);
   assert.equal(isDecidable("REJECTED"), false);
 });
+
+test("parseRequestDetail reads the line, the discount, the margin and the floor, and computes the gap only when both are named", async () => {
+  const { parseRequestDetail, quoteIdOfSubject } = await import("../src/_approval-copy.ts");
+  assert.deepEqual(parseRequestDetail("Quote Q-1001, line 2, Holland 60, 10% discount, margin 9.1% against a floor of 20.0%"), {
+    lineNo: 2,
+    discountPct: 10,
+    marginPct: 9.1,
+    floorPct: 20,
+    gapPct: 10.9,
+  });
+  assert.deepEqual(parseRequestDetail("Quote Q-1001, line 1, Wall, 10% discount"), { lineNo: 1, discountPct: 10, marginPct: null, floorPct: null, gapPct: null });
+  assert.equal(parseRequestDetail("margin 25.0% against a floor of 20.0%").gapPct, null);
+  assert.equal(parseRequestDetail("").lineNo, null);
+  assert.equal(quoteIdOfSubject("quote:q-1001"), "q-1001");
+  assert.equal(quoteIdOfSubject("order:o-1"), "");
+  assert.equal(quoteIdOfSubject(undefined), "");
+});
