@@ -97,6 +97,19 @@ handle /q/* {
 	file_server
 }
 
+# The Quote Desk's Preview, Print and Copy link, and the server's emailed link,
+# address the customer's quote page as /quote.html?t=<token>. Serve the public
+# desk's page there too, behind the same gate: a rewrite, not a redirect, so the
+# token stays in the one request the browser already made (decision log row 972).
+handle /quote.html {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	rewrite * /q/index.html?{query}
+	file_server
+}
+
 handle {
 	basic_auth {
 		demo __GATE_HASH__
