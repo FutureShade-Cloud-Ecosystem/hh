@@ -63,7 +63,7 @@ func TestStanding_AnAccountThatIsBehindSaysSo(t *testing.T) {
 }
 
 func TestStanding_ACURRENTAccountSaysNOTHING(t *testing.T) {
-	// Not "CA$0.00 past due", not "in good standing", nothing. The ordinary case is most of the
+	// Not "$0.00 past due", not "in good standing", nothing. The ordinary case is most of the
 	// tickets on a counter, and a chip that renders on all of them stops being read on any of them.
 	h, _ := standingHarness(t, PastDue{}, nil)
 	out := standingOf(t, h, "cust-abc")

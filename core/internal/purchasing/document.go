@@ -36,7 +36,7 @@ package purchasing
 // - WHY THE CURRENCY IS IN THE HEADING AND NOT IN THE CELL -
 //
 // Because the two encoders emit the SAME STRING, and the two media want opposite things from a money
-// cell: a printed page wants "CA$1,234.56" and a spreadsheet wants 1234.56 or the column will not
+// cell: a printed page wants "$1,234.56" and a spreadsheet wants 1234.56 or the column will not
 // sum (internal/finstmt and internal/reporting both learned this, and reporting's header names it as
 // the single most common complaint about exported reports). Putting the currency in the column
 // heading satisfies both and is what a real purchase order does anyway, it is also the house
