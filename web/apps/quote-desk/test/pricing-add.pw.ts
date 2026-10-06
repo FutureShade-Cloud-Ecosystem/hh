@@ -33,9 +33,13 @@ async function setLight(page: Page): Promise<void> {
   await expect(control).toContainText("Light");
 }
 
-/** The live demo's state: only Pavers and Bulk hold a margin policy. */
+/**
+ * The live demo's state: only Pavers and Bulk hold a margin policy. The contract has no
+ * categories read, so the picker offers the categories the pricing reads prove exist (a rule
+ * or a quantity break scoped to one): here a tier rule names each of the four.
+ */
 async function twoPolicies(page: Page): Promise<void> {
-  await setMode(page, { drop_policies: [WALLS, SLABS, AGGREGATES, ACCESSORIES] });
+  await setMode(page, { drop_policies: [WALLS, SLABS, AGGREGATES, ACCESSORIES], rule_categories: [WALLS, SLABS, AGGREGATES, ACCESSORIES] });
   await signIn(page);
   await setLight(page);
   await openPricing(page);
@@ -110,6 +114,64 @@ test("A: no category, a bad number or a floor over the target is said in the row
   await page.getByTestId("pm-add-save").click();
   await expect(page.getByTestId("pm-add-error")).toBeVisible();
   await expect(page.getByTestId("pm-row")).toHaveCount(2);
+  const state = await pricingState(page);
+  expect(state.writes).toHaveLength(0);
+  expect(state.previews).toHaveLength(0);
+});
+
+test("A: the picker offers only categories the pricing reads prove exist, never a built-in list", async ({ page }) => {
+  // Pavers and Bulk hold a policy; the only other category any rule or break names is Accessories.
+  await setMode(page, { drop_policies: [WALLS, SLABS, AGGREGATES, ACCESSORIES] });
+  await signIn(page);
+  await openPricing(page);
+  await expect(page.getByTestId("pm-row")).toHaveCount(2);
+  await expect(page.getByTestId("pm-add-category").locator("option:not([value=''])")).toHaveText(["Accessories"]);
+});
+
+test("A: a category dropped from the grid is offered back because a rule and a break name it", async ({ page }) => {
+  await setMode(page, { drop_policies: [WALLS, SLABS, AGGREGATES, ACCESSORIES, PAVERS] });
+  await signIn(page);
+  await openPricing(page);
+  await expect(page.getByTestId("pm-row")).toHaveCount(1);
+  await expect(page.getByTestId("pm-add-category").locator("option:not([value=''])")).toHaveText(["Pavers", "Accessories"]);
+});
+
+test("A: a category the server no longer holds is refused in its words, and nothing is added", async ({ page }) => {
+  await twoPolicies(page);
+  // The catalogue loses the category between the read and the save: the server's foreign key refusal.
+  await setMode(page, { catalogue: [PAVERS, BULK] });
+  await page.getByTestId("pm-add-category").selectOption(WALLS);
+  await page.getByTestId("pm-add-target").fill("30");
+  await page.getByTestId("pm-add-floor").fill("20");
+  await page.getByTestId("pm-add-save").click();
+  await expect(page.getByTestId("pm-add-error")).toHaveText("References a nonexistent customer, product, category or branch");
+  await expect(page.getByTestId("pm-row")).toHaveCount(2);
+  expect((await pricingState(page)).policies.find((p) => p.category_id === WALLS)).toBeUndefined();
+});
+
+test("A: a target or a floor above 100 or below 0 is refused in plain words and nothing is sent", async ({ page }) => {
+  await twoPolicies(page);
+  await page.getByTestId("pm-add-category").selectOption(WALLS);
+  for (const [target, floor] of [["150", "20"], ["30", "100.5"], ["-5", "-10"], ["30", "-1"]]) {
+    await page.getByTestId("pm-add-target").fill(target);
+    await page.getByTestId("pm-add-floor").fill(floor);
+    await page.getByTestId("pm-add-save").click();
+    await expect(page.getByTestId("pm-add-error")).toHaveText("Target and floor must be between 0% and 100%.");
+  }
+  // The edge values themselves are accepted.
+  await page.getByTestId("pm-add-target").fill("100");
+  await page.getByTestId("pm-add-floor").fill("0");
+  await page.getByTestId("pm-add-save").click();
+  await expect(page.getByTestId("pm-row")).toHaveCount(3);
+});
+
+test("A: a row's own Save refuses a target over 100 before sending", async ({ page }) => {
+  await signIn(page);
+  await openPricing(page);
+  const row = page.locator('tr[data-category-id="' + PAVERS + '"]');
+  await row.locator('input[data-field="target-' + PAVERS + '"]').fill("150");
+  await row.getByTestId("pm-save").click();
+  await expect(row.getByTestId("pm-error")).toHaveText("Target and floor must be between 0% and 100%.");
   const state = await pricingState(page);
   expect(state.writes).toHaveLength(0);
   expect(state.previews).toHaveLength(0);
@@ -205,10 +267,11 @@ test("E: the pricing log is read only, with no Save, Add, New, Edit, Remove or R
   await expect(page.locator("qd-pricing-audit input[type=text], qd-pricing-audit textarea")).toHaveCount(0);
 });
 
-test("F: Sales is shown the refusal and none of the Add, Edit, Remove, Save or Retire controls on any tab", async ({ page }) => {
+test("F: Sales has no Pricing tab and none of the Add, Edit, Remove, Save or Retire controls", async ({ page }) => {
+  // The reconciliation put Pricing on a manager desk tab under the shared header: Sales is not given the tab at all.
   await signIn(page, "Sales");
-  await openPricing(page);
-  await expect(page.getByTestId("pricing-denied")).toBeVisible();
+  await expect(page.getByTestId("desk-tab-pricing")).toHaveCount(0);
+  await expect(page.getByTestId("pricing-panel")).toHaveCount(0);
   for (const id of ["pm-add-row", "pm-add-category", "pm-add-save", "pm-save", "pr-new", "pr-edit", "pr-retire", "pc-add", "pc-edit", "pc-delete", "pb-new", "pb-edit", "pb-retire"]) {
     await expect(page.getByTestId(id)).toHaveCount(0);
   }
