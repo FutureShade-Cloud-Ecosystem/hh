@@ -12,6 +12,8 @@
 //   tablet-front-door-01..04.png        tablet 768, light
 //   phone-front-door-01..04.png         phone 390, light
 //   dark-front-door-01..04.png          desktop, dark
+//   dark-tablet-front-door-01..04.png   tablet 768, dark
+//   dark-phone-front-door-01..04.png    phone 390, dark
 //
 //   FD_APP_PORT=4926 node test/acceptance/shots.mjs <out-dir>
 //
@@ -84,7 +86,9 @@ async function walk(prefix, viewport, theme) {
 for (const viewport of VIEWPORTS) {
   await walk(viewport.name, viewport, "light");
 }
-await walk("dark-", VIEWPORTS[0], "dark");
+for (const viewport of VIEWPORTS) {
+  await walk(`dark-${viewport.name}`, viewport, "dark");
+}
 
 // QA beside the deliverables: a live card's hover state, the accent the
 // polish round asks the cards to carry.
