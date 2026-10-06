@@ -30,7 +30,7 @@ export async function feedbackCreate(
 // image (imageFilename)); an unnamed Blob rides as "blob", the platform's default part name.
 export async function feedbackCreateMultipart(
   client: ApiClient,
-  body: { type: "bug" | "feedback" | "flag"; message: string; screen?: string; url?: string; user_agent?: string; image?: Blob },
+  body: { type: "bug" | "feedback" | "flag"; message: string; screen?: string; url?: string; user_agent?: string; images?: Blob[]; image?: Blob },
   opts?: { imageFilename?: string },
   call?: ApiCallOptions
 ): Promise<Result<FeedbackResult>> {

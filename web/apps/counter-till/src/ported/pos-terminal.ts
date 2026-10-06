@@ -1145,14 +1145,13 @@ export class HosPosTerminal extends LitElement {
       margin: 0 auto;
  /* THE BOTTOM LANE: one number at every width, because the two things it clears are one size
          at every width. Two fixed bars sit on the counter's bottom edge: the pinned hotkey legend
-         (pos-hotkey-legend.ts, bottom: 0, measured 35px) and the shell's Feedback pill
-         (bottom: var(--hos-fab-inset), 38px tall). They OVERLAP: the pill sits on top of the
-         legend's right-hand end, which is why the legend's own dismiss control is deliberately not
-         right-flushed (pos-hotkey-legend.ts:113-116): so the clearance a scrolled-to-the-bottom
-         column needs is the GREATER of the two, never the sum. --hos-fab-lane is 22 + 38 + 22 = 82
-         and the legend is 35, so the lane is the greater at both pointer types and the legend's
-         half of the old workaround costs nothing extra. --hos-safe-bottom is added because both
-         bars honour it, so on a device with a home indicator both rise by exactly that much. */
+         (pos-hotkey-legend.ts, bottom: 0, measured 35px) and the shell's Feedback pill, which the
+         till mounts lifted (the lift attribute) so it sits wholly ABOVE the legend and never
+         under it: its bottom is --hos-fab-inset + --hos-fab-lift = 48px, 13px clear of the
+         legend. The column therefore reserves the pill's whole stack: --hos-fab-lane is
+         22 + 38 + 22 + 26 = 108, the greater of the two, never the sum. --hos-safe-bottom is
+         added because both bars honour it, so on a device with a home indicator both rise by
+         exactly that much. */
       padding: var(--hos-space-4) var(--hos-space-5) calc(var(--hos-fab-lane) + var(--hos-safe-bottom));
     }
     /* The whole-sale utilities (park / parked / clear) and the stat bar sit UNDER the cards, so

@@ -152,10 +152,11 @@ func demoServe(getenv func(string) string, lookupEnv func(string) (string, bool)
 	// anyone looking at it, which is G4's stated blind spot and not an
 	// oversight of this wiring.
 	if err := boot.RefuseProviderVars(environ(), boot.ProviderDeny{
-		Prefixes:    demoEnvDenyPrefixes,
-		Names:       demoEnvDenyNames,
-		CardVar:     demoEnvCardProcessorVar,
-		CardAllowed: demoEnvCardProcessorValue,
+		Prefixes:         demoEnvDenyPrefixes,
+		PrefixExceptions: demoEnvPlaneBridgeAllowNames,
+		Names:            demoEnvDenyNames,
+		CardVar:          demoEnvCardProcessorVar,
+		CardAllowed:      demoEnvCardProcessorValue,
 	}); err != nil {
 		return err
 	}
