@@ -1,15 +1,37 @@
-# The demo image (plan r7 section 4, item W5): one image in the Railway
-# shape. Build from the repository root:
+# The demo image (plan r7 section 4, item W5, extended by D1): one image in
+# the Railway shape. Build from the repository root:
 #
 #   docker build -f deploy/demo/Dockerfile -t hh-demo-till .
 #
 # The image carries: the core built with -tags demo (the demo issuer, the
-# membership source and every boot guard compiled in), the counter till
-# app's built files, Caddy as the static host in front, and the frozen
-# migration set the migrate role reads from its working directory. The
+# membership source and every boot guard compiled in), the built files of the
+# three apps the box serves, Caddy as the static host in front, and the
+# frozen migration set the migrate role reads from its working directory. The
 # entrypoint (deploy/demo/entrypoint.sh) is the only place the boot order
 # lives: demo-check first, then migrate, demoseed -apply and
-# demo-populate, then serve behind Caddy.
+# demo-populate, a second demoseed -apply (the quote world's personas exist
+# only after the populate), then serve behind Caddy.
+#
+# The route plan (D1, one origin behind the one phrase gate; D4 takes the
+# root line D1's plan reserved for the front door):
+#
+#   /            the front door (D2), the box's role picker landing; its
+#                dist sits at /srv/app
+#   /till/*      the counter till under its own prefix, dist at /srv/app/till
+#   /quote/*     the Quote Desk, dist at /srv/app/quote
+#   /q/*         the customer's quote page, dist at /srv/app/q; the page
+#                reads its share link token from the ?t= query parameter
+#   /api/*, /healthz  the core, proxied, exactly as today
+#
+# Each app is built once per base with Vite's --base flag, so its index.html
+# and assets carry their own prefix and no app source changes for serving.
+# The till serves only its /till/ prefix (the root build the box carried
+# before the front door is gone with the root line it occupied); the front
+# door builds once for the root, and its tiles hand each module its own
+# prefixed app through the session the front door mints. Both staff apps
+# (the till and the Quote Desk) build with --mode demo, the only Vite mode
+# whose build keeps the front door handoff's adopt reader compiled in; a
+# default build ships the empty stub in its place (rows 893 and 899).
 
 FROM golang:1.27-alpine AS core-build
 WORKDIR /src/core
@@ -25,9 +47,15 @@ FROM node:22-alpine AS web-build
 WORKDIR /src/web
 COPY web/ ./
 RUN npm ci
-# The build runs from inside the app's directory so npm puts the
+# The builds run from inside each app's directory so npm puts the
 # workspace root's binaries on PATH (vite is hoisted there).
 WORKDIR /src/web/apps/counter-till
+RUN npx vite build --mode demo --base=/till/ --outDir dist-till
+WORKDIR /src/web/apps/quote-desk
+RUN npx vite build --mode demo --base=/quote/
+WORKDIR /src/web/apps/public-desk
+RUN npx vite build --base=/q/
+WORKDIR /src/web/apps/front-door
 RUN npm run build
 
 FROM caddy:2.10.2 AS caddy
@@ -41,7 +69,10 @@ FROM alpine:3.20
 RUN apk add --no-cache ca-certificates postgresql16-client
 COPY --from=core-build /out/core /usr/local/bin/core
 COPY --from=caddy /usr/bin/caddy /usr/local/bin/caddy
-COPY --from=web-build /src/web/apps/counter-till/dist /srv/app
+COPY --from=web-build /src/web/apps/front-door/dist /srv/app
+COPY --from=web-build /src/web/apps/counter-till/dist-till /srv/app/till
+COPY --from=web-build /src/web/apps/quote-desk/dist /srv/app/quote
+COPY --from=web-build /src/web/apps/public-desk/dist /srv/app/q
 COPY core/db/migrations /srv/core/db/migrations
 COPY deploy/demo/Caddyfile.template /srv/templates/Caddyfile.template
 COPY deploy/demo/entrypoint.sh /usr/local/bin/entrypoint

@@ -225,7 +225,13 @@ esac
 # P1-1); it lives outside the migration chain like the populate's demo_box,
 # and nothing but this script ever writes it. migrate applies only what it
 # has not, the seed writes only its missing rows in one transaction, the
-# populate completes the world and writes its own marker row.
+# populate completes the world and writes its own marker row. The seed runs
+# a second time after the populate (D1, the quote world's own ordering
+# rule, core/cmd/core/demoseed_quotes.go): the quote section of the seed
+# writes nothing until the populate's two demo logins exist, so only this
+# second apply plants the demo quotes, their share links and the floor
+# request. The apply is the same idempotent command, writes only its
+# missing rows, and changes no guard, no refusal and no step's order.
 # --------------------------------------------------------------------------
 if [ "$STATE" = empty ]; then
 	psql "$DATABASE_URL" -qc "CREATE TABLE IF NOT EXISTS demo_build_marker (started timestamptz NOT NULL DEFAULT now())"
@@ -235,6 +241,7 @@ fi
 core migrate
 core demoseed -apply
 core demo-populate
+core demoseed -apply
 
 if [ "$STATE" = building ]; then
 	# The resume path's fail-closed gate: now that the world is whole, the
