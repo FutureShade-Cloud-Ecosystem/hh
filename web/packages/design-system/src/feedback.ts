@@ -7,9 +7,11 @@
 // the edges, matching the lane the ported till already reserves for it (its
 // --hos-fab-inset and --hos-fab-size tokens resolve to exactly these numbers,
 // and pos-hotkey-legend.ts keeps its dismiss control off the right-hand end
-// for this pill). It never covers a working control: the till's hotkey legend
-// sits under it by that lane's own design, the front door's picker and the
-// Quote Desk's chrome end well above the corner. The numbers are literals
+// for this pill). A mount that pins a bar across the foot (the till's hotkey
+// legend, 35px) sets the lift attribute and the pill sits wholly above that
+// bar by position, never by a stacking race. It never covers a working
+// control: the front door's picker and the Quote Desk's chrome end well above
+// the corner. The numbers are literals
 // here rather than var() reads of the shared POS kit's tokens because this
 // package's phantom gate holds every var() to a token defined in its own
 // sheet; the comment beside each literal names the twin it must move with.
@@ -134,6 +136,14 @@ export class HHFeedback extends HHElement {
       box-shadow: 0 2px 10px rgb(0 0 0 / 0.25);
       cursor: pointer;
     }
+    /* The till's pinned hotkey legend is 35px tall across the foot, and a bar
+       painted later than the pill would cover it. A mount that carries a
+       bottom bar sets the lift attribute and the pill sits wholly above the
+       bar by position: 22px + 26px = 48px, 13px clear of the 35px legend
+       (the twin is --hos-fab-lift in the POS kit's tokens). */
+    :host([lift]) .pill {
+      bottom: calc(22px + 26px + var(--hh-safe-bottom));
+    }
     .pill:focus-visible {
       outline: 2px solid var(--hh-focus-ring);
       outline-offset: 2px;
@@ -156,6 +166,10 @@ export class HHFeedback extends HHElement {
       display: grid;
       gap: var(--hh-s-12);
       box-shadow: 0 12px 40px rgb(0 0 0 / 0.35);
+    }
+    :host([lift]) .panel {
+      bottom: calc(22px + 26px + 38px + var(--hh-s-12) + var(--hh-safe-bottom));
+      max-height: calc(100vh - 126px - var(--hh-safe-bottom));
     }
 
     .head {
@@ -314,10 +328,10 @@ export class HHFeedback extends HHElement {
   #sentNumber: string | null = null;
   #error = '';
   #dragOver = false;
-  /** Set when a sent submission cleared the note; updated() empties the box. */
-  #noteCleared = false;
-  /** The blobs whose thumbnail canvas is already painted this render. */
-  #painted = new WeakSet<Blob>();
+  /** The blob each live thumbnail canvas currently shows. A reopen builds new
+   * canvases (absent here, so painted again) and a removal that shifts the
+   * list repaints the slots whose blob changed. */
+  #painted = new WeakMap<HTMLCanvasElement, Blob>();
 
   constructor() {
     super();
@@ -351,31 +365,32 @@ export class HHFeedback extends HHElement {
     super.disconnectedCallback();
   }
 
-  /** The imperative half: the note's cleared state and the thumbnails' pixels. */
+  /** The imperative half: the note's text and the thumbnails' pixels. The
+   * panel is not rendered while closed, so each open builds a fresh textarea
+   * and fresh canvases: the kept note is put back and the kept images are
+   * painted again, so what is shown is exactly what Send will post. */
   protected override updated(changed: PropertyValues): void {
     super.updated(changed);
-    if (this.#noteCleared) {
-      const note = this.renderRoot.querySelector('[data-testid="feedback-note"]');
-      if (note instanceof HTMLTextAreaElement) note.value = '';
-      this.#noteCleared = false;
-    }
+    const note = this.renderRoot.querySelector('[data-testid="feedback-note"]');
+    if (note instanceof HTMLTextAreaElement && note.value !== this.#note) note.value = this.#note;
     void this.#paintThumbs();
   }
 
-  /** Paints every unpainted thumbnail's blob onto its canvas. */
+  /** Paints every thumbnail whose canvas does not yet show its blob. */
   async #paintThumbs(): Promise<void> {
     const slots = Array.from(this.renderRoot.querySelectorAll<HTMLElement>('[data-thumb-index]'));
     for (const slot of slots) {
       const index = Number(slot.getAttribute('data-thumb-index'));
       const thumb = this.#thumbs[index];
-      if (thumb === undefined || this.#painted.has(thumb.blob)) continue;
-      this.#painted.add(thumb.blob);
       const canvas = slot.querySelector('canvas');
-      if (!(canvas instanceof HTMLCanvasElement)) continue;
+      if (thumb === undefined || !(canvas instanceof HTMLCanvasElement)) continue;
+      if (this.#painted.get(canvas) === thumb.blob) continue;
+      this.#painted.set(canvas, thumb.blob);
       try {
         const bitmap = await createImageBitmap(thumb.blob);
         const context = canvas.getContext('2d');
         if (context === null) continue;
+        context.clearRect(0, 0, canvas.width, canvas.height);
         const scale = Math.min(canvas.width / bitmap.width, canvas.height / bitmap.height);
         const width = bitmap.width * scale;
         const height = bitmap.height * scale;
@@ -593,7 +608,6 @@ export class HHFeedback extends HHElement {
         // A sent submission is finished: the note and the images go.
         this.#thumbs = [];
         this.#note = '';
-        this.#noteCleared = true;
       } else {
         // A failure keeps everything, for the retry.
         this.#error = answer.error;

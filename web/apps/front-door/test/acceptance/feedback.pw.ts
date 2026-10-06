@@ -162,3 +162,100 @@ test("a refused send keeps the note and the images for the retry", async ({ page
   await expect(page.getByTestId("feedback-sent")).toHaveText("Sent: HH-42");
   await expect(page.getByTestId("feedback-note")).toHaveValue("");
 });
+
+test("closing and reopening the panel shows the note and thumbnails as kept, and Send posts what is seen", async ({ page }) => {
+  await page.goto("/");
+  await openPanel(page);
+  await page.getByTestId("feedback-note").fill("Kept words across a reopen.");
+  const image = pngFile();
+  await page.evaluate(
+    async ({ buffer, name, type }) => {
+      const file = new File([Uint8Array.from(buffer)], name, { type });
+      const transfer = new DataTransfer();
+      transfer.items.add(file);
+      document.dispatchEvent(new ClipboardEvent("paste", { clipboardData: transfer }));
+    },
+    { buffer: Array.from(image.buffer), name: image.name, type: image.type },
+  );
+  await expect(page.getByTestId("feedback-thumbs").locator("li")).toHaveCount(1);
+  // The thumbnail's pixels, read through both shadow roots.
+  const painted = async (): Promise<number> =>
+    page.evaluate(() => {
+      const canvas = document
+        .querySelector("fd-app-root")
+        ?.shadowRoot?.querySelector("hh-feedback")
+        ?.shadowRoot?.querySelector("[data-thumb-index] canvas");
+      if (!(canvas instanceof HTMLCanvasElement)) return 0;
+      const context = canvas.getContext("2d");
+      if (context === null) return 0;
+      const data = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      let count = 0;
+      for (let index = 0; index < data.length; index += 4) if (data[index + 3] > 0) count += 1;
+      return count;
+    });
+  await expect.poll(painted).toBeGreaterThan(0);
+
+  // Close with the pill, reopen with the pill.
+  await pill(page).click();
+  await expect(page.getByTestId("feedback-panel")).toHaveCount(0);
+  await pill(page).click();
+  await expect(page.getByTestId("feedback-panel")).toBeVisible();
+
+  // The note and the thumbnail are shown exactly as kept, pixels included.
+  await expect(page.getByTestId("feedback-note")).toHaveValue("Kept words across a reopen.");
+  await expect(page.getByTestId("feedback-thumbs").locator("li")).toHaveCount(1);
+  await expect.poll(painted).toBeGreaterThan(0);
+
+  // Send posts what the user can see.
+  await page.getByTestId("feedback-send").click();
+  await expect(page.getByTestId("feedback-sent")).toHaveText("Sent: HH-42");
+  const peek = await stubPeek(page);
+  expect(peek.feedback?.fields["message"]).toBe("Kept words across a reopen.");
+  expect(peek.feedback?.fields["images"]).toBe(1);
+});
+
+/** The pill's whole box is the topmost thing at its corners and its centre:
+ * the deep hit walks every shadow root the way a pointer does. */
+async function pillIsTopmost(page: Page): Promise<string[]> {
+  return pill(page).evaluate((button) => {
+    const deepHit = (x: number, y: number): Element | null => {
+      let hit = document.elementFromPoint(x, y);
+      while (hit?.shadowRoot) {
+        const inner = hit.shadowRoot.elementFromPoint(x, y);
+        if (inner === null || inner === hit) break;
+        hit = inner;
+      }
+      return hit;
+    };
+    const box = button.getBoundingClientRect();
+    // The corner probes sit 8px in, inside the pill's rounding.
+    const inset = 8;
+    const points: Array<[string, number, number]> = [
+      ["top-left", box.left + inset, box.top + inset],
+      ["top-right", box.right - inset, box.top + inset],
+      ["bottom-left", box.left + inset, box.bottom - inset],
+      ["bottom-right", box.right - inset, box.bottom - inset],
+      ["centre", box.left + box.width / 2, box.top + box.height / 2],
+    ];
+    const bad: string[] = [];
+    for (const [name, x, y] of points) {
+      const hit = deepHit(x, y);
+      if (hit === null || !(hit === button || button.contains(hit))) {
+        bad.push(`${name} at ${Math.round(x)},${Math.round(y)} is ${hit?.tagName ?? "nothing"}`);
+      }
+    }
+    return bad;
+  });
+}
+
+for (const size of [
+  { width: 1440, height: 900 },
+  { width: 1024, height: 768 },
+]) {
+  test(`the pill is the topmost element at its corners at ${size.width}x${size.height}`, async ({ page }) => {
+    await page.setViewportSize(size);
+    await page.goto("/");
+    await expect(pill(page)).toBeVisible();
+    expect(await pillIsTopmost(page)).toEqual([]);
+  });
+}
