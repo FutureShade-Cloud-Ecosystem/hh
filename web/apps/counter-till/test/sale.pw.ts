@@ -1092,13 +1092,13 @@ test("the split state is a status band, not a disabled button", async ({ page })
   await expect(page.getByRole("button", { name: /Split: compose/ })).toHaveCount(0);
 });
 
-test("a fresh line before its price answers: the split arms on shape and the ring settles the server's total", async ({
+test("a fresh line before its price answers: the split works from the server's stated total and rings", async ({
   page,
 }) => {
   // The resolve answer for the Holland line is held until released: the line is on the ticket,
-  // priced by no one yet (ui2c P3-2's fresh pending line). The panel arms the ring on the legs'
-  // shape alone (the till computes no total to compare against), and the ring is where the legs
-  // meet the server's total.
+  // priced by no one yet (ui2c P3-2's fresh pending line). The server's sale-preview prices the
+  // line itself, so the panel states the total, fills the last leg, and arms the ring when the
+  // legs equal it.
   let release: () => void = () => {};
   const held = new Promise<void>((resolve) => {
     release = resolve;
@@ -1149,8 +1149,7 @@ test("a split with a card leg carries the simulated word on the confirmation and
   const leg1 = page.getByTestId("split-amount-1");
   await leg0.fill("4.00");
   await leg1.fill("0.52");
-  // The typed sum shows, and the ring arms on the legs' shape: whether the
-  // legs settle the server's total is the ring's own answer.
+  // The legs equal the server's stated total, so what is left is nothing and the ring arms.
   await expect(page.getByTestId("split-remaining")).toHaveText("Left to assign $0.00");
   await expect(page.getByTestId("split-ring")).toBeEnabled();
   const ringPost = page.waitForResponse(

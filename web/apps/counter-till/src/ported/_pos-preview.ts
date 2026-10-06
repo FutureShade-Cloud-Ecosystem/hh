@@ -1,6 +1,7 @@
 // The till's pre-ring totals (decision log row 985): the ticket's own subtotal, tax and total as
 // the ring will compute them, read from POST /api/v1/pos/sale-preview and never assembled in the
-// browser. Pure helpers only (the terminal owns the fetch), unit-tested in _pos-preview.test.mjs.
+// browser. Pure helpers only (the terminal owns the fetch), unit-tested in _pos-preview.test.mjs and
+// read through the browser legs in test/total-split.pw.ts.
 
 export interface PreviewLine {
   product_id: string;

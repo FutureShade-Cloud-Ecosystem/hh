@@ -25,15 +25,13 @@ import {
  * three invoices, three receipts for one pile of stone: and a return against any of them had no
  * single sale to reverse.
  *
- * THE SETTLEMENT IS THE RING'S OWN ANSWER. The server refuses a split whose legs do not sum exactly
- * to the sale's total, and migration 0100's deferred trigger refuses it again at COMMIT. The till
- * computes no total of its own before the ring (decision log row 661), so the panel compares the
- * legs against nothing: it shows the typed sum (arithmetic over the operator's own entries), words
- * the shape refusals the server would also refuse, states that the legs settle the server's total
- * at the ring, and arms Ring on that shape alone. The total arithmetic (the live remainder, the
- * Rest fill) comes back when the counter is served a server-stated total; the `totalCents` input
- * takes one, never a browser assembly. All of the pre-ring read lives in _pos-split.ts's
- * splitDraftRead (the seam file ports.ts owns the sum), DOM-free and unit-tested.
+ * THE TOTAL IS THE SERVER'S (rows 661 and 985). The till computes no total of its own: the terminal
+ * passes the total the sale-preview stated, and only a current one. With it the panel states Total to
+ * split and Left to assign, fills the last leg with the remainder, and arms Ring only when the legs
+ * equal it. With none (the preview pending, unreadable, or stale after the ticket changed) the panel
+ * says the total is pending and Ring stays disabled: it never compares legs against nothing. The
+ * server still refuses a split whose legs miss its total, and migration 0100's deferred trigger
+ * refuses it again at COMMIT. The arithmetic lives in pos-kit's evaluateSplit and autoFillRemainder.
  *
  * The panel emits `pos-split-ring` with the wire-shaped legs; the terminal owns the actual POST, so
  * there is exactly one place in the app that rings a sale.
@@ -292,8 +290,15 @@ export class HosPosSplitTender extends LitElement {
    */
   private reads(legs: DraftLeg[]): { typedCents: number; remainingCents: number; armed: boolean; problem: string } {
     if (this.totalCents === null) {
+      // No server total in hand (the preview is pending, unreadable, or stale after the ticket
+      // changed): the legs are compared with nothing and Ring split sale stays disabled.
       const shape = splitDraftRead(legs, this.hasCustomer, this.hasLines);
-      return { typedCents: shape.typedCents, remainingCents: 0, armed: shape.problem === '', problem: shape.problem };
+      return {
+        typedCents: shape.typedCents,
+        remainingCents: 0,
+        armed: false,
+        problem: shape.problem === '' ? 'Ring split sale arms when the total arrives.' : shape.problem,
+      };
     }
     const live = evaluateSplit(legs, this.totalCents, this.hasCustomer);
     return { typedCents: live.tenderedCents, remainingCents: live.remainingCents, armed: live.ready, problem: live.problem };
@@ -371,7 +376,7 @@ export class HosPosSplitTender extends LitElement {
         <div class="foot">
           <div>
             ${this.totalCents === null
-              ? html`<div class="remaining" data-testid="split-typed">${fmtCents(read.typedCents)} typed so far</div>`
+              ? html`<div class="remaining" data-testid="split-total-pending">Total to split: pending</div>`
               : html`<div class="total" data-testid="split-total">Total to split ${fmtCents(this.totalCents)}</div>
                 <div class="remaining ${remainingClass}" data-testid="split-remaining">
                   ${read.remainingCents < 0
@@ -381,11 +386,7 @@ export class HosPosSplitTender extends LitElement {
             ${/* aria-live: the line changes on every keystroke and is the one thing a
                screen-reader user needs to hear without leaving the amount box. */ ''}
             <div class="problem" role="status" aria-live="polite" data-testid="split-problem">
-              ${this.totalCents === null
-                ? read.problem === ''
-                  ? "The legs settle the server's total at the ring."
-                  : read.problem
-                : read.problem || nothing}
+              ${read.problem || nothing}
             </div>
           </div>
           <div>

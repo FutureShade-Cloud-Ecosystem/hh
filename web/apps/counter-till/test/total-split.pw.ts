@@ -188,13 +188,147 @@ test("the server's split_total_mismatch reads in dollars from its fields, never 
         error: "split_total_mismatch",
         tendered_cents: 26600,
         total_cents: 30058,
-        message: "The tenders add up to $266.00, but the sale total is $300.58.",
+        message: "The server's own sentence, which the till must not print.",
       }),
     }),
   );
   await panel.getByTestId("split-ring").click();
   const banner = page.getByRole("alert");
+  // Read from the fields (26600 and 30058), not from the server's message, which differs here.
   await expect(banner).toContainText("The tenders add up to $266.00, but the sale total is $300.58.");
+  await expect(banner).not.toContainText("The server's own sentence");
   await expect(banner).not.toContainText("cents");
   await expect(banner).not.toContainText("30058");
+});
+
+test("Ring split sale stays disabled while the total is pending, and arms when it arrives", async ({ page }) => {
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/v1/pos/sale-preview", async (route) => {
+    await held;
+    await route.continue();
+  });
+  await signIn(page);
+  await ensureSession(page);
+  await addLine(page, "holland", "Holland Stone 60 mm");
+  await openPaymentStep(page);
+  await page.getByRole("button", { name: "Split" }).click();
+  const panel = page.getByTestId("pos-split-panel");
+  await panel.getByTestId("split-amount-0").fill("1.00");
+  await panel.getByTestId("split-amount-1").fill("1.00");
+  await expect(panel.getByTestId("split-total-pending")).toHaveText("Total to split: pending");
+  await expect(panel.getByTestId("split-typed")).toHaveCount(0);
+  await expect(panel.getByTestId("split-ring")).toBeDisabled();
+  release();
+  await expect(panel.getByTestId("split-total")).toHaveText("Total to split $4.52");
+  await panel.getByTestId("split-amount-1").fill("3.52");
+  await expect(panel.getByTestId("split-ring")).toBeEnabled();
+});
+
+test("Ring split sale stays disabled when the preview cannot be read", async ({ page }) => {
+  await page.route("**/api/v1/pos/sale-preview", (route) => route.fulfill({ status: 500, body: "{}" }));
+  await signIn(page);
+  await ensureSession(page);
+  await addLine(page, "holland", "Holland Stone 60 mm");
+  await openPaymentStep(page);
+  await page.getByRole("button", { name: "Split" }).click();
+  const panel = page.getByTestId("pos-split-panel");
+  await panel.getByTestId("split-amount-0").fill("1.00");
+  await panel.getByTestId("split-amount-1").fill("1.00");
+  await expect(panel.getByTestId("split-total-pending")).toBeVisible();
+  await expect(panel.getByTestId("split-total")).toHaveCount(0);
+  await expect(panel.getByTestId("split-ring")).toBeDisabled();
+});
+
+test("a ticket change after the legs were typed disarms Ring split sale until the new total arrives", async ({
+  page,
+}) => {
+  let hold = false;
+  let release: () => void = () => undefined;
+  await page.route("**/api/v1/pos/sale-preview", async (route) => {
+    if (hold) {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    }
+    await route.continue();
+  });
+  await signIn(page);
+  await ensureSession(page);
+  await addLine(page, "holland", "Holland Stone 60 mm");
+  await openPaymentStep(page);
+  await page.getByRole("button", { name: "Split" }).click();
+  const panel = page.getByTestId("pos-split-panel");
+  await panel.getByTestId("split-amount-0").fill("1.00");
+  await expect(panel.getByTestId("split-total")).toHaveText("Total to split $4.52");
+  await expect(panel.getByTestId("split-ring")).toBeEnabled();
+
+  hold = true;
+  await addLine(page, "edge", "Edge Restraint 8 ft");
+  // The legs typed against $4.52 are stale the moment the ticket changes.
+  await expect(panel.getByTestId("split-total-pending")).toBeVisible();
+  await expect(panel.getByTestId("split-ring")).toBeDisabled();
+  await expect.poll(() => hold).toBe(true);
+  await page.waitForTimeout(500);
+  release();
+  await expect(panel.getByTestId("split-total")).toHaveText("Total to split $40.68");
+  // The untouched last leg followed the remainder, so the legs match the new total.
+  await expect(panel.getByTestId("split-amount-1")).toHaveValue("39.68");
+  await expect(panel.getByTestId("split-ring")).toBeEnabled();
+});
+
+test("a late answer for an older ticket is dropped, and quick edits make one ask", async ({ page }) => {
+  const asked: Array<{ qty: number; at: number }> = [];
+  let holdFirst = true;
+  let releaseFirst: () => void = () => undefined;
+  await page.route("**/api/v1/pos/sale-preview", async (route) => {
+    const body = route.request().postDataJSON() as { lines: Array<{ qty_entered: number }> };
+    asked.push({ qty: body.lines[0]?.qty_entered ?? 0, at: Date.now() });
+    if (holdFirst && asked.length === 1) {
+      holdFirst = false;
+      // The first answer is held, then released AFTER a newer ticket has answered, with a figure
+      // that would be wrong for it.
+      await new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      const real = await route.fetch();
+      const answer = (await real.json()) as Record<string, unknown>;
+      await route.fulfill({ response: real, json: { ...answer, tax_cents: 1, total_cents: 101 } });
+      return;
+    }
+    await route.continue();
+  });
+  await signIn(page);
+  await addLine(page, "holland", "Holland Stone 60 mm");
+  await expect.poll(() => asked.length).toBe(1);
+
+  // Three quick quantity steps inside the debounce window: the ticket is now four sf.
+  await page.evaluate(async () => {
+    const walk = (root: ParentNode): Element[] => {
+      const out: Element[] = [];
+      for (const el of root.querySelectorAll("*")) {
+        out.push(el);
+        if (el.shadowRoot) out.push(...walk(el.shadowRoot));
+      }
+      return out;
+    };
+    const plus = walk(document).find((el) => el.matches("button[aria-label^='Increase quantity']")) as HTMLElement;
+    for (let i = 0; i < 3; i += 1) {
+      plus.click();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  });
+  await openPaymentStep(page);
+  const total = page.getByTestId("pos-totals-card").getByTestId("pos-preview-total");
+  await expect(total).toContainText("$18.08");
+  // One ask for the settled ticket, not one per step (the first, held ask is the other).
+  expect(asked.length).toBe(2);
+  expect(asked[1]?.qty).toBe(4);
+  // The held answer for the one-line ticket lands now and changes nothing on screen.
+  releaseFirst();
+  await page.waitForTimeout(500);
+  await expect(total).toContainText("$18.08");
+  await expect(total).not.toContainText("$1.01");
 });

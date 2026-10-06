@@ -36,7 +36,6 @@ const SANDSTONE_LINE = "Quantity to return: Garden edger, sandstone, each";
 
 async function findSale(page: Page, orderNo: string): Promise<void> {
   await openReturns(page);
-  await openReturns(page);
   await page.getByLabel("Sale number").fill(orderNo);
   await page.getByRole("button", { name: "Find sale" }).click();
   await expect(page.getByTestId("returns-sale")).toContainText(orderNo);
