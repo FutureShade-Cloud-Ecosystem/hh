@@ -4229,7 +4229,10 @@ export class HosPosTerminal extends LitElement {
    */
   private headerFlowSteps() {
     const steps = this.flowSteps();
-    return this.counterLayout === 'PANELS' ? steps.filter((s) => s.id !== 'items') : steps;
+    // Renumbered from 1: the chips count the steps pane's three, not the stepper's four.
+    return this.counterLayout === 'PANELS'
+      ? steps.filter((s) => s.id !== 'items').map((s, i) => ({ ...s, n: i + 1 }))
+      : steps;
   }
 
   /** The step the steps pane has open: always one of the three, whatever openStep last held. */

@@ -239,7 +239,9 @@ test("F4 and Shift F4 cycle Customer, Payment, Summary in the steps pane; Items 
   await twoPaneWithTicket(page);
 
   // The header chips are the three steps.
-  await expect(page.locator("hos-pos-flow-steps").first().locator("button")).toHaveCount(3);
+  const chips = page.locator("hos-pos-flow-steps").first().locator("button");
+  await expect(chips).toHaveCount(3);
+  await expect(chips).toHaveText([/1\s*Customer/, /2\s*Payment/, /3\s*Summary/]);
   const steps = page.getByTestId("pos-pane-steps");
   const customer = steps.getByTestId("pos-customer-mode");
   const payment = steps.getByTestId("pos-paytiles");
