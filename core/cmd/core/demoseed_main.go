@@ -187,6 +187,18 @@ func writeSummary(out *os.File, s planSummary) {
 	for _, l := range s.WillCall {
 		fmt.Fprintf(out, "    %s\n", l)
 	}
+	if len(s.Quotes) == 0 {
+		fmt.Fprintln(out, "  quotes       none, the two demo role logins are not on this database yet (apply again after the demo populate)")
+	} else {
+		fmt.Fprintln(out, "  quotes")
+		for _, l := range s.Quotes {
+			fmt.Fprintf(out, "    %s\n", l)
+		}
+		fmt.Fprintln(out, "  quote share links")
+		for _, l := range s.QuoteLinks {
+			fmt.Fprintf(out, "    %s\n", l)
+		}
+	}
 	// THE ONLY ROWS THAT GROW PER DEPLOY, printed rather than described, because "which rows are
 	// day-keyed" is a question about THIS run's plan and an operator should not have to read ids.go
 	// to answer it. Everything not on this list is written once, ever.
