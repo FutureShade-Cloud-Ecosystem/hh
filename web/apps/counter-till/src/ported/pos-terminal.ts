@@ -501,15 +501,15 @@ export class HosPosTerminal extends LitElement {
   /**
    * Row 976: the two panes swapped (the steps pane first). The page that mounts this terminal owns
    * the choice, because its header carries the swap button beside the theme, and remembers it per
-   * browser; the terminal only draws it.
+   * browser; the terminal only draws it. It arrives as the `data-panes-swapped` attribute ("true" or "false").
    */
-  @property({ type: Boolean }) panesSwapped = false;
+  @property({ attribute: 'data-panes-swapped', converter: (value: string | null) => value === 'true' }) panesSwapped = false;
   /**
    * Row 955: the till's Returns is its own surface. While it is up the sale stays mounted (nothing
    * on the ticket is lost) but the page hides it, and this flag keeps the sale's keys quiet: F12
    * must never ring a sale nobody can see.
    */
-  @property({ type: Boolean, reflect: true }) paused = false;
+  @property({ attribute: 'data-paused', converter: (value: string | null) => value === 'true' }) paused = false;
   /**
    * Row 985: the ticket's tax and total as the ring will compute them, read from the server's
    * sale-preview and refreshed (debounced) when the lines, the customer or the fulfilment change.
@@ -1180,14 +1180,13 @@ export class HosPosTerminal extends LitElement {
       margin: 0 auto;
  /* THE BOTTOM LANE: one number at every width, because the two things it clears are one size
          at every width. Two fixed bars sit on the counter's bottom edge: the pinned hotkey legend
-         (pos-hotkey-legend.ts, bottom: 0, measured 35px) and the shell's Feedback pill
-         (bottom: var(--hos-fab-inset), 38px tall). They OVERLAP: the pill sits on top of the
-         legend's right-hand end, which is why the legend's own dismiss control is deliberately not
-         right-flushed (pos-hotkey-legend.ts:113-116): so the clearance a scrolled-to-the-bottom
-         column needs is the GREATER of the two, never the sum. --hos-fab-lane is 22 + 38 + 22 = 82
-         and the legend is 35, so the lane is the greater at both pointer types and the legend's
-         half of the old workaround costs nothing extra. --hos-safe-bottom is added because both
-         bars honour it, so on a device with a home indicator both rise by exactly that much. */
+         (pos-hotkey-legend.ts, bottom: 0, measured 35px) and the shell's Feedback pill, which the
+         till mounts lifted (the lift attribute) so it sits wholly ABOVE the legend and never
+         under it: its bottom is --hos-fab-inset + --hos-fab-lift = 48px, 13px clear of the
+         legend. The column therefore reserves the pill's whole stack: --hos-fab-lane is
+         22 + 38 + 22 + 26 = 108, the greater of the two, never the sum. --hos-safe-bottom is
+         added because both bars honour it, so on a device with a home indicator both rise by
+         exactly that much. */
       padding: var(--hos-space-4) var(--hos-space-5) calc(var(--hos-fab-lane) + var(--hos-safe-bottom));
     }
     /* The whole-sale utilities (park / parked / clear) and the stat bar sit UNDER the cards, so
@@ -1333,6 +1332,25 @@ export class HosPosTerminal extends LitElement {
     }
     :host([data-counter-layout='PANELS']) .pane-items {
       flex: 1 1 50%;
+      /* The table below answers to the PANE's width, not the window's: a narrow Items pane drops
+         the Weight column the way the phone width does, so the remove control stays inside it. */
+      container-type: inline-size;
+    }
+    @container (max-width: 640px) {
+      .pane-items .linegrid {
+        grid-template-columns:
+          36px minmax(110px, 1fr) auto minmax(28px, auto) minmax(52px, auto) minmax(64px, auto)
+          28px;
+      }
+      .pane-items .linegrid.withmargin {
+        grid-template-columns:
+          36px minmax(110px, 1fr) auto minmax(28px, auto) minmax(52px, auto) minmax(64px, auto)
+          minmax(40px, auto) 28px;
+      }
+      .pane-items .linehead span:nth-child(7),
+      .pane-items .linerow .lweight {
+        display: none;
+      }
     }
     :host([data-counter-layout='PANELS']) .pane-items-body {
       flex: 1 1 auto;
@@ -1505,13 +1523,13 @@ export class HosPosTerminal extends LitElement {
       display: grid;
       grid-template-columns:
         36px minmax(110px, 1fr) auto minmax(28px, auto) minmax(52px, auto) minmax(64px, auto)
-        minmax(52px, auto) 24px;
+        minmax(52px, auto) 28px;
       column-gap: 7px;
     }
     .linegrid.withmargin {
       grid-template-columns:
         36px minmax(110px, 1fr) auto minmax(28px, auto) minmax(52px, auto) minmax(64px, auto)
-        minmax(52px, auto) minmax(40px, auto) 24px;
+        minmax(52px, auto) minmax(40px, auto) 28px;
     }
     /* P3-7: below the desktop breakpoint the eight (nine with margin) tracks
        cannot fit the card: the table ran past its card's right edge and took
@@ -1523,12 +1541,12 @@ export class HosPosTerminal extends LitElement {
       .linegrid {
         grid-template-columns:
           36px minmax(110px, 1fr) auto minmax(28px, auto) minmax(52px, auto) minmax(64px, auto)
-          24px;
+          28px;
       }
       .linegrid.withmargin {
         grid-template-columns:
           36px minmax(110px, 1fr) auto minmax(28px, auto) minmax(52px, auto) minmax(64px, auto)
-          minmax(40px, auto) 24px;
+          minmax(40px, auto) 28px;
       }
       .linehead span:nth-child(7),
       .linerow .lweight {

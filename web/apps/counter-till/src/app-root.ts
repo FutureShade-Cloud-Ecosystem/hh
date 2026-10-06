@@ -28,7 +28,11 @@
 import { html, css, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
-import { ApiClient } from "@hardscapehouse/api-client";
+import { ApiClient, staffFeedback } from "@hardscapehouse/api-client";
+import {
+  HHFeedback,
+  type FeedbackSender,
+} from "@hardscapehouse/design-system/src/feedback.js";
 import { AuthController, SessionStore, authHeaderProvider } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { clearFrontDoorHandoff, readFrontDoorHandoff } from "./demo-account.js";
@@ -111,7 +115,7 @@ export class CounterTillApp extends HHElement {
         height: 100dvh;
         box-sizing: border-box;
       }
-      .surface[hidden] {
+      .surface[data-hidden="true"] {
         display: none !important;
       }
       /* Returns is its own screen: it takes what the bar leaves and scrolls inside itself. */
@@ -214,7 +218,7 @@ export class CounterTillApp extends HHElement {
       }
       header .brand-product,
       .surfacebar .brand-product {
-        font-size: 15px;
+        font-size: 16px;
         font-weight: 700;
         letter-spacing: -0.02em;
         line-height: 1.05;
@@ -379,6 +383,22 @@ export class CounterTillApp extends HHElement {
       activeOrg: () => DEMO_ORG,
     });
     const client = new ApiClient({ baseUrl: "", fetch: capture.fetch, headers: staffHeaders });
+    // The feedback widget's sender rides the staff client: the feedback
+    // route is staff guarded and the till's own custody holds the bearer.
+    this.#feedbackSender = async (request) => {
+      const answer = await staffFeedback.feedbackCreateMultipart(client, {
+        type: request.type,
+        message: request.message,
+        screen: request.screen,
+        url: request.url,
+        user_agent: request.userAgent,
+        images: request.images.map((image) => image.blob),
+      });
+      if (answer.ok) {
+        return { ok: true, issueNumber: answer.value.issue_number ?? "" };
+      }
+      return { ok: false, error: answer.error };
+    };
     // The demo adapter's own client carries no staff bearer: the demo routes
     // are pre-auth by design (the tap-a-role sign-in), and the served gate
     // holds the pages and the demo mint behind basic authentication, where a
@@ -453,6 +473,9 @@ export class CounterTillApp extends HHElement {
     // retargets the target to this element (the design system's README holds
     // both halves). Click is composed, so the host hears it.
     this.addEventListener("click", this.#onHostClick);
+    // The terminal reports which layout it is in (composed, so the host hears it): the design
+    // system's position gate allows no @ binding here, so the listener lives in code.
+    this.addEventListener("pos-counter-layout", this.#onCounterLayout as EventListener);
     // The returns desk's fields ride the same host delegation: one input
     // listener on the host, the control read off composedPath() by its
     // data-field name, so a re-render strands no listener. The inputs are
@@ -535,6 +558,7 @@ export class CounterTillApp extends HHElement {
 
   disconnectedCallback(): void {
     this.removeEventListener("click", this.#onHostClick);
+    this.removeEventListener("pos-counter-layout", this.#onCounterLayout as EventListener);
     this.removeEventListener("input", this.#onHostInput);
     window.removeEventListener("hashchange", this.#onHashChange);
     this.#theme.stop();
@@ -563,6 +587,14 @@ export class CounterTillApp extends HHElement {
     }
     if (field === "reason-code") this.#returns.setReasonCode(control.value);
   };
+
+  readonly #onCounterLayout = (event: CustomEvent<{ layout: string }>): void => {
+    this.#counterLayout = event.detail.layout;
+    this.requestUpdate();
+  };
+
+  /** The feedback widget's sender; built once beside the staff client. */
+  #feedbackSender: FeedbackSender = async () => ({ ok: false, error: "not ready" });
 
   readonly #onHostClick = (event: MouseEvent): void => {
     const control = event
@@ -883,14 +915,10 @@ export class CounterTillApp extends HHElement {
                   </button>
                 </p>
               </div>
-              <div class="surface" ?hidden=${this.#route === "returns"}>
+              <div class="surface" data-hidden="${this.#route === "returns" ? "true" : "false"}">
                 <hos-pos-terminal
-                  ?paused=${this.#route === "returns"}
-                  .panesSwapped=${this.#panesSwapped}
-                  @pos-counter-layout=${(e: CustomEvent<{ layout: string }>) => {
-                    this.#counterLayout = e.detail.layout;
-                    this.requestUpdate();
-                  }}
+                  data-paused="${this.#route === "returns" ? "true" : "false"}"
+                  data-panes-swapped="${this.#panesSwapped ? "true" : "false"}"
                 ></hos-pos-terminal>
               </div>
               ${this.#route === "returns" ? renderReturns(this.#returns) : nothing}
@@ -899,7 +927,20 @@ export class CounterTillApp extends HHElement {
             `
           : renderEntry({ flows: this.#flowsState, busy: this.#busy, message: this.#message })}
       </main>
+      <!-- The feedback pill, lifted (the lift attribute) so it sits wholly
+           above the pinned hotkey legend: the lane the ported terminal's
+           bottom padding reserves counts that lift (--hos-fab-lift). -->
+      <hh-feedback screen="Counter Till" lift></hh-feedback>
     `;
+  }
+
+  /** The widget's sender rides the property, never a template binding (the
+   * design system's position gate refuses . bindings in dependents too). */
+  protected override updated(): void {
+    const widget = this.renderRoot.querySelector("hh-feedback");
+    if (widget instanceof HHFeedback && widget.send !== this.#feedbackSender) {
+      widget.send = this.#feedbackSender;
+    }
   }
 }
 

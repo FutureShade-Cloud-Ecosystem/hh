@@ -573,3 +573,37 @@ test("the pricing CSV import accepts bytes too, and rides them verbatim", async 
   assert.ok(call.bytes instanceof Uint8Array);
   assert.deepEqual(call.bytes, bytes);
 });
+
+test("the feedback submission sends three screenshots as three parts of one field", async (t) => {
+  // The Feature Polish widget attaches up to three screenshots; the contract
+  // declares images as an array of binary parts, and the wire shape is three
+  // parts under the one name, each its own bytes, in order.
+  const shots = [PNG, PNG, PNG];
+  const rec = recorder({ "POST /api/v1/feedback": { body: { issue_id: "i-1", issue_number: "HH-42" } } });
+  const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: rec.fetch, headers: () => ({ "X-Org": "dibbits" }) });
+  unwrap(await api.staffFeedback.feedbackCreateMultipart(client, {
+    type: "bug",
+    message: "with three shots",
+    screen: "Quote Desk",
+    images: shots.map((bytes, index) => new Blob([bytes], { type: "image/png" })),
+  }));
+  const call = rec.calls[0];
+  const parsed = await new Request(call.url, { method: call.method, body: call.form }).formData();
+  const parts = parsed.getAll("images");
+  assert.equal(parts.length, 3, `three parts under the one field name, found ${parts.length}`);
+  for (const part of parts) {
+    assert.ok(part instanceof Blob, "each images part rides as a Blob");
+    assert.deepEqual(new Uint8Array(await part.arrayBuffer()), PNG, "byte for byte through a real multipart parse");
+  }
+});
+
+test("the feedback answer reads the work item number the board answered", async (t) => {
+  const rec = recorder({ "POST /api/v1/feedback": { body: { issue_id: "i-1", issue_number: "HH-42" } } });
+  const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: rec.fetch, headers: () => ({ "X-Org": "dibbits" }) });
+  const value = unwrap(await api.staffFeedback.feedbackCreateMultipart(client, {
+    type: "feedback",
+    message: "no image",
+  }));
+  assert.equal(value.issue_id, "i-1");
+  assert.equal(value.issue_number, "HH-42", "the panel's Sent line reads this field");
+});

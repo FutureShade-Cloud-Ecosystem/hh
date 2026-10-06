@@ -93,6 +93,54 @@ func TestDemoServeRefusesAProviderVariable(t *testing.T) {
 	}
 }
 
+// G4's one exception, through the serve entry: the feedback bridge is the one
+// outbound a demo box may carry (the Feature Polish ruling), so the bridge's
+// own five variables pass the provider gate. The proof the gate was passed is
+// the NEXT guard's refusal: the made-up database stops the serve with the
+// database's own error, never with an outbound provider error naming a bridge
+// variable. Written red first: on main every PLANE_ name refused the boot.
+func TestDemoServeAcceptsTheFeedbackBridgeVariables(t *testing.T) {
+	for _, name := range []string{
+		"PLANE_API_URL", "PLANE_API_KEY", "PLANE_PROJECT_ID",
+		"PLANE_WORKSPACE_SLUG", "PLANE_FEEDBACK_MODULE",
+	} {
+		env := serveEnv(t)
+		env[name] = "bridge-value"
+		getenv, lookup, environ := envFuncs(env)
+		err := demoServe(getenv, lookup, environ)
+		if err == nil {
+			t.Fatalf("%s: the made-up database must still stop the serve", name)
+		}
+		if strings.Contains(err.Error(), name) || strings.Contains(err.Error(), "outbound provider") {
+			t.Fatalf("%s: the bridge variable refused the boot: %v", name, err)
+		}
+	}
+}
+
+// The exception is exactly the bridge's five names: every other PLANE_
+// variable still refuses the boot, and so do the other denied prefixes. This
+// is the regression guard the ruling asked to keep.
+func TestDemoServeStillRefusesEveryOtherProviderPrefix(t *testing.T) {
+	for _, kv := range []string{
+		"PLANE_SOMETHING_NEW=1",
+		"BISTRACK_API_KEY=x",
+		"TWILIO_AUTH_TOKEN=x",
+		"HOS_PAYMENT_API_KEY=x",
+		"HOS_ASSIST_ANTHROPIC_API_KEY=x",
+	} {
+		env := serveEnv(t)
+		getenv, lookup, environ := envFuncs(env)
+		picture := append(environ(), kv)
+		err := demoServe(getenv, lookup, func() []string { return picture })
+		if err == nil {
+			t.Fatalf("%s: accepted", kv)
+		}
+		if !strings.Contains(err.Error(), "outbound provider") {
+			t.Fatalf("%s: refusal %q is not the provider guard's", kv, err)
+		}
+	}
+}
+
 // G3 through the serve entry: the database check runs inside
 // demoRegisterRoutes, before anything registers or serves, so a
 // non-demo database stops demoServe with the guard's own refusal and the

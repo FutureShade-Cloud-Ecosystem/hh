@@ -6,11 +6,19 @@
 // this stub checks no credential, like the core's own public demo routes.
 //
 //   POST /api/v1/demo/session -> DemoSessionResponse, or the armed refusal
+//   POST /api/v1/feedback     -> 201 { issue_id, issue_number: HH-42 }, or the
+//                                armed board refusal; the last submission's
+//                                fields and image parts are recorded for peek
 //   GET  /healthz             -> 200, for the harness's readiness probe
 //   GET  /_stub/peek          -> what the last mint request carried (the org
 //                                header the app's client configuration sends)
+//                                and what the last feedback submission carried
 //   POST /_stub/refuse        -> arm a refusal: { status, error, flows }
-//   POST /_stub/reset         -> clear the armed refusal and the ledgers
+//   POST /_stub/refuse-feedback -> arm the board refusal the next feedback
+//                                submission answers, once per arming
+//   POST /_stub/feedback-numberless -> the next feedback answers carry no
+//                                issue_number, until the next reset
+//   POST /_stub/reset         -> clear the armed refusals and the ledgers
 //
 // The mint answers a JWT-shaped token so the app's expiry read (the token's
 // exp claim) sees the same shape the real mint issues: three segments, a
@@ -62,6 +70,14 @@ let approvalsShape = "array";
 let extraApprovals = 0;
 let approvalsDelayMs = 0;
 
+// The feedback bridge's own state: the armed board refusal (answered once)
+// and the last submission the widget posted, its text fields read out of the
+// multipart body and its images counted, so the acceptance spec asserts what
+// the widget actually sent without ever reaching a real board.
+let feedbackRefusal = null;
+let feedbackNumberless = false;
+let lastFeedback = null;
+
 function base64Url(value) {
   return Buffer.from(JSON.stringify(value), "utf8")
     .toString("base64")
@@ -110,7 +126,30 @@ const server = createServer(async (request, response) => {
   }
 
   if (path === "/_stub/peek") {
-    sendJson(response, 200, { lastOrg, mints, refusalArmed: refusal !== null });
+    sendJson(response, 200, {
+      lastOrg,
+      mints,
+      refusalArmed: refusal !== null,
+      feedback: lastFeedback,
+      feedbackRefusalArmed: feedbackRefusal !== null,
+    });
+    return;
+  }
+
+  if (path === "/_stub/feedback-numberless" && request.method === "POST") {
+    feedbackNumberless = true;
+    sendJson(response, 200, { armed: true });
+    return;
+  }
+
+  if (path === "/_stub/refuse-feedback" && request.method === "POST") {
+    const body = await readBody(request);
+    if (body === null || typeof body !== "object" || typeof body.error !== "string") {
+      sendJson(response, 400, { error: "arm the board refusal with an error" });
+      return;
+    }
+    feedbackRefusal = { status: typeof body.status === "number" ? body.status : 502, error: body.error };
+    sendJson(response, 200, { armed: true });
     return;
   }
 
@@ -133,6 +172,9 @@ const server = createServer(async (request, response) => {
 
   if (path === "/_stub/reset" && request.method === "POST") {
     refusal = null;
+    feedbackRefusal = null;
+    feedbackNumberless = false;
+    lastFeedback = null;
     lastOrg = "";
     mints = 0;
     pendingApprovalCount = 3;
@@ -140,6 +182,39 @@ const server = createServer(async (request, response) => {
     extraApprovals = 0;
     approvalsDelayMs = 0;
     sendJson(response, 200, { reset: true });
+    return;
+  }
+
+  if (path === "/api/v1/feedback" && request.method === "POST") {
+    // The widget posts multipart/form-data (text fields plus image parts).
+    // The fields are read out of the raw body by boundary scanning, enough
+    // for the spec's assertions without a multipart parser dependency.
+    const contentType = String(request.headers["content-type"] ?? "");
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const raw = Buffer.concat(chunks);
+    const fields = {};
+    const boundary = /boundary=(.+)$/.exec(contentType)?.[1]?.trim();
+    if (boundary !== undefined) {
+      const parts = raw.toString("binary").split(`--${boundary}`);
+      for (const part of parts) {
+        const name = /name="([^"]+)"/.exec(part)?.[1];
+        if (name === undefined) continue;
+        if (/filename="/.test(part)) {
+          fields[name] = Number(fields[name] ?? 0) + 1;
+        } else {
+          fields[name] = part.split("\r\n\r\n")[1]?.replace(/\r\n$/, "") ?? "";
+        }
+      }
+    }
+    lastFeedback = { fields, bytes: raw.length, org: request.headers["x-org"] ?? "" };
+    if (feedbackRefusal !== null) {
+      const armed = feedbackRefusal;
+      feedbackRefusal = null;
+      sendJson(response, armed.status, { error: armed.error });
+      return;
+    }
+    sendJson(response, 201, feedbackNumberless ? { issue_id: "issue-stub-1" } : { issue_id: "issue-stub-1", issue_number: "HH-42" });
     return;
   }
 

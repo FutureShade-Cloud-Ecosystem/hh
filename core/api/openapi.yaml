@@ -12251,7 +12251,7 @@ paths:
       tags:
         - staff-feedback
       summary: File one staff feedback submission to the tracking board
-      description: The in-app widget posts a bug, feedback note, or flag; each becomes an issue on the tracker board. JSON for text only, or multipart/form-data when a screenshot is attached (the image part is optional, re-validated server side against its sniffed content type, and capped). The upstream board credential lives server side only; no route accepts or returns it. Submissions are rate limited per user.
+      description: The in-app widget posts a bug, feedback note, or flag; each becomes a work item on the tracker board, grouped under the module the server resolves by its configured name. JSON for text only, or multipart/form-data when screenshots are attached (each image part is optional, re-validated server side against its sniffed content type, and bounded per image and in total). The upstream board credential lives server side only; no route accepts or returns it. Submissions are rate limited per user.
       x-role: requireStaff
       x-access:
         surfaces:
@@ -12286,10 +12286,17 @@ paths:
                   type: string
                 user_agent:
                   type: string
+                images:
+                  type: array
+                  maxItems: 3
+                  items:
+                    type: string
+                    format: binary
+                  description: Up to three screenshots, each its own tracker attachment; each is re-validated server side against its sniffed content type and per image and total byte bounds
                 image:
                   type: string
                   format: binary
-                  description: Optional screenshot; the sniffed type must be PNG, JPEG or WebP
+                  description: Legacy single screenshot part, still honoured; the current widget sends images instead
       responses:
         "201":
           description: The submission filed
@@ -37297,6 +37304,9 @@ components:
         issue_id:
           type: string
           description: The tracker issue id the submission became
+        issue_number:
+          type: string
+          description: The work item's readable number (the project's identifier and the issue's sequence), shown by the widget as the sent answer; empty when the board answers no sequence
     OrderViewLine:
       type: object
       description: "One line as the staff order surface renders it: the quantity trio, the money, and the allocated/fulfilled progress that decides whether the line may still be cut or removed."
