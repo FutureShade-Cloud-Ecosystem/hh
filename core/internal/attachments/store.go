@@ -117,11 +117,17 @@ func scopePredicate(f sync.ScopeFilter) (string, []any, bool) {
 // grouped by attachment id. This is the module's own table; no join
 // crosses the fence.
 func (s *SyncStore) loadLinks(ctx context.Context, ids []string) (map[string][]Link, error) {
+	return s.loadLinksOn(ctx, s.pool, ids)
+}
+
+// loadLinksOn is loadLinks over a querier (the pool, or a transaction
+// the caller already holds).
+func (s *SyncStore) loadLinksOn(ctx context.Context, q rowQuerier, ids []string) (map[string][]Link, error) {
 	out := map[string][]Link{}
 	if len(ids) == 0 {
 		return out, nil
 	}
-	rows, err := s.pool.Query(ctx, `
+	rows, err := q.Query(ctx, `
 		SELECT attachment_id::text, owner_kind, owner_id::text, COALESCE(role, '')
 		FROM attachment_link
 		WHERE attachment_id = ANY($1::uuid[])
@@ -245,14 +251,30 @@ func (s *SyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key str
 // caller's org is the same as an absent one (existence never leaks).
 // Live rows carry their links.
 func (s *SyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
+	return s.load(ctx, s.pool, f, id)
+}
+
+// rowQuerier is the read surface a pool and a transaction share, so one
+// loader body serves the public Load (the pool) and the callers that
+// already hold a transaction (their own connection).
+type rowQuerier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// load is Load over a querier. A caller inside a transaction passes the
+// transaction, so the read rides the connection it already holds instead
+// of asking the shared pool for a second one (connection starvation by
+// second acquisition when pool-size callers do this together).
+func (s *SyncStore) load(ctx context.Context, q rowQuerier, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
 	where, args, ok := scopePredicate(f)
 	if !ok || !looksLikeUUID(id) {
 		return sync.RowState{}, false, nil
 	}
-	q := fmt.Sprintf(`SELECT %s FROM attachment WHERE id = $2::uuid AND %s`,
+	query := fmt.Sprintf(`SELECT %s FROM attachment WHERE id = $2::uuid AND %s`,
 		attachmentColumns, where)
 	args = append(args, id)
-	r, err := scanAttachment(s.pool.QueryRow(ctx, q, args...))
+	r, err := scanAttachment(q.QueryRow(ctx, query, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, false, nil
 	}
@@ -263,9 +285,14 @@ func (s *SyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sy
 		rs, err := rowStateOf(r)
 		return rs, true, err
 	}
-	a, err := s.withLinks(ctx, r.attachment)
+	links, err := s.loadLinksOn(ctx, q, []string{r.attachment.ID})
 	if err != nil {
 		return sync.RowState{}, false, err
+	}
+	a := r.attachment
+	a.Links = []Link{}
+	if len(links[a.ID]) > 0 {
+		a.Links = links[a.ID]
 	}
 	data, err := attachmentData(a)
 	if err != nil {
@@ -381,7 +408,7 @@ func (s *SyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, 
 	if errors.Is(err, pgx.ErrNoRows) {
 		// The client-chosen id is taken; WHERE decides the refusal so
 		// existence never leaks across the scope boundary.
-		if _, own, _ := s.Load(ctx, f, id); own {
+		if _, own, _ := s.load(ctx, tx, f, id); own {
 			return sync.RowState{}, sync.ErrRowExists
 		}
 		return sync.RowState{}, sync.ErrRowNotFound

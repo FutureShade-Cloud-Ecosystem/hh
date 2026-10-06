@@ -35,6 +35,22 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// The composition root hands pos.Repository to orderSvc.WithCancelGuards as the cancel predicate's
+// sale reader. The compile-time assertion below pins that it keeps answering the order module's
+// TRANSACTION-JOINING reader (order.CommittedSaleTxReader, OrderHasCommittedPOSSaleTx): the order
+// cancel and guarded line edit prechecks run INSIDE their order transaction, and a repository that
+// stopped satisfying the tx reader would silently fall back to the pool read there, a second
+// acquisition while the transaction holds its connection, the starvation the tx reader exists to
+// delete, with every leg that mocks the seam still green. A signature change on the pos method now
+// breaks the build here instead of reverting the connection behaviour quietly.
+var _ order.CommittedSaleTxReader = (*pos.Repository)(nil)
+
+// The same pin for the invoice half of the cancel predicate: orderSvc.WithCancelGuards receives
+// billingRepo, and assertCancellable falls back to the pool read when it does not answer the
+// transaction-joining reader (order.FinalizedInvoiceTxReader, OrderHasFinalizedInvoiceTx). A signature
+// change on the billing method breaks the build here instead of quietly taking a second connection.
+var _ order.FinalizedInvoiceTxReader = (*billing.Repository)(nil)
+
 // cardChargerAdapter satisfies till.CardCharger over payment.Service.ChargeTx, the creds-free
 // charge rail (the posCardRefunderAdapter mirror): the till passes the tender amount and token and
 // gets the capture's own processor ref back; creds stay inside RUN-PAY. The sale transaction passes
@@ -212,6 +228,19 @@ type dispatchSignatureAdapter struct{ svc *pos.Service }
 
 func (a dispatchSignatureAdapter) CaptureTyped(ctx context.Context, in dispatch.TypedAttestation) (string, error) {
 	return a.svc.CaptureTypedSignature(ctx, pos.TypedAttestation{
+		Purpose:   in.Purpose,
+		RefType:   in.RefType,
+		RefID:     in.RefID,
+		TypedName: in.TypedName,
+		Affirmed:  in.Affirmed,
+	})
+}
+
+// CaptureTypedTx rides the CALLER'S transaction through pos.Service.CaptureTypedSignatureTx: the
+// pickups sync confirm captures inside its own transaction, so the signature row and its audit row
+// commit or roll back with the confirm and the capture never takes a second pool connection.
+func (a dispatchSignatureAdapter) CaptureTypedTx(ctx context.Context, tx pgx.Tx, in dispatch.TypedAttestation) (string, error) {
+	return a.svc.CaptureTypedSignatureTx(ctx, tx, pos.TypedAttestation{
 		Purpose:   in.Purpose,
 		RefType:   in.RefType,
 		RefID:     in.RefID,

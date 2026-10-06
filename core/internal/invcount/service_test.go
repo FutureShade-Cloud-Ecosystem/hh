@@ -151,6 +151,9 @@ func (s *fakeStock) SnapshotOnHand(_ context.Context, _ string) ([]Snapshot, err
 func (s *fakeStock) WeightedAvgCostCents(_ context.Context, _, _ string) (int64, error) {
 	return s.avg, nil
 }
+func (s *fakeStock) WeightedAvgCostCentsTx(_ context.Context, _ pgx.Tx, _, _ string) (int64, error) {
+	return s.avg, nil
+}
 func (s *fakeStock) PostCountAdjustmentTx(_ context.Context, _ pgx.Tx, _, _, _ string, qtyDelta float64, unitCostCents int64, _ string) (string, error) {
 	s.moves++
 	s.lastQty = qtyDelta
@@ -407,4 +410,8 @@ func asClient(err error, target *clientError) bool {
 		err = u.Unwrap()
 	}
 	return false
+}
+
+func (s *fakeStock) SnapshotOnHandTx(ctx context.Context, _ pgx.Tx, branchID string) ([]Snapshot, error) {
+	return s.SnapshotOnHand(ctx, branchID)
 }

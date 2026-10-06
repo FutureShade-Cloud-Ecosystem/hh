@@ -147,6 +147,10 @@ type posStore interface {
 	EmitEvent(ctx context.Context, tx pgx.Tx, topic string, payload any) error
 	// signature persistence (non-tx write, standalone capture)
 	InsertSignature(ctx context.Context, sig signatureRow) (string, error)
+	// InsertSignatureTx is the same insert on the CALLER'S transaction (nil tx means the pool, the
+	// shape of the tree's other store seams): the tx capture writes the row through the caller's
+	// transaction so it commits or rolls back with it, and both capture paths share ONE statement.
+	InsertSignatureTx(ctx context.Context, tx pgx.Tx, sig signatureRow) (string, error)
 
 	// -- W7 counter-v2 (pos-owned 0043 tables; the invoice-credit write stays in the M2-debt family) --
 	// POS policy (branch row overrides the org NULL row)
@@ -986,8 +990,11 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 
 	// Audit the completed sale post-commit (the Recorder owns the audit_log table; zero-trust).
 	// DIB-488 rev 6 (item D): the PO / job reference and the credited salesperson ride the SAME
-	// record's Extra, the order's audit/activity trail carries who sold it and against what
-	// reference, per the existing Extra idiom (ActPaymentAllocated below). Absent when unused.
+	// record's Extra, the order's audit/activity trail carries the salesperson's ID and the
+	// reference it was sold against, per the existing Extra idiom (ActPaymentAllocated below).
+	// Absent when unused. The trail keeps ids and references only: salesperson_name and
+	// job_address are set here but dropped at the audit chokepoint, a name is read from the id
+	// when shown.
 	var saleExtra map[string]any
 	if poJobRef != "" || in.SalespersonID != "" || jobAddress != "" || jobReference != "" {
 		saleExtra = map[string]any{}

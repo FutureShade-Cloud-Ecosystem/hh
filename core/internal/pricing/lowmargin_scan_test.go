@@ -13,8 +13,10 @@ import (
 // - D-PA-3 daily low-margin scan (LowMarginScan) -
 // The scan grades the ACTUAL sold price (order_lines.unit_price_cents) vs the current per-branch
 // WAC cost converted to the line's price_uom, classified via the SAME classifyMargin + category
-// policy the manual classifier uses. Brussels: cost 175¢/PC × SF factor 4.10 (float64) → 717¢/SF
-// (the resolver's float path, 175 × 4.10 = 717.4999… → roundCents → 717, reused for consistency).
+// policy the manual classifier uses. Brussels: cost 175¢/PC × SF factor 4.10 is 717.5 EXACTLY, and
+// the row 820 exact arm rounds it half away from zero → 718¢/SF. (The float arm this replaced
+// evaluated 4.1 as 4.0999999999999996 and answered 717, a cent low on an exact half; these pins
+// moved with the exact arm and no other expectation in the file moved.)
 
 // fakeScan is a DB-free salesScanStore: it returns a fixed set of committed sale lines and records
 // the window/branch it was asked for (so the default-window + branch-filter plumbing is checkable).
@@ -63,11 +65,11 @@ func rowByLine(rows []LowMarginScanRow, id string) (LowMarginScanRow, bool) {
 // TestLowMarginScan_GradesActualSoldPrice is the core money-math test: a below-FLOOR actual price →
 // critical; below-TARGET → warn; ≥ target → omitted; a cost-missing line → invalid (never dropped).
 func TestLowMarginScan_GradesActualSoldPrice(t *testing.T) {
-	cost := int64(175) // ¢/PC (base uom); × SF factor 4.10 (float64) = 717.4999… → roundCents → 717¢/SF
+	cost := int64(175) // ¢/PC (base uom); x SF factor 4.10 = 717.5 exactly → exact arm → 718¢/SF
 	scan := &fakeScan{lines: []LowMarginSaleLine{
-		brusselsLine("crit", 850, p64(cost)),     // margin ((850-717)*1e4)/850 = 1564 bps < floor 2000 → CRITICAL
-		brusselsLine("warn", 975, p64(cost)),     // margin ((975-717)*1e4)/975 = 2646 bps in [2000,3300) → WARN
-		brusselsLine("healthy", 1400, p64(cost)), // margin ((1400-717)*1e4)/1400 = 4878 bps ≥ 3300 → OMITTED
+		brusselsLine("crit", 850, p64(cost)),     // margin ((850-718)*1e4)/850 = 1552 bps < floor 2000 → CRITICAL
+		brusselsLine("warn", 975, p64(cost)),     // margin ((975-718)*1e4)/975 = 2635 bps in [2000,3300) → WARN
+		brusselsLine("healthy", 1400, p64(cost)), // margin ((1400-718)*1e4)/1400 = 4871 bps ≥ 3300 → OMITTED
 		brusselsLine("nocost", 900, nil),         // no product_branch_costs row → INVALID (no cost on file)
 	}}
 	rows, err := scanSvc(scan).LowMarginScan(context.Background(), time.Now().AddDate(0, 0, -30), time.Now(), "")
@@ -87,11 +89,11 @@ func TestLowMarginScan_GradesActualSoldPrice(t *testing.T) {
 	if crit.Level != "critical" {
 		t.Errorf("below-floor sold price → level %q, want critical", crit.Level)
 	}
-	if crit.MarginBps != 1564 {
-		t.Errorf("critical margin_bps = %d, want 1564", crit.MarginBps)
+	if crit.MarginBps != 1552 {
+		t.Errorf("critical margin_bps = %d, want 1552", crit.MarginBps)
 	}
-	if crit.CostInPriceUOMCents != 717 {
-		t.Errorf("cost converted to SF = %d¢, want 717¢ (175 × 4.10, float path)", crit.CostInPriceUOMCents)
+	if crit.CostInPriceUOMCents != 718 {
+		t.Errorf("cost converted to SF = %d¢, want 718¢ (175 x 4.10 = 717.5 exact, half away from zero)", crit.CostInPriceUOMCents)
 	}
 	if crit.TargetBps != 3300 || crit.FloorBps != 2000 {
 		t.Errorf("PAVER policy not applied: target=%d floor=%d, want 3300/2000", crit.TargetBps, crit.FloorBps)
@@ -107,8 +109,8 @@ func TestLowMarginScan_GradesActualSoldPrice(t *testing.T) {
 	if warn.Level != "warn" {
 		t.Errorf("below-target sold price → level %q, want warn", warn.Level)
 	}
-	if warn.MarginBps != 2646 {
-		t.Errorf("warn margin_bps = %d, want 2646", warn.MarginBps)
+	if warn.MarginBps != 2635 {
+		t.Errorf("warn margin_bps = %d, want 2635", warn.MarginBps)
 	}
 
 	nocost, ok := rowByLine(rows, "nocost")
@@ -119,7 +121,7 @@ func TestLowMarginScan_GradesActualSoldPrice(t *testing.T) {
 		t.Errorf("cost-missing line → level %q reason %q, want invalid + a reason", nocost.Level, nocost.Reason)
 	}
 
-	// Worst-first ordering among the valid breaching rows: critical (1564) before warn (2646).
+	// Worst-first ordering among the valid breaching rows: critical (1552) before warn (2635).
 	if len(rows) >= 2 && rows[0].OrderLineID != "crit" {
 		t.Errorf("rows must be worst-first: got %q first, want crit", rows[0].OrderLineID)
 	}
@@ -154,15 +156,15 @@ func TestLowMarginScan_ZeroCostAndZeroPriceAreInvalid(t *testing.T) {
 // TestLowMarginScan_DefaultPolicyBand: a line whose product has NO category policy is graded against
 // the DEFAULT target/floor band (3000/1200), not the floor, mirroring the classifier (finding #12).
 func TestLowMarginScan_DefaultPolicyBand(t *testing.T) {
-	cost := p64(175) // → 717¢/SF (float path)
+	cost := p64(175) // → 718¢/SF (the exact arm, 717.5 rounded half away from zero)
 	mk := func(id string, price int64) LowMarginSaleLine {
 		ln := brusselsLine(id, price, cost)
 		ln.CategoryID = "" // no policy → default 3000/1200 band
 		return ln
 	}
 	scan := &fakeScan{lines: []LowMarginSaleLine{
-		mk("dflt-crit", 800), // margin ((800-717)*1e4)/800 = 1037 bps < default floor 1200 → CRITICAL
-		mk("dflt-warn", 900), // margin ((900-717)*1e4)/900 = 2033 bps in [1200,3000) → WARN
+		mk("dflt-crit", 800), // margin ((800-718)*1e4)/800 = 1025 bps < default floor 1200 → CRITICAL
+		mk("dflt-warn", 900), // margin ((900-718)*1e4)/900 = 2022 bps in [1200,3000) → WARN
 	}}
 	rows, err := scanSvc(scan).LowMarginScan(context.Background(), time.Now().AddDate(0, 0, -1), time.Now(), "")
 	if err != nil {

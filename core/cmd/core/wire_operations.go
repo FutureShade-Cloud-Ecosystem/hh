@@ -592,15 +592,25 @@ func (a invcountGLPoster) PostJournal(ctx context.Context, in invcount.GLJournal
 }
 
 // landedGLPoster satisfies landedcost.GLPoster over glSvc.PostExternal
-// (the capitalization / retro-split journal).
+// (the capitalization / retro-split journal) and glSvc.PostExternalTx
+// (the Void reversing journal through the void's own transaction).
 type landedGLPoster struct{ svc *gl.Service }
 
-func (a landedGLPoster) PostJournal(ctx context.Context, in landedcost.GLJournal) (string, error) {
-	lines := make([]gl.ExternalLine, len(in.Lines))
-	for i, l := range in.Lines {
+func landedGLExtLines(in []landedcost.GLLine) []gl.ExternalLine {
+	lines := make([]gl.ExternalLine, len(in))
+	for i, l := range in {
 		lines[i] = gl.ExternalLine{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo}
 	}
-	return a.svc.PostExternal(ctx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, Lines: lines})
+	return lines
+}
+
+func (a landedGLPoster) PostJournal(ctx context.Context, in landedcost.GLJournal) (string, error) {
+	return a.svc.PostExternal(ctx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, Lines: landedGLExtLines(in.Lines)})
+}
+
+// PostJournalTx is PostJournal through the caller's transaction (gl.Service.PostExternalTx).
+func (a landedGLPoster) PostJournalTx(ctx context.Context, tx pgx.Tx, in landedcost.GLJournal) (string, error) {
+	return a.svc.PostExternalTx(ctx, tx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, Lines: landedGLExtLines(in.Lines)})
 }
 
 // warrantyGLPoster satisfies warranty.GLPoster over glSvc.PostExternal
@@ -1048,7 +1058,11 @@ func (a taskOrderAdvanceAdapter) AdvanceOrder(ctx context.Context, orderID, targ
 type invCountAdapter struct{ svc *inventory.Service }
 
 func (a invCountAdapter) SnapshotOnHand(ctx context.Context, branchID string) ([]invcount.Snapshot, error) {
-	snaps, err := a.svc.SnapshotOnHand(ctx, branchID)
+	return a.SnapshotOnHandTx(ctx, nil, branchID)
+}
+
+func (a invCountAdapter) SnapshotOnHandTx(ctx context.Context, tx pgx.Tx, branchID string) ([]invcount.Snapshot, error) {
+	snaps, err := a.svc.SnapshotOnHandTx(ctx, tx, branchID)
 	if err != nil {
 		return nil, err
 	}
@@ -1060,7 +1074,11 @@ func (a invCountAdapter) SnapshotOnHand(ctx context.Context, branchID string) ([
 }
 
 func (a invCountAdapter) WeightedAvgCostCents(ctx context.Context, productID, branchID string) (int64, error) {
-	return a.svc.WeightedAvgCostCents(ctx, productID, branchID)
+	return a.WeightedAvgCostCentsTx(ctx, nil, productID, branchID)
+}
+
+func (a invCountAdapter) WeightedAvgCostCentsTx(ctx context.Context, tx pgx.Tx, productID, branchID string) (int64, error) {
+	return a.svc.WeightedAvgCostCentsTx(ctx, tx, productID, branchID)
 }
 
 func (a invCountAdapter) PostCountAdjustmentTx(ctx context.Context, tx pgx.Tx, productID, locationID, branchID string, qtyDelta float64, unitCostCents int64, reason string) (string, error) {
@@ -1248,6 +1266,18 @@ func (a w4cGLPoster) PostJournal(ctx context.Context, in purchasing.GLJournal) (
 		lines[i] = gl.ExternalLine{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo}
 	}
 	return a.svc.PostExternal(ctx, gl.ExternalJournal{
+		Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey,
+		Memo: in.Memo, BranchID: in.BranchID, Lines: lines,
+	})
+}
+
+// PostJournalTx is PostJournal through the caller's transaction (gl.Service.PostExternalTx).
+func (a w4cGLPoster) PostJournalTx(ctx context.Context, tx pgx.Tx, in purchasing.GLJournal) (string, error) {
+	lines := make([]gl.ExternalLine, len(in.Lines))
+	for i, l := range in.Lines {
+		lines[i] = gl.ExternalLine{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo}
+	}
+	return a.svc.PostExternalTx(ctx, tx, gl.ExternalJournal{
 		Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey,
 		Memo: in.Memo, BranchID: in.BranchID, Lines: lines,
 	})

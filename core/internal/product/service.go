@@ -362,6 +362,31 @@ func (s *Service) ConvertUOM(ctx context.Context, productID, fromUOM string) (fl
 	return s.store.ConvertUOM(ctx, productID, fromUOM)
 }
 
+// exactFactorStore is the OPTIONAL capability behind ConvertUOMExact: the pgx *Repository
+// answers it, DB-free fakes need not (the coverage-capability convention: a capability a
+// store may predate is asserted, not required of every fake).
+type exactFactorStore interface {
+	ConvertUOMExact(ctx context.Context, productID, fromUOM string) (string, error)
+}
+
+// ConvertUOMExact returns the product_uoms.qty_in_base factor for the product as the exact
+// decimal text the row carries (the pricing resolver's exact line-total read seam, decision
+// log row 820). Same not-found and no-conversion semantics as ConvertUOM; a store without
+// the capability fails closed (errNoDB), it never answers a guessed factor.
+func (s *Service) ConvertUOMExact(ctx context.Context, productID, fromUOM string) (string, error) {
+	if productID == "" {
+		return "", badReq("product id is required")
+	}
+	if fromUOM == "" {
+		return "", badReq("uom is required")
+	}
+	exact, ok := s.store.(exactFactorStore)
+	if !ok {
+		return "", errNoDB
+	}
+	return exact.ConvertUOMExact(ctx, productID, fromUOM)
+}
+
 // GetBaseUOM returns the product's base unit-of-measure (products.base_uom). Catalog
 // read seam for the pricing module (A-07): the pricing resolver denominates a DERIVED
 // (cost-based) retail anchor in this base UOM, so Breakdown.PriceUOM carries the product's

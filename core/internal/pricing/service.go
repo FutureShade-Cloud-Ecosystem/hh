@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"math/big"
 	"sort"
 	"time"
 
@@ -180,12 +181,13 @@ type Service struct {
 	// W4-A optional seams. All three are FLAG-OFF by default: nil means the corresponding step does
 	// not run and the resolver behaves exactly as it did in W3. That is what lets every pre-existing
 	// resolver test keep passing against a fake that has never heard of promotions.
-	promo  promoStore  // DIB-70 promotions/clearance (nil until WithPromoStore)
-	rebate rebateStore // DIB-69 rebate programs + accrual ledger (nil until WithRebateStore)
-	conv   convStore   // M2-uom sales conversion graph (nil until WithConversionStore)
-	cat    CategoryResolver
-	uom    UOMConverter
-	gate   MarginGate
+	promo    promoStore  // DIB-70 promotions/clearance (nil until WithPromoStore)
+	rebate   rebateStore // DIB-69 rebate programs + accrual ledger (nil until WithRebateStore)
+	conv     convStore   // M2-uom sales conversion graph (nil until WithConversionStore)
+	cat      CategoryResolver
+	uom      UOMConverter
+	uomExact UOMConverterExact // the exact decimal text twin, wired when the converter has it
+	gate     MarginGate
 	// authority is the DIB-420 server-side margin-override check. NIL MEANS NO OVERRIDE REQUEST IS
 	// EVER HONOURED, see override_authority.go for why that is the safe default and not a gap.
 	authority OverrideAuthority
@@ -245,8 +247,21 @@ func NewService(store pricingStore) *Service {
 }
 
 func (s *Service) WithCategoryResolver(c CategoryResolver) *Service { s.cat = c; return s }
-func (s *Service) WithUOMConverter(u UOMConverter) *Service         { s.uom = u; return s }
-func (s *Service) WithMarginGate(g MarginGate) *Service             { s.gate = g; return s }
+
+// WithUOMConverter injects the uom-factor seam. When the injected converter also carries the
+// exact decimal-text twin (UOMConverterExact, satisfied by *product.Service), it is wired
+// alongside: the resolver's money arms then convert with the exact DECIMAL(19,8) factor, and
+// a converter without it (a DB-free fake) falls back through the float value. Additive, so
+// the frozen composition root needs no new call.
+func (s *Service) WithUOMConverter(u UOMConverter) *Service {
+	s.uom = u
+	if e, ok := u.(UOMConverterExact); ok {
+		s.uomExact = e
+	}
+	return s
+}
+
+func (s *Service) WithMarginGate(g MarginGate) *Service { s.gate = g; return s }
 
 // WithLogger attaches a logger. Nil-safe everywhere; a Service without one simply says nothing.
 func (s *Service) WithLogger(l *slog.Logger) *Service { s.log = l; return s }
@@ -281,11 +296,13 @@ func (s *Service) resolveBaseUOM(ctx context.Context, productID string) (string,
 }
 
 // uomFactorFor returns qty_in_base for (productID, uom) through the injected UOMConverter, the
-// SINGLE uom-factor helper the resolver's factor closure AND the D-PA-3 low-margin scan both use,
-// so a scanned line's cost is converted BASE→price_uom exactly the way the priced line was (no
-// second, divergent conversion). Semantics match the resolver's original closure: uom=="" → 1
-// (dimensionless), no converter wired → 1 (degrade to same-UOM on the scaffold/unit path), and a
-// missing factor → errNoConversion (a scan line surfaces that as an invalid "no uom factor" row).
+// float helper the resolver's factor closure uses for QUANTITY work (threshold bucketing,
+// qty_base). Its exact twin uomFactorExactFor (exact.go) is the one the MONEY arms use, so a
+// scanned or priced line's cents are converted BASE→price_uom against the exact DECIMAL(19,8)
+// factor (no second, divergent conversion and no float edge). Both share one seam and one set
+// of semantics: uom=="" → 1 (dimensionless), no converter wired → 1 (degrade to same-UOM on the
+// scaffold/unit path), and a missing factor → errNoConversion (a scan line surfaces that as an
+// invalid "no uom factor" row).
 func (s *Service) uomFactorFor(ctx context.Context, productID, uom string) (float64, error) {
 	if uom == "" {
 		return 1, nil
@@ -515,19 +532,22 @@ func (s *Service) resolve(ctx context.Context, in ResolveInput, dryRun, counterT
 	}
 
 	// 5. Convert the anchor + cost into the result price_uom and apply the BASE calc.
-	fRes, err := factor(resultUOM)
+	//    EXACT ARMS (row 820): cents times an exact rational factor, rounded once half away
+	//    from zero, so an anchor priced per a larger unit (35 cents per BOX of 100) lands on
+	//    the same per-piece cents the shelf arithmetic says, at half-cent edges included.
+	fResRat, err := s.uomFactorExactFor(ctx, in.ProductID, resultUOM)
 	if err != nil {
 		return Breakdown{}, err
 	}
-	fList, err := factor(listUOM)
+	fListRat, err := s.uomFactorExactFor(ctx, in.ProductID, listUOM)
 	if err != nil {
 		return Breakdown{}, err
 	}
-	if fList == 0 || fRes == 0 {
+	if fResRat.Sign() == 0 || fListRat.Sign() == 0 {
 		return Breakdown{}, errNoConversion
 	}
-	originalCents := roundCents(float64(listCents) * fRes / fList)
-	costInResUOM := roundCents(float64(in.CostCents) * fRes)
+	originalCents := centsTimesFactor(listCents, new(big.Rat).Quo(fResRat, fListRat))
+	costInResUOM := centsTimesFactor(in.CostCents, fResRat)
 
 	var finalCents int64
 	switch {
@@ -680,14 +700,26 @@ func (s *Service) resolve(ctx context.Context, in ResolveInput, dryRun, counterT
 	}
 
 	// 6. Quantities + line total in the result price_uom (pre-tax only).
+	//
+	// THE LINE TOTAL IS THE EXACT ARM (row 820): integer cents times the exact rational
+	// quantity (entered decimal x factor(entered) / factor(result)), rounded ONCE half away
+	// from zero. 410 pieces at 15 cents per box of 100 is exactly 61.5 and prices at 62; the
+	// float this replaces evaluated 410 / 100 as 4.0999999999999996 and rounded a cent low on
+	// about one line in a thousand at these edges. QtyBase stays the float projection the
+	// breakdown has always carried (a quantity for display and persistence, not money).
+	fEntRat, err := s.uomFactorExactFor(ctx, in.ProductID, in.UOMEntered)
+	if err != nil {
+		return Breakdown{}, err
+	}
 	fEnt, err := factor(in.UOMEntered)
 	if err != nil {
 		return Breakdown{}, err
 	}
 	fBase := 1.0 // qty_base is in the product base UOM; entered × factor(entered) gives base units
 	qtyBase := in.QtyEntered * fEnt * fBase
-	qtyInResUOM := in.QtyEntered * fEnt / fRes
-	lineTotal := roundCents(qtyInResUOM * float64(finalCents))
+	qtyInResUOM := new(big.Rat).Mul(exactDecimal(in.QtyEntered), fEntRat)
+	qtyInResUOM.Quo(qtyInResUOM, fResRat)
+	lineTotal := centsTimesFactor(finalCents, qtyInResUOM)
 
 	bd := Breakdown{
 		OriginalCents:   originalCents,
@@ -1630,9 +1662,10 @@ func resolveErrReason(err error) string {
 // Unlike LowMarginReport this does NOT re-run the resolver, grading the re-derived engine price
 // would MISS a manual discount below floor, which is the entire point of the report. It grades the
 // real charged price (order_lines.unit_price_cents). Cost is converted BASE→price_uom the SAME way
-// the resolver does, roundCents(cost_base × factor(price_uom)) via the shared uomFactorFor helper -
-// and classified through the SAME classifyMargin + category-policy resolution (policy row when
-// present, else the default target/floor band). Tax is never computed (pre-tax engine; M5 owns tax).
+// the resolver does, exactly: cents_base × the exact factor, rounded once (the row 820 exact arm
+// behind uomFactorFor's float twin), and classified through the SAME classifyMargin +
+// category-policy resolution (policy row when present, else the default target/floor band). Tax is
+// never computed (pre-tax engine; M5 owns tax).
 //
 // margin_bps = ((unit_price_cents − costInPriceUOM) × 10000) / unit_price_cents  (price ≤ 0 → invalid;
 // cost > price → negative margin → critical). Cost-missing / non-positive-price lines are SURFACED as
@@ -1684,14 +1717,15 @@ func (s *Service) LowMarginScan(ctx context.Context, from, to time.Time, branchI
 			out = append(out, row)
 			continue
 		}
-		// Convert the per-BASE-uom WAC into the line's price_uom exactly as the resolver does.
-		f, ferr := s.uomFactorFor(ctx, ln.ProductID, ln.PriceUOM)
+		// Convert the per-BASE-uom WAC into the line's price_uom exactly as the resolver does,
+		// through the exact arm (row 820): cents times the exact rational factor, once.
+		fRat, ferr := s.uomFactorExactFor(ctx, ln.ProductID, ln.PriceUOM)
 		if ferr != nil {
 			row.Level, row.Reason = "invalid", resolveErrReason(ferr)
 			out = append(out, row)
 			continue
 		}
-		costInPriceUOM := roundCents(float64(*ln.AvgUnitCostCents) * f)
+		costInPriceUOM := centsTimesFactor(*ln.AvgUnitCostCents, fRat)
 		row.CostInPriceUOMCents = costInPriceUOM
 		row.MarginBps = marginBps(ln.UnitPriceCents, costInPriceUOM)
 		level, breaching := classifyMargin(row.MarginBps, target, floor)

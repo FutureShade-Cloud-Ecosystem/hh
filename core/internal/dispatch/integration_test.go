@@ -38,6 +38,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/printing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -135,7 +136,7 @@ type recordingSigner struct {
 	fail  error
 }
 
-func (s *recordingSigner) CaptureTyped(_ context.Context, in TypedAttestation) (string, error) {
+func (s *recordingSigner) capture(in TypedAttestation) (string, error) {
 	if s.fail != nil {
 		return "", s.fail
 	}
@@ -154,6 +155,16 @@ func (s *recordingSigner) CaptureTyped(_ context.Context, in TypedAttestation) (
 	}
 	s.calls = append(s.calls, in)
 	return fmt.Sprintf("sig_test_%d", len(s.calls)), nil
+}
+
+func (s *recordingSigner) CaptureTyped(_ context.Context, in TypedAttestation) (string, error) {
+	return s.capture(in)
+}
+
+// CaptureTypedTx is the same contract on the caller's transaction. The fake touches no database, so
+// the transaction passes through untouched and the recorded calls are identical either way.
+func (s *recordingSigner) CaptureTypedTx(_ context.Context, _ pgx.Tx, in TypedAttestation) (string, error) {
+	return s.capture(in)
 }
 
 // recordingFulfiller stands in for order.Service.AdvanceFromEvent.

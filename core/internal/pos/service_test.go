@@ -292,6 +292,11 @@ func (f *fakeStore) InsertSignature(_ context.Context, sig signatureRow) (string
 	return "sig-row-1", nil
 }
 
+func (f *fakeStore) InsertSignatureTx(_ context.Context, _ pgx.Tx, sig signatureRow) (string, error) {
+	f.signatures = append(f.signatures, sig)
+	return "sig-row-tx", nil
+}
+
 // -- W7 counter-v2 fakes -----------------------------------------------------
 
 func (f *fakeStore) ReadPosPolicy(_ context.Context, branchID string) (PosPolicy, error) {
