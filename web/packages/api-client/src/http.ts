@@ -460,6 +460,13 @@ export class ApiClient {
             } else {
               form.append(name, value);
             }
+          } else if (Array.isArray(value) && value.length > 0 && value.every((entry) => entry instanceof Blob)) {
+            // A contract field declared as an array of binary parts rides as
+            // repeated parts under the one field name (the feedback widget's
+            // images): each Blob is its own part, byte for byte, in order.
+            for (const blob of value) {
+              form.append(name, blob);
+            }
           } else {
             form.append(name, String(value));
           }

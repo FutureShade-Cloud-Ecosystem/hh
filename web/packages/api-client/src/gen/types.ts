@@ -3407,6 +3407,7 @@ export type FeedbackSubmission = {
 };
 export type FeedbackResult = {
   issue_id: string;
+  issue_number?: string;
 };
 export type OrderViewLine = {
   line_no: number;
