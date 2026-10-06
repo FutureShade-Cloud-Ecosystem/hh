@@ -1343,11 +1343,11 @@ test("a preview shows the band and no way to accept", async ({ page }) => {
   await page.goto("/");
   await page.evaluate(async () => {
     const view = await (await fetch("/api/public/v1/quotes/q-preview-draft")).json();
-    // The page's own modules, served by Vite; named in variables so the test's typecheck does not resolve them.
-    const clientPath = "/src/quote-client.ts";
-    const pagePath = "/src/quote-public.ts";
-    const { validateQuoteView } = await import(clientPath);
-    await import(pagePath);
+    // The page's own modules, served by Vite in the browser; the test's typecheck cannot resolve a root path.
+    // @ts-expect-error resolved by the browser, not by tsc
+    const { validateQuoteView } = await import("/src/quote-client.ts");
+    // @ts-expect-error resolved by the browser, not by tsc
+    await import("/src/quote-public.ts");
     document.querySelector("pd-quote-public")?.remove();
     const el = document.createElement("pd-quote-public") as HTMLElement & { showQuote(v: unknown): void };
     el.showQuote(validateQuoteView(view));
