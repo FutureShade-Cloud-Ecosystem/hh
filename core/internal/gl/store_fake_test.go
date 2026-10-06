@@ -64,6 +64,11 @@ func (f *fakeStore) PostingAccounts(_ context.Context, eventType, _ string) (map
 	return out, nil
 }
 
+// PostingAccountsTx has no transaction to ride in a DB-free fake; it answers as PostingAccounts does.
+func (f *fakeStore) PostingAccountsTx(ctx context.Context, _ pgx.Tx, eventType, branchID string) (map[string]string, error) {
+	return f.PostingAccounts(ctx, eventType, branchID)
+}
+
 func (f *fakeStore) ListActiveRules(_ context.Context) ([]RuleRef, error) { return f.activeRules, nil }
 
 func (f *fakeStore) ListAccounts(_ context.Context) ([]Account, error) {
@@ -101,6 +106,11 @@ func (f *fakeStore) SetAccountActive(_ context.Context, code string, active bool
 	a.IsActive = active
 	f.accounts[code] = a
 	return a, nil
+}
+
+// InsertJournalTx has no transaction to ride in a DB-free fake; it posts as InsertJournal does.
+func (f *fakeStore) InsertJournalTx(ctx context.Context, _ pgx.Tx, d journalDraft) (string, bool, error) {
+	return f.InsertJournal(ctx, d)
 }
 
 func (f *fakeStore) InsertJournal(_ context.Context, d journalDraft) (string, bool, error) {

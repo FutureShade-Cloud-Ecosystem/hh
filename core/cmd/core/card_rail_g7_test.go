@@ -71,7 +71,7 @@ import (
 func g7WiredRail(t *testing.T) *payment.Service {
 	t.Helper()
 	sg := testkit.NewStaffGuards(t)
-	paySvc, _ := buildCardRail(http.NewServeMux(), sg.Guards, nil, config.Config{}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	paySvc, _, _ := buildCardRail(http.NewServeMux(), sg.Guards, nil, config.Config{}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	return paySvc
 }
 

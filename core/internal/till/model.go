@@ -34,24 +34,88 @@ const (
 
 // - consumed seam (zero-trust interface, A-03 never reaches a sibling's tables) -
 //
-// SCAFFOLD-OWNED SHARED SEAM. CardCharger is RUN-PAY's card rail (the creds-free wrapper over
-// payment.Service.Charge, creds resolve INSIDE RUN-PAY and never cross into the till). It is wired
-// in the composition root (cmd/core) via a thin adapter so payment does NOT import till (no
-// cycle). The caller's tx passes STRAIGHT THROUGH (the pos CardRefunder discipline on the charge
-// side): TakeTender runs inside the sale transaction, which holds a pool connection, so the rail's
-// config read rides that transaction and nothing in the transaction's own call stack asks the pool
-// for a second connection. The rotation write-back is the service's own concern: its flush runs on
-// a separate goroutine and may take a second connection while the transaction is still open on a
-// wider pool, always after the ring's outcome can no longer discard it.
+// SCAFFOLD-OWNED SHARED SEAM. CardCharger is RUN-PAY's card capture rail (the creds-free wrapper
+// over payment.Service's Capture, Compensate and BindTx; creds resolve INSIDE RUN-PAY and never
+// cross into the till). It is wired in the composition root (cmd/core) via a thin adapter so
+// payment does NOT import till (no cycle).
+//
+// The seam's transaction discipline is its defining property (decision log row 786, the card
+// charge design 3.3): Capture and Compensate run on the POOL and are never called inside a
+// transaction (pos calls Capture before the sale transaction opens and Compensate after it
+// returns, so no statement they make can wait on a connection the caller holds), and BindTx rides
+// the SALE's transaction, taking the tx it is handed for every statement. The till's TakeTender
+// binds a capture inside the sale transaction; it never charges one.
 type CardCharger interface {
-	Charge(ctx context.Context, tx pgx.Tx, amountCents int64, paymentToken, reference string) (ChargeResult, error)
+	// Capture charges one card leg at most once, on the pool: the claim, the dispatch and the
+	// stamp are all committed before the caller sees the answer, and a leg whose attempt row
+	// already exists answers from the row with no processor call. With ReadOnly set the call
+	// never claims: an existing row answers from itself and a leg with no row answers
+	// ErrCardLegUnattempted, so a ring whose earlier leg already failed can read its remaining
+	// legs without charging a fresh one.
+	Capture(ctx context.Context, in CardChargeInput) (CardCapture, error)
+	// BindTx binds a captured attempt to the payments row the SALE's transaction just wrote,
+	// guarding the status, the amount, the till session and the leg key. It rides tx and never
+	// the pool; a zero-row bind fails the transaction.
+	BindTx(ctx context.Context, tx pgx.Tx, in CardBind) error
+	// Compensate reverses one captured leg on the pool (the void, with the refund as the
+	// fallback): to VOIDED, or the committed and needs-a-manager answers the row gives.
+	Compensate(ctx context.Context, attemptID string) (CardCompensation, error)
 }
 
-// ChargeResult mirrors payment.ChargeResult{ProcessorRef, Status} (status: captured|authorized|failed).
-type ChargeResult struct {
-	ProcessorRef string
-	Status       string
+// CardChargeInput is one card leg the ring captures at the counter, before its sale transaction
+// opens. AccountToken is the client-tokenized instrument: it goes to the processor and nowhere
+// else, never persisted and never logged.
+type CardChargeInput struct {
+	TillSessionID          string
+	BranchID, CustomerID   string
+	AmountCents            int64
+	LegKey, SaleKey        string
+	LegSeq                 int
+	AccountToken, CardType string
+	CreatedBy              string
+	ReadOnly               bool
 }
+
+// CardCapture is a leg's capture answer: the attempt row's id and the processor ref its capture
+// stamped (Kind CardCaptureCaptured), or the already-committed sale's payment id
+// (Kind CardCaptureBound, the replay shape). The attempt id is carried on the typed error answers
+// too, so the caller can name the row a manager has to read.
+type CardCapture struct {
+	Kind         string
+	AttemptID    string
+	ProcessorRef string
+	PaymentID    string
+}
+
+// The capture answer kinds.
+const (
+	CardCaptureCaptured = "CAPTURED"
+	CardCaptureBound    = "BOUND"
+)
+
+// CardBind is the sale transaction's bind of a captured attempt to the payments row it just
+// wrote: all four guards (the attempt id, the leg key, the till session, the amount) name the
+// tender the bind belongs to.
+type CardBind struct {
+	AttemptID, PaymentID  string
+	LegKey, TillSessionID string
+	AmountCents           int64
+}
+
+// CardCompensation is a reversal's answer: no money remains (VOIDED), the sale's commit landed
+// after all (COMMITTED, answer the sale and void nothing), or a person has to look
+// (NEEDS_MANAGER).
+type CardCompensation struct {
+	Kind      string
+	AttemptID string
+}
+
+// The compensation answer kinds.
+const (
+	CardCompVoided       = "VOIDED"
+	CardCompCommitted    = "COMMITTED"
+	CardCompNeedsManager = "NEEDS_MANAGER"
+)
 
 // - domain types -
 
@@ -133,6 +197,11 @@ type TenderInput struct {
 	SignatureRef   string // optional, opaque pointer to A-19's encrypted signature evidence
 	IdempotencyKey string // client-generated UUID, the offline-first replay key
 	Offline        bool   // tender taken with no connectivity (cash/cheque)
+	// Capture is the CARD leg's captured charge (the attempt id and the processor ref the
+	// pre-transaction capture loop stamped). A CARD tender without one is refused: TakeTender
+	// binds a capture inside this transaction, it never takes one. The bind guards the attempt
+	// against this input's own amount, till session and idempotency key (the leg key).
+	Capture CardCapture
 }
 
 // TenderResult is the keystone seam OUTPUT A-19 receives for ONE tender: the persisted payments-row id
@@ -237,10 +306,36 @@ func clientErr(status int, format string, a ...any) error {
 // ErrCardDeclined is the till's card-declined outcome, the gateway refused/failed the charge.
 // Exported (errors.Is-able) so POS can distinguish a real decline (402 to the cashier) from other
 // till failures (no open session, branch access, conflict), which must surface as themselves.
+// Under the capture seam it is one of the typed capture answers (the adapter translates the
+// payment module's into these), read from the attempt row on a retry with no processor call.
 var ErrCardDeclined error = errCardDeclined
 
 // IsCardDeclined reports whether err is (or wraps) ErrCardDeclined.
 func IsCardDeclined(err error) bool { return errors.Is(err, errCardDeclined) }
+
+// The typed capture answers the seam contract names. The composition root's adapter is the ONE
+// place the payment module's own sentinels become these (the posTaxAdapter pattern), so a payment
+// word never crosses into pos.
+var (
+	// ErrCardInFlight: the leg's charge is claimed or captured and not yet bound (a same-key
+	// retry or a concurrent submit). Keep the key and ring again shortly.
+	ErrCardInFlight = errors.New("till: the card charge for this leg is in flight")
+	// ErrCardNeedsManager: the leg has no usable answer, or its reversal's does not: a manager
+	// has to close the attempt before the card is charged again.
+	ErrCardNeedsManager = errors.New("till: the card charge needs a manager")
+	// ErrCardReversed: the leg was captured and then reversed. No money remains.
+	ErrCardReversed = errors.New("till: the card charge was reversed")
+	// ErrCardResolved: a manager closed the leg's attempt; its key never charges again.
+	ErrCardResolved = errors.New("till: the card charge was closed by a manager")
+	// ErrCardUnresolvedOnTill: the till guard's refusal, an earlier unresolved attempt for the
+	// same amount at this till under another sale key.
+	ErrCardUnresolvedOnTill = errors.New("till: an earlier card charge for this amount at this till has no answer yet")
+	// ErrCardNotDispatched: nothing reached the processor (no config, a missing credential, a
+	// refused key refresh). No money moved; the cause rides behind it.
+	ErrCardNotDispatched = errors.New("till: the card charge was not dispatched")
+	// ErrCardLegUnattempted: the read-only arm's answer for a leg no ring ever claimed.
+	ErrCardLegUnattempted = errors.New("till: this card leg was never attempted")
+)
 
 var (
 	errNotFound       = clientError{status: http.StatusNotFound, msg: "till: not found"}
@@ -276,13 +371,6 @@ const (
 	// amount stays positive (0010 amount CHECK), the status conveys direction; RECEIVED-filtered reads
 	// (expected tenders, AR settles) never pick it up.
 	PaymentRefunded = "REFUNDED"
-)
-
-// charge-result statuses (mirror payment.ChargeResult.Status).
-const (
-	ChargeCaptured   = "captured"
-	ChargeAuthorized = "authorized"
-	ChargeFailed     = "failed"
 )
 
 // card_type values (payments.card_type, RUN-PAY's 0027 column; method stays single CARD, D-A03-4).

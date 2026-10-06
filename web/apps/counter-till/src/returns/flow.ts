@@ -23,7 +23,7 @@ import {
   type PosReturnLookup,
   type Result,
 } from "@hardscapehouse/api-client";
-import type { DemoAccount } from "../demo-account.js";
+import type { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { isApproverRole, type OneTimeCredential } from "./approval.js";
 import type { RefundApprovalCapture } from "./capture.js";
 

@@ -274,6 +274,11 @@ func (a glRuleAdapter) ResolveRule(ctx context.Context, eventType, lineRole, bra
 	return a.svc.ResolveRule(ctx, eventType, lineRole, branchID)
 }
 
+// ResolveRuleTx is ResolveRule read through the caller's transaction (purchasing PostBill).
+func (a glRuleAdapter) ResolveRuleTx(ctx context.Context, tx pgx.Tx, eventType, lineRole, branchID string) (string, error) {
+	return a.svc.ResolveRuleTx(ctx, tx, eventType, lineRole, branchID)
+}
+
 // invGLPoster satisfies inventory's GL poster over gl's external posting
 // seam (carried verbatim).
 type invGLPoster struct{ svc *gl.Service }
