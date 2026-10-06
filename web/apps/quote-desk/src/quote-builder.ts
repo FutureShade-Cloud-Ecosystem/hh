@@ -88,6 +88,7 @@ const STATUS_TABS = [
   { label: "Accepted", value: "ACCEPTED" },
   { label: "Expired", value: "EXPIRED" },
   { label: "Converted", value: "CONVERTED" },
+  { label: "Lost", value: "LOST" },
 ];
 
 /** The approvals tab's own value: a page tab beside the statuses, not a status itself. */

@@ -193,8 +193,8 @@ test("split E: the toolbar carries the segmented control and the search, and bot
   await expect(toolbar).toBeVisible();
   const tabs = toolbar.locator('[data-control="segmented"][data-field="status-filter"]');
   await expect(tabs).toBeVisible();
-  // The six tabs, All pressed, the rest not.
-  for (const label of ["All", "Draft", "Sent", "Accepted", "Expired", "Converted"]) {
+  // The seven tabs (every status the server has), All pressed, the rest not.
+  for (const label of ["All", "Draft", "Sent", "Accepted", "Expired", "Converted", "Lost"]) {
     await expect(tabs.getByRole("button", { name: label, exact: true })).toBeVisible();
   }
   await expect(tabs.getByRole("button", { name: "All", exact: true })).toHaveAttribute("aria-pressed", "true");
@@ -209,6 +209,10 @@ test("split E: the toolbar carries the segmented control and the search, and bot
   await tabs.getByRole("button", { name: "Draft", exact: true }).click();
   await expect(page.getByTestId("qb-list-row")).toHaveCount(1);
   await expect(page.getByTestId("qb-list-row").first()).toContainText("Q-1001");
+  // Lost reaches the server as the LOST status.
+  const asked = page.waitForRequest((r) => r.url().includes("/api/v1/quotes?") && r.url().includes("status=LOST"));
+  await tabs.getByRole("button", { name: "Lost", exact: true }).click();
+  await asked;
   await tabs.getByRole("button", { name: "All", exact: true }).click();
   await expect(page.getByTestId("qb-list-row")).toHaveCount(2);
   // The search filters by customer and by number, and the two combine with

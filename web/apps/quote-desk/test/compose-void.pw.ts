@@ -65,4 +65,8 @@ test("an empty list still reads its quiet message on the list page", async ({ pa
   await page.getByTestId("qd-list-tabs").getByRole("button", { name: "Sent", exact: true }).click();
   await expect(page.getByTestId("qb-list")).toHaveText("No quotes.");
   await expect(page.getByTestId("qb-identity")).toBeHidden();
+  // The Lost tab too: LOST is a real status, and an empty answer reads the same.
+  await page.getByTestId("qd-list-tabs").getByRole("button", { name: "Lost", exact: true }).click();
+  await expect(page.getByTestId("qb-list")).toHaveText("No quotes.");
+  await expect(page.getByTestId("qb-identity")).toBeHidden();
 });
