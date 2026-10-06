@@ -69,11 +69,20 @@ func exactLineFixture(t *testing.T, pool *pgxpool.Pool) (cust, quoteID, prodID s
 		tag, tag).Scan(&cust); err != nil {
 		t.Fatalf("seed customer: %v", err)
 	}
+	// The quote carries the seeded user as its creator, as every fixture on
+	// this stack does: the edit gate's ownership rung (plan 3.3) lets a Work
+	// caller edit only quotes it owns, and an ownerless quote is editable by
+	// nobody at Work, so an ownerless fixture would answer forbidden before
+	// the pricing under test ever runs.
+	var creator any
+	if seedUserID != "" {
+		creator = seedUserID
+	}
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO quotes (quote_no, customer_id, branch_id, status, valid_until,
-		                    subtotal_cents, tax_cents, total_cents)
-		VALUES ($1, $2::uuid, $3::uuid, 'DRAFT', NULL, 0, 0, 0) RETURNING id::text`,
-		"#Q-"+tag, cust, intTrenton).Scan(&quoteID); err != nil {
+		                    subtotal_cents, tax_cents, total_cents, created_by)
+		VALUES ($1, $2::uuid, $3::uuid, 'DRAFT', NULL, 0, 0, 0, $4) RETURNING id::text`,
+		"#Q-"+tag, cust, intTrenton, creator).Scan(&quoteID); err != nil {
 		t.Fatalf("seed quote: %v", err)
 	}
 	t.Cleanup(func() {
@@ -111,6 +120,11 @@ func TestIntegration_ExactLineTotal_QuoteLineAt410(t *testing.T) {
 		WithCostBasis(zeroCostBasis{}).
 		WithCustomerType(retailCustType{}).
 		WithActorNamer(repo).
+		// The decided default role configuration, as production wires it and
+		// as every fixture on this stack does: the edit gate's ladder reads the
+		// caller's Quote Desk level through it, and a service without one puts
+		// every caller under Work, which the ladder refuses before the write.
+		WithRoleConfig(qTestRoleConfig()).
 		withCaller(qCallerFrom)
 
 	if _, err := svc.AddLine(ctx, quoteID, prodID, "exact line pin at the half cent", "410", "PC"); err != nil {
