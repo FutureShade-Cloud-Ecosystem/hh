@@ -320,3 +320,57 @@ func countIdempotencyKeys(t *testing.T, s *trentonStack, ctx context.Context) in
 	}
 	return n
 }
+
+// Leg C: the preview takes the sale's own walls. The staff wall reads the
+// ticket; a bearer whose membership is another org's takes the shared 403
+// the sale takes for the same credential; no bearer takes the shared 401;
+// an empty body is the clear 400 (the no-lines refusal in words).
+func TestIntegration_Trenton_SalePreview_RoleWalls(t *testing.T) {
+	s := previewWiredStack(t)
+	ticket := previewTicket(trentonBranchID)
+
+	// The staff wall: the counter's own bearer reads the ticket's totals.
+	rec := s.do(http.MethodPost, "/api/v1/pos/sale-preview", s.bearer(trentonClerkSub), "", ticket)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the staff wall must read the preview: got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// The wall the sale refuses is the wall the preview refuses: a
+	// foreign org's bearer takes the shared 403 body on both routes for
+	// the same credential, so the preview opens no door the sale keeps
+	// shut.
+	foreign := s.bearer(elsewhereSub)
+	rec = s.do(http.MethodPost, "/api/v1/pos/sale-preview", foreign, "", ticket)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("a foreign org's bearer must take the 403 at the preview: got %d: %s", rec.Code, rec.Body.String())
+	}
+	if body := s.decodeBody(rec); body["error"] != "Forbidden" {
+		t.Fatalf("the preview's 403 must be the shared pinned body: %v", body)
+	}
+	rec = s.do(http.MethodPost, "/api/v1/pos/sales", foreign, "", ringTicket(trentonBranchID, s.trentonTill, nil))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("the same credential must take the 403 at the sale too: got %d: %s", rec.Code, rec.Body.String())
+	}
+	if body := s.decodeBody(rec); body["error"] != "Forbidden" {
+		t.Fatalf("the sale's 403 must be the same shared body: %v", body)
+	}
+
+	// No bearer: the shared 401 body.
+	rec = previewNoBearerCall(s, http.MethodPost, "/api/v1/pos/sale-preview")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("no bearer must take the shared 401: got %d: %s", rec.Code, rec.Body.String())
+	}
+	if body := s.decodeBody(rec); body["error"] != "Missing or invalid credentials" {
+		t.Fatalf("the preview's 401 must be the shared pinned body: %v", body)
+	}
+
+	// An empty body: the no-lines refusal in words, the same clear code
+	// the sale answers.
+	rec = s.do(http.MethodPost, "/api/v1/pos/sale-preview", s.bearer(trentonClerkSub), "", map[string]any{})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("an empty body must be the clear 400: got %d: %s", rec.Code, rec.Body.String())
+	}
+	if body := s.decodeBody(rec); body["error"] != "a sale needs at least one line" {
+		t.Fatalf("an empty body must be refused in words: %v", body)
+	}
+}
