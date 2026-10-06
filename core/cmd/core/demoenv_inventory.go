@@ -12,13 +12,29 @@ package main
 // demoEnvDenyPrefixes are the environment prefixes a demo box must not
 // carry: the Plane feedback bridge, the BisTrack sync, the SMS provider,
 // the assist provider and the live payment gateway. Any variable under
-// one of them refuses the boot: the demo talks to nothing.
+// one of them refuses the boot, except the five exact Plane bridge names
+// listed in demoEnvPlaneBridgeAllowNames below: the demo talks to nothing
+// else.
 var demoEnvDenyPrefixes = []string{
 	"PLANE_",
 	"BISTRACK_",
 	"TWILIO_",
 	"HOS_PAYMENT_",
 	"HOS_ASSIST_",
+}
+
+// demoEnvPlaneBridgeAllowNames is the one exception to the deny prefixes
+// (the Feature Polish ruling): the feedback bridge is the one outbound a
+// demo box may carry, and only these five exact names pass the gate. Every
+// other PLANE_ name still refuses the boot, and the values come only from
+// FB Deploy's environment sourced from FB Vault: never this repository,
+// never the image, never a fixture.
+var demoEnvPlaneBridgeAllowNames = []string{
+	"PLANE_API_URL",
+	"PLANE_API_KEY",
+	"PLANE_PROJECT_ID",
+	"PLANE_WORKSPACE_SLUG",
+	"PLANE_FEEDBACK_MODULE",
 }
 
 // demoEnvDenyNames are the single environment names refused outright on
@@ -60,6 +76,7 @@ var demoEnvAllowNames = []string{
 	"HH_CORE_TEST_DATABASE_URL",
 	"JWKS_URL",
 	"PAYMENT_VAULT_KEY",
+	"PLANE_FEEDBACK_MODULE",
 	"PORT",
 	"PORTAL_BASE_URL",
 	"SMS_RATE_PER_MIN",
@@ -131,6 +148,7 @@ var envInventoryFixture = []string{
 	"PAYMENT_VAULT_KEY",
 	"PLANE_API_KEY",
 	"PLANE_API_URL",
+	"PLANE_FEEDBACK_MODULE",
 	"PLANE_PROJECT_ID",
 	"PLANE_WORKSPACE_SLUG",
 	"PORT",

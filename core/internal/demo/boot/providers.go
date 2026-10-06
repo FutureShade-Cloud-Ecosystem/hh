@@ -17,6 +17,13 @@ import (
 type ProviderDeny struct {
 	// Prefixes are refused on any variable whose name starts with one.
 	Prefixes []string
+	// PrefixExceptions are the exact names a prefix refusal lifts, one
+	// outbound at a time: the feedback bridge's own variables (the Feature
+	// Polish ruling) pass the gate while every other name under the same
+	// prefix still refuses. An exception lifts only the prefix clause: a
+	// name also carried by Names stays refused, and no exception ever
+	// touches the card processor's own rule.
+	PrefixExceptions []string
 	// Names are refused outright.
 	Names []string
 	// CardVar is the card processor selection variable.
@@ -36,8 +43,15 @@ func RefuseProviderVars(environ []string, deny ProviderDeny) error {
 		if name == "" {
 			continue
 		}
+		excepted := false
+		for _, allowed := range deny.PrefixExceptions {
+			if name == allowed {
+				excepted = true
+				break
+			}
+		}
 		for _, prefix := range deny.Prefixes {
-			if strings.HasPrefix(name, prefix) {
+			if !excepted && strings.HasPrefix(name, prefix) {
 				return fmt.Errorf("%s is set: the demo box carries no outbound provider, so a variable under %q stops the boot", name, prefix)
 			}
 		}
