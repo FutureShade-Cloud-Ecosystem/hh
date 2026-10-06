@@ -67,12 +67,20 @@ export function quoteNumberLabel(quoteNo: string): string {
 }
 
 /**
- * A moment in the page's own words for a customer ("October 6, 2026 at 3:49 p.m."), never the raw
- * stamp with its seconds. An unreadable stamp comes back as it arrived rather than as an invented time.
+ * A moment in the page's own words for a customer ("October 6, 2026 at 7:49 p.m. EDT"), never the raw
+ * stamp with its seconds. The viewer's own zone is named, so a customer in another zone reads the
+ * moment right. An unreadable stamp comes back as it arrived rather than as an invented time.
  */
 export function plainWhen(iso: string): string {
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString("en-CA", { dateStyle: "long", timeStyle: "short" });
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString("en-CA", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        timeZoneName: "short",
+      });
 }
 
 /**

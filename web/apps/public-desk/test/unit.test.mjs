@@ -320,7 +320,7 @@ test("the quote number carries its mark once, whichever way the core serves it",
 });
 
 test("a moment and a day read in the page's own words, never as raw stamps", () => {
-  assert.match(plainWhen("2026-10-06T19:49:47Z"), /^[A-Z][a-z]+ \d{1,2}, \d{4} at \d{1,2}:\d{2} [ap]\.m\.$/);
+  assert.match(plainWhen("2026-10-06T19:49:47Z"), /^[A-Z][a-z]+ \d{1,2}, \d{4} at \d{1,2}:\d{2} [ap]\.m\. \S+$/);
   assert.equal(plainWhen("not a time"), "not a time", "an unreadable stamp is shown as it arrived, never invented");
   assert.equal(plainDay("2026-10-27"), "October 27, 2026");
   assert.equal(plainDay("2026-02-31"), "2026-02-31", "a day that does not exist is shown as it arrived");

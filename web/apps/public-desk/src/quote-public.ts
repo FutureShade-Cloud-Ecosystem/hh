@@ -35,12 +35,14 @@ import {
   isDefiniteRefusal,
   isKeyReuseRefusal,
   PublicQuoteClient,
+  validateQuoteView,
   type AcceptanceRef,
   type QuoteViewRef,
 } from "./quote-client.js";
 
 // The staff preview's band: said once, plainly, above the page the customer will see.
 const PREVIEW_BAND = "Preview: this is what your customer will see. Nothing has been sent.";
+const PREVIEW_REFUSED = "This preview could not be shown.";
 const LINK_GONE =
   "This link is no longer valid. Quote links expire, and can also be turned off by our team. Please contact us for an up-to-date link.";
 const LINK_GONE_SHORT = "This link is no longer valid. Please contact us for an up-to-date link.";
@@ -366,6 +368,9 @@ export class QuotePublicPage extends HHElement {
   private autoPrint = false;
   /** True once a host has handed the page its quote: the page then never reads the link or loads. */
   private hosted = false;
+  /** A host handed the page something that is not a well formed preview: the page says so and shows nothing else. */
+  @state()
+  private previewRefused = false;
   /**
    * Object URLs minted for thumbnails, keyed by image reference. They live as
    * long as the page does: a reload after a refused accept reuses them and
@@ -403,13 +408,23 @@ export class QuotePublicPage extends HHElement {
 
   /**
    * Render a quote the HOST already holds, instead of loading one by link token. This is how the Quote
-   * Desk shows the staff preview (the contract's customer view read, validated by this app's own
-   * validateQuoteView): the page itself holds no session and reads no credential, so the host fetches
-   * the view with its own session and hands it over. The thumbnails still ride the public image read.
+   * Desk shows the staff preview: the page itself holds no session and reads no credential, so the host
+   * fetches the contract's customer view read with its own session and hands over the answer as it came
+   * off the wire. The page trusts nothing it is handed: it validates the answer itself
+   * (validateQuoteView), and a hosted page is a preview by construction, so anything that is not a
+   * well formed view with the preview flag true is refused with a plain state. A hosted page never
+   * renders an accept control, whatever the view carries. The thumbnails still ride the public image read.
    */
-  showQuote(view: QuoteViewRef): void {
+  showQuote(value: unknown): void {
     this.hosted = true;
     this.fatal = "";
+    const view = validateQuoteView(value);
+    if (view === null || !view.preview) {
+      this.quote = null;
+      this.previewRefused = true;
+      return;
+    }
+    this.previewRefused = false;
     this.quote = view;
     void this.fetchThumbs(view);
   }
@@ -749,7 +764,7 @@ export class QuotePublicPage extends HHElement {
     if (this.accepted) return nothing;
     // A preview offers no way to accept and says nothing about acceptance: no form, no typed name,
     // and no "closed" card either, because the band above already says what this page is.
-    if (q.preview) return nothing;
+    if (q.preview || this.hosted) return nothing;
     if (!q.acceptable || this.landed) {
       // The customer reads this alone, with no staff beside them to translate,
       // so the state is SAID, in the same six states said mid-sentence: under
@@ -800,6 +815,12 @@ export class QuotePublicPage extends HHElement {
   }
 
   private renderBody(): TemplateResult {
+    if (this.previewRefused) {
+      return html`<div class="card refusal">
+        <h2>Preview unavailable</h2>
+        <p class="gone">${PREVIEW_REFUSED}</p>
+      </div>`;
+    }
     if (this.fatal) {
       return html`<div class="card refusal">
         <h2>Quote link unavailable</h2>
