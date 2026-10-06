@@ -299,6 +299,7 @@ var Routes = []Route{
 	{Method: "PUT", Path: "/api/v1/load/categories", OperationID: "loadUpsertCategories", Tag: "load", XRole: "machine", Bearer: "machine", Addition: true, Surfaces: nil, Level: "", List: ""},
 	{Method: "POST", Path: "/api/v1/load/keys/resolve", OperationID: "loadResolveKeys", Tag: "load", XRole: "machine", Bearer: "machine", Addition: true, Surfaces: nil, Level: "", List: ""},
 	{Method: "PUT", Path: "/api/v1/load/products/unit-sets", OperationID: "loadPutUnitSets", Tag: "load", XRole: "machine", Bearer: "machine", Addition: true, Surfaces: nil, Level: "", List: ""},
+	{Method: "PUT", Path: "/api/v1/load/receivables", OperationID: "loadUpsertReceivables", Tag: "load", XRole: "machine", Bearer: "machine", Addition: true, Surfaces: nil, Level: "", List: ""},
 	{Method: "PUT", Path: "/api/v1/load/suppliers", OperationID: "loadUpsertSuppliers", Tag: "load", XRole: "machine", Bearer: "machine", Addition: true, Surfaces: nil, Level: "", List: ""},
 	{Method: "PUT", Path: "/api/v1/load/units", OperationID: "loadUpsertUnits", Tag: "load", XRole: "machine", Bearer: "machine", Addition: true, Surfaces: nil, Level: "", List: ""},
 	{Method: "PUT", Path: "/api/v1/load/users", OperationID: "loadMapUsers", Tag: "load", XRole: "machine", Bearer: "machine", Addition: true, Surfaces: nil, Level: "", List: ""},
