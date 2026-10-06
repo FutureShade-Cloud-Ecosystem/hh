@@ -75,7 +75,7 @@ async function main() {
     // The vendored face the inlined token sheet registers (its @font-face
     // URLs are page-relative, so at / they ask for /fonts/...): served from
     // the same committed copies the build writes beside the static pages.
-    const font = url.pathname.match(/^\/fonts\/([a-z0-9-]+\.(woff2|txt))$/);
+    const font = url.pathname.match(/^\/fonts\/([A-Za-z0-9-]+\.(woff2|txt))$/);
     if (font) {
       try {
         res.writeHead(200, {
