@@ -32,6 +32,11 @@ import { ApiClient } from "@hardscapehouse/api-client";
 import { AuthController, SessionStore, authHeaderProvider } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import {
+  clearFrontDoorHandoff,
+  readFrontDoorHandoff,
+  type StorageLike,
+} from "./demo-account.js";
+import {
   TillClient,
   HOUSE_ZONE,
   houseDayInZone,
@@ -360,11 +365,65 @@ export class CounterTillApp extends HHElement {
     // credential (this app's custody is memory per tab by design, and its
     // committed sink gate refuses every storage and channel path a handshake
     // would dial). The flow table answers first (its label is the role's name
-    // in the chrome), then the flow runs.
+    // in the chrome), then the flow runs. A window that is not a pop-out
+    // takes the front door's handoff instead: the mint the front door held
+    // for the box lands signed in, no second picker.
     const popped = new URLSearchParams(window.location.search).get("popout");
     if (typeof popped === "string" && popped !== "") {
       void this.#flowsLoaded.then(() => this.#chooseFlow(popped));
+    } else {
+      void this.#adoptFromFrontDoor();
     }
+  }
+
+  /**
+   * The front door's handoff (HH-DEMO-1 D2 polish, item 6): the front door
+   * mints the demo session and holds it for the box under its own
+   * sessionStorage key; when this app boots from a module tile's navigation,
+   * the record is read, handed to AuthController.adopt (custody takes the
+   * token into private memory and rewrites the display mirror itself), and
+   * the key is cleared in the same step, so a later visit to this app never
+   * re-adopts a spent handoff. The clerk facts the chrome and the receipt
+   * read ride the same record (the front door validated the mint already;
+   * this read validates the record again before custody sees any of it). An
+   * absent key is the ordinary direct visit; an unusable or refused record
+   * is dropped and the entry page with the cards comes up, the till's
+   * ordinary way in. A pop-out window skips this: its own ?popout flow signs
+   * in by the cards route above.
+   */
+  async #adoptFromFrontDoor(): Promise<void> {
+    if (this.#sessions.current !== null) return;
+    const storage = (globalThis as { sessionStorage?: StorageLike }).sessionStorage;
+    if (storage === undefined) return;
+    const read = readFrontDoorHandoff(storage, Date.now());
+    if (read.kind === "absent") return;
+    if (read.kind === "unusable") {
+      clearFrontDoorHandoff(storage);
+      return;
+    }
+    const handed = read.session;
+    const adopted = this.#controller.adopt({
+      token: handed.token,
+      tokenExpiresAtMs: handed.tokenExpiresAtMs,
+      user: handed.user,
+    });
+    clearFrontDoorHandoff(storage);
+    if (!adopted) return;
+    this.#clerkUserId = handed.user.userId;
+    this.#clerkRoleCode = handed.roleCode;
+    this.#clerkIdentity = {
+      user_id: handed.user.userId,
+      email: handed.user.email,
+      display_name: handed.user.name,
+      role_code: handed.roleCode,
+      role_name: handed.roleName,
+      tier: handed.tier,
+      scope: handed.scope,
+    };
+    this.#till = { label: handed.roleLabel };
+    this.#activeFlow = handed.flow;
+    this.requestUpdate();
+    await this.#initTill();
   }
 
   disconnectedCallback(): void {
