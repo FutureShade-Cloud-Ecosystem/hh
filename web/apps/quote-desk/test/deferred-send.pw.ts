@@ -82,6 +82,31 @@ test("sender: a terms flush on leaving queued behind a held PUT is never sent un
   expect(puts.sent.every((p) => p.endsWith(`as ${SALES}`))).toBe(true);
 });
 
+test("sender: a terms PUT queued behind a held one is never sent when the same person signs back in on the same quote", async ({ page }) => {
+  await seed(page, { customer_id: "c-fenwick" });
+  await signIn(page, "Sales");
+  await open(page, "Q-1004");
+  await expect(page.getByTestId("qb-po")).toBeVisible();
+  const puts = record(page, /\/quotes\/q-1004\/terms$/);
+  const put1 = await hold(page, /\/quotes\/q-1004\/terms$/, { method: "PUT", times: 1 });
+  await page.getByTestId("qb-po").fill("PO-FIRST");
+  await put1.asked;
+  await page.getByTestId("qb-contact").fill("Site contact by Sales");
+  // Past the debounce and away: the debounced save and the flush of the leaving both queue behind the held first.
+  await page.waitForTimeout(1500);
+  await open(page, "Q-1001");
+  // The same person signs back in and opens the very quote the edit was typed on: the queued PUT is refused all the
+  // same, and the proof is on the wire, the server never sees it.
+  await signOutThenIn(page, "Sales");
+  await open(page, "Q-1004");
+  await quiet(page);
+  const before = puts.sent.length;
+  await put1.release();
+  await settle(page);
+  expect(puts.sent.length).toBe(before);
+  expect(puts.sent.every((p) => p.endsWith(`as ${SALES}`))).toBe(true);
+});
+
 test("sender: a reset queued behind a held layout save is never sent under the next person's session", async ({ page }) => {
   await signIn(page, "Sales");
   await open(page, "Q-1001");

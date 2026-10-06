@@ -1352,6 +1352,15 @@
     "testFile": "test/deferred-send.test.mjs"
   },
   {
+    "id": "sender-quote-id",
+    "file": "src/deferred-send.ts",
+    "find": "now.quote.id === capture.quoteId && ",
+    "replace": "",
+    "test": "refused on another quote's id and sent on the same quote's id",
+    "runner": "node",
+    "testFile": "test/deferred-send.test.mjs"
+  },
+  {
     "id": "sender-capture-in-closure",
     "file": "src/quote-workarea.ts",
     "find": "this.queueTermsPut(ctx.id, () => deferredSend(capture, () => client.putTerms(ctx.id, termsBody(t))))",

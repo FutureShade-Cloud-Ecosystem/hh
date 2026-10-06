@@ -84,6 +84,25 @@ test("sender quote: a write is not sent when the same quote was left and opened 
   assert.deepEqual(calls, []);
 });
 
+// The epoch alone is not the quote's identity: a work area replaced at sign out starts its scope over, so the quote
+// another instance opens can carry the captured epoch. Only the id tells those quotes apart (the principal's look at
+// round 9, P3-3: removing the id sub-check used to fail no behavioral test).
+test("sender quote: a write under the same session is refused on another quote's id and sent on the same quote's id", async () => {
+  const client = fakeClient("sales");
+  const calls = [];
+  const asked = new QuoteContext("q-1", 4);
+  const state = here(client, asked);
+  const capture = captureSend(state.read, { quote: asked });
+  state.now.quote = new QuoteContext("q-2", 4);
+  const refused = await deferredSend(capture, sendOk(calls));
+  assert.equal(wasUnsent(refused), true);
+  assert.equal(refused.unsent, "quote");
+  assert.deepEqual(calls, []);
+  state.now.quote = new QuoteContext("q-1", 4);
+  assert.equal((await deferredSend(capture, sendOk(calls))).ok, true);
+  assert.deepEqual(calls, ["sent"]);
+});
+
 test("sender quote: a write that follows its own quote is sent after the quote on screen changed, under the same session", async () => {
   const client = fakeClient("sales");
   const calls = [];
