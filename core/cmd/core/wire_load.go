@@ -26,8 +26,10 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/branches"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/inventory"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/load"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/product"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/purchasing"
 	"github.com/jackc/pgx/v5"
@@ -58,6 +60,17 @@ func wireLoad(r httpx.Registrar, pool *pgxpool.Pool, log *slog.Logger, doors boo
 			product.CategoryLoadWriter{}, auditSvc),
 		"PUT /api/v1/load/suppliers": newLoadDoor(store, load.KindSupplier,
 			purchasing.VendorLoadWriter{}, auditSvc),
+		// LD-3's two doors: the unit catalogue upsert, and the product
+		// unit set replace through the pricing, inventory and purchasing
+		// readers.
+		"PUT /api/v1/load/units": newLoadDoor(store, load.KindUnit,
+			product.UnitLoadWriter{}, auditSvc),
+		"PUT /api/v1/load/products/unit-sets": newLoadDoor(store, load.KindUnitSet,
+			product.UnitSetLoadWriter{
+				Pricing: pricing.LoadedUnitUseReader{},
+				Stock:   inventory.LoadedUnitUseReader{},
+				Vendor:  purchasing.LoadedUnitUseReader{},
+			}, auditSvc),
 	})
 	submits.RegisterRoutes(r)
 	log.Info("load: the load doors serve behind the machine gate")

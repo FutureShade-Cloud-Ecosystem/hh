@@ -42,6 +42,11 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/products/facets", http.HandlerFunc(h.facets))
 	r.Handle("GET /api/v1/products/{id}", http.HandlerFunc(h.get))
 	r.Handle("PUT /api/v1/products/{id}", g.RequireManager(h.staff(h.update)))
+	// The staff read of the unit catalogue (HH-LOAD-1 LD-3,
+	// productListUnits): staff tier at read, the contract's x-access
+	// annotation naming the dealer-admin surface, and the registrar
+	// wraps the registration in the role gate the census carries.
+	r.Handle("GET /api/v1/uoms", g.RequireStaff(h.staff(h.listUnits)))
 }
 
 // RegisterSearchRoute wires the STAFF fuzzy product search (DIB-56).
@@ -392,4 +397,22 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		h.log.Error("product: internal error", "method", r.Method, "path", r.URL.Path, "err", err)
 		httpx.Error(w, http.StatusInternalServerError, "internal error")
 	}
+}
+
+// listUnits answers the staff read of the unit catalogue (HH-LOAD-1
+// LD-3, productListUnits): one cursor page of the catalogue, the code
+// the stable ordering key. A Service wired without the catalogue read
+// answers the unavailable family, never an empty catalogue.
+func (h *Handler) listUnits(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+	p, err := httpx.ParseCursorPage(r)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, "cursor is malformed")
+		return
+	}
+	rows, next, err := h.svc.UnitsPage(r.Context(), p.Limit, p.Cursor)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteCursorPage(w, rows, next, p.Limit)
 }

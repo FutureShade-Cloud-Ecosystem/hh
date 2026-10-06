@@ -1118,6 +1118,19 @@ type Product struct {
 	ListPriceUom                   *string             `json:"list_price_uom,omitempty"`
 }
 
+type UomView struct {
+	Code      string `json:"code"`
+	Name      string `json:"name"`
+	Dimension string `json:"dimension"`
+	IsActive  bool   `json:"is_active"`
+}
+
+type UomViewPage struct {
+	Items      []UomView `json:"items"`
+	NextCursor *string   `json:"next_cursor,omitempty"`
+	Limit      *int32    `json:"limit,omitempty"`
+}
+
 type ProductPage struct {
 	Items      []Product `json:"items"`
 	NextCursor *string   `json:"next_cursor,omitempty"`

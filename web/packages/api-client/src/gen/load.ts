@@ -67,6 +67,21 @@ export async function loadResolveKeys(
   });
 }
 
+export async function loadPutUnitSets(
+  client: ApiClient,
+  body: LoadSubmitRequest,
+  call?: ApiCallOptions
+): Promise<Result<LoadSubmitResult>> {
+  return client.request<LoadSubmitResult>({
+    method: "PUT",
+    path: "/api/v1/load/products/unit-sets",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "loadPutUnitSets",
+  });
+}
+
 export async function loadUpsertSuppliers(
   client: ApiClient,
   body: LoadSubmitRequest,
@@ -79,6 +94,21 @@ export async function loadUpsertSuppliers(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "loadUpsertSuppliers",
+  });
+}
+
+export async function loadUpsertUnits(
+  client: ApiClient,
+  body: LoadSubmitRequest,
+  call?: ApiCallOptions
+): Promise<Result<LoadSubmitResult>> {
+  return client.request<LoadSubmitResult>({
+    method: "PUT",
+    path: "/api/v1/load/units",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "loadUpsertUnits",
   });
 }
 

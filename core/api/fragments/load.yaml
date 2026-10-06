@@ -319,6 +319,150 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /api/v1/load/units:
+    put:
+      operationId: loadUpsertUnits
+      tags: [load]
+      summary: Upsert the unit catalogue, a unit that already stands attached
+      description: >-
+        One item per unit. The record names the code, the name and the
+        dimension, one of count, area, weight, volume and length. A code
+        the catalogue does not carry answers created; a unit already
+        standing with the same code and dimension answers attached and
+        takes the load's stamps, a seeded row included (the plan's
+        section 2: records that already exist are attached, never
+        created twice); the same code under another dimension refuses
+        naming the field, and the caller's pack maps repeat or clashing
+        source codes to unique HH codes (the plan's reading 4); a
+        dimension the catalogue does not carry refuses naming the field;
+        a row another org owns refuses naming the kind and the key, its
+        org never overwritten. No unit is ever deleted. The catalogue is
+        the deployment wide vocabulary (the plan's reading 3): the
+        unit's identity is its code, the catalogue carries no uuid
+        column, and the registry names a unit by the code's derived row
+        id, stable across deployments. The read assumes one deployment
+        per dealer: it carries no org predicate on the catalogue rows.
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: "HH-LOAD-1 load doors; no ERP source route"
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadSubmitRequest"
+      responses:
+        "200":
+          description: One outcome per item and the batch's counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadSubmitResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: The batch id is recorded under another door; the submission is a collision of two doors' batch namespaces, not a replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: >-
+            The batch contended with another in flight batch on shared
+            names and Postgres rolled it back whole: nothing of it stands,
+            and resubmitting the whole batch is safe. The one answer a
+            caller may retry the batch on, never a per item outcome.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/load/products/unit-sets:
+    put:
+      operationId: loadPutUnitSets
+      tags: [load]
+      summary: Replace a product's unit set atomically, the product named by legacy key
+      description: >-
+        One item per product's unit set. The product arrives as a
+        reference of kind product and resolves against the registry
+        before any write, so a name not yet loaded refuses as a missing
+        reference naming the kind and the key; the product door itself is
+        a later item, so until it lands the registry is the only way a
+        product name stands. The record's rows are the set, each naming
+        the code, the factor as decimal text only (a factor that arrives
+        as a number refuses naming factor_type: the door never re-spells
+        a float), the base flag and, if named, the role hints. The set
+        REPLACES the product's rows atomically, the old set deleted and
+        the new inserted inside the item's transaction: exactly one base
+        row at factor one, and that base row the product's own base unit
+        (products.base_uom, compared the way CITEXT compares); every
+        factor positive and at scale eight or under, a factor beyond that
+        refused naming the legacy key and the field, never a value,
+        never rounded (the plan's section 8 point 3); every code naming
+        a catalogue unit; the product's price unit inside the set; no
+        unit removed while a price, break, rule, override or stock row
+        still names it (the list price, the pricing rules and the
+        quantity break headers and items of the product and of the
+        product's category, matched the way the price resolver matches
+        them so a row carrying a product beside the category still
+        applies, the customer category overrides priced in the unit, the
+        promotions' fixed prices, the clearance prices, the supplier
+        skus, the product's rounding rule, the stock moves and the
+        pricing conversion edges; the category scoped and store wide
+        promotions and the tier default rules are deliberately beyond
+        this check: a unit mismatch leaves such a promotion inert rather
+        than failing a resolve, and a rule that applies to every product
+        is no one product's row to hold); and the decimal round trip
+        holding on
+        every conversion against the representation the price resolver
+        reads: factors are exact only to what the resolver reads, and a
+        factor the float read would corrupt is refused (the plan's risk
+        1, stated honestly). The open document lines (open quotes and
+        orders, open purchase order lines, transfers in transit) are
+        deliberately not read: the plan's load order loads unit sets
+        before any document exists, and the document reload is LD-12's
+        follow up. Nothing of a refused replace stands.
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: "HH-LOAD-1 load doors; no ERP source route"
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadSubmitRequest"
+      responses:
+        "200":
+          description: One outcome per item and the batch's counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadSubmitResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: The batch id is recorded under another door; the submission is a collision of two doors' batch namespaces, not a replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: >-
+            The batch contended with another in flight batch on shared
+            names and Postgres rolled it back whole: nothing of it stands,
+            and resubmitting the whole batch is safe. The one answer a
+            caller may retry the batch on, never a per item outcome.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 components:
   schemas:
     LoadKeyRef:
