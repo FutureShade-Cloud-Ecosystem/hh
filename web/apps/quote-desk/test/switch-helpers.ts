@@ -19,7 +19,31 @@ export function row(page: Page, quoteNo: string) {
   return page.getByTestId("qb-list-row").filter({ hasText: quoteNo }).first();
 }
 
+/**
+ * Show the quotes list page wherever the person stands: from a quote page
+ * (the All quotes link), from the approvals view (the All tab), or already
+ * there (nothing). The split-list navigation's own walk.
+ */
+export async function showList(page: Page): Promise<void> {
+  if (await page.getByTestId("qb-list-row").first().isVisible()) return;
+  if (await page.getByTestId("qb-all-quotes").isVisible()) {
+    await page.getByTestId("qb-all-quotes").click();
+    await expect(page.getByTestId("qd-list-toolbar")).toBeVisible();
+    return;
+  }
+  // The approvals view stands in the rows' place: the All tab walks back.
+  if (await page.getByTestId("qd-approvals-view").isVisible()) {
+    await page.getByTestId("qd-list-tabs").getByRole("button", { name: "All", exact: true }).click();
+    return;
+  }
+  // Already the list page, its rows just not read yet.
+  await expect(page.getByTestId("qd-list-toolbar")).toBeVisible();
+}
+
 export async function open(page: Page, quoteNo: string): Promise<void> {
+  // Under the split-list navigation the list is the list page's own: when
+  // the person is on a quote page, walk home before opening another row.
+  await showList(page);
   await row(page, quoteNo).click();
   await expect(page.getByTestId("qb-context")).toContainText(quoteNo);
 }

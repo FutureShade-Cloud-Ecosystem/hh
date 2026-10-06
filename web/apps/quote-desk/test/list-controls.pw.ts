@@ -1,9 +1,9 @@
-// The quotes list and the New quote form under the desk carry the design
-// system's controls, not raw browser chrome: the bare select, the native
-// date input, the plain Refresh and Create buttons and the fieldset legend
-// are the demo round's defect 2. The card scoped here is the one that holds
-// the list's status filter (the list box), which holds both the filter row
-// and the New quote group.
+// The quotes list page under the split-list navigation: its toolbar carries
+// the design system's controls, not raw browser chrome. The demo round's
+// defect 2 (a bare select, a native date input, plain buttons, a fieldset
+// legend) stays closed on the new page: the search is the design system's
+// text control, the status tabs are its segmented control, and the New quote
+// button in the title row is its primary button.
 import { expect, test, type Page } from "@playwright/test";
 
 const SALES = { name: "Sales", exact: true };
@@ -21,52 +21,36 @@ async function signIn(page: Page): Promise<void> {
   await expect(page.getByTestId("qb-list")).toBeVisible();
 }
 
-/** The list box: the card that holds the status filter, the list and the New quote group. */
-async function quotesCard(page: Page): Promise<ReturnType<Page["locator"]>> {
-  const card = page.locator("qd-quote-builder .box").filter({ has: page.getByTestId("qb-list-filter") });
-  await expect(card).toBeVisible();
-  return card;
-}
-
-test("the quotes card holds no bare native controls", async ({ page }) => {
+test("the list page holds no bare native controls", async ({ page }) => {
   await signIn(page);
-  const card = await quotesCard(page);
-  await expect(card.locator("select:not([data-control])")).toHaveCount(0);
-  await expect(card.locator('input[type="date"]:not([data-control])')).toHaveCount(0);
-  // The control rows (the filter row and the New quote group's row) hold no
-  // plain button of their own: the list's row buttons are the card's content
-  // and the picker's own control rides inside the kit, so the leg reads the
-  // rows' direct children.
-  await expect(card.locator(".row > button:not(.btn-primary):not(.btn-secondary)")).toHaveCount(0);
-  await expect(card.locator("fieldset:not([data-control])")).toHaveCount(0);
+  const listPage = page.getByTestId("qd-list-page");
+  await expect(listPage).toBeVisible();
+  await expect(listPage.locator("select:not([data-control])")).toHaveCount(0);
+  await expect(listPage.locator("input:not([data-control])")).toHaveCount(0);
+  await expect(listPage.locator("fieldset:not([data-control])")).toHaveCount(0);
+  // The toolbar's own buttons are the design system's (the Refresh button)
+  // or the segmented control's segments; the rows' own buttons are the
+  // page's content, the way the list's row buttons always were.
+  await expect(page.getByTestId("qd-list-toolbar").locator("select")).toHaveCount(0);
 });
 
-test("the quotes card's controls carry the design system's control classes", async ({ page }) => {
+test("the toolbar carries the segmented control and the search, the title row the primary New quote", async ({ page }) => {
   await signIn(page);
-  const card = await quotesCard(page);
-  const filter = card.locator('select[data-control="select"][data-field="status-filter"]');
-  await expect(filter).toBeVisible();
-  await expect(filter).toContainText("All statuses");
-  const refresh = card.locator('button.btn-secondary[data-action="refresh"]');
+  const toolbar = page.getByTestId("qd-list-toolbar");
+  await expect(toolbar).toBeVisible();
+  const search = toolbar.locator('input[data-control="text"][data-field="list-search"]');
+  await expect(search).toBeVisible();
+  const tabs = toolbar.locator('[data-control="segmented"][data-field="status-filter"]');
+  await expect(tabs).toBeVisible();
+  for (const label of ["All", "Draft", "Sent", "Accepted", "Expired", "Converted"]) {
+    await expect(tabs.getByRole("button", { name: label, exact: true })).toBeVisible();
+  }
+  // Sales sees neither of the manager's extra tabs.
+  await expect(tabs.getByRole("button", { name: "Approvals", exact: true })).toHaveCount(0);
+  const refresh = toolbar.locator('button.btn-secondary[data-action="refresh"]');
   await expect(refresh).toBeVisible();
   await expect(refresh).toHaveText("Refresh");
-  const branch = card.locator('select[data-control="select"][data-field="new-branch"]');
-  await expect(branch).toBeVisible();
-  const expiry = card.locator('input[type="date"][data-control="date"][data-field="new-expiry"]');
-  await expect(expiry).toBeVisible();
-  const create = card.locator('button.btn-primary[data-action="create"]');
-  await expect(create).toBeVisible();
-  await expect(create).toHaveText("Create");
-});
-
-test("the new quote group's heading carries the legend's words", async ({ page }) => {
-  await signIn(page);
-  const card = await quotesCard(page);
-  const group = card.locator('fieldset[data-control="field-group"]');
-  await expect(group).toBeVisible();
-  const heading = group.locator(".field-group-heading");
-  await expect(heading).toBeVisible();
-  await expect(heading).toHaveText("New quote");
-  // The visible heading is also the group's accessible name.
-  await expect(page.getByRole("group", { name: "New quote" })).toBeVisible();
+  const newQuote = page.locator('button.btn-primary[data-action="new-quote"]');
+  await expect(newQuote).toBeVisible();
+  await expect(newQuote).toHaveText("New quote");
 });

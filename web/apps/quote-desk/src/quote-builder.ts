@@ -1,18 +1,31 @@
 // Ported from hardscapeos_dibbits master 87d7941b app/src/quote-builder.ts;
 // adapted for HH.
 //
-// The Quote Desk's list and shell: it lists the quotes the caller can reach
-// (a Work caller's list defaults to its own quotes, the server's own rule),
-// filters by status, opens one, creates a new one, and hosts the work area
-// above the list (the work area IS the screen; the list sits under it). The
-// edit panel, the history and the settings seams (the second coder's panels)
-// and the assist, follow-ups, hold expiry, availability and approvals seams
-// (the third coder's) are hosted under the detail disclosure as named empty
-// seams, and the quote-changed fan-out reaches them all through reload().
+// The Quote Desk's shell under the split-list navigation (the CP1 feedback,
+// decision log row 941): two screens, one element. The list page is the
+// desk's landing page (the title row with the primary New quote button, the
+// toolbar with the search and the status tabs, the rows that open a quote);
+// the quote page is the work area alone (the stepper, and the Quote detail
+// and admin disclosure under it). The address bar carries the person between
+// them (#/quotes, #/quotes/new, #/quotes/<id>): the host wires the parsed
+// route down, and this shell writes a new hash when a control walks.
+//
+// The work area and its panels stay mounted on the list page, hidden: a
+// panel taken off the page loses the late answers of writes still out for
+// the quote it left (the leaving-through-New-Quote rule), so the split is a
+// change of view, never a teardown. The work area keeps the quote it held
+// while the person walks the list, and coming back to the same quote's route
+// finds it as it was left.
+//
+// The Sales manager's tabs also carry Approvals: the approvals panel stands
+// in the list page's content place (one instance, the same panel the fan-out
+// reaches), and the quote page's disclosure carries an Approvals way in for
+// the requester. Sales sees neither tab; the walls the server owns are
+// unchanged.
 //
 // The binding discipline is the app's own: the templates carry no property or
 // event bindings; the host delegates by data-action and data-field, and the
-// work area and the picker receive their facts through the wiring pass.
+// work area and the panels receive their facts through the wiring pass.
 import { LitElement, css, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import "./quote-workarea.js";
@@ -38,16 +51,22 @@ import {
   SEAM_SETTINGS,
 } from "./panel-seams.js";
 import { money } from "@hardscapehouse/pos-kit/src/ported/pos-api.js";
-import { baseStyles, button, dateInput, fieldGroup, select } from "@hardscapehouse/design-system/src/primitives.js";
-import "./customer-picker.js";
-import type { PickerCustomer } from "@hardscapehouse/pos-kit/src/ported/_customer-picker.js";
+import { baseStyles, button, chip, segmented, textInput, type ChipTone } from "@hardscapehouse/design-system/src/primitives.js";
 import {
   expiryLabel,
   quoteErrorMessage,
   quoteStatusWord,
 } from "./_quote-edit.js";
-import { spokenRefusal, validUntilFromDays } from "./_quote-workarea.js";
+import { spokenRefusal } from "./_quote-workarea.js";
 import { OPEN_SETTINGS_EVENT } from "./panel-seams.js";
+import {
+  COMPOSE_ROUTE,
+  LIST_ROUTE,
+  quoteRoute,
+  routeHash,
+  routeIsQuotePage,
+  type DeskRoute,
+} from "./quote-router.js";
 import type { QdClient, QuoteRow } from "./qd-client.js";
 
 interface BranchRow {
@@ -60,28 +79,62 @@ interface BranchRow {
 /** The most pages one refresh of the list reads: a runaway cursor ends here. */
 const MAX_LIST_PAGES = 40;
 
+/** The status tabs' own options, the closed set the segmented control renders. */
+const STATUS_TABS = [
+  { label: "All", value: "" },
+  { label: "Draft", value: "DRAFT" },
+  { label: "Sent", value: "SENT" },
+  { label: "Accepted", value: "ACCEPTED" },
+  { label: "Expired", value: "EXPIRED" },
+  { label: "Converted", value: "CONVERTED" },
+];
+
+/** The approvals tab's own value: a page tab beside the statuses, not a status itself. */
+const APPROVALS_TAB = { label: "Approvals", value: "APPROVALS" };
+
+/** The chip tone a status reads as (the state colours, never colour alone: the word rides the chip). */
+function statusTone(status: string): ChipTone {
+  if (status === "ACCEPTED" || status === "CONVERTED") return "good";
+  if (status === "SENT") return "watch";
+  if (status === "EXPIRED") return "stop";
+  return "neutral";
+}
+
 @customElement("qd-quote-builder")
 export class QdQuoteBuilder extends LitElement {
   /** The host wires the validated client before the first render. */
   @property({ attribute: false }) client: QdClient | null = null;
 
+  /** The desk's route, parsed from the address bar by the host and wired down (never a template binding). */
+  @property({ attribute: false }) route: DeskRoute = LIST_ROUTE;
+
+  /** The signed in person's role code, wired by the host: the Sales manager's tabs carry Approvals. */
+  @property({ attribute: false }) roleCode = "";
+
   @state() private rows: QuoteRow[] = [];
   /** The next page of the list, or "" when the server sent no more. */
   @state() private nextCursor = "";
   private listSeq = 0;
-  @state() private selected = "";
   @state() private error = "";
   @state() private busy = false;
   @state() private statusFilter = "";
+  /** The toolbar's search: filters the rows the server already answered, by number or customer. */
+  @state() private search = "";
   @state() private branches: BranchRow[] = [];
-  @state() private newBranch = "";
-  @state() private newExpiry = "";
-  @state() private detailOpen = false;
-  /** The picked account for a new quote, from the picker (never a typed id). */
-  private newCustomer: PickerCustomer | null = null;
+  /** The branch this login reaches (the person's own branch): the work area's fallback branch for a new quote. */
+  @state() private myBranch = "";
+  /** The manager's Approvals tab pressed: the approvals panel stands in the list page's content place. */
+  @state() private approvalsOpen = false;
+  /**
+   * The quote page last shown. The work area keeps that quote loaded (hidden,
+   * its panels with it) while the person walks the list, so walking back to
+   * the same quote's route finds it as it was left and a write still out for
+   * it is not cut in two.
+   */
+  private lastQuoteId = "";
 
-  // The design system's shared sheet comes first: the list card's controls
-  // (the status filter, the New quote group) take the control face from it,
+  // The design system's shared sheet comes first: the toolbar's controls (the
+  // search box, the status tabs) and the buttons take their faces from it,
   // and this element's own rules below win where they speak.
   static styles = [
     baseStyles,
@@ -92,16 +145,113 @@ export class QdQuoteBuilder extends LitElement {
       font-family: var(--hos-font-ui, var(--hh-font-ui));
       color: var(--hos-text, var(--hh-text));
     }
-    header {
+    /* The two screens: whichever the route names is the one that shows. */
+    .desksplit[data-view="list"] .quotepage,
+    .desksplit[data-view="quote"] .listpage {
+      display: none;
+    }
+    .titlerow {
       display: flex;
-      align-items: baseline;
+      align-items: center;
+      justify-content: space-between;
       gap: 12px;
       flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 1.2rem;
+    }
+    .toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      padding: 10px 12px;
+      border: 1px solid var(--hos-line, var(--hh-line));
+      border-radius: 8px;
+      background: var(--hos-slate-warm, var(--hh-card));
       margin-bottom: 12px;
     }
-    h2 {
+    .toolbar .tools {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    ul {
+      list-style: none;
       margin: 0;
-      font-size: 1.05rem;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 70vh;
+      overflow-y: auto;
+    }
+    /* The row: one wide line of six (number, customer, total, status,
+       salesperson, validity), the ERP's own reading order. */
+    .rowline {
+      display: grid;
+      grid-template-columns: minmax(88px, auto) 1fr auto auto minmax(88px, auto) minmax(120px, auto);
+      gap: 4px 14px;
+      align-items: center;
+      width: 100%;
+      text-align: left;
+      border: 1px solid var(--hos-line, var(--hh-line));
+      border-radius: 6px;
+      padding: 8px 12px;
+      cursor: pointer;
+      font-size: 0.83rem;
+      background: var(--hos-slate-warm, var(--hh-card));
+      color: var(--hos-text, var(--hh-text));
+    }
+    .rowline[aria-current="true"] {
+      border-color: var(--hos-stone-amber, var(--hh-accent));
+      background: var(--hos-line, var(--hh-line));
+    }
+    .rowline .c-no {
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .rowline .c-cust {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .rowline .c-total {
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .rowline .c-owner,
+    .rowline .c-until {
+      color: var(--hos-text-dim, var(--hh-text-dim));
+      font-size: 0.76rem;
+      white-space: nowrap;
+    }
+    /* The tablet card (the till's own polish: the card face at the card
+       radius, the facts stacked in two tracks). */
+    @media (max-width: 900px) {
+      .rowline {
+        grid-template-columns: 1fr 1fr;
+        gap: 6px 12px;
+        padding: 12px 14px;
+        border-radius: var(--hh-radius-card, 16px);
+        background: var(--hh-card, var(--hos-slate-warm));
+      }
+      .rowline .c-cust {
+        grid-column: 1 / -1;
+        white-space: normal;
+      }
+      .rowline .c-until {
+        grid-column: 1 / -1;
+      }
+    }
+    button:focus-visible,
+    input:focus-visible {
+      outline: 2px solid var(--hos-stone-amber-text, var(--hh-accent-text));
+      outline-offset: 2px;
     }
     .box {
       border: 1px solid var(--hos-line, var(--hh-line));
@@ -112,40 +262,6 @@ export class QdQuoteBuilder extends LitElement {
     h3 {
       margin: 0 0 10px;
       font-size: 0.95rem;
-    }
-    ul {
-      list-style: none;
-      margin: 0;
-      padding: 0;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      max-height: 60vh;
-      overflow-y: auto;
-    }
-    .rowbtn {
-      display: block;
-      width: 100%;
-      text-align: left;
-      border: 1px solid var(--hos-line, var(--hh-line));
-      border-radius: 6px;
-      padding: 6px 8px;
-      cursor: pointer;
-      font-size: 0.83rem;
-    }
-    .rowbtn[aria-current="true"] {
-      border-color: var(--hos-stone-amber, var(--hh-accent));
-      background: var(--hos-line, var(--hh-line));
-    }
-    .no {
-      display: block;
-      font-weight: 600;
-    }
-    .meta {
-      display: block;
-      color: var(--hos-text-dim, var(--hh-text-dim));
-      font-size: 0.76rem;
-      margin-top: 2px;
     }
     .stack {
       display: flex;
@@ -161,40 +277,6 @@ export class QdQuoteBuilder extends LitElement {
       align-items: flex-end;
       flex-wrap: wrap;
     }
-    button:focus-visible,
-    input:focus-visible,
-    select:focus-visible {
-      outline: 2px solid var(--hos-stone-amber-text, var(--hh-accent-text));
-      outline-offset: 2px;
-    }
-    input,
-    select {
-      font: inherit;
-      font-size: 0.83rem;
-      padding: 4px 6px;
-      border: 1px solid var(--hos-control-line, var(--hh-control-line, var(--hh-line)));
-      border-radius: 4px;
-      background: var(--hos-deep-earth, var(--hh-page));
-      color: var(--hos-text, var(--hh-text));
-    }
-    button {
-      font: inherit;
-      font-size: 0.83rem;
-      padding: 4px 10px;
-      border: 1px solid var(--hos-line, var(--hh-line));
-      border-radius: 5px;
-      background: var(--hos-slate-warm, var(--hh-card));
-      color: var(--hos-text, var(--hh-text));
-      cursor: pointer;
-    }
-    button:disabled {
-      /* The design system's disabled rule, not a fade: a held control drops
-         its fill and goes grey through the tokens (AGENTS.md). */
-      background: var(--hh-disabled-fill, var(--hos-slate-warm, var(--hh-card)));
-      color: var(--hh-disabled-ink, var(--hos-text-dim, var(--hh-text-dim)));
-      border-color: var(--hh-disabled-line, var(--hos-line, var(--hh-line)));
-      cursor: default;
-    }
     .err {
       color: var(--hos-safety-red, var(--hh-negative));
       font-size: 0.82rem;
@@ -202,6 +284,14 @@ export class QdQuoteBuilder extends LitElement {
     .empty {
       color: var(--hos-text-dim, var(--hh-text-dim));
       font-size: 0.83rem;
+    }
+    /* The approvals view stands in the list page's content place; the rows
+       stand down while it is the page's content. */
+    .approvalsview[data-open="false"] {
+      display: none;
+    }
+    .listmain[data-open="false"] {
+      display: none;
     }
     /* The detail disclosure's seam rows: nothing shows today, so the row
        keeps its own height at zero until a panel lands in the seam. */
@@ -214,22 +304,21 @@ export class QdQuoteBuilder extends LitElement {
   override connectedCallback(): void {
     super.connectedCallback();
     this.startLoads();
-    // The expiry defaults to thirty days out so nobody types a date to make
-    // the form move.
-    if (this.newExpiry === "") this.newExpiry = validUntilFromDays(30, new Date());
     this.renderRoot.addEventListener("click", this.onActionClick as EventListener);
-    this.renderRoot.addEventListener("change", this.onFieldChange as EventListener);
+    this.renderRoot.addEventListener("input", this.onFieldInput as EventListener);
     this.renderRoot.addEventListener("quote-changed", this.onQuoteChanged as EventListener);
     this.renderRoot.addEventListener("quote-open", this.onQuoteOpen as EventListener);
+    this.renderRoot.addEventListener("all-quotes", this.onAllQuotes as EventListener);
     window.addEventListener(OPEN_SETTINGS_EVENT, this.onOpenSettings);
-    this.renderRoot.addEventListener("customer-picked", this.onCustomerPicked as EventListener);
-    this.renderRoot.addEventListener("customer-cleared", this.onCustomerCleared as EventListener);
   }
 
   protected override willUpdate(changed: Map<string, unknown>): void {
     // The host wires the client after this element mounts; the loads start
     // the moment it arrives (the entry page's cards never reach here).
     if (changed.has("client") && this.client !== null) this.startLoads();
+    // A quote page takes the approvals view with it: coming back to the list
+    // shows the rows, not the view the person left behind.
+    if (changed.has("route") && routeIsQuotePage(this.route)) this.approvalsOpen = false;
   }
 
   private startLoads(): void {
@@ -241,58 +330,41 @@ export class QdQuoteBuilder extends LitElement {
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     this.renderRoot.removeEventListener("click", this.onActionClick as EventListener);
-    this.renderRoot.removeEventListener("change", this.onFieldChange as EventListener);
+    this.renderRoot.removeEventListener("input", this.onFieldInput as EventListener);
     this.renderRoot.removeEventListener("quote-changed", this.onQuoteChanged as EventListener);
     this.renderRoot.removeEventListener("quote-open", this.onQuoteOpen as EventListener);
+    this.renderRoot.removeEventListener("all-quotes", this.onAllQuotes as EventListener);
     window.removeEventListener(OPEN_SETTINGS_EVENT, this.onOpenSettings);
-    this.renderRoot.removeEventListener("customer-picked", this.onCustomerPicked as EventListener);
-    this.renderRoot.removeEventListener("customer-cleared", this.onCustomerCleared as EventListener);
   }
 
   protected override updated(): void {
-    // The wiring pass: the work area and the picker receive their facts.
+    // The wiring pass: the work area, the picker's own panels and the
+    // approvals panel receive their facts. The work area's quote follows the
+    // route on a quote page; on the list page it keeps the quote it held
+    // (the split is a change of view, never a teardown of the work in it).
+    const route = this.route;
+    if (route.kind === "quote") this.lastQuoteId = route.id;
+    const openQuoteId = route.kind === "quote" ? route.id : route.kind === "compose" ? "" : this.lastQuoteId;
+    const branchId = this.selectedBranch() || this.myBranch;
     const area = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("qd-quote-workarea");
     if (area !== null) {
       area.client = this.client;
-      area.quoteId = this.selected;
-      area.branchId = this.selectedBranch() || this.newBranch;
+      area.quoteId = openQuoteId;
+      area.branchId = branchId;
       area.branchName = this.branchDisplayName();
+      // The address bar is the person's place now: the work area's own
+      // resume of a remembered quote stays heard only where a quote page
+      // already names one (which needs no resume); a boot at the list or the
+      // compose page is the person's own ask.
+      area.resumeOpenRef = route.kind === "quote";
     }
-    const picker = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("hos-customer-picker");
-    if (picker !== null) {
-      picker.branchId = this.newBranch;
-      if (picker.labelText === undefined || picker.labelText === "") picker.labelText = "Customer";
-    }
-    // The seam rows and the panels mounted in their place receive the open
-    // quote the same way: the edit panel, the change history and the settings
-    // also take the validated client.
     for (const seam of this.renderRoot.querySelectorAll<HTMLElement & Record<string, unknown>>(
-      "qd-panel-seam, qd-quote-edit, qd-quote-history, qd-quote-settings, qd-quote-assist, qd-quote-followups, qd-quote-hold-expiry, qd-quote-availability, qd-quote-guard, qd-approvals, qd-floor-refusal",
+      "qd-panel-seam, qd-quote-edit, qd-quote-assist, qd-quote-history, qd-quote-followups, qd-quote-hold-expiry, qd-quote-availability, qd-quote-guard, qd-approvals, qd-quote-settings, qd-floor-refusal",
     )) {
-      seam.quoteId = this.selected;
-      seam.branchId = this.selectedBranch() || this.newBranch;
+      seam.quoteId = openQuoteId;
+      seam.branchId = branchId;
       if (seam.tagName !== "QD-PANEL-SEAM") seam.client = this.client;
     }
-    // The new quote form's uncontrolled fields.
-    const branchSelect = this.renderRoot.querySelector<HTMLSelectElement>('[data-field="new-branch"]');
-    if (branchSelect !== null && this.branches.length > 0) {
-      const shape = this.branches.map((b) => `${b.id}:${b.code}:${b.name}`).join("|");
-      if ((branchSelect as HTMLElement & { lastShape?: string }).lastShape !== shape) {
-        (branchSelect as HTMLElement & { lastShape?: string }).lastShape = shape;
-        branchSelect.textContent = "";
-        for (const b of this.branches) {
-          const option = document.createElement("option");
-          option.value = b.id;
-          option.textContent = `${b.code}: ${b.name}`;
-          branchSelect.append(option);
-        }
-      }
-      if (branchSelect.value !== this.newBranch) branchSelect.value = this.newBranch;
-    }
-    const statusSelect = this.renderRoot.querySelector<HTMLSelectElement>('[data-field="status-filter"]');
-    if (statusSelect !== null && statusSelect.value !== this.statusFilter) statusSelect.value = this.statusFilter;
-    const expiry = this.renderRoot.querySelector<HTMLInputElement>('[data-field="new-expiry"]');
-    if (expiry !== null && expiry.value !== this.newExpiry) expiry.value = this.newExpiry;
   }
 
   // ── loading ────────────────────────────────────────────────────────────────
@@ -353,35 +425,12 @@ export class QdQuoteBuilder extends LitElement {
     const client = this.client;
     if (client === null) return;
     const result = await client.resolveBranch();
-    if (!result.ok) return; // the select degrades to empty; the create still validates
+    if (!result.ok) return; // the work area falls back to no branch; the create still validates
     this.branches = [{ id: result.value.id, code: result.value.code, name: result.value.name, isDefault: true }];
-    if (this.newBranch === "") this.newBranch = result.value.id;
+    if (this.myBranch === "") this.myBranch = result.value.id;
   }
 
-  private async createQuote(): Promise<void> {
-    const client = this.client;
-    if (client === null) return;
-    if (this.newCustomer === null || this.newBranch.trim() === "") {
-      this.error = this.newCustomer === null ? "Choose a customer for the quote." : "Choose a branch for the quote.";
-      return;
-    }
-    this.busy = true;
-    this.error = "";
-    const onScreen = this.selected;
-    const result = await client.createQuote(this.newCustomer.id, this.newBranch.trim(), this.newExpiry.trim());
-    this.busy = false;
-    if (!result.ok) {
-      this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "create a quote"));
-      return;
-    }
-    this.newCustomer = null;
-    this.newExpiry = validUntilFromDays(30, new Date()); // stays pre-filled for the next quote
-    await this.loadList();
-    // The person may have opened another quote while this one was being made: it joins the list but does not take the screen.
-    if (this.selected === onScreen) this.selected = result.value;
-  }
-
-  // ── the fan-out and the open events ────────────────────────────────────────
+  // ── the fan-out, the open events and the walks ─────────────────────────────
 
   /**
    * An edit anywhere reaches the screens that show it. The announcement names the quote it belongs to by its own id
@@ -392,27 +441,30 @@ export class QdQuoteBuilder extends LitElement {
    */
   private readonly onQuoteChanged = (event: CustomEvent<{ quoteId?: string }>): void => {
     const named = event.detail?.quoteId;
-    if (named === undefined || named === this.selected) this.reloadDetailPanels();
+    if (named === undefined || named === this.openQuoteId()) this.reloadDetailPanels();
     else this.reloadSessionPanels();
     void this.loadList(true);
   };
 
   private readonly onQuoteOpen = (event: CustomEvent<{ quoteId: string }>): void => {
-    this.selected = event.detail.quoteId;
+    // The work area's intents walk the routes: a create hands its quote
+    // down, New Quote asks for the compose page. On the list page the work
+    // area is not the person's place, and its once per mount resume of a
+    // remembered quote stays unheard: the address bar names the person's
+    // place now.
+    if (this.route.kind === "list") return;
+    this.walk(event.detail.quoteId === "" ? COMPOSE_ROUTE : quoteRoute(event.detail.quoteId));
     void this.loadList();
   };
 
-  private readonly onCustomerPicked = (event: CustomEvent<PickerCustomer>): void => {
-    // The work area's own compose picker bubbles the same event; the form
-    // only takes the pick that came from its own fieldset.
-    if (!event.composedPath().some((el) => el instanceof HTMLFieldSetElement)) return;
-    event.stopPropagation();
-    this.newCustomer = event.detail;
-    this.error = "";
+  private readonly onAllQuotes = (): void => {
+    this.walk(LIST_ROUTE);
   };
 
-  private readonly onCustomerCleared = (): void => {
-    this.newCustomer = null;
+  /** The requester's way to the approvals view from the quote page's disclosure. */
+  private readonly onShowApprovals = (): void => {
+    this.approvalsOpen = true;
+    this.walk(LIST_ROUTE);
   };
 
   /**
@@ -449,7 +501,7 @@ export class QdQuoteBuilder extends LitElement {
     if (control === undefined) return;
     const action = control.getAttribute("data-action");
     if (action === "open") {
-      this.selected = control.getAttribute("data-quote") ?? "";
+      this.walk(quoteRoute(control.getAttribute("data-quote") ?? ""));
     }
     if (action === "refresh") {
       void this.loadList();
@@ -457,107 +509,138 @@ export class QdQuoteBuilder extends LitElement {
     if (action === "more") {
       void this.loadMore();
     }
-    if (action === "create") {
-      void this.createQuote();
+    if (action === "new-quote") {
+      this.walk(COMPOSE_ROUTE);
+    }
+    if (action === "tab") {
+      const value = control.getAttribute("data-value") ?? "";
+      if (value === APPROVALS_TAB.value) {
+        this.approvalsOpen = true;
+      } else {
+        this.approvalsOpen = false;
+        this.statusFilter = value;
+        void this.loadList();
+      }
+    }
+    if (action === "show-approvals") {
+      this.onShowApprovals();
     }
   };
 
-  private readonly onFieldChange = (event: Event): void => {
+  private readonly onFieldInput = (event: Event): void => {
     const control = event
       .composedPath()
       .find((node): node is Element => node instanceof Element && node.hasAttribute("data-field"));
-    if (control === undefined) return;
-    const field = control.getAttribute("data-field") ?? "";
-    if (control instanceof HTMLSelectElement && field === "status-filter") {
-      this.statusFilter = control.value;
-      void this.loadList();
-    }
-    if (control instanceof HTMLSelectElement && field === "new-branch") {
-      this.newBranch = control.value;
-    }
-    if (control instanceof HTMLInputElement && field === "new-expiry") {
-      this.newExpiry = control.value;
+    if (!(control instanceof HTMLInputElement)) return;
+    if (control.getAttribute("data-field") === "list-search") {
+      this.search = control.value;
     }
   };
 
+  /** A control's walk to a route: the address bar is written once, and the hashchange (the host's ear) does the rest. */
+  private walk(route: DeskRoute): void {
+    const hash = routeHash(route);
+    if (location.hash !== hash) location.hash = hash;
+  }
+
   // ── the branch facts ───────────────────────────────────────────────────────
 
+  /** The quote the work area holds (the quote page's route, or the one it kept when the person walked to the list). */
+  private openQuoteId(): string {
+    const route = this.route;
+    if (route.kind === "quote") return route.id;
+    if (route.kind === "compose") return "";
+    return this.lastQuoteId;
+  }
+
   /**
-   * The open quote's branch, read from the list row rather than from the new
-   * quote form: the form's branch is what the NEXT quote would be created
+   * The open quote's branch, read from the list row rather than from the
+   * person's own: the person's branch is what the NEXT quote would be created
    * in, and using it here would scope the catalogue to the wrong yard the
-   * moment the create dropdown changed.
+   * moment the person changed.
    */
   private selectedBranch(): string {
-    return this.rows.find((r) => r.id === this.selected)?.branchId ?? "";
+    return this.rows.find((r) => r.id === this.openQuoteId())?.branchId ?? "";
   }
 
   private branchDisplayName(): string {
-    const id = this.selectedBranch() === "" ? this.newBranch : this.selectedBranch();
+    const id = this.selectedBranch() === "" ? this.myBranch : this.selectedBranch();
     const b = this.branches.find((x) => x.id === id);
     return b !== undefined ? b.name : "";
   }
 
   // ── render ─────────────────────────────────────────────────────────────────
 
-  private renderList() {
+  /** The status tabs: the closed set, and the Sales manager's Approvals beside them. */
+  private tabOptions(): Array<{ label: string; value: string }> {
+    return this.roleCode === "sales_manager" ? [...STATUS_TABS, APPROVALS_TAB] : STATUS_TABS;
+  }
+
+  /** The rows the search leaves (by number or customer): a filter of the page the server answered, never a second read. */
+  private visibleRows(): QuoteRow[] {
+    const needle = this.search.trim().toLowerCase();
+    if (needle === "") return this.rows;
+    return this.rows.filter(
+      (r) => r.quoteNo.toLowerCase().includes(needle) || r.customerName.toLowerCase().includes(needle),
+    );
+  }
+
+  private renderListPage() {
+    const rows = this.visibleRows();
     return html`
-      <div class="box">
-        <h3>Quotes</h3>
-        <div class="row">
-          ${select({
-            label: "Filter by status",
-            field: "status-filter",
-            testid: "qb-list-filter",
-            content: html`
-              <option value="">All statuses</option>
-              <option value="DRAFT">Draft</option>
-              <option value="SENT">Sent</option>
-              <option value="ACCEPTED">Accepted</option>
-              <option value="CONVERTED">Converted</option>
-              <option value="EXPIRED">Expired</option>
-              <option value="LOST">Lost</option>
-            `,
-          })}
-          ${button({ label: "Refresh", kind: "secondary", action: "refresh", disabled: this.busy })}
+      <section class="listpage" data-testid="qd-list-page" aria-label="Quotes">
+        <div class="titlerow">
+          <h1 data-testid="qd-list-title">Quotes</h1>
+          ${button({ label: "New quote", kind: "primary", action: "new-quote" })}
         </div>
-        ${this.rows.length === 0
-          ? html`<p class="empty" style="margin-top: 10px" data-testid="qb-list">No quotes.</p>`
-          : html`<ul style="margin-top: 10px" data-testid="qb-list">
-              ${this.rows.map(
-                (r) => html`<li>
-                  <button
-                    type="button"
-                    class="rowbtn"
-                    data-action="open"
-                    data-quote=${r.id}
-                    data-testid="qb-list-row"
-                    aria-current=${r.id === this.selected ? "true" : "false"}
-                  >
-                    <span class="no">${r.quoteNo} · ${quoteStatusWord(r.status)}</span>
-                    <span class="meta">
-                      ${r.customerName} · ${money(r.totalCents)} · ${expiryLabel(r)}
-                      ${r.ownerName !== null ? html` · ${r.ownerName}` : nothing}
-                    </span>
-                  </button>
-                </li>`,
-              )}
-            </ul>`}
-        ${this.nextCursor !== ""
-          ? html`<div class="row"><button type="button" data-action="more" data-testid="qb-list-more" ?disabled=${this.busy}>Load more quotes</button></div>`
-          : nothing}
-        ${fieldGroup({
-          heading: "New quote",
-          content: html`
-            <div class="row">
-              <hos-customer-picker></hos-customer-picker>
-              ${select({ label: "Branch", field: "new-branch" })}
-              ${dateInput({ label: "Expiry date", field: "new-expiry" })}
-              ${button({ label: "Create", kind: "primary", action: "create", disabled: this.busy })}
-            </div>
-          `,
-        })}
-      </div>
+        <div class="toolbar" data-testid="qd-list-toolbar">
+          <div class="tools">
+            ${textInput({ label: "Search quotes", field: "list-search", type: "search" })}
+          </div>
+          <div class="tools">
+            ${segmented({
+              label: "Filter by status",
+              field: "status-filter",
+              action: "tab",
+              testid: "qd-list-tabs",
+              selected: this.approvalsOpen ? APPROVALS_TAB.value : this.statusFilter,
+              options: this.tabOptions(),
+            })}
+            ${button({ label: "Refresh", kind: "secondary", action: "refresh", disabled: this.busy })}
+          </div>
+        </div>
+        <div class="listmain" data-open=${this.approvalsOpen ? "false" : "true"}>
+          ${rows.length === 0
+            ? html`<p class="empty" style="margin-top: 10px" data-testid="qb-list">No quotes.</p>`
+            : html`<ul style="margin-top: 0" data-testid="qb-list">
+                ${rows.map(
+                  (r) => html`<li>
+                    <button
+                      type="button"
+                      class="rowline"
+                      data-action="open"
+                      data-quote=${r.id}
+                      data-testid="qb-list-row"
+                      aria-current=${r.id === this.openQuoteId() ? "true" : "false"}
+                    >
+                      <span class="c-no">${r.quoteNo}</span>
+                      <span class="c-cust">${r.customerName}</span>
+                      <span class="c-total">${money(r.totalCents)}</span>
+                      <span class="c-status">${chip(quoteStatusWord(r.status), statusTone(r.status))}</span>
+                      <span class="c-owner">${r.ownerName ?? ""}</span>
+                      <span class="c-until">${expiryLabel({ valid_until: r.validUntil ?? undefined, expired: r.expired })}</span>
+                    </button>
+                  </li>`,
+                )}
+              </ul>`}
+          ${this.nextCursor !== ""
+            ? html`<div class="row" style="margin-top: 8px"><button type="button" class="btn-secondary" data-action="more" data-testid="qb-list-more" ?disabled=${this.busy}>Load more quotes</button></div>`
+            : nothing}
+        </div>
+        <div class="approvalsview" data-testid="qd-approvals-view" data-open=${this.approvalsOpen ? "true" : "false"}>
+          <qd-approvals data-seam=${SEAM_APPROVALS}></qd-approvals>
+        </div>
+      </section>
     `;
   }
 
@@ -569,20 +652,22 @@ export class QdQuoteBuilder extends LitElement {
   override render() {
     return html`
       ${this.error !== "" ? html`<header><span class="err" role="alert">${this.error}</span></header>` : nothing}
-      <qd-quote-workarea></qd-quote-workarea>
-      <qd-floor-refusal></qd-floor-refusal>
-      <div style="margin-top: 12px">${this.renderList()}</div>
-      <details class="box" style="margin-top: 12px" data-testid="qb-detail">
-        <summary style="cursor: pointer">Quote detail &amp; admin</summary>
-        <div class="stack seams" style="margin-top: 10px">
-          ${this.selected === ""
-            ? html`<div class="box"><p class="empty">Select a quote to open it.</p></div>`
-            : nothing}
-          <!-- The panels stay mounted through New Quote (compose shows none of them, each returns nothing for no
-               quote): a panel taken off the page loses the late answers of writes still out for the quote it left,
-               its announcement dies with it and the panel that comes back is never told what landed. Leaving a quote
-               for another quote was already this way, and New Quote takes that same proven path. -->
-          <div class="stack" data-testid="qb-quote-panels" data-compose=${this.selected === "" ? "true" : "false"}>
+      <div class="desksplit" data-view=${routeIsQuotePage(this.route) ? "quote" : "list"}>
+        ${this.renderListPage()}
+        <section class="quotepage" aria-label="The quote">
+          <qd-quote-workarea></qd-quote-workarea>
+          <qd-floor-refusal></qd-floor-refusal>
+          <details class="box" style="margin-top: 12px" data-testid="qb-detail">
+            <summary style="cursor: pointer">Quote detail &amp; admin</summary>
+            <div class="stack seams" style="margin-top: 10px">
+              ${this.openQuoteId() === ""
+                ? html`<div class="box"><p class="empty">Select a quote to open it.</p></div>`
+                : nothing}
+              <!-- The panels stay mounted through the list page and New Quote (each returns nothing for no
+                   quote): a panel taken off the page loses the late answers of writes still out for the quote it left,
+                   its announcement dies with it and the panel that comes back is never told what landed. Leaving a quote
+                   for another quote was already this way, and the list page and New Quote take that same proven path. -->
+              <div class="stack" data-testid="qb-quote-panels" data-compose=${this.openQuoteId() === "" ? "true" : "false"}>
             <qd-quote-edit data-seam=${SEAM_EDIT_PANEL}></qd-quote-edit>
             <qd-quote-assist data-seam=${SEAM_ASSIST}></qd-quote-assist>
             <qd-quote-history data-seam=${SEAM_HISTORY}></qd-quote-history>
@@ -591,10 +676,14 @@ export class QdQuoteBuilder extends LitElement {
             <qd-quote-availability data-seam=${SEAM_AVAILABILITY}></qd-quote-availability>
             <qd-quote-guard></qd-quote-guard>
           </div>
-          <qd-approvals data-seam=${SEAM_APPROVALS}></qd-approvals>
-          <qd-quote-settings data-seam=${SEAM_SETTINGS}></qd-quote-settings>
-        </div>
-      </details>
+              <qd-quote-settings data-seam=${SEAM_SETTINGS}></qd-quote-settings>
+              <div class="row">
+                <button type="button" class="btn-secondary" data-action="show-approvals">Approvals</button>
+              </div>
+            </div>
+          </details>
+        </section>
+      </div>
     `;
   }
 }

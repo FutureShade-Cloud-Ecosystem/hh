@@ -15,6 +15,8 @@ async function openTicket(page: Page, role: string): Promise<void> {
   await page.goto("/");
   await page.getByRole("button", { name: role, exact: true }).click();
   await expect(page.getByTestId("qb-list")).toBeVisible();
+  await page.getByRole("button", { name: "New quote", exact: true }).click();
+  await expect(page.getByTestId("qb-identity")).toBeVisible();
   const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
   await picker.getByPlaceholder("Search name or account #…").fill("Maple");
   await picker.getByRole("option", { name: /Maple Ridge Contracting/ }).click();

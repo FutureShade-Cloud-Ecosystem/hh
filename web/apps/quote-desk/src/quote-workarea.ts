@@ -151,6 +151,14 @@ const CREATE_FAILED_SCAN = "The new quote could not be made, so nothing was adde
 export class QdQuoteWorkarea extends LitElement {
   /** The open quote ('' means compose: pick a customer to start one). */
   @property({ attribute: "quote-id" }) quoteId = "";
+  /**
+   * Whether the work area's own resume of a remembered quote is heard. Under
+   * the split-list navigation the address bar names the person's place (the
+   * host wires this false on the list and compose pages), so a boot there is
+   * the person's own ask and the remembered quote does not steal the screen;
+   * a quote page names its quote already, where the resume has nothing to do.
+   */
+  @property({ attribute: false }) resumeOpenRef = true;
   @property({ attribute: "branch-id" }) branchId = "";
   @property({ attribute: "branch-name" }) branchName = "";
 
@@ -224,6 +232,24 @@ export class QdQuoteWorkarea extends LitElement {
       border-radius: var(--hos-radius-card, 10px);
       background: var(--hos-slate-warm, var(--hh-card));
       margin-bottom: var(--hos-s-12, 12px);
+    }
+    /* The way home sits at the left of the title row: a quiet link, not a
+       control, so the title stays the row's own anchor. */
+    .topbar .backlink {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: var(--qb-caption);
+      color: var(--hos-text-dim, var(--hh-text-dim));
+      background: transparent;
+      border: none;
+      padding: 4px 2px;
+      min-height: 0;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .topbar .backlink:hover {
+      color: var(--hos-stone-amber-text, var(--hh-accent-text));
     }
     .headid .pagetitle {
       margin: 0;
@@ -1540,7 +1566,7 @@ export class QdQuoteWorkarea extends LitElement {
    * own open ref says one was remembered.
    */
   private async maybeRestoreOpenQuote(ref: string): Promise<void> {
-    if (this.restoreTried || ref === "" || this.quoteId !== "") return;
+    if (this.restoreTried || !this.resumeOpenRef || ref === "" || this.quoteId !== "") return;
     this.restoreTried = true;
     // A quote is being made (or was just made and not yet handed down): that is where the person is going, not the remembered one.
     if (this.creating !== null || this.createdQuoteId !== "") return;
@@ -1707,6 +1733,9 @@ export class QdQuoteWorkarea extends LitElement {
     const line = Number(control.getAttribute("data-line") ?? "");
     const product = control.getAttribute("data-product") ?? "";
     switch (action) {
+      case "all-quotes":
+        this.dispatchEvent(new CustomEvent("all-quotes", { bubbles: true, composed: true }));
+        break;
       case "new-quote":
         this.startNewQuote();
         break;
@@ -2678,6 +2707,15 @@ export class QdQuoteWorkarea extends LitElement {
     const statusText = v !== null ? quoteStatusWord(v.status) : "New";
     return html`
       <div class="topbar">
+        <button
+          type="button"
+          class="backlink"
+          data-action="all-quotes"
+          data-testid="qb-all-quotes"
+          title="Back to the quotes list"
+        >
+          <span aria-hidden="true">${drawIcon(iconForId("pencil:left"), 12)}</span> All quotes
+        </button>
         <div class="headid">
           <h1 class="pagetitle" data-testid="qb-title">${v !== null ? "Quote" : "New Quote"}</h1>
           <div class="pagectx" data-testid="qb-context">

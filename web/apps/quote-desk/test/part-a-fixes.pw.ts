@@ -6,6 +6,7 @@
 // quotes list pages and its rows are reachable by keyboard; convert sends
 // the chosen fulfilment and nothing more.
 import { expect, test, type Page } from "@playwright/test";
+import { showList } from "./switch-helpers.js";
 
 const SALES = { name: "Sales", exact: true };
 
@@ -16,6 +17,8 @@ async function signIn(page: Page, role: { name: string; exact: boolean } = SALES
 }
 
 async function startQuote(page: Page, customer = "Maple", option = /Maple Ridge Contracting/): Promise<void> {
+  await page.getByRole("button", { name: "New quote", exact: true }).click();
+  await expect(page.getByTestId("qb-identity")).toBeVisible();
   const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
   await picker.getByPlaceholder("Search name or account #…").fill(customer);
   await picker.getByRole("option", { name: option }).click();
@@ -81,6 +84,7 @@ test("a failed config read still lets a later layout change save, and a refusal 
   );
   await signIn(page);
   await expect(page.getByTestId("qb-layout-error")).toContainText("The saved layout could not be read");
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Draft" }).first().click();
   await page.getByRole("button", { name: "Swap panels" }).click();
   await expect(page.getByTestId("qb-layout-error")).toContainText("The layout was not saved");
@@ -121,6 +125,7 @@ test("Send Quote is one send: a double press mints one link, and the confirmatio
 
 test("the Sales manager and Sales both get the Screen settings entry; the server answers who may write", async ({ page }) => {
   await signIn(page, { name: "Sales manager", exact: true });
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Draft" }).first().click();
   await expect(page.getByTestId("qb-settings-btn")).toBeVisible();
   const salesPage = await page.context().newPage();
@@ -147,10 +152,10 @@ test("a quote row is reached with Tab and opened with Enter", async ({ page }) =
   const first = page.getByTestId("qb-list-row").first();
   await first.focus();
   await expect(first).toBeFocused();
-  // Tab walks to a row from the control before it, and the row opens on Enter.
-  await page.getByTestId("qb-list-filter").focus();
+  // Tab walks to a row from the toolbar's controls, and the row opens on Enter.
+  await page.getByTestId("qd-list-toolbar").locator('[data-field="list-search"]').focus();
   let reached = false;
-  for (let i = 0; i < 8 && !reached; i += 1) {
+  for (let i = 0; i < 14 && !reached; i += 1) {
     await page.keyboard.press("Tab");
     reached = await page.evaluate(() => {
       let el: Element | null = document.activeElement;
@@ -165,6 +170,7 @@ test("a quote row is reached with Tab and opened with Enter", async ({ page }) =
 
 test("convert sends nothing for the default fulfilment and the chosen one when chosen", async ({ page, request }) => {
   await signIn(page);
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Accepted" }).first().click();
   await page.getByText("Quote detail & admin").click();
   await page.getByTestId("qe-convert").click();
@@ -259,6 +265,8 @@ for (const [status, words] of [
       }
     });
     await signIn(page);
+    await page.getByRole("button", { name: "New quote", exact: true }).click();
+    await expect(page.getByTestId("qb-identity")).toBeVisible();
     const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
     await picker.getByTestId("customer-add-new").click();
     await picker.getByTestId("customer-new-name").fill("Greenridge Landscaping");

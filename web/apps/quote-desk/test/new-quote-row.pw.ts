@@ -1,10 +1,9 @@
-// The New quote row carries one control height: the customer search input
-// rides beside the branch select, the expiry date input and the Create
-// button, under the filter row's status select and Refresh button, and the
-// design system's control face is one height for a form row. The demo
-// polish round 2 shot set found the search input shorter than the controls
-// beside it: the picker's wiring let its input shrink to its content while
-// the row's design system controls stood at the control face height.
+// The list page's title row and toolbar carry one control height: the New
+// quote button in the title row, and the toolbar's search box, segmented
+// control and Refresh button beside each other. The demo polish round 2
+// found a control that shrank to its content while its neighbours stood at
+// the control face height (then the form's customer search; the same
+// discipline holds for the new page's controls).
 //
 // Every control's box height is pinned inside a tolerance of the design
 // system's input height token, read live off the document root (no
@@ -44,18 +43,16 @@ async function expectTokenResolves(page: Page, tokenPx: number): Promise<void> {
   expect(tokenPx, "the design system's input height token --hh-h-input resolves live on the document root").toBeGreaterThan(0);
 }
 
-test("new-quote-row-one-control-height", async ({ page }) => {
+test("list-toolbar-one-control-height", async ({ page }) => {
   await signIn(page);
-  const card = page.locator("qd-quote-builder .box").filter({ has: page.getByTestId("qb-list-filter") });
-  await expect(card).toBeVisible();
+  const toolbar = page.getByTestId("qd-list-toolbar");
+  await expect(toolbar).toBeVisible();
   const tokenPx = await inputHeightToken(page);
   const controls: Array<[string, ReturnType<Page["locator"]>]> = [
-    ["customer search input", card.locator('fieldset[data-control="field-group"] hos-customer-picker input')],
-    ["status select", card.locator('select[data-control="select"][data-field="status-filter"]')],
-    ["branch select", card.locator('select[data-control="select"][data-field="new-branch"]')],
-    ["expiry date input", card.locator('input[type="date"][data-control="date"][data-field="new-expiry"]')],
-    ["Refresh button", card.locator('button.btn-secondary[data-action="refresh"]')],
-    ["Create button", card.locator('button.btn-primary[data-action="create"]')],
+    ["search input", toolbar.locator('input[data-control="text"][data-field="list-search"]')],
+    ["segmented control", toolbar.locator('[data-control="segmented"][data-field="status-filter"]')],
+    ["Refresh button", toolbar.locator('button.btn-secondary[data-action="refresh"]')],
+    ["New quote button", page.locator('button.btn-primary[data-action="new-quote"]')],
   ];
   const heights: number[] = [];
   for (const [label, control] of controls) {

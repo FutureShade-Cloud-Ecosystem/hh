@@ -144,7 +144,7 @@
     "file": "src/quote-workarea.ts",
     "find": "        if (this.store !== null) this.store.state.openRef = this.quoteId;\n        this.store?.scheduleSave();",
     "replace": "        this.store?.scheduleSave();",
-    "test": "P2-4 the desk resumes"
+    "test": "P3 layout saves reach the server one at a time"
   },
   {
     "id": "wa-reset-columns-draft",
@@ -736,13 +736,6 @@
     "test": "guard list paging:"
   },
   {
-    "id": "bq-create-selection",
-    "file": "src/quote-builder.ts",
-    "find": "    if (this.selected === onScreen) this.selected = result.value;",
-    "replace": "    this.selected = result.value;",
-    "test": "guard create selection:"
-  },
-  {
     "id": "pk-search-order",
     "file": "src/customer-picker.ts",
     "find": "    if (mine !== this.seq) return;\n    this.loading = false;",
@@ -1311,14 +1304,14 @@
     "id": "qb-edit-panel-mounted",
     "file": "src/quote-builder.ts",
     "find": "          <qd-quote-edit data-seam=${SEAM_EDIT_PANEL}></qd-quote-edit>",
-    "replace": "          ${this.selected !== \"\" ? html`<qd-quote-edit data-seam=${SEAM_EDIT_PANEL}></qd-quote-edit>` : nothing}",
+    "replace": "          ${this.openQuoteId() !== \"\" ? html`<qd-quote-edit data-seam=${SEAM_EDIT_PANEL}></qd-quote-edit>` : nothing}",
     "test": "P2-2 leaving through New Quote: a quantity that lands while its panel is gone"
   },
   {
     "id": "qb-followups-panel-mounted",
     "file": "src/quote-builder.ts",
     "find": "          <qd-quote-followups data-seam=${SEAM_FOLLOWUPS}></qd-quote-followups>",
-    "replace": "          ${this.selected !== \"\" ? html`<qd-quote-followups data-seam=${SEAM_FOLLOWUPS}></qd-quote-followups>` : nothing}",
+    "replace": "          ${this.openQuoteId() !== \"\" ? html`<qd-quote-followups data-seam=${SEAM_FOLLOWUPS}></qd-quote-followups>` : nothing}",
     "test": "P2-2 leaving through New Quote: a follow-ups stop that lands while its panel is gone"
   },
   {
@@ -1389,7 +1382,7 @@
     "id": "qb-hold-expiry-unmount",
     "file": "src/quote-builder.ts",
     "find": "            <qd-quote-hold-expiry data-seam=${SEAM_HOLD_EXPIRY}></qd-quote-hold-expiry>\n",
-    "replace": "            ${this.selected === \"\" ? nothing : html`<qd-quote-hold-expiry data-seam=${SEAM_HOLD_EXPIRY}></qd-quote-hold-expiry>`}\n",
+    "replace": "            ${this.openQuoteId() === \"\" ? nothing : html`<qd-quote-hold-expiry data-seam=${SEAM_HOLD_EXPIRY}></qd-quote-hold-expiry>`}\n",
     "test": "P2-2 leaving through New Quote: a re-hold that lands while the hold expiry panel is gone still announces its quote"
   },
   {

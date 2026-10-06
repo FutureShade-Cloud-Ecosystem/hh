@@ -89,6 +89,41 @@
     outline: 2px solid var(--hh-focus-ring);
     outline-offset: 2px;
   }
+  /* The segmented control: a joined row of buttons on the recessed track,
+     the pill of the till's own view flip at the sheet's own face. The
+     pressed segment is marked by aria-pressed and the row face (the row-alt
+     fill), never by colour alone. */
+  .segmented {
+    display: inline-flex;
+    align-items: stretch;
+    gap: var(--hh-s-2);
+    padding: var(--hh-s-2);
+    border: 1px solid var(--hh-control-line);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-track);
+  }
+  .seg-btn {
+    /* The row's own box sits at the control face height (the sheet's input
+       token), so a segmented control beside a text control reads as one
+       row: the segment's height less its padding and the row's borders. */
+    min-height: calc(var(--hh-h-input) - 6px);
+    padding: 0 var(--hh-s-16);
+    border: 1px solid transparent;
+    border-radius: var(--hh-radius-pill);
+    background: transparent;
+    color: var(--hh-text-dim);
+    font-size: var(--hh-s-12);
+    white-space: nowrap;
+  }
+  .seg-btn:hover:not(:disabled) {
+    color: var(--hh-text);
+  }
+  .seg-btn.seg-on {
+    background: var(--hh-row-alt);
+    border-color: var(--hh-control-line);
+    color: var(--hh-text);
+    font-weight: 600;
+  }
   /* The named group: the fieldset keeps its legend (the group's accessible
      name) and the legend is set as the group's visible heading. */
   .field-group {

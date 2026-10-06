@@ -5,6 +5,7 @@
 // nothing was written. The suite's discount test lost to that race about as
 // often as it won; this test makes the race deterministic.
 import { expect, test } from "@playwright/test";
+import { showList } from "./switch-helpers.js";
 
 // Both tests read the second line of the seeded draft: a quote another test left behind, or a layout row that resumes
 // another quote, would put a different quote under the click, so each starts from the seeded world.
@@ -18,6 +19,7 @@ test.afterAll(async ({ request }) => {
 test("a late re-read leaves the box being typed in alone, and the blur still saves", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Sales", exact: true }).click();
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Draft" }).first().click();
   const disc = page.getByTestId("qb-line-disc").nth(1);
   await expect(disc).toBeVisible();
@@ -38,6 +40,7 @@ test("a late re-read leaves the box being typed in alone, and the blur still sav
 test("the edit panel keeps the figure being typed through a re-read too", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Sales", exact: true }).click();
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Draft" }).first().click();
   await page.getByText("Quote detail & admin").click();
   const qty = page.locator("qd-quote-edit").locator('[data-field="qty"]').nth(1);

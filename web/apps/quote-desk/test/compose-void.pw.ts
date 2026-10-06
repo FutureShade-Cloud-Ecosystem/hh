@@ -1,8 +1,9 @@
-// New Quote's empty state: the compose card is the screen (one card, one
-// question), and the space between it and the quotes list under the desk is
-// bounded by a spacing token, not a wrapper's reserved height. The demo
-// round found a large void there (defect 3): the compose wrapper reserved a
-// fixed minimum taller than its card, and the void read as a broken layout.
+// New Quote's empty state under the split-list navigation: the compose page
+// is the work area's own screen (one card, one question), and the quotes
+// list is NOT on it any more (the CP1 feedback: the list and the quote flow
+// on separate screens). The old void defect (a wrapper reserving a fixed
+// minimum taller than its card) is pinned the same way it was: the compose
+// wrapper's height is bounded by a spacing token, not a reserved box.
 import { expect, test, type Page } from "@playwright/test";
 
 const SALES = { name: "Sales", exact: true };
@@ -20,13 +21,18 @@ async function signIn(page: Page): Promise<void> {
   await expect(page.getByTestId("qb-list")).toBeVisible();
 }
 
-/** The visible gap between the compose card's bottom and the quotes box's top. */
-async function composeGap(page: Page): Promise<number> {
-  const cardBox = await page.getByTestId("qb-identity").boundingBox();
-  expect(cardBox).toBeTruthy();
-  const quotesBox = page.locator("qd-quote-builder .box").filter({ has: page.getByTestId("qb-list-filter") });
-  const boxTop = await quotesBox.evaluate((el) => el.getBoundingClientRect().top);
-  return boxTop - (cardBox!.y + cardBox!.height);
+/** The compose card's own height, the wrapper's height, and the page's own height. */
+async function heights(page: Page): Promise<{ card: number; wrap: number; page: number }> {
+  return page.evaluate(() => {
+    const area = document.querySelector("qd-app-root")?.shadowRoot?.querySelector("qd-quote-builder")?.shadowRoot?.querySelector("qd-quote-workarea");
+    const card = area?.shadowRoot?.querySelector('[data-testid="qb-identity"]');
+    const wrap = area?.shadowRoot?.querySelector(".composewrap");
+    return {
+      card: card instanceof HTMLElement ? card.getBoundingClientRect().height : -1,
+      wrap: wrap instanceof HTMLElement ? wrap.getBoundingClientRect().height : -1,
+      page: document.documentElement.scrollHeight,
+    };
+  });
 }
 
 async function spacingToken(page: Page): Promise<number> {
@@ -38,21 +44,25 @@ async function spacingToken(page: Page): Promise<number> {
   return tokenPx;
 }
 
-test("the compose card's gap to the quotes list is bounded by the spacing token", async ({ page }) => {
+test("the compose page is the card alone, with no list under it", async ({ page }) => {
   await signIn(page);
-  // The single empty-state card is the screen.
+  await page.getByRole("button", { name: "New quote", exact: true }).click();
   await expect(page.getByTestId("qb-identity")).toBeVisible();
-  const gap = await composeGap(page);
+  await expect(page).toHaveURL(/#\/quotes\/new$/);
+  // The quotes list is not on the compose page: its markup shows nothing.
+  await expect(page.getByTestId("qb-list")).toBeHidden();
+  await expect(page.getByTestId("qd-list-toolbar")).toBeHidden();
+  // The wrapper reserves no void taller than the card by more than a
+  // spacing token (the old defect's own bound).
+  const h = await heights(page);
+  expect(h.card).toBeGreaterThan(0);
   const tokenPx = await spacingToken(page);
-  expect(gap, "the visible gap between the compose card's bottom and the quotes list's top").toBeLessThanOrEqual(tokenPx);
+  expect(h.wrap - h.card, "the wrapper's reserved space over the card").toBeLessThanOrEqual(tokenPx);
 });
 
-test("an empty list still reads its quiet message inside the bounded layout", async ({ page }) => {
+test("an empty list still reads its quiet message on the list page", async ({ page }) => {
   await signIn(page);
-  await page.getByTestId("qb-list-filter").selectOption("LOST");
+  await page.getByTestId("qd-list-tabs").getByRole("button", { name: "Sent", exact: true }).click();
   await expect(page.getByTestId("qb-list")).toHaveText("No quotes.");
-  await expect(page.getByTestId("qb-identity")).toBeVisible();
-  const gap = await composeGap(page);
-  const tokenPx = await spacingToken(page);
-  expect(gap).toBeLessThanOrEqual(tokenPx);
+  await expect(page.getByTestId("qb-identity")).toBeHidden();
 });

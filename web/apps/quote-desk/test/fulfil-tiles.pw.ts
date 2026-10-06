@@ -28,9 +28,16 @@ async function signIn(page: Page): Promise<void> {
   await expect(page.getByTestId("qb-list")).toBeVisible();
 }
 
+/** The compose page under the split-list navigation: the New quote button walks the desk to #/quotes/new. */
+async function newQuote(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "New quote", exact: true }).click();
+  await expect(page.getByTestId("qb-identity")).toBeVisible();
+}
+
 /** Open a quote with no lines: the compose picker's pick IS the create. */
 async function openQuoteWithNoItems(page: Page): Promise<void> {
   await signIn(page);
+  await newQuote(page);
   const pickerInput = page.getByTestId("qb-identity").locator("hos-customer-picker").getByPlaceholder("Search name or account #…");
   await pickerInput.fill("Maple");
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByRole("option", { name: /Maple Ridge Contracting/ }).click();
