@@ -21,6 +21,7 @@ import { AuthController, SessionStore, authHeaderProvider } from "@hardscapehous
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { entryStyles, renderEntry, type FlowsState } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { demoBanner, demoBannerStyles } from "./demo-banner.js";
+import { clearFrontDoorHandoff, readFrontDoorHandoff } from "./demo-account.js";
 import { HOUSE_ZONE, houseDayInZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import { setBranches, wirePorts, clearSessionState, type AuthUser } from "@hardscapehouse/pos-kit/src/ported/ports.js";
 import { QdClient, type BranchRef } from "./qd-client.js";
@@ -181,6 +182,16 @@ export class QuoteDeskApp extends HHElement {
     // The system's light setting is honoured from the first paint.
     this.#theme.start();
     void this.#loadFlows();
+    // The seam rule (decision log rows 893 and 899): the front door's
+    // handoff is adopted only where the demo is compiled in. Vite
+    // substitutes the mode constant at build time, so a default build drops
+    // this branch whole and the reader behind it resolves to the empty stub
+    // (vite.config.ts), keeping the key name and the adopt call out of the
+    // served product; the demo image and the Playwright harness build with
+    // the demo mode.
+    if (import.meta.env.MODE === "demo") {
+      void this.#adoptFromFrontDoor();
+    }
   }
 
   protected override updated(): void {
@@ -221,6 +232,51 @@ export class QuoteDeskApp extends HHElement {
       ? { kind: "ready", flows: result.value }
       : { kind: "unavailable", status: result.status ?? null };
     this.requestUpdate();
+  }
+
+  /**
+   * The front door's handoff (HH-DEMO-1, the Quote Desk's adopt, decision
+   * log rows 893, 899 and 906): the front door mints the demo session and
+   * holds it for the box under its own session storage key; when this app
+   * boots from a module tile's navigation, the record is read, handed to
+   * AuthController.adopt (custody takes the token into private memory and
+   * rewrites the display mirror itself), and the key is dropped in the same
+   * step, so a later visit to this app never re-adopts a spent handoff. The
+   * desk facts the chrome and the ported surfaces read ride the same record
+   * (the front door validated the mint already; this read validates the
+   * record again before custody sees any of it), exactly the fields
+   * #chooseFlow's mint leaves. An absent or unusable record is the ordinary
+   * direct visit; the entry page with the cards comes up, the desk's
+   * ordinary way in. The storage touch rides the auth package's throw-safe
+   * mirror, this app's sink gate's one sanctioned accessor. The shape is the
+   * till's (counter-till app-root on demo/front-door 385cd8d6).
+   */
+  async #adoptFromFrontDoor(): Promise<void> {
+    if (this.#sessions.current !== null) return;
+    const read = readFrontDoorHandoff();
+    if (read.kind === "absent") return;
+    clearFrontDoorHandoff();
+    if (read.kind === "unusable") return;
+    const handed = read.session;
+    const adopted = this.#controller.adopt({
+      token: handed.token,
+      tokenExpiresAtMs: handed.tokenExpiresAtMs,
+      user: handed.user,
+    });
+    if (!adopted) return;
+    this.#deskUserId = handed.user.userId;
+    this.#deskIdentity = {
+      user_id: handed.user.userId,
+      email: handed.user.email,
+      display_name: handed.user.name,
+      role_code: handed.roleCode,
+      role_name: handed.roleName,
+      tier: handed.tier,
+      scope: handed.scope,
+    };
+    this.#roleLabel = handed.roleLabel;
+    this.requestUpdate();
+    await this.#initDesk();
   }
 
   async #chooseFlow(flow: string): Promise<void> {
