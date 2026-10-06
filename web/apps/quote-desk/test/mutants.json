@@ -1465,5 +1465,12 @@
     "find": " && this.hits.length > 0 && shouldQuery(this.term)) void this.run(this.term, true);",
     "replace": " && false) void this.run(this.term, true);",
     "test": "a branch change reads the rows"
+  },
+  {
+    "id": "wa-preview-busy",
+    "file": "src/quote-workarea.ts",
+    "find": "  private async doPreview(print: boolean): Promise<void> {\n    if (this.busy) return;\n",
+    "replace": "  private async doPreview(print: boolean): Promise<void> {\n",
+    "test": "Send Quote is one send"
   }
 ]

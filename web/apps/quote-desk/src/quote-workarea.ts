@@ -2604,8 +2604,12 @@ export class QdQuoteWorkarea extends LitElement {
   }
 
   private async doCopyLink(): Promise<void> {
+    // One thing at a time, like Send: a press that lands while another write is out (a double click whose second press
+    // met a button the page had moved under the pointer) does nothing.
+    if (this.busy) return;
     const ctx = this.ctx;
     const capture = this.captureFor(ctx);
+    const release = this.holdBusy(ctx);
     try {
       const token = await this.ensureLink(ctx, capture);
       // The clipboard is only there on a secure page: say so rather than claim a copy that did not happen.
@@ -2620,12 +2624,16 @@ export class QdQuoteWorkarea extends LitElement {
     } catch (e) {
       if (ctx.stale) return;
       this.error = e instanceof Error ? e.message : "Could not create the link.";
+    } finally {
+      release();
     }
   }
 
   private async doPreview(print: boolean): Promise<void> {
+    if (this.busy) return;
     const ctx = this.ctx;
     const capture = this.captureFor(ctx);
+    const release = this.holdBusy(ctx);
     try {
       // ensureLink throws once the quote has been left, so the lines below only run on the quote that asked.
       const token = await this.ensureLink(ctx, capture);
@@ -2636,6 +2644,8 @@ export class QdQuoteWorkarea extends LitElement {
     } catch (e) {
       if (ctx.stale) return;
       this.error = e instanceof Error ? e.message : "Could not open the preview.";
+    } finally {
+      release();
     }
   }
 

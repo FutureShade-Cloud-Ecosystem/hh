@@ -112,16 +112,15 @@ test("Send Quote is one send: a double press mints one link, and the confirmatio
   page.on("request", (req) => {
     if (req.method() === "POST" && /\/api\/v1\/quotes\/[^/]+\/share-links$/.test(new URL(req.url()).pathname)) mints.push(req.url());
   });
+  let opened = 0;
+  page.on("popup", () => (opened += 1));
   const send = page.getByTestId("qb-send");
-  // Two presses on the same button, whatever the page does between them: the draft hint above the actions folds away
-  // when the quote is sent (the buttons move up), so a pointer double click can land its second press on the
-  // neighbour, which is not what this leg is about.
-  await send.evaluate((el) => {
-    (el as HTMLElement).click();
-    (el as HTMLElement).click();
-  });
+  // A real pointer double click: the page moves between the two presses (the draft hint folds when the quote is
+  // sent), so the second press must find nothing that mints or prints under the pointer.
+  await send.dblclick();
   await expect(page.getByTestId("qb-notice")).toContainText("Quote sent");
   expect(mints).toHaveLength(1);
+  expect(opened, "no print or preview window was opened by the second press").toBe(0);
   const notice = (await page.getByTestId("qb-notice").innerText()).toLowerCase();
   expect(notice).toContain("nothing was emailed");
   expect(notice).not.toMatch(/emailed to the customer|emailed and texted/);
