@@ -13,14 +13,17 @@
 // holds its templates to no property or event bindings): the cards and the
 // chrome controls delegate through data-action on the host.
 import { SIGN_OUT_EVENT, UNSENT_WAIT_MS, waitUpTo, type SignOutDetail } from "./quote-context.js";
-import { html, css, nothing, type TemplateResult } from "lit";
+import { html, css, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
+// The shared chrome (item 5, decision log row 938): the element registers
+// itself; the app feeds it through the wiring pass below, the same
+// no-template-binding discipline the builder's client rides.
+import "@hardscapehouse/design-system/src/header.js";
 import { ApiClient } from "@hardscapehouse/api-client";
 import { AuthController, SessionStore, authHeaderProvider } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { entryStyles, renderEntry, type FlowsState } from "@hardscapehouse/pos-kit/src/ported/entry.js";
-import { demoBanner, demoBannerStyles } from "./demo-banner.js";
 import { clearFrontDoorHandoff, readFrontDoorHandoff } from "./demo-account.js";
 import { HOUSE_ZONE, houseDayInZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import { setBranches, wirePorts, clearSessionState, type AuthUser } from "@hardscapehouse/pos-kit/src/ported/ports.js";
@@ -34,7 +37,6 @@ const DEMO_ORG = "hh-demo";
 export class QuoteDeskApp extends HHElement {
   static styles = [
     baseStyles,
-    demoBannerStyles,
     entryStyles,
     css`
       :host {
@@ -43,77 +45,27 @@ export class QuoteDeskApp extends HHElement {
         background: var(--hh-page);
         color: var(--hh-text);
       }
-      header.bar {
+      /* The chrome above the work area is the shared header element
+         (hos-app-header); this app keeps only the theme control of its own,
+         on one slim row under the bar. The control's face is the sheet's
+         secondary button at the bar's own compact size. */
+      .chrome-tools {
         display: flex;
-        align-items: center;
-        flex-wrap: wrap;
-        gap: var(--hh-s-8) var(--hh-s-16);
-        min-height: 48px;
-        box-sizing: border-box;
-        padding: var(--hh-s-8) var(--hh-s-20);
-        background: var(--hh-card);
-        border-bottom: 1px solid var(--hh-line);
-      }
-      .brand {
-        display: flex;
-        align-items: center;
-        gap: var(--hh-s-12);
-      }
-      .mark {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 30px;
-        height: 30px;
-        border-radius: var(--hh-radius-control);
-        background: var(--hh-accent);
-        color: var(--hh-accent-ink);
-        font-size: 12px;
-        font-weight: 700;
-        letter-spacing: 0.02em;
-      }
-      .brand h1 {
-        font-size: 17px;
-        font-weight: 600;
-        margin: 0;
-        white-space: nowrap;
-      }
-      .bar-demo {
-        display: flex;
-        min-width: 0;
-      }
-      .bar-user {
-        margin: 0 0 0 auto;
-        display: flex;
+        justify-content: flex-end;
         align-items: center;
         gap: var(--hh-s-8);
+        padding: var(--hh-s-4) var(--hh-s-20);
       }
-      .role-name {
-        margin: 0;
-        font-weight: 600;
-        font-size: 13px;
-        padding: var(--hh-s-4) var(--hh-s-12);
-        border: 1px solid var(--hh-line);
-        border-radius: var(--hh-radius-pill);
-        background: var(--hh-page);
-        white-space: nowrap;
-      }
-      header.bar button {
+      .chrome-tools button {
         min-height: 0;
         padding: 7px 14px;
         font-size: 12px;
         line-height: normal;
         white-space: nowrap;
       }
-      header.bar button:hover:not(:disabled) {
+      .chrome-tools button:hover:not(:disabled) {
         border-color: var(--hh-accent-text);
         color: var(--hh-accent-text);
-      }
-      @media (max-width: 1100px) {
-        .bar-demo {
-          order: 3;
-          flex-basis: 100%;
-        }
       }
       main {
         padding: var(--hh-s-4) 0;
@@ -144,6 +96,8 @@ export class QuoteDeskApp extends HHElement {
   #themeStatus = "";
   /** The mounted surface: the entry cards, or the desk. */
   #surface: "entry" | "desk" = "entry";
+  /** Whether this build is the demo build: the seam rule's own constant (the front door handoff rides it), and the shared header's demo badge rides it too. */
+  readonly #demoBuild = import.meta.env.MODE === "demo";
 
   constructor() {
     super();
@@ -199,6 +153,18 @@ export class QuoteDeskApp extends HHElement {
     // way every shared component receives its facts.
     const builder = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("qd-quote-builder");
     if (builder !== null) builder.client = this.#client;
+    // The shared chrome is fed the same way, not through template bindings
+    // (the design system's position gate holds this app's templates too):
+    // the role's label, the signed-in flag, the demo badge's build flag, and
+    // the theme the switcher last applied to the document, which the element
+    // re-applies under the sheet's own attribute contract.
+    const header = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("hos-app-header");
+    if (header !== null) {
+      header.roleLabel = this.#signedInRoleLabel();
+      header.signedIn = this.#roleLabel !== null;
+      header.demo = this.#demoBuild;
+      header.theme = document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+    }
   }
 
   override disconnectedCallback(): void {
@@ -218,6 +184,9 @@ export class QuoteDeskApp extends HHElement {
     }
     if (control.getAttribute("data-action") === "sign-out") {
       void this.#signOut();
+    }
+    if (control.getAttribute("data-action") === "switch-role") {
+      void this.#switchRole();
     }
     if (control.getAttribute("data-action") === "theme") {
       this.#theme.cycle();
@@ -366,6 +335,19 @@ export class QuoteDeskApp extends HHElement {
     this.requestUpdate();
   }
 
+  /**
+   * Switch role: the front door owns the picker, so the walk goes there
+   * (decision log row 938: Switch role returns to the front door at /). The
+   * session ends the sign-out way first, unsent work included, so no custody
+   * mirror survives the walk and the front door comes up at its own picker,
+   * not at a session it did not mint.
+   */
+  async #switchRole(): Promise<void> {
+    if (this.#busy) return;
+    await this.#signOut();
+    window.location.assign("/");
+  }
+
   /** The role's label in the chrome, read from custody rather than cached. */
   #signedInRoleLabel(): string {
     const session = this.#sessions.current;
@@ -394,28 +376,12 @@ export class QuoteDeskApp extends HHElement {
   }
 
   render(): TemplateResult {
-    const demoPresent =
-      this.#surface === "desk" || (this.#flowsState.kind === "ready" && this.#flowsState.flows.length > 0);
     return html`
       <p class="visually-hidden" role="status" aria-live="polite" data-testid="theme-status">${this.#themeStatus}</p>
-      <header class="bar" data-testid="qd-bar">
-        <div class="brand">
-          <span class="mark" data-testid="qd-mark" aria-hidden="true">QD</span>
-          <h1 data-testid="qd-title">Quote Desk</h1>
-        </div>
-        ${demoPresent ? html`<div class="bar-demo">${demoBanner()}</div>` : nothing}
-        ${this.#roleLabel === null
-          ? html`<p class="bar-user">${this.#themeControl()}</p>`
-          : html`
-              <p class="bar-user">
-                <span class="role-name" data-testid="signed-in-role">${this.#signedInRoleLabel()}</span>
-                ${this.#themeControl()}
-                <button type="button" class="btn-secondary" data-action="sign-out" ?disabled=${this.#busy}>
-                  Sign out
-                </button>
-              </p>
-            `}
-      </header>
+      <hos-app-header data-testid="qd-bar"></hos-app-header>
+      <div class="chrome-tools">
+        ${this.#themeControl()}
+      </div>
       <main>
         ${this.#surface === "desk"
           ? html`

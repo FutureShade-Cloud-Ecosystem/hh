@@ -381,8 +381,8 @@
   {
     "id": "wa-cart-after-read",
     "file": "src/quote-workarea.ts",
-    "find": "    await this.loadAll();\n    if (ctx.stale) return;\n    this.quoteChanged();\n  }\n\n  // ── the workspace",
-    "replace": "    await this.loadAll();\n    this.quoteChanged();\n  }\n\n  // ── the workspace",
+    "find": "    await this.loadAll();\n    if (ctx.stale) return;\n    this.quoteChanged();\n  }\n\n  // \u2500\u2500 the workspace",
+    "replace": "    await this.loadAll();\n    this.quoteChanged();\n  }\n\n  // \u2500\u2500 the workspace",
     "test": "guard cart change after read:"
   },
   {
@@ -598,8 +598,8 @@
   {
     "id": "ep-convert-reload",
     "file": "src/edit-panel.ts",
-    "find": "    await this.load();\n    if (ctx.stale) return;\n    this.announceChanged();\n  }\n\n  // ── delegation",
-    "replace": "    await this.load();\n    this.announceChanged();\n  }\n\n  // ── delegation",
+    "find": "    await this.load();\n    if (ctx.stale) return;\n    this.announceChanged();\n  }\n\n  // \u2500\u2500 delegation",
+    "replace": "    await this.load();\n    this.announceChanged();\n  }\n\n  // \u2500\u2500 delegation",
     "test": "guard edit convert reload:"
   },
   {
@@ -1416,5 +1416,12 @@
     "test": "no write of the src is sent from a deferred position",
     "runner": "node",
     "testFile": "test/write-census.test.mjs"
+  },
+  {
+    "id": "app-switch-role-ends-session",
+    "file": "src/app-root.ts",
+    "find": "    await this.#signOut();\n    window.location.assign(\"/\");",
+    "replace": "    window.location.assign(\"/\");",
+    "test": "Switch role ends the session and returns to the front door at /"
   }
 ]

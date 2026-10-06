@@ -97,7 +97,7 @@ test("a boot from the front door's key lands signed in as the handed role, no se
   await seedHandoff(page, handoffRecord());
   await page.goto("/");
   // The bar is up under the role's name; the entry cards never show.
-  await expect(page.getByTestId("signed-in-role")).toHaveText("Sales", { timeout: 15_000 });
+  await expect(page.getByTestId("header-word")).toHaveText("Sales", { timeout: 15_000 });
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Sales manager", exact: true })).toHaveCount(0);
   // The handoff key is spent in the same step; custody's mirror is written
@@ -123,7 +123,7 @@ test("a handoff record that fails a read is dropped and the entry page comes up"
 test("the box's Switch role walk lands the desk as the other role the same way", async ({ page }) => {
   await seedHandoff(page, handoffRecord());
   await page.goto("/");
-  await expect(page.getByTestId("signed-in-role")).toHaveText("Sales", { timeout: 15_000 });
+  await expect(page.getByTestId("header-word")).toHaveText("Sales", { timeout: 15_000 });
   // Sign out is the desk's end of the first walk; the front door's Switch
   // role then leaves a fresh record for the other role, and the module
   // opens again. The re-seed is written from the page side, then the desk
@@ -137,7 +137,7 @@ test("the box's Switch role walk lands the desk as the other role the same way",
     { key: HANDOFF_KEY, value: JSON.stringify(managerHandoffRecord()) },
   );
   await page.reload();
-  await expect(page.getByTestId("signed-in-role")).toHaveText("Sales manager", { timeout: 15_000 });
+  await expect(page.getByTestId("header-word")).toHaveText("Sales manager", { timeout: 15_000 });
   await expect(page.getByRole("button", { name: "Sales manager", exact: true })).toHaveCount(0);
   const stored = await page.evaluate((key) => window.sessionStorage.getItem(key), HANDOFF_KEY);
   expect(stored).toBeNull();
