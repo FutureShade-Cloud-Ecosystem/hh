@@ -6,7 +6,7 @@
 // ref_type, ref_id) describes a capture that no longer exists: nothing in it says who signed or
 // that they agreed.
 
-import { api } from './ports.js';
+import { api } from '@hardscapehouse/pos-kit/src/ported/ports.js';
 
 export interface TypedAttestationResult {
   signature_ref: string;

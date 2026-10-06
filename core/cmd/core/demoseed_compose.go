@@ -80,11 +80,12 @@ func compose(pool *pgxpool.Pool, log *slog.Logger, vaultKey string) (*world, err
 	if err != nil {
 		return nil, err
 	}
-	paySvc := payment.NewService(payment.NewStore(pool, payVault), payment.RunPaymentsStub{})
+	payStore := payment.NewStore(pool, payVault)
+	paySvc := payment.NewService(payStore, payment.RunPaymentsStub{})
 
 	tillRepo := till.NewRepository(pool)
 	tillSvc := till.NewService(tillRepo).
-		WithCardCharger(cardChargerAdapter{svc: paySvc}).
+		WithCardCharger(cardChargerAdapter{svc: paySvc, store: payStore}).
 		WithAudit(auditSvc)
 
 	// The till's role-configuration rules ride the demo compose too (RT-B):

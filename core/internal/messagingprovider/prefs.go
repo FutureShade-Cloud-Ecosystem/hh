@@ -63,13 +63,28 @@ func scanPrefs(row pgx.Row) (SMSPrefs, error) {
 	return p, err
 }
 
+// rowQuerier is the one read both the pool and a transaction can answer. It lets the same statement
+// serve a pool-level read (Get) and a read that must not move between the decision and the commit
+// (getOn under a caller's transaction), so the under-transaction read never asks the shared pool for
+// a second connection while the first is held.
+type rowQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 // Get returns one customer's preferences. found=false means NO ROW, which means no consent, it is
 // not an error and callers must treat it as a refusal, not a default.
 func (s *PrefsStore) Get(ctx context.Context, customerID string) (SMSPrefs, bool, error) {
 	if s.pool == nil || strings.TrimSpace(customerID) == "" {
 		return SMSPrefs{}, false, nil
 	}
-	p, err := scanPrefs(s.pool.QueryRow(ctx,
+	return getOn(ctx, s.pool, customerID)
+}
+
+// getOn is Get through the querier given: the pool for a standalone read, the caller's transaction
+// when the answer must be the row as of the commit, not as of some earlier read. found=false means
+// NO ROW, the same refusal Get reports.
+func getOn(ctx context.Context, q rowQuerier, customerID string) (SMSPrefs, bool, error) {
+	p, err := scanPrefs(q.QueryRow(ctx,
 		`SELECT `+prefsCols+` FROM customer_sms_prefs WHERE customer_id = $1`, customerID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

@@ -377,11 +377,12 @@ func (r *Repository) PendingFulfilments(ctx context.Context, branchID string) ([
 }
 
 // SnapshotOnHand is the count-sheet freeze basis: on-hand + weighted-avg for every product at a branch.
-func (r *Repository) SnapshotOnHand(ctx context.Context, branchID string) ([]CountSnapshot, error) {
+// A caller holding a transaction passes it so the read rides that connection; nil reads through the pool.
+func (r *Repository) SnapshotOnHand(ctx context.Context, tx pgx.Tx, branchID string) ([]CountSnapshot, error) {
 	if r.pool == nil {
 		return nil, errNoDB
 	}
-	rows, err := r.pool.Query(ctx, `
+	rows, err := r.q(tx).Query(ctx, `
 		SELECT sb.product_id::text, sb.location_id::text, sb.on_hand_base,
 		       COALESCE(pbc.avg_unit_cost_cents, 0)
 		FROM stock_balances sb

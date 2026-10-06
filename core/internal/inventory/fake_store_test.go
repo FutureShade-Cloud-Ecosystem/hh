@@ -207,7 +207,9 @@ func (f *fakeStore) RecentMoves(context.Context, string, string, int) ([]StockMo
 func (f *fakeStore) PendingFulfilments(context.Context, string) ([]PendingFulfilment, error) {
 	return nil, nil
 }
-func (f *fakeStore) SnapshotOnHand(context.Context, string) ([]CountSnapshot, error) { return nil, nil }
+func (f *fakeStore) SnapshotOnHand(context.Context, pgx.Tx, string) ([]CountSnapshot, error) {
+	return nil, nil
+}
 func (f *fakeStore) ReceivedLinesForPO(context.Context, string) ([]ReceivedLine, error) {
 	return nil, nil
 }

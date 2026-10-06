@@ -207,10 +207,11 @@ func accrualFor(p RebateProgram, l RebateSaleLine) (cents int64, basis int64, no
 		if p.RateCentsPerUnit == nil {
 			return 0, 0, ""
 		}
-		// Base qty is fractional (tonnes, square feet), so this is a float multiply rounded through
-		// the same half-up helper the money paths use rather than an int64 multiply that would
-		// silently drop the fraction of a tonne.
-		return roundCents(l.QtyBase * float64(*p.RateCentsPerUnit)), l.SaleCents,
+		// EXACT ARM (row 820): base qty is fractional (tonnes, square feet), so the accrual is
+		// integer cents times the exact rational quantity the float64 wire carried, rounded once
+		// half away from zero, the same treatment the line total gets. A claim on 4.1 tonnes at
+		// 15 cents a tonne is exactly 61.5 and accrues 62, not the float's 61.
+		return centsTimesFactor(*p.RateCentsPerUnit, exactDecimal(l.QtyBase)), l.SaleCents,
 			fmt.Sprintf("%s per base unit", moneyStr(*p.RateCentsPerUnit))
 	}
 	return 0, 0, ""

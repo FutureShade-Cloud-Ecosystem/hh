@@ -49,7 +49,7 @@
 // into the staff app and may not be: home-bento-wiring.test.mjs pins that too.
 
 import { css, html, nothing } from 'lit';
-import { focusRing } from './styles/focus-ring.js';
+import { focusRing } from '@hardscapehouse/pos-kit/src/ported/styles/focus-ring.js';
 import type { TemplateResult } from 'lit';
 
 /**

@@ -52,15 +52,36 @@ func insert(table, conflict string, pairs ...any) row {
 	return r
 }
 
+// auditAnchor is a column value that is the seq of an audit_log row the plan wrote earlier in the
+// same transaction, named by that row's id. audit_log.seq is GENERATED ALWAYS, so no plan can know it;
+// an acceptance record anchors to its QUOTE_ACCEPTED row by it (quote_acceptances.audit_seq). It
+// renders as a read-only lookup around ONE bound parameter, so the applier still writes INSERTs only.
+type auditAnchor string
+
 // sql renders the statement. Column names come from this file's own call sites, never from input,
 // so they are interpolated; every VALUE is a bound parameter.
 func (r row) sql() string {
 	ph := make([]string, len(r.cols))
 	for i := range r.cols {
 		ph[i] = fmt.Sprintf("$%d", i+1)
+		if _, ok := r.vals[i].(auditAnchor); ok {
+			ph[i] = fmt.Sprintf("(SELECT seq FROM audit_log WHERE id = $%d::uuid)", i+1)
+		}
 	}
 	return fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT %s DO NOTHING",
 		r.table, strings.Join(r.cols, ", "), strings.Join(ph, ", "), r.conflict)
+}
+
+// args is the bound parameter list, in column order.
+func (r row) args() []any {
+	out := make([]any, len(r.vals))
+	for i, v := range r.vals {
+		if a, ok := v.(auditAnchor); ok {
+			v = string(a)
+		}
+		out[i] = v
+	}
+	return out
 }
 
 // applyResult is the arithmetic a run reports: how many rows the plan proposed and how many the
@@ -84,7 +105,7 @@ type txExec interface {
 func apply(ctx context.Context, tx txExec, rows []row) (applyResult, error) {
 	res := applyResult{Proposed: len(rows), ByTable: map[string]int{}}
 	for i, r := range rows {
-		tag, err := tx.Exec(ctx, r.sql(), r.vals...)
+		tag, err := tx.Exec(ctx, r.sql(), r.args()...)
 		if err != nil {
 			return res, fmt.Errorf("demoseed: row %d into %s: %w", i, r.table, err)
 		}

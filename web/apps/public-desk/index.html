@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- The token rides the address bar, so no request this page makes may
+         carry it onward as a referrer. -->
+    <meta name="referrer" content="no-referrer" />
+    <title>Your Quote: Hardscape House</title>
+    <!-- This page is reached by an opaque share-link token and runs BEFORE any
+         authentication: there is no session, no nav shell and no toast host, so
+         the component surfaces all feedback inline. The token in the link is the
+         credential; no other credential exists here. -->
+    <!-- Pin LIGHT unconditionally, before the stylesheet link so no mode ever
+         flashes. Deliberately NOT a preference-reading bootstrap: this page is
+         pre-auth, so there is no session and no theme preference that could
+         belong to the person reading it. A customer document must look
+         identical to everyone and must print correctly. One line, no branching
+         (the ERP's own DIB-399 ruling, carried). The brand is pinned the same
+         way: the manifest names hh-pro for this app, so the action fill is
+         the dealer blue. -->
+    <script>
+      document.documentElement.setAttribute('data-theme', 'light');
+      document.documentElement.setAttribute('data-brand', 'hh-pro');
+    </script>
+    <!-- The page's own chrome, the design-system harness's one line: the body
+         stands on the token's ground (--hh-page, pale grey-blue in the light
+         half this page pins), so the white quote cards stand OFF the page
+         instead of dissolving into it. The component paints only its own
+         reading column; the canvas behind it is the document's. -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: var(--hh-page);
+        color: var(--hh-text);
+      }
+    </style>
+  </head>
+  <body>
+    <pd-quote-public></pd-quote-public>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

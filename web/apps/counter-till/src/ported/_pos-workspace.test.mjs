@@ -27,7 +27,7 @@ import {
   mergeWorkspaceForSave,
   changedWorkspaceFields,
   WORKSPACE_FIELDS,
-} from './_pos-workspace.ts';
+} from '@hardscapehouse/pos-kit/src/ported/_pos-workspace.ts';
 
 const view = (over = {}) => ({ ...defaultView(), ...over });
 

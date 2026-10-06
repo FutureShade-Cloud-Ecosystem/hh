@@ -43,9 +43,9 @@ func seedTermsQuote(t *testing.T, pool *pgxpool.Pool, totalCents int64) string {
 	var quoteID string
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO quotes (quote_no, customer_id, branch_id, status, valid_until,
-		                    subtotal_cents, tax_cents, total_cents)
-		VALUES ($1, $2::uuid, $3::uuid, 'DRAFT', NULL, $4, 0, $4) RETURNING id::text`,
-		"#Q-"+tag, cust, intTrenton, totalCents).Scan(&quoteID); err != nil {
+		                    subtotal_cents, tax_cents, total_cents, created_by, salesperson_id)
+		VALUES ($1, $2::uuid, $3::uuid, 'DRAFT', NULL, $4, 0, $4, $5, $5) RETURNING id::text`,
+		"#Q-"+tag, cust, intTrenton, totalCents, seedUserID).Scan(&quoteID); err != nil {
 		t.Fatalf("seed quote: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `

@@ -18,6 +18,8 @@ type glStore interface {
 
 	// - posting rules -
 	PostingAccounts(ctx context.Context, eventType, branchID string) (map[string]string, error) // line_role → account_code
+	// PostingAccountsTx is PostingAccounts read through the caller's transaction (no second pool connection).
+	PostingAccountsTx(ctx context.Context, tx pgx.Tx, eventType, branchID string) (map[string]string, error)
 	ListActiveRules(ctx context.Context) ([]RuleRef, error)
 
 	// - chart of accounts -
@@ -29,6 +31,8 @@ type glStore interface {
 
 	// - journals (the shared persist path) -
 	InsertJournal(ctx context.Context, d journalDraft) (id string, created bool, err error)
+	// InsertJournalTx is InsertJournal inside the caller's transaction, under a savepoint (see the repository).
+	InsertJournalTx(ctx context.Context, tx pgx.Tx, d journalDraft) (id string, created bool, err error)
 	GetJournal(ctx context.Context, id string) (Journal, error)
 	ListJournals(ctx context.Context, f JournalFilter) ([]Journal, error)
 	ApproveJournal(ctx context.Context, id, approverID string) (Journal, error)

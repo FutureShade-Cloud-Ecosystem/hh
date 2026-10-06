@@ -2,8 +2,8 @@
 
 import { LitElement, css, html, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
-import { focusRing } from './styles/focus-ring.js';
-import { ModalFocus } from './modal-focus.js';
+import { focusRing } from '@hardscapehouse/pos-kit/src/ported/styles/focus-ring.js';
+import { ModalFocus } from '@hardscapehouse/pos-kit/src/ported/modal-focus.js';
 import { canPark, guardMessage, quickStartMode, type LiveTicket } from './quick-action-guard.js';
 
 /**
