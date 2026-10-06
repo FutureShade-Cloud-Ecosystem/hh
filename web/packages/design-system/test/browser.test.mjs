@@ -128,6 +128,47 @@ function elementPage() {
 </html>`;
 }
 
+// The header slot leg's page: the shared header with and without slotted
+// theme controls, static HTML so the elements upgrade with their light DOM
+// children already in place (the shape every adopting app renders).
+function headerPage() {
+  const themeControls = (choice) => `
+  <div slot="theme" class="theme-cycle">
+    <button type="button" data-action="theme-cycle" data-choice="${choice}">Theme: ${choice}</button>
+  </div>`;
+  return `<!doctype html>
+<html data-theme="light">
+<head>
+<meta charset="utf-8">
+<title>hh design system header slot leg</title>
+<link rel="stylesheet" href="/tokens.css">
+<script type="importmap">
+  {
+    "imports": {
+      "lit": "/node_modules/lit/index.js",
+      "lit/": "/node_modules/lit/",
+      "lit-html": "/node_modules/lit-html/lit-html.js",
+      "lit-html/": "/node_modules/lit-html/",
+      "lit-element": "/node_modules/lit-element/lit-element.js",
+      "lit-element/": "/node_modules/lit-element/",
+      "@lit/reactive-element": "/node_modules/@lit/reactive-element/reactive-element.js",
+      "@lit/reactive-element/": "/node_modules/@lit/reactive-element/"
+    }
+  }
+</script>
+</head>
+<body>
+<hos-app-header id="bare-unsigned"></hos-app-header>
+<hos-app-header id="bare-signed" role-label="Sales" signed-in></hos-app-header>
+<hos-app-header id="slotted-signed" role-label="Sales" signed-in>${themeControls('auto')}</hos-app-header>
+<hos-app-header id="slotted-unsigned">${themeControls('auto')}</hos-app-header>
+<script type="module">
+  import '/src/index.js';
+</script>
+</body>
+</html>`;
+}
+
 function startServer() {
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
@@ -147,6 +188,11 @@ function startServer() {
     if (url.pathname === '/harness') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       res.end(buildHarnessPage({ theme: 'dark', brand: 'base' }));
+      return;
+    }
+    if (url.pathname === '/header') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(headerPage());
       return;
     }
     // The per-kit sheets the harness page's declarative shadow roots link.
@@ -861,6 +907,176 @@ if (reason && inCI && !underBun) {
         0,
         'a listener that outside code attached to a node inside the kit must be lost across a state change',
       );
+    } finally {
+      await cdp.close();
+      await close();
+    }
+  });
+
+  test('the shared header without slotted theme content keeps a fixed right cluster: two buttons, no separator, no empty slot element', async () => {
+    // The item 5 followup's WITHOUT half: a host that never slots theme
+    // controls must see exactly the cluster the element shipped before the
+    // slot existed. An always-rendered empty slot, or a separator with
+    // nothing behind it, fails here.
+    const { port, close } = await startServer();
+    const cdp = await launchBrowser(binary);
+    try {
+      await cdp.navigate(`http://127.0.0.1:${port}/header`);
+      const out = await cdp.evaluate(
+        `(async () => {
+          await new Promise((done) => {
+            const t0 = Date.now();
+            const poll = () => {
+              const ok = !!customElements.get('hos-app-header') &&
+                [...document.querySelectorAll('hos-app-header')].every((el) => el.shadowRoot !== null);
+              if (ok || Date.now() - t0 > 5000) done();
+              else setTimeout(poll, 25);
+            };
+            poll();
+          });
+          const shape = (el) => {
+            const cluster = el.shadowRoot.querySelector('.controls');
+            if (cluster === null) return null;
+            return [...cluster.children].map((n) => {
+              const tag = n.tagName.toLowerCase();
+              const action = n.getAttribute('data-action');
+              const name = n.getAttribute('name');
+              return tag + (action ? '[data-action=' + action + ']' : '') + (name ? '[' + name + ']' : '');
+            });
+          };
+          return {
+            signed: shape(document.getElementById('bare-signed')),
+            unsigned: shape(document.getElementById('bare-unsigned')),
+          };
+        })()`,
+      );
+      assert.deepEqual(
+        out.signed,
+        ['button[data-action=switch-role]', 'button[data-action=sign-out]'],
+        'the bare signed-in cluster is exactly Switch role then Sign out',
+      );
+      assert.deepEqual(out.unsigned, [], 'the bare unsigned cluster renders nothing');
+    } finally {
+      await cdp.close();
+      await close();
+    }
+  });
+
+  test('slotted theme controls render inside the right cluster behind a thin separator, and stay live', async () => {
+    // The WITH half: the host's controls land inside the element's right
+    // cluster, after Switch role and Sign out, with a thin separator between
+    // the buttons and them; unsigned, the controls still render (the front
+    // door's theme switcher is an unsigned control) with no separator and no
+    // buttons; and a click on a slotted control reaches the host's listener
+    // off composedPath, the delegation pattern every adopting app rides.
+    const { port, close } = await startServer();
+    const cdp = await launchBrowser(binary);
+    try {
+      await cdp.navigate(`http://127.0.0.1:${port}/header`);
+      const out = await cdp.evaluate(
+        `(async () => {
+          await new Promise((done) => {
+            const t0 = Date.now();
+            const poll = () => {
+              const ok = !!customElements.get('hos-app-header') &&
+                [...document.querySelectorAll('hos-app-header')].every((el) => el.shadowRoot !== null);
+              if (ok || Date.now() - t0 > 5000) done();
+              else setTimeout(poll, 25);
+            };
+            poll();
+          });
+          const shape = (el) => {
+            const cluster = el.shadowRoot.querySelector('.controls');
+            if (cluster === null) return null;
+            return [...cluster.children].map((n) => {
+              const tag = n.tagName.toLowerCase();
+              const action = n.getAttribute('data-action');
+              const name = n.getAttribute('name');
+              const cls = n.className || '';
+              return tag + (action ? '[data-action=' + action + ']' : '') + (name ? '[' + name + ']' : '') + (cls ? '.' + cls : '');
+            });
+          };
+          const signed = document.getElementById('slotted-signed');
+          const unsigned = document.getElementById('slotted-unsigned');
+          const slot = signed.shadowRoot.querySelector('.controls slot[name="theme"]');
+          const assigned = slot ? slot.assignedElements() : [];
+          const themeButton = assigned.length > 0 ? assigned[0].querySelector('button') : null;
+          const signOut = signed.shadowRoot.querySelector('button[data-action="sign-out"]');
+          const sep = signed.shadowRoot.querySelector('.controls .theme-sep');
+          const rect = (el) => {
+            const r = el.getBoundingClientRect();
+            return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, cx: (r.left + r.right) / 2, cy: (r.top + r.bottom) / 2 };
+          };
+          const headerBox = rect(signed);
+          const buttonBox = themeButton ? rect(themeButton) : null;
+          const signOutBox = signOut ? rect(signOut) : null;
+          const sepBox = sep ? rect(sep) : null;
+          const unsignedSlot = unsigned.shadowRoot.querySelector('.controls slot[name="theme"]');
+          const unsignedButton = unsignedSlot && unsignedSlot.assignedElements().length > 0
+            ? unsignedSlot.assignedElements()[0].querySelector('button')
+            : null;
+          // The delegation pattern: one listener on the host, the control read
+          // off the composed path, exactly as the README tells adopters.
+          const received = [];
+          signed.addEventListener('click', (event) => {
+            const control = event.composedPath().find((n) => n instanceof Element && n.hasAttribute('data-action'));
+            received.push(control ? control.getAttribute('data-action') + ':' + control.getAttribute('data-choice') : null);
+          });
+          if (themeButton) themeButton.click();
+          return {
+            signedShape: shape(signed),
+            unsignedShape: shape(unsigned),
+            assignedCount: assigned.length,
+            themeButtonVisible: themeButton !== null && themeButton.isConnected,
+            headerBox,
+            buttonBox,
+            signOutBox,
+            sepBox,
+            unsignedButtonVisible: unsignedButton !== null && unsignedButton.isConnected,
+            received,
+          };
+        })()`,
+      );
+      assert.deepEqual(
+        out.signedShape,
+        [
+          'button[data-action=switch-role].btn-secondary',
+          'button[data-action=sign-out].btn-secondary',
+          'span.theme-sep',
+          'slot[theme]',
+        ],
+        'the slotted signed-in cluster reads Switch role, Sign out, a thin separator, then the theme slot',
+      );
+      assert.deepEqual(
+        out.unsignedShape,
+        ['slot[theme]'],
+        'unsigned with slotted controls renders the slot alone: no buttons, no separator with nothing to separate',
+      );
+      assert.equal(out.assignedCount, 1, 'the theme slot has the host control assigned');
+      assert.ok(out.themeButtonVisible, 'the slotted theme control is live in the element');
+      assert.ok(out.unsignedButtonVisible, 'the unsigned header still shows the slotted theme control');
+      assert.ok(out.sepBox !== null, 'the separator rendered');
+      assert.ok(out.sepBox.right - out.sepBox.left <= 2, `the separator is a hairline (${out.sepBox.right - out.sepBox.left}px)`);
+      assert.ok(out.sepBox.bottom - out.sepBox.top >= 10, 'the separator stretches with the cluster');
+      assert.ok(
+        out.signOutBox !== null && out.signOutBox.right <= out.sepBox.left + 0.5,
+        'the separator sits after Sign out',
+      );
+      assert.ok(
+        out.buttonBox !== null && out.sepBox.right <= out.buttonBox.left + 0.5,
+        'the slotted control sits after the separator',
+      );
+      assert.ok(
+        out.buttonBox !== null && out.signOutBox !== null && Math.abs(out.buttonBox.cy - out.signOutBox.cy) < 8,
+        'the slotted control rides the same band as Sign out, inside the right cluster',
+      );
+      assert.ok(
+        out.buttonBox !== null &&
+          out.buttonBox.left >= out.headerBox.left && out.buttonBox.right <= out.headerBox.right + 0.5 &&
+          out.buttonBox.top >= out.headerBox.top - 0.5 && out.buttonBox.bottom <= out.headerBox.bottom + 0.5,
+        'the slotted control paints inside the header bar',
+      );
+      assert.deepEqual(out.received, ['theme-cycle:auto'], 'a click on the slotted control reaches the host listener off composedPath');
     } finally {
       await cdp.close();
       await close();
