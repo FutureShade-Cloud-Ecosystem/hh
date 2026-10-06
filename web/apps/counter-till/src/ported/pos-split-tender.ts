@@ -38,6 +38,10 @@ import {
  * The panel emits `pos-split-ring` with the wire-shaped legs; the terminal owns the actual POST, so
  * there is exactly one place in the app that rings a sale.
  */
+/** The tender names a person reads: Account, Card, Cash (the wire words stay upper case). */
+const METHOD_LABELS: Record<string, string> = { ACCOUNT: 'Account', CARD: 'Card', CASH: 'Cash', CHEQUE: 'Cheque' };
+const METHOD_ORDER: DraftLeg['method'][] = SPLIT_METHODS.slice().sort((a, b) => (METHOD_LABELS[a] ?? a).localeCompare(METHOD_LABELS[b] ?? b));
+
 @customElement('hos-pos-split-tender')
 export class HosPosSplitTender extends LitElement {
   /**
@@ -55,6 +59,13 @@ export class HosPosSplitTender extends LitElement {
   @property({ attribute: 'customer-name' }) customerName = '';
   /** Disables the controls while the parent's ring is in flight. */
   @property({ type: Boolean }) busy = false;
+
+  /**
+   * Row 985: once the server has stated the total, the LAST leg follows the remainder until the
+   * person types into it themselves (it stays an ordinary editable box). Typing in any other leg,
+   * changing a method or the total, moves the last leg to what is left.
+   */
+  private lastLegTouched = false;
 
   // Two legs is the smallest legal split, so the panel opens ready to be typed into rather than
   // making the cashier click "add tender" twice before anything can happen.
@@ -168,6 +179,11 @@ export class HosPosSplitTender extends LitElement {
         padding-top: 12px;
         border-top: 1px solid var(--hos-line);
       }
+      .total {
+        font-family: var(--hos-font-mono);
+        font-size: 15px;
+        margin-bottom: 2px;
+      }
       .remaining {
         font-family: var(--hos-font-mono);
         font-size: 15px;
@@ -203,25 +219,44 @@ export class HosPosSplitTender extends LitElement {
   private setMethod(i: number, method: DraftLeg['method']): void {
     const next = [...this.legs];
     next[i] = { ...next[i], method };
-    this.legs = next;
+    this.legs = this.withLastFilled(next);
   }
 
   private setAmount(i: number, raw: string): void {
     const next = [...this.legs];
     next[i] = { ...next[i], raw };
-    this.legs = next;
+    if (i === next.length - 1) this.lastLegTouched = true;
+    this.legs = this.withLastFilled(next);
   }
 
   private addLeg(): void {
     if (this.legs.length >= MAX_SPLIT_LEGS) return;
-    this.legs = [...this.legs, { method: 'CASH', raw: '' }];
+    this.lastLegTouched = false;
+    this.legs = this.withLastFilled([...this.legs, { method: 'CASH', raw: '' }]);
   }
 
   private removeLeg(i: number): void {
     // Two is the floor: dropping to one would silently turn a split into an ordinary sale with the
     // panel still open, which is a confusing state to be in when you press Ring.
     if (this.legs.length <= 2) return;
-    this.legs = this.legs.filter((_, n) => n !== i);
+    this.lastLegTouched = false;
+    this.legs = this.withLastFilled(this.legs.filter((_, n) => n !== i));
+  }
+
+  /** The legs with the last one set to the remainder, while a server total is stated and it is untouched. */
+  private withLastFilled(legs: { method: DraftLeg['method']; raw: string }[]): { method: DraftLeg['method']; raw: string }[] {
+    if (this.totalCents === null || this.lastLegTouched || legs.length === 0) return legs;
+    const draft = legs.map((l) => ({ method: l.method, amountCents: parseAmountCents(l.raw) }));
+    const last = legs.length - 1;
+    const rest = autoFillRemainder(draft, this.totalCents, last);
+    const out = [...legs];
+    out[last] = { ...out[last], raw: rest > 0 ? plainDollars(rest) : '' };
+    return out;
+  }
+
+  protected willUpdate(changed: Map<PropertyKey, unknown>): void {
+    // A new total from the server (the lines, the customer or the fulfilment moved) re-fills the last leg.
+    if (changed.has('totalCents')) this.legs = this.withLastFilled(this.legs);
   }
 
   /** fill puts exactly what is left into one leg: the counter's whole reason to trust this panel. */
@@ -281,7 +316,7 @@ export class HosPosSplitTender extends LitElement {
                 ?disabled=${this.busy}
                 @change=${(e: Event) => this.setMethod(i, (e.target as HTMLSelectElement).value as DraftLeg['method'])}
               >
-                ${SPLIT_METHODS.map((m) => html`<option value=${m} ?selected=${m === leg.method}>${m}</option>`)}
+                ${METHOD_ORDER.map((m) => html`<option value=${m} ?selected=${m === leg.method}>${METHOD_LABELS[m] ?? m}</option>`)}
               </select>
               <input
                 class="amt"
@@ -337,12 +372,11 @@ export class HosPosSplitTender extends LitElement {
           <div>
             ${this.totalCents === null
               ? html`<div class="remaining" data-testid="split-typed">${fmtCents(read.typedCents)} typed so far</div>`
-              : html`<div class="remaining ${remainingClass}" data-testid="split-remaining">
-                  ${read.remainingCents === 0
-                    ? 'Settled exactly'
-                    : read.remainingCents > 0
-                    ? `${fmtCents(read.remainingCents)} remaining`
-                    : `${fmtCents(-read.remainingCents)} over`}
+              : html`<div class="total" data-testid="split-total">Total to split ${fmtCents(this.totalCents)}</div>
+                <div class="remaining ${remainingClass}" data-testid="split-remaining">
+                  ${read.remainingCents < 0
+                    ? `Over by ${fmtCents(-read.remainingCents)}`
+                    : `Left to assign ${fmtCents(read.remainingCents)}`}
                 </div>`}
             ${/* aria-live: the line changes on every keystroke and is the one thing a
                screen-reader user needs to hear without leaving the amount box. */ ''}
