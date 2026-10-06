@@ -66,9 +66,15 @@ type ReceivedLine struct {
 }
 
 // GLPoster posts the landed-cost capitalization / retro-split journal through the GL provider. Satisfied by a
-// main.go adapter over *gl.Service.PostExternal.
+// wire_operations.go adapter over *gl.Service. PostJournal is the pool variant (apply / retroAdjust post
+// OUTSIDE their transactions, between two WithinTx calls); PostJournalTx is the tx-aware variant (Void posts
+// its reversing journal INSIDE the void's own transaction, so a caller that already holds a pool connection
+// never asks the shared pool for a second one and the journal commits or rolls back with the caller).
 type GLPoster interface {
 	PostJournal(ctx context.Context, in GLJournal) (string, error)
+	// PostJournalTx is PostJournal through the caller's transaction (a nil tx is refused by the GL store
+	// rather than falling back to the pool).
+	PostJournalTx(ctx context.Context, tx pgx.Tx, in GLJournal) (string, error)
 }
 
 // GLJournal + GLLine mirror gl.ExternalJournal by value.
