@@ -25,9 +25,12 @@ import { clearFrontDoorHandoff, readFrontDoorHandoff } from "./demo-account.js";
 import { HOUSE_ZONE, houseDayInZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import { setBranches, wirePorts, clearSessionState, type AuthUser } from "@hardscapehouse/pos-kit/src/ported/ports.js";
 import { QdClient, type BranchRef } from "./qd-client.js";
+import { PricingClient } from "./pricing-client.js";
 import { THEME_LABEL, ThemeController, themeControlLabel, themeStatusText } from "./theme.js";
 // The builder shell registers the work area and the panel seams.
 import "./quote-builder.js";
+// The pricing panel (QD-4), mounted here until Dealer Admin has a screen of its own.
+import "./pricing-panel.js";
 
 const DEMO_ORG = "hh-demo";
 
@@ -118,6 +121,9 @@ export class QuoteDeskApp extends HHElement {
       main {
         padding: var(--hh-s-4) 0;
       }
+      .away {
+        display: none;
+      }
       .notice {
         margin: var(--hh-s-8) var(--hh-s-20);
       }
@@ -128,6 +134,9 @@ export class QuoteDeskApp extends HHElement {
   readonly #account: DemoAccount;
   readonly #controller: AuthController;
   readonly #client: QdClient;
+  readonly #pricing: PricingClient;
+  /** Which of the desk's two screens shows: the quotes (always mounted, so a draft survives), or the pricing panel (mounted only while open). */
+  #view: "quotes" | "pricing" = "quotes";
   #flowsState: FlowsState = { kind: "loading" };
   #busy = false;
   #message: string | null = null;
@@ -163,6 +172,7 @@ export class QuoteDeskApp extends HHElement {
     this.#controller = new AuthController({ account: this.#account, sessions: this.#sessions });
     // The caller's own id is read from the live session, not from the sign-in answer kept beside it.
     this.#client = new QdClient(client, () => this.#sessions.current?.user.userId ?? "");
+    this.#pricing = new PricingClient(client);
     // The shared kit's host wiring: one door, wired once, reading custody
     // through this element's own closures so the bearer never rests in a
     // second place.
@@ -199,6 +209,11 @@ export class QuoteDeskApp extends HHElement {
     // way every shared component receives its facts.
     const builder = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("qd-quote-builder");
     if (builder !== null) builder.client = this.#client;
+    const pricing = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("qd-pricing-panel");
+    if (pricing !== null) {
+      pricing["pricing"] = this.#pricing;
+      pricing["branchId"] = this.#branch?.id ?? "";
+    }
   }
 
   override disconnectedCallback(): void {
@@ -216,8 +231,16 @@ export class QuoteDeskApp extends HHElement {
       const flow = control.getAttribute("data-flow");
       if (typeof flow === "string" && flow !== "") void this.#chooseFlow(flow);
     }
+    // A saved price whose floor confirmation is not in the pricing log yet holds a leave once
+    // (the pricing panel's holdLeave; the SIGN_OUT_EVENT wait of quote/qd-3b-app registers it).
+    const leaving = control.getAttribute("data-action");
+    if ((leaving === "sign-out" || (leaving === "pricing" && this.#view === "pricing")) && this.#pricingHoldsLeave()) return;
     if (control.getAttribute("data-action") === "sign-out") {
       void this.#signOut();
+    }
+    if (control.getAttribute("data-action") === "pricing") {
+      this.#view = this.#view === "pricing" ? "quotes" : "pricing";
+      this.requestUpdate();
     }
     if (control.getAttribute("data-action") === "theme") {
       this.#theme.cycle();
@@ -225,6 +248,11 @@ export class QuoteDeskApp extends HHElement {
       this.requestUpdate();
     }
   };
+
+  #pricingHoldsLeave(): boolean {
+    const panel = this.renderRoot.querySelector<HTMLElement & { holdLeave?: () => boolean }>("qd-pricing-panel");
+    return panel?.holdLeave?.() === true;
+  }
 
   async #loadFlows(): Promise<void> {
     const result = await this.#account.listFlows();
@@ -360,6 +388,7 @@ export class QuoteDeskApp extends HHElement {
     this.#deskIdentity = null;
     this.#branch = null;
     this.#message = sent ? null : "Signing out did not wait for every unsent change: saving timed out, so a change you made last may not have been saved.";
+    this.#view = "quotes";
     this.#surface = "entry";
     // The shared surface's session-owned module state goes with the session.
     clearSessionState();
@@ -409,6 +438,11 @@ export class QuoteDeskApp extends HHElement {
           : html`
               <p class="bar-user">
                 <span class="role-name" data-testid="signed-in-role">${this.#signedInRoleLabel()}</span>
+                ${this.#surface === "desk"
+                  ? html`<button type="button" class="btn-secondary" data-action="pricing" data-testid="pricing-toggle" aria-pressed=${this.#view === "pricing" ? "true" : "false"}>
+                      ${this.#view === "pricing" ? "Quotes" : "Pricing"}
+                    </button>`
+                  : nothing}
                 ${this.#themeControl()}
                 <button type="button" class="btn-secondary" data-action="sign-out" ?disabled=${this.#busy}>
                   Sign out
@@ -419,9 +453,12 @@ export class QuoteDeskApp extends HHElement {
       <main>
         ${this.#surface === "desk"
           ? html`
-              <div class="surface">
+              <div class="surface ${this.#view === "pricing" ? "away" : ""}">
                 <qd-quote-builder></qd-quote-builder>
               </div>
+              ${this.#view === "pricing"
+                ? html`<div class="pricing" data-testid="pricing-screen"><qd-pricing-panel></qd-pricing-panel></div>`
+                : nothing}
             `
           : renderEntry({ flows: this.#flowsState, busy: this.#busy, message: this.#message })}
       </main>

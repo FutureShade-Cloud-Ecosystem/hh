@@ -66,6 +66,7 @@
 // QuoteFloorRefusal, field for field, with no error field, exactly as the
 // core's own FloorRefusalError marshals.
 import { createServer } from "node:http";
+import { handlePricing, resetPricing } from "./pricing-stub.mjs";
 
 const port = Number(process.env.QD_STUB_PORT ?? 4839);
 
@@ -211,7 +212,9 @@ const productById = new Map(PRODUCTS.map((p) => [p.product_id, p]));
 // names, and that rule is what puts Holland under the Pavers floor.
 const CUSTOMERS = [
   {
-    id: "c-maple-ridge",
+    // the core's own uuid, the id the search answers and the pricing routes carry, so a
+    // name learned at a customer pick answers for the customer the rules list names by id
+    id: "c0000000-0000-4000-9000-000000000001",
     account_no: "C01",
     name: "Maple Ridge Contracting",
     customer_type: "CONTRACTOR",
@@ -221,7 +224,7 @@ const CUSTOMERS = [
     percent_off: 18,
   },
   {
-    id: "c-fenwick",
+    id: "c0000000-0000-4000-9000-000000000002",
     account_no: "C02",
     name: "Fenwick Builders Ltd",
     customer_type: "BUILDER",
@@ -232,7 +235,12 @@ const CUSTOMERS = [
   },
 ];
 
-const customerById = new Map(CUSTOMERS.map((c) => [c.id, c]));
+const customerById = new Map([
+  ...CUSTOMERS.map((c) => [c.id, c]),
+  // the short labels the seeded quotes were written with stay resolvable
+  ["c-maple-ridge", CUSTOMERS[0]],
+  ["c-fenwick", CUSTOMERS[1]],
+]);
 
 const HST_RATE_BPS = 1300;
 
@@ -538,7 +546,9 @@ function seedQuote(status, customerId, ownerFlow, lines, terms = {}) {
   const quote = {
     id,
     quote_no: `Q-${quoteCounter}`,
-    customer_id: customerId,
+    // stored under the id the search answers, so the workarea's account match hits
+    // whichever form (core uuid or short label) the caller seeded with
+    customer_id: customer.id,
     customer_name: customer.name,
     branch_id: TRENTON_ID,
     status,
@@ -1024,6 +1034,7 @@ const server = createServer(async (request, response) => {
     decisions.length = 0;
     conversions.length = 0;
     acceptance.allow_multi_accept = false;
+    resetPricing();
     resetPolicy();
     resetScopeRules();
     switches.callerOnCostList = true;
@@ -1130,6 +1141,9 @@ const server = createServer(async (request, response) => {
     });
     return;
   }
+
+  // The pricing console's routes and switches (QD-4), behind the same bearer check.
+  if (handlePricing({ request, response, path, url, callerOf, readBody, respondJson })) return;
 
   // The staff routes, behind the minted bearer and the demo org header.
   const caller = callerOf(request);
