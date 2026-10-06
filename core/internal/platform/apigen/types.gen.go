@@ -3675,9 +3675,29 @@ type LoadBatchItemOutcome struct {
 
 type LoadBatchCounts struct {
 	Created   int32 `json:"created"`
+	Attached  int32 `json:"attached"`
 	Updated   int32 `json:"updated"`
 	Unchanged int32 `json:"unchanged"`
 	Refused   int32 `json:"refused"`
+}
+
+type LoadSubmitItem struct {
+	LegacyId   string         `json:"legacy_id"`
+	DerivedKey *string        `json:"derived_key,omitempty"`
+	Record     map[string]any `json:"record"`
+	Requires   *[]LoadKeyRef  `json:"requires,omitempty"`
+}
+
+type LoadSubmitRequest struct {
+	SourceSystem string           `json:"source_system"`
+	BatchId      string           `json:"batch_id"`
+	Items        []LoadSubmitItem `json:"items"`
+}
+
+type LoadSubmitResult struct {
+	BatchId string                 `json:"batch_id"`
+	Counts  LoadBatchCounts        `json:"counts"`
+	Items   []LoadBatchItemOutcome `json:"items"`
 }
 
 type LoadBatchView struct {

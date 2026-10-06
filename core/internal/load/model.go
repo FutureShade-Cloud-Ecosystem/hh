@@ -28,9 +28,16 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// The four outcomes, one per item.
+// The five outcomes, one per item. The attached word belongs to the map
+// doors (the branch map and the user map, HH-LOAD-1 LD-4): they record
+// names against rows that already exist and create nothing, so an item
+// whose name was not yet recorded and now binds to the pre existing row
+// answers attached; a replay of an already recorded name answers
+// unchanged or updated as usual. Every other door answers created on the
+// create arm.
 const (
 	OutcomeCreated   = "created"
+	OutcomeAttached  = "attached"
 	OutcomeUpdated   = "updated"
 	OutcomeUnchanged = "unchanged"
 	OutcomeRefused   = "refused"
@@ -185,11 +192,14 @@ type ResolveResult struct {
 }
 
 // Write is what the frame hands the owning module's writer for one row:
-// the org, the row to update (empty on the create arm), the derived key
-// for the row's idempotency column where the table has one, the record,
-// and the resolved references.
+// the org, the legacy key as named (the row's natural key where the
+// owning table's upsert is by it, the supplier's vendor number), the
+// row to update (empty on the create arm), the derived key for the
+// row's idempotency column where the table has one, the record, and the
+// resolved references.
 type Write struct {
 	OrgID      string
+	LegacyID   string
 	RowID      string
 	DerivedKey string
 	Record     map[string]any

@@ -1,11 +1,19 @@
-# Fragment: the load doors (HH-LOAD-1 item LD-1).
+# Fragment: the load doors (HH-LOAD-1 items LD-1 and LD-4).
 #
 # The machine surface FB Move's loads arrive through. This fragment
-# carries the frame's own two operations: the batch read and the legacy
-# key resolution. The keyed load doors themselves land with the later
-# items of the cycle and take the one body shape the plan's operation
-# list names (the source system, the caller's batch id, a bounded list
-# of items).
+# carries the frame's own two operations (the batch read and the legacy
+# key resolution) and the four reference and supplier doors: the branch
+# map, the user map, the category upsert and the supplier upsert.
+#
+# One body shape for every load door (the plan's operation list): the
+# source system, the caller's batch id, and a bounded list of items,
+# each with its legacy key, the derived key, the record, and the
+# references named by legacy key. One answer shape: one outcome per item
+# and the batch's counts. The outcome vocabulary is created, attached,
+# updated, unchanged and refused: the map doors record names against rows
+# that already exist and answer attached for an item whose name was not
+# yet recorded and now binds to the pre existing row; a replay of an
+# already recorded name answers unchanged or updated as usual.
 #
 # Gate: x-role machine, MachineBearer alone (ADR-0024): the machine word
 # and the scheme name each other, and the machine credential never
@@ -18,9 +26,14 @@
 # machine leg's 403 body, so no answer here splits the refusals into a
 # directory.
 #
-# Read semantics: both operations write nothing; loadResolveKeys exists
-# so callers can name references by legacy key and the reconcile can
-# count, and loadGetBatch returns what a batch first recorded.
+# Read semantics: loadResolveKeys and loadGetBatch write nothing;
+# loadResolveKeys exists so callers can name references by legacy key and
+# the reconcile can count, and loadGetBatch returns what a batch first
+# recorded. The four PUT doors are the keyed upserts: the maps create
+# nothing (branches and staff rows are attached, never created), the
+# categories upsert a tree whose parent is named by legacy key with
+# cycles refused, and the suppliers upsert the vendor record with its
+# contact through the purchasing module's own contact store.
 paths:
   /api/v1/load/batches/{id}:
     get:
@@ -91,6 +104,221 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/load/branches:
+    put:
+      operationId: loadMapBranches
+      tags: [load]
+      summary: Attach the dealer's branch keys to HH's existing branches
+      description: >-
+        One item per legacy branch key. The record names one field, the
+        yard code of an existing branch row; a name not yet recorded
+        binds to that row and answers attached, a replay answers
+        unchanged, and a record that would re-point a recorded name at a
+        second row refuses as a key conflict. A code that answers no
+        branch row refuses naming the field. No branch is ever created.
+        The read assumes one deployment per dealer: it carries no org
+        predicate (the single org assumption of the plan's reading 3).
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: "HH-LOAD-1 load doors; no ERP source route"
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadSubmitRequest"
+      responses:
+        "200":
+          description: One outcome per item and the batch's counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadSubmitResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: The batch id is recorded under another door; the submission is a collision of two doors' batch namespaces, not a replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: >-
+            The batch contended with another in flight batch on shared
+            names and Postgres rolled it back whole: nothing of it stands,
+            and resubmitting the whole batch is safe. The one answer a
+            caller may retry the batch on, never a per item outcome.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/load/users:
+    put:
+      operationId: loadMapUsers
+      tags: [load]
+      summary: Attach the dealer's user and sales rep keys to existing staff rows
+      description: >-
+        One item per legacy user key. The record names one field, the
+        verified login email of an existing staff row; a name not yet
+        recorded binds to that row and answers attached, a replay answers
+        unchanged. An email that answers no staff row refuses naming the
+        field, never a value. No user is ever created. Any staff row
+        that is not deleted attaches, suspended and deactivated staff
+        included, so a former rep's key still resolves; the attach
+        grants nothing. The read assumes one deployment per dealer: it
+        carries no org predicate (the plan's reading 3).
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: "HH-LOAD-1 load doors; no ERP source route"
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadSubmitRequest"
+      responses:
+        "200":
+          description: One outcome per item and the batch's counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadSubmitResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: The batch id is recorded under another door; the submission is a collision of two doors' batch namespaces, not a replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: >-
+            The batch contended with another in flight batch on shared
+            names and Postgres rolled it back whole: nothing of it stands,
+            and resubmitting the whole batch is safe. The one answer a
+            caller may retry the batch on, never a per item outcome.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/load/categories:
+    put:
+      operationId: loadUpsertCategories
+      tags: [load]
+      summary: Upsert product categories, the parent named by legacy key
+      description: >-
+        One item per category. The record names the code and the name;
+        the parent, named by legacy key, arrives as a reference of kind
+        category and resolves against the registry before any write, so
+        a parent not yet loaded refuses naming the kind and the key. A
+        parent chain that would return to the row the item names refuses
+        as a cycle, and one deeper than the bound the catalogue serves
+        refuses as too deep, each with nothing of the write standing. A
+        code a staff member already made attaches to that row and takes
+        the load's stamps. A changed code on a recorded legacy key
+        updates that row in place; a code another row carries refuses as
+        a key conflict naming both keys. A row another org owns refuses
+        naming the kind and the key; its org is never overwritten.
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: "HH-LOAD-1 load doors; no ERP source route"
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadSubmitRequest"
+      responses:
+        "200":
+          description: One outcome per item and the batch's counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadSubmitResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: The batch id is recorded under another door; the submission is a collision of two doors' batch namespaces, not a replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: >-
+            The batch contended with another in flight batch on shared
+            names and Postgres rolled it back whole: nothing of it stands,
+            and resubmitting the whole batch is safe. The one answer a
+            caller may retry the batch on, never a per item outcome.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/load/suppliers:
+    put:
+      operationId: loadUpsertSuppliers
+      tags: [load]
+      summary: Upsert the supplier record with its terms, remit address and ordering contact
+      description: >-
+        One item per supplier. The legacy id is the vendor number, the
+        source's natural key; the record names the supplier name and,
+        named, the payment terms in days, the EDI flag, the remit
+        address, the active flag, the metadata, and the ordering contact
+        (contact name, email, phone) through the purchasing module's own
+        contact store. A contact that names neither an email nor a phone
+        refuses naming the field, as do negative payment terms. A reload
+        whose record names no contact removes the loaded contact: the
+        record is the whole truth. A row another org owns refuses naming
+        the kind and the key; its org is never overwritten.
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: "HH-LOAD-1 load doors; no ERP source route"
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadSubmitRequest"
+      responses:
+        "200":
+          description: One outcome per item and the batch's counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadSubmitResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: The batch id is recorded under another door; the submission is a collision of two doors' batch namespaces, not a replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: >-
+            The batch contended with another in flight batch on shared
+            names and Postgres rolled it back whole: nothing of it stands,
+            and resubmitting the whole batch is safe. The one answer a
+            caller may retry the batch on, never a per item outcome.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 components:
   schemas:
     LoadKeyRef:
@@ -140,19 +368,57 @@ components:
         legacy_id: { type: string }
         status:
           type: string
-          enum: [created, updated, unchanged, refused]
+          enum: [created, attached, updated, unchanged, refused]
         hh_id: { type: [string, "null"], format: uuid }
         reason: { type: [string, "null"] }
         field: { type: [string, "null"] }
         detail: { type: [string, "null"] }
     LoadBatchCounts:
       type: object
-      required: [created, updated, unchanged, refused]
+      required: [created, attached, updated, unchanged, refused]
       properties:
         created: { type: integer, format: int32 }
+        attached: { type: integer, format: int32 }
         updated: { type: integer, format: int32 }
         unchanged: { type: integer, format: int32 }
         refused: { type: integer, format: int32 }
+    LoadSubmitItem:
+      type: object
+      required: [legacy_id, record]
+      properties:
+        legacy_id: { type: string, minLength: 1, maxLength: 512 }
+        derived_key: { type: [string, "null"], format: uuid }
+        record:
+          type: object
+          additionalProperties: true
+        requires:
+          type: array
+          maxItems: 64
+          items:
+            $ref: "#/components/schemas/LoadKeyRef"
+    LoadSubmitRequest:
+      type: object
+      required: [source_system, batch_id, items]
+      properties:
+        source_system: { type: string, minLength: 1, maxLength: 64 }
+        batch_id: { type: string, minLength: 1, maxLength: 128 }
+        items:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            $ref: "#/components/schemas/LoadSubmitItem"
+    LoadSubmitResult:
+      type: object
+      required: [batch_id, counts, items]
+      properties:
+        batch_id: { type: string }
+        counts:
+          $ref: "#/components/schemas/LoadBatchCounts"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/LoadBatchItemOutcome"
     LoadBatchView:
       type: object
       required: [batch_id, source_system, kind, caller, state, counts, items, created_at]
