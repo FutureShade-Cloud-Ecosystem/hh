@@ -126,6 +126,84 @@ test("the write census rules a capture helper called at the send a violation", (
   assert.match(row.reason, /capture taken inside the sender closure or at a deferred position/);
 });
 
+// The census watches every channel a write can ride, not only the client's methods (review PR 121 round 9, P2-1):
+// the pos kit's raw api() port, which the app's picker already creates accounts through, and any direct request
+// door (fetch and its friends) carrying a method other than GET, case and spacing aside. A write deferred through
+// either is a violation like any other, tagged by its channel; an immediate one is listed; one handed to the sender
+// is allowed as ever.
+const RAW_HEAD = `${HEAD}import { api } from "@hardscapehouse/pos-kit/src/ported/ports.js";\n`;
+
+const DEFERRED_API_POST = `${RAW_HEAD}export async function create(body: string) { await Promise.resolve(); await api("/api/v1/customers", { method: "POST", body }); }`;
+
+const IMMEDIATE_API_POST = `${RAW_HEAD}export function create(body: string) { return api("/api/v1/customers", { method: " post ", body }); }`;
+
+const API_POST_THROUGH_SENDER = `${RAW_HEAD}import type { SendNow } from "./deferred-send.js";\nclass W { now = (): SendNow => ({ client: null, attached: true, quote: null }); create(body: string) { const cap = captureSend(this.now); return Promise.resolve().then(() => deferredSend(cap, () => api("/api/v1/customers", { method: "POST", body }))); } }`;
+
+const DEFERRED_FETCH_PUT = `${HEAD}export async function save(body: string) { await Promise.resolve(); await fetch("/api/v1/things", { method: "PUT", body }); }`;
+
+const RAW_READ = `${HEAD}export function read() { return fetch("/api/v1/things"); }`;
+
+const DEFERRED_BEACON = `${HEAD}export async function ping() { await Promise.resolve(); navigator.sendBeacon("/api/v1/pings", "x"); }`;
+
+const DEFERRED_XHR_OPEN = `${HEAD}export function put(body: string) { setTimeout(() => { const x = new XMLHttpRequest(); x.open("PUT", "/api/v1/things"); x.send(body); }, 10); }`;
+
+const DEFERRED_SOCKET = `${HEAD}export async function listen() { await Promise.resolve(); return new WebSocket("/api/v1/stream"); }`;
+
+test("the write census rules a deferred write through the raw api() port a violation, tagged by its channel", () => {
+  const rows = writeCensusOfText(DEFERRED_API_POST);
+  const row = rows.find((candidate) => candidate.call === "api");
+  assert.ok(row !== undefined, `the census found no api() port write in the fixture: ${JSON.stringify(rows)}`);
+  assert.equal(row.channel, "api port");
+  assert.equal(row.verb, "POST");
+  assert.equal(row.way, "VIOLATION");
+  assert.match(row.reason, /after an await/);
+});
+
+test("the write census lists an immediate api() port write, whatever the case or spacing of its method", () => {
+  const rows = writeCensusOfText(IMMEDIATE_API_POST);
+  assert.deepEqual(
+    rows.map((row) => ({ call: row.call, verb: row.verb, channel: row.channel, way: row.way })),
+    [{ call: "api", verb: "POST", channel: "api port", way: "immediate" }],
+  );
+});
+
+test("the write census allows an api() port write routed through the sender", () => {
+  const rows = writeCensusOfText(API_POST_THROUGH_SENDER);
+  assert.deepEqual(rows.map((row) => row.way), ["sender"]);
+});
+
+test("the write census rules a deferred raw fetch write a violation, tagged by its channel", () => {
+  const rows = writeCensusOfText(DEFERRED_FETCH_PUT);
+  const row = rows.find((candidate) => candidate.call === "fetch");
+  assert.ok(row !== undefined, `the census found no fetch write in the fixture: ${JSON.stringify(rows)}`);
+  assert.equal(row.channel, "raw fetch");
+  assert.equal(row.verb, "PUT");
+  assert.equal(row.way, "VIOLATION");
+  assert.match(row.reason, /after an await/);
+});
+
+test("the write census lists no row for a raw fetch read (no method, so a GET)", () => {
+  const rows = writeCensusOfText(RAW_READ);
+  assert.deepEqual(rows, []);
+});
+
+test("the write census rules a deferred beacon, a deferred XMLHttpRequest open and a deferred socket violations", () => {
+  const beacon = writeCensusOfText(DEFERRED_BEACON);
+  assert.ok(beacon.some((row) => row.call === "sendBeacon" && row.channel === "raw fetch" && row.way === "VIOLATION"), JSON.stringify(beacon));
+  const xhr = writeCensusOfText(DEFERRED_XHR_OPEN);
+  assert.ok(xhr.some((row) => row.call === "XMLHttpRequest.open" && row.verb === "PUT" && row.way === "VIOLATION"), JSON.stringify(xhr));
+  const socket = writeCensusOfText(DEFERRED_SOCKET);
+  assert.ok(socket.some((row) => row.call === "WebSocket" && row.channel === "raw fetch" && row.way === "VIOLATION"), JSON.stringify(socket));
+});
+
+test("the census classifies the picker's customer create: an immediate write on the api() port, deferred it would go red", () => {
+  const rows = srcWriteCensus().filter((row) => row.file === "customer-picker.ts");
+  assert.deepEqual(
+    rows.map((row) => ({ call: row.call, verb: row.verb, channel: row.channel, way: row.way })),
+    [{ call: "api", verb: "POST", channel: "api port", way: "immediate" }],
+  );
+});
+
 const ALLOWED = [
   ["a write in the same tick as the person's action", `${HEAD}class A { client: QdClient | null = null; m(id: string) { return this.client?.putTerms(id, {} as never); } }`, "immediate"],
   [

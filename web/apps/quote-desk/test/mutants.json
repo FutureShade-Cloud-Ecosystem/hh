@@ -1361,6 +1361,15 @@
     "testFile": "test/write-census.test.mjs"
   },
   {
+    "id": "sender-raw-api-deferred",
+    "file": "src/customer-picker.ts",
+    "find": "    this.createBusy = true;\n    this.createError = '';\n    try {",
+    "replace": "    this.createBusy = true;\n    this.createError = '';\n    setTimeout(() => void api('/api/v1/customers', { method: 'POST', body: '{}' }), 0);\n    try {",
+    "test": "no write of the src is sent from a deferred position",
+    "runner": "node",
+    "testFile": "test/write-census.test.mjs"
+  },
+  {
     "id": "wa-create-failed-keeps-reason",
     "file": "src/quote-workarea.ts",
     "find": "    if (reason !== \"\" && this.error === CREATE_FAILED_SCAN) this.error = `${reason.replace(/[.!?]?$/, \".\")} ${CREATE_FAILED_SCAN}`;\n",

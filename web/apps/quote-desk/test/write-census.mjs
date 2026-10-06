@@ -1,22 +1,39 @@
-// The census of the app's writes: every call in src that reaches a write method of the client (a method of QdClient
-// whose generated operation sends a PUT, POST, PATCH or DELETE; the set is read off qd-client.ts and the generated
-// client, not listed by hand), and where in its function it sits. A write whose send expression is reached only after
-// an await, from a then(), catch() or finally() callback, from a timer, from a callback its callee runs later, or from
-// a method that is itself called from such a position, is DEFERRED: it can outlive the person who asked for it and the
-// quote it was asked on. A deferred write is allowed one way only, as the closure handed to deferredSend
-// (src/deferred-send.ts), which captured the session and the quote when the person acted and checks them at send time.
-// The capture belongs at the person's action too: one taken inside the sender's own call, or taken by a local of the
-// send's own function whose initializer sits at a deferred position (a then() callback, the store's queue turn), is
-// evaluated at send time, so every check compares now with now, and a row sent that way is a violation like any
-// other; the same holds for a capture helper written where the send is. A capture named outside the send's own
-// function, or at its entry before any await, was taken when the person acted. Anything else deferred is a violation.
-// test/write-census.test.mjs holds the src to it.
+// The census of the app's writes: every call in src that reaches a write, by the channel it rides. Three channels
+// are watched (review PR 121 round 9, P2-1: a write outside the client was invisible to the census):
+// - channel "client": a method of QdClient whose generated operation sends a PUT, POST, PATCH or DELETE; the set is
+//   read off qd-client.ts and the generated client, not listed by hand.
+// - channel "api port": a call of the pos kit's raw api() port (src is @hardscapehouse/pos-kit/src/ported/ports.js)
+//   whose method literal, wherever it sits in the call's arguments, names a write (the app's picker creates accounts
+//   through it); a call with no method literal is the GET default and no write.
+// - channel "raw fetch": a direct request door, fetch, httpRequest, request, sendBeacon, an XMLHttpRequest open, a
+//   WebSocket or an EventSource, carrying a method literal other than GET (case and whitespace aside); a beacon and
+//   a socket carry no method and are writes whatever they carry.
+// And where in its function the write sits. A write whose send expression is reached only after an await, from a
+// then(), catch() or finally() callback, from a timer, from a callback its callee runs later, or from a method that
+// is itself called from such a position, is DEFERRED: it can outlive the person who asked for it and the quote it
+// was asked on. A deferred write is allowed one way only, as the closure handed to deferredSend
+// (src/deferred-send.ts), which captured the session and the quote when the person acted and checks them at send
+// time. The capture belongs at the person's action too: one taken inside the sender's own call, or taken by a local
+// of the send's own function whose initializer sits at a deferred position (a then() callback, the store's queue
+// turn), is evaluated at send time, so every check compares now with now, and a row sent that way is a violation
+// like any other; the same holds for a capture helper written where the send is. A capture named outside the send's
+// own function, or at its entry before any await, was taken when the person acted. Anything else deferred is a
+// violation. test/write-census.test.mjs holds the src to it.
 import { join, relative } from "node:path";
 import ts from "typescript";
 import { appDir, makeProgram, symbolOf, walk } from "./await-census.mjs";
 
 const srcDir = join(appDir, "src");
 const WRITE_VERBS = new Set(["PUT", "POST", "PATCH", "DELETE"]);
+/** What a raw door must name to be a write: the write verbs plus HEAD, the method literals that are not a GET. */
+const RAW_WRITE_VERBS = new Set([...WRITE_VERBS, "HEAD"]);
+/** Direct request doors that read their method from an argument; a call of one with no method literal is a GET. */
+const RAW_METHOD_DOORS = new Set(["fetch", "httpRequest", "request"]);
+/** Doors that carry no method argument and are writes whatever they carry. */
+const RAW_ALWAYS_WRITE = new Set(["sendBeacon", "WebSocket", "EventSource"]);
+const CLIENT_CHANNEL = "client";
+const API_CHANNEL = "api port";
+const FETCH_CHANNEL = "raw fetch";
 const TIMERS = new Set(["setTimeout", "setInterval", "requestAnimationFrame", "queueMicrotask", "requestIdleCallback"]);
 /** Callees that run an arrow synchronously, in place: the arrow sits where the call sits. */
 const IN_PLACE = new Set(["forEach", "map", "filter", "some", "every", "find", "findIndex", "reduce", "flatMap"]);
@@ -76,6 +93,60 @@ function calleeDeclaration(checker, call) {
   let symbol = checker.getSymbolAtLocation(target);
   if (symbol !== undefined && symbol.flags & ts.SymbolFlags.Alias) symbol = checker.getAliasedSymbol(symbol);
   return symbol?.declarations?.[0];
+}
+
+function normalizeVerb(text) {
+  return text.trim().toUpperCase();
+}
+
+/** The method literal in the call's arguments, wherever it sits: { method: "POST" } and the like. */
+function methodLiteralOf(call) {
+  for (const arg of call.arguments) {
+    if (!ts.isObjectLiteralExpression(arg)) continue;
+    for (const prop of arg.properties) {
+      if (ts.isPropertyAssignment(prop) && prop.name.getText() === "method" && ts.isStringLiteralLike(prop.initializer)) return prop.initializer.text;
+    }
+  }
+  return null;
+}
+
+/** True when the declaration is the pos kit's raw api() port. */
+function isApiPortDeclaration(decl) {
+  const file = decl?.getSourceFile().fileName ?? "";
+  return decl !== undefined && decl.name?.getText() === "api" && file.includes("/pos-kit/") && file.endsWith("/ports.ts");
+}
+
+/**
+ * The write a call or a construction makes outside the client, or null: a call of the pos kit's raw api() port, or
+ * of a direct request door, with a write verb; a beacon or a socket is a write whatever it carries.
+ */
+function rawWriteAt(node, checker) {
+  if (ts.isNewExpression(node)) {
+    const name = ts.isIdentifier(node.expression) ? node.expression.text : "";
+    return RAW_ALWAYS_WRITE.has(name) ? { name, verb: "POST", channel: FETCH_CHANNEL } : null;
+  }
+  if (!ts.isCallExpression(node)) return null;
+  // XMLHttpRequest.open("PUT", ...): the receiver is the request, the verb is its first argument.
+  if (ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "open") {
+    const type = checker.getTypeAtLocation(node.expression.expression);
+    if ((type.symbol ?? type.aliasSymbol)?.getName() !== "XMLHttpRequest") return null;
+    const first = node.arguments[0];
+    if (first === undefined || !ts.isStringLiteralLike(first)) return null;
+    const verb = normalizeVerb(first.text);
+    return RAW_WRITE_VERBS.has(verb) ? { name: "XMLHttpRequest.open", verb, channel: FETCH_CHANNEL } : null;
+  }
+  if (isApiPortDeclaration(calleeDeclaration(checker, node))) {
+    const verb = normalizeVerb(methodLiteralOf(node) ?? "GET");
+    return verb !== "GET" && RAW_WRITE_VERBS.has(verb) ? { name: "api", verb, channel: API_CHANNEL } : null;
+  }
+  const callee = node.expression;
+  const name = ts.isPropertyAccessExpression(callee) ? callee.name.text : ts.isIdentifier(callee) ? callee.text : "";
+  if (RAW_ALWAYS_WRITE.has(name)) return { name, verb: "POST", channel: FETCH_CHANNEL };
+  if (RAW_METHOD_DOORS.has(name)) {
+    const verb = normalizeVerb(methodLiteralOf(node) ?? "GET");
+    return verb !== "GET" && RAW_WRITE_VERBS.has(verb) ? { name, verb, channel: FETCH_CHANNEL } : null;
+  }
+  return null;
 }
 
 /** True when an await (or for await) of the same function ends before this node starts. */
@@ -312,33 +383,39 @@ export function writeCensus(program, sourceFiles) {
       ts.forEachChild(n, find);
     })(sf);
     (function visit(n) {
+      let write = null;
       if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && methods.has(n.expression.name.text)) {
         const decl = calleeDeclaration(checker, n);
         const owner = decl?.parent;
         if (owner !== undefined && ts.isClassDeclaration(owner) && owner.name?.text === "QdClient") {
-          const reason = deferredReason(n, env);
-          const sender = insideSender(n, checker);
-          let way = sender ? "sender" : reason === null ? "immediate" : "VIOLATION";
-          let why = reason ?? "";
-          if (way === "sender") {
-            const send = senderCallAbove(n, checker);
-            const takenInside = send !== undefined && captures.some((cs) => captureInsideSender(cs, checker) && cs.getStart() >= send.getStart() && cs.getEnd() <= send.getEnd());
-            const takenAtSend = send !== undefined && captureTakenAtSend(send, checker, env);
-            if (takenInside || takenAtSend) {
-              way = "VIOLATION";
-              why = "capture taken inside the sender closure or at a deferred position";
-            }
-          }
-          rows.push({
-            file: relative(srcDir, sf.fileName),
-            symbol: symbolOf(n, sf),
-            call: n.expression.name.text,
-            verb: methods.get(n.expression.name.text),
-            line: sf.getLineAndCharacterOfPosition(n.getStart()).line + 1,
-            way,
-            reason: way === "immediate" ? "" : why,
-          });
+          write = { name: n.expression.name.text, verb: methods.get(n.expression.name.text), channel: CLIENT_CHANNEL };
         }
+      }
+      if (write === null) write = rawWriteAt(n, checker);
+      if (write !== null) {
+        const reason = deferredReason(n, env);
+        const sender = insideSender(n, checker);
+        let way = sender ? "sender" : reason === null ? "immediate" : "VIOLATION";
+        let why = reason ?? "";
+        if (way === "sender") {
+          const send = senderCallAbove(n, checker);
+          const takenInside = send !== undefined && captures.some((cs) => captureInsideSender(cs, checker) && cs.getStart() >= send.getStart() && cs.getEnd() <= send.getEnd());
+          const takenAtSend = send !== undefined && captureTakenAtSend(send, checker, env);
+          if (takenInside || takenAtSend) {
+            way = "VIOLATION";
+            why = "capture taken inside the sender closure or at a deferred position";
+          }
+        }
+        rows.push({
+          file: relative(srcDir, sf.fileName),
+          symbol: symbolOf(n, sf),
+          call: write.name,
+          verb: write.verb,
+          line: sf.getLineAndCharacterOfPosition(n.getStart()).line + 1,
+          way,
+          reason: way === "immediate" ? "" : why,
+          channel: write.channel,
+        });
       }
       ts.forEachChild(n, visit);
     })(sf);
