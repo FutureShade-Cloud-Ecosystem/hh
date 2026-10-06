@@ -4,9 +4,11 @@
 // After the fix it opens "${BASE_URL}?popout=<flow>" which with
 // --base=/till/ becomes "/till/?popout=<flow>" -- the till's own page.
 //
-// The leg also asserts the new window is same-size as the opener: the fix
-// passes popup=yes,width=<opener outer width>,height=<opener outer height>
-// and calls .focus() on the result.
+// The leg also asserts the window was asked for as a popup with the opener's
+// size: the fix passes popup=yes,width=<opener outer width>,height=<opener
+// outer height> and calls .focus() on the result. Headless Chrome does not
+// honour the requested size reliably, so the leg asserts the features string
+// handed to window.open through a page level spy, never the measured size.
 //
 // Red: fails on main because the pop-out lands on /?popout= (root, front door).
 // Green: passes after the fix because the pop-out lands on /till/?popout= (till).
@@ -21,16 +23,22 @@ async function signIn(page: Page): Promise<void> {
   await expect(page.getByTestId("pos-page-title")).toHaveText("New Counter Sale");
 }
 
-test("the pop-out opens under the till's base, not the root, and is same-size as the opener", async ({
+test("the pop-out opens under the till's base, not the root, as a popup of the opener's size", async ({
   page,
   context,
 }) => {
+  // Spy on window.open before any page script runs, and still call through so
+  // the real window opens. The spy keeps the arguments the till passed.
+  await page.addInitScript(() => {
+    const real = window.open.bind(window);
+    const calls: Array<{ url: string; target: string; features: string }> = [];
+    (window as unknown as { __openCalls: typeof calls }).__openCalls = calls;
+    window.open = (url?: string | URL, target?: string, features?: string) => {
+      calls.push({ url: String(url ?? ""), target: target ?? "", features: features ?? "" });
+      return real(url, target, features);
+    };
+  });
   await signIn(page);
-
-  // Record the opener's outer dimensions so we can assert the new window
-  // carries them through to its inner dimensions.
-  const openerWidth = page.viewportSize()?.width ?? 1280;
-  const openerHeight = page.viewportSize()?.height ?? 720;
 
   // Wait for the new window before clicking Pop out.
   const poppedPromise = context.waitForEvent("page");
@@ -38,23 +46,31 @@ test("the pop-out opens under the till's base, not the root, and is same-size as
   const popped = await poppedPromise;
   await popped.waitForLoadState();
 
-  // The URL must begin with the till's base (/till/) and carry ?popout=.
-  // On main the bug opens "/?popout=" (the root, front door picker).
-  const poppedUrl = popped.url();
-  const urlPattern = /^\/till\/.*\?popout=/;
-  expect(urlPattern.test(poppedUrl)).toBe(true);
+  // What the till asked the browser for: one call, a popup, the opener's size.
+  const calls = await page.evaluate(
+    () =>
+      (window as unknown as { __openCalls: Array<{ url: string; features: string }> }).__openCalls,
+  );
+  expect(calls).toHaveLength(1);
+  const opener = await page.evaluate(() => ({
+    width: window.outerWidth,
+    height: window.outerHeight,
+  }));
+  const features = new Map(
+    calls[0].features.split(",").map((pair) => pair.split("=") as [string, string]),
+  );
+  expect(features.get("popup")).toBe("yes");
+  expect(Number(features.get("width"))).toBe(opener.width);
+  expect(Number(features.get("height"))).toBe(opener.height);
 
-  // After the fix the new window is opened with popup=yes and the opener's
-  // outer dimensions passed as width=/height=, so the new window's inner
-  // dimensions must match the opener's outer dimensions within a small
-  // tolerance (5px each axis covers rounding and browser chrome).
-  const poppedInner = popped.viewportSize() ?? { width: 0, height: 0 };
-  expect(Math.abs(poppedInner.width - openerWidth)).toBeLessThanOrEqual(5);
-  expect(Math.abs(poppedInner.height - openerHeight)).toBeLessThanOrEqual(5);
+  // The new window's URL is under the till's base (/till/) and carries
+  // ?popout=. On main the bug opens "/?popout=" (the root, front door picker).
+  const url = new URL(popped.url());
+  expect(url.pathname.startsWith("/till/")).toBe(true);
+  expect(url.searchParams.get("popout")).toBe("sales");
 
-  // The new window must show the sale surface (the popped window has focus
-  // after .focus(), so the page title is visible without a timeout).
-  await expect(popped.getByTestId("pos-page-title")).toBeVisible();
+  // It lands on the sale surface, not the front door and not a picker.
+  await expect(popped.getByTestId("pos-page-title")).toHaveText("New Counter Sale");
 
   await popped.close();
 });

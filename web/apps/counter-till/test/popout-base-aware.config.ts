@@ -23,7 +23,7 @@ const appPort = process.env.CT_APP_PORT ?? String(20000 + slot);
 const stubPort = process.env.CT_STUB_PORT ?? String(20000 + slot + 1);
 
 export default defineConfig({
-  testDir: "./test",
+  testDir: ".",
   testMatch: "popout-base-aware.pw.ts",
   use: {
     baseURL: `http://127.0.0.1:${appPort}/till/`,
