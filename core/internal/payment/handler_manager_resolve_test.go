@@ -18,7 +18,11 @@ import (
 const resolveBody = `{"resolution":"NOT_CHARGED","note":"checked at the processor: no capture exists"}`
 
 func TestCardAttempts_Resolve_RBAC(t *testing.T) {
-	fake := &fakeAttemptStore{byID: map[string]Attempt{listFixture.ID: listFixture}}
+	fake := &fakeAttemptStore{
+		byID:          map[string]Attempt{listFixture.ID: listFixture},
+		resolveResult: listFixture,
+		resolveMoved:  true,
+	}
 	sg, mux := newManagerTestMux(t, fake)
 	path := "/api/v1/payments/card-attempts/" + listFixture.ID + "/resolve"
 
@@ -173,5 +177,30 @@ func TestCardAttempts_Resolve_StoreGuardLost(t *testing.T) {
 	rec := doReq(t, sg, mux, http.MethodPost, path, resolveBody)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("lost guard resolve = %d, want 409 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// The pairing rule: a row whose capture was confirmed before its reversal was
+// lost or refused (VOID_UNKNOWN, VOID_DECLINED) cannot truthfully close as
+// NOT_CHARGED. The route refuses it before any move is attempted.
+func TestCardAttempts_Resolve_PairingRefused(t *testing.T) {
+	for _, status := range []string{AttemptVoidUnknown, AttemptVoidDeclined} {
+		reversed := listFixture
+		reversed.Status = status
+		fake := &fakeAttemptStore{byID: map[string]Attempt{reversed.ID: reversed}}
+		sg, mux := newManagerTestMux(t, fake)
+		managerAuth(sg)
+		path := "/api/v1/payments/card-attempts/" + reversed.ID + "/resolve"
+
+		rec := doReq(t, sg, mux, http.MethodPost, path, resolveBody)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s close as NOT_CHARGED = %d, want 400 (%s)", status, rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "a reversed attempt closes as REVERSED_AT_PROCESSOR") {
+			t.Fatalf("the refusal must name the pairing rule, got %s", rec.Body.String())
+		}
+		if len(fake.resolveCalls) != 0 {
+			t.Fatalf("Resolve calls for a refused pairing = %d, want 0", len(fake.resolveCalls))
+		}
 	}
 }
