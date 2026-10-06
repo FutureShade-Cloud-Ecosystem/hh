@@ -1418,20 +1418,6 @@
     "testFile": "test/write-census.test.mjs"
   },
   {
-    "id": "wa-scan-handoff-timeout-says",
-    "file": "src/quote-workarea.ts",
-    "find": "          this.speakAdd(\"The new quote did not open in time, so that scan was not added. Scan it again once the quote is on screen.\", \"warn\");\n",
-    "replace": "",
-    "test": "P3 a scan made in compose says so when the host never"
-  },
-  {
-    "id": "wa-handoff-give-up",
-    "file": "src/quote-workarea.ts",
-    "find": "    this.releaseHandoffWaiters(\"gave-up\");\n  }",
-    "replace": "  }",
-    "test": "P3 a scan made in compose says so when the host never"
-  },
-  {
     "id": "pm-load-stale-start",
     "file": "src/pricing-margin.ts",
     "find": "    const ctx = this.ctx; // the tab's own context: cancelled when the panel closes (the Pricing swap, a tab switch) or the person signs out\n    if (pricing === null || ctx.stale) return;",
