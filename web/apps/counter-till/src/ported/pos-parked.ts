@@ -2,8 +2,7 @@
 
 import { LitElement, css, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import { discardParked, listParked, resumeParked, type ParkedTicket } from '@hardscapehouse/pos-kit/src/ported/pos-api.js';
-import { money } from './_till-dollars.js';
+import { discardParked, listParked, money, resumeParked, type ParkedTicket } from '@hardscapehouse/pos-kit/src/ported/pos-api.js';
 import { resumeDiscardMessage } from './_pos.js';
 import type { ParkedInfo } from './_pos.js';
 import { focusRing } from '@hardscapehouse/pos-kit/src/ported/styles/focus-ring.js';

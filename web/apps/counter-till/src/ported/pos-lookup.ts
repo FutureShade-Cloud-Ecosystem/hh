@@ -3,8 +3,7 @@
 import { LitElement, css, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { focusRing } from '@hardscapehouse/pos-kit/src/ported/styles/focus-ring.js';
-import { lookupSales, getSale, type SaleSummary, type SaleView } from '@hardscapehouse/pos-kit/src/ported/pos-api.js';
-import { money } from './_till-dollars.js';
+import { lookupSales, getSale, money, type SaleSummary, type SaleView } from '@hardscapehouse/pos-kit/src/ported/pos-api.js';
 import { printReceipt } from './receipt-print.js';
 import { orderStatusWord } from './order-logic.js';
 import { tenderMethodWord } from './tender-logic.js';

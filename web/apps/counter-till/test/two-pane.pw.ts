@@ -310,17 +310,13 @@ test("the header badge sits at the left edge before the Demo pill, at the front 
   }
 });
 
-// Scope: the text on screen (a closed disclosure paints nothing, so it is not read). The Browse
-// products grid is pos-kit's own component and prints its list prices through pos-kit's formatter,
-// which the dollar change in pos-kit owns; this leg widens to it when that lands.
-test("no CA$ in any text the till shows", async ({ page }) => {
+test("no CA$ in any text the till renders, hidden disclosures included", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await twoPaneWithTicket(page);
   const text = await page.evaluate(() => {
     const walk = (root: ParentNode): string[] => {
       const out: string[] = [];
       for (const el of root.querySelectorAll("*:not(style):not(script)")) {
-        if (!el.checkVisibility()) continue;
         for (const n of el.childNodes) if (n.nodeType === 3) out.push(n.textContent ?? "");
         for (const attr of ["title", "aria-label", "placeholder"]) out.push(el.getAttribute(attr) ?? "");
         if (el.shadowRoot) out.push(...walk(el.shadowRoot));
