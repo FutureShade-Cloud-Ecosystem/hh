@@ -13,7 +13,7 @@
 // holds its templates to no property or event bindings): the cards and the
 // chrome controls delegate through data-action on the host.
 import { SIGN_OUT_EVENT, UNSENT_WAIT_MS, waitUpTo, type SignOutDetail } from "./quote-context.js";
-import { html, css, type TemplateResult } from "lit";
+import { html, css, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
 // The shared chrome (item 5, decision log row 938): the element registers
@@ -77,6 +77,34 @@ export class QuoteDeskApp extends HHElement {
       }
       .notice {
         margin: var(--hh-s-8) var(--hh-s-20);
+      }
+      /* The desk tab strip lives below the shared header, not in it. Quotes is
+         always here; Pricing is manager only. The strip follows the same token
+         rules as the header and keeps the light theme look. */
+      .desk-tabs {
+        display: flex;
+        gap: var(--hh-s-4);
+        padding: var(--hh-s-8) var(--hh-s-20) 0;
+        background: var(--hh-surface);
+        border-bottom: 1px solid var(--hh-line);
+      }
+      .desk-tab {
+        padding: var(--hh-s-8) var(--hh-s-16);
+        border: 1px solid transparent;
+        border-bottom: none;
+        border-radius: var(--hh-radius-control) var(--hh-radius-control) 0 0;
+        background: transparent;
+        color: var(--hh-text-dim);
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .desk-tab[aria-selected="true"] {
+        background: var(--hh-page);
+        color: var(--hh-text);
+        border-color: var(--hh-line);
+      }
+      .desk-tab:hover:not(:disabled) {
+        color: var(--hh-accent-text);
       }
     `,
   ];
@@ -205,6 +233,14 @@ export class QuoteDeskApp extends HHElement {
     }
     if (control.getAttribute("data-action") === "switch-role") {
       void this.#switchRole();
+    }
+    if (control.getAttribute("data-action") === "desk-tab") {
+      const next = control.getAttribute("data-view") as "quotes" | "pricing" | null;
+      if (next !== null && next !== this.#view) {
+        if (this.#view === "pricing" && this.#pricingHoldsLeave()) return;
+        this.#view = next;
+        this.requestUpdate();
+      }
     }
     if (control.getAttribute("data-action") === "theme") {
       this.#theme.cycle();
@@ -382,6 +418,11 @@ export class QuoteDeskApp extends HHElement {
     return this.#roleLabel ?? session.user.name;
   }
 
+  /** Whether the signed-in user may use the Pricing desk tab. */
+  #isManager(): boolean {
+    return this.#deskIdentity !== null && this.#deskIdentity.tier <= 2;
+  }
+
   /** The Theme control of the bar: one button, its value beside the word. */
   #themeControl(): TemplateResult {
     const choice = this.#theme.choice;
@@ -399,12 +440,47 @@ export class QuoteDeskApp extends HHElement {
     `;
   }
 
+  /** The desk tab strip: Quotes for every desk user, Pricing for managers. */
+  #deskTabs(): TemplateResult {
+    const selected = this.#view;
+    const pricingAllowed = this.#isManager();
+    return html`
+      <nav class="desk-tabs" data-testid="desk-tabs" aria-label="Desk views">
+        <button
+          type="button"
+          class="desk-tab"
+          data-action="desk-tab"
+          data-view="quotes"
+          data-testid="desk-tab-quotes"
+          aria-selected=${selected === "quotes" ? "true" : "false"}
+        >
+          Quotes
+        </button>
+        ${pricingAllowed
+          ? html`
+              <button
+                type="button"
+                class="desk-tab"
+                data-action="desk-tab"
+                data-view="pricing"
+                data-testid="desk-tab-pricing"
+                aria-selected=${selected === "pricing" ? "true" : "false"}
+              >
+                Pricing
+              </button>
+            `
+          : nothing}
+      </nav>
+    `;
+  }
+
   render(): TemplateResult {
     return html`
       <p class="visually-hidden" role="status" aria-live="polite" data-testid="theme-status">${this.#themeStatus}</p>
       <hos-app-header data-testid="qd-bar">
         <div class="theme-slot" slot="theme">${this.#themeControl()}</div>
       </hos-app-header>
+      ${this.#surface === "desk" ? this.#deskTabs() : nothing}
       <main>
         ${this.#surface === "desk"
           ? html`
