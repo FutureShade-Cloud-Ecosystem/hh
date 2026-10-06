@@ -29,12 +29,12 @@
 
 import { LitElement, css, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import { api } from './ports.js';
-import { drawIcon, iconForId } from './_icon-consumer.js';
+import { api } from '@hardscapehouse/pos-kit/src/ported/ports.js';
+import { drawIcon, iconForId } from '@hardscapehouse/pos-kit/src/ported/_icon-consumer.js';
 import { surfaceConfigUrl } from './surface-config-url.js';
-import { focusRing } from './styles/focus-ring.js';
-import './product-thumb.js';
-import { listProducts, putProductImage, deleteProductImage, type PosProduct } from './pos-api.js';
+import { focusRing } from '@hardscapehouse/pos-kit/src/ported/styles/focus-ring.js';
+import '@hardscapehouse/pos-kit/src/ported/product-thumb.js';
+import { listProducts, putProductImage, deleteProductImage, type PosProduct } from '@hardscapehouse/pos-kit/src/ported/pos-api.js';
 import {
   BISTRACK_ROSTER,
   HOTKEY_ORDER,

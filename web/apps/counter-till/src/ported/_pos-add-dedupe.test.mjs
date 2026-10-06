@@ -35,12 +35,15 @@ import {
   ADD_EVENT,
   ADD_ECHO_EVENT,
   AddOnce,
-} from './_pos-add-dedupe.ts';
+} from '@hardscapehouse/pos-kit/src/ported/_pos-add-dedupe.ts';
 import { echoAddMessage } from './_pos.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
+// The grid moved into @hardscapehouse/pos-kit (web/packages/pos-kit,
+// src/ported, same name); the hot list and this module's echo stayed here.
+const kitPorted = join(here, '..', '..', '..', '..', 'packages', 'pos-kit', 'src', 'ported');
 const hotSrc = readFileSync(join(here, 'pos-hot-list.ts'), 'utf8');
-const gridSrc = readFileSync(join(here, 'pos-product-grid.ts'), 'utf8');
+const gridSrc = readFileSync(join(kitPorted, 'pos-product-grid.ts'), 'utf8');
 
 // ── the pure rule ─────────────────────────────────────────────────────────────────────────────
 

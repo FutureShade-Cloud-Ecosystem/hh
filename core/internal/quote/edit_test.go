@@ -12,6 +12,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -79,6 +80,7 @@ type fakeStaffStore struct {
 	status     string
 	branchID   string
 	validUntil *time.Time
+	ownerID    string
 	line       QuoteLineSnapshot
 	uom        string
 	lineGone   bool
@@ -87,6 +89,12 @@ type fakeStaffStore struct {
 	lastWrite quoteEditWrite
 	writes    int
 	validSet  string
+	// disc and clearing back the floor seam's store read.
+	disc     int
+	clearing *floorClearingStamp
+	// floorReadErr, when set, is the floor state read failing: the read
+	// error leg of the quantity reprice (P2-6).
+	floorReadErr error
 }
 
 func newFakeStaffStore(status string) *fakeStaffStore {
@@ -109,11 +117,11 @@ func (f *fakeStaffStore) ResolveQuoteID(_ context.Context, idOrNo string, _ bool
 	return "", ErrNotFound
 }
 
-func (f *fakeStaffStore) QuoteEditHeader(_ context.Context, quoteID string) (string, string, *time.Time, error) {
+func (f *fakeStaffStore) QuoteEditHeader(_ context.Context, quoteID string) (string, string, *time.Time, string, error) {
 	if quoteID != qOrg {
-		return "", "", nil, ErrNotFound
+		return "", "", nil, "", ErrNotFound
 	}
-	return f.status, f.branchID, f.validUntil, nil
+	return f.status, f.branchID, f.validUntil, f.ownerID, nil
 }
 
 func (f *fakeStaffStore) CreateQuote(_ context.Context, _ QuoteCreate) (string, string, error) {
@@ -126,7 +134,7 @@ func (f *fakeStaffStore) StaffDetail(_ context.Context, quoteID string) (StaffQu
 	}
 	v := StaffQuoteView{
 		ID: qOrg, QuoteNo: "#Q-1", CustomerID: qCust, BranchID: f.branchID,
-		Status: f.status, validUntil: f.validUntil, Lines: []QuoteViewLine{},
+		Status: f.status, validUntil: f.validUntil, Lines: []QuoteViewLine{}, OwnerID: f.ownerID,
 	}
 	if f.validUntil != nil {
 		v.ValidUntil = f.validUntil.Format(dateLayout)
@@ -134,7 +142,7 @@ func (f *fakeStaffStore) StaffDetail(_ context.Context, quoteID string) (StaffQu
 	return v, nil
 }
 
-func (f *fakeStaffStore) ListStaffQuotes(_ context.Context, _ bool, _ []string, _ Filter) ([]StaffQuoteSummary, error) {
+func (f *fakeStaffStore) ListStaffQuotes(_ context.Context, _ bool, _ []string, _ string, _ Filter) ([]StaffQuoteSummary, error) {
 	return []StaffQuoteSummary{}, nil
 }
 
@@ -147,6 +155,19 @@ func (f *fakeStaffStore) LineForEdit(_ context.Context, quoteID string, lineNo i
 
 func (f *fakeStaffStore) QuotePricingContext(_ context.Context, _ string) (string, string, error) {
 	return qCust, f.branchID, nil
+}
+
+// LineFloorState satisfies the floor seam's store read (floor.go): the
+// fake's line is undiscounted unless a test sets disc. The line's own row
+// id is a fixed fixture string: no test here relies on row identity.
+func (f *fakeStaffStore) LineFloorState(_ context.Context, quoteID string, lineNo int) (string, int, int64, int64, string, *floorClearingStamp, error) {
+	if f.floorReadErr != nil {
+		return "", 0, 0, 0, "", nil, f.floorReadErr
+	}
+	if quoteID != qOrg || f.lineGone || lineNo != f.line.LineNo {
+		return "", 0, 0, 0, "", nil, ErrLineNotFound
+	}
+	return "11111111-1111-4111-8111-111111111111", f.disc, 1000, 2000, "EA", f.clearing, nil
 }
 
 // Convert satisfies the DIB-483 conversion seam embedded in staffStore. The edit tests never call it;
@@ -175,7 +196,7 @@ func (f *fakeStaffStore) totals() QuoteTotals {
 	return QuoteTotals{SubtotalCents: f.line.LineTotalCents, TotalCents: f.line.LineTotalCents}
 }
 
-func (f *fakeStaffStore) UpdateLineGuarded(ctx context.Context, w quoteEditWrite, hooks quoteEditHooks) (QuoteLineSnapshot, QuoteLineSnapshot, QuoteTotals, string, error) {
+func (f *fakeStaffStore) UpdateLineGuarded(ctx context.Context, w quoteEditWrite, _ floorWritePlan, hooks quoteEditHooks) (QuoteLineSnapshot, QuoteLineSnapshot, QuoteTotals, string, error) {
 	if err := f.guard(w.AllowedFrom); err != nil {
 		return QuoteLineSnapshot{}, QuoteLineSnapshot{}, QuoteTotals{}, f.status, err
 	}
@@ -193,6 +214,10 @@ func (f *fakeStaffStore) UpdateLineGuarded(ctx context.Context, w quoteEditWrite
 			f.line = saved // the real tx rolls back; so does the fake
 			return before, after, totals, f.status, err
 		}
+	}
+	if err := runPricingLog(ctx, hooks.pricing, nil, after.LineNo, before != after); err != nil {
+		f.line = saved
+		return before, after, totals, f.status, err
 	}
 	f.writes++
 	f.lastWrite = w
@@ -216,6 +241,9 @@ func (f *fakeStaffStore) InsertLineGuarded(ctx context.Context, w quoteEditWrite
 		if err := hooks.record(ctx, nil, QuoteLineSnapshot{}, after, totals); err != nil {
 			return after, totals, f.status, err
 		}
+	}
+	if err := runPricingLog(ctx, hooks.pricing, nil, after.LineNo, true); err != nil {
+		return after, totals, f.status, err
 	}
 	f.writes++
 	f.lastWrite = w
@@ -302,9 +330,12 @@ func (r *recordingTxRecorder) RecordTx(_ context.Context, _ audit.Execer, a audi
 // - pricing / seam doubles -
 
 type qPricer struct {
-	blocked bool
-	factor  float64
-	err     error
+	blocked    bool
+	finalCents int64
+	marginBps  int64
+	floorBps   int64
+	factor     float64
+	err        error
 }
 
 func (p qPricer) ResolvePrice(_ context.Context, in pricing.ResolveInput) (pricing.Breakdown, error) {
@@ -312,7 +343,17 @@ func (p qPricer) ResolvePrice(_ context.Context, in pricing.ResolveInput) (prici
 		return pricing.Breakdown{}, p.err
 	}
 	if p.blocked {
-		return pricing.Breakdown{Blocked: true, BlockPolicy: "FLOOR"}, nil
+		// The resolve shape a rule price below the floor answers: complete,
+		// with Blocked set and the figures riding it (plan 4.1 keeps them).
+		final := p.finalCents
+		if final == 0 {
+			final = 600
+		}
+		return pricing.Breakdown{
+			Blocked: true, BlockPolicy: "FLOOR",
+			FinalCents: final, MarginBps: p.marginBps, FloorBps: p.floorBps,
+			PriceUOM: "EA", QtyBase: in.QtyEntered, LineTotalCents: int64(in.QtyEntered) * final,
+		}, nil
 	}
 	f := p.factor
 	if f == 0 {
@@ -348,12 +389,13 @@ func qCallerFrom(ctx context.Context) (identity.StaffContext, bool) {
 	return c, ok
 }
 
-// qStaff is a frontline, branch-scoped staff member, the LOWEST authority that R1 says may edit a
-// quote. Using frontline (not manager) as the default caller in every matrix test is deliberate: it is
-// what proves R1 rather than merely assuming it.
+// qStaff is a frontline, branch-scoped staff member, the LOWEST authority that may edit a
+// quote it owns (plan 3.3: an inside sales caller at Work). Using frontline
+// (not manager) as the default caller in every matrix test is deliberate: it is
+// what proves the ladder's lowest rung rather than merely assuming it.
 func qStaff() identity.StaffContext {
 	return identity.StaffContext{
-		UserID: qUser, Tier: identity.TierFrontline, Scope: identity.ScopeBranch,
+		UserID: qUser, RoleCode: "INSIDE_SALES", Tier: identity.TierFrontline, Scope: identity.ScopeBranch,
 		Status: identity.StatusActive, Branches: map[string]bool{qBranch: true},
 	}
 }
@@ -364,19 +406,32 @@ func qInactive() identity.StaffContext {
 	return c
 }
 
-// qFixture is the one-liner every test starts from.
+// qFixture is the one-liner every test starts from. The store's quote is
+// owned by qStaff's user and the service carries the decided role
+// configuration, the shape every edit now runs under (plan 3.3).
 func qFixture(t *testing.T, status string) (*StaffService, *fakeStaffStore, *recordingTxRecorder) {
 	t.Helper()
 	store := newFakeStaffStore(status)
+	store.ownerID = qUser
 	rec := &recordingTxRecorder{}
 	svc := NewStaffService(store).
 		WithAudit(rec).
 		WithPricing(qPricer{}).
 		WithCostBasis(qInv{}).
 		WithCustomerType(qCustType{}).
+		WithRoleConfig(qTestRoleConfig()).
 		withCaller(qCallerFrom).
 		withNow(qNow)
 	return svc, store, rec
+}
+
+// qTestRoleConfig loads the decided default once for the unit fixtures.
+func qTestRoleConfig() *roleconfig.Config {
+	cfg, err := roleconfig.Default()
+	if err != nil {
+		panic("quote tests: role configuration refused: " + err.Error())
+	}
+	return cfg
 }
 
 // applyQuoteEdit drives one command uniformly, so the matrix test can treat all four identically.
@@ -836,25 +891,32 @@ func TestQuoteQty_RejectsNonPositive(t *testing.T) {
 	}
 }
 
-// TestQuoteEdit_PriceBlockedIsRefused pins that the A-20 margin gate stays live on a quoted line, a
-// staff quote must not be able to go out below floor.
-func TestQuoteEdit_PriceBlockedIsRefused(t *testing.T) {
+// TestQuoteEdit_RulePriceBelowFloorIsAccepted pins plan 4.1 (defect D1,
+// CP0-3 answer A): a line whose rule price resolves below the margin floor
+// is priced and written like any other, as at the till, the resolver's
+// figures riding the breakdown for the write's own logging. The floor
+// question belongs to the two writes that put a line below its rule price,
+// not to the resolve.
+func TestQuoteEdit_RulePriceBelowFloorIsAccepted(t *testing.T) {
 	svc, store, _ := qFixture(t, "DRAFT")
-	svc.WithPricing(qPricer{blocked: true})
-	err := applyQuoteEdit(svc, qCtxAs(qStaff()), FieldQuoteLineQty)
-	var pb *PriceBlockedError
-	if !errors.As(err, &pb) {
-		t.Fatalf("want *PriceBlockedError, got %T: %v", err, err)
+	// The arbiter is wired: the rule price row cannot be logged without one,
+	// and the write then fails closed (qd2_floor_source_integration_test.go).
+	svc.WithPricing(qPricer{blocked: true, finalCents: 600, marginBps: 500, floorBps: 1200}).
+		WithFloorArbiter(&unitFloorArbiter{})
+	if err := applyQuoteEdit(svc, qCtxAs(qStaff()), FieldQuoteLineQty); err != nil {
+		t.Fatalf("a line at its rule price must be accepted wherever the floor sits: %v", err)
 	}
-	if store.writes != 0 {
-		t.Error("a below-floor line must not be written")
+	if store.writes != 1 {
+		t.Errorf("the reprice must be written, got %d writes", store.writes)
 	}
 }
 
 // TestQuoteEdit_UnwiredPricingFailsClosed pins that a missing seam refuses rather than quoting at zero.
 func TestQuoteEdit_UnwiredPricingFailsClosed(t *testing.T) {
 	store := newFakeStaffStore("DRAFT")
+	store.ownerID = qUser
 	svc := NewStaffService(store).WithAudit(&recordingTxRecorder{}).
+		WithRoleConfig(qTestRoleConfig()).
 		withCaller(qCallerFrom).withNow(qNow) // no pricing/cost/customer-type seams
 	if svc.QuoteEditSeamsWired() {
 		t.Fatal("fixture bug: seams must be unwired for this test")
@@ -896,3 +958,17 @@ func TestLooksLikeUUID(t *testing.T) {
 // compile-time proof the fake satisfies the real seam.
 var _ staffStore = (*fakeStaffStore)(nil)
 var _ pgx.Tx = pgx.Tx(nil)
+
+// TestQuoteQty_FloorStateReadFailureRefuses (P2-6): a quantity reprice
+// whose floor state read FAILS is refused, never waved through the floor
+// decision as though the line carried no discount.
+func TestQuoteQty_FloorStateReadFailureRefuses(t *testing.T) {
+	svc, store, _ := qFixture(t, "DRAFT")
+	store.floorReadErr = fmt.Errorf("floor state read failed")
+	if _, err := svc.EditLineQty(qCtxAs(qStaff()), qOrg, 1, "5"); err == nil {
+		t.Fatal("a failed floor state read must refuse the quantity change, not skip the floor question")
+	}
+	if store.writes != 0 {
+		t.Errorf("a refused reprice must not write, wrote %d", store.writes)
+	}
+}

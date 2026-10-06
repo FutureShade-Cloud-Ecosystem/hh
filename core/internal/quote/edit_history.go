@@ -64,7 +64,7 @@ func (s *StaffService) QuoteEditHistory(ctx context.Context, quoteID string) (Qu
 	if err != nil {
 		return QuoteEditHistoryOut{}, err
 	}
-	_, branchID, _, err := s.store.QuoteEditHeader(ctx, quoteID)
+	_, branchID, _, _, err := s.store.QuoteEditHeader(ctx, quoteID)
 	if err != nil {
 		return QuoteEditHistoryOut{}, err // ErrNotFound for a missing quote, no existence leak
 	}

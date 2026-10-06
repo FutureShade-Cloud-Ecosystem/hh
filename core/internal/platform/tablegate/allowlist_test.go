@@ -839,6 +839,16 @@ var allowlist = []allowlistEntry{
 	},
 	{
 		module: "quote",
+		file:   "core/internal/quote/share_idempotency.go",
+		tables: []string{"audit_log"},
+		// the function's own comment: findKeyedAcceptance returns the earlier
+		// acceptance of this quote through this share link that carried the
+		// key, rebuilt as the confirmation it first produced, and must run
+		// under the quote row lock.
+		reason: "share acceptance idempotency rebuilds the earlier keyed acceptance from the audit trail inside the accept's transaction, stated in the function's comment (it must run under the quote row lock); new in HH-RD2 (the Quote Desk cycle), a same transaction read, granted to move behind the owning module's transaction taking seam (the till hold's WithCallerTx shape)",
+	},
+	{
+		module: "quote",
 		file:   "core/internal/quote/share_repository.go",
 		tables: []string{"customers", "product_images", "products"},
 		writes: []string{"scope_sequences"},

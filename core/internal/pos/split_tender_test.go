@@ -2,6 +2,7 @@ package pos
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -326,10 +327,32 @@ func TestSale_SplitTender_CardLegBlocksOffline(t *testing.T) {
 	}
 }
 
-func TestSale_SplitTender_DeclinedLegRollsTheWholeSaleBack(t *testing.T) {
+func TestSale_SplitTender_DeclinedCardLegNeverOpensTheTransaction(t *testing.T) {
 	h := newHarness()
-	// The first leg succeeds, the second is declined: without a single enclosing tx the cash would
-	// already be in the drawer against an order that never commits.
+	// The card leg is declined at its CAPTURE, before the transaction opens: the cash leg was
+	// never taken either, nothing persists, and the ring answers the decline word.
+	h.tender.captureErr = fmt.Errorf("%w: gateway refused", till.ErrCardDeclined)
+	_, err := h.svc.Sale(context.Background(), splitInput(
+		TenderLegInput{Method: TenderCash, AmountCents: 4000},
+		TenderLegInput{Method: TenderCard, AmountCents: 7300},
+	))
+	if !errors.Is(err, ErrCardChargeCardDeclined) {
+		t.Fatalf("a declined card leg must read as the decline answer, got %v", err)
+	}
+	if len(h.store.orders) != 0 || len(h.store.invoices) != 0 || len(h.store.saleTenders) != 0 {
+		t.Fatalf("a declined leg must leave nothing behind: orders=%d invoices=%d legs=%d",
+			len(h.store.orders), len(h.store.invoices), len(h.store.saleTenders))
+	}
+	if len(h.tender.takes) != 0 {
+		t.Fatalf("a declined capture must take no tender at all; takes=%d", len(h.tender.takes))
+	}
+}
+
+// A failing leg INSIDE the transaction (the bind failing, the drawer refusing) still rolls the
+// whole split back, and under the capture seam its captured card leg is compensated before the
+// ring answers: the split-decline machine's other half.
+func TestSale_SplitTender_TxFailingLegRollsBackAndReversesTheCapture(t *testing.T) {
+	h := newHarness()
 	h.tender.err = nil
 	declineOnSecond := &declineNthTender{inner: h.tender, n: 2}
 	h.svc.tender = declineOnSecond
@@ -338,18 +361,19 @@ func TestSale_SplitTender_DeclinedLegRollsTheWholeSaleBack(t *testing.T) {
 		TenderLegInput{Method: TenderCash, AmountCents: 4000},
 		TenderLegInput{Method: TenderCard, AmountCents: 7300},
 	))
-	if err == nil {
-		t.Fatal("a declined leg must fail the sale")
-	}
-	if err.Error() != errCardDeclined.Error() {
-		t.Fatalf("a real gateway decline must read as a decline, got %q", err.Error())
+	if !errors.Is(err, ErrSaleFailedCardReversed) {
+		t.Fatalf("a failing leg after the capture must answer the reversed word, got %v", err)
 	}
 	if len(h.store.orders) != 0 || len(h.store.invoices) != 0 || len(h.store.saleTenders) != 0 {
-		t.Fatalf("a declined leg must roll the whole split back: orders=%d invoices=%d legs=%d",
+		t.Fatalf("a failing leg must roll the whole split back: orders=%d invoices=%d legs=%d",
 			len(h.store.orders), len(h.store.invoices), len(h.store.saleTenders))
 	}
 	if len(h.tender.receiptRecords) != 0 {
 		t.Fatal("a rolled-back split must record no PAYMENT_RECEIVED for the leg that did succeed")
+	}
+	// The card leg's capture was reversed on the way out.
+	if len(h.tender.compCalls) != 1 {
+		t.Fatalf("the captured card leg must be compensated once, got %d compensation calls", len(h.tender.compCalls))
 	}
 }
 
@@ -371,6 +395,12 @@ func (d *declineNthTender) TakeTender(ctx context.Context, tx pgx.Tx, in till.Te
 
 func (d *declineNthTender) RefundTender(ctx context.Context, tx pgx.Tx, in till.RefundInput) (till.RefundResult, error) {
 	return d.inner.RefundTender(ctx, tx, in)
+}
+func (d *declineNthTender) CaptureCard(ctx context.Context, in till.CardChargeInput) (till.CardCapture, error) {
+	return d.inner.CaptureCard(ctx, in)
+}
+func (d *declineNthTender) CompensateCard(ctx context.Context, attemptID string) (till.CardCompensation, error) {
+	return d.inner.CompensateCard(ctx, attemptID)
 }
 func (d *declineNthTender) RecordPaymentReceived(ctx context.Context, res till.TenderResult) {
 	d.inner.RecordPaymentReceived(ctx, res)

@@ -121,6 +121,11 @@ type RouteAccess struct {
 // refusal, never a silent no-list.
 var listReaders = map[string]func(*roleconfig.Config) []string{
 	roleconfig.SettingPricingEditors: func(c *roleconfig.Config) []string { return c.PricingEditors() },
+	// The pricing log names the cost and margin list (D10): the log carries
+	// margin figures, so a role off the list (HR, whose Dealer Admin cell is
+	// admin) is refused beside the level, exactly as the price writes name
+	// their editors.
+	roleconfig.SettingCostVisibility: func(c *roleconfig.Config) []string { return c.CostVisibility() },
 }
 
 // valid checks the annotation against roleconfig's vocabulary. An empty

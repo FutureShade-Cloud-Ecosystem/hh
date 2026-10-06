@@ -1088,12 +1088,12 @@ type Product struct {
 	IsFeatured                     bool                `json:"is_featured"`
 	IsSpecialOrder                 bool                `json:"is_special_order"`
 	ContractorPricingEventDiscount bool                `json:"contractor_pricing_event_discount"`
-	FullSkidQuantity               *int32              `json:"full_skid_quantity,omitempty"`
-	LayerQuantity                  *int32              `json:"layer_quantity,omitempty"`
-	PalletCount                    *int32              `json:"pallet_count,omitempty"`
-	MinimumOrderQty                *string             `json:"minimum_order_qty,omitempty"`
+	FullSkidQuantity               *int32              `json:"full_skid_quantity"`
+	LayerQuantity                  *int32              `json:"layer_quantity"`
+	PalletCount                    *int32              `json:"pallet_count"`
+	MinimumOrderQty                *string             `json:"minimum_order_qty"`
 	IsActive                       bool                `json:"is_active"`
-	Metadata                       *map[string]any     `json:"metadata,omitempty"`
+	Metadata                       *map[string]any     `json:"metadata"`
 	OnHandByBranch                 *map[string]float64 `json:"on_hand_by_branch,omitempty"`
 	ListPriceCents                 *int64              `json:"list_price_cents,omitempty"`
 	ListPriceUom                   *string             `json:"list_price_uom,omitempty"`
@@ -1157,13 +1157,13 @@ type ProductCoverageBasis struct {
 	BaseDimension      string   `json:"base_dimension"`
 	SellUom            string   `json:"sell_uom"`
 	SellDimension      string   `json:"sell_dimension"`
-	SellUomFactor      *float64 `json:"sell_uom_factor,omitempty"`
-	CoverageSfPerUnit  *float64 `json:"coverage_sf_per_unit,omitempty"`
+	SellUomFactor      *float64 `json:"sell_uom_factor"`
+	CoverageSfPerUnit  *float64 `json:"coverage_sf_per_unit"`
 	CoverageSource     string   `json:"coverage_source"`
-	PalletFactor       *float64 `json:"pallet_factor,omitempty"`
+	PalletFactor       *float64 `json:"pallet_factor"`
 	BreakPalletAllowed bool     `json:"break_pallet_allowed"`
 	WasteFactorPct     float64  `json:"waste_factor_pct"`
-	DensityTPerCyd     *float64 `json:"density_t_per_cyd,omitempty"`
+	DensityTPerCyd     *float64 `json:"density_t_per_cyd"`
 }
 
 type ProductCoverageResults struct {
@@ -2016,15 +2016,15 @@ type DispatchScheduleInput struct {
 	AddressLine     string   `json:"address_line"`
 	City            string   `json:"city"`
 	PostalCode      string   `json:"postal_code"`
-	Latitude        *float64 `json:"latitude,omitempty"`
-	Longitude       *float64 `json:"longitude,omitempty"`
+	Latitude        *float64 `json:"latitude"`
+	Longitude       *float64 `json:"longitude"`
 	Instructions    string   `json:"instructions"`
 	CommitState     string   `json:"commit_state"`
 	RequestedDate   string   `json:"requested_date"`
 	DateState       *string  `json:"date_state,omitempty"`
-	WeightKg        *float64 `json:"weight_kg,omitempty"`
-	VolumeM3        *float64 `json:"volume_m3,omitempty"`
-	PalletPositions *int32   `json:"pallet_positions,omitempty"`
+	WeightKg        *float64 `json:"weight_kg"`
+	VolumeM3        *float64 `json:"volume_m3"`
+	PalletPositions *int32   `json:"pallet_positions"`
 }
 
 type DispatchAssignInput struct {
@@ -3539,7 +3539,7 @@ type InvCountLine struct {
 	ProductName        *string  `json:"product_name,omitempty"`
 	LocationId         string   `json:"location_id"`
 	SnapshotQtyBase    float64  `json:"snapshot_qty_base"`
-	CountedQtyBase     *float64 `json:"counted_qty_base,omitempty"`
+	CountedQtyBase     *float64 `json:"counted_qty_base"`
 	VarianceBase       float64  `json:"variance_base"`
 	UnitCostCents      int64    `json:"unit_cost_cents"`
 	VarianceValueCents int64    `json:"variance_value_cents"`
@@ -4425,7 +4425,7 @@ type TaskStageRequest struct {
 }
 
 type TaskShortageRequest struct {
-	OrderLineNo *int32 `json:"order_line_no,omitempty"`
+	OrderLineNo *int32 `json:"order_line_no"`
 	ProductId   string `json:"product_id"`
 	Sku         string `json:"sku"`
 	Description string `json:"description"`
@@ -6477,6 +6477,8 @@ type QuoteSummary struct {
 	TaxCents      int64     `json:"tax_cents"`
 	TotalCents    int64     `json:"total_cents"`
 	UpdatedAt     time.Time `json:"updated_at"`
+	OwnerId       *string   `json:"owner_id,omitempty"`
+	OwnerName     *string   `json:"owner_name,omitempty"`
 }
 
 type QuoteSummaryPage struct {
@@ -6496,6 +6498,8 @@ type QuoteView struct {
 	Expired        bool            `json:"expired"`
 	EditableFields []string        `json:"editable_fields"`
 	CanConvert     bool            `json:"can_convert"`
+	OwnerId        *string         `json:"owner_id,omitempty"`
+	OwnerName      *string         `json:"owner_name,omitempty"`
 	Lines          []QuoteViewLine `json:"lines"`
 	SubtotalCents  int64           `json:"subtotal_cents"`
 	TaxCents       int64           `json:"tax_cents"`
@@ -6504,15 +6508,17 @@ type QuoteView struct {
 }
 
 type QuoteViewLine struct {
-	LineNo         int32  `json:"line_no"`
-	ProductId      string `json:"product_id"`
-	Description    string `json:"description"`
-	QtyEntered     string `json:"qty_entered"`
-	UomEntered     string `json:"uom_entered"`
-	QtyBase        string `json:"qty_base"`
-	UnitPriceCents int64  `json:"unit_price_cents"`
-	PriceUom       string `json:"price_uom"`
-	LineTotalCents int64  `json:"line_total_cents"`
+	LineNo              int32   `json:"line_no"`
+	ProductId           string  `json:"product_id"`
+	Description         string  `json:"description"`
+	QtyEntered          string  `json:"qty_entered"`
+	UomEntered          string  `json:"uom_entered"`
+	QtyBase             string  `json:"qty_base"`
+	UnitPriceCents      int64   `json:"unit_price_cents"`
+	PriceUom            string  `json:"price_uom"`
+	LineTotalCents      int64   `json:"line_total_cents"`
+	RulePriceBelowFloor *bool   `json:"rule_price_below_floor,omitempty"`
+	FloorClearedBy      *string `json:"floor_cleared_by,omitempty"`
 }
 
 type QuoteCreateRequest struct {
@@ -6879,7 +6885,7 @@ type QuoteBranchStock struct {
 	InTransitBase float64 `json:"in_transit_base"`
 	AvailableBase float64 `json:"available_base"`
 	SoftHeldBase  float64 `json:"soft_held_base"`
-	AvgCostCents  int64   `json:"avg_cost_cents"`
+	AvgCostCents  *int64  `json:"avg_cost_cents,omitempty"`
 }
 
 type QuoteBranchStockList struct {
@@ -7012,6 +7018,33 @@ type QuoteAssistScopeRuleList struct {
 
 type QuoteAssistScopeRulePatch struct {
 	Enabled bool `json:"enabled"`
+}
+
+type QuoteFloorApprovalRequest struct {
+	DiscPct int32   `json:"disc_pct"`
+	Note    *string `json:"note,omitempty"`
+}
+
+type QuoteFloorRequestState struct {
+	Id      string `json:"id"`
+	Status  string `json:"status"`
+	LineNo  int32  `json:"line_no"`
+	DiscPct int32  `json:"disc_pct"`
+}
+
+type QuoteFloorApprovalAnswer struct {
+	Filed          bool                    `json:"filed"`
+	MayClearItself bool                    `json:"may_clear_itself"`
+	Request        *QuoteFloorRequestState `json:"request,omitempty"`
+}
+
+type QuoteFloorRefusal struct {
+	Policy          string                  `json:"policy"`
+	ApproverRoles   []string                `json:"approver_roles"`
+	ManagerMaySet   bool                    `json:"manager_may_set"`
+	ExistingRequest *QuoteFloorRequestState `json:"existing_request,omitempty"`
+	MarginBps       *int64                  `json:"margin_bps,omitempty"`
+	FloorBps        *int64                  `json:"floor_bps,omitempty"`
 }
 
 type ReportingColumn struct {
@@ -7876,7 +7909,7 @@ type WarrantyVendorProfileInput struct {
 	VendorId   string           `json:"vendor_id"`
 	Status     string           `json:"status"`
 	Coverage   string           `json:"coverage"`
-	TermMonths *int32           `json:"term_months,omitempty"`
+	TermMonths *int32           `json:"term_months"`
 	Channel    string           `json:"channel"`
 	ChannelRef string           `json:"channel_ref"`
 	Docs       []WarrantyDocRef `json:"docs"`
@@ -7887,7 +7920,7 @@ type WarrantyProductOverrideInput struct {
 	ProfileId  string `json:"profile_id"`
 	ProductId  string `json:"product_id"`
 	Coverage   string `json:"coverage"`
-	TermMonths *int32 `json:"term_months,omitempty"`
+	TermMonths *int32 `json:"term_months"`
 	Notes      string `json:"notes"`
 }
 
@@ -8045,7 +8078,7 @@ type WarrantyEvidenceInput struct {
 
 type WarrantySettlementInput struct {
 	Outcome        string `json:"outcome"`
-	ExpectedCents  *int64 `json:"expected_cents,omitempty"`
+	ExpectedCents  *int64 `json:"expected_cents"`
 	RealizedCents  int64  `json:"realized_cents"`
 	Note           string `json:"note"`
 	ManualOverride bool   `json:"manual_override"`

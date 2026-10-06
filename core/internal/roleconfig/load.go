@@ -167,7 +167,7 @@ func refuseWrongCaseKeys(data []byte) error {
 		if err := json.Unmarshal(raw, &lists); err != nil {
 			return err
 		}
-		if err := keysWithin(lists, "lists", "exception_approvers", "floor_clearers_own_branch", "delivery_date_committers"); err != nil {
+		if err := keysWithin(lists, "lists", "exception_approvers", "floor_clearers_own_branch", "delivery_date_committers", "quote_floor_branch_approvers"); err != nil {
 			return err
 		}
 		if approvers, ok := lists["exception_approvers"]; ok {
@@ -269,6 +269,7 @@ func validate(doc *Document) (*Config, error) {
 	moneyApprovers := []namedRoleList{
 		{SettingRefundApprovers, settings.RefundApprovers},
 		{"floor_clearers_own_branch", lists.FloorClearersOwnBranch},
+		{"quote_floor_branch_approvers", lists.QuoteFloorBranchApprovers},
 	}
 	for _, kind := range exceptionKindOrder {
 		moneyApprovers = append(moneyApprovers, namedRoleList{approverListName(kind), lists.ExceptionApprovers[kind]})
@@ -343,6 +344,13 @@ func validateLists(lists Lists) (Lists, []string) {
 
 	floorClearers, fIssues := checkApproverList(lists.FloorClearersOwnBranch, "floor_clearers_own_branch")
 	issues = append(issues, fIssues...)
+	// The quote floor branch approvers list walks the same approver-list
+	// rules (CP0-1 answer B): a role that can decide a below floor price
+	// names at least one role, and the list must be in the file, a dropped
+	// or null list would silently strip the branch's Sales manager of the
+	// decide authority.
+	quoteFloorBranch, qfIssues := checkApproverList(lists.QuoteFloorBranchApprovers, "quote_floor_branch_approvers")
+	issues = append(issues, qfIssues...)
 	// The list must be in the file: on a nil slice the key is absent or
 	// null, and both refuse. An explicit empty list is the dealer's
 	// choice, the same ruling the informational settings carry; a dropped
@@ -351,13 +359,18 @@ func validateLists(lists Lists) (Lists, []string) {
 		issues = append(issues, fmt.Sprintf("no %s list: a dropped or null list refuses, an explicit empty list is the dealer's choice",
 			"delivery_date_committers"))
 	}
+	if lists.QuoteFloorBranchApprovers == nil {
+		issues = append(issues, fmt.Sprintf("no %s list: a dropped or null list refuses, an explicit empty list is the dealer's choice",
+			"quote_floor_branch_approvers"))
+	}
 	dateCommitters, dIssues := checkRoleList(lists.DeliveryDateCommitters, "delivery_date_committers")
 	issues = append(issues, dIssues...)
 
 	return Lists{
-		ExceptionApprovers:     approverKinds,
-		FloorClearersOwnBranch: floorClearers,
-		DeliveryDateCommitters: dateCommitters,
+		ExceptionApprovers:        approverKinds,
+		FloorClearersOwnBranch:    floorClearers,
+		DeliveryDateCommitters:    dateCommitters,
+		QuoteFloorBranchApprovers: quoteFloorBranch,
 	}, issues
 }
 

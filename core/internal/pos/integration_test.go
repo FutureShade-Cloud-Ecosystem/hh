@@ -56,20 +56,34 @@ func intPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-// stubCharger is the deterministic RunPaymentsStub seam for the card path (no live call).
+// stubCharger is the deterministic capture seam for the card path (no live call, no attempt
+// table): Capture answers the stub's canned capture (or the decline when fail is set), BindTx
+// accepts the facts it is handed, Compensate answers a clean reversal.
 type stubCharger struct{ fail bool }
 
-func (c stubCharger) Charge(_ context.Context, tx pgx.Tx, _ int64, _, _ string) (till.ChargeResult, error) {
-	// The till must hand the SALE's transaction to the rail (the seam's whole point): a nil here is
-	// the charger back on the pool-shaped path, which only the database-gated legs can catch, so
-	// this rig refuses it on every card tender it serves.
-	if tx == nil {
-		return till.ChargeResult{}, errors.New("stub charger: the till forwarded a nil transaction to the card rail")
+func (c stubCharger) Capture(_ context.Context, in till.CardChargeInput) (till.CardCapture, error) {
+	if in.ReadOnly {
+		return till.CardCapture{}, till.ErrCardLegUnattempted
 	}
 	if c.fail {
-		return till.ChargeResult{Status: "failed"}, errors.New("processor: declined")
+		return till.CardCapture{}, till.ErrCardDeclined
 	}
-	return till.ChargeResult{ProcessorRef: "rp_stub_captured", Status: "captured"}, nil
+	return till.CardCapture{
+		Kind:         till.CardCaptureCaptured,
+		AttemptID:    "att-stub-" + in.LegKey,
+		ProcessorRef: "rp_stub_captured",
+	}, nil
+}
+
+func (c stubCharger) BindTx(_ context.Context, _ pgx.Tx, b till.CardBind) error {
+	if b.AttemptID == "" || b.PaymentID == "" {
+		return errors.New("stub charger: the bind arrived without its attempt or payment id")
+	}
+	return nil
+}
+
+func (c stubCharger) Compensate(_ context.Context, attemptID string) (till.CardCompensation, error) {
+	return till.CardCompensation{Kind: till.CardCompVoided, AttemptID: attemptID}, nil
 }
 
 func realPosSvc(t *testing.T, pool *pgxpool.Pool, charger till.CardCharger) *Service {

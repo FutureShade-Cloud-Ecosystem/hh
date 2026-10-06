@@ -144,7 +144,12 @@ function structLines(s, where) {
       let base = goType(p, `${where}.${name}`);
       if (base === null) base = inlineStruct(p, `${where}.${name}`);
       const typ = nullable || !required.has(name) ? pointer(base) : base;
-      const omitempty = !required.has(name) || nullable ? ",omitempty" : "";
+      // omitempty rides only on a property the document does not
+      // require: a required nullable property is a pointer without it,
+      // so an absent value serializes as an explicit null and the
+      // contract's required key stays in the payload (the same rule the
+      // mapping pin above states).
+      const omitempty = !required.has(name) ? ",omitempty" : "";
       lines.push(`	${field} ${typ} \`json:"${name}${omitempty}"\``);
     }
   };

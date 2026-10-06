@@ -2,7 +2,7 @@
 
 import { LitElement, css, html } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
-import { focusRing } from './styles/focus-ring.js';
+import { focusRing } from '@hardscapehouse/pos-kit/src/ported/styles/focus-ring.js';
 import { emptyState, emptyStateStyles, faultBox } from './empty-state.js';
 import { whenWord } from './field-refusal.js';
 import {

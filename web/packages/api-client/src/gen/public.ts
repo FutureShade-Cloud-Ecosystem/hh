@@ -5,7 +5,7 @@
 
 import type { CustomerQuoteAcceptanceRequest, CustomerQuoteAcceptanceResult, CustomerQuotePublicView, DispatchPublicWillCall, DispatchWillCallConfirmInput, QuoteAcceptanceResult, QuotePublicAcceptRequest, QuotePublicView, WarrantyPublicIntakeInput, WarrantyPublicIntakeResult } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient, type ApiCallOptions } from "../http.js";
+import { ApiClient, type ApiCallOptions, type ApiKeyedCallOptions } from "../http.js";
 
 // The document declares the success content as image/gif
 // (format: binary); the client resolves the raw bytes.
@@ -106,17 +106,21 @@ export async function quotePublicViewQuote(
   });
 }
 
+// The document lets this call carry an Idempotency-Key: call.idempotencyKey, a UUID chosen
+// once per acceptance and resent unchanged on every retry of it (never a new key per try), so a retry after a
+// timeout answers the first outcome instead of recording a second one.
 export async function quotePublicAcceptQuote(
   client: ApiClient,
   token: string | number,
   body: QuotePublicAcceptRequest,
-  call?: ApiCallOptions
+  call?: ApiKeyedCallOptions
 ): Promise<Result<QuoteAcceptanceResult>> {
   return client.request<QuoteAcceptanceResult>({
     method: "POST",
     path: "/api/public/v1/quotes/{token}/accept",
     pathParams: { token },
     body,
+    idempotencyKey: call?.idempotencyKey,
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "quotePublicAcceptQuote",
