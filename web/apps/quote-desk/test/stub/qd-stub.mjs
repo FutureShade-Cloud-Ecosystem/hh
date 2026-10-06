@@ -255,6 +255,10 @@ const HST_RATE_BPS = 1300;
 // approvalsShape: "page" is the contract's IdentityApprovalPage, "bare" is what
 // the core's handler writes today (a bare array), "paged" is the page object
 // split into pages of one row with next_cursor.
+// The feedback route (the contract's staff-feedback create): the answer mode
+// the suite flips, and the submissions seen, for the sender's assertions.
+const feedbackFiled = [];
+const feedbackMode = { value: "ok" };
 const switches = { callerOnCostList: true, callerIsGeneralManager: false, floorRaiseBps: 0, approvalsShape: "page", quotePageSize: 0 };
 
 // Every write the stub sees, for the suite's layout save assertions. The
@@ -1008,6 +1012,36 @@ const server = createServer(async (request, response) => {
     });
     return;
   }
+  if (path === "/_stub/feedback-mode" && request.method === "PUT") {
+    readBody(request, response, (body) => {
+      feedbackMode.value = ["fail", "no-number"].includes(body.mode) ? body.mode : "ok";
+      respondJson(response, 200, { mode: feedbackMode.value });
+    });
+    return;
+  }
+  if (path === "/_stub/feedback" && request.method === "GET") {
+    respondJson(response, 200, { filed: feedbackFiled });
+    return;
+  }
+  // The feedback route: a multipart body, kept raw (the readBody helper parses JSON).
+  if (path === "/api/v1/feedback" && request.method === "POST") {
+    const chunks = [];
+    request.on("data", (chunk) => chunks.push(chunk));
+    request.on("end", () => {
+      const text = Buffer.concat(chunks).toString("latin1");
+      const field = (name) => {
+        const match = new RegExp(`name="${name}"\\r\\n\\r\\n([^\\r]*)`).exec(text);
+        return match === null ? "" : match[1];
+      };
+      if (feedbackMode.value === "fail") {
+        respondJson(response, 502, { error: "the board is not answering" });
+        return;
+      }
+      feedbackFiled.push({ type: field("type"), message: field("message"), screen: field("screen"), images: (text.match(/name="images"/g) ?? []).length });
+      respondJson(response, 201, feedbackMode.value === "no-number" ? {} : { issue_number: `HH-${feedbackFiled.length}` });
+    });
+    return;
+  }
   // Put the whole in-memory world back to its seeded state, so a suite that
   // changes quotes, policy or switches leaves the next one a clean stub.
   if (path === "/_stub/reset" && request.method === "POST") {
@@ -1023,6 +1057,8 @@ const server = createServer(async (request, response) => {
     policyWrites.length = 0;
     decisions.length = 0;
     conversions.length = 0;
+    feedbackFiled.length = 0;
+    feedbackMode.value = "ok";
     acceptance.allow_multi_accept = false;
     resetPolicy();
     resetScopeRules();

@@ -193,6 +193,29 @@ export class QuoteDeskApp extends HHElement {
     if (feedback instanceof HHFeedback && feedback.send !== this.#feedbackSender) {
       feedback.send = this.#feedbackSender;
     }
+    if (feedback instanceof HHFeedback) this.#hideFeedbackPill(feedback);
+  }
+
+  /**
+   * The desk carries no floating pill: the trigger is the header's Feedback
+   * button, and the widget's own pill is taken out of the layout so nothing
+   * of it can sit over the work area. Its panel is the shared one, opened by
+   * the widget's own toggle control.
+   */
+  #hideFeedbackPill(feedback: HHFeedback): void {
+    const root = feedback.shadowRoot;
+    if (root === null || this.#pillHidden.has(root)) return;
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync(".pill { display: none; }");
+    root.adoptedStyleSheets = [...root.adoptedStyleSheets, sheet];
+    this.#pillHidden.add(root);
+  }
+
+  readonly #pillHidden = new WeakSet<ShadowRoot>();
+
+  #toggleFeedback(): void {
+    const pill = this.renderRoot.querySelector("hh-feedback")?.shadowRoot?.querySelector<HTMLElement>('[data-action="toggle"]');
+    pill?.click();
   }
 
   override disconnectedCallback(): void {
@@ -215,6 +238,9 @@ export class QuoteDeskApp extends HHElement {
     }
     if (control.getAttribute("data-action") === "switch-role") {
       void this.#switchRole();
+    }
+    if (control.getAttribute("data-action") === "feedback") {
+      this.#toggleFeedback();
     }
     if (control.getAttribute("data-action") === "theme") {
       this.#theme.cycle();
@@ -386,6 +412,15 @@ export class QuoteDeskApp extends HHElement {
     return this.#roleLabel ?? session.user.name;
   }
 
+  /** The Feedback control of the bar: opens the shared widget's panel. */
+  #feedbackControl(): TemplateResult {
+    return html`
+      <button type="button" class="btn-secondary" data-action="feedback" data-testid="feedback-control" title="Send feedback about this screen">
+        Feedback
+      </button>
+    `;
+  }
+
   /** The Theme control of the bar: one button, its value beside the word. */
   #themeControl(): TemplateResult {
     const choice = this.#theme.choice;
@@ -407,6 +442,7 @@ export class QuoteDeskApp extends HHElement {
     return html`
       <p class="visually-hidden" role="status" aria-live="polite" data-testid="theme-status">${this.#themeStatus}</p>
       <hos-app-header data-testid="qd-bar">
+        <div class="theme-slot" slot="theme">${this.#feedbackControl()}</div>
         <div class="theme-slot" slot="theme">${this.#themeControl()}</div>
       </hos-app-header>
       <main>
@@ -418,9 +454,8 @@ export class QuoteDeskApp extends HHElement {
             `
           : renderEntry({ flows: this.#flowsState, busy: this.#busy, message: this.#message })}
       </main>
-      <!-- The feedback pill: the shared widget (Feature Polish), in the
-           bottom-right lane, clear of the desk's chrome and its
-           bottom-anchored panels. -->
+      <!-- The feedback widget (Feature Polish): the shared panel, opened by
+           the bar's Feedback button; its floating pill is not shown here. -->
       <hh-feedback screen="Quote Desk"></hh-feedback>
     `;
   }
