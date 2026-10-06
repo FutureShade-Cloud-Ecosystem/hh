@@ -352,6 +352,13 @@ export class CounterTillApp extends HHElement {
   /** Row 976: the till's layout (the terminal reports it) and whether the two panes are swapped. */
   #counterLayout = "";
   #panesSwapped = readPanesSwapped();
+  /** Round 7: this window is a pop-out (opened with ?popout=<flow>): it offers no Pop out of its own. */
+  readonly #isPopout = new URLSearchParams(window.location.search).get("popout") !== null;
+  /** The layout the opener was in, carried on the pop-out's address (a layout word, never a credential). */
+  readonly #layoutHint = ((): string => {
+    const hint = new URLSearchParams(window.location.search).get("layout");
+    return hint === "PANELS" || hint === "STEPPER" ? hint : "";
+  })();
   #flowsState: FlowsState = { kind: "loading" };
   /** The one flows read this element makes; the pop-out's tap waits for it. */
   #flowsLoaded: Promise<void> = Promise.resolve();
@@ -688,8 +695,11 @@ export class CounterTillApp extends HHElement {
    * silent no-click.
    */
   #popOut(flow: string): void {
+    // The opener's layout rides along so the window keeps the layout the person was using; the
+    // server's workspace row may not have it yet (a save still on its way, a second mint).
+    const layout = this.#counterLayout === "PANELS" || this.#counterLayout === "STEPPER" ? `&layout=${this.#counterLayout}` : "";
     const popped = window.open(
-      `${import.meta.env.BASE_URL}?popout=${encodeURIComponent(flow)}`,
+      `${import.meta.env.BASE_URL}?popout=${encodeURIComponent(flow)}${layout}`,
       "ct-popout",
       `popup=yes,width=${window.outerWidth},height=${window.outerHeight}`,
     );
@@ -952,15 +962,17 @@ export class CounterTillApp extends HHElement {
                   ${this.#route === "sale" ? this.#swapControl() : nothing}
                   ${this.#themeControl()}
                   ${this.#feedbackControl()}
-                  <button
-                    type="button"
-                    class="btn-secondary"
-                    data-action="pop-out"
-                    data-flow=${this.#activeFlow ?? nothing}
-                    title="Open the till on a second window"
-                  >
-                    Pop out
-                  </button>
+                  ${this.#isPopout
+                    ? nothing
+                    : html`<button
+                        type="button"
+                        class="btn-secondary"
+                        data-action="pop-out"
+                        data-flow=${this.#activeFlow ?? nothing}
+                        title="Open the till on a second window"
+                      >
+                        Pop out
+                      </button>`}
                   <button type="button" class="btn-secondary" data-action="sign-out" ?disabled=${this.#busy}>
                     Sign out
                   </button>
@@ -970,6 +982,7 @@ export class CounterTillApp extends HHElement {
                 <hos-pos-terminal
                   data-paused="${this.#route === "returns" ? "true" : "false"}"
                   data-panes-swapped="${this.#panesSwapped ? "true" : "false"}"
+                  data-layout-hint="${this.#isPopout ? this.#layoutHint : ""}"
                 ></hos-pos-terminal>
               </div>
               ${this.#route === "returns" ? renderReturns(this.#returns) : nothing}

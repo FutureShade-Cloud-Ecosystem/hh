@@ -213,3 +213,38 @@ test("dark theme keeps its inset fields: the input fill is the page's deep tone"
   expect(fill).toBe("rgb(7, 24, 39)");
   await pickTheme(page, "Light");
 });
+
+for (const layout of ["panels", "stepper"] as const) {
+  test(`a popped window keeps the ${layout} layout, hides Pop out and keeps Sign out`, async ({ page, context }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await signIn(page);
+    await pickLayout(page, layout);
+    if (layout === "panels") await page.getByTestId("swap-panes").click();
+    await expect(page.getByRole("button", { name: "Pop out" })).toBeVisible();
+    // The server's workspace row does not carry the pick to the new window (a save not yet landed, a
+    // second mint): the window must keep the layout from what the opener told it, not from the row.
+    await context.route("**/api/v1/pos/workspace**", (route) =>
+      route.request().method() === "GET" ? route.fulfill({ status: 500, body: "{}" }) : route.continue(),
+    );
+
+    const poppedPromise = context.waitForEvent("page");
+    await page.getByRole("button", { name: "Pop out" }).click();
+    const popped = await poppedPromise;
+    await popped.waitForLoadState();
+    await expect(popped.getByTestId("pos-page-title")).toHaveText("New Counter Sale");
+
+    if (layout === "panels") {
+      await expect(popped.getByTestId("pos-twopane")).toBeVisible();
+      await expect(popped.getByTestId("swap-panes")).toHaveAttribute("aria-pressed", "true");
+    } else {
+      await expect(popped.getByTestId("pos-twopane")).toHaveCount(0);
+      await expect(popped.getByTestId("swap-panes")).toHaveCount(0);
+    }
+    await expect(popped.getByRole("button", { name: "Pop out" })).toHaveCount(0);
+    await expect(popped.getByRole("button", { name: "Sign out" })).toBeVisible();
+    // The opener keeps its own Pop out.
+    await expect(page.getByRole("button", { name: "Pop out" })).toBeVisible();
+    if (layout === "panels") await page.getByTestId("swap-panes").click();
+    await popped.close();
+  });
+}
