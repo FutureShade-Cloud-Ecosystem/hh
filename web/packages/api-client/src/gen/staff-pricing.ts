@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { PricingApplyDueResult, PricingAuditLogPage, PricingBatchApplyResult, PricingBatchCreate, PricingBatchImportResult, PricingBatchLinePage, PricingBatchPage, PricingBreakdown, PricingCategoryPolicy, PricingCategoryPolicyPage, PricingCategoryPolicyWrite, PricingChangeLogPage, PricingClearanceItem, PricingClearancePage, PricingClearanceWrite, PricingCreatedRef, PricingImportProfile, PricingImportProfilePage, PricingLowMarginEntry, PricingLowMarginRequest, PricingLowMarginScanPage, PricingMappingWrite, PricingOverride, PricingOverridePage, PricingOverrideWrite, PricingPriceBatch, PricingPriceFileApplyResult, PricingPriceFileForm, PricingPriceFilePreview, PricingPriceFileVendorPage, PricingPriceImportRunPage, PricingPromotion, PricingPromotionPage, PricingPromotionWrite, PricingQuantityBreakHeader, PricingQuantityBreakPage, PricingQuantityBreakWrite, PricingRebateAccrualResult, PricingRebateAccrueRequest, PricingRebateProgram, PricingRebateProgramPage, PricingRebateProgramWrite, PricingResolveRequest, PricingRule, PricingRulePage, PricingRulePatch, PricingRuleWrite, PricingStatusResult, PricingUOMConversion, PricingUOMConversionPage, PricingUOMPlan, PricingUOMPlanInput, PricingVendorRebateLedger } from "./types.js";
+import type { PricingApplyDueResult, PricingAuditLogPage, PricingBatchApplyResult, PricingBatchCreate, PricingBatchImportResult, PricingBatchLinePage, PricingBatchPage, PricingBreakdown, PricingCategoryPolicy, PricingCategoryPolicyPage, PricingCategoryPolicyWrite, PricingChangeLogPage, PricingClearanceItem, PricingClearancePage, PricingClearanceWrite, PricingCreatedRef, PricingFloorConfirmation, PricingFloorPreview, PricingFloorPreviewRequest, PricingImportProfile, PricingImportProfilePage, PricingLowMarginEntry, PricingLowMarginRequest, PricingLowMarginScanPage, PricingMappingWrite, PricingOverride, PricingOverridePage, PricingOverrideWrite, PricingPriceBatch, PricingPriceFileApplyResult, PricingPriceFileForm, PricingPriceFilePreview, PricingPriceFileVendorPage, PricingPriceImportRunPage, PricingPromotion, PricingPromotionPage, PricingPromotionWrite, PricingQuantityBreakHeader, PricingQuantityBreakPage, PricingQuantityBreakWrite, PricingRebateAccrualResult, PricingRebateAccrueRequest, PricingRebateProgram, PricingRebateProgramPage, PricingRebateProgramWrite, PricingResolveRequest, PricingRule, PricingRulePage, PricingRulePatch, PricingRuleWrite, PricingStatusResult, PricingUOMConversion, PricingUOMConversionPage, PricingUOMPlan, PricingUOMPlanInput, PricingVendorRebateLedger } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -276,6 +276,36 @@ export async function pricingCreateOverride(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "pricingCreateOverride",
+  });
+}
+
+export async function pricingConfirmFloorWarning(
+  client: ApiClient,
+  body: PricingFloorConfirmation,
+  call?: ApiCallOptions
+): Promise<Result<PricingStatusResult>> {
+  return client.request<PricingStatusResult>({
+    method: "POST",
+    path: "/api/v1/pricing/floor-confirmations",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "pricingConfirmFloorWarning",
+  });
+}
+
+export async function pricingPreviewFloor(
+  client: ApiClient,
+  body: PricingFloorPreviewRequest,
+  call?: ApiCallOptions
+): Promise<Result<PricingFloorPreview>> {
+  return client.request<PricingFloorPreview>({
+    method: "POST",
+    path: "/api/v1/pricing/floor-preview",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "pricingPreviewFloor",
   });
 }
 

@@ -30,8 +30,18 @@ type fakeStore struct {
 	nextID        int
 }
 
-func (f *fakeStore) MatchingRules(_ context.Context, _ ResolveInput) ([]Rule, error) {
-	return f.rules, nil
+func (f *fakeStore) MatchingRules(_ context.Context, in ResolveInput) ([]Rule, error) {
+	// The repository's read drops a rule limited to a branch unless the input names that
+	// branch (branch_id IS NULL OR branch_id = $5), and the preview's branch-less grading
+	// turns on exactly that drop, so the fake answers the same way as the SQL.
+	var out []Rule
+	for _, r := range f.rules {
+		if r.BranchID != "" && r.BranchID != in.BranchID {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out, nil
 }
 func (f *fakeStore) QuantityBreaksFor(_ context.Context, _, _ string) ([]QuantityBreak, error) {
 	return f.breaks, nil

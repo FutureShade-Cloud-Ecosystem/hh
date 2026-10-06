@@ -18,6 +18,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
@@ -89,6 +90,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	// caller (the two-source order is the adapter's own, carried).
 	pricingSvc.
 		WithCostVisibility(pricingCostVisibility{}).
+		WithFloorCustomerType(pricingFloorCustomers{svc: customer.NewService(customer.NewRepository(pool))}).
 		WithVendorDirectory(pricingVendorDirectory{pool: pool}).
 		WithCatalogSKUs(pricingCatalogSKUs{pool: pool}).
 		WithOverrideAuthority(w5cOverrideAuthority{roles: roleCfg, log: log}).
@@ -108,6 +110,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	// W6: inventory over GL (poster + rule resolver, both in-batch).
 	inventorySvc := inventory.NewService(inventory.NewRepository(pool)).WithAudit(auditSvc)
 	inventorySvc.WithGLPoster(invGLPoster{svc: glSvc}).WithRuleResolver(glRuleAdapter{svc: glSvc})
+	pricingSvc.WithCandidateSource(pricingFloorCandidates{products: productSvc, inventory: inventorySvc})
 	productSvc.WithStock(productStockReader{svc: inventorySvc}).WithBranchStock(inventorySvc).WithListPrices(pricingSvc)
 	inventory.NewHandler(inventorySvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 	inventory.NewHandler(inventorySvc, log).WithUserLinker(link).RegisterStockTruthRoutes(r, g)
@@ -460,6 +463,120 @@ func (a pricingCatalogSKUs) LookupSKUs(ctx context.Context, skus []string) (map[
 		out[e.SKU] = e
 	}
 	return out, rows.Err()
+}
+
+// pricingFloorCandidates satisfies pricing.FloorCandidates for the editors' floor warning
+// (plan CP0-6): the active products a pricing change may reach, each with the cost the floor is
+// graded against. Products come from the catalogue's own list (the product module owns the
+// table) and the cost from inventory's cost basis (it owns the branch costs), so pricing reads
+// neither table. With a branch the cost is that branch's; with none the product carries every
+// branch location's own cost row (BranchCosts, so the preview grades each branch at its own
+// cost with its own branch rules) and CostCents stays the highest of them, the basis the
+// warning errs toward naming a product on. The per-branch rows come from inventory's
+// cross-branch availability read, one row per branch with its cost. A product with no cost row
+// comes back at 0 and the preview counts it as no cost on file.
+type pricingFloorCandidates struct {
+	products  *product.Service
+	inventory *inventory.Service
+}
+
+func (a pricingFloorCandidates) CandidateProducts(ctx context.Context, categoryID, productID, branchID string, limit int) ([]pricing.CandidateProduct, error) {
+	if limit <= 0 {
+		limit = pricing.PreviewProductCap + 1
+	}
+	var rows []product.Product
+	if productID != "" {
+		p, err := a.products.Get(ctx, productID)
+		if err != nil {
+			if errors.Is(err, product.ErrNotFound) {
+				return nil, nil
+			}
+			return nil, err
+		}
+		if p.IsActive {
+			rows = append(rows, p)
+		}
+	} else {
+		// The catalogue pages at 200; read pages until the limit or the end, so the caller's
+		// one extra row (the truncation signal) is there.
+		const page = 200
+		for off := 0; len(rows) < limit; off += page {
+			n := page
+			if rem := limit - len(rows); rem < n {
+				n = rem
+			}
+			got, err := a.products.List(ctx, product.Filter{CategoryID: categoryID, ActiveOnly: true, Limit: n, Offset: off})
+			if err != nil {
+				return nil, err
+			}
+			rows = append(rows, got...)
+			if len(got) < n {
+				break
+			}
+		}
+	}
+	out := make([]pricing.CandidateProduct, 0, len(rows))
+	for _, p := range rows {
+		cat, err := a.products.GetCategory(ctx, p.ID)
+		if err != nil {
+			if errors.Is(err, product.ErrNotFound) {
+				continue
+			}
+			return nil, err
+		}
+		if categoryID != "" && cat != categoryID {
+			continue
+		}
+		cost, branches, err := a.candidateCost(ctx, p.ID, branchID)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, pricing.CandidateProduct{
+			ProductID: p.ID, CategoryID: cat, SKU: p.SKU, Name: p.Name, BaseUOM: p.BaseUOM, CostCents: cost, BranchCosts: branches,
+		})
+	}
+	return out, nil
+}
+
+// candidateCost is the cost the floor is graded against: the named branch's own cost, or with
+// no branch every branch's own row (BranchCosts, the preview grades each one) alongside the
+// highest any branch carries, read from inventory's one-row-per-branch availability answer
+// (it left-joins the branch cost, so a branch with no cost row reports 0).
+func (a pricingFloorCandidates) candidateCost(ctx context.Context, productID, branchID string) (int64, []pricing.CandidateBranchCost, error) {
+	if branchID != "" {
+		cost, _, err := a.inventory.CurrentCostCents(ctx, productID, branchID)
+		return cost, nil, err
+	}
+	branches, err := a.inventory.AvailabilityAllBranches(ctx, productID)
+	if err != nil {
+		return 0, nil, err
+	}
+	var highest int64
+	per := make([]pricing.CandidateBranchCost, 0, len(branches))
+	for _, b := range branches {
+		per = append(per, pricing.CandidateBranchCost{
+			BranchID: b.BranchID, BranchCode: b.BranchCode, BranchName: b.BranchName, CostCents: b.AvgCostCents,
+		})
+		if b.AvgCostCents > highest {
+			highest = b.AvgCostCents
+		}
+	}
+	return highest, per, nil
+}
+
+// pricingFloorCustomers satisfies pricing.FloorCustomers over customer.Service.ResolveAccount, so
+// a customer scoped change is graded at that customer's own pricing type.
+type pricingFloorCustomers struct{ svc *customer.Service }
+
+func (a pricingFloorCustomers) CustomerType(ctx context.Context, customerID string) (string, error) {
+	acct, err := a.svc.ResolveAccount(ctx, customerID)
+	if err != nil {
+		if errors.Is(err, customer.ErrNotFound) {
+			return "", pricing.ErrFloorCustomerNotFound
+		}
+		return "", err
+	}
+	return acct.CustomerType, nil
 }
 
 // w5cOverrideAuthority satisfies pricing.OverrideAuthority over the
