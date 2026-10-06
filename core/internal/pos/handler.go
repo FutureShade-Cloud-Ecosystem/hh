@@ -529,7 +529,18 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	var nt ErrNoOpenTill
 	var ra ErrRefundApprovalRequired
 	var mgr ErrCardChargeNeedsManager
+	var sm ErrSplitTotalMismatch
 	switch {
+	case errors.As(err, &sm):
+		// The split-tender sum refusal (DIB-165) is a problem body a person
+		// can read: the stable word, the two amounts as integer cents
+		// fields, and the dollar sentence. The till renders from the
+		// fields; no message ever prints cents.
+		httpx.ErrorWith(w, http.StatusUnprocessableEntity, "split_total_mismatch", map[string]any{
+			"tendered_cents": sm.TenderedCents,
+			"total_cents":    sm.TotalCents,
+			"message":        splitMismatchMessage(sm.TenderedCents, sm.TotalCents),
+		})
 	case errors.Is(err, ErrSaleFailedCardReversed):
 		// The sale did not go through and every card charge it took was reversed: the client
 		// clears its key and rings again.

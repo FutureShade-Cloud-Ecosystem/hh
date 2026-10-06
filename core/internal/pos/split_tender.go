@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 )
@@ -119,6 +121,45 @@ func normalizeSplitLegs(in SaleInput) ([]TenderLeg, error) {
 	return legs, nil
 }
 
+// ErrSplitTotalMismatch is the typed shape of the split-tender sum
+// refusal: the two amounts the cashier needs, as integer cents. The
+// handler answers the problem body from these fields (the stable word
+// split_total_mismatch beside them, and a message in dollars), so the
+// till renders from the fields; the Go-side Error string keeps the
+// module-prefixed cents sentence for the logs, greppable as before.
+type ErrSplitTotalMismatch struct {
+	TenderedCents int64
+	TotalCents    int64
+}
+
+func (e ErrSplitTotalMismatch) Error() string {
+	return fmt.Sprintf("pos: split tenders total %d cents but the sale total is %d cents, the tenders must sum exactly to the total",
+		e.TenderedCents, e.TotalCents)
+}
+
+// splitMismatchDollars speaks an amount of integer cents the way the
+// counter reads money: 26600 becomes $266.00, 126600 becomes $1,266.00.
+// Integer arithmetic only, the amounts are always positive here.
+func splitMismatchDollars(cents int64) string {
+	dollars, frac := cents/100, cents%100
+	d := strconv.FormatInt(dollars, 10)
+	var groups []string
+	for len(d) > 3 {
+		groups = append([]string{d[len(d)-3:]}, groups...)
+		d = d[:len(d)-3]
+	}
+	groups = append([]string{d}, groups...)
+	return "$" + strings.Join(groups, ",") + "." + fmt.Sprintf("%02d", frac)
+}
+
+// splitMismatchMessage is the refusal's sentence in dollars and plain
+// words, the one a person reads at the counter. No message ever prints
+// cents.
+func splitMismatchMessage(tenderedCents, totalCents int64) string {
+	return fmt.Sprintf("The tenders add up to %s, but the sale total is %s.",
+		splitMismatchDollars(tenderedCents), splitMismatchDollars(totalCents))
+}
+
 // checkTenderSum is the tx-level half of the split-tender guard: the legs must settle the sale
 // EXACTLY. The DB half is the deferred constraint trigger in migration 0100, which re-derives the
 // same assertion from orders.total_cents at COMMIT so no writer, this service, a migration, a
@@ -133,9 +174,7 @@ func checkTenderSum(legs []TenderLeg, totalCents int64) error {
 		sum += l.AmountCents
 	}
 	if sum != totalCents {
-		return clientErr(http.StatusUnprocessableEntity,
-			"pos: split tenders total %d cents but the sale total is %d cents, the tenders must sum exactly to the total",
-			sum, totalCents)
+		return ErrSplitTotalMismatch{TenderedCents: sum, TotalCents: totalCents}
 	}
 	return nil
 }
