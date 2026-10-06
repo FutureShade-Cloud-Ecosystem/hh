@@ -366,6 +366,8 @@ export function handlePricing({ request, response, path, url, callerOf, readBody
       if (body.fail_next !== undefined) switches.failNext = body.fail_next;
       if (body.product_names !== undefined) switches.productNames = body.product_names;
       if (typeof body.fail_confirm === "boolean") switches.failConfirm = body.fail_confirm;
+      // Category ids whose margin policy the world does not hold (the live demo holds two): the add row's picker lists them.
+      if (Array.isArray(body.drop_policies)) for (const id of body.drop_policies) world.policies.delete(id);
       // Fields laid over the next previews' answer (not_graded, no_cost, truncated, items), or null to stop.
       if (body.force_preview !== undefined) switches.forcePreview = body.force_preview;
       respondJson(response, 200, { ...switches });
@@ -476,12 +478,13 @@ export function handlePricing({ request, response, path, url, callerOf, readBody
       if (failing("save")) return;
       const id = m[1];
       const cur = world.policies.get(id);
-      if (cur === undefined) return respondJson(response, 404, { error: "not found" });
       if (!validBps(body.margin_target_bps) || !validBps(body.margin_floor_bps)) return respondJson(response, 422, { error: "margin must be between 0% and 100%" });
       if (body.margin_floor_bps > body.margin_target_bps) return respondJson(response, 422, { error: "margin floor must be at or below the target" });
       const next = { category_id: id, margin_target_bps: body.margin_target_bps, margin_floor_bps: body.margin_floor_bps, margin_enforcement_disabled: body.margin_enforcement_disabled === true };
+      // The server's PUT creates or replaces: a category with no policy yet is created.
       for (const field of ["margin_target_bps", "margin_floor_bps", "margin_enforcement_disabled"]) {
-        if (cur[field] !== next[field]) logRow(userId, "category_policy", id, "UPDATE", field, String(cur[field]), String(next[field]), { type: "category", id });
+        if (cur === undefined) logRow(userId, "category_policy", id, "CREATE", field, "", String(next[field]), { type: "category", id });
+        else if (cur[field] !== next[field]) logRow(userId, "category_policy", id, "UPDATE", field, String(cur[field]), String(next[field]), { type: "category", id });
       }
       world.policies.set(id, next);
       world.ledger.writes.push({ kind: "policy", id });
