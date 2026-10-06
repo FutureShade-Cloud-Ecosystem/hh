@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"sync/atomic"
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
@@ -32,6 +33,13 @@ type SimulatedSignatureProvider struct {
 	store posStore
 	audit audit.Recorder
 	now   func() time.Time
+
+	// bindFills is the stand-in's bind counter, the leg's count reply (signature_race_test.go):
+	// it counts the lazy binds that ran the fill, so a concurrent submit's serialization is
+	// observable (one bind winning and one waiting reads 1; two binds both running the fill, the
+	// un-serialized shape, reads 2). Atomic so the count stays exact while the fields it watches
+	// are still unlocked; the row 834 lock then moves the count inside the mutex.
+	bindFills atomic.Int64
 }
 
 // NewSimulatedSignatureProvider wires the shared sealer.
@@ -41,14 +49,21 @@ func NewSimulatedSignatureProvider(vault Sealer) *SimulatedSignatureProvider {
 
 // bind lazily wires the persistence deps without disturbing main.go's vault-only constructor.
 func (p *SimulatedSignatureProvider) bind(store posStore, rec audit.Recorder, now func() time.Time) {
+	filled := false
 	if p.store == nil {
 		p.store = store
+		filled = true
 	}
 	if p.audit == nil {
 		p.audit = rec
+		filled = true
 	}
 	if p.now == nil && now != nil {
 		p.now = now
+		filled = true
+	}
+	if filled {
+		p.bindFills.Add(1)
 	}
 }
 
