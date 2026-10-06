@@ -28,17 +28,21 @@ import {
 } from "./_quote-public.js";
 import { createAcceptKeys } from "./accept-key.js";
 import { DEALER_NAME } from "./dealer.js";
-import { formatMoney, quoteStatusPhrase, withFullStop } from "./format.js";
+import { formatMoney, plainDay, plainWhen, quoteNumberLabel, quoteStatusPhrase, withFullStop } from "./format.js";
 import {
   envelopeOnlyFetch,
   isDeadLinkAnswer,
   isDefiniteRefusal,
   isKeyReuseRefusal,
   PublicQuoteClient,
+  validateQuoteView,
   type AcceptanceRef,
   type QuoteViewRef,
 } from "./quote-client.js";
 
+// The staff preview's band: said once, plainly, above the page the customer will see.
+const PREVIEW_BAND = "Preview: this is what your customer will see. Nothing has been sent.";
+const PREVIEW_REFUSED = "This preview could not be shown.";
 const LINK_GONE =
   "This link is no longer valid. Quote links expire, and can also be turned off by our team. Please contact us for an up-to-date link.";
 const LINK_GONE_SHORT = "This link is no longer valid. Please contact us for an up-to-date link.";
@@ -99,6 +103,16 @@ export class QuotePublicPage extends HHElement {
       }
       /* Full text ink, NOT the dimmed one: this line sits on the page rather
          than on a card, and it is load bearing information, not decoration. */
+      .previewband {
+        border: 1px solid var(--hh-line);
+        border-left-width: 4px;
+        border-radius: var(--hh-radius-card);
+        background: var(--hh-card);
+        padding: var(--hh-s-12) var(--hh-s-16);
+        margin-bottom: var(--hh-s-16);
+        font-size: 0.9rem;
+        font-weight: 600;
+      }
       .sub {
         color: var(--hh-text);
         font-size: 0.88rem;
@@ -352,6 +366,11 @@ export class QuotePublicPage extends HHElement {
   private readonly acceptKeys = createAcceptKeys();
   private token = "";
   private autoPrint = false;
+  /** True once a host has handed the page its quote: the page then never reads the link or loads. */
+  private hosted = false;
+  /** A host handed the page something that is not a well formed preview: the page says so and shows nothing else. */
+  @state()
+  private previewRefused = false;
   /**
    * Object URLs minted for thumbnails, keyed by image reference. They live as
    * long as the page does: a reload after a refused accept reuses them and
@@ -384,7 +403,30 @@ export class QuotePublicPage extends HHElement {
     this.renderRoot.addEventListener("input", this.onNameInput);
     this.renderRoot.addEventListener("change", this.onAffirmChange);
     this.renderRoot.addEventListener("click", this.onActionClick);
-    void this.load();
+    if (!this.hosted) void this.load();
+  }
+
+  /**
+   * Render a quote the HOST already holds, instead of loading one by link token. This is how the Quote
+   * Desk shows the staff preview: the page itself holds no session and reads no credential, so the host
+   * fetches the contract's customer view read with its own session and hands over the answer as it came
+   * off the wire. The page trusts nothing it is handed: it validates the answer itself
+   * (validateQuoteView), and a hosted page is a preview by construction, so anything that is not a
+   * well formed view with the preview flag true is refused with a plain state. A hosted page never
+   * renders an accept control, whatever the view carries. The thumbnails still ride the public image read.
+   */
+  showQuote(value: unknown): void {
+    this.hosted = true;
+    this.fatal = "";
+    const view = validateQuoteView(value);
+    if (view === null || !view.preview) {
+      this.quote = null;
+      this.previewRefused = true;
+      return;
+    }
+    this.previewRefused = false;
+    this.quote = view;
+    void this.fetchThumbs(view);
   }
 
   disconnectedCallback(): void {
@@ -621,8 +663,7 @@ export class QuotePublicPage extends HHElement {
   }
 
   private when(iso: string): string {
-    const d = new Date(iso);
-    return Number.isNaN(d.getTime()) ? iso : d.toLocaleString("en-CA");
+    return plainWhen(iso);
   }
 
   /**
@@ -655,7 +696,7 @@ export class QuotePublicPage extends HHElement {
       ${delivery
         ? html`<p class="note">
             <b>Delivery</b> to ${q.deliveryAddress || "the address on file"}${q.requestedDate
-              ? html` · requested ${q.requestedDate}`
+              ? html` · requested ${plainDay(q.requestedDate)}`
               : nothing}${(q.deliveryFeeCents ?? 0) > 0
               ? html` · delivery fee ${formatMoney(q.deliveryFeeCents ?? 0)} (included in the total)`
               : nothing}
@@ -721,6 +762,9 @@ export class QuotePublicPage extends HHElement {
 
   private renderAcceptForm(q: QuoteViewRef): typeof nothing | TemplateResult {
     if (this.accepted) return nothing;
+    // A preview offers no way to accept and says nothing about acceptance: no form, no typed name,
+    // and no "closed" card either, because the band above already says what this page is.
+    if (q.preview || this.hosted) return nothing;
     if (!q.acceptable || this.landed) {
       // The customer reads this alone, with no staff beside them to translate,
       // so the state is SAID, in the same six states said mid-sentence: under
@@ -733,7 +777,7 @@ export class QuotePublicPage extends HHElement {
         ${this.keyReused ? html`<p class="gone">${KEY_REUSED}</p>` : nothing}
         <p class="gone">
           ${q.expired && !acceptedElsewhere
-            ? `This quote expired on ${q.validUntil} and can no longer be accepted online. Please contact us for an updated quote.`
+            ? `This quote expired on ${plainDay(q.validUntil ?? "")} and can no longer be accepted online. Please contact us for an updated quote.`
             : `This quote is ${quoteStatusPhrase(q.status)} and is not awaiting acceptance.`}
         </p>
       </div>`;
@@ -771,6 +815,12 @@ export class QuotePublicPage extends HHElement {
   }
 
   private renderBody(): TemplateResult {
+    if (this.previewRefused) {
+      return html`<div class="card refusal">
+        <h2>Preview unavailable</h2>
+        <p class="gone">${PREVIEW_REFUSED}</p>
+      </div>`;
+    }
     if (this.fatal) {
       return html`<div class="card refusal">
         <h2>Quote link unavailable</h2>
@@ -781,10 +831,11 @@ export class QuotePublicPage extends HHElement {
     if (!q) return html`<p class="sub">Loading your quote…</p>`;
     const withImages = showsImages(q);
     return html`
-      <h1>Quote #${q.quoteNo}</h1>
+      ${q.preview ? html`<div class="previewband" role="status">${PREVIEW_BAND}</div>` : nothing}
+      <h1>Quote ${quoteNumberLabel(q.quoteNo)}</h1>
       <div class="sub">
-        Prepared for ${q.customerName} · as of ${this.when(q.asOf)}
-        ${q.validUntil ? html` · ${q.expired ? "expired" : "valid until"} ${q.validUntil}` : nothing}
+        Prepared for ${q.customerName} · last updated ${this.when(q.asOf)}
+        ${q.validUntil ? html` · ${q.expired ? "expired" : "valid until"} ${plainDay(q.validUntil)}` : nothing}
       </div>
       <div class="card">
         <div class="tablewrap">

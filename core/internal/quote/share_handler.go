@@ -23,6 +23,8 @@ func (h *StaffHandler) RegisterShareRoutes(r httpx.Registrar, g *guards.Guards) 
 	}
 	r.Handle("POST /api/v1/quotes/{id}/share-links", g.RequireStaff(h.staff(h.mintShareLink)))
 	r.Handle("GET /api/v1/quotes/{id}/share-links", g.RequireStaff(h.staff(h.listShareLinks)))
+	// The preview of the customer's page: a pure read, so it sits beside the quote reads and never mints.
+	r.Handle("GET /api/v1/quotes/{id}/customer-view", g.RequireStaff(h.staff(h.customerViewPreview)))
 	r.Handle("DELETE /api/v1/quotes/{id}/share-links/{linkId}", g.RequireStaff(h.staff(h.revokeShareLink)))
 }
 
@@ -73,6 +75,15 @@ func (h *StaffHandler) revokeShareLink(w http.ResponseWriter, r *http.Request, _
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *StaffHandler) customerViewPreview(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+	view, err := h.svc.CustomerViewPreview(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.writeShareErr(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, view)
 }
 
 func (h *StaffHandler) publicQuote(w http.ResponseWriter, r *http.Request) {

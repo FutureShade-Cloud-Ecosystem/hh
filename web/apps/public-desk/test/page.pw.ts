@@ -1321,3 +1321,78 @@ for (const [token, status, error] of [
     await expect(page.locator("#name")).toHaveJSProperty("readOnly", true);
   });
 }
+
+// The page's two small faults: the quote number once, and the time in the page's own words.
+test("the title shows the quote number once, and the time is plain words", async ({ page }) => {
+  await page.goto("/?t=q-hash-6");
+  await expect(page.getByRole("heading", { name: "Quote #Q-6" })).toBeVisible();
+  await expect(page.getByText("##Q-6")).toHaveCount(0);
+  const sub = page.locator(".sub").first();
+  await expect(sub).toContainText("Prepared for Fenwick Builders Ltd");
+  await expect(sub).toContainText(/last updated [A-Z][a-z]+ \d{1,2}, \d{4} at \d{1,2}:\d{2} [ap]\.m\. \S+/);
+  await expect(sub).not.toContainText("as of");
+  await expect(sub).not.toContainText(/\d{4}-\d{2}-\d{2}/);
+  await expect(sub).not.toContainText(/\d:\d{2}:\d{2}/);
+});
+
+// The preview: the same page, handed the staff read of the customer's view. It states plainly that
+// nothing was sent, and offers no accept area and no typed name. The page itself never reads a staff
+// session (the sinks gate holds that), so the Quote Desk fetches the view with its own session and
+// hands the validated view to the element; the test stands in for that host.
+test("a preview shows the band and no way to accept", async ({ page }) => {
+  await page.goto("/");
+  // The host hands the page the endpoint's own JSON; the page validates it itself.
+  await hostPreview(page, { fetchFrom: "q-preview-draft" });
+  const band = page.getByText("Preview: this is what your customer will see. Nothing has been sent.");
+  await expect(band).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Quote #Q-7" })).toBeVisible();
+  await expectNoAcceptControl(page);
+  await expect(page.getByText("Accept this quote")).toHaveCount(0);
+  await expect(page.getByText("is not awaiting acceptance")).toHaveCount(0);
+});
+
+// Hand the page a view the way the Quote Desk would: through showQuote, on a page with no link token.
+async function hostPreview(page: Page, what: { fetchFrom: string; patch?: Record<string, unknown>; raw?: unknown }): Promise<void> {
+  await page.evaluate(async (w) => {
+    let value: unknown = w.raw;
+    if (w.raw === undefined) {
+      const view = await (await fetch(`/api/public/v1/quotes/${w.fetchFrom}`)).json();
+      value = { ...view, ...(w.patch ?? {}) };
+      for (const [k, v] of Object.entries(w.patch ?? {})) if (v === undefined) delete (value as Record<string, unknown>)[k];
+    }
+    // The page's own module, served by Vite in the browser; the test's typecheck cannot resolve a root path.
+    // @ts-expect-error resolved by the browser, not by tsc
+    await import("/src/quote-public.ts");
+    document.querySelector("pd-quote-public")?.remove();
+    const el = document.createElement("pd-quote-public") as HTMLElement & { showQuote(v: unknown): void };
+    document.body.append(el);
+    el.showQuote(value);
+  }, what);
+}
+
+async function expectNoAcceptControl(page: Page): Promise<void> {
+  await expect(page.locator("#name")).toHaveCount(0);
+  await expect(page.locator("#affirm")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /accept/i })).toHaveCount(0);
+}
+
+// The page never trusts its host: whatever it is handed, a hosted page is a preview or it is refused,
+// and it never renders an accept control or crashes.
+for (const [name, what] of [
+  ["null", { fetchFrom: "q-preview-draft", raw: null }],
+  ["a malformed view", { fetchFrom: "q-preview-draft", raw: { quote_no: "#Q-7" } }],
+  ["a view that is not an object", { fetchFrom: "q-preview-draft", raw: "nope" }],
+  ["a link shaped view: preview false, acceptable true, SENT", { fetchFrom: "q-demo-25", patch: { preview: false, acceptable: true, status: "SENT" } }],
+  ["a view with the preview flag missing", { fetchFrom: "q-demo-25" }],
+] as const) {
+  test(`a hosted page refuses ${name}: no crash, no accept control`, async ({ page }) => {
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.goto("/");
+    await hostPreview(page, what);
+    await expect(page.getByText("This preview could not be shown.")).toBeVisible();
+    await expectNoAcceptControl(page);
+    await expect(page.getByText("Loading your quote")).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+}
