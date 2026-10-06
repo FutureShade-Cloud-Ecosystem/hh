@@ -922,7 +922,7 @@ test("a line the account's price cannot answer reads price pending through ordin
   // (review round 2, R2-P3-1). The chip joined the button after the pin was
   // written; the pattern admits it by shape, not by the roster's choice of key.
   await expect(cta).toHaveText(
-    /^\s*(Open session · then complete|Complete sale) · subtotal (CA\$[\d,]+\.\d{2}|\(not priced\)) \+ tax at the ring(\s+[A-Za-z0-9+]+)?\s*$/,
+    /^\s*(Open session · then complete|Complete sale) · subtotal (\$[\d,]+\.\d{2}|\(not priced\)) \+ tax at the ring(\s+[A-Za-z0-9+]+)?\s*$/,
   );
   await expect(cta).not.toContainText("(est.");
 });
@@ -1291,8 +1291,10 @@ test("an empty draft shows the blank marker in the detached layout too", async (
   await page.getByTestId("pos-view").click();
   await page.getByTestId("pos-layout-panels").click();
   await expect(page.getByTestId("pos-flow-panels")).toBeVisible();
-  // The Panels payment panel paints from the first render: the same honest
-  // marker, never a zero.
+  // The two-pane view holds Payment as a step in the steps pane (it is no longer a panel on
+  // screen from the first render), so the Payment chip opens it; then the same honest marker,
+  // never a zero.
+  await page.locator("hos-pos-flow-steps").first().getByRole("button", { name: /Payment/ }).click();
   const totals = page.getByTestId("pos-totals-card");
   await expect(totals).toContainText("(not priced)");
   await expect(totals).not.toContainText("$0.00");
