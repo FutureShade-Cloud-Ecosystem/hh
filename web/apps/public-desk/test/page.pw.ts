@@ -12,6 +12,7 @@
 // names deliberately.
 import { createHash } from "node:crypto";
 import { expect, test, type Page, type Response } from "@playwright/test";
+import { DEALER_NAME } from "../src/dealer.js";
 
 const GOOD_TOKEN = "q-demo-25";
 
@@ -501,19 +502,94 @@ test("a definite refusal is final whatever the re-read does: the page's own sent
   await expect(page.getByText("Quote link unavailable")).toHaveCount(0);
 });
 
-test("the page wears the manifest's brand: hh-pro pins the action fill to the dealer blue, not the house gold", async ({ page }) => {
+test("the page carries the dealer's header: the dealer's name is visible at the top, from the app's own data", async ({ page }) => {
+  await page.goto(`/?t=${GOOD_TOKEN}`);
+  await expect(page.getByRole("heading", { name: "Quote #Q-25" })).toBeVisible();
+  // The header band is the page's first element, and the name it carries is
+  // the dealer name's source of truth in the app, imported here so the test
+  // pins the structure, never a duplicated literal.
+  const header = page.locator("pd-quote-public header.dealer");
+  const name = page.locator("pd-quote-public header.dealer .dealer-name");
+  await expect(name).toHaveText(DEALER_NAME);
+  await expect(name).toBeVisible();
+  const boxes = await page.evaluate(() => {
+    const root = document.querySelector("pd-quote-public")?.shadowRoot;
+    const pick = (selector: string): number | null => root?.querySelector(selector)?.getBoundingClientRect().top ?? null;
+    return { header: pick("header.dealer"), h1: pick("h1") };
+  });
+  expect(boxes.h1, "the quote heading must exist").not.toBeNull();
+  expect(boxes.header, "the dealer header must sit above the quote heading").toBeLessThan(boxes.h1!);
+  await expect(header).toContainText(DEALER_NAME);
+});
+
+test("every line shows the same image cell: the photo or the no-photo mark, never an empty box", async ({ page }) => {
+  // Images are ON and the two lines differ on purpose: the first carries a
+  // product photo, the second carries none, the exact shape the staging
+  // defect showed (an empty box on one line, nothing on the next).
+  await page.goto("/?t=q-mixed-images-29");
+  await expect(page.getByRole("heading", { name: "Quote #Q-29" })).toBeVisible();
+  const rows = page.locator("tbody tr");
+  await expect(rows).toHaveCount(2);
+  // The first line shows the product's photo, through the image read.
+  await expect(rows.nth(0).locator("img.thumb")).toBeVisible();
+  // The second line shows the SAME cell treatment with the drawn no-photo
+  // mark: never an empty box (indistinguishable from an image still loading)
+  // and never a missing cell.
+  await expect(rows.nth(1).locator("svg.thumbmark")).toBeVisible();
+  await expect(rows.nth(1).locator("img.thumb")).toHaveCount(0);
+  // And no image cell on any line is left bare: every one is the same drawn
+  // box with either the photo or the mark in it.
+  const cells = await page.evaluate(() => {
+    const root = document.querySelector("pd-quote-public")?.shadowRoot;
+    return Array.from(root?.querySelectorAll("tbody tr") ?? []).map((row) => {
+      const box = row.querySelector("td .thumbslot");
+      if (box === null) return "missing";
+      const marked = box.querySelector("img.thumb, svg.thumbmark") !== null;
+      return getComputedStyle(box).borderTopWidth !== "0px" && marked ? "boxed" : "bare";
+    });
+  });
+  expect(cells, "every line's image cell is the same visible box, photo or mark").toEqual(["boxed", "boxed"]);
+});
+
+test("the accept button takes the design system's accent token, not a brand override blue", async ({ page }) => {
   // A quote that is still open: the demo quote is accepted by an earlier test.
   await page.goto("/?t=q-terms-28");
-  await expect(page.locator("html")).toHaveAttribute("data-brand", "hh-pro");
-  // The computed colour may come back in a wide-gamut syntax; a canvas
-  // pixel turns it into plain sRGB channels.
-  const [r, , b] = await page.getByRole("button", { name: "Accept quote" }).evaluate((node) => {
-    const ctx = document.createElement("canvas").getContext("2d") as CanvasRenderingContext2D;
-    ctx.fillStyle = getComputedStyle(node).backgroundColor;
-    ctx.fillRect(0, 0, 1, 1);
-    return Array.from(ctx.getImageData(0, 0, 1, 1).data);
+  await expect(page.getByRole("button", { name: "Accept quote" })).toBeVisible();
+  // The page pins no brand override, so the base brand layer stands and the
+  // pressable fill is the design system's own accent, the same accent the
+  // Quote Desk staff app presses.
+  await expect(page.locator("html")).not.toHaveAttribute("data-brand", "hh-pro");
+  // The accent token's value is resolved LIVE from the token sheet the page
+  // loads (it is theme-invariant, so the light half this page pins declares
+  // the same value), never a literal here; the button's computed fill may
+  // come back in a wide-gamut syntax, so both go through a canvas pixel into
+  // plain sRGB channels before they are compared, with a small tolerance for
+  // the colour conversion.
+  const sampled = await page.evaluate(() => {
+    const pixelOf = (colour: string): Array<number> => {
+      const ctx = document.createElement("canvas").getContext("2d") as CanvasRenderingContext2D;
+      ctx.fillStyle = colour;
+      ctx.fillRect(0, 0, 1, 1);
+      return Array.from(ctx.getImageData(0, 0, 1, 1).data).slice(0, 3);
+    };
+    const accent = getComputedStyle(document.documentElement).getPropertyValue("--hh-accent").trim();
+    const button = document.querySelector("pd-quote-public")?.shadowRoot?.querySelector<HTMLButtonElement>(
+      "button[data-action=accept]",
+    );
+    return {
+      accent,
+      accentPixel: pixelOf(accent),
+      fill: button ? getComputedStyle(button).backgroundColor : null,
+      fillPixel: button ? pixelOf(getComputedStyle(button).backgroundColor) : null,
+    };
   });
-  expect(b).toBeGreaterThan(r);
+  expect(sampled.fill, "the accept button must have a computed background").not.toBeNull();
+  for (let channel = 0; channel < 3; channel += 1) {
+    expect(
+      Math.abs((sampled.fillPixel as Array<number>)[channel] - sampled.accentPixel[channel]),
+      `channel ${channel}: the accept button's fill must be the accent token ${sampled.accent} (it sampled ${sampled.fill})`,
+    ).toBeLessThanOrEqual(2);
+  }
 });
 
 // The core keeps an ACCEPTED quote acceptable when multi-accept is on

@@ -143,6 +143,42 @@ const QUOTES = {
     as_of: nowIso(),
     acceptable: true,
   },
+  // The mixed-images quote, for the image-cell consistency item: images are
+  // ON and the FIRST line carries a photo while the SECOND carries none, the
+  // exact shape the staging defect showed (an empty box on one line, no cell
+  // on the next).
+  "q-mixed-images-29": {
+    quote_no: "Q-29",
+    customer_name: "Quinte Hardscapes Inc",
+    status: "SENT",
+    valid_until: dayFromNow(28),
+    expired: false,
+    lines: [
+      {
+        line_no: 1,
+        description: "Banas Natural Step",
+        qty_entered: "1.0000",
+        uom_entered: "PC",
+        unit_price_cents: 2057,
+        line_total_cents: 2057,
+        image_ref: "p-banas",
+      },
+      {
+        line_no: 2,
+        description: "Granular A",
+        qty_entered: "8.0000",
+        uom_entered: "T",
+        unit_price_cents: 3250,
+        line_total_cents: 26000,
+      },
+    ],
+    subtotal_cents: 28057,
+    tax_cents: 3647,
+    total_cents: 31704,
+    as_of: nowIso(),
+    acceptable: true,
+    include_images: true,
+  },
   "q-terms-28": {
     quote_no: "Q-28",
     customer_name: "Fenwick Builders Ltd",
