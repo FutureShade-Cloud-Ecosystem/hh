@@ -329,7 +329,7 @@ func (r *Repository) ApplyChangeTx(ctx context.Context, id string, hooks changeA
 	}
 
 	if hooks.precheck != nil {
-		if err := hooks.precheck(ctx, taxCents); err != nil {
+		if err := hooks.precheck(withPrecheckTx(ctx, tx), taxCents); err != nil {
 			return ChangeOrder{}, err
 		}
 	}

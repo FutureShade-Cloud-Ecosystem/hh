@@ -48,6 +48,7 @@ tags:
   - name: staff-audit
   - name: staff-bankrec
   - name: staff-billing
+  - name: manager-billing
   - name: staff-branches
   - name: staff-bistrack
   - name: staff-compliance
@@ -104,6 +105,10 @@ x-access-map:
     surfaces:
       - money-desk
     level: read
+  manager-billing:
+    surfaces:
+      - money-desk
+    level: manage
   staff-bistrack:
     surfaces:
       - buying-and-stock
@@ -2307,6 +2312,98 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/payments/card-attempts:
+    get:
+      operationId: paymentListCardAttempts
+      tags:
+        - staff-billing
+      summary: List the card charge attempts that need a person
+      description: "The list a person reconciling a Run settlement report reads: every trans_id with no sale behind it, and why. With state=open it answers every attempt that needs a person (UNKNOWN, VOID_UNKNOWN, VOID_DECLINED), whatever its date; from and to (RFC3339) bound the second arm, every attempt in the range that carries a charge ref and is not BOUND. A missing from and to default from to the seven day window, so the range arm is bounded whatever the caller sends. Newest first, bounded at 500 rows."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: state
+          in: query
+          required: false
+          description: open selects the attempts that need a person
+          schema:
+            type: string
+            enum:
+              - open
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: The attempt rows, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PaymentCardAttemptSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/payments/card-attempts/{id}/resolve:
+    post:
+      operationId: paymentResolveCardAttempt
+      tags:
+        - manager-billing
+      summary: Close one card charge attempt that needed a person
+      description: "Reason-required and audited: the resolution must be NOT_CHARGED or REVERSED_AT_PROCESSOR and the note non-empty, and the close carries the caller's own user id as the resolver. The row stays and its leg key never charges again. An unknown id answers 404; a BOUND attempt (its sale exists) answers 409; a VOID_* row cannot close as NOT_CHARGED (400, the pairing refusal); a row that moves between the read and the close answers 409."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentCardAttemptResolve"
+      responses:
+        "200":
+          description: The resolved row's summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentCardAttemptSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/assist/commands:
     get:
       operationId: assistListCommands
@@ -2683,6 +2780,35 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/uoms:
+    get:
+      operationId: productListUnits
+      tags:
+        - staff-product
+      summary: Read the unit catalogue
+      description: "The staff read of the load doors' catalogue (HH-LOAD-1 LD-3): one cursor page of the unit rows in code order, the code the stable ordering key. Dealer Admin at read: the route serves the dealer admin surface, a named exception to this tag's default. The catalogue is the deployment wide vocabulary, so the read carries the X-Org the staff surface takes and no per row org."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - dealer-admin
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: One cursor page of the catalogue
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UomViewPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/products:
     get:
       operationId: productList
@@ -2940,6 +3066,7 @@ paths:
       x-access:
         surfaces:
           - counter-till
+          - quote-desk
         level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -2984,6 +3111,7 @@ paths:
       x-access:
         surfaces:
           - counter-till
+          - quote-desk
         level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -8921,11 +9049,12 @@ paths:
       tags:
         - staff-identity
       summary: Approve or reject a pending approval request
-      description: "Decide authority is enforced in the service per policy: the rail policies (MARGIN_BELOW_MINIMUM, JE_OVER_THRESHOLD, FREIGHT_ABOVE_QUOTE) are decidable only by the ruled leadership role set, credit policies by leadership tier. Separation of duties bars the requester from deciding their own request. A decision on a JE or freight subject bridges into the owning module inside the same transaction. Deciding an already-decided request returns 409."
+      description: "Decide authority is enforced in the service per policy: the rail policies (MARGIN_BELOW_MINIMUM, JE_OVER_THRESHOLD, FREIGHT_ABOVE_QUOTE) are decidable by the ruled leadership role set, with the margin floor's authority from the dealer's role configuration (a branch scoped Quote Desk manager decides floor requests of its own branch, beside the dealer wide approvers); credit policies by leadership tier. Separation of duties bars the requester from deciding their own request. A decision on a JE or freight subject bridges into the owning module inside the same transaction. Deciding an already-decided request returns 409."
       x-role: requireStaff
       x-access:
         surfaces:
           - manager-home
+          - quote-desk
         level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -11103,6 +11232,144 @@ paths:
                 $ref: "#/components/schemas/Error"
         "503":
           description: "The batch contended with another in flight batch on shared names and Postgres rolled it back whole: nothing of it stands, and resubmitting the whole batch is safe. The one answer a caller may retry the batch on, never a per item outcome."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/load/units:
+    put:
+      operationId: loadUpsertUnits
+      tags:
+        - load
+      summary: Upsert the unit catalogue, a unit that already stands attached
+      description: "One item per unit. The record names the code, the name and the dimension, one of count, area, weight, volume and length. A code the catalogue does not carry answers created; a unit already standing with the same code and dimension answers attached and takes the load's stamps, a seeded row included (the plan's section 2: records that already exist are attached, never created twice); the same code under another dimension refuses naming the field, and the caller's pack maps repeat or clashing source codes to unique HH codes (the plan's reading 4); a dimension the catalogue does not carry refuses naming the field; a row another org owns refuses naming the kind and the key, its org never overwritten. No unit is ever deleted. The catalogue is the deployment wide vocabulary (the plan's reading 3): the unit's identity is its code, the catalogue carries no uuid column, and the registry names a unit by the code's derived row id, stable across deployments. The read assumes one deployment per dealer: it carries no org predicate on the catalogue rows."
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: HH-LOAD-1 load doors; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadSubmitRequest"
+      responses:
+        "200":
+          description: One outcome per item and the batch's counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadSubmitResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The batch id is recorded under another door; the submission is a collision of two doors' batch namespaces, not a replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "The batch contended with another in flight batch on shared names and Postgres rolled it back whole: nothing of it stands, and resubmitting the whole batch is safe. The one answer a caller may retry the batch on, never a per item outcome."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/load/products/unit-sets:
+    put:
+      operationId: loadPutUnitSets
+      tags:
+        - load
+      summary: Replace a product's unit set atomically, the product named by legacy key
+      description: "One item per product's unit set. The product arrives as a reference of kind product and resolves against the registry before any write, so a name not yet loaded refuses as a missing reference naming the kind and the key; the product door itself is a later item, so until it lands the registry is the only way a product name stands. The record's rows are the set, each naming the code, the factor as decimal text only (a factor that arrives as a number refuses naming factor_type: the door never re-spells a float), the base flag and, if named, the role hints. The set REPLACES the product's rows atomically, the old set deleted and the new inserted inside the item's transaction: exactly one base row at factor one, and that base row the product's own base unit (products.base_uom, compared the way CITEXT compares); every factor positive and at scale eight or under, a factor beyond that refused naming the legacy key and the field, never a value, never rounded (the plan's section 8 point 3); every code naming a catalogue unit; the product's price unit inside the set; no unit removed while a price, break, rule, override or stock row still names it (the list price, the pricing rules and the quantity break headers and items of the product and of the product's category, matched the way the price resolver matches them so a row carrying a product beside the category still applies, the customer category overrides priced in the unit, the promotions' fixed prices, the clearance prices, the supplier skus, the product's rounding rule, the stock moves and the pricing conversion edges; the category scoped and store wide promotions and the tier default rules are deliberately beyond this check: a unit mismatch leaves such a promotion inert rather than failing a resolve, and a rule that applies to every product is no one product's row to hold); and the decimal round trip holding on every conversion against the representation the price resolver reads: factors are exact only to what the resolver reads, and a factor the float read would corrupt is refused (the plan's risk 1, stated honestly). The open document lines (open quotes and orders, open purchase order lines, transfers in transit) are deliberately not read: the plan's load order loads unit sets before any document exists, and the document reload is LD-12's follow up. Nothing of a refused replace stands."
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: HH-LOAD-1 load doors; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadSubmitRequest"
+      responses:
+        "200":
+          description: One outcome per item and the batch's counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadSubmitResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The batch id is recorded under another door; the submission is a collision of two doors' batch namespaces, not a replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "The batch contended with another in flight batch on shared names and Postgres rolled it back whole: nothing of it stands, and resubmitting the whole batch is safe. The one answer a caller may retry the batch on, never a per item outcome."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/load/receivables:
+    put:
+      operationId: loadUpsertReceivables
+      tags:
+        - load
+      summary: Load one batch of open receivable items
+      description: "The open receivables door (HH-LOAD-1 LD-11): each open item of the caller's AR extract lands as an imported invoice or credit memo, with the source document number beside HH's own, the issue and due dates as recorded, and the open amount in whole cents, one receivables ledger row per item in date order per customer so aging survives. Unapplied cash loads as a negative item and lands as a credit memo. An item whose issue_date is after the load day (the day the batch's transaction runs, UTC) refuses the batch naming the issue_date field, never a value: a postdated document would sit above HH's own sales in the ledger readers and understate the balance, so the extract carries none; an item dated the load day itself lands. The batch is all or nothing: one refused item refuses the batch and nothing lands, and the refusing item is named in the 422 body. A replayed batch id returns the outcomes it first recorded and writes nothing (the replay must carry exactly the recorded items, in any order: a subset, a superset or a changed item refuses with 409 before any outcome is built); a batch that contended with another batch on shared names rolled back whole and answers 503 with Retry-After: resubmit the whole batch (money batches re-run whole; the id was never recorded). An item restated on a later batch updates its document in place, with three refusals that name their own reason: sign_changed (the restated amount changed sign; a source item that changed sign is a different document), target_worked_in_hh (HH has worked the loaded document since it loaded, so a reload never overwrites it), and update_target_missing (the registry names a document that is truly gone). One worked item refuses the whole reload, so FB Move's reload must exclude items HH has worked. No journal, no finalized event, no customer message, reminder or credit sweep is triggered by a load: the imported document emits none of the events those paths hang off. Money is integer cents, never a float: an open amount that is not exact whole cents refuses with 400 naming the item and the field."
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: HH-LOAD-1 LD-11 open receivables; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadReceivablesUpsertRequest"
+      responses:
+        "200":
+          description: The batch's counts by outcome and one outcome per item, in the body's own item order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadReceivablesResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The batch id is recorded under another door, or the replay carries an item the played batch never recorded or whose content differs from what it recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: The batch refused whole; the refusing item's legacy id, reason, field and detail ride the Error envelope, keys and fields only, never a record value
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: The batch contended with another in flight batch and rolled back whole, nothing landed and the id was never recorded; Retry-After names the pause, and the caller resubmits the whole batch
           content:
             application/json:
               schema:
@@ -14040,6 +14307,12 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "402":
+          description: "A card leg was declined: no money moved for that leg and any card already charged for this sale was reversed. The error word card_charge_card_declined names the card case beside the till's own decline word; the client clears its key and may re-ring."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "403":
           $ref: "#/components/responses/Forbidden"
         "409":
@@ -14273,6 +14546,7 @@ paths:
       x-access:
         surfaces:
           - counter-till
+          - quote-desk
         level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -14475,6 +14749,7 @@ paths:
       x-access:
         surfaces:
           - counter-till
+          - quote-desk
         level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -16248,6 +16523,7 @@ paths:
         surfaces:
           - dealer-admin
         level: read
+        list: cost_visibility
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -19404,7 +19680,13 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          $ref: "#/components/responses/Conflict"
+          description: The typed floor refusal when the write would put the line below the margin floor and the caller holds no clearing and no approved request, or the frozen status refusal
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/QuoteFloorRefusal"
+                  - $ref: "#/components/schemas/Error"
     delete:
       operationId: quoteRemoveQuoteLine
       tags:
@@ -19523,6 +19805,50 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/quotes/{id}/order-payment:
+    post:
+      operationId: quoteTakeOrderPayment
+      tags:
+        - staff-quote
+      summary: Take payment at the counter on a converted quote's order
+      description: "The counter's payment door on the quote desk. For a converted quote in the caller's branch it finds the order the quote became, raises that order's invoice at the agreed totals if none exists (every line at its agreed total, plus the delivery fee and its tax for a delivery quote, so the invoice equals the quote's agreed total), and records the payment through the payments settle with the caller stamped as the receiver. Billing the order again when it leaves the yard returns the same document. A customer with a credit account may pay a part (a deposit); a customer with no credit account pays the whole of what the invoice still owes (on a fresh order, the whole agreed total), and for such a customer an ACCEPTED quote is converted, billed and paid as one action: the conversion, the invoice and the payment are written in one transaction, so either all three exist or none does, and a cash customer's order never exists unpaid. For a customer with a credit account the order already exists when the payment is taken; the invoice and the payment are then written together, so a payment that fails leaves no invoice and no balance behind. The Yard manager is admitted at the cash customer's one action, on an accepted quote only; the separate conversion of a quote keeps its selling role rule. An order that already has an invoice raised another way (by shipment group, say) is refused with a 409 and nothing is raised, so the order is never billed twice. The counter's invoice does not move the order out of the yard: it is confirmed, picked and handed over as usual, and is invoiced when it leaves. A replayed idempotency_key posts nothing and answers the first payment; the same key with a different method or amount is a 409. The role rule is Work or above on the Counter Till at the order's branch."
+      x-addition: the counter's payment door on a converted quote's order (plan 1.1, QD-5); no ERP source route
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - counter-till
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteOrderPaymentRequest"
+      responses:
+        "200":
+          description: The payment, the invoice and the balance (also a replay of the first result)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteOrderPaymentResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/quotes/{id}/lines/{lineNo}/compare:
     post:
       operationId: quoteCompareQuoteLine
@@ -19573,6 +19899,62 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/quotes/{id}/lines/{lineNo}/floor-approval:
+    post:
+      operationId: quoteRequestFloorApproval
+      tags:
+        - staff-quote
+      summary: File an approval request for a quote line discount below the margin floor
+      description: "For a line the caller may edit whose asked discount lands below the margin floor, files one approval request bound to that quote, that line and that discount. The server builds the subject and the detail from its own figures; the caller supplies neither. A caller who may clear the floor itself is told so and no request is filed. A line not below the floor is a 409: nothing to approve."
+      x-addition: the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - quote-desk
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema:
+            type: string
+        - name: lineNo
+          in: path
+          required: true
+          description: The quote line number, a positive integer
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteFloorApprovalRequest"
+      responses:
+        "201":
+          description: The filed request's state, or the word that the caller may clear the floor itself
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteFloorApprovalAnswer"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The asked discount does not land below the floor, nothing to approve
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/quotes/{id}/related-documents:
     get:
       operationId: quoteQuoteRelatedDocuments
@@ -19669,12 +20051,13 @@ paths:
       tags:
         - staff-quote
       summary: Flip the dealer's multi-acceptance switch
-      description: "Admin-gated in the service (Tier-1 global), audited in both directions. allow_multi_accept is required: a body that omits it is refused rather than read as false, because this one field decides whether a duplicate order can be minted."
+      description: "The switch is dealer wide, so CP0-5 answer A gives the write to the General Manager alone: the rule runs in the service, in words, and any other caller is refused with 403 naming the role. The gate sits at read so the General Manager (Read on the Quote Desk) reaches the service. Every flip is audited in both directions. allow_multi_accept is required: a body that omits it is refused rather than read as false, because this one field decides whether a duplicate order can be minted."
       x-role: requireStaff
       x-access:
         surfaces:
           - quote-desk
-        level: manage
+        level: read
+        reason: The dealer wide switch is the General Manager's alone under CP0-5 answer A, and that rule runs in the service in words; the gate must let the General Manager (Read on the Quote Desk) through to it.
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -19732,12 +20115,13 @@ paths:
       tags:
         - staff-quote
       summary: Write the dealer or branch quote-builder policy
-      description: Admin-gated in the service (Tier-1 global), exactly like the acceptance settings. Out-of-bounds knobs are refused in words with 422 before any database CHECK can fire; the 422 body is the shared Error envelope.
+      description: "The CP0-5 answer A rule runs in the service, in words: a caller holding Manage on the Quote Desk writes a branch row it reaches (the Sales manager under the decided default), and the General Manager alone writes the NULL dealer default row; any other caller is refused with 403 naming the role. The gate therefore sits at read, so both named roles reach the service (the General Manager holds Read on the Quote Desk). Out-of-bounds knobs are refused in words with 422 before any database CHECK can fire; the 422 body is the shared Error envelope."
       x-role: requireStaff
       x-access:
         surfaces:
           - quote-desk
-        level: manage
+        level: read
+        reason: The CP0-5 answer A rule runs in the service in words (Manage writes a branch row it reaches, the General Manager the dealer default), so the gate must let both named roles through; the General Manager holds Read on the Quote Desk.
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -20013,7 +20397,7 @@ paths:
       tags:
         - public
       summary: Accept a dealer quote through a share link
-      description: "Pre-auth: the opaque token in the path is the credential. Acceptance is a typed full name plus an explicit affirmative, recorded as an electronic attestation. The status flip, the acceptance record and the audit row land on one transaction under the quote row lock. A 409 names why the quote is not awaiting acceptance, including the order a first acceptance became when multi-accept is off."
+      description: "Pre-auth: the opaque token in the path is the credential. Acceptance is a typed full name plus an explicit affirmative, recorded as an electronic attestation. The status flip, the acceptance record and the audit row land on one transaction under the quote row lock. A 409 names why the quote is not awaiting acceptance, including the order a first acceptance became when multi-accept is off. An optional Idempotency-Key header (a UUID) makes a retry safe: a request that timed out at the client may still have committed, so every retry of one acceptance carries the same key. A repeat under the same key, on the same quote and share link, answers the first outcome with the same confirmation, writes nothing, and does so whatever the quote's status is by then, multi-accept on or off. The same key with a different typed name is a 409 on a live link and a 410 on a dead one. A retry through a link that was revoked or has expired since the first attempt still answers that first outcome with a 200 when the acceptance under the key is found for that link, and is a 410 when none is found. The lookup waits for an attempt still in flight, and an attempt whose link died before it took the quote lock is refused with the same 410, so a keyed 410 is never followed by a commit under that key: no acceptance exists under this key for this link at that moment and none is recorded under it afterwards. Otherwise the answer is the one a live link gives (a 400 when accepted is false or absent, a 500 when the lookup fails) except that an empty or over long typed name is a 410 on a dead link. A malformed key is a 400. Without the header the acceptance behaves as it always has."
       x-role: public
       security: []
       parameters:
@@ -20023,6 +20407,13 @@ paths:
           description: The share-link token; it is the credential
           schema:
             type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: A UUID chosen once per acceptance and resent unchanged on every retry of it. Scoped to the quote and the share link.
+          schema:
+            type: string
+            format: uuid
       requestBody:
         required: true
         content:
@@ -27659,6 +28050,80 @@ components:
           items:
             type: string
             format: uuid
+    PaymentCardAttemptSummary:
+      type: object
+      description: "One manager-readable attempt row: the reconciliation facts (amount, branch, till session, time, sale key) beside the charge's own answers (status, the charge and reversal refs, the bounded diagnostic). ref is the id's short form, the name the needs-manager answers carry; id is the whole value, the resolve route's path parameter. The row never carries a leg key, a note or a resolver: it is the reconciliation view, not the row's every column."
+      required:
+        - ref
+        - id
+        - status
+        - amount_cents
+        - branch_id
+        - till_session_id
+        - created_at
+        - sale_key
+        - charge_ref
+        - reversal_ref
+        - last_error
+      properties:
+        ref:
+          type: string
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          description: The attempt row's stored state
+          enum:
+            - CHARGING
+            - CAPTURED
+            - DECLINED
+            - UNKNOWN
+            - BOUND
+            - VOIDING
+            - VOIDED
+            - VOID_UNKNOWN
+            - VOID_DECLINED
+            - RESOLVED
+        amount_cents:
+          type: integer
+          format: int64
+        branch_id:
+          type: string
+          format: uuid
+        till_session_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        sale_key:
+          type: string
+          format: uuid
+        charge_ref:
+          type: string
+          description: The processor's charge reference; empty until an answer carried one
+        reversal_ref:
+          type: string
+          description: The processor's reversal reference; empty until an answer carried one
+        last_error:
+          type: string
+          description: The bounded, redacted diagnostic; never a token, a credential or a card number
+    PaymentCardAttemptResolve:
+      type: object
+      description: The manager's close of an attempt that needed a person
+      required:
+        - resolution
+        - note
+      properties:
+        resolution:
+          type: string
+          enum:
+            - NOT_CHARGED
+            - REVERSED_AT_PROCESSOR
+        note:
+          type: string
+          description: Mandatory; what the manager found at the processor
     AssistArgSpec:
       type: object
       required:
@@ -28258,6 +28723,45 @@ components:
         list_price_uom:
           type: string
           description: The unit list_price_cents is denominated in, carried only with it
+    UomView:
+      type: object
+      description: One row of the unit catalogue
+      required:
+        - code
+        - name
+        - dimension
+        - is_active
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        dimension:
+          type: string
+          enum:
+            - count
+            - area
+            - weight
+            - volume
+            - length
+        is_active:
+          type: boolean
+    UomViewPage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/UomView"
+        next_cursor:
+          type:
+            - string
+            - "null"
+        limit:
+          type: integer
+          format: int32
     ProductPage:
       type: object
       required:
@@ -35804,6 +36308,71 @@ components:
         limit:
           type: integer
           format: int32
+    LoadReceivablesRecord:
+      type: object
+      description: "One open item's record, the carried facts only, never recomputed: source_doc_no (the source document number, one to 128 characters, required), issue_date and due_date (strict calendar days as YYYY-MM-DD, both required, landed as recorded), open_amount_cents (the open amount in whole cents, required, non-zero: a negative amount is unapplied cash and lands as a credit memo; a value that is not an exact integer refuses the batch naming the item), and the optional source_job_key and source_address_key (the source job and address legacy keys, which ride on the record until their homes exist). The record is closed: a field outside these six refuses, so two records that differ anywhere the door cannot land also cannot hash alike."
+      additionalProperties: true
+    LoadReceivablesItem:
+      type: object
+      required:
+        - legacy_id
+        - requires
+        - record
+      properties:
+        legacy_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        derived_key:
+          type:
+            - string
+            - "null"
+          format: uuid
+          description: The caller's name-based uuid over the same four parts; empty leaves the row's idempotency column untouched
+        requires:
+          type: array
+          description: "The item's references by legacy key: exactly one customer and one branch. The source job and address keys ride on the record instead; they have no registry homes yet."
+          items:
+            $ref: "#/components/schemas/LoadKeyRef"
+        record:
+          $ref: "#/components/schemas/LoadReceivablesRecord"
+    LoadReceivablesUpsertRequest:
+      type: object
+      required:
+        - source_system
+        - batch_id
+        - items
+      properties:
+        source_system:
+          type: string
+          minLength: 1
+          maxLength: 64
+        batch_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        items:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            $ref: "#/components/schemas/LoadReceivablesItem"
+    LoadReceivablesResult:
+      type: object
+      required:
+        - batch_id
+        - counts
+        - items
+      properties:
+        batch_id:
+          type: string
+        counts:
+          $ref: "#/components/schemas/LoadBatchCounts"
+        items:
+          type: array
+          description: One outcome per item, in the request body's own item order
+          items:
+            $ref: "#/components/schemas/LoadBatchItemOutcome"
     LoadKeyRef:
       type: object
       required:
@@ -44970,6 +45539,13 @@ components:
         updated_at:
           type: string
           format: date-time
+        owner_id:
+          type: string
+          format: uuid
+          description: The quote's owner (the salesperson when one is set, else the creator)
+        owner_name:
+          type: string
+          description: The owner's display name; absent when unknown
     QuoteSummaryPage:
       type: object
       description: One cursor page of the staff quote list. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8).
@@ -45047,6 +45623,13 @@ components:
         can_convert:
           type: boolean
           description: Whether this caller may convert this quote to an order right now
+        owner_id:
+          type: string
+          format: uuid
+          description: The quote's owner (the salesperson when one is set, else the creator); absent when neither is stamped
+        owner_name:
+          type: string
+          description: The owner's display name; absent when unknown
         lines:
           type: array
           items:
@@ -45101,6 +45684,12 @@ components:
         line_total_cents:
           type: integer
           format: int64
+        rule_price_below_floor:
+          type: boolean
+          description: "For callers on the cost and margin list: the line's rule price itself sits below the margin floor. Absent for every other caller and when the floor could not be evaluated."
+        floor_cleared_by:
+          type: string
+          description: Who cleared a below floor price on this line (the clearing stamped when the price went through); absent when the line was never cleared
     QuoteCreateRequest:
       type: object
       description: The staff create payload. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8).
@@ -45379,6 +45968,95 @@ components:
           format: uuid
         order_no:
           type: string
+    QuoteOrderPaymentRequest:
+      type: object
+      description: One payment taken at the counter. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8). The tender is one of the four the payments settle accepts; the key makes a repeat post nothing.
+      required:
+        - method
+        - amount_cents
+        - reference
+        - idempotency_key
+      properties:
+        method:
+          type: string
+          enum:
+            - CASH
+            - CARD
+            - CHEQUE
+            - EFT
+        amount_cents:
+          type: integer
+          format: int64
+          minimum: 1
+        reference:
+          type: string
+          description: Cheque number, EFT trace or terminal reference as given; may be empty for cash
+        idempotency_key:
+          type: string
+          minLength: 1
+          maxLength: 64
+    QuoteOrderPaymentResult:
+      type: object
+      description: "What the till's receipt needs: the payment, the invoice it settled against, the order and the balance now on the invoice. On a replay the payment fields (the reference and the receiver included) are the first payment's as stored, and replayed is true."
+      required:
+        - order_id
+        - order_no
+        - invoice_id
+        - invoice_no
+        - invoice_total_cents
+        - payment_id
+        - payment_no
+        - method
+        - amount_cents
+        - received_at
+        - reference
+        - received_by
+        - balance_cents
+        - replayed
+        - converted
+      properties:
+        order_id:
+          type: string
+          format: uuid
+        order_no:
+          type: string
+        invoice_id:
+          type: string
+          format: uuid
+        invoice_no:
+          type: string
+        invoice_total_cents:
+          type: integer
+          format: int64
+        payment_id:
+          type: string
+          format: uuid
+        payment_no:
+          type: string
+        method:
+          type: string
+        amount_cents:
+          type: integer
+          format: int64
+        received_at:
+          type: string
+          format: date-time
+        reference:
+          type: string
+        received_by:
+          type: string
+          format: uuid
+          description: The staff member who took the payment
+        balance_cents:
+          type: integer
+          format: int64
+          description: The invoice's balance after this payment (live on a replay)
+        replayed:
+          type: boolean
+          description: True when this request posted nothing and answers the first payment
+        converted:
+          type: boolean
+          description: True when this action also converted the quote (a customer with no credit)
     QuoteRelatedDocument:
       type: object
       description: One normalized row of a quote's document family. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8).
@@ -46175,7 +46853,7 @@ components:
           type: boolean
     QuoteBranchStock:
       type: object
-      description: The four-bucket view of one product at one branch. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8).
+      description: "The four-bucket view of one product at one branch. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8). avg_cost_cents is gated by the dealer's cost_visibility list: it is present for callers on the list and absent otherwise, never zero, never null."
       required:
         - product_id
         - branch_id
@@ -46186,7 +46864,6 @@ components:
         - in_transit_base
         - available_base
         - soft_held_base
-        - avg_cost_cents
       properties:
         product_id:
           type: string
@@ -46212,6 +46889,7 @@ components:
         avg_cost_cents:
           type: integer
           format: int64
+          description: Present only for callers the cost_visibility list allows, absent otherwise
     QuoteBranchStockList:
       type: object
       description: One product's stock at every branch, plus the seam flag. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8).
@@ -46610,6 +47288,89 @@ components:
       properties:
         enabled:
           type: boolean
+    QuoteFloorApprovalRequest:
+      type: object
+      description: The request door's body (the discount asked for and a bounded free text note). The subject and the detail are the server's own, built from its figures.
+      required:
+        - disc_pct
+      properties:
+        disc_pct:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 100
+          description: The discount percent asked for
+        note:
+          type: string
+          maxLength: 500
+          description: A bounded free text note riding the request
+    QuoteFloorRequestState:
+      type: object
+      description: One filed floor request's state
+      required:
+        - id
+        - status
+        - line_no
+        - disc_pct
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+            - PENDING
+            - APPROVED
+            - REJECTED
+        line_no:
+          type: integer
+          format: int32
+        disc_pct:
+          type: integer
+          format: int32
+    QuoteFloorApprovalAnswer:
+      type: object
+      description: "The request door's answer: the filed (or already standing) request's state, or the word that the caller may clear the floor itself and no request was filed."
+      required:
+        - filed
+        - may_clear_itself
+      properties:
+        filed:
+          type: boolean
+        may_clear_itself:
+          type: boolean
+        request:
+          $ref: "#/components/schemas/QuoteFloorRequestState"
+    QuoteFloorRefusal:
+      type: object
+      description: "The typed 409 a below floor write answers: the policy, who may approve, whether a manager of the branch may set it, the caller's pending or approved request if any, and the margin and floor figures for callers on the cost and margin list only."
+      required:
+        - policy
+        - approver_roles
+        - manager_may_set
+      properties:
+        policy:
+          type: string
+        approver_roles:
+          type: array
+          description: The roles who may approve, the branch's Sales manager among them
+          items:
+            type: string
+        manager_may_set:
+          type: boolean
+          description: Whether a manager of the branch may set the price itself
+        existing_request:
+          $ref: "#/components/schemas/QuoteFloorRequestState"
+        margin_bps:
+          type: integer
+          format: int64
+          description: The margin at the asked discount; present for cost list callers only
+        floor_bps:
+          type: integer
+          format: int64
+          description: The margin floor; present for cost list callers only
+      x-error:
+        status: 409
     ReportingColumn:
       type: object
       description: One entry in a template's explicit column allowlist. kind decides how the value is read, totalled and rendered; total marks a column that rolls into the report's totals row.

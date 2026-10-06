@@ -45,6 +45,7 @@ import (
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -231,6 +232,15 @@ type QuoteViewLine struct {
 	UnitPriceCents int64  `json:"unit_price_cents"`
 	PriceUOM       string `json:"price_uom"`
 	LineTotalCents int64  `json:"line_total_cents"`
+	// RulePriceBelowFloor, for callers on the cost and margin list (X3):
+	// the line's rule price itself sits below the margin floor. Pointer so
+	// absent means "not asked" (a caller off the list, or no arbiter), never
+	// a confident false.
+	RulePriceBelowFloor *bool `json:"rule_price_below_floor,omitempty"`
+	// FloorClearedBy names who cleared a below floor price on this line
+	// (the clearing stamped by the write that went through); "" when the
+	// line was never cleared.
+	FloorClearedBy string `json:"floor_cleared_by,omitempty"`
 }
 
 // quoteEditWrite is one line mutation's payload, handed to the guarded write.
@@ -238,10 +248,10 @@ type quoteEditWrite struct {
 	QuoteID        string
 	LineNo         int
 	AllowedFrom    []string
-	ProductID      string
+	ProductID      string // a reprice: the product the price was read for, pinned under the lock
 	Description    string
 	QtyEntered     string
-	UOMEntered     string
+	UOMEntered     string // a reprice: the unit the price was read for, pinned under the lock beside the product
 	QtyBase        string
 	UnitPriceCents int64
 	PriceUOM       string
@@ -288,11 +298,36 @@ type quoteEditHooks struct {
 	// change whose hold never landed is a quote holding a quantity nobody quoted, and the visibility
 	// surface stops being believed the first time anyone notices. nil = the reservation seam is off.
 	holds func(ctx context.Context, tx pgx.Tx) error
+	// pricing runs LAST before commit, on the SAME tx (plan 4.2): the
+	// pricing log rows the write owes, written on the write's own
+	// transaction so a commit with no row cannot happen and a rolled back
+	// write leaves no row. lineNo is fed by the write (the add derives it
+	// inside the lock); changed says whether the write actually moved the
+	// line, and an idempotent rewrite (the standing discount re-asserted,
+	// the standing quantity repriced to the same figures) writes no row.
+	// nil = this write owes no pricing log row.
+	pricing func(ctx context.Context, tx pgx.Tx, lineNo int, changed bool) error
 }
 
 // quoteDateHooks is the record-only hook for the valid_until write.
 type quoteDateHooks struct {
 	record func(ctx context.Context, tx pgx.Tx, before, after string) error
+}
+
+// quoteDiscountHooks is the record closure the discount write threads into
+// its guarded write (plan 4.2): the discount before and after and the line
+// total, on the write's own transaction, the same trail the other line
+// writes use. The percents and the line's net total are passed explicitly:
+// the discount is the one column a QuoteLineSnapshot does not carry, and a
+// half-populated snapshot invites a confident wrong read.
+type quoteDiscountHooks struct {
+	record func(ctx context.Context, tx pgx.Tx, lineNo, beforeDisc, afterDisc int, beforeTotal, afterTotal int64, totals QuoteTotals) error
+	// pricing is the pricing log row the discount write owes, on the same
+	// transaction as the record above (plan 4.2): the BYPASS row for a
+	// cleared below floor price, the UPDATE row for a below rule above
+	// floor write, none for an idempotent re-assertion of the standing
+	// discount. nil = this write owes no pricing log row.
+	pricing func(ctx context.Context, tx pgx.Tx, lineNo int, changed bool) error
 }
 
 // - expiry (D2) -
@@ -345,10 +380,19 @@ func assertNotExpired(validUntil *time.Time, now time.Time) error {
 //	known edit field               → BadRequest       (400)
 //	quote exists                   → ErrNotFound      (404)  ← resolved BEFORE any authz rejection
 //	caller reaches the quote branch → ErrForbidden    (403)
+//	caller holds Work+ on quote-desk, and owns the quote unless it holds Manage
+//	                               → NotQuoteOwnerError (403, the way forward named) / ErrForbidden
 //	field editable in this status  → NotEditableError (409, status named)
 //	quote not expired              → QuoteExpiredError(409, date + path forward)
 //
-// There is NO tier rung: R1 ratifies quote editing as open to any active in-branch staff member.
+// The ownership rung is plan 3.3 (defect D4): a caller at Work edits only its
+// own quotes, a caller at Manage edits any quote in its branch. "Own" is the
+// quote's salesperson when one is set, else its creator. A Work caller still
+// reads any quote in its branch and converts an accepted one: only the edit
+// ladder changed. The level comes from the dealer's role configuration
+// (the caller's role mapped through identity.CanonicalForERPCode); a caller
+// whose level is under Work edits nothing, and a service with no
+// configuration wired fails closed.
 //
 // It returns the caller, the rule, and the RESOLVED quote id. The status and expiry it checked are
 // deliberately not returned: both are ADVISORY only, because the authoritative re-check happens inside
@@ -378,12 +422,20 @@ func (s *StaffService) authorizeQuoteEdit(ctx context.Context, quoteID string, f
 	if err != nil {
 		return identity.StaffContext{}, quoteEditRule{}, "", err
 	}
-	status, branchID, validUntil, err := s.store.QuoteEditHeader(ctx, quoteID)
+	status, branchID, validUntil, ownerID, err := s.store.QuoteEditHeader(ctx, quoteID)
 	if err != nil {
 		return identity.StaffContext{}, quoteEditRule{}, "", err // ErrNotFound, no existence leak
 	}
 	if !caller.CanAccessBranch(branchID) {
 		return identity.StaffContext{}, quoteEditRule{}, "", ErrForbidden
+	}
+	// The ownership rung (plan 3.3), shared with the quotes sync door.
+	if err := ownershipRung(s.quoteDeskLevel(caller), caller, ownerID); err != nil {
+		var notOwner *NotQuoteOwnerError
+		if errors.As(err, &notOwner) {
+			notOwner.OwnerName = s.ownerName(ctx, ownerID)
+		}
+		return identity.StaffContext{}, quoteEditRule{}, "", err
 	}
 	if !rule.from[status] {
 		return identity.StaffContext{}, quoteEditRule{}, quoteID, &NotEditableError{Field: field, Status: status}
@@ -392,6 +444,70 @@ func (s *StaffService) authorizeQuoteEdit(ctx context.Context, quoteID string, f
 		return identity.StaffContext{}, quoteEditRule{}, quoteID, err
 	}
 	return caller, rule, quoteID, nil
+}
+
+// quoteDeskLevel answers the caller's configured level on the Quote Desk,
+// mapping the caller's ERP role code through the bridge
+// (identity.CanonicalForERPCode) onto the configuration's vocabulary. An
+// unmapped or unknown role, or a service with no configuration, answers
+// none: the gated paths fail closed, never permissively.
+func (s *StaffService) quoteDeskLevel(c identity.StaffContext) roleconfig.Level {
+	return deskLevelFor(s.roles, c)
+}
+
+// deskLevelFor is the Quote Desk level the configuration gives the caller's
+// role; no configuration, no role or an unmapped role answers no level.
+func deskLevelFor(cfg *roleconfig.Config, c identity.StaffContext) roleconfig.Level {
+	if cfg == nil || c.RoleCode == "" {
+		return roleconfig.LevelNone
+	}
+	canonical, ok := identity.CanonicalForERPCode(c.RoleCode)
+	if !ok {
+		return roleconfig.LevelNone
+	}
+	level, err := cfg.Level(canonical, "quote-desk")
+	if err != nil {
+		return roleconfig.LevelNone
+	}
+	return level
+}
+
+// ownershipRung is plan 3.3's ladder for a write on one quote: under Work
+// edits nothing (a flat 403), Work edits its own quotes, Manage edits any
+// quote of a branch the caller reaches. One rung for the REST edit path and
+// the quotes sync door, so the two doors cannot drift. A non-owner at Work
+// gets the typed refusal without the owner's name; the REST path names it.
+func ownershipRung(level roleconfig.Level, c identity.StaffContext, ownerID string) error {
+	if !level.AtLeast(roleconfig.LevelWork) {
+		return ErrForbidden
+	}
+	if level == roleconfig.LevelWork && !(ownerID != "" && c.UserID == ownerID) {
+		return &NotQuoteOwnerError{}
+	}
+	return nil
+}
+
+// ownsQuote answers whether the caller owns the quote whose owner is ownerID
+// (the salesperson when one is set, else the creator, plan 3.3). An
+// ownerless quote (no salesperson, no creator, the pre-ownership seeds) is
+// owned by nobody, so a Work caller cannot edit it: the way forward is the
+// branch's Sales manager, exactly as for anyone else's quote.
+func (s *StaffService) ownsQuote(c identity.StaffContext, ownerID string) bool {
+	return ownerID != "" && c.UserID == ownerID
+}
+
+// NotQuoteOwnerError is the refusal a Work caller gets editing a quote it
+// does not own. Typed so the message can name the way forward: the quote's
+// owner or the branch's Sales manager. Mapped to 403.
+// NotQuoteOwnerError names the quote's owner when the store can resolve
+// it, so the caller is sent to a person and not to a role (plan 3.4).
+type NotQuoteOwnerError struct{ OwnerName string }
+
+func (e *NotQuoteOwnerError) Error() string {
+	if e.OwnerName == "" {
+		return "quote: this quote belongs to another salesperson, ask the branch's Sales manager to take it over"
+	}
+	return fmt.Sprintf("quote: this quote belongs to %s, ask the branch's Sales manager to take it over", e.OwnerName)
 }
 
 // callerBranchScope projects a caller onto the branch filter ResolveQuoteID needs: a GLOBAL caller
@@ -423,8 +539,13 @@ func nameQuoteField(err error, field QuoteEditField) error {
 
 // priceLine resolves the pre-tax price trio for (product, qty, uom) at today's rates through the SAME
 // pricing seam the POS ring, the order edit and the portal reorder use. The quote module does not own
-// UOM factor math or price derivation, so it asks pricing rather than reimplementing either; that also
-// keeps the A-20 margin gate live on a quoted line, so a staff quote cannot quietly go out below floor.
+// UOM factor math or price derivation, so it asks pricing rather than reimplementing either.
+//
+// A line at its RULE PRICE is accepted wherever the floor sits (plan 4.1, defect D1, CP0-3 answer A):
+// the price is the dealer's own rule, the salesperson has nothing to ask for, and the till prices the
+// same line the same way. The resolver's margin and floor figures are KEPT on the returned breakdown,
+// so the write's caller can log the below floor rule price for the pricing editors; the floor question
+// itself is asked only by the two writes that put a line below its rule price (floor.go).
 //
 // A nil seam FAILS CLOSED (ErrEditNotConfigured → 503): quoting a line at a stale or zero price would be
 // worse than refusing the edit.
@@ -450,9 +571,6 @@ func (s *StaffService) priceLine(ctx context.Context, customerID, branchID, prod
 	if err != nil {
 		return pricing.LinePrice{}, httpx.BadRequestf("cannot price this line: %v", err)
 	}
-	if bd.Blocked {
-		return pricing.LinePrice{}, &PriceBlockedError{Policy: bd.BlockPolicy}
-	}
 	if bd.QtyBase > maxQuoteQty {
 		return pricing.LinePrice{}, httpx.BadRequestf(
 			"resulting base quantity exceeds the %d maximum for a quote line", maxQuoteQty)
@@ -464,17 +582,6 @@ func (s *StaffService) priceLine(ctx context.Context, customerID, branchID, prod
 		QtyBase:        bd.QtyBase,
 		Breakdown:      bd,
 	}, nil
-}
-
-// PriceBlockedError is returned when pricing a quote line lands below the margin floor. Carries the
-// policy so the 409 can name it. A legitimate business refusal, not a fault.
-type PriceBlockedError struct{ Policy string }
-
-func (e *PriceBlockedError) Error() string {
-	if e.Policy == "" {
-		return "quote: line is below the margin floor"
-	}
-	return fmt.Sprintf("quote: line is below the margin floor (%s)", e.Policy)
 }
 
 // - quantity helpers -
@@ -629,20 +736,26 @@ func (s *StaffService) recordIntChange(ctx context.Context, q audit.Execer, acto
 
 // - read-side matrix projection -
 
-// editableFields computes which fields THIS caller may edit on a quote in THIS status: the ratified
-// matrix ∧ the caller's authority ∧ the expiry guard.
+// editableFields computes which fields a caller WITH edit authority may edit on a quote in THIS status:
+// the ratified matrix ∧ the expiry guard. editableFieldsFor folds the ownership answer in (plan 3.3).
 //
 // Deliberately SOFTER than the write path, mirroring canOfferCancel/editableFields on the order side: an
 // expired or frozen quote simply OFFERS NOTHING, none of it may fail the quote read. The 409 belongs
 // exclusively to an actual edit attempt.
 //
-// Because R1 puts no tier rung on quote editing, the caller's authority contributes nothing here beyond
-// the branch check already done by the read, which is why this projection is a function of (status,
-// valid_until) alone. If a future ruling adds a tier axis, it goes here AND in authorizeQuoteEdit.
-func (s *StaffService) editableFields(status string, validUntil *time.Time) []string {
+// Since plan 3.3 the caller's authority contributes the ownership axis, and
+// the axis is the WRITE LADDER's own: below Work edits nothing, a Work
+// caller edits only its own quotes, and a Manage caller edits any quote in
+// its branch. A Sales manager reading another salesperson's quote is
+// therefore offered the fields, because a button that appears must be a
+// button that works.
+func (s *StaffService) editableFieldsFor(status string, validUntil *time.Time, level roleconfig.Level, owns bool) []string {
 	out := make([]string, 0, len(quoteFieldOrder))
 	if quoteExpired(validUntil, s.now()) {
 		return out // an expired quote offers nothing (D2), [] not null
+	}
+	if !level.AtLeast(roleconfig.LevelWork) || (level == roleconfig.LevelWork && !owns) {
+		return out // a caller the write ladder would refuse offers nothing, [] not null
 	}
 	for _, f := range quoteFieldOrder {
 		if !quoteEditRules[f].from[status] {

@@ -15,6 +15,7 @@ package quote
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
@@ -105,6 +106,11 @@ func (s *StaffService) AddLine(ctx context.Context, quoteID, productID, descript
 	if err != nil {
 		return QuoteEditResult{}, err
 	}
+	// CP0-3 answer A: an accepted line at a below floor rule price is
+	// logged for the pricing editors (the mark rides the read). The row
+	// rides the write's own transaction, named by the line the insert
+	// derived under the lock. A fresh line carries no discount.
+	pricingRows := rulePriceLogRows(caller, quoteID, productID, 0, lp.Breakdown)
 	after, totals, status, err := s.store.InsertLineGuarded(ctx, quoteEditWrite{
 		QuoteID: quoteID, AllowedFrom: rule.fromList(),
 		ProductID: productID, Description: description,
@@ -112,8 +118,9 @@ func (s *StaffService) AddLine(ctx context.Context, quoteID, productID, descript
 		UnitPriceCents: lp.UnitPriceCents, PriceUOM: lp.PriceUOM, LineTotalCents: lp.LineTotalCents,
 		ActorID: caller.UserID,
 	}, quoteEditHooks{
-		record: s.lineAuditHook(caller.UserID, quoteID, FieldQuoteLineAdd),
-		holds:  s.holdSyncHook(quoteID, caller.UserID),
+		record:  s.lineAuditHook(caller.UserID, quoteID, FieldQuoteLineAdd),
+		holds:   s.holdSyncHook(quoteID, caller.UserID),
+		pricing: s.pricingLogHook(pricingRows),
 	})
 	if err != nil {
 		return QuoteEditResult{}, nameQuoteField(err, FieldQuoteLineAdd)
@@ -148,14 +155,61 @@ func (s *StaffService) EditLineQty(ctx context.Context, quoteID string, lineNo i
 	if err != nil {
 		return QuoteEditResult{}, err
 	}
+	// D5 (plan 3.3): a quantity change on a line that carries a discount
+	// reprices it below its rule price, so the reprice runs the same floor
+	// decision the discount arm runs. A line at its rule price (disc 0) is
+	// not asked: that is QD-2's read side. But the discount the read SAW is
+	// always recorded, at 0 too, so the guarded write re-checks it under
+	// the lock: a discount set between the read and the commit cannot ride
+	// a repriced line nobody decided on (P2-6). And a read that FAILS is a
+	// refusal, never a skip: the floor question that cannot be answered
+	// must not answer itself "no discount".
+	plan := floorWritePlan{expectedDisc: -1}
+	var out *floorOutcome
+	disc := 0
+	if fs, ok := s.floorStore(); ok {
+		lineID, storedDisc, _, _, _, clearing, ferr := fs.LineFloorState(ctx, quoteID, lineNo)
+		if ferr != nil {
+			return QuoteEditResult{}, ferr
+		}
+		disc = storedDisc
+		plan.expectedDisc = disc
+		if disc > 0 {
+			out, err = s.decideLineFloor(ctx, caller, quoteID, branchID, cur.ProductID, lineNo, disc, lineID, uom,
+				lp.UnitPriceCents, lp.LineTotalCents, lp.PriceUOM, clearing)
+			if err != nil {
+				return QuoteEditResult{}, err
+			}
+			if out.refusal != nil {
+				return QuoteEditResult{}, out.refusal
+			}
+			plan = out.plan
+			plan.expectedDisc = disc
+		}
+	} else {
+		// Fail closed: the floor state read is how the reprice learns the
+		// line carries a discount at all, so a store that cannot answer
+		// must refuse rather than reprice a discounted line unchecked.
+		return QuoteEditResult{}, ErrEditNotConfigured
+	}
+	// The pricing log rows the reprice owes, on the write's own
+	// transaction (plan 4.2 and CP0-3 answer A): the floor row for a
+	// repriced discounted line, and the rule price row when the reprice
+	// struck a below floor rule price, logged like the add that first
+	// wrote it and carrying the line's real stored discount.
+	rows := append(
+		floorLogRows(caller, quoteID, cur.ProductID, disc, out),
+		rulePriceLogRows(caller, quoteID, cur.ProductID, disc, lp.Breakdown)...)
 	_, after, totals, status, err := s.store.UpdateLineGuarded(ctx, quoteEditWrite{
 		QuoteID: quoteID, LineNo: lineNo, AllowedFrom: rule.fromList(),
+		ProductID: cur.ProductID, UOMEntered: uom,
 		QtyEntered: strings.TrimSpace(qtyEntered), QtyBase: formatQty(lp.QtyBase),
 		UnitPriceCents: lp.UnitPriceCents, PriceUOM: lp.PriceUOM, LineTotalCents: lp.LineTotalCents,
 		ActorID: caller.UserID,
-	}, quoteEditHooks{
-		record: s.lineAuditHook(caller.UserID, quoteID, FieldQuoteLineQty),
-		holds:  s.holdSyncHook(quoteID, caller.UserID),
+	}, plan, quoteEditHooks{
+		record:  s.lineAuditHook(caller.UserID, quoteID, FieldQuoteLineQty),
+		holds:   s.holdSyncHook(quoteID, caller.UserID),
+		pricing: s.pricingLogHook(rows),
 	})
 	if err != nil {
 		return QuoteEditResult{}, nameQuoteField(err, FieldQuoteLineQty)
@@ -223,5 +277,27 @@ func (s *StaffService) dateAuditHook(actor, quoteID string) func(context.Context
 			return err
 		}
 		return nil
+	}
+}
+
+// discountAuditHook builds the record hook the guarded discount write runs
+// on its transaction (plan 4.2): the discount before and after and the
+// line total, plus the quote level pair every line write records, so the
+// quote's own history shows who discounted what.
+func (s *StaffService) discountAuditHook(actor, quoteID string) func(context.Context, pgx.Tx, int, int, int, int64, int64, QuoteTotals) error {
+	return func(ctx context.Context, tx pgx.Tx, lineNo, beforeDisc, afterDisc int, beforeTotal, afterTotal int64, totals QuoteTotals) error {
+		bd, ad := int64(beforeDisc), int64(afterDisc)
+		if err := s.recordIntChange(ctx, tx, actor, quoteID, lineNo, "disc_pct", &bd, &ad); err != nil {
+			return fmt.Errorf("quote-discount audit: %w", err)
+		}
+		bt, at := beforeTotal, afterTotal
+		if err := s.recordIntChange(ctx, tx, actor, quoteID, lineNo, "line_total_cents", &bt, &at); err != nil {
+			return fmt.Errorf("quote-discount audit: %w", err)
+		}
+		subtotal, total := totals.SubtotalCents, totals.TotalCents
+		if err := s.recordIntChange(ctx, tx, actor, quoteID, 0, "subtotal_cents", nil, &subtotal); err != nil {
+			return fmt.Errorf("quote-discount audit: %w", err)
+		}
+		return s.recordIntChange(ctx, tx, actor, quoteID, 0, "total_cents", nil, &total)
 	}
 }

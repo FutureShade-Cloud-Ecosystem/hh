@@ -13,6 +13,7 @@ import (
 	"fmt"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
+	"github.com/jackc/pgx/v5"
 )
 
 // postingEventType maps an outbox topic to its posting_rules.event_type (the frozen two-name scheme).
@@ -640,8 +641,29 @@ func (s *Service) buildTillSessionCompleted(ctx context.Context, payload []byte)
 // - provider surface (bankrec + finstmt + boot) -
 
 func (s *Service) postExternal(ctx context.Context, in ExternalJournal) (string, error) {
+	draft, err := s.externalDraft(in)
+	if err != nil {
+		return "", err
+	}
+	id, _, err := s.store.InsertJournal(ctx, draft)
+	return id, err
+}
+
+// postExternalTx is postExternal posted through the caller's transaction.
+func (s *Service) postExternalTx(ctx context.Context, tx pgx.Tx, in ExternalJournal) (string, error) {
+	draft, err := s.externalDraft(in)
+	if err != nil {
+		return "", err
+	}
+	id, _, err := s.store.InsertJournalTx(ctx, tx, draft)
+	return id, err
+}
+
+// externalDraft validates a caller-built external journal and turns it into the draft both the pool and the
+// transaction post share, so the two variants refuse exactly the same inputs.
+func (s *Service) externalDraft(in ExternalJournal) (journalDraft, error) {
 	if len(in.Lines) == 0 {
-		return "", badReq("gl: external journal has no lines")
+		return journalDraft{}, badReq("gl: external journal has no lines")
 	}
 	source := in.Source
 	if source == "" {
@@ -668,14 +690,13 @@ func (s *Service) postExternal(ctx context.Context, in ExternalJournal) (string,
 	// surprise. All legitimate legs are non-negative, so this changes no correct behavior.
 	for _, l := range draft.Lines {
 		if l.DebitCents < 0 || l.CreditCents < 0 {
-			return "", errUnbalanced
+			return journalDraft{}, errUnbalanced
 		}
 	}
 	if !draft.balanced() {
-		return "", errUnbalanced
+		return journalDraft{}, errUnbalanced
 	}
-	id, _, err := s.store.InsertJournal(ctx, draft)
-	return id, err
+	return draft, nil
 }
 
 func (s *Service) glBalanceCents(ctx context.Context, accountCode string, year, month int, branchID string) (int64, error) {

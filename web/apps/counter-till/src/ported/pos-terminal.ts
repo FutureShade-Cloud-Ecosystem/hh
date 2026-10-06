@@ -3,7 +3,7 @@
 import { LitElement, css, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { ifDefined } from 'lit/directives/if-defined.js';
-import { api, BRANCHES, branchName, getCurrentUser, isAdmin } from './ports.js';
+import { api, BRANCHES, branchName, getCurrentUser, isAdmin } from '@hardscapehouse/pos-kit/src/ported/ports.js';
 import {
   availableCreditCents,
   cartSubtotalCents,
@@ -11,8 +11,8 @@ import {
   parseAmountCents,
   perLineSavingCents,
   sumLineSavingCents,
-} from './ports.js';
-import { drawIcon, iconForId } from './_icon-consumer.js';
+} from '@hardscapehouse/pos-kit/src/ported/ports.js';
+import { drawIcon, iconForId } from '@hardscapehouse/pos-kit/src/ported/_icon-consumer.js';
 // Boundary: the sold and lookup panels embed neighbouring screens by tag
 // (hos-till-close, hos-pricing-doc, the hos-order-* family, hos-related-docs).
 // The reference registered those elements with side-effect imports; in HH they
@@ -20,29 +20,30 @@ import { drawIcon, iconForId } from './_icon-consumer.js';
 // (see CLOSURE.md). Until the wiring item lands they render as unknown
 // elements and nothing else on the surface depends on them.
 import { surfaceConfigUrl } from './surface-config-url.js';
-import './price-breakdown.js';
-import './pos-product-grid.js';
+import '@hardscapehouse/pos-kit/src/ported/price-breakdown.js';
+import '@hardscapehouse/pos-kit/src/ported/pos-product-grid.js';
 import './pos-search-drop.js';
 import './pos-hot-list.js';
 import './pos-hotkey-legend.js';
 import './pos-counter-settings.js';
-import './pos-customer-strip.js';
-import './pos-customer-picker.js';
+import '@hardscapehouse/pos-kit/src/ported/pos-customer-strip.js';
+import '@hardscapehouse/pos-kit/src/ported/pos-customer-picker.js';
 import './pos-assess-relief.js';
 import './pos-signature.js';
 import './pos-return.js';
 import './pos-parked.js';
 // ── W3-A (DIB-165 / the pos-barcode ticket / pos-search / product-images-ui) ──
-import './pos-scan-box.js';
+import '@hardscapehouse/pos-kit/src/ported/pos-scan-box.js';
 import './pos-split-tender.js';
 import './pos-lookup.js';
-import './product-thumb.js';
-import type { RelatedDoc } from './ports.js';
-import type { PosCustomer } from './pos-customer-strip.js';
+import '@hardscapehouse/pos-kit/src/ported/product-thumb.js';
+import type { RelatedDoc } from '@hardscapehouse/pos-kit/src/ported/ports.js';
+import type { PosCustomer } from '@hardscapehouse/pos-kit/src/ported/pos-customer-strip.js';
 import type { HosPosParked } from './pos-parked.js';
 import { parseCompactDate } from './_date.js'; // DIB-200: compact YYYYMMDD → ISO requested-date entry
 import {
   restoreParkedCustomer,
+  cardChargeAnswer, // the card charge answers: words and the key rule in one table (unit-pinned in the card-charge-*.test.mjs legs)
   clearSaleNeedsConfirm,
   counterRingMessage, // rev 5: ringErrorMessage in counter wording (module prefix stripped, fixes named)
   creditBlockMessage, // the credit gate's refusal words, by the policy the gate named
@@ -66,9 +67,9 @@ import {
   type ParkedInfo,
 } from './_pos.js'; // DIB-244/246/247/379
 // ── DIB-488 ── the tracked (never gated) sale-session flow + the stock-status line.
-import './pos-flow-steps.js';
+import '@hardscapehouse/pos-kit/src/ported/pos-flow-steps.js';
 import './pos-step-card.js'; // POS restructure: one accordion card, four times over
-import { deriveFlow, type FlowStepId } from './_pos-flow.js';
+import { deriveFlow, type FlowStepId } from '@hardscapehouse/pos-kit/src/ported/_pos-flow.js';
 import {
   summaryFor, // what a COLLAPSED card still says
   advanceOn, // the two moments that move the expansion: and only those two
@@ -104,7 +105,7 @@ import {
   POS_COUNTER_SURFACE_ID,
   COUNTER_PANEL_DEFAULTS,
 } from './_pos-counter-view.js';
-import { pricePicture, basisWord, type CounterQuote } from './_pos-searchdrop.js';
+import { pricePicture, basisWord, type CounterQuote } from '@hardscapehouse/pos-kit/src/ported/_pos-searchdrop.js';
 import { stockStatus } from './_pos-stock.js';
 // ── DIB-488 rev 2 ── the two-panel WORKSPACE (Inventory lookup ⇄ Sale): geometry, collapse/
 // maximize rules and the persistence resolution are pure (_pos-workspace.ts); this file only
@@ -119,7 +120,7 @@ import {
   type WorkspaceField,
   type Arrangement,
   type LookupPresentation,
-} from './_pos-workspace.js';
+} from '@hardscapehouse/pos-kit/src/ported/_pos-workspace.js';
 // ── DIB-488 rev 8 ── the concept slate: unified field, header bar, weight/margin columns, the
 // footer transaction bar and the DIB-502 add-ons strip. All decisions pure (_pos-rev8.ts).
 // HH note: the margin word routes through the app's reviewed formatMargin
@@ -135,7 +136,7 @@ import {
   resolveCuratedChips,
   payTileStep, // DIB-512: the tender tiles as ONE roving keyboard stop
   type LineWeightFacts,
-} from './_pos-rev8.js';
+} from '@hardscapehouse/pos-kit/src/ported/_pos-rev8.js';
 // P3-10 (the comprehensive train review): the margin surface follows the policy
 // word /pos/policy answers, not the glance's own serving rule.
 import { marginVisibleToCaller } from './_pos-margin-visibility.js';
@@ -172,10 +173,10 @@ import {
   type SaleResult,
   type ReliefOutcome,
   type StockGlance,
-} from './pos-api.js';
+} from '@hardscapehouse/pos-kit/src/ported/pos-api.js';
 import './pos-panels.js';
-import { focusRing } from './styles/focus-ring.js';
-import { ModalFocus } from './modal-focus.js';
+import { focusRing } from '@hardscapehouse/pos-kit/src/ported/styles/focus-ring.js';
+import { ModalFocus } from '@hardscapehouse/pos-kit/src/ported/modal-focus.js';
 // ── DIB-434 ── the global "+ Sale" quick action arrives here as an INTENT, and the in-progress
 // guard below is what stops it from ever clobbering a live till.
 import './quick-action-start-guard.js';
@@ -3565,6 +3566,16 @@ export class HosPosTerminal extends LitElement {
         void this.refreshCustomerAfterRing();
         return;
       }
+      // The card charge answers: words and the key rule in one table (_pos.ts, unit-pinned).
+      // split=true: the split decline copy names what became of the leg the card money already
+      // took. A named answer clears the per-till card charge key when the table says so, so the
+      // next press is a new sale key; the panel stays open with the legs intact either way.
+      const charge = cardChargeAnswer(res.err.status, res.err.error, true);
+      if (charge) {
+        if (charge.clearsKey) this.ringKeyMemo = null;
+        this.ring = { state: 'error', msg: charge.msg };
+        return;
+      }
       if (res.err.status === 409 && res.err.error === 'credit_blocked') {
         this.dispatchEvent(
           new CustomEvent('hos-action-blocked', {
@@ -3582,12 +3593,6 @@ export class HosPosTerminal extends LitElement {
           state: 'error',
           msg: creditBlockMessage(res.err.policy, !!this.customer),
         };
-        return;
-      }
-      if (res.err.status === 402) {
-        // A declined card leg rolls the WHOLE split back server-side, so the panel stays open with
-        // the legs intact and the cashier can swap that one leg for cash.
-        this.ring = { state: 'error', msg: 'A card leg was declined: the whole sale was rolled back. Try another tender.' };
         return;
       }
       this.ring = { state: 'error', msg: counterRingMessage(res.err) };
@@ -3665,6 +3670,15 @@ export class HosPosTerminal extends LitElement {
         void this.refreshCustomerAfterRing();
         return;
       }
+      // The card charge answers: words and the key rule in one table (_pos.ts, unit-pinned).
+      // split=false: the single tender's standard decline copy. A named answer clears the
+      // per-till card charge key when the table says so, so the next press is a new sale key.
+      const charge = cardChargeAnswer(res.err.status, res.err.error, false);
+      if (charge) {
+        if (charge.clearsKey) this.ringKeyMemo = null;
+        this.ring = { state: 'error', msg: charge.msg };
+        return;
+      }
  // HH note: only the credit gate is worded here, and its words follow the
  // policy the gate named (creditBlockMessage, one rule for both ring arms): a
  // hold or an over-the-limit refusal keeps HH's reviewed account sentence,
@@ -3685,10 +3699,6 @@ export class HosPosTerminal extends LitElement {
           state: 'error',
           msg: creditBlockMessage(res.err.policy, !!this.customer),
         };
-        return;
-      }
-      if (res.err.status === 402) {
-        this.ring = { state: 'error', msg: 'Card declined: try another tender.' };
         return;
       }
       // DIB-379/F2: surface the server's real detail for EVERY ring failure (409 no-till-session, 503

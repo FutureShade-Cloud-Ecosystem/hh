@@ -11,7 +11,22 @@ import (
 )
 
 func Connect(ctx context.Context, url string) (*pgxpool.Pool, error) {
-	pool, err := pgxpool.New(ctx, url)
+	return ConnectWithMaxConns(ctx, url, 0)
+}
+
+// ConnectWithMaxConns is Connect with the pool's size pinned to maxConns (zero or less keeps the
+// pgx default, which is what Connect asks for). It exists for a small dedicated pool that must
+// carry exactly the session the shared pool carries (same URL, same connect path, same ping) and
+// differ only in how many connections it may hold.
+func ConnectWithMaxConns(ctx context.Context, url string, maxConns int32) (*pgxpool.Pool, error) {
+	cfg, err := pgxpool.ParseConfig(url)
+	if err != nil {
+		return nil, fmt.Errorf("db connect: %w", err)
+	}
+	if maxConns > 0 {
+		cfg.MaxConns = maxConns
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("db connect: %w", err)
 	}

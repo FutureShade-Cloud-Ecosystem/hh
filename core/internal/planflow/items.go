@@ -198,6 +198,21 @@ func (s *ItemsSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, ke
 // Load reads one line by id under the tenant predicate; a row outside
 // the caller's tenant is the same as an absent one.
 func (s *ItemsSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
+	return s.load(ctx, s.pool, f, id)
+}
+
+// itemsQuerier is the read surface a pool and a transaction share, so one
+// loader body serves the public Load (the pool) and the callers that
+// already hold a transaction (their own connection).
+type itemsQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// load is Load over a querier. A caller inside a transaction passes the
+// transaction, so the read rides the connection it already holds instead
+// of asking the shared pool for a second one (connection starvation by
+// second acquisition when pool-size callers do this together).
+func (s *ItemsSyncStore) load(ctx context.Context, db itemsQuerier, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
 	where, args, ok := tenantPredicate(f)
 	if !ok || !looksLikeUUID(id) {
 		return sync.RowState{}, false, nil
@@ -205,7 +220,7 @@ func (s *ItemsSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string
 	q := fmt.Sprintf(`SELECT %s FROM plan_line WHERE id = $3::uuid AND %s`,
 		itemsColumns, where)
 	args = append(args, id)
-	r, err := scanItem(s.pool.QueryRow(ctx, q, args...))
+	r, err := scanItem(db.QueryRow(ctx, q, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, false, nil
 	}
@@ -330,7 +345,7 @@ func (s *ItemsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key str
 		id, planID, f.OrgID, f.TenantID, productID, desc, qty, uom, isSpecial,
 		specialDesc, notes, addedBy, seq, key))
 	if errors.Is(err, pgx.ErrNoRows) {
-		if _, own, _ := s.Load(ctx, f, id); own {
+		if _, own, _ := s.load(ctx, tx, f, id); own {
 			return sync.RowState{}, sync.ErrRowExists
 		}
 		return sync.RowState{}, sync.ErrRowNotFound

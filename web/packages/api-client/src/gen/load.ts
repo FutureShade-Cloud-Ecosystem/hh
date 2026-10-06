@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { LoadBatchView, LoadKeysResolveRequest, LoadKeysResolveResult, LoadSubmitRequest, LoadSubmitResult } from "./types.js";
+import type { LoadBatchView, LoadKeysResolveRequest, LoadKeysResolveResult, LoadReceivablesResult, LoadReceivablesUpsertRequest, LoadSubmitRequest, LoadSubmitResult } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -112,6 +112,36 @@ export async function loadResolveKeys(
   });
 }
 
+export async function loadPutUnitSets(
+  client: ApiClient,
+  body: LoadSubmitRequest,
+  call?: ApiCallOptions
+): Promise<Result<LoadSubmitResult>> {
+  return client.request<LoadSubmitResult>({
+    method: "PUT",
+    path: "/api/v1/load/products/unit-sets",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "loadPutUnitSets",
+  });
+}
+
+export async function loadUpsertReceivables(
+  client: ApiClient,
+  body: LoadReceivablesUpsertRequest,
+  call?: ApiCallOptions
+): Promise<Result<LoadReceivablesResult>> {
+  return client.request<LoadReceivablesResult>({
+    method: "PUT",
+    path: "/api/v1/load/receivables",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "loadUpsertReceivables",
+  });
+}
+
 export async function loadUpsertSuppliers(
   client: ApiClient,
   body: LoadSubmitRequest,
@@ -124,6 +154,21 @@ export async function loadUpsertSuppliers(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "loadUpsertSuppliers",
+  });
+}
+
+export async function loadUpsertUnits(
+  client: ApiClient,
+  body: LoadSubmitRequest,
+  call?: ApiCallOptions
+): Promise<Result<LoadSubmitResult>> {
+  return client.request<LoadSubmitResult>({
+    method: "PUT",
+    path: "/api/v1/load/units",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "loadUpsertUnits",
   });
 }
 

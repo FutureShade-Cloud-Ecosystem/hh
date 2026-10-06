@@ -42,6 +42,22 @@ func NewAttachDoor(store *Store, kind string, w Writer, a BatchAuditSink) *Door 
 	return d
 }
 
+// AttachReporter is the optional seam a writer carries when its create
+// arm answers two ways: the row the write landed on is new, or it is a
+// row the owning table already held (a seeded row or one a staff member
+// made) and the item attached to it. The units door of HH-LOAD-1 LD-3
+// is the shape: a unit code the catalogue does not carry answers
+// created, the same code and dimension already standing answers
+// attached. The door reads the fact off the create arm's answer; a
+// writer without the seam answers created on the create arm, and an
+// attach door (NewAttachDoor) answers attached for every create arm
+// item as before.
+type AttachReporter interface {
+	Writer
+	// ApplyAttached is Apply with the attach fact in the answer.
+	ApplyAttached(ctx context.Context, tx pgx.Tx, in Write) (rowID string, attached bool, err error)
+}
+
 // maxNameRetries bounds the race retry: the registry insert is the lock,
 // and the item that loses a name race re-runs once the winner's row is
 // visible. Three tries is two lost races; a third contention is an
@@ -194,6 +210,26 @@ func writerApply(ctx context.Context, tx pgx.Tx, w Writer, in Write) (rowID stri
 	return "", nil, err
 }
 
+// writerApplyAttached is writerApply on the create arm, with the
+// attach fact for a writer that carries the AttachReporter seam: the
+// units door's create arm answers created for a row the writer made and
+// attached for a row the catalogue already held.
+func writerApplyAttached(ctx context.Context, tx pgx.Tx, w Writer, in Write) (rowID string, attached bool, refused *Refusal, err error) {
+	if aw, ok := w.(AttachReporter); ok {
+		id, at, err := aw.ApplyAttached(ctx, tx, in)
+		if err == nil {
+			return id, at, nil, nil
+		}
+		var r *Refusal
+		if errors.As(err, &r) {
+			return "", false, r, nil
+		}
+		return "", false, nil, err
+	}
+	id, refused, err := writerApply(ctx, tx, w, in)
+	return id, false, refused, err
+}
+
 // tryItem is one attempt: one transaction, the name resolved under the
 // lock, the write through the owning module's writer, the name recorded.
 // The commit decision sits here so an unchanged answer that raced never
@@ -283,7 +319,7 @@ func (d *Door) tryItem(ctx context.Context, tx pgx.Tx, in Batch, item Item, hash
 	// in line, and the registry insert is the lock both contend on.
 	var createNote *Refusal
 	boundExisting := false
-	rowID, refused, err := writerApply(ctx, tx, d.writer, Write{
+	rowID, attached, refused, err := writerApplyAttached(ctx, tx, d.writer, Write{
 		OrgID: in.OrgID, LegacyID: item.LegacyID, DerivedKey: item.DerivedKey,
 		Record: item.Record, Refs: refs, Note: noteSink(&createNote),
 		Attached: func() { boundExisting = true },
@@ -346,11 +382,14 @@ func (d *Door) tryItem(ctx context.Context, tx pgx.Tx, in Batch, item Item, hash
 	if err := tx.Commit(ctx); err != nil {
 		return Outcome{}, false, fmt.Errorf("load: commit: %w", err)
 	}
-	// The create arm's word: a map door's item whose name now binds to a
-	// pre existing row answers attached; every other door answers
-	// created.
+	// The create arm's word: an item whose name now binds to a pre
+	// existing row answers attached, either because the door is a map
+	// door (the maps record names against rows that already exist) or
+	// because the writer's own answer says the row was already there
+	// (the units door's seeded and staff made rows); every other create
+	// arm answers created.
 	status := OutcomeCreated
-	if d.attach || boundExisting {
+	if d.attach || attached || boundExisting {
 		status = OutcomeAttached
 	}
 	return notedOutcome(Outcome{LegacyID: item.LegacyID, Status: status, HHID: rowID}, createNote), false, nil

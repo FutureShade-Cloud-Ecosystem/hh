@@ -2,9 +2,9 @@
 
 import { LitElement, css, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import { focusRing } from './styles/focus-ring.js';
-import './product-thumb.js';
-import { counterSearch, counterPrices, counterHitToProduct, money, type CounterHit } from './pos-api.js';
+import { focusRing } from '@hardscapehouse/pos-kit/src/ported/styles/focus-ring.js';
+import '@hardscapehouse/pos-kit/src/ported/product-thumb.js';
+import { counterSearch, counterPrices, counterHitToProduct, money, type CounterHit } from '@hardscapehouse/pos-kit/src/ported/pos-api.js';
 import {
   DROP_ROWS,
   dropView,
@@ -13,8 +13,8 @@ import {
   pricePicture,
   basisWord,
   type CounterQuote,
-} from './_pos-searchdrop.js';
-import { AddOnce } from './_pos-add-dedupe.js';
+} from '@hardscapehouse/pos-kit/src/ported/_pos-searchdrop.js';
+import { AddOnce } from '@hardscapehouse/pos-kit/src/ported/_pos-add-dedupe.js';
 
 /**
  * hos-pos-search-drop: the counter's search RESULTS, as five rows under the field.

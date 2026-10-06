@@ -8,7 +8,7 @@ import {
   attestationBlockedReason,
   normalizeTypedName,
 } from './pos-signature-logic.js';
-import { focusRing } from './styles/focus-ring.js';
+import { focusRing } from '@hardscapehouse/pos-kit/src/ported/styles/focus-ring.js';
 
 /**
  * DIB-386: typed-name attestation capture.

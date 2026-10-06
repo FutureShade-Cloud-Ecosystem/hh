@@ -24,12 +24,15 @@ import (
 	"log/slog"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/branches"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/inventory"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/load"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/portal"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/product"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/purchasing"
 	"github.com/jackc/pgx/v5"
@@ -41,16 +44,19 @@ import (
 // registrar, the machine gate wraps each one, and the handler's org and
 // actor come from the scope the gate stamps. The frame's two read
 // operations register beside the four submit doors of LD-4 (the branch
-// map, the user map, the categories and the suppliers) and the three
-// customer doors of LD-6 (customers, contacts, jobs): every door over
-// the same store, each owning module's writer or read taken by
-// constructor, all of them off until the switch is on.
+// map, the user map, the categories and the suppliers), the three
+// customer doors of LD-6 (customers, contacts, jobs) and the open
+// receivables door of LD-11 (billing's own import writer over the money
+// batch protocol): every door over the same store, each owning module's
+// writer or read taken by constructor, all of them off until the switch
+// is on.
 func wireLoad(r httpx.Registrar, pool *pgxpool.Pool, log *slog.Logger, doors bool, auditSvc *audit.Service) {
 	if !doors {
 		return
 	}
 	store := load.NewStore(pool)
-	h := load.NewHandler(store, log)
+	h := load.NewHandler(store, log).
+		WithReceivables(load.NewReceivablesDoor(store, billing.NewReceivablesLoadWriter(), loadAuditSeam{svc: auditSvc}))
 	h.RegisterRoutes(r)
 	submits := load.NewDoorsHandler(log, map[string]*load.Door{
 		"PUT /api/v1/load/branches": newLoadMapDoor(store, load.KindBranch,
@@ -67,6 +73,17 @@ func wireLoad(r httpx.Registrar, pool *pgxpool.Pool, log *slog.Logger, doors boo
 			customer.ContactLoadWriter{}, auditSvc),
 		"PUT /api/v1/load/jobs": newLoadDoor(store, load.KindJob,
 			portal.JobLoadWriter{Customers: customer.OrgReader{}}, auditSvc),
+		// LD-3's two doors: the unit catalogue upsert, and the product
+		// unit set replace through the pricing, inventory and purchasing
+		// readers.
+		"PUT /api/v1/load/units": newLoadDoor(store, load.KindUnit,
+			product.UnitLoadWriter{}, auditSvc),
+		"PUT /api/v1/load/products/unit-sets": newLoadDoor(store, load.KindUnitSet,
+			product.UnitSetLoadWriter{
+				Pricing: pricing.LoadedUnitUseReader{},
+				Stock:   inventory.LoadedUnitUseReader{},
+				Vendor:  purchasing.LoadedUnitUseReader{},
+			}, auditSvc),
 	})
 	submits.RegisterRoutes(r)
 	log.Info("load: the load doors serve behind the machine gate")
