@@ -117,7 +117,7 @@ func (s *StaffService) CompareLine(ctx context.Context, quoteID string, lineNo i
 	if err != nil {
 		return LineComparison{}, err
 	}
-	_, branchID, _, err := s.store.QuoteEditHeader(ctx, quoteID)
+	_, branchID, _, _, err := s.store.QuoteEditHeader(ctx, quoteID)
 	if err != nil {
 		return LineComparison{}, err
 	}

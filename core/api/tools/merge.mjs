@@ -52,7 +52,15 @@ const doc = {
 };
 
 const tagNames = new Set(doc.tags.map((t) => t.name));
+// The census word families this tool knows. The three staff tier words
+// carry an x-access block (the role gate reads it); every other word
+// carries none, because its wall lives elsewhere: public is open, tenant
+// and scope-member ride the identity guards, the capability words ride
+// the capability guard, and machine (ADR-0024) rides the machine
+// principal's own door list, so a machine operation with an x-access
+// block is the same fault as any other non-staff operation with one.
 const STAFF_ROLES = new Set(["requireStaff", "requireManager", "requireAdmin"]);
+const MACHINE_ROLES = new Set(["machine"]);
 const accessMap = doc["x-access-map"];
 let accessCount = 0;
 const exceptions = [];
@@ -174,6 +182,14 @@ for (const path of Object.keys(doc.paths)) {
 }
 
 // Operation checks.
+// bearerSchemesOf collects the security scheme names one operation
+// carries, after the document-level default applies.
+const bearerSchemesOf = (op) => {
+  const sec = op.security === undefined ? doc.security : op.security;
+  const names = new Set();
+  for (const req of sec ?? []) for (const scheme of Object.keys(req)) names.add(scheme);
+  return names;
+};
 for (const [path, item] of Object.entries(doc.paths)) {
   for (const [method, op] of Object.entries(item)) {
     if (!HTTP_METHODS.has(method)) continue;
@@ -184,6 +200,20 @@ for (const [path, item] of Object.entries(doc.paths)) {
     if (op["x-role"] === undefined) problems.push(`${where}: missing x-role`);
     if (!Array.isArray(op.tags) || op.tags.length !== 1) problems.push(`${where}: must carry exactly one tag`);
     else if (!tagNames.has(op.tags[0])) problems.push(`${where}: unknown tag ${op.tags[0]}`);
+    // The machine word and the MachineBearer scheme name each other, and
+    // the machine credential rides alone (ADR-0024): an operation worded
+    // machine carries MachineBearer and nothing beside it, and an
+    // operation carrying MachineBearer is worded machine. A mix of the
+    // machine scheme with a platform scheme is a document fault however
+    // it is spelled, because the machine class never dual lists.
+    const schemes = bearerSchemesOf(op);
+    if (MACHINE_ROLES.has(op["x-role"])) {
+      if (schemes.size !== 1 || !schemes.has("MachineBearer")) {
+        problems.push(`${where}: a machine operation carries MachineBearer alone, found ${[...schemes].sort().join("+") || "no scheme"}`);
+      }
+    } else if (schemes.has("MachineBearer")) {
+      problems.push(`${where}: the MachineBearer scheme belongs to machine operations alone, but the x-role is ${JSON.stringify(op["x-role"])}`);
+    }
     if (op["x-role"] !== undefined && (!Array.isArray(op.tags) || op.tags.length === 1)) {
       const access = checkAccess(where, method, op);
       if (access !== null) {

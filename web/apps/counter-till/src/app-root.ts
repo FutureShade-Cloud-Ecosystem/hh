@@ -30,7 +30,7 @@ import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
 import { ApiClient } from "@hardscapehouse/api-client";
 import { AuthController, SessionStore, authHeaderProvider } from "@hardscapehouse/auth";
-import { DemoAccount } from "./demo-account.js";
+import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import {
   TillClient,
   HOUSE_ZONE,
@@ -39,7 +39,7 @@ import {
 } from "./till-client.js";
 import { demoBanner, demoBannerStyles } from "./demo-banner.js";
 import { THEME_LABEL, ThemeController, themeControlLabel, themeStatusText } from "./theme.js";
-import { entryStyles, renderEntry, type FlowsState } from "./views/entry.js";
+import { entryStyles, renderEntry, type FlowsState } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { ReturnsFlow } from "./returns/flow.js";
 import { OneTimeCredential } from "./returns/approval.js";
 import { RefundApprovalCapture } from "./returns/capture.js";
@@ -47,7 +47,7 @@ import { returnsStyles, renderReturns } from "./views/returns.js";
 // The ported terminal: its import registers the surface's elements, and the
 // host wiring (ports.ts) answers its seams.
 import "./ported/pos-terminal.js";
-import { clearSessionState, setBranches, wirePorts, type AuthUser } from "./ported/ports.js";
+import { clearSessionState, setBranches, wirePorts, type AuthUser } from "@hardscapehouse/pos-kit/src/ported/ports.js";
 
 const DEMO_ORG = "hh-demo";
 

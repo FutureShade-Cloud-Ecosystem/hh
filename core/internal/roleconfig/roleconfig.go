@@ -234,11 +234,21 @@ type Cell struct {
 // Lists holds the cross cutting role lists the rules name: who approves
 // each kind of exception (X4, and X7's refund approvers travel as a
 // setting), who clears the floor on its own quote price in its own branch
-// (X5), who commits a delivery date (X11: the Yard Team commits none).
+// (X5), who commits a delivery date (X11: the Yard Team commits none), and
+// who decides a quote floor request inside its own branch beside the floor
+// list's dealer wide approvers (CP0-1 answer B: the branch's Sales manager).
 type Lists struct {
-	ExceptionApprovers     map[ExceptionKind][]string `json:"exception_approvers"`
-	FloorClearersOwnBranch []string                   `json:"floor_clearers_own_branch"`
-	DeliveryDateCommitters []string                   `json:"delivery_date_committers"`
+	ExceptionApprovers map[ExceptionKind][]string `json:"exception_approvers"`
+	// FloorClearersOwnBranch, who clears the floor on its own quote price
+	// inside its own branch (X5).
+	FloorClearersOwnBranch []string `json:"floor_clearers_own_branch"`
+	// DeliveryDateCommitters, who commits a delivery date (X11).
+	DeliveryDateCommitters []string `json:"delivery_date_committers"`
+	// QuoteFloorBranchApprovers, who decides a quote floor request inside
+	// its own branch (CP0-1 answer B). Branch scoped: a listed role decides
+	// only requests of a branch it reaches, the branch reach the decide
+	// path already re-checks.
+	QuoteFloorBranchApprovers []string `json:"quote_floor_branch_approvers"`
 }
 
 // Document is the JSON document of a role configuration: the format of a

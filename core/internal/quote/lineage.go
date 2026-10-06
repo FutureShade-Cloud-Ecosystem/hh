@@ -86,7 +86,7 @@ func (s *StaffService) RelatedDocumentsForQuote(ctx context.Context, idOrNo stri
 	if err != nil {
 		return nil, err
 	}
-	_, branchID, _, err := s.store.QuoteEditHeader(ctx, quoteID)
+	_, branchID, _, _, err := s.store.QuoteEditHeader(ctx, quoteID)
 	if err != nil {
 		return nil, err
 	}

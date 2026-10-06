@@ -3,7 +3,7 @@ package main
 // The census half of the completeness contract (the PR 44 review's P2-5),
 // split out of the composition walk so it runs where the repository's CI
 // actually runs: with no gate variable, no database, no composition. The
-// document and the census are asserted here in both directions: all 595
+// document and the census are asserted here in both directions: all 597
 // staff operations carry a surface and a level in roleconfig's
 // vocabulary, no non-staff operation carries an annotation, and every
 // named list is one the gate reads. What this test cannot see is a route
@@ -31,8 +31,8 @@ func TestCensusStaffRoutesCarrySurfaceAndLevel(t *testing.T) {
 			}
 		}
 	}
-	if staff != 595 {
-		t.Fatalf("census staff operations: %d, want the document's 595", staff)
+	if staff != 597 {
+		t.Fatalf("census staff operations: %d, want the document's 597", staff)
 	}
 	t.Logf("surface and level asserted for all %d census staff operations, no database needed", staff)
 }
@@ -54,7 +54,9 @@ func assertCensusAnnotated(t *testing.T, route apigen.Route) {
 	default:
 		t.Fatalf("staff operation %s names unknown level %q", route.OperationID, route.Level)
 	}
-	if route.List != "" && route.List != roleconfig.SettingPricingEditors {
+	// The named lists the gate reads (rolegate.go's listReaders): the
+	// pricing editors and the cost and margin list (D10, the pricing log).
+	if route.List != "" && route.List != roleconfig.SettingPricingEditors && route.List != roleconfig.SettingCostVisibility {
 		t.Fatalf("staff operation %s names list %q, which no gate reader knows", route.OperationID, route.List)
 	}
 }

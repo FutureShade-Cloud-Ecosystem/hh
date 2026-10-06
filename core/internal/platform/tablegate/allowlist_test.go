@@ -133,13 +133,15 @@ var allowlist = []allowlistEntry{
 	{
 		module: "billing",
 		file:   "core/internal/billing/invoice_writer.go",
-		tables: []string{"locations"},
+		tables: []string{"locations", "orders"},
 		writes: []string{"events_outbox", "scope_sequences"},
 		// DIB-422: the order to invoice writer outside the POS ring. It
 		// stamps the invoice row with its org through the locations anchor,
 		// draws the invoice stream from the 0213 allocator, and raises its
-		// events through the outbox.
-		reason: "the order to invoice writer stamps org (locations anchor) and seq (0213 allocator) on the document it raises and publishes events through the outbox",
+		// events through the outbox. The orders read is lockOrder taking the
+		// order's row lock, the one lock every writer that bills an order
+		// takes first, stated in lockOrder's own comment.
+		reason: "the order to invoice writer stamps org (locations anchor) and seq (0213 allocator) on the document it raises and publishes events through the outbox; the orders read is lockOrder's row lock so a group invoice and a counter invoice of one order queue behind each other, new in HH-RD2 (the Quote Desk cycle), a same transaction read, granted to move behind the owning module's transaction taking seam (the till hold's WithCallerTx shape)",
 	},
 	{
 		module: "billing",
@@ -506,8 +508,14 @@ var allowlist = []allowlistEntry{
 	{
 		module: "order",
 		file:   "core/internal/order/invoice_source.go",
-		tables: []string{"customers"},
-		reason: "the invoice source seam returns FACTS about the order (the customer's terms beside them); read only, no permission decided here",
+		tables: []string{"customers", "invoices"},
+		// the invoice source seam returns FACTS about the order. The
+		// invoices read is OrderHasCounterInvoice: the fulfilment road asks
+		// whether the counter already raised the order's invoice (the header
+		// metadata marker the finalized event carries) so it completes the
+		// move instead of raising a second document, per that function's own
+		// comment.
+		reason: "the invoice source seam returns FACTS about the order (the customer's terms beside them); read only, no permission decided here; the invoices read is OrderHasCounterInvoice, new in HH-RD2 (the Quote Desk cycle), a pool read made after the status move commits, by the outbox observer whose claim connection is its own pool (PR 163), not a same transaction read",
 	},
 	{
 		module: "order",
@@ -817,6 +825,17 @@ var allowlist = []allowlistEntry{
 	},
 	{
 		module: "quote",
+		file:   "core/internal/quote/order_payment_repository.go",
+		tables: []string{"customers"},
+		// the file's own header and the function's comment: OrderPaymentFactsTx
+		// reads the quote's status, owner, branch, figures, lines sum, the
+		// customer's credit limit and the orders its acceptances became, on
+		// the door's transaction; the order, the invoice and the payment are
+		// reached through the seams in order_payment.go.
+		reason: "the conversion door's facts read takes the customer's credit limit beside the quote's own figures on the door's transaction, stated in the function's comment; new in HH-RD2 (the Quote Desk cycle), a same transaction read, granted to move behind the owning module's transaction taking seam (the till hold's WithCallerTx shape)",
+	},
+	{
+		module: "quote",
 		file:   "core/internal/quote/repository.go",
 		tables: []string{"order_lines", "orders", "products"},
 		writes: []string{"order_lines", "orders", "scope_sequences"},
@@ -836,6 +855,16 @@ var allowlist = []allowlistEntry{
 		file:   "core/internal/quote/share.go",
 		tables: []string{"audit_log"},
 		reason: "the public share surface reads the audit trail's seq for the quote to detect replay of a logged act; read only",
+	},
+	{
+		module: "quote",
+		file:   "core/internal/quote/share_idempotency.go",
+		tables: []string{"audit_log"},
+		// the function's own comment: findKeyedAcceptance returns the earlier
+		// acceptance of this quote through this share link that carried the
+		// key, rebuilt as the confirmation it first produced, and must run
+		// under the quote row lock.
+		reason: "share acceptance idempotency rebuilds the earlier keyed acceptance from the audit trail inside the accept's transaction, stated in the function's comment (it must run under the quote row lock); new in HH-RD2 (the Quote Desk cycle), a same transaction read, granted to move behind the owning module's transaction taking seam (the till hold's WithCallerTx shape)",
 	},
 	{
 		module: "quote",

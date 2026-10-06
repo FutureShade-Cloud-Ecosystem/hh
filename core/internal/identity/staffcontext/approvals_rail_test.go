@@ -166,7 +166,11 @@ func TestCreateApproval_FansOutToEligibleApprovers(t *testing.T) {
 	}
 	s := NewApprovals(f).WithApprovalNotifier(notifier)
 
-	if _, err := s.CreateApproval(context.Background(), "clerk", trt, PolicyMargin, "6% margin", ""); err != nil {
+	// D7: the margin request is filed by the quote module alone, so this
+	// test files through the quote module's door.
+	if _, err := s.FileFloorApproval(context.Background(), FloorApprovalFiling{
+		RequestedBy: "clerk", BranchID: trt, SubjectRef: "q1", Detail: "6% margin", LineNo: 1, DiscPct: 25, LineID: "11111111-1111-4111-8111-111111111111", ProductID: "prod-1",
+	}); err != nil {
 		t.Fatalf("create should succeed: %v", err)
 	}
 	if len(notifier.requested) != 1 {
@@ -217,4 +221,74 @@ func TestApprovalReconcile_SplitsPendingAndDecided(t *testing.T) {
 	if len(decided) != 1 || decided[0].Status != string(ApprovalApproved) {
 		t.Fatalf("expected one decided row, got %+v", decided)
 	}
+}
+
+// TestFanOutFollowsTheConfiguredFloorApprovers pins the fan-out's
+// authority source (D11, CP0-1 answer B, the review's P2-3): a service
+// wired with the dealer's configured floor set fans a branch floor
+// request to the branch's configured Sales manager beside the dealer
+// wide approvers, on both fan-out legs (the filed notice and the
+// reconcile sweep), so the branch's decider is notified of exactly what
+// it may decide. The carried default set has no branch arm, so under it
+// the branch Sales manager is not notified and the request sits unseen.
+func TestFanOutFollowsTheConfiguredFloorApprovers(t *testing.T) {
+	configured := FloorApprovers{
+		DealerWide: []string{"GENERAL_MANAGER", "FINANCIAL_CONTROLLER", RoleSuperAdmin},
+		OwnBranch:  []string{"SALES_MANAGER"},
+	}
+	candidates := []StaffContext{
+		{UserID: "gm", RoleCode: "GENERAL_MANAGER", Tier: TierLeadership, Scope: ScopeGlobal},
+		{UserID: "sm", RoleCode: "SALES_MANAGER", Tier: TierManager, Scope: ScopeBranch,
+			Branches: map[string]bool{trt: true}},
+		{UserID: "sm-other", RoleCode: "SALES_MANAGER", Tier: TierManager, Scope: ScopeBranch,
+			Branches: map[string]bool{"5d1b3f6e-0000-4000-9000-000000000002": true}},
+	}
+	want := []string{"gm", "sm"}
+
+	notifier := &fakeNotifier{}
+	s := NewApprovals(&fakeStore{candidates: candidates, requesterRoles: map[string]string{"clerk": "INSIDE_SALES"}}).
+		WithApprovalNotifier(notifier).
+		WithFloorApprovers(configured)
+	if _, err := s.FileFloorApproval(context.Background(), FloorApprovalFiling{
+		RequestedBy: "clerk", BranchID: trt, SubjectRef: "q1", Detail: "below floor", LineNo: 1, DiscPct: 25,
+		LineID: "11111111-1111-4111-8111-111111111112", ProductID: "prod-1",
+	}); err != nil {
+		t.Fatalf("file the branch floor request: %v", err)
+	}
+	if len(notifier.requested) != 1 {
+		t.Fatalf("expected exactly one fan-out notice, got %d", len(notifier.requested))
+	}
+	if got := notifier.requested[0].ApproverIDs; !equalIDs(got, want) {
+		t.Fatalf("the fan-out notice carries %v, want the dealer wide approver and the branch's configured Sales manager %v", got, want)
+	}
+
+	// The reconcile sweep re-fans the same authority: a Sales manager of
+	// another branch is not notified of this branch's request.
+	f := &fakeStore{
+		candidates: candidates,
+		reconcile:  []ApprovalRequest{{ID: "p1", BranchID: trt, Policy: PolicyMargin, RequesterRole: "INSIDE_SALES", Status: ApprovalPending}},
+	}
+	s = NewApprovals(f).WithFloorApprovers(configured)
+	pending, _, err := s.ApprovalReconcile(context.Background(), time.Now().Add(-24*time.Hour))
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if len(pending) != 1 || !equalIDs(pending[0].ApproverIDs, want) {
+		t.Fatalf("the reconcile sweep carries %+v, want the configured approvers %v", pending, want)
+	}
+}
+
+// equalIDs compares two id slices as sets with stable order (the
+// fan-out's candidate order is the store's; the assertion is about
+// membership).
+func equalIDs(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
 }

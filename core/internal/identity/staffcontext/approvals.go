@@ -84,6 +84,11 @@ type Approvals struct {
 	jeDecider JEDecider        // bridges a JE_OVER_THRESHOLD decision to the GL maker-checker
 	// freightDecider bridges a FREIGHT_ABOVE_QUOTE decision to the parked split dispatch owns (0195).
 	freightDecider FreightDecider
+	// floorApprovers is the margin floor's decide authority from the dealer's
+	// role configuration (D11): the floor list's dealer wide approvers plus
+	// the branch scoped quote floor approvers (CP0-1 answer B). The zero
+	// value falls back to the carried default, which equals r3's ruling.
+	floorApprovers FloorApprovers
 }
 
 // NewApprovals returns the rail service over one store, with the default
@@ -91,7 +96,7 @@ type Approvals struct {
 // store; the rail never reads it, and the secret no longer exists in the
 // target configuration.
 func NewApprovals(store approvalStore) *Approvals {
-	return &Approvals{store: store, log: slog.Default()}
+	return &Approvals{store: store, log: slog.Default(), floorApprovers: defaultFloorApprovers()}
 }
 
 // WithLogger swaps the structured logger (best-effort approvals-rail fan-out logging).
@@ -99,6 +104,20 @@ func (s *Approvals) WithLogger(l *slog.Logger) *Approvals {
 	if l != nil {
 		s.log = l
 	}
+	return s
+}
+
+// WithFloorApprovers wires the margin floor's decide authority from the
+// dealer's role configuration (D11): the composition root builds it from
+// the configuration's exception_approvers.floor list plus its branch scoped
+// quote floor approvers list, mapped onto the ERP role codes the carried
+// vocabulary speaks. An empty set is the carried default, never a silent
+// widening: the default equals r3's ruling.
+func (s *Approvals) WithFloorApprovers(f FloorApprovers) *Approvals {
+	if len(f.DealerWide) == 0 && len(f.OwnBranch) == 0 {
+		f = defaultFloorApprovers()
+	}
+	s.floorApprovers = f
 	return s
 }
 
@@ -117,14 +136,25 @@ func (s *Approvals) CreateApproval(ctx context.Context, requestedBy, branchID st
 	if policy == PolicyJEThreshold {
 		return ApprovalRequest{}, clientErr(http.StatusForbidden, "JE approvals are filed by the ledger, not directly")
 	}
-	// FREIGHT_ABOVE_QUOTE is SYSTEM-ONLY for the same reason and with sharper teeth (0195). It is
-	// filed exclusively by dispatch's freight gate, which binds a real PARKED delivery_freight_raises
+	// FREIGHT_ABOVE_QUOTE is SYSTEM-ONLY for the same reason and with sharper teeth (0195). It
+	// is filed exclusively by dispatch's freight gate, which binds a real PARKED delivery_freight_raises
 	// row as subject_ref after establishing the invariant breach against the order's own frozen
 	// baseline. Accepting it would let any authenticated staffer file a freight card naming a
 	// subject_ref of their choosing (including a raise nobody proposed, or another branch's), which
 	// a rail approver could then APPROVE, and approving is what applies the money.
 	if policy == PolicyFreightAboveQuote {
 		return ApprovalRequest{}, clientErr(http.StatusForbidden, "freight approvals are filed by dispatch, not directly")
+	}
+	// MARGIN_BELOW_MINIMUM is QUOTE-MODULE-ONLY (D7): the margin request is
+	// filed by the quote module alone, through FileFloorApproval, which
+	// binds the real quote, line and discount from its own state and builds
+	// the detail the approver reads from its own figures. Accepting it here
+	// would let any caller file a margin card with a subject and a detail
+	// of its own choosing, and the approver would be shown words the server
+	// never checked.
+	if policy == PolicyMargin {
+		return ApprovalRequest{}, clientErr(http.StatusForbidden,
+			"margin approvals are filed by the quote desk for a quote line, not directly")
 	}
 	return s.fileApproval(ctx, ApprovalRequest{
 		RequestedBy: requestedBy,
@@ -134,6 +164,123 @@ func (s *Approvals) CreateApproval(ctx context.Context, requestedBy, branchID st
 		SubjectRef:  subjectRef,
 		Status:      ApprovalPending,
 	})
+}
+
+// FloorApprovalFiling is the quote module's floor request (D7, plan 1.1):
+// every binding figure arrives from the quote module's own state, never
+// from a caller's body. SubjectRef is the quote id; LineNo and DiscPct bind
+// the request to one line at exactly the discount that was asked, and
+// LineID and ProductID bind it to the line's OWN row: a line number is
+// reused by the next line added after a delete, the row id never is.
+type FloorApprovalFiling struct {
+	RequestedBy string
+	BranchID    string
+	SubjectRef  string
+	Detail      string
+	LineNo      int
+	DiscPct     int
+	LineID      string
+	ProductID   string
+	Note        string
+}
+
+// FloorRequestRecord is a filed floor request's state as the quote module
+// answers it: the request's id, status, and its line and discount binding.
+type FloorRequestRecord struct {
+	ID      string
+	Status  ApprovalStatus
+	LineNo  int
+	DiscPct int
+}
+
+// FileFloorApproval files a quote floor request (the quote module's door,
+// D7). It is the ONLY path a MARGIN_BELOW_MINIMUM request is filed on: the
+// subject, the detail and the binding figures are the quote module's own,
+// so a caller can never file a margin card with a subject and a detail of
+// its own choosing.
+func (s *Approvals) FileFloorApproval(ctx context.Context, in FloorApprovalFiling) (FloorRequestRecord, error) {
+	if in.LineNo <= 0 {
+		return FloorRequestRecord{}, clientErr(http.StatusBadRequest, "line_no is required")
+	}
+	if in.DiscPct < 0 || in.DiscPct > 100 {
+		return FloorRequestRecord{}, clientErr(http.StatusBadRequest, "disc_pct must be between 0 and 100")
+	}
+	// The row binding is the request's identity: without it the request
+	// matches a line NUMBER, which a later line can reuse, and an approval
+	// could clear a line that did not exist when it was filed. A filing
+	// without the row id and the product is refused, never stored unbound.
+	if in.LineID == "" || in.ProductID == "" {
+		return FloorRequestRecord{}, clientErr(http.StatusBadRequest,
+			"line_id and product_id are required: a floor request is bound to the line's own row")
+	}
+	req, err := s.fileApproval(ctx, ApprovalRequest{
+		RequestedBy: in.RequestedBy,
+		BranchID:    in.BranchID,
+		Policy:      PolicyMargin,
+		Detail:      in.Detail,
+		SubjectRef:  in.SubjectRef,
+		LineNo:      in.LineNo,
+		DiscPct:     in.DiscPct,
+		LineID:      in.LineID,
+		ProductID:   in.ProductID,
+		Note:        in.Note,
+		Status:      ApprovalPending,
+	})
+	if err != nil {
+		return FloorRequestRecord{}, err
+	}
+	return FloorRequestRecord{ID: req.ID, Status: req.Status, LineNo: req.LineNo, DiscPct: req.DiscPct}, nil
+}
+
+// FloorRequestFor answers the caller's open request for one quote line: a
+// PENDING or APPROVED and unused request bound to that subject and that
+// line's own row, so the typed refusal can carry it (plan 1.1's refusal
+// body) and the request door can answer an existing request's state instead
+// of filing a twin. lineID and productID are the line's OWN identity: a
+// line number alone is not, the next line added after a delete reuses it.
+func (s *Approvals) FloorRequestFor(ctx context.Context, requestedBy, branchID, subjectRef string, lineNo int, lineID, productID string) (FloorRequestRecord, bool, error) {
+	if requestedBy == "" || branchID == "" || subjectRef == "" || lineNo <= 0 || lineID == "" || productID == "" {
+		return FloorRequestRecord{}, false, nil
+	}
+	r, ok := s.store.(floorRequestReader)
+	if !ok {
+		return FloorRequestRecord{}, false, nil
+	}
+	return r.FloorRequestFor(ctx, requestedBy, branchID, subjectRef, lineNo, lineID, productID)
+}
+
+// floorRequestReader is the store's subject narrowed floor request lookup
+// (D3: the store already narrows on a subject when given one).
+type floorRequestReader interface {
+	FloorRequestFor(ctx context.Context, requestedBy, branchID, subjectRef string, lineNo int, lineID, productID string) (FloorRequestRecord, bool, error)
+}
+
+// floorTxConsumer is the store's transactional consumption of an approved
+// floor request: the quote module's own transaction carries it, so the used
+// up stamp commits or rolls back with the write that used it.
+type floorTxConsumer interface {
+	ConsumeApprovedFloorTx(ctx context.Context, tx pgx.Tx, requestedBy, branchID, subjectRef string, lineNo, discPct int, lineID, productID string) (FloorRequestRecord, FloorConsumption, error)
+}
+
+// FloorConsumption names what a consumed approval was: the request and who
+// decided it, for the clearing stamp on the line.
+type FloorConsumption struct {
+	ApprovalID string
+	DecidedBy  string
+}
+
+// ConsumeApprovedFloorTx consumes the caller's APPROVED and unused floor
+// request for exactly that quote, that line's own row, at no deeper a
+// discount than was asked, ON the transaction the quote write holds (D3):
+// the first write that uses the request uses it up, in the same commit as
+// the line it cleared. ok is false when no such request stands.
+func (s *Approvals) ConsumeApprovedFloorTx(ctx context.Context, tx pgx.Tx, requestedBy, branchID, subjectRef string, lineNo, discPct int, lineID, productID string) (FloorRequestRecord, FloorConsumption, error) {
+	c, ok := s.store.(floorTxConsumer)
+	if !ok {
+		return FloorRequestRecord{}, FloorConsumption{}, clientErr(http.StatusServiceUnavailable,
+			"the approvals store cannot consume a floor request on this transaction")
+	}
+	return c.ConsumeApprovedFloorTx(ctx, tx, requestedBy, branchID, subjectRef, lineNo, discPct, lineID, productID)
 }
 
 // fileApproval is the shared create path for every trigger (the margin override from CreateApproval, the
@@ -161,11 +308,19 @@ func (s *Approvals) fileApproval(ctx context.Context, in ApprovalRequest) (Appro
 // HasApprovedOverride reports whether the requester holds an APPROVED override for
 // the given branch + policy (+ optional subject). This is the final hop of the
 // request-approve-proceed loop the policy gate consults (H-2).
-func (s *Approvals) HasApprovedOverride(ctx context.Context, requestedBy, branchID string, policy PolicyType) (bool, error) {
+//
+// D3: the subject is a PARAMETER, never a hidden empty string at the lookup
+// site. The resolver's adapter passes "" explicitly (a generic resolve
+// carries no document, and no till or generic route sets OverrideRequested,
+// so that arm is unreachable in practice); every quote floor path goes
+// through the subject narrowed FloorRequestFor and ConsumeApprovedFloorTx
+// instead, so one approved card can no longer clear every below floor
+// price for that person at that branch.
+func (s *Approvals) HasApprovedOverride(ctx context.Context, requestedBy, branchID, subjectRef string, policy PolicyType) (bool, error) {
 	if requestedBy == "" || branchID == "" {
 		return false, nil
 	}
-	return s.store.HasApprovedOverride(ctx, requestedBy, branchID, "", policy)
+	return s.store.HasApprovedOverride(ctx, requestedBy, branchID, subjectRef, policy)
 }
 
 // ListApprovals returns the requests the caller is allowed to see:
@@ -179,17 +334,34 @@ func (s *Approvals) HasApprovedOverride(ctx context.Context, requestedBy, branch
 // scaffold read is gone from the decide path and nothing on it derives
 // authority from the scaffold tables.
 func (s *Approvals) ListApprovals(ctx context.Context, caller StaffContext, status string) ([]ApprovalRequest, error) {
+	var (
+		list []ApprovalRequest
+		err  error
+	)
 	if caller.Scope == ScopeGlobal {
-		return s.store.ListApprovals(ctx, status, nil)
+		list, err = s.store.ListApprovals(ctx, status, nil)
+	} else {
+		branches := make([]string, 0, len(caller.Branches))
+		for b := range caller.Branches {
+			branches = append(branches, b)
+		}
+		if len(branches) == 0 {
+			return []ApprovalRequest{}, nil
+		}
+		list, err = s.store.ListApprovals(ctx, status, branches)
 	}
-	branches := make([]string, 0, len(caller.Branches))
-	for b := range caller.Branches {
-		branches = append(branches, b)
+	if err != nil {
+		return nil, err
 	}
-	if len(branches) == 0 {
-		return []ApprovalRequest{}, nil
+	// A floor request's margin figures are read by whoever could decide it
+	// or filed it, never by the rest of the branch (P2-3, round 3).
+	kept := make([]ApprovalRequest, 0, len(list))
+	for _, r := range list {
+		if s.MayReadRequest(caller, r) {
+			kept = append(kept, r)
+		}
 	}
-	return s.store.ListApprovals(ctx, status, branches)
+	return kept, nil
 }
 
 // DecideApproval enforces the authority model, bridges a JE decision to the GL maker-checker (GL first),
@@ -213,8 +385,9 @@ func (s *Approvals) DecideApproval(ctx context.Context, id string, caller StaffC
 		return err
 	}
 	// Validate authority + PENDING-state + four-eyes in memory (sets req.Status). Nothing persists yet, so
-	// a rejected decide never touches the ledger or the request row.
-	if err := req.Decide(caller, approve); err != nil {
+	// a rejected decide never touches the ledger or the request row. The margin arm's authority is the
+	// dealer's configured set (D11, CP0-1 answer B), carried on the service.
+	if err := req.DecideWithFloor(caller, approve, s.floorApprovers); err != nil {
 		return err
 	}
 
@@ -325,17 +498,37 @@ func (r *ApprovalRepository) CreateApproval(ctx context.Context, req ApprovalReq
 	}
 	// AmountCents has no dedicated column (0016): persist it into the existing `data` JSONB so the rail
 	// card + the reconcile re-fan can read it back (0075). Zero/absent leaves data as the '{}' default.
-	data := []byte(`{}`)
+	// The quote floor binding (D3, D7) rides the same column: line_no, disc_pct, the line's own row id
+	// and product, and the requester's note.
+	data := map[string]any{}
 	if req.AmountCents != 0 {
-		if b, err := json.Marshal(map[string]int64{"amount_cents": req.AmountCents}); err == nil {
-			data = b
+		data["amount_cents"] = req.AmountCents
+	}
+	if req.LineNo > 0 || req.DiscPct != 0 || req.Note != "" {
+		data["line_no"] = req.LineNo
+		data["disc_pct"] = req.DiscPct
+		if req.LineID != "" {
+			data["line_id"] = req.LineID
+		}
+		if req.ProductID != "" {
+			data["product_id"] = req.ProductID
+		}
+		if req.Note != "" {
+			data["note"] = req.Note
+		}
+	}
+	raw := []byte(`{}`)
+	if len(data) > 0 {
+		if b, err := json.Marshal(data); err == nil {
+			raw = b
 		}
 	}
 	var id string
 	err := r.pool.QueryRow(ctx, approvalsSeqCTE+`
 		INSERT INTO permission_approval_requests (requested_by, branch_id, policy_type, detail, subject_ref, data, status, seq)
-		VALUES ($1, $2, $3, $4, $5, $6, 'PENDING', (SELECT next_value FROM aseq)) RETURNING id::text`,
-		req.RequestedBy, req.BranchID, string(req.Policy), req.Detail, subject, data).Scan(&id)
+		VALUES ($1, $2, $3, $4, $5, $6, 'PENDING', (SELECT next_value FROM aseq))
+		RETURNING id::text, `+requesterRoleSQL("requested_by"),
+		req.RequestedBy, req.BranchID, string(req.Policy), req.Detail, subject, raw).Scan(&id, &req.RequesterRole)
 	if err != nil {
 		return ApprovalRequest{}, fmt.Errorf("create approval: %w", err)
 	}
@@ -344,6 +537,30 @@ func (r *ApprovalRepository) CreateApproval(ctx context.Context, req ApprovalReq
 	return req, nil
 }
 
+// requesterRoleSQL is the SQL that reads the ERP role code of the user a
+// request's requested_by names (row 743): the user's platform link, the
+// live staff_role_grant rows of that platform user, the role's origin_code
+// (the ERP name the carried predicates key on). The user must hold exactly
+// ONE role across its grants and that role must carry an ERP name, else the
+// answer is the empty string, which the floor arm reads as no salesperson:
+// the request reaches leadership only. col is the requester's user id column
+// or parameter (a uuid); the expression is a scalar subquery.
+func requesterRoleSQL(col string) string {
+	return requesterRoleHead + col + requesterRoleTail
+}
+
+// requesterRoleHead and requesterRoleTail are the two halves of the
+// expression around the requester column, constants so a const projection
+// (the sync door's column list) can carry the same read.
+const (
+	requesterRoleHead = `COALESCE((SELECT CASE WHEN COUNT(DISTINCT g.role_id) = 1 THEN MIN(sr.origin_code) END
+		FROM users ru
+		JOIN staff_role_grant g ON g.platform_user_id = ru.platform_user_id AND g.deleted_at IS NULL
+		JOIN staff_role sr ON sr.id = g.role_id
+		WHERE ru.id = `
+	requesterRoleTail = `), '')`
+)
+
 // ListApprovals returns requests filtered by status (empty = any) and, when branches
 // is non-nil, restricted to those branches.
 func (r *ApprovalRepository) ListApprovals(ctx context.Context, status string, branches []string) ([]ApprovalRequest, error) {
@@ -351,11 +568,13 @@ func (r *ApprovalRepository) ListApprovals(ctx context.Context, status string, b
 		return nil, errNoDB
 	}
 	// Select subject_ref + amount so the rail feed (GET /api/v1/staff/approvals) can render a faithful
-	// JE card (money magnitude + journal binding), matching ApprovalsForReconcile.
+	// JE card (money magnitude + journal binding), matching ApprovalsForReconcile. line_id rides along
+	// so the queue's count can hold the decide path's branch arm rule (P2-C).
 	q := `SELECT id::text, requested_by::text, branch_id::text, policy_type, detail,
 	             COALESCE(subject_ref,''), COALESCE((data->>'amount_cents')::bigint, 0),
-	             status, COALESCE(decided_by::text,'')
-	      FROM permission_approval_requests WHERE ($1 = '' OR status = $1)`
+	             COALESCE(data->>'line_id',''),
+	             status, COALESCE(decided_by::text,''), ` + requesterRoleSQL("requested_by") + `
+	      FROM permission_approval_requests WHERE deleted_at IS NULL AND ($1 = '' OR status = $1)`
 	args := []any{status}
 	if branches != nil {
 		q += ` AND branch_id = ANY($2::uuid[])`
@@ -372,7 +591,7 @@ func (r *ApprovalRepository) ListApprovals(ctx context.Context, status string, b
 		var a ApprovalRequest
 		var policy, st string
 		if err := rows.Scan(&a.ID, &a.RequestedBy, &a.BranchID, &policy, &a.Detail,
-			&a.SubjectRef, &a.AmountCents, &st, &a.DecidedBy); err != nil {
+			&a.SubjectRef, &a.AmountCents, &a.LineID, &st, &a.DecidedBy, &a.RequesterRole); err != nil {
 			return nil, err
 		}
 		a.Policy = PolicyType(policy)
@@ -392,13 +611,16 @@ func (r *ApprovalRepository) GetApproval(ctx context.Context, id string) (Approv
 	// Must select subject_ref + amount here: DecideApproval reads req.SubjectRef to bridge a
 	// JE_OVER_THRESHOLD approve into gl.ApproveJournal. Omitting it (the shipped bug) left SubjectRef=""
 	// so the bridge was skipped: the request stamped APPROVED while the journal stayed DRAFT (0075).
+	// line_id rides along for the decide path's branch arm rule (P2-C): a margin request with
+	// no line binding is decidable by the dealer wide floor set alone.
 	err := r.pool.QueryRow(ctx, `
 		SELECT id::text, requested_by::text, branch_id::text, policy_type, detail,
 		       COALESCE(subject_ref,''), COALESCE((data->>'amount_cents')::bigint, 0),
-		       status, COALESCE(decided_by::text,'')
-		FROM permission_approval_requests WHERE id = $1`, id).Scan(
+		       COALESCE(data->>'line_id',''),
+		       status, COALESCE(decided_by::text,''), `+requesterRoleSQL("requested_by")+`
+		FROM permission_approval_requests WHERE id = $1 AND deleted_at IS NULL`, id).Scan(
 		&a.ID, &a.RequestedBy, &a.BranchID, &policy, &a.Detail,
-		&a.SubjectRef, &a.AmountCents, &st, &a.DecidedBy)
+		&a.SubjectRef, &a.AmountCents, &a.LineID, &st, &a.DecidedBy, &a.RequesterRole)
 	if err != nil {
 		// A well-formed-but-absent id maps to a clean 404 (not a raw 500), matching the module's
 		// clientError taxonomy. (Malformed non-UUID ids are rejected upstream in DecideApproval.)
@@ -425,7 +647,7 @@ func (r *ApprovalRepository) SaveDecision(ctx context.Context, id, decidedBy str
 		UPDATE permission_approval_requests
 		SET status = $2, decided_by = $3, decided_at = now(), rejection_reason = $4,
 		    seq = (SELECT next_value FROM aseq)
-		WHERE id = $1 AND status = 'PENDING'`, id, string(status), decidedBy, reason)
+		WHERE id = $1 AND status = 'PENDING' AND deleted_at IS NULL`, id, string(status), decidedBy, reason)
 	if err != nil {
 		return false, err
 	}
@@ -451,7 +673,7 @@ func (r *ApprovalRepository) SaveDecisionTx(ctx context.Context, tx pgx.Tx, id, 
 		UPDATE permission_approval_requests
 		SET status = $2, decided_by = $3, decided_at = now(), rejection_reason = $4,
 		    seq = (SELECT next_value FROM aseq)
-		WHERE id = $1 AND status = 'PENDING'`, id, string(status), decidedBy, reason)
+		WHERE id = $1 AND status = 'PENDING' AND deleted_at IS NULL`, id, string(status), decidedBy, reason)
 	if err != nil {
 		return false, err
 	}
@@ -470,12 +692,90 @@ func (r *ApprovalRepository) HasApprovedOverride(ctx context.Context, requestedB
 		SELECT EXISTS (
 			SELECT 1 FROM permission_approval_requests
 			WHERE requested_by = $1 AND branch_id = $2 AND policy_type = $3 AND status = 'APPROVED'
+			  AND deleted_at IS NULL
 			  AND ($4 = '' OR subject_ref = $4)
 		)`, requestedBy, branchID, string(policy), subjectRef).Scan(&ok)
 	if err != nil {
 		return false, fmt.Errorf("check approved override: %w", err)
 	}
 	return ok, nil
+}
+
+// FloorRequestFor answers the caller's open quote floor request for one
+// subject quote and line: a PENDING request, or an APPROVED one no write
+// has used up (the used state lives in the data JSON column, D3: no schema
+// change, no new status word). D3's narrowing is here: the subject and the
+// line are always given, one approved card clears one line of one quote.
+// The line match is the line's OWN row id and product, never the number
+// alone: the next line added after a delete reuses the number.
+func (r *ApprovalRepository) FloorRequestFor(ctx context.Context, requestedBy, branchID, subjectRef string, lineNo int, lineID, productID string) (FloorRequestRecord, bool, error) {
+	if r.pool == nil {
+		return FloorRequestRecord{}, false, errNoDB
+	}
+	var rec FloorRequestRecord
+	var status string
+	err := r.pool.QueryRow(ctx, `
+		SELECT id::text, status, COALESCE((data->>'line_no')::int, 0), COALESCE((data->>'disc_pct')::int, 0)
+		FROM permission_approval_requests
+		WHERE requested_by = $1 AND branch_id = $2 AND policy_type = 'MARGIN_BELOW_MINIMUM'
+		  AND deleted_at IS NULL
+		  AND subject_ref = $3 AND COALESCE((data->>'line_no')::int, 0) = $4
+		  AND COALESCE(data->>'line_id', '') = $5
+		  AND COALESCE(data->>'product_id', '') = $6
+		  AND (status = 'PENDING' OR (status = 'APPROVED' AND (data->>'used') IS NULL))
+		  -- An APPROVED and unused request outranks a newer PENDING twin:
+		  -- the newest row alone would hide a request already decided
+		  -- behind one nobody has decided yet.
+		ORDER BY (status = 'APPROVED' AND (data->>'used') IS NULL) DESC, requested_at DESC LIMIT 1`,
+		requestedBy, branchID, subjectRef, lineNo, lineID, productID).Scan(&rec.ID, &status, &rec.LineNo, &rec.DiscPct)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return FloorRequestRecord{}, false, nil
+	}
+	if err != nil {
+		return FloorRequestRecord{}, false, fmt.Errorf("read floor request: %w", err)
+	}
+	rec.Status = ApprovalStatus(status)
+	return rec, true, nil
+}
+
+// ConsumeApprovedFloorTx consumes the caller's APPROVED and unused floor
+// request for exactly that subject and line's own row, at no deeper a
+// discount than the request was filed at (a shallower write is covered, a
+// deeper one is not), ON the caller's transaction: the used up stamp (the
+// data JSON column, D3) commits or rolls back with the quote write that
+// used it. The compare-and-swap on the unused state is what makes the
+// request usable once: two racing writes, one stamp.
+func (r *ApprovalRepository) ConsumeApprovedFloorTx(ctx context.Context, tx pgx.Tx, requestedBy, branchID, subjectRef string, lineNo, discPct int, lineID, productID string) (FloorRequestRecord, FloorConsumption, error) {
+	var rec FloorRequestRecord
+	var status, decidedBy string
+	err := tx.QueryRow(ctx, approvalsSeqCTE+`
+		UPDATE permission_approval_requests
+		SET data = data || jsonb_build_object('used', true, 'used_by_disc_pct', $6::text),
+		    seq = (SELECT next_value FROM aseq)
+		WHERE id = (
+			SELECT id FROM permission_approval_requests
+			WHERE requested_by = $1 AND branch_id = $2 AND policy_type = 'MARGIN_BELOW_MINIMUM'
+			  AND deleted_at IS NULL
+			  AND subject_ref = $3 AND status = 'APPROVED' AND (data->>'used') IS NULL
+			  AND COALESCE((data->>'line_no')::int, 0) = $4
+			  AND COALESCE((data->>'disc_pct')::int, 0) >= $5
+			  AND COALESCE(data->>'line_id', '') = $7
+			  AND COALESCE(data->>'product_id', '') = $8
+			ORDER BY requested_at DESC LIMIT 1
+			FOR UPDATE
+		)
+		RETURNING id::text, status, COALESCE((data->>'line_no')::int, 0), COALESCE((data->>'disc_pct')::int, 0),
+		          COALESCE(decided_by::text, '')`,
+		requestedBy, branchID, subjectRef, lineNo, discPct, fmt.Sprintf("%d", discPct), lineID, productID).
+		Scan(&rec.ID, &status, &rec.LineNo, &rec.DiscPct, &decidedBy)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return FloorRequestRecord{}, FloorConsumption{}, nil
+	}
+	if err != nil {
+		return FloorRequestRecord{}, FloorConsumption{}, fmt.Errorf("consume approved floor request: %w", err)
+	}
+	rec.Status = ApprovalStatus(status)
+	return rec, FloorConsumption{ApprovalID: rec.ID, DecidedBy: decidedBy}, nil
 }
 
 // ResolveStaff loads one user's CURRENT authority (status, tier, scope,
@@ -718,9 +1018,9 @@ func (r *ApprovalRepository) ApprovalsForReconcile(ctx context.Context, decidedS
 	rows, err := r.pool.Query(ctx, `
 		SELECT id::text, requested_by::text, branch_id::text, policy_type, detail,
 		       COALESCE(subject_ref,''), COALESCE((data->>'amount_cents')::bigint, 0),
-		       status, COALESCE(decided_by::text,'')
+		       status, COALESCE(decided_by::text,''), `+requesterRoleSQL("requested_by")+`
 		FROM permission_approval_requests
-		WHERE status = 'PENDING' OR (decided_at IS NOT NULL AND decided_at >= $1)
+		WHERE deleted_at IS NULL AND (status = 'PENDING' OR (decided_at IS NOT NULL AND decided_at >= $1))
 		ORDER BY requested_at DESC`, decidedSince)
 	if err != nil {
 		return nil, fmt.Errorf("approvals for reconcile: %w", err)
@@ -731,7 +1031,7 @@ func (r *ApprovalRepository) ApprovalsForReconcile(ctx context.Context, decidedS
 		var a ApprovalRequest
 		var policy, st string
 		if err := rows.Scan(&a.ID, &a.RequestedBy, &a.BranchID, &policy, &a.Detail,
-			&a.SubjectRef, &a.AmountCents, &st, &a.DecidedBy); err != nil {
+			&a.SubjectRef, &a.AmountCents, &st, &a.DecidedBy, &a.RequesterRole); err != nil {
 			return nil, fmt.Errorf("scan reconcile row: %w", err)
 		}
 		a.Policy = PolicyType(policy)

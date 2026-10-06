@@ -83,6 +83,13 @@ const (
 	SourceWarrantyCredit = "WARRANTY_CREDIT"
 )
 
+// EventSourceCounter marks an invoice raised at the counter for an order that has not left the yard
+// (QD-5, InvoiceOrderAtAgreed). It rides on the invoice header's metadata and on the
+// ar.invoice.finalized payload as "source". AR and the ledger take the event whole and ignore it; the
+// order lifecycle consumer reads it so that an invoice for goods still in the yard does not move the
+// order or consume its holds. Every other producer sets no source.
+const EventSourceCounter = "COUNTER"
+
 // TaxStdON13 is the default reason code, spelled identically to pos.TaxStdON13 and tax.ReasonStdON13.
 // Written out rather than imported: a reason code is a wire/DB value, and billing importing pos to
 // borrow a string would be a module dependency bought for nothing.
@@ -189,6 +196,15 @@ type OrderInvoiceFacts struct {
 	// are echoed back by MarkGroupsInvoiced and they key the idempotency.
 	GroupIDs []string
 	Lines    []OrderInvoiceLine
+	// FreightCents is the delivery fee the agreed price carries, written as its own line. Zero for
+	// every caller but the counter's agreed invoice.
+	FreightCents int64
+	// AgreedTaxCents, when set, is the tax the customer was shown, billed as stated. Nil for every
+	// caller but the counter's agreed invoice.
+	AgreedTaxCents *int64
+	// RaisedAtCounter marks the counter's agreed invoice: the header and the finalized event carry
+	// EventSourceCounter. False for every other caller.
+	RaisedAtCounter bool
 }
 
 // OrderInvoiceLine is one billable line, in the shape invoice_lines stores. Quantities are DECIMAL
@@ -224,6 +240,9 @@ type InvoiceDoc struct {
 	TotalCents    int64  `json:"total_cents"`
 	BalanceCents  int64  `json:"balance_cents"`
 	ClosesOrder   bool   `json:"closes_order"`
+	// AtCounter reports that the document was raised at the counter (EventSourceCounter), read off the
+	// header's metadata. Not part of any answer on the wire.
+	AtCounter bool `json:"-"`
 	// Reused reports that an existing document with this idempotency key was returned rather than a
 	// new one raised. The surface says "already invoiced as #INV-1043" instead of pretending.
 	Reused bool `json:"reused"`
@@ -306,6 +325,25 @@ func (w *InvoiceWriter) InvoiceOrderGroups(ctx context.Context, orderID string, 
 	if w.source == nil {
 		return InvoiceDoc{}, ErrOrderSourceUnwired
 	}
+	// An order already billed whole at its agreed price BY THE COUNTER (QD-5, raised under the whole
+	// order key and marked as the counter's) is not billed again under a shipment plan's group key:
+	// the plan's groups are covered by that document, so they are linked to it and nothing new is
+	// written. Any other whole order document (the fulfilment path's, the sync door's) may bill only
+	// part of the order, so it covers nothing here and the groups are billed as they always were.
+	if w.pool != nil {
+		if whole, ok, err := w.findByKey(ctx, wholeOrderKey(orderID)); err != nil {
+			return InvoiceDoc{}, err
+		} else if ok && whole.AtCounter {
+			whole.Reused = true
+			if len(groupIDs) > 0 {
+				if err := w.source.MarkGroupsInvoiced(ctx, groupIDs, whole.InvoiceID, w.now()); err != nil {
+					return whole, fmt.Errorf("billing: order already invoiced as %s but the shipment groups could not be marked: %w",
+						whole.InvoiceNo, err)
+				}
+			}
+			return whole, nil
+		}
+	}
 	facts, err := w.source.InvoiceableOrder(ctx, orderID, groupIDs)
 	if err != nil {
 		return InvoiceDoc{}, err
@@ -315,6 +353,25 @@ func (w *InvoiceWriter) InvoiceOrderGroups(ctx context.Context, orderID string, 
 	}
 	doc, err := w.write(ctx, facts, SourceMultiShip, multiShipKey(orderID, facts.GroupIDs), "")
 	if err != nil {
+		// An overlap refusal first heals the standing document and THEN refuses. The overlap was
+		// found against a document whose groups may never have been linked to it: the marking is a
+		// separate transaction (see the write-back below), and a fault after its document committed
+		// leaves the plan reading those groups as unbilled, so the plan the caller reads again keeps
+		// offering one of them and every later request is refused the same way: 400 for good. The
+		// marking here is the write-back's own, idempotent (a group already linked is left alone), so
+		// the refusal's advice, read the plan again and invoice what is left, names a plan that can
+		// actually be followed.
+		var overlap *groupOverlapError
+		if errors.As(err, &overlap) {
+			if standing, ok, ferr := w.findByKey(ctx, overlap.key); ferr != nil {
+				return InvoiceDoc{}, ferr
+			} else if ok && len(overlap.groups) > 0 {
+				if mErr := w.source.MarkGroupsInvoiced(ctx, overlap.groups, standing.InvoiceID, w.now()); mErr != nil {
+					return InvoiceDoc{}, fmt.Errorf("billing: invoice %s was found standing but its shipment groups could not be marked: %w",
+						standing.InvoiceNo, mErr)
+				}
+			}
+		}
 		return InvoiceDoc{}, err
 	}
 	// The write-back is a SEPARATE transaction, deliberately and with a stated consequence: the group
@@ -362,8 +419,12 @@ func (w *InvoiceWriter) InvoiceOrderNamed(ctx context.Context, orderID, docID st
 	}
 	facts.ClosesOrder = true
 	facts.GroupIDs = nil
-	return w.write(ctx, facts, SourceOrder, "order-invoice:"+orderID, docID)
+	return w.write(ctx, facts, SourceOrder, wholeOrderKey(orderID), docID)
 }
+
+// wholeOrderKey is the idempotency key of a whole-order invoice: one document per order, whichever
+// door raises it (fulfilment, the invoices sync door, or the counter's agreed invoice).
+func wholeOrderKey(orderID string) string { return "order-invoice:" + orderID }
 
 // multiShipKey is the retry key for a group invoice: the order plus the EXACT group set, sorted so
 // the same set in a different order is the same key. Two different subsets of the same order are two
@@ -387,8 +448,24 @@ func multiShipKey(orderID string, groupIDs []string) string {
 // moment it lands (the additive columns stay NULL on writers that predate them, ERP-carried
 // rows included).
 func (w *InvoiceWriter) write(ctx context.Context, f OrderInvoiceFacts, sourceKind, idemKey, docID string) (InvoiceDoc, error) {
-	if w.pool == nil {
-		return InvoiceDoc{}, errNoDB
+	return w.writeCore(ctx, nil, f, sourceKind, idemKey, docID)
+}
+
+// writeCore is write on either the writer's own transaction (tx nil) or the caller's (QD-5): with a
+// caller's transaction nothing here begins, commits or rolls back, the existing document under the key
+// is looked for on that transaction, and the header, the lines, the AR subledger row and the event
+// are written on it, so they commit with whatever the caller wrote before and after. A genuine key
+// race then surfaces as the database's error (the transaction cannot continue after it), and the
+// caller's action fails whole, never half.
+func (w *InvoiceWriter) writeCore(ctx context.Context, ctxTx pgx.Tx, f OrderInvoiceFacts, sourceKind, idemKey, docID string) (InvoiceDoc, error) {
+	var q keyQuerier
+	if ctxTx != nil {
+		q = ctxTx
+	} else {
+		if w.pool == nil {
+			return InvoiceDoc{}, errNoDB
+		}
+		q = w.pool
 	}
 	if f.CustomerID == "" || f.BranchID == "" {
 		return InvoiceDoc{}, httpx.BadRequestf("an invoice needs a customer and a branch")
@@ -399,35 +476,20 @@ func (w *InvoiceWriter) write(ctx context.Context, f OrderInvoiceFacts, sourceKi
 
 	// An existing document under this key ends the call before any write. This is the fast path for
 	// the double click; the UNIQUE index is the slow path for the genuine race.
-	if doc, ok, err := w.findByKey(ctx, idemKey); err != nil {
+	if doc, ok, err := findByKeyOn(ctx, q, idemKey); err != nil {
 		return InvoiceDoc{}, err
 	} else if ok {
 		doc.Reused = true
 		return doc, nil
 	}
 
-	var subtotal int64
-	for _, l := range f.Lines {
-		subtotal += l.LineTotalCents
-	}
-	if subtotal < 0 {
-		// A negative bill is a credit memo, and a credit memo has its own writer with its own
-		// document type. Refusing here keeps 0146's sign discipline meaningful rather than letting a
-		// caller mint a memo-shaped row that says INVOICE on it.
-		return InvoiceDoc{}, httpx.BadRequestf("an invoice subtotal cannot be negative, use IssueCreditMemo")
-	}
-
-	reason := f.TaxReasonCode
-	if reason == "" {
-		reason = TaxStdON13
-	}
-	quote, err := w.assessor().AssessSale(ctx, TaxQuoteInput{
-		BranchID: f.BranchID, SubtotalCents: subtotal, ReasonCode: reason,
-	})
+	shaped, err := w.shape(ctx, f)
 	if err != nil {
 		return InvoiceDoc{}, err
 	}
-	total := subtotal + quote.TaxCents
+	f.Lines = shaped.lines
+	subtotal, total := shaped.subtotal, shaped.total
+	quote := TaxQuoteResult{TaxCents: shaped.tax}
 
 	// Per-line tax: the largest-remainder split of the HEADER tax over the line totals. Identical
 	// call, identical function, identical arguments to the ring's, see G2.
@@ -444,22 +506,65 @@ func (w *InvoiceWriter) write(ctx context.Context, f OrderInvoiceFacts, sourceKi
 	dueDate := w.now().AddDate(0, 0, terms).Format("2006-01-02")
 
 	var doc InvoiceDoc
-	err = w.inTx(ctx, func(tx pgx.Tx) error {
+	var covered *InvoiceDoc
+	insert := func(tx pgx.Tx) error {
+		// The order's row lock is this transaction's FIRST statement (QD-5 review round 2): the writers
+		// that bill an order (the counter's, the group's, the whole order's) serialise on it, and the
+		// existence checks that follow see whatever the one ahead of them committed.
+		if f.OrderID != "" {
+			if err := lockOrder(ctx, tx, f.OrderID); err != nil {
+				return err
+			}
+			// A group is covered by the counter's whole order document when that document committed
+			// while this call waited for the lock: nothing new is written, the groups link to it.
+			if sourceKind == SourceMultiShip {
+				if whole, ok, err := findByKeyOn(ctx, tx, wholeOrderKey(f.OrderID)); err != nil {
+					return err
+				} else if ok && whole.AtCounter {
+					whole.Reused = true
+					covered = &whole
+					return nil
+				}
+				// The group set was read before this lock was held, so it may overlap a group that a
+				// call ahead of this one billed while this one waited. Decide against what committed:
+				// the same set under the same key is that call's document (the double click), and a set
+				// that shares a group with a different document is refused whole, so no group is billed
+				// twice and the invoices of the order never total more than the order. The refusal
+				// carries the standing document's key and group set (groupOverlapError) so the caller
+				// can link that document's groups to it before the refusal is answered.
+				if same, ok, err := findByKeyOn(ctx, tx, idemKey); err != nil {
+					return err
+				} else if ok {
+					same.Reused = true
+					covered = &same
+					return nil
+				}
+				if no, key, err := overlappingGroupInvoice(ctx, tx, f.OrderID, f.GroupIDs); err != nil {
+					return err
+				} else if no != "" {
+					return &groupOverlapError{
+						wrapped: httpx.BadRequestf("a shipment group in this request was invoiced as %s while the request was waiting; read the shipment plan again and invoice what is left", no),
+						key:     key,
+						groups:  groupsUnderKey(f.OrderID, key),
+					}
+				}
+			}
+		}
 		var invoiceID, invoiceNo string
 		// FINALIZED, not DRAFT. The order was delivered; the document is real the moment it exists,
 		// and a DRAFT invoice is a promise to remember to finalize it that nobody keeps.
 		err := tx.QueryRow(ctx, invoiceWriterSeqCTE+`
 INSERT INTO invoices (id, invoice_no, customer_id, order_id, branch_id, status, due_date,
                       subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at,
-                      doc_type, source_kind, idempotency_key, closes_order, org_id, seq)
+                      doc_type, source_kind, idempotency_key, closes_order, org_id, seq, metadata)
 VALUES (COALESCE(NULLIF($1,'')::uuid, gen_random_uuid()), '#INV-' || nextval('invoice_no_seq'),
         $2, $3, $4, 'FINALIZED', $5,
         $6, $7, $8, $8, now(), 'INVOICE', $9, $10, $11,
         (SELECT org_id FROM locations WHERE id = $4::uuid),
-        (SELECT next_value FROM iseq))
+        (SELECT next_value FROM iseq), $12::jsonb)
 RETURNING id::text, invoice_no`,
 			docID, f.CustomerID, nullUUID(f.OrderID), f.BranchID, dueDate,
-			subtotal, quote.TaxCents, total, sourceKind, idemKey, f.ClosesOrder,
+			subtotal, quote.TaxCents, total, sourceKind, idemKey, f.ClosesOrder, headerMetadata(f),
 		).Scan(&invoiceID, &invoiceNo)
 		if err != nil {
 			return fmt.Errorf("insert invoice: %w", err)
@@ -497,10 +602,14 @@ VALUES ($1, 'INVOICE', $2, $3, 'invoice', $4, $5, $6, clock_timestamp())`,
 
 		// G3: the SAME topic and the SAME payload keys the ring emits. gl derives the journal from the
 		// invoice row, so this is the whole of the GL wiring for this producer.
-		if err := emitOutbox(ctx, tx, "ar.invoice.finalized", map[string]any{
+		finalized := map[string]any{
 			"invoice_id": invoiceID, "customer_id": f.CustomerID,
 			"total_cents": total, "due_date": dueDate,
-		}); err != nil {
+		}
+		if f.RaisedAtCounter {
+			finalized["source"] = EventSourceCounter
+		}
+		if err := emitOutbox(ctx, tx, "ar.invoice.finalized", finalized); err != nil {
 			return err
 		}
 
@@ -509,10 +618,20 @@ VALUES ($1, 'INVOICE', $2, $3, 'invoice', $4, $5, $6, clock_timestamp())`,
 			CustomerID: f.CustomerID, OrderID: f.OrderID, BranchID: f.BranchID,
 			Status: "FINALIZED", DueDate: dueDate,
 			SubtotalCents: subtotal, TaxCents: quote.TaxCents, TotalCents: total, BalanceCents: total,
-			ClosesOrder: f.ClosesOrder,
+			ClosesOrder: f.ClosesOrder, AtCounter: f.RaisedAtCounter,
 		}
 		return nil
-	})
+	}
+	if ctxTx != nil {
+		if err := insert(ctxTx); err != nil {
+			return InvoiceDoc{}, err
+		}
+		return doc, nil
+	}
+	err = w.inTx(ctx, insert)
+	if err == nil && covered != nil {
+		return *covered, nil
+	}
 	if err != nil {
 		// The genuine race: a concurrent caller won the UNIQUE index. Return THEIR document.
 		if isUniqueViolation(err) {
@@ -524,6 +643,322 @@ VALUES ($1, 'INVOICE', $2, $3, 'invoice', $4, $5, $6, clock_timestamp())`,
 		return InvoiceDoc{}, err
 	}
 	return doc, nil
+}
+
+// headerMetadata is the invoice header's metadata: empty for every producer but the counter's agreed
+// invoice, which says so (the same marker the finalized event carries).
+func headerMetadata(f OrderInvoiceFacts) string {
+	if f.RaisedAtCounter {
+		return `{"source":"` + EventSourceCounter + `"}`
+	}
+	return `{}`
+}
+
+// shapedDocument is the document's money as billing shapes it: the lines (with the delivery fee as
+// its own line when the facts carry one), the subtotal over them, the tax and the total.
+type shapedDocument struct {
+	lines                []OrderInvoiceLine
+	subtotal, tax, total int64
+}
+
+// shape is the ONE place the document's totals are decided, so the counter's preview and the write
+// can never disagree. For every caller but the counter's agreed invoice the facts carry no freight
+// and no agreed tax, and the answer is exactly the lines' sum with the assessed tax.
+func (w *InvoiceWriter) shape(ctx context.Context, f OrderInvoiceFacts) (shapedDocument, error) {
+	lines := append([]OrderInvoiceLine(nil), f.Lines...)
+	if f.FreightCents > 0 {
+		lines = append(lines, OrderInvoiceLine{
+			LineNo: len(lines) + 1, Description: "Delivery", QtyEntered: "1", UOMEntered: "EA", QtyBase: "1",
+			UnitPriceCents: f.FreightCents, PriceUOM: "EA", LineTotalCents: f.FreightCents,
+		})
+	}
+	var subtotal int64
+	for _, l := range lines {
+		subtotal += l.LineTotalCents
+	}
+	if subtotal < 0 {
+		// A negative bill is a credit memo, and a credit memo has its own writer with its own
+		// document type. Refusing here keeps 0146's sign discipline meaningful rather than letting a
+		// caller mint a memo-shaped row that says INVOICE on it.
+		return shapedDocument{}, httpx.BadRequestf("an invoice subtotal cannot be negative, use IssueCreditMemo")
+	}
+	var tax int64
+	if f.AgreedTaxCents != nil {
+		// The tax the customer was shown, billed as stated: assessing it again could move the total
+		// the quote agreed.
+		if *f.AgreedTaxCents < 0 {
+			return shapedDocument{}, httpx.BadRequestf("an agreed tax cannot be negative")
+		}
+		tax = *f.AgreedTaxCents
+	} else {
+		reason := f.TaxReasonCode
+		if reason == "" {
+			reason = TaxStdON13
+		}
+		q, err := w.assessor().AssessSale(ctx, TaxQuoteInput{
+			BranchID: f.BranchID, SubtotalCents: subtotal, ReasonCode: reason,
+		})
+		if err != nil {
+			return shapedDocument{}, err
+		}
+		tax = q.TaxCents
+	}
+	return shapedDocument{lines: lines, subtotal: subtotal, tax: tax, total: subtotal + tax}, nil
+}
+
+// AgreedOrderSource is the optional order seam the counter's agreed invoice reads: every line at
+// its agreed total with the delivery fee and the agreed tax stated. A source that does not answer
+// it cannot raise the counter's invoice.
+type AgreedOrderSource interface {
+	AgreedInvoiceableOrder(ctx context.Context, orderID string) (OrderInvoiceFacts, error)
+}
+
+// AgreedOrderSourceTx is the same answer read on the caller's transaction (QD-5), for an order written
+// in that transaction and not yet visible to any other connection.
+type AgreedOrderSourceTx interface {
+	AgreedInvoiceableOrderTx(ctx context.Context, tx pgx.Tx, orderID string) (OrderInvoiceFacts, error)
+}
+
+func (w *InvoiceWriter) agreedSource() (AgreedOrderSource, error) {
+	if w.source == nil {
+		return nil, ErrOrderSourceUnwired
+	}
+	src, ok := w.source.(AgreedOrderSource)
+	if !ok {
+		return nil, ErrOrderSourceUnwired
+	}
+	return src, nil
+}
+
+// agreedFacts is the order's agreed facts, read through the pool (ctxTx nil) or the caller's
+// transaction.
+func (w *InvoiceWriter) agreedFacts(ctx context.Context, ctxTx pgx.Tx, orderID string) (OrderInvoiceFacts, error) {
+	if ctxTx == nil {
+		src, err := w.agreedSource()
+		if err != nil {
+			return OrderInvoiceFacts{}, err
+		}
+		return src.AgreedInvoiceableOrder(ctx, orderID)
+	}
+	if w.source == nil {
+		return OrderInvoiceFacts{}, ErrOrderSourceUnwired
+	}
+	src, ok := w.source.(AgreedOrderSourceTx)
+	if !ok {
+		return OrderInvoiceFacts{}, ErrOrderSourceUnwired
+	}
+	return src.AgreedInvoiceableOrderTx(ctx, ctxTx, orderID)
+}
+
+// OrderAlreadyInvoicedError is the counter's refusal to raise an invoice for an order that already has
+// one raised another way (by shipment group, say): billing the whole order again would bill the lines
+// the earlier document already carries.
+type OrderAlreadyInvoicedError struct {
+	InvoiceNo string
+}
+
+func (e *OrderAlreadyInvoicedError) Error() string {
+	return "this order is already invoiced as " + e.InvoiceNo + " by another route, so the counter cannot bill it again; " +
+		"hand the customer to Payables and receivables, or to the General Manager or Financial controller, " +
+		"who record the payment against that invoice"
+}
+
+// lockOrder takes the order's row lock for the rest of the transaction: the one lock every writer that
+// bills an order takes first, so a group invoice and a counter invoice of one order queue behind each
+// other. Order edits, reservations and shipment groups already take the same lock first. An order that
+// does not exist locks nothing and is left to the facts read to refuse.
+func lockOrder(ctx context.Context, q keyQuerier, orderID string) error {
+	var id string
+	err := q.QueryRow(ctx, `SELECT id::text FROM orders WHERE id = $1::uuid FOR UPDATE`, orderID).Scan(&id)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("billing: lock the order: %w", err)
+	}
+	return nil
+}
+
+// groupOverlapError is the overlap refusal carrying what its recovery needs: the standing document's
+// idempotency key and the group set that document bills. The refusal itself is unchanged (it wraps
+// the same 400 with the same words); the caller links the standing document's groups to it before
+// the refusal is answered, see InvoiceOrderGroups.
+type groupOverlapError struct {
+	wrapped error
+	key     string
+	groups  []string
+}
+
+func (e *groupOverlapError) Error() string { return e.wrapped.Error() }
+func (e *groupOverlapError) Unwrap() error { return e.wrapped }
+
+// groupsUnderKey reads the group set out of a group invoice's idempotency key (multiShipKey's
+// encoding: the order id, then the sorted group ids joined by commas). An empty answer means no
+// group is named, and the caller marks nothing.
+func groupsUnderKey(orderID, key string) []string {
+	if key == "" {
+		return nil
+	}
+	prefix := "multiship-invoice:" + orderID + ":"
+	var out []string
+	for _, g := range strings.Split(strings.TrimPrefix(key, prefix), ",") {
+		if g != "" {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
+// overlappingGroupInvoice names a live group invoice of the order that already bills any of the given
+// shipment groups ("" when none does), with its idempotency key beside the name. The set a group
+// invoice bills is carried in that key (multiShipKey), which is how a later request finds the groups
+// an earlier one took without reading the order module's tables. Run on the order's locked
+// transaction, it sees every document committed ahead.
+func overlappingGroupInvoice(ctx context.Context, tx pgx.Tx, orderID string, groupIDs []string) (no, key string, err error) {
+	prefix := "multiship-invoice:" + orderID + ":"
+	rows, err := tx.Query(ctx, `
+SELECT invoice_no::text, idempotency_key FROM invoices
+ WHERE order_id = $1::uuid AND doc_type = 'INVOICE' AND status <> 'VOID'
+   AND idempotency_key LIKE $2
+ ORDER BY created_at`, orderID, prefix+"%")
+	if err != nil {
+		return "", "", fmt.Errorf("billing: look up the order's group invoices: %w", err)
+	}
+	defer rows.Close()
+	want := make(map[string]bool, len(groupIDs))
+	for _, g := range groupIDs {
+		want[g] = true
+	}
+	for rows.Next() {
+		if err := rows.Scan(&no, &key); err != nil {
+			return "", "", fmt.Errorf("billing: read the order's group invoices: %w", err)
+		}
+		for _, g := range strings.Split(strings.TrimPrefix(key, prefix), ",") {
+			if want[g] {
+				return no, key, nil
+			}
+		}
+	}
+	return "", "", rows.Err()
+}
+
+// otherLiveInvoice names an invoice of the order that is not the counter's whole order document: any
+// live INVOICE of the order under any other key (a shipment group's, a fulfilment document raised before
+// the counter's key existed). "" when there is none.
+func otherLiveInvoice(ctx context.Context, q keyQuerier, orderID string) (string, error) {
+	var no string
+	err := q.QueryRow(ctx, `
+SELECT invoice_no::text FROM invoices
+ WHERE order_id = $1::uuid AND doc_type = 'INVOICE' AND status <> 'VOID'
+   AND idempotency_key IS DISTINCT FROM $2
+ ORDER BY created_at LIMIT 1`, orderID, wholeOrderKey(orderID)).Scan(&no)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("billing: look up the order's other invoices: %w", err)
+	}
+	return no, nil
+}
+
+// AgreedOrderInvoice answers, read only, what the order's invoice at its agreed totals is: the
+// document itself when one exists under the whole order key (exists true), else the document that
+// would be raised (exists false, no id, balance equal to the total).
+func (w *InvoiceWriter) AgreedOrderInvoice(ctx context.Context, orderID string) (InvoiceDoc, bool, error) {
+	if w.pool == nil {
+		return InvoiceDoc{}, false, errNoDB
+	}
+	return w.agreedOrderInvoice(ctx, nil, w.pool, orderID)
+}
+
+// AgreedOrderInvoiceTx is AgreedOrderInvoice read on the caller's transaction (QD-5).
+func (w *InvoiceWriter) AgreedOrderInvoiceTx(ctx context.Context, tx pgx.Tx, orderID string) (InvoiceDoc, bool, error) {
+	return w.agreedOrderInvoice(ctx, tx, tx, orderID)
+}
+
+func (w *InvoiceWriter) agreedOrderInvoice(ctx context.Context, ctxTx pgx.Tx, q keyQuerier, orderID string) (InvoiceDoc, bool, error) {
+	if ctxTx != nil {
+		if err := lockOrder(ctx, ctxTx, orderID); err != nil {
+			return InvoiceDoc{}, false, err
+		}
+	}
+	if doc, ok, err := findByKeyOn(ctx, q, wholeOrderKey(orderID)); err != nil {
+		return InvoiceDoc{}, false, err
+	} else if ok {
+		return doc, true, nil
+	}
+	if no, err := otherLiveInvoice(ctx, q, orderID); err != nil {
+		return InvoiceDoc{}, false, err
+	} else if no != "" {
+		return InvoiceDoc{}, false, &OrderAlreadyInvoicedError{InvoiceNo: no}
+	}
+	facts, err := w.agreedFacts(ctx, ctxTx, orderID)
+	if err != nil {
+		return InvoiceDoc{}, false, err
+	}
+	if len(facts.Lines) == 0 {
+		return InvoiceDoc{}, false, ErrNothingToInvoice
+	}
+	shaped, err := w.shape(ctx, facts)
+	if err != nil {
+		return InvoiceDoc{}, false, err
+	}
+	return InvoiceDoc{
+		CustomerID: facts.CustomerID, OrderID: orderID, BranchID: facts.BranchID, DocType: DocInvoice,
+		SubtotalCents: shaped.subtotal, TaxCents: shaped.tax, TotalCents: shaped.total,
+		BalanceCents: shaped.total, ClosesOrder: true,
+	}, false, nil
+}
+
+// InvoiceOrderAtAgreed raises the order's invoice at its agreed totals, the counter's invoice for an
+// order paid before it leaves the yard. It is raised under the WHOLE order key, the same key the
+// fulfilment path uses, so billing the order again when it leaves returns this document and bills
+// nothing twice; a document already under the key is returned (Reused) before the order is asked
+// anything. Raising it again is the same call.
+func (w *InvoiceWriter) InvoiceOrderAtAgreed(ctx context.Context, orderID string) (InvoiceDoc, error) {
+	if w.pool == nil {
+		return InvoiceDoc{}, errNoDB
+	}
+	// On a transaction of its own, so the order's lock and the checks that follow it are one unit with
+	// the write.
+	var doc InvoiceDoc
+	err := w.inTx(ctx, func(tx pgx.Tx) error {
+		var err error
+		doc, err = w.invoiceOrderAtAgreed(ctx, tx, tx, orderID)
+		return err
+	})
+	return doc, err
+}
+
+// InvoiceOrderAtAgreedTx is InvoiceOrderAtAgreed on the caller's transaction (QD-5): the existing
+// document is looked for, the order's facts are read, and the invoice, its lines, its AR subledger row
+// and its event are written, all on that transaction, which this method neither commits nor rolls back.
+func (w *InvoiceWriter) InvoiceOrderAtAgreedTx(ctx context.Context, tx pgx.Tx, orderID string) (InvoiceDoc, error) {
+	return w.invoiceOrderAtAgreed(ctx, tx, tx, orderID)
+}
+
+func (w *InvoiceWriter) invoiceOrderAtAgreed(ctx context.Context, ctxTx pgx.Tx, q keyQuerier, orderID string) (InvoiceDoc, error) {
+	if ctxTx != nil {
+		if err := lockOrder(ctx, ctxTx, orderID); err != nil {
+			return InvoiceDoc{}, err
+		}
+	}
+	if doc, ok, err := findByKeyOn(ctx, q, wholeOrderKey(orderID)); err != nil {
+		return InvoiceDoc{}, err
+	} else if ok {
+		doc.Reused = true
+		return doc, nil
+	}
+	if no, err := otherLiveInvoice(ctx, q, orderID); err != nil {
+		return InvoiceDoc{}, err
+	} else if no != "" {
+		return InvoiceDoc{}, &OrderAlreadyInvoicedError{InvoiceNo: no}
+	}
+	facts, err := w.agreedFacts(ctx, ctxTx, orderID)
+	if err != nil {
+		return InvoiceDoc{}, err
+	}
+	facts.ClosesOrder = true
+	facts.GroupIDs = nil
+	facts.RaisedAtCounter = true
+	return w.writeCore(ctx, ctxTx, facts, SourceOrder, wholeOrderKey(orderID), "")
 }
 
 // invoiceMemo names the document on the subledger row so an AR clerk reading the ledger sees WHY the
@@ -538,20 +973,31 @@ func invoiceMemo(f OrderInvoiceFacts, invoiceNo string) string {
 	return invoiceNo
 }
 
+// keyQuerier is what an invoice is looked up through: the pool, or a caller's transaction (QD-5).
+type keyQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 // findByKey resolves an existing document by its idempotency key.
 func (w *InvoiceWriter) findByKey(ctx context.Context, key string) (InvoiceDoc, bool, error) {
+	return findByKeyOn(ctx, w.pool, key)
+}
+
+func findByKeyOn(ctx context.Context, q keyQuerier, key string) (InvoiceDoc, bool, error) {
 	if key == "" {
 		return InvoiceDoc{}, false, nil
 	}
 	var d InvoiceDoc
 	var orderID *string
 	var due time.Time
-	err := w.pool.QueryRow(ctx, `
+	err := q.QueryRow(ctx, `
 SELECT id::text, invoice_no::text, doc_type, customer_id::text, order_id::text, branch_id::text,
-       status, due_date, subtotal_cents, tax_cents, total_cents, balance_cents, closes_order
+       status, due_date, subtotal_cents, tax_cents, total_cents, balance_cents, closes_order,
+       COALESCE(metadata->>'source', '') = '`+EventSourceCounter+`'
   FROM invoices WHERE idempotency_key = $1`, key).
 		Scan(&d.InvoiceID, &d.InvoiceNo, &d.DocType, &d.CustomerID, &orderID, &d.BranchID,
-			&d.Status, &due, &d.SubtotalCents, &d.TaxCents, &d.TotalCents, &d.BalanceCents, &d.ClosesOrder)
+			&d.Status, &due, &d.SubtotalCents, &d.TaxCents, &d.TotalCents, &d.BalanceCents, &d.ClosesOrder,
+			&d.AtCounter)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return InvoiceDoc{}, false, nil

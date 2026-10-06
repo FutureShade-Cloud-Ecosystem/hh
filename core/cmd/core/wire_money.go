@@ -13,19 +13,23 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/inventory"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/product"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/quote"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -55,7 +59,7 @@ func linkedUserID(pool *pgxpool.Pool) identity.UserIDLinker {
 // the landed seam set supports; the seams whose owners land in later
 // batches (billing, pos, till, customer) stay unwired and their surfaces
 // answer the modules' designed fail-closed refusals.
-func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog.Logger, staffBaseURL string) *moneySpine {
+func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog.Logger, staffBaseURL string, roleCfg *roleconfig.Config) *moneySpine {
 	link := linkedUserID(pool)
 	outboxStore := notify.NewPgOutboxStore(pool)
 	auditSvc := audit.NewService(audit.NewRepository(pool), log)
@@ -86,7 +90,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 		WithCostVisibility(pricingCostVisibility{}).
 		WithVendorDirectory(pricingVendorDirectory{pool: pool}).
 		WithCatalogSKUs(pricingCatalogSKUs{pool: pool}).
-		WithOverrideAuthority(w5cOverrideAuthority{svc: approvals, log: log}).
+		WithOverrideAuthority(w5cOverrideAuthority{roles: roleCfg, log: log}).
 		WithLogger(log)
 	pricing.NewHandler(pricingSvc, log).WithUserLinker(link).RegisterW4Routes(r, g)
 
@@ -129,6 +133,42 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	// the customer-tier seam lands with customer) and the public share
 	// routes (token in path, no guard, R4).
 	quoteRepo := quote.NewRepository(pool)
+	// The quote floor's approvals rail: the margin decide authority from
+	// the role configuration (D11, CP0-1 answer B), the floor list's dealer
+	// wide approvers plus the branch scoped quote floor approvers, mapped
+	// onto the ERP role codes the rail speaks. The platform admin rides
+	// beside them (outside the configuration's thirteen role vocabulary).
+	quoteFloorApprovers := identity.FloorApprovers{
+		DealerWide: []string{identity.RoleSuperAdmin},
+		OwnBranch:  []string{},
+	}
+	if wide, err := roleCfg.ExceptionApprovers(roleconfig.ExceptionFloorQuote); err == nil {
+		for _, role := range wide {
+			if erp, ok := identity.ERPCodeFor(role); ok {
+				quoteFloorApprovers.DealerWide = append(quoteFloorApprovers.DealerWide, erp)
+			}
+		}
+	}
+	for _, role := range roleCfg.QuoteFloorBranchApprovers() {
+		if erp, ok := identity.ERPCodeFor(role); ok {
+			quoteFloorApprovers.OwnBranch = append(quoteFloorApprovers.OwnBranch, erp)
+		}
+	}
+	approvals.WithFloorApprovers(quoteFloorApprovers)
+	// The approvals sync door decides through the same configured
+	// authority the rail now holds: its store is constructed on another
+	// wire (wire_operations) the role configuration does not pass, so the
+	// set the rail was given is published for the door to read (D11): one
+	// authority, one source.
+	identity.PublishFloorApprovers(quoteFloorApprovers)
+	// The approvals sync door holds the REST routes' role walls (Work to
+	// file, Manage to decide) from the same configuration the role gate was
+	// built with, published for the store the operations wire builds.
+	identity.PublishApprovalRoles(roleCfg)
+	// The quotes sync door runs the same ownership ladder the quote
+	// service runs, from the same configuration: the store is built on the
+	// operations wire, so the configuration is published for it (P2-4).
+	quote.PublishRoleConfig(roleCfg)
 	quoteStaffSvc := quote.NewStaffService(quoteRepo).
 		WithAudit(auditSvc).
 		WithAuditTrail(auditSvc).
@@ -136,10 +176,18 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 		WithPricePreview(pricingSvc).
 		WithCostBasis(inventorySvc).
 		WithActorNamer(quoteRepo).
+		WithRoleConfig(roleCfg).
+		WithFloorArbiter(pricingSvc).
+		WithFloorRail(approvals).
 		WithShares(quoteRepo).
 		WithStockReserver(w5aQuoteStockReserver{svc: inventorySvc}).
 		WithAvailability(w5aQuoteAvailability{svc: inventorySvc}).
 		WithSoftHoldExpiry(w6cQuoteSoftHoldExpiry{svc: orderSvc})
+	// QD-5: the counter's payment door on a converted quote's order. The quote module declares
+	// the two seams; the order and billing and payments modules answer them here and the quote
+	// package never imports any of the three.
+	quoteInvoicer, quotePayer := quoteMoneyDoor(pool, orderSvc)
+	quoteStaffSvc.WithOrderInvoicer(quoteInvoicer).WithCounterPayer(quotePayer)
 	quoteRepo.WithStockReserver(w5aQuoteStockReserver{svc: inventorySvc})
 	quoteStaffHandler := quote.NewStaffHandler(quoteStaffSvc).WithUserLinker(link)
 	quoteStaffHandler.RegisterStaffRoutes(r, g)
@@ -414,13 +462,24 @@ func (a pricingCatalogSKUs) LookupSKUs(ctx context.Context, skus []string) (map[
 }
 
 // w5cOverrideAuthority satisfies pricing.OverrideAuthority over the
-// approvals rail plus the bridged caller stamp: an APPROVED margin override
-// first, then the caller's own manager scope, checked against the branch
-// being priced (carried verbatim from the pin's adapter belt, re-pointed at
-// the bridge).
+// bridged caller stamp and the dealer's role configuration: the caller's
+// own manager scope, held to the CONFIGURED floor clearers
+// (floor_clearers_own_branch under the manager_own_branch_floor_clearing
+// setting, D6) and to the branch being priced. The arm once cleared for
+// any manager that reached the branch, the Yard manager included, where
+// the configuration names the Sales manager and the Branch manager alone.
+//
+// The approvals substrate arms NOTHING here. A generic resolve carries no
+// document, so an approval lookup would match an EMPTY subject: through
+// the preview route's body flag any approved margin card answered
+// "granted" whatever its subject and however used up (D3, the QD-1
+// review's P2-5; the flag no longer reaches the resolver either, the
+// pricing handler reads and drops it). Until a live caller can bind its
+// request to a document, no approval arm may grant; the quote floor path
+// consumes subject narrowed requests on its own transaction instead.
 type w5cOverrideAuthority struct {
-	svc *identity.Approvals
-	log *slog.Logger
+	roles *roleconfig.Config
+	log   *slog.Logger
 }
 
 func (a w5cOverrideAuthority) MarginOverrideAuthority(ctx context.Context, userID, branchID string) (pricing.OverrideGrant, error) {
@@ -429,27 +488,159 @@ func (a w5cOverrideAuthority) MarginOverrideAuthority(ctx context.Context, userI
 		// wrong, there is simply nobody to grant anything to.
 		return pricing.OverrideGrant{}, nil
 	}
-	// 1. the approvals substrate.
-	has, err := a.svc.HasApprovedOverride(ctx, userID, branchID, identity.PolicyMargin)
-	if err != nil {
-		// Propagated, NOT swallowed. pricing fails closed on an error, which is what we want when the
-		// approvals substrate is unreachable, an outage must not become a pricing hole.
-		return pricing.OverrideGrant{}, err
+	// No configuration, no grant: the configured list IS the authority.
+	if a.roles == nil {
+		return pricing.OverrideGrant{}, nil
 	}
-	if has {
-		return pricing.OverrideGrant{Granted: true, Source: pricing.AuthorityApproval}, nil
-	}
-	// 2. the caller's own manager scope.
 	caller, ok := identity.StaffContextFromContext(ctx)
 	if !ok || caller.UserID != userID {
 		return pricing.OverrideGrant{}, nil
 	}
-	if caller.IsManager() && caller.CanAccessBranch(branchID) {
-		if a.log != nil {
-			a.log.Info("pricing: below-floor price cleared on MANAGER SCOPE (no approval record)",
-				"user_id", userID, "branch_id", branchID, "role", caller.RoleCode)
-		}
-		return pricing.OverrideGrant{Granted: true, Source: pricing.AuthorityManagerScope}, nil
+	if !caller.CanAccessBranch(branchID) {
+		return pricing.OverrideGrant{}, nil
 	}
-	return pricing.OverrideGrant{}, nil
+	role, ok := identity.CanonicalForERPCode(caller.RoleCode)
+	if !ok {
+		return pricing.OverrideGrant{}, nil
+	}
+	clears, err := a.roles.ClearsOwnBranchFloor(role)
+	if err != nil || !clears {
+		return pricing.OverrideGrant{}, nil
+	}
+	if a.log != nil {
+		a.log.Info("pricing: below-floor price cleared on MANAGER SCOPE (no approval record)",
+			"user_id", userID, "branch_id", branchID, "role", caller.RoleCode)
+	}
+	return pricing.OverrideGrant{Granted: true, Source: pricing.AuthorityManagerScope}, nil
+}
+
+// quoteMoneyDoor builds the two seams the quote module's payment door needs, over the real order,
+// billing and payments modules (QD-5). The writer is the same type the money tail uses, bound to an
+// order source that also answers the agreed facts; the group invoicer of an order that later gains a
+// shipment plan is the money tail's writer, which looks for this document first.
+func quoteMoneyDoor(pool *pgxpool.Pool, orderSvc *order.Service) (quote.OrderInvoicer, quote.CounterPayer) {
+	w := billing.NewInvoiceWriter(pool).WithOrderSource(quoteAgreedOrderSource{
+		w6cOrderInvoiceSource: w6cOrderInvoiceSource{svc: orderSvc}, svc: orderSvc,
+	})
+	return quoteOrderInvoicer{w: w}, quoteCounterPayer{repo: payments.NewRepository(pool)}
+}
+
+// quoteAgreedOrderSource is the money tail's order source plus the one answer the counter's agreed
+// invoice needs: every line at its agreed total, the delivery fee and the tax the quote agreed, read
+// through the pool or on the door's transaction.
+type quoteAgreedOrderSource struct {
+	w6cOrderInvoiceSource
+	svc *order.Service
+}
+
+func (a quoteAgreedOrderSource) AgreedInvoiceableOrder(ctx context.Context, orderID string) (billing.OrderInvoiceFacts, error) {
+	f, err := a.svc.AgreedInvoiceableOrder(ctx, orderID)
+	return agreedFactsFor(f, err)
+}
+
+func (a quoteAgreedOrderSource) AgreedInvoiceableOrderTx(ctx context.Context, tx pgx.Tx, orderID string) (billing.OrderInvoiceFacts, error) {
+	f, err := a.svc.AgreedInvoiceableOrderTx(ctx, tx, orderID)
+	return agreedFactsFor(f, err)
+}
+
+// agreedFactsFor shapes the order module's answer into billing's facts, carrying its refusal across
+// as the quote door's 409.
+func agreedFactsFor(f order.InvoiceFacts, err error) (billing.OrderInvoiceFacts, error) {
+	if err != nil {
+		var refusal *order.AgreedBillingRefusal
+		if errors.As(err, &refusal) {
+			return billing.OrderInvoiceFacts{}, quote.NewOrderPaymentConflict(refusal.Error())
+		}
+		return billing.OrderInvoiceFacts{}, err
+	}
+	out := billing.OrderInvoiceFacts{
+		OrderID: f.OrderID, OrderNo: f.OrderNo, CustomerID: f.CustomerID, BranchID: f.BranchID,
+		TermsDays: f.TermsDays, TaxReasonCode: f.TaxReasonCode, ClosesOrder: true,
+		FreightCents: f.FreightCents, AgreedTaxCents: f.AgreedTaxCents,
+	}
+	out.Lines = make([]billing.OrderInvoiceLine, 0, len(f.Lines))
+	for _, l := range f.Lines {
+		out.Lines = append(out.Lines, billing.OrderInvoiceLine{
+			LineNo: l.LineNo, OrderLineID: l.OrderLineID, ProductID: l.ProductID,
+			Description: l.Description, QtyEntered: l.QtyEntered, UOMEntered: l.UOMEntered,
+			QtyBase: l.QtyBase, UnitPriceCents: l.UnitPriceCents, PriceUOM: l.PriceUOM,
+			LineTotalCents: l.LineTotalCents,
+		})
+	}
+	return out, nil
+}
+
+// quoteOrderInvoicer binds the quote module's invoicer seam to the billing writer, every call on the
+// door's transaction.
+type quoteOrderInvoicer struct{ w *billing.InvoiceWriter }
+
+func (a quoteOrderInvoicer) AgreedInvoiceTx(ctx context.Context, tx pgx.Tx, orderID string) (quote.AgreedInvoice, error) {
+	doc, exists, err := a.w.AgreedOrderInvoiceTx(ctx, tx, orderID)
+	if err != nil {
+		return quote.AgreedInvoice{}, mapBillingRefusal(err)
+	}
+	return agreedFromDoc(doc, exists), nil
+}
+
+func (a quoteOrderInvoicer) RaiseAgreedInvoiceTx(ctx context.Context, tx pgx.Tx, orderID string) (quote.AgreedInvoice, error) {
+	doc, err := a.w.InvoiceOrderAtAgreedTx(ctx, tx, orderID)
+	if err != nil {
+		return quote.AgreedInvoice{}, mapBillingRefusal(err)
+	}
+	return agreedFromDoc(doc, true), nil
+}
+
+func agreedFromDoc(d billing.InvoiceDoc, exists bool) quote.AgreedInvoice {
+	return quote.AgreedInvoice{
+		Exists: exists, InvoiceID: d.InvoiceID, InvoiceNo: d.InvoiceNo, CustomerID: d.CustomerID,
+		BranchID: d.BranchID, TotalCents: d.TotalCents, BalanceCents: d.BalanceCents,
+	}
+}
+
+// mapBillingRefusal turns billing's business refusal into the quote door's 409; every other error
+// passes through unchanged.
+func mapBillingRefusal(err error) error {
+	if errors.Is(err, billing.ErrNothingToInvoice) {
+		return quote.NewOrderPaymentConflict("the order has no billable lines")
+	}
+	var already *billing.OrderAlreadyInvoicedError
+	if errors.As(err, &already) {
+		return quote.NewOrderPaymentConflict(already.Error())
+	}
+	return err
+}
+
+// quoteCounterPayer binds the quote module's payer seam to the payments settle, on the door's
+// transaction.
+type quoteCounterPayer struct{ repo *payments.Repository }
+
+func (a quoteCounterPayer) KeyTakenTx(ctx context.Context, tx pgx.Tx, key string) (bool, error) {
+	return a.repo.ReceiptKeyTakenTx(ctx, tx, key)
+}
+
+// LockPaymentsSequenceTx binds the door's sequence order seam to the payments module's shared
+// non incrementing lock on the caller's transaction (payments/LOCK-ORDER.md), the same adapter
+// belt as the other two methods.
+func (a quoteCounterPayer) LockPaymentsSequenceTx(ctx context.Context, tx pgx.Tx) error {
+	return a.repo.LockPaymentsSequenceTx(ctx, tx)
+}
+
+func (a quoteCounterPayer) TakePaymentTx(ctx context.Context, tx pgx.Tx, in quote.CounterReceiptInput) (quote.CounterReceipt, error) {
+	out, err := a.repo.RecordReceiptTx(ctx, tx, payments.ReceiptRequest{
+		CustomerID:     in.CustomerID,
+		Method:         in.Method,
+		Reference:      in.Reference,
+		IdempotencyKey: in.IdempotencyKey,
+		ReceivedBy:     in.ReceivedBy,
+		BranchID:       in.BranchID,
+		Allocations:    []payments.Allocation{{InvoiceID: in.InvoiceID, AmountCents: in.AmountCents}},
+	})
+	if err != nil {
+		return quote.CounterReceipt{}, err
+	}
+	return quote.CounterReceipt{
+		PaymentID: out.Payment.ID, PaymentNo: out.Payment.PaymentNo, Method: out.Payment.Method,
+		AmountCents: out.Payment.AmountCents, ReceivedAt: out.Payment.ReceivedAt,
+		Reference: out.Reference, ReceivedBy: out.ReceivedBy, Replayed: out.Replayed,
+	}, nil
 }

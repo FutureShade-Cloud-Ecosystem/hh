@@ -22,7 +22,7 @@ import { readFileSync } from 'node:fs';
 
 const terminalSrc = readFileSync(new URL('./pos-terminal.ts', import.meta.url), 'utf8');
 const cardSrc = readFileSync(new URL('./pos-step-card.ts', import.meta.url), 'utf8');
-import { FLOW_ORDER } from './_pos-flow.ts';
+import { FLOW_ORDER } from '@hardscapehouse/pos-kit/src/ported/_pos-flow.ts';
 
 const facts = (over = {}) => ({
   customerName: '',
