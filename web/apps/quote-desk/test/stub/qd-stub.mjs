@@ -1870,6 +1870,32 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === "POST" && path === "/api/v1/pos/counter-prices") {
+    // The customer aware price picture: the server's answer, one entry per asked product. The account's own
+    // rule is the customer's price and retail stands beside it.
+    readBody(request, response, (body) => {
+      const customer = customerById.get(String(body.customer_id ?? ""));
+      const items = Array.isArray(body.items) ? body.items : [];
+      const prices = [];
+      for (const item of items) {
+        const product = productById.get(String(item.product_id ?? ""));
+        if (product === undefined) continue;
+        const off = customer === undefined ? 0 : customer.percent_off;
+        const customerCents = Math.round((product.list_cents * (100 - off)) / 100);
+        prices.push({
+          product_id: product.product_id,
+          price_uom: product.sold_by,
+          retail_cents: product.list_cents,
+          customer_cents: customerCents,
+          saving_cents: product.list_cents - customerCents,
+          basis: off > 0 ? "ACCOUNT" : "",
+        });
+      }
+      respondJson(response, 200, { customer_type: customer === undefined ? "" : customer.customer_type, prices });
+    });
+    return;
+  }
+
   if (request.method === "GET" && path === "/api/v1/products/scan") {
     const code = (url.searchParams.get("code") ?? "").trim().toLowerCase();
     const product = PRODUCTS.find((row) => row.sku.toLowerCase() === code || row.name.toLowerCase() === code || row.aliases.some((alias) => alias.trim().toLowerCase() === code));
