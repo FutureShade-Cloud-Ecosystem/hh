@@ -47,7 +47,7 @@ RUN npm ci
 # The builds run from inside each app's directory so npm puts the
 # workspace root's binaries on PATH (vite is hoisted there).
 WORKDIR /src/web/apps/counter-till
-RUN npx vite build --base=/till/ --outDir dist-till
+RUN npx vite build --mode demo --base=/till/ --outDir dist-till
 WORKDIR /src/web/apps/quote-desk
 RUN npx vite build --base=/quote/
 WORKDIR /src/web/apps/public-desk
