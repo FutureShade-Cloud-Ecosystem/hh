@@ -10,6 +10,7 @@
 // off-list caller gets the server's sentence in place of the screen's
 // controls. The stub's world is put back at both ends of the file.
 import { expect, test, type Page } from "@playwright/test";
+import { openDesk } from "./surface-tabs";
 
 async function signIn(page: Page, role = "Sales manager"): Promise<void> {
   await page.goto("/");
@@ -21,8 +22,7 @@ const settings = (page: Page) => page.locator("qd-quote-settings");
 
 /** Open the detail disclosure and the screen settings the way a person does. */
 async function openScreenSettings(page: Page): Promise<void> {
-  await page.getByText("Quote detail & admin").click();
-  await settings(page).getByTestId("qs-screen").locator("summary").click();
+  await openDesk(page, "settings");
   await expect(page.getByTestId("qs-policy")).toBeVisible();
 }
 
@@ -44,12 +44,12 @@ test.afterAll(async ({ request }) => {
   await request.post("/_stub/reset");
 });
 
-test("the work area's Screen settings button opens the settings region", async ({ page }) => {
+test("the work area's Screen settings button opens the Settings surface", async ({ page }) => {
   await signIn(page);
   // The button sits on the open quote's panel; a quote has to be open.
   await page.getByTestId("qb-list-row").filter({ hasText: "Draft" }).first().click();
   await page.getByTestId("qb-settings-btn").click();
-  await expect(page.getByTestId("qb-detail")).toHaveAttribute("open", "");
+  await expect(page).toHaveURL(/#\/settings$/);
   await expect(page.getByTestId("qs-policy")).toBeVisible();
   await expect(page.getByTestId("qs-validity-days")).toHaveValue("30");
 });
@@ -77,12 +77,12 @@ test("the quote policy saves a branch row, validated first, and reads back", asy
   await expect(page.getByTestId("qs-send-sms")).not.toBeChecked();
 });
 
-/** The fan-out the builder runs after any edit elsewhere on the page, and the policy read it brings. */
+/** The fan-out the desk host runs after any edit elsewhere on the page, and the policy read it brings. */
 async function fanOut(page: Page): Promise<void> {
   const read = page.waitForResponse((r) => r.url().includes("/api/v1/quotes/policy") && r.request().method() === "GET");
+  // The announcement reaches the Settings surface through the window (the desk host re-reads it on any edit).
   await page.evaluate(() => {
-    const root = document.querySelector("qd-app-root")?.shadowRoot?.querySelector("qd-quote-builder")?.shadowRoot;
-    root?.dispatchEvent(new CustomEvent("quote-changed", { detail: { quoteId: "" } }));
+    window.dispatchEvent(new CustomEvent("quote-changed", { detail: { quoteId: "" } }));
   });
   await read;
   await page.waitForTimeout(300);
@@ -178,8 +178,7 @@ test("the layout curation lists the registry, marks cost columns server gated, a
 
 test("the acceptance switch reads for this role, and the server refuses the dealer wide write: the switch locks with its sentence", async ({ page }) => {
   await signIn(page);
-  await page.getByText("Quote detail & admin").click();
-  await settings(page).getByTestId("qa-details").locator("summary").click();
+  await openDesk(page, "settings");
   await expect(page.getByTestId("qa-switch")).toBeVisible();
   await expect(page.getByTestId("qa-switch")).not.toBeChecked();
   // A click, not check(): the server refuses, so the box settles back where it was, which can beat the check's own re-read.
@@ -192,8 +191,7 @@ test("the acceptance switch reads for this role, and the server refuses the deal
 test("where the server allows it, the one switch flips and says what it now means", async ({ page }) => {
   await page.request.put("/_stub/general-manager", { data: { member: true } });
   await signIn(page);
-  await page.getByText("Quote detail & admin").click();
-  await settings(page).getByTestId("qa-details").locator("summary").click();
+  await openDesk(page, "settings");
   await page.getByTestId("qa-switch").check();
   await expect(page.getByTestId("qa-notice")).toContainText("Multiple acceptance is on");
   await page.getByTestId("qa-switch").uncheck();
@@ -203,8 +201,7 @@ test("where the server allows it, the one switch flips and says what it now mean
 
 test("the scope rule table lists every rule, switches one off and keeps it listed", async ({ page }) => {
   await signIn(page);
-  await page.getByText("Quote detail & admin").click();
-  await settings(page).getByTestId("qr-details").locator("summary").click();
+  await openDesk(page, "settings");
   await expect(page.getByTestId("qr-row")).toHaveCount(7);
   await expect(page.getByTestId("qr-summary")).toContainText("7 of 7 rules are on.");
   const row = page.getByTestId("qr-row").filter({ hasText: "WALL_NEEDS_BASE" });
@@ -220,32 +217,6 @@ test("the scope rule table lists every rule, switches one off and keeps it liste
   await expect(page.getByTestId("qr-table").locator("input")).toHaveCount(0);
   await row.getByRole("button").click();
   await expect(page.getByTestId("qr-summary")).toContainText("7 of 7 rules are on.");
-});
-
-test("a caller outside the settings roles sees the server's sentences in place of the controls", async ({ page }) => {
-  await signIn(page, "Sales");
-  // The work area offers no Screen settings entry to this caller.
-  await expect(page.getByTestId("qb-settings-btn")).toHaveCount(0);
-  await page.getByText("Quote detail & admin").click();
-  await settings(page).getByTestId("qs-screen").locator("summary").click();
-  await settings(page).getByTestId("qa-details").locator("summary").click();
-  await settings(page).getByTestId("qr-details").locator("summary").click();
-  // The acceptance switch and the scope rules: the server refused the read, so its sentence stands.
-  await expect(page.getByTestId("qa-refused")).toContainText("may not read them");
-  await expect(page.getByTestId("qa-switch")).toHaveCount(0);
-  await expect(page.getByTestId("qr-refused")).toContainText("Only an administrator reads the scope rules");
-  await expect(page.getByTestId("qr-row")).toHaveCount(0);
-  // The policy reads; its write is refused, and the screen locks with the server's sentence.
-  await expect(page.getByTestId("qs-policy")).toBeVisible();
-  const before = (await ledger(page)).policyWrites.length;
-  await page.getByTestId("qs-policy-save").click();
-  await expect(page.getByTestId("qs-policy-lock")).toContainText("The Inside Sales role may not change the quote policy");
-  await expect(page.getByTestId("qs-policy-save")).toBeDisabled();
-  expect((await ledger(page)).policyWrites).toHaveLength(before);
-  // The curation write is refused the same way.
-  await page.getByTestId("qs-items-save").click();
-  await expect(page.getByTestId("qs-items-lock")).toContainText("Only an administrator saves the dealer's screen layout");
-  await expect(page.getByTestId("qs-items-save")).toBeDisabled();
 });
 
 // ── PR 121 round 1: a switch never wipes or misdirects what the person typed ──

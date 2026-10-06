@@ -29,8 +29,8 @@ import { HOUSE_ZONE, houseDayInZone } from "@hardscapehouse/pos-kit/src/ported/h
 import { setBranches, wirePorts, clearSessionState, type AuthUser } from "@hardscapehouse/pos-kit/src/ported/ports.js";
 import { QdClient, type BranchRef } from "./qd-client.js";
 import { THEME_LABEL, ThemeController, themeControlLabel, themeStatusText } from "./theme.js";
-// The builder shell registers the work area and the panel seams.
-import "./quote-builder.js";
+// The desk host registers the navigation bar, every surface and the builder shell.
+import "./desk-surfaces.js";
 
 const DEMO_ORG = "hh-demo";
 
@@ -150,8 +150,12 @@ export class QuoteDeskApp extends HHElement {
   protected override updated(): void {
     // The wiring pass: the builder receives the validated client the same
     // way every shared component receives its facts.
-    const builder = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("qd-quote-builder");
-    if (builder !== null) builder.client = this.#client;
+    const desk = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("qd-desk-surfaces");
+    if (desk !== null) {
+      desk.client = this.#client;
+      desk.roleCode = this.#deskIdentity?.role_code ?? "";
+      desk.branchId = this.#branch?.id ?? "";
+    }
     // The shared chrome is fed the same way, not through template bindings
     // (the design system's position gate holds this app's templates too):
     // the role's label, the signed-in flag, the demo badge's build flag, and
@@ -329,6 +333,9 @@ export class QuoteDeskApp extends HHElement {
     this.#branch = null;
     this.#message = sent ? null : "Signing out did not wait for every unsent change: saving timed out, so a change you made last may not have been saved.";
     this.#surface = "entry";
+    // The address belongs to the session that ended: the next person starts at the landing, never on the last
+    // person's quote or walled page (nothing is asked of a quote under the next session until it is opened).
+    if (window.location.hash !== "") window.location.replace("#/quotes");
     // The shared surface's session-owned module state goes with the session.
     clearSessionState();
     this.requestUpdate();
@@ -384,7 +391,7 @@ export class QuoteDeskApp extends HHElement {
         ${this.#surface === "desk"
           ? html`
               <div class="surface">
-                <qd-quote-builder></qd-quote-builder>
+                <qd-desk-surfaces></qd-desk-surfaces>
               </div>
             `
           : renderEntry({ flows: this.#flowsState, busy: this.#busy, message: this.#message })}

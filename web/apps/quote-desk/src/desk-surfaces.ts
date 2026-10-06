@@ -45,7 +45,7 @@ export class QdDeskSurfaces extends LitElement {
     :host {
       display: block;
     }
-    [hidden] {
+    [data-hidden="true"] {
       display: none;
     }
     qd-desk-nav {
@@ -107,6 +107,9 @@ export class QdDeskSurfaces extends LitElement {
       if (el !== null) Object.assign(el, facts);
     };
     const role = roleOf(this.roleCode);
+    feed("qd-desk-nav", { deskRole: role, active: deskTabOf(this.route), pending: this.pending });
+    feed("qd-no-access", { surface: this.surfaceName(this.route) });
+    feed("qd-approval-detail", { requestId: this.route.kind === "approval" ? this.route.id : "" });
     feed("qd-quote-builder", { client: this.client, route: this.route, deskRole: role });
     feed("qd-approvals-queue", { client: this.client });
     feed("qd-approval-detail", { client: this.client });
@@ -126,22 +129,22 @@ export class QdDeskSurfaces extends LitElement {
     const allowed = canSee(role, route);
     const onQuotes = route.kind === "quotes" || route.kind === "compose" || route.kind === "quote";
     const surface = !allowed
-      ? html`<qd-no-access surface=${this.surfaceName(route)}></qd-no-access>`
+      ? html`<qd-no-access></qd-no-access>`
       : route.kind === "approvals"
         ? html`<qd-approvals-queue></qd-approvals-queue>`
         : route.kind === "approval"
-          ? html`<qd-approval-detail request-id=${route.id}></qd-approval-detail>`
+          ? html`<qd-approval-detail></qd-approval-detail>`
           : route.kind === "pricing"
             ? html`<qd-pricing-surface></qd-pricing-surface>`
             : route.kind === "settings"
               ? html`<qd-settings-page></qd-settings-page>`
               : nothing;
     return html`
-      <qd-desk-nav desk-role=${role} active=${deskTabOf(route)} pending=${String(this.pending)}></qd-desk-nav>
+      <qd-desk-nav></qd-desk-nav>
       ${surface}
       <!-- The builder stays mounted while another surface shows (its quote's late answers must still land), and
            shows only on the quote routes the role may see. -->
-      <qd-quote-builder ?hidden=${!(onQuotes && allowed)}></qd-quote-builder>
+      <qd-quote-builder data-hidden=${onQuotes && allowed ? "false" : "true"}></qd-quote-builder>
     `;
   }
 }

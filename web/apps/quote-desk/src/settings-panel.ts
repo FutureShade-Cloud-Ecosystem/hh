@@ -38,6 +38,12 @@ export class QdQuoteSettings extends PanelBase {
     `,
   ];
 
+  /** The page's sections read open from the first draw; a person who closes one keeps it closed. */
+  protected override firstUpdated(): void {
+    if (!this.openSections) return;
+    for (const details of this.renderRoot.querySelectorAll("details")) details.open = true;
+  }
+
   /** The children receive the same facts the host was given. */
   protected override updated(): void {
     for (const child of this.renderRoot.querySelectorAll<HTMLElement & Record<string, unknown>>("qd-surface-settings, qd-accept-admin, qd-scope-rules")) {
@@ -62,15 +68,15 @@ export class QdQuoteSettings extends PanelBase {
 
   override render() {
     return html`
-      <details class="box" data-testid="qs-screen" ?open=${this.openSections}>
+      <details class="box" data-testid="qs-screen">
         <summary>Screen settings</summary>
         <qd-surface-settings></qd-surface-settings>
       </details>
-      <details class="box" data-testid="qa-details" ?open=${this.openSections}>
+      <details class="box" data-testid="qa-details">
         <summary>Acceptance settings</summary>
         <qd-accept-admin></qd-accept-admin>
       </details>
-      <details class="box" data-testid="qr-details" ?open=${this.openSections}>
+      <details class="box" data-testid="qr-details">
         <summary>Scope suggestion rules</summary>
         <qd-scope-rules></qd-scope-rules>
       </details>

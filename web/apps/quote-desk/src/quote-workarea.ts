@@ -225,6 +225,16 @@ export class QdQuoteWorkarea extends LitElement {
       background: var(--hos-slate-warm, var(--hh-card));
       margin-bottom: var(--hos-s-12, 12px);
     }
+    /* The quote's surface tabs (the builder slots its strip here): they sit in the title row beside the title, and
+       on a tab other than Build the row stands alone, the stepper and the workspace giving way to the surface. */
+    .tabsrow {
+      display: flex;
+      align-items: center;
+    }
+    :host([data-tab-only="true"]) hos-pos-flow-steps,
+    :host([data-tab-only="true"]) .workspace {
+      display: none;
+    }
     .headid .pagetitle {
       margin: 0;
       font-size: var(--qb-title);
@@ -2684,6 +2694,7 @@ export class QdQuoteWorkarea extends LitElement {
             ${this.branchName === "" ? "Yard" : this.branchName}${v !== null ? html` · ${v.quote_no}` : nothing}
           </div>
         </div>
+        <div class="tabsrow"><slot name="tabs"></slot></div>
         <hos-pos-flow-steps></hos-pos-flow-steps>
         <div class="session">
           <span class="clock" data-testid="qb-clock">${clockLabel(this.clockNow)}</span>

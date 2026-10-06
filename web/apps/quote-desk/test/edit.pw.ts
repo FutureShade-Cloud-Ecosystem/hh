@@ -7,8 +7,9 @@
 // area fires), and the convert control with the fulfilment choice. The stub's
 // world is in memory: the file puts it back at both ends and runs in order.
 import { expect, test, type Page } from "@playwright/test";
+import { openTab } from "./surface-tabs";
 
-async function signIn(page: Page, role = "Sales"): Promise<void> {
+async function signIn(page: Page, role = "Sales manager"): Promise<void> {
   await page.goto("/");
   await page.getByRole("button", { name: role, exact: true }).click();
   await expect(page.getByTestId("qb-list")).toBeVisible();
@@ -17,8 +18,7 @@ async function signIn(page: Page, role = "Sales"): Promise<void> {
 /** Open a row of the list by its text, then the detail disclosure that hosts the panel. */
 async function openQuote(page: Page, text: string): Promise<void> {
   await page.getByTestId("qb-list-row").filter({ hasText: text }).first().click();
-  const detail = page.getByTestId("qb-detail");
-  if ((await detail.getAttribute("open")) === null) await page.getByText("Quote detail & admin").click();
+  await openTab(page, "admin");
   await expect(page.getByTestId("qe-box")).toBeVisible();
 }
 
@@ -38,6 +38,9 @@ async function refusals(page: Page): Promise<Array<{ quoteId: string; lineNo: nu
 
 test.beforeAll(async ({ request }) => {
   await request.post("/_stub/reset");
+  // The edit panel is the Sales manager's (the Admin tab) and a manager may clear a floor: the stub is told not to,
+  // so the floor refusal legs below still meet the refusal; the manager's own clearing turns it back on.
+  await request.put("/_stub/manager-override", { data: { on: false } });
 });
 
 test.afterAll(async ({ request }) => {
@@ -221,7 +224,10 @@ test("share links: mint once with the token shown once, list without it, revoke"
   await expect(panel(page).getByTestId("qe-link")).toContainText("Active");
   // A fresh load lists the link and never shows its token again.
   await page.reload();
-  await page.getByRole("button", { name: "Sales", exact: true }).click();
+  await page.getByRole("button", { name: "Sales manager", exact: true }).click();
+  await page.evaluate(() => {
+    window.location.hash = "#/quotes";
+  });
   await openQuote(page, "Sent");
   await expect(panel(page).getByTestId("qe-link")).toHaveCount(1);
   await expect(panel(page).locator('[data-field="link-url"]')).toHaveCount(0);
@@ -287,33 +293,11 @@ test("an accepted quote offers convert and no edit; the fulfilment choice rides 
   expect(state.conversions[0].fulfillment).toBe("WILL_CALL");
 });
 
-test("a caller the server offers nothing sees no edit control, only the reasons", async ({ page }) => {
-  await signIn(page);
-  // The manager's Sent quote is not in the Sales list; open it by id the way the list's open event does.
-  await page.evaluate(() => {
-    const root = document.querySelector("qd-app-root")?.shadowRoot?.querySelector("qd-quote-builder")?.shadowRoot;
-    root?.dispatchEvent(new CustomEvent("quote-open", { detail: { quoteId: "q-1002" } }));
-  });
-  await page.getByText("Quote detail & admin").click();
-  await expect(page.getByTestId("qe-box")).toBeVisible();
-  await expect(page.getByTestId("qe-title")).toContainText("Q-1002");
-  await expect(page.getByTestId("qe-frozen")).toHaveText("No changes are offered to you on this quote. It belongs to Sales manager (demo).");
-  await expect(panel(page).locator('[data-field="qty"]')).toHaveCount(0);
-  await expect(panel(page).locator('[data-field="disc"]')).toHaveCount(0);
-  await expect(panel(page).getByRole("button", { name: "Remove" })).toHaveCount(0);
-  await expect(panel(page).locator('[data-field="expiry"]')).toHaveCount(0);
-  await expect(panel(page).getByText("Add a line", { exact: true })).toHaveCount(0);
-  await expect(panel(page).getByRole("button", { name: "Create link to copy" })).toHaveCount(0);
-  await expect(page.getByTestId("qe-share-note")).toHaveText("Sharing is not offered to you on this quote.");
-  await expect(panel(page).getByTestId("qe-convert")).toHaveCount(0);
-  // Reading is still allowed: Compare stays, read only.
-  await expect(panel(page).getByRole("button", { name: "Compare" })).toHaveCount(1);
-});
-
-test("the Sales manager edits any quote in its branch", async ({ page }) => {
+test("the Sales manager edits any quote in its branch", async ({ page, request }) => {
+  await request.put("/_stub/manager-override", { data: { on: true } });
   await signIn(page, "Sales manager");
   await page.getByTestId("qb-list-row").filter({ hasText: "Fenwick" }).first().click();
-  await page.getByText("Quote detail & admin").click();
+  await openTab(page, "admin");
   await expect(panel(page).locator('[data-field="qty"]')).toHaveCount(1);
   await panel(page).locator('[data-field="qty"]').fill("11");
   await panel(page).getByRole("button", { name: "Save", exact: true }).click();

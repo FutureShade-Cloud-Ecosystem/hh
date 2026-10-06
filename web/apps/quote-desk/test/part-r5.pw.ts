@@ -1,6 +1,7 @@
 // Round 5: the principal's two P2s and the folded P3s (decision row 783). Each test holds an answer back behind a
 // gate, so the order of events is exact and never depends on the machine's speed.
 import { expect, test, type Page } from "@playwright/test";
+import { openTab } from "./surface-tabs";
 import { hold, open, quiet, row, seed, settle, signIn, writes } from "./switch-helpers.js";
 
 test.beforeEach(async ({ request }) => {
@@ -10,11 +11,10 @@ test.afterAll(async ({ request }) => {
   await request.post("/_stub/reset");
 });
 
-async function openQuoteDetail(page: Page, quoteNo: string): Promise<void> {
+async function openQuoteDetail(page: Page, quoteNo: string, tab: "admin" | "activity" = "admin"): Promise<void> {
   await row(page, quoteNo).click();
-  const detail = page.getByTestId("qb-detail");
-  if ((await detail.getAttribute("open")) === null) await page.getByText("Quote detail & admin").click();
-  await expect(page.getByTestId("qe-title")).toContainText(quoteNo);
+  await openTab(page, tab);
+  await expect(page.getByTestId("qb-context")).toContainText(quoteNo);
 }
 
 async function newQuote(page: Page): Promise<void> {
@@ -87,14 +87,14 @@ const followups = (page: Page) => page.locator("qd-quote-followups");
 
 test("P2-2 leaving through New Quote: a follow-ups stop that lands while its panel is gone shows OFF on return", async ({ page }) => {
   await signIn(page, "Sales manager");
-  await openQuoteDetail(page, "Q-1002");
+  await openQuoteDetail(page, "Q-1002", "activity");
   await expect(followups(page).getByTestId("fu-summary")).toContainText("Follow-ups are on");
   const disable = await hold(page, /\/quotes\/q-1002\/followups\/disable$/, { method: "POST", times: 1 });
   await followups(page).getByRole("button", { name: "Stop follow-ups" }).click();
   await disable.asked;
   await newQuote(page);
   // The quote is opened again while the stop is still out: the panel on screen is not the one that made the stop.
-  await openQuoteDetail(page, "Q-1002");
+  await openQuoteDetail(page, "Q-1002", "activity");
   await expect(followups(page).getByTestId("fu-summary")).toContainText("Follow-ups are on");
   await disable.release();
   await expect(followups(page).getByTestId("fu-summary")).toContainText("Follow-ups are OFF");

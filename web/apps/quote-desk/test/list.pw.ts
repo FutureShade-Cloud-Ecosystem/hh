@@ -5,6 +5,7 @@
 // disclosure hosts the named seams the second and third coders fill. The
 // stub's world is in memory, so the tests run in order.
 import { expect, test, type Page } from "@playwright/test";
+import { openTab } from "./surface-tabs";
 
 // The stub keeps the person's layout row, which now remembers the open quote: every test starts from the seeded world.
 test.beforeEach(async ({ request }) => {
@@ -72,17 +73,17 @@ test("the create form makes a quote and opens it", async ({ page }) => {
   await expect(page.getByTestId("qb-identity")).toContainText("Fenwick Builders");
 });
 
-test("the detail disclosure hosts the named seams and reaches them on the fan-out", async ({ page }) => {
-  await signIn(page);
+test("the quote's surfaces host the named seams and reach them on the fan-out", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Sales manager", exact: true }).click();
+  await expect(page.getByTestId("qb-list")).toBeVisible();
   // The seams are mounted for an open quote only: open the Draft row first.
   await page.getByTestId("qb-list-row").filter({ hasText: "Draft" }).first().click();
-  await page.getByText("Quote detail & admin").click();
-  await expect(page.locator('[data-seam="edit-panel"]')).toBeAttached();
-  await expect(page.locator('[data-seam="history"]')).toBeAttached();
-  await expect(page.locator('[data-seam="settings"]')).toBeAttached();
-  await expect(page.locator('[data-seam="assist"]')).toBeAttached();
-  await expect(page.locator('[data-seam="followups"]')).toBeAttached();
-  await expect(page.locator('[data-seam="hold-expiry"]')).toBeAttached();
-  await expect(page.locator('[data-seam="availability"]')).toBeAttached();
-  await expect(page.locator('[data-seam="approvals"]')).toBeAttached();
+  await openTab(page, "admin");
+  // Activity: history, follow ups, assist. Stock: hold expiry, availability. Admin: the edit panel.
+  for (const seam of ["edit-panel", "history", "assist", "followups", "hold-expiry", "availability"]) {
+    await expect(page.locator(`[data-seam="${seam}"]`)).toBeAttached();
+  }
+  // The settings and the approvals left for their own surfaces: nothing of them is under a quote.
+  await expect(page.locator('[data-seam="settings"], [data-seam="approvals"]')).toHaveCount(0);
 });

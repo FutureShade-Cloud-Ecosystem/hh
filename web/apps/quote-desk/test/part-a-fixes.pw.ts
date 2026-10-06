@@ -6,6 +6,7 @@
 // quotes list pages and its rows are reachable by keyboard; convert sends
 // the chosen fulfilment and nothing more.
 import { expect, test, type Page } from "@playwright/test";
+import { openTab } from "./surface-tabs";
 
 const SALES = { name: "Sales", exact: true };
 
@@ -164,9 +165,9 @@ test("a quote row is reached with Tab and opened with Enter", async ({ page }) =
 });
 
 test("convert sends nothing for the default fulfilment and the chosen one when chosen", async ({ page, request }) => {
-  await signIn(page);
+  await signIn(page, { name: "Sales manager", exact: true });
   await page.getByTestId("qb-list-row").filter({ hasText: "Accepted" }).first().click();
-  await page.getByText("Quote detail & admin").click();
+  await openTab(page, "admin");
   await page.getByTestId("qe-convert").click();
   await expect(page.getByTestId("qe-converted")).toContainText("Converted to order SO-");
   const state = await (await request.get("/_stub/state")).json();

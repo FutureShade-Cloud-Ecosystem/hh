@@ -5,6 +5,7 @@
 // nothing was written. The suite's discount test lost to that race about as
 // often as it won; this test makes the race deterministic.
 import { expect, test } from "@playwright/test";
+import { openTab } from "./surface-tabs";
 
 // Both tests read the second line of the seeded draft: a quote another test left behind, or a layout row that resumes
 // another quote, would put a different quote under the click, so each starts from the seeded world.
@@ -17,7 +18,7 @@ test.afterAll(async ({ request }) => {
 
 test("a late re-read leaves the box being typed in alone, and the blur still saves", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "Sales", exact: true }).click();
+  await page.getByRole("button", { name: "Sales manager", exact: true }).click();
   await page.getByTestId("qb-list-row").filter({ hasText: "Draft" }).first().click();
   const disc = page.getByTestId("qb-line-disc").nth(1);
   await expect(disc).toBeVisible();
@@ -25,7 +26,7 @@ test("a late re-read leaves the box being typed in alone, and the blur still sav
   // The fan-out the builder runs after any edit elsewhere on the page, and its read.
   const read = page.waitForResponse((r) => /\/api\/v1\/quotes\/q-\d+$/.test(r.url()) && r.request().method() === "GET");
   await page.evaluate(() => {
-    const root = document.querySelector("qd-app-root")?.shadowRoot?.querySelector("qd-quote-builder")?.shadowRoot;
+    const root = document.querySelector("qd-app-root")?.shadowRoot?.querySelector("qd-desk-surfaces")?.shadowRoot?.querySelector("qd-quote-builder")?.shadowRoot;
     root?.dispatchEvent(new CustomEvent("quote-changed", { detail: { quoteId: "q-1001" } }));
   });
   await read;
@@ -37,15 +38,15 @@ test("a late re-read leaves the box being typed in alone, and the blur still sav
 
 test("the edit panel keeps the figure being typed through a re-read too", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "Sales", exact: true }).click();
+  await page.getByRole("button", { name: "Sales manager", exact: true }).click();
   await page.getByTestId("qb-list-row").filter({ hasText: "Draft" }).first().click();
-  await page.getByText("Quote detail & admin").click();
+  await openTab(page, "admin");
   const qty = page.locator("qd-quote-edit").locator('[data-field="qty"]').nth(1);
   await expect(qty).toBeVisible();
   await qty.fill("7");
   const read = page.waitForResponse((r) => /\/api\/v1\/quotes\/q-\d+$/.test(r.url()) && r.request().method() === "GET");
   await page.evaluate(() => {
-    const root = document.querySelector("qd-app-root")?.shadowRoot?.querySelector("qd-quote-builder")?.shadowRoot;
+    const root = document.querySelector("qd-app-root")?.shadowRoot?.querySelector("qd-desk-surfaces")?.shadowRoot?.querySelector("qd-quote-builder")?.shadowRoot;
     root?.dispatchEvent(new CustomEvent("quote-changed", { detail: { quoteId: "q-1001" } }));
   });
   await read;
@@ -56,7 +57,7 @@ test("the edit panel keeps the figure being typed through a re-read too", async 
   await qty.fill("9");
   await page.locator("qd-quote-edit").locator('[data-field="qty"]').first().focus();
   await page.evaluate(() => {
-    const root = document.querySelector("qd-app-root")?.shadowRoot?.querySelector("qd-quote-builder")?.shadowRoot;
+    const root = document.querySelector("qd-app-root")?.shadowRoot?.querySelector("qd-desk-surfaces")?.shadowRoot?.querySelector("qd-quote-builder")?.shadowRoot;
     root?.dispatchEvent(new CustomEvent("quote-changed", { detail: { quoteId: "q-1001" } }));
   });
   await expect(qty).toHaveValue("9");

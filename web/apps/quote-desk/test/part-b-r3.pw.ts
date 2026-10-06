@@ -1,20 +1,18 @@
 // PR 121 round 3, Part B findings: the panels. Every test holds an answer back behind a delayed route, so the order
 // of events is exact on any machine.
 import { expect, test, type Browser, type Page } from "@playwright/test";
+import { openDesk, openTab } from "./surface-tabs";
 import { hold, quiet, row, seed, settle, signIn as signInAs, writes } from "./switch-helpers.js";
 
 // The Sales manager sees every quote in the list, so the probes can move between quotes of either owner.
 const signIn = (page: Page, role = "Sales manager") => signInAs(page, role);
 
-async function openDetail(page: Page): Promise<void> {
-  const detail = page.getByTestId("qb-detail");
-  if ((await detail.getAttribute("open")) === null) await page.getByText("Quote detail & admin").click();
-  await expect(page.getByTestId("qe-box")).toBeVisible();
-}
+/** The quote's surface a panel stands on: Admin (the edit panel, Check Quote), Activity (follow ups, assist) or Stock. */
+type Surface = "admin" | "activity" | "stock";
 
-async function openQuote(page: Page, quoteNo: string): Promise<void> {
+async function openQuote(page: Page, quoteNo: string, tab: Surface = "admin"): Promise<void> {
   await row(page, quoteNo).click();
-  await openDetail(page);
+  await openTab(page, tab);
   await expect(page.getByTestId("qe-title")).toContainText(quoteNo);
 }
 
@@ -23,6 +21,9 @@ const assist = (page: Page) => page.locator("qd-quote-assist");
 
 test.beforeEach(async ({ request }) => {
   await request.post("/_stub/reset");
+  // The edit panel and Check Quote are the Sales manager's (the Admin tab) and a manager may clear a floor: the stub
+  // is told not to, so the floor refusals these legs probe still happen.
+  await request.put("/_stub/manager-override", { data: { on: false } });
 });
 test.afterAll(async ({ request }) => {
   await request.post("/_stub/reset");
@@ -30,7 +31,7 @@ test.afterAll(async ({ request }) => {
 
 test("P2-1 an add that was out when the person left lands, and the note counts it and the line is there on return", async ({ page }) => {
   await signIn(page);
-  await openQuote(page, "Q-1001");
+  await openQuote(page, "Q-1001", "activity");
   await assist(page).locator("#jobtext").fill("3 yd clear stone, 20 sf holland stone");
   await assist(page).getByRole("button", { name: "Suggest lines from this text" }).click();
   const proposals = assist(page).getByTestId("qa-proposal");
@@ -65,7 +66,7 @@ async function plantAndOpenAsManager(browser: Browser, page: Page): Promise<Page
   for (const lineNo of [1, 2]) await page.request.post("/_stub/plant-approval", { data: { quote_id: "q-1001", line_no: lineNo, disc_pct: 10, requested_by_flow: "sales" } });
   const manager = await (await browser.newContext({ viewport: { width: 1440, height: 900 } })).newPage();
   await signIn(manager, "Sales manager");
-  await openQuote(manager, "Q-1001");
+  await openDesk(manager, "approvals");
   await expect(manager.locator("qd-approvals").getByTestId("ap-row")).toHaveCount(2);
   return manager;
 }
@@ -164,7 +165,7 @@ test("P2-3 a conversion that lands after leaving and returning to the quote show
 });
 
 test("P3 a floor refusal answered after the person returned to the quote is shown on it", async ({ page }) => {
-  await signIn(page, "Sales");
+  await signIn(page, "Sales manager");
   await openQuote(page, "Q-1001");
   const patch = await hold(page, /\/api\/v1\/quotes\/q-1001\/lines\/1$/, { method: "PATCH", times: 1 });
   const paver = edit(page).getByTestId("qe-line").first();
@@ -180,7 +181,7 @@ test("P3 a floor refusal answered after the person returned to the quote is show
 });
 
 test("P3 a refusal answered while the person is on another quote is not shown there", async ({ page }) => {
-  await signIn(page, "Sales");
+  await signIn(page, "Sales manager");
   await openQuote(page, "Q-1001");
   const patch = await hold(page, /\/api\/v1\/quotes\/q-1001\/lines\/1$/, { method: "PATCH", times: 1 });
   const paver = edit(page).getByTestId("qe-line").first();
@@ -216,8 +217,7 @@ test("P3 the fulfilment chosen for one conversion is not preselected on the next
 });
 
 async function openScreenSettings(page: Page): Promise<void> {
-  await page.getByText("Quote detail & admin").click();
-  await page.locator("qd-quote-settings").getByTestId("qs-screen").locator("summary").click();
+  await openDesk(page, "settings");
   await expect(page.getByTestId("qs-policy")).toBeVisible();
 }
 
@@ -290,7 +290,7 @@ const reloadOf = (page: Page, selector: string) => page.locator(selector).evalua
 
 test("P3 availability: an older read of the quote answered late does not undo a newer one", async ({ page, request }) => {
   await signIn(page);
-  await openQuote(page, "Q-1002");
+  await openQuote(page, "Q-1002", "stock");
   const panel = page.locator("qd-quote-availability");
   const chip = panel.getByTestId("av-chip").first();
   await expect(chip).toBeVisible();
@@ -314,7 +314,7 @@ test("P3 availability: an older read of the quote answered late does not undo a 
 
 test("P3 availability: a peek answered after a newer read of the quote is dropped", async ({ page, request }) => {
   await signIn(page);
-  await openQuote(page, "Accepted");
+  await openQuote(page, "Accepted", "stock");
   const panel = page.locator("qd-quote-availability");
   const thin = panel.getByTestId("av-line").filter({ has: page.locator('[data-avail-grade="THIN"]') });
   await quiet(page);
@@ -337,7 +337,7 @@ test("P3 availability: a peek answered after a newer read of the quote is droppe
 
 test("P3 follow-ups: an older read of the quote answered late does not undo a newer one", async ({ page, request }) => {
   await signIn(page);
-  await openQuote(page, "Q-1002");
+  await openQuote(page, "Q-1002", "activity");
   const panel = page.locator("qd-quote-followups");
   await expect(panel.getByTestId("fu-contact")).toContainText("Not heard from us yet");
   await quiet(page);
@@ -358,7 +358,7 @@ test("P3 follow-ups: an older read of the quote answered late does not undo a ne
 
 test("P3 hold expiry: an older read of the quote answered late does not undo a newer one", async ({ page, request }) => {
   await signIn(page);
-  await openQuote(page, "Q-1001");
+  await openQuote(page, "Q-1001", "stock");
   const panel = page.locator("qd-quote-hold-expiry");
   await expect(panel.getByTestId("he-headline")).toHaveCount(0);
   await quiet(page);
@@ -378,7 +378,7 @@ test("P3 hold expiry: an older read of the quote answered late does not undo a n
 });
 
 test("P3 the guard panel: a verdict answered after the quote moved to another branch says nothing", async ({ page }) => {
-  await signIn(page, "Sales");
+  await signIn(page, "Sales manager");
   await openQuote(page, "Q-1001");
   const guard = page.locator("qd-quote-guard");
   const post = await hold(page, /\/api\/v1\/staff\/identity\/policy\/check|\/policy\/check/, { method: "POST" });
@@ -393,7 +393,7 @@ test("P3 the guard panel: a verdict answered after the quote moved to another br
 });
 
 test("P3 the guard panel: a verdict is cleared when the quote moves to another branch", async ({ page }) => {
-  await signIn(page, "Sales");
+  await signIn(page, "Sales manager");
   await openQuote(page, "Q-1001");
   const guard = page.locator("qd-quote-guard");
   await guard.getByTestId("qg-check").click();
@@ -405,7 +405,7 @@ test("P3 the guard panel: a verdict is cleared when the quote moves to another b
 });
 
 test("P3 the floor dialog: the answer to a request filed for a refusal closed since says nothing on the next refusal", async ({ page }) => {
-  await signIn(page, "Sales");
+  await signIn(page, "Sales manager");
   await openQuote(page, "Q-1001");
   const paver = edit(page).getByTestId("qe-line").first();
   await paver.locator('[data-field="disc"]').fill("10");
@@ -428,7 +428,7 @@ test("P3 the floor dialog: the answer to a request filed for a refusal closed si
 
 test("P3 the assist panel: leaving a quote and coming back inside one update leaves the panel usable", async ({ page }) => {
   await signIn(page);
-  await openQuote(page, "Q-1001");
+  await openQuote(page, "Q-1001", "activity");
   const extract = await hold(page, /\/api\/v1\/quote-assist\/extract$/, { method: "POST" });
   await assist(page).locator("#jobtext").fill("3 yd clear stone");
   await assist(page).getByRole("button", { name: "Suggest lines from this text" }).click();
@@ -445,7 +445,7 @@ test("P3 the assist panel: leaving a quote and coming back inside one update lea
 });
 
 test("P3 the guard panel: the branch name read for the branch before is not shown under the new one", async ({ page }) => {
-  await signIn(page, "Sales");
+  await signIn(page, "Sales manager");
   await openQuote(page, "Q-1001");
   const guard = page.locator("qd-quote-guard");
   const own = await guard.evaluate((el) => (el as unknown as { branchId: string }).branchId);

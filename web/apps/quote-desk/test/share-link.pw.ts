@@ -1,14 +1,14 @@
 // The just-minted share link: a revoked link takes its address and the "copy
 // this now" offer with it, and a page with no clipboard never claims a copy.
 import { expect, test, type Page } from "@playwright/test";
+import { openTab } from "./surface-tabs";
 
 async function open(page: Page): Promise<void> {
   await page.goto("/");
-  await page.getByRole("button", { name: "Sales", exact: true }).click();
+  await page.getByRole("button", { name: "Sales manager", exact: true }).click();
   await expect(page.getByTestId("qb-list")).toBeVisible();
   await page.getByTestId("qb-list-row").filter({ hasText: "Q-1001" }).first().click();
-  const detail = page.getByTestId("qb-detail");
-  if ((await detail.getAttribute("open")) === null) await page.getByText("Quote detail & admin").click();
+  await openTab(page, "admin");
   await expect(page.getByTestId("qe-box")).toBeVisible();
 }
 

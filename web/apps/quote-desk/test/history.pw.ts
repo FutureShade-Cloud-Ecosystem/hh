@@ -4,8 +4,9 @@
 // actor on each, the panel refreshing when an edit lands elsewhere on the
 // page, the empty state, and a refused read shown in words.
 import { expect, test, type Page } from "@playwright/test";
+import { openTab } from "./surface-tabs";
 
-async function signIn(page: Page, role = "Sales"): Promise<void> {
+async function signIn(page: Page, role = "Sales manager"): Promise<void> {
   await page.goto("/");
   await page.getByRole("button", { name: role, exact: true }).click();
   await expect(page.getByTestId("qb-list")).toBeVisible();
@@ -13,9 +14,10 @@ async function signIn(page: Page, role = "Sales"): Promise<void> {
 
 async function openQuote(page: Page, text: string): Promise<void> {
   await page.getByTestId("qb-list-row").filter({ hasText: text }).first().click();
-  const detail = page.getByTestId("qb-detail");
-  if ((await detail.getAttribute("open")) === null) await page.getByText("Quote detail & admin").click();
-  await expect(page.getByTestId("qh-box")).toBeVisible();
+  // The edits are made on the Admin tab (the manager's per line table); the trail they leave is read from the Activity
+  // tab's panel, which stays mounted while hidden, so its text is asserted where it stands.
+  await openTab(page, "admin");
+  await expect(page.getByTestId("qe-box")).toBeVisible();
 }
 
 const history = (page: Page) => page.locator("qd-quote-history");
@@ -47,7 +49,7 @@ test("each action is one entry, in order, with its consequences beneath and the 
   // The history refreshed without a page reload: the edit panel's quote-changed reached it.
   const first = history(page).getByTestId("qh-group").first();
   await expect(first).toContainText("Quantity, line 2: 2 → 6");
-  await expect(first).toContainText("Sales (demo)");
+  await expect(first).toContainText("Sales manager (demo)");
   await expect(first).toContainText("Line total: CA$22.96 → CA$68.88");
   await expect(first).toContainText("Quote subtotal");
   // Action two: a discount on the same line, among the rows as its own entry.

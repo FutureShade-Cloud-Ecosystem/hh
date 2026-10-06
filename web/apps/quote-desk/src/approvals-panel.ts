@@ -21,6 +21,7 @@
 // The templates carry no property or event bindings: the panel base delegates
 // by data-action and data-field, and the reason input is uncontrolled.
 import { css, html, nothing } from "lit";
+import { hhAddress } from "@hardscapehouse/design-system/src/address.js";
 import { customElement, state } from "lit/decorators.js";
 import type { IdentityApproval } from "@hardscapehouse/api-client";
 import { PanelBase } from "./panel-base.js";
@@ -210,6 +211,7 @@ export class QdApprovals extends PanelBase {
     const refusal = this.rowError[row.id] ?? "";
     const offer = this.offers(row);
     const own = isDecidable(row.status) && this.isOwn(row);
+    const requestHref = `#/approvals/${encodeURIComponent(row.id)}`;
     const tone = row.status === "APPROVED" ? "good" : row.status === "PENDING" ? "wait" : "";
     return html`
       <div class="req" data-testid="ap-row" data-status=${row.status}>
@@ -217,7 +219,7 @@ export class QdApprovals extends PanelBase {
           <span class="pill">${label}</span>
           <span class="pill ${tone}" data-testid="ap-status">${decisionWord(row.status)}</span>
         </div>
-        <p class="detail" data-testid="ap-detail"><a class="open" href=${`#/approvals/${encodeURIComponent(row.id)}`} data-testid="ap-open">${detail}</a></p>
+        <p class="detail" data-testid="ap-detail"><a class="open" href="${hhAddress(requestHref)}" data-testid="ap-open">${detail}</a></p>
         ${offer
           ? html`<div class="actions">
               <button type="button" class="primary" data-action="approve" data-id=${row.id} ?disabled=${this.busyId !== ""} data-testid="ap-approve">Approve<span class="sr"> ${detail}</span></button>

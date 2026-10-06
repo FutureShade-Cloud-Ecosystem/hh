@@ -2,6 +2,7 @@
 // Send that sends an unsaved terms edit before it mints, one busy flag shared by a scan and a send, an error that
 // stays with its quote, and a list that keeps the page a quote was opened from. Answers are held behind gates.
 import { expect, test } from "@playwright/test";
+import { openTab } from "./surface-tabs";
 import { gate, open, settle, signIn, writes } from "./switch-helpers.js";
 
 test.beforeEach(async ({ request }) => {
@@ -102,9 +103,9 @@ test("an edit to a quote opened from the second page keeps that page in the list
 });
 
 test("the convert copy does not say credit is checked for every customer", async ({ page }) => {
-  await signIn(page);
+  await signIn(page, "Sales manager");
   await open(page, "Q-1003");
-  await page.getByText("Quote detail & admin").click();
+  await openTab(page, "admin");
   const panel = page.locator("qd-quote-edit");
   await expect(panel).toContainText("Converting it commits the order");
   await expect(panel).not.toContainText("their credit is checked");

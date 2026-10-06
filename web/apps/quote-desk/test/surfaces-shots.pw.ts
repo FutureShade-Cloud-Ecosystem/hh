@@ -2,7 +2,7 @@
 // when QD_SHOT_DIR names a directory; QD_SHOT_PHASE is "before" or "after" and prefixes every name. The legs
 // assert nothing: a shot of a regression has to be takeable where the surface does not exist yet.
 import { expect, test, type Browser, type Page } from "@playwright/test";
-import { shot } from "./shot.ts";
+import { shot } from "./shot.js";
 
 const PHASE = process.env.QD_SHOT_PHASE === "before" ? "before" : "after";
 const DESKTOP = { width: 1440, height: 900 };

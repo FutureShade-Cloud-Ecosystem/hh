@@ -2,20 +2,16 @@
 // began on, and what it would have said never shows on the quote now open. Every test holds one answer back behind
 // a gate it opens itself (a delayed route), so the order of events is exact on any machine.
 import { expect, test, type Browser, type Page } from "@playwright/test";
+import { openDesk, openTab } from "./surface-tabs";
 import { gate, row, seed, settle, signIn as signInAs, writes } from "./switch-helpers.js";
 
 // The Sales manager sees every quote in the list, so the probes can move between quotes of either owner.
 const signIn = (page: Page, role = "Sales manager") => signInAs(page, role);
 
-async function openDetail(page: Page): Promise<void> {
-  const detail = page.getByTestId("qb-detail");
-  if ((await detail.getAttribute("open")) === null) await page.getByText("Quote detail & admin").click();
-  await expect(page.getByTestId("qe-box")).toBeVisible();
-}
-
-async function openQuote(page: Page, quoteNo: string): Promise<void> {
+/** Open a quote on the surface its panel stands on: Admin (the edit panel), Activity (assist, follow ups) or Stock. */
+async function openQuote(page: Page, quoteNo: string, tab: "admin" | "activity" | "stock" = "admin"): Promise<void> {
   await row(page, quoteNo).click();
-  await openDetail(page);
+  await openTab(page, tab);
   await expect(page.getByTestId("qe-title")).toContainText(quoteNo);
 }
 
@@ -107,7 +103,7 @@ test("a link minted for one quote does not appear on the next quote opened", asy
 
 test("the assist panel recovers after a quote switch during a read", async ({ page }) => {
   await signIn(page);
-  await openQuote(page, "Q-1001");
+  await openQuote(page, "Q-1001", "activity");
   const held = gate();
   await page.route(/\/api\/v1\/quote-assist\/extract$/, async (route) => {
     await held.opened;
@@ -132,7 +128,7 @@ test("the assist panel recovers after a quote switch during a read", async ({ pa
 
 test("a confirm loop cut short by a quote switch says how far it got, and writes nothing to the new quote", async ({ page }) => {
   await signIn(page);
-  await openQuote(page, "Q-1001");
+  await openQuote(page, "Q-1001", "activity");
   await assist(page).locator("#jobtext").fill("3 yd clear stone, 20 sf holland stone");
   await assist(page).getByRole("button", { name: "Suggest lines from this text" }).click();
   const proposals = assist(page).getByTestId("qa-proposal");
@@ -168,7 +164,7 @@ test("a confirm loop cut short by a quote switch says how far it got, and writes
 test("a re-hold answer that lands after another quote opened says nothing on that quote", async ({ page, request }) => {
   await request.post("/_stub/hold-lapse", { data: { quote_id: "q-1001", line_no: 2 } });
   await signIn(page);
-  await openQuote(page, "Q-1001");
+  await openQuote(page, "Q-1001", "stock");
   const held = gate();
   await page.route(/\/api\/v1\/quotes\/q-1001\/holds\/resync$/, async (route) => {
     await held.opened;
@@ -189,7 +185,7 @@ test("a re-hold answer that lands after another quote opened says nothing on tha
 
 test("a follow-ups stop that lands after another quote opened says nothing and lays no plan on that quote", async ({ page }) => {
   await signIn(page);
-  await openQuote(page, "Q-1002");
+  await openQuote(page, "Q-1002", "activity");
   const held = gate();
   await page.route(/\/api\/v1\/quotes\/q-1002\/followups\/disable$/, async (route) => {
     await held.opened;
@@ -210,7 +206,7 @@ test("a follow-ups stop that lands after another quote opened says nothing and l
 
 test("a text share answer that lands after another quote opened says nothing on that quote", async ({ page }) => {
   await signIn(page);
-  await openQuote(page, "Q-1002");
+  await openQuote(page, "Q-1002", "activity");
   const held = gate();
   await page.route(/\/api\/v1\/quotes\/q-1002\/sms-share$/, async (route) => {
     await held.opened;
@@ -231,7 +227,7 @@ test("a text share answer that lands after another quote opened says nothing on 
 
 test("the availability panel drops a stale error when another quote opens", async ({ page }) => {
   await signIn(page);
-  await openQuote(page, "Q-1003");
+  await openQuote(page, "Q-1003", "stock");
   const held = gate();
   await page.route(/\/api\/v1\/quote-availability\/[^/]+\/branches$/, async (route) => {
     await held.opened;
@@ -253,7 +249,7 @@ async function plantAndOpenAsManager(browser: Browser, page: Page): Promise<Page
   for (const lineNo of [1, 2]) await page.request.post("/_stub/plant-approval", { data: { quote_id: "q-1001", line_no: lineNo, disc_pct: 10, requested_by_flow: "sales" } });
   const manager = await (await browser.newContext({ viewport: { width: 1440, height: 900 } })).newPage();
   await signIn(manager, "Sales manager");
-  await openQuote(manager, "Q-1001");
+  await openDesk(manager, "approvals");
   await expect(manager.locator("qd-approvals").getByTestId("ap-row")).toHaveCount(2);
   return manager;
 }

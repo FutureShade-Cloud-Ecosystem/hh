@@ -1,23 +1,16 @@
-// The "Quote detail & admin" disclosure's placement, as the plan decides it
-// (QD-0-plan-r1.md): the demo polish round asked for it to be hidden from the
-// Sales and Sales manager desks UNLESS the plan places it there, and to say
-// which. The plan places it on both demo desks, and builds no third login:
+// The placement of the quote's secondary jobs, as the plan decides it (QD-0-plan-r1.md) and as decision log rows
+// 955 and 957 reshape it: nothing stacks under the quote as a disclosure ("Quote detail & admin" is gone). The plan
+// puts the history, follow ups, assist and availability where the Sales desk reads them, and the per line edit
+// panel and Check Quote (the manager's admin work) where only the Sales manager does:
 //
-//   row 2 hosts the edit panel, the history, the assist panel and the related
-//   documents on the desk's shell; row 3 ports the edit panel (the per line
-//   Save, Remove, Compare table) as a desk screen whose controls are the
-//   SERVER's offers (editable_fields), never the app's rule (section 3.5).
-//   QD-1 carries the requester's view of a margin request's state, which is
-//   the approvals panel on the Sales desk. The settings entry is offered to
-//   everyone and the server answers who may write. QD-6 builds the way in for
-//   exactly two logins, Sales and Sales manager: there is no Administrator
-//   desk to keep it for, and the demo's administrator-facing surface is the
-//   Sales manager's (the settings screen's own profile word for that role is
-//   admin).
+//   Activity (history, follow ups, assist) and Stock (availability, hold expiry): Sales and Sales manager
+//   Admin (the per line edit panel, Check Quote): Sales manager only; for Sales the tab and its panels are not
+//   in the page, and the route says "no access"
 //
-// So the hide set is empty: this test pins the placement and the role gate
-// that IS the plan's, the server's own offers inside the panels.
+// The role gate inside each panel is still the server's own offers (editable_fields); this pins where each panel
+// stands and who reaches it. QD-6 builds the way in for exactly two logins, Sales and Sales manager.
 import { expect, test, type Page } from "@playwright/test";
+import { openTab } from "./surface-tabs";
 
 test.beforeEach(async ({ request }) => {
   await request.post("/_stub/reset");
@@ -34,25 +27,21 @@ async function openQuoteAs(page: Page, role: string): Promise<void> {
   await expect(page.getByTestId("qb-context")).toContainText("Q-1001");
 }
 
-test("the disclosure stands on the Sales desk, with the panels mounted for the late answers", async ({ page }) => {
+test("the Sales desk has Activity and Stock, and no Admin: its panels are not in the page", async ({ page }) => {
   await openQuoteAs(page, "Sales");
-  const detail = page.getByTestId("qb-detail");
-  await expect(detail).toBeAttached();
-  await expect(page.getByText("Quote detail & admin")).toBeVisible();
-  await page.getByText("Quote detail & admin").click();
-  await expect(page.getByTestId("qb-quote-panels")).toBeVisible();
-  await expect(page.locator("qd-quote-edit")).toBeAttached();
-  // The role gate that holds is the server's own: the Sales caller is offered
-  // no decide control on an approval row (the requester's view, QD-1).
-  await expect(page.locator("qd-approvals")).toBeAttached();
+  await expect(page.getByText("Quote detail & admin")).toHaveCount(0);
+  await openTab(page, "activity");
+  await expect(page.locator("qd-quote-history")).toBeVisible();
+  await openTab(page, "stock");
+  await expect(page.locator("qd-quote-availability")).toBeVisible();
+  await expect(page.getByTestId("qt-tab-admin")).toHaveCount(0);
+  await expect(page.locator("qd-quote-edit, qd-quote-guard")).toHaveCount(0);
 });
 
-test("the disclosure stands on the Sales manager desk, the demo's administrator-facing surface", async ({ page }) => {
+test("the Sales manager desk has Admin too, the demo's administrator-facing surface", async ({ page }) => {
   await openQuoteAs(page, "Sales manager");
-  const detail = page.getByTestId("qb-detail");
-  await expect(detail).toBeAttached();
-  await expect(page.getByText("Quote detail & admin")).toBeVisible();
-  await page.getByText("Quote detail & admin").click();
-  await expect(page.getByTestId("qb-quote-panels")).toBeVisible();
-  await expect(page.locator("qd-quote-edit")).toBeAttached();
+  await expect(page.getByText("Quote detail & admin")).toHaveCount(0);
+  await openTab(page, "admin");
+  await expect(page.locator("qd-quote-edit")).toBeVisible();
+  await expect(page.locator("qd-quote-guard")).toBeVisible();
 });

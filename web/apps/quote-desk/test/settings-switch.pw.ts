@@ -2,6 +2,7 @@
 // new label, a save that answers after the switch fills nothing, the refusal names what differs (scope or branch),
 // and a refusal locks the one branch row it was for. Answers are held behind gates the tests open themselves.
 import { expect, test, type Page } from "@playwright/test";
+import { openDesk } from "./surface-tabs";
 import { gate, settle } from "./switch-helpers.js";
 
 const settings = (page: Page) => page.locator("qd-quote-settings");
@@ -13,8 +14,7 @@ async function signIn(page: Page): Promise<void> {
 }
 
 async function openScreenSettings(page: Page): Promise<void> {
-  await page.getByText("Quote detail & admin").click();
-  await settings(page).getByTestId("qs-screen").locator("summary").click();
+  await openDesk(page, "settings");
   await expect(page.getByTestId("qs-policy")).toBeVisible();
 }
 

@@ -2,6 +2,7 @@
 // in the grid and Save policy touched the row above. The four switches now
 // share a row of their own, and Save policy has its own breathing room.
 import { expect, test } from "@playwright/test";
+import { openDesk } from "./surface-tabs";
 
 // The stub keeps the person's layout row, which now remembers the open quote: every test starts from the seeded world.
 test.beforeEach(async ({ request }) => {
@@ -16,8 +17,7 @@ test("the policy switches share one row and Save policy keeps its distance", asy
   await page.goto("/");
   await page.getByRole("button", { name: "Sales manager", exact: true }).click();
   await expect(page.getByTestId("qb-list")).toBeVisible();
-  await page.getByText("Quote detail & admin").click();
-  await page.locator("qd-quote-settings").getByTestId("qs-screen").locator("summary").click();
+  await openDesk(page, "settings");
   await expect(page.getByTestId("qs-policy")).toBeVisible();
   const policy = page.getByTestId("qs-policy");
   const tops: number[] = [];

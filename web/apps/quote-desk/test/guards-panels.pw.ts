@@ -3,19 +3,21 @@
 // behind a delayed route, moves to another quote (or scope, or branch), lets the answer go and asserts none of it
 // shows. Take the guard away (test/mutants.json names the exact edit) and the test goes red.
 import { expect, test, type Page } from "@playwright/test";
+import { openDesk, openTab } from "./surface-tabs";
 import { armedHold, countRequests, hold, quiet, row, seed, settle, signIn as signInAs, stubBrowserChannels, watchEvent, writes } from "./switch-helpers.js";
 
 const signIn = (page: Page, role = "Sales manager") => signInAs(page, role);
 
-async function openDetail(page: Page): Promise<void> {
-  const detail = page.getByTestId("qb-detail");
-  if ((await detail.getAttribute("open")) === null) await page.getByText("Quote detail & admin").click();
-  await expect(page.getByTestId("qe-box")).toBeVisible();
+/** The quote's surface a panel stands on: Admin (the edit panel), Activity (history, assist, follow ups) or Stock. */
+type Surface = "admin" | "activity" | "stock";
+
+async function openDetail(page: Page, tab: Surface = "admin"): Promise<void> {
+  await openTab(page, tab);
 }
 
-async function openQuote(page: Page, quoteNo: string): Promise<void> {
+async function openQuote(page: Page, quoteNo: string, tab: Surface = "admin"): Promise<void> {
   await row(page, quoteNo).click();
-  await openDetail(page);
+  await openDetail(page, tab);
   await expect(page.getByTestId("qe-title")).toContainText(quoteNo);
 }
 
@@ -56,6 +58,7 @@ test("guard edit read order: an older read of the quote answered late does not u
   await gated.held.asked;
   gated.disarm();
   // A line is added on the work area: the fan-out reads the quote again and the edit panel shows three lines.
+  await openTab(page, "build");
   const scan = page.getByTestId("pos-scan-input");
   await scan.fill("PSN-100");
   await scan.press("Enter");
@@ -71,6 +74,7 @@ test("guard edit discounts read: the discounts of the quote left never show on t
   await signIn(page);
   await openQuote(page, "Q-1001");
   // Five percent on the sand line of Q-1001, so its terms read carries a discount that Q-1004 does not have.
+  await openTab(page, "build");
   const disc = page.getByTestId("qb-line-disc").nth(1);
   await disc.fill("5");
   await disc.blur();
@@ -91,6 +95,7 @@ test("guard edit discounts read: the discounts of the quote left never show on t
 test("guard edit discounts order: an older terms read answered late does not undo a newer one", async ({ page }) => {
   await signIn(page);
   await openQuote(page, "Q-1001");
+  await openTab(page, "build");
   const disc = page.getByTestId("qb-line-disc").nth(1);
   await disc.fill("5");
   await disc.blur();
@@ -303,12 +308,12 @@ test("guard edit convert reload: a conversion whose re-read answers after anothe
 
 test("guard history read: the changes of the quote left never show under the quote now open", async ({ page }) => {
   await signIn(page);
-  await openQuote(page, "Q-1001");
+  await openQuote(page, "Q-1001", "admin");
   const sand = edit(page).getByTestId("qe-line").nth(1);
   await sand.locator('[data-field="qty"]').fill("6");
   await sand.getByRole("button", { name: "Save" }).click();
   await expect(page.locator("qd-quote-history").getByTestId("qh-group")).toHaveCount(1);
-  await openQuote(page, "Q-1003");
+  await openQuote(page, "Q-1003", "admin");
   await expect(page.locator("qd-quote-history")).toContainText("No changes yet.");
   await quiet(page);
   const gated = await armedHold(page, /\/api\/v1\/quotes\/q-1001\/edits$/, "GET");
@@ -316,7 +321,7 @@ test("guard history read: the changes of the quote left never show under the quo
   await row(page, "Q-1001").click();
   await gated.held.asked;
   gated.disarm();
-  await openQuote(page, "Q-1003");
+  await openQuote(page, "Q-1003", "admin");
   await gated.held.release();
   await settle(page);
   await expect(page.locator("qd-quote-history").getByTestId("qh-group")).toHaveCount(0);
@@ -324,7 +329,7 @@ test("guard history read: the changes of the quote left never show under the quo
 
 test("guard history order: an older read answered late does not undo a newer one", async ({ page }) => {
   await signIn(page);
-  await openQuote(page, "Q-1001");
+  await openQuote(page, "Q-1001", "admin");
   await expect(page.locator("qd-quote-history")).toContainText("No changes yet.");
   await quiet(page);
   const gated = await armedHold(page, /\/api\/v1\/quotes\/q-1001\/edits$/, "GET", { snapshot: true, times: 1 });
@@ -349,12 +354,12 @@ const READ = { name: "Suggest lines from this text" };
 
 test("guard assist read: proposals read for the quote left never show on the quote now open", async ({ page }) => {
   await signIn(page);
-  await openQuote(page, "Q-1001");
+  await openQuote(page, "Q-1001", "activity");
   const post = await hold(page, /\/api\/v1\/quote-assist\/extract$/, { method: "POST" });
   await assist(page).locator("#jobtext").fill("3 yd clear stone");
   await assist(page).getByRole("button", READ).click();
   await post.asked;
-  await openQuote(page, "Q-1003");
+  await openQuote(page, "Q-1003", "activity");
   await post.release();
   await settle(page);
   await expect(assist(page).getByTestId("qa-proposal")).toHaveCount(0);
@@ -362,12 +367,12 @@ test("guard assist read: proposals read for the quote left never show on the quo
 
 test("guard assist reading flag: a read that ends on the quote left does not free the flag of a read on the quote open", async ({ page }) => {
   await signIn(page);
-  await openQuote(page, "Q-1001");
+  await openQuote(page, "Q-1001", "activity");
   const first = await hold(page, /\/api\/v1\/quote-assist\/extract$/, { method: "POST", times: 1 });
   await assist(page).locator("#jobtext").fill("3 yd clear stone");
   await assist(page).getByRole("button", READ).click();
   await first.asked;
-  await openQuote(page, "Q-1003");
+  await openQuote(page, "Q-1003", "activity");
   const second = await hold(page, /\/api\/v1\/quote-assist\/extract$/, { method: "POST", match: () => true });
   await assist(page).locator("#jobtext").fill("20 sf holland stone");
   await assist(page).getByRole("button", READ).click();
@@ -382,14 +387,14 @@ test("guard assist reading flag: a read that ends on the quote left does not fre
 
 test("guard assist adding flag: an add that ends on the quote left does not free the flag of an add on the quote open", async ({ page }) => {
   await signIn(page);
-  await openQuote(page, "Q-1001");
+  await openQuote(page, "Q-1001", "activity");
   await assist(page).locator("#jobtext").fill("3 yd clear stone");
   await assist(page).getByRole("button", READ).click();
   await assist(page).getByTestId("qa-proposal").first().locator('[data-field="tick"]').check();
   const first = await hold(page, /\/api\/v1\/quotes\/q-1001\/lines$/, { method: "POST" });
   await assist(page).getByTestId("qa-confirm").click();
   await first.asked;
-  await openQuote(page, "Q-1003");
+  await openQuote(page, "Q-1003", "activity");
   await assist(page).locator("#jobtext").fill("20 sf holland stone");
   await assist(page).getByRole("button", READ).click();
   await assist(page).getByTestId("qa-proposal").first().locator('[data-field="tick"]').check();
@@ -405,7 +410,7 @@ test("guard assist adding flag: an add that ends on the quote left does not free
 
 test("guard assist gaps read: the suggestions for the quote left never show on the quote now open", async ({ page }) => {
   await signIn(page);
-  await openQuote(page, "Q-1003");
+  await openQuote(page, "Q-1003", "activity");
   await expect(assist(page).getByTestId("qa-gaps")).toBeVisible();
   await expect(assist(page).getByTestId("qa-gaps")).toContainText("Checked 1 line");
   await quiet(page);
@@ -414,7 +419,7 @@ test("guard assist gaps read: the suggestions for the quote left never show on t
   await row(page, "Q-1001").click();
   await gated.held.asked;
   gated.disarm();
-  await openQuote(page, "Q-1003");
+  await openQuote(page, "Q-1003", "activity");
   await gated.held.release();
   await settle(page);
   await expect(assist(page).getByTestId("qa-gaps")).toContainText("Checked 1 line");
@@ -423,7 +428,7 @@ test("guard assist gaps read: the suggestions for the quote left never show on t
 
 test("guard assist gaps order: an older suggestions read answered late does not undo a newer one", async ({ page }) => {
   await signIn(page);
-  await openQuote(page, "Q-1001");
+  await openQuote(page, "Q-1001", "activity");
   await expect(assist(page).getByTestId("qa-gaps")).toContainText("Granular base for the paved area");
   await quiet(page);
   const gated = await armedHold(page, /\/api\/v1\/quote-assist\/scope-gaps/, "GET", { snapshot: true, times: 1 });
@@ -432,6 +437,7 @@ test("guard assist gaps order: an older suggestions read answered late does not 
   await gated.held.asked;
   gated.disarm();
   // Clear stone is the base: adding it from the work area makes the base suggestion go away.
+  await openTab(page, "build");
   const scan = page.getByTestId("pos-scan-input");
   await scan.fill("GRA-CL");
   await scan.press("Enter");
@@ -446,7 +452,7 @@ test("guard assist gaps order: an older suggestions read answered late does not 
 
 test("guard availability read: the stock read for the quote left never shows on the quote now open", async ({ page }) => {
   await signIn(page);
-  await openQuote(page, "Q-1003");
+  await openQuote(page, "Q-1003", "stock");
   const panel = page.locator("qd-quote-availability");
   await expect(panel.getByTestId("av-chip").first()).toBeVisible();
   const own = await panel.getByTestId("av-box").innerText();
@@ -456,7 +462,7 @@ test("guard availability read: the stock read for the quote left never shows on 
   await row(page, "Q-1002").click();
   await gated.held.asked;
   gated.disarm();
-  await openQuote(page, "Q-1003");
+  await openQuote(page, "Q-1003", "stock");
   await expect(panel.getByTestId("av-box")).toHaveText(own);
   await gated.held.release();
   await settle(page);
@@ -465,7 +471,7 @@ test("guard availability read: the stock read for the quote left never shows on 
 
 test("guard follow-ups read: the plan of the quote left never shows on the quote now open", async ({ page }) => {
   await signIn(page);
-  await openQuote(page, "Q-1001");
+  await openQuote(page, "Q-1001", "activity");
   const panel = page.locator("qd-quote-followups");
   await expect(panel.getByTestId("fu-row")).toHaveCount(0);
   await quiet(page);
@@ -474,7 +480,7 @@ test("guard follow-ups read: the plan of the quote left never shows on the quote
   await row(page, "Q-1002").click();
   await gated.held.asked;
   gated.disarm();
-  await openQuote(page, "Q-1001");
+  await openQuote(page, "Q-1001", "activity");
   await gated.held.release();
   await settle(page);
   await expect(panel.getByTestId("fu-row")).toHaveCount(0);
@@ -482,7 +488,7 @@ test("guard follow-ups read: the plan of the quote left never shows on the quote
 
 test("guard follow-ups text reload: a text share whose re-read answers after another quote opened announces nothing", async ({ page }) => {
   await signIn(page);
-  await openQuote(page, "Q-1002");
+  await openQuote(page, "Q-1002", "activity");
   // The text leg is queued (the stub's own answer is a refusal, which has no re-read after it).
   await page.route(/\/api\/v1\/quotes\/q-1002\/sms-share$/, (route) => route.fulfill({ status: 200, contentType: "application/json", body: "{}" }));
   await quiet(page);
@@ -491,7 +497,7 @@ test("guard follow-ups text reload: a text share whose re-read answers after ano
   await page.locator("qd-quote-followups").getByRole("button", { name: "Text the quote link" }).click();
   await gated.held.asked;
   gated.disarm();
-  await openQuote(page, "Q-1001");
+  await openQuote(page, "Q-1001", "activity");
   const changed = await watchEvent(page, "quote-changed");
   await gated.held.release();
   await settle(page);
@@ -502,7 +508,7 @@ test("guard follow-ups text reload: a text share whose re-read answers after ano
 test("guard hold expiry read: the lapse of the quote left never shows on the quote now open", async ({ page, request }) => {
   await request.post("/_stub/hold-lapse", { data: { quote_id: "q-1001", line_no: 2 } });
   await signIn(page);
-  await openQuote(page, "Q-1003");
+  await openQuote(page, "Q-1003", "stock");
   const panel = page.locator("qd-quote-hold-expiry");
   await expect(panel.getByTestId("he-headline")).toHaveCount(0);
   await quiet(page);
@@ -511,7 +517,7 @@ test("guard hold expiry read: the lapse of the quote left never shows on the quo
   await row(page, "Q-1001").click();
   await gated.held.asked;
   gated.disarm();
-  await openQuote(page, "Q-1003");
+  await openQuote(page, "Q-1003", "stock");
   await gated.held.release();
   await settle(page);
   await expect(panel.getByTestId("he-headline")).toHaveCount(0);
@@ -520,7 +526,7 @@ test("guard hold expiry read: the lapse of the quote left never shows on the quo
 test("guard hold expiry reload: a re-hold whose re-read answers after another quote opened announces nothing", async ({ page, request }) => {
   await request.post("/_stub/hold-lapse", { data: { quote_id: "q-1001", line_no: 2 } });
   await signIn(page);
-  await openQuote(page, "Q-1001");
+  await openQuote(page, "Q-1001", "stock");
   const panel = page.locator("qd-quote-hold-expiry");
   await expect(panel.getByRole("button", { name: "Re-hold these lines" })).toBeVisible();
   await quiet(page);
@@ -529,7 +535,7 @@ test("guard hold expiry reload: a re-hold whose re-read answers after another qu
   await panel.getByRole("button", { name: "Re-hold these lines" }).click();
   await gated.held.asked;
   gated.disarm();
-  await openQuote(page, "Q-1003");
+  await openQuote(page, "Q-1003", "stock");
   const changed = await watchEvent(page, "quote-changed");
   await gated.held.release();
   await settle(page);
@@ -614,8 +620,7 @@ test("guard picker search: a customer search answered for an older word never re
 const surface = (page: Page) => page.locator("qd-surface-settings");
 
 async function openScreenSettings(page: Page): Promise<void> {
-  await page.getByText("Quote detail & admin").click();
-  await page.locator("qd-quote-settings").getByTestId("qs-screen").locator("summary").click();
+  await openDesk(page, "settings");
   await expect(page.getByTestId("qs-policy")).toBeVisible();
 }
 

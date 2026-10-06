@@ -12,6 +12,7 @@
 import { LitElement, css, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { IdentityApproval } from "@hardscapehouse/api-client";
+import { hhAddress } from "@hardscapehouse/design-system/src/address.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
 import { money } from "@hardscapehouse/pos-kit/src/ported/pos-api.js";
 import type { QdClient } from "./qd-client.js";
@@ -298,6 +299,7 @@ export class QdApprovalDetail extends LitElement {
     const figures = parseRequestDetail(request.detail);
     const decidable = isDecidable(request.status);
     const own = decidable && this.isOwn();
+    const quoteHref = `#/quotes/${encodeURIComponent(view?.id ?? "")}`;
     return html`
       <div class="top">
         <a href="#/approvals" data-testid="ad-back">All approvals</a>
@@ -336,7 +338,7 @@ export class QdApprovalDetail extends LitElement {
                       <dd data-testid="ad-margin">${marginPctLabel(this.glance.margin_bps)}</dd>`
                   : nothing}
               </dl>
-              <p><a href=${`#/quotes/${encodeURIComponent(view.id)}`} data-testid="ad-open-quote">Open the full quote</a></p>
+              <p><a href="${hhAddress(quoteHref)}" data-testid="ad-open-quote">Open the full quote</a></p>
             </div>
           `
         : nothing}

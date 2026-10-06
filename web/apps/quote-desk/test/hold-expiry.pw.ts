@@ -4,6 +4,7 @@
 // re-reading), shows the server's own refusal verbatim on an expired quote,
 // and says nothing at all when the seam is not wired.
 import { expect, test, type Page } from "@playwright/test";
+import { openTab } from "./surface-tabs";
 import { shot } from "./shot";
 
 async function signIn(page: Page, role = "Sales manager"): Promise<void> {
@@ -14,9 +15,8 @@ async function signIn(page: Page, role = "Sales manager"): Promise<void> {
 
 async function openQuote(page: Page, text: string): Promise<void> {
   await page.getByTestId("qb-list-row").filter({ hasText: text }).first().click();
-  const detail = page.getByTestId("qb-detail");
-  if ((await detail.getAttribute("open")) === null) await page.getByText("Quote detail & admin").click();
-  await expect(page.locator("qd-quote-followups").getByTestId("fu-box")).toBeVisible();
+  await openTab(page, "stock");
+  await expect(page.locator("qd-quote-availability").getByTestId("av-box")).toBeVisible();
 }
 
 const panel = (page: Page) => page.locator("qd-quote-hold-expiry");

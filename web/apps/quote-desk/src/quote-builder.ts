@@ -17,26 +17,10 @@ import { LitElement, css, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import "./quote-workarea.js";
 import "./panel-seams.js";
-import "./edit-panel.js";
-import "./history-panel.js";
-import "./settings-panel.js";
-import "./assist-panel.js";
-import "./followups-panel.js";
-import "./hold-expiry-panel.js";
-import "./availability-panel.js";
-import "./guard-panel.js";
-import "./approvals-panel.js";
+import "./quote-tabs.js";
+import "./quote-surfaces.js";
 import "./floor-refusal-dialog.js";
-import {
-  SEAM_APPROVALS,
-  SEAM_ASSIST,
-  SEAM_AVAILABILITY,
-  SEAM_EDIT_PANEL,
-  SEAM_FOLLOWUPS,
-  SEAM_HISTORY,
-  SEAM_HOLD_EXPIRY,
-  SEAM_SETTINGS,
-} from "./panel-seams.js";
+import { quoteTabHash, type DeskRole, type QuoteTab, type SurfaceRoute } from "./surface-route.js";
 import { money } from "@hardscapehouse/pos-kit/src/ported/pos-api.js";
 import { baseStyles, button, dateInput, fieldGroup, select } from "@hardscapehouse/design-system/src/primitives.js";
 import "./customer-picker.js";
@@ -64,6 +48,9 @@ const MAX_LIST_PAGES = 40;
 export class QdQuoteBuilder extends LitElement {
   /** The host wires the validated client before the first render. */
   @property({ attribute: false }) client: QdClient | null = null;
+  /** The route the desk host parsed: the open quote and its tab follow it. */
+  @property({ attribute: false }) route: SurfaceRoute | null = null;
+  @property({ attribute: "desk-role" }) deskRole: DeskRole = "sales";
 
   @state() private rows: QuoteRow[] = [];
   /** The next page of the list, or "" when the server sent no more. */
@@ -76,7 +63,6 @@ export class QdQuoteBuilder extends LitElement {
   @state() private branches: BranchRow[] = [];
   @state() private newBranch = "";
   @state() private newExpiry = "";
-  @state() private detailOpen = false;
   /** The picked account for a new quote, from the picker (never a typed id). */
   private newCustomer: PickerCustomer | null = null;
 
@@ -230,6 +216,27 @@ export class QdQuoteBuilder extends LitElement {
     // The host wires the client after this element mounts; the loads start
     // the moment it arrives (the entry page's cards never reach here).
     if (changed.has("client") && this.client !== null) this.startLoads();
+    // The route names the open quote: the address bar is what opens, switches and closes it.
+    if (changed.has("route") && this.route !== null) {
+      if (this.route.kind === "quote" && this.route.id !== this.selected) this.selected = this.route.id;
+      if ((this.route.kind === "quotes" || this.route.kind === "compose") && this.selected !== "") this.selected = "";
+    }
+  }
+
+  /** The quote tab on screen: Build unless the route names another. */
+  private currentTab(): QuoteTab {
+    return this.route?.kind === "quote" && this.selected === this.route.id ? this.route.tab : "build";
+  }
+
+  /**
+   * Open a quote (or leave to the landing) by writing the address; the route echoes back through the host. A person
+   * on a quote's Activity, Stock or Admin tab who opens another quote stays on that surface.
+   */
+  private openQuote(id: string): void {
+    const tab = this.currentTab();
+    this.selected = id;
+    const hash = id === "" ? "#/quotes" : quoteTabHash(id, tab);
+    if (window.location.hash !== hash) window.location.hash = hash;
   }
 
   private startLoads(): void {
@@ -263,16 +270,17 @@ export class QdQuoteBuilder extends LitElement {
       picker.branchId = this.newBranch;
       if (picker.labelText === undefined || picker.labelText === "") picker.labelText = "Customer";
     }
-    // The seam rows and the panels mounted in their place receive the open
-    // quote the same way: the edit panel, the change history and the settings
-    // also take the validated client.
-    for (const seam of this.renderRoot.querySelectorAll<HTMLElement & Record<string, unknown>>(
-      "qd-panel-seam, qd-quote-edit, qd-quote-history, qd-quote-settings, qd-quote-assist, qd-quote-followups, qd-quote-hold-expiry, qd-quote-availability, qd-quote-guard, qd-approvals, qd-floor-refusal",
-    )) {
+    // The quote's own surfaces (activity, stock, admin) and the dialog receive the open quote the same way.
+    for (const seam of this.renderRoot.querySelectorAll<HTMLElement & Record<string, unknown>>("qd-quote-surfaces, qd-floor-refusal")) {
       seam.quoteId = this.selected;
       seam.branchId = this.selectedBranch() || this.newBranch;
-      if (seam.tagName !== "QD-PANEL-SEAM") seam.client = this.client;
+      seam.client = this.client;
     }
+    const tab = this.currentTab();
+    const surfaces = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("qd-quote-surfaces");
+    if (surfaces !== null) Object.assign(surfaces, { deskRole: this.deskRole, tab });
+    const tabs = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("qd-quote-tabs");
+    if (tabs !== null) Object.assign(tabs, { quoteId: this.selected, deskRole: this.deskRole, active: tab });
     // The new quote form's uncontrolled fields.
     const branchSelect = this.renderRoot.querySelector<HTMLSelectElement>('[data-field="new-branch"]');
     if (branchSelect !== null && this.branches.length > 0) {
@@ -378,7 +386,7 @@ export class QdQuoteBuilder extends LitElement {
     this.newExpiry = validUntilFromDays(30, new Date()); // stays pre-filled for the next quote
     await this.loadList();
     // The person may have opened another quote while this one was being made: it joins the list but does not take the screen.
-    if (this.selected === onScreen) this.selected = result.value;
+    if (this.selected === onScreen) this.openQuote(result.value);
   }
 
   // ── the fan-out and the open events ────────────────────────────────────────
@@ -398,7 +406,7 @@ export class QdQuoteBuilder extends LitElement {
   };
 
   private readonly onQuoteOpen = (event: CustomEvent<{ quoteId: string }>): void => {
-    this.selected = event.detail.quoteId;
+    this.openQuote(event.detail.quoteId);
     void this.loadList();
   };
 
@@ -416,29 +424,23 @@ export class QdQuoteBuilder extends LitElement {
   };
 
   /**
-   * The work area's Screen settings button asks for the settings region: the
-   * detail disclosure opens and the settings panel opens its screen settings.
+   * The work area's Screen settings button asks for the settings surface: its own route, #/settings, the Sales
+   * manager's. For Sales the button has nowhere to go (the surface is walled), so it does nothing.
    */
   private readonly onOpenSettings = (): void => {
-    const details = this.renderRoot.querySelector<HTMLDetailsElement>('[data-testid="qb-detail"]');
-    if (details !== null) details.open = true;
-    this.renderRoot.querySelector<HTMLElement & { openScreenSettings?: () => void }>("qd-quote-settings")?.openScreenSettings?.();
+    if (this.deskRole === "manager") window.location.hash = "#/settings";
   };
 
   private reloadDetailPanels(): void {
     this.renderRoot
       ?.querySelectorAll<HTMLElement & { reload?: () => void }>(
-        "qd-quote-workarea, qd-panel-seam, qd-quote-edit, qd-quote-history, qd-quote-settings, qd-quote-assist, qd-quote-followups, qd-quote-hold-expiry, qd-quote-availability, qd-quote-guard, qd-approvals",
+        "qd-quote-workarea, qd-panel-seam, qd-quote-surfaces",
       )
       .forEach((el) => el.reload?.());
   }
 
-  /** The panels no single quote owns: they re-read on any edit, whichever quote it names. */
-  private reloadSessionPanels(): void {
-    this.renderRoot
-      ?.querySelectorAll<HTMLElement & { reload?: () => void }>("qd-quote-settings, qd-approvals")
-      .forEach((el) => el.reload?.());
-  }
+  /** The panels no single quote owns (the approvals queue, the settings) live on their own surfaces and re-read there. */
+  private reloadSessionPanels(): void {}
 
   // ── the host delegation ────────────────────────────────────────────────────
 
@@ -449,7 +451,7 @@ export class QdQuoteBuilder extends LitElement {
     if (control === undefined) return;
     const action = control.getAttribute("data-action");
     if (action === "open") {
-      this.selected = control.getAttribute("data-quote") ?? "";
+      this.openQuote(control.getAttribute("data-quote") ?? "");
     }
     if (action === "refresh") {
       void this.loadList();
@@ -561,40 +563,20 @@ export class QdQuoteBuilder extends LitElement {
     `;
   }
 
-  /** The named empty seams the second and third coders fill. */
-  private renderSeam(name: string, label: string) {
-    return html`<qd-panel-seam data-seam=${name} data-seam-label=${label}></qd-panel-seam>`;
-  }
-
   override render() {
+    const tab = this.currentTab();
     return html`
       ${this.error !== "" ? html`<header><span class="err" role="alert">${this.error}</span></header>` : nothing}
-      <qd-quote-workarea></qd-quote-workarea>
+      <qd-quote-workarea data-tab-only=${tab !== "build" ? "true" : "false"}>
+        <qd-quote-tabs slot="tabs"></qd-quote-tabs>
+      </qd-quote-workarea>
       <qd-floor-refusal></qd-floor-refusal>
+      <!-- The panels stay mounted through New Quote and every tab (each returns nothing for no quote, and a hidden
+           tab only changes what is shown): a panel taken off the page loses the late answers of writes still out
+           for the quote it left, its announcement dies with it and the panel that comes back is never told what
+           landed. -->
+      <qd-quote-surfaces data-compose=${this.selected === "" ? "true" : "false"}></qd-quote-surfaces>
       <div style="margin-top: 12px">${this.renderList()}</div>
-      <details class="box" style="margin-top: 12px" data-testid="qb-detail">
-        <summary style="cursor: pointer">Quote detail &amp; admin</summary>
-        <div class="stack seams" style="margin-top: 10px">
-          ${this.selected === ""
-            ? html`<div class="box"><p class="empty">Select a quote to open it.</p></div>`
-            : nothing}
-          <!-- The panels stay mounted through New Quote (compose shows none of them, each returns nothing for no
-               quote): a panel taken off the page loses the late answers of writes still out for the quote it left,
-               its announcement dies with it and the panel that comes back is never told what landed. Leaving a quote
-               for another quote was already this way, and New Quote takes that same proven path. -->
-          <div class="stack" data-testid="qb-quote-panels" data-compose=${this.selected === "" ? "true" : "false"}>
-            <qd-quote-edit data-seam=${SEAM_EDIT_PANEL}></qd-quote-edit>
-            <qd-quote-assist data-seam=${SEAM_ASSIST}></qd-quote-assist>
-            <qd-quote-history data-seam=${SEAM_HISTORY}></qd-quote-history>
-            <qd-quote-followups data-seam=${SEAM_FOLLOWUPS}></qd-quote-followups>
-            <qd-quote-hold-expiry data-seam=${SEAM_HOLD_EXPIRY}></qd-quote-hold-expiry>
-            <qd-quote-availability data-seam=${SEAM_AVAILABILITY}></qd-quote-availability>
-            <qd-quote-guard></qd-quote-guard>
-          </div>
-          <qd-approvals data-seam=${SEAM_APPROVALS}></qd-approvals>
-          <qd-quote-settings data-seam=${SEAM_SETTINGS}></qd-quote-settings>
-        </div>
-      </details>
     `;
   }
 }

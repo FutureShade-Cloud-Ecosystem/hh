@@ -5,9 +5,10 @@
 // discount below the floor and the requester's view of it, and the server's
 // offer to clear the price itself for the Sales manager.
 import { expect, test, type Page } from "@playwright/test";
+import { openTab } from "./surface-tabs";
 import { shot } from "./shot";
 
-async function signIn(page: Page, role = "Sales"): Promise<void> {
+async function signIn(page: Page, role = "Sales manager"): Promise<void> {
   await page.goto("/");
   await page.getByRole("button", { name: role, exact: true }).click();
   await expect(page.getByTestId("qb-list")).toBeVisible();
@@ -15,17 +16,18 @@ async function signIn(page: Page, role = "Sales"): Promise<void> {
 
 async function openQuote(page: Page, text: string): Promise<void> {
   await page.getByTestId("qb-list-row").filter({ hasText: text }).first().click();
-  const detail = page.getByTestId("qb-detail");
-  if ((await detail.getAttribute("open")) === null) await page.getByText("Quote detail & admin").click();
+  await openTab(page, "admin");
   await expect(page.getByTestId("qg-box")).toBeVisible();
 }
 
 const guard = (page: Page) => page.locator("qd-quote-guard");
 const dialog = (page: Page) => page.locator("qd-floor-refusal");
-const edit = (page: Page) => page.locator("qd-quote-edit");
 
 test.beforeEach(async ({ request }) => {
   await request.post("/_stub/reset");
+  // Check Quote is the Sales manager's page (the Admin tab), and a manager may override the floor: the stub is told
+  // not to, so these legs still see the verdicts a check that is held to the floor gets.
+  await request.put("/_stub/manager-override", { data: { on: false } });
 });
 test.afterAll(async ({ request }) => {
   await request.post("/_stub/reset");
@@ -111,11 +113,12 @@ test("Tab stays inside the open dialog", async ({ page }) => {
 
 test("Sales files a request through a discount below the floor and sees the requester state", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  await signIn(page);
-  await openQuote(page, "Q-1001");
-  const paver = edit(page).getByTestId("qe-line").first();
-  await paver.locator('[data-field="disc"]').fill("10");
-  await paver.getByRole("button", { name: "Save" }).click();
+  await signIn(page, "Sales");
+  await page.getByTestId("qb-list-row").filter({ hasText: "Q-1001" }).first().click();
+  // Sales has no Admin tab: the discount is asked on the work area's own box.
+  const paver = page.getByTestId("qb-line-disc").first();
+  await paver.fill("10");
+  await paver.blur();
   const dlg = dialog(page).getByRole("dialog", { name: "Action blocked" });
   await expect(dlg).toBeVisible();
   await expect(dialog(page).getByTestId("fr-policy")).toHaveText("Category margin floor");
@@ -134,13 +137,14 @@ test("Sales files a request through a discount below the floor and sees the requ
   await dialog(page).getByTestId("fr-close").click();
   await expect(dlg).toHaveCount(0);
   // The standing request rides the next refusal as existing_request: shown, not refiled.
-  await paver.locator('[data-field="disc"]').fill("11");
-  await paver.getByRole("button", { name: "Save" }).click();
+  await paver.fill("11");
+  await paver.blur();
   await expect(dialog(page).getByTestId("fr-request-state")).toContainText("Your request is pending");
   await expect(dialog(page).getByTestId("fr-request")).toHaveCount(0);
 });
 
-test("the Sales manager is offered the price itself and nothing is filed", async ({ page }) => {
+test("the Sales manager is offered the price itself and nothing is filed", async ({ page, request }) => {
+  await request.put("/_stub/manager-override", { data: { on: true } });
   await signIn(page, "Sales manager");
   await openQuote(page, "Q-1001");
   // The work area does not raise a refusal for this caller (the server lets the write through), so the

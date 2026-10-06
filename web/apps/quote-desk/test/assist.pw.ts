@@ -8,6 +8,7 @@
 // and a refused request in words under the one role=alert. The screenshots
 // are headless and prefixed assist-.
 import { expect, test, type Page } from "@playwright/test";
+import { openTab } from "./surface-tabs";
 import { shot } from "./shot";
 
 const TEXT = "3 yd clear stone, 20 sf holland stone, jointing sand, a bobcat for the day";
@@ -17,13 +18,11 @@ async function openDraft(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Sales", exact: true }).click();
   await expect(page.getByTestId("qb-list")).toBeVisible();
   await page.getByTestId("qb-list-row").filter({ hasText: "Q-1001" }).first().click();
-  const detail = page.getByTestId("qb-detail");
-  if ((await detail.getAttribute("open")) === null) await page.getByText("Quote detail & admin").click();
+  await openTab(page, "activity");
   await expect(page.locator("qd-quote-assist").getByTestId("qa-extract")).toBeVisible();
 }
 
 const assist = (page: Page) => page.locator("qd-quote-assist");
-const edit = (page: Page) => page.locator("qd-quote-edit");
 const proposals = (page: Page) => assist(page).getByTestId("qa-proposal");
 const rowOf = (page: Page, name: string) => proposals(page).filter({ has: page.locator(".pname", { hasText: name }) });
 
@@ -69,15 +68,15 @@ test("proposals arrive unticked and the could not match list shows", async ({ pa
 
 test("ticking and confirming adds only the ticked lines, and the suggestions shrink", async ({ page }) => {
   await openDraft(page);
-  await expect(edit(page).getByTestId("qe-line")).toHaveCount(2);
+  await expect(page.getByTestId("qb-line")).toHaveCount(2);
   await paste(page, TEXT);
   await rowOf(page, "Clear Stone").locator('input[type="checkbox"]').check();
   await expect(assist(page).getByTestId("qa-confirm")).toHaveText("Add 1 line to the quote");
   await assist(page).getByTestId("qa-confirm").click();
   await expect(assist(page).getByTestId("qa-add-note")).toHaveText("Added 1 line.");
-  // The edit panel re-read through quote-changed: exactly one new line, the clear stone.
-  await expect(edit(page).getByTestId("qe-line")).toHaveCount(3);
-  await expect(edit(page).getByTestId("qe-line").nth(2)).toContainText("Clear Stone");
+  // The work area re-read through quote-changed: exactly one new line, the clear stone.
+  await expect(page.getByTestId("qb-line")).toHaveCount(3);
+  await expect(page.getByTestId("qb-line").nth(2)).toContainText("Clear Stone");
   // The untouched proposals are still waiting, unticked.
   await expect(proposals(page)).toHaveCount(2);
   await expect(rowOf(page, "Holland Stone").locator('input[type="checkbox"]')).not.toBeChecked();
@@ -128,7 +127,7 @@ test("a gap can be dismissed and brought back, and Find reads its query into the
   await expect(proposals(page)).toHaveCount(1);
   await expect(proposals(page).first()).toContainText("Edge Restraint 8 ft");
   await expect(proposals(page).first().locator('input[type="checkbox"]')).not.toBeChecked();
-  await expect(edit(page).getByTestId("qe-line")).toHaveCount(2);
+  await expect(page.getByTestId("qb-line")).toHaveCount(2);
 });
 
 test("with no key configured the AI helper latches disabled, grey, with the server's note", async ({ page }) => {

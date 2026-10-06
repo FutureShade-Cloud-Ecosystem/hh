@@ -3,13 +3,13 @@
 // Save policy, with nothing marking the field. It now sits beside Save policy
 // and the field carries aria-invalid and a red border.
 import { expect, test, type Page } from "@playwright/test";
+import { openDesk } from "./surface-tabs";
 
 async function openScreenSettings(page: Page): Promise<void> {
   await page.goto("/");
   await page.getByRole("button", { name: "Sales manager", exact: true }).click();
   await expect(page.getByTestId("qb-list")).toBeVisible();
-  await page.getByText("Quote detail & admin").click();
-  await page.locator("qd-quote-settings").getByTestId("qs-screen").locator("summary").click();
+  await openDesk(page, "settings");
   await expect(page.getByTestId("qs-policy")).toBeVisible();
 }
 

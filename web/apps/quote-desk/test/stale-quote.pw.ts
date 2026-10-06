@@ -2,8 +2,9 @@
 // open now, and a save never goes to the wrong quote: the edit panel and the
 // change history each answer only for the quote that asked.
 import { expect, test, type Page } from "@playwright/test";
+import { openTab } from "./surface-tabs";
 
-async function signIn(page: Page, role = "Sales"): Promise<void> {
+async function signIn(page: Page, role = "Sales manager"): Promise<void> {
   await page.goto("/");
   await page.getByRole("button", { name: role, exact: true }).click();
   await expect(page.getByTestId("qb-list")).toBeVisible();
@@ -11,8 +12,7 @@ async function signIn(page: Page, role = "Sales"): Promise<void> {
 
 async function openQuote(page: Page, text: string): Promise<void> {
   await page.getByTestId("qb-list-row").filter({ hasText: text }).first().click();
-  const detail = page.getByTestId("qb-detail");
-  if ((await detail.getAttribute("open")) === null) await page.getByText("Quote detail & admin").click();
+  await openTab(page, "admin");
   await expect(page.getByTestId("qe-box")).toBeVisible();
 }
 

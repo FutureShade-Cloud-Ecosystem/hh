@@ -211,6 +211,67 @@ test("D: a request the server does not hold says so on the detail", async ({ bro
   await page.close();
 });
 
+test("D: a late read for the request left never shows on the request now open", async ({ browser, request }) => {
+  await plant(request, 1);
+  await plant(request, 2);
+  const page = await as(browser, "Sales manager");
+  let held = 0;
+  let release: () => void = () => undefined;
+  const door = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route(/\/api\/v1\/staff\/approvals(\?cursor=.*)?$/, async (route) => {
+    held += 1;
+    if (held === 1) {
+      const answer = await route.fetch();
+      await door;
+      await route.fulfill({ response: answer });
+      return;
+    }
+    await route.continue();
+  });
+  await page.goto("/#/approvals/fr-q-1001%3A1");
+  await expect.poll(() => held).toBeGreaterThanOrEqual(1);
+  await page.goto("/#/approvals/fr-q-1001%3A2");
+  await expect(page.locator("qd-approval-detail").locator('[data-testid="ad-line"][data-requested="true"]')).toHaveAttribute("data-line", "2");
+  release();
+  await page.waitForLoadState("networkidle");
+  await expect(page.locator("qd-approval-detail").locator('[data-testid="ad-line"][data-requested="true"]')).toHaveAttribute("data-line", "2");
+  await page.close();
+});
+
+test("A: a late count read never puts a decided request back on the Approvals tab", async ({ browser, request }) => {
+  await plant(request);
+  const context = await browser.newContext({ viewport: DESKTOP });
+  const page = await context.newPage();
+  let held = 0;
+  let release: () => void = () => undefined;
+  const door = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route(/\/api\/v1\/staff\/approvals\?status=PENDING/, async (route) => {
+    held += 1;
+    if (held === 1) {
+      const answer = await route.fetch();
+      await door;
+      await route.fulfill({ response: answer });
+      return;
+    }
+    await route.continue();
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Sales manager", exact: true }).click();
+  await expect(page.getByTestId("qb-list")).toBeVisible();
+  await tab(page, "approvals").click();
+  await page.getByTestId("ap-row").first().getByTestId("ap-approve").click();
+  await expect.poll(() => held).toBeGreaterThanOrEqual(2);
+  await expect(tab(page, "approvals")).toHaveText("Approvals");
+  release();
+  await page.waitForLoadState("networkidle");
+  await expect(tab(page, "approvals")).toHaveText("Approvals");
+  await context.close();
+});
+
 // ── E: the tablet viewport ───────────────────────────────────────────────────
 
 test("E: at tablet width the manager's navigation carries all four tabs and the quote strip all four quote tabs", async ({ browser }) => {

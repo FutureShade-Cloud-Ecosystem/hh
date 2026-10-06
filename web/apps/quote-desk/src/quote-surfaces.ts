@@ -36,10 +36,10 @@ export class QdQuoteSurfaces extends LitElement {
     :host {
       display: block;
     }
-    :host([data-compose]) {
+    :host([data-compose="true"]) {
       display: none;
     }
-    [hidden] {
+    [data-hidden="true"] {
       display: none;
     }
     section {
@@ -65,17 +65,17 @@ export class QdQuoteSurfaces extends LitElement {
   override render() {
     const admin = this.deskRole === "manager";
     return html`
-      <section data-testid="qs-activity" ?hidden=${this.tab !== "activity"}>
+      <section data-testid="qs-activity" data-hidden=${this.tab !== "activity" ? "true" : "false"}>
         <qd-quote-history data-seam=${SEAM_HISTORY}></qd-quote-history>
         <qd-quote-followups data-seam=${SEAM_FOLLOWUPS}></qd-quote-followups>
         <qd-quote-assist data-seam=${SEAM_ASSIST}></qd-quote-assist>
       </section>
-      <section data-testid="qs-stock" ?hidden=${this.tab !== "stock"}>
+      <section data-testid="qs-stock" data-hidden=${this.tab !== "stock" ? "true" : "false"}>
         <qd-quote-availability data-seam=${SEAM_AVAILABILITY}></qd-quote-availability>
         <qd-quote-hold-expiry data-seam=${SEAM_HOLD_EXPIRY}></qd-quote-hold-expiry>
       </section>
       ${admin
-        ? html`<section data-testid="qs-admin" ?hidden=${this.tab !== "admin"}>
+        ? html`<section data-testid="qs-admin" data-hidden=${this.tab !== "admin" ? "true" : "false"}>
             <qd-quote-edit data-seam=${SEAM_EDIT_PANEL}></qd-quote-edit>
             <qd-quote-guard></qd-quote-guard>
           </section>`

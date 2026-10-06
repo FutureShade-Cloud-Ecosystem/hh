@@ -255,7 +255,7 @@ const HST_RATE_BPS = 1300;
 // approvalsShape: "page" is the contract's IdentityApprovalPage, "bare" is what
 // the core's handler writes today (a bare array), "paged" is the page object
 // split into pages of one row with next_cursor.
-const switches = { callerOnCostList: true, callerIsGeneralManager: false, floorRaiseBps: 0, approvalsShape: "page", quotePageSize: 0 };
+const switches = { managerOverride: true, callerOnCostList: true, callerIsGeneralManager: false, floorRaiseBps: 0, approvalsShape: "page", quotePageSize: 0 };
 
 // Every write the stub sees, for the suite's layout save assertions. The
 // ledger is test scaffolding: no contract path reads it.
@@ -475,7 +475,7 @@ function floorDecision(caller, product, customer, discPct) {
   const floorBps = product.floor_bps + switches.floorRaiseBps;
   if (margin >= floorBps) return null;
   const isManager = caller.account.role_code === "sales_manager";
-  if (isManager) return { cleared: true, by: USERS[caller.flow].display_name };
+  if (isManager && switches.managerOverride) return { cleared: true, by: USERS[caller.flow].display_name };
   return {
     cleared: false,
     body: {
@@ -957,6 +957,15 @@ const server = createServer(async (request, response) => {
     });
     return;
   }
+  // Check Quote is the Sales manager's page now (the Admin tab): a manager may override the floor, which would
+  // hide the blocked verdict. Off, the stub answers a manager's check the way it answers a caller who may not.
+  if (path === "/_stub/manager-override" && request.method === "PUT") {
+    readBody(request, response, (body) => {
+      switches.managerOverride = body.on !== false;
+      respondJson(response, 200, { on: switches.managerOverride });
+    });
+    return;
+  }
   if (path === "/_stub/general-manager" && request.method === "PUT") {
     readBody(request, response, (body) => {
       switches.callerIsGeneralManager = body.member === true;
@@ -1030,6 +1039,7 @@ const server = createServer(async (request, response) => {
     switches.callerIsGeneralManager = false;
     switches.floorRaiseBps = 0;
     switches.approvalsShape = "page";
+    switches.managerOverride = true;
     switches.quotePageSize = 0;
     respondJson(response, 200, { reset: true });
     return;
@@ -2078,7 +2088,7 @@ const server = createServer(async (request, response) => {
         return;
       }
       const margin = marginBps(body.price_cents, body.cost_cents);
-      const override = caller.account.role_code === "sales_manager";
+      const override = caller.account.role_code === "sales_manager" && switches.managerOverride;
       respondJson(response, 200, { allowed: margin >= 2000 || override, margin_bps: margin, override });
     });
     return;

@@ -1,6 +1,7 @@
 // PR 121 round 4 findings: each test holds one answer back behind a delayed route, so the order of events is exact
 // and does not depend on the machine's speed.
 import { expect, test, type Page } from "@playwright/test";
+import { openDesk, openTab } from "./surface-tabs";
 import { gate, hold, open, quiet, row, seed, settle, signIn, stubBrowserChannels, writes } from "./switch-helpers.js";
 
 /** A day well after any seeded expiry, built at run time. */
@@ -14,8 +15,7 @@ test.afterAll(async ({ request }) => {
 });
 
 async function openDetail(page: Page): Promise<void> {
-  const detail = page.getByTestId("qb-detail");
-  if ((await detail.getAttribute("open")) === null) await page.getByText("Quote detail & admin").click();
+  await openTab(page, "admin");
   await expect(page.getByTestId("qe-box")).toBeVisible();
 }
 
@@ -108,8 +108,11 @@ test("A P2-1 an edit panel save still out at sign out sends no discount write un
   expect(await keptSays(page)).toEqual({ error: "", notice: "" });
 });
 
-test("A P2-1 an edit panel save refused after sign out reads nothing and opens no dialog under the next person's session", async ({ page }) => {
-  await signIn(page, "Sales");
+test("A P2-1 an edit panel save refused after sign out reads nothing and opens no dialog under the next person's session", async ({ page, request }) => {
+  // The edit panel is the Sales manager's (the Admin tab): the stub is told the manager may not clear the floor, so
+  // the discount below is refused the way the leg needs; the next person is Sales, another role.
+  await request.put("/_stub/manager-override", { data: { on: false } });
+  await signIn(page, "Sales manager");
   await row(page, "Q-1001").click();
   await openDetail(page);
   await expect(page.getByTestId("qe-title")).toContainText("Q-1001");
@@ -120,7 +123,7 @@ test("A P2-1 an edit panel save refused after sign out reads nothing and opens n
   await line.getByRole("button", { name: "Save" }).click();
   await patch.asked;
   // The next person is another role: the same role would be resumed on the quote it had open.
-  await signOutAndInAs(page, "Sales manager");
+  await signOutAndInAs(page, "Sales");
   const touched: string[] = [];
   page.on("request", (request) => {
     if (/\/api\/v1\/quotes\/q-1001/.test(request.url())) touched.push(`${request.method()} ${request.url()}`);
@@ -220,21 +223,22 @@ test("A P2-2 a slow terms save that lands after the person has left the quote ag
 const followups = (page: Page) => page.locator("qd-quote-followups");
 const holdExpiry = (page: Page) => page.locator("qd-quote-hold-expiry");
 
-async function openQuote(page: Page, quoteNo: string): Promise<void> {
+/** Open a quote on the surface its panel stands on: Admin (the edit panel), Activity (follow ups) or Stock (hold expiry). */
+async function openQuote(page: Page, quoteNo: string, tab: "admin" | "activity" | "stock" = "admin"): Promise<void> {
   await row(page, quoteNo).click();
-  await openDetail(page);
+  await openTab(page, tab);
   await expect(page.getByTestId("qe-title")).toContainText(quoteNo);
 }
 
 test("B P2-1 a follow-ups stop that lands after leaving and returning shows on return", async ({ page }) => {
   await signIn(page, "Sales manager");
-  await openQuote(page, "Q-1002");
+  await openQuote(page, "Q-1002", "activity");
   await expect(followups(page).getByTestId("fu-summary")).toContainText("Follow-ups are on");
   const disable = await hold(page, /\/quotes\/q-1002\/followups\/disable$/, { method: "POST", times: 1 });
   await followups(page).getByRole("button", { name: "Stop follow-ups" }).click();
   await disable.asked;
-  await openQuote(page, "Q-1001");
-  await openQuote(page, "Q-1002");
+  await openQuote(page, "Q-1001", "activity");
+  await openQuote(page, "Q-1002", "activity");
   await expect(followups(page).getByTestId("fu-summary")).toContainText("Follow-ups are on");
   await disable.release();
   await expect(followups(page).getByTestId("fu-summary")).toContainText("Follow-ups are OFF");
@@ -242,14 +246,14 @@ test("B P2-1 a follow-ups stop that lands after leaving and returning shows on r
 
 test("B P2-1 a follow-ups restart that lands after leaving and returning shows on return", async ({ page }) => {
   await signIn(page, "Sales manager");
-  await openQuote(page, "Q-1002");
+  await openQuote(page, "Q-1002", "activity");
   await followups(page).getByRole("button", { name: "Stop follow-ups" }).click();
   await expect(followups(page).getByTestId("fu-summary")).toContainText("Follow-ups are OFF");
   const enable = await hold(page, /\/quotes\/q-1002\/followups\/enable$/, { method: "POST", times: 1 });
   await followups(page).getByRole("button", { name: "Restart follow-ups" }).click();
   await enable.asked;
-  await openQuote(page, "Q-1001");
-  await openQuote(page, "Q-1002");
+  await openQuote(page, "Q-1001", "activity");
+  await openQuote(page, "Q-1002", "activity");
   await expect(followups(page).getByTestId("fu-summary")).toContainText("Follow-ups are OFF");
   await enable.release();
   await expect(followups(page).getByTestId("fu-summary")).toContainText("Follow-ups are on");
@@ -257,7 +261,7 @@ test("B P2-1 a follow-ups restart that lands after leaving and returning shows o
 
 test("B P2-1 a text share that lands after leaving and returning makes the quote re-read", async ({ page }) => {
   await signIn(page, "Sales manager");
-  await openQuote(page, "Q-1002");
+  await openQuote(page, "Q-1002", "activity");
   const door = gate();
   await page.route(/\/api\/v1\/quotes\/q-1002\/sms-share$/, async (route) => {
     await door.opened;
@@ -266,8 +270,8 @@ test("B P2-1 a text share that lands after leaving and returning makes the quote
   const asked = page.waitForRequest((r) => r.url().endsWith("/quotes/q-1002/sms-share"));
   await followups(page).getByRole("button", { name: "Text the quote link" }).click();
   await asked;
-  await openQuote(page, "Q-1001");
-  await openQuote(page, "Q-1002");
+  await openQuote(page, "Q-1001", "activity");
+  await openQuote(page, "Q-1002", "activity");
   await quiet(page);
   const reads: string[] = [];
   page.on("request", (request) => {
@@ -283,13 +287,13 @@ test("B P2-1 a text share that lands after leaving and returning makes the quote
 test("B P2-1 a re-hold that lands after leaving and returning shows on return", async ({ page, request }) => {
   await request.post("/_stub/hold-lapse", { data: { quote_id: "q-1001", line_no: 2 } });
   await signIn(page, "Sales manager");
-  await openQuote(page, "Q-1001");
+  await openQuote(page, "Q-1001", "stock");
   await expect(holdExpiry(page).getByTestId("he-headline")).toBeVisible();
   const resync = await hold(page, /\/quotes\/q-1001\/holds\/resync$/, { method: "POST", times: 1 });
   await holdExpiry(page).getByRole("button", { name: "Re-hold these lines" }).click();
   await resync.asked;
-  await openQuote(page, "Q-1003");
-  await openQuote(page, "Q-1001");
+  await openQuote(page, "Q-1003", "stock");
+  await openQuote(page, "Q-1001", "stock");
   await expect(holdExpiry(page).getByTestId("he-headline")).toBeVisible();
   await resync.release();
   await expect(holdExpiry(page).getByTestId("he-headline")).toHaveCount(0);
@@ -297,12 +301,12 @@ test("B P2-1 a re-hold that lands after leaving and returning shows on return", 
 
 test("B P2-1 a follow-ups stop refused after leaving and returning is said on return", async ({ page }) => {
   await signIn(page, "Sales manager");
-  await openQuote(page, "Q-1002");
+  await openQuote(page, "Q-1002", "activity");
   const disable = await hold(page, /\/quotes\/q-1002\/followups\/disable$/, { method: "POST", times: 1, refuse: { status: 409, error: "quote: the cadence is locked" } });
   await followups(page).getByRole("button", { name: "Stop follow-ups" }).click();
   await disable.asked;
-  await openQuote(page, "Q-1001");
-  await openQuote(page, "Q-1002");
+  await openQuote(page, "Q-1001", "activity");
+  await openQuote(page, "Q-1002", "activity");
   await expect(followups(page).getByTestId("fu-error")).toHaveCount(0);
   await disable.release();
   await expect(followups(page).getByTestId("fu-error")).toBeVisible();
@@ -310,11 +314,11 @@ test("B P2-1 a follow-ups stop refused after leaving and returning is said on re
 
 test("B P2-1 a follow-ups stop refused while the person is on another quote says nothing there", async ({ page }) => {
   await signIn(page, "Sales manager");
-  await openQuote(page, "Q-1002");
+  await openQuote(page, "Q-1002", "activity");
   const disable = await hold(page, /\/quotes\/q-1002\/followups\/disable$/, { method: "POST", times: 1, refuse: { status: 409, error: "quote: the cadence is locked" } });
   await followups(page).getByRole("button", { name: "Stop follow-ups" }).click();
   await disable.asked;
-  await openQuote(page, "Q-1001");
+  await openQuote(page, "Q-1001", "activity");
   await disable.release();
   await settle(page);
   await expect(followups(page).getByTestId("fu-error")).toHaveCount(0);
@@ -506,6 +510,7 @@ test("P3 a draft typed on a line that is gone is dropped, so it does not land on
   const lines = page.locator("qd-quote-edit").getByTestId("qe-line");
   await expect(lines).toHaveCount(2);
   await lines.nth(1).locator('[data-field="qty"]').fill("9");
+  await openTab(page, "build");
   await page.getByTestId("qb-line-trash").nth(1).click();
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
   await expect(lines).toHaveCount(1);
@@ -569,9 +574,8 @@ test("P3 a read of the acceptance switch begun before a flip does not override t
   await page.request.put("/_stub/general-manager", { data: { member: true } });
   try {
     await signIn(page, "Sales manager");
-    await page.getByText("Quote detail & admin").click();
+    await openDesk(page, "settings");
     const settings = page.locator("qd-quote-settings");
-    await settings.getByTestId("qa-details").locator("summary").click();
     await expect(page.getByTestId("qa-switch")).toBeVisible();
     await expect(page.getByTestId("qa-switch")).not.toBeChecked();
     const read = await hold(page, /\/quotes\/settings\/acceptance$/, { method: "GET", times: 1, snapshot: true });
@@ -589,8 +593,7 @@ test("P3 a read of the acceptance switch begun before a flip does not override t
 
 test("P3 a read of the scope rules begun before a switch does not override the switch", async ({ page }) => {
   await signIn(page, "Sales manager");
-  await page.getByText("Quote detail & admin").click();
-  await page.locator("qd-quote-settings").getByTestId("qr-details").locator("summary").click();
+  await openDesk(page, "settings");
   await expect(page.getByTestId("qr-row")).toHaveCount(7);
   const row = page.getByTestId("qr-row").filter({ hasText: "WALL_NEEDS_BASE" });
   const read = await hold(page, /\/quote-assist\/scope-rules$/, { method: "GET", times: 1, snapshot: true });
@@ -607,8 +610,7 @@ test("P3 no empty lock box shows while a policy save is out", async ({ page }) =
   await page.request.put("/_stub/general-manager", { data: { member: true } });
   try {
     await signIn(page, "Sales manager");
-    await page.getByText("Quote detail & admin").click();
-    await page.locator("qd-quote-settings").getByTestId("qs-screen").locator("summary").click();
+    await openDesk(page, "settings");
     await expect(page.getByTestId("qs-policy")).toBeVisible();
     await page.getByTestId("qs-validity-days").fill("55");
     const put = await hold(page, /\/api\/v1\/quotes\/policy/, { method: "PUT", times: 1 });

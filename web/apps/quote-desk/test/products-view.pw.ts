@@ -24,7 +24,7 @@ test("Cards and Rows beside Products flip the grid's presentation", async ({ pag
   await expect(rows).toHaveAttribute("aria-pressed", "false");
   const presentation = () =>
     page.evaluate(() => {
-      const root = document.querySelector("qd-app-root")?.shadowRoot?.querySelector("qd-quote-builder")?.shadowRoot;
+      const root = document.querySelector("qd-app-root")?.shadowRoot?.querySelector("qd-desk-surfaces")?.shadowRoot?.querySelector("qd-quote-builder")?.shadowRoot;
       const grid = root?.querySelector("qd-quote-workarea")?.shadowRoot?.querySelector("hos-pos-product-grid") as
         | (HTMLElement & { presentation?: string })
         | null

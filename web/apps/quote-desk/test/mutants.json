@@ -738,8 +738,8 @@
   {
     "id": "bq-create-selection",
     "file": "src/quote-builder.ts",
-    "find": "    if (this.selected === onScreen) this.selected = result.value;",
-    "replace": "    this.selected = result.value;",
+    "find": "    if (this.selected === onScreen) this.openQuote(result.value);",
+    "replace": "    this.openQuote(result.value);",
     "test": "guard create selection:"
   },
   {
@@ -1309,16 +1309,16 @@
   },
   {
     "id": "qb-edit-panel-mounted",
-    "file": "src/quote-builder.ts",
-    "find": "          <qd-quote-edit data-seam=${SEAM_EDIT_PANEL}></qd-quote-edit>",
-    "replace": "          ${this.selected !== \"\" ? html`<qd-quote-edit data-seam=${SEAM_EDIT_PANEL}></qd-quote-edit>` : nothing}",
+    "file": "src/quote-surfaces.ts",
+    "find": "            <qd-quote-edit data-seam=${SEAM_EDIT_PANEL}></qd-quote-edit>",
+    "replace": "            ${this.quoteId !== \"\" ? html`<qd-quote-edit data-seam=${SEAM_EDIT_PANEL}></qd-quote-edit>` : nothing}",
     "test": "P2-2 leaving through New Quote: a quantity that lands while its panel is gone"
   },
   {
     "id": "qb-followups-panel-mounted",
-    "file": "src/quote-builder.ts",
-    "find": "          <qd-quote-followups data-seam=${SEAM_FOLLOWUPS}></qd-quote-followups>",
-    "replace": "          ${this.selected !== \"\" ? html`<qd-quote-followups data-seam=${SEAM_FOLLOWUPS}></qd-quote-followups>` : nothing}",
+    "file": "src/quote-surfaces.ts",
+    "find": "        <qd-quote-followups data-seam=${SEAM_FOLLOWUPS}></qd-quote-followups>",
+    "replace": "        ${this.quoteId !== \"\" ? html`<qd-quote-followups data-seam=${SEAM_FOLLOWUPS}></qd-quote-followups>` : nothing}",
     "test": "P2-2 leaving through New Quote: a follow-ups stop that lands while its panel is gone"
   },
   {
@@ -1387,9 +1387,9 @@
   },
   {
     "id": "qb-hold-expiry-unmount",
-    "file": "src/quote-builder.ts",
-    "find": "            <qd-quote-hold-expiry data-seam=${SEAM_HOLD_EXPIRY}></qd-quote-hold-expiry>\n",
-    "replace": "            ${this.selected === \"\" ? nothing : html`<qd-quote-hold-expiry data-seam=${SEAM_HOLD_EXPIRY}></qd-quote-hold-expiry>`}\n",
+    "file": "src/quote-surfaces.ts",
+    "find": "        <qd-quote-hold-expiry data-seam=${SEAM_HOLD_EXPIRY}></qd-quote-hold-expiry>\n",
+    "replace": "        ${this.quoteId === \"\" ? nothing : html`<qd-quote-hold-expiry data-seam=${SEAM_HOLD_EXPIRY}></qd-quote-hold-expiry>`}\n",
     "test": "P2-2 leaving through New Quote: a re-hold that lands while the hold expiry panel is gone still announces its quote"
   },
   {
@@ -1423,5 +1423,19 @@
     "find": "    await this.#signOut();\n    window.location.assign(\"/\");",
     "replace": "    window.location.assign(\"/\");",
     "test": "Switch role ends the session and returns to the front door at /"
+  },
+  {
+    "id": "ad-load-order",
+    "file": "src/approval-detail.ts",
+    "find": "    if (seq !== this.seq) return;\n    if (!all.ok) {",
+    "replace": "    if (!all.ok) {",
+    "test": "D: a late read for the request left never shows"
+  },
+  {
+    "id": "ds-count-order",
+    "file": "src/desk-surfaces.ts",
+    "find": "    if (seq !== this.countSeq || !result.ok) return;",
+    "replace": "    if (!result.ok) return;",
+    "test": "A: a late count read never puts a decided request back"
   }
 ]

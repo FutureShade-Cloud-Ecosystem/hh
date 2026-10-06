@@ -4,6 +4,7 @@
 // the role, the active tab and the pending count through its wiring pass; the tabs are plain links, so the hash
 // carries the walk and the browser's history carries back and forward.
 import { LitElement, html, nothing } from "lit";
+import { hhAddress } from "@hardscapehouse/design-system/src/address.js";
 import { customElement, property } from "lit/decorators.js";
 import { DESK_TAB_LABEL, deskTabHash, deskTabsFor, type DeskRole, type DeskTab } from "./surface-route.js";
 import { tabStyles } from "./_tab-styles.js";
@@ -19,17 +20,18 @@ export class QdDeskNav extends LitElement {
 
   override render() {
     return html`<nav class="tabs" data-testid="desk-nav" aria-label="Desk surfaces">
-      ${deskTabsFor(this.deskRole).map(
-        (tab) => html`<a
+      ${deskTabsFor(this.deskRole).map((tab) => {
+        const href = deskTabHash(tab);
+        return html`<a
           class="tab"
-          href=${deskTabHash(tab)}
+          href="${hhAddress(href)}"
           data-testid=${`desk-tab-${tab}`}
           aria-current=${tab === this.active ? "page" : nothing}
           >${DESK_TAB_LABEL[tab]}${tab === "approvals" && this.pending > 0
             ? html` <span class="count" data-testid="desk-pending">${this.pending}</span>`
             : nothing}</a
-        >`,
-      )}
+        >`;
+      })}
     </nav>`;
   }
 }
