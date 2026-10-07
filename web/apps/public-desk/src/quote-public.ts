@@ -19,6 +19,7 @@ import { state } from "lit/decorators.js";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles, button } from "@hardscapehouse/design-system/src/primitives.js";
 import { ApiClient } from "@hardscapehouse/api-client";
+import { productTileUrl } from "@hardscapehouse/design-system/src/assets/product-tiles/index.js";
 import {
   acceptanceAmountPhrase,
   acceptanceRefusal,
@@ -37,6 +38,7 @@ import {
   PublicQuoteClient,
   validateQuoteView,
   type AcceptanceRef,
+  type QuoteLineRef,
   type QuoteViewRef,
 } from "./quote-client.js";
 
@@ -303,7 +305,8 @@ export class QuotePublicPage extends HHElement {
         background: var(--hh-card);
         overflow: hidden;
       }
-      .thumb {
+      .thumb,
+      .tile {
         width: 100%;
         height: 100%;
         object-fit: cover;
@@ -484,12 +487,44 @@ export class QuotePublicPage extends HHElement {
    * https and scheme free only) refuses to bind, so the slot renders in the
    * template and the image element is built here, one per slot, idempotent.
    */
+  /**
+   * The drawn tile for a line that carries no photo (decision log row 1057): the design system's
+   * tile for the product's category, in the page's theme. The public line carries no category word
+   * of its own, so the tile is read from the line's description by the same resolver the till uses
+   * (an unknown name resolves to no tile and the line keeps the no-photo mark; nothing is guessed).
+   */
+  private tileFor(line: QuoteLineRef): string | null {
+    if (line.imageRef) return null;
+    const theme = document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+    return productTileUrl(line.description, theme);
+  }
+
   private paintThumbs(): void {
+    const tiles = this.renderRoot.querySelectorAll<HTMLSpanElement>("[data-tile]");
+    for (const slot of tiles) {
+      const name = slot.getAttribute("data-tile") ?? "";
+      const theme = document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+      const url = productTileUrl(name, theme);
+      const existing = slot.querySelector("img.tile");
+      if (url === null) {
+        existing?.remove();
+      } else if (existing === null) {
+        const img = document.createElement("img");
+        img.className = "tile";
+        img.src = url;
+        img.alt = "";
+        img.width = 36;
+        img.height = 36;
+        slot.append(img);
+      } else if (existing.getAttribute("src") !== url) {
+        existing.setAttribute("src", url);
+      }
+    }
     const slots = this.renderRoot.querySelectorAll<HTMLSpanElement>("[data-thumb]");
     for (const slot of slots) {
       const ref = slot.getAttribute("data-thumb");
       const url = ref !== null && ref !== "" ? (this.thumbs.get(ref) ?? null) : null;
-      const existing = slot.querySelector("img");
+      const existing = slot.querySelector<HTMLImageElement>("img.thumb");
       if (url !== null && existing !== null && existing.getAttribute("src") !== url) {
         existing.src = url;
       } else if (url !== null && existing === null) {
@@ -855,7 +890,12 @@ export class QuotePublicPage extends HHElement {
                 (l) => html`<tr>
                   ${withImages
                     ? html`<td>
-                        <span class="thumbslot" data-thumb=${l.imageRef}>${l.imageRef ? nothing : this.renderThumbMark()}</span>
+                        <span
+                          class="thumbslot"
+                          data-thumb=${l.imageRef}
+                          data-tile=${this.tileFor(l) === null ? nothing : l.description}
+                          >${l.imageRef || this.tileFor(l) !== null ? nothing : this.renderThumbMark()}</span
+                        >
                       </td>`
                     : nothing}
                   <td class="item">
