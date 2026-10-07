@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -319,13 +320,8 @@ func maskCardNumber(raw string) string {
 	return "•••• " + string(digits[len(digits)-4:])
 }
 
-// today returns YYYY-MM-DD for the given clock (or time.Now when nil).
-func today(now func() time.Time) string {
-	if now == nil {
-		now = time.Now
-	}
-	return now().Format("2006-01-02")
-}
+// today returns YYYY-MM-DD, the house zone's day, for the given clock (or time.Now when nil).
+func today(now func() time.Time) string { return houseday.Today(now) }
 
 // normDate coerces "" → today and validates YYYY-MM-DD; returns a BadRequestError on a malformed date.
 func normDate(s string, now func() time.Time) (string, error) {
