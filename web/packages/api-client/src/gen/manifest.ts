@@ -807,6 +807,7 @@ export const SCHEMA_NAMES: readonly string[] = [
   "QuoteSummary",
   "QuoteSummaryPage",
   "QuoteView",
+  "QuoteAcceptanceRecord",
   "QuoteViewLine",
   "QuoteCreateRequest",
   "QuoteValidUntilWrite",

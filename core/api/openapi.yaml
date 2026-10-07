@@ -20383,6 +20383,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "422":
+          description: The quantities were not confirmed; refused in words and nothing is recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/quotes/{id}/sms-share:
     post:
       operationId: quoteShareBySMS
@@ -45631,6 +45637,7 @@ components:
         - tax_cents
         - total_cents
         - updated_at
+        - acceptances
       properties:
         id:
           type: string
@@ -45696,6 +45703,26 @@ components:
         updated_at:
           type: string
           format: date-time
+        acceptances:
+          type: array
+          description: The acceptance history, oldest first; empty on a quote nobody has accepted
+          items:
+            $ref: "#/components/schemas/QuoteAcceptanceRecord"
+    QuoteAcceptanceRecord:
+      type: object
+      description: One row of a quote's acceptance history. quantities_confirmed is false on an acceptance taken before the confirmation existed. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8).
+      required:
+        - typed_name
+        - accepted_at
+        - quantities_confirmed
+      properties:
+        typed_name:
+          type: string
+        accepted_at:
+          type: string
+          format: date-time
+        quantities_confirmed:
+          type: boolean
     QuoteViewLine:
       type: object
       description: One line as the staff quote surface renders it. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8); this line view is the ERP wire shape, distinct from the skeleton QuoteLine that dealer_quote and customer_quote share.
@@ -46628,10 +46655,11 @@ components:
           description: Present only when the dealer's include-product-images choice is on and the product has a primary image; it addresses the already public product-image byte route, which an img tag can send no Authorization header to
     QuotePublicAcceptRequest:
       type: object
-      description: "The acceptance payload: a typed full name plus an explicit affirmative, two required acts. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8)."
+      description: "The acceptance payload: a typed full name, an explicit affirmative and the customer's confirmation of the quantities, three required acts. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8)."
       required:
         - typed_name
         - accepted
+        - quantities_confirmed
       properties:
         typed_name:
           type: string
@@ -46639,6 +46667,9 @@ components:
         accepted:
           type: boolean
           description: Must be true; the affirmative is a required separate act
+        quantities_confirmed:
+          type: boolean
+          description: Must be true; the customer confirms the quantities as a separate act, and an absent or false value is refused with 422
     QuoteAcceptanceResult:
       type: object
       description: The acceptance confirmation; it echoes the agreed totals so the customer's own record does not depend on a careful reading of the page. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8).
@@ -46649,11 +46680,15 @@ components:
         - subtotal_cents
         - tax_cents
         - total_cents
+        - quantities_confirmed
       properties:
         quote_no:
           type: string
         typed_name:
           type: string
+        quantities_confirmed:
+          type: boolean
+          description: Echoes the customer's confirmation of the quantities, as stored on the acceptance record
         accepted_at:
           type: string
           format: date-time

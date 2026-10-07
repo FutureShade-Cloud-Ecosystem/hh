@@ -638,6 +638,27 @@ func (r *Repository) StaffDetail(ctx context.Context, quoteID string) (StaffQuot
 	if err := rows.Err(); err != nil {
 		return v, fmt.Errorf("iterate quote lines: %w", err)
 	}
+	rows.Close()
+
+	// The acceptance history, on the same snapshot as the lines it speaks about.
+	arows, err := tx.Query(ctx, `
+		SELECT typed_name, accepted_at, quantities_confirmed
+		  FROM quote_acceptances WHERE quote_id = $1 ORDER BY accepted_at, id`, quoteID)
+	if err != nil {
+		return v, fmt.Errorf("read quote acceptances: %w", err)
+	}
+	defer arows.Close()
+	v.Acceptances = []QuoteAcceptanceRecord{}
+	for arows.Next() {
+		var a QuoteAcceptanceRecord
+		if err := arows.Scan(&a.TypedName, &a.AcceptedAt, &a.QuantitiesConfirmed); err != nil {
+			return v, fmt.Errorf("scan quote acceptance: %w", err)
+		}
+		v.Acceptances = append(v.Acceptances, a)
+	}
+	if err := arows.Err(); err != nil {
+		return v, fmt.Errorf("iterate quote acceptances: %w", err)
+	}
 	return v, nil
 }
 

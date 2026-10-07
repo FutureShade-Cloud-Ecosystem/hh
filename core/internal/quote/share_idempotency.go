@@ -52,7 +52,7 @@ func (r *Repository) findKeyedAcceptance(ctx context.Context, tx rowQuerier, in 
 	var before, after string
 	err = tx.QueryRow(ctx, `
 		SELECT qa.quote_no, qa.typed_name, qa.accepted_subtotal_cents, qa.accepted_tax_cents,
-		       qa.accepted_total_cents, qa.accepted_at,
+		       qa.accepted_total_cents, qa.accepted_at, qa.quantities_confirmed,
 		       COALESCE(al.changes->>'before',''), COALESCE(al.changes->>'after','')
 		  FROM quote_acceptances qa
 		  JOIN audit_log al ON al.seq = qa.audit_seq
@@ -62,7 +62,7 @@ func (r *Repository) findKeyedAcceptance(ctx context.Context, tx rowQuerier, in 
 		 ORDER BY qa.accepted_at, qa.id
 		 LIMIT 1`, in.QuoteID, in.ShareLinkID, in.IdempotencyKey).
 		Scan(&out.QuoteNo, &out.TypedName, &out.SubtotalCents, &out.TaxCents, &out.TotalCents,
-			&out.AcceptedAt, &before, &after)
+			&out.AcceptedAt, &out.QuantitiesConfirmed, &before, &after)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AcceptanceResult{}, false, nil
 	}

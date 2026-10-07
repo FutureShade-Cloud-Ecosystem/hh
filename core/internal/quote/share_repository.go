@@ -352,7 +352,7 @@ func (r *Repository) AcceptQuoteGuarded(ctx context.Context, in acceptWrite, hoo
 		}
 	}
 	out = AcceptanceResult{
-		QuoteNo: quoteNo, TypedName: in.TypedName, AcceptedAt: in.Now,
+		QuoteNo: quoteNo, TypedName: in.TypedName, AcceptedAt: in.Now, QuantitiesConfirmed: in.QuantitiesConfirmed,
 		SubtotalCents: subtotal, TaxCents: tax, TotalCents: total,
 		Repeat: repeat, priorStatus: status, idemKey: in.IdempotencyKey,
 	}
@@ -367,10 +367,12 @@ func (r *Repository) AcceptQuoteGuarded(ctx context.Context, in acceptWrite, hoo
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO quote_acceptances
 		  (quote_id, share_link_id, quote_no, typed_name,
-		   accepted_subtotal_cents, accepted_tax_cents, accepted_total_cents, audit_seq, accepted_at)
-		VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, NULLIF($8,0), $9)
+		   accepted_subtotal_cents, accepted_tax_cents, accepted_total_cents, audit_seq, accepted_at,
+		   quantities_confirmed)
+		VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, NULLIF($8,0), $9, $10)
 		RETURNING accepted_at`,
-		in.QuoteID, in.ShareLinkID, quoteNo, in.TypedName, subtotal, tax, total, seq, in.Now).
+		in.QuoteID, in.ShareLinkID, quoteNo, in.TypedName, subtotal, tax, total, seq, in.Now,
+		in.QuantitiesConfirmed).
 		Scan(&out.AcceptedAt); err != nil {
 		return AcceptanceResult{}, fmt.Errorf("record quote acceptance: %w", err)
 	}

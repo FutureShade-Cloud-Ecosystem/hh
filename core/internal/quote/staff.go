@@ -291,10 +291,22 @@ type StaffQuoteView struct {
 	TaxCents      int64           `json:"tax_cents"`
 	TotalCents    int64           `json:"total_cents"`
 	UpdatedAt     time.Time       `json:"updated_at"`
+	// Acceptances is the acceptance history, oldest first: who accepted, when, and whether they
+	// confirmed the quantities. Empty (never null) on a quote nobody has accepted.
+	Acceptances []QuoteAcceptanceRecord `json:"acceptances"`
 
 	// validUntil is the parsed form the service uses to compute Expired/EditableFields. Unexported -
 	// it never crosses the wire.
 	validUntil *time.Time
+}
+
+// QuoteAcceptanceRecord is one row of a quote's acceptance history, read back from the stored
+// acceptance record. QuantitiesConfirmed is false on acceptances taken before the question existed,
+// which says plainly that no confirmation was captured.
+type QuoteAcceptanceRecord struct {
+	TypedName           string    `json:"typed_name"`
+	AcceptedAt          time.Time `json:"accepted_at"`
+	QuantitiesConfirmed bool      `json:"quantities_confirmed"`
 }
 
 // QuoteCreate is the staff create payload.

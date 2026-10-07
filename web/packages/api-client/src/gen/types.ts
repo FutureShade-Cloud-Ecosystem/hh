@@ -5720,6 +5720,12 @@ export type QuoteView = {
   tax_cents: number;
   total_cents: number;
   updated_at: string;
+  acceptances: QuoteAcceptanceRecord[];
+};
+export type QuoteAcceptanceRecord = {
+  typed_name: string;
+  accepted_at: string;
+  quantities_confirmed: boolean;
 };
 export type QuoteViewLine = {
   line_no: number;
@@ -5994,10 +6000,12 @@ export type QuotePublicLine = {
 export type QuotePublicAcceptRequest = {
   typed_name: string;
   accepted: boolean;
+  quantities_confirmed: boolean;
 };
 export type QuoteAcceptanceResult = {
   quote_no: string;
   typed_name: string;
+  quantities_confirmed: boolean;
   accepted_at: string;
   subtotal_cents: number;
   tax_cents: number;
