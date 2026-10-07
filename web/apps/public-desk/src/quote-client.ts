@@ -51,6 +51,8 @@ export interface QuoteViewRef {
   deliveryAddress: string | null;
   requestedDate: string | null;
   deliveryFeeCents: number | null;
+  /** The dealer's notice that the quantities are the customer's to confirm; absent is honest, never a sentence of the page's own. */
+  quantityNotice: string | null;
 }
 
 export interface AcceptanceRef {
@@ -60,6 +62,8 @@ export interface AcceptanceRef {
   subtotalCents: number;
   taxCents: number;
   totalCents: number;
+  /** The server's echo that the quantities were confirmed; false when it did not say. */
+  quantitiesConfirmed: boolean;
 }
 
 // -- what a customer may be told of a refusal: the server's words only when
@@ -220,6 +224,7 @@ export function validateQuoteView(value: unknown): QuoteViewRef | null {
     deliveryAddress: stringAt(record, "delivery_address"),
     requestedDate: stringAt(record, "requested_date"),
     deliveryFeeCents: integerAt(record, "delivery_fee_cents"),
+    quantityNotice: stringAt(record, "quantity_notice"),
   };
 }
 
@@ -240,9 +245,10 @@ export function validateAcceptance(value: unknown): AcceptanceRef | null {
   if (quoteNo === null || typedName === null || acceptedAt === null || subtotalCents === null || taxCents === null || totalCents === null) {
     return null;
   }
-  return { quoteNo, typedName, acceptedAt, subtotalCents, taxCents, totalCents };
+  return { quoteNo, typedName, acceptedAt, subtotalCents, taxCents, totalCents, quantitiesConfirmed: booleanAt(record, "quantities_confirmed") === true };
 }
 
+const QUANTITIES_REFUSAL_WORDS = /reviewed the quantities on this quote/;
 const KEY_REUSE_WORDS = /idempotency key was used for a different acceptance/;
 
 /**
@@ -255,7 +261,7 @@ export function isKeyReuseRefusal(failure: { error: string; status?: number }): 
 
 /**
  * The core's own definite refusal of an acceptance, and only that: a status the
- * core's accept route answers itself (400 for a bad request, 404 for a link or
+ * core's accept route answers itself (400 for a bad request, 422 for quantities not confirmed, 404 for a link or
  * quote that is not found, 409 for a quote that is not awaiting acceptance)
  * carrying the contract's JSON error envelope. A 404 must also say "not found",
  * the core's words for it. Only this proves the acceptance was not recorded.
@@ -266,6 +272,8 @@ export function isDefiniteRefusal(failure: { error: string; status?: number }): 
   const words = serverWords(failure);
   if (words === null) return false;
   if (failure.status === 404) return /not found$/.test(words);
+  // The core's 422 is its quantities refusal alone, said in its own words; a proxy's 422 is not that.
+  if (failure.status === 422) return QUANTITIES_REFUSAL_WORDS.test(words);
   return failure.status === 400 || failure.status === 409;
 }
 
@@ -298,7 +306,7 @@ export class PublicQuoteClient {
     const result = await publicApi.quotePublicAcceptQuote(
       this.#client,
       token,
-      { typed_name: typedName, accepted: true },
+      { typed_name: typedName, accepted: true, quantities_confirmed: true },
       { idempotencyKey },
     );
     if (!result.ok) return result;

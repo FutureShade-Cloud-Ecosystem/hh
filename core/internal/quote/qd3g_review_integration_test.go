@@ -46,7 +46,7 @@ func TestIntegration_QD3g_RetryThroughDeadLinkWaitsForInFlightAccept(t *testing.
 			}
 			first := make(chan answerOrErr, 1)
 			go func() {
-				r, err := svc.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, qd3dKeyA)
+				r, err := svc.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, true, qd3dKeyA)
 				first <- answerOrErr{res: r, err: err}
 			}()
 			qd3fWaitForLockWaiters(t, pool, 1)
@@ -109,7 +109,7 @@ type answerOrErr struct {
 func qd3gAccepted(t *testing.T, pool *pgxpool.Pool, now time.Time) (svc *StaffService, quoteID, token string, first AcceptanceResult) {
 	t.Helper()
 	svc, quoteID, token, linkID := qd3fMinted(t, pool, now)
-	first, err := svc.AcceptByTokenKeyed(context.Background(), token, qd3fCustomer, true, qd3dKeyA)
+	first, err := svc.AcceptByTokenKeyed(context.Background(), token, qd3fCustomer, true, true, qd3dKeyA)
 	if err != nil {
 		t.Fatalf("attempt 1: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestIntegration_QD3g_DeadLinkNeedsTheAffirmative(t *testing.T) {
 			t.Errorf("%s through a dead link = %d (%s), want the 400 you must confirm", name, w.Code, w.Body.String())
 		}
 	}
-	if w := qd3gPostBody(t, svc, token, qd3dKeyA, `{"typed_name":"`+qd3fCustomer+`","accepted":true}`); w.Code != http.StatusOK {
+	if w := qd3gPostBody(t, svc, token, qd3dKeyA, `{"typed_name":"`+qd3fCustomer+`","accepted":true,"quantities_confirmed":true}`); w.Code != http.StatusOK {
 		t.Errorf("the affirmed retry = %d (%s), want 200", w.Code, w.Body.String())
 	}
 	if n := acceptanceRows(t, pool, quoteID); n != 1 {

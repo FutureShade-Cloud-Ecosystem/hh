@@ -20707,6 +20707,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "422":
+          description: The quantities were not confirmed; refused in words and nothing is recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/quotes/{id}/sms-share:
     post:
       operationId: quoteShareBySMS
@@ -23125,28 +23131,24 @@ paths:
       operationId: tenantAcceptQuote
       tags:
         - tenant-quotes
-      summary: Mark a SENT dealer quote ACCEPTED
-      description: An out-of-state transition is a 409.
+      summary: Refused, a quote is accepted through the dealer's share link
+      description: Always a 422 in words, touching nothing. An acceptance needs the customer's typed name, their confirmation of the quantities and a share link to anchor the record on; this door carries none of them, so it would mark a quote accepted with nothing to show the quantities were confirmed. The share link's accept is the one door that records an acceptance.
       x-role: capability:submit_rfq
       security:
         - TenantBearer: []
       parameters:
         - $ref: "#/components/parameters/Id"
       responses:
-        "200":
-          description: The quote after the transition
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TenantQuote"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
+        "422":
+          description: Refused; the words point to the share link
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/tenant/quotes/{id}/reject:
     post:
       operationId: tenantRejectQuote
@@ -46313,6 +46315,8 @@ components:
         - tax_cents
         - total_cents
         - updated_at
+        - acceptances
+        - quantity_notice
       properties:
         id:
           type: string
@@ -46384,6 +46388,80 @@ components:
         updated_at:
           type: string
           format: date-time
+        quantity_notice:
+          type: string
+          description: The dealer's quantity notice for this quote's branch, the words the customer sees
+        acceptances:
+          type: array
+          description: The acceptance history, oldest first; empty on a quote nobody has accepted
+          items:
+            $ref: "#/components/schemas/QuoteAcceptanceRecord"
+    QuoteAcceptanceRecord:
+      type: object
+      description: "One row of a quote's acceptance history, oldest first: the customer's own acceptance, or staff accepting on the customer's behalf after the customer said yes by another channel. quantities_confirmed is false on a customer acceptance taken before the confirmation existed. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8)."
+      required:
+        - source
+        - accepted_at
+        - quantities_confirmed
+        - amount_cents
+      properties:
+        source:
+          type: string
+          enum:
+            - CUSTOMER
+            - STAFF_ON_BEHALF
+        typed_name:
+          type: string
+          description: The customer's typed name; absent on a staff row, the customer typed none
+        accepted_at:
+          type: string
+          format: date-time
+        quantities_confirmed:
+          type: boolean
+        amount_cents:
+          type: integer
+          format: int64
+          description: What was accepted; on a staff row, the amount the staff member read to the customer
+        channel:
+          type: string
+          description: Staff rows only, how the customer said yes (phone, text, email or in_person)
+        note:
+          type: string
+          description: Staff rows only, what the staff member wrote
+        quantity_notice:
+          type: string
+          description: Customer rows only, the notice wording that stood on the page at the accept; absent on acceptances taken before it was kept
+        lines:
+          type: array
+          description: Customer rows only, the lines as they stood at the accept, kept so a later edit leaves the record alone; absent on acceptances taken before they were kept
+          items:
+            $ref: "#/components/schemas/QuoteAcceptedLine"
+    QuoteAcceptedLine:
+      type: object
+      description: One line as the customer accepted it. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8).
+      required:
+        - line_no
+        - description
+        - qty_entered
+        - uom_entered
+        - unit_price_cents
+        - line_total_cents
+      properties:
+        line_no:
+          type: integer
+          format: int32
+        description:
+          type: string
+        qty_entered:
+          type: string
+        uom_entered:
+          type: string
+        unit_price_cents:
+          type: integer
+          format: int64
+        line_total_cents:
+          type: integer
+          format: int64
     QuoteViewLine:
       type: object
       description: One line as the staff quote surface renders it. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8); this line view is the ERP wire shape, distinct from the skeleton QuoteLine that dealer_quote and customer_quote share.
@@ -46998,6 +47076,7 @@ components:
         - quick_chip_set
         - workspace_split_pct
         - workspace_arrangement
+        - quantity_notice
       properties:
         branch_id:
           type: string
@@ -47036,6 +47115,11 @@ components:
           description: What the chip row renders; read-only, never written
           items:
             type: string
+        quantity_notice:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: The notice that the quantities are the customer's to confirm, shown on the customer's page, the printed page and the staff quote; a blank write goes back to the default wording
         workspace_split_pct:
           type: integer
           format: int32
@@ -47321,9 +47405,13 @@ components:
         - total_cents
         - as_of
         - acceptable
+        - quantity_notice
       properties:
         quote_no:
           type: string
+        quantity_notice:
+          type: string
+          description: The dealer's notice that the quantities are the customer's to confirm; shown near the lines and on the printed page
         customer_name:
           type: string
         status:
@@ -47422,10 +47510,11 @@ components:
           description: Present only when the dealer's include-product-images choice is on and the product has a primary image; it addresses the already public product-image byte route, which an img tag can send no Authorization header to
     QuotePublicAcceptRequest:
       type: object
-      description: "The acceptance payload: a typed full name plus an explicit affirmative, two required acts. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8)."
+      description: "The acceptance payload: a typed full name, an explicit affirmative and the customer's confirmation of the quantities, three required acts. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8)."
       required:
         - typed_name
         - accepted
+        - quantities_confirmed
       properties:
         typed_name:
           type: string
@@ -47433,6 +47522,9 @@ components:
         accepted:
           type: boolean
           description: Must be true; the affirmative is a required separate act
+        quantities_confirmed:
+          type: boolean
+          description: Must be true; the customer confirms the quantities as a separate act, and an absent or false value is refused with 422
     QuoteAcceptanceResult:
       type: object
       description: The acceptance confirmation; it echoes the agreed totals so the customer's own record does not depend on a careful reading of the page. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8).
@@ -47443,11 +47535,15 @@ components:
         - subtotal_cents
         - tax_cents
         - total_cents
+        - quantities_confirmed
       properties:
         quote_no:
           type: string
         typed_name:
           type: string
+        quantities_confirmed:
+          type: boolean
+          description: Echoes the customer's confirmation of the quantities, as stored on the acceptance record
         accepted_at:
           type: string
           format: date-time

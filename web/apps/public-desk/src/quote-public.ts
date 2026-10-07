@@ -23,6 +23,8 @@ import { productTileUrl } from "@hardscapehouse/design-system/src/assets/product
 import {
   acceptanceAmountPhrase,
   acceptanceRefusal,
+  acceptHint,
+  acceptReady,
   showsImages,
   totalsBlock,
   type QuoteMoney,
@@ -62,6 +64,7 @@ const NAME_LOCKED =
 // The core words its refusals for staff ("convert it at the counter", "ask an administrator"), so
 // the customer only ever reads these sentences, chosen by status, never the server's text.
 const CANNOT_ACCEPT = "This quote cannot be accepted right now. Please contact us.";
+const QUANTITIES_UNCONFIRMED = "Please confirm that you have reviewed the quantities on this quote.";
 const CHECK_FIELDS = "Please check your full name and the confirmation, then try again.";
 const REFUSED_GENERIC = "We could not accept this quote right now. Please contact us.";
 const REPEAT_NOTE =
@@ -213,17 +216,63 @@ export class QuotePublicPage extends HHElement {
         background: var(--hh-card);
         color: var(--hh-text);
       }
-      .check {
+      /* The dealer's notice that the quantities are the customer's to confirm: an information callout,
+         not a field. A tinted ground, a heavy rule and an icon in the info ink, no hairline box, so it
+         cannot be mistaken for the inputs below and reads the same on screen and on paper. */
+      .qtynotice {
         display: flex;
         align-items: flex-start;
         gap: var(--hh-s-8);
-        margin: var(--hh-s-16) 0;
+        margin: var(--hh-s-12) 0 0;
+        padding: var(--hh-s-8) var(--hh-s-12);
+        border: 0;
+        border-left: 4px solid var(--hh-info);
+        border-radius: var(--hh-radius-control);
+        background: color-mix(in srgb, var(--hh-info) 11%, var(--hh-card));
+        color: var(--hh-text);
         font-size: 0.88rem;
         line-height: 1.45;
+        overflow-wrap: anywhere;
       }
-      /* The attestation is a sentence, not a field title: regular weight. */
-      .check-label {
-        font-weight: 400;
+      .noticeicon {
+        flex: none;
+        width: 1.1rem;
+        height: 1.1rem;
+        margin-top: 0.1rem;
+        color: var(--hh-info);
+      }
+      .noticetext {
+        min-width: 0;
+      }
+      /* The accept card's ticks, the quantities box and the confirmation alike: one row design, one
+         type, so the quantities tick reads as part of the card and not a line added above the name. A
+         ticked row takes the info tint, the same ground the notice speaks in. */
+      .tick {
+        display: flex;
+        align-items: flex-start;
+        gap: var(--hh-s-8);
+        margin: var(--hh-s-12) 0;
+        padding: var(--hh-s-8) var(--hh-s-12);
+        border: 1px solid var(--hh-line);
+        border-radius: var(--hh-radius-control);
+        background: var(--hh-card);
+      }
+      .tick:has(input:checked) {
+        background: color-mix(in srgb, var(--hh-info) 8%, var(--hh-card));
+      }
+      .tick input[type="checkbox"] {
+        flex: none;
+        width: 1.1rem;
+        height: 1.1rem;
+        margin: 0.1rem 0 0;
+        accent-color: var(--hh-info);
+      }
+      .tick label {
+        margin: 0;
+        font-size: 0.9rem;
+        font-weight: 500;
+        line-height: 1.45;
+        overflow-wrap: anywhere;
       }
       /* Shadow roots do not inherit the document's focus rule: the accept
          button must show the same ring as every staff surface, and this page
@@ -361,6 +410,9 @@ export class QuotePublicPage extends HHElement {
   private lockedName: string | null = null;
   @state()
   private affirmed = false;
+  /** The separate confirmation that the customer reviewed the quantities. */
+  @state()
+  private quantitiesConfirmed = false;
   /** Line thumbnails fetched through the image read, by image reference. */
   @state()
   private thumbs: Map<string, string> = new Map();
@@ -369,6 +421,8 @@ export class QuotePublicPage extends HHElement {
   private readonly acceptKeys = createAcceptKeys();
   private token = "";
   private autoPrint = false;
+  /** The staff print action's copy: the quote on paper, with no accept card (nothing on paper is tickable). */
+  private printCopy = false;
   /** True once a host has handed the page its quote: the page then never reads the link or loads. */
   private hosted = false;
   /** A host handed the page something that is not a well formed preview: the page says so and shows nothing else. */
@@ -399,6 +453,7 @@ export class QuotePublicPage extends HHElement {
     // once the quote has rendered. Guarded: a failed load never opens an
     // empty print dialog.
     this.autoPrint = params.get("print") === "1";
+    this.printCopy = this.autoPrint;
     // The design system's position gate holds the template allow table at
     // zero event and property bindings, so the controls stay static and this
     // root delegates: the kits' own data-action pattern, and id-keyed reads
@@ -448,6 +503,7 @@ export class QuotePublicPage extends HHElement {
   private onAffirmChange = (event: Event): void => {
     const target = event.target as HTMLInputElement;
     if (target.id === "affirm") this.affirmed = target.checked;
+    if (target.id === "qty-confirm") this.quantitiesConfirmed = target.checked;
   };
 
   private onActionClick = (event: Event): void => {
@@ -467,9 +523,23 @@ export class QuotePublicPage extends HHElement {
     if (this.lockedName !== null && input.value !== this.lockedName) input.value = this.lockedName;
   }
 
+  /**
+   * The disabled Accept button is described by the hint beside it. The design system's button takes no
+   * description, and the template gate allows no attribute bindings, so the tie is applied here, like the
+   * name lock: present while the hint is, gone with it.
+   */
+  private syncAcceptHint(): void {
+    const button = this.renderRoot.querySelector<HTMLButtonElement>('[data-action="accept"]');
+    if (button === null) return;
+    const hinted = this.renderRoot.querySelector("#accept-hint") !== null;
+    if (hinted && button.getAttribute("aria-describedby") !== "accept-hint") button.setAttribute("aria-describedby", "accept-hint");
+    if (!hinted && button.hasAttribute("aria-describedby")) button.removeAttribute("aria-describedby");
+  }
+
   /** Fire the one-shot print once the loaded quote has painted. */
   updated(): void {
     this.syncNameLock();
+    this.syncAcceptHint();
     if (this.autoPrint && this.quote) {
       this.autoPrint = false;
       try {
@@ -596,7 +666,7 @@ export class QuotePublicPage extends HHElement {
 
   private async accept(): Promise<void> {
     if (this.busy) return;
-    const refusal = acceptanceRefusal(this.lockedName ?? this.typedName, this.affirmed);
+    const refusal = acceptanceRefusal(this.lockedName ?? this.typedName, this.affirmed, this.quantitiesConfirmed);
     if (refusal !== null) {
       this.error = refusal;
       return;
@@ -643,7 +713,14 @@ export class QuotePublicPage extends HHElement {
             this.error = CANNOT_ACCEPT;
             return;
           }
-          const sentence = result.status === 400 ? CHECK_FIELDS : result.status === 404 ? NOT_FOUND : REFUSED_GENERIC;
+          const sentence =
+            result.status === 400
+              ? CHECK_FIELDS
+              : result.status === 422
+                ? QUANTITIES_UNCONFIRMED
+                : result.status === 404
+                  ? NOT_FOUND
+                  : REFUSED_GENERIC;
           this.error = `${sentence} ${NOT_RECORDED}`;
           return;
         }
@@ -762,6 +839,25 @@ export class QuotePublicPage extends HHElement {
     </svg>`;
   }
 
+  /** The information mark of the notice callout: a ringed i, drawn in the info ink. */
+  private renderNoticeIcon(): TemplateResult {
+    return html`<svg
+      class="noticeicon"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+      role="presentation"
+    >
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v5" />
+      <path d="M12 8h.01" />
+    </svg>`;
+  }
+
   /** The success mark: the design system's done-marker check, success ink. */
   private renderOkMark(): TemplateResult {    return html`<svg
       class="okmark"
@@ -786,6 +882,7 @@ export class QuotePublicPage extends HHElement {
       <div class="card ok">
         <h2>${this.renderOkMark()}Thank you: quote ${a.quoteNo} accepted</h2>
         <p class="sub">${withFullStop(`Accepted by ${a.typedName} on ${this.when(a.acceptedAt)}`)}</p>
+        ${a.quantitiesConfirmed ? html`<p class="sub">You confirmed the quantities on this quote.</p>` : nothing}
         ${this.renderTotals(a)}
         <p class="note">
           We have recorded your acceptance and our team will be in touch. Please keep this page or the confirmation for
@@ -799,7 +896,7 @@ export class QuotePublicPage extends HHElement {
     if (this.accepted) return nothing;
     // A preview offers no way to accept and says nothing about acceptance: no form, no typed name,
     // and no "closed" card either, because the band above already says what this page is.
-    if (q.preview || this.hosted) return nothing;
+    if (q.preview || this.hosted || this.printCopy) return nothing;
     if (!q.acceptable || this.landed) {
       // The customer reads this alone, with no staff beside them to translate,
       // so the state is SAID, in the same six states said mid-sentence: under
@@ -817,22 +914,28 @@ export class QuotePublicPage extends HHElement {
         </p>
       </div>`;
     }
+    const hint = acceptHint(this.lockedName ?? this.typedName, this.affirmed, this.quantitiesConfirmed);
     return html`
       <div class="card">
         <h2 class="card-h2">Accept this quote</h2>
         ${q.status === "ACCEPTED" || q.status === "CONVERTED" ? html`<p class="note">${REPEAT_NOTE}</p>` : nothing}
+        <div class="tick">
+          <input id="qty-confirm" type="checkbox" />
+          <label for="qty-confirm">I have reviewed the quantities on this quote and they are what I want.</label>
+        </div>
         <label for="name">Your full name</label>
         <input id="name" type="text" autocomplete="name" />
         ${this.lockedName !== null ? html`<p class="note">${NAME_LOCKED}</p>` : nothing}
-        <div class="check">
+        <div class="tick">
           <input id="affirm" type="checkbox" />
-          <label for="affirm" class="check-label">
+          <label for="affirm">
             ${withFullStop(
               `I accept this quote for ${acceptanceAmountPhrase(q)} and confirm I am authorised to do so on behalf of ${q.customerName}`,
             )}
           </label>
         </div>
-        ${button({ label: this.busy ? "Recording…" : "Accept quote", action: "accept", disabled: this.busy })}
+        ${button({ label: this.busy ? "Recording…" : "Accept quote", action: "accept", disabled: this.busy || !acceptReady(this.lockedName ?? this.typedName, this.affirmed, this.quantitiesConfirmed) })}
+        ${hint !== null ? html`<p class="note" id="accept-hint">${hint}</p>` : nothing}
         ${this.error ? html`<p class="err" role="alert">${this.error}</p>` : nothing}
         <p class="note">
           Accepting records your typed name, the date and time, and the link you used. This is an electronic acceptance:
@@ -911,6 +1014,9 @@ export class QuotePublicPage extends HHElement {
             </tbody>
           </table>
         </div>
+        ${q.quantityNotice
+          ? html`<div class="qtynotice" role="note">${this.renderNoticeIcon()}<span class="noticetext">${q.quantityNotice}</span></div>`
+          : nothing}
         ${this.renderTermsFacts(q)}
         ${this.renderTotals(q)}
       </div>

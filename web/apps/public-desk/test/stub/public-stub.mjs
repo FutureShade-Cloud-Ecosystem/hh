@@ -302,9 +302,29 @@ for (const token of [
   "q-proxy-429",
   "q-dead-landed",
   "q-dead-unrecorded",
+  "q-qty-422",
+  "q-demo-25-hint",
+  "q-print-33",
 ]) {
   QUOTES[token] = structuredClone(QUOTES["q-terms-28"]);
 }
+
+// The dealer's quantity notice: the core serves it on every quote's public view (branch row over the
+// dealer default, and the default wording when the dealer wrote none). One quote carries a dealer's own
+// wording, so the page is proven to show what it is sent and not a sentence of its own.
+const DEFAULT_QUANTITY_NOTICE =
+  "All quantities are to be confirmed by the customer. Please review them before you accept it.";
+QUOTES["q-notice-29"] = structuredClone(QUOTES["q-terms-28"]);
+QUOTES["q-notice-29"].quote_no = "Q-29";
+QUOTES["q-notice-29"].quantity_notice = "Check every quantity against your plan before you accept.";
+// A notice with no break in it, the longest the dealer may save: the page must wrap it, not widen.
+QUOTES["q-long-32"] = structuredClone(QUOTES["q-terms-28"]);
+QUOTES["q-long-32"].quote_no = "Q-32";
+QUOTES["q-long-32"].quantity_notice = "x".repeat(500);
+for (const quote of Object.values(QUOTES)) {
+  if (quote.quantity_notice === undefined) quote.quantity_notice = DEFAULT_QUANTITY_NOTICE;
+}
+// Tokens cloned after this point (none today) must carry it too: the clone copies the field.
 
 // The link the server revoked: the route answers 410, not 404, because the
 // link EXISTED and died. The page says so, and says what to do next.
@@ -511,6 +531,13 @@ const server = createServer(async (request, response) => {
       return;
     }
     const typedName = body.typed_name.trim();
+    // The core's own 422 for an accept without the quantities confirmation, in words, recording nothing.
+    if (body.quantities_confirmed !== true) {
+      respondJson(response, 422, {
+        error: "please confirm that you have reviewed the quantities on this quote before you accept it",
+      });
+      return;
+    }
     // The key is looked up before the quote's status is judged, as the core
     // does under the quote lock: a repeat answers the first outcome even when
     // the quote has since left the acceptable state.
@@ -543,6 +570,7 @@ const server = createServer(async (request, response) => {
       subtotal_cents: quote.subtotal_cents,
       tax_cents: quote.tax_cents,
       total_cents: quote.total_cents,
+      quantities_confirmed: true,
     };
     const rows = ACCEPTANCES.get(token) ?? [];
     rows.push({ typed_name: typedName, key: key ?? null });

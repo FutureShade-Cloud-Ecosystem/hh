@@ -185,6 +185,7 @@ func (s *ReceiptService) Receipt(ctx context.Context, id string) (Receipt, error
 		TaxLabel:       hstLabel(head.HSTRateBps),
 		ReprintCount:   priorPrints,
 		PrintedAt:      s.now(),
+		QuantityNotice: head.QuantityNotice,
 	}
 
 	// The print record is written HERE, in the request that produced the paper, and its failure
@@ -314,6 +315,11 @@ type Receipt struct {
 	// page refresh, a different cashier, and a different terminal.
 	ReprintCount int
 	PrintedAt    time.Time
+
+	// QuantityNotice is the dealer's notice that the quantities are the customer's to confirm, the
+	// same words the quote carries (quote_policy.quantity_notice, branch over dealer default). It is
+	// printed after the lines; empty prints nothing.
+	QuantityNotice string
 }
 
 // IsReprint reports whether this rendering is a reprint (used by the template).

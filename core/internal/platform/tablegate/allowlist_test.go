@@ -768,8 +768,8 @@ var allowlist = []allowlistEntry{
 	{
 		module: "printing",
 		file:   "core/internal/printing/receipt_repository.go",
-		tables: []string{"customers", "invoices", "locations", "order_lines", "orders", "payment_allocations", "payments", "pos_sale", "pos_sale_tenders", "products", "staff_role", "system_settings", "users"},
-		reason: "receipt assembly reads the whole printed truth: org name and HST settings, the branch, the sale, its lines and tenders, the invoice it billed, the payments and allocations, the customer and the staff who took it, and the role label of the manager who approved a discount (Discount approved by), read only",
+		tables: []string{"customers", "invoices", "locations", "order_lines", "orders", "payment_allocations", "payments", "pos_sale", "pos_sale_tenders", "products", "quote_policy", "staff_role", "system_settings", "users"},
+		reason: "receipt assembly reads the whole printed truth: org name, HST and quantity notice settings, the branch, the sale, its lines and tenders, the invoice it billed, the payments and allocations, the customer and the staff who took it, and the role label of the manager who approved a discount (Discount approved by), read only",
 	},
 	{
 		module: "procurement",
@@ -840,9 +840,9 @@ var allowlist = []allowlistEntry{
 	{
 		module: "quote",
 		file:   "core/internal/quote/edit_repository.go",
-		tables: []string{"customers", "locations", "products", "users"},
+		tables: []string{"audit_log", "customers", "locations", "products", "users"},
 		writes: []string{"scope_sequences"},
-		reason: "the quote editor joins the customer, branch, product and preparer facts the document shows; the 0213 seq stamp marks its rows",
+		reason: "the quote editor joins the customer, branch, product and preparer facts the document shows, and its acceptance history reads the quote's own staff decision rows from audit_log (a staff accept writes no acceptance row; the audit row is its record), read only; the 0213 seq stamp marks its rows",
 	},
 	{
 		module: "quote",

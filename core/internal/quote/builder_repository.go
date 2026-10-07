@@ -43,7 +43,7 @@ func (r *Repository) ReadQuotePolicy(ctx context.Context, branchID string) (Quot
 	const q = `
 SELECT COALESCE(branch_id::text,''), cost_visibility, default_validity_days, default_deposit_pct,
        line_discounts_enabled, send_email_enabled, send_sms_enabled, include_product_images,
-       quick_chip_set, workspace_split_pct, workspace_arrangement
+       quick_chip_set, workspace_split_pct, workspace_arrangement, quantity_notice
   FROM quote_policy
  WHERE ($1 <> '' AND branch_id::text = $1) OR branch_id IS NULL
  ORDER BY branch_id::text NULLS LAST
@@ -53,7 +53,7 @@ SELECT COALESCE(branch_id::text,''), cost_visibility, default_validity_days, def
 	err := r.pool.QueryRow(ctx, q, branchID).Scan(&p.BranchID, &p.CostVisibility,
 		&p.DefaultValidityDays, &p.DefaultDepositPct, &p.LineDiscountsEnabled,
 		&p.SendEmailEnabled, &p.SendSMSEnabled, &p.IncludeProductImages,
-		&chips, &p.WorkspaceSplitPct, &p.WorkspaceArrangement)
+		&chips, &p.WorkspaceSplitPct, &p.WorkspaceArrangement, &p.QuantityNotice)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return QuotePolicy{}, fmt.Errorf("quote: quote_policy default row missing (0173 seed)")
 	}
@@ -71,18 +71,19 @@ func (r *Repository) UpsertQuotePolicy(ctx context.Context, p QuotePolicy) error
 			UPDATE quote_policy SET cost_visibility = $1, default_validity_days = $2,
 			       default_deposit_pct = $3, line_discounts_enabled = $4, send_email_enabled = $5,
 			       send_sms_enabled = $6, include_product_images = $7, quick_chip_set = $8,
-			       workspace_split_pct = $9, workspace_arrangement = $10, updated_at = now()
+			       workspace_split_pct = $9, workspace_arrangement = $10, quantity_notice = $11,
+			       updated_at = now()
 			 WHERE branch_id IS NULL`,
 			p.CostVisibility, p.DefaultValidityDays, p.DefaultDepositPct, p.LineDiscountsEnabled,
 			p.SendEmailEnabled, p.SendSMSEnabled, p.IncludeProductImages, joinQuoteChips(p.QuickChipSet),
-			p.WorkspaceSplitPct, p.WorkspaceArrangement)
+			p.WorkspaceSplitPct, p.WorkspaceArrangement, p.QuantityNotice)
 		return err
 	}
 	_, err := r.pool.Exec(ctx, `
 		INSERT INTO quote_policy (branch_id, cost_visibility, default_validity_days, default_deposit_pct,
 		        line_discounts_enabled, send_email_enabled, send_sms_enabled, include_product_images,
-		        quick_chip_set, workspace_split_pct, workspace_arrangement)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		        quick_chip_set, workspace_split_pct, workspace_arrangement, quantity_notice)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		ON CONFLICT (branch_id) DO UPDATE SET
 		    cost_visibility = EXCLUDED.cost_visibility,
 		    default_validity_days = EXCLUDED.default_validity_days,
@@ -94,10 +95,11 @@ func (r *Repository) UpsertQuotePolicy(ctx context.Context, p QuotePolicy) error
 		    quick_chip_set = EXCLUDED.quick_chip_set,
 		    workspace_split_pct = EXCLUDED.workspace_split_pct,
 		    workspace_arrangement = EXCLUDED.workspace_arrangement,
+		    quantity_notice = EXCLUDED.quantity_notice,
 		    updated_at = now()`,
 		p.BranchID, p.CostVisibility, p.DefaultValidityDays, p.DefaultDepositPct,
 		p.LineDiscountsEnabled, p.SendEmailEnabled, p.SendSMSEnabled, p.IncludeProductImages,
-		joinQuoteChips(p.QuickChipSet), p.WorkspaceSplitPct, p.WorkspaceArrangement)
+		joinQuoteChips(p.QuickChipSet), p.WorkspaceSplitPct, p.WorkspaceArrangement, p.QuantityNotice)
 	return err
 }
 

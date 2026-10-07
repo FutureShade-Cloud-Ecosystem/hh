@@ -46,6 +46,11 @@ import (
 // persisted per link, so changing this constant never retroactively extends or kills a live link.
 const defaultShareTTL = 30 * 24 * time.Hour
 
+// ErrQuantitiesUnconfirmed: the accept arrived without the customer's confirmation of the quantities.
+// Mapped to 422, in words the customer can act on. Customers blame the dealer for quantities they
+// chose, so the confirmation is a required act of its own, never implied by the name or the tick.
+var ErrQuantitiesUnconfirmed = errors.New("please confirm that you have reviewed the quantities on this quote before you accept it")
+
 // maxTypedName bounds the attested name. Long enough for any real name; short enough that the column
 // cannot be used as free-text storage.
 const maxTypedName = 120
@@ -148,6 +153,10 @@ type PublicQuoteView struct {
 	DeliveryAddress  string `json:"delivery_address,omitempty"`
 	RequestedDate    string `json:"requested_date,omitempty"`
 	DeliveryFeeCents int64  `json:"delivery_fee_cents,omitempty"`
+
+	// QuantityNotice is the dealer's notice that the quantities are the customer's to confirm. Always
+	// present: the page shows it near the lines and on the printed page whatever the quote's state.
+	QuantityNotice string `json:"quantity_notice"`
 }
 
 // PublicQuoteLine is the customer-visible shape of a line. Note what is absent: no product_id (an
@@ -181,6 +190,10 @@ type AcceptanceResult struct {
 	SubtotalCents int64     `json:"subtotal_cents"`
 	TaxCents      int64     `json:"tax_cents"`
 	TotalCents    int64     `json:"total_cents"`
+	// QuantitiesConfirmed echoes that the customer confirmed the quantities before accepting. Always
+	// true on a fresh acceptance (the accept is refused without it); a replay reads it back from the
+	// stored record.
+	QuantitiesConfirmed bool `json:"quantities_confirmed"`
 	// Repeat is DIB-491's honesty flag: true when this acceptance is a REPEAT of one already recorded
 	// (multi-accept ON). The confirmation page can then say so, per C2, a customer who accepts twice
 	// deserves a page that admits it was twice, not one that pretends this was the first time.
@@ -221,7 +234,9 @@ type acceptWrite struct {
 	QuoteID     string
 	ShareLinkID string
 	TypedName   string
-	Now         time.Time
+	// QuantitiesConfirmed is the customer's confirmation of the quantities, stored on the record.
+	QuantitiesConfirmed bool
+	Now                 time.Time
 	// IdempotencyKey is the optional, already validated and lowercased Idempotency-Key. Empty means
 	// the caller sent none and the acceptance behaves exactly as it did before the key existed.
 	IdempotencyKey string
@@ -429,12 +444,12 @@ func (s *StaffService) PublicQuoteByToken(ctx context.Context, rawToken string) 
 // The status flip, the acceptance record and the audit row all land on ONE transaction under the quote
 // row lock (R3), so an acceptance is exactly as reconstructable as a staff edit, and an acceptance
 // can never exist without the trail that explains it, or vice versa.
-func (s *StaffService) AcceptByToken(ctx context.Context, rawToken, typedName string, affirmed bool) (AcceptanceResult, error) {
-	return s.AcceptByTokenKeyed(ctx, rawToken, typedName, affirmed, "")
+func (s *StaffService) AcceptByToken(ctx context.Context, rawToken, typedName string, affirmed, quantitiesConfirmed bool) (AcceptanceResult, error) {
+	return s.AcceptByTokenKeyed(ctx, rawToken, typedName, affirmed, quantitiesConfirmed, "")
 }
 
 // AcceptByTokenKeyed is AcceptByToken carrying the optional Idempotency-Key (see share_idempotency.go).
-func (s *StaffService) AcceptByTokenKeyed(ctx context.Context, rawToken, typedName string, affirmed bool, idemKey string) (AcceptanceResult, error) {
+func (s *StaffService) AcceptByTokenKeyed(ctx context.Context, rawToken, typedName string, affirmed, quantitiesConfirmed bool, idemKey string) (AcceptanceResult, error) {
 	idemKey, kerr := normalizeIdempotencyKey(idemKey)
 	if kerr != nil {
 		return AcceptanceResult{}, kerr
@@ -444,7 +459,7 @@ func (s *StaffService) AcceptByTokenKeyed(ctx context.Context, rawToken, typedNa
 		if errors.Is(err, ErrLinkGone) && idemKey != "" {
 			// QD-3d: the retry of a committed acceptance can arrive after its link died. Its first
 			// outcome is replayed (read only, nothing written); anything else stays the 410.
-			res, ok, rerr := s.replayThroughDeadLink(ctx, link, quoteID, typedName, affirmed, idemKey)
+			res, ok, rerr := s.replayThroughDeadLink(ctx, link, quoteID, typedName, affirmed, quantitiesConfirmed, idemKey)
 			if rerr != nil {
 				return AcceptanceResult{}, rerr
 			}
@@ -466,9 +481,12 @@ func (s *StaffService) AcceptByTokenKeyed(ctx context.Context, rawToken, typedNa
 	if !affirmed {
 		return AcceptanceResult{}, httpx.BadRequestf("you must confirm that you accept this quote")
 	}
+	if !quantitiesConfirmed {
+		return AcceptanceResult{}, ErrQuantitiesUnconfirmed
+	}
 	res, err := s.shares.AcceptQuoteGuarded(ctx, acceptWrite{
 		QuoteID: quoteID, ShareLinkID: link.ID, TypedName: name, Now: s.now(),
-		IdempotencyKey: idemKey,
+		QuantitiesConfirmed: true, IdempotencyKey: idemKey,
 	}, acceptHooks{
 		record: func(ctx context.Context, tx pgx.Tx, r AcceptanceResult) (int64, error) {
 			return s.recordAcceptance(ctx, tx, quoteID, link.ID, r)
@@ -491,13 +509,16 @@ func (s *StaffService) AcceptByTokenKeyed(ctx context.Context, rawToken, typedNa
 // over long typed name and no matching acceptance are all that 410, so a dead link reveals nothing
 // more. The affirmative is checked as on a live link (the same 400). A lookup failure is an error, not
 // the 410: the outcome is unknown, and the 410 must keep its meaning.
-func (s *StaffService) replayThroughDeadLink(ctx context.Context, link ShareLink, quoteID, typedName string, affirmed bool, idemKey string) (AcceptanceResult, bool, error) {
+func (s *StaffService) replayThroughDeadLink(ctx context.Context, link ShareLink, quoteID, typedName string, affirmed, quantitiesConfirmed bool, idemKey string) (AcceptanceResult, bool, error) {
 	name := strings.TrimSpace(typedName)
 	if name == "" || len(name) > maxTypedName {
 		return AcceptanceResult{}, false, nil
 	}
 	if !affirmed {
 		return AcceptanceResult{}, false, httpx.BadRequestf("you must confirm that you accept this quote")
+	}
+	if !quantitiesConfirmed {
+		return AcceptanceResult{}, false, ErrQuantitiesUnconfirmed
 	}
 	res, found, err := s.shares.ReplayKeyedAcceptance(ctx, acceptWrite{
 		QuoteID: quoteID, ShareLinkID: link.ID, TypedName: name, IdempotencyKey: idemKey,

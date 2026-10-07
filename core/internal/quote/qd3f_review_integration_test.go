@@ -81,7 +81,7 @@ func TestIntegration_QD3f_RetryThroughDeadLink(t *testing.T) {
 		for name, die := range kill {
 			t.Run(name, func(t *testing.T) {
 				svc, quoteID, token, linkID := qd3fMinted(t, pool, now)
-				first, err := svc.AcceptByTokenKeyed(context.Background(), token, qd3fCustomer, true, qd3dKeyA)
+				first, err := svc.AcceptByTokenKeyed(context.Background(), token, qd3fCustomer, true, true, qd3dKeyA)
 				if err != nil {
 					t.Fatalf("attempt 1: %v", err)
 				}
@@ -136,20 +136,20 @@ func TestIntegration_QD3f_ReplayWritesNoShareEvent(t *testing.T) {
 	setMultiAccept(t, pool, true)
 	svc, quoteID, token, linkID := qd3fMinted(t, pool, now)
 	ctx := context.Background()
-	if _, err := svc.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, qd3dKeyA); err != nil {
+	if _, err := svc.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, true, qd3dKeyA); err != nil {
 		t.Fatalf("attempt 1: %v", err)
 	}
 	if n := qd3fEvents(t, pool, quoteID, "ACCEPT"); n != 1 {
 		t.Fatalf("ACCEPT events after the first acceptance = %d, want 1", n)
 	}
-	if _, err := svc.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, qd3dKeyA); err != nil {
+	if _, err := svc.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, true, qd3dKeyA); err != nil {
 		t.Fatalf("replay: %v", err)
 	}
 	if n := qd3fEvents(t, pool, quoteID, "ACCEPT"); n != 1 {
 		t.Errorf("ACCEPT events after a replay = %d, want still 1", n)
 	}
 	// A new key is a new acceptance and does log one.
-	if _, err := svc.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, qd3dKeyB); err != nil {
+	if _, err := svc.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, true, qd3dKeyB); err != nil {
 		t.Fatalf("second acceptance: %v", err)
 	}
 	if n := qd3fEvents(t, pool, quoteID, "ACCEPT"); n != 2 {
@@ -159,7 +159,7 @@ func TestIntegration_QD3f_ReplayWritesNoShareEvent(t *testing.T) {
 	if err := svc.RevokeShareLink(qCtxAs(intStaff(intTrenton)), quoteID, linkID); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
-	if _, err := svc.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, qd3dKeyA); err != nil {
+	if _, err := svc.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, true, qd3dKeyA); err != nil {
 		t.Fatalf("replay through the dead link: %v", err)
 	}
 	if n := qd3fEvents(t, pool, quoteID, "ACCEPT"); n != 2 {
@@ -176,7 +176,7 @@ func TestIntegration_QD3f_AnchorIsTheRowCarryingThisKey(t *testing.T) {
 	setMultiAccept(t, pool, true)
 	svc, quoteID, token, _ := qd3fMinted(t, pool, now)
 	ctx := context.Background()
-	if _, err := svc.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, qd3dKeyA); err != nil {
+	if _, err := svc.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, true, qd3dKeyA); err != nil {
 		t.Fatalf("attempt 1: %v", err)
 	}
 	for _, ddl := range []string{
@@ -195,7 +195,7 @@ func TestIntegration_QD3f_AnchorIsTheRowCarryingThisKey(t *testing.T) {
 		_, _ = pool.Exec(context.Background(), `DROP TRIGGER IF EXISTS qd3f_swallow ON audit_log`)
 		_, _ = pool.Exec(context.Background(), `DROP FUNCTION IF EXISTS qd3f_swallow()`)
 	})
-	if _, err := svc.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, qd3dKeyB); err == nil {
+	if _, err := svc.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, true, qd3dKeyB); err == nil {
 		t.Errorf("a keyed accept whose own audit row is missing must be refused, not anchored to another row")
 	}
 	if n := acceptanceRows(t, pool, quoteID); n != 1 {
@@ -246,7 +246,7 @@ func TestIntegration_QD3f_RolledBackAcceptLeavesNoKey(t *testing.T) {
 			t.Errorf("multi=%v: status after the rollback = %s, want SENT", multi, got)
 		}
 		// The retry under the same key records fresh: it is the first acceptance, not a replay.
-		res, err := svc.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, qd3dKeyA)
+		res, err := svc.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, true, qd3dKeyA)
 		if err != nil {
 			t.Fatalf("multi=%v: retry: %v", multi, err)
 		}
@@ -278,7 +278,7 @@ func TestIntegration_QD3f_AnchorMissingRefusesKeyedAccept(t *testing.T) {
 	svc, quoteID, token, _ := qd3fMinted(t, pool, now)
 	svc.auditTx = silentRecorder{}
 	ctx := context.Background()
-	_, err := svc.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, qd3dKeyA)
+	_, err := svc.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, true, qd3dKeyA)
 	if err == nil || !strings.Contains(err.Error(), "audit anchor") {
 		t.Fatalf("a keyed accept with no anchor must be refused naming the anchor, got %v", err)
 	}
@@ -288,7 +288,7 @@ func TestIntegration_QD3f_AnchorMissingRefusesKeyedAccept(t *testing.T) {
 	if got := qd3dStatus(t, pool, quoteID); got != "SENT" {
 		t.Errorf("status = %s, want SENT", got)
 	}
-	if _, err := svc.AcceptByToken(ctx, token, qd3fCustomer, true); err != nil {
+	if _, err := svc.AcceptByToken(ctx, token, qd3fCustomer, true, true); err != nil {
 		t.Errorf("an unkeyed accept with the same lost row still degrades, got %v", err)
 	}
 }
@@ -302,7 +302,7 @@ func TestIntegration_QD3f_MissingAuditTrailRefusesKeyedAccept(t *testing.T) {
 	svc, quoteID, token, _ := qd3fMinted(t, pool, now)
 	svc.auditTx = nil
 	ctx := context.Background()
-	_, err := svc.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, qd3dKeyA)
+	_, err := svc.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, true, qd3dKeyA)
 	if err == nil || !strings.Contains(err.Error(), "needs the audit trail") {
 		t.Fatalf("a keyed accept with no audit trail must be refused, got %v", err)
 	}
@@ -312,7 +312,7 @@ func TestIntegration_QD3f_MissingAuditTrailRefusesKeyedAccept(t *testing.T) {
 	if got := qd3dStatus(t, pool, quoteID); got != "SENT" {
 		t.Errorf("status = %s, want SENT", got)
 	}
-	if _, err := svc.AcceptByToken(ctx, token, qd3fCustomer, true); err != nil {
+	if _, err := svc.AcceptByToken(ctx, token, qd3fCustomer, true, true); err != nil {
 		t.Errorf("an unkeyed accept with no audit trail is unchanged, got %v", err)
 	}
 }
@@ -335,7 +335,7 @@ func TestIntegration_QD3f_ConcurrentSameKeyBothModes(t *testing.T) {
 			go func(i int) {
 				defer wg.Done()
 				<-start
-				r, err := svc.AcceptByTokenKeyed(context.Background(), token, qd3fCustomer, true, qd3dKeyA)
+				r, err := svc.AcceptByTokenKeyed(context.Background(), token, qd3fCustomer, true, true, qd3dKeyA)
 				errs[i] = err
 				if err == nil {
 					bodies[i] = qd3dBody(t, r)
@@ -409,7 +409,7 @@ func TestIntegration_QD3f_InFlightCommitThenRetry(t *testing.T) {
 			}
 			out := make(chan answer, 2)
 			attempt := func() {
-				r, err := svc.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, qd3dKeyA)
+				r, err := svc.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, true, qd3dKeyA)
 				a := answer{err: err}
 				if err == nil {
 					a.body = qd3dBody(t, r)
@@ -464,7 +464,7 @@ func TestIntegration_QD3f_KeyBoundedAndNeverEchoed(t *testing.T) {
 		}
 	}
 	// The 409 for a reused key must not echo it either.
-	if _, err := svc.AcceptByTokenKeyed(context.Background(), token, qd3fCustomer, true, qd3dKeyA); err != nil {
+	if _, err := svc.AcceptByTokenKeyed(context.Background(), token, qd3fCustomer, true, true, qd3dKeyA); err != nil {
 		t.Fatalf("accept: %v", err)
 	}
 	w := qd3dPost(t, svc, context.Background(), token, qd3dKeyA, "Another Customer")

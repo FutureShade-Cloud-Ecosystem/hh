@@ -37,15 +37,18 @@ export async function tenantGetQuote(
   });
 }
 
+// The document declares no success response for this operation; the client
+// resolves the raw response text.
 export async function tenantAcceptQuote(
   client: ApiClient,
   id: string | number,
   call?: ApiCallOptions
-): Promise<Result<TenantQuote>> {
-  return client.request<TenantQuote>({
+): Promise<Result<unknown>> {
+  return client.request<unknown>({
     method: "POST",
     path: "/api/v1/tenant/quotes/{id}/accept",
     pathParams: { id },
+    textResponse: true,
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "tenantAcceptQuote",
