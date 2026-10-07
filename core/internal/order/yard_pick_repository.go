@@ -176,9 +176,9 @@ SELECT id::text, description, uom_entered::text, qty_entered::text, qty_base::te
 	if picked.Cmp(curE) == 0 {
 		// Already held. A reason or note typed again on a short line is kept; nothing else moves.
 		if picked.Cmp(orderedE) < 0 {
-			if _, err := tx.Exec(ctx, `
-UPDATE order_line_shortfalls SET reason = $2, note = $3, updated_at = now() WHERE order_line_id = $1`,
-				id, l.Reason, l.Note); err != nil {
+			if err := tx.QueryRow(ctx, `
+UPDATE order_line_shortfalls SET reason = $2, note = $3, updated_at = now() WHERE order_line_id = $1
+RETURNING revision`, id, l.Reason, l.Note).Scan(&eff.Revision); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return YardLineOutcome{}, nil, fmt.Errorf("yard pick: shortfall note: %w", err)
 			}
 		}
@@ -198,15 +198,17 @@ UPDATE order_lines SET qty_entered = $3::decimal, qty_base = $4::decimal, line_t
 		id, in.OrderID, rat4(picked), rat4(newB), newTotal, rat4(backEntered), rat4(backBase)); err != nil {
 		return YardLineOutcome{}, nil, fmt.Errorf("yard pick: line %d: %w", l.LineNo, err)
 	}
-	if _, err := tx.Exec(ctx, `
+	if err := tx.QueryRow(ctx, `
 INSERT INTO order_line_shortfalls (order_line_id, order_id, line_no, ordered_entered, ordered_base,
                                    ordered_total_cents, reason, note, recorded_by)
 VALUES ($1, $2, $3, $4::decimal, $5::decimal, $6, $7, $8, NULLIF($9, '')::uuid)
 ON CONFLICT (order_line_id) DO UPDATE SET
   ordered_entered = EXCLUDED.ordered_entered, ordered_base = EXCLUDED.ordered_base,
   ordered_total_cents = EXCLUDED.ordered_total_cents, reason = EXCLUDED.reason, note = EXCLUDED.note,
-  recorded_by = EXCLUDED.recorded_by, updated_at = now()`,
-		id, in.OrderID, l.LineNo, rat4(orderedE), rat4(orderedB), orderedTotal, l.Reason, l.Note, in.ActorID); err != nil {
+  recorded_by = EXCLUDED.recorded_by, updated_at = now(),
+  revision = order_line_shortfalls.revision + 1
+RETURNING revision`,
+		id, in.OrderID, l.LineNo, rat4(orderedE), rat4(orderedB), orderedTotal, l.Reason, l.Note, in.ActorID).Scan(&eff.Revision); err != nil {
 		return YardLineOutcome{}, nil, fmt.Errorf("yard pick: shortfall record: %w", err)
 	}
 	eff.Changed = true

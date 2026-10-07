@@ -15,6 +15,7 @@ package tasks
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -91,6 +92,7 @@ type YardLineEffect struct {
 	QtyPicked      string
 	QtyBackordered string
 	Changed        bool
+	Revision       int
 }
 
 // YardOrderFacts is what the order module knows that a notice needs: who the order is for and whose
@@ -133,6 +135,7 @@ type YardSkidResult struct {
 	DepositBeforeCents int64
 	DepositAfterCents  int64
 	Changed            bool
+	ChangeID           string
 }
 
 // SkidInput is the yard's skid count request on one pick task.
@@ -177,9 +180,18 @@ func (s *Service) RecordSkids(ctx context.Context, in SkidInput) (YardSkidResult
 	if err != nil {
 		return YardSkidResult{}, err
 	}
-	return s.yardOrders.RecordSkids(ctx, YardSkidChange{
+	change := YardSkidChange{
 		OrderID: task.OrderID, ActorID: in.ActorID, SkidCount: in.SkidCount, Reason: in.Reason, Note: in.Note,
-	})
+	}
+	res, err := s.yardOrders.RecordSkids(ctx, change)
+	if err != nil {
+		return YardSkidResult{}, err
+	}
+	if res.Changed {
+		key := fmt.Sprintf("yard.skids:%s:%s", task.OrderID, res.ChangeID)
+		s.notifyOrderRep(ctx, task, res.Order, key, "yard.skid_change", skidMessage(change, res))
+	}
+	return res, nil
 }
 
 // WithYardOrderChanges injects the order port (main.go wires the order service adapter).

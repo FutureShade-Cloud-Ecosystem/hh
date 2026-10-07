@@ -72,6 +72,9 @@ type YardLineOutcome struct {
 	QtyPicked      string
 	QtyBackordered string
 	Changed        bool
+	// Revision counts the changes of this line's shortfall (0 when it never was short), so a
+	// notice's idempotency key tells one real change from a repeat of it.
+	Revision int
 }
 
 // YardOrderFacts is the order's side of a notice: whose order it is and how its money stands.

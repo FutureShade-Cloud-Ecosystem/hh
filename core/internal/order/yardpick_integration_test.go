@@ -124,7 +124,8 @@ func TestIntegration_YardPick_SameRecordAgainChangesNothing(t *testing.T) {
 	svc, _ := editSvc(t, pool)
 	in := yardPick("3", "CONDENSED_SKIDS")
 	in.OrderID = ord
-	if _, err := svc.ApplyYardPicks(context.Background(), in); err != nil {
+	first, err := svc.ApplyYardPicks(context.Background(), in)
+	if err != nil {
 		t.Fatalf("first: %v", err)
 	}
 	out, err := svc.ApplyYardPicks(context.Background(), in)
@@ -134,8 +135,20 @@ func TestIntegration_YardPick_SameRecordAgainChangesNothing(t *testing.T) {
 	if out.Lines[0].Changed {
 		t.Fatal("an identical repeat is not a change, and must not be told to anyone twice")
 	}
+	if first.Lines[0].Revision != 1 || out.Lines[0].Revision != 1 {
+		t.Fatalf("a repeat keeps the revision its change carried, so its notice keeps its key: %d then %d",
+			first.Lines[0].Revision, out.Lines[0].Revision)
+	}
+	next := yardPick("2", "CONDENSED_SKIDS")
+	next.OrderID = ord
+	if again, err := svc.ApplyYardPicks(context.Background(), next); err != nil || again.Lines[0].Revision != 2 {
+		t.Fatalf("a real change is a new revision, so its notice is a new message: %+v %v", again, err)
+	}
+	if _, err := svc.ApplyYardPicks(context.Background(), in); err != nil {
+		t.Fatalf("back to 3: %v", err)
+	}
 	if _, tot := liveTotals(t, pool, ord); tot != 3390 {
-		t.Fatalf("a repeat must not drift the money: %d", tot)
+		t.Fatalf("a repeat must not drift the money after a round trip: %d", tot)
 	}
 }
 

@@ -42,6 +42,8 @@ type YardSkidOutcome struct {
 	DepositBeforeCents int64
 	DepositAfterCents  int64
 	Changed            bool
+	// ChangeID is the history row of this change, empty when nothing changed. A notice keys on it.
+	ChangeID string
 }
 
 type yardSkidStore interface {
@@ -149,12 +151,13 @@ ON CONFLICT (order_id) DO UPDATE SET skid_count = EXCLUDED.skid_count,
   updated_by = EXCLUDED.updated_by, updated_at = now()`, in.OrderID, in.SkidCount, in.ActorID); err != nil {
 		return YardSkidOutcome{}, fmt.Errorf("yard skids: write: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `
+	if err := tx.QueryRow(ctx, `
 INSERT INTO order_skid_changes (order_id, count_before, count_after, deposit_before_cents,
                                 deposit_after_cents, reason, note, changed_by)
-VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, '')::uuid)`,
+VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, '')::uuid)
+RETURNING id::text`,
 		in.OrderID, out.CountBefore, in.SkidCount, out.DepositBeforeCents, out.DepositAfterCents,
-		in.Reason, in.Note, in.ActorID); err != nil {
+		in.Reason, in.Note, in.ActorID).Scan(&out.ChangeID); err != nil {
 		return YardSkidOutcome{}, fmt.Errorf("yard skids: history: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {

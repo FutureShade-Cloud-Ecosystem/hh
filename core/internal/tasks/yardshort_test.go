@@ -9,6 +9,7 @@ package tasks
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -17,7 +18,11 @@ import (
 type fakeYardOrder struct {
 	picks []YardPickChange
 	skids []YardSkidChange
-	err   error
+	// restore marks every unchanged line as a restoration to full, and skidResult overrides the
+	// skid answer; both are for the notice tests.
+	restore    bool
+	skidResult *YardSkidResult
+	err        error
 	// effects is what each call answers; the zero value answers "changed" for every short line.
 	changed map[int]bool
 	facts   YardOrderFacts
@@ -34,9 +39,12 @@ func (f *fakeYardOrder) ApplyPicks(_ context.Context, in YardPickChange) (YardPi
 		if f.changed != nil {
 			changed = f.changed[l.LineNo]
 		}
+		ordered, _ := strconv.ParseFloat(l.QtyOrdered, 64)
+		picked, _ := strconv.ParseFloat(l.QtyPicked, 64)
 		res.Lines = append(res.Lines, YardLineEffect{
 			LineNo: l.LineNo, Description: "Armour stone", UOM: l.UOM,
-			QtyOrdered: l.QtyOrdered, QtyPicked: l.QtyPicked, Changed: changed,
+			QtyOrdered: l.QtyOrdered, QtyPicked: l.QtyPicked,
+			QtyBackordered: strconv.FormatFloat(ordered-picked, 'f', 4, 64), Changed: changed || f.restore,
 		})
 	}
 	return res, nil

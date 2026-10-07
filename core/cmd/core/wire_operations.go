@@ -696,6 +696,9 @@ func (a yardChatNotifier) PostTaskEvent(ctx context.Context, ref tasks.TaskEvent
 			yardSlug = s
 		}
 	}
+	if ref.Audience == tasks.AudienceOrderRep {
+		return a.postOrderRepNotice(ctx, ref, yardSlug)
+	}
 	candidates := []string{yardSlug, yardCounterFallbackSlug}
 	if ref.Audience == tasks.AudienceCounter {
 		if counter := tasks.CounterSlugForYardSlug(yardSlug); counter != "" {
@@ -714,6 +717,54 @@ func (a yardChatNotifier) PostTaskEvent(ctx context.Context, ref tasks.TaskEvent
 		lastErr = err
 		if a.log != nil {
 			a.log.Warn("yard: channel post failed, trying the next route", "slug", slug, "topic", ref.Topic, "err", err)
+		}
+	}
+	return lastErr
+}
+
+// orderRepFallbackNote is the sentence put in front of an order notice that reached the counter
+// because the order has no sales rep, so a reader knows why it arrived there.
+const orderRepFallbackNote = "No sales rep is on this order, so this came to the counter. "
+
+// postOrderRepNotice delivers a yard change on an order to the order's sales rep through the
+// messaging module's rep routing (the order's override, then its own salesperson, then the
+// customer's rep). With no rep it falls back to the branch counter and yard channels and says so in
+// the message. A rep lookup that fails is the same fallback with its own sentence: the notice must
+// arrive somewhere a person reads it.
+func (a yardChatNotifier) postOrderRepNotice(ctx context.Context, ref tasks.TaskEventRef, yardSlug string) error {
+	fallback := []string{yardCounterFallbackSlug}
+	if counter := tasks.CounterSlugForYardSlug(yardSlug); counter != "" {
+		fallback = append([]string{counter}, fallback...)
+	}
+	fallback = append(fallback, yardSlug)
+	in := messaging.OrderRepNotice{
+		CustomerID: ref.CustomerID, OrderID: ref.OrderID, OrderRepUserID: ref.RepUserID,
+		EventKey: ref.EventKey, Body: ref.Summary,
+		Ref:           messaging.EventRef{Topic: ref.Topic, Entity: ref.Entity, DeepLink: ref.DeepLink, Summary: ref.Summary},
+		FallbackSlugs: fallback, FallbackPrefix: orderRepFallbackNote,
+	}
+	if _, err := a.svc.NotifyOrderRep(ctx, in); err != nil {
+		if a.log != nil {
+			a.log.Warn("yard: order rep notice failed, sending to the counter", "order", ref.OrderID, "err", err)
+		}
+		in.OrderRepUserID, in.CustomerID = "", ""
+		return a.fallbackOrderNotice(ctx, in)
+	}
+	return nil
+}
+
+// fallbackOrderNotice posts the notice to the counter with a sentence that says the rep could not
+// be reached, after the rep route itself failed.
+func (a yardChatNotifier) fallbackOrderNotice(ctx context.Context, in messaging.OrderRepNotice) error {
+	var lastErr error
+	for _, slug := range in.FallbackSlugs {
+		body := "The sales rep could not be reached, so this came to the counter. " + in.Body
+		ref := in.Ref
+		ref.Summary = body
+		if _, _, err := a.svc.PostEventToChannelSlug(ctx, slug, in.EventKey, body, ref, false); err == nil {
+			return nil
+		} else {
+			lastErr = err
 		}
 	}
 	return lastErr

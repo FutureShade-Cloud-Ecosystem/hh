@@ -164,10 +164,17 @@ func (s *Service) RecordPick(ctx context.Context, taskID, actorID string, lines 
 	// The order first: it refuses a pick above what the order line holds, and a refused pick must
 	// not be recorded. The order's effect sets absolute quantities, so a retry after a failed
 	// record converges rather than doubling.
-	if _, err := s.applyToOrder(ctx, taskID, actorID, clean); err != nil {
+	res, err := s.applyToOrder(ctx, taskID, actorID, clean)
+	if err != nil {
 		return nil, err
 	}
-	return s.store.UpsertPickedLines(ctx, taskID, actorID, clean)
+	picked, err := s.store.UpsertPickedLines(ctx, taskID, actorID, clean)
+	if err != nil {
+		return nil, err
+	}
+	// The rep hears at once, after the record is safe. Best effort: see notifyOrderRep.
+	s.noticeShortPicks(ctx, taskID, clean, res)
+	return picked, nil
 }
 
 // applyToOrder hands a recorded pick to the order module, when the port is wired.

@@ -14,6 +14,11 @@ func (f *fakeYardOrder) RecordSkids(_ context.Context, in YardSkidChange) (YardS
 	if f.err != nil {
 		return YardSkidResult{}, f.err
 	}
+	if f.skidResult != nil {
+		r := *f.skidResult
+		r.Order = f.facts
+		return r, nil
+	}
 	return YardSkidResult{Order: f.facts, CountAfter: in.SkidCount, Changed: true}, nil
 }
 

@@ -73,5 +73,6 @@ func (a yardOrderAdapter) RecordSkids(ctx context.Context, in tasks.YardSkidChan
 	return tasks.YardSkidResult{
 		Order: tasks.YardOrderFacts(out.Order), CountBefore: out.CountBefore, CountAfter: out.CountAfter,
 		DepositBeforeCents: out.DepositBeforeCents, DepositAfterCents: out.DepositAfterCents, Changed: out.Changed,
+		ChangeID: out.ChangeID,
 	}, nil
 }
