@@ -215,3 +215,36 @@ for (const width of [390, 360, 320]) {
     }
   });
 }
+
+/**
+ * PR 253 review P2-2: no width from 320 to 480 cuts a step's label short. Sampled every 5 px: at
+ * each width every label shows whole (nothing ellipsised, nothing spilling out of its pill, no pill
+ * over its neighbour), either because the four fit or because the row scrolls inside itself.
+ */
+test("no width from 320 to 480 cuts a step label short, sampled every 5 px", async ({ page }) => {
+  await page.setViewportSize({ width: 480, height: 844 });
+  await signIn(page);
+  const cut: string[] = [];
+  for (let width = 320; width <= 480; width += 5) {
+    await page.setViewportSize({ width, height: 844 });
+    const read = await page.evaluate(() => {
+      const host = document
+        .querySelector("ct-app-root")
+        ?.shadowRoot?.querySelector("hos-pos-terminal")
+        ?.shadowRoot?.querySelector("hos-pos-flow-steps") as HTMLElement | null;
+      if (host === null || host === undefined) return null;
+      const buttons = Array.from(host.shadowRoot?.querySelectorAll("button") ?? []) as HTMLElement[];
+      const labels = buttons.map((b) => Array.from(b.querySelectorAll("span")).filter((s) => !s.classList.contains("sr") && !s.classList.contains("num"))[0] as HTMLElement);
+      return {
+        cut: labels.filter((l) => l.scrollWidth > l.clientWidth + 0.5 || getComputedStyle(l).textOverflow === "ellipsis" && l.scrollWidth > l.clientWidth).map((l) => l.textContent?.trim() ?? ""),
+        overlap: buttons.filter((b, i) => i > 0 && b.getBoundingClientRect().left < (buttons[i - 1] as HTMLElement).getBoundingClientRect().right - 0.5).length,
+        scrolls: host.scrollWidth > host.clientWidth + 1,
+        overflowX: getComputedStyle(host).overflowX,
+      };
+    });
+    if (read === null) throw new Error("the stepper did not render");
+    if (read.cut.length > 0 || read.overlap > 0) cut.push(`${width}px: cut ${read.cut.join("/")} overlap ${read.overlap}`);
+    if (read.scrolls && !["auto", "scroll"].includes(read.overflowX)) cut.push(`${width}px: overflows without a scroll box`);
+  }
+  expect(cut, "widths where a label is cut short").toEqual([]);
+});
