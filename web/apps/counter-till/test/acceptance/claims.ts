@@ -74,10 +74,10 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
     { file: "20-sales.pw.ts", test: "a return within 250.00: refunded in cash, and the drawer's expected cash drops by it" },
     { file: "30-manager.pw.ts", test: "a return within 250.00 under the manager: refunded, and the drawer drops by it" },
   ],
-  "refund-refused": [
+  "refund-any-size": [
     { file: "20-sales.pw.ts", test: "a return above 250.00 at the demo dealer: no approval threshold, so the clerk's own refund commits with no refusal and no dialog" },
   ],
-  "manager-card": [
+  "refund-no-dialog": [
     { file: "20-sales.pw.ts", test: "a return above 250.00 at the demo dealer: no approval threshold, so the clerk's own refund commits with no refusal and no dialog" },
   ],
   "manager-own": [
