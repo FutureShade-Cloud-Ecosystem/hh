@@ -161,7 +161,8 @@ SELECT o.id::text, o.order_no, o.branch_id::text, o.customer_id::text,
     OR ($1 = '' AND $2 <> '' AND (
          upper(o.order_no) IN ($2, '#' || $2)
          OR upper(i.invoice_no) IN ($2, '#' || $2)
-         OR ($2 ~ '^[0-9]+$' AND o.order_no LIKE '%-' || $2)))
+         OR ($2 ~ '^[0-9]+$' AND o.order_no LIKE '%-' || $2
+             AND ($3::text[] IS NULL OR o.branch_id::text = ANY($3::text[])))))
  ORDER BY (upper(o.order_no) IN ($2, '#' || $2) OR upper(i.invoice_no) IN ($2, '#' || $2)) DESC,
           o.created_at DESC
  LIMIT 1`
@@ -203,13 +204,21 @@ func (r *Repository) FindReturnByKeyTx(ctx context.Context, tx pgx.Tx, key strin
 }
 
 func (r *Repository) ReturnOrderContext(ctx context.Context, orderID, orderNo string) (returnOrderCtx, bool, error) {
+	return r.ReturnOrderContextFor(ctx, orderID, orderNo, nil)
+}
+
+// ReturnOrderContextFor is the same read for a typed reference scoped to the branches the caller
+// reaches: reach nil is a caller who reaches every branch, a non-nil slice (possibly empty) limits the
+// bare digits arm to those branch ids. Exact order and invoice numbers stay unscoped, so a full
+// number from another branch still meets the branch wall.
+func (r *Repository) ReturnOrderContextFor(ctx context.Context, orderID, orderNo string, reach []string) (returnOrderCtx, bool, error) {
 	if r.pool == nil {
 		return returnOrderCtx{}, false, errNoPool
 	}
 	// The original ring must be a committed POS sale (a pos_sale facet row exists). gateway_ref rides
 	// the ORIGINAL capture's payments row, the CARD refund rail reverses against it.
 	var oc returnOrderCtx
-	err := r.pool.QueryRow(ctx, returnOrderContextQuery, orderID, orderNo).Scan(&oc.OrderID, &oc.OrderNo, &oc.BranchID,
+	err := r.pool.QueryRow(ctx, returnOrderContextQuery, orderID, orderNo, reach).Scan(&oc.OrderID, &oc.OrderNo, &oc.BranchID,
 		&oc.CustomerID, &oc.InvoiceID, &oc.InvoiceStatus, &oc.SaleTender, &oc.GatewayRef)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return returnOrderCtx{}, false, nil
@@ -224,7 +233,7 @@ func (r *Repository) ReturnOrderContext(ctx context.Context, orderID, orderNo st
 // tx twin the in-transaction replay check needs (see FindReturnByKeyTx).
 func (r *Repository) ReturnOrderContextTx(ctx context.Context, tx pgx.Tx, orderID, orderNo string) (returnOrderCtx, bool, error) {
 	var oc returnOrderCtx
-	err := tx.QueryRow(ctx, returnOrderContextQuery, orderID, orderNo).Scan(&oc.OrderID, &oc.OrderNo, &oc.BranchID,
+	err := tx.QueryRow(ctx, returnOrderContextQuery, orderID, orderNo, nil).Scan(&oc.OrderID, &oc.OrderNo, &oc.BranchID,
 		&oc.CustomerID, &oc.InvoiceID, &oc.InvoiceStatus, &oc.SaleTender, &oc.GatewayRef)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return returnOrderCtx{}, false, nil

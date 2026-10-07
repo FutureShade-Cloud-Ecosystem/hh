@@ -217,7 +217,12 @@ func (s *Service) prepareReturn(ctx context.Context, in ReturnInput) (*returnPla
 	}
 
 	// The original sale: must be a committed POS sale; the return runs at ITS branch.
-	oc, found, err := s.store.ReturnOrderContext(ctx, in.OrderID, normalizeSaleRef(in.OrderNo))
+	callerForRef, err := s.caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ref := normalizeSaleRef(in.OrderNo)
+	oc, found, err := s.store.ReturnOrderContextFor(ctx, in.OrderID, ref, reachableBranches(callerForRef))
 	if err != nil {
 		return nil, err
 	}
@@ -234,10 +239,7 @@ func (s *Service) prepareReturn(ctx context.Context, in ReturnInput) (*returnPla
 	// are not a thing a key alone buys. The return runs at the sale's
 	// branch; the caller brings their own grants, resolved per request by
 	// the guards, never claimed.
-	caller, err := s.caller(ctx)
-	if err != nil {
-		return nil, err
-	}
+	caller := callerForRef
 	plan.caller = caller
 	if err := requireBranchReach(caller, plan.oc.BranchID); err != nil {
 		return nil, err
@@ -766,6 +768,21 @@ func (s *Service) applyAccountCredit(ctx context.Context, tx pgx.Tx, oc returnOr
 	return nil
 }
 
+// reachableBranches is the branch ids a bare number may be searched in: nil for a caller who reaches
+// every branch (global scope), otherwise the granted ids, a non-nil slice even when there are none.
+func reachableBranches(caller identity.StaffContext) []string {
+	if caller.Scope == identity.ScopeGlobal {
+		return nil
+	}
+	ids := make([]string, 0, len(caller.Branches))
+	for id, ok := range caller.Branches {
+		if ok {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
 // normalizeSaleRef is the typed sale reference as the lookup compares it: trimmed, upper cased, and
 // without a leading hash, so "#SO-TRT-21", "so-trt-21", " SO-TRT-21 " and "INV-17" all reach the
 // same comparison (the stored numbers carry the hash; the query adds it back).
@@ -781,16 +798,16 @@ func (s *Service) LookupReturn(ctx context.Context, orderID, orderNo string) (Re
 	if orderID == "" && orderNo == "" {
 		return ReturnLookup{}, clientErr(http.StatusBadRequest, "pos: order_id or order_no is required")
 	}
-	oc, found, err := s.store.ReturnOrderContext(ctx, orderID, normalizeSaleRef(orderNo))
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return ReturnLookup{}, err
+	}
+	oc, found, err := s.store.ReturnOrderContextFor(ctx, orderID, normalizeSaleRef(orderNo), reachableBranches(caller))
 	if err != nil {
 		return ReturnLookup{}, err
 	}
 	if !found {
 		return ReturnLookup{}, errReturnNotFound
-	}
-	caller, err := s.caller(ctx)
-	if err != nil {
-		return ReturnLookup{}, err
 	}
 	if err := requireBranchReach(caller, oc.BranchID); err != nil {
 		return ReturnLookup{}, err
