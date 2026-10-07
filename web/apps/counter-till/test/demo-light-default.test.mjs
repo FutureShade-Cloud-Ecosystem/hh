@@ -13,8 +13,8 @@ import { fileURLToPath } from "node:url";
 const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const scratchDir = join(appDir, "test", ".demo-light-default-build");
 
-/** Matches the minified ThemeController class and captures its first field's string value. */
-const THEME_CONTROLLER_INIT = /class\{#[a-z]=`(\w+)`;#[a-z]=null;#[a-z]=\(\)=>this\.apply\(\)/;
+/** Matches the minified ThemeController class and captures its first field's fallback value (after the carried choice's reader, which answers null in a default build). */
+const THEME_CONTROLLER_INIT = /class\{#[a-z]=\w+\(\)\?\?`(\w+)`;#[a-z]=null;#[a-z]=\(\)=>this\.apply\(\)/;
 
 function* files(dir) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
