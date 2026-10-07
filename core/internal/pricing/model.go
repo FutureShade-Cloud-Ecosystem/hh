@@ -407,17 +407,45 @@ type LowMarginEntry struct {
 
 // - D-PA-3 daily low-margin scan (the auto-populated live-sales report) -
 
-// LowMarginSaleLine is ONE raw committed sold line the D-PA-3 scan reads from the live-sales feed
-// (order_lines JOIN orders JOIN customers JOIN products LEFT JOIN product_branch_costs). It is the
+// The report's document kinds. A row says which one it came from (DocType*); a request names which
+// to read (ScanDocs*): quotes, orders, or both (the default).
+const (
+	DocTypeQuote = "quote"
+	DocTypeOrder = "order"
+
+	ScanDocsQuotes = "quotes"
+	ScanDocsOrders = "orders"
+	ScanDocsBoth   = "both"
+)
+
+// LowMarginFilter is what one report request asks the live-sales feed for. From is inclusive and To
+// exclusive, both on the document's own created time; BranchID "" is every branch; DocType is one of
+// the ScanDocs values, "" meaning both.
+type LowMarginFilter struct {
+	From, To time.Time
+	BranchID string
+	DocType  string
+}
+
+// LowMarginSaleLine is ONE raw document line the D-PA-3 scan reads from the live-sales feed: a
+// committed order line (order_lines JOIN orders JOIN customers JOIN products LEFT JOIN
+// product_branch_costs) or a quote line (the same shape over quote_lines and quotes). It is the
 // PRE-classification row: the service converts the per-BASE-uom WAC into the line's price_uom,
-// computes the margin against the ACTUAL charged price, resolves the category target/floor and
-// grades it. AvgUnitCostCents is nil when the product has NO product_branch_costs row at the sale's
-// branch (cost unknown), surfaced as an invalid "no cost on file" row, never omitted (design #5).
+// computes the margin against the price the document ACTUALLY holds, resolves the category
+// target/floor and grades it. AvgUnitCostCents is nil when the product has NO product_branch_costs
+// row at the document's branch (cost unknown), surfaced as an invalid "no cost on file" row, never
+// omitted (design #5).
+//
+// UnitPriceCents is the price as STORED, and DiscPct the line's discount percent: a quote line stores
+// the engine's gross unit price with the discount beside it, and an order converted from a quote
+// keeps that pair (the percent in the line's metadata), so the price the customer pays is the stored
+// price taken net of DiscPct (netUnitCents). Zero DiscPct leaves the stored price as it is.
 type LowMarginSaleLine struct {
-	OrderLineID      string
-	OrderID          string
-	OrderNo          string
-	SoldAt           time.Time
+	DocType          string // DocTypeQuote | DocTypeOrder
+	LineID           string
+	DocID            string
+	DocNo            string
+	DocAt            time.Time
 	BranchID         string
 	CustomerID       string
 	CustomerType     string
@@ -427,7 +455,8 @@ type LowMarginSaleLine struct {
 	ProductName      string
 	QtyEntered       float64
 	UOMEntered       string
-	UnitPriceCents   int64 // the ACTUAL charged price per price_uom (order_lines.unit_price_cents)
+	UnitPriceCents   int64 // as stored, per price_uom
+	DiscPct          int
 	PriceUOM         string
 	AvgUnitCostCents *int64 // per product BASE uom; nil = no product_branch_costs row (cost missing)
 }
@@ -438,10 +467,11 @@ type LowMarginSaleLine struct {
 // is non-positive. Invalid rows are SURFACED, never dropped (mirrors the classifier's invalid
 // discipline). Clean (at/above target) lines are omitted. Money is pre-tax cents (M5 owns tax).
 type LowMarginScanRow struct {
-	OrderLineID         string    `json:"order_line_id"`
-	OrderID             string    `json:"order_id"`
-	OrderNo             string    `json:"order_no"`
-	SoldAt              time.Time `json:"sold_at"`
+	DocType             string    `json:"doc_type"` // quote | order
+	LineID              string    `json:"line_id"`
+	DocID               string    `json:"doc_id"`
+	DocNo               string    `json:"doc_no"`
+	DocAt               time.Time `json:"doc_at"`
 	BranchID            string    `json:"branch_id"`
 	CustomerID          string    `json:"customer_id,omitempty"`
 	CustomerType        string    `json:"customer_type"`
@@ -450,7 +480,8 @@ type LowMarginScanRow struct {
 	ProductName         string    `json:"product_name"`
 	QtyEntered          float64   `json:"qty_entered"`
 	UOMEntered          string    `json:"uom_entered"`
-	UnitPriceCents      int64     `json:"unit_price_cents"` // the ACTUAL sold price per price_uom
+	UnitPriceCents      int64     `json:"unit_price_cents"` // the price the document holds, net of the line's discount, per price_uom
+	DiscPct             int       `json:"disc_pct,omitempty"`
 	PriceUOM            string    `json:"price_uom"`
 	CostInPriceUOMCents int64     `json:"cost_in_price_uom_cents"` // WAC converted BASE→price_uom
 	MarginBps           int64     `json:"margin_bps"`

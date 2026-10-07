@@ -907,14 +907,14 @@ func TestIntegration_LowMarginScan(t *testing.T) {
 	pool := intPool(t)
 	svc := realSvc(pool)
 
-	rows, err := svc.LowMarginScan(ctx, time.Now().AddDate(0, 0, -30), time.Now().Add(time.Hour), "")
+	rows, err := svc.LowMarginScan(ctx, LowMarginFilter{From: time.Now().AddDate(0, 0, -30), To: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatalf("LowMarginScan: %v", err)
 	}
 	byOrder := map[string]LowMarginScanRow{}
 	for _, r := range rows {
 		if r.Level != "invalid" {
-			byOrder[r.OrderNo] = r
+			byOrder[r.DocNo] = r
 		}
 	}
 
@@ -951,7 +951,7 @@ func TestIntegration_LowMarginScan(t *testing.T) {
 
 	// The healthy 1400¢/SF line on the WARN order must NOT surface, only the 975¢/SF WARN line does.
 	for _, r := range rows {
-		if r.OrderNo == "#SO-DPA3-WARN" && r.UnitPriceCents == 1400 {
+		if r.DocNo == "#SO-DPA3-WARN" && r.UnitPriceCents == 1400 {
 			t.Errorf("healthy 1400¢/SF line must be omitted, but it surfaced: %+v", r)
 		}
 	}

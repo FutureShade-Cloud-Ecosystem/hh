@@ -160,7 +160,7 @@ type pricingStore interface {
 // *Repository, like batchStore) rather than a method on the zero-trust pricingStore, which reads
 // pricing-owned tables only. nil until wired; LowMarginScan returns errNoDB when it is unset.
 type salesScanStore interface {
-	LowMarginSalesLines(ctx context.Context, from, to time.Time, branchID string) ([]LowMarginSaleLine, error)
+	LowMarginSalesLines(ctx context.Context, f LowMarginFilter) ([]LowMarginSaleLine, error)
 }
 
 // txAuditStore is the transactional half of the audit append: the same row
@@ -1670,28 +1670,35 @@ func resolveErrReason(err error) string {
 // margin_bps = ((unit_price_cents − costInPriceUOM) × 10000) / unit_price_cents  (price ≤ 0 → invalid;
 // cost > price → negative margin → critical). Cost-missing / non-positive-price lines are SURFACED as
 // invalid, never omitted (design #5: a coalesced cost=0 would render 100% margin and hide the blindness).
-func (s *Service) LowMarginScan(ctx context.Context, from, to time.Time, branchID string) ([]LowMarginScanRow, error) {
-	if from.IsZero() || to.IsZero() {
+func (s *Service) LowMarginScan(ctx context.Context, f LowMarginFilter) ([]LowMarginScanRow, error) {
+	if f.From.IsZero() || f.To.IsZero() {
 		return nil, badReq("from and to are required")
 	}
-	if !to.After(from) {
+	if !f.To.After(f.From) {
 		return nil, badReq("to must be after from")
+	}
+	switch f.DocType {
+	case "":
+		f.DocType = ScanDocsBoth
+	case ScanDocsQuotes, ScanDocsOrders, ScanDocsBoth:
+	default:
+		return nil, badReq("doc_type must be quotes, orders or both")
 	}
 	if s.scan == nil {
 		return nil, errNoDB // the live-sales feed seam is unwired (DB-free build)
 	}
-	lines, err := s.scan.LowMarginSalesLines(ctx, from, to, branchID)
+	lines, err := s.scan.LowMarginSalesLines(ctx, f)
 	if err != nil {
 		return nil, fmt.Errorf("low-margin scan: %w", err)
 	}
 	out := make([]LowMarginScanRow, 0, len(lines))
 	for _, ln := range lines {
 		row := LowMarginScanRow{
-			OrderLineID: ln.OrderLineID, OrderID: ln.OrderID, OrderNo: ln.OrderNo, SoldAt: ln.SoldAt,
+			DocType: ln.DocType, LineID: ln.LineID, DocID: ln.DocID, DocNo: ln.DocNo, DocAt: ln.DocAt,
 			BranchID: ln.BranchID, CustomerID: ln.CustomerID, CustomerType: ln.CustomerType,
 			ProductID: ln.ProductID, SKU: ln.SKU, ProductName: ln.ProductName,
 			QtyEntered: ln.QtyEntered, UOMEntered: ln.UOMEntered,
-			UnitPriceCents: ln.UnitPriceCents, PriceUOM: ln.PriceUOM,
+			UnitPriceCents: netUnitCents(ln.UnitPriceCents, ln.DiscPct), DiscPct: ln.DiscPct, PriceUOM: ln.PriceUOM,
 		}
 		// Category target/floor via the SAME resolution the classifier uses: the policy row when
 		// present, else the default target/floor band (finding #12, a no-policy category is graded
@@ -1712,7 +1719,7 @@ func (s *Service) LowMarginScan(ctx context.Context, from, to time.Time, branchI
 			continue
 		}
 		// A non-positive charged price cannot be graded (margin denominator) → SURFACED invalid.
-		if ln.UnitPriceCents <= 0 {
+		if row.UnitPriceCents <= 0 {
 			row.Level, row.Reason = "invalid", "sold price must be greater than 0"
 			out = append(out, row)
 			continue
@@ -1727,7 +1734,7 @@ func (s *Service) LowMarginScan(ctx context.Context, from, to time.Time, branchI
 		}
 		costInPriceUOM := centsTimesFactor(*ln.AvgUnitCostCents, fRat)
 		row.CostInPriceUOMCents = costInPriceUOM
-		row.MarginBps = marginBps(ln.UnitPriceCents, costInPriceUOM)
+		row.MarginBps = marginBps(row.UnitPriceCents, costInPriceUOM)
 		level, breaching := classifyMargin(row.MarginBps, target, floor)
 		if !breaching {
 			continue // a healthy line (margin ≥ target) is omitted, proves the filter
@@ -1748,6 +1755,16 @@ func (s *Service) LowMarginScan(ctx context.Context, from, to time.Time, branchI
 }
 
 // - helpers -
+
+// netUnitCents is a document line's unit price taken net of its discount percent, half up once, the
+// arithmetic the quote's own discount write applies (quote.discountUnitCents). A zero or negative
+// percent leaves the stored price alone.
+func netUnitCents(unitCents int64, discPct int) int64 {
+	if discPct <= 0 {
+		return unitCents
+	}
+	return (unitCents*int64(100-discPct) + 50) / 100
+}
 
 func withinValidity(r Rule, now time.Time) bool {
 	if r.ValidFrom != nil && now.Before(*r.ValidFrom) {

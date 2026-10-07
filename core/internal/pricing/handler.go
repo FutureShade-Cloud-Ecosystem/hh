@@ -563,7 +563,14 @@ func (h *Handler) lowMarginScan(w http.ResponseWriter, r *http.Request, _ guards
 		httpx.Error(w, http.StatusBadRequest, "branch_id must be a uuid")
 		return
 	}
-	rows, err := h.svc.LowMarginScan(r.Context(), from, to, branchID)
+	docType := q.Get("doc_type")
+	switch docType {
+	case "", ScanDocsQuotes, ScanDocsOrders, ScanDocsBoth:
+	default:
+		httpx.Error(w, http.StatusBadRequest, "doc_type must be quotes, orders or both")
+		return
+	}
+	rows, err := h.svc.LowMarginScan(r.Context(), LowMarginFilter{From: from, To: to, BranchID: branchID, DocType: docType})
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
