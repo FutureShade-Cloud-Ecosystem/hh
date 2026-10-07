@@ -264,6 +264,11 @@ export class QdQuoteWorkarea extends LitElement {
       font-weight: 700;
       line-height: 1.2;
     }
+    /* The shared stepper scrolls inside itself under 360 px (the till's rule): its host here may not widen the page. */
+    hos-pos-flow-steps {
+      max-width: 100%;
+      overflow-x: auto;
+    }
     .headid .pagectx {
       font-size: var(--qb-caption);
       color: var(--hos-text-dim, var(--hh-text-dim));
