@@ -493,17 +493,24 @@ paths:
     get:
       operationId: pricingLowMarginScan
       tags: [staff-pricing]
-      summary: Grade committed sale lines against current cost in a window
+      summary: The low margin report, quotes and orders graded against current cost
       description: >-
-        The auto-populated low-margin report over the live-sales feed: grades
-        the actual charged price of every committed sale line in the window
-        against current per-branch cost, returning breaching rows worst first
-        and cost-missing lines as invalid. from and to accept RFC3339 or date
-        only.
+        The low margin report the managers scan. It grades the price every
+        document line holds (a committed order line, or a quote line at the
+        quote's own price, net of the line's discount) against current
+        per-branch cost and answers the lines below target (warn) or below the
+        floor (critical), with lines whose cost is unknown as invalid, as a
+        cursor page sorted by margin. Each row names the salesperson, the
+        margin against the floor and the target, whether the line was cleared
+        below the floor and by whom, and the document's own overall margin.
+        from and to are the document's own dates, RFC3339 or date only. Held to
+        the managers who clear or decide a floor and the roles above them, and
+        to the cost and margin list: a role that may not see cost is refused.
       x-role: requireStaff
       x-access:
-        surfaces: [quote-desk]
+        surfaces: [quote-desk, money-desk]
         level: read
+        list: low_margin_report
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -511,17 +518,37 @@ paths:
         - name: from
           in: query
           required: false
-          description: Lower window bound, RFC3339 or date only
+          description: Lower bound of the document date, RFC3339 or date only (default thirty days back)
           schema: { type: string }
         - name: to
           in: query
           required: false
-          description: Upper window bound, RFC3339 or date only, inclusive of the named day
+          description: Upper bound of the document date, RFC3339 or date only, inclusive of the named day
           schema: { type: string }
         - name: branch_id
           in: query
           required: false
           schema: { type: string, format: uuid }
+        - name: doc_type
+          in: query
+          required: false
+          description: Which documents to read, quotes, orders or both (the default)
+          schema: { type: string, enum: [quotes, orders, both] }
+        - name: salesperson_id
+          in: query
+          required: false
+          description: Only this salesperson's documents (a staff user id)
+          schema: { type: string, format: uuid }
+        - name: cleared_only
+          in: query
+          required: false
+          description: Only the lines cleared below the floor
+          schema: { type: boolean, default: false }
+        - name: sort
+          in: query
+          required: false
+          description: Order by the line's margin, worst first (margin_asc, the default) or best first; lines with no margin come last either way
+          schema: { type: string, enum: [margin_asc, margin_desc], default: margin_asc }
       responses:
         "200":
           description: The page of graded rows
@@ -2078,16 +2105,21 @@ components:
     PricingLowMarginScanRow:
       type: object
       description: >-
-        One graded row of the live-sales low-margin scan: the actual sold price
-        graded against current per-branch cost. level is warn (below target, at
-        or above floor), critical (below floor) or invalid (cost unknown or a
-        non-positive charged price). Money is pre-tax.
-      required: [order_line_id, order_id, order_no, sold_at, branch_id, customer_type, product_id, sku, product_name, qty_entered, uom_entered, unit_price_cents, price_uom, cost_in_price_uom_cents, margin_bps, target_bps, floor_bps, level]
+        One graded row of the low margin report: a document line (a committed
+        order line or a quote line) graded at the price the document holds,
+        net of the line's discount, against current per-branch cost. level is
+        warn (below target, at or above floor), critical (below floor) or
+        invalid (cost unknown or a non-positive price). Money is pre-tax.
+      required: [doc_type, line_id, doc_id, doc_no, doc_at, branch_id, customer_type, product_id, sku, product_name, qty_entered, uom_entered, unit_price_cents, price_uom, cost_in_price_uom_cents, margin_bps, target_bps, floor_bps, level, cleared_below_floor]
       properties:
-        order_line_id: { type: string, format: uuid }
-        order_id: { type: string, format: uuid }
-        order_no: { type: string }
-        sold_at: { type: string, format: date-time }
+        doc_type: { type: string, enum: [quote, order] }
+        line_id: { type: string, format: uuid }
+        doc_id: { type: string, format: uuid }
+        doc_no: { type: string }
+        doc_at:
+          type: string
+          format: date-time
+          description: When the document was created
         branch_id: { type: string, format: uuid }
         customer_id: { type: string, format: uuid }
         customer_type: { type: string }
@@ -2099,7 +2131,11 @@ components:
         unit_price_cents:
           type: integer
           format: int64
-          description: The actual sold price per price_uom
+          description: The price the document holds per price_uom, net of the line's discount percent
+        disc_pct:
+          type: integer
+          format: int32
+          description: The line's discount percent, absent when none
         price_uom: { type: string }
         cost_in_price_uom_cents:
           type: integer
@@ -2113,9 +2149,27 @@ components:
           enum: [warn, critical, invalid]
         reason:
           type: string
-          description: Set only when level is invalid
-
-    # --- quantity breaks --------------------------------------------------------
+        salesperson_id:
+          type: string
+          format: uuid
+          description: The document's salesperson, the quote's salesperson else its creator
+        salesperson:
+          type: string
+          description: The salesperson's display label
+        cleared_below_floor:
+          type: boolean
+          description: A manager or an approval cleared this line below the margin floor
+        cleared_by_id: { type: string, format: uuid }
+        cleared_by:
+          type: string
+          description: Who cleared it, as a display label
+        clear_authority:
+          type: string
+          enum: [MANAGER_SCOPE, APPROVAL]
+        doc_margin_bps:
+          type: integer
+          format: int64
+          description: The document's own overall margin over its product lines, absent when any of them has no cost on file
 
     PricingQuantityBreakItem:
       type: object
@@ -2997,7 +3051,7 @@ components:
 
     PricingLowMarginScanPage:
       type: object
-      required: [items]
+      required: [items, limit]
       properties:
         items:
           type: array

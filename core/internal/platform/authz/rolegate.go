@@ -126,7 +126,14 @@ var listReaders = map[string]func(*roleconfig.Config) []string{
 	// admin) is refused beside the level, exactly as the price writes name
 	// their editors.
 	roleconfig.SettingCostVisibility: func(c *roleconfig.Config) []string { return c.CostVisibility() },
+	// The low margin report names a list derived from the floor lists and the cost list together
+	// (roleconfig.LowMarginReportReaders): a role that clears or decides a floor, or sits above one,
+	// and may see cost. Not a stored setting, so the name is the route's own.
+	ListLowMarginReport: func(c *roleconfig.Config) []string { return c.LowMarginReportReaders() },
 }
+
+// ListLowMarginReport is the x-access list name of the low margin report route.
+const ListLowMarginReport = "low_margin_report"
 
 // valid checks the annotation against roleconfig's vocabulary. An empty
 // surface list, an unknown surface, an unknown level, none as the level (a

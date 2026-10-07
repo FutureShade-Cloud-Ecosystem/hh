@@ -96,7 +96,7 @@ const shapeCensusWantPages = 118
 //	(4) wrong key: the list is written under a key the contract does
 //	    not declare (items is the contract's spelling).
 var shapeCensusAllowlist = map[string]string{
-	// (1) bare array (24 of the 118, the first entry the brief names).
+	// (1) bare array (23 of the 118, the first entry the brief names).
 	"identityListApprovals":       "answers a bare JSON array (core/internal/identity/staffcontext/approvals_handler.go, listApprovals writes the ListApprovals slice directly) against the contract's IdentityApprovalPage (items, next_cursor); the fix is the owning lane's",
 	"auditListEntries":            "answers a bare JSON array (internal/audit/handler.go, (*Handler).list writes the h.svc.List rows directly) against the contract's AuditEntryPage; the fix is the owning lane's",
 	"auditReopenTransaction":      "answers a bare JSON array (internal/audit/handler.go, (*Handler).reopen writes its projected []Entry directly) against the contract's AuditEntryPage; the fix is the owning lane's",
@@ -119,7 +119,6 @@ var shapeCensusAllowlist = map[string]string{
 	"pricingListRebatePrograms":   "answers a bare JSON array (internal/pricing/w4_handler.go, (*Handler).listRebatePrograms writes the h.svc.ListRebatePrograms slice directly) against the contract's PricingRebateProgramPage; the fix is the owning lane's",
 	"pricingListRules":            "answers a bare JSON array (internal/pricing/handler.go, (*Handler).listRules writes the h.svc.ListRules slice directly) against the contract's PricingRulePage; the fix is the owning lane's",
 	"pricingListUOMConversions":   "answers a bare JSON array (internal/pricing/w4_handler.go, (*Handler).listConversions writes the h.svc.ListConversions slice directly) against the contract's PricingUOMConversionPage; the fix is the owning lane's",
-	"pricingLowMarginScan":        "answers a bare JSON array (internal/pricing/handler.go, (*Handler).lowMarginScan writes the h.svc.LowMarginScan slice directly) against the contract's PricingLowMarginScanPage; the fix is the owning lane's",
 	"productList":                 "answers a bare JSON array (internal/product/handler.go, (*Handler).list writes the h.svc.List slice directly, totals in an X-Total-Count header); the handler source carries a comment calling the bare array load bearing for the POS grid and the export callers, so this entry is the contract and the handler disagreeing on purpose (the owning lane owns the resolution (a page envelope here, or a contract amendment)) against the contract's ProductPage",
 
 	// (2) items null (13): the map (or struct) is (or holds) a nil slice

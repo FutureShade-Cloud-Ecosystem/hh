@@ -179,7 +179,7 @@ func assertRouteAnnotated(t *testing.T, pattern string, route apigen.Route) {
 	if !xrKnownLevel(route.Level) {
 		t.Fatalf("staff route %s (%s) names unknown level %q", pattern, route.OperationID, route.Level)
 	}
-	if route.List != "" && route.List != roleconfig.SettingPricingEditors && route.List != roleconfig.SettingCostVisibility {
+	if route.List != "" && route.List != roleconfig.SettingPricingEditors && route.List != roleconfig.SettingCostVisibility && route.List != authz.ListLowMarginReport {
 		t.Fatalf("staff route %s (%s) names list %q, which no gate reader knows", pattern, route.OperationID, route.List)
 	}
 }
