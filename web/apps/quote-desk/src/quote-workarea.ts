@@ -207,6 +207,8 @@ export class QdQuoteWorkarea extends LitElement {
   private mintedToken = "";
   /** The customer picked for a New quote: nothing is made on the server until the first line is added. */
   @state() private composeCustomer: PickerCustomer | null = null;
+  /** True while the first create of a New quote is out: the customer cannot be changed under it, so the pick is never lost. */
+  @state() private creatingNow = false;
   /** The raw customer-view answer Preview shows in the desk, or null when no preview is open. */
   @state() private previewRaw: unknown = null;
   /** The context of the quote on screen: every read and write captures it at its start and checks it after each await. */
@@ -1289,6 +1291,7 @@ export class QdQuoteWorkarea extends LitElement {
     this.flushTermsOf(previousId);
     this.scope.open(this.quoteId);
     this.mintedToken = "";
+    this.composeCustomer = null;
     this.raisedFrom = null;
     this.previewRaw = null;
     this.error = "";
@@ -2690,8 +2693,10 @@ export class QdQuoteWorkarea extends LitElement {
   // ── compose (a new quote) and the send and convert paths ───────────────────
 
   private createFor(cust: PickerCustomer): Promise<void> {
+    this.creatingNow = true;
     const made = this.createForNow(cust).finally(() => {
       if (this.creating === made) this.creating = null;
+      this.creatingNow = false;
     });
     this.creating = made;
     return made;
@@ -2699,7 +2704,14 @@ export class QdQuoteWorkarea extends LitElement {
 
   private async createForNow(cust: PickerCustomer): Promise<void> {
     const client = this.client;
-    if (client === null || this.busy) return;
+    if (client === null) return;
+    if (this.busy) {
+      // Something else is still being saved: the line is not dropped in silence, it is said, and the person adds it again.
+      this.error = "Another change is still being saved.";
+      this.createFailed = true;
+      this.releaseHandoffWaiters("create-failed");
+      return;
+    }
     const ctx = this.ctx;
     const release = this.holdBusy(ctx);
     this.error = "";
@@ -2722,6 +2734,8 @@ export class QdQuoteWorkarea extends LitElement {
       return;
     }
     this.customer = cust;
+    // The pick has become the quote: a compose reached again later starts fresh, and no second quote is made from it.
+    this.composeCustomer = null;
     // A DIFFERENT document now sits under the grid: everything the grid's
     // guard is holding belongs to the quote that just left.
     this.ticketMoved();
@@ -3704,7 +3718,10 @@ export class QdQuoteWorkarea extends LitElement {
         <div class="composecard" data-testid="qb-identity">
           <div class="cname" data-testid="qb-compose-customer">${picked.name}</div>
           <div class="csub">${picked.account_no !== "" ? picked.account_no : ""}</div>
-          <button type="button" class="backlink" data-action="compose-change" data-testid="qb-compose-change">Change customer</button>
+          <button type="button" class="backlink" data-action="compose-change" data-testid="qb-compose-change" ?disabled=${this.creatingNow}>Change customer</button>
+          ${this.creatingNow
+            ? html`<p class="pagectx" role="status" data-testid="qb-compose-making">The quote is being made for ${picked.name}.</p>`
+            : nothing}
           <p class="pagectx">Search for the first product. The quote is made when you add it.</p>
           <quote-search-add></quote-search-add>
         </div>

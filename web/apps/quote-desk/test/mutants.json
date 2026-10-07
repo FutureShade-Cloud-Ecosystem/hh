@@ -1133,8 +1133,8 @@
   {
     "id": "wa-handoff-create-failed-flag",
     "file": "src/quote-workarea.ts",
-    "find": "      this.createFailed = true;\n",
-    "replace": "",
+    "find": "      this.createFailed = true;\n      this.releaseHandoffWaiters(\"create-failed\");\n      return;\n    }\n    this.customer = cust;",
+    "replace": "      this.releaseHandoffWaiters(\"create-failed\");\n      return;\n    }\n    this.customer = cust;",
     "test": "P3 a scan made in compose says so at once when the create itself is refused"
   },
   {
@@ -2100,5 +2100,26 @@
     "find": "    this.composeCustomer = event.detail;\n    this.error = \"\";",
     "replace": "    this.composeCustomer = event.detail;\n    void this.createFor(event.detail);\n    this.error = \"\";",
     "test": "picking a customer makes no quote"
+  },
+  {
+    "id": "wa-compose-clear-on-leave",
+    "file": "src/quote-workarea.ts",
+    "find": "    this.mintedToken = \"\";\n    this.composeCustomer = null;\n",
+    "replace": "    this.mintedToken = \"\";\n",
+    "test": "R11 P2-1 arriving at New quote by the address is a fresh compose too"
+  },
+  {
+    "id": "wa-change-held",
+    "file": "src/quote-workarea.ts",
+    "find": " ?disabled=${this.creatingNow}>Change customer",
+    "replace": ">Change customer",
+    "test": "R11 P2-2 Change customer waits while the first create is out"
+  },
+  {
+    "id": "wa-create-busy-said",
+    "file": "src/quote-workarea.ts",
+    "find": "      this.error = \"Another change is still being saved.\";\n",
+    "replace": "",
+    "test": "R11 P3 a first line added while another change is still saving says so"
   }
 ]
