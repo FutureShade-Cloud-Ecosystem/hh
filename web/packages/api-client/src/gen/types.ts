@@ -3914,6 +3914,8 @@ export type PosDiscountInput = {
   percent_bps?: number;
   amount_cents?: number;
   approved_by: string;
+  approved_qty?: number;
+  approved_base_cents: number;
 };
 export type PosDiscountApprover = {
   id: string;

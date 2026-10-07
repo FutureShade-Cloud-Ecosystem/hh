@@ -177,7 +177,14 @@ import {
 } from '@hardscapehouse/pos-kit/src/ported/pos-api.js';
 import './pos-panels.js';
 import './pos-discount.js';
-import { discountWire, discountWords, ticketCarriesDiscount } from './_pos-discount.js';
+import {
+  discountRemovedWords,
+  discountsThatStand,
+  discountWire,
+  discountWords,
+  ticketBasis,
+  ticketCarriesDiscount,
+} from './_pos-discount.js';
 import { previewBody, previewKey, readPreview, splitMismatchWords, type PreviewState } from './_pos-preview.js';
 import { focusRing } from '@hardscapehouse/pos-kit/src/ported/styles/focus-ring.js';
 import { ModalFocus } from '@hardscapehouse/pos-kit/src/ported/modal-focus.js';
@@ -2960,7 +2967,35 @@ export class HosPosTerminal extends LitElement {
     // view's screen-filling rules to it: the stepper column keeps the page
     // measure and the page scroll it has today.
     this.dataset.counterLayout = this.counterLayout;
+    this.enforceDiscountApproval();
     this.noteTicketForPreview();
+  }
+
+  /**
+   * A manager's yes is for the line and quantity it was given. When a discounted line's quantity
+   * or price moves, or the ticket under a ticket discount changes, the discount is removed and
+   * the person is told in words to ask a manager again (the ring refuses a stale one too).
+   * Nothing moves once the sale is ringing or rung: the committed ticket stays what it was.
+   */
+  private enforceDiscountApproval(): void {
+    if (this.ringBusy() || this.ringDone()) return;
+    if (!ticketCarriesDiscount(this.cart, this.ticketDiscount)) return;
+    const st = discountsThatStand(this.cart, this.ticketDiscount);
+    if (!st.lineRemoved && !st.ticketRemoved) return;
+    if (st.lineRemoved) this.cart = st.cart;
+    this.ticketDiscount = st.ticket;
+    this.setUtil(discountRemovedWords(st.reason, st.ticketRemoved), 'bad');
+  }
+
+  /**
+   * What a ticket discount is struck from: the subtotal after the line discounts, the server's
+   * figure (the preview's subtotal plus the ticket discount's own share). Null while the ticket
+   * is still being priced with line discounts on it: the yes is given for a known base.
+   */
+  private ticketBaseCents(): number | null {
+    const p = this.preview;
+    if (p.kind === 'ready') return p.subtotalCents + p.saleDiscountCents;
+    return this.cart.some((l) => l.discount) ? null : this.subtotal();
   }
 
   /** Row 985: notice a change in what the preview depends on, and mark the totals pending at once. */
@@ -7047,14 +7082,21 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
     return t.kind === 'ticket' ? this.ticketDiscount : (this.cart[t.index]?.discount ?? null);
   }
 
-  private onDiscountApply(d: CartDiscount): void {
+  private onDiscountApply(entered: CartDiscount): void {
     const t = this.discountTarget;
     if (t === null) return;
     if (t.kind === 'ticket') {
-      this.ticketDiscount = d;
+      const base = this.ticketBaseCents();
+      if (base === null) {
+        this.setUtil('The ticket is still being priced. Try the discount again in a moment.', 'bad');
+        this.discountTarget = null;
+        return;
+      }
+      this.ticketDiscount = { ...entered, approvedBaseCents: base, basis: ticketBasis(this.cart) };
     } else {
       const next = [...this.cart];
-      if (next[t.index]) next[t.index] = { ...next[t.index], discount: d };
+      const l = next[t.index];
+      if (l) next[t.index] = { ...l, discount: { ...entered, approvedQty: l.qty, approvedBaseCents: l.lineTotalCents } };
       this.cart = next;
     }
     this.ticketChanged();

@@ -116,3 +116,54 @@ test('a ticket carries a discount when any line or the ticket does: that is what
   assert.equal(ticketCarriesDiscount([line], { percentBps: 100, ...approver }), true);
   assert.equal(discountFromLine(line), undefined);
 });
+
+// A manager's yes is for the line and quantity it was given (the review's P2-2): the discount
+// carries what it was approved for, and the ticket drops it, in words, when that no longer holds.
+import { discountsThatStand, ticketBasis, discountRemovedWords } from './_pos-discount.ts';
+
+const line = (qty, total, discount) => ({ product: { id: 'p1' }, qty, uom: 'SF', lineTotalCents: total, ...(discount ? { discount } : {}) });
+const yes = (over = {}) => ({ percentBps: 1000, approvedBy: 'u-mgr', approvedByName: 'Sales manager', approvedQty: 10, approvedBaseCents: 1000, ...over });
+
+test('the wire carries the quantity and base the yes was given for', () => {
+  assert.deepEqual(discountWire(yes()), { percent_bps: 1000, approved_by: 'u-mgr', approved_qty: 10, approved_base_cents: 1000 });
+  assert.deepEqual(discountWire({ amountCents: 500, approvedBy: 'u', approvedByName: 'x', approvedBaseCents: 9000 }),
+    { amount_cents: 500, approved_by: 'u', approved_base_cents: 9000 });
+});
+
+test('a line discount stands only at the quantity and line total it was approved at', () => {
+  const same = discountsThatStand([line(10, 1000, yes())], null);
+  assert.equal(same.cart[0].discount !== undefined, true);
+  assert.equal(same.lineRemoved, false);
+  const grew = discountsThatStand([line(100, 10000, yes())], null);
+  assert.equal(grew.cart[0].discount, undefined);
+  assert.equal(grew.lineRemoved, true);
+  assert.equal(grew.reason, 'quantity');
+  const repriced = discountsThatStand([line(10, 1200, yes())], null);
+  assert.equal(repriced.cart[0].discount, undefined);
+  assert.equal(repriced.reason, 'price');
+  // A line still waiting on its price keeps its yes: nothing new is known yet.
+  const pending = discountsThatStand([{ ...line(10, 1000, yes()), priceMissing: true }], null);
+  assert.equal(pending.lineRemoved, false);
+});
+
+test('a ticket discount stands only while the ticket is the one it was approved on', () => {
+  const cart = [line(10, 1000)];
+  const t = { amountCents: 100, approvedBy: 'u', approvedByName: 'x', approvedBaseCents: 1000, basis: ticketBasis(cart) };
+  assert.equal(discountsThatStand(cart, t).ticket !== null, true);
+  const more = [...cart, line(1, 100)];
+  const dropped = discountsThatStand(more, t);
+  assert.equal(dropped.ticket, null);
+  assert.equal(dropped.ticketRemoved, true);
+  // A quantity change, a price change and a new line discount all change the basis.
+  assert.notEqual(ticketBasis([line(11, 1000)]), ticketBasis(cart));
+  assert.notEqual(ticketBasis([line(10, 900)]), ticketBasis(cart));
+  assert.notEqual(ticketBasis([line(10, 1000, yes())]), ticketBasis(cart));
+});
+
+test('the words say what happened and what to do', () => {
+  assert.equal(discountRemovedWords('quantity', false), 'The discount was removed because the quantity changed. Ask a manager again.');
+  assert.equal(discountRemovedWords('price', false), 'The discount was removed because the price changed. Ask a manager again.');
+  assert.equal(discountRemovedWords(null, true), 'The ticket discount was removed because the ticket changed. Ask a manager again.');
+  assert.equal(discountRemovedWords('quantity', true),
+    'The discount was removed because the quantity changed. The ticket discount was removed because the ticket changed. Ask a manager again.');
+});

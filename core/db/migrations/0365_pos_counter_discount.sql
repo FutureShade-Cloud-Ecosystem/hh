@@ -13,7 +13,13 @@
 --                                       as a word so a later role change never rewrites a receipt
 --   order_lines.sale_discount_cents     the line's share of the ticket discount, also out of
 --                                       line_total_cents (largest remainder over the lines)
---   pos_sale.discount_*                 the ticket discount: its cents, percent and approver
+--   order_lines.discount_approved_qty / _base_cents
+--                                       what the manager's yes was given for: the quantity and the
+--                                       line total the discount was struck from. The ring refuses a
+--                                       discount whose approval no longer matches, so a yes never
+--                                       grows with the quantity or the ticket
+--   pos_sale.discount_*                 the ticket discount: its cents, percent, approver and the
+--                                       subtotal (after the line discounts) the yes was given for
 --
 -- line_total_cents stays what was CHARGED, so a return (refund = line total over quantity) refunds
 -- what was paid with no special case, and the invoice lines, which copy it, add up.
@@ -25,7 +31,9 @@ ALTER TABLE order_lines
     ADD COLUMN discount_percent_bps   INTEGER NULL CHECK (discount_percent_bps IS NULL OR discount_percent_bps BETWEEN 1 AND 10000),
     ADD COLUMN discount_approved_by   UUID NULL REFERENCES users(id),
     ADD COLUMN discount_approved_role TEXT NULL,
-    ADD COLUMN sale_discount_cents    BIGINT NOT NULL DEFAULT 0 CHECK (sale_discount_cents >= 0);
+    ADD COLUMN sale_discount_cents    BIGINT NOT NULL DEFAULT 0 CHECK (sale_discount_cents >= 0),
+    ADD COLUMN discount_approved_qty  NUMERIC(19,4) NULL,
+    ADD COLUMN discount_approved_base_cents BIGINT NULL;
 
 ALTER TABLE order_lines
     ADD CONSTRAINT order_lines_discount_has_approver
@@ -35,7 +43,8 @@ ALTER TABLE pos_sale
     ADD COLUMN discount_cents         BIGINT NOT NULL DEFAULT 0 CHECK (discount_cents >= 0),
     ADD COLUMN discount_percent_bps   INTEGER NULL CHECK (discount_percent_bps IS NULL OR discount_percent_bps BETWEEN 1 AND 10000),
     ADD COLUMN discount_approved_by   UUID NULL REFERENCES users(id),
-    ADD COLUMN discount_approved_role TEXT NULL;
+    ADD COLUMN discount_approved_role TEXT NULL,
+    ADD COLUMN discount_approved_base_cents BIGINT NULL;
 
 ALTER TABLE pos_sale
     ADD CONSTRAINT pos_sale_discount_has_approver

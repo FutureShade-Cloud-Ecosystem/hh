@@ -229,7 +229,7 @@ export class HosPosDiscount extends LitElement {
     const entry = this.entry();
     const who = this.chosen();
     if (!entry.ok || !who) return;
-    const discount: CartDiscount = { ...entry.discount, approvedBy: who.id, approvedByName: who.name };
+    const discount = { ...entry.discount, approvedBy: who.id, approvedByName: who.name } as CartDiscount;
     this.dispatchEvent(new CustomEvent('pos-discount-apply', { detail: discount, bubbles: true, composed: true }));
   }
 

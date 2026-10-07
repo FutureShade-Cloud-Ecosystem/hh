@@ -566,7 +566,7 @@ function discountRefusal(error) {
   return { refusal: { status: 422, body: { error } } };
 }
 
-function oneDiscount(raw, base, what, label) {
+function oneDiscount(raw, base, what, label, qty) {
   const percent = raw.percent_bps ?? 0;
   const amount = raw.amount_cents ?? 0;
   if (!Number.isInteger(percent) || !Number.isInteger(amount) || percent < 0 || amount < 0 || (percent > 0) === (amount > 0)) {
@@ -584,6 +584,14 @@ function oneDiscount(raw, base, what, label) {
   if (approver === "") return discountRefusal(`${label}: a discount needs the manager who approved it (approved_by)`);
   const who = DISCOUNT_APPROVERS.find((a) => a.id === approver);
   if (who === undefined) return discountRefusal(`${label}: that person cannot approve a discount at this branch`);
+  // A yes is for the quantity and base it was given for (the core's own check, in its words).
+  const line = qty !== null;
+  if (!(raw.approved_base_cents > 0) || (line && !(raw.approved_qty > 0))) {
+    return discountRefusal(`${label}: a discount carries the quantity and the amount it was approved for`);
+  }
+  if (raw.approved_base_cents !== base || (line && raw.approved_qty !== qty)) {
+    return discountRefusal(`${label}: the discount was approved for a different quantity or price: ask a manager again`);
+  }
   return { cents, percent, who };
 }
 
@@ -595,7 +603,7 @@ function applyStubDiscounts(grossTotals, rawLines, ticket) {
   for (let i = 0; i < grossTotals.length; i += 1) {
     const raw = rawLines[i]?.discount;
     if (raw === undefined || raw === null) continue;
-    const got = oneDiscount(raw, grossTotals[i], "the line", `line ${i + 1}`);
+    const got = oneDiscount(raw, grossTotals[i], "the line", `line ${i + 1}`, rawLines[i]?.qty_entered ?? 0);
     if (got.refusal) return got;
     nets[i] -= got.cents;
     rows[i].discount = got.cents;
@@ -607,7 +615,7 @@ function applyStubDiscounts(grossTotals, rawLines, ticket) {
   let saleCents = 0;
   if (ticket !== undefined && ticket !== null) {
     const base = nets.reduce((sum, n) => sum + n, 0);
-    const got = oneDiscount(ticket, base, "the ticket", "ticket");
+    const got = oneDiscount(ticket, base, "the ticket", "ticket", null);
     if (got.refusal) return got;
     saleCents = got.cents;
     // Largest remainder over the net line totals, ties to the lowest line.

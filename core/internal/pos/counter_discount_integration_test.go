@@ -43,6 +43,8 @@ func TestIntegration_CounterDiscount_EndToEnd(t *testing.T) {
 	line := func(qty float64, d map[string]any) map[string]any {
 		l := map[string]any{"product_id": l2cProductID, "qty_entered": qty, "uom_entered": "SF"}
 		if d != nil {
+			// The yes is for this quantity and this line total (10.00 a SF here).
+			d["approved_qty"], d["approved_base_cents"] = qty, int64(qty*1000)
 			l["discount"] = d
 		}
 		return l
@@ -110,7 +112,7 @@ func TestIntegration_CounterDiscount_EndToEnd(t *testing.T) {
 	// The preview answers the total the ring charges (line and ticket discounts together).
 	both := s.discountedBody(key(),
 		[]map[string]any{line(20, map[string]any{"percent_bps": 1000, "approved_by": managerUserID}), line(10, nil)},
-		map[string]any{"amount_cents": 1500, "approved_by": managerUserID})
+		map[string]any{"amount_cents": 1500, "approved_by": managerUserID, "approved_base_cents": 28000})
 	prevBody := map[string]any{"branch_id": trentonBranchID, "lines": both["lines"], "discount": both["discount"]}
 	rec = s.do(http.MethodPost, "/api/v1/pos/sale-preview", s.bearer(trentonClerkSub), "", prevBody)
 	prev := s.decodeBody(rec)
@@ -133,6 +135,16 @@ func TestIntegration_CounterDiscount_EndToEnd(t *testing.T) {
 	if err := s.pool.QueryRow(ctx, `SELECT COALESCE(SUM(sale_discount_cents),0) FROM order_lines WHERE order_id = $1::uuid`,
 		ring["order_id"].(string)).Scan(&shares); err != nil || shares != 1500 {
 		t.Fatalf("the ticket discount is shared over the lines to the cent: %d %v", shares, err)
+	}
+
+	// A yes is for the quantity it was given: the same discount at 30 SF is refused, nothing written.
+	k2 := key()
+	stale := s.discountedBody(k2, []map[string]any{{
+		"product_id": l2cProductID, "qty_entered": 30.0, "uom_entered": "SF",
+		"discount": map[string]any{"percent_bps": 1000, "approved_by": managerUserID, "approved_qty": 20.0, "approved_base_cents": 20000},
+	}}, nil)
+	if code, body := s.ringBody(trentonClerkSub, stale); code != http.StatusUnprocessableEntity {
+		t.Fatalf("a stale approval must be refused: %d %v", code, body)
 	}
 
 	// Refusals in words, and nothing written: no approver, a clerk, a manager of the other
@@ -191,8 +203,8 @@ func TestIntegration_CounterDiscount_ReturnRefundsWhatWasPaid(t *testing.T) {
 	s := newTrentonStack(t)
 	code, sale := s.ringBody(trentonClerkSub, s.discountedBody(key(), []map[string]any{{
 		"product_id": l2cProductID, "qty_entered": 20.0, "uom_entered": "SF",
-		"discount": map[string]any{"percent_bps": 1000, "approved_by": managerUserID},
-	}}, map[string]any{"amount_cents": 500, "approved_by": managerUserID}))
+		"discount": map[string]any{"percent_bps": 1000, "approved_by": managerUserID, "approved_qty": 20.0, "approved_base_cents": 20000},
+	}}, map[string]any{"amount_cents": 500, "approved_by": managerUserID, "approved_base_cents": 18000}))
 	if code != http.StatusCreated {
 		t.Fatalf("ring: %d %v", code, sale)
 	}

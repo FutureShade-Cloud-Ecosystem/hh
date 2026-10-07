@@ -59,14 +59,21 @@ export function discountWords(
   return `${entered}${cents}, approved by ${d.approvedByName}`;
 }
 
-/** The contract's DiscountInput for a discount: one of percent or amount, and approved_by. */
+/**
+ * The contract's DiscountInput for a discount: one of percent or amount, approved_by, and what the
+ * yes was given for (approved_qty for a line, approved_base_cents for both), which the ring checks.
+ */
 export function discountWire(d: CartDiscount | null | undefined):
-  | { percent_bps: number; approved_by: string }
-  | { amount_cents: number; approved_by: string }
+  | { percent_bps: number; approved_by: string; approved_qty?: number; approved_base_cents?: number }
+  | { amount_cents: number; approved_by: string; approved_qty?: number; approved_base_cents?: number }
   | undefined {
   if (!d) return undefined;
-  if (d.percentBps !== undefined) return { percent_bps: d.percentBps, approved_by: d.approvedBy };
-  return { amount_cents: d.amountCents ?? 0, approved_by: d.approvedBy };
+  const approval = {
+    ...(d.approvedQty !== undefined ? { approved_qty: d.approvedQty } : {}),
+    ...(d.approvedBaseCents !== undefined ? { approved_base_cents: d.approvedBaseCents } : {}),
+  };
+  if (d.percentBps !== undefined) return { percent_bps: d.percentBps, approved_by: d.approvedBy, ...approval };
+  return { amount_cents: d.amountCents ?? 0, approved_by: d.approvedBy, ...approval };
 }
 
 /** A line's own discount, if it has one. */
@@ -84,4 +91,73 @@ export function ticketCarriesDiscount(
   ticket: CartDiscount | null,
 ): boolean {
   return ticket !== null || cart.some((l) => l.discount !== undefined);
+}
+
+type StandLine = Pick<CartLine, 'qty' | 'lineTotalCents'> & {
+  product: { id: string };
+  uom?: string;
+  discount?: CartDiscount;
+  priceMissing?: boolean;
+};
+
+/**
+ * The ticket's signature: every line's product, quantity, unit, price and discount. A ticket
+ * discount is approved on one ticket; when the signature moves, the yes no longer stands.
+ */
+export function ticketBasis(cart: readonly StandLine[]): string {
+  return cart
+    .map((l) =>
+      [l.product.id, l.qty, l.uom ?? '', l.lineTotalCents, l.discount ? `${l.discount.percentBps ?? ''}/${l.discount.amountCents ?? ''}/${l.discount.approvedBy}` : ''].join('|'),
+    )
+    .join(';');
+}
+
+export interface Standing<T extends StandLine> {
+  cart: T[];
+  ticket: CartDiscount | null;
+  lineRemoved: boolean;
+  ticketRemoved: boolean;
+  /** Why a line's discount went: its quantity moved, or its price did. */
+  reason: 'quantity' | 'price' | null;
+}
+
+/**
+ * Which discounts still stand. A line discount stands at the quantity and the line total it was
+ * approved at (a line still waiting on its price keeps its yes); a ticket discount stands while
+ * the ticket's signature is the one it was approved on. A manager's yes is for the line and
+ * quantity it was given: it never grows with the quantity or the ticket (the ring refuses a stale
+ * one too, this is the till saying so first, in words).
+ */
+export function discountsThatStand<T extends StandLine>(cart: readonly T[], ticket: CartDiscount | null): Standing<T> {
+  let reason: 'quantity' | 'price' | null = null;
+  const next = cart.map((l) => {
+    const d = l.discount;
+    if (!d) return l;
+    if (d.approvedQty !== undefined && d.approvedQty !== l.qty) {
+      reason = 'quantity';
+      return { ...l, discount: undefined };
+    }
+    if (!l.priceMissing && d.approvedBaseCents !== undefined && d.approvedBaseCents !== l.lineTotalCents) {
+      reason ??= 'price';
+      return { ...l, discount: undefined };
+    }
+    return l;
+  });
+  const lineRemoved = reason !== null;
+  let keep: CartDiscount | null = ticket;
+  let ticketRemoved = false;
+  if (ticket !== null && ticket.basis !== undefined && !cart.some((l) => l.priceMissing) && ticket.basis !== ticketBasis(next)) {
+    keep = null;
+    ticketRemoved = true;
+  }
+  return { cart: lineRemoved ? (next as T[]) : (cart as T[]), ticket: keep, lineRemoved, ticketRemoved, reason };
+}
+
+/** The words for a discount that stopped standing, and what to do about it. */
+export function discountRemovedWords(reason: 'quantity' | 'price' | null, ticketRemoved: boolean): string {
+  const parts: string[] = [];
+  if (reason !== null) parts.push(`The discount was removed because the ${reason} changed.`);
+  if (ticketRemoved) parts.push('The ticket discount was removed because the ticket changed.');
+  parts.push('Ask a manager again.');
+  return parts.join(' ');
 }

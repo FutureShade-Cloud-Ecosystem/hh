@@ -315,13 +315,14 @@ func (r *Repository) InsertOrderLines(ctx context.Context, tx pgx.Tx, orderID st
 INSERT INTO order_lines (order_id, line_no, product_id, description, qty_entered, uom_entered, qty_base,
                          unit_price_cents, price_uom, line_total_cents, tax_cents,
                          discount_cents, discount_percent_bps, discount_approved_by, discount_approved_role,
-                         sale_discount_cents)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING id::text`
+                         sale_discount_cents, discount_approved_qty, discount_approved_base_cents)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING id::text`
 		var id string
 		if err := tx.QueryRow(ctx, q, orderID, l.LineNo, nullStr(l.ProductID), l.Description, l.QtyEntered,
 			l.UOMEntered, l.QtyBase, l.UnitPriceCents, l.PriceUOM, l.LineTotalCents, l.TaxCents,
 			l.DiscountCents, nullInt(l.DiscountPercentBps), nullStr(l.DiscountApprovedBy),
-			nullStr(l.DiscountRoleID), l.SaleDiscountCents).Scan(&id); err != nil {
+			nullStr(l.DiscountRoleID), l.SaleDiscountCents, nullFloat(l.DiscountApprovedQty),
+			nullInt64(l.DiscountApprovedBase)).Scan(&id); err != nil {
 			return nil, err
 		}
 		ids = append(ids, id)
@@ -395,13 +396,13 @@ func (r *Repository) InsertPosSale(ctx context.Context, tx pgx.Tx, s posSaleRow)
 INSERT INTO pos_sale (idempotency_key, order_id, invoice_id, payment_id, branch_id, till_session_id,
                       sale_type, cash_sale, tender, tax_reason_code, offline_origin, created_by,
                       split_tender, discount_cents, discount_percent_bps, discount_approved_by,
-                      discount_approved_role)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING id::text`
+                      discount_approved_role, discount_approved_base_cents)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING id::text`
 	var id string
 	err := tx.QueryRow(ctx, q, s.IdempotencyKey, s.OrderID, nullStr(s.InvoiceID), nullStr(s.PaymentID),
 		s.BranchID, nullStr(s.TillSessionID), s.SaleType, s.CashSale, s.Tender, s.TaxReasonCode,
 		s.OfflineOrigin, nullStr(s.CreatedBy), s.SplitTender, s.Discount.AmountCents,
-		nullInt(s.Discount.PercentBps), nullStr(s.Discount.ApprovedBy), nullStr(s.Discount.RoleID)).Scan(&id)
+		nullInt(s.Discount.PercentBps), nullStr(s.Discount.ApprovedBy), nullStr(s.Discount.RoleID), nullInt64(s.Discount.ApprovedBase)).Scan(&id)
 	return id, err
 }
 
@@ -593,6 +594,21 @@ SELECT 'SALE', 0, COALESCE(ps.discount_percent_bps, 0), ps.discount_cents,
 		out = append(out, d)
 	}
 	return out, rows.Err()
+}
+
+// nullFloat and nullInt64 map 0 → SQL NULL for the optional approval columns.
+func nullFloat(f float64) any {
+	if f == 0 {
+		return nil
+	}
+	return f
+}
+
+func nullInt64(n int64) any {
+	if n == 0 {
+		return nil
+	}
+	return n
 }
 
 // nullInt maps 0 → SQL NULL for the optional percent column.

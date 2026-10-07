@@ -4600,9 +4600,11 @@ type PosLineInput struct {
 }
 
 type PosDiscountInput struct {
-	PercentBps  *int32 `json:"percent_bps,omitempty"`
-	AmountCents *int64 `json:"amount_cents,omitempty"`
-	ApprovedBy  string `json:"approved_by"`
+	PercentBps        *int32   `json:"percent_bps,omitempty"`
+	AmountCents       *int64   `json:"amount_cents,omitempty"`
+	ApprovedBy        string   `json:"approved_by"`
+	ApprovedQty       *float64 `json:"approved_qty,omitempty"`
+	ApprovedBaseCents int64    `json:"approved_base_cents"`
 }
 
 type PosDiscountApprover struct {

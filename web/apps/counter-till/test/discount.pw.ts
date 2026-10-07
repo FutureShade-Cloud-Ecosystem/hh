@@ -159,8 +159,17 @@ for (const layout of ["stepper", "panels"] as const) {
     const sold = page.getByTestId("sold-panel");
     await expect(sold).toBeVisible();
     const body = rung.at(-1)!;
-    expect(body.lines[0].discount).toEqual({ percent_bps: 1000, approved_by: "c0c0a0a0-0000-4000-8000-000000000001" });
-    expect(body.discount).toEqual({ amount_cents: 200, approved_by: "c0c0a0a0-0000-4000-8000-000000000002" });
+    expect(body.lines[0].discount).toEqual({
+      percent_bps: 1000,
+      approved_by: "c0c0a0a0-0000-4000-8000-000000000001",
+      approved_qty: 10,
+      approved_base_cents: 4000,
+    });
+    expect(body.discount).toEqual({
+      amount_cents: 200,
+      approved_by: "c0c0a0a0-0000-4000-8000-000000000002",
+      approved_base_cents: 3600,
+    });
     const paid = sold.getByTestId("sold-discount");
     await expect(paid).toHaveCount(2);
     await expect(paid.nth(0)).toContainText("Holland Stone 60 mm");
@@ -240,4 +249,31 @@ test.describe("review screens", () => {
       });
     }
   }
+});
+
+test("a manager's yes is for the line and quantity it was given: change either and the discount goes, in words", async ({
+  page,
+}) => {
+  await signIn(page, "stepper");
+  await ensureSession(page);
+  await tenHolland(page);
+  await giveDiscount(page, () => page.getByTestId("pos-line-discount").click(), "percent", "10", "Sales manager · Sales Manager");
+  await expect(page.getByTestId("pos-line-discount-chip")).toContainText("10% off ($4.00)");
+  const qty = page.getByLabel("Quantity: Holland Stone 60 mm", { exact: true });
+  await qty.fill("100");
+  await qty.press("Enter");
+  await expect(page.getByTestId("pos-line-discount-chip")).toHaveCount(0);
+  await expect(page.getByTestId("pos-line-discount")).toBeVisible();
+  await expect(page.getByTestId("pos-line-row").first().locator(".ltot")).toContainText("$400.00");
+  await expect(page.getByText("The discount was removed because the quantity changed. Ask a manager again.")).toBeVisible();
+
+  // A ticket discount is for the ticket it was given on: another line removes it.
+  await openStep(page, "payment");
+  await giveDiscount(page, () => page.getByTestId("pos-ticket-discount").click(), "amount", "2", "Branch manager · Branch Manager");
+  await expect(page.getByTestId("pos-ticket-discount-row")).toContainText("-$2.00");
+  await addLine(page, "edge", "Edge Restraint 8 ft");
+  await openStep(page, "payment");
+  await expect(page.getByTestId("pos-ticket-discount-row")).toHaveCount(0);
+  await expect(page.getByTestId("pos-ticket-discount")).toContainText("Discount the ticket");
+  await expect(page.getByText("The ticket discount was removed because the ticket changed. Ask a manager again.")).toBeVisible();
 });

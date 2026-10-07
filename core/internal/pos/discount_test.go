@@ -34,6 +34,18 @@ func withApprovers(h *harness) {
 	}
 }
 
+// atLine stamps the quantity and base the harness line (100 SF at 10000 cents) was approved at;
+// atBase stamps the base a ticket discount was approved at.
+func atLine(d DiscountInput) *DiscountInput {
+	d.ApprovedQty, d.ApprovedBaseCents = 100, 10000
+	return &d
+}
+
+func atBase(d DiscountInput, base int64) *DiscountInput {
+	d.ApprovedBaseCents = base
+	return &d
+}
+
 func discountedInput(d *DiscountInput) SaleInput {
 	in := baseInput()
 	in.Lines[0].Discount = d
@@ -59,7 +71,7 @@ func wantRefusal(t *testing.T, err error, status int, contains string) {
 func TestDiscount_LinePercent_AppliesStoresAndReports(t *testing.T) {
 	h := newHarness()
 	withApprovers(h)
-	out, err := h.svc.Sale(context.Background(), discountedInput(&DiscountInput{PercentBps: 1000, ApprovedBy: mgrSales}))
+	out, err := h.svc.Sale(context.Background(), discountedInput(atLine(DiscountInput{PercentBps: 1000, ApprovedBy: mgrSales})))
 	if err != nil {
 		t.Fatalf("sale: %v", err)
 	}
@@ -86,7 +98,7 @@ func TestDiscount_LinePercent_AppliesStoresAndReports(t *testing.T) {
 func TestDiscount_LineAmount_Applies(t *testing.T) {
 	h := newHarness()
 	withApprovers(h)
-	out, err := h.svc.Sale(context.Background(), discountedInput(&DiscountInput{AmountCents: 2500, ApprovedBy: mgrBranch}))
+	out, err := h.svc.Sale(context.Background(), discountedInput(atLine(DiscountInput{AmountCents: 2500, ApprovedBy: mgrBranch})))
 	if err != nil {
 		t.Fatalf("sale: %v", err)
 	}
@@ -98,7 +110,7 @@ func TestDiscount_LineAmount_Applies(t *testing.T) {
 func TestDiscount_RefusedWithoutAnApprover(t *testing.T) {
 	h := newHarness()
 	withApprovers(h)
-	_, err := h.svc.Sale(context.Background(), discountedInput(&DiscountInput{PercentBps: 500}))
+	_, err := h.svc.Sale(context.Background(), discountedInput(atLine(DiscountInput{PercentBps: 500})))
 	wantRefusal(t, err, http.StatusUnprocessableEntity, "approved_by")
 	if len(h.store.orders) != 0 || h.tender.called {
 		t.Fatalf("a refused discount wrote or took money: orders=%d tender=%v", len(h.store.orders), h.tender.called)
@@ -114,7 +126,7 @@ func TestDiscount_RefusedForANonManagerApprover(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h := newHarness()
 			withApprovers(h)
-			_, err := h.svc.Sale(context.Background(), discountedInput(&DiscountInput{PercentBps: 500, ApprovedBy: id}))
+			_, err := h.svc.Sale(context.Background(), discountedInput(atLine(DiscountInput{PercentBps: 500, ApprovedBy: id})))
 			wantRefusal(t, err, http.StatusUnprocessableEntity, "cannot approve a discount")
 			if len(h.store.orders) != 0 {
 				t.Fatalf("a refused discount wrote an order")
@@ -133,7 +145,7 @@ func TestDiscount_FollowsTheDealersClearingSetting(t *testing.T) {
 		cfg = withClearingOff(t, cfg)
 	}
 	h.svc.WithRoleConfig(cfg)
-	_, err := h.svc.Sale(context.Background(), discountedInput(&DiscountInput{PercentBps: 500, ApprovedBy: mgrSales}))
+	_, err := h.svc.Sale(context.Background(), discountedInput(atLine(DiscountInput{PercentBps: 500, ApprovedBy: mgrSales})))
 	wantRefusal(t, err, http.StatusUnprocessableEntity, "cannot approve a discount")
 }
 
@@ -152,8 +164,7 @@ func TestDiscount_ShapeRefusals(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h := newHarness()
 			withApprovers(h)
-			d := c.d
-			_, err := h.svc.Sale(context.Background(), discountedInput(&d))
+			_, err := h.svc.Sale(context.Background(), discountedInput(atLine(c.d)))
 			wantRefusal(t, err, http.StatusUnprocessableEntity, c.want)
 		})
 	}
@@ -166,8 +177,8 @@ func TestDiscount_Ticket_SharedOverTheLines(t *testing.T) {
 	withApprovers(h)
 	in := baseInput()
 	in.Lines = append(in.Lines, LineInput{ProductID: "prod-blu", QtyEntered: 100, UOMEntered: "SF"})
-	in.Lines[0].Discount = &DiscountInput{AmountCents: 1000, ApprovedBy: mgrSales} // 9000 + 10000
-	in.Discount = &DiscountInput{PercentBps: 1000, ApprovedBy: mgrBranch}          // 10% of 19000 = 1900
+	in.Lines[0].Discount = atLine(DiscountInput{AmountCents: 1000, ApprovedBy: mgrSales}) // 9000 + 10000
+	in.Discount = atBase(DiscountInput{PercentBps: 1000, ApprovedBy: mgrBranch}, 19000)   // 10% of 19000 = 1900
 	out, err := h.svc.Sale(context.Background(), in)
 	if err != nil {
 		t.Fatalf("sale: %v", err)
@@ -198,8 +209,8 @@ func TestDiscount_Ticket_SharedOverTheLines(t *testing.T) {
 func TestDiscount_AuditAndPricingLog(t *testing.T) {
 	h := newHarness()
 	withApprovers(h)
-	in := discountedInput(&DiscountInput{PercentBps: 1000, ApprovedBy: mgrSales})
-	in.Discount = &DiscountInput{AmountCents: 500, ApprovedBy: mgrBranch}
+	in := discountedInput(atLine(DiscountInput{PercentBps: 1000, ApprovedBy: mgrSales}))
+	in.Discount = atBase(DiscountInput{AmountCents: 500, ApprovedBy: mgrBranch}, 9000)
 	if _, err := h.svc.Sale(context.Background(), in); err != nil {
 		t.Fatalf("sale: %v", err)
 	}
@@ -233,8 +244,8 @@ func TestDiscount_AuditAndPricingLog(t *testing.T) {
 func TestDiscount_PreviewEqualsTheRing(t *testing.T) {
 	h := newHarness()
 	withApprovers(h)
-	in := discountedInput(&DiscountInput{PercentBps: 1250, ApprovedBy: mgrSales})
-	in.Discount = &DiscountInput{AmountCents: 333, ApprovedBy: mgrBranch}
+	in := discountedInput(atLine(DiscountInput{PercentBps: 1250, ApprovedBy: mgrSales}))
+	in.Discount = atBase(DiscountInput{AmountCents: 333, ApprovedBy: mgrBranch}, 8750)
 	prev, err := h.svc.SalePreview(context.Background(), SalePreviewInput{
 		BranchID: in.BranchID, CustomerID: in.CustomerID, Lines: in.Lines, Discount: in.Discount,
 	})
@@ -254,7 +265,7 @@ func TestDiscount_PreviewEqualsTheRing(t *testing.T) {
 	}
 	// And the preview refuses what the ring refuses.
 	_, err = h.svc.SalePreview(context.Background(), SalePreviewInput{
-		BranchID: in.BranchID, Lines: in.Lines, Discount: &DiscountInput{PercentBps: 500, ApprovedBy: clerkInner},
+		BranchID: in.BranchID, Lines: in.Lines, Discount: atBase(DiscountInput{PercentBps: 500, ApprovedBy: clerkInner}, 10000),
 	})
 	wantRefusal(t, err, http.StatusUnprocessableEntity, "cannot approve a discount")
 }
@@ -264,7 +275,7 @@ func TestDiscount_ReplayReportsTheDiscounts(t *testing.T) {
 	h := newHarness()
 	h.store.cached["11111111-1111-4111-8111-111111111111"] = Sale{OrderID: "o-1", TotalCents: 10170, SubtotalCents: 9000}
 	h.store.discountReads = []SaleDiscount{{Scope: DiscountScopeLine, LineNo: 1, AmountCents: 1000, ApprovedBy: mgrSales, ApprovedByLabel: "Sales Manager"}}
-	out, err := h.svc.Sale(context.Background(), discountedInput(&DiscountInput{PercentBps: 1000, ApprovedBy: mgrSales}))
+	out, err := h.svc.Sale(context.Background(), discountedInput(atLine(DiscountInput{PercentBps: 1000, ApprovedBy: mgrSales})))
 	if err != nil {
 		t.Fatalf("replay: %v", err)
 	}
@@ -302,4 +313,51 @@ func withClearingOff(t *testing.T, _ *roleconfig.Config) *roleconfig.Config {
 		t.Fatalf("load the default with clearing off: %v", err)
 	}
 	return cfg
+}
+
+// A manager's yes is for the line and quantity it was given. The approval carries the quantity and
+// the base it was struck from, the core stores them, and a discount whose approval no longer
+// matches the line or the ticket is refused in words even if a client sends it anyway.
+func TestDiscount_ApprovalMustMatchTheLineAndTheTicket(t *testing.T) {
+	stale := "different quantity or price"
+	cases := map[string]struct {
+		line   *DiscountInput
+		ticket *DiscountInput
+		want   string // "" accepted
+	}{
+		"line at its quantity and base": {line: atLine(DiscountInput{PercentBps: 1000, ApprovedBy: mgrSales})},
+		"line quantity grew":            {line: &DiscountInput{PercentBps: 1000, ApprovedBy: mgrSales, ApprovedQty: 10, ApprovedBaseCents: 10000}, want: stale},
+		"line price moved":              {line: &DiscountInput{PercentBps: 1000, ApprovedBy: mgrSales, ApprovedQty: 100, ApprovedBaseCents: 9000}, want: stale},
+		"line approval absent":          {line: &DiscountInput{PercentBps: 1000, ApprovedBy: mgrSales}, want: "approved for"},
+		"ticket at its base":            {ticket: atBase(DiscountInput{AmountCents: 500, ApprovedBy: mgrSales}, 10000)},
+		"ticket grew":                   {ticket: atBase(DiscountInput{PercentBps: 1000, ApprovedBy: mgrSales}, 5000), want: stale},
+		"ticket approval absent":        {ticket: &DiscountInput{PercentBps: 1000, ApprovedBy: mgrSales}, want: "approved for"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness()
+			withApprovers(h)
+			in := baseInput()
+			in.Lines[0].Discount, in.Discount = c.line, c.ticket
+			out, err := h.svc.Sale(context.Background(), in)
+			if c.want == "" {
+				if err != nil {
+					t.Fatalf("a matching approval is accepted: %v", err)
+				}
+				l := h.store.orderLines[0]
+				if c.line != nil && (l.DiscountApprovedQty != 100 || l.DiscountApprovedBase != 10000) {
+					t.Fatalf("the approved quantity and base must be stored with the discount: %+v", l)
+				}
+				if c.ticket != nil && h.store.posSales[0].Discount.ApprovedBase != 10000 {
+					t.Fatalf("the ticket's approved base must be stored: %+v", h.store.posSales[0].Discount)
+				}
+				_ = out
+				return
+			}
+			wantRefusal(t, err, http.StatusUnprocessableEntity, c.want)
+			if len(h.store.orders) != 0 {
+				t.Fatalf("a stale approval wrote an order")
+			}
+		})
+	}
 }

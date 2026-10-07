@@ -69,6 +69,15 @@ export interface CartDiscount {
   approvedBy: string;
   /** The approver's display name, for the screen only. */
   approvedByName: string;
+  /**
+   * What the manager's yes was given for: a line discount's quantity and line total before the
+   * discount, a ticket discount's subtotal after the line discounts. Sent with the discount; the
+   * ring refuses one that no longer matches, and the till drops it first, in words.
+   */
+  approvedQty?: number;
+  approvedBaseCents?: number;
+  /** A ticket discount only: the signature of the ticket it was approved on. */
+  basis?: string;
 }
 
 /** One manager the till may name as a discount's approver (GET /pos/discount-approvers). */

@@ -42,6 +42,12 @@ type DiscountInput struct {
 	PercentBps  int    `json:"percent_bps,omitempty"`
 	AmountCents int64  `json:"amount_cents,omitempty"`
 	ApprovedBy  string `json:"approved_by"`
+	// ApprovedQty and ApprovedBaseCents are what the manager's yes was given for: a line
+	// discount's quantity and the line total it was struck from, a ticket discount's base (the
+	// subtotal after the line discounts). The ring refuses a discount whose approval no longer
+	// matches (discount.go), so a yes never grows with the quantity or the ticket.
+	ApprovedQty       float64 `json:"approved_qty,omitempty"`
+	ApprovedBaseCents int64   `json:"approved_base_cents"`
 }
 
 // Discount scopes on a SaleDiscount.
@@ -63,10 +69,11 @@ type SaleDiscount struct {
 
 // saleDiscountRow is the ticket discount stored on pos_sale (0365).
 type saleDiscountRow struct {
-	AmountCents int64
-	PercentBps  int
-	ApprovedBy  string
-	RoleID      string
+	AmountCents  int64
+	PercentBps   int
+	ApprovedBy   string
+	RoleID       string
+	ApprovedBase int64 // the base the ticket yes was given for
 }
 
 // DiscountApprover is one manager a till person may name: id and display name, with the role
@@ -118,6 +125,10 @@ var (
 		"pos: a discount is either a percent or an amount, not both and not neither")
 	errDiscountPercent = clientErr(http.StatusUnprocessableEntity,
 		"pos: a discount percent must be more than 0 and no more than 100")
+	errDiscountNoApproval = clientErr(http.StatusUnprocessableEntity,
+		"pos: a discount carries the quantity and the amount it was approved for")
+	errDiscountStale = clientErr(http.StatusUnprocessableEntity,
+		"pos: the discount was approved for a different quantity or price: ask a manager again")
 	errDiscountNothing = clientErr(http.StatusUnprocessableEntity,
 		"pos: that discount comes to less than a cent")
 )
@@ -189,6 +200,19 @@ type discountApproverEntry struct {
 	roleID string
 }
 
+// checkApproval holds a discount to what the manager's yes was given for: a line discount to the
+// quantity and the line total it was struck from, a ticket discount to the subtotal after the line
+// discounts. A yes never grows with the quantity or the ticket; absent or stale, the ring refuses.
+func checkApproval(d *DiscountInput, qty float64, base int64, line bool) error {
+	if d.ApprovedBaseCents <= 0 || (line && d.ApprovedQty <= 0) {
+		return errDiscountNoApproval
+	}
+	if d.ApprovedBaseCents != base || (line && d.ApprovedQty != qty) {
+		return errDiscountStale
+	}
+	return nil
+}
+
 // resolveApprover names one approver for a discount, once per body (cache), refusing in words
 // without an id and with a login the rule does not admit.
 func (s *Service) resolveApprover(ctx context.Context, branchID, id string, cache map[string]approverInfo) (approverInfo, error) {
@@ -256,6 +280,11 @@ func (s *Service) applyDiscounts(ctx context.Context, branchID string, reqs []Li
 		if err != nil {
 			return nil, saleDiscountRow{}, clientErr(http.StatusUnprocessableEntity, "line %d: %s", i+1, trimPrefixPos(err))
 		}
+		if err := checkApproval(d, reqs[i].QtyEntered, gross, true); err != nil {
+			return nil, saleDiscountRow{}, clientErr(http.StatusUnprocessableEntity, "line %d: %s", i+1, trimPrefixPos(err))
+		}
+		lines[i].DiscountApprovedQty = d.ApprovedQty
+		lines[i].DiscountApprovedBase = d.ApprovedBaseCents
 		lines[i].LineTotalCents = gross - cents
 		lines[i].DiscountCents = cents
 		lines[i].DiscountPercentBps = d.PercentBps
@@ -282,11 +311,14 @@ func (s *Service) applyDiscounts(ctx context.Context, branchID string, reqs []Li
 		if err != nil {
 			return nil, saleDiscountRow{}, clientErr(http.StatusUnprocessableEntity, "ticket: %s", trimPrefixPos(err))
 		}
+		if err := checkApproval(ticket, 0, subtotal, false); err != nil {
+			return nil, saleDiscountRow{}, clientErr(http.StatusUnprocessableEntity, "ticket: %s", trimPrefixPos(err))
+		}
 		for i, share := range moneyutil.AllocateLargestRemainder(cents, weights) {
 			lines[i].SaleDiscountCents = share
 			lines[i].LineTotalCents -= share
 		}
-		row = saleDiscountRow{AmountCents: cents, PercentBps: ticket.PercentBps, ApprovedBy: a.id, RoleID: a.roleID}
+		row = saleDiscountRow{AmountCents: cents, PercentBps: ticket.PercentBps, ApprovedBy: a.id, RoleID: a.roleID, ApprovedBase: subtotal}
 		applied = append(applied, appliedDiscount{
 			scope: DiscountScopeSale, percentBps: ticket.PercentBps, cents: cents, baseCents: subtotal, approver: a,
 		})

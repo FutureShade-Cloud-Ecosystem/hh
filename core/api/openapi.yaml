@@ -39136,6 +39136,7 @@ components:
       description: "One manual counter discount: a percent or an amount, and the manager who said yes at the counter. The discount is verbal, no approval queue, but it always names its approver so it is auditable. Exactly one of percent_bps and amount_cents. The approver must be a login from the discount-approvers read for the sale's branch; otherwise the ring refuses in words (422). A line discount comes off the line total; a ticket discount comes off the subtotal after the line discounts and is shared over the lines. The till still rings at rule and tier prices with no margin floor: a discount is a manager's word on top of that price."
       required:
         - approved_by
+        - approved_base_cents
       properties:
         percent_bps:
           type: integer
@@ -39152,6 +39153,14 @@ components:
           type: string
           format: uuid
           description: The approving manager's staff id
+        approved_qty:
+          type: number
+          description: "A line discount only: the quantity the manager's yes was given for. The ring refuses the discount if the line's quantity is no longer this."
+        approved_base_cents:
+          type: integer
+          format: int64
+          minimum: 1
+          description: "What the yes was given for in cents: a line discount's line total before the discount, a ticket discount's subtotal after the line discounts. The ring refuses a discount whose base no longer matches (422, ask a manager again), so a manager's percent never grows with the quantity or the ticket. The ticket total must also stay above zero: a sale cannot total $0.00."
     PosDiscountApprover:
       type: object
       description: One manager a till person may name

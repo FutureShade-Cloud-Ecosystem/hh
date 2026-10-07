@@ -284,6 +284,10 @@ type orderLineRow struct {
 	DiscountApprovedBy string // staff id of the approving manager, "" with no discount
 	DiscountRoleID     string // that manager's role (staff_role id) when approving
 	SaleDiscountCents  int64
+	// What the manager's yes was given for, stored beside the discount (0365): the quantity and
+	// the line total it was struck from.
+	DiscountApprovedQty  float64
+	DiscountApprovedBase int64
 }
 
 type invoiceRow struct {
