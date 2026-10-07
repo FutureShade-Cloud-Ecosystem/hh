@@ -121,7 +121,7 @@ func TestIntegration_QtyNotice_DealerWordingAndBranchOverride(t *testing.T) {
 // The policy save validates in words, and an empty value goes back to the default wording.
 func TestIntegration_QtyNotice_PolicyWrite(t *testing.T) {
 	pool := intPool(t)
-	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Second)
 	qtyNoticeEnsureDealerRow(t, pool)
 	gm := qd1User(t, pool, "qtynotice")
 	svc := qd1Svc(t, pool, now)
