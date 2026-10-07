@@ -2058,5 +2058,40 @@
     "find": "      this.lateRefusals.delete(ctx.id);\n      this.error = refused;",
     "replace": "      this.lateRefusals.delete(ctx.id);",
     "test": "a floor refusal that lands after the person moved to a new quote is said on the list"
+  },
+  {
+    "id": "wa-copy-busy",
+    "file": "src/quote-workarea.ts",
+    "find": "    // met a button the page had moved under the pointer) does nothing.\n    if (this.busy) return;\n    const ctx = this.ctx;\n    const capture = this.captureFor(ctx);\n    const release = this.holdBusy(ctx);\n    try {\n      const token = await this.ensureLink(ctx, capture);\n      // The clipboard",
+    "replace": "    // met a button the page had moved under the pointer) does nothing.\n    const ctx = this.ctx;\n    const capture = this.captureFor(ctx);\n    const release = this.holdBusy(ctx);\n    try {\n      const token = await this.ensureLink(ctx, capture);\n      // The clipboard",
+    "test": "pinned copy link busy"
+  },
+  {
+    "id": "wa-copy-release",
+    "file": "src/quote-workarea.ts",
+    "find": "\"Could not create the link.\";\n    } finally {\n      release();\n    }",
+    "replace": "\"Could not create the link.\";\n    }",
+    "test": "pinned copy link release"
+  },
+  {
+    "id": "wa-preview-release",
+    "file": "src/quote-workarea.ts",
+    "find": "\"Could not show the preview.\";\n    } finally {\n      release();\n    }",
+    "replace": "\"Could not show the preview.\";\n    }",
+    "test": "pinned preview release"
+  },
+  {
+    "id": "qb-create-walk",
+    "file": "src/quote-builder.ts",
+    "find": "    if (this.createWalk) {\n      this.createWalk = false;\n      return;\n    }\n",
+    "replace": "",
+    "test": "pinned create walk"
+  },
+  {
+    "id": "qsa-exact-position",
+    "file": "src/quote-search-add.ts",
+    "find": "if (at >= 0 && at < ROWS) this.active = at;",
+    "replace": "if (at === 0) this.active = at;",
+    "test": "pinned exact row"
   }
 ]
