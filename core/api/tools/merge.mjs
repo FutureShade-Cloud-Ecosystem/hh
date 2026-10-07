@@ -30,6 +30,8 @@ const knownListKeys = new Set([
   ...ROLE_LIST_SETTINGS.filter((k) => Array.isArray(roleconfig.settings?.[k])),
   "floor_clearers_own_branch",
   "delivery_date_committers",
+  // derived from the floor lists and the cost list (roleconfig.LowMarginReportReaders), not a setting
+  "low_margin_report",
 ]);
 
 // All state is declared before any check runs, so a faulty map entry is

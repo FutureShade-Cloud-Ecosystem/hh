@@ -280,12 +280,39 @@ var xrStaffLegs = []struct {
 // serves, the role gate's admission rule.
 func xrMatrixAdmits(t *testing.T, cfg *roleconfig.Config, route apigen.Route, role string) bool {
 	t.Helper()
+	// The route's named list is the rule's own wall beside the level (pricing_editors on the price
+	// writes, low_margin_report on the report): a role off it is refused whatever its cells say.
+	if route.List != "" && !xrOnList(t, cfg, route.List, role) {
+		return false
+	}
 	for _, surface := range route.Surfaces {
 		ok, err := cfg.Holds(role, surface, roleconfig.Level(route.Level))
 		if err != nil {
 			t.Fatalf("matrix read for %s on %s: %v", role, surface, err)
 		}
 		if ok {
+			return true
+		}
+	}
+	return false
+}
+
+// xrOnList reads a route's x-access list from the configuration the way the role gate does.
+func xrOnList(t *testing.T, cfg *roleconfig.Config, list, role string) bool {
+	t.Helper()
+	var members []string
+	switch list {
+	case roleconfig.SettingPricingEditors:
+		members = cfg.PricingEditors()
+	case roleconfig.SettingCostVisibility:
+		members = cfg.CostVisibility()
+	case authz.ListLowMarginReport:
+		members = cfg.LowMarginReportReaders()
+	default:
+		t.Fatalf("route names list %q, which this suite cannot read", list)
+	}
+	for _, m := range members {
+		if m == role {
 			return true
 		}
 	}

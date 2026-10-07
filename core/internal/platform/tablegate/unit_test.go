@@ -127,7 +127,7 @@ func TestSameModuleReadPasses(t *testing.T) {
 // cross-module read: pricing's LowMarginSalesLines, the item's given first
 // entry, tables resolved through the real ownership map.
 func TestAllowlistedReadPasses(t *testing.T) {
-	for _, table := range []string{"order_lines", "orders", "customers", "products", "product_branch_costs", "pos_sale"} {
+	for _, table := range []string{"order_lines", "orders", "customers", "products", "product_branch_costs", "pos_sale", "quotes", "quote_lines", "users"} {
 		a := fixtureAccess("pricing", "core/internal/pricing/repository.go", "LowMarginSalesLines", table, false)
 		if v := checkAccess(a, ownedObjects[table]); len(v) != 0 {
 			t.Fatalf("the allowlisted pricing read of %s was failed: %v", table, v)
