@@ -900,6 +900,13 @@ var allowlist = []allowlistEntry{
 	},
 	{
 		module: "quote",
+		file:   "core/internal/quote/staff_decision_repository.go",
+		tables: []string{"audit_log"},
+		writes: []string{"scope_sequences"},
+		reason: "the staff accept and reject replay a keyed decision from the audit trail inside the decision's own transaction under the quote row lock (the share_idempotency.go shape, read only), and the 0213 seq stamp marks the quote row it moves",
+	},
+	{
+		module: "quote",
 		file:   "core/internal/quote/syncscope.go",
 		tables: []string{"locations"},
 		writes: []string{"scope_sequences"},

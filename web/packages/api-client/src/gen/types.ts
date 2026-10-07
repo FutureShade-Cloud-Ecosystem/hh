@@ -5728,6 +5728,8 @@ export type QuoteView = {
   expired: boolean;
   editable_fields: ("line_qty" | "line_add" | "line_remove" | "valid_until")[];
   can_convert: boolean;
+  can_accept: boolean;
+  can_reject: boolean;
   owner_id?: string;
   owner_name?: string;
   lines: QuoteViewLine[];
@@ -5825,6 +5827,28 @@ export type QuoteLineComparison = {
   quote_id: string;
   line_no: number;
   options: QuoteComparisonRow[];
+};
+export type QuoteAcceptOnBehalfRequest = {
+  channel: "phone" | "text" | "email" | "in_person";
+  note?: string;
+  quantities_confirmed: boolean;
+  expected_total_cents: number;
+};
+export type QuoteRejectOnBehalfRequest = {
+  channel: "phone" | "text" | "email" | "in_person";
+  reason_code: "price" | "competitor" | "project_cancelled" | "timing" | "no_response" | "other";
+  note?: string;
+};
+export type QuoteDecisionResult = {
+  quote_id: string;
+  quote_no: string;
+  status: "ACCEPTED" | "LOST";
+  previous_status: "DRAFT" | "SENT";
+  channel?: "phone" | "text" | "email" | "in_person";
+  on_behalf: boolean;
+  decided_at: string;
+  total_cents: number;
+  replayed: boolean;
 };
 export type QuoteConvertRequest = {
   fulfillment?: "PICKUP" | "WILL_CALL";

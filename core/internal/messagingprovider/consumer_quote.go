@@ -35,6 +35,40 @@ func (c *Consumer) WithResolver(r RecipientResolver) *Consumer {
 	return c
 }
 
+// QuoteStatusReader answers a quote's current status at delivery time. An unknown quote answers "".
+type QuoteStatusReader interface {
+	QuoteStatus(ctx context.Context, quoteID string) (string, error)
+}
+
+// WithQuoteStatus gives the follow-up handlers the means to re-read a quote when a notice is
+// delivered. A cadence step is enqueued by the sweep and delivered later (a text waits for the
+// quiet hours to end), and the customer may answer in between, through the link or by phone with
+// staff recording it; the cancel at that moment cannot reach a step already queued. Nil checks
+// nothing, the behaviour before this seam existed.
+func (c *Consumer) WithQuoteStatus(r QuoteStatusReader) *Consumer {
+	c.quotes = r
+	return c
+}
+
+// quoteStillOpen is the delivery-time check for a follow-up notice: only a SENT quote is still being
+// followed up. A closed, lost, expired, converted or vanished quote's notice is skipped (published
+// with a reason, never retried), and a read failure is returned so the row retries rather than
+// sending on an unknown.
+func (c *Consumer) quoteStillOpen(ctx context.Context, e notify.Event, quoteID string) (bool, error) {
+	if c.quotes == nil || quoteID == "" {
+		return true, nil
+	}
+	status, err := c.quotes.QuoteStatus(ctx, quoteID)
+	if err != nil {
+		return false, fmt.Errorf("quote follow-up: reading the quote's status: %w", err)
+	}
+	if status != "SENT" {
+		c.skip(e, "the quote is no longer open ("+status+"), follow-up dropped")
+		return false, nil
+	}
+	return true, nil
+}
+
 // RegisterQuoteHandlers claims the Wave 3 topics. Kept separate from RegisterHandlers so a deployment
 // that wants only the Wave 2 fulfilment notices does not silently acquire a quote cadence, and so the
 // Wave 2 registration line in main.go stays untouched.
@@ -74,6 +108,9 @@ func (c *Consumer) handleQuoteFollowupSMS(ctx context.Context, e notify.Event) e
 	if err := json.Unmarshal(e.Payload, &n); err != nil {
 		return fmt.Errorf("quote follow-up notice: unreadable payload (permanent): %w", err)
 	}
+	if open, err := c.quoteStillOpen(ctx, e, n.QuoteID); err != nil || !open {
+		return err
+	}
 	r, ok, err := c.resolveCustomer(ctx, e, n.To, n.CustomerID)
 	if err != nil || !ok {
 		return err
@@ -91,6 +128,9 @@ func (c *Consumer) handleQuoteFollowupEmail(ctx context.Context, e notify.Event)
 	var n QuoteFollowupNotice
 	if err := json.Unmarshal(e.Payload, &n); err != nil {
 		return fmt.Errorf("quote follow-up email: unreadable payload (permanent): %w", err)
+	}
+	if open, err := c.quoteStillOpen(ctx, e, n.QuoteID); err != nil || !open {
+		return err
 	}
 	if n.Email == "" {
 		c.skip(e, "no email address on the notice")

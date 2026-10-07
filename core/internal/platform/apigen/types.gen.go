@@ -6666,6 +6666,8 @@ type QuoteView struct {
 	Expired        bool            `json:"expired"`
 	EditableFields []string        `json:"editable_fields"`
 	CanConvert     bool            `json:"can_convert"`
+	CanAccept      bool            `json:"can_accept"`
+	CanReject      bool            `json:"can_reject"`
 	OwnerId        *string         `json:"owner_id,omitempty"`
 	OwnerName      *string         `json:"owner_name,omitempty"`
 	Lines          []QuoteViewLine `json:"lines"`
@@ -6777,6 +6779,31 @@ type QuoteLineComparison struct {
 	QuoteId string               `json:"quote_id"`
 	LineNo  int32                `json:"line_no"`
 	Options []QuoteComparisonRow `json:"options"`
+}
+
+type QuoteAcceptOnBehalfRequest struct {
+	Channel             string  `json:"channel"`
+	Note                *string `json:"note,omitempty"`
+	QuantitiesConfirmed bool    `json:"quantities_confirmed"`
+	ExpectedTotalCents  int64   `json:"expected_total_cents"`
+}
+
+type QuoteRejectOnBehalfRequest struct {
+	Channel    string  `json:"channel"`
+	ReasonCode string  `json:"reason_code"`
+	Note       *string `json:"note,omitempty"`
+}
+
+type QuoteDecisionResult struct {
+	QuoteId        string    `json:"quote_id"`
+	QuoteNo        string    `json:"quote_no"`
+	Status         string    `json:"status"`
+	PreviousStatus string    `json:"previous_status"`
+	Channel        *string   `json:"channel,omitempty"`
+	OnBehalf       bool      `json:"on_behalf"`
+	DecidedAt      time.Time `json:"decided_at"`
+	TotalCents     int64     `json:"total_cents"`
+	Replayed       bool      `json:"replayed"`
 }
 
 type QuoteConvertRequest struct {
