@@ -93,6 +93,10 @@ type YardLineEffect struct {
 	QtyBackordered string
 	Changed        bool
 	Revision       int
+	// Reason and Note are what the order holds for the line after the pick (a blank re-save keeps
+	// the stored ones, a full pick clears them); the recorded line and the notice read these.
+	Reason string
+	Note   string
 }
 
 // YardOrderFacts is what the order module knows that a notice needs: who the order is for and whose
@@ -210,9 +214,13 @@ func validShortReason(code string) bool {
 	return false
 }
 
-// cleanShortReason holds a line to the rule: short needs a reason, OTHER needs a note, a full pick
-// carries none, and nobody picks above the ordered quantity.
-func cleanShortReason(l *PickedLineInput) error {
+// cleanShortReason tidies a line's reason and note and holds them to the rule where this module is
+// the one deciding: with no order port bound the ticket's quantities are all there is, so a short
+// needs a reason, OTHER needs a note, a full pick carries none and nobody picks above the ordered
+// quantity. With the port bound the ORDER LINE's own ordered quantity decides all of that (the
+// ticket is rebuilt from the line after a short and understates what was ordered), so only the
+// shape of what was sent is checked here.
+func cleanShortReason(l *PickedLineInput, orderDecides bool) error {
 	ordered, _ := strconv.ParseFloat(l.QtyOrdered, 64)
 	picked, _ := strconv.ParseFloat(l.QtyPicked, 64)
 	l.ShortReason = strings.TrimSpace(l.ShortReason)
@@ -220,15 +228,18 @@ func cleanShortReason(l *PickedLineInput) error {
 	if len(l.ShortNote) > maxShortNote {
 		return httpx.BadRequestf("line %d: the note is too long (max %d)", l.OrderLineNo, maxShortNote)
 	}
+	if l.ShortReason != "" && !validShortReason(l.ShortReason) {
+		return httpx.BadRequestf("line %d: %q is not a short pick reason (%s)", l.OrderLineNo, l.ShortReason, strings.Join(ShortReasons, ", "))
+	}
+	if orderDecides {
+		return nil
+	}
 	switch {
 	case picked > ordered:
 		return httpx.BadRequestf("line %d: %v", l.OrderLineNo, ErrAboveOrdered)
 	case picked < ordered:
 		if l.ShortReason == "" {
 			return httpx.BadRequestf("line %d is short, give the reason (%s)", l.OrderLineNo, strings.Join(ShortReasons, ", "))
-		}
-		if !validShortReason(l.ShortReason) {
-			return httpx.BadRequestf("line %d: %q is not a short pick reason (%s)", l.OrderLineNo, l.ShortReason, strings.Join(ShortReasons, ", "))
 		}
 		if l.ShortReason == ShortReasonOther && l.ShortNote == "" {
 			return httpx.BadRequestf("line %d: say what happened in the note when the reason is OTHER", l.OrderLineNo)

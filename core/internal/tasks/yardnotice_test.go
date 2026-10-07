@@ -189,3 +189,20 @@ func TestSkidChange_FirstRecordAndNoChange(t *testing.T) {
 		t.Fatalf("the same count again is not told: %+v", n.posts)
 	}
 }
+
+func TestShortPick_NeverReadsAnEmptyReason(t *testing.T) {
+	svc, taskID, fy, n := noticeSvc(t)
+	fy.stored = map[int]string{}
+	line := shortLine()
+	line.ShortReason, line.ShortNote = ShortReasonDamaged, ""
+	if _, err := svc.RecordPick(context.Background(), taskID, "u-1", []PickedLineInput{line}); err != nil {
+		t.Fatal(err)
+	}
+	if s := lastRepNotice(t, n).Summary; strings.Contains(s, "Reason: .") || strings.Contains(s, "Reason: ,") {
+		t.Errorf("a notice must not read an empty reason:\n%s", s)
+	}
+	if got := shortPickMessage(YardOrderFacts{OrderNo: "#X", TotalAfterCents: 100, TotalBeforeCents: 100},
+		YardLineEffect{LineNo: 1, Description: "d", UOM: "EA", QtyOrdered: "5.0000", QtyPicked: "3.0000", QtyBackordered: "2.0000"}); strings.Contains(got, "Reason") || strings.Contains(got, "(was") {
+		t.Errorf("no reason means no reason sentence, and an unchanged total has no (was ...):\n%s", got)
+	}
+}

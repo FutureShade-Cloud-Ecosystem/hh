@@ -242,3 +242,76 @@ func TestIntegration_YardPick_PaidOrderCarriesWhatIsOwedBack(t *testing.T) {
 		t.Fatalf("paid 5650 against a new total of 3390 means 2260 owed back: %+v", f)
 	}
 }
+
+func storedReason(t *testing.T, pool *pgxpool.Pool, ord string) (reason, note string, revision int) {
+	t.Helper()
+	if err := pool.QueryRow(context.Background(), `SELECT reason, note, revision FROM order_line_shortfalls WHERE order_id = $1 AND line_no = 1`,
+		ord).Scan(&reason, &note, &revision); err != nil {
+		t.Fatalf("read shortfall: %v", err)
+	}
+	return
+}
+
+func TestIntegration_YardPick_TheOrderRefusesAShortWithNoReason(t *testing.T) {
+	pool := intPool(t)
+	ord := seedYardOrder(t, pool, "CONFIRMED")
+	svc, _ := editSvc(t, pool)
+	ctx := context.Background()
+	in := yardPick("3", "")
+	in.OrderID = ord
+	if _, err := svc.ApplyYardPicks(ctx, in); err == nil {
+		t.Fatal("a short on a whole line with no reason must be refused by the order itself")
+	}
+	other := yardPick("3", "OTHER")
+	other.OrderID = ord
+	other.Lines[0].Note = ""
+	if _, err := svc.ApplyYardPicks(ctx, other); err == nil {
+		t.Fatal("OTHER with no note must be refused by the order itself")
+	}
+	if _, tot := liveTotals(t, pool, ord); tot != 5650 {
+		t.Fatalf("refused picks leave the order alone: %d", tot)
+	}
+}
+
+func TestIntegration_YardPick_ResavingNeverBlanksTheReasonAndAReasonChangeIsAChange(t *testing.T) {
+	pool := intPool(t)
+	ord := seedYardOrder(t, pool, "CONFIRMED")
+	svc, _ := editSvc(t, pool)
+	ctx := context.Background()
+	first := yardPick("3", "DAMAGED")
+	first.OrderID = ord
+	if _, err := svc.ApplyYardPicks(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	resave := yardPick("3", "")
+	resave.OrderID = ord
+	resave.Lines[0].Note = ""
+	out, err := svc.ApplyYardPicks(ctx, resave)
+	if err != nil {
+		t.Fatalf("re-saving the pick as it stands is not a new short: %v", err)
+	}
+	if out.Lines[0].Changed || out.Lines[0].Reason != "DAMAGED" || out.Lines[0].Note != "yard count" || out.Lines[0].Revision != 1 {
+		t.Fatalf("a blank re-save changes nothing and reports the stored reason and note: %+v", out.Lines[0])
+	}
+	if r, n, rev := storedReason(t, pool, ord); r != "DAMAGED" || n != "yard count" || rev != 1 {
+		t.Fatalf("the stored reason and note survive a re-save: %q %q %d", r, n, rev)
+	}
+	again := yardPick("3", "NOT_IN_YARD")
+	again.OrderID = ord
+	out, err = svc.ApplyYardPicks(ctx, again)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Lines[0].Changed || out.Lines[0].Revision != 2 || out.Lines[0].Reason != "NOT_IN_YARD" {
+		t.Fatalf("a new reason on a still short line is a change, with its own revision, so it is announced: %+v", out.Lines[0])
+	}
+	if _, tot := liveTotals(t, pool, ord); tot != 3390 {
+		t.Fatalf("a reason only change moves no money: %d", tot)
+	}
+	full := yardPick("5", "")
+	full.OrderID = ord
+	out, err = svc.ApplyYardPicks(ctx, full)
+	if err != nil || out.Lines[0].Reason != "" || out.Lines[0].QtyOrdered != "5.0000" {
+		t.Fatalf("a full pick clears the reason and reports the true ordered quantity: %+v %v", out.Lines[0], err)
+	}
+}

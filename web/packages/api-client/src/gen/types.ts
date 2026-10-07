@@ -3431,6 +3431,8 @@ export type OrderViewLine = {
   fulfilled_base: string;
   unit_price_cents: number;
   line_total_cents: number;
+  backorder_entered: string;
+  backorder_base: string;
 };
 export type OrderView = {
   id: string;
@@ -3799,6 +3801,7 @@ export type TaskPickLine = {
   sku?: string;
   description: string;
   qty_ordered: string;
+  qty_backordered?: string;
   uom: string;
   location?: string;
 };

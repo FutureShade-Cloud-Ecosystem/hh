@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math/big"
 	"slices"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 
@@ -152,16 +153,37 @@ SELECT id::text, description, uom_entered::text, qty_entered::text, qty_base::te
 	}
 
 	// The ordered money: what the line is worth whole. A line that is whole right now is its own
-	// answer (an edit may have repriced it since); a short line's is frozen on its shortfall row.
+	// answer (an edit may have repriced it since); a short line's is frozen on its shortfall row,
+	// which also holds the reason and note already recorded and the revision of the last change.
 	orderedTotal := lineTotal
+	var storedReason, storedNote string
+	storedRev := 0
 	if boE.Sign() > 0 {
-		err := tx.QueryRow(ctx, `SELECT ordered_total_cents FROM order_line_shortfalls WHERE order_line_id = $1`, id).Scan(&orderedTotal)
+		err := tx.QueryRow(ctx, `SELECT ordered_total_cents, reason, note, revision FROM order_line_shortfalls WHERE order_line_id = $1`, id).
+			Scan(&orderedTotal, &storedReason, &storedNote, &storedRev)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return YardLineOutcome{}, nil, fmt.Errorf("yard pick: ordered total of line %d: %w", l.LineNo, err)
 		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			orderedTotal = lineTotal
 		}
+	}
+
+	// The reason rule, decided HERE against the order line's own ordered quantity and never the
+	// ticket's (the ticket is rebuilt from the line after a short, so it understates the ordered
+	// quantity): a line that ends short needs a reason when it changes, a re-save that sends none
+	// keeps what is stored, and a full pick carries none.
+	short := picked.Cmp(orderedE) < 0
+	reason, note := strings.TrimSpace(l.Reason), strings.TrimSpace(l.Note)
+	switch {
+	case !short:
+		reason, note = "", ""
+	case reason == "" && picked.Cmp(curE) == 0:
+		reason, note = storedReason, storedNote
+	case reason == "":
+		return YardLineOutcome{}, nil, httpx.BadRequestf("line %d is short, give the reason", l.LineNo)
+	case reason == yardReasonOther && note == "":
+		return YardLineOutcome{}, nil, httpx.BadRequestf("line %d: say what happened in the note when the reason is OTHER", l.LineNo)
 	}
 
 	newB := orderedB
@@ -172,15 +194,19 @@ SELECT id::text, description, uom_entered::text, qty_entered::text, qty_base::te
 		LineNo: l.LineNo, Description: desc, UOM: uom,
 		QtyOrdered: rat4(orderedE), QtyPicked: rat4(picked),
 		QtyBackordered: rat4(new(big.Rat).Sub(orderedE, picked)),
+		Reason:         reason, Note: note, Revision: storedRev,
 	}
 	if picked.Cmp(curE) == 0 {
-		// Already held. A reason or note typed again on a short line is kept; nothing else moves.
-		if picked.Cmp(orderedE) < 0 {
+		// Already held. A different reason or note on a still short line is a change of its own: it
+		// takes the next revision so the rep is told, and moves no money. The same record is not.
+		if short && (reason != storedReason || note != storedNote) {
 			if err := tx.QueryRow(ctx, `
-UPDATE order_line_shortfalls SET reason = $2, note = $3, updated_at = now() WHERE order_line_id = $1
-RETURNING revision`, id, l.Reason, l.Note).Scan(&eff.Revision); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+UPDATE order_line_shortfalls SET reason = $2, note = $3, recorded_by = NULLIF($4, '')::uuid, updated_at = now(),
+       revision = revision + 1 WHERE order_line_id = $1
+RETURNING revision`, id, reason, note, in.ActorID).Scan(&eff.Revision); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return YardLineOutcome{}, nil, fmt.Errorf("yard pick: shortfall note: %w", err)
 			}
+			eff.Changed = true
 		}
 		return eff, nil, nil
 	}
@@ -208,7 +234,7 @@ ON CONFLICT (order_line_id) DO UPDATE SET
   recorded_by = EXCLUDED.recorded_by, updated_at = now(),
   revision = order_line_shortfalls.revision + 1
 RETURNING revision`,
-		id, in.OrderID, l.LineNo, rat4(orderedE), rat4(orderedB), orderedTotal, l.Reason, l.Note, in.ActorID).Scan(&eff.Revision); err != nil {
+		id, in.OrderID, l.LineNo, rat4(orderedE), rat4(orderedB), orderedTotal, reason, note, in.ActorID).Scan(&eff.Revision); err != nil {
 		return YardLineOutcome{}, nil, fmt.Errorf("yard pick: shortfall record: %w", err)
 	}
 	eff.Changed = true

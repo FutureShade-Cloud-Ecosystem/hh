@@ -206,6 +206,11 @@ type OrderViewLine struct {
 	FulfilledBase  string `json:"fulfilled_base"`
 	UnitPriceCents int64  `json:"unit_price_cents"`
 	LineTotalCents int64  `json:"line_total_cents"`
+	// BackorderEntered and BackorderBase are the quantity the yard picked short and the order still
+	// owes the customer (migration 0365), in the line's own unit and in base. The line's quantity
+	// above is what is to be fulfilled now; ordered = quantity + backorder.
+	BackorderEntered string `json:"backorder_entered"`
+	BackorderBase    string `json:"backorder_base"`
 }
 
 // EditResult is what a successful edit returns to the caller: the new line state (absent for a

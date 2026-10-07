@@ -156,7 +156,7 @@ func (s *Service) RecordPick(ctx context.Context, taskID, actorID string, lines 
 		if l.ProductID != "" && !looksLikeUUID(l.ProductID) {
 			return nil, httpx.BadRequestf("product_id must be a uuid")
 		}
-		if err := cleanShortReason(&l); err != nil {
+		if err := cleanShortReason(&l, s.yardOrders != nil); err != nil {
 			return nil, err
 		}
 		clean = append(clean, l)
@@ -167,6 +167,17 @@ func (s *Service) RecordPick(ctx context.Context, taskID, actorID string, lines 
 	res, err := s.applyToOrder(ctx, taskID, actorID, clean)
 	if err != nil {
 		return nil, err
+	}
+	// What is stored is what the order holds: its own ordered quantity (not the ticket's) and the
+	// reason and note it keeps, so a re-save with none never blanks them.
+	byLine := make(map[int]YardLineEffect, len(res.Lines))
+	for _, e := range res.Lines {
+		byLine[e.LineNo] = e
+	}
+	for i := range clean {
+		if e, ok := byLine[clean[i].OrderLineNo]; ok {
+			clean[i].QtyOrdered, clean[i].ShortReason, clean[i].ShortNote = e.QtyOrdered, e.Reason, e.Note
+		}
 	}
 	picked, err := s.store.UpsertPickedLines(ctx, taskID, actorID, clean)
 	if err != nil {

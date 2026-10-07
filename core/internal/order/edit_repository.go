@@ -192,7 +192,7 @@ func (r *Repository) OrderLines(ctx context.Context, orderID string) ([]OrderVie
 	rows, err := tx.Query(ctx,
 		`SELECT line_no, COALESCE(product_id::text, ''), description, qty_entered::text,
 		        uom_entered::text, qty_base::text, allocated_base::text, fulfilled_base::text,
-		        unit_price_cents, line_total_cents
+		        unit_price_cents, line_total_cents, backorder_entered::text, backorder_base::text
 		   FROM order_lines WHERE order_id = $1 ORDER BY line_no`, orderID)
 	if err != nil {
 		return nil, OrderTotals{}, 0, fmt.Errorf("read order %q lines: %w", orderID, err)
@@ -202,7 +202,8 @@ func (r *Repository) OrderLines(ctx context.Context, orderID string) ([]OrderVie
 	for rows.Next() {
 		var l OrderViewLine
 		if err := rows.Scan(&l.LineNo, &l.ProductID, &l.Description, &l.QtyEntered, &l.UOMEntered,
-			&l.QtyBase, &l.AllocatedBase, &l.FulfilledBase, &l.UnitPriceCents, &l.LineTotalCents); err != nil {
+			&l.QtyBase, &l.AllocatedBase, &l.FulfilledBase, &l.UnitPriceCents, &l.LineTotalCents,
+			&l.BackorderEntered, &l.BackorderBase); err != nil {
 			return nil, OrderTotals{}, 0, err
 		}
 		out = append(out, l)

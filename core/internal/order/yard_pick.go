@@ -34,6 +34,10 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
+// yardReasonOther is the reason code that needs a note. The code list itself belongs to the yard
+// door (tasks); the order enforces only that a short has one and that OTHER explains itself.
+const yardReasonOther = "OTHER"
+
 // ErrAboveOrdered is a picked quantity above what the order line was ordered for. Mapped to 400.
 var ErrAboveOrdered = errors.New("order: that is more than was ordered, the yard cannot raise a quantity")
 
@@ -75,6 +79,10 @@ type YardLineOutcome struct {
 	// Revision counts the changes of this line's shortfall (0 when it never was short), so a
 	// notice's idempotency key tells one real change from a repeat of it.
 	Revision int
+	// Reason and Note are what the order holds for this line after the pick: the reason sent, or
+	// the stored one a blank re-save keeps, empty on a full pick.
+	Reason string
+	Note   string
 }
 
 // YardOrderFacts is the order's side of a notice: whose order it is and how its money stands.

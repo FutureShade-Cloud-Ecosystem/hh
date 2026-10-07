@@ -1642,6 +1642,8 @@ components:
         - fulfilled_base
         - unit_price_cents
         - line_total_cents
+        - backorder_entered
+        - backorder_base
       properties:
         line_no: { type: integer, format: int32 }
         product_id: { type: string }
@@ -1661,6 +1663,15 @@ components:
           description: DECIMAL as string
         unit_price_cents: { type: integer, format: int64 }
         line_total_cents: { type: integer, format: int64 }
+        backorder_entered:
+          type: string
+          description: >-
+            DECIMAL as string. The quantity the yard picked short that the order
+            still owes the customer, in the line's own unit. qty_entered is what
+            is to be fulfilled now; ordered = qty_entered + backorder_entered.
+        backorder_base:
+          type: string
+          description: DECIMAL as string. The same quantity in the base unit.
 
     OrderView:
       type: object
@@ -2575,7 +2586,13 @@ components:
         description: { type: string }
         qty_ordered:
           type: string
-          description: DECIMAL as string
+          description: >-
+            DECIMAL as string. What the order line was ordered for, including
+            any quantity held on backorder, so a yard that finds the rest sends
+            the true number.
+        qty_backordered:
+          type: string
+          description: DECIMAL as string. The part of qty_ordered held on backorder; absent when none.
         uom: { type: string }
         location:
           type: string

@@ -69,15 +69,23 @@ func standingSentence(f YardOrderFacts, deposit bool) string {
 }
 
 // shortPickMessage is the body for one changed or still-short line.
-func shortPickMessage(f YardOrderFacts, e YardLineEffect, reason, note string) string {
+func shortPickMessage(f YardOrderFacts, e YardLineEffect) string {
 	head := fmt.Sprintf("order %s, line %d (%s)", f.OrderNo, e.LineNo, e.Description)
 	if backordered, _ := strconv.ParseFloat(e.QtyBackordered, 64); backordered <= 0 {
 		return fmt.Sprintf("Pick restored on %s: now picked in full, %s %s of %s %s ordered. The order total is %s.%s",
 			head, e.QtyPicked, e.UOM, e.QtyOrdered, e.UOM, dollars(f.TotalAfterCents), standingSentence(f, false))
 	}
-	return fmt.Sprintf("Short pick on %s: ordered %s %s, picked %s %s, %s %s on backorder. %s The order total is now %s (was %s).%s",
+	was := ""
+	if f.TotalBeforeCents != f.TotalAfterCents {
+		was = fmt.Sprintf(" (was %s)", dollars(f.TotalBeforeCents))
+	}
+	reason := ""
+	if e.Reason != "" {
+		reason = " " + reasonSentence(e.Reason, e.Note)
+	}
+	return fmt.Sprintf("Short pick on %s: ordered %s %s, picked %s %s, %s %s on backorder.%s The order total is now %s%s.%s",
 		head, e.QtyOrdered, e.UOM, e.QtyPicked, e.UOM, e.QtyBackordered, e.UOM,
-		reasonSentence(reason, note), dollars(f.TotalAfterCents), dollars(f.TotalBeforeCents), standingSentence(f, false))
+		reason, dollars(f.TotalAfterCents), was, standingSentence(f, false))
 }
 
 // skidMessage is the body for a changed skid count.
@@ -135,17 +143,12 @@ func (s *Service) noticeShortPicks(ctx context.Context, taskID string, lines []P
 	if err != nil {
 		return
 	}
-	byLine := make(map[int]PickedLineInput, len(lines))
-	for _, l := range lines {
-		byLine[l.OrderLineNo] = l
-	}
 	for _, e := range res.Lines {
 		backordered, _ := strconv.ParseFloat(e.QtyBackordered, 64)
 		if !e.Changed && backordered <= 0 {
 			continue
 		}
-		l := byLine[e.LineNo]
-		key := fmt.Sprintf("yard.short:%s:%d:%d", taskID, e.LineNo, e.Revision)
-		s.notifyOrderRep(ctx, t, res.Order, key, "yard.short_pick", shortPickMessage(res.Order, e, l.ShortReason, l.ShortNote))
+		key := fmt.Sprintf("yard.short:%s:%d:%d", t.OrderID, e.LineNo, e.Revision)
+		s.notifyOrderRep(ctx, t, res.Order, key, "yard.short_pick", shortPickMessage(res.Order, e))
 	}
 }

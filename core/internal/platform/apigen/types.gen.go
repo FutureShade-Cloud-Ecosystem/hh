@@ -4043,16 +4043,18 @@ type FeedbackResult struct {
 }
 
 type OrderViewLine struct {
-	LineNo         int32  `json:"line_no"`
-	ProductId      string `json:"product_id"`
-	Description    string `json:"description"`
-	QtyEntered     string `json:"qty_entered"`
-	UomEntered     string `json:"uom_entered"`
-	QtyBase        string `json:"qty_base"`
-	AllocatedBase  string `json:"allocated_base"`
-	FulfilledBase  string `json:"fulfilled_base"`
-	UnitPriceCents int64  `json:"unit_price_cents"`
-	LineTotalCents int64  `json:"line_total_cents"`
+	LineNo           int32  `json:"line_no"`
+	ProductId        string `json:"product_id"`
+	Description      string `json:"description"`
+	QtyEntered       string `json:"qty_entered"`
+	UomEntered       string `json:"uom_entered"`
+	QtyBase          string `json:"qty_base"`
+	AllocatedBase    string `json:"allocated_base"`
+	FulfilledBase    string `json:"fulfilled_base"`
+	UnitPriceCents   int64  `json:"unit_price_cents"`
+	LineTotalCents   int64  `json:"line_total_cents"`
+	BackorderEntered string `json:"backorder_entered"`
+	BackorderBase    string `json:"backorder_base"`
 }
 
 type OrderView struct {
@@ -4467,13 +4469,14 @@ type TaskCancelRequest struct {
 }
 
 type TaskPickLine struct {
-	LineNo      int32   `json:"line_no"`
-	ProductId   *string `json:"product_id,omitempty"`
-	Sku         *string `json:"sku,omitempty"`
-	Description string  `json:"description"`
-	QtyOrdered  string  `json:"qty_ordered"`
-	Uom         string  `json:"uom"`
-	Location    *string `json:"location,omitempty"`
+	LineNo         int32   `json:"line_no"`
+	ProductId      *string `json:"product_id,omitempty"`
+	Sku            *string `json:"sku,omitempty"`
+	Description    string  `json:"description"`
+	QtyOrdered     string  `json:"qty_ordered"`
+	QtyBackordered *string `json:"qty_backordered,omitempty"`
+	Uom            string  `json:"uom"`
+	Location       *string `json:"location,omitempty"`
 }
 
 type TaskPickTicket struct {

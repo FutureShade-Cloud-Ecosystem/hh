@@ -63,8 +63,10 @@ type PickLine struct {
 	SKU         string `json:"sku,omitempty"`
 	Description string `json:"description"`
 	QtyOrdered  string `json:"qty_ordered"`
-	UOM         string `json:"uom"`
-	Location    string `json:"location,omitempty"` // bin/yard hint, "" when the source has none
+	// QtyBackordered is the part of QtyOrdered held on backorder, absent when none.
+	QtyBackordered string `json:"qty_backordered,omitempty"`
+	UOM            string `json:"uom"`
+	Location       string `json:"location,omitempty"` // bin/yard hint, "" when the source has none
 }
 
 // PickTicket is everything the yard needs to pull one order: who it is for, where, and what.

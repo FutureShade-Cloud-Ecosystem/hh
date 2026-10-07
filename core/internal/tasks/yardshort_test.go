@@ -9,9 +9,12 @@ package tasks
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
 // fakeYardOrder records what the tasks module asked the order module to do.
@@ -26,6 +29,11 @@ type fakeYardOrder struct {
 	// effects is what each call answers; the zero value answers "changed" for every short line.
 	changed map[int]bool
 	facts   YardOrderFacts
+	// truth is the order line's own ordered quantity per line (the frozen original), which decides
+	// short against full whatever the ticket says; unset means the ticket's number. stored is the
+	// reason already held on a short line, kept when a re-save sends none.
+	truth  map[int]string
+	stored map[int]string
 }
 
 func (f *fakeYardOrder) ApplyPicks(_ context.Context, in YardPickChange) (YardPickResult, error) {
@@ -39,12 +47,33 @@ func (f *fakeYardOrder) ApplyPicks(_ context.Context, in YardPickChange) (YardPi
 		if f.changed != nil {
 			changed = f.changed[l.LineNo]
 		}
-		ordered, _ := strconv.ParseFloat(l.QtyOrdered, 64)
+		orderedText := l.QtyOrdered
+		if t, ok := f.truth[l.LineNo]; ok {
+			orderedText = t
+		}
+		ordered, _ := strconv.ParseFloat(orderedText, 64)
 		picked, _ := strconv.ParseFloat(l.QtyPicked, 64)
+		if picked > ordered {
+			return YardPickResult{}, fmt.Errorf("line %d: %w", l.LineNo, ErrAboveOrdered)
+		}
+		reason, note := l.Reason, l.Note
+		if reason == "" {
+			reason = f.stored[l.LineNo]
+		}
+		if picked < ordered && reason == "" {
+			return YardPickResult{}, httpx.BadRequestf("line %d is short, give the reason", l.LineNo)
+		}
+		if picked < ordered && reason == ShortReasonOther && note == "" {
+			return YardPickResult{}, httpx.BadRequestf("line %d: say what happened in the note when the reason is OTHER", l.LineNo)
+		}
+		if picked >= ordered {
+			reason, note = "", ""
+		}
 		res.Lines = append(res.Lines, YardLineEffect{
 			LineNo: l.LineNo, Description: "Armour stone", UOM: l.UOM,
-			QtyOrdered: l.QtyOrdered, QtyPicked: l.QtyPicked,
+			QtyOrdered: strconv.FormatFloat(ordered, 'f', 4, 64), QtyPicked: l.QtyPicked,
 			QtyBackordered: strconv.FormatFloat(ordered-picked, 'f', 4, 64), Changed: changed || f.restore,
+			Reason: reason, Note: note,
 		})
 	}
 	return res, nil
@@ -66,9 +95,10 @@ func TestRecordPick_ShortNeedsAReason(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "reason") {
 		t.Fatalf("a short pick with no reason must be refused naming the reason, got %v", err)
 	}
-	if len(fy.picks) != 0 {
-		t.Fatal("a refused pick must not reach the order")
+	if got, _ := svc.ListPickedLines(context.Background(), taskID); len(got) != 0 {
+		t.Fatalf("a refused pick records nothing: %+v", got)
 	}
+	_ = fy
 }
 
 func TestRecordPick_UnknownReasonRefusedAndOtherNeedsANote(t *testing.T) {
@@ -124,8 +154,57 @@ func TestRecordPick_NoOneRaisesAQuantityAboveOrdered(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "more than was ordered") {
 		t.Fatalf("picking above ordered must be refused in words, got %v", err)
 	}
-	if len(fy.picks) != 0 {
-		t.Fatal("a refused pick must not reach the order")
+	if got, _ := svc.ListPickedLines(context.Background(), taskID); len(got) != 0 {
+		t.Fatalf("a refused pick records nothing: %+v", got)
+	}
+	_ = fy
+}
+
+// The ticket is rebuilt from the order line after a short, so it shows the quantity to fulfil (3),
+// not the ordered 5. An honest "found the rest, picked 5" must restore the line: the order line's
+// own ordered quantity decides, never the ticket's.
+func TestRecordPick_FoundTheRestRestoresAgainstTheOrdersOwnQuantity(t *testing.T) {
+	svc, taskID, fy := yardShortSvc(t)
+	fy.truth = map[int]string{1: "5"}
+	got, err := svc.RecordPick(context.Background(), taskID, "u-1", []PickedLineInput{
+		{OrderLineNo: 1, QtyOrdered: "3", QtyPicked: "5", UOM: "EA"},
+	})
+	if err != nil {
+		t.Fatalf("5 of 5 against an order of 5 is a full pick whatever the ticket said: %v", err)
+	}
+	if got[0].QtyOrdered != "5.0000" || got[0].ShortReason != "" {
+		t.Fatalf("the recorded line carries the order's ordered quantity and no reason: %+v", got[0])
+	}
+}
+
+// A ticket quantity cannot create a short without a reason: 3 of a doctored 3 on an order of 5.
+func TestRecordPick_ADoctoredTicketQuantityCannotHideAShort(t *testing.T) {
+	svc, taskID, fy := yardShortSvc(t)
+	fy.truth = map[int]string{1: "5"}
+	_, err := svc.RecordPick(context.Background(), taskID, "u-1", []PickedLineInput{
+		{OrderLineNo: 1, QtyOrdered: "3", QtyPicked: "3", UOM: "EA"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "reason") {
+		t.Fatalf("a short against the order's own 5 needs a reason, got %v", err)
+	}
+	if got, _ := svc.ListPickedLines(context.Background(), taskID); len(got) != 0 {
+		t.Fatalf("and records nothing: %+v", got)
+	}
+}
+
+// Re-saving the pick as it stands (3 of 3, no reason) keeps the reason and note the order holds.
+func TestRecordPick_ResavingNeverBlanksAStoredReason(t *testing.T) {
+	svc, taskID, fy := yardShortSvc(t)
+	fy.truth = map[int]string{1: "5"}
+	fy.stored = map[int]string{1: ShortReasonDamaged}
+	got, err := svc.RecordPick(context.Background(), taskID, "u-1", []PickedLineInput{
+		{OrderLineNo: 1, QtyOrdered: "3", QtyPicked: "3", UOM: "EA"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].ShortReason != ShortReasonDamaged || got[0].QtyOrdered != "5.0000" {
+		t.Fatalf("the recorded line keeps the order's reason and ordered quantity: %+v", got[0])
 	}
 }
 
