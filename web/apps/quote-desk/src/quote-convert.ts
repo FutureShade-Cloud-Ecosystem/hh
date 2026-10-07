@@ -41,6 +41,7 @@ import {
   awayNotice,
   codRefusalWords,
   fulfilmentLabel,
+  accountKind,
   isCashOnDemand,
   isCodRefusal,
   parsePayAmount,
@@ -525,6 +526,11 @@ export class QuoteConvert extends HHElement {
     return this.#codLearned || isCashOnDemand(this.#standing);
   }
 
+  /** The product's own Cash On Demand account: zero-day terms with a credit line beside them. A payment is a choice here, with its consequence. */
+  #isCodTerms(): boolean {
+    return !this.#isCod() && this.#standing !== null && accountKind(this.#standing) === "COD_TERMS";
+  }
+
   #standingNow(): Standing {
     const read = standingOf(this.#standing, this.#hold);
     if (this.#codLearned && read.terms !== "COD") {
@@ -889,6 +895,7 @@ export class QuoteConvert extends HHElement {
 
   #renderPayment(): TemplateResult {
     const cod = this.#isCod();
+    const codTerms = this.#isCodTerms();
     const due = this.#view?.total_cents ?? 0;
     if (this.#grant === false) {
       // The server's own grant says this role takes no payment: no field is offered, and a customer with no credit
@@ -910,13 +917,17 @@ export class QuoteConvert extends HHElement {
     }
     return html`
       <section class="card" data-testid="qc-payment" aria-label="Payment">
-        <h3>${cod ? "Take the whole payment" : "Take a deposit or a payment (optional)"}</h3>
+        <h3>${cod ? "Take the whole payment" : codTerms ? "Cash On Demand: pay before release" : "Take a deposit or a payment (optional)"}</h3>
         ${cod
           ? html`<p class="notice" data-testid="qc-pay-cod-note">
                 This customer is on Cash On Demand${this.#codLearned ? ": the server confirmed there is no credit account" : ""}. The order is made, and gets its number, when the whole payment is taken, and nothing is released until it is paid.
               </p>
               <p data-testid="qc-pay-due">Amount due: <strong>${moneyWord(due)}</strong>, the quote's total as the server holds it. The whole amount is taken, never a part.</p>`
-          : html`<p class="sub">The payment is taken against the order once it exists. Leave it empty to take none now.</p>`}
+          : codTerms
+            ? html`<p class="notice" data-testid="qc-pay-cod-terms-note">
+                This customer is Cash On Demand. The order will be held until it is paid in full, and nothing is released before then. A deposit puts it in process. You may take nothing now, and the order is then held.
+              </p>`
+            : html`<p class="sub">The payment is taken against the order once it exists. Leave it empty to take none now.</p>`}
         <div class="fields">
           <label>
             Method
@@ -946,7 +957,7 @@ export class QuoteConvert extends HHElement {
         ${this.#payError !== "" ? html`<p class="bad" role="alert" data-testid="qc-pay-error">${this.#payError}</p>` : nothing}
         <div class="nav">
           <button type="button" class="btn btn-secondary" data-action="back" data-testid="qc-back">Back</button>
-          ${cod ? nothing : html`<button type="button" class="btn btn-secondary" data-action="skip-payment" data-testid="qc-pay-skip">Skip payment</button>`}
+          ${cod ? nothing : html`<button type="button" class="btn btn-secondary" data-action="skip-payment" data-testid="qc-pay-skip">${codTerms ? "Take nothing now, hold the order" : "Skip payment"}</button>`}
           <button type="button" class="btn btn-primary" data-action="next" data-testid="qc-next">Continue to confirm</button>
         </div>
       </section>
@@ -956,6 +967,7 @@ export class QuoteConvert extends HHElement {
   #renderConfirm(view: QuoteView): TemplateResult {
     const standing = this.#standingNow();
     const cod = this.#isCod();
+    const codTerms = this.#isCodTerms();
     const planned = this.#planned;
     return html`
       <section class="card" data-testid="qc-confirm-step" aria-label="Confirm">
@@ -970,7 +982,13 @@ export class QuoteConvert extends HHElement {
           <dt>Terms</dt>
           <dd>${standing.termsText}</dd>
           <dt>${cod ? "Payment, taken as the order is made" : "Payment now"}</dt>
-          <dd>${planned === null ? "None" : html`${moneyWord(planned.amountCents)} by ${PAY_METHOD_LABEL[planned.method]}${planned.reference === "" ? nothing : html`, reference ${planned.reference}`}`}</dd>
+          <dd data-testid="qc-confirm-payment">
+            ${planned === null
+              ? codTerms
+                ? "Nothing now. The order will be held until it is paid in full."
+                : "None"
+              : html`${moneyWord(planned.amountCents)} by ${PAY_METHOD_LABEL[planned.method]}${planned.reference === "" ? nothing : html`, reference ${planned.reference}`}${codTerms ? ". A deposit puts the order in process; it is paid in full before it is released." : nothing}`}
+          </dd>
         </dl>
         ${this.#refusal !== "" ? html`<p class="notice stop" role="alert" data-testid="qc-refusal">${this.#refusal}</p>` : nothing}
         <div class="nav">
