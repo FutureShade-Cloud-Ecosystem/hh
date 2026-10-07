@@ -32,3 +32,19 @@ test("a catalogue of two categories gives two on every Pricing screen", async ({
   const value = await page.locator('select[data-field="categoryId"]').inputValue();
   expect([PAVERS, BULK]).toContain(value);
 });
+
+test("R11 P3 when the catalogue read fails the category pickers say so and carry no built-in category", async ({ page }) => {
+  await page.route(/\/api\/v1\/product-categories/, (route) => route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "product: the categories could not be read" }) }));
+  await signIn(page);
+  await openPricing(page);
+  await openTab(page, "breaks");
+  await page.getByTestId("pb-new").click();
+  await expect(page.getByTestId("catalogue-error")).toContainText("categories could not be read");
+  await expect(page.locator('select[data-field="categoryId"] option')).toHaveCount(0);
+  await expect(page.locator('select[data-field="categoryId"]')).toHaveValue("");
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await openTab(page, "rules");
+  await page.getByTestId("pr-new").click();
+  await page.getByTestId("pr-scope").selectOption("TIER_CATEGORY").catch(() => undefined);
+  await expect(page.getByTestId("catalogue-error")).toContainText("categories could not be read");
+});

@@ -279,6 +279,11 @@ export class QdPricingCustomers extends PricingTabBase {
       const f = this.form;
       // A category the catalogue does not hold is never what the form is left on: it starts on the catalogue's first.
       const first = this.categoryChoices()[0]?.[0];
+      if (first === undefined && f.categoryId !== "" && f.id === "") {
+        // No catalogue to choose from: the form carries no built-in category, so a save cannot name one the catalogue never listed.
+        this.form = { ...this.form, categoryId: "" };
+        return;
+      }
       if (first !== undefined && !this.categoryChoices().some(([id]) => id === f.categoryId) && f.id === "") {
         this.form = { ...this.form, categoryId: first };
         return;
@@ -364,6 +369,7 @@ export class QdPricingCustomers extends PricingTabBase {
             <div class="field">
               <label for="pc-category">Category</label>
               <select id="pc-category" data-field="categoryId" data-testid="pc-category"></select>
+${this.catalogueError !== "" ? html`<p class="rowerr" role="alert" data-testid="catalogue-error">${this.catalogueError}</p>` : nothing}
             </div>
             <div class="field">
               <label for="pc-calc">Calculation</label>

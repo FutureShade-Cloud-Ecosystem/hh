@@ -80,10 +80,6 @@ export function isKnownCategory(id: string): boolean {
   return id in CATEGORY_NAMES;
 }
 
-export const CATEGORY_OPTIONS: ReadonlyArray<{ id: string; name: string }> = Object.entries(CATEGORY_NAMES).map(
-  ([id, name]) => ({ id, name }),
-);
-
 export const CUSTOMER_TYPES = ["CONTRACTOR", "RETAIL", "BUILDER", "GOVERNMENT", "INTERNAL"] as const;
 
 const SCOPE_LABELS: Readonly<Record<string, string>> = {

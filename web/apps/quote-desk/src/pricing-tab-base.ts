@@ -433,7 +433,7 @@ export abstract class PricingTabBase extends PanelBase {
     if (read === undefined || this.pricing !== pricing || seq !== this.catalogueSeq) return;
     if (!read.ok) {
       this.catalogue = [];
-      this.catalogueError = `The categories could not be read, so a category cannot be added now. ${spokenRefusal(read.error)}`;
+      this.catalogueError = `The categories could not be read, so no category can be chosen now. ${spokenRefusal(read.error)}`;
       return;
     }
     this.catalogueError = "";

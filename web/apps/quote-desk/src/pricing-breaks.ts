@@ -271,6 +271,11 @@ export class QdPricingBreaks extends PricingTabBase {
       this.fillSelect("scopeKind", [["category", "Category"], ["product", "Product"]], f.scopeKind);
       // A category the catalogue does not hold is never what the form is left on: it starts on the catalogue's first.
       const first = this.categoryChoices()[0]?.[0];
+      if (first === undefined && f.categoryId !== "" && f.id === "") {
+        // No catalogue to choose from: the form carries no built-in category, so a save cannot name one the catalogue never listed.
+        this.form = { ...this.form, categoryId: "" };
+        return;
+      }
       if (first !== undefined && !this.categoryChoices().some(([id]) => id === f.categoryId) && f.id === "") {
         this.form = { ...this.form, categoryId: first };
         return;
@@ -401,6 +406,7 @@ export class QdPricingBreaks extends PricingTabBase {
               ? html`<div class="field">
                   <label for="pb-category">Category</label>
                   <select id="pb-category" data-field="categoryId" data-testid="pb-category"></select>
+${this.catalogueError !== "" ? html`<p class="rowerr" role="alert" data-testid="catalogue-error">${this.catalogueError}</p>` : nothing}
                 </div>`
               : html`<div class="field">
                   <label for="pb-product">Product id (uuid)</label>

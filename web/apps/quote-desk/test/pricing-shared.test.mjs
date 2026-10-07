@@ -18,7 +18,6 @@ import {
   isKnownCategory,
   pctToBps,
   scopeLabel,
-  CATEGORY_OPTIONS,
 } from "../src/_pricing-shared.js";
 
 test("pctToBps reads a typed percentage by its digits, never by multiplying", () => {
@@ -67,7 +66,6 @@ test("categories are named for the six seeded ids and degrade to a plain word ot
   assert.equal(categoryLabel("deadbeef-0000-4000-9000-000000000001"), "a category");
   assert.equal(isKnownCategory("ca700000-0000-4000-9000-000000000002"), true);
   assert.equal(isKnownCategory("deadbeef-0000-4000-9000-000000000001"), false);
-  assert.equal(CATEGORY_OPTIONS.length, 6);
 });
 
 test("scopes, entities, actions and fields are said in words, and an unknown one passes through", () => {

@@ -331,6 +331,11 @@ export class QdPricingRules extends PricingTabBase {
       this.fillSelect("customerType", CUSTOMER_TYPES.map((t) => [t, t] as const), f.customerType);
       // A category the catalogue does not hold is never what the form is left on: it starts on the catalogue's first.
       const first = this.categoryChoices()[0]?.[0];
+      if (first === undefined && f.categoryId !== "" && f.id === "") {
+        // No catalogue to choose from: the form carries no built-in category, so a save cannot name one the catalogue never listed.
+        this.form = { ...this.form, categoryId: "" };
+        return;
+      }
       if (first !== undefined && !this.categoryChoices().some(([id]) => id === f.categoryId) && f.id === "") {
         this.form = { ...this.form, categoryId: first };
         return;
@@ -441,6 +446,7 @@ export class QdPricingRules extends PricingTabBase {
               ? html`<div class="field">
                     <label for="pr-category">Category</label>
                     <select id="pr-category" data-field="categoryId" data-testid="pr-category"></select>
+${this.catalogueError !== "" ? html`<p class="rowerr" role="alert" data-testid="catalogue-error">${this.catalogueError}</p>` : nothing}
                   </div>
                   <div class="field">
                     <label for="pr-branch">Branch (optional, blank is all)</label>
@@ -461,6 +467,7 @@ export class QdPricingRules extends PricingTabBase {
                   <div class="field">
                     <label for="pr-category">Category</label>
                     <select id="pr-category" data-field="categoryId" data-testid="pr-category"></select>
+${this.catalogueError !== "" ? html`<p class="rowerr" role="alert" data-testid="catalogue-error">${this.catalogueError}</p>` : nothing}
                   </div>`
               : nothing}
             ${f.scope === "CUSTOMER_PRODUCT"
