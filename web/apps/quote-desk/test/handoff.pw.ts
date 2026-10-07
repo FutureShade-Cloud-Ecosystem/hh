@@ -7,9 +7,9 @@
 // suite proves the mint and the two keys there), so these tests seed the
 // exact record the front door writes, in the exact shape its custody
 // validates, and watch this app's boot take it: the bar comes up under the
-// role's name, the entry cards never show, the handoff key is cleared in
-// the same step (a later visit never re-adopts a spent handoff), and the
-// custody mirror carries the display profile as every other sign in leaves
+// role's name, the entry cards never show, the handoff key stays in the
+// tab until Sign out or Switch role (a reload or a second visit keeps the
+// session, decision log row 1040), and the custody mirror carries the display profile as every other sign in leaves
 // it. A record that fails a read is dropped and the entry page with the
 // cards comes up, the desk's ordinary way in. Sign out ends an adopted
 // session the ordinary way, and the box's Switch role walk (the front door
@@ -100,16 +100,39 @@ test("a boot from the front door's key lands signed in as the handed role, no se
   await expect(page.getByTestId("header-word")).toHaveText("Sales", { timeout: 15_000 });
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Sales manager", exact: true })).toHaveCount(0);
-  // The handoff key is spent in the same step; custody's mirror is written
-  // as every other sign in leaves it.
+  // The handoff key stays in the tab until Sign out or Switch role (decision log row 1040); custody's
+  // mirror is written as every other sign in leaves it.
   const stored = await page.evaluate(
     (keys) => keys.map((key) => window.sessionStorage.getItem(key) !== null),
     [HANDOFF_KEY, MIRROR_KEY],
   );
-  expect(stored).toEqual([false, true]);
-  // Sign out ends it the ordinary way: the entry cards come back.
+  expect(stored).toEqual([true, true]);
+  // Sign out ends it the ordinary way: the entry cards come back, and the key goes with the session.
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
+  expect(await page.evaluate((key) => window.sessionStorage.getItem(key), HANDOFF_KEY)).toBeNull();
+});
+
+test("a reload in the same tab keeps the session, and a second visit to a quote's address does too", async ({ page }) => {
+  await seedHandoff(page, handoffRecord());
+  await page.goto("/");
+  await expect(page.getByTestId("header-word")).toHaveText("Sales", { timeout: 15_000 });
+  await page.reload();
+  await expect(page.getByTestId("header-word")).toHaveText("Sales", { timeout: 15_000 });
+  await expect(page.getByRole("button", { name: "Sales", exact: true })).toHaveCount(0);
+  // A second visit by the address (the module's link opened again in the tab) lands on the desk, not the entry.
+  await page.goto("/#/quotes/q-1001");
+  await expect(page.getByTestId("header-word")).toHaveText("Sales", { timeout: 15_000 });
+  await expect(page.getByRole("button", { name: "Sales", exact: true })).toHaveCount(0);
+});
+
+test("Switch role drops the key with the session", async ({ page }) => {
+  await seedHandoff(page, handoffRecord());
+  await page.goto("/");
+  await expect(page.getByTestId("header-word")).toHaveText("Sales", { timeout: 15_000 });
+  await page.getByRole("button", { name: "Switch role", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
+  expect(await page.evaluate((key) => window.sessionStorage.getItem(key), HANDOFF_KEY)).toBeNull();
 });
 
 test("a handoff record that fails a read is dropped and the entry page comes up", async ({ page }) => {
@@ -130,6 +153,7 @@ test("the box's Switch role walk lands the desk as the other role the same way",
   // boots over it exactly as over the first handoff.
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
+  expect(await page.evaluate((key) => window.sessionStorage.getItem(key), HANDOFF_KEY)).toBeNull();
   await page.evaluate(
     ({ key, value }) => {
       window.sessionStorage.setItem(key, value);
@@ -139,6 +163,7 @@ test("the box's Switch role walk lands the desk as the other role the same way",
   await page.reload();
   await expect(page.getByTestId("header-word")).toHaveText("Sales manager", { timeout: 15_000 });
   await expect(page.getByRole("button", { name: "Sales manager", exact: true })).toHaveCount(0);
+  // The second record is kept for the tab like the first.
   const stored = await page.evaluate((key) => window.sessionStorage.getItem(key), HANDOFF_KEY);
-  expect(stored).toBeNull();
+  expect(stored).not.toBeNull();
 });

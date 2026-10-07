@@ -332,8 +332,9 @@ export class QuoteDeskApp extends HHElement {
    * holds it for the box under its own session storage key; when this app
    * boots from a module tile's navigation, the record is read, handed to
    * AuthController.adopt (custody takes the token into private memory and
-   * rewrites the display mirror itself), and the key is dropped in the same
-   * step, so a later visit to this app never re-adopts a spent handoff. The
+   * rewrites the display mirror itself). The key stays in the tab until Sign out or Switch role (decision
+   * log row 1040), so a reload or a second visit to a quote's address keeps the session; a record that
+   * fails a read, or a session the server refuses, drops it. The
    * desk facts the chrome and the ported surfaces read ride the same record
    * (the front door validated the mint already; this read validates the
    * record again before custody sees any of it), exactly the fields
@@ -346,16 +347,26 @@ export class QuoteDeskApp extends HHElement {
   async #adoptFromFrontDoor(): Promise<void> {
     if (this.#sessions.current !== null) return;
     const read = readFrontDoorHandoff();
-    if (read.kind === "absent") return;
-    clearFrontDoorHandoff();
-    if (read.kind === "unusable") return;
+    if (read.kind === "absent") {
+      this.#toFrontDoor();
+      return;
+    }
+    if (read.kind === "unusable") {
+      clearFrontDoorHandoff();
+      this.#toFrontDoor();
+      return;
+    }
     const handed = read.session;
     const adopted = this.#controller.adopt({
       token: handed.token,
       tokenExpiresAtMs: handed.tokenExpiresAtMs,
       user: handed.user,
     });
-    if (!adopted) return;
+    if (!adopted) {
+      clearFrontDoorHandoff();
+      this.#toFrontDoor();
+      return;
+    }
     this.#deskUserId = handed.user.userId;
     this.#deskIdentity = {
       user_id: handed.user.userId,
@@ -368,7 +379,17 @@ export class QuoteDeskApp extends HHElement {
     };
     this.#roleLabel = handed.roleLabel;
     this.requestUpdate();
-    await this.#initDesk();
+    await this.#initDesk(true);
+  }
+
+  /**
+   * A demo build that finds no session sends the person to the front door to pick a role (decision log row
+   * 1040), never to the shared entry page. Only where the desk is served under its own prefix (the box:
+   * BASE_URL is /quote/): at the origin root the desk's own entry cards are the way in, and the front door
+   * is not there.
+   */
+  #toFrontDoor(): void {
+    if (import.meta.env.BASE_URL !== "/") window.location.assign("/");
   }
 
   async #chooseFlow(flow: string): Promise<void> {
@@ -414,7 +435,7 @@ export class QuoteDeskApp extends HHElement {
    * branch that does not resolve is the one wall that keeps the desk down:
    * without the branch nothing on the surface can fence itself.
    */
-  async #initDesk(): Promise<void> {
+  async #initDesk(fromHandoff = false): Promise<void> {
     const branch = await this.#client.resolveBranch();
     if (!branch.ok) {
       this.#message = `The desk did not start: ${branch.error}`;
@@ -423,6 +444,12 @@ export class QuoteDeskApp extends HHElement {
       this.#deskIdentity = null;
       await this.#controller.signOut();
       this.requestUpdate();
+      // A session the server refuses (ended or revoked) must not be re-adopted by every load: the key goes
+      // and the person picks a role again at the front door. Only the handoff's own adopt does this.
+      if (fromHandoff) {
+        clearFrontDoorHandoff();
+        this.#toFrontDoor();
+      }
       return;
     }
     this.#branch = branch.value;
@@ -452,6 +479,8 @@ export class QuoteDeskApp extends HHElement {
     // Bounded: a save that never answers must not hold the session open for good.
     const sent = await waitUpTo(UNSENT_WAIT_MS, Promise.allSettled(detail.waits));
     await this.#controller.signOut();
+    // The front door's key was kept in the tab for the session (row 1040); it goes with the session.
+    clearFrontDoorHandoff();
     this.#busy = false;
     this.#roleLabel = null;
     this.#deskUserId = null;
@@ -469,6 +498,7 @@ export class QuoteDeskApp extends HHElement {
     // The shared surface's session-owned module state goes with the session.
     clearSessionState();
     this.requestUpdate();
+    if (import.meta.env.MODE === "demo") this.#toFrontDoor();
   }
 
   /**
