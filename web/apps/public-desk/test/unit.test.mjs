@@ -12,6 +12,7 @@ import {
   acceptanceAmountPhrase,
   acceptanceRefusal,
   acceptReady,
+  acceptHint,
   carriesTax,
   showsImages,
   totalsBlock,
@@ -364,4 +365,16 @@ test("the preview flag is read only when the core sets it", () => {
   assert.equal(validateQuoteView(base).preview, false, "a customer's own view carries no preview flag");
   assert.equal(validateQuoteView({ ...base, preview: true }).preview, true);
   assert.equal(validateQuoteView({ ...base, preview: "yes" }).preview, false, "only a true boolean counts");
+});
+
+test("the disabled Accept button says what is still missing, in the order the form reads", () => {
+  assert.equal(
+    acceptHint("", false, false),
+    "To accept, tick the quantities box, type your full name and tick the confirmation.",
+  );
+  assert.equal(acceptHint("", false, true), "To accept, type your full name and tick the confirmation.");
+  assert.equal(acceptHint("Sample Customer", false, true), "To accept, tick the confirmation.");
+  assert.equal(acceptHint("Sample Customer", true, false), "To accept, tick the quantities box.");
+  assert.equal(acceptHint("   ", true, true), "To accept, type your full name.");
+  assert.equal(acceptHint("Sample Customer", true, true), null);
 });

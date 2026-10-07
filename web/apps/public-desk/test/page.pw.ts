@@ -1505,3 +1505,21 @@ test("a long unbroken notice wraps inside the page: no sideways scroll on a phon
   const widths = await page.evaluate(() => ({ doc: document.documentElement.scrollWidth, view: window.innerWidth }));
   expect(widths.doc).toBeLessThanOrEqual(widths.view);
 });
+
+test("the disabled Accept button explains itself, tied to the button, and the hint goes when the form is ready", async ({ page }) => {
+  await page.goto("/?t=q-demo-25-hint");
+  const accept = page.getByRole("button", { name: "Accept quote" });
+  await expect(accept).toBeDisabled();
+  const hint = page.locator("#accept-hint");
+  await expect(hint).toBeVisible();
+  await expect(hint).toHaveText("To accept, tick the quantities box, type your full name and tick the confirmation.");
+  await expect(accept).toHaveAttribute("aria-describedby", "accept-hint");
+  await page.locator("#qty-confirm").check();
+  await expect(hint).toHaveText("To accept, type your full name and tick the confirmation.");
+  await page.locator("#name").fill("Sample Customer");
+  await expect(hint).toHaveText("To accept, tick the confirmation.");
+  await page.locator("#affirm").check();
+  await expect(accept).toBeEnabled();
+  await expect(page.locator("#accept-hint")).toHaveCount(0);
+  await expect(accept).not.toHaveAttribute("aria-describedby", /.+/);
+});

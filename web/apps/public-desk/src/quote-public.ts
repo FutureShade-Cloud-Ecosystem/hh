@@ -23,6 +23,7 @@ import { productTileUrl } from "@hardscapehouse/design-system/src/assets/product
 import {
   acceptanceAmountPhrase,
   acceptanceRefusal,
+  acceptHint,
   acceptReady,
   showsImages,
   totalsBlock,
@@ -490,9 +491,23 @@ export class QuotePublicPage extends HHElement {
     if (this.lockedName !== null && input.value !== this.lockedName) input.value = this.lockedName;
   }
 
+  /**
+   * The disabled Accept button is described by the hint beside it. The design system's button takes no
+   * description, and the template gate allows no attribute bindings, so the tie is applied here, like the
+   * name lock: present while the hint is, gone with it.
+   */
+  private syncAcceptHint(): void {
+    const button = this.renderRoot.querySelector<HTMLButtonElement>('[data-action="accept"]');
+    if (button === null) return;
+    const hinted = this.renderRoot.querySelector("#accept-hint") !== null;
+    if (hinted && button.getAttribute("aria-describedby") !== "accept-hint") button.setAttribute("aria-describedby", "accept-hint");
+    if (!hinted && button.hasAttribute("aria-describedby")) button.removeAttribute("aria-describedby");
+  }
+
   /** Fire the one-shot print once the loaded quote has painted. */
   updated(): void {
     this.syncNameLock();
+    this.syncAcceptHint();
     if (this.autoPrint && this.quote) {
       this.autoPrint = false;
       try {
@@ -848,6 +863,7 @@ export class QuotePublicPage extends HHElement {
         </p>
       </div>`;
     }
+    const hint = acceptHint(this.lockedName ?? this.typedName, this.affirmed, this.quantitiesConfirmed);
     return html`
       <div class="card">
         <h2 class="card-h2">Accept this quote</h2>
@@ -868,6 +884,7 @@ export class QuotePublicPage extends HHElement {
           </label>
         </div>
         ${button({ label: this.busy ? "Recording…" : "Accept quote", action: "accept", disabled: this.busy || !acceptReady(this.lockedName ?? this.typedName, this.affirmed, this.quantitiesConfirmed) })}
+        ${hint !== null ? html`<p class="note" id="accept-hint">${hint}</p>` : nothing}
         ${this.error ? html`<p class="err" role="alert">${this.error}</p>` : nothing}
         <p class="note">
           Accepting records your typed name, the date and time, and the link you used. This is an electronic acceptance:

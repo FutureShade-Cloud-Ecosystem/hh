@@ -303,6 +303,7 @@ for (const token of [
   "q-dead-landed",
   "q-dead-unrecorded",
   "q-qty-422",
+  "q-demo-25-hint",
 ]) {
   QUOTES[token] = structuredClone(QUOTES["q-terms-28"]);
 }

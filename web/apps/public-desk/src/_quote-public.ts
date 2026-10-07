@@ -125,6 +125,21 @@ export function acceptReady(typedName: string, affirmed: boolean, quantitiesConf
 }
 
 /**
+ * acceptHint is what the disabled Accept button says is still missing, in the order the form reads, or
+ * null when nothing is. A greyed button with no reason is a dead end for a keyboard or screen reader
+ * customer, so the page shows this beside the button and ties it to the button as its description.
+ */
+export function acceptHint(typedName: string, affirmed: boolean, quantitiesConfirmed: boolean): string | null {
+  const missing: string[] = [];
+  if (!quantitiesConfirmed) missing.push("tick the quantities box");
+  if (!typedName.trim()) missing.push("type your full name");
+  if (!affirmed) missing.push("tick the confirmation");
+  if (missing.length === 0) return null;
+  const last = missing.pop() as string;
+  return `To accept, ${missing.length > 0 ? `${missing.join(", ")} and ${last}` : last}.`;
+}
+
+/**
  * showsImages: thumbnails render only when the dealer chose to include
  * product images on this quote AND at least one line carries a reference.
  * Both halves are facts from the server; neither is inferred. The structural
