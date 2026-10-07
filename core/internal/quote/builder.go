@@ -88,7 +88,7 @@ type QuotePolicy struct {
 	QuantityNotice string `json:"quantity_notice"`
 }
 
-// DefaultQuantityNotice is the house wording, the column default of quote_policy.quantity_notice (0366).
+// DefaultQuantityNotice is the house wording, the column default of quote_policy.quantity_notice (0367).
 const DefaultQuantityNotice = "All quantities are to be confirmed by the customer. Please review them before you accept it."
 
 // maxQuantityNotice bounds the notice; it matches the column's CHECK so the service refuses in words

@@ -10,12 +10,12 @@ import (
 // The Go default and the column default are one wording: a deployment whose policy row is missing must
 // read the same notice the column serves.
 func TestDefaultQuantityNoticeEqualsTheColumnDefault(t *testing.T) {
-	body, err := os.ReadFile(filepath.Join("..", "..", "db", "migrations", "0366_quote_policy_quantity_notice.sql"))
+	body, err := os.ReadFile(filepath.Join("..", "..", "db", "migrations", "0367_quote_policy_quantity_notice.sql"))
 	if err != nil {
-		t.Fatalf("reading 0366: %v", err)
+		t.Fatalf("reading 0367: %v", err)
 	}
 	if !strings.Contains(string(body), "DEFAULT '"+DefaultQuantityNotice+"'") {
-		t.Errorf("0366 does not default the column to DefaultQuantityNotice %q", DefaultQuantityNotice)
+		t.Errorf("0367 does not default the column to DefaultQuantityNotice %q", DefaultQuantityNotice)
 	}
 	if n := len([]rune(DefaultQuantityNotice)); n < 1 || n > maxQuantityNotice {
 		t.Errorf("the default is %d characters, outside the bound", n)

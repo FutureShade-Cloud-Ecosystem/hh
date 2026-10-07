@@ -45,7 +45,7 @@ type receiptSale struct {
 	CustomerName      string
 	CustomerAcct      string
 	CashierName       string
-	// The whole-ticket manual discount (pos_sale 0365) and the role label of its approver.
+	// The whole-ticket manual discount (pos_sale 0366) and the role label of its approver.
 	SaleDiscountCents int64
 	SaleDiscountLabel string
 }
@@ -64,7 +64,7 @@ type branchHeader struct {
 }
 
 // defaultQuantityNotice is the house wording, the same sentence as quote.DefaultQuantityNotice and the
-// 0366 column default (a test pins the two equal; printing may not import quote outside tests).
+// 0367 column default (a test pins the two equal; printing may not import quote outside tests).
 const defaultQuantityNotice = "All quantities are to be confirmed by the customer. Please review them before you accept it."
 
 // ReadReceiptSale reads one COMMITTED sale by pos_sale id, order id, or the VISIBLE "#SO-" number.

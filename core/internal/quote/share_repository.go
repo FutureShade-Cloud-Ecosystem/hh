@@ -366,7 +366,7 @@ func (r *Repository) AcceptQuoteGuarded(ctx context.Context, in acceptWrite, hoo
 	}
 	// The acceptance record SNAPSHOTS the money and the document number (C1): it must stay meaningful
 	// even if the quote row is later gone, so it never reads back through quote_id at display time.
-	// The record also keeps what the customer was shown (0367): the lines as they stand under this lock
+	// The record also keeps what the customer was shown (0368): the lines as they stand under this lock
 	// and the notice wording in force for the quote's branch, read in the same statement.
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO quote_acceptances

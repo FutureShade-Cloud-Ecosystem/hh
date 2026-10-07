@@ -336,7 +336,7 @@ type QuoteAcceptanceRecord struct {
 	Channel string `json:"channel,omitempty"`
 	Note    string `json:"note,omitempty"`
 	// QuantityNotice and Lines are the customer row's dispute record: the notice wording that stood on
-	// the page and the lines as accepted, kept on the acceptance (0367) so later edits to either leave
+	// the page and the lines as accepted, kept on the acceptance (0368) so later edits to either leave
 	// them untouched. Absent on a staff row and on acceptances taken before they were kept.
 	QuantityNotice string               `json:"quantity_notice,omitempty"`
 	Lines          []AcceptedLineRecord `json:"lines,omitempty"`

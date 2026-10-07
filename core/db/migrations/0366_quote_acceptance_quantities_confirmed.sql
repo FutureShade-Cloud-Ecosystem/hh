@@ -1,4 +1,4 @@
--- 0365: an acceptance records that the customer confirmed the quantities.
+-- 0366: an acceptance records that the customer confirmed the quantities.
 --
 -- Customers blame the dealer for quantities they chose, so the public accept now needs the customer to
 -- confirm the quantities as a separate act, beside the typed name and the affirmative. The acceptance

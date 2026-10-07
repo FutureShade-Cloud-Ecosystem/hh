@@ -1,4 +1,4 @@
--- 0366: the dealer's quantity notice, a text setting on quote_policy.
+-- 0367: the dealer's quantity notice, a text setting on quote_policy.
 --
 -- Customers blame the dealer for quantities they chose, so every quote carries a notice that the
 -- quantities are the customer's to confirm. The wording is the dealer's: the dealer default row holds
