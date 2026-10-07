@@ -392,6 +392,8 @@ export class QuotePublicPage extends HHElement {
   private readonly acceptKeys = createAcceptKeys();
   private token = "";
   private autoPrint = false;
+  /** The staff print action's copy: the quote on paper, with no accept card (nothing on paper is tickable). */
+  private printCopy = false;
   /** True once a host has handed the page its quote: the page then never reads the link or loads. */
   private hosted = false;
   /** A host handed the page something that is not a well formed preview: the page says so and shows nothing else. */
@@ -422,6 +424,7 @@ export class QuotePublicPage extends HHElement {
     // once the quote has rendered. Guarded: a failed load never opens an
     // empty print dialog.
     this.autoPrint = params.get("print") === "1";
+    this.printCopy = this.autoPrint;
     // The design system's position gate holds the template allow table at
     // zero event and property bindings, so the controls stay static and this
     // root delegates: the kits' own data-action pattern, and id-keyed reads
@@ -845,7 +848,7 @@ export class QuotePublicPage extends HHElement {
     if (this.accepted) return nothing;
     // A preview offers no way to accept and says nothing about acceptance: no form, no typed name,
     // and no "closed" card either, because the band above already says what this page is.
-    if (q.preview || this.hosted) return nothing;
+    if (q.preview || this.hosted || this.printCopy) return nothing;
     if (!q.acceptable || this.landed) {
       // The customer reads this alone, with no staff beside them to translate,
       // so the state is SAID, in the same six states said mid-sentence: under

@@ -1523,3 +1523,19 @@ test("the disabled Accept button explains itself, tied to the button, and the hi
   await expect(page.locator("#accept-hint")).toHaveCount(0);
   await expect(accept).not.toHaveAttribute("aria-describedby", /.+/);
 });
+
+test("print=1 prints the quote and the notice, not the accept card: a paper copy has nothing to tick", async ({ page }) => {
+  await page.emulateMedia({ media: "print" });
+  await page.goto("/?t=q-print-33&print=1");
+  await expect(page.getByRole("heading", { name: "Quote #Q-28" })).toBeVisible();
+  await expect(page.getByText("All quantities are to be confirmed by the customer.")).toBeVisible();
+  await expect(page.locator("#qty-confirm")).toHaveCount(0);
+  await expect(page.locator("#name")).toHaveCount(0);
+  await expect(page.locator("#affirm")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Accept quote" })).toHaveCount(0);
+  await expect(page.getByText("Accept this quote")).toHaveCount(0);
+  // The same link on screen still offers the form.
+  await page.emulateMedia({ media: "screen" });
+  await page.goto("/?t=q-print-33");
+  await expect(page.locator("#qty-confirm")).toBeVisible();
+});
