@@ -248,3 +248,60 @@ test("no width from 320 to 480 cuts a step label short, sampled every 5 px", asy
   }
   expect(cut, "widths where a label is cut short").toEqual([]);
 });
+
+/**
+ * Round 11: at phone width a ticket line shows every column whole (qty, unit, price, total, remove),
+ * not just the name: the row stacks instead of scrolling the money columns out of sight. Sampled
+ * every 10 px from 320 to 480: each cell sits inside the line's box, is not cut short, and the table
+ * itself has nothing to scroll.
+ */
+test("at every width from 320 to 480 a ticket line shows its qty, unit, price and total whole", async ({ page }) => {
+  await page.setViewportSize({ width: 480, height: 844 });
+  await signIn(page);
+  const row = await searchDropRow(page, "holland", "Holland Stone 60 mm");
+  await row.click();
+  await expect(page.getByTestId("pos-line-row")).toHaveCount(1);
+  const bad: string[] = [];
+  for (let width = 320; width <= 480; width += 10) {
+    await page.setViewportSize({ width, height: 844 });
+    const read = await page.evaluate(() => {
+      const walk = (root: ParentNode, acc: Element[] = []): Element[] => {
+        for (const el of root.querySelectorAll("*")) {
+          acc.push(el);
+          if (el.shadowRoot) walk(el.shadowRoot, acc);
+        }
+        return acc;
+      };
+      const all = walk(document);
+      const grid = all.find((e) => (e as HTMLElement).dataset?.testid === "pos-lines") as HTMLElement | undefined;
+      const rowEl = all.find((e) => (e as HTMLElement).dataset?.testid === "pos-line-row") as HTMLElement | undefined;
+      if (!grid || !rowEl) return null;
+      const box = grid.getBoundingClientRect();
+      const cell = (sel: string) => rowEl.querySelector(sel) as HTMLElement | null;
+      const cells: Record<string, HTMLElement | null> = {
+        qty: cell("input.qty"),
+        unit: cell(".lunit"),
+        price: cell(".lprice"),
+        total: cell(".ltot"),
+        remove: cell("button.rm"),
+      };
+      const out: string[] = [];
+      for (const [name, el] of Object.entries(cells)) {
+        if (!el) {
+          out.push(`${name} missing`);
+          continue;
+        }
+        const r = el.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) out.push(`${name} has no box`);
+        if (r.left < box.left - 0.5 || r.right > box.right + 0.5) out.push(`${name} outside the line (${Math.round(r.left)}-${Math.round(r.right)} vs ${Math.round(box.left)}-${Math.round(box.right)})`);
+        if (el.scrollWidth > el.clientWidth + 1) out.push(`${name} cut short`);
+      }
+      if (grid.scrollWidth > grid.clientWidth + 1) out.push("the table scrolls sideways");
+      if (document.documentElement.scrollWidth > window.innerWidth) out.push("the page scrolls sideways");
+      return out;
+    });
+    if (read === null) throw new Error("the ticket line did not render");
+    if (read.length > 0) bad.push(`${width}px: ${read.join("; ")}`);
+  }
+  expect(bad, "widths where a column is out of sight or cut").toEqual([]);
+});

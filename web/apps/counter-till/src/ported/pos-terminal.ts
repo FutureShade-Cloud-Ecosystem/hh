@@ -1677,6 +1677,79 @@ export class HosPosTerminal extends LitElement {
       white-space: nowrap;
       text-align: right; /* rev 8 (item 3): its own aligned column now */
     }
+    /* ROUND 11: at phone width the line stacks instead of scrolling its money columns out of sight.
+       Row one is the picture, the name and the remove control; row two the quantity stepper, the unit
+       and the line total; row three the unit price (and the margin where the role sees it), each
+       labelled. Every column is on screen at 320 to 519, none cut: the eight tracks of the desktop
+       table cannot share a 250px card, and a table the person must scroll hides the price. The table
+       keeps its own overflow-x as a safety net; it has nothing to scroll here. */
+    @media (max-width: 519px) {
+      .linegrid,
+      .linegrid.withmargin {
+        display: block;
+      }
+      .linehead {
+        display: none;
+      }
+      .linerow {
+        display: grid;
+        grid-template-columns: 36px auto auto minmax(0, 1fr) 28px;
+        column-gap: 8px;
+        row-gap: 6px;
+        align-items: center;
+      }
+      .linerow hos-product-thumb {
+        grid-column: 1;
+        grid-row: 1 / span 3;
+        align-self: start;
+      }
+      .linerow .lmain {
+        grid-column: 2 / 5;
+        grid-row: 1;
+      }
+      .linerow .rm {
+        grid-column: 5;
+        grid-row: 1;
+        align-self: start;
+      }
+      .linerow .stepper {
+        grid-column: 2;
+        grid-row: 2;
+      }
+      .linerow .lunit {
+        grid-column: 3;
+        grid-row: 2;
+      }
+      .linerow .ltot {
+        grid-column: 4 / 6;
+        grid-row: 2;
+        text-align: right;
+      }
+      .linerow .lprice {
+        grid-column: 2 / 5;
+        grid-row: 3;
+        text-align: left;
+      }
+      .linerow .lprice::before {
+        content: 'Price ';
+        color: var(--hos-text-dim);
+        font-family: var(--hos-font-ui);
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.09em;
+      }
+      .linerow .lmargin {
+        grid-column: 4 / 6;
+        grid-row: 3;
+      }
+      .linerow .lmargin::before {
+        content: 'Margin ';
+        font-family: var(--hos-font-ui);
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.09em;
+      }
+    }
  /* The DIB-488 stock-status line: status colours via the existing token roles only. */
     .stockline {
       font-size: 11px;
