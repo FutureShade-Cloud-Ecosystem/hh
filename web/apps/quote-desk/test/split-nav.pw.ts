@@ -202,9 +202,9 @@ test("split E: the toolbar carries the segmented control and the search, and bot
   // The search box is the design system's control face.
   const search = toolbar.locator('[data-control="text"][data-field="list-search"]');
   await expect(search).toBeVisible();
-  // The rows the seeded world gives the Sales login: two (Draft and
-  // Accepted), both Maple Ridge.
-  await expect(page.getByTestId("qb-list-row")).toHaveCount(2);
+  // The rows the seeded world gives the Sales login: four (Draft,
+  // Accepted, Accepted of the cash customer and Converted).
+  await expect(page.getByTestId("qb-list-row")).toHaveCount(4);
   // A status tab routes the rows: Draft alone answers one.
   await tabs.getByRole("button", { name: "Draft", exact: true }).click();
   await expect(page.getByTestId("qb-list-row")).toHaveCount(1);
@@ -214,17 +214,17 @@ test("split E: the toolbar carries the segmented control and the search, and bot
   await tabs.getByRole("button", { name: "Lost", exact: true }).click();
   await asked;
   await tabs.getByRole("button", { name: "All", exact: true }).click();
-  await expect(page.getByTestId("qb-list-row")).toHaveCount(2);
+  await expect(page.getByTestId("qb-list-row")).toHaveCount(4);
   // The search filters by customer and by number, and the two combine with
   // the tab that is pressed.
   await search.fill("Maple");
-  await expect(page.getByTestId("qb-list-row")).toHaveCount(2);
+  await expect(page.getByTestId("qb-list-row")).toHaveCount(3);
   await search.fill("Q-1001");
   await expect(page.getByTestId("qb-list-row")).toHaveCount(1);
   await search.fill("Fenwick");
   await expect(page.getByTestId("qb-list")).toContainText("No quotes.");
   await search.fill("");
-  await expect(page.getByTestId("qb-list-row")).toHaveCount(2);
+  await expect(page.getByTestId("qb-list-row")).toHaveCount(4);
 });
 
 test("split E: the Sales manager's tabs also carry Approvals, and Sales sees neither", async ({ page }) => {

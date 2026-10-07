@@ -33,6 +33,8 @@ import "./quote-convert.js";
 import { CONVERT_NOTICE_EVENT } from "./_quote-convert.js";
 import "./panel-seams.js";
 import "./edit-panel.js";
+import "./related-docs-panel.js";
+import "./order-payment-panel.js";
 import "./history-panel.js";
 import "./settings-panel.js";
 import "./assist-panel.js";
@@ -50,6 +52,7 @@ import {
   SEAM_FOLLOWUPS,
   SEAM_HISTORY,
   SEAM_HOLD_EXPIRY,
+  SEAM_PAYMENT,
   SEAM_SETTINGS,
 } from "./panel-seams.js";
 import { money } from "@hardscapehouse/pos-kit/src/ported/pos-api.js";
@@ -409,7 +412,7 @@ export class QdQuoteBuilder extends LitElement {
       area.branchName = this.branchDisplayName();
     }
     for (const seam of this.renderRoot.querySelectorAll<HTMLElement & Record<string, unknown>>(
-      "qd-panel-seam, qd-quote-edit, qd-quote-assist, qd-quote-history, qd-quote-followups, qd-quote-hold-expiry, qd-quote-availability, qd-quote-guard, qd-approvals, qd-quote-settings, qd-floor-refusal",
+      "qd-panel-seam, qd-quote-edit, qd-related-docs, qd-order-payment, qd-quote-assist, qd-quote-history, qd-quote-followups, qd-quote-hold-expiry, qd-quote-availability, qd-quote-guard, qd-approvals, qd-quote-settings, qd-floor-refusal",
     )) {
       seam.quoteId = openQuoteId;
       seam.branchId = branchId;
@@ -621,7 +624,7 @@ export class QdQuoteBuilder extends LitElement {
   private reloadDetailPanels(): void {
     this.renderRoot
       ?.querySelectorAll<HTMLElement & { reload?: () => void }>(
-        "qd-quote-workarea, qd-panel-seam, qd-quote-edit, qd-quote-history, qd-quote-settings, qd-quote-assist, qd-quote-followups, qd-quote-hold-expiry, qd-quote-availability, qd-quote-guard, qd-approvals",
+        "qd-quote-workarea, qd-panel-seam, qd-quote-edit, qd-related-docs, qd-order-payment, qd-quote-history, qd-quote-settings, qd-quote-assist, qd-quote-followups, qd-quote-hold-expiry, qd-quote-availability, qd-quote-guard, qd-approvals",
       )
       .forEach((el) => el.reload?.());
   }
@@ -832,6 +835,10 @@ export class QdQuoteBuilder extends LitElement {
                    for another quote was already this way, and the list page and New Quote take that same proven path. -->
               <div class="stack" data-testid="qb-quote-panels" data-compose=${this.openQuoteId() === "" ? "true" : "false"}>
             <qd-quote-edit data-seam=${SEAM_EDIT_PANEL}></qd-quote-edit>
+            <div data-seam=${SEAM_PAYMENT} data-seam-label="Related documents and the order's payment (QD-5)">
+              <qd-related-docs></qd-related-docs>
+              <qd-order-payment></qd-order-payment>
+            </div>
             <qd-quote-assist data-seam=${SEAM_ASSIST}></qd-quote-assist>
             <qd-quote-history data-seam=${SEAM_HISTORY}></qd-quote-history>
             <qd-quote-followups data-seam=${SEAM_FOLLOWUPS}></qd-quote-followups>

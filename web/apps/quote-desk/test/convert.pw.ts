@@ -322,7 +322,7 @@ test("E the surface announces quote-converted with the order and the quote", asy
   await page.getByTestId("qc-confirm").click();
   await expect(page.getByTestId("qc-done")).toBeVisible();
   const heard = await page.evaluate(() => (window as unknown as { __converted: unknown[] }).__converted);
-  expect(heard).toEqual([{ orderId: "o-q-1003", quoteId: "q-1003" }]);
+  expect(heard).toEqual([{ orderId: "o-2002", quoteId: "q-1003" }]);
 });
 
 test("F a Sales caller whose role does not carry the convert action cannot reach the route", async ({ page, request }) => {

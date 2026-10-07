@@ -737,8 +737,7 @@ func (a quoteCounterPayer) KeyTakenTx(ctx context.Context, tx pgx.Tx, key string
 }
 
 // LockPaymentsSequenceTx binds the door's sequence order seam to the payments module's shared
-// non incrementing lock on the caller's transaction (payments/LOCK-ORDER.md), the same adapter
-// belt as the other two methods.
+// non incrementing lock on the caller's transaction, the same adapter belt as the other two methods.
 func (a quoteCounterPayer) LockPaymentsSequenceTx(ctx context.Context, tx pgx.Tx) error {
 	return a.repo.LockPaymentsSequenceTx(ctx, tx)
 }

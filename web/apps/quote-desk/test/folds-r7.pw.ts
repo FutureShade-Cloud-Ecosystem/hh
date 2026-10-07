@@ -1,7 +1,7 @@
 // Round 7 folds: the compose view and the panels, the refused create's reason, the hold expiry panel at New Quote and
 // the sign out flush's store close.
 import { expect, test, type Page } from "@playwright/test";
-import { hold, open, quiet, settle, signIn, showList } from "./switch-helpers.js";
+import { countRequests, hold, open, quiet, row, settle, signIn, showList } from "./switch-helpers.js";
 
 /** The compose page under the split-list navigation: the New quote button walks the desk to #/quotes/new. */
 async function newQuote(page: Page): Promise<void> {
@@ -43,6 +43,30 @@ test("compose draws none of the quote panels and leaves no blank gap in the deta
   expect(seen.gaps.length).toBeGreaterThan(0);
   for (const gap of seen.gaps) expect(gap, "no blank space between the boxes that do show").toBeLessThanOrEqual(14);
   await expect(page.getByTestId("qg-box")).toHaveCount(0);
+});
+
+test("an open quote renders the payment seam in the detail, and the builder's fan-out query is answered by its panels", async ({ page }) => {
+  await signIn(page, "Sales");
+  const reads = countRequests(page, /GET .*\/quotes\/q-1001\/related-documents$/);
+  await showList(page);
+  await row(page, "Q-1001").click();
+  await expect(page.getByTestId("qb-context")).toContainText("Q-1001");
+  await page.getByText("Quote detail & admin").click();
+  // The seam element sits in the detail's panel stack with its position attribute, both of its
+  // panels mounted in it, right after the edit panel that begins its read cycle.
+  const seam = page.locator('[data-seam="payment"]');
+  await expect(seam).toHaveCount(1);
+  await expect(seam.locator("qd-related-docs")).toHaveCount(1);
+  await expect(seam.locator("qd-order-payment")).toHaveCount(1);
+  await expect(page.getByTestId("rd-box")).toBeVisible();
+  // The builder's fan-out finds the seam's panels (the query is answered): a quote changed
+  // announcement re-reads the family exactly once, the cycle the edit panel began.
+  const before = reads();
+  await page.locator("qd-quote-edit").evaluate((el) =>
+    el.dispatchEvent(new CustomEvent("quote-changed", { detail: { quoteId: "q-1001" }, bubbles: true, composed: true })),
+  );
+  await settle(page);
+  expect(reads() - before).toBe(1);
 });
 
 test("an open quote draws its panels in the detail", async ({ page }) => {

@@ -36,6 +36,7 @@ import {
   staffSettings,
 } from "@hardscapehouse/api-client";
 import { convertBody, type QuoteView } from "./_quote-edit.js";
+import type { RelatedDoc } from "./_related-docs.js";
 import type { QuoteFieldChange } from "./_quote-history.js";
 import {
   readAcceptance,
@@ -426,6 +427,98 @@ function validateEditOutcome(value: unknown): EditOutcome | null {
   return { subtotalCents, totalCents, status };
 }
 
+/** A quote's document family as the client proves it: a row that cannot prove its fields refuses the whole list. */
+function readFamily(value: unknown): RelatedDoc[] | null {
+  if (!isRecord(value)) return null;
+  const items = value["items"];
+  if (!Array.isArray(items)) return null;
+  const rows: RelatedDoc[] = [];
+  for (const item of items) {
+    if (!isRecord(item)) return null;
+    const kind = stringAt(item, "kind");
+    const id = stringAt(item, "id");
+    const number = stringAt(item, "number");
+    const status = stringAt(item, "status");
+    const date = stringAt(item, "date");
+    const totalCents = integerAt(item, "total_cents");
+    if (kind === null || id === null || number === null || status === null || date === null || totalCents === null) return null;
+    rows.push({
+      kind,
+      id,
+      number,
+      status,
+      date,
+      totalCents,
+      ...(typeof item["parent_id"] === "string" ? { parentId: item["parent_id"] } : {}),
+      ...(typeof item["origin"] === "string" ? { origin: item["origin"] } : {}),
+      ...(typeof item["accept_seq"] === "number" && Number.isInteger(item["accept_seq"]) ? { acceptSeq: item["accept_seq"] } : {}),
+      ...(item["self"] === true ? { self: true } : {}),
+    });
+  }
+  return rows;
+}
+
+/** The receipt the payment door answers, field for field: a missing field refuses it rather than defaulting. */
+export interface OrderPaymentAnswer {
+  orderId: string;
+  orderNo: string;
+  invoiceId: string;
+  invoiceNo: string;
+  invoiceTotalCents: number;
+  paymentId: string;
+  paymentNo: string;
+  method: string;
+  amountCents: number;
+  receivedAt: string;
+  reference: string;
+  receivedBy: string;
+  balanceCents: number;
+  replayed: boolean;
+  converted: boolean;
+}
+
+function readPaymentAnswer(value: unknown): OrderPaymentAnswer | null {
+  if (!isRecord(value)) return null;
+  const orderId = stringAt(value, "order_id");
+  const orderNo = stringAt(value, "order_no");
+  const invoiceId = stringAt(value, "invoice_id");
+  const invoiceNo = stringAt(value, "invoice_no");
+  const invoiceTotalCents = integerAt(value, "invoice_total_cents");
+  const paymentId = stringAt(value, "payment_id");
+  const paymentNo = stringAt(value, "payment_no");
+  const method = stringAt(value, "method");
+  const amountCents = integerAt(value, "amount_cents");
+  const receivedAt = stringAt(value, "received_at");
+  const receivedBy = stringAt(value, "received_by");
+  const balanceCents = integerAt(value, "balance_cents");
+  const replayed = booleanAt(value, "replayed");
+  const converted = booleanAt(value, "converted");
+  if (
+    orderId === null || orderNo === null || invoiceId === null || invoiceNo === null || invoiceTotalCents === null ||
+    paymentId === null || paymentNo === null || method === null || amountCents === null || receivedAt === null ||
+    receivedBy === null || balanceCents === null || replayed === null || converted === null
+  ) {
+    return null;
+  }
+  return {
+    orderId,
+    orderNo,
+    invoiceId,
+    invoiceNo,
+    invoiceTotalCents,
+    paymentId,
+    paymentNo,
+    method,
+    amountCents,
+    receivedAt,
+    reference: typeof value["reference"] === "string" ? value["reference"] : "",
+    receivedBy,
+    balanceCents,
+    replayed,
+    converted,
+  };
+}
+
 const MAX_APPROVAL_PAGES = 40;
 
 /** The account facts the standing step reads off the customer search. */
@@ -434,17 +527,6 @@ export interface StandingRead {
   paymentTermsDays: number;
   creditLimitCents: number;
   openBalanceCents: number;
-}
-
-/** The payment door's answer: the payment, the balance now on the invoice, and the order (made by this very action when converted). */
-export interface OrderPaymentAnswer {
-  paymentNo: string;
-  amountCents: number;
-  balanceCents: number;
-  orderId: string;
-  orderNo: string;
-  converted: boolean;
-  replayed: boolean;
 }
 
 /** The counter's account standing read: the past due position and the hold flag, as the server answers them. */
@@ -717,6 +799,23 @@ export class QdClient {
   }
 
   /**
+   * The document family of a quote or of one of its orders: the quote, the
+   * order or orders it became and their invoices, as normalized rows. Asking
+   * from either end returns the same family; the row the caller asked from
+   * carries self. One unreadable row refuses the whole list rather than show
+   * it short.
+   */
+  async relatedDocuments(id: string, end: "quote" | "order" = "quote"): Promise<Result<RelatedDoc[]>> {
+    const result =
+      end === "order"
+        ? await staffQuote.quoteOrderRelatedDocuments(this.#client, id)
+        : await staffQuote.quoteQuoteRelatedDocuments(this.#client, id);
+    if (!result.ok) return result;
+    const rows = readFamily(result.value);
+    return rows === null ? err("the related documents list is not readable") : ok(rows);
+  }
+
+  /**
    * The guided surface's conversion: the chosen fulfilment rides explicitly, both of the contract's
    * two values (the bare button's convertBody sends only Will-call and leaves Pickup to the default).
    */
@@ -748,17 +847,8 @@ export class QdClient {
       operationId: "quoteTakeOrderPayment",
     });
     if (!result.ok) return result;
-    const record = result.value;
-    if (!isRecord(record)) return err("the payment answer is not readable");
-    const paymentNo = stringAt(record, "payment_no");
-    const amountCents = integerAt(record, "amount_cents");
-    const balanceCents = integerAt(record, "balance_cents");
-    const orderId = stringAt(record, "order_id");
-    const orderNo = stringAt(record, "order_no");
-    if (paymentNo === null || amountCents === null || balanceCents === null || orderId === null || orderNo === null) {
-      return err("the payment answer is missing its figures");
-    }
-    return ok({ paymentNo, amountCents, balanceCents, orderId, orderNo, converted: record["converted"] === true, replayed: record["replayed"] === true });
+    const answer = readPaymentAnswer(result.value);
+    return answer === null ? err("the payment answer is not readable") : ok(answer);
   }
 
   /**

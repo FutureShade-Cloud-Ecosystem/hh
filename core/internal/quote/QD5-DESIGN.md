@@ -122,15 +122,40 @@ The counter's invoice header carries a source marker (`metadata.source = COUNTER
   document: the group writer finds the counter's document and links its groups to it, the counter finds
   the group's invoice and answers its 409. The race is forced in tests by a trigger that sleeps inside
   one side's transaction while the other is issued, both ways round.
-- Lock order, so the lock cannot deadlock: the one money lock order every payments writer follows is
-  written once in `payments/LOCK-ORDER.md` and its writers table carries this door with the rest, so
-  this note defers to it instead of keeping its own copy. In the door's own words: the quote's
-  advisory lock first (only the counter takes it), then, in a credit order's payment, the order row,
-  then the payments sequence row through `payments.LockPaymentsSequenceTx` (which advances nothing)
-  before the invoice is raised, then the settle's invoice and payment rows. The proof is
-  `cmd/core/qd5_seqorder_integration_test.go`: the door beside the real register settle, the door's
-  window stretched open inside its own transaction, deadlocked (40P01) before the fix at pool 4 and
-  16 and both answer with it.
+- Lock order, so the lock cannot deadlock: the counter takes the quote's advisory lock first (only the
+  counter takes it), then, in a credit order's payment, the order row, then the payments scope
+  sequence row, then the invoices scope sequence and the invoice and payment rows. The payments row is
+  taken through the payments module's shared non incrementing lock (`payments.LockPaymentsSequenceTx`
+  on the door's transaction, the one written order in `payments/LOCK-ORDER.md`, which is the
+  authority for this paragraph) BEFORE the invoice is raised, and the settle's numbering later in the
+  same transaction re-takes a lock that transaction already holds and draws the feed number once (the
+  lock here does not advance the counter, so no number is spent on the door alone): the door once
+  raised the invoice (the invoices row) and then settled (the payments row), the opposite of every
+  writer that both bills and settles, and the review reproduced the 40P01 that follows between the
+  door and a real register settle at pool 4 and 16, on an action whose card charge has already
+  happened. Every writer that takes both scope sequence rows now takes the payments one first:
+
+  | writer | payments sequence row | invoices sequence row | order |
+  |---|---|---|---|
+  | the counter's door (this action) | `LockPaymentsSequenceTx` before the raise, then the settle's own draw | the agreed invoice's raise, then the settle's balance move | payments then invoices (this fold; the raise alone took invoices first) |
+  | the AR register settle (`billing`'s RecordPayment into `payments`' settleReceipt) | the payment header insert | the invoice balance move | payments then invoices |
+  | the payments writer (`payments`' settle, PayWithStamps and the counter receipt) | the payment header insert | the invoice balance move | payments then invoices |
+  | the POS ring (the sale transaction: the till tender, then the ring's invoice) | the till payment insert | the ring invoice insert | payments then invoices |
+  | the billing group and whole order writers (`invoice_writer.go`) | never | every invoice they raise | invoices only, no payments row to hold or wait on |
+  | the till refund (RefundTender) | the refund payment insert | never | payments only |
+  | the till NSF reversal (MarkNSF) | never (the payment row is updated, none inserted) | the invoice re-open | invoices only |
+
+  The group writer takes the order row first, then the same invoices scope sequence and invoice rows.
+  Order edits, reservations and shipment groups already take the order
+  row lock first and then the rows below it. For a cash customer the conversion runs before the lock
+  and holds stock rows, but the order row it then locks is its own, written in the same transaction
+  and visible to no one else, so no other session can be waiting on it. No path takes an invoice or a
+  payment row and then waits for an order row, no writer holds the invoices sequence row and then
+  waits for the payments one, and a writer that touches one sequence row only can never hold the
+  other, so there is no cycle with the advisory lock, the conversion's locks or between the two
+  sequence rows. The proof is `cmd/core/qd5_seqorder_integration_test.go`: the door beside the real
+  register settle, the door's window stretched open inside its own transaction, deadlocked (40P01)
+  before the fix at pool 4 and 16 and both answer with it.
 - The manager's group invoice route reads the plan before the writer takes the order lock, so its group
   set can overlap a group a call ahead of it billed while it waited. After the lock the writer therefore
   decides against what committed: the same set under the same key answers that call's document, and a

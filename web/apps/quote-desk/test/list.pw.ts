@@ -23,13 +23,15 @@ async function signIn(page: Page, role = "Sales"): Promise<void> {
 
 test("the list answers the caller's own quotes and the status tabs reach the server", async ({ page }) => {
   await signIn(page);
-  // The seeded world: two quotes the Sales login owns (Draft and Accepted),
-  // and one Sent quote the manager owns. A Work caller's list defaults to
-  // its own: the manager's quote is not in it.
+  // The seeded world: four quotes the Sales login owns (Draft, Accepted,
+  // Accepted of the cash customer, Converted), and one Sent quote the manager
+  // owns. A Work caller's list defaults to its own: the manager's quote is
+  // not in it.
   const rows = page.getByTestId("qb-list-row");
-  await expect(rows).toHaveCount(2);
+  await expect(rows).toHaveCount(4);
   await expect(page.getByTestId("qb-list")).toContainText("Draft");
   await expect(page.getByTestId("qb-list")).toContainText("Accepted");
+  await expect(page.getByTestId("qb-list")).toContainText("Converted");
   await expect(page.getByTestId("qb-list")).not.toContainText("Fenwick");
 
   // The status tabs are the segmented control: Draft alone answers one row.
@@ -42,21 +44,21 @@ test("the list answers the caller's own quotes and the status tabs reach the ser
   await tabs.getByRole("button", { name: "Sent", exact: true }).click();
   await expect(page.getByTestId("qb-list")).toContainText("No quotes.");
 
-  // All brings the caller's own two back.
+  // All brings the caller's own four back.
   await tabs.getByRole("button", { name: "All", exact: true }).click();
-  await expect(rows).toHaveCount(2);
+  await expect(rows).toHaveCount(4);
 });
 
 test("the Sales manager's list reaches every quote in its branch", async ({ page }) => {
   await signIn(page, "Sales manager");
   const rows = page.getByTestId("qb-list-row");
-  await expect(rows).toHaveCount(3);
+  await expect(rows).toHaveCount(5);
   await expect(page.getByTestId("qb-list")).toContainText("Fenwick");
 });
 
 test("opening a row mounts it in the work area", async ({ page }) => {
   await signIn(page);
-  await page.getByTestId("qb-list-row").filter({ hasText: "Accepted" }).click();
+  await page.getByTestId("qb-list-row").filter({ hasText: "Q-1003" }).click();
   await expect(page).toHaveURL(/#\/quotes\/[^/]+$/);
   await expect(page.getByTestId("qb-title")).toHaveText("Quote");
   // The header's context names the open quote's number.

@@ -128,8 +128,8 @@
   {
     "id": "app-signout-says-timeout",
     "file": "src/app-root.ts",
-    "find": "this.#message = sent ? null :",
-    "replace": "this.#message = true ? null :",
+    "find": "const lines = sent ? notes : [timeoutLine, ...notes];",
+    "replace": "const lines = true ? notes : [timeoutLine, ...notes];",
     "test": "P2-2 sign out is bounded"
   },
   {
@@ -1243,6 +1243,194 @@
     "test": "P3 a link made for the quote left by the work area is said"
   },
   {
+    "id": "rd-read-guard",
+    "file": "src/related-docs-panel.ts",
+    "find": "const result = await ctx.guardedRead(seq, familyShare.read(client, ctx.id, this.kind));\n    if (result === undefined) return;",
+    "replace": "const result = await familyShare.read(client, ctx.id, this.kind);",
+    "test": "guard related documents read:"
+  },
+  {
+    "id": "rd-read-order",
+    "file": "src/related-docs-panel.ts",
+    "find": "await ctx.guardedRead(seq, familyShare.read(client, ctx.id, this.kind))",
+    "replace": "await ctx.guarded(familyShare.read(client, ctx.id, this.kind))",
+    "test": "guard related documents order:"
+  },
+  {
+    "id": "rd-load-stale",
+    "file": "src/related-docs-panel.ts",
+    "find": "    // A cancelled context issues no more requests: the panel left the page (sign out) and a read of its is not this session's.\n    if (ctx.stale) return;\n",
+    "replace": "",
+    "test": "A P2-1 a panel that has left the page reads nothing"
+  },
+  {
+    "id": "op-read-guard",
+    "file": "src/order-payment-panel.ts",
+    "find": "const answers = await ctx.guardedRead(seq, Promise.all([client.readQuote(ctx.id), familyShare.read(client, ctx.id, \"quote\")]));\n    if (answers === undefined) return false;",
+    "replace": "const answers = await Promise.all([client.readQuote(ctx.id), familyShare.read(client, ctx.id, \"quote\")]);",
+    "test": "guard payment read:"
+  },
+  {
+    "id": "op-read-order",
+    "file": "src/order-payment-panel.ts",
+    "find": "await ctx.guardedRead(seq, Promise.all([client.readQuote(ctx.id), familyShare.read(client, ctx.id, \"quote\")]))",
+    "replace": "await ctx.guarded(Promise.all([client.readQuote(ctx.id), familyShare.read(client, ctx.id, \"quote\")]))",
+    "test": "guard payment read order:"
+  },
+  {
+    "id": "op-load-stale",
+    "file": "src/order-payment-panel.ts",
+    "find": "    // A cancelled context issues no more requests: the panel left the page (sign out) and a read of its is not this session's.\n    if (ctx.stale) return false;\n",
+    "replace": "",
+    "test": "A P2-1 a panel that has left the page reads nothing"
+  },
+  {
+    "id": "op-pay-answer",
+    "file": "src/order-payment-panel.ts",
+    "find": "    const result = await ctx.guarded(posting, (late) => this.lateAnswer(ctx, late));",
+    "replace": "    const result = await posting;",
+    "test": "a payment that lands after the person left"
+  },
+  {
+    "id": "op-late-announce",
+    "file": "src/order-payment-panel.ts",
+    "find": "(late) => this.lateAnswer(ctx, late));",
+    "replace": "undefined);",
+    "test": "a payment that lands after the person left"
+  },
+  {
+    "id": "op-late-note",
+    "file": "src/order-payment-panel.ts",
+    "find": "      this.lateNotes.set(ctx.id, LATE_PAYMENT_NOTE);\n      this.announceChangedFor(ctx);",
+    "replace": "      this.announceChangedFor(ctx);",
+    "test": "a payment that lands after the person left"
+  },
+  {
+    "id": "op-kept-restore",
+    "file": "src/order-payment-panel.ts",
+    "find": "    this.attempt = rec?.attempt ?? null;",
+    "replace": "    this.attempt = null as PaymentAttempt | null;",
+    "test": "kept for its quote across switches"
+  },
+  {
+    "id": "op-kept-busy",
+    "file": "src/order-payment-panel.ts",
+    "find": "    this.busy = this.attempt?.phase === \"in-flight\";\n    this.unknown = this.attempt?.phase === \"not-known\" ? unknownOutcomeNote() : \"\";",
+    "replace": "    this.busy = false;\n    this.unknown = this.attempt?.phase === \"not-known\" ? unknownOutcomeNote() : \"\";",
+    "test": "keeps the controls held on return"
+  },
+  {
+    "id": "op-late-kept-record",
+    "file": "src/order-payment-panel.ts",
+    "find": "      rec.attempt = null;\n      rec.receipt = late.value;\n      rec.receiptEarlier = false;\n      rec.refusal = \"\";\n      rec.amountRaw = \"\";\n      rec.reference = \"\";\n      this.lateNotes.set(ctx.id, LATE_PAYMENT_NOTE);",
+    "replace": "      rec.attempt = null;\n      this.lateNotes.set(ctx.id, LATE_PAYMENT_NOTE);",
+    "test": "keeps the controls held on return"
+  },
+  {
+    "id": "op-late-kept-attempt",
+    "file": "src/order-payment-panel.ts",
+    "find": "    } else if (isUnknownOutcome(late.status)) {\n      this.book.mark(ctx.id, \"not-known\");\n      const rec = this.record(ctx.id);\n      rec.attempt = this.book.attempt(ctx.id);\n      rec.refusal = \"\";",
+    "replace": "    } else if (isUnknownOutcome(late.status)) {",
+    "test": "recorded for its own quote only"
+  },
+  {
+    "id": "op-seam-mounted",
+    "file": "src/quote-builder.ts",
+    "find": "            <div data-seam=${SEAM_PAYMENT} data-seam-label=\"Related documents and the order's payment (QD-5)\">\n              <qd-related-docs></qd-related-docs>\n              <qd-order-payment></qd-order-payment>\n            </div>",
+    "replace": "            ${this.openQuoteId() === \"\"\n              ? nothing\n              : html`<div data-seam=${SEAM_PAYMENT} data-seam-label=\"Related documents and the order's payment (QD-5)\">\n                  <qd-related-docs></qd-related-docs>\n                  <qd-order-payment></qd-order-payment>\n                </div>`}",
+    "test": "New Quote keeps the payment seam"
+  },
+  {
+    "id": "op-held-lock",
+    "file": "src/order-payment-panel.ts",
+    "find": "    const phase = this.attempt?.phase;\n    return this.busy || phase === \"not-known\" || phase === \"held\";",
+    "replace": "    const phase = this.attempt?.phase;\n    return this.busy;",
+    "test": "cannot become a 5 card"
+  },
+  {
+    "id": "op-held-mark",
+    "file": "src/order-payment-panel.ts",
+    "find": "    this.marked(ctx.id, isDifferentPaymentRefusal(result.error) ? \"held\" : \"kept\", words);",
+    "replace": "    this.marked(ctx.id, \"kept\", words);",
+    "test": "holds the attempt instead of looping"
+  },
+  {
+    "id": "op-start-new-reread",
+    "file": "src/order-payment-panel.ts",
+    "find": "    const landed = await this.load(\"take-start-new\");\n    if (!landed || this.quoteId !== ctx.id) return;",
+    "replace": "    if (this.quoteId !== ctx.id) return;",
+    "test": "Start a new payment unlocks only over a read that landed"
+  },
+  {
+    "id": "op-over-balance",
+    "file": "src/order-payment-panel.ts",
+    "find": "      const balance = this.paymentBalance;\n      if (balance !== null && cents > balance) {\n        this.error = `The payment is more than the balance of ${moneyWord(balance)}`;\n        this.unknown = \"\";\n        return;\n      }\n",
+    "replace": "",
+    "test": "refused before anything is sent"
+  },
+  {
+    "id": "op-amount-comma",
+    "file": "src/_order-payment.ts",
+    "find": "  if (/[,\\s]/.test(fraction)) return COMMA_WORDS;",
+    "replace": "  if (false) return COMMA_WORDS;",
+    "test": "a decimal comma or a loose space is refused with the words that teach the point",
+    "runner": "node",
+    "testFile": "test/order-payment.test.mjs"
+  },
+  {
+    "id": "op-amount-cap",
+    "file": "src/_order-payment.ts",
+    "find": "  if (cents > Number.MAX_SAFE_INTEGER) return { cents: null, problem: OVERSAFE_WORDS };",
+    "replace": "",
+    "test": "an amount above Number.MAX_SAFE_INTEGER cents is refused",
+    "runner": "node",
+    "testFile": "test/order-payment.test.mjs"
+  },
+  {
+    "id": "op-preview",
+    "file": "src/order-payment-panel.ts",
+    "find": "    const parsed = parseTypedAmount(this.amountRaw);\n    return parsed.cents === null ? \"\" : `Taking ${moneyWord(parsed.cents)} by ${tenderWord(this.tender)}`;",
+    "replace": "    const parsed = parseTypedAmount(this.amountRaw);\n    return \"\";",
+    "test": "the parsed figure is shown beside the button"
+  },
+  {
+    "id": "op-tile-grid",
+    "file": "src/order-payment-panel.ts",
+    "find": "      .tenders {\n        display: grid;\n        grid-template-columns: 1fr 1fr;\n        gap: 8px;\n        margin-top: 8px;\n      }",
+    "replace": "      .tenders {\n        display: grid;\n        grid-template-columns: repeat(4, 1fr);\n        gap: 8px;\n        margin-top: 8px;\n      }",
+    "test": "the payment form follows the till's tile language"
+  },
+  {
+    "id": "op-paid-state",
+    "file": "src/order-payment-panel.ts",
+    "find": "    return this.loaded && this.readError === \"\" && this.paymentBalance === 0 && !this.attemptOpen;",
+    "replace": "    return false;",
+    "test": "shows a Paid in full state in place of the form"
+  },
+  {
+    "id": "op-receipt-earlier",
+    "file": "src/order-payment-panel.ts",
+    "find": "    if (this.receipt !== null && !this.receiptEarlier) {\n      this.receiptEarlier = true;\n      this.record(ctx.id).receiptEarlier = true;\n    }\n",
+    "replace": "",
+    "test": "marked as that, never as the result of a refusal"
+  },
+  {
+    "id": "op-403-words",
+    "file": "src/_order-payment.ts",
+    "find": "    if (body !== \"\" && body !== \"Forbidden\") return spokenRefusal(quoteErrorMessage(403, body, \"take this payment\"));\n    return PAYMENT_ROLE_WORDS;",
+    "replace": "    if (body !== \"\" && body !== \"Forbidden\") return spokenRefusal(quoteErrorMessage(403, body, \"take this payment\"));\n    return spokenRefusal(quoteErrorMessage(403, \"\", \"take this payment\"));",
+    "test": "a payment's role refusal names what to do",
+    "runner": "node",
+    "testFile": "test/order-payment.test.mjs"
+  },
+  {
+    "id": "op-unread-form",
+    "file": "src/order-payment-panel.ts",
+    "find": "    if (this.readError !== \"\") {\n      return html`\n        <fieldset data-testid=\"op-box\">\n          <legend>Take payment at the counter</legend>\n          <p class=\"err\" role=\"alert\" data-testid=\"op-unread\">${this.readError}</p>\n          <div class=\"row\">\n            <button type=\"button\" data-action=\"retry-read\" data-testid=\"op-retry-read\">Try the read again</button>\n          </div>\n        </fieldset>\n      `;\n    }\n",
+    "replace": "",
+    "test": "does not render over an unread family"
+  },
+  {
     "id": "ws-serialize",
     "file": "src/workspace-store.ts",
     "find": "    if (this.#inFlight !== null) return this.#inFlight;\n",
@@ -1542,6 +1730,78 @@
     "find": "    if (fresh === undefined || seq !== this.editSeq) return;",
     "replace": "    if (fresh === undefined) return;",
     "test": "two quick Edit clicks on the quantity breaks tab open the later one"
+  },
+  {
+    "id": "op-signout-kept",
+    "file": "src/order-payment-panel.ts",
+    "find": "    for (const { quoteId, attempt } of this.book.unsettled()) {\n      keepLeftoverAttempt(quoteId, attempt);\n      detail.notes = [...(detail.notes ?? []), leftoverAttemptNote(this.quoteNoOf(quoteId), attempt)];\n    }",
+    "replace": "",
+    "test": "a payment still out at sign out is kept as a known attempt for the next sign in, so it cannot be taken twice"
+  },
+  {
+    "id": "op-signout-wait",
+    "file": "src/order-payment-panel.ts",
+    "find": "this.posting.set(ctx.id, posting);",
+    "replace": "",
+    "test": "sign out waits for a payment that lands inside the bound and says on the entry page that it was taken"
+  },
+  {
+    "id": "op-retry-mark",
+    "file": "src/order-payment-panel.ts",
+    "find": "      this.book.mark(ctx.id, \"in-flight\");\n      const inflight = this.book.attempt(ctx.id);\n      if (inflight !== null) {\n        this.attempt = inflight;\n        this.record(ctx.id).attempt = inflight;\n      }",
+    "replace": "",
+    "test": "a retry is marked in flight: returning to the quote while it is out holds the button, so two retries never race"
+  },
+  {
+    "id": "op-paid-known",
+    "file": "src/order-payment-panel.ts",
+    "find": "return this.loaded && this.readError === \"\" && this.paymentBalance === 0 && !this.attemptOpen;",
+    "replace": "return this.loaded && this.readError === \"\" && this.paymentBalance === 0;",
+    "test": "Paid in full is not said beside an attempt whose outcome is not known: the owed nothing is said with the attempt's status, and the retry stays offered"
+  },
+  {
+    "id": "op-amount-junk",
+    "file": "src/_order-payment.ts",
+    "find": "  if (/[^0-9, ]/.test(whole)) return NOT_NUMBER_WORDS;",
+    "replace": "  if (false) return NOT_NUMBER_WORDS;",
+    "test": "lowercase letters and any non digit, non separator input are refused in the desk's own words, never sent",
+    "runner": "node",
+    "testFile": "test/order-payment.test.mjs"
+  },
+  {
+    "id": "op-amount-mixed",
+    "file": "src/_order-payment.ts",
+    "find": "  if (comma && space) return GROUPING_WORDS;",
+    "replace": "  if (false) return GROUPING_WORDS;",
+    "test": "a mixed grouping is rejected on input with the grouping words, never sent"
+  },
+  {
+    "id": "op-stale-balance",
+    "file": "src/order-payment-panel.ts",
+    "find": "    this.marked(ctx.id, isDifferentPaymentRefusal(result.error) ? \"held\" : \"kept\", words);\n    // A definite refusal is evidence the server's state moved under the desk (a payment or a\n    // credit landed elsewhere, a balance changed): the family is read again, so the figures say\n    // what the server said at the latest read, and an invoice that is no longer owed leaves the\n    // form. The read is the panel's guarded one (its own row), never applied to another quote, and\n    // it begins its own share cycle at the read site, so the re-read never joins the cycle's cached\n    // family answer (the pre refusal truth the refusal itself says has moved).\n    void this.load(\"take-refusal\");",
+    "replace": "    this.marked(ctx.id, isDifferentPaymentRefusal(result.error) ? \"held\" : \"kept\", words);",
+    "test": "a credit that moved the order to Paid while the desk held the old Part paid balance is caught: a refusal re-reads and the panel shows Paid"
+  },
+  {
+    "id": "rd-share-single",
+    "file": "src/_related-docs.ts",
+    "find": "    if (this.live !== null && this.quoteId === quoteId) return this.live;",
+    "replace": "    if (quoteId === \"\" && this.live !== null) return this.live;",
+    "test": "the seam makes one related documents read per read cycle, shared by the family and the payment panels"
+  },
+  {
+    "id": "rd-share-stale",
+    "file": "src/_related-docs.ts",
+    "find": "  beginCycle(quoteId: string = \"\", reason: FamilyTakeReason | \"\" = \"\"): void {\n    this.generation += 1;\n    this.quoteId = \"\";\n    this.live = null;\n  }",
+    "replace": "  beginCycle(quoteId: string = \"\", reason: FamilyTakeReason | \"\" = \"\"): void {\n    this.generation += 1;\n  }",
+    "test": "the seam makes one related documents read per read cycle, shared by the family and the payment panels"
+  },
+  {
+    "id": "rd-take-fresh",
+    "file": "src/order-payment-panel.ts",
+    "find": "    if (reason !== undefined) familyShare.beginCycle(ctx.id, reason);\n",
+    "replace": "",
+    "test": "the take path's re-read is its own share cycle"
   },
   {
     "id": "app-switch-role-ends-session",

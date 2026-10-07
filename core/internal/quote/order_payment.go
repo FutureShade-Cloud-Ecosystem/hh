@@ -95,13 +95,14 @@ type CounterPayer interface {
 	// KeyTakenTx says whether a payment already holds the key, so the door can tell a replay, which it
 	// answers with the stored payment, from a first payment, which it holds to the invoice's balance.
 	KeyTakenTx(ctx context.Context, tx pgx.Tx, key string) (bool, error)
-	// LockPaymentsSequenceTx takes the payments sequence row lock on the door's transaction, without
+	// LockPaymentsSequenceTx takes the payments sequence row lock on the door's transaction WITHOUT
 	// advancing it: the payments module owns the mechanism (payments.LockPaymentsSequenceTx, the one
-	// lock order in payments/LOCK-ORDER.md), and the door takes it BEFORE it raises anything so that
-	// it holds the payments sequence row before the invoices one, the one order every writer that
-	// both bills and settles follows, and a settle beside the door queues behind it instead of
+	// written order in payments/LOCK-ORDER.md), and the door takes it BEFORE it raises anything so
+	// that it holds the payments sequence row before the invoices one, the one order every writer
+	// that both bills and settles follows, and a settle beside the door queues behind it instead of
 	// deadlocking with it on the two rows (40P01, an aborted counter action whose card charge already
-	// happened).
+	// happened). The lock does not advance the counter, so no feed number is drawn here; the settle's
+	// own numbering later in the same transaction draws it once.
 	LockPaymentsSequenceTx(ctx context.Context, tx pgx.Tx) error
 	TakePaymentTx(ctx context.Context, tx pgx.Tx, in CounterReceiptInput) (CounterReceipt, error)
 }
@@ -329,8 +330,10 @@ func (s *StaffService) takeOrderPaymentTx(ctx context.Context, tx pgx.Tx, ps ord
 	// running beside it queues behind this transaction on the payments row instead of holding it
 	// while this action holds the invoices row: the two rows in opposite orders is the 40P01 the
 	// review reproduced, and the side Postgres aborts here is an action whose card charge has
-	// already happened. The lock is the payments module's shared one, which advances nothing, so the
-	// settle's own draw later in this transaction is still the one feed number this action uses.
+	// already happened. The one order and its writers are written in payments/LOCK-ORDER.md; the
+	// lock is the payments module's shared non incrementing one, so the counter is not advanced
+	// here and the settle's own numbering later in this transaction re-takes a lock it already
+	// holds and draws the number once.
 	if err := s.payer.LockPaymentsSequenceTx(ctx, tx); err != nil {
 		return OrderPaymentResult{}, err
 	}
