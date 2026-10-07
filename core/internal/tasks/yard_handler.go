@@ -26,6 +26,7 @@ import (
 //	GET  /api/v1/yard/picks/{id}                      one pick: task + ticket + full shortage history
 //	POST /api/v1/yard/picks/{id}/stage                IN_PROGRESS → STAGED (+ counter EVENT)
 //	PUT  /api/v1/yard/picks/{id}/lines                record what was ACTUALLY pulled, per line (0187)
+//	PUT  /api/v1/yard/picks/{id}/skids                record or change the order's skid count, with a reason (0366)
 //	POST /api/v1/yard/picks/{id}/shortages            report a shortage (+ counter EVENT)
 //	POST /api/v1/yard/picks/{id}/shortages/{sid}/resolve   clear one (+ counter EVENT)
 func (h *Handler) RegisterYardRoutes(r httpx.Registrar, g *guards.Guards) {
@@ -34,6 +35,7 @@ func (h *Handler) RegisterYardRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/yard/picks/{id}", g.RequireStaff(h.staff(h.pickDetail)))
 	r.Handle("POST /api/v1/yard/picks/{id}/stage", g.RequireStaff(h.staff(h.stage)))
 	r.Handle("PUT /api/v1/yard/picks/{id}/lines", g.RequireStaff(h.staff(h.recordPick)))
+	r.Handle("PUT /api/v1/yard/picks/{id}/skids", g.RequireStaff(h.staff(h.recordSkids)))
 	r.Handle("POST /api/v1/yard/picks/{id}/shortages", g.RequireStaff(h.staff(h.reportShortage)))
 	r.Handle("POST /api/v1/yard/picks/{id}/shortages/{sid}/resolve", g.RequireStaff(h.staff(h.resolveShortage)))
 }
@@ -212,6 +214,46 @@ func (h *Handler) recordPick(w http.ResponseWriter, r *http.Request, caller guar
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": picked})
 }
 
+type recordSkidsRequest struct {
+	SkidCount *int   `json:"skid_count"`
+	Reason    string `json:"reason"`
+	Note      string `json:"note"`
+}
+
+type recordSkidsResponse struct {
+	SkidCount            int    `json:"skid_count"`
+	PreviousSkidCount    *int   `json:"previous_skid_count"`
+	DepositCents         int64  `json:"deposit_cents"`
+	PreviousDepositCents int64  `json:"previous_deposit_cents"`
+	Changed              bool   `json:"changed"`
+	OrderNo              string `json:"order_no"`
+}
+
+// recordSkids records or changes the order's skid count with a reason. PUT, because the count sent
+// replaces the recorded one. The actor is the verified staff caller, never the body.
+func (h *Handler) recordSkids(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var req recordSkidsRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.SkidCount == nil {
+		httpx.Error(w, http.StatusBadRequest, "skid_count is required, zero is an answer")
+		return
+	}
+	res, err := h.svc.RecordSkids(r.Context(), SkidInput{
+		TaskID: r.PathValue("id"), ActorID: identity.StaffUserIDFromContext(r.Context()),
+		SkidCount: *req.SkidCount, Reason: req.Reason, Note: req.Note,
+	})
+	if err != nil {
+		h.writeYardErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, recordSkidsResponse{
+		SkidCount: res.CountAfter, PreviousSkidCount: res.CountBefore, DepositCents: res.DepositAfterCents,
+		PreviousDepositCents: res.DepositBeforeCents, Changed: res.Changed, OrderNo: res.Order.OrderNo,
+	})
+}
+
 type stageRequest struct {
 	Location string `json:"location"`
 	Ref      string `json:"ref"`  // optional; derived when blank
@@ -301,6 +343,8 @@ func (h *Handler) writeYardErr(w http.ResponseWriter, r *http.Request, err error
 		httpx.Error(w, http.StatusServiceUnavailable, "pick source not configured")
 	case errors.Is(err, ErrShortageNotFound):
 		httpx.Error(w, http.StatusNotFound, "shortage not found")
+	case errors.Is(err, ErrYardOrderUnwired):
+		httpx.Error(w, http.StatusServiceUnavailable, "yard order changes not configured")
 	case errors.Is(err, ErrAboveOrdered):
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ErrOrderRefused):

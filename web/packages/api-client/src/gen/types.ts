@@ -3865,6 +3865,19 @@ export type TaskRecordPickLine = {
 export type TaskRecordPickRequest = {
   lines: TaskRecordPickLine[];
 };
+export type TaskRecordSkidsRequest = {
+  skid_count: number;
+  reason: "CONDENSED_SKIDS" | "DAMAGED" | "NOT_IN_YARD" | "COUNT_CORRECTION" | "OTHER";
+  note?: string;
+};
+export type TaskRecordSkidsResult = {
+  skid_count: number;
+  previous_skid_count: number | null;
+  deposit_cents: number;
+  previous_deposit_cents: number;
+  changed: boolean;
+  order_no: string;
+};
 export type TaskRecordPickResult = {
   items: TaskPickedLine[];
 };

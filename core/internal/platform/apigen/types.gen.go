@@ -4545,6 +4545,21 @@ type TaskRecordPickRequest struct {
 	Lines []TaskRecordPickLine `json:"lines"`
 }
 
+type TaskRecordSkidsRequest struct {
+	SkidCount int32   `json:"skid_count"`
+	Reason    string  `json:"reason"`
+	Note      *string `json:"note,omitempty"`
+}
+
+type TaskRecordSkidsResult struct {
+	SkidCount            int32  `json:"skid_count"`
+	PreviousSkidCount    *int32 `json:"previous_skid_count"`
+	DepositCents         int64  `json:"deposit_cents"`
+	PreviousDepositCents int64  `json:"previous_deposit_cents"`
+	Changed              bool   `json:"changed"`
+	OrderNo              string `json:"order_no"`
+}
+
 type TaskRecordPickResult struct {
 	Items []TaskPickedLine `json:"items"`
 }

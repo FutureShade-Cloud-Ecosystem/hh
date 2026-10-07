@@ -13958,6 +13958,44 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/yard/picks/{id}/skids:
+    put:
+      operationId: yardRecordSkids
+      tags:
+        - staff-tasks
+      summary: Record or change the skid count on the pick's order, with a reason
+      description: PUT replaces the order's recorded skid count with the count sent. A reason from the same list as a short pick is required on every change; OTHER also needs a note. The same count again is not a change (changed is false). The skid deposit that follows the count is recorded, not billed; the response carries it before and after. Refused with 409 when the order's status cannot take it.
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - yard-pick
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskRecordSkidsRequest"
+      responses:
+        "200":
+          description: The recorded skid count
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskRecordSkidsResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/yard/picks/{id}/shortages:
     post:
       operationId: yardReportShortage
@@ -38958,6 +38996,57 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/TaskRecordPickLine"
+    TaskRecordSkidsRequest:
+      type: object
+      required:
+        - skid_count
+        - reason
+      properties:
+        skid_count:
+          type: integer
+          format: int32
+          minimum: 0
+          description: The skids the order leaves on; zero is an answer
+        reason:
+          type: string
+          enum:
+            - CONDENSED_SKIDS
+            - DAMAGED
+            - NOT_IN_YARD
+            - COUNT_CORRECTION
+            - OTHER
+        note:
+          type: string
+          maxLength: 400
+          description: Required when reason is OTHER
+    TaskRecordSkidsResult:
+      type: object
+      required:
+        - skid_count
+        - previous_skid_count
+        - deposit_cents
+        - previous_deposit_cents
+        - changed
+        - order_no
+      properties:
+        skid_count:
+          type: integer
+          format: int32
+        previous_skid_count:
+          type:
+            - integer
+            - "null"
+          format: int32
+        deposit_cents:
+          type: integer
+          format: int64
+        previous_deposit_cents:
+          type: integer
+          format: int64
+        changed:
+          type: boolean
+        order_no:
+          type: string
     TaskRecordPickResult:
       type: object
       required:

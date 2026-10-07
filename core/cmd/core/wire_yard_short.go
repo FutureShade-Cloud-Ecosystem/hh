@@ -61,3 +61,17 @@ func (a invoiceStandingAdapter) InvoiceStanding(ctx context.Context, orderID str
 	}
 	return order.InvoiceStanding{Found: found, InvoiceNo: no, TotalCents: total, PaidCents: paid}, nil
 }
+
+// RecordSkids satisfies tasks.YardOrderChanges over order.Service.RecordYardSkids.
+func (a yardOrderAdapter) RecordSkids(ctx context.Context, in tasks.YardSkidChange) (tasks.YardSkidResult, error) {
+	out, err := a.svc.RecordYardSkids(ctx, order.YardSkidInput{
+		OrderID: in.OrderID, ActorID: in.ActorID, SkidCount: in.SkidCount, Reason: in.Reason, Note: in.Note,
+	})
+	if err != nil {
+		return tasks.YardSkidResult{}, yardOrderRefusal(err)
+	}
+	return tasks.YardSkidResult{
+		Order: tasks.YardOrderFacts(out.Order), CountBefore: out.CountBefore, CountAfter: out.CountAfter,
+		DepositBeforeCents: out.DepositBeforeCents, DepositAfterCents: out.DepositAfterCents, Changed: out.Changed,
+	}, nil
+}

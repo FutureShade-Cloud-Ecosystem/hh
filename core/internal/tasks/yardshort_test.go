@@ -16,6 +16,7 @@ import (
 // fakeYardOrder records what the tasks module asked the order module to do.
 type fakeYardOrder struct {
 	picks []YardPickChange
+	skids []YardSkidChange
 	err   error
 	// effects is what each call answers; the zero value answers "changed" for every short line.
 	changed map[int]bool

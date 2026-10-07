@@ -299,6 +299,7 @@ var migrationTopics = map[string]string{
 	"0320_load_key_registry":               "load",
 	"0321_fb_moves_machine_principal":      "identity",
 	"0365_yard_short_pick_backorder":       "order",
+	"0366_order_skids":                     "order",
 	"0361_card_charge_attempts":            "payment",
 }
 
@@ -466,6 +467,8 @@ var ownedObjects = map[string]string{
 	"order_no_sequences":              "order",             // 0087_branch_order_numbering
 	"order_notes":                     "order",             // 0161_order_notes
 	"order_shortfall_basis":           "order",             // 0365_yard_short_pick_backorder
+	"order_skid_changes":              "order",             // 0366_order_skids
+	"order_skids":                     "order",             // 0366_order_skids
 	"orders":                          "order",             // 0008_quotes_orders
 	"org":                             "identity",          // 0213_org_tenant_seq_deleted_idem
 	"payment_allocations":             "payments",          // 0010_payments_till

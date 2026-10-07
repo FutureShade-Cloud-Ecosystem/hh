@@ -84,3 +84,5 @@ additions:
     reason: "Row 985: the read-only sale preview; the sale's own body without any tender priced through the ring's own resolver, so the counter sees the subtotal, each tax line and the total before the ring; no ERP source route."
   - route: "GET /api/v1/quotes/{id}/customer-view"
     reason: "The staff preview of the customer's quote page: the public view built by the same code path, never minting a link, moving the status, scheduling a follow-up or logging a view, with acceptable false and preview true; no ERP source route."
+  - route: "PUT /api/v1/yard/picks/{id}/skids"
+    reason: "The yard records or changes the skid count on a pick's order with a reason (migration 0366); the ERP recorded no skid count on an order."

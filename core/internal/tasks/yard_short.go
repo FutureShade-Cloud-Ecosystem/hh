@@ -52,6 +52,9 @@ type YardOrderChanges interface {
 	// ABSOLUTE number, so a replay converges) and holds the rest as a backorder. It refuses a pick
 	// above the ordered quantity with ErrAboveOrdered.
 	ApplyPicks(ctx context.Context, in YardPickChange) (YardPickResult, error)
+	// RecordSkids sets the order's skid count and returns what changed. The same count again is
+	// Changed=false.
+	RecordSkids(ctx context.Context, in YardSkidChange) (YardSkidResult, error)
 }
 
 // YardPickChange is what the yard recorded, for the order module to act on.
@@ -106,6 +109,77 @@ type YardOrderFacts struct {
 	// money the order now asks for beyond what the customer has paid on an invoiced order.
 	OwedBackCents int64
 	DueCents      int64
+}
+
+// ErrYardOrderUnwired is a yard order change asked for with no order port bound: a skid count has
+// nowhere to live without the order, so it is refused rather than recorded and lost. Mapped to 503.
+var ErrYardOrderUnwired = errors.New("tasks: the yard's order changes are not configured")
+
+// YardSkidChange is a skid count the yard recorded for an order.
+type YardSkidChange struct {
+	OrderID   string
+	ActorID   string
+	SkidCount int
+	Reason    string
+	Note      string
+}
+
+// YardSkidResult is what the order module did with it. CountBefore is nil when no count had been
+// recorded. For a skid change the facts' OwedBackCents and DueCents are the skid deposit's.
+type YardSkidResult struct {
+	Order              YardOrderFacts
+	CountBefore        *int
+	CountAfter         int
+	DepositBeforeCents int64
+	DepositAfterCents  int64
+	Changed            bool
+}
+
+// SkidInput is the yard's skid count request on one pick task.
+type SkidInput struct {
+	TaskID    string
+	ActorID   string
+	SkidCount int
+	Reason    string
+	Note      string
+}
+
+// maxSkids is the most skids one order can plausibly leave on; a larger number is a typo.
+const maxSkids = 5000
+
+// RecordSkids records or changes the skid count on the task's order, with a reason. Nobody may
+// record a negative or implausible count, and every change needs a reason from the same list as a
+// short pick, so the office reads one vocabulary.
+func (s *Service) RecordSkids(ctx context.Context, in SkidInput) (YardSkidResult, error) {
+	if in.TaskID == "" {
+		return YardSkidResult{}, httpx.BadRequestf("task id is required")
+	}
+	if in.SkidCount < 0 {
+		return YardSkidResult{}, httpx.BadRequestf("a skid count cannot be negative")
+	}
+	if in.SkidCount > maxSkids {
+		return YardSkidResult{}, httpx.BadRequestf("that skid count is implausibly large")
+	}
+	in.Reason, in.Note = strings.TrimSpace(in.Reason), strings.TrimSpace(in.Note)
+	if len(in.Note) > maxShortNote {
+		return YardSkidResult{}, httpx.BadRequestf("the note is too long (max %d)", maxShortNote)
+	}
+	if in.Reason == "" || !validShortReason(in.Reason) {
+		return YardSkidResult{}, httpx.BadRequestf("give the reason for the skid count (%s)", strings.Join(ShortReasons, ", "))
+	}
+	if in.Reason == ShortReasonOther && in.Note == "" {
+		return YardSkidResult{}, httpx.BadRequestf("say what happened in the note when the reason is OTHER")
+	}
+	if s.yardOrders == nil {
+		return YardSkidResult{}, ErrYardOrderUnwired
+	}
+	task, err := s.store.GetTask(ctx, in.TaskID)
+	if err != nil {
+		return YardSkidResult{}, err
+	}
+	return s.yardOrders.RecordSkids(ctx, YardSkidChange{
+		OrderID: task.OrderID, ActorID: in.ActorID, SkidCount: in.SkidCount, Reason: in.Reason, Note: in.Note,
+	})
 }
 
 // WithYardOrderChanges injects the order port (main.go wires the order service adapter).
