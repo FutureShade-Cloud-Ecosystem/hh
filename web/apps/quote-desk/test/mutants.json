@@ -2093,5 +2093,12 @@
     "find": "if (at >= 0 && at < ROWS) this.active = at;",
     "replace": "if (at === 0) this.active = at;",
     "test": "pinned exact row"
+  },
+  {
+    "id": "qdp-reopen-clean",
+    "file": "src/quote-decision-panel.ts",
+    "find": "    this.mode = mode;\n    this.channel = \"\";\n    this.reason = \"\";\n    this.note = \"\";\n    this.confirmed = false;\n    this.keyed = null;\n    this.error = \"\";",
+    "replace": "    this.mode = mode;\n    this.error = \"\";",
+    "test": "P2-1 cancel then reopen starts clean"
   }
 ]

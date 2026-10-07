@@ -168,3 +168,21 @@ test("guard decision write: a decision that answers after another quote opened s
   await expect(page.getByTestId("qb-decision-result")).toHaveCount(0);
   await expect(page.getByTestId("qb-decision-accept-open")).toBeVisible();
 });
+
+test("P2-1 cancel then reopen starts clean: nothing stays armed", async ({ page }) => {
+  const id = await seedSent(page);
+  await openById(page, id);
+  await page.getByTestId("qb-decision-accept-open").click();
+  await page.getByTestId("qb-decision-channel").selectOption("phone");
+  await page.getByTestId("qb-decision-statement").check();
+  await expect(page.getByTestId("qb-decision-accept")).toBeEnabled();
+  await page.getByTestId("qb-decision-cancel").click();
+  await page.getByTestId("qb-decision-accept-open").click();
+  await expect(page.getByTestId("qb-decision-channel")).toHaveValue("");
+  await expect(page.getByTestId("qb-decision-statement")).not.toBeChecked();
+  await expect(page.getByTestId("qb-decision-accept")).toBeDisabled();
+  // Restating both arms it again.
+  await page.getByTestId("qb-decision-channel").selectOption("email");
+  await page.getByTestId("qb-decision-statement").check();
+  await expect(page.getByTestId("qb-decision-accept")).toBeEnabled();
+});

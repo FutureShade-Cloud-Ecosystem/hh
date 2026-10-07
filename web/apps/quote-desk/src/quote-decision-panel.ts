@@ -115,10 +115,25 @@ export class QdQuoteDecision extends PanelBase {
     else if (action === "reject") void this.decide("reject");
   }
 
+  /** Opening a form starts it clean: what was picked in an earlier opening is not carried into this one. */
   private openMode(mode: Mode): void {
     this.mode = mode;
+    this.channel = "";
+    this.reason = "";
+    this.note = "";
+    this.confirmed = false;
+    this.keyed = null;
     this.error = "";
     this.result = "";
+  }
+
+  /** The fields are uncontrolled: after each render they are set to what the state holds, so the screen and the state never differ. */
+  protected override updated(): void {
+    this.syncValue('[data-field="decision-channel"]', this.channel);
+    this.syncValue('[data-field="decision-reason"]', this.reason);
+    this.syncValue('[data-field="decision-note"]', this.note);
+    const statement = this.renderRoot.querySelector<HTMLInputElement>('[data-field="decision-statement"]');
+    if (statement !== null && statement.checked !== this.confirmed) statement.checked = this.confirmed;
   }
 
   protected override onFieldInput(field: string, control: HTMLElement): void {
