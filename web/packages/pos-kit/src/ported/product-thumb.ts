@@ -3,7 +3,7 @@
 import { LitElement, css, html } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { productImageUrl } from './pos-api.js';
-import { isSwatchSized, thumbSource } from './product-thumb-logic.js';
+import { isBlankPicture, isSwatchSized, thumbSource } from './product-thumb-logic.js';
 import { productTile } from './ports.js';
 
 type ProductTileTheme = 'light' | 'dark';
@@ -110,7 +110,29 @@ export class HosProductThumb extends LitElement {
   private onLoad(event: Event): void {
     // A picture that is only a pixel or a few is a swatch: the category's tile reads as the product.
     const img = event.target as HTMLImageElement;
-    if (isSwatchSized(img.naturalWidth, img.naturalHeight)) this.swatch = true;
+    if (isSwatchSized(img.naturalWidth, img.naturalHeight) || this.readsBlank(img)) this.swatch = true;
+  }
+
+  /**
+   * Whether the loaded picture is effectively one flat colour (see isBlankPicture). It is read at its
+   * own size up to 64 by 64 (a larger picture is downscaled to that), so fine texture is not
+   * averaged away into a flat grey before it is judged.
+   */
+  private readsBlank(img: HTMLImageElement): boolean {
+    try {
+      const canvas = document.createElement('canvas');
+      const w = Math.min(64, img.naturalWidth);
+      const h = Math.min(64, img.naturalHeight);
+      canvas.width = w;
+      canvas.height = h;
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      if (context === null) return false;
+      context.drawImage(img, 0, 0, w, h);
+      return isBlankPicture(context.getImageData(0, 0, w, h).data);
+    } catch {
+      // An unreadable picture (a tainted canvas, no decode) is shown as it is: nothing is guessed.
+      return false;
+    }
   }
 
   private onError(): void {
