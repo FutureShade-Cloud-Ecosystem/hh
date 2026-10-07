@@ -22,6 +22,7 @@ import { ApiClient } from "@hardscapehouse/api-client";
 import {
   acceptanceAmountPhrase,
   acceptanceRefusal,
+  acceptReady,
   showsImages,
   totalsBlock,
   type QuoteMoney,
@@ -60,6 +61,7 @@ const NAME_LOCKED =
 // The core words its refusals for staff ("convert it at the counter", "ask an administrator"), so
 // the customer only ever reads these sentences, chosen by status, never the server's text.
 const CANNOT_ACCEPT = "This quote cannot be accepted right now. Please contact us.";
+const QUANTITIES_UNCONFIRMED = "Please confirm that you have reviewed the quantities on this quote.";
 const CHECK_FIELDS = "Please check your full name and the confirmation, then try again.";
 const REFUSED_GENERIC = "We could not accept this quote right now. Please contact us.";
 const REPEAT_NOTE =
@@ -211,6 +213,22 @@ export class QuotePublicPage extends HHElement {
         background: var(--hh-card);
         color: var(--hh-text);
       }
+      /* The dealer's notice that the quantities are the customer's to confirm: a quiet callout under
+         the lines, in the page's own tokens, so it reads the same on screen and on paper. */
+      .qtynotice {
+        margin: var(--hh-s-12) 0 0;
+        padding: var(--hh-s-8) var(--hh-s-12);
+        border: 1px solid var(--hh-line);
+        border-left-width: 3px;
+        border-radius: var(--hh-radius-control);
+        background: var(--hh-card);
+        color: var(--hh-text);
+        font-size: 0.88rem;
+        line-height: 1.45;
+      }
+      .qtycheck {
+        margin-top: 0;
+      }
       .check {
         display: flex;
         align-items: flex-start;
@@ -358,6 +376,9 @@ export class QuotePublicPage extends HHElement {
   private lockedName: string | null = null;
   @state()
   private affirmed = false;
+  /** The separate confirmation that the customer reviewed the quantities. */
+  @state()
+  private quantitiesConfirmed = false;
   /** Line thumbnails fetched through the image read, by image reference. */
   @state()
   private thumbs: Map<string, string> = new Map();
@@ -445,6 +466,7 @@ export class QuotePublicPage extends HHElement {
   private onAffirmChange = (event: Event): void => {
     const target = event.target as HTMLInputElement;
     if (target.id === "affirm") this.affirmed = target.checked;
+    if (target.id === "qty-confirm") this.quantitiesConfirmed = target.checked;
   };
 
   private onActionClick = (event: Event): void => {
@@ -561,7 +583,7 @@ export class QuotePublicPage extends HHElement {
 
   private async accept(): Promise<void> {
     if (this.busy) return;
-    const refusal = acceptanceRefusal(this.lockedName ?? this.typedName, this.affirmed);
+    const refusal = acceptanceRefusal(this.lockedName ?? this.typedName, this.affirmed, this.quantitiesConfirmed);
     if (refusal !== null) {
       this.error = refusal;
       return;
@@ -608,7 +630,14 @@ export class QuotePublicPage extends HHElement {
             this.error = CANNOT_ACCEPT;
             return;
           }
-          const sentence = result.status === 400 ? CHECK_FIELDS : result.status === 404 ? NOT_FOUND : REFUSED_GENERIC;
+          const sentence =
+            result.status === 400
+              ? CHECK_FIELDS
+              : result.status === 422
+                ? QUANTITIES_UNCONFIRMED
+                : result.status === 404
+                  ? NOT_FOUND
+                  : REFUSED_GENERIC;
           this.error = `${sentence} ${NOT_RECORDED}`;
           return;
         }
@@ -751,6 +780,7 @@ export class QuotePublicPage extends HHElement {
       <div class="card ok">
         <h2>${this.renderOkMark()}Thank you: quote ${a.quoteNo} accepted</h2>
         <p class="sub">${withFullStop(`Accepted by ${a.typedName} on ${this.when(a.acceptedAt)}`)}</p>
+        ${a.quantitiesConfirmed ? html`<p class="sub">You confirmed the quantities on this quote.</p>` : nothing}
         ${this.renderTotals(a)}
         <p class="note">
           We have recorded your acceptance and our team will be in touch. Please keep this page or the confirmation for
@@ -786,6 +816,10 @@ export class QuotePublicPage extends HHElement {
       <div class="card">
         <h2 class="card-h2">Accept this quote</h2>
         ${q.status === "ACCEPTED" || q.status === "CONVERTED" ? html`<p class="note">${REPEAT_NOTE}</p>` : nothing}
+        <div class="check qtycheck">
+          <input id="qty-confirm" type="checkbox" />
+          <label for="qty-confirm" class="check-label">I have reviewed the quantities on this quote and they are what I want.</label>
+        </div>
         <label for="name">Your full name</label>
         <input id="name" type="text" autocomplete="name" />
         ${this.lockedName !== null ? html`<p class="note">${NAME_LOCKED}</p>` : nothing}
@@ -797,7 +831,7 @@ export class QuotePublicPage extends HHElement {
             )}
           </label>
         </div>
-        ${button({ label: this.busy ? "Recording…" : "Accept quote", action: "accept", disabled: this.busy })}
+        ${button({ label: this.busy ? "Recording…" : "Accept quote", action: "accept", disabled: this.busy || !acceptReady(this.lockedName ?? this.typedName, this.affirmed, this.quantitiesConfirmed) })}
         ${this.error ? html`<p class="err" role="alert">${this.error}</p>` : nothing}
         <p class="note">
           Accepting records your typed name, the date and time, and the link you used. This is an electronic acceptance:
@@ -871,6 +905,7 @@ export class QuotePublicPage extends HHElement {
             </tbody>
           </table>
         </div>
+        ${q.quantityNotice ? html`<p class="qtynotice" role="note">${q.quantityNotice}</p>` : nothing}
         ${this.renderTermsFacts(q)}
         ${this.renderTotals(q)}
       </div>

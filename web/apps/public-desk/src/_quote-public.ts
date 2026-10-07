@@ -106,15 +106,22 @@ export function acceptanceAmountPhrase(m: QuoteMoney): string {
 }
 
 /**
- * acceptanceRefusal is the gate the accept button runs before anything is
- * sent: a blank (or white space only) name is refused, an unticked
- * attestation is refused, and an honest form passes as null. The refusal
- * words are the page's own inline copy; the server holds the real gate.
+ * acceptanceRefusal is the gate the accept runs before anything is sent, in
+ * the order the form reads: the quantities box above the name, a blank (or
+ * white space only) name, then the attestation. An honest form passes as
+ * null. The refusal words are the page's own inline copy; the server holds
+ * the real gate.
  */
-export function acceptanceRefusal(typedName: string, affirmed: boolean): string | null {
+export function acceptanceRefusal(typedName: string, affirmed: boolean, quantitiesConfirmed: boolean): string | null {
+  if (!quantitiesConfirmed) return "Please tick the box to confirm you have reviewed the quantities on this quote.";
   if (!typedName.trim()) return "Please type your full name.";
   if (!affirmed) return "Please tick the box to confirm you accept this quote.";
   return null;
+}
+
+/** acceptReady: the Accept button is enabled only when the form passes every part of the gate. */
+export function acceptReady(typedName: string, affirmed: boolean, quantitiesConfirmed: boolean): boolean {
+  return acceptanceRefusal(typedName, affirmed, quantitiesConfirmed) === null;
 }
 
 /**

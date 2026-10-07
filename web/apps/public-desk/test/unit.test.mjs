@@ -11,6 +11,7 @@ import {
   INVOICE_TAX_NOTE,
   acceptanceAmountPhrase,
   acceptanceRefusal,
+  acceptReady,
   carriesTax,
   showsImages,
   totalsBlock,
@@ -72,14 +73,25 @@ test("the acceptance amount phrase names the HST inside a taxed total", () => {
   assert.equal(acceptanceAmountPhrase(UNTAXED), "$96.65 before HST");
 });
 
-test("the typed name gate refuses blank and unticked, and passes the honest form", () => {
-  assert.equal(acceptanceRefusal("", false), "Please type your full name.");
-  assert.equal(acceptanceRefusal("   ", false), "Please type your full name.");
+test("the accept gate refuses unreviewed quantities, a blank name and an unticked attestation, and passes the honest form", () => {
   assert.equal(
-    acceptanceRefusal("Sample Customer", false),
+    acceptanceRefusal("Sample Customer", true, false),
+    "Please tick the box to confirm you have reviewed the quantities on this quote.",
+  );
+  assert.equal(acceptanceRefusal("", false, true), "Please type your full name.");
+  assert.equal(acceptanceRefusal("   ", false, true), "Please type your full name.");
+  assert.equal(
+    acceptanceRefusal("Sample Customer", false, true),
     "Please tick the box to confirm you accept this quote.",
   );
-  assert.equal(acceptanceRefusal("Sample Customer", true), null);
+  assert.equal(acceptanceRefusal("Sample Customer", true, true), null);
+});
+
+test("the accept button is ready only with the quantities box, a name and the confirmation", () => {
+  assert.equal(acceptReady("Sample Customer", true, true), true);
+  assert.equal(acceptReady("Sample Customer", true, false), false);
+  assert.equal(acceptReady("Sample Customer", false, true), false);
+  assert.equal(acceptReady("  ", true, true), false);
 });
 
 test("thumbnails render only when the dealer chose images and a line carries one", () => {
@@ -173,6 +185,14 @@ test("a complete quote view parses field by field", () => {
   assert.equal(view.acceptable, true);
 });
 
+test("the dealer's quantity notice is read as sent, and absent is honest, never a sentence of the page's own", () => {
+  const words = "Check every quantity against your plan before you accept.";
+  assert.equal(validateQuoteView({ ...FULL_VIEW, quantity_notice: words }).quantityNotice, words);
+  assert.equal(validateQuoteView(FULL_VIEW).quantityNotice, null);
+  assert.equal(validateQuoteView({ ...FULL_VIEW, quantity_notice: "" }).quantityNotice, null);
+  assert.equal(validateQuoteView({ ...FULL_VIEW, quantity_notice: 7 }).quantityNotice, null);
+});
+
 test("an answer missing a field, or carrying a wrong one, is refused whole", () => {
   assert.equal(validateQuoteView(null), null);
   assert.equal(validateQuoteView("nope"), null);
@@ -222,6 +242,18 @@ test("the acceptance result parses, and an answer without its timestamp is refus
   assert.notEqual(ok, null);
   assert.equal(ok.typedName, "Sample Customer");
   assert.equal(ok.totalCents, 10922);
+  // The echo of the confirmation is read, and never assumed.
+  assert.equal(ok.quantitiesConfirmed, false);
+  const confirmed = validateAcceptance({
+    quote_no: "Q-25",
+    typed_name: "Sample Customer",
+    accepted_at: "the-accepted-at-marker",
+    subtotal_cents: 9665,
+    tax_cents: 1257,
+    total_cents: 10922,
+    quantities_confirmed: true,
+  });
+  assert.equal(confirmed.quantitiesConfirmed, true);
 
   const noTime = {
     quote_no: "Q-25",
