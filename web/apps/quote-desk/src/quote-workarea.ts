@@ -841,7 +841,8 @@ export class QdQuoteWorkarea extends LitElement {
       grid-template-columns: 1fr 1fr;
       gap: var(--hos-s-8, 8px);
     }
-    .fields .wide {
+    .fields .wide,
+    .termsrow .wide {
       grid-column: 1 / -1;
     }
     label.f {
@@ -956,6 +957,14 @@ export class QdQuoteWorkarea extends LitElement {
       align-items: center;
       font-size: var(--qb-caption);
       color: var(--hos-text, var(--hh-text));
+    }
+    /* A checkbox is a checkbox: the field rules above (full width, the input's height) must not stretch it, which is
+       what squeezed "Include product images" into three lines beside it. */
+    .fields .check input[type="checkbox"],
+    .termsrow .check input[type="checkbox"] {
+      width: auto;
+      min-height: 0;
+      flex: none;
     }
     .sr-only {
       position: absolute;
@@ -3519,7 +3528,7 @@ export class QdQuoteWorkarea extends LitElement {
               </span>`
             : nothing}
         </div>
-        <div>
+        <div class="wide">
           <label class="check">
             <input type="checkbox" data-field="include-images" data-testid="qb-terms-images" />
             Include product images
