@@ -380,9 +380,14 @@ func (s *Service) logDiscounts(ctx context.Context, tx pgx.Tx, orderID, clerk st
 // the approver's staff id, the cents and the line, never a name.
 func (s *Service) recordDiscountAudit(ctx context.Context, orderID, actor, branchID string, applied []appliedDiscount) {
 	for _, a := range applied {
-		extra := map[string]any{"approver_id": a.approver.id, "amount_cents": a.cents, "actor_role": a.scope}
+		extra := map[string]any{"approver_id": a.approver.id, "amount_cents": a.cents, "scope": a.scope}
 		if a.lineNo > 0 {
 			extra["line_no"] = a.lineNo
+		}
+		// A manager may approve their own discount (they are the manager the SOP asks for); the
+		// trail marks it so a reader can tell it from a second pair of eyes.
+		if a.approver.id == actor {
+			extra["self_approved"] = true
 		}
 		s.record(ctx, audit.SensitiveAccess{
 			Action: audit.ActPosDiscountApproved, EntityType: "pos.sale", EntityID: orderID,

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 )
 
@@ -401,5 +402,42 @@ func TestDiscount_ATicketTotalOfZeroIsRefusedInWordsAtThePreviewAndTheRing(t *te
 				t.Fatalf("a refused ticket wrote or took money")
 			}
 		})
+	}
+}
+
+// The audit row names the scope of the discount under "scope" (not "actor_role", which is a role),
+// and marks a manager approving their own discount: allowed (they are the manager the SOP asks
+// for) but marked, so a trail reader can tell.
+func TestDiscount_AuditNamesTheScopeAndMarksASelfApproval(t *testing.T) {
+	h := newHarness()
+	withApprovers(h)
+	ctx := identity.ContextWithStaff(context.Background(), identity.StaffContext{
+		UserID: mgrSales, RoleCode: "SALES_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal, Status: "ACTIVE",
+	})
+	in := discountedInput(atLine(DiscountInput{PercentBps: 1000, ApprovedBy: mgrSales}))
+	in.Discount = atBase(DiscountInput{AmountCents: 500, ApprovedBy: mgrBranch}, 9000)
+	if _, err := h.svc.Sale(ctx, in); err != nil {
+		t.Fatalf("a manager may approve their own discount: %v", err)
+	}
+	var rows []audit.SensitiveAccess
+	for _, r := range h.rec.rows {
+		if r.Action == audit.ActPosDiscountApproved {
+			rows = append(rows, r)
+		}
+	}
+	if len(rows) != 2 {
+		t.Fatalf("want 2 discount audit rows, got %d", len(rows))
+	}
+	if _, has := rows[0].Extra["actor_role"]; has {
+		t.Fatalf("actor_role holds a role, not the scope: %v", rows[0].Extra)
+	}
+	if rows[0].Extra["scope"] != "LINE" || rows[1].Extra["scope"] != "SALE" {
+		t.Fatalf("the scope belongs under scope: %v %v", rows[0].Extra, rows[1].Extra)
+	}
+	if rows[0].Extra["self_approved"] != true {
+		t.Fatalf("a manager approving their own discount must be marked self approved: %v", rows[0].Extra)
+	}
+	if _, has := rows[1].Extra["self_approved"]; has {
+		t.Fatalf("another manager's approval is not marked: %v", rows[1].Extra)
 	}
 }

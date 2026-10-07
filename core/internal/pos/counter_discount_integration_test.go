@@ -120,6 +120,27 @@ func TestIntegration_CounterDiscount_EndToEnd(t *testing.T) {
 		t.Fatalf("preview: %d %v", rec.Code, prev)
 	}
 	code, ring := s.ringBody(trentonClerkSub, both)
+	defer func() {
+		// A replay lists the discounts in the original order: the lines first, then the ticket.
+		if code != http.StatusCreated {
+			return
+		}
+		rc, again := s.ringBody(trentonClerkSub, both)
+		if rc != http.StatusOK || again["replayed"] != true {
+			t.Errorf("replay: %d %v", rc, again)
+			return
+		}
+		want, got := ring["discounts"].([]any), again["discounts"].([]any)
+		if len(got) != len(want) {
+			t.Errorf("the replay lists %d discounts, the ring %d", len(got), len(want))
+			return
+		}
+		for i := range want {
+			if want[i].(map[string]any)["scope"] != got[i].(map[string]any)["scope"] {
+				t.Errorf("the replay lists the discounts in another order: want %v got %v", want, got)
+			}
+		}
+	}()
 	if code != http.StatusCreated {
 		t.Fatalf("the two discount ring: %d %v", code, ring)
 	}

@@ -485,10 +485,13 @@ var allowedExtraKeys = map[string]bool{
 	// manager changed this" answers the question a settings screen is asked, without putting a user
 	// identifier on a screen.
 	"actor_role": true,
-	"field":      true, // the order/order_lines column that changed
-	"line_no":    true, // which line it changed on (an int; absent/0 for an order-header field)
-	"before":     true, // the pre-image value  (int64 for cents, string for qty/date)
-	"after":      true, // the post-image value (same shape as before)
+	// The pos counter discount row (POS_DISCOUNT_APPROVED): self_approved marks a manager who
+	// approved their own discount, a bool, never an identifier.
+	"self_approved": true,
+	"field":         true, // the order/order_lines column that changed
+	"line_no":       true, // which line it changed on (an int; absent/0 for an order-header field)
+	"before":        true, // the pre-image value  (int64 for cents, string for qty/date)
+	"after":         true, // the post-image value (same shape as before)
 	// The customer-quote acceptance artifact (HH-3.6, ADR 0022): the signed
 	// acceptance's audit row joins the allowlist openly at the integration
 	// re-point, per the seam contract's own pin (core/internal/customerquote/

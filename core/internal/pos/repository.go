@@ -579,7 +579,7 @@ SELECT 'SALE', 0, COALESCE(ps.discount_percent_bps, 0), ps.discount_cents,
   FROM pos_sale ps
   LEFT JOIN staff_role sr ON sr.id = ps.discount_approved_role
  WHERE ps.order_id = $1 AND ps.discount_cents > 0
- ORDER BY 1 DESC, 2`, orderID)
+ ORDER BY 1, 2`, orderID)
 	if err != nil {
 		return nil, err
 	}
