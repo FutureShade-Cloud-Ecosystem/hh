@@ -24,7 +24,7 @@ test("Preview shows the customer page in the desk and sends nothing", async ({ p
   await page.getByTestId("qb-preview").click();
   const pane = page.getByTestId("qb-preview-pane");
   await expect(pane).toBeVisible();
-  await expect(pane.getByTestId("qb-preview-band")).toHaveText("Preview: this is what your customer will see. Nothing has been sent.");
+  await expect(pane.locator("pd-quote-public").getByText("Preview: this is what your customer will see. Nothing has been sent.")).toHaveCount(1);
   // The customer page's own element, showing the quote it was handed.
   await expect(pane.locator("pd-quote-public")).toHaveCount(1);
   await expect(pane.locator("pd-quote-public").getByText("Q-1004").first()).toBeVisible();

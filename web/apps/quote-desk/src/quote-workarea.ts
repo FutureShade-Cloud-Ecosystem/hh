@@ -1477,7 +1477,7 @@ export class QdQuoteWorkarea extends LitElement {
     if (this.previewRaw === null) return nothing;
     return html`<section class="previewpane" data-testid="qb-preview-pane" aria-label="Preview of the customer's quote">
       <div class="previewhead">
-        <p class="previewband" data-testid="qb-preview-band">Preview: this is what your customer will see. Nothing has been sent.</p>
+        <!-- The band is the customer page's own, drawn once inside it above the quote. -->
         <button type="button" class="abtn" data-action="preview-close" data-testid="qb-preview-close">Close preview</button>
       </div>
       <div data-role="preview-host"></div>
