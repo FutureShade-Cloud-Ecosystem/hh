@@ -702,6 +702,10 @@ export class FrontDoorApp extends HHElement {
       const flow = control.getAttribute("data-flow");
       if (typeof flow === "string" && flow !== "") this.#choose(flow);
     }
+    if (action === "feedback") {
+      const widget = this.renderRoot.querySelector("hh-feedback");
+      if (widget instanceof HHFeedback) widget.show();
+    }
     if (action === "open-module") {
       const href = control.getAttribute("data-href");
       if (typeof href === "string" && href !== "") window.location.assign(href);
@@ -815,7 +819,7 @@ export class FrontDoorApp extends HHElement {
       <div class="stage">
         <p class="notice" role="status" aria-live="polite" aria-atomic="true">${this.#notice}</p>
       </div>
-      <hh-feedback screen="Front door"></hh-feedback>
+      <hh-feedback screen="Front door" trigger="external"></hh-feedback>
     `;
   }
 
@@ -852,6 +856,9 @@ export class FrontDoorApp extends HHElement {
         </div>
         <p class="who" data-testid="header-word">${session === null ? "Pick a role" : session.roleLabel}</p>
         <div class="controls">
+          <button type="button" class="btn-secondary" data-action="feedback" data-testid="feedback-button" title="Send feedback about this screen">
+            Feedback
+          </button>
           ${signedIn
             ? html`
                 <button type="button" class="btn-secondary" data-action="switch-role">Switch role</button>
