@@ -215,9 +215,7 @@ sales-06-receipt-card
 sales-06-receipt-cash
 sales-07-parked
 sales-08-return-within
-sales-09-approved
-sales-09-dialog
-sales-09-refused
+sales-09-committed
 sales-10-kingston
 sales-11-beyond"
 actual="$(cd "$SHOT_DIR" && ls *.png 2>/dev/null | sed 's/\.png$//' | sort)"
