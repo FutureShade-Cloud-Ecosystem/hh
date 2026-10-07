@@ -370,6 +370,8 @@ export function depositCents(required: boolean, pct: number, totalCents: number)
  */
 export interface FreshQuoteState {
   customer: null;
+  /** The customer picked for a quote that does not exist yet: it is made on the first line added. */
+  composeCustomer: null;
   term: string;
   qtyDrafts: Record<number, string>;
   discDrafts: Record<number, string>;
@@ -384,6 +386,7 @@ export interface FreshQuoteState {
 export function freshQuoteState(): FreshQuoteState {
   return {
     customer: null,
+    composeCustomer: null,
     term: "",
     qtyDrafts: {},
     discDrafts: {},

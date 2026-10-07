@@ -23,8 +23,7 @@ test("one match and Enter picks the customer", async ({ page }) => {
   await box.fill("Quarry");
   await expect(page.getByRole("option")).toHaveCount(1);
   await box.press("Enter");
-  await expect(page.getByTestId("qb-context")).toContainText("Q-");
-  await expect(page.getByTestId("qb-identity")).toContainText("Quarry Lane Paving");
+  await expect(page.getByTestId("qb-compose-customer")).toContainText("Quarry Lane Paving");
 });
 
 test("several matches and Enter with none highlighted picks nobody", async ({ page }) => {

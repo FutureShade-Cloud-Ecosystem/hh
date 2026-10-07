@@ -106,7 +106,7 @@ test("the convert copy does not say credit is checked for every customer", async
   await open(page, "Q-1003");
   await page.getByText("Quote detail & admin").click();
   const panel = page.locator("qd-quote-edit");
-  await expect(panel).toContainText("Converting it commits the order");
+  await expect(panel).toContainText("Converting it opens the guided steps");
+  await expect(panel).toContainText("Nothing is converted until you confirm there");
   await expect(panel).not.toContainText("their credit is checked");
-  await expect(panel).toContainText("On an account customer the credit is checked");
 });

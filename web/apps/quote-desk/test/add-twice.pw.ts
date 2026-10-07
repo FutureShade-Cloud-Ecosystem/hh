@@ -28,7 +28,14 @@ async function addByCode(page: Page, code: string): Promise<void> {
 }
 
 test("an empty ticket says to search, in the words of the box above it", async ({ page }) => {
-  await newQuote(page);
+  const seeded = await page.request.post("/_stub/seed-quote", { data: { status: "DRAFT", customer_id: "c-maple-ridge", empty: true } });
+  const id = ((await seeded.json()) as { id: string }).id;
+  await page.goto("/");
+  await page.getByRole("button", { name: "Sales", exact: true }).click();
+  await expect(page.getByTestId("qb-list")).toBeVisible();
+  await page.evaluate((quote) => {
+    window.location.hash = `#/quotes/${quote}`;
+  }, id);
   await expect(page.getByTestId("qb-line")).toHaveCount(0);
   const empty = page.locator("qd-quote-workarea").getByText(/No lines yet/);
   await expect(empty).toContainText("Search for a product");

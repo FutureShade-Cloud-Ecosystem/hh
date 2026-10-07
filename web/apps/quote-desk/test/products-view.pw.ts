@@ -25,6 +25,10 @@ test("Cards and Rows beside Products flip the grid's presentation", async ({ pag
   const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
   await picker.getByPlaceholder("Search name or account #…").fill("Maple");
   await picker.getByRole("option", { name: /Maple Ridge Contracting/ }).click();
+  const first = page.getByRole("combobox", { name: "Search products by name, code or category" });
+  await first.fill("PSN-100");
+  await first.press("Enter");
+  await expect(page.getByTestId("qb-line")).toHaveCount(1);
   const cards = page.getByTestId("qb-view-cards");
   const rows = page.getByTestId("qb-view-rows");
   await expect(cards).toHaveAttribute("aria-pressed", "true");

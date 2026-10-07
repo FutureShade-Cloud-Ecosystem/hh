@@ -65,7 +65,7 @@ test("the stepper tracks the quote: compose, picked, lines, sent", async ({ page
   const pickerInput = page.getByTestId("qb-identity").locator("hos-customer-picker").getByPlaceholder("Search name or account #…");
   await pickerInput.fill("Maple");
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByRole("option", { name: /Maple Ridge Contracting/ }).click();
-  await expect(page.getByTestId("qb-title")).toHaveText("Quote");
+  await expect(page.getByTestId("qb-compose-customer")).toContainText("Maple Ridge Contracting");
   await expect(customer).toHaveClass(/complete/);
   const products = page.getByRole("navigation", { name: "Quote sections" }).getByRole("button", { name: "Products" });
   await expect(products).toHaveClass(/current/);
@@ -199,6 +199,9 @@ test("the layout saves per person: the swap and the keyboard resize reach the wo
   await newQuote(page);
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByPlaceholder("Search name or account #…").fill("Maple");
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByRole("option", { name: /Maple Ridge Contracting/ }).click();
+  const first = page.getByRole("combobox", { name: "Search products by name, code or category" });
+  await first.fill("PSN-100");
+  await first.press("Enter");
   await expect(page.getByTestId("qb-workspace")).toBeVisible();
 
   // The swap: the workspace's arrangement flips and the save lands.

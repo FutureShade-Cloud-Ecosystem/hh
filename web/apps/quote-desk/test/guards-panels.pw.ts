@@ -577,6 +577,10 @@ test("guard create selection: a quote made while another was opened does not tak
   const post = await hold(page, /\/api\/v1\/quotes$/, { method: "POST" });
   await picker.getByPlaceholder("Search name or account #…").fill("Fenwick");
   await picker.getByRole("option", { name: /Fenwick Builders/ }).click();
+  // The first line makes the quote: the create is held, and the person walks to another quote while it is out.
+  const box = page.getByRole("combobox", { name: "Search products by name, code or category" });
+  await box.fill("PSN-100");
+  await box.press("Enter");
   await post.asked;
   await showList(page);
   await row(page, "Q-1001").click();

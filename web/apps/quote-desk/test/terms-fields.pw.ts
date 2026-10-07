@@ -52,15 +52,15 @@ async function sendWithPick(page: Page, pick: "pickup" | "delivery"): Promise<vo
   const pickerHost = page.getByTestId("qb-identity").locator("hos-customer-picker");
   await pickerHost.getByPlaceholder("Search name or account #…").fill("Maple");
   await pickerHost.getByRole("option", { name: /Maple Ridge Contracting/ }).click();
+  const scanInput = page.getByRole("combobox", { name: "Search products by name, code or category" });
+  await scanInput.fill("PSN-100");
+  await scanInput.press("Enter");
+  await expect(page.getByTestId("qb-line")).toHaveCount(1);
   await expect(page.getByTestId("qb-fulfil-pickup")).toBeVisible();
   if (pick === "delivery") {
     await page.getByTestId("qb-fulfil-delivery").click();
     await expect(page.getByTestId("qb-fulfil-delivery")).toHaveAttribute("aria-pressed", "true");
   }
-  const scanInput = page.getByRole("combobox", { name: "Search products by name, code or category" });
-  await scanInput.fill("PSN-100");
-  await scanInput.press("Enter");
-  await expect(page.getByTestId("qb-line")).toHaveCount(1);
   await page.getByTestId("qb-send").click();
   await expect(page.getByTestId("qb-status")).toContainText("Sent");
 }

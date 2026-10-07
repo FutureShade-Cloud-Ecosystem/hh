@@ -74,8 +74,12 @@ test("pinned create walk: after the customer is picked the caret is in the searc
     });
   });
   await picker.getByRole("option", { name: /Maple Ridge Contracting/ }).click();
+  const box = page.getByRole("combobox", { name: "Search products by name, code or category" });
+  await expect(box).toBeFocused();
+  await box.fill("PSN-100");
+  await box.press("Enter");
   await expect(page.getByTestId("qb-context")).toContainText("Q-");
-  await expect(page.getByRole("combobox", { name: "Search products by name, code or category" })).toBeFocused();
+  await expect(box).toBeFocused();
   await settle(page);
   expect(await page.evaluate(() => (window as unknown as { __landed: string[] }).__landed)).not.toContain("qb-title");
 });

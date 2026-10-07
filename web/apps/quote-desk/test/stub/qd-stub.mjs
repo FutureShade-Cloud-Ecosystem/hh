@@ -1171,7 +1171,7 @@ const server = createServer(async (request, response) => {
   // does not have to build its quotes through the screen.
   if (path === "/_stub/seed-quote" && request.method === "POST") {
     readBody(request, response, (body) => {
-      const lines = Array.isArray(body.lines) && body.lines.length > 0 ? body.lines : [{ p: "p-wall-std", q: 4 }];
+      const lines = body.empty === true ? [] : Array.isArray(body.lines) && body.lines.length > 0 ? body.lines : [{ p: "p-wall-std", q: 4 }];
       const made = seedQuote(typeof body.status === "string" ? body.status : "DRAFT", String(body.customer_id ?? "c-fenwick"), String(body.owner_flow ?? "sales"), lines, body.terms ?? {});
       respondJson(response, 200, { id: made.id, quote_no: made.quote_no });
     });

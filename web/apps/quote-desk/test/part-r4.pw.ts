@@ -724,8 +724,8 @@ test("P3 a scan made in compose waits for the host to hand the new quote down, h
   const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
   await picker.getByPlaceholder("Search name or account #…").fill("Fenwick");
   await picker.getByRole("option", { name: /Fenwick/ }).click();
-  await create.asked;
   await scanInCompose(page);
+  await create.asked;
   await create.release();
   await scanIsWaiting(page);
   await expect(page.getByTestId("qb-error")).toHaveText("");
@@ -742,8 +742,8 @@ test("P3 a scan made in compose that another quote overtook says so", async ({ p
   const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
   await picker.getByPlaceholder("Search name or account #…").fill("Fenwick");
   await picker.getByRole("option", { name: /Fenwick/ }).click();
-  await create.asked;
   await scanInCompose(page);
+  await create.asked;
   await open(page, "Q-1001");
   await expect(page.getByTestId("qb-line")).toHaveCount(2);
   await create.release();
@@ -760,8 +760,8 @@ async function parkedScan(page: Page): Promise<void> {
   const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
   await picker.getByPlaceholder("Search name or account #…").fill("Fenwick");
   await picker.getByRole("option", { name: /Fenwick/ }).click();
-  await create.asked;
   await scanInCompose(page);
+  await create.asked;
   await create.release();
   await scanIsWaiting(page);
 }
@@ -797,8 +797,8 @@ test("P3 a scan made in compose says so at once when the create itself is refuse
   const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
   await picker.getByPlaceholder("Search name or account #…").fill("Fenwick");
   await picker.getByRole("option", { name: /Fenwick/ }).click();
-  await create.asked;
   await scanInCompose(page);
+  await create.asked;
   await create.release();
   // The reason the create was refused stays on screen, and the scan's own line follows it.
   await expect(page.getByTestId("qb-error")).toContainText("The quote store is down.");

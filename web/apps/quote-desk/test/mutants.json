@@ -2093,5 +2093,12 @@
     "find": "const standing = await ctx.guardedRead(seq, client.customerStanding(view.value.customer_id, view.value.customer_name));\n      if (standing === undefined) return false;",
     "replace": "const standing = await client.customerStanding(view.value.customer_id, view.value.customer_name);",
     "test": "guard payment words:"
+  },
+  {
+    "id": "wa-lazy-create",
+    "file": "src/quote-workarea.ts",
+    "find": "    this.composeCustomer = event.detail;\n    this.error = \"\";",
+    "replace": "    this.composeCustomer = event.detail;\n    void this.createFor(event.detail);\n    this.error = \"\";",
+    "test": "picking a customer makes no quote"
   }
 ]

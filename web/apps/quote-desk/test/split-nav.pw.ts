@@ -349,6 +349,9 @@ test("split create: a create in flight when All quotes is pressed lists its draf
   const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
   await picker.getByPlaceholder("Search name or account #…").fill("Maple");
   await picker.getByRole("option", { name: /Maple Ridge Contracting/ }).click();
+  const first = page.getByRole("combobox", { name: "Search products by name, code or category" });
+  await first.fill("PSN-100");
+  await first.press("Enter");
   await create.asked;
   await page.getByTestId("qb-all-quotes").click();
   await expect(page.getByTestId("qd-list-toolbar")).toBeVisible();
@@ -367,6 +370,10 @@ test("split create: a create in flight when All quotes is pressed lists its draf
   // And a pick on it makes a second quote of its own (the first draft is not reused).
   await box.fill("Maple");
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByRole("option", { name: /Maple Ridge Contracting/ }).click();
+  await expect(page.getByTestId("qb-compose-customer")).toContainText("Maple Ridge Contracting");
+  const second = page.getByRole("combobox", { name: "Search products by name, code or category" });
+  await second.fill("EDG-08");
+  await second.press("Enter");
   await expect(page.getByTestId("qb-context")).toContainText("Q-1005");
   await expect(page.getByRole("combobox", { name: "Search products by name, code or category" })).toBeVisible();
 });
@@ -458,13 +465,11 @@ test("split page: each route sets the document title and moves focus to the page
   await page.getByRole("button", { name: "New quote", exact: true }).click();
   await expect(page).toHaveTitle("New quote");
   await expect.poll(() => focusedTestId(page)).toBe("qb-title");
-  // A create's own walk to its new quote leaves the caret in the search box (the next act is adding lines).
+  // The pick makes no quote and no history entry; it leaves the caret in the search box (the next act is adding the first line).
   const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
   await picker.getByPlaceholder("Search name or account #…").fill("Maple");
   await picker.getByRole("option", { name: /Maple Ridge Contracting/ }).click();
   await expect(page.getByRole("combobox", { name: "Search products by name, code or category" })).toBeFocused();
-  await page.goBack();
-  await expect(page).toHaveTitle("New quote");
   await page.goBack();
   await expect(page).toHaveTitle("Quotes");
 });

@@ -36,11 +36,13 @@ async function newQuote(page: Page): Promise<void> {
 
 /** Open a quote with no lines: the compose picker's pick IS the create. */
 async function openQuoteWithNoItems(page: Page): Promise<void> {
+  // A quote with no lines is a draft that already exists (a New quote makes nothing until its first line): seeded, then opened.
+  const seeded = await page.request.post("/_stub/seed-quote", { data: { status: "DRAFT", customer_id: "c-maple-ridge", empty: true } });
+  const id = ((await seeded.json()) as { id: string }).id;
   await signIn(page);
-  await newQuote(page);
-  const pickerInput = page.getByTestId("qb-identity").locator("hos-customer-picker").getByPlaceholder("Search name or account #…");
-  await pickerInput.fill("Maple");
-  await page.getByTestId("qb-identity").locator("hos-customer-picker").getByRole("option", { name: /Maple Ridge Contracting/ }).click();
+  await page.evaluate((quote) => {
+    window.location.hash = `#/quotes/${quote}`;
+  }, id);
   await expect(page.getByTestId("qb-fulfil-pickup")).toBeVisible();
 }
 

@@ -70,13 +70,15 @@ test("opening a row mounts it in the work area", async ({ page }) => {
 
 test("the compose page makes a quote and opens it", async ({ page }) => {
   await signIn(page);
-  // New quote walks the desk to the compose page: the pick IS the create
-  // (the form under the list is gone).
+  // New quote walks the desk to the compose page: the pick chooses the customer and the first line made makes the quote.
   await page.getByRole("button", { name: "New quote", exact: true }).click();
   await expect(page).toHaveURL(/#\/quotes\/new$/);
   const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
   await picker.getByPlaceholder("Search name or account #…").fill("Fenwick");
   await picker.getByRole("option", { name: /Fenwick Builders/ }).click();
+  const box = page.getByRole("combobox", { name: "Search products by name, code or category" });
+  await box.fill("PSN-100");
+  await box.press("Enter");
   await expect(page.getByTestId("qb-title")).toHaveText("Quote");
   await expect(page.getByTestId("qb-identity")).toContainText("Fenwick Builders");
 });

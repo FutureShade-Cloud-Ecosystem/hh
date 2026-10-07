@@ -205,6 +205,8 @@ export class QdQuoteWorkarea extends LitElement {
   private clockTimer: ReturnType<typeof setInterval> | undefined;
   private termsTimer: ReturnType<typeof setTimeout> | undefined;
   private mintedToken = "";
+  /** The customer picked for a New quote: nothing is made on the server until the first line is added. */
+  @state() private composeCustomer: PickerCustomer | null = null;
   /** The raw customer-view answer Preview shows in the desk, or null when no preview is open. */
   @state() private previewRaw: unknown = null;
   /** The context of the quote on screen: every read and write captures it at its start and checks it after each await. */
@@ -1504,7 +1506,7 @@ export class QdQuoteWorkarea extends LitElement {
     const search = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("quote-search-add");
     if (search !== null) {
       search.branchId = this.branchId;
-      search.customerId = this.view?.customer_id ?? this.customer?.id ?? "";
+      search.customerId = this.view?.customer_id ?? this.customer?.id ?? this.composeCustomer?.id ?? "";
       search.quoteId = this.quoteId;
     }
     const grid = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("hos-pos-product-grid");
@@ -1520,7 +1522,7 @@ export class QdQuoteWorkarea extends LitElement {
     if (steps !== null) {
       const v = this.view;
       steps.steps = quoteFlowSteps({
-        hasCustomer: Boolean(v || this.customer),
+        hasCustomer: Boolean(v || this.customer || this.composeCustomer),
         lineCount: v?.lines.length ?? 0,
         sentOrBeyond: Boolean(v && v.status !== "DRAFT"),
       });
@@ -1952,6 +1954,9 @@ export class QdQuoteWorkarea extends LitElement {
       case "identity-change":
         this.startNewQuote();
         break;
+      case "compose-change":
+        this.composeCustomer = null;
+        break;
       case "fulfil-pickup":
         this.termsEdit({ fulfillment: "PICKUP" });
         break;
@@ -2147,7 +2152,12 @@ export class QdQuoteWorkarea extends LitElement {
    * has no walk-in row.
    */
   private readonly onCustomerPicked = (event: CustomEvent<PickerCustomer>): void => {
-    void this.createFor(event.detail);
+    // A pick makes no quote: the quote is made on the first line added, so a customer clicked and abandoned leaves
+    // nothing behind (a draft cannot be taken back). Every other quote-level thing (terms, send) needs the quote, so
+    // the compose page offers the search box only.
+    this.composeCustomer = event.detail;
+    this.error = "";
+    void this.updateComplete.then(() => this.focusScan());
   };
 
   // ── quote mutations ────────────────────────────────────────────────────────
@@ -2207,6 +2217,8 @@ export class QdQuoteWorkarea extends LitElement {
       ...(this.quoteId === "" ? { follows: true } : { quote: this.ctx, label: this.view?.quote_no ?? "" }),
       say: (line) => this.speakAdd(line, "warn"),
     });
+    // The first line of a New quote makes the quote: the customer picked in compose is created for now, and this add waits for it.
+    if (this.quoteId === "" && this.composeCustomer !== null && this.creating === null) void this.createFor(this.composeCustomer);
     // A scan right after the customer is picked lands while the quote is still being made or read: it waits
     // for them rather than being told to pick a customer who has just been picked.
     // Only while compose is on screen: a scan on an open quote is for that quote and waits for no create.
@@ -3686,6 +3698,18 @@ export class QdQuoteWorkarea extends LitElement {
    * the screen. No dead product grid, no disabled gold.
    */
   private renderCompose() {
+    const picked = this.composeCustomer;
+    if (picked !== null) {
+      return html`<div class="composewrap">
+        <div class="composecard" data-testid="qb-identity">
+          <div class="cname" data-testid="qb-compose-customer">${picked.name}</div>
+          <div class="csub">${picked.account_no !== "" ? picked.account_no : ""}</div>
+          <button type="button" class="backlink" data-action="compose-change" data-testid="qb-compose-change">Change customer</button>
+          <p class="pagectx">Search for the first product. The quote is made when you add it.</p>
+          <quote-search-add></quote-search-add>
+        </div>
+      </div>`;
+    }
     return html`<div class="composewrap">
       <div class="composecard" data-testid="qb-identity">
         <hos-customer-picker></hos-customer-picker>

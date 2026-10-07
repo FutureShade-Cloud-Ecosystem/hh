@@ -236,6 +236,9 @@ test("sender: the compose create held across a sign out is never re-sent and ope
   const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
   await picker.getByPlaceholder("Search name or account #…").fill("Fenwick");
   await picker.getByRole("option", { name: /Fenwick/ }).click();
+  const box = page.getByRole("combobox", { name: "Search products by name, code or category" });
+  await box.fill("PSN-100");
+  await box.press("Enter");
   await create.asked;
   await signOutThenIn(page, "Sales manager");
   await quiet(page);

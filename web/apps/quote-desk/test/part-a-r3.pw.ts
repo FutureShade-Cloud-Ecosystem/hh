@@ -25,6 +25,12 @@ test("P2-1 a scan on an open quote while a new quote is being created goes to th
   const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
   await picker.getByPlaceholder("Search name or account #…").fill("Fenwick");
   await picker.getByRole("option", { name: /Fenwick/ }).click();
+  // The first line of the new quote starts the create; the person then goes to an open quote while it is out.
+  await page.locator("qd-quote-workarea").evaluate((el) => {
+    el.shadowRoot?.dispatchEvent(
+      new CustomEvent("pos-add-product", { detail: { product: { id: "p-polymer-sand", base_uom: "bag", name: "Polymeric Locking Sand" } }, bubbles: true, composed: true }),
+    );
+  });
   await create.asked;
   await open(page, "Q-1001");
   await expect(page.getByTestId("qb-line")).toHaveCount(2);
@@ -53,13 +59,13 @@ test("P2-1 a scan made in compose while the quote is being created is not added 
   const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
   await picker.getByPlaceholder("Search name or account #…").fill("Fenwick");
   await picker.getByRole("option", { name: /Fenwick/ }).click();
-  await create.asked;
-  // A scan reaches the work area as the scan box's own event: compose has no box, so the event is sent as the gun's would be.
+  // A scan reaches the work area as the scan box's own event, as the gun's would be: it starts the create.
   await page.locator("qd-quote-workarea").evaluate((el) => {
     el.shadowRoot?.dispatchEvent(
       new CustomEvent("pos-add-product", { detail: { product: { id: "p-polymer-sand", base_uom: "bag", name: "Polymeric Locking Sand" } }, bubbles: true, composed: true }),
     );
   });
+  await create.asked;
   await open(page, "Q-1001");
   await expect(page.getByTestId("qb-line")).toHaveCount(2);
   await create.release();
