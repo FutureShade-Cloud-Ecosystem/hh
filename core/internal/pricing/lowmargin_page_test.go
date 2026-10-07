@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strconv"
 	"testing"
 	"time"
@@ -31,6 +32,12 @@ func ids(rows []LowMarginScanRow) []string {
 	for _, r := range rows {
 		out = append(out, r.LineID)
 	}
+	return out
+}
+
+func sortedIDs(rows []LowMarginScanRow) []string {
+	out := ids(rows)
+	sort.Strings(out)
 	return out
 }
 
@@ -80,9 +87,11 @@ func TestLowMarginFilters_SalespersonAndClearedOnlyAndBranch(t *testing.T) {
 	a := docLine(DocTypeQuote, "qa", "a", 850)
 	a.SalespersonID = "sp-1"
 	b := docLine(DocTypeQuote, "qb", "b", 860)
-	b.SalespersonID, b.ClearedBelowFloor, b.ClearedByID, b.ClearAuthority = "sp-2", true, "mgr", "MANAGER_SCOPE"
+	b.SalespersonID, b.ClearedByID, b.ClearAuthority = "sp-2", "mgr", "MANAGER_SCOPE"
+	stampLine(&b, 25, 1000)
 	c := docLine(DocTypeQuote, "qc", "c", 870)
-	c.SalespersonID, c.ClearedBelowFloor, c.ClearAuthority = "sp-1", true, "APPROVAL"
+	c.SalespersonID, c.ClearAuthority = "sp-1", "APPROVAL"
+	stampLine(&c, 25, 1000)
 	scan := &fakeScan{lines: []LowMarginSaleLine{a, b, c}}
 	svc := scanSvc(scan)
 

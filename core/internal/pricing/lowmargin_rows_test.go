@@ -13,6 +13,11 @@ import (
 // the margin against the floor and the target, whether the line was cleared below the floor and by
 // whom, and how the whole document sits, so a below floor line inside a healthy quote reads as such.
 
+// stampLine puts a clearing stamp on a line: cleared at discPct percent off, at marginBps.
+func stampLine(ln *LowMarginSaleLine, discPct int, marginBps int64) {
+	ln.ClearStamped, ln.ClearStampDiscPct, ln.ClearStampMarginBps = true, &discPct, &marginBps
+}
+
 const rowsCost = 175 // cents per PC, 718 per SF once converted
 
 // docLine is a 40 SF Brussels line of a document: 164 PC at 175 cents is 28700 of cost, and a line
@@ -36,9 +41,9 @@ func scanOnce(t *testing.T, lines ...LowMarginSaleLine) []LowMarginScanRow {
 }
 
 func TestLowMarginRow_CarriesSalespersonAndTheClearing(t *testing.T) {
-	cleared := docLine(DocTypeQuote, "q1", "cleared", 850) // 1552 bps, below the 2000 floor
+	cleared := docLine(DocTypeQuote, "q1", "cleared", 850) // 1558 bps, below the 2000 floor
 	cleared.SalespersonID, cleared.SalespersonLabel = "u-sales", "Outside Sales, Trenton"
-	cleared.ClearedBelowFloor = true
+	stampLine(&cleared, 25, 1000)
 	cleared.ClearedByID, cleared.ClearedByLabel, cleared.ClearAuthority = "u-mgr", "Sales Manager, Trenton", "MANAGER_SCOPE"
 	plain := docLine(DocTypeQuote, "q2", "plain", 850)
 	plain.SalespersonID, plain.SalespersonLabel = "u-sales", "Outside Sales, Trenton"
@@ -54,7 +59,7 @@ func TestLowMarginRow_CarriesSalespersonAndTheClearing(t *testing.T) {
 	if !c.ClearedBelowFloor || c.ClearedBy != "Sales Manager, Trenton" || c.ClearedByID != "u-mgr" || c.ClearAuthority != "MANAGER_SCOPE" {
 		t.Errorf("clearing not carried: %+v", c)
 	}
-	if c.MarginBps != 1552 || c.FloorBps != 2000 || c.TargetBps != 3300 {
+	if c.MarginBps != 1558 || c.FloorBps != 2000 || c.TargetBps != 3300 {
 		t.Errorf("margin, floor, target: %d %d %d", c.MarginBps, c.FloorBps, c.TargetBps)
 	}
 	p, _ := rowByLine(rows, "plain")
@@ -97,7 +102,8 @@ func TestLowMarginRow_DocumentMarginAbsentWhenACostIsMissing(t *testing.T) {
 func TestLowMarginRow_JSONNames(t *testing.T) {
 	ln := docLine(DocTypeOrder, "o1", "l", 850)
 	ln.SalespersonLabel = "Outside Sales, Trenton"
-	ln.ClearedBelowFloor, ln.ClearedByLabel, ln.ClearAuthority = true, "Sales Manager, Trenton", "APPROVAL"
+	stampLine(&ln, 25, 1000)
+	ln.ClearedByLabel, ln.ClearAuthority = "Sales Manager, Trenton", "APPROVAL"
 	h := NewHandler(scanSvc(&fakeScan{lines: []LowMarginSaleLine{ln}}), nil)
 	rec := httptest.NewRecorder()
 	h.lowMarginScan(rec, httptest.NewRequest(http.MethodGet, "/api/v1/pricing/reports/low-margin/scan", nil), globalCaller())
@@ -114,11 +120,90 @@ func TestLowMarginRow_JSONNames(t *testing.T) {
 	for k, want := range map[string]any{
 		"salesperson": "Outside Sales, Trenton", "cleared_below_floor": true,
 		"cleared_by": "Sales Manager, Trenton", "clear_authority": "APPROVAL",
-		"margin_bps": float64(1552), "floor_bps": float64(2000), "target_bps": float64(3300),
-		"doc_margin_bps": float64(1558), // (34000-28700)*1e4/34000, the line itself is 1552 on the rounded 718
+		"margin_bps": float64(1558), "floor_bps": float64(2000), "target_bps": float64(3300),
+		"doc_margin_bps": float64(1558), // (34000-28700)*1e4/34000, the line itself agrees
 	} {
 		if r[k] != want {
 			t.Errorf("%s = %v, want %v (row %v)", k, r[k], want, r)
 		}
+	}
+}
+
+// The stamp stands for the discount it cleared and anything shallower; cleared_below_floor is true only
+// when the line is below its floor NOW and a stamp covers it. Every stamped row carries the stamp's own
+// figures beside the current ones, whatever the verdict.
+func TestLowMarginRow_TheStampCoversTheDiscountItClearedAndShallowerOnly(t *testing.T) {
+	cost := p64(175)
+	mk := func(id string, gross int64, disc int) LowMarginSaleLine {
+		ln := brusselsLine(id, gross, cost)
+		ln.DocType, ln.DocID, ln.DocNo, ln.DiscPct = DocTypeQuote, "q-"+id, "Q-"+id, disc
+		ln.ClearedByID, ln.ClearedByLabel, ln.ClearAuthority = "u-mgr", "Sales Manager, Trenton", "MANAGER_SCOPE"
+		return ln
+	}
+	same := mk("same", 1000, 25) // net 750: below the 2000 floor, at the very discount the stamp cleared
+	stampLine(&same, 25, 1000)
+	shallower := mk("shallower", 1000, 15) // net 850: still below the floor, shallower than cleared
+	stampLine(&shallower, 25, 1000)
+	deeper := mk("deeper", 1000, 30) // net 700: below the floor, deeper than the stamp cleared
+	stampLine(&deeper, 25, 1000)
+	recovered := mk("recovered", 1000, 5) // net 950: margin back above the floor, below target (warn)
+	stampLine(&recovered, 25, 1000)
+	unstamped := mk("unstamped", 1000, 25)
+
+	rows := scanOnce(t, same, shallower, deeper, recovered, unstamped)
+	want := map[string]bool{"same": true, "shallower": true, "deeper": false, "recovered": false, "unstamped": false}
+	for id, cleared := range want {
+		r, ok := rowByLine(rows, id)
+		if !ok {
+			t.Fatalf("%s: not a row: %+v", id, rows)
+		}
+		if r.ClearedBelowFloor != cleared {
+			t.Errorf("%s: cleared_below_floor = %v at level %q margin %d, want %v", id, r.ClearedBelowFloor, r.Level, r.MarginBps, cleared)
+		}
+	}
+	rec, _ := rowByLine(rows, "recovered")
+	if rec.Level != "warn" {
+		t.Fatalf("the recovered line is no longer below its floor: level %q", rec.Level)
+	}
+	if rec.ClearDiscPct == nil || *rec.ClearDiscPct != 25 || rec.ClearMarginBps == nil || *rec.ClearMarginBps != 1000 || rec.ClearedBy != "Sales Manager, Trenton" {
+		t.Errorf("a stamped row carries the stamp's own figures whatever the verdict: %+v", rec)
+	}
+	if u, _ := rowByLine(rows, "unstamped"); u.ClearDiscPct != nil || u.ClearMarginBps != nil {
+		t.Errorf("an unstamped row carries no stamp figures: %+v", u)
+	}
+
+	f := window()
+	f.ClearedOnly = true
+	only, err := scanSvc(&fakeScan{lines: []LowMarginSaleLine{same, shallower, deeper, recovered, unstamped}}).LowMarginScan(context.Background(), f)
+	if err != nil || !eq(sortedIDs(only), []string{"same", "shallower"}) {
+		t.Errorf("cleared_only returns the covered lines below the floor now: %v err %v", ids(only), err)
+	}
+}
+
+// A stamp with no discount figure cannot be shown to cover anything.
+func TestLowMarginRow_AStampWithNoDiscountFigureCoversNothing(t *testing.T) {
+	ln := docLine(DocTypeQuote, "q1", "bare", 850)
+	ln.ClearStamped = true
+	rows := scanOnce(t, ln)
+	if len(rows) != 1 || rows[0].ClearedBelowFloor {
+		t.Errorf("a stamp that names no discount covers no line: %+v", rows)
+	}
+}
+
+// The row's margin and the document's agree for a one line document: both come off the line's own
+// total and cost, rounded once, not one off a rounded unit price.
+func TestLowMarginRow_OneLineDocumentRowAndDocumentMarginAgree(t *testing.T) {
+	ln := docLine(DocTypeQuote, "q1", "one", 999)
+	ln.DiscPct = 33
+	ln.LineTotalCents = (999*40*67 + 50) / 100 // 26773, the quote's own net line total
+	rows := scanOnce(t, ln)
+	if len(rows) != 1 || rows[0].DocMarginBps == nil {
+		t.Fatalf("rows %+v", rows)
+	}
+	if rows[0].MarginBps != *rows[0].DocMarginBps {
+		t.Errorf("a one line document: row margin %d, document margin %d", rows[0].MarginBps, *rows[0].DocMarginBps)
+	}
+	if rows[0].MarginBps != -719 {
+		t.Errorf("margin %d, want -719 ((26773-28700)*1e4/26773)", rows[0].MarginBps)
 	}
 }

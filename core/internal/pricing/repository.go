@@ -843,7 +843,9 @@ func (r *Repository) LowMarginSalesLines(ctx context.Context, f LowMarginFilter)
 	       ol.line_total_cents, ROUND(pbc.avg_unit_cost_cents * ol.qty_base)::bigint,
 	       COALESCE(sp.id::text, ''), COALESCE(sp.display_name, ''),
 	       oqc.fc IS NOT NULL, COALESCE(oqc.fc->>'cleared_by', ''), COALESCE(cb.display_name, ''),
-	       COALESCE(oqc.fc->>'authority', '')
+	       COALESCE(oqc.fc->>'authority', ''),
+	       CASE WHEN oqc.fc->>'disc_pct' ~ '^[0-9]{1,3}$' THEN (oqc.fc->>'disc_pct')::int END,
+	       CASE WHEN oqc.fc->>'margin_bps' ~ '^-?[0-9]{1,9}$' THEN (oqc.fc->>'margin_bps')::bigint END
 	  FROM order_lines ol
 	  JOIN orders o    ON o.id = ol.order_id
 	  JOIN customers c ON c.id = o.customer_id
@@ -877,7 +879,9 @@ func (r *Repository) LowMarginSalesLines(ctx context.Context, f LowMarginFilter)
 	       ql.line_total_cents, ROUND(pbc.avg_unit_cost_cents * ql.qty_base)::bigint,
 	       COALESCE(sp.id::text, ''), COALESCE(sp.display_name, ''),
 	       COALESCE(jsonb_typeof(ql.metadata->'floor_clear') = 'object', FALSE), COALESCE(ql.metadata->'floor_clear'->>'cleared_by', ''),
-	       COALESCE(cb.display_name, ''), COALESCE(ql.metadata->'floor_clear'->>'authority', '')
+	       COALESCE(cb.display_name, ''), COALESCE(ql.metadata->'floor_clear'->>'authority', ''),
+	       CASE WHEN ql.metadata->'floor_clear'->>'disc_pct' ~ '^[0-9]{1,3}$' THEN (ql.metadata->'floor_clear'->>'disc_pct')::int END,
+	       CASE WHEN ql.metadata->'floor_clear'->>'margin_bps' ~ '^-?[0-9]{1,9}$' THEN (ql.metadata->'floor_clear'->>'margin_bps')::bigint END
 	  FROM quote_lines ql
 	  JOIN quotes qt   ON qt.id = ql.quote_id
 	  JOIN customers c ON c.id = qt.customer_id
@@ -911,7 +915,8 @@ func (r *Repository) LowMarginSalesLines(ctx context.Context, f LowMarginFilter)
 			&ln.CustomerID, &ln.CustomerType, &ln.ProductID, &ln.CategoryID, &ln.SKU, &ln.ProductName,
 			&ln.QtyEntered, &ln.UOMEntered, &ln.UnitPriceCents, &ln.DiscPct, &ln.PriceUOM, &ln.AvgUnitCostCents,
 			&ln.LineTotalCents, &ln.LineCostCents, &ln.SalespersonID, &ln.SalespersonLabel,
-			&ln.ClearedBelowFloor, &ln.ClearedByID, &ln.ClearedByLabel, &ln.ClearAuthority,
+			&ln.ClearStamped, &ln.ClearedByID, &ln.ClearedByLabel, &ln.ClearAuthority,
+			&ln.ClearStampDiscPct, &ln.ClearStampMarginBps,
 		); err != nil {
 			return nil, err
 		}

@@ -494,13 +494,18 @@ type LowMarginSaleLine struct {
 	// quote's salesperson, else its creator) as an id and a display label. Empty when none is on file.
 	SalespersonID    string
 	SalespersonLabel string
-	// The clearing stamp the line carries: set when a manager (or an approval) cleared this line below
-	// the margin floor. For an order line the stamp is the one on the quote line it was copied from,
-	// found only while the order line still holds that quote line's product and price.
-	ClearedBelowFloor bool
-	ClearedByID       string
-	ClearedByLabel    string
-	ClearAuthority    string // MANAGER_SCOPE | APPROVAL
+	// The clearing stamp the line carries (the floor_clear stamp a manager's or an approval's clearing
+	// leaves on a quote line): who cleared it, on what authority, and at which discount and margin
+	// (ClearStampDiscPct and ClearStampMarginBps, nil when the stamp does not say). For an order line
+	// the stamp is the one on the quote line it was copied from, found only while the order line still
+	// holds that quote line's product and price. A stamp stands for the discount it cleared and anything
+	// shallower; whether it covers the line NOW is the service's verdict, not the feed's.
+	ClearStamped        bool
+	ClearStampDiscPct   *int
+	ClearStampMarginBps *int64
+	ClearedByID         string
+	ClearedByLabel      string
+	ClearAuthority      string // MANAGER_SCOPE | APPROVAL
 }
 
 // LowMarginScanRow is one GRADED row of the principal's daily low-margin report (D-PA-3). A row is either a
@@ -534,12 +539,18 @@ type LowMarginScanRow struct {
 	// Who sold the document, as the staff member's display label.
 	SalespersonID string `json:"salesperson_id,omitempty"`
 	Salesperson   string `json:"salesperson,omitempty"`
-	// ClearedBelowFloor is the clearing stamp's fact: a manager (MANAGER_SCOPE) or an approval
-	// (APPROVAL) cleared this line below the margin floor, and ClearedBy names who, as a display label.
+	// ClearedBelowFloor is true only when the line is below its floor NOW and a clearing stamp covers
+	// it: a stamp stands for the discount it cleared and anything shallower, so a line since
+	// discounted deeper than that, or since brought back above the floor, is not cleared. A stamped
+	// line names who cleared it (ClearedBy, a display label; ClearAuthority MANAGER_SCOPE or APPROVAL)
+	// and the stamp's own figures as cleared (ClearDiscPct, ClearMarginBps) whatever the verdict, beside
+	// the line's current DiscPct and MarginBps, so the reader sees both.
 	ClearedBelowFloor bool   `json:"cleared_below_floor"`
 	ClearedByID       string `json:"cleared_by_id,omitempty"`
 	ClearedBy         string `json:"cleared_by,omitempty"`
 	ClearAuthority    string `json:"clear_authority,omitempty"`
+	ClearDiscPct      *int   `json:"clear_disc_pct,omitempty"`
+	ClearMarginBps    *int64 `json:"clear_margin_bps,omitempty"`
 	// DocMarginBps is the document's own overall margin over its product lines, so a below floor line
 	// inside a healthy quote reads as one. Absent (never a partial figure) when any product line of the
 	// document has no cost on file or the document has no revenue to divide by.

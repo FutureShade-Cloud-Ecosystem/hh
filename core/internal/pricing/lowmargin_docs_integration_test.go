@@ -93,7 +93,7 @@ func TestIntegration_LowMarginDocs_QuotesGradedAtTheirOwnNetPrice(t *testing.T) 
 	svc := realSvc(pool)
 	no := fmt.Sprintf("Q-LMD-%d", time.Now().UnixNano())
 	seedLMQuote(t, pool, lmQuote{ID: "0d4a0000-0000-4000-9000-000000000101", No: no,
-		Lines: []lmQuoteLine{{GrossUnit: 1000, DiscPct: 15}}}) // net 850 per SF: 1552 bps, below the 2000 floor
+		Lines: []lmQuoteLine{{GrossUnit: 1000, DiscPct: 15}}}) // net 850 per SF: 1558 bps, below the 2000 floor
 
 	// Quotes only: the quote's line is there, graded at 850 not at the stored gross 1000.
 	f := lmWindow()
@@ -107,7 +107,7 @@ func TestIntegration_LowMarginDocs_QuotesGradedAtTheirOwnNetPrice(t *testing.T) 
 		t.Fatalf("want the one quote line in the quotes report, got %+v", rows)
 	}
 	r := got[0]
-	if r.DocType != DocTypeQuote || r.UnitPriceCents != 850 || r.MarginBps != 1552 || r.Level != "critical" || r.CostInPriceUOMCents != 718 {
+	if r.DocType != DocTypeQuote || r.UnitPriceCents != 850 || r.MarginBps != 1558 || r.Level != "critical" || r.CostInPriceUOMCents != 718 {
 		t.Errorf("quote line graded wrong: %+v", r)
 	}
 	for _, o := range rows {
@@ -174,7 +174,7 @@ func TestIntegration_LowMarginDocs_ADiscountedOrderLineIsGradedNet(t *testing.T)
 		t.Fatal(err)
 	}
 	got := lmRowsByDoc(rows, no)
-	if len(got) != 1 || got[0].UnitPriceCents != 850 || got[0].MarginBps != 1552 || got[0].Level != "critical" {
+	if len(got) != 1 || got[0].UnitPriceCents != 850 || got[0].MarginBps != 1558 || got[0].Level != "critical" {
 		t.Errorf("a discounted order line must be graded at its net price 850: %+v", got)
 	}
 }
@@ -285,7 +285,7 @@ func TestIntegration_LowMarginDocs_AnEditedOrderLineDoesNotInheritTheClearing(t 
 	svc := realSvc(pool)
 	ctx := context.Background()
 	lmUser(t, pool, lmManagerUser, "Sales Manager, Trenton")
-	stamp := fmt.Sprintf(`{"floor_clear":{"cleared_by":%q,"authority":"APPROVAL"}}`, lmManagerUser)
+	stamp := fmt.Sprintf(`{"floor_clear":{"cleared_by":%q,"authority":"APPROVAL","disc_pct":15,"margin_bps":1558}}`, lmManagerUser)
 	quoteID := "0d4a0000-0000-4000-9000-000000000203"
 	seedLMQuote(t, pool, lmQuote{ID: quoteID, No: fmt.Sprintf("Q-LME-%d", time.Now().UnixNano()),
 		Lines: []lmQuoteLine{{GrossUnit: 1000, DiscPct: 15, Metadata: stamp}}})
@@ -327,7 +327,7 @@ func TestIntegration_LowMarginDocs_FiltersSortAndCursorPage(t *testing.T) {
 	ctx := context.Background()
 	lmUser(t, pool, lmSalesUser, "Outside Sales, Trenton")
 	lmUser(t, pool, lmManagerUser, "Sales Manager, Trenton")
-	stamp := fmt.Sprintf(`{"floor_clear":{"cleared_by":%q,"authority":"MANAGER_SCOPE"}}`, lmManagerUser)
+	stamp := fmt.Sprintf(`{"floor_clear":{"cleared_by":%q,"authority":"MANAGER_SCOPE","disc_pct":15,"margin_bps":1558}}`, lmManagerUser)
 	tag := time.Now().UnixNano()
 	old := time.Now().AddDate(0, 0, -20)
 	// qa: the salesperson's, cleared, 850 net. qb: the manager's own, uncleared, 870 net.
@@ -498,6 +498,99 @@ func TestIntegration_LowMarginDocs_TombstonesNeverAppear(t *testing.T) {
 			t.Errorf("%s: no document margin, want 1558 off the surviving line alone", no)
 		} else if *got[0].DocMarginBps != 1558 {
 			t.Errorf("%s: document margin %d, want 1558 off the surviving line alone", no, *got[0].DocMarginBps)
+		}
+	}
+}
+
+// The stamp stands for the discount it cleared and anything shallower, and cleared_below_floor is true
+// only for a line below its floor now that a stamp covers. A converted order line inherits the same
+// rule: the stamp rides to the order, the order line's own discount is what it is compared with.
+func TestIntegration_LowMarginDocs_ClearedMeansBelowTheFloorNowAndCovered(t *testing.T) {
+	pool := intPool(t)
+	svc := realSvc(pool)
+	ctx := context.Background()
+	lmUser(t, pool, lmManagerUser, "Sales Manager, Trenton")
+	stamp := fmt.Sprintf(`{"floor_clear":{"cleared_by":%q,"authority":"MANAGER_SCOPE","disc_pct":25,"margin_bps":433}}`, lmManagerUser)
+	tag := time.Now().UnixNano()
+	// Gross 1000 a SF, forty SF, cost 28700: 25 percent off is a margin of 433 bps (below the floor),
+	// 15 percent off 1558, 30 percent off negative, 5 percent off 2447 (back above the floor, warn).
+	cases := []struct {
+		name    string
+		disc    int
+		cleared bool
+		level   string
+	}{
+		{"SAME", 25, true, "critical"}, {"SHALLOW", 15, true, "critical"}, {"DEEPER", 30, false, "critical"}, {"BACK", 5, false, "warn"},
+	}
+	quoteIDs := map[string]string{}
+	for i, c := range cases {
+		id := fmt.Sprintf("0d4a0000-0000-4000-9000-00000000050%d", i+1)
+		quoteIDs[c.name] = id
+		seedLMQuote(t, pool, lmQuote{ID: id, No: fmt.Sprintf("Q-LMS-%s-%d", c.name, tag),
+			Lines: []lmQuoteLine{{GrossUnit: 1000, DiscPct: c.disc, Metadata: stamp}}})
+	}
+	f := lmWindow()
+	f.DocType = ScanDocsQuotes
+	rows, err := svc.LowMarginScan(ctx, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range cases {
+		got := lmRowsByDoc(rows, fmt.Sprintf("Q-LMS-%s-%d", c.name, tag))
+		if len(got) != 1 {
+			t.Fatalf("%s: %+v", c.name, got)
+		}
+		r := got[0]
+		if r.Level != c.level || r.ClearedBelowFloor != c.cleared {
+			t.Errorf("%s: level %q cleared_below_floor %v, want %q %v (margin %d)", c.name, r.Level, r.ClearedBelowFloor, c.level, c.cleared, r.MarginBps)
+		}
+		if r.ClearDiscPct == nil || *r.ClearDiscPct != 25 || r.ClearMarginBps == nil || *r.ClearMarginBps != 433 || r.ClearedBy != "Sales Manager, Trenton" {
+			t.Errorf("%s: the stamp's own figures are missing: %+v", c.name, r)
+		}
+	}
+	f.ClearedOnly = true
+	rows, err = svc.LowMarginScan(ctx, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range cases {
+		n := len(lmRowsByDoc(rows, fmt.Sprintf("Q-LMS-%s-%d", c.name, tag)))
+		if (n == 1) != c.cleared {
+			t.Errorf("cleared_only on %s: %d rows, want cleared=%v", c.name, n, c.cleared)
+		}
+	}
+
+	// The orders those quotes became: same rule through the inherited stamp.
+	for i, c := range cases {
+		oid := fmt.Sprintf("0d4a0000-0000-4000-9000-00000000051%d", i+1)
+		ono := fmt.Sprintf("SO-LMS-%s-%d", c.name, tag)
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO orders (id, order_no, customer_id, branch_id, quote_id, status, fulfillment)
+			VALUES ($1, $2, (SELECT id FROM customers WHERE account_no = 'WALK-IN'), $3, $4, 'INVOICED', 'PICKUP')`,
+			oid, ono, lmTrenton, quoteIDs[c.name]); err != nil {
+			t.Fatal(err)
+		}
+		oid2 := oid
+		t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM orders WHERE id = $1`, oid2) })
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO order_lines (order_id, line_no, product_id, description, qty_entered, uom_entered, qty_base,
+			                         unit_price_cents, price_uom, line_total_cents, metadata)
+			SELECT $1, line_no, product_id, description, qty_entered, uom_entered, qty_base, unit_price_cents, price_uom, line_total_cents,
+			       CASE WHEN disc_pct > 0 THEN jsonb_build_object('disc_pct', disc_pct) ELSE '{}'::jsonb END
+			  FROM quote_lines WHERE quote_id = $2`, oid, quoteIDs[c.name]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f = lmWindow()
+	f.DocType = ScanDocsOrders
+	rows, err = svc.LowMarginScan(ctx, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range cases {
+		got := lmRowsByDoc(rows, fmt.Sprintf("SO-LMS-%s-%d", c.name, tag))
+		if len(got) != 1 || got[0].ClearedBelowFloor != c.cleared || got[0].ClearDiscPct == nil || *got[0].ClearDiscPct != 25 {
+			t.Errorf("order %s: %+v, want cleared=%v with the stamp's figures", c.name, got, c.cleared)
 		}
 	}
 }

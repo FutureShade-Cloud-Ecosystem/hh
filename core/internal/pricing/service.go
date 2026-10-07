@@ -1710,8 +1710,11 @@ func (s *Service) LowMarginScan(ctx context.Context, f LowMarginFilter) ([]LowMa
 			QtyEntered: ln.QtyEntered, UOMEntered: ln.UOMEntered,
 			UnitPriceCents: netUnitCents(ln.UnitPriceCents, ln.DiscPct), DiscPct: ln.DiscPct, PriceUOM: ln.PriceUOM,
 			SalespersonID: ln.SalespersonID, Salesperson: ln.SalespersonLabel,
-			ClearedBelowFloor: ln.ClearedBelowFloor, ClearedByID: ln.ClearedByID, ClearedBy: ln.ClearedByLabel,
-			ClearAuthority: ln.ClearAuthority, DocMarginBps: docMargins[docKey(ln)],
+			DocMarginBps: docMargins[docKey(ln)],
+		}
+		if ln.ClearStamped {
+			row.ClearedByID, row.ClearedBy, row.ClearAuthority = ln.ClearedByID, ln.ClearedByLabel, ln.ClearAuthority
+			row.ClearDiscPct, row.ClearMarginBps = ln.ClearStampDiscPct, ln.ClearStampMarginBps
 		}
 		// Category target/floor via the SAME resolution the classifier uses: the policy row when
 		// present, else the default target/floor band (finding #12, a no-policy category is graded
@@ -1748,16 +1751,26 @@ func (s *Service) LowMarginScan(ctx context.Context, f LowMarginFilter) ([]LowMa
 		costInPriceUOM := centsTimesFactor(*ln.AvgUnitCostCents, fRat)
 		row.CostInPriceUOMCents = costInPriceUOM
 		row.MarginBps = marginBps(row.UnitPriceCents, costInPriceUOM)
+		if ln.LineTotalCents > 0 && ln.LineCostCents != nil && *ln.LineCostCents > 0 {
+			// The line's own total and cost, each rounded once: the figure the document's margin is
+			// summed from, so a one line document's row and document margins are the one number.
+			// (Off a rounded unit price the two disagreed by a few basis points.)
+			row.MarginBps = marginBps(ln.LineTotalCents, *ln.LineCostCents)
+		}
 		level, breaching := classifyMargin(row.MarginBps, target, floor)
 		if !breaching {
 			continue // a healthy line (margin ≥ target) is omitted, proves the filter
 		}
 		row.Level = level
+		// Cleared means below the floor now AND covered by a stamp: the stamp stands for the discount
+		// it cleared and anything shallower. A stamp that names no discount covers nothing.
+		row.ClearedBelowFloor = level == "critical" && ln.ClearStamped &&
+			ln.ClearStampDiscPct != nil && ln.DiscPct <= *ln.ClearStampDiscPct
 		out = append(out, row)
 	}
 	if f.ClearedOnly {
-		// An invalid row is a line the report could not grade; a cleared line it could not grade is
-		// still a cleared line, so the filter keeps it, never hides one.
+		// Cleared only is the lines below the floor now that a stamp covers (an invalid row, which
+		// could not be graded, is not one).
 		kept := out[:0]
 		for _, r := range out {
 			if r.ClearedBelowFloor {
