@@ -1,8 +1,9 @@
-// The drawn category tiles, rendered (demo build): a seeded product with no picture shows its
+// The drawn category tiles, rendered (served here in demo mode; every build shows them, see
+// test/default-build/tiles.pw.ts): a seeded product with no picture shows its
 // category's tile as the img in the hot list and in a search result, and the tile follows the
 // document theme (Light is data-theme="light", Dark is the absence of it). The stub's products
 // carry no image (has_image false), the same state as a demo product with no photograph. The
-// default build's side of this (the glyph, no img) is test/default-build/glyph.pw.ts.
+// default build's side of this is test/default-build/tiles.pw.ts.
 import { expect, test, type Page } from "@playwright/test";
 
 async function signInToItems(page: Page): Promise<void> {
