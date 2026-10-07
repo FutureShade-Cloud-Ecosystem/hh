@@ -17,6 +17,8 @@ import (
 	"sort"
 	"strconv"
 	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
 const hstBps = 1300 // 13% HST, the rate the demo world prices at
@@ -46,15 +48,28 @@ type builder struct {
 
 func (b *builder) add(r row) { b.rows = append(b.rows, r) }
 
-// day returns midnight-relative calendar date `off` days from the clock's day, as a DATE literal.
+// THE HOUSE ZONE IS ASKED, NOT DUPLICATED. This command once kept its own copy of the zone
+// constant; the shared houseday helper (the platform package the house settled on for business
+// dates) replaced the copies, and the seed asks it here: daily means the dealer's day, and a UTC
+// midnight rolls the day over at dinner time in Ontario, which for the day-keyed rows is the
+// difference between stamping tonight's sale tonight and stamping it tomorrow. main.go embeds
+// time/tzdata, so the helper's UTC fallback is the insurance, never the plan.
+//
+// day returns midnight-relative calendar date `off` days from the clock's day IN THE HOUSE ZONE,
+// as a DATE literal. The clock itself stays UTC everywhere else; only the CALENDAR the day is read
+// on is the dealer's, the "daily means the dealer's day" invariant every other daily read in the
+// system already obeys (the sales.today window, the rollup day, the ledger's period, the tax
+// assessor's today).
 func (b *builder) day(off int) time.Time {
-	y, m, d := b.in.Now.UTC().Date()
+	y, m, d := b.in.Now.In(houseday.Location()).Date()
 	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC).AddDate(0, 0, off)
 }
 
 // dayStamp is the plan's calendar day as the segment that goes INTO a day-keyed id: 20260903. It is
-// derived from b.day(0) and not from a second format of b.in.Now, so a day-keyed row's key and the
-// scheduled_date/created_at on that same row can never disagree about which day it is.
+// the HOUSE ZONE's day (b.day(0) above) and not a second format of b.in.Now, so a day-keyed row's
+// key and the scheduled_date/created_at on that same row can never disagree about which day it is,
+// and the counter till's acceptance run, which reads the stamp off its own clock in the house zone,
+// finds the sale the seed wrote under the day it is still busy being.
 func (b *builder) dayStamp() string { return b.day(0).Format("20060102") }
 
 // dayID is demoID for a row that MUST be re-minted on each new calendar day rather than recognised.

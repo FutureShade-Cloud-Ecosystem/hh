@@ -45,6 +45,7 @@ func qd1cCfgWithCell(t *testing.T, role string, level roleconfig.Level) *rolecon
 			roleconfig.SettingCostVisibility:                json.RawMessage(`["sales_manager","general_manager","financial_controller"]`),
 			roleconfig.SettingCreditAtTill:                  json.RawMessage(`true`),
 			roleconfig.SettingRefundAmountWithoutApproval:   json.RawMessage(`25000`),
+			roleconfig.SettingRefundApprovalLimitEnabled:    json.RawMessage(`true`),
 			roleconfig.SettingRefundApprovers:               json.RawMessage(`["sales_manager","branch_manager"]`),
 			roleconfig.SettingManagerOwnBranchFloorClearing: json.RawMessage(`true`),
 			roleconfig.SettingPricingEditors:                json.RawMessage(`["sales_manager","general_manager"]`),

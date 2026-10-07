@@ -453,8 +453,9 @@ func (s *Service) returnInTx(ctx context.Context, tx pgx.Tx, plan *returnPlan) (
 		// not qualify refuses with the contract's body, the configured
 		// amount and the configured approvers, never null and never
 		// zero. Within the amount nothing here stirs: the header is
-		// inert.
-		if credentialJudged && cumulative > s.roles.RefundAmountWithoutApprovalCents() {
+		// inert, and under no limit (RefundRequiresApproval folding the
+		// switch in) it never stirs at all.
+		if credentialJudged && s.roles.RefundRequiresApproval(cumulative) {
 			if judgeErr != nil {
 				return Return{}, false, false, judgeErr
 			}
@@ -654,13 +655,15 @@ func (s *Service) standingRefusalFor(totalCents int64) ErrRefundApprovalRequired
 
 // refundMayNeedApproval answers, from the sale's lines without locks,
 // whether the requested return COULD land the sale's CUMULATIVE refunds
-// above the configured amount: the sale's earlier committed returns (the
-// pool read) plus the sum over the requested lines of their original totals
-// and tax, which over-approximates every remaining refund. A false answer
-// makes the credential header inert (nothing needs authorization, nothing
-// is consulted) and stays trustworthy: if the prior committed total plus
-// the requested lines' original totals sits at or under the amount, the
-// cumulative cannot cross it. A true one is only a prospect, the
+// where the dealer's configuration asks for an approver: the sale's earlier
+// committed returns (the pool read) plus the sum over the requested lines
+// of their original totals and tax, which over-approximates every remaining
+// refund, against RefundRequiresApproval, the one rule that folds the limit
+// switch in. A false answer makes the credential header inert (nothing
+// needs authorization, nothing is consulted) and stays trustworthy: if the
+// prior committed total plus the requested lines' original totals sits at
+// or under the amount, the cumulative cannot cross it, and with no limit
+// configured nothing ever crosses it. A true one is only a prospect, the
 // transaction's own cumulative decides. An unreadable read judges the
 // credential: fail closed.
 func (s *Service) refundMayNeedApproval(ctx context.Context, oc returnOrderCtx, in ReturnInput) bool {
@@ -682,14 +685,16 @@ func (s *Service) refundMayNeedApproval(ctx context.Context, oc returnOrderCtx, 
 			prospective += v.LineTotalCents + v.TaxCents
 		}
 	}
-	return prior+prospective > s.roles.RefundAmountWithoutApprovalCents()
+	return s.roles.RefundRequiresApproval(prior + prospective)
 }
 
 // refundApprovalRefusal answers the configured approval rule (X7) for one
 // return against its sale's running total: ok false when the CUMULATIVE of
 // the sale's earlier committed returns and this return sits at or under the
-// amount, or when the caller's role holds the approval. The refusal names
-// the configured amount and the configured approver roles, and RefundCents
+// amount, when the caller's role holds the approval, or when the dealer
+// configured no limit at all (the Dibbits ruling: RefundRequiresApproval
+// folds the switch in, so no refund ever asks). The refusal names the
+// configured amount and the configured approver roles, and RefundCents
 // is the NEW return's own total, the money asked for at the counter, never
 // the cumulative: the audit row's amount_cents keeps meaning the money
 // asked for, refused at the counter. The caller has already refused a
@@ -699,7 +704,7 @@ func (s *Service) refundMayNeedApproval(ctx context.Context, oc returnOrderCtx, 
 // list, fail closed.
 func (s *Service) refundApprovalRefusal(cumulativeCents, newTotalCents int64, caller identity.StaffContext) (ErrRefundApprovalRequired, bool) {
 	amount := s.roles.RefundAmountWithoutApprovalCents()
-	if cumulativeCents <= amount {
+	if !s.roles.RefundRequiresApproval(cumulativeCents) {
 		return ErrRefundApprovalRequired{}, false
 	}
 	approved := false

@@ -3,7 +3,7 @@ package roleconfig
 import _ "embed"
 
 // The decided default (D48), carried into hh as the seed of record: the
-// matrix's 130 cells, the rules' role lists and the nine dealer settings,
+// matrix's 130 cells, the rules' role lists and the eleven dealer settings,
 // derived faithfully from the principal's planning record. default.json's
 // source block and the constants here name that record, by sha256. Per
 // dealer overrides are later work; until they land, this is the
