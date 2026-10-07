@@ -39,9 +39,10 @@ import (
 
 // csSearchAccount mirrors the CustomerSearchResult fields this proof reads.
 type csSearchAccount struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Accounts string `json:"account_no"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Accounts  string `json:"account_no"`
+	TermsDays int    `json:"payment_terms_days"`
 }
 
 func TestDemoWorld_CustomerSearch(t *testing.T) {

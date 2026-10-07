@@ -8,23 +8,27 @@ package main
 //
 // WHAT CASH ON DEMAND MEANS HERE, in the product's own words, because the acronym is the trap:
 // a COD SALE TYPE is unpaid at ring and locked from fulfilment until the money is in
-// (pos/model.go: "cash on DEMAND, a pay-as-you-go posture, NOT cash-on-delivery"), and a COD
-// ACCOUNT is one whose terms make every order that posture. The account rule is the product's
-// own, stated where it is enforced: CanDispatch holds an order back while
-// "payment_terms_days = 0 with an unpaid balance, the defining rule of a COD account"
-// (billing/credit_gate.go), and the credit gates at the ring and at conversion answer
-// "account has no credit; cash or card only (COD)" (identity/staffcontext/rbac.go CheckCredit).
-// So the account is seeded with zero-day terms and no credit limit, at the branch the demo logins
-// work, under a role label name a tester can find and type.
+// (pos/model.go: "cash on DEMAND, a pay-as-you-go posture, NOT cash-on-delivery"). The product
+// reads the words COD ACCOUNT in two places, and the account is seeded to the second: the credit
+// gates read the CREDIT LIMIT ("account has no credit; cash or card only (COD)",
+// identity/staffcontext/rbac.go CheckCredit), and the dispatch gate reads the TERMS
+// ("payment_terms_days = 0 with an unpaid balance, the defining rule of a COD account",
+// billing/credit_gate.go CanDispatch). The account therefore carries zero-day terms, which the
+// dispatch rule reads as Cash On Demand, AND a real credit line, which lets it buy at the ring
+// and at conversion: pay before release means the goods wait for the money, not that the account
+// cannot order. It sits at the branch the demo logins work, under a role label name a tester can
+// find and type.
 //
-// THE PATH, walked end to end through the real routes: the picker finds the account by name at
-// Trenton; the account's accepted quote refuses to convert with the COD sentence and the quote is
-// unchanged; an ACCOUNT ring at the till refuses the same way; a COD ring creates the sale unpaid
-// with its whole balance outstanding; the product's own dispatch rule (the real billing service
-// over the seeded rows) refuses the order's release with PAYMENT DUE naming the COD account; and
-// once the payment is recorded through the AR route, the same rule lets the goods go. That last
-// half is the definition as a test: the account is never barred from buying or from paying, only
-// from having goods leave before the money arrives.
+// THE PATH, walked end to end through the real routes, asserting only what the product does
+// TODAY: the picker finds the account by name at Trenton and answers its zero-day terms; the
+// accepted quote CONVERTS against the credit line, and the converted order is NOT held, the
+// dispatch rule reading the invoiced balance and conversion invoicing nothing, a hold before the
+// invoice exists being planned work (the principal's decision log, row 1047 item 6); the COD ring
+// at the till creates the sale unpaid with its whole balance outstanding, and the product's own
+// dispatch rule (the real billing service over the seeded rows) holds THAT order with PAYMENT DUE
+// naming the COD account; once the payment is recorded through the AR route, the same rule lets
+// the goods go. The last half is the definition as a test: the account is never barred from
+// buying or from paying, only from having goods leave before the money arrives.
 //
 // The database gate is the demo world proofs' own variable, and the harness refuses an address
 // that is not local.
@@ -157,19 +161,24 @@ func TestDemoWorld_CashOnDemand(t *testing.T) {
 	}
 
 	// 2. THE PICKER finds it by name at Trenton, and the answer carries the zero-day terms the
-	// counter renders as Prepaid, never Net 0.
+	// counter renders as Prepaid, never Net 0 (the label is the client's termsLabel; the terms are
+	// asserted on the wire here, at their source).
 	rsp := sales.call("GET", "/api/v1/customers/search?q="+url.QueryEscape("Cash On Demand")+"&branch_id="+trentonBranchID, nil)
 	rsp.ok(t, http.StatusOK)
 	var accounts []csSearchAccount
 	rsp.decode(t, &accounts)
 	var codID string
+	var codTerms int
 	for _, a := range accounts {
 		if a.Accounts == codAccountNo {
-			codID = a.ID
+			codID, codTerms = a.ID, a.TermsDays
 		}
 	}
 	if codID == "" {
 		t.Fatalf("searching %q at Trenton answered %d accounts, none of them the Cash On Demand account", "Cash On Demand", len(accounts))
+	}
+	if codTerms != 0 {
+		t.Errorf("the picker's answer carries %d day terms for the Cash On Demand account, want zero-day", codTerms)
 	}
 
 	// 3. THE QUOTE, ready for the convert button: accepted, at Trenton, priced lines on it.
@@ -182,8 +191,11 @@ func TestDemoWorld_CashOnDemand(t *testing.T) {
 		t.Fatalf("the Cash On Demand quote reads %s can_convert %v with %d lines, want ACCEPTED, convertible, priced", q.Status, q.CanConvert, len(q.Lines))
 	}
 
-	// 4. CONVERT TO ORDER: the account's credit line carries the conversion, the quote becomes an
-	// order, and THAT order is the Cash On Demand path on this surface: it cannot leave.
+	// 4. CONVERT TO ORDER: the account's credit line carries the conversion and the quote becomes an
+	// order. THAT ORDER IS NOT HELD TODAY, and the next step asserts it honestly: the dispatch rule
+	// reads the invoiced balance, conversion invoices nothing, and holding a Cash On Demand order
+	// before its invoice exists is planned work (the principal's decision log, row 1047 item 6), not
+	// built. The held path today is the till's, the step after.
 	conv := sales.call("POST", "/api/v1/quotes/"+quoteID+"/convert", nil)
 	conv.ok(t, http.StatusCreated)
 	var converted struct {
@@ -199,9 +211,10 @@ func TestDemoWorld_CashOnDemand(t *testing.T) {
 	// 5. THE PRODUCT'S OWN RULE, the defining one (billing/credit_gate.go CanDispatch, "the defining
 	// rule of a COD account"), over the real service and the seeded rows. Its unpaid figure is the
 	// INVOICED balance (billing/credit_repository.go OrderDispatchFacts), so the freshly converted
-	// order, invoiced by nobody yet, owes nothing and is free to prepare: the rule holds money owed,
-	// not orders in the abstract, exactly as the source says ("it is precisely that order which must
-	// not leave unpaid"). The account's money goes on the line at the till, which is the next step.
+	// order, invoiced by nobody yet, owes nothing and is free to prepare: TODAY the rule holds money
+	// owed, not orders in the abstract, and the account's money goes on the line at the till, which
+	// is the next step. (The stronger reading, holding the converted order before picking, is the
+	// planned work named above, row 1047 item 6; this proof asserts the product as it ships.)
 	gate := billing.NewCreditService(billing.NewRepository(pool))
 	allowed, reason := gate.CanDispatch(ctx, converted.OrderID)
 	if !allowed || reason != "" {
@@ -259,6 +272,6 @@ func TestDemoWorld_CashOnDemand(t *testing.T) {
 	if !allowed || reason != "" {
 		t.Errorf("after the payment the dispatch rule still answers (%v, %q), the paid order must be free to leave", allowed, reason)
 	}
-	t.Logf("the Cash On Demand path: picker found %s, quote %s converted to order %s (held), the COD sale %s unpaid at %d cents, both held at the gate, the paid sale released",
+	t.Logf("the Cash On Demand path as the product ships it: picker found %s, quote %s converted to order %s (not held, uninvoiced), the COD sale %s unpaid at %d cents and held at the gate, released when the payment landed",
 		codAccountNo, q.QuoteNo, converted.OrderNo, ring.OrderNo, ring.TotalCents)
 }

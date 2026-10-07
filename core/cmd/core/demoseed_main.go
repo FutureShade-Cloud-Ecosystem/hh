@@ -145,9 +145,10 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 	// says how many migration-planted customers -apply renames, the default build's
 	// says nothing because it carries no rename at all.
 	scrubNamesPlan(out)
-	// The seed-repair pass is the demo build's too (the repair pair): the plan says
-	// which guarded repair -apply would make on a database an earlier plan seeded.
-	repairDemoWorldPlan(out, branches)
+	// The seed-repair pass is the demo build's too (the repair pair): the plan says the guarded
+	// repair -apply would make, and only when the row still sits where the pass moves it from,
+	// so a world with nothing to repair reports nothing.
+	repairDemoWorldPlan(ctx, out, pool, branches)
 	fmt.Fprintf(out, "  plan           %d rows across %d tables, dated %s … %s\n\n",
 		summary.Rows, len(summary.ByTable), summary.FirstDate, summary.LastDate)
 	writeSummary(out, summary)

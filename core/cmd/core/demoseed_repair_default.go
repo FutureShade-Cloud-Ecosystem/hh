@@ -22,4 +22,4 @@ func repairDemoWorld(context.Context, txExec, time.Time, []branch) (int, error) 
 
 // repairDemoWorldPlan is the no-op: the default build's plan says nothing about a repair pass it
 // does not carry.
-func repairDemoWorldPlan(*os.File, []branch) {}
+func repairDemoWorldPlan(context.Context, *os.File, rowQuery, []branch) {}

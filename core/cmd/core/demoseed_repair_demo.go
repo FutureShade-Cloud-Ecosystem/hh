@@ -57,12 +57,24 @@ func repairDemoWorld(ctx context.Context, tx txExec, now time.Time, branches []b
 	return int(tag.RowsAffected()), nil
 }
 
-// repairDemoWorldPlan prints the plan's one-line account of the repair pass: what -apply would
-// repair on a database the old plan already seeded. The default build's side prints nothing,
-// because that build carries no repair.
-func repairDemoWorldPlan(out *os.File, branches []branch) {
+// repairDemoWorldPlan prints the plan's one-line account of the repair pass, and only when the
+// apply would actually repair something: the row the pass moves must still sit at the home it is
+// moved from. A second apply, or a box the plan already homes correctly, prints nothing, because a
+// plan line naming a repair that will not happen is a report that cries wolf. The default build's
+// side prints nothing, because that build carries no repair.
+func repairDemoWorldPlan(ctx context.Context, out *os.File, rows rowQuery, branches []branch) {
 	if len(branches) > 1 && branches[0].ID != branches[1].ID {
-		fmt.Fprintf(out, "  home repair    the Northline account moves to %s with -apply if an earlier seed homed it at %s\n",
-			branches[1].Code, branches[0].Code)
+		var waiting int
+		if err := rows.QueryRow(ctx,
+			`SELECT count(*) FROM customers WHERE id = $1::uuid AND home_branch_id = $2::uuid`,
+			demoID("customer:C01"), branches[0].ID).Scan(&waiting); err != nil {
+			// A read that cannot run says nothing rather than guessing: the plan's silence is the
+			// honest answer, the apply's own report is the authoritative one.
+			return
+		}
+		if waiting > 0 {
+			fmt.Fprintf(out, "  home repair    the Northline account moves to %s with -apply, it is still homed at %s\n",
+				branches[1].Code, branches[0].Code)
+		}
 	}
 }

@@ -83,7 +83,7 @@ func (b *builder) islandLines() {
 			"qty_entered", qtyLit, "uom_entered", p.UOM, "qty_base", qtyLit,
 			"fulfilled_base", qtyLit,
 			"unit_price_cents", unit, "price_uom", p.UOM,
-			"line_total_cents", qty * unit,
+			"line_total_cents", qty*unit,
 			"metadata", demoMetadata,
 			"created_at", at, "updated_at", at,
 		))

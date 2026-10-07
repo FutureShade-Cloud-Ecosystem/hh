@@ -5,8 +5,8 @@
 // demo logins reach, covering the states a tester needs: a DRAFT with lines and a floor request
 // waiting on the branch's Sales manager, a SENT quote whose share link a tester can open, one
 // ACCEPTED quote ready to convert whose lines carry a discount a manager cleared and a discount
-// that sits above the floor, and one ACCEPTED quote for the Cash On Demand account whose
-// order waits at the dispatch gate until it is paid (Q4's own comment argues it).
+// that sits above the floor, and one ACCEPTED quote for the Cash On Demand account, ready to
+// convert, whose pay-before-release story is the till's (Q4's own comment argues it).
 //
 // THE OWNERS ARE THE TWO DEMO LOGINS, and that is why this section is conditional. The demo populate
 // plants the Sales login (Inside Sales) and the Sales manager login (Sales manager) AFTER this command
@@ -134,12 +134,22 @@ type quoteSpec struct {
 //	                                  floor (an UPDATE row); Concrete Sand 6 T at list. Ready to convert.
 //	Q4  ACCEPTED  C10  Sales          Concrete Sand 10 T and Granular A 4 T, both at list. The Cash On
 //	                                  Demand account's quote: conversion succeeds against the account's
-//	                                  credit line and the order waits at the dispatch gate until it is paid.
+//	                                  credit line, and the release hold is the till's, see below.
 //
 // Q4 EXISTS SO THE CASH ON DEMAND PATH IS ONE CLICK OLD, not a story a tester has to build first: the
 // account (plan.go's C10) is the one whose zero-day terms the product's own dispatch rule reads as
 // "the defining COD account", and an accepted quote is what puts the Convert to Order button in
-// front of a tester. TWO CONSTRAINTS SHAPED ITS LINES. The account holds no pricing rule, so every
+// front of a tester.
+//
+// WHERE THE HOLD ACTUALLY SITS TODAY, said here because the acronym invites the stronger story.
+// The dispatch rule holds money the account OWES: it reads the invoiced balance
+// (billing/credit_repository.go OrderDispatchFacts), so the till's COD sale is held the moment it
+// rings (its invoice exists, unpaid, due on demand) and stays held until the payment lands. A
+// converted order has no invoice at conversion, so it is NOT held today; holding a Cash On Demand
+// order before it is invoiced is planned work (the principal's decision log, row 1047 item 6) and
+// no seeded sentence may claim it. The quote's Notes tell the tester exactly that.
+//
+// TWO CONSTRAINTS SHAPED ITS LINES. The account holds no pricing rule, so every
 // line must price where the engine's own tier rules and the plan's pricer agree: BULK at list (the
 // migrations' CONTRACTOR tier for the bulk category is zero bps, so both answer list), while a
 // PAVER line would fall to the CONTRACTOR tier default the plan does not carry and price below the
@@ -164,7 +174,7 @@ var demoQuotes = []quoteSpec{
 		}, Link: true, Editor: personaQuoteManager},
 	{Key: "Q4", Cust: "C10", Status: "ACCEPTED", Owner: personaQuoteSales, Branch: 1, AgeDays: 4,
 		Project: "Patio base material", PO: "PO-DEMO-0091", Contact: "Site contact",
-		Notes: "Accepted by the customer. The account pays before release, so nothing leaves the yard unpaid.",
+		Notes: "Accepted by the customer. The account pays before release: a COD sale at the till is held until it is paid, a converted order is not held yet.",
 		Lines: []quoteLineSpec{
 			{Prod: "P08", Qty: 10},
 			{Prod: "P07", Qty: 4},
