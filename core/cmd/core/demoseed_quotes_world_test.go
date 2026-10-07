@@ -70,11 +70,11 @@ var qwOtherWorldTables = []string{
 	"system_settings", "demo_box",
 }
 
-// qwFreshDB creates this test's own database from zero and applies the migration set, the same
-// files and order the migrate role applies.
-func qwFreshDB(t *testing.T, ctx context.Context, dsn string) (*pgxpool.Pool, string) {
+// qwFreshDB creates the test's own database from zero and applies the migration set, the same
+// files and order the migrate role applies. The name is the caller's, so each world proof holds a
+// database of its own and two proofs cannot collide on one name.
+func qwFreshDB(t *testing.T, ctx context.Context, dsn, name string) (*pgxpool.Pool, string) {
 	t.Helper()
-	name := "demoworld_quotes"
 	admin, err := pgxpool.New(ctx, swapDSNDatabase(dsn, "postgres"))
 	if err != nil {
 		t.Fatalf("connecting to the admin database: %v", err)
@@ -218,7 +218,7 @@ func TestDemoWorld_Quotes(t *testing.T) {
 	vaultKeyHex := hex.EncodeToString(rawKey)
 
 	// 1. migrate, then the first apply exactly as a box runs it: the role logins are not there yet.
-	pool, testDSN := qwFreshDB(t, ctx, dsn)
+	pool, testDSN := qwFreshDB(t, ctx, dsn, "demoworld_quotes")
 	t.Setenv("DATABASE_URL", testDSN)
 	t.Setenv("CORE_DATABASE_URL", testDSN)
 	t.Setenv("PAYMENT_VAULT_KEY", vaultKeyHex)
