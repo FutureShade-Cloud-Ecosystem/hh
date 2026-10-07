@@ -36,7 +36,7 @@
 // brought back onto the fields in the same pass.
 import { LitElement, css, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import "@hardscapehouse/pos-kit/src/ported/pos-scan-box.js";
+import "./quote-search-add.js";
 import "@hardscapehouse/pos-kit/src/ported/pos-product-grid.js";
 import "@hardscapehouse/pos-kit/src/ported/product-thumb.js";
 import "@hardscapehouse/pos-kit/src/ported/pos-flow-steps.js";
@@ -160,6 +160,8 @@ export class QdQuoteWorkarea extends LitElement {
   @property({ attribute: false }) client: QdClient | null = null;
 
   @state() private view: QuoteView | null = null;
+  /** The quote id whose first read failed with nothing to show: the page says it could not be opened (never a new quote shell). */
+  @state() private unreadable = "";
   @state() private terms: TermsRef | null = null;
   @state() private config: SurfaceConfig | null = null;
   @state() private glance: GlanceIn | null = null;
@@ -199,7 +201,6 @@ export class QdQuoteWorkarea extends LitElement {
   private dragging = false;
   /** After creating a quote the caret goes to the scan box: the next action is always add. */
   private pendingFocusScan = false;
-  private restoreTried = false;
   private wiredOnce = false;
 
   static styles = css`
@@ -224,6 +225,26 @@ export class QdQuoteWorkarea extends LitElement {
       border-radius: var(--hos-radius-card, 10px);
       background: var(--hos-slate-warm, var(--hh-card));
       margin-bottom: var(--hos-s-12, 12px);
+    }
+    /* The way home sits at the left of the title row: a quiet link, not a
+       control, so the title stays the row's own anchor. */
+    .topbar .backlink,
+    .composecard .backlink {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: var(--qb-caption);
+      color: var(--hos-text-dim, var(--hh-text-dim));
+      background: transparent;
+      border: none;
+      padding: 4px 2px;
+      min-height: 0;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .topbar .backlink:hover,
+    .composecard .backlink:hover {
+      color: var(--hos-stone-amber-text, var(--hh-accent-text));
     }
     .headid .pagetitle {
       margin: 0;
@@ -295,6 +316,20 @@ export class QdQuoteWorkarea extends LitElement {
       background: var(--hos-stone-amber, var(--hh-accent));
       color: var(--hos-stone-amber-ink, var(--hh-accent-ink));
       cursor: pointer;
+      /* The plus and the label on one centre line at the design system's icon
+         gap, the mark the label's own size (decision log row 990). */
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: var(--hh-s-8, 8px);
+      line-height: 1;
+    }
+    .newquote > span {
+      display: inline-flex;
+    }
+    .newquote svg {
+      width: 1em;
+      height: 1em;
     }
     .newquote:hover {
       background: var(--hos-stone-amber-hover, var(--hh-accent));
@@ -1116,7 +1151,7 @@ export class QdQuoteWorkarea extends LitElement {
     this.renderRoot.addEventListener("pointercancel", this.onDividerPointerUp as EventListener);
     this.renderRoot.addEventListener("pointerdown", this.onOutsidePointerDown, true);
     this.renderRoot.addEventListener("pos-term-changed", this.onTermChanged as EventListener);
-    this.renderRoot.addEventListener("pos-scan-resolved", this.onScanResolved as EventListener);
+    this.renderRoot.addEventListener("quote-line-add", this.onLineAdd as EventListener);
     this.renderRoot.addEventListener("pos-add-product", this.onAddProduct as EventListener);
     this.renderRoot.addEventListener("pos-flow-goto", this.onFlowGoto as EventListener);
     this.renderRoot.addEventListener("customer-picked", this.onCustomerPicked as EventListener);
@@ -1137,7 +1172,7 @@ export class QdQuoteWorkarea extends LitElement {
     this.renderRoot.removeEventListener("pointercancel", this.onDividerPointerUp as EventListener);
     this.renderRoot.removeEventListener("pointerdown", this.onOutsidePointerDown, true);
     this.renderRoot.removeEventListener("pos-term-changed", this.onTermChanged as EventListener);
-    this.renderRoot.removeEventListener("pos-scan-resolved", this.onScanResolved as EventListener);
+    this.renderRoot.removeEventListener("quote-line-add", this.onLineAdd as EventListener);
     this.renderRoot.removeEventListener("pos-add-product", this.onAddProduct as EventListener);
     this.renderRoot.removeEventListener("pos-flow-goto", this.onFlowGoto as EventListener);
     this.renderRoot.removeEventListener("customer-picked", this.onCustomerPicked as EventListener);
@@ -1163,12 +1198,6 @@ export class QdQuoteWorkarea extends LitElement {
     if (changed.has("client") && this.client !== null) this.startLoads();
     if (changed.has("quoteId")) {
       this.opening = this.loadAll();
-      // Remember what is open so a refresh resumes it, sent now rather than left to the debounce.
-      if (changed.get("quoteId") !== undefined || this.quoteId) {
-        if (this.store !== null) this.store.state.openRef = this.quoteId;
-        this.store?.scheduleSave();
-        void this.store?.flush();
-      }
     }
   }
 
@@ -1200,11 +1229,11 @@ export class QdQuoteWorkarea extends LitElement {
     this.error = "";
     this.notice = "";
     this.floorSpoken = "";
-    this.renderRoot.querySelector<HTMLElement & { announce?: (msg: string, kind: "ok") => void }>("hos-pos-scan-box")?.announce?.("", "ok"); // the gun's outcome line is the old quote's
     this.busyHolds = 0;
     this.busy = false;
     this.sendOpen = false;
     this.view = null;
+    this.unreadable = "";
     this.terms = null;
     this.glance = null;
     this.customer = null; // the card shows nothing of the old account until the new one is read
@@ -1348,9 +1377,11 @@ export class QdQuoteWorkarea extends LitElement {
   }
 
   private wireShared(): void {
-    const scan = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("hos-pos-scan-box");
-    if (scan !== null) {
-      scan.branchId = this.branchId;
+    const search = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("quote-search-add");
+    if (search !== null) {
+      search.branchId = this.branchId;
+      search.customerId = this.view?.customer_id ?? this.customer?.id ?? "";
+      search.quoteId = this.quoteId;
     }
     const grid = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("hos-pos-product-grid");
     if (grid !== null) {
@@ -1523,7 +1554,6 @@ export class QdQuoteWorkarea extends LitElement {
     this.config = result.value;
     this.store = this.newStore(result.value);
     this.wsEcho++;
-    void this.maybeRestoreOpenQuote(this.store.state.openRef);
   }
 
   private newStore(config: SurfaceConfig | null): WorkspaceStore {
@@ -1532,19 +1562,6 @@ export class QdQuoteWorkarea extends LitElement {
       this.layoutError = line;
     };
     return store;
-  }
-
-  /**
-   * The resume: a refresh mid-quote comes back to the quote, not to compose.
-   * Once per mount, only while nothing is open, and only after the config's
-   * own open ref says one was remembered.
-   */
-  private async maybeRestoreOpenQuote(ref: string): Promise<void> {
-    if (this.restoreTried || ref === "" || this.quoteId !== "") return;
-    this.restoreTried = true;
-    // A quote is being made (or was just made and not yet handed down): that is where the person is going, not the remembered one.
-    if (this.creating !== null || this.createdQuoteId !== "") return;
-    this.dispatchEvent(new CustomEvent("quote-open", { detail: { quoteId: ref }, bubbles: true, composed: true }));
   }
 
   private async loadSalespeople(): Promise<void> {
@@ -1596,9 +1613,15 @@ export class QdQuoteWorkarea extends LitElement {
     if (view === undefined) return this.supersededBy(ctx, seq);
     if (!view.ok) {
       this.error = "Could not read this quote.";
+      if (this.view === null) {
+        this.unreadable = ctx.id;
+        this.announceRead(ctx.id, "", false);
+      }
       return;
     }
     this.view = view.value;
+    this.unreadable = "";
+    this.announceRead(ctx.id, view.value.quote_no, true);
     const late = this.lateNotes.get(ctx.id);
     if (late !== undefined) {
       this.lateNotes.delete(ctx.id);
@@ -1646,6 +1669,11 @@ export class QdQuoteWorkarea extends LitElement {
     if (glance.ok) this.glance = glance.value;
     void this.loadAddons(ctx, seq);
     void this.hydrateCustomer(ctx, seq);
+  }
+
+  /** Tells the host which quote the page holds (its number, or that it could not be read): the host's page title follows it. */
+  private announceRead(quoteId: string, quoteNo: string, ok: boolean): void {
+    this.dispatchEvent(new CustomEvent("quote-read", { detail: { quoteId, quoteNo, ok }, bubbles: true, composed: true }));
   }
 
   /** A read that was dropped because a newer read of the same quote began finishes when that newer read does; one dropped because the quote was left finishes at once. */
@@ -1707,6 +1735,9 @@ export class QdQuoteWorkarea extends LitElement {
     const line = Number(control.getAttribute("data-line") ?? "");
     const product = control.getAttribute("data-product") ?? "";
     switch (action) {
+      case "all-quotes":
+        this.dispatchEvent(new CustomEvent("all-quotes", { bubbles: true, composed: true }));
+        break;
       case "new-quote":
         this.startNewQuote();
         break;
@@ -1755,7 +1786,7 @@ export class QdQuoteWorkarea extends LitElement {
         break;
       case "add-another":
         this.focusScan();
-        this.renderRoot.querySelector("hos-pos-scan-box")?.scrollIntoView({ behavior: "smooth", block: "center" });
+        this.renderRoot.querySelector("quote-search-add")?.scrollIntoView({ behavior: "smooth", block: "center" });
         this.notice = "Ready for the next item.";
         break;
       case "addon-add": {
@@ -1946,8 +1977,9 @@ export class QdQuoteWorkarea extends LitElement {
     this.term = event.detail.term;
   };
 
-  private readonly onScanResolved = (event: CustomEvent<{ product: PosProduct }>): void => {
-    void this.addProduct({ id: event.detail.product.id, uom: event.detail.product.base_uom, name: event.detail.product.name });
+  /** The search and add box's pick: the line goes in at quantity 1 in the product's sell unit. */
+  private readonly onLineAdd = (event: CustomEvent<{ productId: string; unit: string }>): void => {
+    void this.addProduct({ id: event.detail.productId, uom: event.detail.unit });
   };
 
   private readonly onAddProduct = (event: CustomEvent<{ product: PosProduct }>): void => {
@@ -1975,7 +2007,7 @@ export class QdQuoteWorkarea extends LitElement {
   // ── quote mutations ────────────────────────────────────────────────────────
 
   private focusScan(): void {
-    const box = this.renderRoot.querySelector<HTMLElement & { focusInput?: () => void }>("hos-pos-scan-box");
+    const box = this.renderRoot.querySelector<HTMLElement & { focusInput?: () => void }>("quote-search-add");
     box?.focusInput?.();
   }
 
@@ -1984,7 +2016,7 @@ export class QdQuoteWorkarea extends LitElement {
    * when it is mounted, the notice lines otherwise.
    */
   private speakAdd(msg: string, kind: "ok" | "warn" | "err"): void {
-    const box = this.renderRoot.querySelector<HTMLElement & { announce?: (msg: string, kind: "ok" | "warn" | "err") => void }>("hos-pos-scan-box");
+    const box = this.renderRoot.querySelector<HTMLElement & { announce?: (msg: string, kind: "ok" | "warn" | "err") => void }>("quote-search-add");
     if (box?.announce) {
       box.announce(msg, kind);
     } else if (kind === "ok") {
@@ -2324,7 +2356,6 @@ export class QdQuoteWorkarea extends LitElement {
   }
 
   private wsTouch(): void {
-    if (this.store !== null) this.store.state.openRef = this.quoteId;
     this.store?.scheduleSave();
     this.wsEcho++;
   }
@@ -2514,6 +2545,19 @@ export class QdQuoteWorkarea extends LitElement {
     this.dispatchEvent(new CustomEvent("quote-open", { detail: { quoteId: result.value }, bubbles: true, composed: true }));
   }
 
+  /**
+   * The list's New quote button: the compose page opens clean. The quote on screen is left the way a switch leaves it
+   * (its context is cancelled, so a create still out is dropped and its draft told to the list) and the quote's own
+   * state resets; the route's own change of quote does the same when the work area held one.
+   */
+  beginCompose(): void {
+    this.leaveQuote(this.quoteId);
+    Object.assign(this, freshQuoteState());
+    this.createdQuoteId = "";
+    this.createFailed = false;
+    this.renderRoot.querySelector<HTMLElement & { reset?: () => void }>("hos-customer-picker")?.reset?.();
+  }
+
   /** A new quote starts from nothing: the quote's own state resets, the operator's settings stay. */
   private startNewQuote(): void {
     Object.assign(this, freshQuoteState());
@@ -2559,8 +2603,12 @@ export class QdQuoteWorkarea extends LitElement {
   }
 
   private async doCopyLink(): Promise<void> {
+    // One thing at a time, like Send: a press that lands while another write is out (a double click whose second press
+    // met a button the page had moved under the pointer) does nothing.
+    if (this.busy) return;
     const ctx = this.ctx;
     const capture = this.captureFor(ctx);
+    const release = this.holdBusy(ctx);
     try {
       const token = await this.ensureLink(ctx, capture);
       // The clipboard is only there on a secure page: say so rather than claim a copy that did not happen.
@@ -2575,12 +2623,16 @@ export class QdQuoteWorkarea extends LitElement {
     } catch (e) {
       if (ctx.stale) return;
       this.error = e instanceof Error ? e.message : "Could not create the link.";
+    } finally {
+      release();
     }
   }
 
   private async doPreview(print: boolean): Promise<void> {
+    if (this.busy) return;
     const ctx = this.ctx;
     const capture = this.captureFor(ctx);
+    const release = this.holdBusy(ctx);
     try {
       // ensureLink throws once the quote has been left, so the lines below only run on the quote that asked.
       const token = await this.ensureLink(ctx, capture);
@@ -2591,6 +2643,8 @@ export class QdQuoteWorkarea extends LitElement {
     } catch (e) {
       if (ctx.stale) return;
       this.error = e instanceof Error ? e.message : "Could not open the preview.";
+    } finally {
+      release();
     }
   }
 
@@ -2678,8 +2732,17 @@ export class QdQuoteWorkarea extends LitElement {
     const statusText = v !== null ? quoteStatusWord(v.status) : "New";
     return html`
       <div class="topbar">
+        <button
+          type="button"
+          class="backlink"
+          data-action="all-quotes"
+          data-testid="qb-all-quotes"
+          title="Back to the quotes list"
+        >
+          <span aria-hidden="true">${drawIcon(iconForId("pencil:left"), 12)}</span> All quotes
+        </button>
         <div class="headid">
-          <h1 class="pagetitle" data-testid="qb-title">${v !== null ? "Quote" : "New Quote"}</h1>
+          <h1 class="pagetitle" tabindex="-1" data-testid="qb-title">${this.quoteId !== "" ? "Quote" : "New Quote"}</h1>
           <div class="pagectx" data-testid="qb-context">
             ${this.branchName === "" ? "Yard" : this.branchName}${v !== null ? html` · ${v.quote_no}` : nothing}
           </div>
@@ -2705,7 +2768,7 @@ export class QdQuoteWorkarea extends LitElement {
             ${this.helpOpen ? this.renderHelp() : nothing}
           </span>
           <button type="button" class="newquote" data-action="new-quote" data-testid="qb-new-quote">
-            <span aria-hidden="true">${drawIcon(iconForId("pencil:add"), 13)}</span> New Quote
+            <span aria-hidden="true">${drawIcon(iconForId("pencil:add"), 13)}</span>New Quote
           </button>
         </div>
       </div>
@@ -2754,7 +2817,7 @@ export class QdQuoteWorkarea extends LitElement {
             </button>
           </span>
         </div>
-        <hos-pos-scan-box unified defer-outcome autofocus-scan></hos-pos-scan-box>
+        <quote-search-add></quote-search-add>
         <div class="scrollzone">
           <div class="gridwrap">
             <hos-pos-product-grid></hos-pos-product-grid>
@@ -3436,7 +3499,23 @@ export class QdQuoteWorkarea extends LitElement {
     </div>`;
   }
 
+  /** The page for a quote that could not be opened: a plain way back, none of the new quote's controls. */
+  private renderUnreadable() {
+    return html`<div class="composewrap">
+      <div class="composecard" data-testid="qb-unreadable">
+        <h1 class="pagetitle" tabindex="-1" data-testid="qb-title">This quote could not be opened</h1>
+        <p class="pagectx">It may not exist, or you may not be allowed to see it.</p>
+        <button type="button" class="backlink" data-action="all-quotes" data-testid="qb-all-quotes">
+          <span aria-hidden="true">${drawIcon(iconForId("pencil:left"), 12)}</span> All quotes
+        </button>
+      </div>
+    </div>`;
+  }
+
   override render() {
+    if (this.quoteId !== "" && this.view === null && this.unreadable === this.quoteId) {
+      return this.renderUnreadable();
+    }
     if (this.quoteId === "") {
       return html`
         ${this.renderTopbar()}

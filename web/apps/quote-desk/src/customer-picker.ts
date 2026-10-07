@@ -770,6 +770,15 @@ export class HosCustomerPicker extends LitElement {
     }
   }
 
+  /** The host starts a new quote on this same picker: nothing of the last attempt stays (no pick, no word, no list). */
+  reset(): void {
+    this.selected = null;
+    this.query = '';
+    this.results = [];
+    this.open = false;
+    this.active = -1;
+  }
+
   private clear(): void {
     this.selected = null;
     this.query = '';

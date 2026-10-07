@@ -4,6 +4,12 @@
 import { expect, test, type Page, type Request } from "@playwright/test";
 import { hold, open, quiet, seed, settle, signIn } from "./switch-helpers.js";
 
+/** The compose page under the split-list navigation: the New quote button walks the desk to #/quotes/new. */
+async function newQuote(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "New quote", exact: true }).click();
+  await expect(page.getByTestId("qb-identity")).toBeVisible();
+}
+
 test.beforeEach(async ({ request }) => {
   await request.post("/_stub/reset");
 });
@@ -129,6 +135,10 @@ test("sender: the same person signing back in saves layout again", async ({ page
   await quiet(page);
   await signOutThenIn(page, "Sales");
   await quiet(page);
+  // The sign in lands on the list page now: walk back to the quote before
+  // the layout change (the work area is the quote page's own screen).
+  await open(page, "Q-1001");
+  await quiet(page);
   const ws = record(page, /\/my-workspace$/);
   await page.getByRole("button", { name: "Swap panels" }).click();
   await expect.poll(() => ws.sent.length, { timeout: 5000 }).toBeGreaterThan(0);
@@ -220,6 +230,7 @@ test("layout store: a store stopped by the work area leaving sends nothing more 
 // after a sign out makes nothing, and the one send on the wire is the one the person who picked asked for.
 test("sender: the compose create held across a sign out is never re-sent and opens no quote under the next person", async ({ page }) => {
   await signIn(page, "Sales");
+  await newQuote(page);
   const creates = record(page, /\/api\/v1\/quotes$/);
   const create = await hold(page, /\/api\/v1\/quotes$/, { method: "POST", times: 1 });
   const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");

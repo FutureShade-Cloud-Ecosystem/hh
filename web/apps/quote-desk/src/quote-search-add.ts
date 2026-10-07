@@ -2,8 +2,7 @@
 // searching. One box, "Search products by name, code or category"; results as you type (debounced), each row the
 // product's name, code and unit, the price THIS quote's customer pays and the stock at the quote's branch; the
 // arrow keys and Enter, or a click, add the line with quantity 1 in the product's sell unit; the box stays focused
-// and empty for the next item, so several lines go in without leaving it. A code typed exactly (or pasted: it works
-// like a scan without promising one) adds at once. An empty answer says so in words.
+// and empty for the next item, so several lines go in without leaving it. A code typed or pasted exactly is marked as the row to add and Enter adds it; a pause never adds (an add is the person's act, Enter or a click). An empty answer says so in words.
 //
 // THE READS are the counter till's own (pos-kit's counterSearch and counterPrices, the reads
 // pos-search-drop.ts makes): nothing is duplicated, and NOTHING IS PRICED HERE. Every figure on a row is the
@@ -224,6 +223,10 @@ export class QuoteSearchAdd extends HHElement {
       .added {
         margin-top: var(--hh-s-4);
         font-size: 13px;
+        line-height: 1.4;
+        /* The line keeps its height when it is empty, so the rows under the box never move when it fills or clears
+           (a second press of a button under the pointer must land on the same button). */
+        min-height: 1.4em;
         color: var(--hh-success);
       }
     `,
@@ -358,16 +361,14 @@ export class QuoteSearchAdd extends HHElement {
     const enter = this.enterWaiting;
     this.enterWaiting = false;
     if (!refresh) {
-      // A code typed exactly adds at once, the way a scan does (this answer is for the word as it stands: every
-      // keystroke since would have dropped it above).
+      // A code typed or pasted exactly is the row to add: it is marked, and Enter adds it. NOTHING is added on a
+      // pause: a person typing a longer code slowly, whose first part is itself a full code, must reach the end of it.
       const exact = exactCodeHit(hits, term);
-      if (exact !== null) {
-        this.add(exact);
-        return;
-      }
+      const at = exact === null ? -1 : hits.indexOf(exact);
+      if (at >= 0 && at < ROWS) this.active = at;
     }
     void this.loadPrices(hits);
-    if (enter && hits.length > 0) this.add(hits[0]);
+    if (enter && hits.length > 0) this.add(hits[this.active] ?? hits[0]);
   }
 
   /** The customer's price picture for the rows on screen: the server's figures, best effort. */

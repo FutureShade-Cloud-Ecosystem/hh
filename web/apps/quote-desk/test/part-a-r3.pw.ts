@@ -1,7 +1,13 @@
 // PR 121 round 3, Part A findings: each test holds one answer back behind a delayed route, so the order of events
 // is exact and does not depend on the machine's speed.
-import { expect, test } from "@playwright/test";
-import { gate, hold, open, quiet, row, seed, settle, signIn, writes } from "./switch-helpers.js";
+import { expect, test, type Page } from "@playwright/test";
+import { gate, hold, open, quiet, row, seed, settle, signIn, writes, showList } from "./switch-helpers.js";
+
+/** The compose page under the split-list navigation: the New quote button walks the desk to #/quotes/new. */
+async function newQuote(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "New quote", exact: true }).click();
+  await expect(page.getByTestId("qb-identity")).toBeVisible();
+}
 
 test.beforeEach(async ({ request }) => {
   await request.post("/_stub/reset");
@@ -13,6 +19,7 @@ test.afterAll(async ({ request }) => {
 test("P2-1 a scan on an open quote while a new quote is being created goes to the open quote, and the screen stays", async ({ page }) => {
   await seed(page, { customer_id: "c-fenwick" });
   await signIn(page);
+  await newQuote(page);
   const seen = writes(page);
   const create = await hold(page, /\/api\/v1\/quotes$/, { method: "POST" });
   const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
@@ -21,7 +28,7 @@ test("P2-1 a scan on an open quote while a new quote is being created goes to th
   await create.asked;
   await open(page, "Q-1001");
   await expect(page.getByTestId("qb-line")).toHaveCount(2);
-  const scan = page.getByTestId("pos-scan-input");
+  const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scan.fill("PSN-100");
   await scan.press("Enter");
   // The scan lands on the open quote at once; it does not wait for a create it has no part in.
@@ -33,12 +40,14 @@ test("P2-1 a scan on an open quote while a new quote is being created goes to th
   const lineWrites = seen.filter((w) => w.includes("/lines"));
   expect(lineWrites).toHaveLength(1);
   expect(lineWrites[0]).toContain("POST /api/v1/quotes/q-1001/lines");
-  // The quote that was created is in the list, untouched.
+  // The quote that was created is in the list, untouched, one page over.
+  await showList(page);
   await expect(row(page, "Q-1005")).toBeVisible();
 });
 
 test("P2-1 a scan made in compose while the quote is being created is not added to a quote opened meanwhile", async ({ page }) => {
   await signIn(page);
+  await newQuote(page);
   const seen = writes(page);
   const create = await hold(page, /\/api\/v1\/quotes$/, { method: "POST" });
   const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
@@ -68,9 +77,11 @@ test("P2-2 a terms edit still being saved is waited for when the person returns 
   const seen = writes(page);
   const put = await hold(page, /\/quotes\/q-1004\/terms$/, { method: "PUT" });
   await page.getByTestId("qb-po").fill("PO-TYPED-ON-1004");
+  await showList(page);
   await row(page, "Q-1001").click();
   await expect(page.getByTestId("qb-context")).toContainText("Q-1001");
   await put.asked;
+  await showList(page);
   await row(page, "Q-1004").click();
   await expect(page.getByTestId("qb-context")).toContainText("Q-1004");
   // The save is out: the read waits for it, so no empty box is shown as the saved value.
@@ -92,8 +103,10 @@ test("P2-2 a return to a quote whose terms save never answers reads after a boun
   await expect(page.getByTestId("qb-po")).toBeVisible();
   const put = await hold(page, /\/quotes\/q-1004\/terms$/, { method: "PUT" });
   await page.getByTestId("qb-po").fill("PO-NEVER-ANSWERED");
+  await showList(page);
   await row(page, "Q-1001").click();
   await put.asked;
+  await showList(page);
   await row(page, "Q-1004").click();
   await expect(page.getByTestId("qb-po")).toBeVisible({ timeout: 10000 });
   await expect(page.getByTestId("qb-error")).toContainText("still being saved");
@@ -110,6 +123,7 @@ test("P2-2 sign out waits for the terms save of the quote just left, and sends i
   });
   const put = await hold(page, /\/quotes\/q-1004\/terms$/, { method: "PUT" });
   await page.getByTestId("qb-po").fill("PO-AT-SIGN-OUT");
+  await showList(page);
   await row(page, "Q-1001").click();
   await put.asked;
   await page.getByRole("button", { name: "Sign out" }).click();
@@ -129,6 +143,7 @@ test("P2-2 sign out is bounded: a save that never answers does not hold it, and 
   await expect(page.getByTestId("qb-po")).toBeVisible();
   const put = await hold(page, /\/quotes\/q-1004\/terms$/, { method: "PUT" });
   await page.getByTestId("qb-po").fill("PO-NEVER-ANSWERED");
+  await showList(page);
   await row(page, "Q-1001").click();
   await put.asked;
   await page.getByRole("button", { name: "Sign out" }).click();
@@ -139,10 +154,12 @@ test("P2-2 sign out is bounded: a save that never answers does not hold it, and 
 test("P2-3 the identity card shows nothing of the previous customer's account while the new customer's facts are read", async ({ page }) => {
   await seed(page, { customer_id: "c-fenwick" });
   await signIn(page);
+  await newQuote(page);
   await open(page, "Q-1001");
   await expect(page.getByTestId("qb-identity-credit")).toBeVisible();
   await expect(page.getByTestId("qb-identity")).toContainText("C01");
   const held = await hold(page, /\/quotes\/q-1004\/terms$/, { method: "GET" });
+  await showList(page);
   await row(page, "Q-1004").click();
   await held.asked;
   await expect(page.getByTestId("qb-identity")).toContainText("Fenwick");
@@ -152,7 +169,7 @@ test("P2-3 the identity card shows nothing of the previous customer's account wh
   await expect(page.getByTestId("qb-identity")).toContainText("C02");
 });
 
-test("P2-4 the desk resumes the quote that was open when the person signed out, not the one open at the last layout change", async ({ page }) => {
+test("P2-4 a sign in lands on the quotes list, whatever the desk held when the person left", async ({ page }) => {
   await signIn(page);
   await open(page, "Q-1001");
   await page.getByRole("button", { name: "Swap panels" }).click();
@@ -160,7 +177,13 @@ test("P2-4 the desk resumes the quote that was open when the person signed out, 
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Sales", exact: true }).click();
-  await expect(page.getByTestId("qb-context")).toContainText("Q-1003");
+  // The split-list navigation: the desk's landing page is the list, not the
+  // quote the person had open (the layout row still remembers it, and the
+  // walk to it is the person's own).
+  await expect(page.getByTestId("qb-list")).toBeVisible();
+  await expect(page).toHaveURL(/#\/quotes$/);
+  await expect(page.getByTestId("qb-title")).toBeHidden();
+  await open(page, "Q-1003");
 });
 
 test("P3 Reset columns takes: the box a failed re-read held on the draft goes back to the default", async ({ page }) => {
@@ -212,12 +235,12 @@ test("P3 the scan box's outcome line clears when another quote opens", async ({ 
   await seed(page, { customer_id: "c-fenwick" });
   await signIn(page);
   await open(page, "Q-1001");
-  const scan = page.getByTestId("pos-scan-input");
+  const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scan.fill("PSN-100");
   await scan.press("Enter");
-  await expect(page.getByTestId("pos-scan-msg")).toContainText("Added Polymeric Locking Sand");
+  await expect(page.getByTestId("search-add-status")).toContainText("Added Polymeric Locking Sand");
   await open(page, "Q-1004");
-  await expect(page.getByTestId("pos-scan-msg")).toHaveText("");
+  await expect(page.getByTestId("search-add-status")).toHaveText("");
 });
 
 test("P3 reads of one quote land in the order they were asked: an older read answered late does not undo a newer one", async ({ page }) => {
@@ -231,7 +254,7 @@ test("P3 reads of one quote land in the order they were asked: an older read ans
   await page.getByTestId("qb-save-draft").click();
   await older.asked;
   armed = false;
-  const scan = page.getByTestId("pos-scan-input");
+  const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scan.fill("PSN-100");
   await scan.press("Enter");
   await expect(page.getByTestId("qb-line")).toHaveCount(3);
@@ -266,6 +289,7 @@ test("P3 a scan that waits for the quote being opened waits for the newest read 
     }
     await route.continue();
   });
+  await showList(page);
   await row(page, "Q-1001").click();
   await arrivedFirst;
   // A second read of the same quote is asked while the opening read is out (an edit on a panel does exactly this).

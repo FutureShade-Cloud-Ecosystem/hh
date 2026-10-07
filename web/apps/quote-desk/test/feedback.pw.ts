@@ -26,10 +26,13 @@ async function signIn(page: Page): Promise<void> {
 /** Open a quote with one line, at the top of its page. */
 async function openQuote(page: Page): Promise<void> {
   await signIn(page);
+  // A new quote is its own page under the split-list navigation.
+  await page.getByRole("button", { name: "New quote", exact: true }).click();
+  await expect(page.getByTestId("qb-identity")).toBeVisible();
   const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
   await picker.getByPlaceholder("Search name or account #…").fill("Maple");
   await picker.getByRole("option", { name: /Maple Ridge Contracting/ }).click();
-  const scan = page.getByTestId("pos-scan-input");
+  const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scan.fill("PSN-100");
   await scan.press("Enter");
   await expect(page.getByTestId("qb-line")).toHaveCount(1);

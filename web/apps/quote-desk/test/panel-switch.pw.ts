@@ -2,7 +2,7 @@
 // began on, and what it would have said never shows on the quote now open. Every test holds one answer back behind
 // a gate it opens itself (a delayed route), so the order of events is exact on any machine.
 import { expect, test, type Browser, type Page } from "@playwright/test";
-import { gate, row, seed, settle, signIn as signInAs, writes } from "./switch-helpers.js";
+import { gate, row, seed, settle, signIn as signInAs, writes, showList } from "./switch-helpers.js";
 
 // The Sales manager sees every quote in the list, so the probes can move between quotes of either owner.
 const signIn = (page: Page, role = "Sales manager") => signInAs(page, role);
@@ -14,6 +14,7 @@ async function openDetail(page: Page): Promise<void> {
 }
 
 async function openQuote(page: Page, quoteNo: string): Promise<void> {
+  await showList(page);
   await row(page, quoteNo).click();
   await openDetail(page);
   await expect(page.getByTestId("qe-title")).toContainText(quoteNo);
@@ -45,6 +46,7 @@ test("a line save with the quantity and the discount changed never sends the dis
   await line.locator('[data-field="disc"]').fill("5");
   await line.getByRole("button", { name: "Save" }).click();
   await expect.poll(() => seen.filter((w) => w.startsWith("PATCH")).length).toBe(1);
+  await showList(page);
   await row(page, "Q-1002").click();
   await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1002");
   const answered = page.waitForResponse((r) => r.request().method() === "PATCH" && /\/quotes\/q-1001\/lines\/1$/.test(r.url()));
@@ -71,6 +73,7 @@ test("an add that lands after another quote opened does not clear that quote's a
   const asked = page.waitForRequest((r) => r.method() === "POST" && r.url().endsWith("/quotes/q-1001/lines"));
   await edit(page).getByRole("button", { name: /^Add/ }).click();
   await asked;
+  await showList(page);
   await row(page, "Q-1004").click();
   await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1004");
   await edit(page).locator('[data-field="add-qty"]').fill("7");
@@ -95,6 +98,7 @@ test("a link minted for one quote does not appear on the next quote opened", asy
   const asked = page.waitForRequest((r) => r.method() === "POST" && r.url().endsWith("/quotes/q-1001/share-links"));
   await edit(page).getByRole("button", { name: "Create link to copy" }).click();
   await asked;
+  await showList(page);
   await row(page, "Q-1002").click();
   await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1002");
   const answered = page.waitForResponse((r) => r.request().method() === "POST" && r.url().endsWith("/quotes/q-1001/share-links"));
@@ -117,6 +121,7 @@ test("the assist panel recovers after a quote switch during a read", async ({ pa
   await assist(page).locator("#jobtext").fill("3 yd clear stone");
   await assist(page).getByRole("button", { name: "Suggest lines from this text" }).click();
   await asked;
+  await showList(page);
   await row(page, "Q-1003").click();
   await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1003");
   const answered = page.waitForResponse((r) => r.url().endsWith("/quote-assist/extract"));
@@ -150,6 +155,7 @@ test("a confirm loop cut short by a quote switch says how far it got, and writes
   const seen = writes(page);
   await assist(page).getByTestId("qa-confirm").click();
   await expect.poll(() => posts).toBe(1);
+  await showList(page);
   await row(page, "Q-1003").click();
   await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1003");
   const answered = page.waitForResponse((r) => r.request().method() === "POST" && r.url().endsWith("/quotes/q-1001/lines"));
@@ -160,6 +166,7 @@ test("a confirm loop cut short by a quote switch says how far it got, and writes
   await expect(assist(page).getByTestId("qa-add-note")).toContainText("moved to another quote");
   // The one add that was out landed on the quote left: the note counts it, and the line is there on return.
   await expect(assist(page).getByTestId("qa-add-note")).toContainText("1 of the 2 selected lines were added to the quote you left");
+  await showList(page);
   await row(page, "Q-1001").click();
   await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1001");
   await expect(edit(page).getByTestId("qe-line")).toHaveCount(3);
@@ -177,6 +184,7 @@ test("a re-hold answer that lands after another quote opened says nothing on tha
   const asked = page.waitForRequest((r) => r.url().endsWith("/quotes/q-1001/holds/resync"));
   await hold(page).getByRole("button", { name: "Re-hold these lines" }).click();
   await asked;
+  await showList(page);
   await row(page, "Q-1003").click();
   await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1003");
   const answered = page.waitForResponse((r) => r.url().endsWith("/quotes/q-1001/holds/resync"));
@@ -198,6 +206,7 @@ test("a follow-ups stop that lands after another quote opened says nothing and l
   const asked = page.waitForRequest((r) => r.url().endsWith("/quotes/q-1002/followups/disable"));
   await followups(page).getByRole("button", { name: "Stop follow-ups" }).click();
   await asked;
+  await showList(page);
   await row(page, "Q-1001").click();
   await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1001");
   const answered = page.waitForResponse((r) => r.url().endsWith("/quotes/q-1002/followups/disable"));
@@ -219,6 +228,7 @@ test("a text share answer that lands after another quote opened says nothing on 
   const asked = page.waitForRequest((r) => r.url().endsWith("/quotes/q-1002/sms-share"));
   await followups(page).getByRole("button", { name: "Text the quote link" }).click();
   await asked;
+  await showList(page);
   await row(page, "Q-1001").click();
   await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1001");
   const answered = page.waitForResponse((r) => r.url().endsWith("/quotes/q-1002/sms-share"));
@@ -241,6 +251,7 @@ test("the availability panel drops a stale error when another quote opens", asyn
   const asked = page.waitForRequest((r) => /\/quote-availability\/[^/]+\/branches$/.test(r.url()));
   await panel.getByRole("button", { name: "Other branches" }).first().click();
   await asked;
+  await showList(page);
   await row(page, "Q-1001").click();
   await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1001");
   held.open();
@@ -253,7 +264,9 @@ async function plantAndOpenAsManager(browser: Browser, page: Page): Promise<Page
   for (const lineNo of [1, 2]) await page.request.post("/_stub/plant-approval", { data: { quote_id: "q-1001", line_no: lineNo, disc_pct: 10, requested_by_flow: "sales" } });
   const manager = await (await browser.newContext({ viewport: { width: 1440, height: 900 } })).newPage();
   await signIn(manager, "Sales manager");
-  await openQuote(manager, "Q-1001");
+  // The approvals view is the Sales manager's own tab on the list page.
+  await manager.getByTestId("qd-list-tabs").getByRole("button", { name: "Approvals", exact: true }).click();
+  await expect(manager.locator("qd-approvals").getByTestId("ap-box")).toBeVisible();
   await expect(manager.locator("qd-approvals").getByTestId("ap-row")).toHaveCount(2);
   return manager;
 }

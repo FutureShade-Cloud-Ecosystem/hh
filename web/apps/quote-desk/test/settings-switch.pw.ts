@@ -13,6 +13,10 @@ async function signIn(page: Page): Promise<void> {
 }
 
 async function openScreenSettings(page: Page): Promise<void> {
+  // The disclosure lives on the quote page under the split-list navigation:
+  // open a quote first, then the detail disclosure.
+  await page.getByTestId("qb-list-row").first().click();
+  await expect(page.getByTestId("qb-context")).toBeVisible();
   await page.getByText("Quote detail & admin").click();
   await settings(page).getByTestId("qs-screen").locator("summary").click();
   await expect(page.getByTestId("qs-policy")).toBeVisible();

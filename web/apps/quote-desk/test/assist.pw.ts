@@ -9,6 +9,7 @@
 // are headless and prefixed assist-.
 import { expect, test, type Page } from "@playwright/test";
 import { shot } from "./shot";
+import { showList } from "./switch-helpers.js";
 
 const TEXT = "3 yd clear stone, 20 sf holland stone, jointing sand, a bobcat for the day";
 
@@ -16,6 +17,7 @@ async function openDraft(page: Page): Promise<void> {
   await page.goto("/");
   await page.getByRole("button", { name: "Sales", exact: true }).click();
   await expect(page.getByTestId("qb-list")).toBeVisible();
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Q-1001" }).first().click();
   const detail = page.getByTestId("qb-detail");
   if ((await detail.getAttribute("open")) === null) await page.getByText("Quote detail & admin").click();

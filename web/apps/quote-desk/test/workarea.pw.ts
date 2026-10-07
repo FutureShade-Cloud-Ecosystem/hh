@@ -26,6 +26,12 @@ async function signIn(page: Page, role = SALES): Promise<void> {
   await expect(page.getByTestId("qb-list")).toBeVisible();
 }
 
+/** The compose page under the split-list navigation: the New quote button walks the desk to #/quotes/new. */
+async function newQuote(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "New quote", exact: true }).click();
+  await expect(page.getByTestId("qb-identity")).toBeVisible();
+}
+
 async function stubState(page: Page): Promise<{
   workspaceWrites: Array<{ user_id: string; body: Record<string, unknown> | null }>;
 }> {
@@ -39,13 +45,16 @@ test("the entry page shows the demo role cards and the desk opens on the Sales t
   await expect(page.getByRole("button", { name: "Sales manager", exact: true })).toBeVisible();
   await signIn(page);
   await expect(page.getByTestId("header-word")).toHaveText("Sales");
-  // The desk is the builder: the work area above, the list under it.
-  await expect(page.getByTestId("qb-title")).toBeVisible();
+  // The desk's landing page is the list alone (the split-list navigation):
+  // the work area is the quote page's own screen, not the list's neighbour.
   await expect(page.getByTestId("qb-list")).toBeVisible();
+  await expect(page).toHaveURL(/#\/quotes$/);
+  await expect(page.getByTestId("qb-title")).toBeHidden();
 });
 
 test("the stepper tracks the quote: compose, picked, lines, sent", async ({ page }) => {
   await signIn(page);
+  await newQuote(page);
   // Compose: the customer question is the screen, Customer is the open step.
   await expect(page.getByTestId("qb-title")).toHaveText("New Quote");
   const customer = page.getByRole("navigation", { name: "Quote sections" }).getByRole("button", { name: "Customer" });
@@ -63,7 +72,7 @@ test("the stepper tracks the quote: compose, picked, lines, sent", async ({ page
   await expect(products).not.toHaveClass(/complete/);
 
   // Add a line through the scan box: the resolution is the add.
-  const scanInput = page.getByTestId("pos-scan-input");
+  const scanInput = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scanInput.fill("PSN-100");
   await scanInput.press("Enter");
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
@@ -80,13 +89,15 @@ test("the stepper tracks the quote: compose, picked, lines, sent", async ({ page
 
 test("lines are added and removed, and the core does not renumber: the remaining line keeps its number", async ({ page }) => {
   await signIn(page);
+  await newQuote(page);
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByPlaceholder("Search name or account #…").fill("Maple");
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByRole("option", { name: /Maple Ridge Contracting/ }).click();
   await expect(page.getByTestId("qb-line")).toHaveCount(0);
 
-  const scanInput = page.getByTestId("pos-scan-input");
+  const scanInput = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scanInput.fill("PSN-100");
   await scanInput.press("Enter");
+  await expect(page.getByTestId("qb-line")).toHaveCount(1);
   await scanInput.fill("WAT-STD");
   await scanInput.press("Enter");
   await expect(page.getByTestId("qb-line")).toHaveCount(2);
@@ -102,9 +113,10 @@ test("lines are added and removed, and the core does not renumber: the remaining
 
 test("a discount above the floor lands and shows the discount row; below the floor is the typed refusal", async ({ page }) => {
   await signIn(page);
+  await newQuote(page);
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByPlaceholder("Search name or account #…").fill("Maple");
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByRole("option", { name: /Maple Ridge Contracting/ }).click();
-  const scanInput = page.getByTestId("pos-scan-input");
+  const scanInput = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scanInput.fill("PSN-100");
   await scanInput.press("Enter");
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
@@ -143,10 +155,11 @@ test("a discount above the floor lands and shows the discount row; below the flo
 
 test("margin surfaces render only when the server sends them", async ({ page }) => {
   await signIn(page);
+  await newQuote(page);
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByPlaceholder("Search name or account #…").fill("Maple");
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByRole("option", { name: /Maple Ridge Contracting/ }).click();
 
-  const scan = page.getByTestId("pos-scan-input");
+  const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scan.fill("PSN-100");
   await scan.press("Enter");
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
@@ -168,7 +181,9 @@ test("margin surfaces render only when the server sends them", async ({ page }) 
   await page.request.put("/_stub/cost-list", { data: { member: false } });
   await page.reload();
   await page.getByRole("button", SALES).click();
-  // The desk resumes the quote that was open (the resume ref is the open quote), so its line is already there.
+  // A sign in lands on the list (the split-list navigation): the quote just made is a row, and opening it brings its line back.
+  await expect(page.getByTestId("qb-list")).toBeVisible();
+  await page.getByTestId("qb-list-row").filter({ hasText: "Q-1004" }).first().click();
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
   await expect(page.getByTestId("qb-margin-pill")).toHaveCount(0);
   expect(await page.getByTestId("qb-lines").locator('th[data-column="line.unit_cost"]').count()).toBe(0);
@@ -181,6 +196,7 @@ test("margin surfaces render only when the server sends them", async ({ page }) 
 
 test("the layout saves per person: the swap and the keyboard resize reach the workspace row", async ({ page }) => {
   await signIn(page);
+  await newQuote(page);
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByPlaceholder("Search name or account #…").fill("Maple");
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByRole("option", { name: /Maple Ridge Contracting/ }).click();
   await expect(page.getByTestId("qb-workspace")).toBeVisible();
@@ -228,14 +244,15 @@ test("a quote the server offers no edit on shows no edit control", async ({ page
   await expect(page.getByTestId("qb-line-qty")).toHaveCount(0);
   await expect(page.getByTestId("qb-line-disc")).toHaveCount(0);
   await expect(page.getByTestId("qb-line-trash")).toHaveCount(0);
-  await expect(page.locator("hos-pos-scan-box")).toHaveCount(1);
+  await expect(page.locator("quote-search-add")).toHaveCount(1);
 });
 
 test("the Sales manager clears the floor itself, and the clearing is stamped on the line", async ({ page }) => {
   await signIn(page, { name: "Sales manager", exact: true });
+  await newQuote(page);
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByPlaceholder("Search name or account #…").fill("Fenwick");
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByRole("option", { name: /Fenwick Builders/ }).click();
-  const scanInput = page.getByTestId("pos-scan-input");
+  const scanInput = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scanInput.fill("PSN-100");
   await scanInput.press("Enter");
   await expect(page.getByTestId("qb-line")).toHaveCount(1);

@@ -60,14 +60,29 @@ test("search by name shows products and adds the row on click", async ({ page })
   expect(await adds(page)).toEqual([{ productId: "p-polymer-sand", code: "PSN-100", unit: "bag", quantity: 1 }]);
 });
 
-test("search by code adds at once", async ({ page }) => {
-  const { input } = await mountBox(page);
+test("search by code shows the row and the person adds it with Enter; a pause never adds", async ({ page }) => {
+  const { box, input } = await mountBox(page);
   await input.fill("PSN-100");
+  // The answer is on screen with the exact code row marked; the pause that followed the typing added nothing.
+  await expect(box.getByTestId("search-add-row")).toHaveCount(1);
+  await page.waitForTimeout(600);
+  expect(await adds(page)).toEqual([]);
+  await expect(input).toHaveValue("PSN-100");
+  // Enter is the person's act.
+  await input.press("Enter");
   await expect.poll(async () => (await adds(page)).length).toBe(1);
   expect(await adds(page)).toEqual([{ productId: "p-polymer-sand", code: "PSN-100", unit: "bag", quantity: 1 }]);
   // The box is ready for the next item.
   await expect(input).toBeFocused();
   await expect(input).toHaveValue("");
+});
+
+test("Enter pressed before the answer lands adds the exact code row, not another", async ({ page }) => {
+  const { input } = await mountBox(page);
+  await input.fill("PSN-100");
+  await input.press("Enter");
+  await expect.poll(async () => (await adds(page)).length).toBe(1);
+  expect((await adds(page))[0]).toMatchObject({ code: "PSN-100" });
 });
 
 test("keyboard arrow + Enter adds the highlighted row", async ({ page }) => {
@@ -266,7 +281,7 @@ test("an Enter typed before the word's answer is a plain word is not carried to 
   expect(await adds(page)).toEqual([]);
 });
 
-test("a code that is only the start of what is being typed is not added", async ({ page }) => {
+test("a code that is only the start of what is being typed is not added, by a pause or otherwise", async ({ page }) => {
   const { box, input } = await mountBox(page);
   // Two products: the code AB-1 is the start of the code AB-12.
   const hit = (id: string, sku: string) => ({
@@ -284,7 +299,10 @@ test("a code that is only the start of what is being typed is not added", async 
   });
   const gate: { release: () => void } = { release: () => undefined };
   const held = new Promise<void>((resolve) => (gate.release = resolve));
+  const gate2: { release: () => void } = { release: () => undefined };
+  const held2 = new Promise<void>((resolve) => (gate2.release = resolve));
   let asked = 0;
+  let askedLong = 0;
   await page.route(SEARCH, async (route) => {
     const q = new URL(route.request().url()).searchParams.get("q");
     if (q === "AB-1") {
@@ -292,6 +310,8 @@ test("a code that is only the start of what is being typed is not added", async 
       await held;
       await route.fulfill({ json: { items: [hit("p-ab-1", "AB-1"), hit("p-ab-12", "AB-12")] } });
     } else {
+      askedLong += 1;
+      await held2;
       await route.fulfill({ json: { items: [hit("p-ab-12", "AB-12")] } });
     }
   });
@@ -300,12 +320,22 @@ test("a code that is only the start of what is being typed is not added", async 
   // The person keeps typing while the answer for the start of the code is out.
   await input.press("End");
   await input.pressSequentially("2");
+  // The answer for the start of the code lands now, inside the pause that follows the last keystroke (the whole
+  // code's answer is not even asked yet): it is dropped, so the rows of the start of the code are never drawn.
   gate.release();
-  // The whole code, once the box has settled on it, adds that product and only that one.
-  await expect.poll(async () => (await adds(page)).length).toBeGreaterThan(0);
+  await settle(page);
+  await expect(box.getByTestId("search-add-row")).toHaveCount(0);
+  await expect.poll(() => askedLong).toBe(1);
+  await expect(box.getByTestId("search-add-row")).toHaveCount(0);
+  gate2.release();
+  // Nothing is added on a pause: the box settles on the whole code and shows its row, and Enter adds that product only.
+  await expect(box.getByTestId("search-add-row")).toHaveCount(1);
+  await settle(page);
+  expect(await adds(page)).toEqual([]);
+  await input.press("Enter");
+  await expect.poll(async () => (await adds(page)).length).toBe(1);
   await settle(page);
   expect((await adds(page)).map((line) => line.code)).toEqual(["AB-12"]);
-  expect(await box.getByTestId("search-add-row").count()).toBe(0);
 });
 
 test("a branch change reads the rows' stock again", async ({ page }) => {
@@ -330,4 +360,26 @@ test("a category word finds the products of that category", async ({ page }) => 
   const rows = box.getByTestId("search-add-row");
   await expect(rows).toHaveCount(1);
   await expect(rows.first()).toContainText("HPV-60");
+});
+
+test("a person who pauses on a full code that is the start of a longer one adds nothing and can finish typing", async ({ page }) => {
+  const { box, input } = await mountBox(page);
+  const hit = (id: string, sku: string) => ({
+    product_id: id, sku, name: `Product ${sku}`, description: "", base_uom: "pc", sold_by: "pc", has_image: false,
+    match_reason: "SKU_PREFIX", on_hand_branch: 4, on_hand_by_branch: {}, list_price_cents: 100,
+  });
+  await page.route(SEARCH, async (route) => {
+    const q = new URL(route.request().url()).searchParams.get("q");
+    await route.fulfill({ json: { items: q === "AB-1" ? [hit("p-ab-1", "AB-1"), hit("p-ab-12", "AB-12")] : [hit("p-ab-12", "AB-12")] } });
+  });
+  await input.fill("AB-1");
+  await expect(box.getByTestId("search-add-row")).toHaveCount(2);
+  // A long pause on the shorter code: it is on screen, marked, and not added.
+  await page.waitForTimeout(700);
+  expect(await adds(page)).toEqual([]);
+  await input.pressSequentially("2");
+  await expect(box.getByTestId("search-add-row")).toHaveCount(1);
+  await input.press("Enter");
+  await expect.poll(async () => (await adds(page)).length).toBe(1);
+  expect((await adds(page)).map((line) => line.code)).toEqual(["AB-12"]);
 });

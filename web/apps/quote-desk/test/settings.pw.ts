@@ -10,6 +10,7 @@
 // off-list caller gets the server's sentence in place of the screen's
 // controls. The stub's world is put back at both ends of the file.
 import { expect, test, type Page } from "@playwright/test";
+import { row, showList } from "./switch-helpers.js";
 
 async function signIn(page: Page, role = "Sales manager"): Promise<void> {
   await page.goto("/");
@@ -21,6 +22,9 @@ const settings = (page: Page) => page.locator("qd-quote-settings");
 
 /** Open the detail disclosure and the screen settings the way a person does. */
 async function openScreenSettings(page: Page): Promise<void> {
+  await showList(page);
+  await row(page, "Q-1001").click();
+  await expect(page.getByTestId("qb-context")).toBeVisible();
   await page.getByText("Quote detail & admin").click();
   await settings(page).getByTestId("qs-screen").locator("summary").click();
   await expect(page.getByTestId("qs-policy")).toBeVisible();
@@ -47,6 +51,7 @@ test.afterAll(async ({ request }) => {
 test("the work area's Screen settings button opens the settings region", async ({ page }) => {
   await signIn(page);
   // The button sits on the open quote's panel; a quote has to be open.
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Draft" }).first().click();
   await page.getByTestId("qb-settings-btn").click();
   await expect(page.getByTestId("qb-detail")).toHaveAttribute("open", "");
@@ -178,6 +183,9 @@ test("the layout curation lists the registry, marks cost columns server gated, a
 
 test("the acceptance switch reads for this role, and the server refuses the dealer wide write: the switch locks with its sentence", async ({ page }) => {
   await signIn(page);
+  await showList(page);
+  await row(page, "Q-1001").click();
+  await expect(page.getByTestId("qb-context")).toBeVisible();
   await page.getByText("Quote detail & admin").click();
   await settings(page).getByTestId("qa-details").locator("summary").click();
   await expect(page.getByTestId("qa-switch")).toBeVisible();
@@ -192,6 +200,9 @@ test("the acceptance switch reads for this role, and the server refuses the deal
 test("where the server allows it, the one switch flips and says what it now means", async ({ page }) => {
   await page.request.put("/_stub/general-manager", { data: { member: true } });
   await signIn(page);
+  await showList(page);
+  await row(page, "Q-1001").click();
+  await expect(page.getByTestId("qb-context")).toBeVisible();
   await page.getByText("Quote detail & admin").click();
   await settings(page).getByTestId("qa-details").locator("summary").click();
   await page.getByTestId("qa-switch").check();
@@ -203,22 +214,25 @@ test("where the server allows it, the one switch flips and says what it now mean
 
 test("the scope rule table lists every rule, switches one off and keeps it listed", async ({ page }) => {
   await signIn(page);
+  await showList(page);
+  await row(page, "Q-1001").click();
+  await expect(page.getByTestId("qb-context")).toBeVisible();
   await page.getByText("Quote detail & admin").click();
   await settings(page).getByTestId("qr-details").locator("summary").click();
   await expect(page.getByTestId("qr-row")).toHaveCount(7);
   await expect(page.getByTestId("qr-summary")).toContainText("7 of 7 rules are on.");
-  const row = page.getByTestId("qr-row").filter({ hasText: "WALL_NEEDS_BASE" });
-  await expect(row).toContainText("WALL");
-  await expect(row).toContainText("BASE");
-  await row.getByRole("button").click();
-  await expect(row).toHaveAttribute("data-enabled", "false");
-  await expect(row.getByRole("button")).toHaveText("Off");
+  const ruleRow = page.getByTestId("qr-row").filter({ hasText: "WALL_NEEDS_BASE" });
+  await expect(ruleRow).toContainText("WALL");
+  await expect(ruleRow).toContainText("BASE");
+  await ruleRow.getByRole("button").click();
+  await expect(ruleRow).toHaveAttribute("data-enabled", "false");
+  await expect(ruleRow.getByRole("button")).toHaveText("Off");
   await expect(page.getByTestId("qr-row")).toHaveCount(7);
   await expect(page.getByTestId("qr-summary")).toContainText("6 of 7 rules are on.");
   await expect(page.getByText("A switched-off rule stays listed")).toBeVisible();
   // There is no way to edit the wording, categories or order from this table.
   await expect(page.getByTestId("qr-table").locator("input")).toHaveCount(0);
-  await row.getByRole("button").click();
+  await ruleRow.getByRole("button").click();
   await expect(page.getByTestId("qr-summary")).toContainText("7 of 7 rules are on.");
 });
 
@@ -226,6 +240,9 @@ test("a caller outside the settings roles sees the server's sentences in place o
   await signIn(page, "Sales");
   // The work area offers no Screen settings entry to this caller.
   await expect(page.getByTestId("qb-settings-btn")).toHaveCount(0);
+  await showList(page);
+  await row(page, "Q-1001").click();
+  await expect(page.getByTestId("qb-context")).toBeVisible();
   await page.getByText("Quote detail & admin").click();
   await settings(page).getByTestId("qs-screen").locator("summary").click();
   await settings(page).getByTestId("qa-details").locator("summary").click();

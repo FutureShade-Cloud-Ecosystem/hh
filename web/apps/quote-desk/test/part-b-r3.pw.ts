@@ -1,7 +1,7 @@
 // PR 121 round 3, Part B findings: the panels. Every test holds an answer back behind a delayed route, so the order
 // of events is exact on any machine.
 import { expect, test, type Browser, type Page } from "@playwright/test";
-import { hold, quiet, row, seed, settle, signIn as signInAs, writes } from "./switch-helpers.js";
+import { hold, quiet, row, seed, settle, signIn as signInAs, writes, showList } from "./switch-helpers.js";
 
 // The Sales manager sees every quote in the list, so the probes can move between quotes of either owner.
 const signIn = (page: Page, role = "Sales manager") => signInAs(page, role);
@@ -13,6 +13,7 @@ async function openDetail(page: Page): Promise<void> {
 }
 
 async function openQuote(page: Page, quoteNo: string): Promise<void> {
+  await showList(page);
   await row(page, quoteNo).click();
   await openDetail(page);
   await expect(page.getByTestId("qe-title")).toContainText(quoteNo);
@@ -40,6 +41,7 @@ test("P2-1 an add that was out when the person left lands, and the note counts i
   const seen = writes(page);
   await assist(page).getByTestId("qa-confirm").click();
   await posts.asked;
+  await showList(page);
   await row(page, "Q-1003").click();
   await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1003");
   let listReads = 0;
@@ -56,6 +58,7 @@ test("P2-1 an add that was out when the person left lands, and the note counts i
   expect(seen.filter((w) => w.includes("/quotes/q-1003/"))).toEqual([]);
   // The list is told, so its figures follow the line that landed.
   expect(listReads).toBeGreaterThan(0);
+  await showList(page);
   await row(page, "Q-1001").click();
   await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1001");
   await expect(edit(page).getByTestId("qe-line")).toHaveCount(3);
@@ -65,7 +68,9 @@ async function plantAndOpenAsManager(browser: Browser, page: Page): Promise<Page
   for (const lineNo of [1, 2]) await page.request.post("/_stub/plant-approval", { data: { quote_id: "q-1001", line_no: lineNo, disc_pct: 10, requested_by_flow: "sales" } });
   const manager = await (await browser.newContext({ viewport: { width: 1440, height: 900 } })).newPage();
   await signIn(manager, "Sales manager");
-  await openQuote(manager, "Q-1001");
+  // The approvals view is the Sales manager's own tab on the list page.
+  await manager.getByTestId("qd-list-tabs").getByRole("button", { name: "Approvals", exact: true }).click();
+  await expect(manager.locator("qd-approvals").getByTestId("ap-box")).toBeVisible();
   await expect(manager.locator("qd-approvals").getByTestId("ap-row")).toHaveCount(2);
   return manager;
 }
@@ -103,8 +108,10 @@ test("P2-3 a quantity save that lands after leaving and returning to the quote s
   await box.fill("6");
   await edit(page).getByTestId("qe-line").first().getByRole("button", { name: "Save" }).click();
   await patch.asked;
+  await showList(page);
   await row(page, "Q-1002").click();
   await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1002");
+  await showList(page);
   await row(page, "Q-1001").click();
   await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1001");
   await expect(box).toHaveValue("120");
@@ -124,8 +131,10 @@ test("P2-3 an add that lands after leaving and returning to the quote shows on i
   const post = await hold(page, /\/api\/v1\/quotes\/q-1001\/lines$/, { method: "POST" });
   await edit(page).getByRole("button", { name: /^Add/ }).click();
   await post.asked;
+  await showList(page);
   await row(page, "Q-1002").click();
   await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1002");
+  await showList(page);
   await row(page, "Q-1001").click();
   await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1001");
   await expect(edit(page).getByTestId("qe-line")).toHaveCount(2);
@@ -141,8 +150,10 @@ test("P2-3 a link minted after leaving and returning to the quote shows in its l
   const post = await hold(page, /\/api\/v1\/quotes\/q-1001\/share-links$/, { method: "POST" });
   await edit(page).getByRole("button", { name: "Create link to copy" }).click();
   await post.asked;
+  await showList(page);
   await row(page, "Q-1002").click();
   await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1002");
+  await showList(page);
   await row(page, "Q-1001").click();
   await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1001");
   post.open();
@@ -155,8 +166,10 @@ test("P2-3 a conversion that lands after leaving and returning to the quote show
   const post = await hold(page, /\/api\/v1\/quotes\/q-1003\/convert$/, { method: "POST" });
   await edit(page).getByTestId("qe-convert").click();
   await post.asked;
+  await showList(page);
   await row(page, "Q-1002").click();
   await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1002");
+  await showList(page);
   await row(page, "Q-1003").click();
   await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1003");
   post.open();
@@ -171,8 +184,10 @@ test("P3 a floor refusal answered after the person returned to the quote is show
   await paver.locator('[data-field="disc"]').fill("10");
   await paver.getByRole("button", { name: "Save" }).click();
   await patch.asked;
+  await showList(page);
   await row(page, "Q-1003").click();
   await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1003");
+  await showList(page);
   await row(page, "Q-1001").click();
   await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1001");
   patch.open();
@@ -187,6 +202,7 @@ test("P3 a refusal answered while the person is on another quote is not shown th
   await paver.locator('[data-field="disc"]').fill("10");
   await paver.getByRole("button", { name: "Save" }).click();
   await patch.asked;
+  await showList(page);
   await row(page, "Q-1003").click();
   await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1003");
   await patch.release();
@@ -216,6 +232,9 @@ test("P3 the fulfilment chosen for one conversion is not preselected on the next
 });
 
 async function openScreenSettings(page: Page): Promise<void> {
+  await showList(page);
+  await row(page, "Q-1001").click();
+  await expect(page.getByTestId("qb-context")).toBeVisible();
   await page.getByText("Quote detail & admin").click();
   await page.locator("qd-quote-settings").getByTestId("qs-screen").locator("summary").click();
   await expect(page.getByTestId("qs-policy")).toBeVisible();

@@ -7,6 +7,7 @@
 // area fires), and the convert control with the fulfilment choice. The stub's
 // world is in memory: the file puts it back at both ends and runs in order.
 import { expect, test, type Page } from "@playwright/test";
+import { showList } from "./switch-helpers.js";
 
 async function signIn(page: Page, role = "Sales"): Promise<void> {
   await page.goto("/");
@@ -16,6 +17,7 @@ async function signIn(page: Page, role = "Sales"): Promise<void> {
 
 /** Open a row of the list by its text, then the detail disclosure that hosts the panel. */
 async function openQuote(page: Page, text: string): Promise<void> {
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: text }).first().click();
   const detail = page.getByTestId("qb-detail");
   if ((await detail.getAttribute("open")) === null) await page.getByText("Quote detail & admin").click();
@@ -78,11 +80,13 @@ test("a notice or a refusal does not follow the person to another quote", async 
   await expect(page.getByTestId("qe-notice")).toContainText("Saved.");
   await panel(page).locator('[data-field="add-search"]').fill("edge");
   await expect(panel(page).getByRole("option")).toHaveCount(1);
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Accepted" }).first().click();
   await expect(page.getByTestId("qe-title")).toContainText("Q-1003");
   await expect(page.getByTestId("qe-notice")).toHaveText("");
   await expect(page.getByTestId("qe-error")).toHaveText("");
   // The add box a person left half typed does not follow either.
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Draft" }).first().click();
   await expect(panel(page).locator('[data-field="add-search"]')).toHaveValue("");
   await expect(panel(page).getByRole("option")).toHaveCount(0);
@@ -291,9 +295,9 @@ test("a caller the server offers nothing sees no edit control, only the reasons"
   await signIn(page);
   // The manager's Sent quote is not in the Sales list; open it by id the way the list's open event does.
   await page.evaluate(() => {
-    const root = document.querySelector("qd-app-root")?.shadowRoot?.querySelector("qd-quote-builder")?.shadowRoot;
-    root?.dispatchEvent(new CustomEvent("quote-open", { detail: { quoteId: "q-1002" } }));
+    location.hash = "#/quotes/q-1002";
   });
+  await expect(page.getByTestId("qb-context")).toBeVisible();
   await page.getByText("Quote detail & admin").click();
   await expect(page.getByTestId("qe-box")).toBeVisible();
   await expect(page.getByTestId("qe-title")).toContainText("Q-1002");
@@ -312,6 +316,7 @@ test("a caller the server offers nothing sees no edit control, only the reasons"
 
 test("the Sales manager edits any quote in its branch", async ({ page }) => {
   await signIn(page, "Sales manager");
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Fenwick" }).first().click();
   await page.getByText("Quote detail & admin").click();
   await expect(panel(page).locator('[data-field="qty"]')).toHaveCount(1);

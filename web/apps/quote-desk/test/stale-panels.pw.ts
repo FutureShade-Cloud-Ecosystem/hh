@@ -3,6 +3,7 @@
 // belong to the quote they were made for. A read that fails is said, never
 // shown as an empty answer.
 import { expect, test, type Page } from "@playwright/test";
+import { showList } from "./switch-helpers.js";
 
 async function signIn(page: Page): Promise<void> {
   await page.goto("/");
@@ -11,6 +12,7 @@ async function signIn(page: Page): Promise<void> {
 }
 
 async function openQuote(page: Page, text: string): Promise<void> {
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: text }).first().click();
   const detail = page.getByTestId("qb-detail");
   if ((await detail.getAttribute("open")) === null) await page.getByText("Quote detail & admin").click();

@@ -1,7 +1,13 @@
 // The Cards and Rows toggle beside Products (visual review round 1, P3): the
 // ERP's products panel carries a two-way view control, and the shared grid
 // already renders both presentations; the desk gave no way to reach Rows.
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+
+/** The compose page under the split-list navigation: the New quote button walks the desk to #/quotes/new. */
+async function newQuote(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "New quote", exact: true }).click();
+  await expect(page.getByTestId("qb-identity")).toBeVisible();
+}
 
 // The stub keeps the person's layout row, which now remembers the open quote: every test starts from the seeded world.
 test.beforeEach(async ({ request }) => {
@@ -15,6 +21,7 @@ test("Cards and Rows beside Products flip the grid's presentation", async ({ pag
   await page.goto("/");
   await page.getByRole("button", { name: "Sales", exact: true }).click();
   await expect(page.getByTestId("qb-list")).toBeVisible();
+  await newQuote(page);
   const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
   await picker.getByPlaceholder("Search name or account #…").fill("Maple");
   await picker.getByRole("option", { name: /Maple Ridge Contracting/ }).click();
