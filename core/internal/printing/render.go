@@ -207,7 +207,7 @@ var receiptTmpl = template.Must(template.New("receipt").Funcs(template.FuncMap{
 
   <table class="totals">
     {{if gt .SaleDiscountCents 0}}
-    <tr class="sale-discount muted"><td>Discount approved by {{.SaleDiscountApprovedByLabel}}</td><td class="right">-{{money .SaleDiscountCents}}</td></tr>
+    <tr class="sale-discount muted"><td>Ticket discount, approved by {{.SaleDiscountApprovedByLabel}}</td><td class="right">-{{money .SaleDiscountCents}}</td></tr>
     {{end}}
     <tr><td>Subtotal</td><td class="right">{{money .SubtotalCents}}</td></tr>
     <tr class="tax"><td>{{.TaxLabel}}</td><td class="right">{{money .TaxCents}}</td></tr>
@@ -363,7 +363,7 @@ var receiptPageTmpl = template.Must(template.New("receipt-page").Funcs(template.
 
   <table class="totals">
     {{if gt .SaleDiscountCents 0}}
-    <tr class="sale-discount muted"><td>Discount approved by {{.SaleDiscountApprovedByLabel}}</td><td class="right">-{{money .SaleDiscountCents}}</td></tr>
+    <tr class="sale-discount muted"><td>Ticket discount, approved by {{.SaleDiscountApprovedByLabel}}</td><td class="right">-{{money .SaleDiscountCents}}</td></tr>
     {{end}}
     <tr><td>Subtotal</td><td class="right">{{money .SubtotalCents}}</td></tr>
     <tr class="tax"><td>{{.TaxLabel}}</td><td class="right">{{money .TaxCents}}</td></tr>
