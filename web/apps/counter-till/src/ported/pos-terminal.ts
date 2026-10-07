@@ -1693,8 +1693,8 @@ export class HosPosTerminal extends LitElement {
       }
       .linerow {
         display: grid;
-        grid-template-columns: 36px auto auto minmax(0, 1fr) 28px;
-        column-gap: 8px;
+        grid-template-columns: 36px auto auto minmax(0, 1fr) 32px;
+        column-gap: 6px;
         row-gap: 6px;
         align-items: center;
       }
@@ -1729,6 +1729,16 @@ export class HosPosTerminal extends LitElement {
         grid-column: 2 / 5;
         grid-row: 3;
         text-align: left;
+      }
+      /* Touch targets: the stepper's buttons and the remove control are 32px square here, the desktop
+         table keeps its compact 20px and 28px. */
+      .linerow .stepper button,
+      .linerow .rm {
+        min-width: 32px;
+        min-height: 32px;
+      }
+      .linerow .stepper .qty {
+        min-height: 32px;
       }
       .linerow .lprice::before {
         content: 'Price ';

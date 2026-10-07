@@ -370,3 +370,25 @@ test("PR 255 review: the margin role's line stacks and holds from 320 up to 559,
   });
   expect(bad, "widths where the margin role's line scrolls").toEqual([]);
 });
+
+test("PR 255 review: the stepper and remove controls are at least 32 px on the stacked line", async ({ page }) => {
+  await marginRoleLine(page);
+  const bad = await lineChecksAt(page, [320, 360, 390, 480, 559], ({ q }) => {
+    const out: string[] = [];
+    const targets: Array<[string, HTMLElement | null]> = [
+      ["remove", q("button.rm")],
+      ["decrease", q(".stepper button:first-child")],
+      ["increase", q(".stepper button:last-child")],
+    ];
+    for (const [name, el] of targets) {
+      if (!el) {
+        out.push(`${name} missing`);
+        continue;
+      }
+      const r = el.getBoundingClientRect();
+      if (r.width < 31.5 || r.height < 31.5) out.push(`${name} is ${Math.round(r.width)}x${Math.round(r.height)}`);
+    }
+    return out;
+  });
+  expect(bad, "widths where a control is under 32 px").toEqual([]);
+});
