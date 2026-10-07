@@ -161,5 +161,15 @@ UPDATE order_shortfall_basis b SET
 WHERE b.order_id = $1`, orderID); err != nil {
 		return fmt.Errorf("rebase shortfall basis: %w", err)
 	}
-	return nil
+	// The lines' ordered tax follows the same rule: retaken while the order is whole, only topped up
+	// for an added line while it is not. Nothing to do for an order never short.
+	var hasBasis, short bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM order_shortfall_basis WHERE order_id = $1),
+	       EXISTS (SELECT 1 FROM order_lines WHERE order_id = $1 AND backorder_base > 0)`, orderID).Scan(&hasBasis, &short); err != nil {
+		return fmt.Errorf("rebase shortfall basis: %w", err)
+	}
+	if !hasBasis {
+		return nil
+	}
+	return snapshotLineTaxTx(ctx, tx, orderID, !short)
 }

@@ -300,6 +300,7 @@ var migrationTopics = map[string]string{
 	"0321_fb_moves_machine_principal":      "identity",
 	"0365_yard_short_pick_backorder":       "order",
 	"0366_order_skids":                     "order",
+	"0368_yard_short_line_tax":             "order",
 	"0361_card_charge_attempts":            "payment",
 }
 
@@ -463,6 +464,7 @@ var ownedObjects = map[string]string{
 	"msg_unread_summary":              "messaging",         // 0051_messaging_unread_view
 	"nsf_policy":                      "payments",          // 0035_nsf_credit_hold
 	"order_line_shortfalls":           "order",             // 0365_yard_short_pick_backorder
+	"order_line_tax_basis":            "order",             // 0368_yard_short_line_tax
 	"order_lines":                     "order",             // 0008_quotes_orders
 	"order_no_sequences":              "order",             // 0087_branch_order_numbering
 	"order_notes":                     "order",             // 0161_order_notes

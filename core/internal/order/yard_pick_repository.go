@@ -68,6 +68,9 @@ ON CONFLICT (order_id) DO UPDATE SET ordered_subtotal_cents = EXCLUDED.ordered_s
 			in.OrderID, subtotal, tax); err != nil {
 			return YardPickOutcome{}, fmt.Errorf("yard pick: basis: %w", err)
 		}
+		if err := snapshotLineTaxTx(ctx, tx, in.OrderID, true); err != nil {
+			return YardPickOutcome{}, err
+		}
 	}
 
 	var changes []yardLineChange
@@ -96,6 +99,9 @@ SELECT b.ordered_subtotal_cents, b.ordered_tax_cents,
 UPDATE orders SET subtotal_cents = $2, tax_cents = $3, total_cents = $4, updated_at = now() WHERE id = $1`,
 			in.OrderID, newSub, newTax, newTotal); err != nil {
 			return YardPickOutcome{}, fmt.Errorf("yard pick: order money: %w", err)
+		}
+		if err := reallocLineTaxTx(ctx, tx, in.OrderID, basisTax, newTax); err != nil {
+			return YardPickOutcome{}, err
 		}
 		totals := OrderTotals{SubtotalCents: newSub, TotalCents: newTotal}
 		for _, ch := range changes {

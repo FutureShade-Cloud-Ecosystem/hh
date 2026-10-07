@@ -315,3 +315,85 @@ func TestIntegration_YardPick_ResavingNeverBlanksTheReasonAndAReasonChangeIsACha
 		t.Fatalf("a full pick clears the reason and reports the true ordered quantity: %+v %v", out.Lines[0], err)
 	}
 }
+
+func lineTaxes(t *testing.T, pool *pgxpool.Pool, ord string) (taxes []int64, sum int64) {
+	t.Helper()
+	rows, err := pool.Query(context.Background(), `SELECT tax_cents FROM order_lines WHERE order_id = $1 ORDER BY line_no`, ord)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var x int64
+		_ = rows.Scan(&x)
+		taxes = append(taxes, x)
+		sum += x
+	}
+	return
+}
+
+// seedTaxedTwoLines: line 1 is 5 at 1000 carrying 400 of tax, line 2 is 1 at 2500 carrying 250; the
+// header carries 650 and the lines sum to it, as an order the tax engine split does.
+func seedTaxedTwoLines(t *testing.T, pool *pgxpool.Pool) string {
+	t.Helper()
+	ord := seedYardOrder(t, pool, "CONFIRMED")
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `UPDATE order_lines SET tax_cents = 400 WHERE order_id = $1`, ord); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+INSERT INTO order_lines (order_id, line_no, product_id, description, qty_entered, uom_entered, qty_base,
+                         unit_price_cents, price_uom, line_total_cents, tax_cents)
+SELECT order_id, 2, product_id, 'second line', 1, uom_entered, 1, 2500, price_uom, 2500, 250
+  FROM order_lines WHERE order_id = $1 AND line_no = 1`, ord); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE orders SET subtotal_cents = 7500, total_cents = 8150 WHERE id = $1`, ord); err != nil {
+		t.Fatal(err)
+	}
+	return ord
+}
+
+func TestIntegration_YardPick_LineTaxFollowsTheLineAndSumsToTheHeader(t *testing.T) {
+	pool := intPool(t)
+	ord := seedTaxedTwoLines(t, pool)
+	svc, _ := editSvc(t, pool)
+	ctx := context.Background()
+	short := yardPick("3", "CONDENSED_SKIDS")
+	short.OrderID = ord
+	if _, err := svc.ApplyYardPicks(ctx, short); err != nil {
+		t.Fatal(err)
+	}
+	taxes, sum := lineTaxes(t, pool, ord)
+	if sum != liveTax(t, pool, ord) {
+		t.Fatalf("the lines' tax must sum to the header's: %v sum %d header %d", taxes, sum, liveTax(t, pool, ord))
+	}
+	if taxes[0] >= 400 || taxes[1] != 250 && taxes[1] > 250 {
+		t.Fatalf("the shorted line carries less tax and no line gains more than the whole: %v", taxes)
+	}
+	restore := yardPick("5", "")
+	restore.OrderID = ord
+	if _, err := svc.ApplyYardPicks(ctx, restore); err != nil {
+		t.Fatal(err)
+	}
+	if taxes, sum = lineTaxes(t, pool, ord); taxes[0] != 400 || taxes[1] != 250 || sum != 650 || liveTax(t, pool, ord) != 650 {
+		t.Fatalf("a correction restores every line's tax exactly: %v header %d", taxes, liveTax(t, pool, ord))
+	}
+}
+
+func TestIntegration_YardPick_ASingleTaxedLineCarriesTheProRatedTax(t *testing.T) {
+	pool := intPool(t)
+	ord := seedYardOrder(t, pool, "CONFIRMED")
+	if _, err := pool.Exec(context.Background(), `UPDATE order_lines SET tax_cents = 650 WHERE order_id = $1`, ord); err != nil {
+		t.Fatal(err)
+	}
+	svc, _ := editSvc(t, pool)
+	in := yardPick("3", "DAMAGED")
+	in.OrderID = ord
+	if _, err := svc.ApplyYardPicks(context.Background(), in); err != nil {
+		t.Fatal(err)
+	}
+	if taxes, _ := lineTaxes(t, pool, ord); taxes[0] != 390 {
+		t.Fatalf("3 of 5 of a line that carried 650 carries 390: %v", taxes)
+	}
+}
