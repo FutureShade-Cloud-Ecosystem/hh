@@ -1,7 +1,7 @@
 //go:build demo
 
-// demoseed_repair_demo.go, the demo build's side of the seed-repair seam: the one guarded
-// home-branch repair this command carries, for databases the OLD plan already seeded.
+// demoseed_repair_demo.go, the demo build's side of the seed-repair seam: the guarded repairs
+// (a home branch, and empty product applications) this command carries, for databases the OLD plan already seeded.
 //
 // WHY A REPAIR AT ALL. The applier is INSERT-only, by construction, so a change to a row the plan
 // already wrote (C01's home branch, moved to Trenton by plan.go's ruling) lands only on databases
@@ -33,10 +33,43 @@ import (
 	"time"
 )
 
+// productApplicationRepairSQL fills one demo product's application where it is NULL or empty. The
+// product is addressed by its FIXED id, the plan's own demoID("product:"+key), and the value comes
+// from demoProducts, the same table the fresh seed writes from, so there is one source and no copy.
+// A set value (even one a hand chose) never matches, and a repaired row never matches again.
+const productApplicationRepairSQL = `UPDATE products SET application = $1, updated_at = $2 WHERE id = $3::uuid AND (application IS NULL OR application = '')`
+
 // repairDemoWorld re-homes the one account the ruling moved, inside the apply transaction, and
 // returns how many rows it repaired. On the second run against the same world the row already
 // reads its new home, the statement matches nothing, and the answer is 0.
 func repairDemoWorld(ctx context.Context, tx txExec, now time.Time, branches []branch) (int, error) {
+	fixed, err := repairDemoProductApplications(ctx, tx, now)
+	if err != nil {
+		return 0, err
+	}
+	n, err := repairNorthlineHome(ctx, tx, now, branches)
+	return fixed + n, err
+}
+
+// repairDemoProductApplications fills the application of every demo product an older seed left
+// empty, so the till can place the product under its family's category tile. An older seed's rows
+// were left alone by the INSERT-only applier (ON CONFLICT DO NOTHING), so a fresh plan's value
+// never reached that box. On a database that is not the demo world no row carries a demo id and
+// nothing matches.
+func repairDemoProductApplications(ctx context.Context, tx txExec, now time.Time) (int, error) {
+	total := 0
+	for _, p := range demoProducts {
+		tag, err := tx.Exec(ctx, productApplicationRepairSQL, p.Application, now, demoID("product:"+p.Key))
+		if err != nil {
+			return 0, fmt.Errorf("demoseed: filling the empty application of %s: %w", p.SKU, err)
+		}
+		total += int(tag.RowsAffected())
+	}
+	return total, nil
+}
+
+// repairNorthlineHome is the home-branch repair, split out so the pass above can run beside it.
+func repairNorthlineHome(ctx context.Context, tx txExec, now time.Time, branches []branch) (int, error) {
 	if len(branches) == 0 {
 		return 0, nil
 	}
@@ -63,6 +96,12 @@ func repairDemoWorld(ctx context.Context, tx txExec, now time.Time, branches []b
 // plan line naming a repair that will not happen is a report that cries wolf. The default build's
 // side prints nothing, because that build carries no repair.
 func repairDemoWorldPlan(ctx context.Context, out *os.File, rows rowQuery, branches []branch) {
+	var empty int
+	if err := rows.QueryRow(ctx,
+		`SELECT count(*) FROM products WHERE id = ANY($1::uuid[]) AND (application IS NULL OR application = '')`,
+		demoProductIDs()).Scan(&empty); err == nil && empty > 0 {
+		fmt.Fprintf(out, "  product repair %d demo product(s) have no application and get their family with -apply\n", empty)
+	}
 	if len(branches) > 1 && branches[0].ID != branches[1].ID {
 		var waiting int
 		if err := rows.QueryRow(ctx,
@@ -77,4 +116,13 @@ func repairDemoWorldPlan(ctx context.Context, out *os.File, rows rowQuery, branc
 				branches[1].Code, branches[0].Code)
 		}
 	}
+}
+
+// demoProductIDs is every demo product's fixed id, from the plan's own table.
+func demoProductIDs() []string {
+	ids := make([]string, 0, len(demoProducts))
+	for _, p := range demoProducts {
+		ids = append(ids, demoID("product:"+p.Key))
+	}
+	return ids
 }
