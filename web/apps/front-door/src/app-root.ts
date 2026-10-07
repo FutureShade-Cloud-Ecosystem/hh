@@ -63,7 +63,7 @@ import {
   type FrontDoorSession,
 } from "./session.js";
 import { countMarginApprovals } from "./approvals-count.js";
-import { applyTheme } from "./theme.js";
+import { THEME_LABEL, ThemeController, themeControlLabel, themeStatusText } from "./theme.js";
 
 const DEMO_ORG = "hh-demo";
 
@@ -186,8 +186,8 @@ export class FrontDoorApp extends HHElement {
         gap: var(--hh-s-8);
       }
       /* Too narrow for one row (the lockup, the badge, the word and the controls need about
-         1000px): the zones stack and centre, and the badge may wrap under the lockup here. */
-      @media (max-width: 1000px) {
+         1200px): the zones stack and centre, and the badge may wrap under the lockup here. */
+      @media (max-width: 1200px) {
         header {
           grid-template-columns: 1fr;
           justify-items: center;
@@ -214,7 +214,12 @@ export class FrontDoorApp extends HHElement {
           justify-self: center;
         }
       }
+      .controls {
+        flex-wrap: wrap;
+        justify-content: center;
+      }
       .controls button {
+        white-space: nowrap;
         min-height: 0;
         padding: 7px 12px;
         font-size: 11px;
@@ -671,6 +676,11 @@ export class FrontDoorApp extends HHElement {
     return { ok: false, error: answer.error };
   };
 
+  /** The theme choice: Auto follows the system, Light and Brand pin it; carried in the tab's session storage. */
+  readonly #theme = new ThemeController(() => this.requestUpdate());
+  /** What a screen reader hears after a Theme press: focus stays on the button, so the new name is not re-read. */
+  #themeStatus = "";
+
   /** Whether the shared Feedback panel is open, as the widget reports it. */
   #feedbackOpen = false;
 
@@ -690,8 +700,9 @@ export class FrontDoorApp extends HHElement {
     super.connectedCallback();
     this.addEventListener("hh-feedback-toggle", this.#onFeedbackToggle);
     this.addEventListener("click", this.#onHostClick);
-    // Light is the box's default, the sheet's own attribute contract.
-    applyTheme("light");
+    // Light is the box's default unless the person chose otherwise in this tab (the choice is carried
+    // between the front door, the till and the Quote Desk); Auto follows the system.
+    this.#theme.start();
     // A reload or a back navigation in this tab restores the role the mint
     // was for, until the token's own expiry says otherwise. A new tab starts
     // at the picker: sessionStorage is per tab.
@@ -704,6 +715,7 @@ export class FrontDoorApp extends HHElement {
   }
 
   disconnectedCallback(): void {
+    this.#theme.stop();
     this.removeEventListener("hh-feedback-toggle", this.#onFeedbackToggle);
     this.removeEventListener("click", this.#onHostClick);
     super.disconnectedCallback();
@@ -718,6 +730,11 @@ export class FrontDoorApp extends HHElement {
     if (action === "choose") {
       const flow = control.getAttribute("data-flow");
       if (typeof flow === "string" && flow !== "") this.#choose(flow);
+    }
+    if (action === "theme") {
+      this.#theme.cycle();
+      this.#themeStatus = themeStatusText(this.#theme.choice);
+      this.requestUpdate();
     }
     if (action === "feedback") {
       const widget = this.renderRoot.querySelector("hh-feedback");
@@ -827,6 +844,7 @@ export class FrontDoorApp extends HHElement {
 
   render(): TemplateResult {
     return html`
+      <p class="visually-hidden" role="status" aria-live="polite" data-testid="theme-status">${this.#themeStatus}</p>
       ${this.#header()}
       <main>
         ${this.#screen.kind === "picker" ? this.#picker() : nothing}
@@ -873,6 +891,16 @@ export class FrontDoorApp extends HHElement {
         </div>
         <p class="who" data-testid="header-word">${session === null ? "Pick a role" : session.roleLabel}</p>
         <div class="controls">
+          <button
+            type="button"
+            class="btn-secondary"
+            data-action="theme"
+            data-testid="theme-control"
+            aria-label=${themeControlLabel(this.#theme.choice)}
+            title="Cycle the theme: Auto, Light, Brand"
+          >
+            Theme: ${THEME_LABEL[this.#theme.choice]}
+          </button>
           <button type="button" class="btn-secondary" data-action="feedback" data-testid="feedback-button" aria-haspopup="dialog" aria-expanded=${this.#feedbackOpen ? "true" : "false"} title="Send feedback about this screen">
             Feedback
           </button>

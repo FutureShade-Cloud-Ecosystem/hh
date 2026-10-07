@@ -132,3 +132,22 @@ function parseRecord(raw: unknown, now: number): FrontDoorHandoff | null {
     user: { userId, email, name },
   };
 }
+
+/** The session storage key the front door, the till and the Quote Desk share for the person's theme choice. */
+export const THEME_KEY = "hh-demo.theme.v1";
+
+/**
+ * The theme choice carried in this tab (round 13): "auto", "light" or "dark" as the front door or
+ * another app wrote it, or null when nothing readable is there. A demo seam like the handoff: a
+ * default build resolves the stub that answers null, so the key never enters its module graph. The
+ * storage touch rides the auth package's throw-safe mirror, this app's one sanctioned accessor.
+ */
+export function readSharedTheme(options?: { storage?: StorageLike }): "auto" | "light" | "dark" | null {
+  const raw = new ThrowSafeMirror(THEME_KEY, options?.storage).read();
+  return raw === "auto" || raw === "light" || raw === "dark" ? raw : null;
+}
+
+/** Carry the choice to the other apps in the tab. Never throws. */
+export function writeSharedTheme(choice: "auto" | "light" | "dark", options?: { storage?: StorageLike }): void {
+  new ThrowSafeMirror(THEME_KEY, options?.storage).write(choice);
+}

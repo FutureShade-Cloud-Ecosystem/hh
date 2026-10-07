@@ -75,3 +75,43 @@ test.describe("live behaviour", () => {
     await expect(status).toHaveText("Theme is now Auto, following the system.");
   });
 });
+
+// Round 13: the person's choice is carried between the front door, the till and the Quote Desk in the
+// tab's session storage (hh-demo.theme.v1, written by the front door and by each app's control).
+test.describe("the choice carried from the front door", () => {
+  test.use({ colorScheme: "light" });
+
+  test("a Brand choice in the tab opens the till on Brand, and a press is written back", async ({ page }) => {
+    await page.addInitScript(() => {
+      if (window.name === "themed") return;
+      window.name = "themed";
+      window.sessionStorage.setItem("hh-demo.theme.v1", '"dark"');
+    });
+    await page.goto("/");
+    const control = page.getByTestId("theme-control");
+    await expect(control).toContainText("Theme: Brand");
+    await expect(page.locator("html")).not.toHaveAttribute("data-theme", /.*/);
+    await control.click(); // Auto
+    await expect(control).toContainText("Theme: Auto");
+    expect(await page.evaluate(() => window.sessionStorage.getItem("hh-demo.theme.v1"))).toBe('"auto"');
+    // A reload keeps it: the till no longer starts over on Light.
+    await page.reload();
+    await expect(page.getByTestId("theme-control")).toContainText("Theme: Auto");
+  });
+
+  test("a stored Auto follows the system, and a value that is no choice leaves Light", async ({ page }) => {
+    await page.addInitScript(() => window.sessionStorage.setItem("hh-demo.theme.v1", '"auto"'));
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.goto("/");
+    await expect(page.getByTestId("theme-control")).toContainText("Theme: Auto");
+    await expect(page.locator("html")).not.toHaveAttribute("data-theme", /.*/);
+    await page.emulateMedia({ colorScheme: "light" });
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  });
+
+  test("a stored value that is not one of the three is ignored", async ({ page }) => {
+    await page.addInitScript(() => window.sessionStorage.setItem("hh-demo.theme.v1", '"purple"'));
+    await page.goto("/");
+    await expect(page.getByTestId("theme-control")).toContainText("Theme: Light");
+  });
+});
