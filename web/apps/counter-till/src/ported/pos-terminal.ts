@@ -2726,14 +2726,17 @@ export class HosPosTerminal extends LitElement {
       padding-top: 8px;
       border-top: 1px solid var(--hos-line);
       display: grid;
-      gap: 4px;
-    }
-    .sold-discounts .d {
-      display: grid;
-      grid-template-columns: 1fr auto auto;
-      gap: 16px;
+      grid-template-columns: auto auto auto;
+      justify-content: start;
+      gap: 4px 28px;
       font-size: 13px;
       align-items: baseline;
+    }
+    .sold-discounts .d {
+      display: contents;
+    }
+    .sold-discounts .amt {
+      text-align: right;
     }
     .sold-discounts .what {
       color: var(--hos-text);

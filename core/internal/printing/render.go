@@ -119,6 +119,7 @@ var receiptTmpl = template.Must(template.New("receipt").Funcs(template.FuncMap{
   }
   h1 { font-size: 14px; margin: 0 0 2px; letter-spacing: .02em; }
   .muted { color: #444; }
+  .line-discount td.right, .sale-discount td.right { white-space: nowrap; }
   .center { text-align: center; }
   .right { text-align: right; }
   .rule { border-top: 1px dashed #000; margin: 8px 0; }
@@ -272,6 +273,7 @@ var receiptPageTmpl = template.Must(template.New("receipt-page").Funcs(template.
   }
   h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: .02em; }
   .muted { color: #444; }
+  .line-discount td.right, .sale-discount td.right { white-space: nowrap; }
   .center { text-align: center; }
   .right { text-align: right; }
   .rule { border-top: 1px solid #000; margin: 14px 0; }

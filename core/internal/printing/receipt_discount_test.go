@@ -1,6 +1,8 @@
 package printing
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -81,5 +83,20 @@ func TestReceipt_LinesAddUpToTheSubtotalBeforeAndAfterTheTicketDiscount(t *testi
 	}
 	if rec.SubtotalCents+rec.TaxCents != rec.TotalCents {
 		t.Fatalf("subtotal and tax must make the total")
+	}
+	// For the review: RECEIPT_HTML_DIR, when set, also writes the roll and the page document.
+	if dir := os.Getenv("RECEIPT_HTML_DIR"); dir != "" {
+		rec.Tenders = []ReceiptTender{{Label: "CASH", AmountCents: rec.TotalCents}}
+		rec.TaxLabel, rec.OrgName, rec.BranchName = "HST (13%)", "Dibbits Landscape Supply", "Trenton"
+		rec.Lines[0].Description, rec.Lines[1].Description, rec.Lines[2].Description = "Holland Stone 60 mm", "Edge Restraint 8 ft", "Polymeric Sand 50 lb"
+		for name, render := range map[string]func(Receipt) (string, error){"roll": RenderReceiptHTML, "page": RenderReceiptPageHTML} {
+			html, err := render(rec)
+			if err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "receipt-"+name+".html"), []byte(html), 0o644); err != nil {
+				t.Fatalf("%v", err)
+			}
+		}
 	}
 }
