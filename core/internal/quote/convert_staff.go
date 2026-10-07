@@ -33,9 +33,22 @@ import (
 // the wasted trip a plain refusal creates.
 //
 // It is a 403, not a 409: the quote is fine, the person is not.
-type NotSellingRoleError struct{ RoleCode string }
+type NotSellingRoleError struct {
+	RoleCode string
+	// Action names what the caller tried when it is not the conversion, so the staff accept and reject
+	// doors (staff_decision.go) refuse in their own words while sharing this type and the one
+	// predicate. Empty means the conversion, and the message is unchanged.
+	Action string
+}
 
 func (e *NotSellingRoleError) Error() string {
+	if e.Action != "" {
+		if e.RoleCode == "" {
+			return fmt.Sprintf("quote: %s is limited to sales roles", e.Action)
+		}
+		return fmt.Sprintf("quote: %s is limited to sales roles, %s cannot do it; ask inside sales or a manager",
+			e.Action, e.RoleCode)
+	}
 	if e.RoleCode == "" {
 		return "quote: converting a quote to an order is limited to sales roles"
 	}

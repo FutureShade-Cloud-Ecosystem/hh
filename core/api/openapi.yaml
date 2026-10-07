@@ -3530,6 +3530,42 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /api/v1/product-categories:
+    get:
+      operationId: productListCategories
+      tags:
+        - staff-product
+      summary: Read the product categories
+      description: "One cursor page of the caller's org's categories in code order, the code the stable ordering key (unique), each as id, code, name and is_active. Retired categories are returned and marked, because a margin policy or an override can still name one. Dealer Admin at read, the grant the pricing reads use: the route serves the pricing screens, a named exception to this tag's default. A cursor the core did not mint is a 400."
+      x-addition: the staff read of the product categories for the pricing screens (the Quote Desk server reads); no ERP source route
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - dealer-admin
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: One cursor page of the categories
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CategoryViewPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: The category read is not wired on this deployment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/customers/search:
     get:
       operationId: customerSearch
@@ -3609,6 +3645,38 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/customers/{id}:
+    get:
+      operationId: customerGetAccount
+      tags:
+        - staff-customer
+      summary: Read one customer account by id, credit limit and balance included
+      description: The resolved account the create and address writes answer, with the credit limit and the current balance (the latest ledger running balance, the same basis as the search's open balance; an account with no ledger rows answers 0). Behind the search's own grants. An account homed to a branch the caller's grants do not reach is a 404, the same answer as an id nobody has, never a 403 that would confirm it exists. A global caller reaches every branch. The walk-in house account and an inactive account are returned as stored, is_active says which.
+      x-addition: the staff read of one customer account by id with its credit limit and balance (the Quote Desk server reads); no ERP source route
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - counter-till
+          - quote-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The account with its credit limit and current balance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerAccount"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/customers/{id}/billing-address:
     put:
       operationId: customerUpdateBillingAddress
@@ -14616,11 +14684,12 @@ paths:
       tags:
         - staff-pos
       summary: Read one customer's past-due position for the counter
-      description: "A fact, not a gate: the past-due amount, the oldest aging bucket, and the hold flag. The dealer's balance_visibility policy is applied at the marshal layer; a walk-in, a current account, and a disallowed caller all answer an empty object."
+      description: "A fact, not a gate, and every case answers distinctly. The standing word names the case: walk_in (no customer_id), clear (nothing past due, no hold), past_due, or on_hold (an active credit hold, whether or not anything is past due). The past-due amount, the oldest aging bucket and the hold flag ride beside it when they apply. A caller the dealer's balance_visibility policy withholds balances from, or whose grants do not reach the branch, is a 403; an unknown customer is a 404; a malformed customer_id is a 400; a read that could not be made (the AR, hold or policy read failed) is a 503. Never an empty 200. Counter Till or Quote Desk at read: the Quote Desk's Convert to Order asks it before it confirms."
       x-role: requireStaff
       x-access:
         surfaces:
           - counter-till
+          - quote-desk
         level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -14638,7 +14707,7 @@ paths:
             format: uuid
       responses:
         "200":
-          description: The standing answer; empty when there is nothing to say
+          description: The standing answer, always carrying its standing word
           content:
             application/json:
               schema:
@@ -14649,6 +14718,47 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          description: The standing could not be read
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/pos/payment-grant:
+    get:
+      operationId: posPaymentGrant
+      tags:
+        - staff-pos
+      summary: Read whether the caller holds the grant the till's payment routes require
+      description: "One question a client asks before it offers to take a payment: does the signed-in user hold the grant the till sale and the payment on a converted quote's order both need (Counter Till at Work)? The answer is the role gate's own, the same walk over the caller's whole row of roles and the dealer's configuration, taken for the access the document annotates on those payment routes, so it moves with them. The payment door's own not-selling-role rule is folded in, by the one predicate the door calls, so a platform role that passes every gate level but is refused the convert and pay is answered false. A caller holding the Counter Till or the Quote Desk at read is answered, true or false; a caller with neither meets the gate's 403. It is a fact about grants only, never an authorisation: the payment routes still gate every call."
+      x-addition: the grant check the Quote Desk asks before it offers payment; no ERP source route
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - counter-till
+          - quote-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: Whether the caller holds the payment grant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosPaymentGrant"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: The grant could not be read
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/pos/addon-suggestions:
     get:
       operationId: posAddonSuggestions
@@ -19716,13 +19826,119 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/quotes/{id}/accept:
+    post:
+      operationId: quoteAcceptOnBehalf
+      tags:
+        - staff-quote
+      summary: Record that the customer accepted a quote by phone, text, email or in person
+      description: "A salesperson marks a quote accepted on the customer's behalf. SENT moves to ACCEPTED, and so does a DRAFT that has never been sent provided it has at least one line: a customer who agrees to what the salesperson read out has accepted a quote that was never sent. The body names the channel the customer used, an optional note, and quantities_confirmed, the staff member's statement that the customer confirmed the quantities; it is required and must be true. It also names expected_total_cents, the quote total the staff member read to the customer, which is required: if the quote's total is anything else when the accept commits (a colleague edited a line meanwhile) the accept is refused with a 409 naming both totals and nothing is written. The audit row carries the total as amount_cents, and the result returns it as total_cents. A staff accept has no quote_acceptances row (that record is the customer's: a share link and a typed name); its record is the QUOTE_ACCEPTED audit row with purpose STAFF_QUOTE_DECISION. The status move, the audit row (staff on the customer's behalf, channel, note, the statement) and the change history row commit in one transaction, and the quote's follow-ups stop. A note carrying a long run of digits is redacted whole at the audit boundary. Limited to the selling roles that may convert, by the same rule, and to the caller's branches. A 409 names why in words: expired, already accepted (naming the order when there is one), converted, lost, or a draft with no lines. An optional Idempotency-Key header (a UUID) makes a retry safe: a repeat under the same key on the same quote answers the first outcome with replayed true and writes nothing, whatever the quote's status is by then; the same key with a different channel is a 409."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - quote-desk
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: A UUID chosen once per decision and resent unchanged on every retry of it. Scoped to the quote.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteAcceptOnBehalfRequest"
+      responses:
+        "200":
+          description: The quote's new status and the decision's record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteDecisionResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          description: "quantities_confirmed is missing or false: the staff member has not stated that the customer confirmed the quantities"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/quotes/{id}/reject:
+    post:
+      operationId: quoteRejectOnBehalf
+      tags:
+        - staff-quote
+      summary: Record that the customer declined a quote
+      description: "A salesperson marks a quote lost on the customer's behalf. A SENT or never sent DRAFT quote moves to LOST with the channel the customer used, a reason code (price, competitor, project_cancelled, timing, no_response or other) and a note, which is required when the reason is other. The status move, the audit row and the change history row commit in one transaction, the quote's soft stock holds are released on it, and the quote's follow-ups stop. The refusals are the accept door's, in words with a 409: expired, already accepted or converted (an accepted quote is never turned into a lost one here), and already lost. Limited to the selling roles that may convert, by the same rule, and to the caller's branches. An optional Idempotency-Key header (a UUID) makes a retry safe exactly as it does on accept; the same key on the accept door, or with another channel, is a 409."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - quote-desk
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: A UUID chosen once per decision and resent unchanged on every retry of it. Scoped to the quote.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteRejectOnBehalfRequest"
+      responses:
+        "200":
+          description: The quote's new status and the decision's record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteDecisionResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/quotes/{id}/order-payment:
     post:
       operationId: quoteTakeOrderPayment
       tags:
         - staff-quote
       summary: Take payment at the counter on a converted quote's order
-      description: "The counter's payment door on the quote desk. For a converted quote in the caller's branch it finds the order the quote became, raises that order's invoice at the agreed totals if none exists (every line at its agreed total, plus the delivery fee and its tax for a delivery quote, so the invoice equals the quote's agreed total), and records the payment through the payments settle with the caller stamped as the receiver. Billing the order again when it leaves the yard returns the same document. A customer with a credit account may pay a part (a deposit); a customer with no credit account pays the whole of what the invoice still owes (on a fresh order, the whole agreed total), and for such a customer an ACCEPTED quote is converted, billed and paid as one action: the conversion, the invoice and the payment are written in one transaction, so either all three exist or none does, and a cash customer's order never exists unpaid. For a customer with a credit account the order already exists when the payment is taken; the invoice and the payment are then written together, so a payment that fails leaves no invoice and no balance behind. The Yard manager is admitted at the cash customer's one action, on an accepted quote only; the separate conversion of a quote keeps its selling role rule. An order that already has an invoice raised another way (by shipment group, say) is refused with a 409 and nothing is raised, so the order is never billed twice. The counter's invoice does not move the order out of the yard: it is confirmed, picked and handed over as usual, and is invoiced when it leaves. A replayed idempotency_key posts nothing and answers the first payment; the same key with a different method or amount is a 409. The role rule is Work or above on the Counter Till at the order's branch."
+      description: "The counter's payment door on the quote desk. For a converted quote in the caller's branch it finds the order the quote became, raises that order's invoice at the agreed totals if none exists (every line at its agreed total, plus the delivery fee and its tax for a delivery quote, so the invoice equals the quote's agreed total), and records the payment through the payments settle with the caller stamped as the receiver. Billing the order again when it leaves the yard returns the same document. A customer with a credit account may pay a part (a deposit); a customer with no credit account pays the whole of what the invoice still owes (on a fresh order, the whole agreed total), and for such a customer an ACCEPTED quote is converted, billed and paid as one action: the conversion, the invoice and the payment are written in one transaction, so either all three exist or none does, and a cash customer's order never exists unpaid. For a customer with a credit account the order already exists when the payment is taken; the invoice and the payment are then written together, so a payment that fails leaves no invoice and no balance behind. The Yard manager is admitted at the cash customer's one action, on an accepted quote only; the separate conversion of a quote keeps its selling role rule. An order that already has an invoice raised another way (by shipment group, say) is refused with a 409 and nothing is raised, so the order is never billed twice. The counter's invoice does not move the order out of the yard: it is confirmed, picked and handed over as usual, and is invoiced when it leaves. A replayed idempotency_key posts nothing and answers the first payment; the same key with a different method or amount is a 409. The optional fulfillment (PICKUP or WILL_CALL) is the one the plain convert takes, validated by the same rule with the same 400, and rides the conversion this action makes for a customer with no credit account, so a Cash On Demand order need not be Pickup. The role rule is Work or above on the Counter Till at the order's branch."
       x-addition: the counter's payment door on a converted quote's order (plan 1.1, QD-5); no ERP source route
       x-role: requireStaff
       x-access:
@@ -28725,6 +28941,40 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/UomView"
+        next_cursor:
+          type:
+            - string
+            - "null"
+        limit:
+          type: integer
+          format: int32
+    CategoryView:
+      type: object
+      description: One row of the product categories
+      required:
+        - id
+        - code
+        - name
+        - is_active
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+        name:
+          type: string
+        is_active:
+          type: boolean
+    CategoryViewPage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CategoryView"
         next_cursor:
           type:
             - string
@@ -40139,8 +40389,17 @@ components:
             $ref: "#/components/schemas/PosHotkey"
     PosAccountStanding:
       type: object
-      description: "One customer's past-due position, and no more of it than that. The zero value marshals as an empty object: a walk-in, a current account, an unreadable AR read and a disallowed caller all look identical."
+      description: "One customer's standing, and no more of it than that. The standing word is always present and names the case; the three older fields are present exactly when they were before: past_due_cents and oldest_bucket only when money is past due, on_hold only when true."
+      required:
+        - standing
       properties:
+        standing:
+          type: string
+          enum:
+            - walk_in
+            - clear
+            - past_due
+            - on_hold
         past_due_cents:
           type: integer
           format: int64
@@ -40153,6 +40412,14 @@ components:
         on_hold:
           type: boolean
           description: Mirrors the credit gate; enforcement happens at the ring, not here
+    PosPaymentGrant:
+      type: object
+      description: Whether the caller holds the grant the till's payment routes require
+      required:
+        - can_take_payment
+      properties:
+        can_take_payment:
+          type: boolean
     PosAddonSuggestion:
       type: object
       description: One suggestion tile. list_price_cents is display only; the add path re-prices through the engine.
@@ -45621,7 +45888,7 @@ components:
           format: int32
     QuoteView:
       type: object
-      description: "One quote as the staff builder renders it: the header, the lines, the money, and the server-computed edit and convert offers. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8). An absent editable_fields or a false can_convert means no; the client evaluates nothing."
+      description: "One quote as the staff builder renders it: the header, the lines, the money, and the server-computed edit, convert, accept and reject offers. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8). An absent editable_fields or a false offer means no; the client evaluates nothing."
       required:
         - id
         - quote_no
@@ -45632,6 +45899,8 @@ components:
         - expired
         - editable_fields
         - can_convert
+        - can_accept
+        - can_reject
         - lines
         - subtotal_cents
         - tax_cents
@@ -45681,6 +45950,12 @@ components:
         can_convert:
           type: boolean
           description: Whether this caller may convert this quote to an order right now
+        can_accept:
+          type: boolean
+          description: Whether this caller may record the customer's accept on this quote right now (a selling role, SENT or a never sent draft with a line, not expired); the same conjunction the accept door enforces
+        can_reject:
+          type: boolean
+          description: Whether this caller may record the customer's decline on this quote right now (a selling role, SENT or a never sent draft, not expired); the same conjunction the reject door enforces
         owner_id:
           type: string
           format: uuid
@@ -46028,6 +46303,106 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/QuoteComparisonRow"
+    QuoteAcceptOnBehalfRequest:
+      type: object
+      required:
+        - channel
+        - quantities_confirmed
+        - expected_total_cents
+      properties:
+        channel:
+          type: string
+          enum:
+            - phone
+            - text
+            - email
+            - in_person
+          description: How the customer told the salesperson
+        note:
+          type: string
+          maxLength: 500
+          description: The salesperson's own note for the record
+        quantities_confirmed:
+          type: boolean
+          description: The staff member's statement that the customer confirmed the quantities. Required, and must be true.
+        expected_total_cents:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The quote total, in cents, the staff member read to the customer. Required. The accept is refused with a 409 if the quote's total differs when it commits.
+    QuoteRejectOnBehalfRequest:
+      type: object
+      required:
+        - channel
+        - reason_code
+      properties:
+        channel:
+          type: string
+          enum:
+            - phone
+            - text
+            - email
+            - in_person
+          description: How the customer told the salesperson
+        reason_code:
+          type: string
+          enum:
+            - price
+            - competitor
+            - project_cancelled
+            - timing
+            - no_response
+            - other
+        note:
+          type: string
+          maxLength: 500
+          description: The salesperson's own note; required when the reason is other
+    QuoteDecisionResult:
+      type: object
+      required:
+        - quote_id
+        - quote_no
+        - status
+        - previous_status
+        - on_behalf
+        - decided_at
+        - total_cents
+        - replayed
+      properties:
+        quote_id:
+          type: string
+        quote_no:
+          type: string
+        status:
+          type: string
+          enum:
+            - ACCEPTED
+            - LOST
+        previous_status:
+          type: string
+          enum:
+            - DRAFT
+            - SENT
+        channel:
+          type: string
+          enum:
+            - phone
+            - text
+            - email
+            - in_person
+        on_behalf:
+          type: boolean
+          description: Always true, staff recorded the decision for the customer
+        decided_at:
+          type: string
+          format: date-time
+        total_cents:
+          type: integer
+          format: int64
+          description: The quote total at the decision, the amount accepted or lost
+        replayed:
+          type: boolean
+          description: True when this is the first outcome of an earlier request under the same key; nothing was written
     QuoteConvertRequest:
       type: object
       description: The optional conversion body. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8). An absent or empty fulfillment leaves the column out of the insert and the database default applies; DELIVERY is refused in words because a delivery is booked by scheduling a stop, not chosen at conversion.
@@ -46076,6 +46451,12 @@ components:
           type: string
           minLength: 1
           maxLength: 64
+        fulfillment:
+          type: string
+          enum:
+            - PICKUP
+            - WILL_CALL
+          description: "Optional. The fulfilment the order is created with when this action converts the quote (a customer with no credit account), graded exactly as the plain convert grades it: DELIVERY is refused in words, and an absent value leaves the default, Pickup. Ignored when the quote is already converted, because an order's fulfilment is chosen at its conversion."
     QuoteOrderPaymentResult:
       type: object
       description: "What the till's receipt needs: the payment, the invoice it settled against, the order and the balance now on the invoice. On a replay the payment fields (the reference and the receiver included) are the first payment's as stored, and replayed is true."

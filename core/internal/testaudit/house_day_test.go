@@ -75,6 +75,14 @@ import (
 //	                        a due date read back off a DATE column, a label. The `.UTC()` is what
 //	                        turns a rendering into a DECISION, and the decision is what this audits.
 //
+//	Server-zone day         `time.Now().Format("2006-01-02")`, the clock read straight into day text
+//	literal                 with no zone chosen: the day is whatever zone the process holds (a UTC
+//	                        container, a developer laptop), which is the original shape of the tax
+//	                        engine's "as of today" defect. It is reported only when the receiver IS
+//	                        the call to time.Now, so a rendering of some value whose day another
+//	                        line decided is never reported; a clock first stored in a variable is
+//	                        beyond a parser, and `houseday.Today` is the way to write it.
+//
 //	UTC calendar            `time.Date(…, time.UTC)`. No attempt is made to tell an epoch from a day
 //	construction            bound, because that needs to know what the value is FOR, which is a
 //	                        human's knowledge and not a parser's. So the ZIP epoch, the Excel 1899
@@ -118,6 +126,7 @@ const (
 	kindDayText  = "UTC day literal"
 	kindCalendar = "UTC calendar construction"
 	kindSQLDay   = "SQL day boundary on a timestamptz column"
+	kindBareNow  = "server-zone day literal"
 )
 
 type dayExemption struct {
@@ -312,6 +321,20 @@ func isUTCCall(e ast.Expr) bool {
 	return ok && sel.Sel.Name == "UTC"
 }
 
+// isTimeNowCall reports whether an expression is the call `time.Now()`.
+func isTimeNowCall(e ast.Expr) bool {
+	call, ok := e.(*ast.CallExpr)
+	if !ok || len(call.Args) != 0 {
+		return false
+	}
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "Now" {
+		return false
+	}
+	pkg, ok := sel.X.(*ast.Ident)
+	return ok && pkg.Name == "time"
+}
+
 // isOneDay reports whether an expression is the duration `24 * time.Hour`, written either way round.
 func isOneDay(e ast.Expr) bool {
 	bin, ok := e.(*ast.BinaryExpr)
@@ -467,6 +490,12 @@ func scanHouseDays(t *testing.T, root string) []dayOffender {
 						hits = append(hits, dayHit{at(node.Pos()), kindTruncate, ".Truncate(24 * time.Hour)"})
 					}
 				case "Format":
+					if len(node.Args) == 1 && isTimeNowCall(sel.X) {
+						if lit, ok := node.Args[0].(*ast.BasicLit); ok && lit.Kind == token.STRING && lit.Value == `"2006-01-02"` {
+							hits = append(hits, dayHit{at(node.Pos()), kindBareNow, `time.Now().Format("2006-01-02")`})
+						}
+						return true
+					}
 					if len(node.Args) != 1 || !isUTCCall(sel.X) {
 						return true
 					}
@@ -576,7 +605,7 @@ func TestHouseDayAllowlistIsHonest(t *testing.T) {
 		stillHit[o.path] = true
 	}
 
-	knownKinds := []string{kindTruncate, kindDayText, kindCalendar, kindSQLDay}
+	knownKinds := []string{kindTruncate, kindDayText, kindCalendar, kindSQLDay, kindBareNow}
 	var stale []string
 	for rel, ex := range dayAllowlisted {
 		if len(ex.excuses) == 0 {

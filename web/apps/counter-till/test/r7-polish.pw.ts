@@ -28,7 +28,8 @@ async function pickLayout(page: Page, layout: "panels" | "stepper"): Promise<voi
   await page.getByTestId("pos-view").click();
   const radio = page.getByTestId(`pos-layout-${layout}`);
   if ((await radio.getAttribute("aria-checked")) !== "true") {
-    const saved = page.waitForRequest((r) => r.method() === "PUT" && r.url().includes("/api/v1/pos/workspace"));
+    // The response, not the request: a test that ends before the save lands leaves the stub on the old pick.
+    const saved = page.waitForResponse((r) => r.request().method() === "PUT" && r.url().includes("/api/v1/pos/workspace"));
     await radio.click();
     await saved;
   } else {
@@ -248,3 +249,77 @@ for (const layout of ["panels", "stepper"] as const) {
     await popped.close();
   });
 }
+
+test("a popped window never saves the layout its opener told it, even when the workspace read fails", async ({
+  page,
+  context,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page);
+  await pickLayout(page, "panels");
+  await context.route("**/api/v1/pos/workspace**", (route) =>
+    route.request().method() === "GET" ? route.fulfill({ status: 500, body: "{}" }) : route.continue(),
+  );
+  const poppedPromise = context.waitForEvent("page");
+  await page.getByRole("button", { name: "Pop out" }).click();
+  const popped = await poppedPromise;
+  const puts: string[] = [];
+  let rereads = 0;
+  popped.on("request", (request) => {
+    if (!request.url().includes("/api/v1/pos/workspace")) return;
+    if (request.method() === "PUT") puts.push(request.postData() ?? "");
+    if (request.method() === "GET") rereads += 1;
+  });
+  await expect(popped.getByTestId("pos-twopane")).toBeVisible();
+  // Another workspace gesture (the results view flip) saves through the failed re-read: no save may
+  // carry the hinted layout (it is held back until the row reads again).
+  await popped.getByTestId("pos-browse").locator("summary").click();
+  rereads = 0; // the window's own load read is behind us; only the gesture's save counts from here
+  const flip = popped.locator('[data-testid^="lookup-view-"][aria-pressed="false"]').first();
+  await flip.click();
+  await expect(popped.locator('[data-testid^="lookup-view-"][aria-pressed="false"]')).toHaveCount(1);
+  // A save DID fire (it re-read the stored row, which is refused here), so the hold back is what kept
+  // the PUT away, not a save that never ran; and no PUT carries the hinted layout.
+  await expect.poll(() => rereads, { timeout: 5000 }).toBeGreaterThan(0);
+  await popped.waitForTimeout(500);
+  expect(puts, "the held back save wrote nothing while the row could not be read").toEqual([]);
+  for (const body of puts) expect(body).not.toContain('"counter_layout":"PANELS"');
+  await popped.close();
+});
+
+test("a popped window's own unsaved choices are saved once the workspace read recovers, under the stored layout", async ({
+  page,
+  context,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page);
+  await pickLayout(page, "panels");
+  let refusing = true;
+  await context.route("**/api/v1/pos/workspace**", (route) =>
+    refusing && route.request().method() === "GET" ? route.fulfill({ status: 500, body: "{}" }) : route.continue(),
+  );
+  const poppedPromise = context.waitForEvent("page");
+  await page.getByRole("button", { name: "Pop out" }).click();
+  const popped = await poppedPromise;
+  const puts: string[] = [];
+  popped.on("request", (request) => {
+    if (request.method() === "PUT" && request.url().includes("/api/v1/pos/workspace")) puts.push(request.postData() ?? "");
+  });
+  await expect(popped.getByTestId("pos-twopane")).toBeVisible();
+  // The person's own choice in the popped window (the results view flip) while the row cannot be read.
+  await popped.getByTestId("pos-browse").locator("summary").click();
+  const pressedBefore = await popped.locator('[data-testid^="lookup-view-"][aria-pressed="true"]').getAttribute("data-testid");
+  await popped.locator('[data-testid^="lookup-view-"][aria-pressed="false"]').first().click();
+  await popped.waitForTimeout(800);
+  expect(puts, "nothing is written while the row cannot be read").toEqual([]);
+  // The stored layout moves on elsewhere (the opener goes back to Steps), then the read recovers.
+  await pickLayout(page, "stepper");
+  refusing = false;
+  // The held back choice is saved by itself, without another gesture, over the layout the row holds now:
+  // the hinted PANELS is never what lands.
+  await expect.poll(() => puts.length, { timeout: 15_000 }).toBeGreaterThan(0);
+  const saved = puts[puts.length - 1] ?? "";
+  expect(saved).toContain('"counter_layout":"STEPPER"');
+  expect(saved).toContain(pressedBefore === "lookup-view-cards" ? '"lookup_presentation":"ROWS"' : '"lookup_presentation":"CARDS"');
+  await popped.close();
+});

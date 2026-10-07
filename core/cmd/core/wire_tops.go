@@ -65,11 +65,14 @@ import (
 // itself is shared (the yard's stage transaction enqueues through the
 // outbox, the quote automation queues through the resolver).
 type smsBelt struct {
-	notifier  notify.Notifier
-	outbox    *messagingprovider.Outbox
-	resolver  *messagingprovider.ConsentResolver
-	prefs     *messagingprovider.PrefsStore
-	policySet bool
+	// quoteStatus re-reads a quote's status when a follow-up notice is delivered, so a notice queued
+	// before the customer answered is dropped. Nil (a belt with no pool) checks nothing.
+	quoteStatus messagingprovider.QuoteStatusReader
+	notifier    notify.Notifier
+	outbox      *messagingprovider.Outbox
+	resolver    *messagingprovider.ConsentResolver
+	prefs       *messagingprovider.PrefsStore
+	policySet   bool
 	// policy is the send-window and rate gate the sms drain consults; the worker's claim store is a
 	// second Outbox over a different pool and must share this one pointer (its rate state is the gate).
 	policy *messagingprovider.SendPolicy
@@ -128,6 +131,9 @@ type topsSpine struct {
 	cardRail      *payment.Service
 	cardCharger   cardChargerAdapter
 	cardRefunder  posCardRefunderAdapter
+	// posHandler is held so the composition root can register the payment grant read, which needs
+	// the role gate built after the module wiring (pos/grant.go).
+	posHandler *pos.Handler
 }
 
 // feedbackActorNames resolves a linked ERP user id to the display name and
@@ -374,7 +380,9 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	w3bStatementSvc := billing.NewStatementService(billingRepo).WithAudit(auditSvc)
 	billing.NewMonthEndHandler(w3bCreditSvc, w3bStatementSvc, log).
 		WithUserLinker(link).RegisterRoutes(r, g)
-	posSvc.WithAgingReader(posAgingAdapter{svc: w3bCreditSvc})
+	posSvc.WithAgingReader(posAgingAdapter{svc: w3bCreditSvc}).
+		WithHoldReader(ops.tillRepo).
+		WithAccountChecker(posAccountAdapter{svc: customerSvc})
 
 	arLandingRepo := billing.NewARLandingRepository(pool)
 	arLandingSvc := billing.NewARLandingService(arLandingRepo).
@@ -646,6 +654,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		cardRail:      paySvc,
 		cardCharger:   cardCharger,
 		cardRefunder:  cardRefunder,
+		posHandler:    posHandler,
 	}
 }
 

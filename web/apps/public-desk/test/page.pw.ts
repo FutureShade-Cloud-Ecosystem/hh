@@ -572,7 +572,7 @@ test("every line shows the same image cell: the photo or the no-photo mark, neve
     return Array.from(root?.querySelectorAll("tbody tr") ?? []).map((row) => {
       const box = row.querySelector("td .thumbslot");
       if (box === null) return "missing";
-      const marked = box.querySelector("img.thumb, svg.thumbmark") !== null;
+      const marked = box.querySelector("img.thumb, img.tile, svg.thumbmark") !== null;
       return getComputedStyle(box).borderTopWidth !== "0px" && marked ? "boxed" : "bare";
     });
   });
@@ -1474,4 +1474,25 @@ test("a 422 from the core is a definite refusal: the quantities words, nothing r
     "Please confirm that you have reviewed the quantities on this quote. Your acceptance was not recorded.",
   );
   await expect(page.locator("#name")).toHaveJSProperty("readOnly", false);
+});
+
+test("a line without a photo shows its category's drawn tile; a photo still wins; an unknown category keeps the mark", async ({
+  page,
+}) => {
+  await page.goto("/?t=q-tiles-31");
+  await expect(page.getByRole("heading", { name: "Quote #Q-31" })).toBeVisible();
+  const rows = page.locator("tbody tr");
+  await expect(rows).toHaveCount(3);
+  // The photo wins on the line that has one.
+  await expect(rows.nth(0).locator("img.thumb")).toBeVisible();
+  await expect(rows.nth(0).locator("img.tile")).toHaveCount(0);
+  // No photo, a category the tiles know (named by the line): the mulch tile, a drawn image.
+  const tile = rows.nth(1).locator("img.tile");
+  await expect(tile).toBeVisible();
+  await expect(tile).toHaveAttribute("src", /^data:image\/svg\+xml|mulch/);
+  await expect(rows.nth(1).locator("svg.thumbmark")).toHaveCount(0);
+  await expect(rows.nth(1).locator("img.thumb")).toHaveCount(0);
+  // No photo and nothing the tiles know: the drawn no-photo mark, as before.
+  await expect(rows.nth(2).locator("svg.thumbmark")).toBeVisible();
+  await expect(rows.nth(2).locator("img.tile")).toHaveCount(0);
 });

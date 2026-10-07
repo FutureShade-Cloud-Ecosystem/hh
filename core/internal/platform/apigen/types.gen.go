@@ -1131,6 +1131,19 @@ type UomViewPage struct {
 	Limit      *int32    `json:"limit,omitempty"`
 }
 
+type CategoryView struct {
+	Id       string `json:"id"`
+	Code     string `json:"code"`
+	Name     string `json:"name"`
+	IsActive bool   `json:"is_active"`
+}
+
+type CategoryViewPage struct {
+	Items      []CategoryView `json:"items"`
+	NextCursor *string        `json:"next_cursor,omitempty"`
+	Limit      *int32         `json:"limit,omitempty"`
+}
+
 type ProductPage struct {
 	Items      []Product `json:"items"`
 	NextCursor *string   `json:"next_cursor,omitempty"`
@@ -4906,9 +4919,14 @@ type PosHotkeys struct {
 }
 
 type PosAccountStanding struct {
+	Standing     string  `json:"standing"`
 	PastDueCents *int64  `json:"past_due_cents,omitempty"`
 	OldestBucket *string `json:"oldest_bucket,omitempty"`
 	OnHold       *bool   `json:"on_hold,omitempty"`
+}
+
+type PosPaymentGrant struct {
+	CanTakePayment bool `json:"can_take_payment"`
 }
 
 type PosAddonSuggestion struct {
@@ -6648,6 +6666,8 @@ type QuoteView struct {
 	Expired        bool                    `json:"expired"`
 	EditableFields []string                `json:"editable_fields"`
 	CanConvert     bool                    `json:"can_convert"`
+	CanAccept      bool                    `json:"can_accept"`
+	CanReject      bool                    `json:"can_reject"`
 	OwnerId        *string                 `json:"owner_id,omitempty"`
 	OwnerName      *string                 `json:"owner_name,omitempty"`
 	Lines          []QuoteViewLine         `json:"lines"`
@@ -6769,6 +6789,31 @@ type QuoteLineComparison struct {
 	Options []QuoteComparisonRow `json:"options"`
 }
 
+type QuoteAcceptOnBehalfRequest struct {
+	Channel             string  `json:"channel"`
+	Note                *string `json:"note,omitempty"`
+	QuantitiesConfirmed bool    `json:"quantities_confirmed"`
+	ExpectedTotalCents  int64   `json:"expected_total_cents"`
+}
+
+type QuoteRejectOnBehalfRequest struct {
+	Channel    string  `json:"channel"`
+	ReasonCode string  `json:"reason_code"`
+	Note       *string `json:"note,omitempty"`
+}
+
+type QuoteDecisionResult struct {
+	QuoteId        string    `json:"quote_id"`
+	QuoteNo        string    `json:"quote_no"`
+	Status         string    `json:"status"`
+	PreviousStatus string    `json:"previous_status"`
+	Channel        *string   `json:"channel,omitempty"`
+	OnBehalf       bool      `json:"on_behalf"`
+	DecidedAt      time.Time `json:"decided_at"`
+	TotalCents     int64     `json:"total_cents"`
+	Replayed       bool      `json:"replayed"`
+}
+
 type QuoteConvertRequest struct {
 	Fulfillment *string `json:"fulfillment,omitempty"`
 }
@@ -6779,10 +6824,11 @@ type QuoteConvertResult struct {
 }
 
 type QuoteOrderPaymentRequest struct {
-	Method         string `json:"method"`
-	AmountCents    int64  `json:"amount_cents"`
-	Reference      string `json:"reference"`
-	IdempotencyKey string `json:"idempotency_key"`
+	Method         string  `json:"method"`
+	AmountCents    int64   `json:"amount_cents"`
+	Reference      string  `json:"reference"`
+	IdempotencyKey string  `json:"idempotency_key"`
+	Fulfillment    *string `json:"fulfillment,omitempty"`
 }
 
 type QuoteOrderPaymentResult struct {
