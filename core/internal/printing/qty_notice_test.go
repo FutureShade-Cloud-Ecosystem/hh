@@ -57,3 +57,26 @@ func TestDefaultQuantityNoticeIsTheQuoteModulesWording(t *testing.T) {
 		t.Errorf("printing default %q differs from quote's %q", defaultQuantityNotice, quote.DefaultQuantityNotice)
 	}
 }
+
+// A long unbroken notice (a 500 character run, a URL) must wrap inside the paper, never widen it.
+func TestQuantityNoticeWrapsLongUnbrokenText(t *testing.T) {
+	for name, render := range map[string]func(Receipt) (string, error){
+		"roll": RenderReceiptHTML,
+		"page": RenderReceiptPageHTML,
+	} {
+		t.Run(name, func(t *testing.T) {
+			html, err := render(noticeReceipt(strings.Repeat("x", 500)))
+			if err != nil {
+				t.Fatalf("render: %v", err)
+			}
+			i := strings.Index(html, ".qty-notice {")
+			if i < 0 {
+				t.Fatal("no .qty-notice rule")
+			}
+			rule := html[i : i+strings.Index(html[i:], "}")]
+			if !strings.Contains(rule, "overflow-wrap: anywhere") {
+				t.Errorf("the notice rule must wrap anywhere: %q", rule)
+			}
+		})
+	}
+}
