@@ -121,6 +121,10 @@
      --hh-danger for everything red that is text, border or tint, and
      --hh-danger-fill ONLY for a solid red fill carrying white. */
   --hh-danger-fill: #D73A51;
+  /* The edge a solid danger button wears. In brand mode the fill alone is under 3:1 on the card
+     and the raised widget (and no red can hold 4.5:1 under white ink and 3:1 there), so the
+     button's own white 1px edge is its boundary, the .btn-primary pattern. Light needs none. */
+  --hh-danger-fill-edge: #FFFFFF;
   --hh-danger-fill-ink: #FFFFFF; /* theme-invariant: the fill flips so the ink need not (the D-077 shape) */
 
   /* ── the solid success fill, per theme (the DIB-468 pattern, carried) ───────
@@ -339,6 +343,7 @@
 
   --hh-danger: #AB1C31;
   --hh-danger-fill: #C0223A;
+  --hh-danger-fill-edge: transparent;
   --hh-danger-fill-ink: #FFFFFF;
   --hh-info: #14497B;
   --hh-success: #0F6C43;

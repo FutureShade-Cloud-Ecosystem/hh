@@ -136,6 +136,11 @@ test('brand mode: the control boundary also clears 3:1 on the widget layer it ca
   }
 });
 
+test('brand mode: the danger button edge is white in brand mode and transparent in light', () => {
+  assert.equal(palette('dark')['--hh-danger-fill-edge'], '#FFFFFF');
+  assert.equal(palette('light')['--hh-danger-fill-edge'], 'transparent');
+});
+
 test('brand mode: light stays the sheet\'s own light, untouched by the dark re-value', () => {
   const light = palette('light');
   assert.equal(light['--hh-page'], '#E7ECF1');

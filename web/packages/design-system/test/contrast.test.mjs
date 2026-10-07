@@ -150,7 +150,8 @@ test('the danger fill clears 3:1 on the card, or in the dark half the button car
     if (ratio >= NON_TEXT) continue;
     assert.equal(name.endsWith('dark'), true, `${name}: danger fill on card ${ratio.toFixed(2)}:1 and no dark-half exception applies`);
     const rule = readPkg('src/primitives.ts').match(/\.btn-danger\s*\{([^}]*)\}/);
-    assert.ok(rule && /border-color:\s*var\(--hh-danger-fill-ink\)/.test(rule[1]), '.btn-danger must carry the fill-ink border as its boundary');
+    assert.ok(rule && /border-color:\s*var\(--hh-danger-fill-edge\)/.test(rule[1]), '.btn-danger must carry the fill-edge border as its boundary');
+    assert.equal(v['--hh-danger-fill-edge'].toUpperCase(), '#FFFFFF', `${name}: the edge is the ink white where the fill alone is under 3:1`);
   }
 });
 
