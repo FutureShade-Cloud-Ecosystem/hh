@@ -13,6 +13,13 @@ package order
 //	words (ErrLineInUse, 409), never by the constraint. A correction (the yard finds the rest) puts
 //	the quantity back on the newest unshipped group, preferring one that already carries the line.
 //
+// THE GROUP IS LOCKED TOO (FOR UPDATE OF sgl, g), and its status is read under that lock: a dispatch
+// that has not committed holds the group's row, so the pick waits for it and then no longer sees a
+// READY group, where reading only the group lines let a truck that was leaving be shrunk. The lock
+// order is the order row, the order lines, the group lines, then the groups, the order giveToPlan and
+// ReplaceShipmentPlan already take; a dispatch takes only the one group row, and nothing here touches
+// payments or invoices, so no cycle forms with the lock order of row 821.
+//
 // The group invoice path pro-rates a line's money by the group quantities, so with the plan shrunk
 // along with the line the progress invoices still sum to the (reduced) line exactly.
 
@@ -55,7 +62,7 @@ func takeFromPlan(ctx context.Context, tx pgx.Tx, lineID string, lineNo int, nee
 SELECT sgl.id::text, sgl.qty_base::text
   FROM shipment_group_lines sgl JOIN shipment_groups g ON g.id = sgl.shipment_group_id
  WHERE sgl.order_line_id = $1 AND g.status = ANY($2)
- ORDER BY g.group_no DESC FOR UPDATE OF sgl`, lineID, unshippedGroupStatuses)
+ ORDER BY g.group_no DESC FOR UPDATE OF sgl, g`, lineID, unshippedGroupStatuses)
 	if err != nil {
 		return fmt.Errorf("yard pick: plan read: %w", err)
 	}

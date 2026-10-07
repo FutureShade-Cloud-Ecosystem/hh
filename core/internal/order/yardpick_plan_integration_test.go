@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -130,4 +131,77 @@ func TestIntegration_YardPick_AZeroPickEmptiesTheUnshippedGroupAndRestoreRefills
 	if got := groupQtys(t, pool, ord); got[0] != "5.0000" {
 		t.Fatalf("the restore refills the truck: %v", got)
 	}
+}
+
+// A dispatch that has not committed yet holds the group's row. A short pick that read the group as
+// READY before that must not shrink a truck that is leaving: it waits on the group, re-reads its
+// status under the lock, and either refuses (nothing else unshipped to give) or takes another group.
+func TestIntegration_YardPick_ADispatchInFlightIsNotShrunk(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		groups  []pg
+		pick    string
+		refused bool
+	}{
+		{"nothing else to give", []pg{{"READY", "5"}}, "2", true},
+		{"another unshipped group gives", []pg{{"PLANNED", "2"}, {"READY", "3"}}, "4", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pool := intPool(t)
+			ord := seedYardOrder(t, pool, "CONFIRMED")
+			plan(t, pool, ord, tc.groups...)
+			svc, _ := editSvc(t, pool)
+			ctx := context.Background()
+
+			// The dispatch click: an UPDATE of the READY group, left open.
+			tx, err := pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = tx.Rollback(ctx) }()
+			if _, err := tx.Exec(ctx, `UPDATE shipment_groups SET status = 'DISPATCHED', dispatched_at = now()
+				WHERE order_id = $1 AND status = 'READY'`, ord); err != nil {
+				t.Fatal(err)
+			}
+
+			short := yardPick(tc.pick, "NOT_IN_YARD")
+			short.OrderID = ord
+			done := make(chan error, 1)
+			go func() { _, err := svc.ApplyYardPicks(ctx, short); done <- err }()
+			select {
+			case err := <-done:
+				t.Fatalf("the short must wait on the group the dispatch holds, but returned %v", err)
+			case <-time.After(400 * time.Millisecond):
+			}
+			if err := tx.Commit(ctx); err != nil {
+				t.Fatalf("dispatch commit: %v", err)
+			}
+			err = <-done
+			if tc.refused != errors.Is(err, ErrLineInUse) || (!tc.refused && err != nil) {
+				t.Fatalf("refused=%v want, got %v", tc.refused, err)
+			}
+			got := groupQtysByStatus(t, pool, ord)
+			if tc.refused && got["DISPATCHED"] != "5.0000" || !tc.refused && (got["DISPATCHED"] != "3.0000" || got["PLANNED"] != "1.0000") {
+				t.Fatalf("the dispatched truck keeps what it left with: %v", got)
+			}
+		})
+	}
+}
+
+func groupQtysByStatus(t *testing.T, pool *pgxpool.Pool, ord string) map[string]string {
+	t.Helper()
+	rows, err := pool.Query(context.Background(), `
+SELECT g.status, COALESCE(SUM(sgl.qty_base), 0)::text FROM shipment_groups g
+  LEFT JOIN shipment_group_lines sgl ON sgl.shipment_group_id = g.id WHERE g.order_id = $1 GROUP BY g.status`, ord)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var s, q string
+		_ = rows.Scan(&s, &q)
+		out[s] = q
+	}
+	return out
 }
