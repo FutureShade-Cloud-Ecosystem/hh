@@ -8,12 +8,17 @@
 // attribute) and the light sheet is the opt-in `data-theme="light"` on the
 // document root, the same contract the design system's sheet states.
 //
-// The choice rests in this tab's memory only. The reference persists it in
+// The choice rests in this tab's memory in a default build. The reference persists it in
 // local storage; this app's committed sink gate (test/sinks.test.mjs) refuses
 // every storage path (custody is memory per tab), so a reload and a sign-out
-// both start on Auto in a default build and on Light in a demo build, and Auto
-// is the system's own answer. Said here so no one adds a storage call to
-// "finish" the port.
+// start on Auto in a default build, and Auto is the system's own answer. Said
+// here so no one adds a storage call to "finish" the port. In a DEMO build the
+// choice is carried between the front door, the till and this desk in the tab's
+// session storage (hh-demo.theme.v1), through demo-account.ts, the one module
+// that touches storage and that a default build swaps for a stub, so a reload
+// keeps it, and the demo's default is Light.
+
+import { readSharedTheme, writeSharedTheme } from "./demo-account.js";
 
 export type ThemeChoice = "auto" | "light" | "dark";
 
@@ -55,7 +60,9 @@ const LIGHT_QUERY = "(prefers-color-scheme: light)";
 
 /** Holds the choice, applies it to the document root, and follows the system while Auto. */
 export class ThemeController {
-  #choice: ThemeChoice = import.meta.env.MODE === "demo" ? "light" : "auto";
+  // A demo build opens on what the tab carries (the front door and the till write it), else on Light; a default build
+  // opens on Auto and carries nothing (the reader resolves the compiled out stub there).
+  #choice: ThemeChoice = readSharedTheme() ?? (import.meta.env.MODE === "demo" ? "light" : "auto");
   #query: MediaQueryList | null = null;
   readonly #onSystemChange = (): void => this.apply();
   readonly #onChange: () => void;
@@ -81,6 +88,7 @@ export class ThemeController {
 
   cycle(): void {
     this.#choice = themeAfter(this.#choice);
+    writeSharedTheme(this.#choice);
     this.apply();
   }
 

@@ -30,6 +30,8 @@ const scratchDir = join(appDir, "test", ".no-default-adopt-build");
 
 /** The front door's own session record key: the seam's one string artifact. */
 const FRONT_DOOR_KEY = "hh-demo.front-door.session.v1";
+/** The carried theme choice's key: a demo seam like the handoff's, so a default build carries none of it. */
+const THEME_KEY = "hh-demo.theme.v1";
 /** The adopt's source name: absent from every build's output, asserted anyway. */
 const ADOPT_NAME = "adoptFromFrontDoor";
 
@@ -68,6 +70,7 @@ test("a default build of the desk carries neither the front door's key nor the a
   for (const file of built) {
     assert.ok(!file.text.includes(FRONT_DOOR_KEY), `${file.name} carries the front door's key name`);
     assert.ok(!file.text.includes(ADOPT_NAME), `${file.name} carries the adopt's name`);
+    assert.ok(!file.text.includes(THEME_KEY), `${file.name} carries the carried theme's key name`);
   }
 });
 
@@ -75,6 +78,7 @@ test("a demo mode build of the desk ships the reader and the key it reads", () =
   const built = build("demo", ["--mode", "demo"]);
   const carriers = built.filter((file) => file.text.includes(FRONT_DOOR_KEY));
   assert.ok(carriers.length > 0, "the demo build carries the front door's key name nowhere");
+  assert.ok(built.some((file) => file.text.includes(THEME_KEY)), "the demo build carries the carried theme's key nowhere");
 });
 
 test("the adopt call rides only inside the demo build mode gate, at source", () => {

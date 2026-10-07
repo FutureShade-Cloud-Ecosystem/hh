@@ -20,3 +20,11 @@ export function readFrontDoorHandoff(): FrontDoorHandoffRead {
 
 /** The demo build's drop, compiled out: nothing was ever read here. */
 export function clearFrontDoorHandoff(): void {}
+
+/** The carried theme, compiled out of a default build: no choice is carried there. */
+export function readSharedTheme(): "auto" | "light" | "dark" | null {
+  return null;
+}
+
+/** The carried theme's write, compiled out: nothing is carried in a default build. */
+export function writeSharedTheme(): void {}
