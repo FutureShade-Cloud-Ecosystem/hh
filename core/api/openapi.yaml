@@ -19766,6 +19766,12 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "422":
+          description: "quantities_confirmed is missing or false: the staff member has not stated that the customer confirmed the quantities"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/quotes/{id}/reject:
     post:
       operationId: quoteRejectOnBehalf

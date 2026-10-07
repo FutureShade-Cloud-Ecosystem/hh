@@ -3,6 +3,8 @@ package quote
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -149,5 +151,24 @@ func TestStaffDecision_OfferFollowsRoleAndStatus(t *testing.T) {
 			t.Errorf("%s on %s: can_accept=%v can_reject=%v, want %v %v",
 				tc.role, tc.status, view.CanAccept, view.CanReject, tc.accept, tc.rej)
 		}
+	}
+}
+
+// A missing or false quantity statement is a 422, as it is on the customer's own accept: the request is
+// well formed, it just does not say the one thing an acceptance needs it to say.
+func TestStaffDecision_UnconfirmedQuantitiesIs422(t *testing.T) {
+	svc := staffSvcOver(newSeamStore(), sellerCtx("INSIDE_SALES")).withCaller(qCallerFrom)
+	ctx := qCtxAs(sellerCtx("INSIDE_SALES"))
+	_, err := svc.AcceptOnBehalf(ctx, qOrg, StaffAcceptIn{Channel: "phone", ExpectedTotalCents: i64(1)})
+	if !errors.Is(err, ErrQuantityStatementMissing) {
+		t.Fatalf("a missing or false statement must be ErrQuantityStatementMissing, got %v", err)
+	}
+	rec := httptest.NewRecorder()
+	(&StaffHandler{}).writeErr(rec, err)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status %d, want 422", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "confirmed the quantities") {
+		t.Errorf("the 422 must say it in words: %s", rec.Body.String())
 	}
 }

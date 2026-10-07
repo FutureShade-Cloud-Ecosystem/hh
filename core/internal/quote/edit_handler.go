@@ -490,6 +490,8 @@ func (h *StaffHandler) writeErr(w http.ResponseWriter, err error) {
 	var paymentConflict *OrderPaymentConflictError
 	var decisionRefused *DecisionRefusedError
 	switch {
+	case errors.Is(err, ErrQuantityStatementMissing):
+		httpx.Error(w, http.StatusUnprocessableEntity, err.Error())
 	case errors.As(err, &decisionRefused):
 		httpx.Error(w, http.StatusConflict, decisionRefused.Error())
 	case errors.Is(err, ErrIdempotencyKeyReused):

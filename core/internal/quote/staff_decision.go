@@ -55,6 +55,13 @@ type DecisionRefusedError struct{ Msg string }
 
 func (e *DecisionRefusedError) Error() string { return e.Msg }
 
+// ErrQuantityStatementMissing: the accept arrived without the staff member's statement that the customer
+// confirmed the quantities (absent or false). A 422, the status the customer's own accept answers for
+// its quantity acknowledgment: the request is well formed but does not say what an acceptance needs it
+// to say. Distinct from a 400, which is for a request that is malformed.
+var ErrQuantityStatementMissing = errors.New(
+	"quote: confirm that the customer confirmed the quantities before the quote is marked accepted")
+
 // StaffAcceptIn is the staff accept payload. QuantitiesConfirmed is the staff member's statement that
 // the customer confirmed the quantities, the same acknowledgment the customer's page asks for; it must
 // be true, because an acceptance without it is not one the customer's own page would take.
@@ -185,8 +192,7 @@ func (s *StaffService) AcceptOnBehalf(ctx context.Context, idOrNo string, in Sta
 		return StaffDecisionResult{}, err
 	}
 	if !in.QuantitiesConfirmed {
-		return StaffDecisionResult{}, httpx.BadRequestf(
-			"confirm that the customer confirmed the quantities before the quote is marked accepted")
+		return StaffDecisionResult{}, ErrQuantityStatementMissing
 	}
 	if in.ExpectedTotalCents == nil || *in.ExpectedTotalCents < 0 {
 		return StaffDecisionResult{}, httpx.BadRequestf(
