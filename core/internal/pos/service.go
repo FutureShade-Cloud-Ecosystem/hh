@@ -600,6 +600,30 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 		return Sale{}, errDepositTooLarge
 	}
 
+	// Item 9.2: a deposit sale cannot be collect now. The goods do not leave on
+	// a part payment, so the ring refuses in words rather than moving the sale
+	// to a held shape the customer did not ask for (the choice and its reason
+	// live on ErrDepositNotCollectNow, sale_deposit.go).
+	if deposit > 0 && saleType == SaleCollectNow {
+		return Sale{}, ErrDepositNotCollectNow{TotalCents: total, DepositCents: deposit}
+	}
+
+	// Item 9.2: the shape refusal. Whatever this sale would book ON ACCOUNT (a
+	// single ACCOUNT tender, a split's account leg) needs an account the shape
+	// was offered to: terms above zero AND a credit line. A pay before release
+	// sale (COD) never books on account at all, its line two is due later by
+	// definition. This runs BEFORE the credit gate: the gate answers how much
+	// credit fits, this answers whether on account is a shape the account has.
+	if onAccount := onAccountCents(tender, splitLegs, isSplit, total); onAccount > 0 {
+		if codSale || cust.PaymentTermsDays <= 0 || cust.CreditLimitCents <= 0 {
+			return Sale{}, ErrAccountShapeNotAvailable{
+				AmountCents:      onAccount,
+				CreditLimitCents: cust.CreditLimitCents,
+				ZeroDayTerms:     codSale || cust.PaymentTermsDays <= 0,
+			}
+		}
+	}
+
 	// DIB-488 rev 6 (item F): tendered cash must COVER the total, change due is tendered − total,
 	// and a short tender is refused in words (the drawer cannot owe the customer a negative).
 	if in.CashTenderedCents > 0 && in.CashTenderedCents < total {
@@ -727,6 +751,15 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 				// derives from it), parked in the order metadata so a replay answers verbatim; the money
 				// itself is unchanged (the till captures exactly the total, as always).
 				meta["cash_tendered_cents"] = in.CashTenderedCents
+			}
+			if deposit > 0 {
+				// Item 9.2: the taken deposit as the order's own display fact (the
+				// receipt's line one, a replay's echo). orders.deposit_required_cents
+				// is deliberately NOT written: it names the deposit an order
+				// REQUIRES, and this deposit is taken, its remainder lives in the
+				// invoice balance, which every money reader already reads.
+				meta["deposit_cents"] = deposit
+				meta["deposit_method"] = in.DepositMethod
 			}
 			orderID, orderNo, err := s.store.InsertOrder(ctx, tx, orderRow{
 				CustomerID:    customerID,

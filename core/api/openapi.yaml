@@ -14299,7 +14299,7 @@ paths:
         "409":
           $ref: "#/components/responses/Conflict"
         "422":
-          $ref: "#/components/responses/PosSplitTotalMismatch"
+          $ref: "#/components/responses/PosSaleUnprocessable"
     get:
       operationId: posLookupSales
       tags:
@@ -25503,6 +25503,38 @@ components:
                   message:
                     type: string
                     description: The dollar sentence, for example "The tenders add up to $266.00, but the sale total is $300.58."
+    PosSaleUnprocessable:
+      description: "A well-formed sale body the money does not fit, answered as the Error envelope carrying the refusal's own cents fields beside it. The refusal names itself in the error string and a client discriminates on the error string, never on the keys' absence: split_total_mismatch (tendered_cents and total_cents, the legs do not sum to the total); on_account_not_available (amount_cents and credit_limit_cents, the account cannot book the rest on account, zero day terms or no credit line, pay in full or take a deposit with the balance due later); deposit_not_collect_now (total_cents and deposit_cents, a collect now sale is paid in full, the goods do not leave on a part payment). Every message speaks dollars and plain words; no message ever prints cents."
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Error"
+              - type: object
+                properties:
+                  tendered_cents:
+                    type: integer
+                    format: int64
+                    description: Present on split_total_mismatch, what the submitted legs sum to
+                  total_cents:
+                    type: integer
+                    format: int64
+                    description: The sale total, present on split_total_mismatch and deposit_not_collect_now
+                  amount_cents:
+                    type: integer
+                    format: int64
+                    description: Present on on_account_not_available, what would have gone on account
+                  credit_limit_cents:
+                    type: integer
+                    format: int64
+                    description: Present on on_account_not_available, the account's credit line
+                  deposit_cents:
+                    type: integer
+                    format: int64
+                    description: Present on deposit_not_collect_now, the deposit the body carried
+                  message:
+                    type: string
+                    description: The dollar sentence for the refusal a person reads at the counter
   schemas:
     Error:
       type: object

@@ -1075,9 +1075,10 @@ func TestSale_RecordsPaymentReceived_PostCommit_OncePerCommittedTender(t *testin
 		t.Fatal("a rolled-back sale must not invoke the receipt hook")
 	}
 
-	// An ACCOUNT sale (no tender) records nothing.
+	// An ACCOUNT sale (no tender) records nothing. Item 9.2: an ACCOUNT ring
+	// needs a credit shaped account (terms and a line).
 	h4 := newHarness()
-	h4.store.customers["cust-abc"] = customerRec{ID: "cust-abc", CustomerType: "CONTRACTOR", CreditLimitCents: 5000000}
+	h4.store.customers["cust-abc"] = customerRec{ID: "cust-abc", CustomerType: "CONTRACTOR", PaymentTermsDays: 30, CreditLimitCents: 5000000}
 	acct := baseInput()
 	acct.Tender = TenderAccount
 	if _, err := h4.svc.Sale(context.Background(), acct); err != nil {
@@ -1123,6 +1124,10 @@ func TestSale_Account_FinalizedNoPayment(t *testing.T) {
 
 func TestSale_Account_OverLimit_BlockedNoCommit(t *testing.T) {
 	h := newHarness()
+	// Item 9.2: an ACCOUNT ring needs a credit shaped account to reach the
+	// gate at all (the shape refusal, sale_deposit.go), so this leg plants one
+	// and lets the GATE be the thing that blocks, which is its subject.
+	h.store.customers["cust-abc"] = customerRec{ID: "cust-abc", CustomerType: "CONTRACTOR", PaymentTermsDays: 30, CreditLimitCents: 5000000}
 	h.credit.block = &identity.ActionBlocked{Policy: identity.PolicyCredit}
 	in := baseInput()
 	in.Tender = TenderAccount
@@ -1137,6 +1142,12 @@ func TestSale_Account_OverLimit_BlockedNoCommit(t *testing.T) {
 }
 
 // -- U4, no credit → COD constraint ----------------------------------------
+//
+// Item 9.2 narrowed this leg's subject: the ring now refuses an ACCOUNT shape
+// on a no credit account BEFORE the gate runs (ErrAccountShapeNotAvailable,
+// sale_deposit.go), so a 0/0 account never reaches the identity decision any
+// more. The leg asserts the new refusal; the identity gate's own COD answer
+// still stands behind its other callers (the quote conversion's gate).
 
 func TestSale_Account_NoCredit_CODConstraint(t *testing.T) {
 	h := newHarness()
@@ -1144,9 +1155,9 @@ func TestSale_Account_NoCredit_CODConstraint(t *testing.T) {
 	in := baseInput()
 	in.Tender = TenderAccount
 	_, err := h.svc.Sale(context.Background(), in)
-	var cb ErrCreditBlocked
-	if !errors.As(err, &cb) || cb.Policy != string(identity.PolicyCOD) {
-		t.Fatalf("want ErrCreditBlocked(COD_CONSTRAINT), got %v", err)
+	var asn ErrAccountShapeNotAvailable
+	if !errors.As(err, &asn) || asn.CreditLimitCents != 0 {
+		t.Fatalf("want ErrAccountShapeNotAvailable on a no credit account, got %v", err)
 	}
 }
 
