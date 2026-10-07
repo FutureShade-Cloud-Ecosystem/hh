@@ -8,9 +8,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -108,52 +111,92 @@ func TestLowMarginReportBranchWallAtTheCounter(t *testing.T) {
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM user_branch_grants WHERE user_id = $1`, xrUserBranchManagerID)
 	})
-	docs := func(code int, body string) map[string]bool {
+	// The North A documents are this test's own (the shared fixtures are tidied by other legs): one
+	// priced quote at North A, removed again after.
+	quoteNo := fmt.Sprintf("LMW-A-%d", time.Now().UnixNano())
+	const quoteID = "0d4a0000-0000-4000-9000-000000000601"
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO quotes (id, quote_no, customer_id, branch_id, status, org_id) VALUES ($1, $2, $3, $4, 'SENT', $5)`,
+		quoteID, quoteNo, testkit.TenantAlphaID, testkit.BranchNorthAID, testkit.OrgNorthID); err != nil {
+		t.Fatalf("plant the North A quote: %v", err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM quotes WHERE id = $1`, quoteID) })
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO quote_lines (quote_id, line_no, product_id, description, qty_entered, uom_entered, qty_base, unit_price_cents, price_uom, line_total_cents, org_id)
+		VALUES ($1, 1, $2, 'Wall line', 10, 'EA', 10, 1, 'EA', 10, $3)`,
+		quoteID, testkit.ProductID, testkit.OrgNorthID); err != nil {
+		t.Fatalf("plant the North A quote line: %v", err)
+	}
+	// A busy gate database carries many documents, so the walk follows the cursor to the end rather
+	// than trust the first page to hold the fixtures.
+	type result struct {
+		code int
+		body string
+		docs map[string]bool
+	}
+	read := func(path string, headers map[string]string) result {
 		t.Helper()
-		if code != http.StatusOK {
-			t.Fatalf("status %d: %s", code, body)
+		out := result{docs: map[string]bool{}}
+		cursor := ""
+		for i := 0; i < 200; i++ {
+			sep := "?"
+			if strings.Contains(path, "?") {
+				sep = "&"
+			}
+			url := path + sep + "limit=200"
+			if cursor != "" {
+				url += "&cursor=" + cursor
+			}
+			code, body := rgProbe(t, fx, http.MethodGet, url, headers)
+			out.code, out.body = code, body
+			if code != http.StatusOK {
+				return out
+			}
+			var page struct {
+				Items []struct {
+					DocNo string `json:"doc_no"`
+				} `json:"items"`
+				NextCursor *string `json:"next_cursor"`
+			}
+			if err := json.Unmarshal([]byte(body), &page); err != nil {
+				t.Fatalf("decode: %v: %.300s", err, body)
+			}
+			for _, it := range page.Items {
+				out.docs[it.DocNo] = true
+			}
+			if page.NextCursor == nil {
+				return out
+			}
+			cursor = *page.NextCursor
 		}
-		var page struct {
-			Items []struct {
-				DocNo    string `json:"doc_no"`
-				BranchID string `json:"branch_id"`
-			} `json:"items"`
-		}
-		if err := json.Unmarshal([]byte(body), &page); err != nil {
-			t.Fatalf("decode: %v: %s", err, body)
-		}
-		out := map[string]bool{}
-		for _, it := range page.Items {
-			out[it.DocNo] = true
-		}
+		t.Fatal("the report's cursor never ended")
 		return out
 	}
 	const trenton = "5d1b3f6e-0000-4000-9000-000000000001"
 
 	scoped := rgHeaders(t, fx, xrSubBranchManager)
-	got := docs(rgProbe(t, fx, http.MethodGet, lowMarginReportPath, scoped))
-	if !got["FXQTE-A-1"] || !got["FXQTE-B-1"] {
-		t.Errorf("the North A Branch manager must see North A's documents: %v", got)
+	got := read(lowMarginReportPath, scoped).docs
+	if !got[quoteNo] {
+		t.Errorf("the North A Branch manager must see North A's quote %s: %v", quoteNo, got)
 	}
 	if got["#SO-DPA3-CRIT"] || got["#SO-DPA3-WARN"] {
 		t.Errorf("the North A Branch manager sees Trenton's orders: %v", got)
 	}
-	code, body := rgProbe(t, fx, http.MethodGet, lowMarginReportPath+"?branch_id="+trenton, scoped)
-	if code != http.StatusForbidden || body == string(authz.BodyForbidden) {
-		t.Errorf("a branch outside the grant: %d %s, want a 403 that says why", code, body)
+	if r := read(lowMarginReportPath+"?branch_id="+trenton, scoped); r.code != http.StatusForbidden || r.body == string(authz.BodyForbidden) {
+		t.Errorf("a branch outside the grant: %d %.200s, want a 403 that says why", r.code, r.body)
 	}
-	got = docs(rgProbe(t, fx, http.MethodGet, lowMarginReportPath+"?branch_id="+testkit.BranchNorthAID, scoped))
-	if !got["FXQTE-A-1"] {
+	got = read(lowMarginReportPath+"?branch_id="+testkit.BranchNorthAID, scoped).docs
+	if !got[quoteNo] {
 		t.Errorf("the granted branch named: %v", got)
 	}
 	// The Sales manager is branch scoped too.
-	got = docs(rgProbe(t, fx, http.MethodGet, lowMarginReportPath, rgHeaders(t, fx, testkit.SubSalesManager)))
+	got = read(lowMarginReportPath, rgHeaders(t, fx, testkit.SubSalesManager)).docs
 	if got["#SO-DPA3-CRIT"] {
 		t.Errorf("the North A Sales manager sees Trenton's orders: %v", got)
 	}
 	// A global caller reads across the branches.
-	got = docs(rgProbe(t, fx, http.MethodGet, lowMarginReportPath, rgHeaders(t, fx, testkit.SubGeneralMgr)))
-	if !got["FXQTE-A-1"] || !got["#SO-DPA3-CRIT"] {
+	got = read(lowMarginReportPath, rgHeaders(t, fx, testkit.SubGeneralMgr)).docs
+	if !got[quoteNo] || !got["#SO-DPA3-CRIT"] {
 		t.Errorf("the General Manager reads every branch: %v", got)
 	}
 }
