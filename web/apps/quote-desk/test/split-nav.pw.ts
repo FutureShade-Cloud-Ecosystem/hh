@@ -330,10 +330,10 @@ test("split search: the quote page adds lines through the search and add box, no
   const box = page.getByRole("combobox", { name: "Search products by name, code or category" });
   const before = await page.getByTestId("qb-line").count();
   // A code adds on Enter; a name search adds on a click; a pause adds nothing.
-  await box.fill("PSN-100");
+  await box.fill("EDG-08");
   await box.press("Enter");
   await expect(page.getByTestId("qb-line")).toHaveCount(before + 1);
-  await box.fill("holland");
+  await box.fill("clear stone");
   await page.getByTestId("search-add-row").first().click();
   await expect(page.getByTestId("qb-line")).toHaveCount(before + 2);
   await expect(box).toBeFocused();
