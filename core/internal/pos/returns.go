@@ -217,7 +217,7 @@ func (s *Service) prepareReturn(ctx context.Context, in ReturnInput) (*returnPla
 	}
 
 	// The original sale: must be a committed POS sale; the return runs at ITS branch.
-	oc, found, err := s.store.ReturnOrderContext(ctx, in.OrderID, in.OrderNo)
+	oc, found, err := s.store.ReturnOrderContext(ctx, in.OrderID, normalizeSaleRef(in.OrderNo))
 	if err != nil {
 		return nil, err
 	}
@@ -766,6 +766,13 @@ func (s *Service) applyAccountCredit(ctx context.Context, tx pgx.Tx, oc returnOr
 	return nil
 }
 
+// normalizeSaleRef is the typed sale reference as the lookup compares it: trimmed, upper cased, and
+// without a leading hash, so "#SO-TRT-21", "so-trt-21", " SO-TRT-21 " and "INV-17" all reach the
+// same comparison (the stored numbers carry the hash; the query adds it back).
+func normalizeSaleRef(raw string) string {
+	return strings.TrimPrefix(strings.ToUpper(strings.TrimSpace(raw)), "#")
+}
+
 // LookupReturn is the pre-return read: the original committed sale + its lines with prior-return
 // sums netted, so the counter can build the per-line qty entry. Read-only, the commit re-guards.
 // The branch wall answers before the lines are read (X2): another branch's sale is refused, its
@@ -774,7 +781,7 @@ func (s *Service) LookupReturn(ctx context.Context, orderID, orderNo string) (Re
 	if orderID == "" && orderNo == "" {
 		return ReturnLookup{}, clientErr(http.StatusBadRequest, "pos: order_id or order_no is required")
 	}
-	oc, found, err := s.store.ReturnOrderContext(ctx, orderID, orderNo)
+	oc, found, err := s.store.ReturnOrderContext(ctx, orderID, normalizeSaleRef(orderNo))
 	if err != nil {
 		return ReturnLookup{}, err
 	}

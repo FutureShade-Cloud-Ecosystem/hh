@@ -144,8 +144,12 @@ SELECT id::text, return_no, order_id::text, invoice_id::text, refund_method,
        subtotal_cents, tax_cents, total_cents, fee_cents, COALESCE(refund_payment_id::text,''), pickup_status, status
   FROM pos_returns WHERE idempotency_key = $1`
 
-// returnOrderContextQuery is the original committed POS sale behind one
-// order id or number.
+// returnOrderContextQuery is the original committed POS sale behind one order id or one typed
+// reference. Numbers are stored with a hash (#SO-TRT-21, #INV-17) and the clerk reads them off a
+// slip without it, so the reference ($2, already trimmed, upper cased and stripped of a leading hash
+// by normalizeSaleRef) matches the order number or the invoice number with or without the hash, and a
+// bare run of digits matches the number a branch's order numbers end in (the exact numbers rank
+// first, then the newest sale).
 const returnOrderContextQuery = `
 SELECT o.id::text, o.order_no, o.branch_id::text, o.customer_id::text,
        COALESCE(ps.invoice_id::text,''), COALESCE(i.status,''), ps.tender, COALESCE(pay.gateway_ref,'')
@@ -153,7 +157,14 @@ SELECT o.id::text, o.order_no, o.branch_id::text, o.customer_id::text,
   JOIN orders o ON o.id = ps.order_id
   LEFT JOIN invoices i ON i.id = ps.invoice_id
   LEFT JOIN payments pay ON pay.id = ps.payment_id
- WHERE ($1 <> '' AND ps.order_id::text = $1) OR ($1 = '' AND o.order_no = $2)`
+ WHERE ($1 <> '' AND ps.order_id::text = $1)
+    OR ($1 = '' AND $2 <> '' AND (
+         upper(o.order_no) IN ($2, '#' || $2)
+         OR upper(i.invoice_no) IN ($2, '#' || $2)
+         OR ($2 ~ '^[0-9]+$' AND o.order_no LIKE '%-' || $2)))
+ ORDER BY (upper(o.order_no) IN ($2, '#' || $2) OR upper(i.invoice_no) IN ($2, '#' || $2)) DESC,
+          o.created_at DESC
+ LIMIT 1`
 
 func (r *Repository) FindReturnByKey(ctx context.Context, key string) (Return, bool, error) {
 	if r.pool == nil {
@@ -244,10 +255,11 @@ func (r *Repository) ListReturnableLines(ctx context.Context, orderID string) ([
 		return nil, errNoPool
 	}
 	const q = `
-SELECT ol.id::text, COALESCE(ol.product_id::text,''), ol.description, ol.qty_base::float8,
+SELECT ol.id::text, COALESCE(ol.product_id::text,''), COALESCE(NULLIF(ol.description, ''), p.name, ''), ol.qty_base::float8,
        ol.unit_price_cents, ol.line_total_cents, ol.tax_cents,
        COALESCE((SELECT SUM(rl.qty_base) FROM pos_return_lines rl WHERE rl.order_line_id = ol.id), 0)::float8
   FROM order_lines ol
+  LEFT JOIN products p ON p.id = ol.product_id
  WHERE ol.order_id::text = $1
  ORDER BY ol.line_no`
 	rows, err := r.pool.Query(ctx, q, orderID)

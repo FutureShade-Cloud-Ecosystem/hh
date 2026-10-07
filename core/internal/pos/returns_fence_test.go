@@ -214,3 +214,23 @@ func TestReturn_ReplayOfAForeignSale_KeyWithAnOwnedSaleInTheBody_Refuses(t *test
 		t.Fatalf("a walled replay must carry none of the committed return: %+v", replay)
 	}
 }
+
+// Round 11: the typed sale reference is compared without its hash, case or stray spaces, so the
+// stored #SO-TRT-21 and #INV-17 are found by what the clerk reads off a slip.
+func TestNormalizeSaleRef(t *testing.T) {
+	cases := map[string]string{
+		"#SO-TRT-21":  "SO-TRT-21",
+		"SO-TRT-21":   "SO-TRT-21",
+		" so-trt-21 ": "SO-TRT-21",
+		"#inv-17":     "INV-17",
+		"21":          "21",
+		"":            "",
+		"   ":         "",
+		"##SO-TRT-21": "#SO-TRT-21", // only the one leading hash is the stored prefix
+	}
+	for in, want := range cases {
+		if got := normalizeSaleRef(in); got != want {
+			t.Errorf("normalizeSaleRef(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

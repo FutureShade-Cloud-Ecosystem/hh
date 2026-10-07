@@ -357,7 +357,9 @@ func (f *fakeStore) ReturnOrderContext(_ context.Context, orderID, orderNo strin
 		return oc, true, nil
 	}
 	for _, oc := range f.retCtx {
-		if orderNo != "" && oc.OrderNo == orderNo {
+		// The real query compares the number without its hash and in upper case (normalizeSaleRef
+		// has already stripped the typed one), so the fake does the same with the stored number.
+		if orderNo != "" && strings.TrimPrefix(strings.ToUpper(oc.OrderNo), "#") == orderNo {
 			return oc, true, nil
 		}
 	}
