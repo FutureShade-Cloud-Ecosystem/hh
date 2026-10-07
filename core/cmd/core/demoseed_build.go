@@ -181,6 +181,9 @@ func buildPlan(in planInput) ([]row, planSummary, error) {
 	b.freightApprovals()
 	// The quote world, after the customers and products it prices and before the day-keyed rows.
 	b.quoteWorld()
+	// The CP-03 island's missing lines, beside the quote world because they are documents too, and
+	// after the products their foreign keys name (demoseed_island.go argues the whole case).
+	b.islandLines()
 	// LAST, AND THE ORDER IS THE FOREIGN KEY'S. §15's rows reference the products and customers above
 	// them and nothing references them back, so they sit at the end where a reader looking for "what
 	// grows every deploy" finds the whole of it in one place.

@@ -84,3 +84,30 @@ func TestDefaultBuildCarriesNoScrubRename(t *testing.T) {
 		}
 	}
 }
+
+// homeRepairSignatures are the seed-repair pass's load-bearing literals (the demoseed_repair
+// pair): the one guarded home-branch UPDATE, and the plan's own words about it. The customer id
+// the statement addresses is derived (demoID), so the statement text is the marker that cannot
+// appear in a default build by accident.
+var homeRepairSignatures = []string{
+	`UPDATE customers SET home_branch_id = $1::uuid, updated_at = $2 WHERE id = $3::uuid AND home_branch_id = $4::uuid`,
+	"re-homing the Northline account",
+}
+
+// TestDefaultBuildCarriesNoHomeBranchRepair holds the repair pair's gate the same way the rename
+// leg above holds its own: the repair is the demo build's write, and a default build must carry
+// no trace of it, while the demo build must carry both markers or this test has stopped probing.
+func TestDefaultBuildCarriesNoHomeBranchRepair(t *testing.T) {
+	def := buildCoreBinary(t, "core-default-repair", "")
+	for _, sig := range homeRepairSignatures {
+		if bytes.Contains(def, []byte(sig)) {
+			t.Errorf("the default build carries the home-branch repair's %q; the repair must compile only into the demo build", sig)
+		}
+	}
+	demo := buildCoreBinary(t, "core-demo-repair", "-tags=demo")
+	for _, sig := range homeRepairSignatures {
+		if !bytes.Contains(demo, []byte(sig)) {
+			t.Errorf("the demo build has lost the home-branch repair's %q, so the default leg above passes vacuously", sig)
+		}
+	}
+}

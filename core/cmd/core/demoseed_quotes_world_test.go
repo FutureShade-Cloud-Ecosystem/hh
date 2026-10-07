@@ -70,11 +70,11 @@ var qwOtherWorldTables = []string{
 	"system_settings", "demo_box",
 }
 
-// qwFreshDB creates this test's own database from zero and applies the migration set, the same
-// files and order the migrate role applies.
-func qwFreshDB(t *testing.T, ctx context.Context, dsn string) (*pgxpool.Pool, string) {
+// qwFreshDB creates the test's own database from zero and applies the migration set, the same
+// files and order the migrate role applies. The name is the caller's, so each world proof holds a
+// database of its own and two proofs cannot collide on one name.
+func qwFreshDB(t *testing.T, ctx context.Context, dsn, name string) (*pgxpool.Pool, string) {
 	t.Helper()
-	name := "demoworld_quotes"
 	admin, err := pgxpool.New(ctx, swapDSNDatabase(dsn, "postgres"))
 	if err != nil {
 		t.Fatalf("connecting to the admin database: %v", err)
@@ -218,7 +218,7 @@ func TestDemoWorld_Quotes(t *testing.T) {
 	vaultKeyHex := hex.EncodeToString(rawKey)
 
 	// 1. migrate, then the first apply exactly as a box runs it: the role logins are not there yet.
-	pool, testDSN := qwFreshDB(t, ctx, dsn)
+	pool, testDSN := qwFreshDB(t, ctx, dsn, "demoworld_quotes")
 	t.Setenv("DATABASE_URL", testDSN)
 	t.Setenv("CORE_DATABASE_URL", testDSN)
 	t.Setenv("PAYMENT_VAULT_KEY", vaultKeyHex)
@@ -258,7 +258,7 @@ func TestDemoWorld_Quotes(t *testing.T) {
 	// 3. the second apply: now the logins resolve, so the quote world is added, and nothing else moves.
 	before := qwFingerprint(t, ctx, pool, qwOtherWorldTables)
 	proposed, created := qwApply(t)
-	const wantQuoteRows = 3 + 7 + 2 + 1 + 1 + 1 + 4 + 1 // quotes, lines, links, acceptance, audit row, event, log rows, request
+	const wantQuoteRows = 4 + 9 + 3 + 2 + 2 + 2 + 4 + 1 // quotes, lines, links, acceptances, audit rows, events, log rows, request
 	if created != wantQuoteRows {
 		t.Fatalf("the second apply created %d rows, want exactly the quote world's %d (proposed %d)", created, wantQuoteRows, proposed)
 	}
@@ -268,15 +268,15 @@ func TestDemoWorld_Quotes(t *testing.T) {
 			t.Errorf("%s changed across the apply that adds the quotes, nothing else in the world may move", table)
 		}
 	}
-	census := map[string]int{"quotes": 3, "quote_lines": 7, "quote_share_links": 2, "quote_acceptances": 1,
-		"quote_share_link_events": 1, "pricing_audit_log": 4, "permission_approval_requests": 1}
+	census := map[string]int{"quotes": 4, "quote_lines": 9, "quote_share_links": 3, "quote_acceptances": 2,
+		"quote_share_link_events": 2, "pricing_audit_log": 4, "permission_approval_requests": 1}
 	for table, add := range census {
 		if n := qwCount(t, ctx, pool, `SELECT count(*) FROM `+table); n != baseline[table]+add {
 			t.Errorf("%s holds %d rows, want the baseline %d plus the world's %d", table, n, baseline[table], add)
 		}
 	}
-	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM quotes WHERE metadata->>'demo_seed' = $1`, demoMarker); n != 3 {
-		t.Errorf("demo quotes found by the world's marker: %d, want 3", n)
+	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM quotes WHERE metadata->>'demo_seed' = $1`, demoMarker); n != 4 {
+		t.Errorf("demo quotes found by the world's marker: %d, want 4", n)
 	}
 	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM permission_approval_requests WHERE policy_type = 'MARGIN_BELOW_MINIMUM'`); n != 1 {
 		t.Errorf("floor requests: %d, want 1", n)
@@ -367,6 +367,7 @@ func TestDemoWorld_Quotes(t *testing.T) {
 		"Q1": {"DEMO-TRT-Q1", "DRAFT", qwSalesUserID, 2},
 		"Q2": {"DEMO-TRT-Q2", "SENT", qwManagerUserID, 2},
 		"Q3": {"DEMO-TRT-Q3", "ACCEPTED", qwSalesUserID, 3},
+		"Q4": {"DEMO-TRT-Q4", "ACCEPTED", qwSalesUserID, 2},
 	}
 	seeded := map[string]qwQuote{}
 	for key, w := range wants {
@@ -382,10 +383,10 @@ func TestDemoWorld_Quotes(t *testing.T) {
 	if seeded["Q1"].OwnerID == seeded["Q2"].OwnerID {
 		t.Error("the quotes are not owned by two different salespeople")
 	}
-	// The app lists the two customers' quotes to the manager (Manage reaches every quote of its branch).
+	// The app lists the customers' quotes to the manager (Manage reaches every quote of its branch).
 	listRsp := manager.call("GET", "/api/v1/quotes", nil)
 	listRsp.ok(t, http.StatusOK)
-	for _, key := range []string{"Q1", "Q2", "Q3"} {
+	for _, key := range []string{"Q1", "Q2", "Q3", "Q4"} {
 		if !strings.Contains(string(listRsp.body), wants[key].no) {
 			t.Errorf("the quote list as the Sales manager lacks %s", wants[key].no)
 		}
@@ -400,7 +401,7 @@ func TestDemoWorld_Quotes(t *testing.T) {
 		}
 		return id
 	}
-	for key, cust := range map[string]string{"Q1": "C02", "Q2": "C01", "Q3": "C02"} {
+	for key, cust := range map[string]string{"Q1": "C02", "Q2": "C01", "Q3": "C02", "Q4": "C10"} {
 		items := []map[string]any{}
 		for _, ln := range seeded[key].Lines {
 			var qty float64

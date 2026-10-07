@@ -53,8 +53,8 @@ func TestQuotePlan_TheWorldHoldsTheStatesATesterNeeds(t *testing.T) {
 		t.Fatal(err)
 	}
 	q := quoteRows(rows, sum)
-	if got := len(q["quotes"]); got != 3 {
-		t.Fatalf("the world holds %d quotes, want 3", got)
+	if got := len(q["quotes"]); got != 4 {
+		t.Fatalf("the world holds %d quotes, want 4", got)
 	}
 	sales, manager := in.Personas[personaQuoteSales], in.Personas[personaQuoteManager]
 	byStatus := map[string]map[string]any{}
@@ -85,19 +85,19 @@ func TestQuotePlan_TheWorldHoldsTheStatesATesterNeeds(t *testing.T) {
 	if len(owners) != 2 || !owners[sales] || !owners[manager] {
 		t.Errorf("owners %v, want exactly the Sales and the Sales manager logins", owners)
 	}
-	if !custs[demoID("customer:C01")] || !custs[demoID("customer:C02")] || len(custs) != 2 {
-		t.Errorf("customers %v, want C01 and C02 only", custs)
+	if !custs[demoID("customer:C01")] || !custs[demoID("customer:C02")] || !custs[demoID("customer:C10")] || len(custs) != 3 {
+		t.Errorf("customers %v, want C01, C02 and the Cash On Demand account C10 only", custs)
 	}
 	// Every quote line is a priced, whole-quantity line on a demo product.
-	if len(q["quote_lines"]) != 7 {
-		t.Errorf("the world holds %d quote lines, want 7", len(q["quote_lines"]))
+	if len(q["quote_lines"]) != 9 {
+		t.Errorf("the world holds %d quote lines, want 9", len(q["quote_lines"]))
 	}
 	// A tester can open a SENT quote and an ACCEPTED quote by a derived token, and the stored hash is
 	// the hash of that printed token, never the token.
-	if len(q["quote_share_links"]) != 2 || len(sum.QuoteLinks) != 2 {
-		t.Fatalf("share links %d, printed %d, want 2 and 2", len(q["quote_share_links"]), len(sum.QuoteLinks))
+	if len(q["quote_share_links"]) != 3 || len(sum.QuoteLinks) != 3 {
+		t.Fatalf("share links %d, printed %d, want 3 and 3", len(q["quote_share_links"]), len(sum.QuoteLinks))
 	}
-	for _, key := range []string{"Q2", "Q3"} {
+	for _, key := range []string{"Q2", "Q3", "Q4"} {
 		tok := quoteToken(key)
 		found := false
 		for _, l := range q["quote_share_links"] {
@@ -118,8 +118,8 @@ func TestQuotePlan_TheWorldHoldsTheStatesATesterNeeds(t *testing.T) {
 			t.Errorf("the plan summary does not print %s's token", key)
 		}
 	}
-	if len(q["quote_acceptances"]) != 1 {
-		t.Errorf("acceptance records %d, want 1 (the ACCEPTED quote only)", len(q["quote_acceptances"]))
+	if len(q["quote_acceptances"]) != 2 {
+		t.Errorf("acceptance records %d, want 2 (the ACCEPTED quotes only)", len(q["quote_acceptances"]))
 	}
 }
 
@@ -325,8 +325,8 @@ func quoteProdCategory(t *testing.T, prod string) string {
 func TestQuotePlan_TheAcceptanceIsAnchoredAndItsQuoteUpdatedAtTheAccept(t *testing.T) {
 	rows, sum := buildForTest(t)
 	q := quoteRows(rows, sum)
-	if len(q["audit_log"]) != 1 {
-		t.Fatalf("the world holds %d audit rows, want the one QUOTE_ACCEPTED row", len(q["audit_log"]))
+	if len(q["audit_log"]) != 2 {
+		t.Fatalf("the world holds %d audit rows, want the two QUOTE_ACCEPTED rows", len(q["audit_log"]))
 	}
 	a := q["audit_log"][0]
 	if a["action"] != "QUOTE_ACCEPTED" || a["entity_type"] != "quote" || a["entity_id"] != demoID("quote:Q3") {
@@ -348,14 +348,25 @@ func TestQuotePlan_TheAcceptanceIsAnchoredAndItsQuoteUpdatedAtTheAccept(t *testi
 	if len(changes) != 7 {
 		t.Errorf("the audit row carries %d detail keys (%v), the real accept writes 7 allowlisted ones", len(changes), changes)
 	}
-	if len(q["quote_acceptances"]) != 1 {
-		t.Fatalf("acceptance records %d, want 1", len(q["quote_acceptances"]))
+	if len(q["quote_acceptances"]) != 2 {
+		t.Fatalf("acceptance records %d, want 2", len(q["quote_acceptances"]))
+	}
+	// Each acceptance anchors to the audit row of its OWN quote, so the anchors partition the rows.
+	anchors := map[string]bool{}
+	for _, acc := range q["quote_acceptances"] {
+		anchor, ok := acc["audit_seq"].(auditAnchor)
+		if !ok {
+			t.Errorf("an acceptance's audit_seq is %#v, want an anchor to an audit row", acc["audit_seq"])
+			continue
+		}
+		anchors[string(anchor)] = true
+	}
+	for _, row := range q["audit_log"] {
+		if !anchors[fmt.Sprint(row["id"])] {
+			t.Errorf("audit row %v anchors no acceptance", row["id"])
+		}
 	}
 	acc := q["quote_acceptances"][0]
-	anchor, ok := acc["audit_seq"].(auditAnchor)
-	if !ok || string(anchor) != fmt.Sprint(a["id"]) {
-		t.Errorf("the acceptance's audit_seq is %#v, want an anchor to the audit row %v", acc["audit_seq"], a["id"])
-	}
 	if changes["amount_cents"] != float64(acc["accepted_total_cents"].(int64)) {
 		t.Errorf("the audit amount %v is not the accepted total %v", changes["amount_cents"], acc["accepted_total_cents"])
 	}
