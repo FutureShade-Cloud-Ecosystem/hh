@@ -34,12 +34,12 @@ async function setLight(page: Page): Promise<void> {
 }
 
 /**
- * The live demo's state: only Pavers and Bulk hold a margin policy. The contract has no
- * categories read, so the picker offers the categories the pricing reads prove exist (a rule
- * or a quantity break scoped to one): here a tier rule names each of the four.
+ * The live demo's state: only Pavers and Bulk hold a margin policy, and no rule or break names any other
+ * category. The picker lists the catalogue's categories (GET /api/v1/product-categories), so the four
+ * without a policy are offered whatever the pricing reads say.
  */
 async function twoPolicies(page: Page): Promise<void> {
-  await setMode(page, { drop_policies: [WALLS, SLABS, AGGREGATES, ACCESSORIES], rule_categories: [WALLS, SLABS, AGGREGATES, ACCESSORIES] });
+  await setMode(page, { drop_policies: [WALLS, SLABS, AGGREGATES, ACCESSORIES] });
   await signIn(page);
   await setLight(page);
   await openPricing(page);
@@ -57,6 +57,24 @@ test("A: the manager sees an Add category row under Pavers and Bulk", async ({ p
   await expect(page.getByTestId("pm-add-enforce")).toBeChecked();
   await expect(page.getByTestId("pm-add-save")).toBeVisible();
   await shot(page, `${process.env.QD_SHOT_PREFIX ?? "after"}-margin-policy-add-manager-desktop`);
+});
+
+test("A: the picker is the product categories read, with names from it", async ({ page }) => {
+  const reads: string[] = [];
+  page.on("request", (r) => {
+    if (r.method() === "GET") reads.push(new URL(r.url()).pathname);
+  });
+  await twoPolicies(page);
+  expect(reads.filter((p) => p === "/api/v1/product-categories")).toHaveLength(1);
+  await expect(page.getByTestId("pm-add-category").locator("option:not([value=''])")).toHaveCount(4);
+});
+
+test("A: when the categories read is refused the picker says so and offers nothing", async ({ page }) => {
+  await setMode(page, { drop_policies: [WALLS], fail_next: { kind: "categories", status: 500, message: "product: the categories could not be read" } });
+  await signIn(page);
+  await openPricing(page);
+  await expect(page.getByTestId("pm-categories-error")).toContainText("categories could not be read");
+  await expect(page.getByTestId("pm-add-category")).toHaveCount(0);
 });
 
 test("A: the picker opened shows the un-covered categories", async ({ page }) => {
@@ -119,21 +137,21 @@ test("A: no category, a bad number or a floor over the target is said in the row
   expect(state.previews).toHaveLength(0);
 });
 
-test("A: the picker offers only categories the pricing reads prove exist, never a built-in list", async ({ page }) => {
-  // Pavers and Bulk hold a policy; the only other category any rule or break names is Accessories.
-  await setMode(page, { drop_policies: [WALLS, SLABS, AGGREGATES, ACCESSORIES] });
+test("A: the picker offers only the categories the catalogue read answers, never a built-in list", async ({ page }) => {
+  // Pavers and Bulk hold a policy; the catalogue holds only one other category.
+  await setMode(page, { drop_policies: [WALLS, SLABS, AGGREGATES, ACCESSORIES], catalogue: [PAVERS, BULK, ACCESSORIES] });
   await signIn(page);
   await openPricing(page);
   await expect(page.getByTestId("pm-row")).toHaveCount(2);
   await expect(page.getByTestId("pm-add-category").locator("option:not([value=''])")).toHaveText(["Accessories"]);
 });
 
-test("A: a category dropped from the grid is offered back because a rule and a break name it", async ({ page }) => {
+test("A: a category dropped from the grid is offered back with the others the catalogue holds", async ({ page }) => {
   await setMode(page, { drop_policies: [WALLS, SLABS, AGGREGATES, ACCESSORIES, PAVERS] });
   await signIn(page);
   await openPricing(page);
   await expect(page.getByTestId("pm-row")).toHaveCount(1);
-  await expect(page.getByTestId("pm-add-category").locator("option:not([value=''])")).toHaveText(["Accessories", "Pavers"]);
+  await expect(page.getByTestId("pm-add-category").locator("option:not([value=''])")).toHaveText(["Accessories", "Aggregates", "Pavers", "Retaining Walls", "Slabs & Steps"]);
 });
 
 test("A: a category the server no longer holds is refused in its words, and nothing is added", async ({ page }) => {
@@ -207,7 +225,7 @@ test("A: with every category the reads prove covered the add row says so and off
   await signIn(page);
   await openPricing(page);
   await expect(page.getByTestId("pm-row")).toHaveCount(6);
-  await expect(page.getByTestId("pm-add-none")).toHaveText("Every category the pricing knows of has a margin policy.");
+  await expect(page.getByTestId("pm-add-none")).toHaveText("Every category in the catalogue has a margin policy.");
   await expect(page.getByTestId("pm-add-category")).toHaveCount(0);
   await expect(page.getByTestId("pm-add-save")).toHaveCount(0);
 });

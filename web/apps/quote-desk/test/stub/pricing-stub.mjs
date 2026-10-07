@@ -428,7 +428,7 @@ export function handlePricing({ request, response, path, url, callerOf, readBody
     return true;
   }
   const product = /^\/api\/v1\/products\/([^/]+)$/.exec(path);
-  const isPricing = path.startsWith("/api/v1/pricing/") || path === "/api/v1/staff" || (product !== null && productById.has(product[1]));
+  const isPricing = path.startsWith("/api/v1/pricing/") || path === "/api/v1/staff" || path === "/api/v1/product-categories" || (product !== null && productById.has(product[1]));
   if (!isPricing) return false;
 
   const caller = callerOf(request);
@@ -472,6 +472,15 @@ export function handlePricing({ request, response, path, url, callerOf, readBody
 
   const userId = caller.account.user_id;
   let m;
+
+  // ── the catalogue's categories (GET /api/v1/product-categories, the picker's own read) ──
+  if (path === "/api/v1/product-categories" && isRead) {
+    if (failing("categories")) return true;
+    const names = { [CAT.pavers]: ["PAV", "Pavers"], [CAT.walls]: ["WAL", "Retaining Walls"], [CAT.slabs]: ["SLB", "Slabs & Steps"], [CAT.aggregates]: ["AGG", "Aggregates"], [CAT.accessories]: ["ACC", "Accessories"], [CAT.bulk]: ["BLK", "Bulk"] };
+    const rows = [...world.catalogue].map((id) => ({ id, code: names[id]?.[0] ?? id.slice(0, 6), name: names[id]?.[1] ?? id, is_active: true }));
+    respondJson(response, 200, { items: rows, next_cursor: null });
+    return true;
+  }
 
   // ── the category margin policy ──
   if (path === "/api/v1/pricing/category-policies" && isRead) {

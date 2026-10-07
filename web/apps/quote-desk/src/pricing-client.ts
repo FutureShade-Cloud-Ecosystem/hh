@@ -19,6 +19,7 @@ import {
   readAuditPage,
   readBreak,
   readBreakPage,
+  readCategoryPage,
   readCreatedRef,
   readFloorPreview,
   readOverride,
@@ -29,6 +30,7 @@ import {
   readRulePage,
   type AuditRow,
   type BreakRow,
+  type CategoryRow,
   type CreatedRef,
   type FloorPreview,
   type OverrideRow,
@@ -76,6 +78,11 @@ export class PricingClient {
       cursor = read1.nextCursor;
     }
     return err(`the ${what} list did not end`);
+  }
+
+  /** The catalogue's categories, for the margin policy picker (the server refuses a policy for any other). */
+  listCategories(): Promise<Result<CategoryRow[]>> {
+    return this.#all((cursor) => staffProduct.productListCategories(this.#client, { limit: PAGE_LIMIT, ...(cursor === undefined ? {} : { cursor }) }), readCategoryPage, "categories");
   }
 
   // ── the category margin policy ───────────────────────────────────────────────

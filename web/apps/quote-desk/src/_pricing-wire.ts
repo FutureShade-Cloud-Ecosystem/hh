@@ -60,6 +60,27 @@ function readPage<T>(value: unknown, readRow: (row: unknown) => T | null): PageO
   return { items, nextCursor: typeof cursor === "string" && cursor !== "" ? cursor : null };
 }
 
+// ── the catalogue's categories (GET /api/v1/product-categories) ──────────────
+
+export interface CategoryRow {
+  id: string;
+  code: string;
+  name: string;
+  active: boolean;
+}
+
+export function readCategory(value: unknown): CategoryRow | null {
+  if (!isRecord(value)) return null;
+  const id = str(value, "id");
+  const name = str(value, "name");
+  if (id === null || id === "" || name === null || name === "") return null;
+  return { id, code: typeof value["code"] === "string" ? value["code"] : "", name, active: value["is_active"] !== false };
+}
+
+export function readCategoryPage(value: unknown): PageOf<CategoryRow> | null {
+  return readPage(value, readCategory);
+}
+
 // ── category margin policy ───────────────────────────────────────────────────
 
 export interface PolicyRow {

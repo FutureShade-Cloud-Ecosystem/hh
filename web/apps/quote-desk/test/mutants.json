@@ -1804,11 +1804,11 @@
     "test": "Switch role ends the session and returns to the front door at /"
   },
   {
-    "id": "pm-proven-order",
+    "id": "pm-categories-order",
     "file": "src/pricing-margin.ts",
-    "find": "    if (reads === undefined || seq !== this.loadSeq) return;",
-    "replace": "    if (reads === undefined) return;",
-    "test": "P3-1 an older read of the categories the pricing proves, answered late, does not shrink the Add picker"
+    "find": "    if (read === undefined || seq !== this.loadSeq) return;\n    if (!read.ok) {\n      this.categories = [];",
+    "replace": "    if (read === undefined) return;\n    if (!read.ok) {\n      this.categories = [];",
+    "test": "P3-1 an older read of the categories, answered late, does not shrink the Add picker"
   },
   {
     "id": "pm-add-bound",

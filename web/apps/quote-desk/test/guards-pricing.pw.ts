@@ -17,6 +17,7 @@ test.afterAll(async ({ request }) => {
 const PAVERS = "ca700000-0000-4000-9000-000000000001";
 const WALLS = "ca700000-0000-4000-9000-000000000002";
 const SLABS = "ca700000-0000-4000-9000-000000000003";
+const BULK = "ca700000-0000-4000-9000-000000000006";
 const MAPLE = "c0000000-0000-4000-9000-000000000001";
 
 /** A new tier rule on Pavers at a depth that leaves a margin: the form filled, the Save pressed. */
@@ -206,19 +207,19 @@ test("P3-1 the Add category save is bound to the category and numbers picked whe
   expect(state.policies.find((p) => p.category_id === SLABS)).toBeUndefined();
 });
 
-test("P3-1 an older read of the categories the pricing proves, answered late, does not shrink the Add picker", async ({ page }) => {
-  await setMode(page, { drop_policies: [WALLS], rule_categories: [WALLS] });
+test("P3-1 an older read of the categories, answered late, does not shrink the Add picker", async ({ page }) => {
+  await setMode(page, { drop_policies: [WALLS], catalogue: [PAVERS, BULK, WALLS] });
   await signIn(page);
-  const held = await hold(page, /\/api\/v1\/pricing\/rules(\?|$)/, { method: "GET", times: 1, snapshot: true });
+  const held = await hold(page, /\/api\/v1\/product-categories(\?|$)/, { method: "GET", times: 1, snapshot: true });
   await openPricing(page);
   await held.asked;
-  // Slabs gains a rule while the first read is out; the reload sees it, and the first read's older answer lands last.
-  await setMode(page, { drop_policies: [SLABS], rule_categories: [SLABS] });
+  // The catalogue changes while the first read is out; the reload sees it, and the first read's older answer lands last.
+  await setMode(page, { drop_policies: [SLABS], catalogue: [PAVERS, BULK, SLABS] });
   await page.locator("qd-pricing-panel").evaluate((el) => (el as HTMLElement & { reload: () => void }).reload());
-  await expect(page.getByTestId("pm-add-category").locator("option:not([value=''])")).toHaveText(["Retaining Walls", "Slabs & Steps"]);
+  await expect(page.getByTestId("pm-add-category").locator("option:not([value=''])")).toHaveText(["Slabs & Steps"]);
   await held.release();
   await settle(page);
-  await expect(page.getByTestId("pm-add-category").locator("option:not([value=''])")).toHaveText(["Retaining Walls", "Slabs & Steps"]);
+  await expect(page.getByTestId("pm-add-category").locator("option:not([value=''])")).toHaveText(["Slabs & Steps"]);
 });
 
 // ── two quick Edit clicks ──
