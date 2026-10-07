@@ -567,6 +567,8 @@ const DISCOUNT_APPROVERS = [
   { id: "c0c0a0a0-0000-4000-8000-000000000002", name: "Branch manager", role_label: "Branch Manager" },
 ];
 
+const ZERO_TOTAL_LINE_WORDS =
+  "a sale cannot total $0.00: a discount must leave something to pay (a line discount can take off at most the line total less one cent)";
 const ZERO_TOTAL_WORDS =
   "a sale cannot total $0.00: a discount must leave something to pay (a ticket discount can take off at most the ticket total less one cent)";
 
@@ -1605,7 +1607,7 @@ const server = createServer(async (request, response) => {
       }
       const subtotal = discounted.nets.reduce((sum, n) => sum + n, 0);
       if (discounted.discountCents > 0 && subtotal <= 0) {
-        respondJson(response, 422, { error: ZERO_TOTAL_WORDS });
+        respondJson(response, 422, { error: parsed.discount ? ZERO_TOTAL_WORDS : ZERO_TOTAL_LINE_WORDS });
         return;
       }
       const tax = taxCents(subtotal);
@@ -1713,7 +1715,7 @@ const server = createServer(async (request, response) => {
         return;
       }
       if (discounted.discountCents > 0 && discounted.nets.reduce((sum, n) => sum + n, 0) <= 0) {
-        respondJson(response, 422, { error: ZERO_TOTAL_WORDS });
+        respondJson(response, 422, { error: parsed.discount ? ZERO_TOTAL_WORDS : ZERO_TOTAL_LINE_WORDS });
         return;
       }
       for (let index = 0; index < priced.length; index += 1) {
