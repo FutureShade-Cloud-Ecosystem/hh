@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -319,29 +320,8 @@ func maskCardNumber(raw string) string {
 	return "•••• " + string(digits[len(digits)-4:])
 }
 
-// houseZone is the dealer's own zone. A tax lookup "as of today" means the day the yard is on, not
-// the server's zone and not Greenwich: UTC rolls over at evening in Ontario, and a zero-rate row
-// planted for the dealer's day must govern every sale rung on it. This is the seventh copy of the
-// house zone; TestHouseZone_EveryCopyInTheBackendNamesTheSameZone reads it.
-const houseZone = "America/Toronto"
-
-// houseLocation resolves the house zone, degrading to UTC rather than refusing the sale if the image
-// ships no tzdata, the same trade the other copies make.
-func houseLocation() *time.Location {
-	loc, err := time.LoadLocation(houseZone)
-	if err != nil {
-		return time.UTC
-	}
-	return loc
-}
-
 // today returns YYYY-MM-DD, the house zone's day, for the given clock (or time.Now when nil).
-func today(now func() time.Time) string {
-	if now == nil {
-		now = time.Now
-	}
-	return now().In(houseLocation()).Format("2006-01-02")
-}
+func today(now func() time.Time) string { return houseday.Today(now) }
 
 // normDate coerces "" → today and validates YYYY-MM-DD; returns a BadRequestError on a malformed date.
 func normDate(s string, now func() time.Time) (string, error) {

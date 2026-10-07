@@ -8,8 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -204,7 +204,7 @@ SELECT id::text, purchaser_type, proof_identifier_mask, COALESCE(ontario_eligibi
   FROM purchaser_eligibility_profile WHERE id = $1`
 	// The certificate lapses with the dealer's day, so today is decided in Go in the house zone
 	// and bound, not read from CURRENT_DATE, which is the database session's zone.
-	houseDay := time.Now().In(houseLocation()).Format("2006-01-02")
+	houseDay := houseday.Today(nil)
 	var p eligibilityMasked
 	err := r.pool.QueryRow(ctx, q, profileID, houseDay).Scan(
 		&p.ProfileID, &p.PurchaserType, &p.MaskedIdentifier, &p.OntarioEligibility, &p.EligibilityType, &p.Expired,
