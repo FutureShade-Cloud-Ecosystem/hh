@@ -304,7 +304,11 @@ test("guard terms save reload: a terms save whose re-read answers after another 
   await expect(page.getByTestId("qb-po")).toBeVisible();
   const gated = await armedHold(page, /\/api\/v1\/quotes\/q-1004$/, "GET");
   gated.arm();
+  // The re-read follows the terms save's answer, so the person leaves only after that answer: a held read asked by a panel
+  // beside the work area must not stand in for the work area's own.
+  const saved = page.waitForResponse((r) => r.request().method() === "PUT" && r.url().endsWith("/quotes/q-1004/terms"));
   await page.getByTestId("qb-po").fill("PO-RELOAD");
+  await saved;
   // Every read of the quote stays held, whoever asks (the work area re-reads first, the panels beside it read too), and the
   // person leaves only once the page has gone quiet round them: the work area's own re-read is certainly one of them.
   await gated.held.asked;
