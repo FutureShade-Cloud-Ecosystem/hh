@@ -1,6 +1,6 @@
 package order
 
-// yard_pick_tax.go, the per line tax of a shorted order (migration 0368).
+// yard_pick_tax.go, the per line tax of a shorted order (migration 0369).
 //
 // Each order line carries its own tax (order_lines.tax_cents, the tax engine's split of the header
 // tax) and a return reads it, so when the header tax is pro-rated for a short the lines' tax must

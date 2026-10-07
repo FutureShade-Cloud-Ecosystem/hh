@@ -1,4 +1,4 @@
--- 0365: a short pick is recorded with a reason, and the shortfall becomes a backorder on the
+-- 0366: a short pick is recorded with a reason, and the shortfall becomes a backorder on the
 -- order line. Owners: internal/tasks (the two pick line columns) and internal/order (the rest).
 --
 -- THE GAP. At the yard a skid is condensed or a line is picked short (3 of 5). Until now the
@@ -63,6 +63,6 @@ CREATE TABLE IF NOT EXISTS order_shortfall_basis (
 );
 
 COMMENT ON TABLE order_line_shortfalls IS
-  '0365: the ordered values of an order line frozen at its first short pick, with the reason and who recorded it. Ordered = order_lines.qty + order_lines.backorder.';
+  '0366: the ordered values of an order line frozen at its first short pick, with the reason and who recorded it. Ordered = order_lines.qty + order_lines.backorder.';
 COMMENT ON TABLE order_shortfall_basis IS
-  '0365: the ordered subtotal and tax of an order frozen at its first short pick, so the header tax is always pro-rated from the originals.';
+  '0366: the ordered subtotal and tax of an order frozen at its first short pick, so the header tax is always pro-rated from the originals.';

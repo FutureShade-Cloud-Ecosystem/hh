@@ -354,7 +354,7 @@ type PickedLine struct {
 	UOM         string    `json:"uom"`
 	PickedBy    string    `json:"picked_by,omitempty"`
 	PickedAt    time.Time `json:"picked_at"`
-	// ShortReason and ShortNote say why the line came up short (0365). Empty on a full pick.
+	// ShortReason and ShortNote say why the line came up short (0366). Empty on a full pick.
 	ShortReason string `json:"short_reason,omitempty"`
 	ShortNote   string `json:"short_note,omitempty"`
 }

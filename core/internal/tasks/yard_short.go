@@ -22,7 +22,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
-// Short pick reason codes, the picked_lines CHECK set (0365). Add, never rename.
+// Short pick reason codes, the picked_lines CHECK set (0366). Add, never rename.
 const (
 	ShortReasonCondensed       = "CONDENSED_SKIDS"
 	ShortReasonDamaged         = "DAMAGED"

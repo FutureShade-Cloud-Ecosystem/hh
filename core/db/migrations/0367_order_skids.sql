@@ -1,4 +1,4 @@
--- 0366: the skid (pallet) count on an order, changeable by the yard with a reason, and the skid
+-- 0367: the skid (pallet) count on an order, changeable by the yard with a reason, and the skid
 -- deposit that follows from it. Owner: internal/order.
 --
 -- WHAT EXISTED. Nothing. "skid" appears in the core only on products (pallet_count,
@@ -46,6 +46,6 @@ CREATE TABLE IF NOT EXISTS order_skid_changes (
 CREATE INDEX IF NOT EXISTS idx_order_skid_changes_order ON order_skid_changes (order_id, changed_at);
 
 COMMENT ON TABLE order_skids IS
-  '0366: the current skid count on an order and the skid deposit that follows (count times rate). Recorded, not billed.';
+  '0367: the current skid count on an order and the skid deposit that follows (count times rate). Recorded, not billed.';
 COMMENT ON TABLE order_skid_changes IS
-  '0366: append-only history of skid count changes with the reason and who made them.';
+  '0367: append-only history of skid count changes with the reason and who made them.';

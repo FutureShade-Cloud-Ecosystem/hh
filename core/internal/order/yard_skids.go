@@ -1,6 +1,6 @@
 package order
 
-// yard_skids.go, the skid count on an order, changeable by the yard with a reason (migration 0366).
+// yard_skids.go, the skid count on an order, changeable by the yard with a reason (migration 0367).
 //
 // WHAT EXISTED. No order recorded how many skids it left the yard on, and no skid deposit charge
 // existed anywhere in the core. This holds the count, the deposit per skid (a rate, zero until
