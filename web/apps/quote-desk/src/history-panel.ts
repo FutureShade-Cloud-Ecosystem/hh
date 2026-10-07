@@ -17,6 +17,7 @@ import {
   fieldLabel,
   formatChangeValue,
   groupChanges,
+  visibleChanges,
   historyHeadline,
   summariseGroup,
   type QuoteFieldChange,
@@ -148,7 +149,7 @@ export class QdQuoteHistory extends PanelBase {
         <h3>Change history</h3>
         ${this.error !== "" ? html`<p class="err" role="alert">${this.error}</p>` : nothing}
         ${this.error === "" && this.loaded && this.changes.length === 0 ? html`<p class="dim">No changes yet.</p>` : nothing}
-        ${this.changes.length > 0 ? html`<ol>${groupChanges(this.changes).map((g) => this.renderGroup(g))}</ol>` : nothing}
+        ${this.changes.length > 0 ? html`<ol>${groupChanges(visibleChanges(this.changes)).map((g) => this.renderGroup(g))}</ol>` : nothing}
       </div>
     `;
   }

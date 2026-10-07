@@ -46666,6 +46666,34 @@ components:
           description: The acceptance history, oldest first; empty on a quote nobody has accepted
           items:
             $ref: "#/components/schemas/QuoteAcceptanceRecord"
+        declined:
+          $ref: "#/components/schemas/QuoteDeclineRecord"
+    QuoteDeclineRecord:
+      type: object
+      description: Why and how a staff member closed the quote as lost on the customer's behalf, from the decision's audit row. Absent unless a staff decline is on record. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8).
+      required:
+        - reason_code
+        - channel
+        - declined_at
+      properties:
+        reason_code:
+          type: string
+          enum:
+            - price
+            - competitor
+            - project_cancelled
+            - timing
+            - no_response
+            - other
+        channel:
+          type: string
+          description: How the customer said no (phone, text, email or in_person)
+        note:
+          type: string
+          description: What the staff member wrote; absent when nothing was written
+        declined_at:
+          type: string
+          format: date-time
     QuoteAcceptanceRecord:
       type: object
       description: "One row of a quote's acceptance history, oldest first: the customer's own acceptance, or staff accepting on the customer's behalf after the customer said yes by another channel. quantities_confirmed is false on a customer acceptance taken before the confirmation existed. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8)."

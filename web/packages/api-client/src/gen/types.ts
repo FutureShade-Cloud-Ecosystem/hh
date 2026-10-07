@@ -5867,6 +5867,13 @@ export type QuoteView = {
   updated_at: string;
   quantity_notice: string;
   acceptances: QuoteAcceptanceRecord[];
+  declined?: QuoteDeclineRecord;
+};
+export type QuoteDeclineRecord = {
+  reason_code: "price" | "competitor" | "project_cancelled" | "timing" | "no_response" | "other";
+  channel: string;
+  note?: string;
+  declined_at: string;
 };
 export type QuoteAcceptanceRecord = {
   source: "CUSTOMER" | "STAFF_ON_BEHALF";

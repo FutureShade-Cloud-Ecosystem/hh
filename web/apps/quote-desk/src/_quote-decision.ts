@@ -60,3 +60,13 @@ export function declinedNotice(quoteNo: string, channel: string): string {
 export function keyFor(previous: { signature: string; key: string } | null, signature: string, fresh: () => string): { signature: string; key: string } {
   return previous !== null && previous.signature === signature ? previous : { signature, key: fresh() };
 }
+
+/** The words for a decline's reason code; an unknown code reads as the plain word, never as the code. */
+export function declineReasonWord(code: string): string {
+  return DECLINE_REASONS.find((r) => r.value === code)?.label ?? "No reason given";
+}
+
+/** The words for the channel a decision was made by. */
+export function channelLabel(channel: string): string {
+  return DECISION_CHANNELS.find((c) => c.value === channel)?.label ?? "Another way";
+}

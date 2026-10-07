@@ -6817,6 +6817,14 @@ type QuoteView struct {
 	UpdatedAt      time.Time               `json:"updated_at"`
 	QuantityNotice string                  `json:"quantity_notice"`
 	Acceptances    []QuoteAcceptanceRecord `json:"acceptances"`
+	Declined       *QuoteDeclineRecord     `json:"declined,omitempty"`
+}
+
+type QuoteDeclineRecord struct {
+	ReasonCode string    `json:"reason_code"`
+	Channel    string    `json:"channel"`
+	Note       *string   `json:"note,omitempty"`
+	DeclinedAt time.Time `json:"declined_at"`
 }
 
 type QuoteAcceptanceRecord struct {

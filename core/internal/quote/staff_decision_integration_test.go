@@ -334,6 +334,15 @@ func TestIntegration_StaffReject_SentBecomesLostWithItsRecord(t *testing.T) {
 	if !found {
 		t.Errorf("the change history must show status SENT to LOST by the staff member: %+v", hist.Changes)
 	}
+	// The staff read says why and how it was declined, from the decision's own row.
+	view, err := svc.StaffQuoteRead(ctx, quoteID)
+	if err != nil {
+		t.Fatalf("staff read: %v", err)
+	}
+	if view.Declined == nil || view.Declined.ReasonCode != "competitor" || view.Declined.Channel != "email" ||
+		view.Declined.Note != "went with the other yard" || view.Declined.DeclinedAt.IsZero() {
+		t.Errorf("the lost quote must carry its decline: %+v", view.Declined)
+	}
 }
 
 // A quote nobody sent can be marked lost too: the customer said no to what was read out, and an empty

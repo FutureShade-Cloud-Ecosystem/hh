@@ -50,6 +50,8 @@ export interface QuoteView {
   can_reject: boolean;
   /** The dealer's notice that the quantities are the customer's to confirm; the staff accept attests it. */
   quantity_notice: string;
+  /** Why and how a staff member closed the quote as lost for the customer; absent unless a staff decline is on record. */
+  declined?: { reason_code: string; channel: string; note?: string; declined_at: string };
   owner_id?: string;
   owner_name?: string;
   lines: QuoteViewLine[];

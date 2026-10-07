@@ -13,6 +13,8 @@ import { moneyWord, quoteErrorMessage, type QuoteView } from "./_quote-edit.js";
 import {
   acceptReady,
   acceptedNotice,
+  channelLabel,
+  declineReasonWord,
   declinedNotice,
   keyFor,
   rejectReady,
@@ -323,8 +325,17 @@ export class QdQuoteDecision extends PanelBase {
   override render() {
     const view = this.view;
     const offered = view !== null && (view.can_accept || view.can_reject);
-    if (!offered && this.result === "" && this.error === "") return nothing;
+    const declined = view?.declined;
+    if (!offered && this.result === "" && this.error === "" && declined === undefined) return nothing;
     return html`
+      ${declined !== undefined
+        ? html`<section class="decision" data-testid="qb-declined" aria-label="Why this quote was declined">
+            <h3>Declined for the customer</h3>
+            <p class="total">Reason: <strong>${declineReasonWord(declined.reason_code)}</strong></p>
+            <p class="total">The customer said so: <strong>${channelLabel(declined.channel).toLowerCase()}</strong></p>
+            ${declined.note !== undefined ? html`<p class="total">Note: ${declined.note}</p>` : nothing}
+          </section>`
+        : nothing}
       ${offered && view !== null
         ? html`<section class="decision" data-testid="qb-decision" aria-label="Record the customer's decision">
             <h3>The customer's decision</h3>

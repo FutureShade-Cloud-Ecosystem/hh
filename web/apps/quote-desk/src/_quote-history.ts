@@ -7,7 +7,7 @@
 // trail is only GROUPED, because one action emits several column rows and
 // showing them as separate entries would make one edit look like five. The
 // discount changes ride the same trail (QD-2 adds the rows server side).
-import { moneyWord } from "./_quote-edit.js";
+import { moneyWord, quoteStatusWord } from "./_quote-edit.js";
 import { looksLikeId } from "./_names.js";
 
 /** One column level change, field for field the contract's QuoteFieldChange. */
@@ -34,6 +34,7 @@ const FIELD_LABEL: Record<string, string> = {
   line_removed: "Line removed",
   disc_pct: "Discount",
   floor_cleared_by: "Floor cleared by",
+  status: "Status",
 };
 
 /** A column name for the viewer; an unknown field reads as itself so a field added server first still shows. */
@@ -57,11 +58,20 @@ export type NameOf = (id: string) => string | undefined;
 export function formatChangeValue(field: string, value: string | undefined, nameOf: NameOf = () => undefined): string {
   if (value === undefined || value === "") return "none";
   if (field === "floor_cleared_by") return nameOf(value) ?? "a manager";
+  if (field === "status") return quoteStatusWord(value);
   if (field === "line_added" || field === "line_removed") return nameOf(value) ?? "a product";
   if (field === "disc_pct") return Number.isFinite(Number(value)) ? `${value}%` : value;
   if (!MONEY_FIELDS.has(field)) return looksLikeId(value) ? "a record" : value;
   const cents = Number(value);
   return Number.isFinite(cents) ? moneyWord(cents) : value;
+}
+
+/** Fields the server keeps for itself: the base quantity moves with the entered one and says nothing the person did not. */
+const INTERNAL_FIELDS = new Set(["qty_base"]);
+
+/** The trail as a person reads it: without the rows that are bookkeeping. */
+export function visibleChanges(changes: readonly QuoteFieldChange[]): QuoteFieldChange[] {
+  return changes.filter((c) => !INTERNAL_FIELDS.has(c.field));
 }
 
 /**

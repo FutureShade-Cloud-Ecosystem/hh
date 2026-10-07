@@ -197,6 +197,17 @@ function stringArrayAt(record: Record<string, unknown>, key: string): string[] |
   return out;
 }
 
+/** The staff decline, field by field: absent unless the server named a reason and a channel. */
+function readDeclined(raw: unknown): { declined?: NonNullable<QuoteView["declined"]> } {
+  if (!isRecord(raw)) return {};
+  const reason = stringAt(raw, "reason_code");
+  const channel = stringAt(raw, "channel");
+  const at = stringAt(raw, "declined_at");
+  if (reason === null || channel === null || at === null) return {};
+  const note = stringAt(raw, "note");
+  return { declined: { reason_code: reason, channel, declined_at: at, ...(note === null ? {} : { note }) } };
+}
+
 function validateView(value: unknown): QuoteView | null {
   if (!isRecord(value)) return null;
   const linesRaw = value["lines"];
@@ -271,6 +282,7 @@ function validateView(value: unknown): QuoteView | null {
     can_accept: value["can_accept"] === true,
     can_reject: value["can_reject"] === true,
     quantity_notice: typeof value["quantity_notice"] === "string" ? value["quantity_notice"] : "",
+    ...readDeclined(value["declined"]),
     owner_id: stringAt(value, "owner_id") ?? undefined,
     owner_name: stringAt(value, "owner_name") ?? undefined,
     lines,

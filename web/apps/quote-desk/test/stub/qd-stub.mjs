@@ -858,6 +858,7 @@ function viewOf(caller, quote) {
     can_reject: (quote.status === "DRAFT" || quote.status === "SENT") && !quote.expired && !decisionSwitches.grantRefused,
     quantity_notice: "All quantities are to be confirmed by the customer. Please review them before you accept it.",
     acceptances: quote.staffAcceptances ?? [],
+    ...(quote.declined === undefined ? {} : { declined: quote.declined }),
     owner_id: quote.owner_id,
     owner_name: quote.owner_name,
     lines: quote.lines.map((line) => ({
@@ -1900,6 +1901,7 @@ const server = createServer(async (request, response) => {
           respondJson(response, 409, { error: `quote: the quote total is now ${coreMoney(quote.total_cents)}, not the ${coreMoney(Number(body.expected_total_cents))} you read to the customer; read it again` });
           return;
         }
+        audit(quote, callerOf(request), [{ field: "status", before: previous, after: "ACCEPTED" }, { field: "qty_base", line_no: 1, before: "1", after: "1" }]);
         quote.status = "ACCEPTED";
         quote.staffAcceptances = [...(quote.staffAcceptances ?? []), { source: "STAFF_ON_BEHALF", accepted_at: new Date().toISOString(), quantities_confirmed: true, amount_cents: quote.total_cents, channel: body.channel, ...(body.note ? { note: body.note } : {}) }];
       } else {
@@ -1911,7 +1913,9 @@ const server = createServer(async (request, response) => {
           respondJson(response, 422, { error: "quote: a reason of other needs a note" });
           return;
         }
+        audit(quote, callerOf(request), [{ field: "status", before: previous, after: "LOST" }]);
         quote.status = "LOST";
+        quote.declined = { reason_code: String(body.reason_code), channel: String(body.channel), ...(body.note ? { note: String(body.note) } : {}), declined_at: new Date().toISOString() };
       }
       const answer = {
         quote_id: quote.id,
