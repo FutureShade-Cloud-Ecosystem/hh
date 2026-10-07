@@ -600,6 +600,7 @@ export const SCHEMA_NAMES: readonly string[] = [
   "PosSalePreview",
   "PosSalePreviewLine",
   "PosSalePreviewTaxLine",
+  "PosPaymentOption",
   "PosSaleView",
   "PosSaleViewLine",
   "PosSaleSummary",

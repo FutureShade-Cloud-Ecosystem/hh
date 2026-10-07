@@ -39976,13 +39976,14 @@ components:
           $ref: "#/components/schemas/PosDiscountInput"
     PosSalePreview:
       type: object
-      description: "The preview answer: the ticket's own totals in integer cents, exactly as the ring computes them for the same body. A ticket that collects no tax shows no tax line and its total is its subtotal."
+      description: "The preview answer: the ticket's own totals in integer cents, exactly as the ring computes them for the same body, plus the payment shapes the counter may offer this customer. A ticket that collects no tax shows no tax line and its total is its subtotal."
       required:
         - subtotal_cents
         - tax_cents
         - tax_lines
         - total_cents
         - tax_reason_code
+        - payment_options
       properties:
         subtotal_cents:
           type: integer
@@ -39999,6 +40000,11 @@ components:
         total_cents:
           type: integer
           format: int64
+        payment_options:
+          type: array
+          description: "The payment shapes that fit the account (one per shape, always present): the menu the payment step renders from, so no screen decides a money rule. The ring still refuses per sale on the amount (the credit gate); this is what may be offered."
+          items:
+            $ref: "#/components/schemas/PosPaymentOption"
         tax_reason_code:
           type: string
           enum:
@@ -40073,6 +40079,25 @@ components:
         tax_cents:
           type: integer
           format: int64
+    PosPaymentOption:
+      type: object
+      description: One payment shape the counter may offer this account. A credit customer (terms above zero and a credit line) is offered pay in full, all on account, and a deposit with the rest on account; a cash on demand account, a walk in and any no credit account are offered pay in full and a deposit with the rest due later, never on account. A credit customer on hold loses on account (the hold rule's own posture, cash or card only).
+      required:
+        - shape
+      properties:
+        shape:
+          type: string
+          enum:
+            - PAY_IN_FULL_NOW
+            - ALL_ON_ACCOUNT
+            - DEPOSIT_NOW_REST_ON_ACCOUNT
+            - DEPOSIT_NOW_REST_DUE_LATER
+        line_two_words:
+          type: string
+          enum:
+            - On account
+            - Balance due later
+          description: The server's words for line two of a deposit sale, present only on the deposit shapes.
     PosSaleView:
       type: object
       description: The operator-reopen read; no evidence identifiers, no granular flow log

@@ -4760,6 +4760,7 @@ type PosSalePreview struct {
 	TaxCents               int64                   `json:"tax_cents"`
 	TaxLines               []PosSalePreviewTaxLine `json:"tax_lines"`
 	TotalCents             int64                   `json:"total_cents"`
+	PaymentOptions         []PosPaymentOption      `json:"payment_options"`
 	TaxReasonCode          string                  `json:"tax_reason_code"`
 	DiscountCents          *int64                  `json:"discount_cents,omitempty"`
 	SaleDiscountCents      *int64                  `json:"sale_discount_cents,omitempty"`
@@ -4780,6 +4781,11 @@ type PosSalePreviewTaxLine struct {
 	ReasonCode string `json:"reason_code"`
 	RateBps    int32  `json:"rate_bps"`
 	TaxCents   int64  `json:"tax_cents"`
+}
+
+type PosPaymentOption struct {
+	Shape        string  `json:"shape"`
+	LineTwoWords *string `json:"line_two_words,omitempty"`
 }
 
 type PosSaleView struct {

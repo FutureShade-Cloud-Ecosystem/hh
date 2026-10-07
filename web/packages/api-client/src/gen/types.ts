@@ -4057,6 +4057,7 @@ export type PosSalePreview = {
   tax_cents: number;
   tax_lines: PosSalePreviewTaxLine[];
   total_cents: number;
+  payment_options: PosPaymentOption[];
   tax_reason_code: "STD_ON_HST_13" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "MANUAL_TAX_REVIEW" | "RELIEF_DECLINED_EVIDENCE";
   discount_cents?: number;
   sale_discount_cents?: number;
@@ -4075,6 +4076,10 @@ export type PosSalePreviewTaxLine = {
   reason_code: string;
   rate_bps: number;
   tax_cents: number;
+};
+export type PosPaymentOption = {
+  shape: "PAY_IN_FULL_NOW" | "ALL_ON_ACCOUNT" | "DEPOSIT_NOW_REST_ON_ACCOUNT" | "DEPOSIT_NOW_REST_DUE_LATER";
+  line_two_words?: "On account" | "Balance due later";
 };
 export type PosSaleView = {
   order_id: string;
