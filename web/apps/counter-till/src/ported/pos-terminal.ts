@@ -1683,7 +1683,7 @@ export class HosPosTerminal extends LitElement {
        labelled. Every column is on screen at 320 to 519, none cut: the eight tracks of the desktop
        table cannot share a 250px card, and a table the person must scroll hides the price. The table
        keeps its own overflow-x as a safety net; it has nothing to scroll here. */
-    @media (max-width: 519px) {
+    @media (max-width: 559px) {
       .linegrid,
       .linegrid.withmargin {
         display: block;

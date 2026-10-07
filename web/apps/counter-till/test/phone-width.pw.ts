@@ -305,3 +305,68 @@ test("at every width from 320 to 480 a ticket line shows its qty, unit, price an
   }
   expect(bad, "widths where a column is out of sight or cut").toEqual([]);
 });
+
+/** The Sales manager's ticket with one line at a long price ($1,234.56 / PC): the role that sees margin. */
+async function marginRoleLine(page: Page): Promise<void> {
+  await page.route("**/api/v1/pricing/resolve", async (route) => {
+    const real = await route.fetch();
+    const body = (await real.json()) as Record<string, unknown>;
+    body["final_cents"] = 123456;
+    body["line_total_cents"] = 123456;
+    body["price_uom"] = "PC";
+    await route.fulfill({ response: real, json: body });
+  });
+  await page.setViewportSize({ width: 560, height: 844 });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Sales manager", exact: true }).click();
+  await expect(page.getByTestId("pos-page-title")).toHaveText("New Counter Sale");
+  const row = await searchDropRow(page, "holland", "Holland Stone 60 mm");
+  await row.click();
+  await expect(page.getByTestId("pos-line-row")).toHaveCount(1);
+  await expect(page.getByTestId("pos-line-margin")).toBeVisible();
+}
+
+/** Run a check inside the page at each width and collect what fails, with the line's own elements at hand. */
+async function lineChecksAt(page: Page, widths: number[], check: (ctx: { grid: HTMLElement; row: HTMLElement; q: (sel: string) => HTMLElement | null }) => string[]): Promise<string[]> {
+  const bad: string[] = [];
+  for (const width of widths) {
+    await page.setViewportSize({ width, height: 844 });
+    const read = await page.evaluate(
+      ({ source }) => {
+        const walk = (root: ParentNode, acc: Element[] = []): Element[] => {
+          for (const el of root.querySelectorAll("*")) {
+            acc.push(el);
+            if (el.shadowRoot) walk(el.shadowRoot, acc);
+          }
+          return acc;
+        };
+        const all = walk(document);
+        const find = (id: string) => all.find((e) => (e as HTMLElement).dataset?.testid === id) as HTMLElement | undefined;
+        const grid = find("pos-lines");
+        const row = find("pos-line-row");
+        if (!grid || !row) return null;
+        const q = (sel: string) => row.querySelector(sel) as HTMLElement | null;
+        // eslint-disable-next-line no-new-func
+        return (new Function("ctx", `return (${source})(ctx)`) as (c: unknown) => string[])({ grid, row, q });
+      },
+      { source: check.toString() },
+    );
+    if (read === null) throw new Error("the ticket line did not render");
+    if (read.length > 0) bad.push(`${width}px: ${read.join("; ")}`);
+  }
+  return bad;
+}
+
+test("PR 255 review: the margin role's line stacks and holds from 320 up to 559, nothing to scroll", async ({ page }) => {
+  await marginRoleLine(page);
+  const bad = await lineChecksAt(page, [320, 360, 420, 480, 519, 520, 530, 540, 550, 559], ({ grid, row }) => {
+    const out: string[] = [];
+    if (grid.scrollWidth > grid.clientWidth + 1) out.push("the table scrolls sideways");
+    const box = grid.getBoundingClientRect();
+    const rm = row.querySelector("button.rm") as HTMLElement;
+    const r = rm.getBoundingClientRect();
+    if (r.right > box.right + 0.5) out.push("remove outside the line");
+    return out;
+  });
+  expect(bad, "widths where the margin role's line scrolls").toEqual([]);
+});
