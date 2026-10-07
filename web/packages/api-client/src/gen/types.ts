@@ -3431,11 +3431,14 @@ export type OrderViewLine = {
   fulfilled_base: string;
   unit_price_cents: number;
   line_total_cents: number;
+  backorder_entered: string;
+  backorder_base: string;
 };
 export type OrderView = {
   id: string;
   status: "DRAFT" | "CONFIRMED" | "PICKING" | "READY" | "PARTIALLY_FULFILLED" | "FULFILLED" | "INVOICED" | "CLOSED" | "CANCELLED";
   branch_id: string;
+  has_backorder: boolean;
   legal_actions: ("CONFIRMED" | "PICKING" | "READY" | "CANCELLED")[];
   editable_fields: ("line_qty" | "line_add" | "line_remove" | "requested_date")[];
   lines: OrderViewLine[];
@@ -3799,6 +3802,7 @@ export type TaskPickLine = {
   sku?: string;
   description: string;
   qty_ordered: string;
+  qty_backordered?: string;
   uom: string;
   location?: string;
 };
@@ -3843,6 +3847,8 @@ export type TaskPickedLine = {
   uom: string;
   picked_by?: string;
   picked_at: string;
+  short_reason?: string;
+  short_note?: string;
 };
 export type TaskPickQueueEntry = {
   task: Task;
@@ -3868,9 +3874,24 @@ export type TaskRecordPickLine = {
   qty_ordered: string;
   qty_picked: string;
   uom: string;
+  short_reason?: "CONDENSED_SKIDS" | "DAMAGED" | "NOT_IN_YARD" | "COUNT_CORRECTION" | "OTHER";
+  short_note?: string;
 };
 export type TaskRecordPickRequest = {
   lines: TaskRecordPickLine[];
+};
+export type TaskRecordSkidsRequest = {
+  skid_count: number;
+  reason: "CONDENSED_SKIDS" | "DAMAGED" | "NOT_IN_YARD" | "COUNT_CORRECTION" | "OTHER";
+  note?: string;
+};
+export type TaskRecordSkidsResult = {
+  skid_count: number;
+  previous_skid_count: number | null;
+  deposit_cents: number;
+  previous_deposit_cents: number;
+  changed: boolean;
+  order_no: string;
 };
 export type TaskRecordPickResult = {
   items: TaskPickedLine[];
@@ -6706,6 +6727,7 @@ export type TenantOrder = {
   tax_cents: number;
   total_cents: number;
   created_at: string;
+  has_backorder?: boolean;
 };
 export type TenantOrderLine = {
   line_no: number;
@@ -6718,6 +6740,8 @@ export type TenantOrderLine = {
   fulfilled_base: string;
   unit_price_cents: number;
   line_total_cents: number;
+  backorder_entered?: string;
+  backorder_base?: string;
 };
 export type TenantOrderDetail = TenantOrder & { lines: TenantOrderLine[]; delivery_instructions: string };
 export type TenantOrderPage = {

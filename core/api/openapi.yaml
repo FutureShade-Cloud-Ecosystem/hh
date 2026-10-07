@@ -13994,7 +13994,7 @@ paths:
       tags:
         - staff-tasks
       summary: Record what the yard actually pulled, per line (replaces the recorded pick)
-      description: PUT replaces the whole recorded pick with what is sent; the schema uniqueness on (task, order line) says the same thing in the database.
+      description: PUT replaces the whole recorded pick with what is sent; the schema uniqueness on (task, order line) says the same thing in the database. A short line needs a reason; a quantity above the ordered one is refused with 400, for the yard manager as for the yard team. The caller must reach the task's branch (403 otherwise). A short pick becomes a backorder on the order line and tells the order's sales rep.
       x-role: requireStaff
       x-access:
         surfaces:
@@ -14016,6 +14016,44 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TaskRecordPickResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/yard/picks/{id}/skids:
+    put:
+      operationId: yardRecordSkids
+      tags:
+        - staff-tasks
+      summary: Record or change the skid count on the pick's order, with a reason
+      description: PUT replaces the order's recorded skid count with the count sent. A reason from the same list as a short pick is required on every change; OTHER also needs a note. The same count again is not a change (changed is false). The skid deposit that follows the count is recorded, not billed; the response carries it before and after. The caller must reach the task's branch (403 otherwise). Refused with 409 when the order's status cannot take it.
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - yard-pick
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskRecordSkidsRequest"
+      responses:
+        "200":
+          description: The recorded skid count
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskRecordSkidsResult"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -37676,6 +37714,8 @@ components:
         - fulfilled_base
         - unit_price_cents
         - line_total_cents
+        - backorder_entered
+        - backorder_base
       properties:
         line_no:
           type: integer
@@ -37704,6 +37744,12 @@ components:
         line_total_cents:
           type: integer
           format: int64
+        backorder_entered:
+          type: string
+          description: DECIMAL as string. The quantity the yard picked short that the order still owes the customer, in the line's own unit. qty_entered is what is to be fulfilled now; ordered = qty_entered + backorder_entered.
+        backorder_base:
+          type: string
+          description: DECIMAL as string. The same quantity in the base unit.
     OrderView:
       type: object
       description: "The staff order read: current status plus the manual actions and editable fields THIS caller has right now, computed server-side from the same matrices the write path enforces, plus lines and money."
@@ -37717,6 +37763,7 @@ components:
         - subtotal_cents
         - tax_cents
         - total_cents
+        - has_backorder
       properties:
         id:
           type: string
@@ -37735,6 +37782,9 @@ components:
             - CANCELLED
         branch_id:
           type: string
+        has_backorder:
+          type: boolean
+          description: True while any line is short and still owed; each line carries its own backorder quantity
         legal_actions:
           type: array
           description: The manual moves this caller may take now, named by their target status
@@ -39033,7 +39083,10 @@ components:
           type: string
         qty_ordered:
           type: string
-          description: DECIMAL as string
+          description: DECIMAL as string. What the order line was ordered for, including any quantity held on backorder, so a yard that finds the rest sends the true number.
+        qty_backordered:
+          type: string
+          description: DECIMAL as string. The part of qty_ordered held on backorder; absent when none.
         uom:
           type: string
         location:
@@ -39174,6 +39227,12 @@ components:
         picked_at:
           type: string
           format: date-time
+        short_reason:
+          type: string
+          description: Why the line came up short; absent on a full pick
+        short_note:
+          type: string
+          description: The yard's note on a short line; absent when none was given
     TaskPickQueueEntry:
       type: object
       description: "One row of the yard board: the task (the operational truth) joined in memory to its pick ticket, shortage history and recorded pick."
@@ -39252,6 +39311,19 @@ components:
           description: DECIMAL as string
         uom:
           type: string
+        short_reason:
+          type: string
+          enum:
+            - CONDENSED_SKIDS
+            - DAMAGED
+            - NOT_IN_YARD
+            - COUNT_CORRECTION
+            - OTHER
+          description: Required when qty_picked is below qty_ordered. A picked quantity above the ordered one is refused with 400.
+        short_note:
+          type: string
+          maxLength: 400
+          description: Required when short_reason is OTHER
     TaskRecordPickRequest:
       type: object
       required:
@@ -39261,6 +39333,57 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/TaskRecordPickLine"
+    TaskRecordSkidsRequest:
+      type: object
+      required:
+        - skid_count
+        - reason
+      properties:
+        skid_count:
+          type: integer
+          format: int32
+          minimum: 0
+          description: The skids the order leaves on; zero is an answer
+        reason:
+          type: string
+          enum:
+            - CONDENSED_SKIDS
+            - DAMAGED
+            - NOT_IN_YARD
+            - COUNT_CORRECTION
+            - OTHER
+        note:
+          type: string
+          maxLength: 400
+          description: Required when reason is OTHER
+    TaskRecordSkidsResult:
+      type: object
+      required:
+        - skid_count
+        - previous_skid_count
+        - deposit_cents
+        - previous_deposit_cents
+        - changed
+        - order_no
+      properties:
+        skid_count:
+          type: integer
+          format: int32
+        previous_skid_count:
+          type:
+            - integer
+            - "null"
+          format: int32
+        deposit_cents:
+          type: integer
+          format: int64
+        previous_deposit_cents:
+          type: integer
+          format: int64
+        changed:
+          type: boolean
+        order_no:
+          type: string
     TaskRecordPickResult:
       type: object
       required:
@@ -49523,6 +49646,9 @@ components:
         created_at:
           type: string
           format: date-time
+        has_backorder:
+          type: boolean
+          description: True while any line is short and still owed; absent means false, so recorded captures without it stay valid.
     TenantOrderLine:
       type: object
       description: One order_lines row with allocation and fulfillment progress for the status tracker. Quantities are DECIMAL serialized as strings.
@@ -49566,6 +49692,12 @@ components:
         line_total_cents:
           type: integer
           format: int64
+        backorder_entered:
+          type: string
+          description: DECIMAL as string. What was picked short that the order still owes the customer, in the line's own unit; qty_entered is what is to be fulfilled now, and ordered = qty_entered + backorder_entered. Absent in recorded captures that predate it.
+        backorder_base:
+          type: string
+          description: DECIMAL as string
     TenantOrderDetail:
       type: object
       description: One order with its lines and the contractor's delivery note

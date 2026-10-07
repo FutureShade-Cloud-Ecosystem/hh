@@ -4043,22 +4043,25 @@ type FeedbackResult struct {
 }
 
 type OrderViewLine struct {
-	LineNo         int32  `json:"line_no"`
-	ProductId      string `json:"product_id"`
-	Description    string `json:"description"`
-	QtyEntered     string `json:"qty_entered"`
-	UomEntered     string `json:"uom_entered"`
-	QtyBase        string `json:"qty_base"`
-	AllocatedBase  string `json:"allocated_base"`
-	FulfilledBase  string `json:"fulfilled_base"`
-	UnitPriceCents int64  `json:"unit_price_cents"`
-	LineTotalCents int64  `json:"line_total_cents"`
+	LineNo           int32  `json:"line_no"`
+	ProductId        string `json:"product_id"`
+	Description      string `json:"description"`
+	QtyEntered       string `json:"qty_entered"`
+	UomEntered       string `json:"uom_entered"`
+	QtyBase          string `json:"qty_base"`
+	AllocatedBase    string `json:"allocated_base"`
+	FulfilledBase    string `json:"fulfilled_base"`
+	UnitPriceCents   int64  `json:"unit_price_cents"`
+	LineTotalCents   int64  `json:"line_total_cents"`
+	BackorderEntered string `json:"backorder_entered"`
+	BackorderBase    string `json:"backorder_base"`
 }
 
 type OrderView struct {
 	Id             string          `json:"id"`
 	Status         string          `json:"status"`
 	BranchId       string          `json:"branch_id"`
+	HasBackorder   bool            `json:"has_backorder"`
 	LegalActions   []string        `json:"legal_actions"`
 	EditableFields []string        `json:"editable_fields"`
 	Lines          []OrderViewLine `json:"lines"`
@@ -4467,13 +4470,14 @@ type TaskCancelRequest struct {
 }
 
 type TaskPickLine struct {
-	LineNo      int32   `json:"line_no"`
-	ProductId   *string `json:"product_id,omitempty"`
-	Sku         *string `json:"sku,omitempty"`
-	Description string  `json:"description"`
-	QtyOrdered  string  `json:"qty_ordered"`
-	Uom         string  `json:"uom"`
-	Location    *string `json:"location,omitempty"`
+	LineNo         int32   `json:"line_no"`
+	ProductId      *string `json:"product_id,omitempty"`
+	Sku            *string `json:"sku,omitempty"`
+	Description    string  `json:"description"`
+	QtyOrdered     string  `json:"qty_ordered"`
+	QtyBackordered *string `json:"qty_backordered,omitempty"`
+	Uom            string  `json:"uom"`
+	Location       *string `json:"location,omitempty"`
 }
 
 type TaskPickTicket struct {
@@ -4519,6 +4523,8 @@ type TaskPickedLine struct {
 	Uom         string    `json:"uom"`
 	PickedBy    *string   `json:"picked_by,omitempty"`
 	PickedAt    time.Time `json:"picked_at"`
+	ShortReason *string   `json:"short_reason,omitempty"`
+	ShortNote   *string   `json:"short_note,omitempty"`
 }
 
 type TaskPickQueueEntry struct {
@@ -4541,17 +4547,34 @@ type TaskPendingTicketPage struct {
 }
 
 type TaskRecordPickLine struct {
-	OrderLineNo int32  `json:"order_line_no"`
-	ProductId   string `json:"product_id"`
-	Sku         string `json:"sku"`
-	Description string `json:"description"`
-	QtyOrdered  string `json:"qty_ordered"`
-	QtyPicked   string `json:"qty_picked"`
-	Uom         string `json:"uom"`
+	OrderLineNo int32   `json:"order_line_no"`
+	ProductId   string  `json:"product_id"`
+	Sku         string  `json:"sku"`
+	Description string  `json:"description"`
+	QtyOrdered  string  `json:"qty_ordered"`
+	QtyPicked   string  `json:"qty_picked"`
+	Uom         string  `json:"uom"`
+	ShortReason *string `json:"short_reason,omitempty"`
+	ShortNote   *string `json:"short_note,omitempty"`
 }
 
 type TaskRecordPickRequest struct {
 	Lines []TaskRecordPickLine `json:"lines"`
+}
+
+type TaskRecordSkidsRequest struct {
+	SkidCount int32   `json:"skid_count"`
+	Reason    string  `json:"reason"`
+	Note      *string `json:"note,omitempty"`
+}
+
+type TaskRecordSkidsResult struct {
+	SkidCount            int32  `json:"skid_count"`
+	PreviousSkidCount    *int32 `json:"previous_skid_count"`
+	DepositCents         int64  `json:"deposit_cents"`
+	PreviousDepositCents int64  `json:"previous_deposit_cents"`
+	Changed              bool   `json:"changed"`
+	OrderNo              string `json:"order_no"`
 }
 
 type TaskRecordPickResult struct {
@@ -7796,19 +7819,22 @@ type TenantOrder struct {
 	TaxCents           int64     `json:"tax_cents"`
 	TotalCents         int64     `json:"total_cents"`
 	CreatedAt          time.Time `json:"created_at"`
+	HasBackorder       *bool     `json:"has_backorder,omitempty"`
 }
 
 type TenantOrderLine struct {
-	LineNo         int32  `json:"line_no"`
-	ProductId      string `json:"product_id"`
-	Description    string `json:"description"`
-	QtyEntered     string `json:"qty_entered"`
-	UomEntered     string `json:"uom_entered"`
-	QtyBase        string `json:"qty_base"`
-	AllocatedBase  string `json:"allocated_base"`
-	FulfilledBase  string `json:"fulfilled_base"`
-	UnitPriceCents int64  `json:"unit_price_cents"`
-	LineTotalCents int64  `json:"line_total_cents"`
+	LineNo           int32   `json:"line_no"`
+	ProductId        string  `json:"product_id"`
+	Description      string  `json:"description"`
+	QtyEntered       string  `json:"qty_entered"`
+	UomEntered       string  `json:"uom_entered"`
+	QtyBase          string  `json:"qty_base"`
+	AllocatedBase    string  `json:"allocated_base"`
+	FulfilledBase    string  `json:"fulfilled_base"`
+	UnitPriceCents   int64   `json:"unit_price_cents"`
+	LineTotalCents   int64   `json:"line_total_cents"`
+	BackorderEntered *string `json:"backorder_entered,omitempty"`
+	BackorderBase    *string `json:"backorder_base,omitempty"`
 }
 
 type TenantOrderDetail struct {

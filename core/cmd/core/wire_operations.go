@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"strings"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/attachments"
@@ -511,6 +512,11 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		WithOrderLineWriter(orderLineWeightAdapter{svc: orderSvc, repo: orderRepo}).
 		WithOrderAdvancer(taskOrderAdvanceAdapter{svc: orderSvc}).
 		WithAudit(auditSvc)
+	// The yard's short pick: the order takes the shortfall as a backorder and the notice facts read
+	// the live invoice through billing (wire_yard_short.go).
+	orderSvc.WithInvoiceStanding(invoiceStandingAdapter{repo: billing.NewRepository(pool)})
+	orderSvc.WithBackorderNotifier(backorderNoticeAdapter{chat: yardChatNotifier{svc: messagingSvc, log: log}})
+	yardTasksSvc.WithYardOrderChanges(yardOrderAdapter{svc: orderSvc})
 	tasks.NewHandler(yardTasksSvc, log).WithUserLinker(link).RegisterYardRoutes(r, g)
 	tasks.NewHandler(yardTasksSvc, log).WithUserLinker(link).RegisterWeightRoutes(r, g)
 
@@ -692,6 +698,9 @@ func (a yardChatNotifier) PostTaskEvent(ctx context.Context, ref tasks.TaskEvent
 			yardSlug = s
 		}
 	}
+	if ref.Audience == tasks.AudienceOrderRep {
+		return a.postOrderRepNotice(ctx, ref, yardSlug)
+	}
 	candidates := []string{yardSlug, yardCounterFallbackSlug}
 	if ref.Audience == tasks.AudienceCounter {
 		if counter := tasks.CounterSlugForYardSlug(yardSlug); counter != "" {
@@ -710,6 +719,54 @@ func (a yardChatNotifier) PostTaskEvent(ctx context.Context, ref tasks.TaskEvent
 		lastErr = err
 		if a.log != nil {
 			a.log.Warn("yard: channel post failed, trying the next route", "slug", slug, "topic", ref.Topic, "err", err)
+		}
+	}
+	return lastErr
+}
+
+// orderRepFallbackNote is the sentence put in front of an order notice that reached the counter
+// because the order has no sales rep, so a reader knows why it arrived there.
+const orderRepFallbackNote = "No sales rep is on this order, so this came to the counter. "
+
+// postOrderRepNotice delivers a yard change on an order to the order's sales rep through the
+// messaging module's rep routing (the order's override, then its own salesperson, then the
+// customer's rep). With no rep it falls back to the branch counter and yard channels and says so in
+// the message. A rep lookup that fails is the same fallback with its own sentence: the notice must
+// arrive somewhere a person reads it.
+func (a yardChatNotifier) postOrderRepNotice(ctx context.Context, ref tasks.TaskEventRef, yardSlug string) error {
+	fallback := []string{yardCounterFallbackSlug}
+	if counter := tasks.CounterSlugForYardSlug(yardSlug); counter != "" {
+		fallback = append([]string{counter}, fallback...)
+	}
+	fallback = append(fallback, yardSlug)
+	in := messaging.OrderRepNotice{
+		CustomerID: ref.CustomerID, OrderID: ref.OrderID, OrderRepUserID: ref.RepUserID,
+		EventKey: ref.EventKey, Body: ref.Summary,
+		Ref:           messaging.EventRef{Topic: ref.Topic, Entity: ref.Entity, DeepLink: ref.DeepLink, Summary: ref.Summary},
+		FallbackSlugs: fallback, FallbackPrefix: orderRepFallbackNote,
+	}
+	if _, err := a.svc.NotifyOrderRep(ctx, in); err != nil {
+		if a.log != nil {
+			a.log.Warn("yard: order rep notice failed, sending to the counter", "order", ref.OrderID, "err", err)
+		}
+		in.OrderRepUserID, in.CustomerID = "", ""
+		return a.fallbackOrderNotice(ctx, in)
+	}
+	return nil
+}
+
+// fallbackOrderNotice posts the notice to the counter with a sentence that says the rep could not
+// be reached, after the rep route itself failed.
+func (a yardChatNotifier) fallbackOrderNotice(ctx context.Context, in messaging.OrderRepNotice) error {
+	var lastErr error
+	for _, slug := range in.FallbackSlugs {
+		body := "The sales rep could not be reached, so this came to the counter. " + in.Body
+		ref := in.Ref
+		ref.Summary = body
+		if _, _, err := a.svc.PostEventToChannelSlug(ctx, slug, in.EventKey, body, ref, false); err == nil {
+			return nil
+		} else {
+			lastErr = err
 		}
 	}
 	return lastErr
@@ -788,6 +845,18 @@ func (a dispatchPrintAdapter) Enqueue(ctx context.Context, in dispatch.PrintJobR
 // ENTERED quantity in the ENTERED unit, never qty_base.
 type orderPickLineAdapter struct{ repo *order.Repository }
 
+// orderedWithBackorder is what the line was ordered for (the quantity now to fulfil plus any held on
+// backorder) and the held part, as decimal strings; the line's own text when nothing is held. The
+// yard compares what it picked with the order line's own ordered quantity, so the ticket carries it.
+func orderedWithBackorder(qty, backorder string) (ordered, backordered string) {
+	q, okQ := new(big.Rat).SetString(qty)
+	b, okB := new(big.Rat).SetString(backorder)
+	if !okQ || !okB || b.Sign() <= 0 {
+		return qty, ""
+	}
+	return new(big.Rat).Add(q, b).FloatString(4), b.FloatString(4)
+}
+
 func (a orderPickLineAdapter) OrderPickLines(ctx context.Context, orderID string) ([]dispatch.PickFeedLine, error) {
 	lines, _, _, err := a.repo.OrderLines(ctx, orderID)
 	if err != nil {
@@ -795,12 +864,14 @@ func (a orderPickLineAdapter) OrderPickLines(ctx context.Context, orderID string
 	}
 	out := make([]dispatch.PickFeedLine, 0, len(lines))
 	for _, l := range lines {
+		ordered, backordered := orderedWithBackorder(l.QtyEntered, l.BackorderEntered)
 		out = append(out, dispatch.PickFeedLine{
-			LineNo:      l.LineNo,
-			ProductID:   l.ProductID,
-			Description: l.Description,
-			QtyOrdered:  l.QtyEntered,
-			UOM:         l.UOMEntered,
+			LineNo:         l.LineNo,
+			ProductID:      l.ProductID,
+			Description:    l.Description,
+			QtyOrdered:     ordered,
+			QtyBackordered: backordered,
+			UOM:            l.UOMEntered,
 		})
 	}
 	return out, nil
@@ -1011,13 +1082,14 @@ func pickTicketFromFeed(t dispatch.PickFeedTicket) tasks.PickTicket {
 	lines := make([]tasks.PickLine, 0, len(t.Lines))
 	for _, l := range t.Lines {
 		lines = append(lines, tasks.PickLine{
-			LineNo:      l.LineNo,
-			ProductID:   l.ProductID,
-			SKU:         l.SKU,
-			Description: l.Description,
-			QtyOrdered:  l.QtyOrdered,
-			UOM:         l.UOM,
-			Location:    l.Location,
+			LineNo:         l.LineNo,
+			ProductID:      l.ProductID,
+			SKU:            l.SKU,
+			Description:    l.Description,
+			QtyOrdered:     l.QtyOrdered,
+			QtyBackordered: l.QtyBackordered,
+			UOM:            l.UOM,
+			Location:       l.Location,
 		})
 	}
 	return tasks.PickTicket{

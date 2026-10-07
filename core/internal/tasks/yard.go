@@ -63,8 +63,10 @@ type PickLine struct {
 	SKU         string `json:"sku,omitempty"`
 	Description string `json:"description"`
 	QtyOrdered  string `json:"qty_ordered"`
-	UOM         string `json:"uom"`
-	Location    string `json:"location,omitempty"` // bin/yard hint, "" when the source has none
+	// QtyBackordered is the part of QtyOrdered held on backorder, absent when none.
+	QtyBackordered string `json:"qty_backordered,omitempty"`
+	UOM            string `json:"uom"`
+	Location       string `json:"location,omitempty"` // bin/yard hint, "" when the source has none
 }
 
 // PickTicket is everything the yard needs to pull one order: who it is for, where, and what.
@@ -352,6 +354,9 @@ type PickedLine struct {
 	UOM         string    `json:"uom"`
 	PickedBy    string    `json:"picked_by,omitempty"`
 	PickedAt    time.Time `json:"picked_at"`
+	// ShortReason and ShortNote say why the line came up short (0369). Empty on a full pick.
+	ShortReason string `json:"short_reason,omitempty"`
+	ShortNote   string `json:"short_note,omitempty"`
 }
 
 // Short reports whether less came off the shelf than the ticket asked for. It is the ONE place that
@@ -375,6 +380,10 @@ type PickedLineInput struct {
 	QtyOrdered  string
 	QtyPicked   string
 	UOM         string
+	// ShortReason is one of ShortReasons and is required when QtyPicked < QtyOrdered; ShortNote is
+	// required when the reason is OTHER.
+	ShortReason string
+	ShortNote   string
 }
 
 // CounterSlugForYardSlug maps a branch's yard channel slug to that branch's counter channel slug

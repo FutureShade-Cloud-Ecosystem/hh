@@ -156,9 +156,55 @@ func (s *Service) RecordPick(ctx context.Context, taskID, actorID string, lines 
 		if l.ProductID != "" && !looksLikeUUID(l.ProductID) {
 			return nil, httpx.BadRequestf("product_id must be a uuid")
 		}
+		if err := cleanShortReason(&l, s.yardOrders != nil); err != nil {
+			return nil, err
+		}
 		clean = append(clean, l)
 	}
-	return s.store.UpsertPickedLines(ctx, taskID, actorID, clean)
+	// The order first: it refuses a pick above what the order line holds, and a refused pick must
+	// not be recorded. The order's effect sets absolute quantities, so a retry after a failed
+	// record converges rather than doubling.
+	res, err := s.applyToOrder(ctx, taskID, actorID, clean)
+	if err != nil {
+		return nil, err
+	}
+	// What is stored is what the order holds: its own ordered quantity (not the ticket's) and the
+	// reason and note it keeps, so a re-save with none never blanks them.
+	byLine := make(map[int]YardLineEffect, len(res.Lines))
+	for _, e := range res.Lines {
+		byLine[e.LineNo] = e
+	}
+	for i := range clean {
+		if e, ok := byLine[clean[i].OrderLineNo]; ok {
+			clean[i].QtyOrdered, clean[i].ShortReason, clean[i].ShortNote = e.QtyOrdered, e.Reason, e.Note
+		}
+	}
+	picked, err := s.store.UpsertPickedLines(ctx, taskID, actorID, clean)
+	if err != nil {
+		return nil, err
+	}
+	// The rep hears at once, after the record is safe. Best effort: see notifyOrderRep.
+	s.noticeShortPicks(ctx, taskID, clean, res)
+	return picked, nil
+}
+
+// applyToOrder hands a recorded pick to the order module, when the port is wired.
+func (s *Service) applyToOrder(ctx context.Context, taskID, actorID string, lines []PickedLineInput) (YardPickResult, error) {
+	if s.yardOrders == nil {
+		return YardPickResult{}, nil
+	}
+	task, err := s.store.GetTask(ctx, taskID)
+	if err != nil {
+		return YardPickResult{}, err
+	}
+	in := YardPickChange{OrderID: task.OrderID, ActorID: actorID}
+	for _, l := range lines {
+		in.Lines = append(in.Lines, YardPickLine{
+			LineNo: l.OrderLineNo, QtyOrdered: l.QtyOrdered, QtyPicked: l.QtyPicked, UOM: l.UOM,
+			Reason: l.ShortReason, Note: l.ShortNote,
+		})
+	}
+	return s.yardOrders.ApplyPicks(ctx, in)
 }
 
 // ListPickedLines returns what the yard recorded pulling for one task, in ticket order.

@@ -192,7 +192,7 @@ func (r *Repository) OrderLines(ctx context.Context, orderID string) ([]OrderVie
 	rows, err := tx.Query(ctx,
 		`SELECT line_no, COALESCE(product_id::text, ''), description, qty_entered::text,
 		        uom_entered::text, qty_base::text, allocated_base::text, fulfilled_base::text,
-		        unit_price_cents, line_total_cents
+		        unit_price_cents, line_total_cents, backorder_entered::text, backorder_base::text
 		   FROM order_lines WHERE order_id = $1 ORDER BY line_no`, orderID)
 	if err != nil {
 		return nil, OrderTotals{}, 0, fmt.Errorf("read order %q lines: %w", orderID, err)
@@ -202,7 +202,8 @@ func (r *Repository) OrderLines(ctx context.Context, orderID string) ([]OrderVie
 	for rows.Next() {
 		var l OrderViewLine
 		if err := rows.Scan(&l.LineNo, &l.ProductID, &l.Description, &l.QtyEntered, &l.UOMEntered,
-			&l.QtyBase, &l.AllocatedBase, &l.FulfilledBase, &l.UnitPriceCents, &l.LineTotalCents); err != nil {
+			&l.QtyBase, &l.AllocatedBase, &l.FulfilledBase, &l.UnitPriceCents, &l.LineTotalCents,
+			&l.BackorderEntered, &l.BackorderBase); err != nil {
 			return nil, OrderTotals{}, 0, err
 		}
 		out = append(out, l)
@@ -289,6 +290,9 @@ func (r *Repository) UpdateLineGuarded(ctx context.Context, w lineEditWrite, hoo
 		}
 		return LineSnapshot{}, LineSnapshot{}, OrderTotals{}, status, fmt.Errorf("edit line: update: %w", err)
 	}
+	if err = clearedByEdit(ctx, tx, hooks, w.OrderID, w.LineNo); err != nil {
+		return LineSnapshot{}, LineSnapshot{}, OrderTotals{}, status, err
+	}
 	totals, err = recomputeTotals(ctx, tx, w.OrderID)
 	if err != nil {
 		return LineSnapshot{}, LineSnapshot{}, OrderTotals{}, status, err
@@ -337,6 +341,9 @@ func (r *Repository) InsertLineGuarded(ctx context.Context, w lineEditWrite, hoo
 		w.UnitPriceCents, w.PriceUOM, w.LineTotalCents))
 	if err != nil {
 		return LineSnapshot{}, OrderTotals{}, status, fmt.Errorf("add line: insert: %w", err)
+	}
+	if err = rebaseShortfallBasisTx(ctx, tx, w.OrderID); err != nil {
+		return LineSnapshot{}, OrderTotals{}, status, err
 	}
 	totals, err = recomputeTotals(ctx, tx, w.OrderID)
 	if err != nil {
@@ -392,6 +399,10 @@ func (r *Repository) DeleteLineGuarded(ctx context.Context, orderID string, line
 		}
 		return LineSnapshot{}, OrderTotals{}, status, fmt.Errorf("remove line: probe: %w", err)
 	}
+	short, err := readShortTx(ctx, tx, orderID, lineNo, "0.0000")
+	if err != nil {
+		return LineSnapshot{}, OrderTotals{}, status, err
+	}
 	before, err = scanLineSnapshot(tx.QueryRow(ctx, fmt.Sprintf(
 		`DELETE FROM order_lines
 		  WHERE order_id = $1 AND line_no = $2 AND allocated_base = 0 AND fulfilled_base = 0
@@ -401,6 +412,14 @@ func (r *Repository) DeleteLineGuarded(ctx context.Context, orderID string, line
 			return LineSnapshot{}, OrderTotals{}, status, ErrLineInUse
 		}
 		return LineSnapshot{}, OrderTotals{}, status, fmt.Errorf("remove line: delete: %w", err)
+	}
+	if short != nil && hooks.cleared != nil {
+		if err = hooks.cleared(ctx, tx, *short); err != nil {
+			return LineSnapshot{}, OrderTotals{}, status, err
+		}
+	}
+	if err = rebaseShortfallBasisTx(ctx, tx, orderID); err != nil {
+		return LineSnapshot{}, OrderTotals{}, status, err
 	}
 	totals, err = recomputeTotals(ctx, tx, orderID)
 	if err != nil {
@@ -534,4 +553,19 @@ func containsStatus(allowedFrom []string, status string) bool {
 		}
 	}
 	return false
+}
+
+// clearedByEdit runs after an edit set a line's quantity: a short line's backorder is cleared (the edit's
+// quantity is the new order quantity), the hook records it, and the header's ordered basis is rebased.
+func clearedByEdit(ctx context.Context, tx pgx.Tx, hooks lineEditHooks, orderID string, lineNo int) error {
+	c, err := clearShortfallTx(ctx, tx, orderID, lineNo)
+	if err != nil {
+		return err
+	}
+	if c != nil && hooks.cleared != nil {
+		if err := hooks.cleared(ctx, tx, *c); err != nil {
+			return err
+		}
+	}
+	return rebaseShortfallBasisTx(ctx, tx, orderID)
 }

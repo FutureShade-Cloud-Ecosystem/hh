@@ -92,6 +92,9 @@ type Service struct {
 	// audit records the ONE thing this module does that changes another module's row: a fired
 	// order advance. Nil = no audit rows (best-effort, never a precondition).
 	audit audit.Recorder
+	// yardOrders is the short pick's order seam (yard_short.go). Nil = a short pick is recorded with
+	// its reason and does not reach the order.
+	yardOrders YardOrderChanges
 }
 
 // NewService wires the store. Inject the order + chat seams with WithOrderReader / WithChatNotifier.

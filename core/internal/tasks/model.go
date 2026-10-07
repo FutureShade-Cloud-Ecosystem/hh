@@ -223,6 +223,13 @@ type TaskEventRef struct {
 	// the yard already knows it is short; the counter is the one who has to tell the customer. An
 	// empty Audience means AudienceYard (every pre-W2 caller), so the field is additive.
 	Audience Audience
+
+	// OrderID, CustomerID and RepUserID ride an AudienceOrderRep notice: the order it is about, its
+	// customer, and the order's own salesperson (empty when it has none). Routing to the rep is the
+	// messaging module's rep resolution; these are the facts it needs and tasks never reads them back.
+	OrderID    string
+	CustomerID string
+	RepUserID  string
 }
 
 // Audience is the routing intent of a task EVENT, which room the message has to land in. The
@@ -233,6 +240,8 @@ type Audience string
 const (
 	AudienceYard    Audience = "YARD"    // the branch yard channel (pickers)
 	AudienceCounter Audience = "COUNTER" // the branch counter/sales channel (customer-facing staff)
+	// AudienceOrderRep is the order's sales rep, by the rep routing; the counter only when the order has none.
+	AudienceOrderRep Audience = "ORDER_REP"
 )
 
 // ChatNotifier is the injected seam over the messaging event-post path (satisfied in main.go by an

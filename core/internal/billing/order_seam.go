@@ -31,3 +31,25 @@ func (r *Repository) OrderIDForInvoice(ctx context.Context, invoiceID string) (s
 	}
 	return orderID, nil
 }
+
+// InvoiceStandingForOrder is the order's live invoice and how much of it is paid, for the order
+// module's yard notice (it declares the port and never reads the invoice tables itself). The newest
+// non-void INVOICE document wins; found is false when the order has none. Paid is what the document
+// has taken, its total less what is still outstanding.
+func (r *Repository) InvoiceStandingForOrder(ctx context.Context, orderID string) (invoiceNo string, totalCents, paidCents int64, found bool, err error) {
+	if r.pool == nil {
+		return "", 0, 0, false, nil
+	}
+	err = r.pool.QueryRow(ctx, `
+SELECT invoice_no::text, total_cents, total_cents - balance_cents
+  FROM invoices
+ WHERE order_id = $1 AND doc_type = 'INVOICE' AND status <> 'VOID'
+ ORDER BY created_at DESC LIMIT 1`, orderID).Scan(&invoiceNo, &totalCents, &paidCents)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", 0, 0, false, nil
+		}
+		return "", 0, 0, false, fmt.Errorf("invoice standing for order %q: %w", orderID, err)
+	}
+	return invoiceNo, totalCents, paidCents, true, nil
+}

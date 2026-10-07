@@ -66,8 +66,10 @@ type PickFeedLine struct {
 	SKU         string
 	Description string
 	QtyOrdered  string
-	UOM         string
-	Location    string
+	// QtyBackordered is the part of QtyOrdered held on backorder (a yard short pick), empty when none.
+	QtyBackordered string
+	UOM            string
+	Location       string
 }
 
 // OrderLineReader is the NEW consumer-declared seam: "what is on this order". It is satisfied in the

@@ -145,6 +145,8 @@ func (f *fakeStore) UpsertPickedLines(_ context.Context, taskID, actorID string,
 			QtyPicked:   l.QtyPicked,
 			UOM:         l.UOM,
 			PickedBy:    actorID,
+			ShortReason: l.ShortReason,
+			ShortNote:   l.ShortNote,
 			PickedAt:    time.Now().UTC(),
 		}
 	}

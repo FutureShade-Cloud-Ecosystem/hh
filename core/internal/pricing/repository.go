@@ -820,6 +820,7 @@ func (r *Repository) ListAudit(ctx context.Context, f AuditFilter) ([]AuditLogRo
 // INVOICED/FULFILLED/CLOSED OR it has a COMMITTED pos_sale facet. The pos_sale branch is LOAD-BEARING
 // for POS cash sales, the POS ring inserts the order at CONFIRMED and never advances orders.status
 // (internal/pos/service.go), so a cash counter sale is caught ONLY by the facet, not the status set.
+// A line with nothing left to deliver (a yard zero pick, 0369) is not a sale and is not graded.
 // A quote line carries no commitment test: a quote is a price the dealer has put in front of a
 // customer, in any status, and the report's job there is to show what was priced below the floor.
 // product_branch_costs is a LEFT JOIN keyed on (product_id, branch_id), the SAME per-branch WAC row
@@ -863,6 +864,7 @@ func (r *Repository) LowMarginSalesLines(ctx context.Context, f LowMarginFilter)
 	  LEFT JOIN users cb ON cb.id::text = oqc.fc->>'cleared_by'
 	 WHERE $4::text <> 'quotes'
 	   AND ol.product_id IS NOT NULL
+	   AND ol.qty_base > 0
 	   AND ol.deleted_at IS NULL AND o.deleted_at IS NULL
 	   AND o.created_at >= $1 AND o.created_at < $2
 	   AND ($3::uuid IS NULL OR o.branch_id = $3::uuid)

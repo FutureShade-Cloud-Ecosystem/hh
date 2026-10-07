@@ -461,12 +461,13 @@ func (r *Repository) StalePickTasks(ctx context.Context, cutoff time.Time, limit
 // - 0187 · what was actually pulled, per line -
 
 const pickedLineColumns = `id::text, task_id::text, order_line_no, COALESCE(product_id::text,''),
-	sku, description, qty_ordered::text, qty_picked::text, uom, COALESCE(picked_by::text,''), picked_at`
+	sku, description, qty_ordered::text, qty_picked::text, uom, COALESCE(picked_by::text,''), picked_at,
+	short_reason, short_note`
 
 func scanPickedLine(row pgx.Row) (PickedLine, error) {
 	var l PickedLine
 	err := row.Scan(&l.ID, &l.TaskID, &l.OrderLineNo, &l.ProductID, &l.SKU, &l.Description,
-		&l.QtyOrdered, &l.QtyPicked, &l.UOM, &l.PickedBy, &l.PickedAt)
+		&l.QtyOrdered, &l.QtyPicked, &l.UOM, &l.PickedBy, &l.PickedAt, &l.ShortReason, &l.ShortNote)
 	return l, err
 }
 
@@ -504,8 +505,9 @@ func (r *Repository) UpsertPickedLines(ctx context.Context, taskID, actorID stri
 	for _, l := range lines {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO task_pick_lines
-				(task_id, order_line_no, product_id, sku, description, qty_ordered, qty_picked, uom, picked_by)
-			VALUES ($1::uuid, $2, NULLIF($3,'')::uuid, $4, $5, $6::numeric, $7::numeric, $8, NULLIF($9,'')::uuid)
+				(task_id, order_line_no, product_id, sku, description, qty_ordered, qty_picked, uom, picked_by,
+				 short_reason, short_note)
+			VALUES ($1::uuid, $2, NULLIF($3,'')::uuid, $4, $5, $6::numeric, $7::numeric, $8, NULLIF($9,'')::uuid, $10, $11)
 			ON CONFLICT (task_id, order_line_no) DO UPDATE SET
 				product_id  = EXCLUDED.product_id,
 				sku         = EXCLUDED.sku,
@@ -514,9 +516,11 @@ func (r *Repository) UpsertPickedLines(ctx context.Context, taskID, actorID stri
 				qty_picked  = EXCLUDED.qty_picked,
 				uom         = EXCLUDED.uom,
 				picked_by   = EXCLUDED.picked_by,
+				short_reason = EXCLUDED.short_reason,
+				short_note   = EXCLUDED.short_note,
 				updated_at  = now()`,
 			taskID, l.OrderLineNo, l.ProductID, l.SKU, l.Description,
-			l.QtyOrdered, l.QtyPicked, l.UOM, actorID); err != nil {
+			l.QtyOrdered, l.QtyPicked, l.UOM, actorID, l.ShortReason, l.ShortNote); err != nil {
 			return nil, fmt.Errorf("tasks: record pick line %d: %w", l.OrderLineNo, err)
 		}
 	}
