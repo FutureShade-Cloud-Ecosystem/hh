@@ -552,6 +552,8 @@ type OrderView struct {
 	SubtotalCents int64           `json:"subtotal_cents"`
 	TaxCents      int64           `json:"tax_cents"`
 	TotalCents    int64           `json:"total_cents"`
+	// HasBackorder is true while any line is short and still owed (migration 0365).
+	HasBackorder bool `json:"has_backorder"`
 }
 
 // OrderRead returns one order's current status + this caller's legal actions. Authority mirrors the
@@ -597,6 +599,11 @@ func (s *Service) OrderRead(ctx context.Context, orderID string) (OrderView, err
 	if es, eerr := s.editStore(); eerr == nil {
 		if lines, totals, taxCents, lerr := es.OrderLines(ctx, orderID); lerr == nil {
 			view.Lines = lines
+			for _, l := range lines {
+				if r, ok := ratOf(l.BackorderBase); ok && r.Sign() > 0 {
+					view.HasBackorder = true
+				}
+			}
 			view.SubtotalCents, view.TaxCents, view.TotalCents = totals.SubtotalCents, taxCents, totals.TotalCents
 		}
 	}

@@ -24,13 +24,14 @@ func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: po
 // orderColumns is the canonical orders header SELECT list (kept in one place so
 // List/Get scan identically). quote_id and requested_date are nullable.
 const orderColumns = `id::text, order_no::text, customer_id::text, quote_id::text, status,
-	fulfillment, requested_date, subtotal_cents, tax_cents, total_cents, created_at`
+	fulfillment, requested_date, subtotal_cents, tax_cents, total_cents, created_at,
+	EXISTS (SELECT 1 FROM order_lines bl WHERE bl.order_id = orders.id AND bl.backorder_base > 0)`
 
 // orderLineColumns is the canonical order_lines SELECT list. product_id is nullable and
 // the quantity trio is emitted as text so the contractor sees exact DECIMAL values.
 const orderLineColumns = `line_no, product_id::text, description, qty_entered::text,
 	uom_entered::text, qty_base::text, allocated_base::text, fulfilled_base::text,
-	unit_price_cents, line_total_cents`
+	unit_price_cents, line_total_cents, backorder_entered::text, backorder_base::text`
 
 type rowScanner interface{ Scan(dest ...any) error }
 
@@ -43,6 +44,7 @@ func scanOrder(row rowScanner) (Order, error) {
 	if err := row.Scan(
 		&o.ID, &o.OrderNo, &o.CustomerID, &quoteID, &o.Status,
 		&o.Fulfillment, &requestedDate, &o.SubtotalCents, &o.TaxCents, &o.TotalCents, &o.CreatedAt,
+		&o.HasBackorder,
 	); err != nil {
 		return Order{}, err
 	}
@@ -119,7 +121,7 @@ func (r *Repository) GetOrder(ctx context.Context, customerID, orderID string) (
 	err := r.pool.QueryRow(ctx, q, orderID, customerID).Scan(
 		&d.ID, &d.OrderNo, &d.CustomerID, &quoteID, &d.Status,
 		&d.Fulfillment, &requestedDate, &d.SubtotalCents, &d.TaxCents, &d.TotalCents, &d.CreatedAt,
-		&d.DeliveryInstructions,
+		&d.HasBackorder, &d.DeliveryInstructions,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -147,6 +149,7 @@ func (r *Repository) GetOrder(ctx context.Context, customerID, orderID string) (
 		if err := rows.Scan(
 			&l.LineNo, &productID, &l.Description, &l.QtyEntered, &l.UOMEntered,
 			&l.QtyBase, &l.AllocatedBase, &l.FulfilledBase, &l.UnitPriceCents, &l.LineTotalCents,
+			&l.BackorderEntered, &l.BackorderBase,
 		); err != nil {
 			return Detail{}, err
 		}

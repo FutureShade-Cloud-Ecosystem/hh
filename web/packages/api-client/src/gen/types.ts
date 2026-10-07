@@ -3438,6 +3438,7 @@ export type OrderView = {
   id: string;
   status: "DRAFT" | "CONFIRMED" | "PICKING" | "READY" | "PARTIALLY_FULFILLED" | "FULFILLED" | "INVOICED" | "CLOSED" | "CANCELLED";
   branch_id: string;
+  has_backorder: boolean;
   legal_actions: ("CONFIRMED" | "PICKING" | "READY" | "CANCELLED")[];
   editable_fields: ("line_qty" | "line_add" | "line_remove" | "requested_date")[];
   lines: OrderViewLine[];
@@ -6621,6 +6622,7 @@ export type TenantOrder = {
   tax_cents: number;
   total_cents: number;
   created_at: string;
+  has_backorder?: boolean;
 };
 export type TenantOrderLine = {
   line_no: number;
@@ -6633,6 +6635,8 @@ export type TenantOrderLine = {
   fulfilled_base: string;
   unit_price_cents: number;
   line_total_cents: number;
+  backorder_entered?: string;
+  backorder_base?: string;
 };
 export type TenantOrderDetail = TenantOrder & { lines: TenantOrderLine[]; delivery_instructions: string };
 export type TenantOrderPage = {

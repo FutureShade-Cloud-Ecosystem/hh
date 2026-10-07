@@ -1751,6 +1751,11 @@ components:
         tax_cents: { type: integer, format: int64 }
         total_cents: { type: integer, format: int64 }
         created_at: { type: string, format: date-time }
+        has_backorder:
+          type: boolean
+          description: >-
+            True while any line is short and still owed; absent means false, so
+            recorded captures without it stay valid.
 
     TenantOrderLine:
       type: object
@@ -1769,6 +1774,14 @@ components:
         fulfilled_base: { type: string, description: DECIMAL as string }
         unit_price_cents: { type: integer, format: int64 }
         line_total_cents: { type: integer, format: int64 }
+        backorder_entered:
+          type: string
+          description: >-
+            DECIMAL as string. What was picked short that the order still owes
+            the customer, in the line's own unit; qty_entered is what is to be
+            fulfilled now, and ordered = qty_entered + backorder_entered. Absent
+            in recorded captures that predate it.
+        backorder_base: { type: string, description: DECIMAL as string }
 
     TenantOrderDetail:
       type: object

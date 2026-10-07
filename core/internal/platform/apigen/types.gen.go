@@ -4061,6 +4061,7 @@ type OrderView struct {
 	Id             string          `json:"id"`
 	Status         string          `json:"status"`
 	BranchId       string          `json:"branch_id"`
+	HasBackorder   bool            `json:"has_backorder"`
 	LegalActions   []string        `json:"legal_actions"`
 	EditableFields []string        `json:"editable_fields"`
 	Lines          []OrderViewLine `json:"lines"`
@@ -7703,19 +7704,22 @@ type TenantOrder struct {
 	TaxCents           int64     `json:"tax_cents"`
 	TotalCents         int64     `json:"total_cents"`
 	CreatedAt          time.Time `json:"created_at"`
+	HasBackorder       *bool     `json:"has_backorder,omitempty"`
 }
 
 type TenantOrderLine struct {
-	LineNo         int32  `json:"line_no"`
-	ProductId      string `json:"product_id"`
-	Description    string `json:"description"`
-	QtyEntered     string `json:"qty_entered"`
-	UomEntered     string `json:"uom_entered"`
-	QtyBase        string `json:"qty_base"`
-	AllocatedBase  string `json:"allocated_base"`
-	FulfilledBase  string `json:"fulfilled_base"`
-	UnitPriceCents int64  `json:"unit_price_cents"`
-	LineTotalCents int64  `json:"line_total_cents"`
+	LineNo           int32   `json:"line_no"`
+	ProductId        string  `json:"product_id"`
+	Description      string  `json:"description"`
+	QtyEntered       string  `json:"qty_entered"`
+	UomEntered       string  `json:"uom_entered"`
+	QtyBase          string  `json:"qty_base"`
+	AllocatedBase    string  `json:"allocated_base"`
+	FulfilledBase    string  `json:"fulfilled_base"`
+	UnitPriceCents   int64   `json:"unit_price_cents"`
+	LineTotalCents   int64   `json:"line_total_cents"`
+	BackorderEntered *string `json:"backorder_entered,omitempty"`
+	BackorderBase    *string `json:"backorder_base,omitempty"`
 }
 
 type TenantOrderDetail struct {

@@ -20,6 +20,14 @@ package order
 // office's act, not the yard's.
 //
 // The quantity unit is the order line's own (the ticket's own unit), the one the picker reads.
+//
+// NOTE FOR THE CLOSE PATH (a follow up, deliberately not built here). Today an order reaches
+// FULFILLED, INVOICED and CLOSED with a backorder still on a line, and its reservation is released
+// with it, so the owed goods would vanish from replenishment's sight. When the screens land, the close
+// path should refuse (or demand an explicit decision for) an order with has_backorder: fulfil the
+// backorder, cancel it with the credit it implies, or carry it onto a new order; and a backorder that
+// is fulfilled later is a new pick against the line, which this model leaves room for (ordered =
+// quantity + backorder) but does not yet do.
 
 import (
 	"context"

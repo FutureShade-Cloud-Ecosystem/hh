@@ -21,6 +21,9 @@ type Order struct {
 	TaxCents      int64     `json:"tax_cents"`
 	TotalCents    int64     `json:"total_cents"`
 	CreatedAt     time.Time `json:"created_at"`
+	// HasBackorder is true while any line is short and still owed (migration 0365). Absent means
+	// false, so a recorded capture without it stays valid.
+	HasBackorder bool `json:"has_backorder,omitempty"`
 }
 
 // Line is an order_lines row, including allocation/fulfillment progress for the status
@@ -36,6 +39,10 @@ type Line struct {
 	FulfilledBase  string `json:"fulfilled_base"`
 	UnitPriceCents int64  `json:"unit_price_cents"`
 	LineTotalCents int64  `json:"line_total_cents"`
+	// BackorderEntered and BackorderBase are what the yard picked short and the order still owes
+	// the customer; qty_entered is what is to be fulfilled now (ordered = quantity + backorder).
+	BackorderEntered string `json:"backorder_entered"`
+	BackorderBase    string `json:"backorder_base"`
 }
 
 // Detail is one order with its lines and the delivery instructions the contractor has

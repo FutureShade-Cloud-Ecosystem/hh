@@ -37585,6 +37585,7 @@ components:
         - subtotal_cents
         - tax_cents
         - total_cents
+        - has_backorder
       properties:
         id:
           type: string
@@ -37603,6 +37604,9 @@ components:
             - CANCELLED
         branch_id:
           type: string
+        has_backorder:
+          type: boolean
+          description: True while any line is short and still owed; each line carries its own backorder quantity
         legal_actions:
           type: array
           description: The manual moves this caller may take now, named by their target status
@@ -49042,6 +49046,9 @@ components:
         created_at:
           type: string
           format: date-time
+        has_backorder:
+          type: boolean
+          description: True while any line is short and still owed; absent means false, so recorded captures without it stay valid.
     TenantOrderLine:
       type: object
       description: One order_lines row with allocation and fulfillment progress for the status tracker. Quantities are DECIMAL serialized as strings.
@@ -49085,6 +49092,12 @@ components:
         line_total_cents:
           type: integer
           format: int64
+        backorder_entered:
+          type: string
+          description: DECIMAL as string. What was picked short that the order still owes the customer, in the line's own unit; qty_entered is what is to be fulfilled now, and ordered = qty_entered + backorder_entered. Absent in recorded captures that predate it.
+        backorder_base:
+          type: string
+          description: DECIMAL as string
     TenantOrderDetail:
       type: object
       description: One order with its lines and the contractor's delivery note

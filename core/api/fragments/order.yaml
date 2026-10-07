@@ -1689,12 +1689,16 @@ components:
         - subtotal_cents
         - tax_cents
         - total_cents
+        - has_backorder
       properties:
         id: { type: string, format: uuid }
         status:
           type: string
           enum: [DRAFT, CONFIRMED, PICKING, READY, PARTIALLY_FULFILLED, FULFILLED, INVOICED, CLOSED, CANCELLED]
         branch_id: { type: string }
+        has_backorder:
+          type: boolean
+          description: True while any line is short and still owed; each line carries its own backorder quantity
         legal_actions:
           type: array
           description: The manual moves this caller may take now, named by their target status
