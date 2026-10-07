@@ -3,8 +3,12 @@
 package pos
 
 // quickpicks_stocked_integration_test.go: the grid's category representatives are a DB rule (one
-// product per application, only where available stock exists), so it is proven against the seeded
-// catalogue rather than a fake. Run with: make test-integration (after make reset).
+// product per application, only where available stock exists), so it is proven against a real
+// database rather than a fake. The test plants its OWN products under application words no seed uses,
+// so it proves its claim on a migrated database and on a migrated and seeded one alike: a seeded
+// world stocks nearly every category, and a claim about "a category with nothing available" can only
+// be made about a category the test itself owns.
+// Run with: make test-integration (after make reset).
 
 import (
 	"context"
@@ -21,36 +25,50 @@ func TestIntegration_InStockApplicationRepresentatives_OneEachWhereStockExists(t
 	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations ORDER BY id LIMIT 1`).Scan(&loc); err != nil {
 		t.Skipf("no location on this database: %v", err)
 	}
-	pick := func(application string) string {
+
+	// The test's own categories, in words no seed or catalogue uses, with their own SKUs.
+	const (
+		stockedApp  = "Zz Round9 Stocked"
+		reservedApp = "Zz Round9 Reserved"
+		deletedApp  = "Zz Round9 Deleted"
+	)
+	var created []string
+	plant := func(sku, application string) string {
 		var id string
-		err := pool.QueryRow(ctx, `SELECT id::text FROM products WHERE is_active AND application = $1 ORDER BY sku LIMIT 1`, application).Scan(&id)
+		err := pool.QueryRow(ctx, `
+INSERT INTO products (sku, name, base_uom, price_uom, application, is_active)
+VALUES ($1::text, $1::text, 'EA', 'EA', $2::text, true) RETURNING id::text`, sku, application).Scan(&id)
 		if err != nil {
-			t.Skipf("no active %s product on this database: %v", application, err)
+			t.Fatalf("plant %s: %v", sku, err)
 		}
+		created = append(created, id)
 		return id
 	}
-	paver, mulch, soil := pick("Paver"), pick("Mulch"), pick("Soil")
-	put := func(product string, onHand, reserved int, deleted bool) {
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM stock_balances WHERE product_id = ANY($1::uuid[])`, created)
+		_, _ = pool.Exec(ctx, `DELETE FROM products WHERE id = ANY($1::uuid[])`, created)
+	})
+	stock := func(product string, onHand, reserved int, deleted bool) {
 		del := "NULL"
 		if deleted {
 			del = "now()"
 		}
 		_, err := pool.Exec(ctx, `
 INSERT INTO stock_balances (product_id, location_id, branch_id, on_hand_base, qty_reserved, deleted_at)
-VALUES ($1, $2, $2, $3, $4, `+del+`)
-ON CONFLICT (product_id, location_id) DO UPDATE
-   SET on_hand_base = $3, qty_reserved = $4, deleted_at = `+del, product, loc, onHand, reserved)
+VALUES ($1, $2, $2, $3, $4, `+del+`)`, product, loc, onHand, reserved)
 		if err != nil {
 			t.Fatalf("seed stock: %v", err)
 		}
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM stock_balances WHERE product_id = ANY($1::uuid[]) AND location_id = $2::uuid`, []string{paver, mulch, soil}, loc)
-	})
-	put(paver, 40, 0, false) // stocked
-	put(mulch, 5, 0, false)  // stocked
-	put(soil, 3, 3, false)   // fully reserved: nothing available
-	_ = soil
+
+	stockedA := plant("ZZR9-STOCKED-A", stockedApp)
+	stockedB := plant("ZZR9-STOCKED-B", stockedApp) // a second product in the category: still one tile
+	reserved := plant("ZZR9-RESERVED", reservedApp)
+	deleted := plant("ZZR9-DELETED", deletedApp)
+	stock(stockedA, 40, 0, false)
+	stock(stockedB, 5, 0, false)
+	stock(reserved, 3, 3, false) // fully reserved: nothing available
+	stock(deleted, 40, 0, true)  // a soft deleted balance is not stock
 
 	rows, err := repo.InStockApplicationRepresentatives(ctx)
 	if err != nil {
@@ -60,27 +78,19 @@ ON CONFLICT (product_id, location_id) DO UPDATE
 	for _, r := range rows {
 		seen[strings.ToLower(strings.TrimSpace(r.Application))]++
 	}
-	if seen["paver"] != 1 || seen["mulch"] != 1 {
-		t.Fatalf("one tile per stocked category, Paver and Mulch both: %v", seen)
+	if got := seen[strings.ToLower(stockedApp)]; got != 1 {
+		t.Fatalf("a stocked category gets exactly one tile, got %d: %v", got, seen)
 	}
-	if seen["soil"] != 0 {
-		t.Fatalf("a category with nothing available shows no tile: %v", seen)
+	if got := seen[strings.ToLower(reservedApp)]; got != 0 {
+		t.Fatalf("a category with nothing available (fully reserved) shows no tile: %v", seen)
 	}
+	if got := seen[strings.ToLower(deletedApp)]; got != 0 {
+		t.Fatalf("a category whose only balance is soft deleted shows no tile: %v", seen)
+	}
+	// And on any world: one representative per category, never two.
 	for app, n := range seen {
 		if n != 1 {
 			t.Fatalf("%s appears %d times: one representative each", app, n)
-		}
-	}
-
-	// A deleted stock row is not stock.
-	put(paver, 40, 0, true)
-	rows, err = repo.InStockApplicationRepresentatives(ctx)
-	if err != nil {
-		t.Fatalf("representatives after delete: %v", err)
-	}
-	for _, r := range rows {
-		if strings.EqualFold(strings.TrimSpace(r.Application), "paver") {
-			t.Fatalf("a soft deleted balance counted as stock: %s", r.SKU)
 		}
 	}
 }
