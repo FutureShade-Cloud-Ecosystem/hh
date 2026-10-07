@@ -135,9 +135,24 @@ test('every ink resolves in every palette (guards the matrix above)', () => {
 // ── solid fills: judged as shapes at the non-text bar, against where they sit ──
 
 const FILL_PAIRS = [
-  { fill: '--hh-danger-fill', surfaces: ['--hh-page', '--hh-card', '--hh-ground'] },
+  { fill: '--hh-danger-fill', surfaces: ['--hh-page', '--hh-ground'] },
   { fill: '--hh-success-fill', surfaces: ['--hh-page', '--hh-card'] },
 ];
+
+// The danger fill against the CARD: under white ink the fill must be no lighter than about
+// L 0.18 (4.5:1), and the brand mode card (#173550) needs it no darker than about L 0.20 for 3:1,
+// so no single red holds both there. The other palettes still hold it; in the dark half the
+// button's 1px ink border is the boundary (the .btn-primary pattern), pinned here.
+test('the danger fill clears 3:1 on the card, or in the dark half the button carries its own ink border', () => {
+  for (const name of PALETTE_NAMES) {
+    const v = palette(name);
+    const ratio = contrast(resolveColor(v['--hh-danger-fill'], v), resolveColor(v['--hh-card'], v));
+    if (ratio >= NON_TEXT) continue;
+    assert.equal(name.endsWith('dark'), true, `${name}: danger fill on card ${ratio.toFixed(2)}:1 and no dark-half exception applies`);
+    const rule = readPkg('src/primitives.ts').match(/\.btn-danger\s*\{([^}]*)\}/);
+    assert.ok(rule && /border-color:\s*var\(--hh-danger-fill-ink\)/.test(rule[1]), '.btn-danger must carry the fill-ink border as its boundary');
+  }
+});
 
 test(`solid fills stay visible against the surfaces they sit on (non-text 3:1): every palette`, () => {
   for (const name of PALETTE_NAMES) {

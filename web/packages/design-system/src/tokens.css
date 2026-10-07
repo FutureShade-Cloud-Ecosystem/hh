@@ -50,33 +50,44 @@
    a label, or a pattern change), and disabled controls change COLOUR, not
    opacity (a token swap, never a fade). */
 
+/* BRAND MODE (decision log rows 1047 item 10 and 1119, option A). The dark half of this
+   sheet is the brand mode: the HH badge's own navy #0F2944 as the page, calmer than the
+   richer blue (#071827) it replaced, with the gold family held invariant so the frame reads
+   as the brand. The token NAMES are the dark set's, so nothing that consumes them changes;
+   only the values moved. The stop state ink took one minimal step (#F07C6C to #F17E6E)
+   because the board did not measure it on the raised widget (4.48:1 there, 4.69:1 now), and the raised widget took one step darker (#1A3856 to #193653)
+   so the hh-pro identity blue reads on it (4.42:1 on the board's value, 4.55:1 now). The state inks, the fills, the stripe and the elevations are
+   carried as they were. The text and boundary pairs on the new surfaces are pinned in
+   test/brand-mode.test.mjs. Light stays the default theme. The dark half still lives in
+   :root, and the data-theme attribute is still absent for it. */
+
 :root {
   /* ── canvases and surfaces ─────────────────────────────────────────────────
      Carried from the ERP dark theme, role for role: the page, the card one step
      off it, and the solid line between them. The ERP paints its line SOLID (an
      alpha flattened over the navy canvas) because tints that resolve over a
      translucent line collapse to a wash; the same reasoning holds here. */
-  --hh-page: #071827;
-  --hh-card: #0B2338;
-  --hh-line: #253441;
+  --hh-page: #0F2944;
+  --hh-card: #173550;
+  --hh-line: #2C4763;
   /* The one input fill (round 7): dark keeps the page's own deep tone, so a field sits inset in
      its card as it always has; the light half re-values it, see there. */
-  --hh-field: #071827;
+  --hh-field: #0F2944;
 
   /* ── control boundary ──────────────────────────────────────────────────────
      The outline a NON-FILLED control is seen by: WCAG 1.4.11 judges a control's
-     boundary as a shape at 3:1, and --hh-line above is a hairline (1.41:1 on
+     boundary as a shape at 3:1, and --hh-line above is a hairline (1.54:1 on
      the dark page), not a boundary. --hh-control-line is declared in BOTH
-     halves to clear 3:1 against the page AND the card (dark: 3.50 and 3.12;
+     halves to clear 3:1 against the page AND the card (dark: 3.92 and 3.35;
      light: 3.89 and 4.62); the secondary button's border takes it. */
-  --hh-control-line: #5A7086;
+  --hh-control-line: #6B86A3;
 
   /* ── inks ──────────────────────────────────────────────────────────────────
      Text, and the dimmed ink under it. The light half of --hh-text-dim is the
      ERP's DIB-409 finding: the most-used dimmed text was under AA on its own
      page, so the value is checked, not eyeballed. */
   --hh-text: #FFFFFF;
-  --hh-text-dim: #AEBDCA;
+  --hh-text-dim: #A9BCD0;
 
   /* ── the brand gold family (theme-INVARIANT, on purpose) ────────────────────
      The fill does not flip between themes, so neither does its ink: that is the
@@ -86,7 +97,7 @@
   --hh-accent: #FFC313;        /* a FILL, never an ink */
   --hh-accent-hover: #FFD45B;  /* the gold hover fill */
   --hh-accent-ink: #0B1725;    /* the ONLY ink a gold fill carries: 11.23:1 on the gold, 12.74:1 on the hover */
-  /* Gold as INK, dark half: on the dark page the gold itself reads (11.18:1). */
+  /* Gold as INK, dark half: on the dark page the gold itself reads (9.20:1). */
   --hh-accent-text: #FFC313;
 
   /* The focus ring is gold-as-INK (per theme), not the gold fill: the same rule
@@ -95,7 +106,7 @@
 
   /* ── status inks ───────────────────────────────────────────────────────────
      Danger, info and success AS TEXT, per theme. Each is tuned to be READ on
-     the theme's own page, and the values are the ERP's: #FF8F9F is 8.28:1 on
+     the theme's own page, and the values are the ERP's: #FF8F9F is 6.81:1 on
      the dark page, #AB1C31 is 6.65:1 on the light one. */
   --hh-danger: #FF8F9F;
   --hh-info: #86BDF6;
@@ -136,31 +147,31 @@
      (4.49:1 and 4.40:1), so each takes one more minimal step. */
   --hh-state-good: #5CC48A;
   --hh-state-watch: #F0A93A;
-  --hh-state-stop: #F07C6C;
+  --hh-state-stop: #F17E6E;
 
   /* ── disabled is a colour, not a fade ───────────────────────────────────────
      The carried rule from HH Pro: a filled control at reduced opacity still
      reads as clickable in daylight. Disabled controls DROP their fill and go
      grey. This family is the token swap the rule is implemented with, and the
      kit gate fails if any shipped source reaches for opacity or a filter
-     instead of it. Both pairs clear AA (4.77:1 dark, 5.22:1 light) even though
+     instead of it. Both pairs clear AA (4.83:1 dark, 5.22:1 light) even though
      WCAG exempts disabled controls: an honest grey is free. */
-  --hh-disabled-fill: #1B2735;
-  --hh-disabled-ink: #7E93A8;
-  --hh-disabled-line: #2A3949;
+  --hh-disabled-fill: #142C46;
+  --hh-disabled-ink: #8499AD;
+  --hh-disabled-line: #28455F;
 
   /* ── the dashboard kit's own layer ──────────────────────────────────────────
      A widget sits ONE step off the page, on its own ground; it is deliberately
      not the card pair above. Dark steps the SURFACE and takes no shadow; light
      keeps one surface and lifts with the shadow. */
-  --hh-ground: #0D1420;
-  --hh-widget: #152033;
-  --hh-widget-raised: #1A2740;
+  --hh-ground: #0C2138;
+  --hh-widget: #142E49;
+  --hh-widget-raised: #193653;
   --hh-hairline: rgba(255,255,255,.07);
   --hh-track: rgba(255,255,255,.08);
   --hh-widget-shadow: none;
 
-  --hh-scrim: rgba(2, 7, 12, 0.72);
+  --hh-scrim: rgba(4, 10, 20, 0.72);
 
   /* ── the row stripe ─────────────────────────────────────────────────────────
      Carried for the list kits: alternating rows, stated as "the row's own
@@ -391,7 +402,7 @@
    package's canvases: the light identity is 4.66:1 on the light page (and
    4.65:1 on the widget ground, which is why the row 987 ground stops where it
    does) and its white on-ink clears AA on the identity fill; the dark
-   identity is 6.60:1 on the dark page and its on-ink 7.03:1 on the fill. */
+   identity is 5.43:1 on the dark page and its on-ink 7.03:1 on the fill. */
 :root[data-brand="hh-pro"] {
   --brand: oklch(70% 0.17 255);
   --brand-hover: oklch(76% 0.17 255);
