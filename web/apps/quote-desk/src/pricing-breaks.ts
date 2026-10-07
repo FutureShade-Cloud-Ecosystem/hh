@@ -287,7 +287,7 @@ export class QdPricingBreaks extends PricingTabBase {
   }
 
   private scopeText(h: BreakRow): string {
-    if (h.productId !== undefined) return `product · ${this.productNames[h.productId] ?? h.productId.slice(0, 8)}`;
+    if (h.productId !== undefined) return `product · ${this.productNames[h.productId] ?? "a product"}`;
     return `category · ${categoryLabel(h.categoryId ?? "")}`;
   }
 

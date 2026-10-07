@@ -113,7 +113,7 @@ export class QdPricingRules extends PricingTabBase {
     return f.id !== "" && f.scope === "CUSTOMER_CATEGORY" ? [...EDITABLE_SCOPES, "CUSTOMER_CATEGORY"] : EDITABLE_SCOPES;
   }
 
-  private branchName = (id: string): string => this.branchNames.find((b) => b.id === id)?.name ?? id.slice(0, 8);
+  private branchName = (id: string): string => this.branchNames.find((b) => b.id === id)?.name ?? "a branch";
   private customerName = (id: string): string => this.customerNames.get(id) ?? "";
 
   protected override closeTopDialog(): boolean {

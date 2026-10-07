@@ -73,7 +73,7 @@ export const CATEGORY_NAMES: Readonly<Record<string, string>> = {
 };
 
 export function categoryLabel(id: string): string {
-  return CATEGORY_NAMES[id] ?? id.slice(0, 8);
+  return CATEGORY_NAMES[id] ?? "a category";
 }
 
 export function isKnownCategory(id: string): boolean {

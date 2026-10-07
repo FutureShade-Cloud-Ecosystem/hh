@@ -61,10 +61,10 @@ test("formatPct and formatMoney render integers as words", () => {
   assert.equal(formatMoney(-250), "-$2.50");
 });
 
-test("categories are named for the six seeded ids and degrade to a short id otherwise", () => {
+test("categories are named for the six seeded ids and degrade to a plain word otherwise", () => {
   assert.equal(categoryLabel("ca700000-0000-4000-9000-000000000001"), "Pavers");
   assert.equal(categoryLabel("ca700000-0000-4000-9000-000000000006"), "Bulk");
-  assert.equal(categoryLabel("deadbeef-0000-4000-9000-000000000001"), "deadbeef");
+  assert.equal(categoryLabel("deadbeef-0000-4000-9000-000000000001"), "a category");
   assert.equal(isKnownCategory("ca700000-0000-4000-9000-000000000002"), true);
   assert.equal(isKnownCategory("deadbeef-0000-4000-9000-000000000001"), false);
   assert.equal(CATEGORY_OPTIONS.length, 6);

@@ -292,7 +292,7 @@ test("a rule's applies to reads as the list shows it", () => {
   assert.equal(ruleAppliesTo(ruleRow, branch, cat), "CONTRACTOR · Pavers");
   assert.equal(ruleAppliesTo({ ...ruleRow, branchId: "b1" }, branch, cat), "CONTRACTOR · Pavers · Trenton");
   assert.equal(ruleAppliesTo({ ...ruleRow, scope: "TIER_DEFAULT", categoryId: undefined }, branch, cat), "CONTRACTOR");
-  assert.equal(ruleAppliesTo({ ...ruleRow, scope: "CUSTOMER_PRODUCT", customerId: CUST, productId: PROD }, branch, cat), "c0000000 · a7000000");
+  assert.equal(ruleAppliesTo({ ...ruleRow, scope: "CUSTOMER_PRODUCT", customerId: CUST, productId: PROD }, branch, cat), "a customer · a product");
 });
 
 // The reviewer's P2-C case: a rule of any scope can be limited to one branch (the server's
@@ -325,12 +325,12 @@ test("a rule's start date is read as the day the core wrote, whatever offset it 
 });
 
 // The rules list names a customer by name where the panel knows it, and by short id where it
-// does not (round 2's small item: "c0000000 · Pavers" said nothing).
+// does not (round 2's small item: "a customer · Pavers" said nothing).
 test("a rule's customer reads by name where one is known", () => {
   const names = (id) => (id === CUST ? "Maple Ridge Contracting" : "");
   const row = { ...ruleRow, scope: "CUSTOMER_CATEGORY", customerId: CUST };
   assert.equal(ruleAppliesTo(row, () => "Trenton", () => "Pavers", names), "Maple Ridge Contracting · Pavers");
-  assert.equal(ruleAppliesTo(row, () => "Trenton", () => "Pavers"), "c0000000 · Pavers");
+  assert.equal(ruleAppliesTo(row, () => "Trenton", () => "Pavers"), "a customer · Pavers");
   const prod = { ...ruleRow, scope: "CUSTOMER_PRODUCT", customerId: CUST, productId: PROD };
-  assert.equal(ruleAppliesTo(prod, () => "Trenton", () => "Pavers", names), "Maple Ridge Contracting · a7000000");
+  assert.equal(ruleAppliesTo(prod, () => "Trenton", () => "Pavers", names), "Maple Ridge Contracting · a product");
 });

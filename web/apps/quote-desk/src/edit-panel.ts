@@ -948,7 +948,7 @@ export class QdQuoteEdit extends PanelBase {
     const label = (r: ComparisonRow): string => {
       if (r.is_current) return "Current line";
       const alt = this.compareAlts.find((a) => a.product_id === r.product_id);
-      return alt !== undefined ? `${alt.sku} · ${alt.name}` : r.product_id.slice(0, 8);
+      return alt !== undefined ? `${alt.sku} · ${alt.name}` : "a product";
     };
     return html`
       <fieldset data-testid="qe-compare">

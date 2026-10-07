@@ -154,7 +154,7 @@ export class QdPricingAudit extends PricingTabBase {
 
   private actorLabel(userId: string | undefined) {
     if (userId === undefined) return html`<span class="dim">system</span>`;
-    return html`${this.actors.get(userId) ?? userId.slice(0, 8)}`;
+    return html`${this.actors.get(userId) ?? "a staff member"}`;
   }
 
   private renderRecord(row: AuditRow) {
@@ -186,7 +186,7 @@ export class QdPricingAudit extends PricingTabBase {
         <td><span class="ts">${this.fmtTime(row.createdAt)}</span></td>
         <td>
           ${entityLabel(row.entityType)}
-          <div class="mono dim small">${row.entityType === "category_policy" ? categoryLabel(row.entityId) : row.entityId.slice(0, 8)}</div>
+          <div class="mono dim small">${row.entityType === "category_policy" ? categoryLabel(row.entityId) : "a record"}</div>
         </td>
         <td>${this.renderRecord(row)}</td>
         <td><span class="${badge}">${auditActionWord(row.action)}</span></td>

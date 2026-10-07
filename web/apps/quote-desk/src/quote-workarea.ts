@@ -3353,7 +3353,7 @@ export class QdQuoteWorkarea extends LitElement {
     return html`<div class="card identity" data-testid="qb-identity">
       <span class="avatar" aria-hidden="true">${initialsOf(v.customer_name === "" ? "?" : v.customer_name)}</span>
       <div>
-        <div class="cname">${v.customer_name === "" ? v.customer_id.slice(0, 8) : v.customer_name}</div>
+        <div class="cname">${v.customer_name === "" ? "A customer" : v.customer_name}</div>
         <div class="cmeta">
           ${c != null ? html`${c.account_no} · ${customerTypeTag(c.customer_type)}` : nothing}
         </div>

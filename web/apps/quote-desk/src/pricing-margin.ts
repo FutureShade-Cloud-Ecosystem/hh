@@ -303,7 +303,7 @@ export class QdPricingMargin extends PricingTabBase {
       <tr class="${focused ? "focused" : ""}" data-category-id="${id}" data-testid="pm-row">
         <td>
           <div data-testid="pm-category">${label}</div>
-          ${isKnownCategory(id) || this.categories.some((c) => c.id === id) ? nothing : html`<div class="mono dim small">${id.slice(0, 8)}</div>`}
+          ${isKnownCategory(id) || this.categories.some((c) => c.id === id) ? nothing : nothing}
         </td>
         <td class="r">
           ${this.canEdit

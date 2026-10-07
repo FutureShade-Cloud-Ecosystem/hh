@@ -264,9 +264,9 @@ export function ruleAppliesTo(
   const at = r.branchId === undefined ? "" : ` \u00b7 ${branchName(r.branchId)}`;
   const who = (id: string | undefined): string => {
     const name = id === undefined ? "" : customerName(id);
-    return name !== "" ? name : (id ?? "").slice(0, 8);
+    return name !== "" ? name : "a customer";
   };
-  if (r.scope === "CUSTOMER_PRODUCT") return `${who(r.customerId)} \u00b7 ${(r.productId ?? "").slice(0, 8)}${at}`;
+  if (r.scope === "CUSTOMER_PRODUCT") return `${who(r.customerId)} \u00b7 a product${at}`;
   if (r.scope === "CUSTOMER_CATEGORY") return `${who(r.customerId)} \u00b7 ${categoryName(r.categoryId ?? "")}${at}`;
   if (r.scope === "TIER_CATEGORY") {
     return `${r.customerType ?? ""} \u00b7 ${categoryName(r.categoryId ?? "")}${at}`;

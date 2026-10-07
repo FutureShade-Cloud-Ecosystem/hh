@@ -191,5 +191,5 @@ export function floorProductIds(text: string | undefined): string[] {
 
 /** A floor confirmation's text with each product id replaced by its name where known, else its first eight characters. */
 export function floorConfirmationText(text: string, names: ReadonlyMap<string, string>): string {
-  return text.replace(UUID_G, (id) => names.get(id) ?? id.slice(0, 8));
+  return text.replace(UUID_G, (id) => names.get(id) ?? "a record");
 }
