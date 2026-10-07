@@ -25,6 +25,8 @@ type Consumer struct {
 	// WithEmailNotifier was called, see consumer_quote.go for why one dispatcher carries two
 	// transports rather than one queue carrying one channel.
 	email notify.Notifier
+	// quotes re-reads a quote's status when a follow-up notice is delivered (WithQuoteStatus).
+	quotes QuoteStatusReader
 }
 
 // NewConsumer builds the consumer. A nil resolver falls back to the empty fixture, which resolves

@@ -516,6 +516,15 @@ var allowedExtraKeys = map[string]bool{
 	"op":              true, // create, update or delete
 	"client_id":       true, // the operation's idempotency key (uuid)
 	"conflict_policy": true, // the conflict policy that resolved a stale write
+	// Staff accepting or rejecting a quote on the customer's behalf (quote/staff_decision.go):
+	// channel and decline_reason are enum vocabulary (phone, text, email, in_person; price,
+	// competitor and the like), on_behalf and quantities_confirmed are booleans, and note is the
+	// staff member's own short free text, still redacted at this boundary like every string.
+	"channel":              true, // how the customer told staff (an enum word)
+	"on_behalf":            true, // staff recorded the decision for the customer (a bool)
+	"quantities_confirmed": true, // staff attests the customer confirmed the quantities (a bool)
+	"decline_reason":       true, // why the customer declined (an enum word)
+	"note":                 true, // the staff member's note, redacted like every string
 	// The sync caller's platform subject, recorded when no linked users.id exists (a tenant
 	// caller, or a staff caller with no linked users row): audit_log.actor_id is a uuid column a text subject cannot ride. It is the
 	// platform JWT subject (an identity id, not PII) and stays out of operatorSafeKeys.

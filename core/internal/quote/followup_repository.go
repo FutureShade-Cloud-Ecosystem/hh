@@ -230,6 +230,17 @@ func (r *FollowUpRepository) CancelRemaining(ctx context.Context, plan FollowUpP
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	cancelled, err := r.cancelRemainingTx(ctx, tx, plan, why, now)
+	if err != nil {
+		return cancelled, err
+	}
+	return cancelled, tx.Commit(ctx)
+}
+
+// cancelRemainingTx is CancelRemaining on the caller's transaction, so a staff decision on a quote can
+// stop the cadence in the same transaction that moves the quote (staff_decision_repository.go). It
+// touches only this repository's own two tables and needs no pool.
+func (r *FollowUpRepository) cancelRemainingTx(ctx context.Context, tx pgx.Tx, plan FollowUpPlan, why string, now time.Time) (int, error) {
 	cancelled := 0
 	for _, d := range plan.OffsetsDays {
 		due := plan.StartedAt.AddDate(0, 0, d)
@@ -253,7 +264,7 @@ func (r *FollowUpRepository) CancelRemaining(ctx context.Context, plan FollowUpP
 		WHERE quote_id = $1`, plan.QuoteID, now.UTC(), why); err != nil {
 		return cancelled, fmt.Errorf("quote: disable plan: %w", err)
 	}
-	return cancelled, tx.Commit(ctx)
+	return cancelled, nil
 }
 
 // Begin exposes a transaction to the service (the claim + enqueue pair needs one).

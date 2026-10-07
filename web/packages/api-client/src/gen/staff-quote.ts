@@ -3,9 +3,9 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { QuoteAcceptanceSettings, QuoteAcceptanceSettingsWrite, QuoteBranchStockList, QuoteConvertRequest, QuoteConvertResult, QuoteCreateRequest, QuoteEditHistory, QuoteEditResult, QuoteFloorApprovalAnswer, QuoteFloorApprovalRequest, QuoteFollowUpHistory, QuoteHoldExpiryView, QuoteHoldList, QuoteHoldReleaseResult, QuoteHoldResyncResult, QuoteLineAddRequest, QuoteLineAvailabilityList, QuoteLineCompareRequest, QuoteLineComparison, QuoteLinePatchRequest, QuoteMargin, QuoteMintedShareLink, QuoteOrderPaymentRequest, QuoteOrderPaymentResult, QuotePolicy, QuotePublicView, QuoteRelatedDocumentList, QuoteSMSShareRequest, QuoteSMSShareResult, QuoteShareLinkList, QuoteShareLinkMintRequest, QuoteSummaryPage, QuoteTerms, QuoteTermsInput, QuoteValidUntilWrite, QuoteView } from "./types.js";
+import type { QuoteAcceptOnBehalfRequest, QuoteAcceptanceSettings, QuoteAcceptanceSettingsWrite, QuoteBranchStockList, QuoteConvertRequest, QuoteConvertResult, QuoteCreateRequest, QuoteDecisionResult, QuoteEditHistory, QuoteEditResult, QuoteFloorApprovalAnswer, QuoteFloorApprovalRequest, QuoteFollowUpHistory, QuoteHoldExpiryView, QuoteHoldList, QuoteHoldReleaseResult, QuoteHoldResyncResult, QuoteLineAddRequest, QuoteLineAvailabilityList, QuoteLineCompareRequest, QuoteLineComparison, QuoteLinePatchRequest, QuoteMargin, QuoteMintedShareLink, QuoteOrderPaymentRequest, QuoteOrderPaymentResult, QuotePolicy, QuotePublicView, QuoteRejectOnBehalfRequest, QuoteRelatedDocumentList, QuoteSMSShareRequest, QuoteSMSShareResult, QuoteShareLinkList, QuoteShareLinkMintRequest, QuoteSummaryPage, QuoteTerms, QuoteTermsInput, QuoteValidUntilWrite, QuoteView } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient, type ApiCallOptions } from "../http.js";
+import { ApiClient, type ApiCallOptions, type ApiKeyedCallOptions } from "../http.js";
 
 export async function quoteOrderRelatedDocuments(
   client: ApiClient,
@@ -154,6 +154,27 @@ export async function quoteSetValidUntil(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "quoteSetValidUntil",
+  });
+}
+
+// The document lets this call carry an Idempotency-Key: call.idempotencyKey, a UUID chosen
+// once per acceptance and resent unchanged on every retry of it (never a new key per try), so a retry after a
+// timeout answers the first outcome instead of recording a second one.
+export async function quoteAcceptOnBehalf(
+  client: ApiClient,
+  id: string | number,
+  body: QuoteAcceptOnBehalfRequest,
+  call?: ApiKeyedCallOptions
+): Promise<Result<QuoteDecisionResult>> {
+  return client.request<QuoteDecisionResult>({
+    method: "POST",
+    path: "/api/v1/quotes/{id}/accept",
+    pathParams: { id },
+    body,
+    idempotencyKey: call?.idempotencyKey,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "quoteAcceptOnBehalf",
   });
 }
 
@@ -440,6 +461,27 @@ export async function quoteTakeOrderPayment(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "quoteTakeOrderPayment",
+  });
+}
+
+// The document lets this call carry an Idempotency-Key: call.idempotencyKey, a UUID chosen
+// once per acceptance and resent unchanged on every retry of it (never a new key per try), so a retry after a
+// timeout answers the first outcome instead of recording a second one.
+export async function quoteRejectOnBehalf(
+  client: ApiClient,
+  id: string | number,
+  body: QuoteRejectOnBehalfRequest,
+  call?: ApiKeyedCallOptions
+): Promise<Result<QuoteDecisionResult>> {
+  return client.request<QuoteDecisionResult>({
+    method: "POST",
+    path: "/api/v1/quotes/{id}/reject",
+    pathParams: { id },
+    body,
+    idempotencyKey: call?.idempotencyKey,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "quoteRejectOnBehalf",
   });
 }
 

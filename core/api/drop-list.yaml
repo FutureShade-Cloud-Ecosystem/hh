@@ -92,3 +92,7 @@ additions:
     reason: "The staff read of the product categories (id, code, name, is_active) for the pricing screens, Dealer Admin at read like the pricing reads; the ERP has the category list only inside its product filters; no ERP source route."
   - route: "GET /api/v1/quotes/{id}/customer-view"
     reason: "The staff preview of the customer's quote page: the public view built by the same code path, never minting a link, moving the status, scheduling a follow-up or logging a view, with acceptable false and preview true; no ERP source route."
+  - route: "POST /api/v1/quotes/{id}/accept"
+    reason: "Staff accepting a quote on the customer's behalf after a phone, text, email or in person yes: the same selling-role rule as convert, the channel, a note and the quantity statement recorded in the audit and the change history; the ERP's only accept is the contractor portal's own; no ERP source route."
+  - route: "POST /api/v1/quotes/{id}/reject"
+    reason: "Staff marking a quote lost on the customer's behalf after a phone, text, email or in person no: a reason code and note, the same selling-role rule as convert, the soft holds released and the follow-ups stopped; the ERP's only reject is the contractor portal's own; no ERP source route."

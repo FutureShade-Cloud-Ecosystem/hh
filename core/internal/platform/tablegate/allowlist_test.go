@@ -56,7 +56,7 @@ var allowlist = []allowlistEntry{
 		// the item's given first entry, verbatim from the source.
 		module: "pricing",
 		file:   "core/internal/pricing/repository.go",
-		tables: []string{"customers", "order_lines", "orders", "pos_sale", "product_branch_costs", "products"},
+		tables: []string{"customers", "order_lines", "orders", "pos_sale", "product_branch_costs", "products", "quote_lines", "quotes", "users"},
 		// the file's own comment: LowMarginSalesLines reads the COMMITTED
 		// sold lines for the principal's daily low-margin report (D-PA-3).
 		// This is the ONE deliberately cross-module reporting query in the
@@ -65,8 +65,13 @@ var allowlist = []allowlistEntry{
 		// live-sales feed; it never WRITES those tables. product_branch_costs
 		// is the LEFT JOIN keyed on (product_id, branch_id) that supplies
 		// avg_unit_cost_cents, and pos_sale is the COMMITTED facet that
-		// catches POS cash sales the orders.status arm never sees.
-		reason: "D-PA-3 daily low-margin report: the one deliberately cross-module reporting query, read only, stated in the function's own comment",
+		// catches POS cash sales the orders.status arm never sees. The
+		// report covers quotes as well as orders, so the same query reads
+		// quotes and quote_lines (the quote's own prices and the clearing
+		// stamp on the line's metadata, which an order line reaches through
+		// its quote), and LEFT JOINs users for the salesperson's and the
+		// clearer's display labels (the users pattern above).
+		reason: "D-PA-3 low-margin report over orders and quotes: the one deliberately cross-module reporting query, read only, stated in the function's own comment",
 	},
 	{
 		module: "assist",
@@ -897,6 +902,13 @@ var allowlist = []allowlistEntry{
 		tables: []string{"customers", "product_images", "products"},
 		writes: []string{"scope_sequences"},
 		reason: "the public share payload resolves the customer name, product facts and the image the public page shows; the 0213 seq stamp marks its rows",
+	},
+	{
+		module: "quote",
+		file:   "core/internal/quote/staff_decision_repository.go",
+		tables: []string{"audit_log"},
+		writes: []string{"scope_sequences"},
+		reason: "the staff accept and reject replay a keyed decision from the audit trail inside the decision's own transaction under the quote row lock (the share_idempotency.go shape, read only), and the 0213 seq stamp marks the quote row it moves",
 	},
 	{
 		module: "quote",
