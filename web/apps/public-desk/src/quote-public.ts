@@ -216,34 +216,63 @@ export class QuotePublicPage extends HHElement {
         background: var(--hh-card);
         color: var(--hh-text);
       }
-      /* The dealer's notice that the quantities are the customer's to confirm: a quiet callout under
-         the lines, in the page's own tokens, so it reads the same on screen and on paper. */
+      /* The dealer's notice that the quantities are the customer's to confirm: an information callout,
+         not a field. A tinted ground, a heavy rule and an icon in the info ink, no hairline box, so it
+         cannot be mistaken for the inputs below and reads the same on screen and on paper. */
       .qtynotice {
-        overflow-wrap: anywhere;
-        margin: var(--hh-s-12) 0 0;
-        padding: var(--hh-s-8) var(--hh-s-12);
-        border: 1px solid var(--hh-line);
-        border-left-width: 3px;
-        border-radius: var(--hh-radius-control);
-        background: var(--hh-card);
-        color: var(--hh-text);
-        font-size: 0.88rem;
-        line-height: 1.45;
-      }
-      .qtycheck {
-        margin-top: 0;
-      }
-      .check {
         display: flex;
         align-items: flex-start;
         gap: var(--hh-s-8);
-        margin: var(--hh-s-16) 0;
+        margin: var(--hh-s-12) 0 0;
+        padding: var(--hh-s-8) var(--hh-s-12);
+        border: 0;
+        border-left: 4px solid var(--hh-info);
+        border-radius: var(--hh-radius-control);
+        background: color-mix(in srgb, var(--hh-info) 11%, var(--hh-card));
+        color: var(--hh-text);
         font-size: 0.88rem;
         line-height: 1.45;
+        overflow-wrap: anywhere;
       }
-      /* The attestation is a sentence, not a field title: regular weight. */
-      .check-label {
-        font-weight: 400;
+      .noticeicon {
+        flex: none;
+        width: 1.1rem;
+        height: 1.1rem;
+        margin-top: 0.1rem;
+        color: var(--hh-info);
+      }
+      .noticetext {
+        min-width: 0;
+      }
+      /* The accept card's ticks, the quantities box and the confirmation alike: one row design, one
+         type, so the quantities tick reads as part of the card and not a line added above the name. A
+         ticked row takes the info tint, the same ground the notice speaks in. */
+      .tick {
+        display: flex;
+        align-items: flex-start;
+        gap: var(--hh-s-8);
+        margin: var(--hh-s-12) 0;
+        padding: var(--hh-s-8) var(--hh-s-12);
+        border: 1px solid var(--hh-line);
+        border-radius: var(--hh-radius-control);
+        background: var(--hh-card);
+      }
+      .tick:has(input:checked) {
+        background: color-mix(in srgb, var(--hh-info) 8%, var(--hh-card));
+      }
+      .tick input[type="checkbox"] {
+        flex: none;
+        width: 1.1rem;
+        height: 1.1rem;
+        margin: 0.1rem 0 0;
+        accent-color: var(--hh-info);
+      }
+      .tick label {
+        margin: 0;
+        font-size: 0.9rem;
+        font-weight: 500;
+        line-height: 1.45;
+        overflow-wrap: anywhere;
       }
       /* Shadow roots do not inherit the document's focus rule: the accept
          button must show the same ring as every staff surface, and this page
@@ -810,6 +839,25 @@ export class QuotePublicPage extends HHElement {
     </svg>`;
   }
 
+  /** The information mark of the notice callout: a ringed i, drawn in the info ink. */
+  private renderNoticeIcon(): TemplateResult {
+    return html`<svg
+      class="noticeicon"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+      role="presentation"
+    >
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v5" />
+      <path d="M12 8h.01" />
+    </svg>`;
+  }
+
   /** The success mark: the design system's done-marker check, success ink. */
   private renderOkMark(): TemplateResult {    return html`<svg
       class="okmark"
@@ -871,16 +919,16 @@ export class QuotePublicPage extends HHElement {
       <div class="card">
         <h2 class="card-h2">Accept this quote</h2>
         ${q.status === "ACCEPTED" || q.status === "CONVERTED" ? html`<p class="note">${REPEAT_NOTE}</p>` : nothing}
-        <div class="check qtycheck">
+        <div class="tick">
           <input id="qty-confirm" type="checkbox" />
-          <label for="qty-confirm" class="check-label">I have reviewed the quantities on this quote and they are what I want.</label>
+          <label for="qty-confirm">I have reviewed the quantities on this quote and they are what I want.</label>
         </div>
         <label for="name">Your full name</label>
         <input id="name" type="text" autocomplete="name" />
         ${this.lockedName !== null ? html`<p class="note">${NAME_LOCKED}</p>` : nothing}
-        <div class="check">
+        <div class="tick">
           <input id="affirm" type="checkbox" />
-          <label for="affirm" class="check-label">
+          <label for="affirm">
             ${withFullStop(
               `I accept this quote for ${acceptanceAmountPhrase(q)} and confirm I am authorised to do so on behalf of ${q.customerName}`,
             )}
@@ -966,7 +1014,9 @@ export class QuotePublicPage extends HHElement {
             </tbody>
           </table>
         </div>
-        ${q.quantityNotice ? html`<p class="qtynotice" role="note">${q.quantityNotice}</p>` : nothing}
+        ${q.quantityNotice
+          ? html`<div class="qtynotice" role="note">${this.renderNoticeIcon()}<span class="noticetext">${q.quantityNotice}</span></div>`
+          : nothing}
         ${this.renderTermsFacts(q)}
         ${this.renderTotals(q)}
       </div>

@@ -1539,3 +1539,50 @@ test("print=1 prints the quote and the notice, not the accept card: a paper copy
   await page.goto("/?t=q-print-33");
   await expect(page.locator("#qty-confirm")).toBeVisible();
 });
+
+// The look: the notice reads as information, not as another field, and the quantities tick is one of the
+// card's own ticks (the same row, the same type) rather than a bolted on line.
+test("the notice is an information callout: an icon, a tinted ground, no field border", async ({ page }) => {
+  await page.goto("/?t=q-print-33");
+  const notice = page.locator(".qtynotice");
+  await expect(notice).toBeVisible();
+  await expect(notice.locator("svg.noticeicon")).toHaveCount(1);
+  const look = await page.evaluate(() => {
+    const root = document.querySelector("pd-quote-public")?.shadowRoot as ShadowRoot;
+    const n = getComputedStyle(root.querySelector(".qtynotice") as Element);
+    const card = getComputedStyle(root.querySelector(".card") as Element);
+    const input = getComputedStyle(root.querySelector("#name") as Element);
+    return {
+      ground: n.backgroundColor, cardGround: card.backgroundColor,
+      top: n.borderTopWidth, left: n.borderLeftWidth, leftColour: n.borderLeftColor,
+      inputBorder: input.borderTopColor, noticeTopColour: n.borderTopColor,
+    };
+  });
+  expect(look.ground).not.toBe(look.cardGround);
+  expect(look.top).toBe("0px");
+  expect(look.left).toBe("4px");
+  expect(look.leftColour).not.toBe(look.inputBorder);
+});
+
+test("the quantities tick is one of the card's own ticks: the same row and the same type as the confirmation", async ({ page }) => {
+  await page.goto("/?t=q-print-33");
+  const same = await page.evaluate(() => {
+    const root = document.querySelector("pd-quote-public")?.shadowRoot as ShadowRoot;
+    const read = (id: string) => {
+      const input = root.querySelector(`#${id}`) as HTMLInputElement;
+      const row = input.closest(".tick") as HTMLElement | null;
+      const label = root.querySelector(`label[for="${id}"]`) as HTMLElement;
+      const r = row === null ? null : getComputedStyle(row);
+      const l = getComputedStyle(label);
+      return {
+        hasRow: row !== null,
+        rowBorder: r?.borderTopWidth, rowRadius: r?.borderTopLeftRadius, rowPad: r?.paddingTop,
+        weight: l.fontWeight, size: l.fontSize, boxSize: getComputedStyle(input).width,
+      };
+    };
+    return { qty: read("qty-confirm"), affirm: read("affirm") };
+  });
+  expect(same.qty.hasRow).toBe(true);
+  expect(same.affirm.hasRow).toBe(true);
+  expect(same.qty).toEqual(same.affirm);
+});
