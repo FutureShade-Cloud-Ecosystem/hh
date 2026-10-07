@@ -46,7 +46,17 @@ func TestTillRules_WiringIsPinned(t *testing.T) {
 		}
 	}
 	assertContains("wire_tops.go", "wireTillRules(")
-	assertContains("wire_tops.go", "loadRoleConfig()")
+	// The till's rules ride the role configuration the composition root
+	// hands wireTops (the demo's differs from the default's), never a
+	// second load inside it.
+	assertContains("wire_tops.go", "roleCfg, g, link)")
+	raw, err := os.ReadFile("wire_tops.go")
+	if err != nil {
+		t.Fatalf("read wire_tops.go: %v", err)
+	}
+	if containsStr(string(raw), "loadRoleConfig()") {
+		t.Fatal("wire_tops.go loads the role configuration itself; it must use the one wireTops is handed, or the demo's configuration never reaches the till")
+	}
 	assertContains("demoseed_compose.go", "WithRoleConfig(loadRoleConfig())")
 }
 

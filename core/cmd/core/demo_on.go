@@ -341,7 +341,7 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 	belt := buildSmsBelt(pool, log)
 	money := wireMoney(r, pool, g, log, cfg.StaffBaseURL, roleCfg)
 	ops := wireOperations(r, pool, g, log, money, getenv("CORE_STREAM_TICKET_KEY"), belt.outbox)
-	tops := wireTops(r, pool, g, log, money, ops, cfg, belt)
+	tops := wireTops(r, pool, g, log, money, ops, cfg, roleCfg, belt)
 	if err := wirePaymentGrant(r, g, roleGate, tops.posHandler); err != nil {
 		pool.Close()
 		return nil, err

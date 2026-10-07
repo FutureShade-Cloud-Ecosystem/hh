@@ -455,7 +455,7 @@ func registerRoutesWithRoleConfig(r httpx.Registrar, getenv func(string) string,
 
 	money := wireMoney(r, pool, g, log, cfg.StaffBaseURL, roleCfg)
 	ops := wireOperations(r, pool, g, log, money, os.Getenv("CORE_STREAM_TICKET_KEY"), belt.outbox)
-	tops := wireTops(r, pool, g, log, money, ops, cfg, belt)
+	tops := wireTops(r, pool, g, log, money, ops, cfg, roleCfg, belt)
 	if err := wirePaymentGrant(r, g, roleGate, tops.posHandler); err != nil {
 		pool.Close()
 		return nil, err

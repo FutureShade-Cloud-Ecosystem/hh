@@ -186,7 +186,7 @@ func wireFold(t *testing.T, pool *pgxpool.Pool, vaultKey, branchID string) (tops
 	belt := buildSmsBelt(pool, log)
 	money := wireMoney(mux, pool, sg.Guards, log, "", mustRoleConfigForWire())
 	ops := wireOperations(mux, pool, sg.Guards, log, money, "fx-ticket-key", belt.outbox)
-	tops := wireTops(mux, pool, sg.Guards, log, money, ops, config.Config{PaymentVaultKey: vaultKey}, belt)
+	tops := wireTops(mux, pool, sg.Guards, log, money, ops, config.Config{PaymentVaultKey: vaultKey}, mustRoleConfigForWire(), belt)
 	return *tops, mux, sg
 }
 
