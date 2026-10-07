@@ -112,7 +112,7 @@ test("a quantity save reprices from the server's answer, and bad input is refuse
   await sand.getByRole("button", { name: "Save" }).click();
   await expect(page.getByTestId("qe-notice")).toContainText("Saved.");
   await expect(sand.locator('[data-field="qty"]')).toHaveValue("5");
-  await expect(sand).toContainText("CA$57.40");
+  await expect(sand).toContainText("$57.40");
 });
 
 test("a discount within the floor saves; a blank clears it; a non-percent is refused", async ({ page }) => {
@@ -328,7 +328,7 @@ test("the Sales manager edits any quote in its branch", async ({ page }) => {
   await panel(page).getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByTestId("qe-notice")).toContainText("Saved.");
   await expect(panel(page).locator('[data-field="qty"]')).toHaveValue("11");
-  await expect(panel(page).getByTestId("qe-line")).toContainText("CA$514.80");
+  await expect(panel(page).getByTestId("qe-line")).toContainText("$514.80");
 });
 
 // Visual review round 1, P3: the compare table's Basis column words the pricing

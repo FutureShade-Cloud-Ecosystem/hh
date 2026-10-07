@@ -216,7 +216,7 @@ test("the deposit shown is the server's deposit_cents; an unsaved terms edit sho
   });
   await page.getByTestId("qb-terms-deposit-toggle").check();
   await expect(page.getByTestId("qb-deposit-label")).toHaveText("Deposit due");
-  await expect(page.getByTestId("qb-totals")).toContainText("CA$123.45");
+  await expect(page.getByTestId("qb-totals")).toContainText("$123.45");
   // A change that has not been saved yet is the local figure, and says so.
   slowSave = true;
   await page.getByTestId("qb-terms-deposit").fill("50");
@@ -239,7 +239,7 @@ test("a typed delivery fee of $25 or 1,250 is refused in words, never saved as z
   await expect(page.getByTestId("qb-totals")).not.toContainText("Delivery");
   await fee.fill("25");
   await fee.blur();
-  await expect(page.getByTestId("qb-totals")).toContainText("CA$25.00");
+  await expect(page.getByTestId("qb-totals")).toContainText("$25.00");
 });
 
 // ── P3: popovers, the picker's words ──

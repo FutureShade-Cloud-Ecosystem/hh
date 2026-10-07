@@ -136,9 +136,10 @@ test("the margin boxes are filled boxes, and the code and id inputs sit left", a
   expect(look.radius).toBeLessThan(12);
   expect(look.width).toBeGreaterThanOrEqual(96);
   expect(look.back).not.toBe("rgba(0, 0, 0, 0)");
-  // The reference (shots/pricing/margin-policy.png, measured) is a light border and a steady
-  // fill: rgb(219,227,234) around rgb(245,247,250), the same fill on the striped row and the
-  // plain one. Those are the light theme's line and page tokens exactly, and the dark theme
+  // The reference (shots/pricing/margin-policy.png, measured) is a border and a steady fill, the
+  // same fill on the striped row and the plain one. In the light theme they are the line token
+  // (#94A4B4, rgb(148,164,180), after the design system's round 7 step up from the reference's
+  // rgb(219,227,234)) around the page token (#E7ECF1, rgb(231,236,241), the design system's moved light page), and the dark theme
   // answers with the same two tokens' dark halves, so the check compares the box to the
   // reference's own numbers in light and to the tokens in dark, never to a formula the box
   // itself feeds back (round 3 P3: the old check could not see this difference).
@@ -147,8 +148,8 @@ test("the margin boxes are filled boxes, and the code and id inputs sit left", a
   await setTheme(page, "Light");
   for (const box of [plain, striped]) {
     const got = await box.evaluate((el) => ({ border: getComputedStyle(el).borderTopColor, fill: getComputedStyle(el).backgroundColor }));
-    expect(got.border, "the reference's light border").toBe("rgb(219, 227, 234)");
-    expect(got.fill, "the reference's steady fill").toBe("rgb(245, 247, 250)");
+    expect(got.border, "the light line token").toBe("rgb(148, 164, 180)");
+    expect(got.fill, "the light page token, steady over the stripe").toBe("rgb(231, 236, 241)");
   }
   await setTheme(page, "Dark");
   for (const box of [plain, striped]) {
