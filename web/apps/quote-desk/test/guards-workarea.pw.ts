@@ -321,8 +321,10 @@ test("guard terms save reload: a terms save whose re-read answers after another 
   const gated = await armedHold(page, /\/api\/v1\/quotes\/q-1004$/, "GET");
   gated.arm();
   await page.getByTestId("qb-po").fill("PO-RELOAD");
+  // Every read of the quote stays held, whoever asks (the work area re-reads first, the panels beside it read too), and the
+  // person leaves only once the page has gone quiet round them: the work area's own re-read is certainly one of them.
   await gated.held.asked;
-  gated.disarm();
+  await settle(page);
   await open(page, "Q-1001");
   const changed = await watchEvent(page, "quote-changed");
   await gated.held.release();
@@ -338,8 +340,10 @@ test("guard validity reload: a validity change whose re-read answers after anoth
   const gated = await armedHold(page, /\/api\/v1\/quotes\/q-1004$/, "GET");
   gated.arm();
   await page.getByTestId("qb-terms-validity").selectOption("60 days");
+  // Every read of the quote stays held, whoever asks (the work area re-reads first, the panels beside it read too), and the
+  // person leaves only once the page has gone quiet round them: the work area's own re-read is certainly one of them.
   await gated.held.asked;
-  gated.disarm();
+  await settle(page);
   await open(page, "Q-1001");
   const changed = await watchEvent(page, "quote-changed");
   await gated.held.release();
@@ -355,8 +359,10 @@ test("guard convert reload: a conversion whose re-read answers after another quo
   const gated = await armedHold(page, /\/api\/v1\/quotes\/q-1004$/, "GET");
   gated.arm();
   await page.getByTestId("qb-convert").click();
+  // Every read of the quote stays held, whoever asks (the work area re-reads first, the panels beside it read too), and the
+  // person leaves only once the page has gone quiet round them: the work area's own re-read is certainly one of them.
   await gated.held.asked;
-  gated.disarm();
+  await settle(page);
   await open(page, "Q-1001");
   const changed = await watchEvent(page, "quote-changed");
   await gated.held.release();
@@ -389,8 +395,10 @@ test("guard copy link reload: a copy whose re-read answers after another quote o
   const gated = await armedHold(page, /\/api\/v1\/quotes\/q-1004$/, "GET");
   gated.arm();
   await page.getByTestId("qb-copy-link").click();
+  // Every read of the quote stays held, whoever asks (the work area re-reads first, the panels beside it read too), and the
+  // person leaves only once the page has gone quiet round them: the work area's own re-read is certainly one of them.
   await gated.held.asked;
-  gated.disarm();
+  await settle(page);
   await open(page, "Q-1001");
   const changed = await watchEvent(page, "quote-changed");
   await gated.held.release();
@@ -450,8 +458,10 @@ test("guard print reload: a print whose re-read answers after another quote open
   const gated = await armedHold(page, /\/api\/v1\/quotes\/q-1004$/, "GET");
   gated.arm();
   await page.getByTestId("qb-print").click();
+  // Every read of the quote stays held, whoever asks (the work area re-reads first, the panels beside it read too), and the
+  // person leaves only once the page has gone quiet round them: the work area's own re-read is certainly one of them.
   await gated.held.asked;
-  gated.disarm();
+  await settle(page);
   await open(page, "Q-1001");
   const changed = await watchEvent(page, "quote-changed");
   await gated.held.release();

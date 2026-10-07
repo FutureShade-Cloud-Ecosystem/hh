@@ -250,6 +250,9 @@ test("P3 reads of one quote land in the order they were asked: an older read ans
   // The first read of the quote is asked while it has two lines and is held; the add that follows reads three.
   let armed = false;
   const older = await hold(page, /\/api\/v1\/quotes\/q-1001$/, { method: "GET", times: 1, snapshot: true, match: () => armed });
+  // The panels beside the work area read the quote once it has opened: let those reads finish, so the first read after
+  // the press is the work area's own and not one of theirs.
+  await quiet(page);
   armed = true;
   await page.getByTestId("qb-save-draft").click();
   await older.asked;
