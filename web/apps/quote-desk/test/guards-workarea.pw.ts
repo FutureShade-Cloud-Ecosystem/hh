@@ -298,10 +298,14 @@ test("guard cart change after read: an add whose re-read answers after another q
   const gated = await armedHold(page, /\/api\/v1\/quotes\/q-1004$/, "GET");
   gated.arm();
   const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
-  await scan.fill("PSN-100");
+  // Every read of the quote after the add is held, whoever asks for it, and the person leaves only once the add has
+  // answered and a read is out, so the work area's re-read is certainly one of the held reads.
+  const added = page.waitForResponse((r) => r.request().method() === "POST" && r.url().endsWith("/quotes/q-1004/lines"));
+  await scan.fill("EDG-08");
   await scan.press("Enter");
+  await added;
   await gated.held.asked;
-  gated.disarm();
+  await settle(page);
   await open(page, "Q-1001");
   const changed = await watchEvent(page, "quote-changed");
   await gated.held.release();
@@ -524,11 +528,16 @@ test("guard send reload: a send whose re-read answers after another quote opened
   await seed(page, { customer_id: "c-fenwick" });
   await signIn(page);
   await open(page, "Q-1004");
+  // Every read of the quote after the writes is held, whoever asks for it (the work area re-reads first; the panels
+  // beside it read too), and the person leaves only once the writes have answered and a read is out: the work
+  // area's re-read is then certainly one of the held reads, never one that slipped through.
   const gated = await armedHold(page, /\/api\/v1\/quotes\/q-1004$/, "GET");
   gated.arm();
+  const texted = page.waitForResponse((r) => r.request().method() === "POST" && r.url().endsWith("/quotes/q-1004/sms-share"));
   await page.getByTestId("qb-send").click();
+  await texted;
   await gated.held.asked;
-  gated.disarm();
+  await settle(page);
   await open(page, "Q-1001");
   const changed = await watchEvent(page, "quote-changed");
   await gated.held.release();
