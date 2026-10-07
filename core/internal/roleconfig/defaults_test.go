@@ -227,7 +227,7 @@ func TestDefaultDeliveryDateCommitters(t *testing.T) {
 	}
 }
 
-// Rules X6, X7, X11, X13 and rows 352, 353, 457, 360: the nine dealer
+// Rules X6, X7, X11, X13 and rows 352, 353, 457, 360: the eleven dealer
 // settings, each at its decided default. The refund amount is integer
 // cents, 250.00 held as 25000.
 func TestDefaultSettings(t *testing.T) {
@@ -237,6 +237,15 @@ func TestDefaultSettings(t *testing.T) {
 	}
 	if got := cfg.RefundAmountWithoutApprovalCents(); got != 25000 {
 		t.Errorf("the refund amount without approval is %d cents, decided 25000", got)
+	}
+	// The decided default is a limit dealer (the Dibbits ruling's no-limit
+	// switch is a dealer's choice, never the default every dealer inherits):
+	// the rule asks above 250.00 and not at it.
+	if !cfg.RefundRequiresApproval(25001) {
+		t.Error("the default's refund rule must ask above the configured 250.00")
+	}
+	if cfg.RefundRequiresApproval(25000) {
+		t.Error("the default's refund rule must not ask at the configured 250.00")
 	}
 	gotApprovers := cfg.RefundApprovers()
 	wantApprovers := []string{"sales_manager", "branch_manager"}

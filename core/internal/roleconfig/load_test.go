@@ -162,7 +162,7 @@ func TestRefuseMistypedSetting(t *testing.T) {
 // it is refused by name: a null setting is no setting (the package's rule:
 // a setting can never silently fall back to a zero value).
 func TestRefuseNullSettings(t *testing.T) {
-	for _, name := range []string{SettingCreditAtTill, SettingManagerOwnBranchFloorClearing, SettingGeneralManagerSelling} {
+	for _, name := range []string{SettingCreditAtTill, SettingManagerOwnBranchFloorClearing, SettingGeneralManagerSelling, SettingRefundApprovalLimitEnabled} {
 		doc := docFromDefault(t)
 		doc.Settings[name] = json.RawMessage(`null`)
 		refused(t, doc, name+" is not true or false")
