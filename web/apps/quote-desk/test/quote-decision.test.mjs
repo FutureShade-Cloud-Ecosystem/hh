@@ -30,3 +30,13 @@ test("the same intent keeps its key and a changed one gets a new key", () => {
   assert.equal(keyFor(first, "a", fresh).key, first.key);
   assert.notEqual(keyFor(first, "b", fresh).key, first.key);
 });
+
+test("the panel's static options are exactly the channels and reasons the lists name", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { DECISION_CHANNELS, DECLINE_REASONS } = await import("../src/_quote-decision.ts");
+  const source = readFileSync(new URL("../src/quote-decision-panel.ts", import.meta.url), "utf8");
+  const options = [...source.matchAll(/<option value="([a-z_]+)">([^<]+)<\/option>/g)].map((m) => [m[1], m[2]]);
+  for (const row of [...DECISION_CHANNELS, ...DECLINE_REASONS]) {
+    assert.ok(options.some(([value, label]) => value === row.value && label === row.label), `${row.value} is offered as ${row.label}`);
+  }
+});

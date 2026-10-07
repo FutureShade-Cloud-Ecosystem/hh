@@ -3489,7 +3489,7 @@ export class QdQuoteWorkarea extends LitElement {
               class="abtn"
               data-action="print"
               data-testid="qb-print"
-              title="Creates the customer's link${v.status === "DRAFT" ? " and marks the quote Sent" : ""}, then opens it for paper."
+              title="Creates the customer's link, marks a draft quote Sent, then opens it for paper."
               ?disabled=${!shareable && this.mintedToken === ""}
             >
               Print${v.status === "DRAFT" ? " (marks Sent)" : ""}
@@ -3501,7 +3501,7 @@ export class QdQuoteWorkarea extends LitElement {
               class="abtn"
               data-action="copy-link"
               data-testid="qb-copy-link"
-              title="Creates the customer's link${v.status === "DRAFT" ? " and marks the quote Sent" : ""}. Nothing is emailed."
+              title="Creates the customer's link, and marks a draft quote Sent. Nothing is emailed."
               ?disabled=${!shareable && this.mintedToken === ""}
             >
               Copy Link${v.status === "DRAFT" ? " (marks Sent)" : ""}

@@ -11,8 +11,6 @@ import { panelStyles } from "./panel-styles.js";
 import { spokenRefusal } from "./_quote-workarea.js";
 import { moneyWord, quoteErrorMessage, type QuoteView } from "./_quote-edit.js";
 import {
-  DECISION_CHANNELS,
-  DECLINE_REASONS,
   acceptReady,
   acceptedNotice,
   declinedNotice,
@@ -178,7 +176,10 @@ export class QdQuoteDecision extends PanelBase {
       >How the customer said so
       <select data-field="decision-channel" data-testid="qb-decision-channel" aria-label="How the customer said so">
         <option value="">Choose one</option>
-        ${DECISION_CHANNELS.map((c) => html`<option value=${c.value}>${c.label}</option>`)}
+        <option value="phone">On the phone</option>
+        <option value="text">By text</option>
+        <option value="email">By email</option>
+        <option value="in_person">In person</option>
       </select></label
     >`;
   }
@@ -214,7 +215,12 @@ export class QdQuoteDecision extends PanelBase {
           >Why
           <select data-field="decision-reason" data-testid="qb-decision-reason" aria-label="Why">
             <option value="">Choose one</option>
-            ${DECLINE_REASONS.map((r) => html`<option value=${r.value}>${r.label}</option>`)}
+            <option value="price">The price</option>
+            <option value="competitor">Went with a competitor</option>
+            <option value="project_cancelled">The project was cancelled</option>
+            <option value="timing">The timing</option>
+            <option value="no_response">No response</option>
+            <option value="other">Something else (say what)</option>
           </select></label
         >
       </div>
