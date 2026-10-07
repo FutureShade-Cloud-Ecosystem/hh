@@ -274,7 +274,7 @@ export function isDefiniteRefusal(failure: { error: string; status?: number }): 
   if (failure.status === 404) return /not found$/.test(words);
   // The core's 422 is its quantities refusal alone, said in its own words; a proxy's 422 is not that.
   if (failure.status === 422) return QUANTITIES_REFUSAL_WORDS.test(words);
-  return failure.status === 400 || failure.status === 409 
+  return failure.status === 400 || failure.status === 409;
 }
 
 /** The server's own answer that a link is dead: a 410 carrying the error envelope. */

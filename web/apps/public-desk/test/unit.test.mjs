@@ -378,3 +378,21 @@ test("the disabled Accept button says what is still missing, in the order the fo
   assert.equal(acceptHint("   ", true, true), "To accept, type your full name.");
   assert.equal(acceptHint("Sample Customer", true, true), null);
 });
+
+test("quote-client keeps its statements closed and its lines free of trailing space", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { dirname, join } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "quote-client.ts"), "utf8");
+  const lines = source.split("\n");
+  assert.deepEqual(
+    lines.map((l, i) => (/\s$/.test(l) ? i + 1 : 0)).filter(Boolean),
+    [],
+    "no line ends in white space",
+  );
+  assert.deepEqual(
+    lines.map((l, i) => (/^\s*return .*[^;{(,\[\s]$/.test(l) ? i + 1 : 0)).filter(Boolean),
+    [],
+    "every single line return ends in a semicolon",
+  );
+});
