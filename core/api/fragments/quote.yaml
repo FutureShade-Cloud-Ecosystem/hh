@@ -354,7 +354,11 @@ paths:
         not move the order out of the yard: it is confirmed, picked and handed
         over as usual, and is invoiced when it leaves. A replayed
         idempotency_key posts nothing and answers the first payment; the same
-        key with a different method or amount is a 409. The role rule is Work
+        key with a different method or amount is a 409. The optional
+        fulfillment (PICKUP or WILL_CALL) is the one the plain convert takes,
+        validated by the same rule with the same 400, and rides the
+        conversion this action makes for a customer with no credit account,
+        so a Cash On Demand order need not be Pickup. The role rule is Work
         or above on the Counter Till at the order's branch.
       x-addition: "the counter's payment door on a converted quote's order (plan 1.1, QD-5); no ERP source route"
       x-role: requireStaff
@@ -1821,6 +1825,16 @@ components:
           type: string
           minLength: 1
           maxLength: 64
+        fulfillment:
+          type: string
+          enum: [PICKUP, WILL_CALL]
+          description: >-
+            Optional. The fulfilment the order is created with when this
+            action converts the quote (a customer with no credit account),
+            graded exactly as the plain convert grades it: DELIVERY is
+            refused in words, and an absent value leaves the default, Pickup.
+            Ignored when the quote is already converted, because an order's
+            fulfilment is chosen at its conversion.
     QuoteOrderPaymentResult:
       type: object
       description: >-

@@ -671,8 +671,24 @@ export class FrontDoorApp extends HHElement {
     return { ok: false, error: answer.error };
   };
 
+  /** Whether the shared Feedback panel is open, as the widget reports it. */
+  #feedbackOpen = false;
+
+  readonly #onFeedbackToggle = (event: Event): void => {
+    const open = (event as CustomEvent<{ open: boolean }>).detail.open === true;
+    this.#feedbackOpen = open;
+    this.requestUpdate();
+    // Closing the panel hands focus back to the button that opened it.
+    if (!open) {
+      void this.updateComplete.then(() => {
+        this.renderRoot.querySelector<HTMLElement>('[data-testid="feedback-button"]')?.focus();
+      });
+    }
+  };
+
   connectedCallback(): void {
     super.connectedCallback();
+    this.addEventListener("hh-feedback-toggle", this.#onFeedbackToggle);
     this.addEventListener("click", this.#onHostClick);
     // Light is the box's default, the sheet's own attribute contract.
     applyTheme("light");
@@ -688,6 +704,7 @@ export class FrontDoorApp extends HHElement {
   }
 
   disconnectedCallback(): void {
+    this.removeEventListener("hh-feedback-toggle", this.#onFeedbackToggle);
     this.removeEventListener("click", this.#onHostClick);
     super.disconnectedCallback();
   }
@@ -701,6 +718,10 @@ export class FrontDoorApp extends HHElement {
     if (action === "choose") {
       const flow = control.getAttribute("data-flow");
       if (typeof flow === "string" && flow !== "") this.#choose(flow);
+    }
+    if (action === "feedback") {
+      const widget = this.renderRoot.querySelector("hh-feedback");
+      if (widget instanceof HHFeedback) widget.show();
     }
     if (action === "open-module") {
       const href = control.getAttribute("data-href");
@@ -815,7 +836,7 @@ export class FrontDoorApp extends HHElement {
       <div class="stage">
         <p class="notice" role="status" aria-live="polite" aria-atomic="true">${this.#notice}</p>
       </div>
-      <hh-feedback screen="Front door"></hh-feedback>
+      <hh-feedback screen="Front door" trigger="external"></hh-feedback>
     `;
   }
 
@@ -852,6 +873,9 @@ export class FrontDoorApp extends HHElement {
         </div>
         <p class="who" data-testid="header-word">${session === null ? "Pick a role" : session.roleLabel}</p>
         <div class="controls">
+          <button type="button" class="btn-secondary" data-action="feedback" data-testid="feedback-button" aria-haspopup="dialog" aria-expanded=${this.#feedbackOpen ? "true" : "false"} title="Send feedback about this screen">
+            Feedback
+          </button>
           ${signedIn
             ? html`
                 <button type="button" class="btn-secondary" data-action="switch-role">Switch role</button>

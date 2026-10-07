@@ -95,9 +95,9 @@ test("a one pixel swatch picture falls through to the category's drawn tile", as
 });
 
 test("a real sized picture still wins over the tile", async ({ page }) => {
-  // A 8x8 PNG is a picture, not a swatch: built here so the test needs no file.
+  // A 9x9 PNG is a picture, not a swatch (8px and under is): built here so the test needs no file.
   const { deflateSync } = await import("node:zlib");
-  const size = 8;
+  const size = 9;
   const row = Buffer.concat([Buffer.from([0]), Buffer.alloc(size * 3, 0x80)]);
   const raw = Buffer.concat(Array.from({ length: size }, () => row));
   const crcTable = Array.from({ length: 256 }, (_, n) => {
@@ -136,5 +136,10 @@ test("a real sized picture still wins over the tile", async ({ page }) => {
   await signInToItems(page);
   await page.getByTestId("hot-group").filter({ hasText: "Pavers" }).click();
   const img = page.getByTestId("hot-item").locator("img").first();
+  // Wait for the load handler to have run on the real picture before asserting what it left, so
+  // the leg cannot pass on the first render alone.
+  await expect
+    .poll(() => img.evaluate((el: HTMLImageElement) => (el.complete ? el.naturalWidth : 0)))
+    .toBe(size);
   await expect(img).toHaveAttribute("src", /\/api\/v1\/products\/.+\/image/);
 });
