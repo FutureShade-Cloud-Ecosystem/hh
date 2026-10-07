@@ -156,9 +156,37 @@ func (s *Service) RecordPick(ctx context.Context, taskID, actorID string, lines 
 		if l.ProductID != "" && !looksLikeUUID(l.ProductID) {
 			return nil, httpx.BadRequestf("product_id must be a uuid")
 		}
+		if err := cleanShortReason(&l); err != nil {
+			return nil, err
+		}
 		clean = append(clean, l)
 	}
+	// The order first: it refuses a pick above what the order line holds, and a refused pick must
+	// not be recorded. The order's effect sets absolute quantities, so a retry after a failed
+	// record converges rather than doubling.
+	if _, err := s.applyToOrder(ctx, taskID, actorID, clean); err != nil {
+		return nil, err
+	}
 	return s.store.UpsertPickedLines(ctx, taskID, actorID, clean)
+}
+
+// applyToOrder hands a recorded pick to the order module, when the port is wired.
+func (s *Service) applyToOrder(ctx context.Context, taskID, actorID string, lines []PickedLineInput) (YardPickResult, error) {
+	if s.yardOrders == nil {
+		return YardPickResult{}, nil
+	}
+	task, err := s.store.GetTask(ctx, taskID)
+	if err != nil {
+		return YardPickResult{}, err
+	}
+	in := YardPickChange{OrderID: task.OrderID, ActorID: actorID}
+	for _, l := range lines {
+		in.Lines = append(in.Lines, YardPickLine{
+			LineNo: l.OrderLineNo, QtyOrdered: l.QtyOrdered, QtyPicked: l.QtyPicked, UOM: l.UOM,
+			Reason: l.ShortReason, Note: l.ShortNote,
+		})
+	}
+	return s.yardOrders.ApplyPicks(ctx, in)
 }
 
 // ListPickedLines returns what the yard recorded pulling for one task, in ticket order.

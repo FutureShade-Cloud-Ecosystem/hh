@@ -4506,6 +4506,8 @@ type TaskPickedLine struct {
 	Uom         string    `json:"uom"`
 	PickedBy    *string   `json:"picked_by,omitempty"`
 	PickedAt    time.Time `json:"picked_at"`
+	ShortReason *string   `json:"short_reason,omitempty"`
+	ShortNote   *string   `json:"short_note,omitempty"`
 }
 
 type TaskPickQueueEntry struct {
@@ -4528,13 +4530,15 @@ type TaskPendingTicketPage struct {
 }
 
 type TaskRecordPickLine struct {
-	OrderLineNo int32  `json:"order_line_no"`
-	ProductId   string `json:"product_id"`
-	Sku         string `json:"sku"`
-	Description string `json:"description"`
-	QtyOrdered  string `json:"qty_ordered"`
-	QtyPicked   string `json:"qty_picked"`
-	Uom         string `json:"uom"`
+	OrderLineNo int32   `json:"order_line_no"`
+	ProductId   string  `json:"product_id"`
+	Sku         string  `json:"sku"`
+	Description string  `json:"description"`
+	QtyOrdered  string  `json:"qty_ordered"`
+	QtyPicked   string  `json:"qty_picked"`
+	Uom         string  `json:"uom"`
+	ShortReason *string `json:"short_reason,omitempty"`
+	ShortNote   *string `json:"short_note,omitempty"`
 }
 
 type TaskRecordPickRequest struct {

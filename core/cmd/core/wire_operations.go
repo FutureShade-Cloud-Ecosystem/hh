@@ -511,6 +511,10 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		WithOrderLineWriter(orderLineWeightAdapter{svc: orderSvc, repo: orderRepo}).
 		WithOrderAdvancer(taskOrderAdvanceAdapter{svc: orderSvc}).
 		WithAudit(auditSvc)
+	// The yard's short pick: the order takes the shortfall as a backorder and the notice facts read
+	// the live invoice through billing (wire_yard_short.go).
+	orderSvc.WithInvoiceStanding(invoiceStandingAdapter{repo: billing.NewRepository(pool)})
+	yardTasksSvc.WithYardOrderChanges(yardOrderAdapter{svc: orderSvc})
 	tasks.NewHandler(yardTasksSvc, log).WithUserLinker(link).RegisterYardRoutes(r, g)
 	tasks.NewHandler(yardTasksSvc, log).WithUserLinker(link).RegisterWeightRoutes(r, g)
 

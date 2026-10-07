@@ -182,6 +182,8 @@ type recordPickRequest struct {
 		QtyOrdered  string `json:"qty_ordered"`
 		QtyPicked   string `json:"qty_picked"`
 		UOM         string `json:"uom"`
+		ShortReason string `json:"short_reason"`
+		ShortNote   string `json:"short_note"`
 	} `json:"lines"`
 }
 
@@ -198,6 +200,7 @@ func (h *Handler) recordPick(w http.ResponseWriter, r *http.Request, caller guar
 		lines = append(lines, PickedLineInput{
 			OrderLineNo: l.OrderLineNo, ProductID: l.ProductID, SKU: l.SKU,
 			Description: l.Description, QtyOrdered: l.QtyOrdered, QtyPicked: l.QtyPicked, UOM: l.UOM,
+			ShortReason: l.ShortReason, ShortNote: l.ShortNote,
 		})
 	}
 	picked, err := h.svc.RecordPick(r.Context(), r.PathValue("id"),
@@ -298,6 +301,10 @@ func (h *Handler) writeYardErr(w http.ResponseWriter, r *http.Request, err error
 		httpx.Error(w, http.StatusServiceUnavailable, "pick source not configured")
 	case errors.Is(err, ErrShortageNotFound):
 		httpx.Error(w, http.StatusNotFound, "shortage not found")
+	case errors.Is(err, ErrAboveOrdered):
+		httpx.Error(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, ErrOrderRefused):
+		httpx.Error(w, http.StatusConflict, err.Error())
 	case errors.Is(err, ErrShortageResolved):
 		httpx.Error(w, http.StatusConflict, "shortage already resolved")
 	default:

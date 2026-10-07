@@ -3832,6 +3832,8 @@ export type TaskPickedLine = {
   uom: string;
   picked_by?: string;
   picked_at: string;
+  short_reason?: string;
+  short_note?: string;
 };
 export type TaskPickQueueEntry = {
   task: Task;
@@ -3857,6 +3859,8 @@ export type TaskRecordPickLine = {
   qty_ordered: string;
   qty_picked: string;
   uom: string;
+  short_reason?: "CONDENSED_SKIDS" | "DAMAGED" | "NOT_IN_YARD" | "COUNT_CORRECTION" | "OTHER";
+  short_note?: string;
 };
 export type TaskRecordPickRequest = {
   lines: TaskRecordPickLine[];

@@ -145,6 +145,8 @@ type Service struct {
 	// PARK: no order→invoice writer exists in the tree outside the POS ring, so readiness is computed
 	// and published while the button stays absent rather than fabricating an invoice number.
 	invoicer MultiShipInvoicer
+	// standing is the billing read behind the yard pick notice facts (yard_pick.go); nil = none.
+	standing InvoiceStandingReader
 }
 
 // txRecorder is the transactional half of the audit seam: write one row on the caller's transaction so

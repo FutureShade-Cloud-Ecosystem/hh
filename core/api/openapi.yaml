@@ -38852,6 +38852,12 @@ components:
         picked_at:
           type: string
           format: date-time
+        short_reason:
+          type: string
+          description: Why the line came up short; absent on a full pick
+        short_note:
+          type: string
+          description: The yard's note on a short line; absent when none was given
     TaskPickQueueEntry:
       type: object
       description: "One row of the yard board: the task (the operational truth) joined in memory to its pick ticket, shortage history and recorded pick."
@@ -38930,6 +38936,19 @@ components:
           description: DECIMAL as string
         uom:
           type: string
+        short_reason:
+          type: string
+          enum:
+            - CONDENSED_SKIDS
+            - DAMAGED
+            - NOT_IN_YARD
+            - COUNT_CORRECTION
+            - OTHER
+          description: Required when qty_picked is below qty_ordered. A picked quantity above the ordered one is refused with 400.
+        short_note:
+          type: string
+          maxLength: 400
+          description: Required when short_reason is OTHER
     TaskRecordPickRequest:
       type: object
       required:
