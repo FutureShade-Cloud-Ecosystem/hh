@@ -229,6 +229,18 @@ func (s *Service) prepareReturn(ctx context.Context, in ReturnInput) (*returnPla
 	if !found {
 		return nil, errReturnNotFound
 	}
+	// An order_id and an order_no that name different sales are refused outright: the id would win
+	// and the number would be silently ignored, so a clerk's typo could ring a return on a sale they
+	// did not mean.
+	if in.OrderID != "" && ref != "" {
+		named, namedFound, nerr := s.store.ReturnOrderContextFor(ctx, "", ref, reachableBranches(callerForRef))
+		if nerr != nil {
+			return nil, nerr
+		}
+		if !namedFound || named.OrderID != oc.OrderID {
+			return nil, clientErr(http.StatusConflict, "pos: order_id and order_no name different sales")
+		}
+	}
 	plan.oc = oc
 	// The branch wall runs BEFORE any rail, before any write and before the
 	// idempotent replay (X2, fixing HH-218; the lead's P2-2 ruling): no

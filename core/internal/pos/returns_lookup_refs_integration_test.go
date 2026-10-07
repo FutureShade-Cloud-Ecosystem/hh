@@ -121,3 +121,22 @@ func TestIntegration_ReturnsLookupRefs_ABareNumberFindsTheCallersOwnSaleNotANewe
 		t.Fatalf("the full foreign number still meets the wall, got %d", code)
 	}
 }
+
+// PR 255 review P3: a commit whose order_id and order_no name different sales is refused outright.
+func TestIntegration_ReturnsLookupRefs_ACommitWithTwoDifferentSalesIsRefused(t *testing.T) {
+	s := newTrentonStack(t)
+	own := s.ringSale(uuid.NewString(), trentonBranchID, s.trentonTill, "trenton", []float64{6}, TenderCash)
+	other := s.ringSale(uuid.NewString(), trentonBranchID, s.trentonTill, "trenton", []float64{6}, TenderCash)
+	body := s.returnBody(uuid.NewString(), own, 0, RefundCash, 1)
+	body["order_no"] = other.OrderNo
+	rec := s.do(http.MethodPost, "/api/v1/pos/returns", s.bearer(trentonClerkSub), "", body)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("an order_id and an order_no naming different sales must be refused, got %d: %s", rec.Code, rec.Body.String())
+	}
+	// The agreeing pair commits.
+	ok := s.returnBody(uuid.NewString(), own, 0, RefundCash, 1)
+	ok["order_no"] = own.OrderNo
+	if rec := s.do(http.MethodPost, "/api/v1/pos/returns", s.bearer(trentonClerkSub), "", ok); rec.Code != http.StatusCreated {
+		t.Fatalf("a consistent pair must commit, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
