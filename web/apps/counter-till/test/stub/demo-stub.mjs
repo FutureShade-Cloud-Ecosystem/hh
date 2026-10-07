@@ -511,11 +511,16 @@ let LAST_RETURN_BODY = null;
 const RETURN_META = new Map();
 
 // The approval above which a refund needs a manager, and the roles that hold
-// the approval, as the demo dealer's configuration sets them (D49's 250.00
-// and its two approver roles). The real values are RT-B's configuration read;
-// this stub pins the demo's.
+// the approval, as a dealer that keeps the rule sets them (D49's 250.00 and
+// its two approver roles). The demo dealer's configuration turns the rule off
+// (refund_approval_limit_enabled false, decision log rows 1047 and 1073), so
+// the stub starts in the demo's mode: no refund asks for an approval. Setting
+// CT_REFUND_APPROVAL_LIMIT=on starts it the other way, and the harness-only
+// POST /_stub/refund-approval-limit flips it mid run, which is how the suite
+// keeps the approval path under test for a dealer where the rule applies.
 const APPROVAL_AMOUNT_CENTS = 25000;
 const APPROVER_ROLES = ["sales_manager", "branch_manager"];
+let approvalLimitEnabled = process.env.CT_REFUND_APPROVAL_LIMIT === "on";
 
 let RETURN_SEQ = 0;
 
@@ -875,7 +880,7 @@ function returnsRefusal(caller, body, approver) {
     }
   }
   const totalCents = returnTotal(sale, body.lines);
-  if (totalCents > APPROVAL_AMOUNT_CENTS && !APPROVER_ROLES.includes(caller.account.role_code) && !approver.present) {
+  if (approvalLimitEnabled && totalCents > APPROVAL_AMOUNT_CENTS && !APPROVER_ROLES.includes(caller.account.role_code) && !approver.present) {
     return {
       status: 409,
       body: {
@@ -1149,7 +1154,18 @@ const server = createServer(async (request, response) => {
       lastReturnBody: LAST_RETURN_BODY,
       sightings: SIGHTINGS,
       previewCalls,
+      approvalLimitEnabled,
       returns: [...RETURN_META.entries()].map(([key, meta]) => ({ key, ...meta })),
+    });
+    return;
+  }
+
+  if (request.method === "POST" && path === "/_stub/refund-approval-limit") {
+    // Harness-only: switches the stub between the demo dealer's configuration
+    // (no approval threshold) and a dealer that keeps the 250.00 rule.
+    readBody(request, (parsed) => {
+      approvalLimitEnabled = parsed !== null && typeof parsed === "object" && parsed.enabled === true;
+      respondJson(response, 200, { approvalLimitEnabled });
     });
     return;
   }

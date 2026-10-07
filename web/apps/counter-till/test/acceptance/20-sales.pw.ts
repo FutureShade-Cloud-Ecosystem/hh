@@ -1,7 +1,7 @@
 // The eleven screens of the plan's section 2 as the clerk: the way in, the
 // drawer, a sale, a contractor's pavers, an account the credit gate refuses,
 // tender and receipt, parked sales, a return within 250.00, a return above it
-// with the manager walking over, a Kingston sale refused, and beyond the till.
+// that commits with no approval at the demo dealer, a Kingston sale refused, and beyond the till.
 // Driven against the demo image's own app and core; every figure the screen
 // shows is held against what the core answers through its own reads, and a
 // screenshot names every screen.
@@ -23,7 +23,6 @@ import {
   openParked,
   openStep,
   openingFloat,
-  paceMint,
   pickCustomer,
   returnLineInputs,
   ring,
@@ -434,11 +433,14 @@ test("a return within 250.00: refunded in cash, and the drawer's expected cash d
   await shotParts(page, "sales-08-return-within", testInfo, [zBefore, receiptPicture, zAfter]);
 });
 
-test("a return above 250.00: refused with the amount and approvers named, completed by the manager's card at the clerk's till", async ({
+test("a return above 250.00 at the demo dealer: no approval threshold, so the clerk's own refund commits with no refusal and no dialog", async ({
   page,
 }, testInfo) => {
+  // The demo dealer's configuration turns the refund approval threshold off
+  // (refund_approval_limit_enabled false, decision log rows 1047 and 1073): a
+  // refund of any size commits as the clerk, with nobody approving it.
   await signIn(page, "Sales");
-  // A sale whose refund crosses the dealer's approval amount: sixty wall blocks.
+  // A sale whose refund would have crossed the old 250.00 amount: sixty wall blocks.
   await searchAndAdd(page, "DEMO-WALL-BLOCK", "Retaining Wall Block 8x18 (demo)");
   await setQuantity(page, "Retaining Wall Block 8x18 (demo)", "60");
   await expect(lineRow(page, "Retaining Wall Block 8x18 (demo)").locator(".ltot")).toHaveText(cad(75000));
@@ -452,45 +454,29 @@ test("a return above 250.00: refused with the amount and approvers named, comple
   await expect(page.getByTestId("returns-sale")).toContainText(orderNo);
   await returnLineInputs(page).first().fill("60");
   await page.getByRole("button", { name: "Cash", exact: true }).click();
+  const bearer0 = await mint(page, "sales");
   const payoutsOf = async (): Promise<number> => {
     const drawer = await openDrawer(page, bearer0);
     const read = await staffGet(page, bearer0, `/api/v1/till/sessions/${drawer}`);
     const rows = read.body.movements as Array<{ movement_type: string; amount_cents: number }>;
     return rows.filter((m) => m.movement_type === "PAID_OUT" && m.amount_cents === 84750).length;
   };
-  const bearer0 = await mint(page, "sales");
   const payoutsBefore = await payoutsOf();
   await page.getByRole("button", { name: "Refund cash" }).click();
-
-  const refusal = page.getByTestId("refund-refusal");
-  await expect(refusal).toContainText("$250.00");
-  await expect(refusal).toContainText("Sales manager");
-  await expect(refusal).toContainText("Branch manager");
-  await expect(page.getByRole("dialog")).toHaveCount(0);
-  await shot(page, "sales-09-refused", testInfo);
-
-  // The manager walks over and taps their own card at the clerk's till.
-  await refusal.getByRole("button", { name: "Manager approval" }).click();
-  const dialog = page.getByRole("dialog", { name: "Manager approval" });
-  await expect(dialog).toBeVisible();
-  await expect(dialog).toContainText("the till stays the clerk's");
-  await shot(page, "sales-09-dialog", testInfo);
-  // The approver's card mints the manager credential: the same paced tap a
-  // person gives it.
-  await paceMint(page);
-  await dialog.getByRole("button", { name: "Sales manager" }).click();
 
   const refund = page.getByTestId("refund-receipt");
   await expect(refund).toBeVisible();
   await expect(refund).toContainText("$847.50");
-  await expect(refund).toContainText("Approved by Sales manager (demo).");
   await expect(refund).toContainText("Rung by Sales (demo).");
+  // No refusal, no dialog and no approver line at any point of the path.
+  await expect(refund).not.toContainText("Approved by");
+  await expect(page.getByTestId("refund-refusal")).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   // The till is still the clerk's.
   await expect(page.getByTestId("signed-in-role")).toHaveText("Sales");
-  await expect(page.getByRole("dialog")).toHaveCount(0);
-  // The approved refund went through once: the core holds exactly one return
-  // for the sale (its line fully returned) and exactly one drawer movement
-  // paying it out of the shared drawer, named for the return.
+  // The refund went through once, on the first send: the core holds exactly
+  // one return for the sale (its line fully returned) and exactly one drawer
+  // movement paying it out of the shared drawer.
   const bearer2 = await mint(page, "sales");
   const lookupPath = `/api/v1/pos/returns/lookup?order_no=${encodeURIComponent(orderNo)}`;
   const after = await staffGet(page, bearer2, lookupPath);
@@ -508,16 +494,14 @@ test("a return above 250.00: refused with the amount and approvers named, comple
     reference: string;
   }>;
   const payouts = movements.filter((m) => m.movement_type === "PAID_OUT" && m.amount_cents === 84750);
-  // The refused attempt moved nothing and the approved one moved once: the
-  // shared drawer gained exactly one payout of the refund.
-  expect(payouts.length - payoutsBefore, "exactly one drawer movement carries the approved refund").toBe(1);
+  expect(payouts.length - payoutsBefore, "exactly one drawer movement carries the refund").toBe(1);
   // The picture holds the three places the claim lives: the receipt naming
-  // both people, the sale's lines read back with the single return, and the
-  // drawer's own record with the single payout.
+  // the clerk alone, the sale's lines read back with the single return, and
+  // the drawer's own record with the single payout.
   const receiptPicture = await page.getByTestId("refund-receipt").screenshot();
   const lookupPicture = await apiPicture(page, bearer2, lookupPath);
   const detailPicture = await apiPicture(page, bearer2, detailPath);
-  await shotParts(page, "sales-09-approved", testInfo, [receiptPicture, lookupPicture, detailPicture]);
+  await shotParts(page, "sales-09-committed", testInfo, [receiptPicture, lookupPicture, detailPicture]);
 });
 
 test("a Kingston sale: refused in words before anything lays out", async ({ page }, testInfo) => {
