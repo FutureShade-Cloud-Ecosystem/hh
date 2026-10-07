@@ -156,6 +156,34 @@ func TestIntegration_CounterDiscount_EndToEnd(t *testing.T) {
 			t.Fatalf("%s: a refused discount wrote a sale", name)
 		}
 	}
+
+	// The approvers read: the Trenton Sales manager only (a clerk, the global General Manager and
+	// Kingston's manager are not named); a Kingston-only caller is walled off Trenton's list.
+	rec = s.do(http.MethodGet, "/api/v1/pos/discount-approvers?branch_id="+trentonBranchID, s.bearer(trentonClerkSub), "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("approvers: %d %s", rec.Code, rec.Body.String())
+	}
+	items := s.decodeBody(rec)["items"].([]any)
+	found := false
+	for _, it := range items {
+		m := it.(map[string]any)
+		switch m["id"] {
+		case managerUserID:
+			found = true
+			if m["role_label"] != "Sales Manager" {
+				t.Fatalf("the manager's role label: %v", m)
+			}
+		case clerkUserID, adminUserID, "5d1b0000-0000-4000-9000-0000000000c4":
+			t.Fatalf("%v must not be named as an approver at Trenton", m)
+		}
+	}
+	if !found {
+		t.Fatalf("the Trenton Sales manager must be named: %v", items)
+	}
+	rec = s.do(http.MethodGet, "/api/v1/pos/discount-approvers?branch_id="+trentonBranchID, s.bearer(kingstonClerkSub), "", nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("a Kingston login must not read Trenton's approvers, got %d", rec.Code)
+	}
 }
 
 // A return of a discounted line refunds what was paid, the discount already out of the line.

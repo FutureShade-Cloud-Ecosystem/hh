@@ -3915,6 +3915,14 @@ export type PosDiscountInput = {
   amount_cents?: number;
   approved_by: string;
 };
+export type PosDiscountApprover = {
+  id: string;
+  name: string;
+  role_label: string;
+};
+export type PosDiscountApproverList = {
+  items: PosDiscountApprover[];
+};
 export type PosSaleDiscount = {
   scope: "LINE" | "SALE";
   line_no?: number;

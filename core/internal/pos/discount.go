@@ -213,6 +213,28 @@ func (s *Service) resolveApprover(ctx context.Context, branchID, id string, cach
 	return a, nil
 }
 
+// ListDiscountApprovers answers the managers a till person may name at the branch: id, display
+// name and the role label. Behind the counter till surface at read, and the branch wall every
+// branch read takes (D49).
+func (s *Service) ListDiscountApprovers(ctx context.Context, branchID string) ([]DiscountApprover, error) {
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := requireBranchReach(caller, branchID); err != nil {
+		return nil, err
+	}
+	list, err := s.discountApprovers(ctx, branchID, "")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]DiscountApprover, len(list))
+	for i, e := range list {
+		out[i] = e.DiscountApprover
+	}
+	return out, nil
+}
+
 // applyDiscounts takes the priced lines (LineTotalCents the list line total) and the optional
 // ticket discount, applies every manual discount, and returns what the ring and the preview both
 // need. It mutates the lines: after it each LineTotalCents is net of every discount, which is

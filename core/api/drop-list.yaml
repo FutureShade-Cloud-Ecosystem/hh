@@ -82,5 +82,7 @@ additions:
     reason: "The counter's payment door on a converted quote's order (plan 1.1, QD-5): raises the order's invoice at the agreed totals and settles the payment through the payments settle; the ERP's one payment route is the register's record-payment against an existing invoice and no route finds the order a quote became; no ERP source route."
   - route: "POST /api/v1/pos/sale-preview"
     reason: "Row 985: the read-only sale preview; the sale's own body without any tender priced through the ring's own resolver, so the counter sees the subtotal, each tax line and the total before the ring; no ERP source route."
+  - route: "GET /api/v1/pos/discount-approvers"
+    reason: "Row 1047 item 3: the managers a till person may name as the approver of a counter discount, the logins the dealer's own-branch clearing list admits at the branch; the discount stays verbal with no approval queue and the ring refuses any approver not on this list; no ERP source route."
   - route: "GET /api/v1/quotes/{id}/customer-view"
     reason: "The staff preview of the customer's quote page: the public view built by the same code path, never minting a link, moving the status, scheduling a follow-up or logging a view, with acceptable false and preview true; no ERP source route."

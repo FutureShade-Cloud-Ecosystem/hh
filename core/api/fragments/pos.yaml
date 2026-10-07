@@ -292,6 +292,41 @@ paths:
                 $ref: "#/components/schemas/PosSalespersonPage"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/pos/discount-approvers:
+    get:
+      operationId: posListDiscountApprovers
+      tags: [staff-pos]
+      summary: List the managers a till person may name as the approver of a discount
+      description: >-
+        The "Approved by" picker of the counter's Discount action: the active
+        logins whose grants reach the branch and whose role the dealer's
+        configuration lets clear a price in its own branch (the same
+        own-branch clearing list the quote side's floor clearing reads), one
+        row per login by display name, with the role label the receipt prints.
+        The list is the rule the sale applies to approved_by, so a name from
+        this list is a name the ring accepts. The branch wall every branch
+        read takes applies.
+      x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
+        reason: lists the managers who may approve a counter discount and writes nothing
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The approvers at the branch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosDiscountApproverList"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /api/v1/pos/margin-glance:
     post:
       operationId: posMarginGlance
@@ -1622,6 +1657,21 @@ components:
         percent_bps: { type: integer, format: int32, minimum: 1, maximum: 10000, description: "Basis points, 1250 is 12.5 percent" }
         amount_cents: { type: integer, format: int64, minimum: 1, description: Cents off; not more than what it comes off }
         approved_by: { type: string, format: uuid, description: The approving manager's staff id }
+    PosDiscountApprover:
+      type: object
+      description: One manager a till person may name
+      required: [id, name, role_label]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        role_label: { type: string, description: The role label the receipt prints, never a name }
+    PosDiscountApproverList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PosDiscountApprover" }
     PosSaleDiscount:
       type: object
       description: One manual discount on a committed sale, with the role of the manager who approved it

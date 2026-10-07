@@ -4605,6 +4605,16 @@ type PosDiscountInput struct {
 	ApprovedBy  string `json:"approved_by"`
 }
 
+type PosDiscountApprover struct {
+	Id        string `json:"id"`
+	Name      string `json:"name"`
+	RoleLabel string `json:"role_label"`
+}
+
+type PosDiscountApproverList struct {
+	Items []PosDiscountApprover `json:"items"`
+}
+
 type PosSaleDiscount struct {
 	Scope           string `json:"scope"`
 	LineNo          *int32 `json:"line_no,omitempty"`

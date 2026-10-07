@@ -3,6 +3,7 @@ package pos
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -270,6 +271,26 @@ func TestDiscount_ReplayReportsTheDiscounts(t *testing.T) {
 	if !out.Replayed || out.DiscountCents != 1000 || len(out.Discounts) != 1 || out.Discounts[0].ApprovedByLabel != "Sales Manager" {
 		t.Fatalf("replay lost the discount: %+v", out)
 	}
+}
+
+// The managers a till person may name: only logins on the dealer's list, one row each, by name.
+func TestDiscount_ApproversRead(t *testing.T) {
+	h := newHarness()
+	withApprovers(h)
+	h.store.discountStaff = append(h.store.discountStaff,
+		discountStaffRow{UserID: mgrSales, Name: "Sales Mgr", RoleID: "inside_sales", RoleLabel: "Inside Sales", Tier: 3})
+	got, err := h.svc.ListDiscountApprovers(context.Background(), "branch-trt")
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(got) != 2 || got[0].ID != mgrBranch || got[0].RoleLabel != "Branch Manager" || got[1].ID != mgrSales {
+		t.Fatalf("want [Branch Mgr, Sales Mgr], got %+v", got)
+	}
+	h.caller.Scope = "branch"
+	h.caller.Branches = map[string]bool{"other": true}
+	_, err = h.svc.ListDiscountApprovers(context.Background(), "branch-trt")
+	wantRefusal(t, err, http.StatusForbidden, "branch")
+	_ = errors.New
 }
 
 // withClearingOff reloads the decided default with the own-branch clearing setting off.

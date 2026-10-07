@@ -48,6 +48,9 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/pos/stock-glance", g.RequireStaff(h.staff(h.stockGlance)))
 	// DIB-488 rev 6 (item D): the counter's salesperson selector, active staff, id + name only.
 	r.Handle("GET /api/v1/pos/salespeople", g.RequireStaff(h.staff(h.listSalespeople)))
+	// The managers a till person may name when giving a discount at the branch (discount.go): id,
+	// display name and role label of the logins the dealer's own-branch clearing list admits.
+	r.Handle("GET /api/v1/pos/discount-approvers", g.RequireStaff(h.staff(h.listDiscountApprovers)))
 	// DIB-488 rev 8 (item 10): the role-gated margin glance, requireStaff at the door, the
 	// dealer's margin_visibility gate at the MARSHAL layer inside (non-allowed roles get `{}`).
 	r.Handle("POST /api/v1/pos/margin-glance", g.RequireStaff(h.staff(h.marginGlance)))
@@ -406,6 +409,16 @@ func (h *Handler) capture(w http.ResponseWriter, r *http.Request, caller guards.
 // listSalespeople answers the counter's salesperson selector (DIB-488 rev 6, item D).
 func (h *Handler) listSalespeople(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	out, err := h.svc.ListSalespeople(r.Context())
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+// listDiscountApprovers answers the counter's "Approved by" picker for one branch.
+func (h *Handler) listDiscountApprovers(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	out, err := h.svc.ListDiscountApprovers(r.Context(), strings.TrimSpace(r.URL.Query().Get("branch_id")))
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
