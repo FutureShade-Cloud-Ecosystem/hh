@@ -205,6 +205,14 @@
   --hh-radius-pill: 999px;
   --hh-radius-widget: 16px;
 
+  /* ── control sizes, by role ─────────────────────────────────────────────────
+     The one height of a form control: the sheet's button and .control faces
+     take it, and a consumer rows its own controls onto the same token so a
+     form row reads as one system (the demo polish round 2 bounds tests pin
+     their rows to it live). Theme-invariant like the spacing grid and the
+     radii: a control does not change height between themes. */
+  --hh-h-input: 44px;
+
   /* ── elevation: exactly two levels, resting and raised ───────────────────────
      Dark lifts with the SURFACE step and takes no resting shadow; light lifts
      with the shadow (the ERP's two-layer light shadow: a 1px contact shadow and
@@ -445,7 +453,7 @@ show at the window width and look the same, which is what their labels say.</p>
       <ul class="lines"><!--lit-part--><!--lit-part YOF8JOkazYc=--><li class="line"><span class="name"><!--lit-part-->Paver, 60mm, charcoal<!--/lit-part--></span><span class="qty"><!--lit-part-->640 sq ft<!--/lit-part--></span></li><!--/lit-part--><!--lit-part YOF8JOkazYc=--><li class="line"><span class="name"><!--lit-part-->Edge restraint, 8 ft steel<!--/lit-part--></span><span class="qty"><!--lit-part-->24 ea<!--/lit-part--></span></li><!--/lit-part--><!--lit-part YOF8JOkazYc=--><li class="line"><span class="name"><!--lit-part-->Bedding sand, washed<!--/lit-part--></span><span class="qty"><!--lit-part-->9 tonne<!--/lit-part--></span></li><!--/lit-part--><!--/lit-part--></ul>
       <div class="summary"><span>3 lines on the ticket</span><span>all priced</span></div>
     </div><!--/lit-part-->
-    <!--lit-part 7jkkwuTBPig=--><div class="kit-actions" data-live="true"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="confirm"><!--lit-part-->Confirm load<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary"  data-action="rescan"><!--lit-part-->Rescan<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
+    <!--lit-part 7jkkwuTBPig=--><div class="kit-actions" data-live="true"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="confirm"><!--lit-part--><!--/lit-part--><!--lit-part-->Confirm load<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary"  data-action="rescan"><!--lit-part--><!--/lit-part--><!--lit-part-->Rescan<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
   </div><!--/lit-part--></template></hh-scan-and-confirm></div></figure>
 <figure class="cell" data-cell="hh-scan-and-confirm/empty"><figcaption>scan-and-confirm / empty</figcaption><div class="cell-body"><hh-scan-and-confirm state="empty"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-scan-and-confirm.css"><!--lit-part 9CGu8XYTGqg=--><!--lit-node 0--><div
     class="kit-root"
@@ -538,7 +546,7 @@ show at the window width and look the same, which is what their labels say.</p>
       <ul class="lines"><!--lit-part--><!--lit-part YOF8JOkazYc=--><li class="line"><span class="name"><!--lit-part-->Paver, 60mm, charcoal<!--/lit-part--></span><span class="qty"><!--lit-part-->640 sq ft<!--/lit-part--></span></li><!--/lit-part--><!--lit-part YOF8JOkazYc=--><li class="line"><span class="name"><!--lit-part-->Edge restraint, 8 ft steel<!--/lit-part--></span><span class="qty"><!--lit-part-->24 ea<!--/lit-part--></span></li><!--/lit-part--><!--lit-part YOF8JOkazYc=--><li class="line"><span class="name"><!--lit-part-->Bedding sand, washed<!--/lit-part--></span><span class="qty"><!--lit-part-->9 tonne<!--/lit-part--></span></li><!--/lit-part--><!--/lit-part--></ul>
       <div class="summary"><span>3 lines on the ticket</span><span>all priced</span></div>
     </div><!--/lit-part-->
-    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="confirm"><!--lit-part-->Confirm load<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="rescan"><!--lit-part-->Rescan<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
+    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="confirm"><!--lit-part--><!--/lit-part--><!--lit-part-->Confirm load<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="rescan"><!--lit-part--><!--/lit-part--><!--lit-part-->Rescan<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
   </div><!--/lit-part--></template></hh-scan-and-confirm></div></figure>
 <figure class="cell" data-cell="hh-scan-and-confirm/conflict"><figcaption>scan-and-confirm / conflict</figcaption><div class="cell-body"><hh-scan-and-confirm state="conflict"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-scan-and-confirm.css"><!--lit-part 9CGu8XYTGqg=--><!--lit-node 0--><div
     class="kit-root"
@@ -576,7 +584,7 @@ show at the window width and look the same, which is what their labels say.</p>
       <ul class="lines"><!--lit-part--><!--lit-part YOF8JOkazYc=--><li class="line"><span class="name"><!--lit-part-->Paver, 60mm, charcoal<!--/lit-part--></span><span class="qty"><!--lit-part-->640 sq ft<!--/lit-part--></span></li><!--/lit-part--><!--lit-part YOF8JOkazYc=--><li class="line"><span class="name"><!--lit-part-->Edge restraint, 8 ft steel<!--/lit-part--></span><span class="qty"><!--lit-part-->24 ea<!--/lit-part--></span></li><!--/lit-part--><!--lit-part YOF8JOkazYc=--><li class="line"><span class="name"><!--lit-part-->Bedding sand, washed<!--/lit-part--></span><span class="qty"><!--lit-part-->9 tonne<!--/lit-part--></span></li><!--/lit-part--><!--/lit-part--></ul>
       <div class="summary"><span>3 lines on the ticket</span><span>all priced</span></div>
     </div><!--/lit-part-->
-    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="review"><!--lit-part-->Review changes<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="confirm"><!--lit-part-->Confirm load<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="rescan"><!--lit-part-->Rescan<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
+    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="review"><!--lit-part--><!--/lit-part--><!--lit-part-->Review changes<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="confirm"><!--lit-part--><!--/lit-part--><!--lit-part-->Confirm load<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="rescan"><!--lit-part--><!--/lit-part--><!--lit-part-->Rescan<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
   </div><!--/lit-part--></template></hh-scan-and-confirm></div></figure>
 <figure class="cell" data-cell="hh-scan-and-confirm/error"><figcaption>scan-and-confirm / error</figcaption><div class="cell-body"><hh-scan-and-confirm state="error"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-scan-and-confirm.css"><!--lit-part 9CGu8XYTGqg=--><!--lit-node 0--><div
     class="kit-root"
@@ -604,7 +612,7 @@ show at the window width and look the same, which is what their labels say.</p>
     <span class="state-label"><!--lit-part-->Something went wrong<!--/lit-part--></span>
   </div><!--/lit-part-->
         <p class="state-note"><!--lit-part-->The last action did not complete. Nothing was lost.<!--/lit-part--></p>
-        <!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="retry"><!--lit-part-->Try again<!--/lit-part--></button><!--/lit-part-->
+        <!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="retry"><!--lit-part--><!--/lit-part--><!--lit-part-->Try again<!--/lit-part--></button><!--/lit-part-->
       </div><!--/lit-part-->
     <!--lit-part--><!--/lit-part-->
     <!--lit-part--><!--/lit-part-->
@@ -630,7 +638,7 @@ show at the window width and look the same, which is what their labels say.</p>
         </dl>
       </div>
     </div><!--/lit-part-->
-    <!--lit-part 7jkkwuTBPig=--><div class="kit-actions" data-live="true"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="open"><!--lit-part-->Open detail<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary"  data-action="assign"><!--lit-part-->Assign crew<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
+    <!--lit-part 7jkkwuTBPig=--><div class="kit-actions" data-live="true"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="open"><!--lit-part--><!--/lit-part--><!--lit-part-->Open detail<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary"  data-action="assign"><!--lit-part--><!--/lit-part--><!--lit-part-->Assign crew<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
   </div><!--/lit-part--></template></hh-list-detail></div></figure>
 <figure class="cell" data-cell="hh-list-detail/empty"><figcaption>list-detail / empty</figcaption><div class="cell-body"><hh-list-detail state="empty"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-list-detail.css"><!--lit-part 9CGu8XYTGqg=--><!--lit-node 0--><div
     class="kit-root"
@@ -729,7 +737,7 @@ show at the window width and look the same, which is what their labels say.</p>
         </dl>
       </div>
     </div><!--/lit-part-->
-    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="open"><!--lit-part-->Open detail<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="assign"><!--lit-part-->Assign crew<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
+    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="open"><!--lit-part--><!--/lit-part--><!--lit-part-->Open detail<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="assign"><!--lit-part--><!--/lit-part--><!--lit-part-->Assign crew<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
   </div><!--/lit-part--></template></hh-list-detail></div></figure>
 <figure class="cell" data-cell="hh-list-detail/conflict"><figcaption>list-detail / conflict</figcaption><div class="cell-body"><hh-list-detail state="conflict"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-list-detail.css"><!--lit-part 9CGu8XYTGqg=--><!--lit-node 0--><div
     class="kit-root"
@@ -773,7 +781,7 @@ show at the window width and look the same, which is what their labels say.</p>
         </dl>
       </div>
     </div><!--/lit-part-->
-    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="review"><!--lit-part-->Review changes<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="open"><!--lit-part-->Open detail<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="assign"><!--lit-part-->Assign crew<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
+    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="review"><!--lit-part--><!--/lit-part--><!--lit-part-->Review changes<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="open"><!--lit-part--><!--/lit-part--><!--lit-part-->Open detail<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="assign"><!--lit-part--><!--/lit-part--><!--lit-part-->Assign crew<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
   </div><!--/lit-part--></template></hh-list-detail></div></figure>
 <figure class="cell" data-cell="hh-list-detail/error"><figcaption>list-detail / error</figcaption><div class="cell-body"><hh-list-detail state="error"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-list-detail.css"><!--lit-part 9CGu8XYTGqg=--><!--lit-node 0--><div
     class="kit-root"
@@ -801,7 +809,7 @@ show at the window width and look the same, which is what their labels say.</p>
     <span class="state-label"><!--lit-part-->Something went wrong<!--/lit-part--></span>
   </div><!--/lit-part-->
         <p class="state-note"><!--lit-part-->The last action did not complete. Nothing was lost.<!--/lit-part--></p>
-        <!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="retry"><!--lit-part-->Try again<!--/lit-part--></button><!--/lit-part-->
+        <!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="retry"><!--lit-part--><!--/lit-part--><!--lit-part-->Try again<!--/lit-part--></button><!--/lit-part-->
       </div><!--/lit-part-->
     <!--lit-part--><!--/lit-part-->
     <!--lit-part--><!--/lit-part-->
@@ -847,7 +855,7 @@ show at the window width and look the same, which is what their labels say.</p>
         <div class="field-value">640 sq ft</div>
       </div>
     </div><!--/lit-part-->
-    <!--lit-part 7jkkwuTBPig=--><div class="kit-actions" data-live="true"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary"  data-action="back"><!--lit-part-->Back<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="next"><!--lit-part-->Next<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
+    <!--lit-part 7jkkwuTBPig=--><div class="kit-actions" data-live="true"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary"  data-action="back"><!--lit-part--><!--/lit-part--><!--lit-part-->Back<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="next"><!--lit-part--><!--/lit-part--><!--lit-part-->Next<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
   </div><!--/lit-part--></template></hh-guided-flow></div></figure>
 <figure class="cell" data-cell="hh-guided-flow/empty"><figcaption>guided-flow / empty</figcaption><div class="cell-body"><hh-guided-flow state="empty"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-guided-flow.css"><!--lit-part 9CGu8XYTGqg=--><!--lit-node 0--><div
     class="kit-root"
@@ -966,7 +974,7 @@ show at the window width and look the same, which is what their labels say.</p>
         <div class="field-value">640 sq ft</div>
       </div>
     </div><!--/lit-part-->
-    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="back"><!--lit-part-->Back<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="next"><!--lit-part-->Next<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
+    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="back"><!--lit-part--><!--/lit-part--><!--lit-part-->Back<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="next"><!--lit-part--><!--/lit-part--><!--lit-part-->Next<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
   </div><!--/lit-part--></template></hh-guided-flow></div></figure>
 <figure class="cell" data-cell="hh-guided-flow/conflict"><figcaption>guided-flow / conflict</figcaption><div class="cell-body"><hh-guided-flow state="conflict"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-guided-flow.css"><!--lit-part 9CGu8XYTGqg=--><!--lit-node 0--><div
     class="kit-root"
@@ -1030,7 +1038,7 @@ show at the window width and look the same, which is what their labels say.</p>
         <div class="field-value">640 sq ft</div>
       </div>
     </div><!--/lit-part-->
-    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="review"><!--lit-part-->Review changes<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="back"><!--lit-part-->Back<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="next"><!--lit-part-->Next<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
+    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="review"><!--lit-part--><!--/lit-part--><!--lit-part-->Review changes<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="back"><!--lit-part--><!--/lit-part--><!--lit-part-->Back<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="next"><!--lit-part--><!--/lit-part--><!--lit-part-->Next<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
   </div><!--/lit-part--></template></hh-guided-flow></div></figure>
 <figure class="cell" data-cell="hh-guided-flow/error"><figcaption>guided-flow / error</figcaption><div class="cell-body"><hh-guided-flow state="error"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-guided-flow.css"><!--lit-part 9CGu8XYTGqg=--><!--lit-node 0--><div
     class="kit-root"
@@ -1058,7 +1066,7 @@ show at the window width and look the same, which is what their labels say.</p>
     <span class="state-label"><!--lit-part-->Something went wrong<!--/lit-part--></span>
   </div><!--/lit-part-->
         <p class="state-note"><!--lit-part-->The last action did not complete. Nothing was lost.<!--/lit-part--></p>
-        <!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="retry"><!--lit-part-->Try again<!--/lit-part--></button><!--/lit-part-->
+        <!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="retry"><!--lit-part--><!--/lit-part--><!--lit-part-->Try again<!--/lit-part--></button><!--/lit-part-->
       </div><!--/lit-part-->
     <!--lit-part--><!--/lit-part-->
     <!--lit-part--><!--/lit-part-->
@@ -1090,7 +1098,7 @@ show at the window width and look the same, which is what their labels say.</p>
         <!--lit-part qFsue1iqaOM=--><!--lit-node 0--><span class="chip chip-watch"><!--lit-part--><!--/lit-part--><span class="chip-text"><!--lit-part-->2 stalled<!--/lit-part--></span></span><!--/lit-part-->
       </div>
     </div><!--/lit-part-->
-    <!--lit-part 7jkkwuTBPig=--><div class="kit-actions" data-live="true"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="open-queue"><!--lit-part-->Open pick queue<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary"  data-action="refresh"><!--lit-part-->Refresh figures<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
+    <!--lit-part 7jkkwuTBPig=--><div class="kit-actions" data-live="true"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="open-queue"><!--lit-part--><!--/lit-part--><!--lit-part-->Open pick queue<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary"  data-action="refresh"><!--lit-part--><!--/lit-part--><!--lit-part-->Refresh figures<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
   </div><!--/lit-part--></template></hh-dashboard></div></figure>
 <figure class="cell" data-cell="hh-dashboard/empty"><figcaption>dashboard / empty</figcaption><div class="cell-body"><hh-dashboard state="empty"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-dashboard.css"><!--lit-part 9CGu8XYTGqg=--><!--lit-node 0--><div
     class="kit-root"
@@ -1195,7 +1203,7 @@ show at the window width and look the same, which is what their labels say.</p>
         <!--lit-part qFsue1iqaOM=--><!--lit-node 0--><span class="chip chip-watch"><!--lit-part--><!--/lit-part--><span class="chip-text"><!--lit-part-->2 stalled<!--/lit-part--></span></span><!--/lit-part-->
       </div>
     </div><!--/lit-part-->
-    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="open-queue"><!--lit-part-->Open pick queue<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="refresh"><!--lit-part-->Refresh figures<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
+    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="open-queue"><!--lit-part--><!--/lit-part--><!--lit-part-->Open pick queue<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="refresh"><!--lit-part--><!--/lit-part--><!--lit-part-->Refresh figures<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
   </div><!--/lit-part--></template></hh-dashboard></div></figure>
 <figure class="cell" data-cell="hh-dashboard/conflict"><figcaption>dashboard / conflict</figcaption><div class="cell-body"><hh-dashboard state="conflict"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-dashboard.css"><!--lit-part 9CGu8XYTGqg=--><!--lit-node 0--><div
     class="kit-root"
@@ -1245,7 +1253,7 @@ show at the window width and look the same, which is what their labels say.</p>
         <!--lit-part qFsue1iqaOM=--><!--lit-node 0--><span class="chip chip-watch"><!--lit-part--><!--/lit-part--><span class="chip-text"><!--lit-part-->2 stalled<!--/lit-part--></span></span><!--/lit-part-->
       </div>
     </div><!--/lit-part-->
-    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="review"><!--lit-part-->Review changes<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="open-queue"><!--lit-part-->Open pick queue<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="refresh"><!--lit-part-->Refresh figures<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
+    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="review"><!--lit-part--><!--/lit-part--><!--lit-part-->Review changes<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="open-queue"><!--lit-part--><!--/lit-part--><!--lit-part-->Open pick queue<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="refresh"><!--lit-part--><!--/lit-part--><!--lit-part-->Refresh figures<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
   </div><!--/lit-part--></template></hh-dashboard></div></figure>
 <figure class="cell" data-cell="hh-dashboard/error"><figcaption>dashboard / error</figcaption><div class="cell-body"><hh-dashboard state="error"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-dashboard.css"><!--lit-part 9CGu8XYTGqg=--><!--lit-node 0--><div
     class="kit-root"
@@ -1273,7 +1281,7 @@ show at the window width and look the same, which is what their labels say.</p>
     <span class="state-label"><!--lit-part-->Something went wrong<!--/lit-part--></span>
   </div><!--/lit-part-->
         <p class="state-note"><!--lit-part-->The last action did not complete. Nothing was lost.<!--/lit-part--></p>
-        <!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="retry"><!--lit-part-->Try again<!--/lit-part--></button><!--/lit-part-->
+        <!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="retry"><!--lit-part--><!--/lit-part--><!--lit-part-->Try again<!--/lit-part--></button><!--/lit-part-->
       </div><!--/lit-part-->
     <!--lit-part--><!--/lit-part-->
     <!--lit-part--><!--/lit-part-->
@@ -1296,7 +1304,7 @@ show at the window width and look the same, which is what their labels say.</p>
         <p>The ticket total is one pallet short of the truck manifest. Confirm against the load before the driver leaves the gate.</p>
       </div>
     </div><!--/lit-part-->
-    <!--lit-part 7jkkwuTBPig=--><div class="kit-actions" data-live="true"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary"  data-action="mark-read"><!--lit-part-->Mark read<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="open-load"><!--lit-part-->Open load<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
+    <!--lit-part 7jkkwuTBPig=--><div class="kit-actions" data-live="true"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary"  data-action="mark-read"><!--lit-part--><!--/lit-part--><!--lit-part-->Mark read<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="open-load"><!--lit-part--><!--/lit-part--><!--lit-part-->Open load<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
   </div><!--/lit-part--></template></hh-inbox></div></figure>
 <figure class="cell" data-cell="hh-inbox/empty"><figcaption>inbox / empty</figcaption><div class="cell-body"><hh-inbox state="empty"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-inbox.css"><!--lit-part 9CGu8XYTGqg=--><!--lit-node 0--><div
     class="kit-root"
@@ -1392,7 +1400,7 @@ show at the window width and look the same, which is what their labels say.</p>
         <p>The ticket total is one pallet short of the truck manifest. Confirm against the load before the driver leaves the gate.</p>
       </div>
     </div><!--/lit-part-->
-    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="mark-read"><!--lit-part-->Mark read<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="open-load"><!--lit-part-->Open load<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
+    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="mark-read"><!--lit-part--><!--/lit-part--><!--lit-part-->Mark read<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="open-load"><!--lit-part--><!--/lit-part--><!--lit-part-->Open load<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
   </div><!--/lit-part--></template></hh-inbox></div></figure>
 <figure class="cell" data-cell="hh-inbox/conflict"><figcaption>inbox / conflict</figcaption><div class="cell-body"><hh-inbox state="conflict"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-inbox.css"><!--lit-part 9CGu8XYTGqg=--><!--lit-node 0--><div
     class="kit-root"
@@ -1433,7 +1441,7 @@ show at the window width and look the same, which is what their labels say.</p>
         <p>The ticket total is one pallet short of the truck manifest. Confirm against the load before the driver leaves the gate.</p>
       </div>
     </div><!--/lit-part-->
-    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="review"><!--lit-part-->Review changes<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="mark-read"><!--lit-part-->Mark read<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="open-load"><!--lit-part-->Open load<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
+    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="review"><!--lit-part--><!--/lit-part--><!--lit-part-->Review changes<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="mark-read"><!--lit-part--><!--/lit-part--><!--lit-part-->Mark read<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="open-load"><!--lit-part--><!--/lit-part--><!--lit-part-->Open load<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
   </div><!--/lit-part--></template></hh-inbox></div></figure>
 <figure class="cell" data-cell="hh-inbox/error"><figcaption>inbox / error</figcaption><div class="cell-body"><hh-inbox state="error"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-inbox.css"><!--lit-part 9CGu8XYTGqg=--><!--lit-node 0--><div
     class="kit-root"
@@ -1461,7 +1469,7 @@ show at the window width and look the same, which is what their labels say.</p>
     <span class="state-label"><!--lit-part-->Something went wrong<!--/lit-part--></span>
   </div><!--/lit-part-->
         <p class="state-note"><!--lit-part-->The last action did not complete. Nothing was lost.<!--/lit-part--></p>
-        <!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="retry"><!--lit-part-->Try again<!--/lit-part--></button><!--/lit-part-->
+        <!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="retry"><!--lit-part--><!--/lit-part--><!--lit-part-->Try again<!--/lit-part--></button><!--/lit-part-->
       </div><!--/lit-part-->
     <!--lit-part--><!--/lit-part-->
     <!--lit-part--><!--/lit-part-->
@@ -1486,7 +1494,7 @@ show at the window width and look the same, which is what their labels say.</p>
       <ul class="lines"><!--lit-part--><!--lit-part YOF8JOkazYc=--><li class="line"><span class="name"><!--lit-part-->Paver, 60mm, charcoal<!--/lit-part--></span><span class="qty"><!--lit-part-->640 sq ft<!--/lit-part--></span></li><!--/lit-part--><!--lit-part YOF8JOkazYc=--><li class="line"><span class="name"><!--lit-part-->Edge restraint, 8 ft steel<!--/lit-part--></span><span class="qty"><!--lit-part-->24 ea<!--/lit-part--></span></li><!--/lit-part--><!--lit-part YOF8JOkazYc=--><li class="line"><span class="name"><!--lit-part-->Bedding sand, washed<!--/lit-part--></span><span class="qty"><!--lit-part-->9 tonne<!--/lit-part--></span></li><!--/lit-part--><!--/lit-part--></ul>
       <div class="summary"><span>3 lines on the ticket</span><span>all priced</span></div>
     </div><!--/lit-part-->
-    <!--lit-part 7jkkwuTBPig=--><div class="kit-actions" data-live="true"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="confirm"><!--lit-part-->Confirm load<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary"  data-action="rescan"><!--lit-part-->Rescan<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
+    <!--lit-part 7jkkwuTBPig=--><div class="kit-actions" data-live="true"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="confirm"><!--lit-part--><!--/lit-part--><!--lit-part-->Confirm load<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary"  data-action="rescan"><!--lit-part--><!--/lit-part--><!--lit-part-->Rescan<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
   </div><!--/lit-part--></template></hh-scan-and-confirm></div></figure>
 <figure class="cell" data-cell="hh-scan-and-confirm/empty"><figcaption>scan-and-confirm / empty</figcaption><div class="cell-body"><hh-scan-and-confirm state="empty"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-scan-and-confirm.css"><!--lit-part 9CGu8XYTGqg=--><!--lit-node 0--><div
     class="kit-root"
@@ -1579,7 +1587,7 @@ show at the window width and look the same, which is what their labels say.</p>
       <ul class="lines"><!--lit-part--><!--lit-part YOF8JOkazYc=--><li class="line"><span class="name"><!--lit-part-->Paver, 60mm, charcoal<!--/lit-part--></span><span class="qty"><!--lit-part-->640 sq ft<!--/lit-part--></span></li><!--/lit-part--><!--lit-part YOF8JOkazYc=--><li class="line"><span class="name"><!--lit-part-->Edge restraint, 8 ft steel<!--/lit-part--></span><span class="qty"><!--lit-part-->24 ea<!--/lit-part--></span></li><!--/lit-part--><!--lit-part YOF8JOkazYc=--><li class="line"><span class="name"><!--lit-part-->Bedding sand, washed<!--/lit-part--></span><span class="qty"><!--lit-part-->9 tonne<!--/lit-part--></span></li><!--/lit-part--><!--/lit-part--></ul>
       <div class="summary"><span>3 lines on the ticket</span><span>all priced</span></div>
     </div><!--/lit-part-->
-    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="confirm"><!--lit-part-->Confirm load<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="rescan"><!--lit-part-->Rescan<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
+    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="confirm"><!--lit-part--><!--/lit-part--><!--lit-part-->Confirm load<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="rescan"><!--lit-part--><!--/lit-part--><!--lit-part-->Rescan<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
   </div><!--/lit-part--></template></hh-scan-and-confirm></div></figure>
 <figure class="cell" data-cell="hh-scan-and-confirm/conflict"><figcaption>scan-and-confirm / conflict</figcaption><div class="cell-body"><hh-scan-and-confirm state="conflict"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-scan-and-confirm.css"><!--lit-part 9CGu8XYTGqg=--><!--lit-node 0--><div
     class="kit-root"
@@ -1617,7 +1625,7 @@ show at the window width and look the same, which is what their labels say.</p>
       <ul class="lines"><!--lit-part--><!--lit-part YOF8JOkazYc=--><li class="line"><span class="name"><!--lit-part-->Paver, 60mm, charcoal<!--/lit-part--></span><span class="qty"><!--lit-part-->640 sq ft<!--/lit-part--></span></li><!--/lit-part--><!--lit-part YOF8JOkazYc=--><li class="line"><span class="name"><!--lit-part-->Edge restraint, 8 ft steel<!--/lit-part--></span><span class="qty"><!--lit-part-->24 ea<!--/lit-part--></span></li><!--/lit-part--><!--lit-part YOF8JOkazYc=--><li class="line"><span class="name"><!--lit-part-->Bedding sand, washed<!--/lit-part--></span><span class="qty"><!--lit-part-->9 tonne<!--/lit-part--></span></li><!--/lit-part--><!--/lit-part--></ul>
       <div class="summary"><span>3 lines on the ticket</span><span>all priced</span></div>
     </div><!--/lit-part-->
-    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="review"><!--lit-part-->Review changes<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="confirm"><!--lit-part-->Confirm load<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="rescan"><!--lit-part-->Rescan<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
+    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="review"><!--lit-part--><!--/lit-part--><!--lit-part-->Review changes<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="confirm"><!--lit-part--><!--/lit-part--><!--lit-part-->Confirm load<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="rescan"><!--lit-part--><!--/lit-part--><!--lit-part-->Rescan<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
   </div><!--/lit-part--></template></hh-scan-and-confirm></div></figure>
 <figure class="cell" data-cell="hh-scan-and-confirm/error"><figcaption>scan-and-confirm / error</figcaption><div class="cell-body"><hh-scan-and-confirm state="error"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-scan-and-confirm.css"><!--lit-part 9CGu8XYTGqg=--><!--lit-node 0--><div
     class="kit-root"
@@ -1645,7 +1653,7 @@ show at the window width and look the same, which is what their labels say.</p>
     <span class="state-label"><!--lit-part-->Something went wrong<!--/lit-part--></span>
   </div><!--/lit-part-->
         <p class="state-note"><!--lit-part-->The last action did not complete. Nothing was lost.<!--/lit-part--></p>
-        <!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="retry"><!--lit-part-->Try again<!--/lit-part--></button><!--/lit-part-->
+        <!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="retry"><!--lit-part--><!--/lit-part--><!--lit-part-->Try again<!--/lit-part--></button><!--/lit-part-->
       </div><!--/lit-part-->
     <!--lit-part--><!--/lit-part-->
     <!--lit-part--><!--/lit-part-->
@@ -1671,7 +1679,7 @@ show at the window width and look the same, which is what their labels say.</p>
         </dl>
       </div>
     </div><!--/lit-part-->
-    <!--lit-part 7jkkwuTBPig=--><div class="kit-actions" data-live="true"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="open"><!--lit-part-->Open detail<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary"  data-action="assign"><!--lit-part-->Assign crew<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
+    <!--lit-part 7jkkwuTBPig=--><div class="kit-actions" data-live="true"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="open"><!--lit-part--><!--/lit-part--><!--lit-part-->Open detail<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary"  data-action="assign"><!--lit-part--><!--/lit-part--><!--lit-part-->Assign crew<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
   </div><!--/lit-part--></template></hh-list-detail></div></figure>
 <figure class="cell" data-cell="hh-list-detail/empty"><figcaption>list-detail / empty</figcaption><div class="cell-body"><hh-list-detail state="empty"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-list-detail.css"><!--lit-part 9CGu8XYTGqg=--><!--lit-node 0--><div
     class="kit-root"
@@ -1770,7 +1778,7 @@ show at the window width and look the same, which is what their labels say.</p>
         </dl>
       </div>
     </div><!--/lit-part-->
-    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="open"><!--lit-part-->Open detail<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="assign"><!--lit-part-->Assign crew<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
+    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="open"><!--lit-part--><!--/lit-part--><!--lit-part-->Open detail<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="assign"><!--lit-part--><!--/lit-part--><!--lit-part-->Assign crew<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
   </div><!--/lit-part--></template></hh-list-detail></div></figure>
 <figure class="cell" data-cell="hh-list-detail/conflict"><figcaption>list-detail / conflict</figcaption><div class="cell-body"><hh-list-detail state="conflict"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-list-detail.css"><!--lit-part 9CGu8XYTGqg=--><!--lit-node 0--><div
     class="kit-root"
@@ -1814,7 +1822,7 @@ show at the window width and look the same, which is what their labels say.</p>
         </dl>
       </div>
     </div><!--/lit-part-->
-    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="review"><!--lit-part-->Review changes<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="open"><!--lit-part-->Open detail<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="assign"><!--lit-part-->Assign crew<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
+    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="review"><!--lit-part--><!--/lit-part--><!--lit-part-->Review changes<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="open"><!--lit-part--><!--/lit-part--><!--lit-part-->Open detail<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="assign"><!--lit-part--><!--/lit-part--><!--lit-part-->Assign crew<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
   </div><!--/lit-part--></template></hh-list-detail></div></figure>
 <figure class="cell" data-cell="hh-list-detail/error"><figcaption>list-detail / error</figcaption><div class="cell-body"><hh-list-detail state="error"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-list-detail.css"><!--lit-part 9CGu8XYTGqg=--><!--lit-node 0--><div
     class="kit-root"
@@ -1842,7 +1850,7 @@ show at the window width and look the same, which is what their labels say.</p>
     <span class="state-label"><!--lit-part-->Something went wrong<!--/lit-part--></span>
   </div><!--/lit-part-->
         <p class="state-note"><!--lit-part-->The last action did not complete. Nothing was lost.<!--/lit-part--></p>
-        <!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="retry"><!--lit-part-->Try again<!--/lit-part--></button><!--/lit-part-->
+        <!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="retry"><!--lit-part--><!--/lit-part--><!--lit-part-->Try again<!--/lit-part--></button><!--/lit-part-->
       </div><!--/lit-part-->
     <!--lit-part--><!--/lit-part-->
     <!--lit-part--><!--/lit-part-->
@@ -1888,7 +1896,7 @@ show at the window width and look the same, which is what their labels say.</p>
         <div class="field-value">640 sq ft</div>
       </div>
     </div><!--/lit-part-->
-    <!--lit-part 7jkkwuTBPig=--><div class="kit-actions" data-live="true"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary"  data-action="back"><!--lit-part-->Back<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="next"><!--lit-part-->Next<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
+    <!--lit-part 7jkkwuTBPig=--><div class="kit-actions" data-live="true"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary"  data-action="back"><!--lit-part--><!--/lit-part--><!--lit-part-->Back<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="next"><!--lit-part--><!--/lit-part--><!--lit-part-->Next<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
   </div><!--/lit-part--></template></hh-guided-flow></div></figure>
 <figure class="cell" data-cell="hh-guided-flow/empty"><figcaption>guided-flow / empty</figcaption><div class="cell-body"><hh-guided-flow state="empty"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-guided-flow.css"><!--lit-part 9CGu8XYTGqg=--><!--lit-node 0--><div
     class="kit-root"
@@ -2007,7 +2015,7 @@ show at the window width and look the same, which is what their labels say.</p>
         <div class="field-value">640 sq ft</div>
       </div>
     </div><!--/lit-part-->
-    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="back"><!--lit-part-->Back<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="next"><!--lit-part-->Next<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
+    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="back"><!--lit-part--><!--/lit-part--><!--lit-part-->Back<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="next"><!--lit-part--><!--/lit-part--><!--lit-part-->Next<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
   </div><!--/lit-part--></template></hh-guided-flow></div></figure>
 <figure class="cell" data-cell="hh-guided-flow/conflict"><figcaption>guided-flow / conflict</figcaption><div class="cell-body"><hh-guided-flow state="conflict"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-guided-flow.css"><!--lit-part 9CGu8XYTGqg=--><!--lit-node 0--><div
     class="kit-root"
@@ -2071,7 +2079,7 @@ show at the window width and look the same, which is what their labels say.</p>
         <div class="field-value">640 sq ft</div>
       </div>
     </div><!--/lit-part-->
-    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="review"><!--lit-part-->Review changes<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="back"><!--lit-part-->Back<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="next"><!--lit-part-->Next<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
+    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="review"><!--lit-part--><!--/lit-part--><!--lit-part-->Review changes<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="back"><!--lit-part--><!--/lit-part--><!--lit-part-->Back<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="next"><!--lit-part--><!--/lit-part--><!--lit-part-->Next<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
   </div><!--/lit-part--></template></hh-guided-flow></div></figure>
 <figure class="cell" data-cell="hh-guided-flow/error"><figcaption>guided-flow / error</figcaption><div class="cell-body"><hh-guided-flow state="error"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-guided-flow.css"><!--lit-part 9CGu8XYTGqg=--><!--lit-node 0--><div
     class="kit-root"
@@ -2099,7 +2107,7 @@ show at the window width and look the same, which is what their labels say.</p>
     <span class="state-label"><!--lit-part-->Something went wrong<!--/lit-part--></span>
   </div><!--/lit-part-->
         <p class="state-note"><!--lit-part-->The last action did not complete. Nothing was lost.<!--/lit-part--></p>
-        <!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="retry"><!--lit-part-->Try again<!--/lit-part--></button><!--/lit-part-->
+        <!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="retry"><!--lit-part--><!--/lit-part--><!--lit-part-->Try again<!--/lit-part--></button><!--/lit-part-->
       </div><!--/lit-part-->
     <!--lit-part--><!--/lit-part-->
     <!--lit-part--><!--/lit-part-->
@@ -2131,7 +2139,7 @@ show at the window width and look the same, which is what their labels say.</p>
         <!--lit-part qFsue1iqaOM=--><!--lit-node 0--><span class="chip chip-watch"><!--lit-part--><!--/lit-part--><span class="chip-text"><!--lit-part-->2 stalled<!--/lit-part--></span></span><!--/lit-part-->
       </div>
     </div><!--/lit-part-->
-    <!--lit-part 7jkkwuTBPig=--><div class="kit-actions" data-live="true"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="open-queue"><!--lit-part-->Open pick queue<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary"  data-action="refresh"><!--lit-part-->Refresh figures<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
+    <!--lit-part 7jkkwuTBPig=--><div class="kit-actions" data-live="true"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="open-queue"><!--lit-part--><!--/lit-part--><!--lit-part-->Open pick queue<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary"  data-action="refresh"><!--lit-part--><!--/lit-part--><!--lit-part-->Refresh figures<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
   </div><!--/lit-part--></template></hh-dashboard></div></figure>
 <figure class="cell" data-cell="hh-dashboard/empty"><figcaption>dashboard / empty</figcaption><div class="cell-body"><hh-dashboard state="empty"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-dashboard.css"><!--lit-part 9CGu8XYTGqg=--><!--lit-node 0--><div
     class="kit-root"
@@ -2236,7 +2244,7 @@ show at the window width and look the same, which is what their labels say.</p>
         <!--lit-part qFsue1iqaOM=--><!--lit-node 0--><span class="chip chip-watch"><!--lit-part--><!--/lit-part--><span class="chip-text"><!--lit-part-->2 stalled<!--/lit-part--></span></span><!--/lit-part-->
       </div>
     </div><!--/lit-part-->
-    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="open-queue"><!--lit-part-->Open pick queue<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="refresh"><!--lit-part-->Refresh figures<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
+    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="open-queue"><!--lit-part--><!--/lit-part--><!--lit-part-->Open pick queue<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="refresh"><!--lit-part--><!--/lit-part--><!--lit-part-->Refresh figures<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
   </div><!--/lit-part--></template></hh-dashboard></div></figure>
 <figure class="cell" data-cell="hh-dashboard/conflict"><figcaption>dashboard / conflict</figcaption><div class="cell-body"><hh-dashboard state="conflict"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-dashboard.css"><!--lit-part 9CGu8XYTGqg=--><!--lit-node 0--><div
     class="kit-root"
@@ -2286,7 +2294,7 @@ show at the window width and look the same, which is what their labels say.</p>
         <!--lit-part qFsue1iqaOM=--><!--lit-node 0--><span class="chip chip-watch"><!--lit-part--><!--/lit-part--><span class="chip-text"><!--lit-part-->2 stalled<!--/lit-part--></span></span><!--/lit-part-->
       </div>
     </div><!--/lit-part-->
-    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="review"><!--lit-part-->Review changes<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="open-queue"><!--lit-part-->Open pick queue<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="refresh"><!--lit-part-->Refresh figures<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
+    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="review"><!--lit-part--><!--/lit-part--><!--lit-part-->Review changes<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="open-queue"><!--lit-part--><!--/lit-part--><!--lit-part-->Open pick queue<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="refresh"><!--lit-part--><!--/lit-part--><!--lit-part-->Refresh figures<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
   </div><!--/lit-part--></template></hh-dashboard></div></figure>
 <figure class="cell" data-cell="hh-dashboard/error"><figcaption>dashboard / error</figcaption><div class="cell-body"><hh-dashboard state="error"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-dashboard.css"><!--lit-part 9CGu8XYTGqg=--><!--lit-node 0--><div
     class="kit-root"
@@ -2314,7 +2322,7 @@ show at the window width and look the same, which is what their labels say.</p>
     <span class="state-label"><!--lit-part-->Something went wrong<!--/lit-part--></span>
   </div><!--/lit-part-->
         <p class="state-note"><!--lit-part-->The last action did not complete. Nothing was lost.<!--/lit-part--></p>
-        <!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="retry"><!--lit-part-->Try again<!--/lit-part--></button><!--/lit-part-->
+        <!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="retry"><!--lit-part--><!--/lit-part--><!--lit-part-->Try again<!--/lit-part--></button><!--/lit-part-->
       </div><!--/lit-part-->
     <!--lit-part--><!--/lit-part-->
     <!--lit-part--><!--/lit-part-->
@@ -2337,7 +2345,7 @@ show at the window width and look the same, which is what their labels say.</p>
         <p>The ticket total is one pallet short of the truck manifest. Confirm against the load before the driver leaves the gate.</p>
       </div>
     </div><!--/lit-part-->
-    <!--lit-part 7jkkwuTBPig=--><div class="kit-actions" data-live="true"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary"  data-action="mark-read"><!--lit-part-->Mark read<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="open-load"><!--lit-part-->Open load<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
+    <!--lit-part 7jkkwuTBPig=--><div class="kit-actions" data-live="true"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary"  data-action="mark-read"><!--lit-part--><!--/lit-part--><!--lit-part-->Mark read<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="open-load"><!--lit-part--><!--/lit-part--><!--lit-part-->Open load<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
   </div><!--/lit-part--></template></hh-inbox></div></figure>
 <figure class="cell" data-cell="hh-inbox/empty"><figcaption>inbox / empty</figcaption><div class="cell-body"><hh-inbox state="empty"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-inbox.css"><!--lit-part 9CGu8XYTGqg=--><!--lit-node 0--><div
     class="kit-root"
@@ -2433,7 +2441,7 @@ show at the window width and look the same, which is what their labels say.</p>
         <p>The ticket total is one pallet short of the truck manifest. Confirm against the load before the driver leaves the gate.</p>
       </div>
     </div><!--/lit-part-->
-    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="mark-read"><!--lit-part-->Mark read<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="open-load"><!--lit-part-->Open load<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
+    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="mark-read"><!--lit-part--><!--/lit-part--><!--lit-part-->Mark read<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="open-load"><!--lit-part--><!--/lit-part--><!--lit-part-->Open load<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
   </div><!--/lit-part--></template></hh-inbox></div></figure>
 <figure class="cell" data-cell="hh-inbox/conflict"><figcaption>inbox / conflict</figcaption><div class="cell-body"><hh-inbox state="conflict"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-inbox.css"><!--lit-part 9CGu8XYTGqg=--><!--lit-node 0--><div
     class="kit-root"
@@ -2474,7 +2482,7 @@ show at the window width and look the same, which is what their labels say.</p>
         <p>The ticket total is one pallet short of the truck manifest. Confirm against the load before the driver leaves the gate.</p>
       </div>
     </div><!--/lit-part-->
-    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="review"><!--lit-part-->Review changes<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="mark-read"><!--lit-part-->Mark read<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="open-load"><!--lit-part-->Open load<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
+    <!--lit-part PBUyC53tbEE=--><div class="kit-actions" data-live="false"><!--lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="review"><!--lit-part--><!--/lit-part--><!--lit-part-->Review changes<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-secondary" disabled data-action="mark-read"><!--lit-part--><!--/lit-part--><!--lit-part-->Mark read<!--/lit-part--></button><!--/lit-part--><!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary" disabled data-action="open-load"><!--lit-part--><!--/lit-part--><!--lit-part-->Open load<!--/lit-part--></button><!--/lit-part--><!--/lit-part--></div><!--/lit-part-->
   </div><!--/lit-part--></template></hh-inbox></div></figure>
 <figure class="cell" data-cell="hh-inbox/error"><figcaption>inbox / error</figcaption><div class="cell-body"><hh-inbox state="error"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-inbox.css"><!--lit-part 9CGu8XYTGqg=--><!--lit-node 0--><div
     class="kit-root"
@@ -2502,7 +2510,7 @@ show at the window width and look the same, which is what their labels say.</p>
     <span class="state-label"><!--lit-part-->Something went wrong<!--/lit-part--></span>
   </div><!--/lit-part-->
         <p class="state-note"><!--lit-part-->The last action did not complete. Nothing was lost.<!--/lit-part--></p>
-        <!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="retry"><!--lit-part-->Try again<!--/lit-part--></button><!--/lit-part-->
+        <!--lit-part 9STWgBtd+dQ=--><!--lit-node 0--><button type="button" class="btn btn-primary"  data-action="retry"><!--lit-part--><!--/lit-part--><!--lit-part-->Try again<!--/lit-part--></button><!--/lit-part-->
       </div><!--/lit-part-->
     <!--lit-part--><!--/lit-part-->
     <!--lit-part--><!--/lit-part-->

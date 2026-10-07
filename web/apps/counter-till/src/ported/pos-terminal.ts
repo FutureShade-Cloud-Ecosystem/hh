@@ -43,6 +43,7 @@ import type { HosPosParked } from './pos-parked.js';
 import { parseCompactDate } from './_date.js'; // DIB-200: compact YYYYMMDD → ISO requested-date entry
 import {
   restoreParkedCustomer,
+  cardChargeAnswer, // the card charge answers: words and the key rule in one table (unit-pinned in the card-charge-*.test.mjs legs)
   clearSaleNeedsConfirm,
   counterRingMessage, // rev 5: ringErrorMessage in counter wording (module prefix stripped, fixes named)
   creditBlockMessage, // the credit gate's refusal words, by the policy the gate named
@@ -3565,6 +3566,16 @@ export class HosPosTerminal extends LitElement {
         void this.refreshCustomerAfterRing();
         return;
       }
+      // The card charge answers: words and the key rule in one table (_pos.ts, unit-pinned).
+      // split=true: the split decline copy names what became of the leg the card money already
+      // took. A named answer clears the per-till card charge key when the table says so, so the
+      // next press is a new sale key; the panel stays open with the legs intact either way.
+      const charge = cardChargeAnswer(res.err.status, res.err.error, true);
+      if (charge) {
+        if (charge.clearsKey) this.ringKeyMemo = null;
+        this.ring = { state: 'error', msg: charge.msg };
+        return;
+      }
       if (res.err.status === 409 && res.err.error === 'credit_blocked') {
         this.dispatchEvent(
           new CustomEvent('hos-action-blocked', {
@@ -3582,12 +3593,6 @@ export class HosPosTerminal extends LitElement {
           state: 'error',
           msg: creditBlockMessage(res.err.policy, !!this.customer),
         };
-        return;
-      }
-      if (res.err.status === 402) {
-        // A declined card leg rolls the WHOLE split back server-side, so the panel stays open with
-        // the legs intact and the cashier can swap that one leg for cash.
-        this.ring = { state: 'error', msg: 'A card leg was declined: the whole sale was rolled back. Try another tender.' };
         return;
       }
       this.ring = { state: 'error', msg: counterRingMessage(res.err) };
@@ -3665,6 +3670,15 @@ export class HosPosTerminal extends LitElement {
         void this.refreshCustomerAfterRing();
         return;
       }
+      // The card charge answers: words and the key rule in one table (_pos.ts, unit-pinned).
+      // split=false: the single tender's standard decline copy. A named answer clears the
+      // per-till card charge key when the table says so, so the next press is a new sale key.
+      const charge = cardChargeAnswer(res.err.status, res.err.error, false);
+      if (charge) {
+        if (charge.clearsKey) this.ringKeyMemo = null;
+        this.ring = { state: 'error', msg: charge.msg };
+        return;
+      }
  // HH note: only the credit gate is worded here, and its words follow the
  // policy the gate named (creditBlockMessage, one rule for both ring arms): a
  // hold or an over-the-limit refusal keeps HH's reviewed account sentence,
@@ -3685,10 +3699,6 @@ export class HosPosTerminal extends LitElement {
           state: 'error',
           msg: creditBlockMessage(res.err.policy, !!this.customer),
         };
-        return;
-      }
-      if (res.err.status === 402) {
-        this.ring = { state: 'error', msg: 'Card declined: try another tender.' };
         return;
       }
       // DIB-379/F2: surface the server's real detail for EVERY ring failure (409 no-till-session, 503

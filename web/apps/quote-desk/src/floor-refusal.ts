@@ -127,6 +127,9 @@ export interface FloorRefusalSeamEvent {
 
 export const FLOOR_REFUSAL_SEAM_EVENT = "qd-floor-refusal";
 
+/** The dialog hands the host a refusal it did not open (its quote is not on screen): { quoteId, lineNo }. */
+export const FLOOR_REFUSAL_DROPPED_EVENT = "qd-floor-refusal-dropped";
+
 /**
  * The window event the dialog fires when it closes, so the surface that
  * spoke the refusal's plain message in its outcome line can take it down: the

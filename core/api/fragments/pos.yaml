@@ -38,6 +38,15 @@ paths:
                 $ref: "#/components/schemas/PosSale"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "402":
+          description: >-
+            A card leg was declined: no money moved for that leg and any card
+            already charged for this sale was reversed. The error word
+            card_charge_card_declined names the card case beside the till's
+            own decline word; the client clears its key and may re-ring.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
     get:

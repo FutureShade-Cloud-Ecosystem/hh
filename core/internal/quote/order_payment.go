@@ -324,8 +324,8 @@ func (s *StaffService) takeOrderPaymentTx(ctx context.Context, tx pgx.Tx, ps ord
 		}
 	}
 	// The payments sequence row is taken BEFORE the invoice is raised (the sequence order fix): the
-	// settle below takes the payments feed's sequence row and then the invoices feed's, and so does
-	// every other writer that both bills and settles (the register settle, the POS ring, the payments
+	// settle below takes the payments sequence row and then the invoices feed's, and so does every
+	// other writer that both bills and settles (the register settle, the POS ring, the payments
 	// settle itself). Taking the payments row first puts this action on that one order, so a settle
 	// running beside it queues behind this transaction on the payments row instead of holding it
 	// while this action holds the invoices row: the two rows in opposite orders is the 40P01 the

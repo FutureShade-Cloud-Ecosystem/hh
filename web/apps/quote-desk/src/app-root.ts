@@ -13,17 +13,26 @@
 // holds its templates to no property or event bindings): the cards and the
 // chrome controls delegate through data-action on the host.
 import { SIGN_OUT_EVENT, UNSENT_WAIT_MS, waitUpTo, type SignOutDetail } from "./quote-context.js";
-import { html, css, nothing, type TemplateResult } from "lit";
+import { html, css, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
-import { ApiClient } from "@hardscapehouse/api-client";
+// The shared chrome (item 5, decision log row 938): the element registers
+// itself; the app feeds it through the wiring pass below, the same
+// no-template-binding discipline the builder's client rides.
+import "@hardscapehouse/design-system/src/header.js";
+import { ApiClient, staffFeedback } from "@hardscapehouse/api-client";
+import {
+  HHFeedback,
+  type FeedbackSender,
+} from "@hardscapehouse/design-system/src/feedback.js";
 import { AuthController, SessionStore, authHeaderProvider } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { entryStyles, renderEntry, type FlowsState } from "@hardscapehouse/pos-kit/src/ported/entry.js";
-import { demoBanner, demoBannerStyles } from "./demo-banner.js";
+import { clearFrontDoorHandoff, readFrontDoorHandoff } from "./demo-account.js";
 import { HOUSE_ZONE, houseDayInZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import { setBranches, wirePorts, clearSessionState, type AuthUser } from "@hardscapehouse/pos-kit/src/ported/ports.js";
 import { QdClient, type BranchRef } from "./qd-client.js";
+import { LIST_ROUTE, parseRoute, routeHash, type DeskRoute } from "./quote-router.js";
 import { THEME_LABEL, ThemeController, themeControlLabel, themeStatusText } from "./theme.js";
 // The builder shell registers the work area and the panel seams.
 import "./quote-builder.js";
@@ -33,7 +42,6 @@ const DEMO_ORG = "hh-demo";
 export class QuoteDeskApp extends HHElement {
   static styles = [
     baseStyles,
-    demoBannerStyles,
     entryStyles,
     css`
       :host {
@@ -42,77 +50,26 @@ export class QuoteDeskApp extends HHElement {
         background: var(--hh-page);
         color: var(--hh-text);
       }
-      header.bar {
-        display: flex;
-        align-items: center;
-        flex-wrap: wrap;
-        gap: var(--hh-s-8) var(--hh-s-16);
-        min-height: 48px;
-        box-sizing: border-box;
-        padding: var(--hh-s-8) var(--hh-s-20);
-        background: var(--hh-card);
-        border-bottom: 1px solid var(--hh-line);
-      }
-      .brand {
-        display: flex;
-        align-items: center;
-        gap: var(--hh-s-12);
-      }
-      .mark {
+      /* The chrome above the work area is the shared header element
+         (hos-app-header). The theme control is the app's own, passed into
+         the element's named theme slot: it renders inside the right cluster,
+         after Switch role and Sign out, and nothing sits between the bar and
+         the work area. The control's face is the sheet's secondary button at
+         the bar's own compact size. */
+      .theme-slot {
         display: inline-flex;
         align-items: center;
-        justify-content: center;
-        width: 30px;
-        height: 30px;
-        border-radius: var(--hh-radius-control);
-        background: var(--hh-accent);
-        color: var(--hh-accent-ink);
-        font-size: 12px;
-        font-weight: 700;
-        letter-spacing: 0.02em;
       }
-      .brand h1 {
-        font-size: 17px;
-        font-weight: 600;
-        margin: 0;
-        white-space: nowrap;
-      }
-      .bar-demo {
-        display: flex;
-        min-width: 0;
-      }
-      .bar-user {
-        margin: 0 0 0 auto;
-        display: flex;
-        align-items: center;
-        gap: var(--hh-s-8);
-      }
-      .role-name {
-        margin: 0;
-        font-weight: 600;
-        font-size: 13px;
-        padding: var(--hh-s-4) var(--hh-s-12);
-        border: 1px solid var(--hh-line);
-        border-radius: var(--hh-radius-pill);
-        background: var(--hh-page);
-        white-space: nowrap;
-      }
-      header.bar button {
+      .theme-slot button {
         min-height: 0;
-        padding: 7px 14px;
-        font-size: 12px;
+        padding: 7px 12px;
+        font-size: 11px;
         line-height: normal;
         white-space: nowrap;
       }
-      header.bar button:hover:not(:disabled) {
+      .theme-slot button:hover:not(:disabled) {
         border-color: var(--hh-accent-text);
         color: var(--hh-accent-text);
-      }
-      @media (max-width: 1100px) {
-        .bar-demo {
-          order: 3;
-          flex-basis: 100%;
-        }
       }
       main {
         padding: var(--hh-s-4) 0;
@@ -143,6 +100,17 @@ export class QuoteDeskApp extends HHElement {
   #themeStatus = "";
   /** The mounted surface: the entry cards, or the desk. */
   #surface: "entry" | "desk" = "entry";
+  /**
+   * The desk's route, parsed from the address bar (the split-list
+   * navigation): the list page is the desk's landing page, and the quote
+   * pages are the work area's own. The hash is the desk's whole navigation:
+   * the browser's back and forward move between the routes, and the host
+   * wires the parsed route down through the same no-template-binding pass
+   * as the client.
+   */
+  #route: DeskRoute = LIST_ROUTE;
+  /** Whether this build is the demo build: the seam rule's own constant (the front door handoff rides it), and the shared header's demo badge rides it too. */
+  readonly #demoBuild = import.meta.env.MODE === "demo";
 
   constructor() {
     super();
@@ -152,6 +120,22 @@ export class QuoteDeskApp extends HHElement {
       activeOrg: () => DEMO_ORG,
     });
     const client = new ApiClient({ baseUrl: "", headers: staffHeaders });
+    // The feedback widget's sender rides the staff client: the feedback
+    // route is staff guarded and the desk's own custody holds the bearer.
+    this.#feedbackSender = async (request) => {
+      const answer = await staffFeedback.feedbackCreateMultipart(client, {
+        type: request.type,
+        message: request.message,
+        screen: request.screen,
+        url: request.url,
+        user_agent: request.userAgent,
+        images: request.images.map((image) => image.blob),
+      });
+      if (answer.ok) {
+        return { ok: true, issueNumber: answer.value.issue_number ?? "" };
+      }
+      return { ok: false, error: answer.error };
+    };
     // The demo adapter's own client carries no staff bearer: the demo routes
     // are pre-auth by design (the tap a role sign-in).
     const demoClient = new ApiClient({
@@ -173,28 +157,81 @@ export class QuoteDeskApp extends HHElement {
     });
   }
 
+  /** The feedback widget's sender; built once beside the staff client. */
+  #feedbackSender: FeedbackSender = async () => ({ ok: false, error: "not ready" });
+
   override connectedCallback(): void {
     super.connectedCallback();
     // The kits' wiring rule: listen on the HOST and read the control off
     // composedPath(), never an event binding in a template.
     this.addEventListener("click", this.#onHostClick);
+    // The desk's navigation ear: a hash change (a control's walk, the
+    // browser's back or forward) re-reads the address bar.
+    window.addEventListener("hashchange", this.#onHashChange);
     // The system's light setting is honoured from the first paint.
     this.#theme.start();
     void this.#loadFlows();
+    // The seam rule (decision log rows 893 and 899): the front door's
+    // handoff is adopted only where the demo is compiled in. Vite
+    // substitutes the mode constant at build time, so a default build drops
+    // this branch whole and the reader behind it resolves to the empty stub
+    // (vite.config.ts), keeping the key name and the adopt call out of the
+    // served product; the demo image and the Playwright harness build with
+    // the demo mode.
+    if (import.meta.env.MODE === "demo") {
+      void this.#adoptFromFrontDoor();
+    }
   }
 
   protected override updated(): void {
     // The wiring pass: the builder receives the validated client the same
     // way every shared component receives its facts.
     const builder = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("qd-quote-builder");
-    if (builder !== null) builder.client = this.#client;
+    if (builder !== null) {
+      builder.client = this.#client;
+      // The parsed route and the signed in person's role code ride the same
+      // pass: the builder's two screens and the Sales manager's Approvals
+      // tab read them, never a template binding.
+      builder.route = this.#route;
+      builder.roleCode = this.#deskIdentity?.role_code ?? "";
+    }
+    // The shared chrome is fed the same way, not through template bindings
+    // (the design system's position gate holds this app's templates too):
+    // the role's label, the signed-in flag, the demo badge's build flag, and
+    // the theme the switcher last applied to the document, which the element
+    // re-applies under the sheet's own attribute contract.
+    const header = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("hos-app-header");
+    if (header !== null) {
+      header.roleLabel = this.#signedInRoleLabel();
+      header.signedIn = this.#roleLabel !== null;
+      header.demo = this.#demoBuild;
+      header.theme = document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+    }
+    // The feedback widget's sender rides the property the same way, never a
+    // template binding: the widget's own seam.
+    const feedback = this.renderRoot.querySelector("hh-feedback");
+    if (feedback instanceof HHFeedback && feedback.send !== this.#feedbackSender) {
+      feedback.send = this.#feedbackSender;
+    }
+  }
+
+  /** The desk carries no floating pill: the bar's Feedback button opens the shared panel by the widget's show(). */
+  #showFeedback(): void {
+    const feedback = this.renderRoot.querySelector("hh-feedback");
+    if (feedback instanceof HHFeedback) feedback.show();
   }
 
   override disconnectedCallback(): void {
     this.removeEventListener("click", this.#onHostClick);
+    window.removeEventListener("hashchange", this.#onHashChange);
     this.#theme.stop();
     super.disconnectedCallback();
   }
+
+  readonly #onHashChange = (): void => {
+    this.#route = parseRoute(location.hash);
+    this.requestUpdate();
+  };
 
   readonly #onHostClick = (event: MouseEvent): void => {
     const control = event
@@ -207,6 +244,12 @@ export class QuoteDeskApp extends HHElement {
     }
     if (control.getAttribute("data-action") === "sign-out") {
       void this.#signOut();
+    }
+    if (control.getAttribute("data-action") === "switch-role") {
+      void this.#switchRole();
+    }
+    if (control.getAttribute("data-action") === "feedback") {
+      this.#showFeedback();
     }
     if (control.getAttribute("data-action") === "theme") {
       this.#theme.cycle();
@@ -221,6 +264,51 @@ export class QuoteDeskApp extends HHElement {
       ? { kind: "ready", flows: result.value }
       : { kind: "unavailable", status: result.status ?? null };
     this.requestUpdate();
+  }
+
+  /**
+   * The front door's handoff (HH-DEMO-1, the Quote Desk's adopt, decision
+   * log rows 893, 899 and 906): the front door mints the demo session and
+   * holds it for the box under its own session storage key; when this app
+   * boots from a module tile's navigation, the record is read, handed to
+   * AuthController.adopt (custody takes the token into private memory and
+   * rewrites the display mirror itself), and the key is dropped in the same
+   * step, so a later visit to this app never re-adopts a spent handoff. The
+   * desk facts the chrome and the ported surfaces read ride the same record
+   * (the front door validated the mint already; this read validates the
+   * record again before custody sees any of it), exactly the fields
+   * #chooseFlow's mint leaves. An absent or unusable record is the ordinary
+   * direct visit; the entry page with the cards comes up, the desk's
+   * ordinary way in. The storage touch rides the auth package's throw-safe
+   * mirror, this app's sink gate's one sanctioned accessor. The shape is the
+   * till's (counter-till app-root on demo/front-door 385cd8d6).
+   */
+  async #adoptFromFrontDoor(): Promise<void> {
+    if (this.#sessions.current !== null) return;
+    const read = readFrontDoorHandoff();
+    if (read.kind === "absent") return;
+    clearFrontDoorHandoff();
+    if (read.kind === "unusable") return;
+    const handed = read.session;
+    const adopted = this.#controller.adopt({
+      token: handed.token,
+      tokenExpiresAtMs: handed.tokenExpiresAtMs,
+      user: handed.user,
+    });
+    if (!adopted) return;
+    this.#deskUserId = handed.user.userId;
+    this.#deskIdentity = {
+      user_id: handed.user.userId,
+      email: handed.user.email,
+      display_name: handed.user.name,
+      role_code: handed.roleCode,
+      role_name: handed.roleName,
+      tier: handed.tier,
+      scope: handed.scope,
+    };
+    this.#roleLabel = handed.roleLabel;
+    this.requestUpdate();
+    await this.#initDesk();
   }
 
   async #chooseFlow(flow: string): Promise<void> {
@@ -280,6 +368,12 @@ export class QuoteDeskApp extends HHElement {
     this.#branch = branch.value;
     setBranches([{ id: branch.value.id, name: branch.value.name }]);
     this.#surface = "desk";
+    // A sign in starts at the desk's landing page (decision log row 941):
+    // whatever the address bar carried in (a stale quote fragment, a handoff
+    // boot's address) gives way to the list, written once in place so no
+    // stray history entry is left behind.
+    this.#route = LIST_ROUTE;
+    if (location.hash !== routeHash(LIST_ROUTE)) location.replace(routeHash(LIST_ROUTE));
     this.requestUpdate();
   }
 
@@ -316,6 +410,19 @@ export class QuoteDeskApp extends HHElement {
     this.requestUpdate();
   }
 
+  /**
+   * Switch role: the front door owns the picker, so the walk goes there
+   * (decision log row 938: Switch role returns to the front door at /). The
+   * session ends the sign-out way first, unsent work included, so no custody
+   * mirror survives the walk and the front door comes up at its own picker,
+   * not at a session it did not mint.
+   */
+  async #switchRole(): Promise<void> {
+    if (this.#busy) return;
+    await this.#signOut();
+    window.location.assign("/");
+  }
+
   /** The role's label in the chrome, read from custody rather than cached. */
   #signedInRoleLabel(): string {
     const session = this.#sessions.current;
@@ -324,6 +431,15 @@ export class QuoteDeskApp extends HHElement {
       return session.user.name;
     }
     return this.#roleLabel ?? session.user.name;
+  }
+
+  /** The Feedback control of the bar: opens the shared widget's panel. */
+  #feedbackControl(): TemplateResult {
+    return html`
+      <button type="button" class="btn-secondary" data-action="feedback" data-testid="feedback-control" title="Send feedback about this screen">
+        Feedback
+      </button>
+    `;
   }
 
   /** The Theme control of the bar: one button, its value beside the word. */
@@ -344,28 +460,12 @@ export class QuoteDeskApp extends HHElement {
   }
 
   render(): TemplateResult {
-    const demoPresent =
-      this.#surface === "desk" || (this.#flowsState.kind === "ready" && this.#flowsState.flows.length > 0);
     return html`
       <p class="visually-hidden" role="status" aria-live="polite" data-testid="theme-status">${this.#themeStatus}</p>
-      <header class="bar" data-testid="qd-bar">
-        <div class="brand">
-          <span class="mark" data-testid="qd-mark" aria-hidden="true">QD</span>
-          <h1 data-testid="qd-title">Quote Desk</h1>
-        </div>
-        ${demoPresent ? html`<div class="bar-demo">${demoBanner()}</div>` : nothing}
-        ${this.#roleLabel === null
-          ? html`<p class="bar-user">${this.#themeControl()}</p>`
-          : html`
-              <p class="bar-user">
-                <span class="role-name" data-testid="signed-in-role">${this.#signedInRoleLabel()}</span>
-                ${this.#themeControl()}
-                <button type="button" class="btn-secondary" data-action="sign-out" ?disabled=${this.#busy}>
-                  Sign out
-                </button>
-              </p>
-            `}
-      </header>
+      <hos-app-header data-testid="qd-bar">
+        <div class="theme-slot" slot="theme">${this.#feedbackControl()}</div>
+        <div class="theme-slot" slot="theme">${this.#themeControl()}</div>
+      </hos-app-header>
       <main>
         ${this.#surface === "desk"
           ? html`
@@ -375,6 +475,9 @@ export class QuoteDeskApp extends HHElement {
             `
           : renderEntry({ flows: this.#flowsState, busy: this.#busy, message: this.#message })}
       </main>
+      <!-- The feedback widget (Feature Polish): the shared panel, opened by
+           the bar's Feedback button (trigger external: no floating pill). -->
+      <hh-feedback screen="Quote Desk" trigger="external"></hh-feedback>
     `;
   }
 }

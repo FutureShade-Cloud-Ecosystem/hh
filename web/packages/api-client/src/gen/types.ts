@@ -760,6 +760,23 @@ export type PaymentsReversalResult = {
   same_day: boolean;
   reopened_invoices: string[];
 };
+export type PaymentCardAttemptSummary = {
+  ref: string;
+  id: string;
+  status: "CHARGING" | "CAPTURED" | "DECLINED" | "UNKNOWN" | "BOUND" | "VOIDING" | "VOIDED" | "VOID_UNKNOWN" | "VOID_DECLINED" | "RESOLVED";
+  amount_cents: number;
+  branch_id: string;
+  till_session_id: string;
+  created_at: string;
+  sale_key: string;
+  charge_ref: string;
+  reversal_ref: string;
+  last_error: string;
+};
+export type PaymentCardAttemptResolve = {
+  resolution: "NOT_CHARGED" | "REVERSED_AT_PROCESSOR";
+  note: string;
+};
 export type AssistArgSpec = {
   name: string;
   label: string;
@@ -946,6 +963,17 @@ export type Product = {
   on_hand_by_branch?: { [key: string]: number };
   list_price_cents?: number | null;
   list_price_uom?: string;
+};
+export type UomView = {
+  code: string;
+  name: string;
+  dimension: "count" | "area" | "weight" | "volume" | "length";
+  is_active: boolean;
+};
+export type UomViewPage = {
+  items: UomView[];
+  next_cursor?: string | null;
+  limit?: number;
 };
 export type ProductPage = {
   items: Product[];
@@ -3071,6 +3099,85 @@ export type InvCountReconRunPage = {
   next_cursor?: string | null;
   limit?: number;
 };
+export type LoadReceivablesRecord = { [key: string]: unknown };
+export type LoadReceivablesItem = {
+  legacy_id: string;
+  derived_key?: string | null;
+  requires: LoadKeyRef[];
+  record: LoadReceivablesRecord;
+};
+export type LoadReceivablesUpsertRequest = {
+  source_system: string;
+  batch_id: string;
+  items: LoadReceivablesItem[];
+};
+export type LoadReceivablesResult = {
+  batch_id: string;
+  counts: LoadBatchCounts;
+  items: LoadBatchItemOutcome[];
+};
+export type LoadKeyRef = {
+  kind: string;
+  legacy_id: string;
+};
+export type LoadKeysResolveRequest = {
+  source_system: string;
+  items: LoadKeyRef[];
+};
+export type LoadKeyResolution = {
+  kind: string;
+  legacy_id: string;
+  hh_id: string | null;
+};
+export type LoadKeysResolveCounts = {
+  found: number;
+  missing: number;
+};
+export type LoadKeysResolveResult = {
+  items: LoadKeyResolution[];
+  counts: LoadKeysResolveCounts;
+};
+export type LoadBatchItemOutcome = {
+  legacy_id: string;
+  status: "created" | "attached" | "updated" | "unchanged" | "refused";
+  hh_id?: string | null;
+  reason?: string | null;
+  field?: string | null;
+  detail?: string | null;
+};
+export type LoadBatchCounts = {
+  created: number;
+  attached: number;
+  updated: number;
+  unchanged: number;
+  refused: number;
+};
+export type LoadSubmitItem = {
+  legacy_id: string;
+  derived_key?: string | null;
+  record: { [key: string]: unknown };
+  requires?: LoadKeyRef[];
+};
+export type LoadSubmitRequest = {
+  source_system: string;
+  batch_id: string;
+  items: LoadSubmitItem[];
+};
+export type LoadSubmitResult = {
+  batch_id: string;
+  counts: LoadBatchCounts;
+  items: LoadBatchItemOutcome[];
+};
+export type LoadBatchView = {
+  batch_id: string;
+  source_system: string;
+  kind: string;
+  caller: string;
+  state: "RECORDED";
+  counts: LoadBatchCounts;
+  items: LoadBatchItemOutcome[];
+  created_at: string;
+};
 export type MessagingChannel = {
   id: string;
   kind: "BRANCH" | "TEAM" | "TOPIC" | "DM" | "APPROVAL";
@@ -3300,6 +3407,7 @@ export type FeedbackSubmission = {
 };
 export type FeedbackResult = {
   issue_id: string;
+  issue_number?: string;
 };
 export type OrderViewLine = {
   line_no: number;

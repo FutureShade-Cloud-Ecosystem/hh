@@ -6,6 +6,7 @@
 // reported", and the panel re-reading when a line changes elsewhere.
 import { expect, test, type Page } from "@playwright/test";
 import { shot } from "./shot";
+import { showList } from "./switch-helpers.js";
 
 async function signIn(page: Page, role = "Sales manager"): Promise<void> {
   await page.goto("/");
@@ -14,6 +15,7 @@ async function signIn(page: Page, role = "Sales manager"): Promise<void> {
 }
 
 async function openQuote(page: Page, text: string): Promise<void> {
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: text }).first().click();
   const detail = page.getByTestId("qb-detail");
   if ((await detail.getAttribute("open")) === null) await page.getByText("Quote detail & admin").click();
@@ -88,6 +90,7 @@ test("each grade carries its own word and look: none and thin and unreported are
   await page.getByRole("button", { name: "Sales manager", exact: true }).click();
   await openQuote(page, "Accepted");
   await expect(panel(page).getByTestId("av-chip").filter({ hasText: "only 2 of 3" })).toHaveClass(/amber/);
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Draft" }).first().click();
   await expect(panel(page).getByTestId("av-chip").first()).toHaveClass(/green/);
 });

@@ -6,6 +6,7 @@
 // offer to clear the price itself for the Sales manager.
 import { expect, test, type Page } from "@playwright/test";
 import { shot } from "./shot";
+import { showList } from "./switch-helpers.js";
 
 async function signIn(page: Page, role = "Sales"): Promise<void> {
   await page.goto("/");
@@ -14,6 +15,7 @@ async function signIn(page: Page, role = "Sales"): Promise<void> {
 }
 
 async function openQuote(page: Page, text: string): Promise<void> {
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: text }).first().click();
   const detail = page.getByTestId("qb-detail");
   if ((await detail.getAttribute("open")) === null) await page.getByText("Quote detail & admin").click();

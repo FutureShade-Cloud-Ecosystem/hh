@@ -1,0 +1,26 @@
+{
+  "name": "@hardscapehouse/front-door",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The demo box's front door: the role picker landing that replaces the till's chooser as the first screen. Pick a role, land on that role's home with its modules as tiles, one header across the states with the demo badge, the role's name, Switch role and Sign out. The other eleven roles of the decided matrix stay visible as coming, never tappable.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import ../../packages/api-client/src/_ts-js-loader.mjs --test test/unit.test.mjs && playwright test --config test/acceptance.config.ts"
+  },
+  "dependencies": {
+    "@hardscapehouse/api-client": "0.0.0",
+    "@hardscapehouse/auth": "0.0.0",
+    "@hardscapehouse/design-system": "0.0.0",
+    "@hardscapehouse/pos-kit": "0.0.0",
+    "lit": "3.3.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "22.20.4",
+    "typescript": "5.9.3",
+    "vite": "8.3.1"
+  }
+}

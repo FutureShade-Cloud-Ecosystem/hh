@@ -25,14 +25,14 @@
 // carries no property or event bindings: the panel base delegates by
 // data-action and data-field.
 import { css, html, nothing } from "lit";
-import { customElement, state } from "lit/decorators.js";
+import { customElement, property, state } from "lit/decorators.js";
 import { PanelBase } from "./panel-base.js";
 import { panelStyles } from "./panel-styles.js";
 import { approverWords, policyLabel, requesterStateWords } from "./_approval-copy.js";
 import { quoteErrorMessage } from "./_quote-edit.js";
 import { spokenRefusal } from "./_quote-workarea.js";
 import { bpsToPercent } from "./_guard-format.js";
-import { FLOOR_REFUSAL_CLOSED_EVENT, FLOOR_REFUSAL_SEAM_EVENT, type FloorRefusalSeamEvent, type FloorRefusalView } from "./floor-refusal.js";
+import { FLOOR_REFUSAL_CLOSED_EVENT, FLOOR_REFUSAL_DROPPED_EVENT, FLOOR_REFUSAL_SEAM_EVENT, type FloorRefusalSeamEvent, type FloorRefusalView } from "./floor-refusal.js";
 
 /** The check-only refusal the guard raises: the seam event plus the server's own sentence, when it wrote one. */
 export interface GuardRefusalEvent extends FloorRefusalSeamEvent {
@@ -69,6 +69,11 @@ export class QdFloorRefusal extends PanelBase {
   @state() private mayClear = false;
   @state() private note = "";
   private returnFocus: HTMLElement | null = null;
+  /**
+   * Whether the desk is on a quote page (set by the host's wiring pass). On the list page the work area is kept
+   * mounted but hidden, and an answer that lands there belongs to a quote the person has left: it opens nothing.
+   */
+  @property({ attribute: false }) onQuotePage = true;
 
   static styles = [
     panelStyles,
@@ -166,6 +171,15 @@ export class QdFloorRefusal extends PanelBase {
   private readonly onSeam = (event: Event): void => {
     const detail = (event as CustomEvent<GuardRefusalEvent>).detail;
     if (detail === undefined || detail === null || detail.refusal === undefined) return;
+    // A refusal for a quote that is not the one on screen (the person walked to the list or to another quote) opens no
+    // dialog and files nothing: it is handed to the host to say on the list. A check only refusal (no quote) is the
+    // person's own and belongs to a quote page.
+    if (!this.onQuotePage || (detail.quoteId !== "" && detail.quoteId !== this.quoteId)) {
+      if (detail.quoteId !== "") {
+        this.dispatchEvent(new CustomEvent(FLOOR_REFUSAL_DROPPED_EVENT, { detail: { quoteId: detail.quoteId, lineNo: detail.lineNo }, bubbles: true, composed: true }));
+      }
+      return;
+    }
     this.returnFocus = QdFloorRefusal.deepActive();
     this.shown += 1;
     this.refusal = detail.refusal;
@@ -241,6 +255,13 @@ export class QdFloorRefusal extends PanelBase {
       (primary ?? this.renderRoot.querySelector<HTMLElement>('[data-testid="fr-close"]'))?.focus();
     }
     this.syncValue('[data-field="note"]', this.note);
+  }
+
+  protected override willUpdate(changed: Map<string, unknown>): void {
+    // The person walked off the quote this dialog is about (to the list, or to another quote): it closes with it.
+    if (this.open && ((changed.has("onQuotePage") && !this.onQuotePage) || (changed.has("quoteId") && this.target !== null && this.target.quoteId !== "" && this.target.quoteId !== this.quoteId))) {
+      this.close();
+    }
   }
 
   private close(): void {

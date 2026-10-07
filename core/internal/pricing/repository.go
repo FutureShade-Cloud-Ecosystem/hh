@@ -722,7 +722,9 @@ func (r *Repository) SaveQuantityBreakHeader(ctx context.Context, h QuantityBrea
 		return QuantityBreakHeader{}, mapBreakErr(err)
 	}
 	if tag.RowsAffected() == 0 {
-		return QuantityBreakHeader{}, r.breakConflictOrMissing(ctx, h.ID)
+		// Nothing was written on this arm: the read joins the save's own transaction rather than asking
+		// the pool for a second connection while the first is held (pool starvation at pool 4).
+		return QuantityBreakHeader{}, r.breakConflictOrMissing(ctx, tx, h.ID)
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM quantity_break_items WHERE header_id=$1`, h.ID); err != nil {
 		return QuantityBreakHeader{}, err
@@ -749,14 +751,17 @@ func (r *Repository) DeleteQuantityBreakHeader(ctx context.Context, id string, e
 		return fmt.Errorf("retire quantity break: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return r.breakConflictOrMissing(ctx, id)
+		return r.breakConflictOrMissing(ctx, r.pool, id)
 	}
 	return nil
 }
 
-func (r *Repository) breakConflictOrMissing(ctx context.Context, id string) error {
+// breakConflictOrMissing reads through q: the caller's transaction when it holds one, the pool otherwise.
+func (r *Repository) breakConflictOrMissing(ctx context.Context, q interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, id string) error {
 	var exists bool
-	if err := r.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM quantity_break_headers WHERE id=$1)`, id).Scan(&exists); err != nil {
+	if err := q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM quantity_break_headers WHERE id=$1)`, id).Scan(&exists); err != nil {
 		return err
 	}
 	if exists {

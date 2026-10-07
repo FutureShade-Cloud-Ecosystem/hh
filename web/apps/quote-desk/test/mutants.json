@@ -140,13 +140,6 @@
     "test": "P2-3 the identity card"
   },
   {
-    "id": "wa-open-ref",
-    "file": "src/quote-workarea.ts",
-    "find": "        if (this.store !== null) this.store.state.openRef = this.quoteId;\n        this.store?.scheduleSave();",
-    "replace": "        this.store?.scheduleSave();",
-    "test": "P2-4 the desk resumes"
-  },
-  {
     "id": "wa-reset-columns-draft",
     "file": "src/quote-workarea.ts",
     "find": "      this.columnsDraft = effectiveItems(\"column\", QB_COLUMNS, this.config?.roleItems, undefined);\n",
@@ -161,10 +154,10 @@
     "test": "P3 Reset columns takes"
   },
   {
-    "id": "wa-leave-clears-scan-line",
+    "id": "wa-search-add-quote-id",
     "file": "src/quote-workarea.ts",
-    "find": "?.announce?.(\"\", \"ok\"); // the gun's outcome line is the old quote's\n",
-    "replace": ";\n",
+    "find": "      search.quoteId = this.quoteId;\n",
+    "replace": "",
     "test": "P3 the scan box's outcome line clears"
   },
   {
@@ -381,8 +374,8 @@
   {
     "id": "wa-cart-after-read",
     "file": "src/quote-workarea.ts",
-    "find": "    await this.loadAll();\n    if (ctx.stale) return;\n    this.quoteChanged();\n  }\n\n  // ── the workspace",
-    "replace": "    await this.loadAll();\n    this.quoteChanged();\n  }\n\n  // ── the workspace",
+    "find": "    await this.loadAll();\n    if (ctx.stale) return;\n    this.quoteChanged();\n  }\n\n  // \u2500\u2500 the workspace",
+    "replace": "    await this.loadAll();\n    this.quoteChanged();\n  }\n\n  // \u2500\u2500 the workspace",
     "test": "guard cart change after read:"
   },
   {
@@ -598,8 +591,8 @@
   {
     "id": "ep-convert-reload",
     "file": "src/edit-panel.ts",
-    "find": "    await this.load();\n    if (ctx.stale) return;\n    this.announceChanged();\n  }\n\n  // ── delegation",
-    "replace": "    await this.load();\n    this.announceChanged();\n  }\n\n  // ── delegation",
+    "find": "    await this.load();\n    if (ctx.stale) return;\n    this.announceChanged();\n  }\n\n  // \u2500\u2500 delegation",
+    "replace": "    await this.load();\n    this.announceChanged();\n  }\n\n  // \u2500\u2500 delegation",
     "test": "guard edit convert reload:"
   },
   {
@@ -734,13 +727,6 @@
     "find": "    this.busy = false;\n    if (seq !== this.listSeq) return;",
     "replace": "    this.busy = false;",
     "test": "guard list paging:"
-  },
-  {
-    "id": "bq-create-selection",
-    "file": "src/quote-builder.ts",
-    "find": "    if (this.selected === onScreen) this.selected = result.value;",
-    "replace": "    this.selected = result.value;",
-    "test": "guard create selection:"
   },
   {
     "id": "pk-search-order",
@@ -1159,13 +1145,6 @@
     "test": "P3 a policy save refused after the scope moved on says which settings"
   },
   {
-    "id": "wa-restore-not-while-creating",
-    "file": "src/quote-workarea.ts",
-    "find": "    if (this.creating !== null || this.createdQuoteId !== \"\") return;\n",
-    "replace": "",
-    "test": "P3 a late layout answer does not resume the remembered quote"
-  },
-  {
     "id": "wa-scan-overtaken-says",
     "file": "src/quote-workarea.ts",
     "find": "        this.speakAdd(\"That scan was meant for the new quote, which another quote overtook, so it was not added. Scan it again on the quote you want.\", \"warn\");\n",
@@ -1358,7 +1337,7 @@
     "id": "op-seam-mounted",
     "file": "src/quote-builder.ts",
     "find": "            <div data-seam=${SEAM_PAYMENT} data-seam-label=\"Related documents and the order's payment (QD-5)\">\n              <qd-related-docs></qd-related-docs>\n              <qd-order-payment></qd-order-payment>\n            </div>",
-    "replace": "            ${this.selected === \"\"\n              ? nothing\n              : html`<div data-seam=${SEAM_PAYMENT} data-seam-label=\"Related documents and the order's payment (QD-5)\">\n                  <qd-related-docs></qd-related-docs>\n                  <qd-order-payment></qd-order-payment>\n                </div>`}",
+    "replace": "            ${this.openQuoteId() === \"\"\n              ? nothing\n              : html`<div data-seam=${SEAM_PAYMENT} data-seam-label=\"Related documents and the order's payment (QD-5)\">\n                  <qd-related-docs></qd-related-docs>\n                  <qd-order-payment></qd-order-payment>\n                </div>`}",
     "test": "New Quote keeps the payment seam"
   },
   {
@@ -1499,14 +1478,14 @@
     "id": "qb-edit-panel-mounted",
     "file": "src/quote-builder.ts",
     "find": "          <qd-quote-edit data-seam=${SEAM_EDIT_PANEL}></qd-quote-edit>",
-    "replace": "          ${this.selected !== \"\" ? html`<qd-quote-edit data-seam=${SEAM_EDIT_PANEL}></qd-quote-edit>` : nothing}",
+    "replace": "          ${this.openQuoteId() !== \"\" ? html`<qd-quote-edit data-seam=${SEAM_EDIT_PANEL}></qd-quote-edit>` : nothing}",
     "test": "P2-2 leaving through New Quote: a quantity that lands while its panel is gone"
   },
   {
     "id": "qb-followups-panel-mounted",
     "file": "src/quote-builder.ts",
     "find": "          <qd-quote-followups data-seam=${SEAM_FOLLOWUPS}></qd-quote-followups>",
-    "replace": "          ${this.selected !== \"\" ? html`<qd-quote-followups data-seam=${SEAM_FOLLOWUPS}></qd-quote-followups>` : nothing}",
+    "replace": "          ${this.openQuoteId() !== \"\" ? html`<qd-quote-followups data-seam=${SEAM_FOLLOWUPS}></qd-quote-followups>` : nothing}",
     "test": "P2-2 leaving through New Quote: a follow-ups stop that lands while its panel is gone"
   },
   {
@@ -1577,7 +1556,7 @@
     "id": "qb-hold-expiry-unmount",
     "file": "src/quote-builder.ts",
     "find": "            <qd-quote-hold-expiry data-seam=${SEAM_HOLD_EXPIRY}></qd-quote-hold-expiry>\n",
-    "replace": "            ${this.selected === \"\" ? nothing : html`<qd-quote-hold-expiry data-seam=${SEAM_HOLD_EXPIRY}></qd-quote-hold-expiry>`}\n",
+    "replace": "            ${this.openQuoteId() === \"\" ? nothing : html`<qd-quote-hold-expiry data-seam=${SEAM_HOLD_EXPIRY}></qd-quote-hold-expiry>`}\n",
     "test": "P2-2 leaving through New Quote: a re-hold that lands while the hold expiry panel is gone still announces its quote"
   },
   {
@@ -1676,5 +1655,191 @@
     "find": "    if (reason !== undefined) familyShare.beginCycle(ctx.id, reason);\n",
     "replace": "",
     "test": "the take path's re-read is its own share cycle"
+  },
+  {
+    "id": "app-switch-role-ends-session",
+    "file": "src/app-root.ts",
+    "find": "    await this.#signOut();\n    window.location.assign(\"/\");",
+    "replace": "    window.location.assign(\"/\");",
+    "test": "Switch role ends the session and returns to the front door at /"
+  },
+  {
+    "id": "qc-load-order",
+    "file": "src/quote-convert.ts",
+    "find": "    if (seq !== this.#seq) return;\n    if (stock.ok) {",
+    "replace": "    if (stock.ok) {",
+    "test": "guard convert load order:"
+  },
+  {
+    "id": "qc-convert-answer",
+    "file": "src/quote-convert.ts",
+    "find": "    if (seq !== this.#seq) {\n      // The person left while the conversion was out.",
+    "replace": "    if (false as boolean) {\n      // The person left while the conversion was out.",
+    "test": "guard convert answer:"
+  },
+  {
+    "id": "qc-away-settles",
+    "file": "src/quote-convert.ts",
+    "find": "if (result.ok && planned !== null) await this.#settleAway(client, quoteId, quoteNo, result.value.orderNo, planned);",
+    "replace": "void planned;",
+    "test": "a payment typed for the order is still taken"
+  },
+  {
+    "id": "qc-cod-route",
+    "file": "src/quote-convert.ts",
+    "find": "    if (this.#isCod()) return this.#payAndConvert();\n",
+    "replace": "",
+    "test": "D a Cash On Demand customer pays the whole amount"
+  },
+  {
+    "id": "qc-busy-convert",
+    "file": "src/quote-convert.ts",
+    "find": "if (client === null || view === null || this.#busy) return;\n    if (this.#isCod())",
+    "replace": "if (client === null || view === null) return;\n    if (this.#isCod())",
+    "test": "idempotency: a double click on Confirm posts the conversion once"
+  },
+  {
+    "id": "qc-cod-answer",
+    "file": "src/quote-convert.ts",
+    "find": "    if (seq !== this.#seq) {\n      const words = paid.ok",
+    "replace": "    if (false as boolean) {\n      const words = paid.ok",
+    "test": "guard convert cod answer:"
+  },
+  {
+    "id": "qc-learn-cod",
+    "file": "src/quote-convert.ts",
+    "find": "        this.#codLearned = true;",
+    "replace": "        this.#codLearned = false;",
+    "test": "D when the customer read is unavailable"
+  },
+  {
+    "id": "qc-key-keeps",
+    "file": "src/_quote-convert.ts",
+    "find": "key: same ? prev.key : mint()",
+    "replace": "key: mint()",
+    "test": "the idempotency key follows the intended payment",
+    "runner": "node",
+    "testFile": "test/quote-convert.test.mjs"
+  },
+  {
+    "id": "qc-key-fresh",
+    "file": "src/_quote-convert.ts",
+    "find": "key: same ? prev.key : mint()",
+    "replace": "key: prev !== null ? prev.key : mint()",
+    "test": "the idempotency key follows the intended payment",
+    "runner": "node",
+    "testFile": "test/quote-convert.test.mjs"
+  },
+  {
+    "id": "qc-take-away",
+    "file": "src/quote-convert.ts",
+    "find": "      this.#announceAway(quoteId, awayNotice({ orderNo, quoteNo, amountCents: planned.amountCents, paid: paid.ok ? paid.value : null, said: paid.ok ? \"\" : spokenRefusal(paid.error) }));\n      return;",
+    "replace": "      void orderNo;\n      void quoteNo;\n      return;",
+    "test": "guard convert payment: a payment out after the conversion"
+  },
+  {
+    "id": "sa-search-landing",
+    "file": "src/quote-search-add.ts",
+    "find": "    if (seq !== this.seq) return; // a newer keystroke owns the box\n",
+    "replace": "",
+    "test": "a search answer that lands after the box moved on"
+  },
+  {
+    "id": "sa-search-failed",
+    "file": "src/quote-search-add.ts",
+    "find": "      if (seq !== this.seq) return;\n      if (refresh) return;",
+    "replace": "      if (refresh) return;",
+    "test": "a failed search answer that lands after the box moved on"
+  },
+  {
+    "id": "sa-keystroke-seq",
+    "file": "src/quote-search-add.ts",
+    "find": "    this.seq += 1; // every keystroke makes any answer in flight stale, so a code that is only the start of this one never adds\n",
+    "replace": "",
+    "test": "a code that is only the start of what is being typed"
+  },
+  {
+    "id": "sa-price-customer",
+    "file": "src/quote-search-add.ts",
+    "find": "      if (customer !== this.customerId) return;\n",
+    "replace": "",
+    "test": "a price answer for the customer who was switched away from"
+  },
+  {
+    "id": "sa-price-hits",
+    "file": "src/quote-search-add.ts",
+    "find": "      if (hits !== this.hits) return;\n",
+    "replace": "",
+    "test": "a price answer for an older query"
+  },
+  {
+    "id": "sa-enter-flight",
+    "file": "src/quote-search-add.ts",
+    "find": "if (this.timer !== 0 || this.searching) {",
+    "replace": "if (this.timer !== 0) {",
+    "test": "Enter while a search is in flight"
+  },
+  {
+    "id": "sa-enter-carried",
+    "file": "src/quote-search-add.ts",
+    "find": "    this.enterWaiting = false;\n    const term = this.term;",
+    "replace": "    const term = this.term;",
+    "test": "an Enter typed before the word"
+  },
+  {
+    "id": "sa-branch-refresh",
+    "file": "src/quote-search-add.ts",
+    "find": " && this.hits.length > 0 && shouldQuery(this.term)) void this.run(this.term, true);",
+    "replace": " && false) void this.run(this.term, true);",
+    "test": "a branch change reads the rows"
+  },
+  {
+    "id": "wa-preview-busy",
+    "file": "src/quote-workarea.ts",
+    "find": "  private async doPreview(print: boolean): Promise<void> {\n    if (this.busy) return;\n",
+    "replace": "  private async doPreview(print: boolean): Promise<void> {\n",
+    "test": "Send Quote is one send"
+  },
+  {
+    "id": "bq-open-list-read",
+    "file": "src/quote-builder.ts",
+    "find": "      void this.loadList(true);\n      return;\n    }\n    this.createWalk",
+    "replace": "      return;\n    }\n    this.createWalk",
+    "test": "split create:"
+  },
+  {
+    "id": "bq-search-reads-on",
+    "file": "src/quote-builder.ts",
+    "find": "      this.search = control.value;\n      void this.searchAllPages();\n",
+    "replace": "      this.search = control.value;\n",
+    "test": "split search pages:"
+  },
+  {
+    "id": "fr-ignore-off-page",
+    "file": "src/floor-refusal-dialog.ts",
+    "find": "    if (!this.onQuotePage || (detail.quoteId !== \"\" && detail.quoteId !== this.quoteId)) {",
+    "replace": "    if (false) {",
+    "test": "split floor:"
+  },
+  {
+    "id": "sa-no-add-on-pause",
+    "file": "src/quote-search-add.ts",
+    "find": "      if (at >= 0 && at < ROWS) this.active = at;\n",
+    "replace": "      if (at >= 0 && at < ROWS) this.active = at;\n      if (exact !== null) { this.add(exact); return; }\n",
+    "test": "a person who pauses on a full code"
+  },
+  {
+    "id": "wa-unreadable-page",
+    "file": "src/quote-workarea.ts",
+    "find": "        this.unreadable = ctx.id;\n",
+    "replace": "",
+    "test": "split page: a quote id that cannot be read"
+  },
+  {
+    "id": "bq-route-focus",
+    "file": "src/quote-builder.ts",
+    "find": "    if (changed.has(\"route\") && changed.get(\"route\") !== undefined) void this.focusHeading();\n",
+    "replace": "",
+    "test": "split page: each route sets the document title"
   }
 ]

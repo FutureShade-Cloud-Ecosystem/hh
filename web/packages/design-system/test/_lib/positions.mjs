@@ -566,13 +566,16 @@ export const IMPORT_ALLOW_LIST = {
     'node:path': ['dirname', 'join'],
     'node:url': ['fileURLToPath', 'pathToFileURL'],
     './address.js': ['hhAddress'],
+    './feedback.js': ['FeedbackImage', 'FeedbackSendRequest', 'FeedbackSendResult', 'FeedbackSender', 'HHFeedback'],
+    './header.js': ['HosAppHeader'],
     './base.js': ['HHElement', 'HHRenderError', 'defineElement'],
+    './vendor/modern-screenshot.mjs': ['domToBlob'],
     './kits/dashboard.js': ['DashboardKit'],
     './kits/guided-flow.js': ['GuidedFlowKit'],
     './kits/inbox.js': ['InboxKit'],
     './kits/list-detail.js': ['ListDetailKit'],
     './kits/scan-and-confirm.js': ['ScanConfirmKit'],
-    './primitives.js': ['ButtonSpec', 'baseStyles', 'button', 'chip', 'row', 'spinner'],
+    './primitives.js': ['ButtonSpec', 'baseStyles', 'button', 'chip', 'row', 'spinner', 'select', 'dateInput', 'fieldGroup', 'textInput', 'segmented'],
     './state-icons.js': ['STATE_ICONS', 'StateIconName', 'icon'],
     './state.js': ['DesignedState', 'KIT_STATES', 'STATE_META', 'KitState', 'kitShell', 'stateIndicator', 'stateStyles'],
     '../base.js': ['HHElement', 'defineElement'],
@@ -603,12 +606,13 @@ export const IMPORT_ALLOW_LIST = {
     './_lib/sheet.mjs': ['PALETTE_NAMES', 'contrast', 'declaredPairs', 'definedTokens', 'parseDeclarations', 'palette', 'palettes', 'pkgDir', 'readPkg', 'referencedTokens', 'resolveColor', 'shippedStyleFiles', 'sheetBlocks', 'stripComments'],
     './color.mjs': ['contrast', 'oklchToHex', 'parseOklch'],
     '../src/harness-page.js': ['HARNESS_STATES', 'HARNESS_TITLE', 'KITS', 'WIDTHS', 'buildHarnessPage', 'harnessSheets'],
+    '../src/header.js': ['HosAppHeader'],
     '../src/kits/dashboard.js': ['DashboardKit'],
     '../src/kits/guided-flow.js': ['GuidedFlowKit'],
     '../src/kits/inbox.js': ['InboxKit'],
     '../src/kits/list-detail.js': ['ListDetailKit'],
     '../src/kits/scan-and-confirm.js': ['ScanConfirmKit'],
-    '../src/primitives.js': ['baseStyles'],
+    '../src/primitives.js': ['baseStyles', 'select', 'dateInput', 'fieldGroup', 'button', 'textInput', 'segmented'],
     '../src/state-icons.js': ['STATE_ICONS', 'icon'],
     '../src/state.js': ['KIT_STATES', 'STATE_META', 'kitShell', 'stateIndicator'],
   },
@@ -1193,7 +1197,7 @@ export const walkSources = (dir, prefix, out, skipFiles = [], rootDir = dir) => 
       // package's ROOT only, by their full path: a folder of either name
       // anywhere else is walked, so a source file cannot hide inside one.
       // .git is never a source tree, at any depth.
-      if (abs === join(rootDir, 'node_modules') || abs === join(rootDir, 'dist') || entry === '.git') continue;
+      if (abs === join(rootDir, 'node_modules') || abs === join(rootDir, 'dist') || rel === 'src/vendor' || entry === '.git') continue;
       walkSources(abs, rel, out, skipFiles, rootDir);
     } else if (SOURCE_RE.test(entry) && !skipFiles.includes(rel)) {
       out.push({ rel, abs, text: readFileSync(abs, 'utf8') });

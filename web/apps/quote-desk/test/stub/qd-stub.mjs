@@ -40,6 +40,7 @@
 //   GET  /api/v1/products/search                 -> ProductSearchResults
 //   GET  /api/v1/customers/search                -> PosCustomer[]
 //   GET  /api/v1/pos/salespeople                 -> PosSalespersonPage
+//   GET  /api/v1/pos/account-standing            -> PosAccountStanding ({} unless a hold is on file)
 //   GET  /api/v1/pos/addon-suggestions           -> { suggestions: [] }
 //   GET  /api/v1/products?active=true            -> PosProduct[]
 //   GET  /api/v1/products/counter-search         -> ProductCounterSearchResults
@@ -233,12 +234,35 @@ const CUSTOMERS = [
     open_balance_cents: 0,
     percent_off: 10,
   },
+  // The convert surface's two standings: an account sitting near its limit (the
+  // gate refuses an order that carries it over) and a cash customer with no
+  // credit account at all (terms are cash on delivery).
+  {
+    id: "c-granite",
+    account_no: "C03",
+    name: "Granite Overlimit Co",
+    customer_type: "CONTRACTOR",
+    payment_terms_days: 30,
+    credit_limit_cents: 100000,
+    open_balance_cents: 95000,
+    percent_off: 0,
+  },
+  {
+    id: "c-walkin",
+    account_no: "C04",
+    name: "Walkin Cash Customer",
+    customer_type: "RETAIL",
+    payment_terms_days: 0,
+    credit_limit_cents: 0,
+    open_balance_cents: 0,
+    percent_off: 0,
+  },
   {
     // The customer with no credit account: every conversion draws on credit
     // at the plain door, so for this account the QD-5 door is the whole
     // counter action (convert, invoice, pay in full).
     id: "c-quarry-lane",
-    account_no: "C03",
+    account_no: "C06",
     name: "Quarry Lane Paving",
     customer_type: "CONTRACTOR",
     payment_terms_days: 0,
@@ -246,7 +270,24 @@ const CUSTOMERS = [
     open_balance_cents: 0,
     percent_off: 0,
   },
+  // An account inside its limit that sits on an active credit hold: the server's gate
+  // refuses its order whatever the limit says (core/internal/till/holds.go).
+  {
+    id: "c-held",
+    account_no: "C05",
+    name: "Held Account Builders",
+    customer_type: "CONTRACTOR",
+    payment_terms_days: 30,
+    credit_limit_cents: 900000,
+    open_balance_cents: 0,
+    percent_off: 0,
+  },
 ];
+
+// The account standing the counter reads for a customer: the past due and the hold flag.
+// Every other customer answers the empty object, exactly as the contract's read does for
+// a walk-in, a current account and a caller it will not tell.
+const HELD_STANDINGS = new Map([["c-held", { past_due_cents: 12000, oldest_bucket: "60", on_hold: true }]]);
 
 const customerById = new Map(CUSTOMERS.map((c) => [c.id, c]));
 
@@ -271,7 +312,11 @@ const HST_RATE_BPS = 1300;
 // approvalsShape: "page" is the contract's IdentityApprovalPage, "bare" is what
 // the core's handler writes today (a bare array), "paged" is the page object
 // split into pages of one row with next_cursor.
-const switches = { callerOnCostList: true, callerIsGeneralManager: false, floorRaiseBps: 0, approvalsShape: "page", quotePageSize: 0, paymentRoleRefused: false, paymentGhost: false, paymentKeyCrossed: false };
+// The feedback route (the contract's staff-feedback create): the answer mode
+// the suite flips, and the submissions seen, for the sender's assertions.
+const feedbackFiled = [];
+const feedbackMode = { value: "ok" };
+const switches = { convertWall: false, callerOnCostList: true, callerIsGeneralManager: false, floorRaiseBps: 0, approvalsShape: "page", quotePageSize: 0, paymentRoleRefused: false, paymentGhost: false, paymentKeyCrossed: false };
 
 // Every write the stub sees, for the suite's layout save assertions. The
 // ledger is test scaffolding: no contract path reads it.
@@ -284,6 +329,14 @@ const shareLinks = new Map();
 const floorRequests = new Map(); // `${quoteId}:${lineNo}` -> request row
 // The conversions seen, for the suite's fulfilment assertion (scaffolding).
 const conversions = [];
+// The order payments seen: the body and the Idempotency-Key header each carried, and the first answer per key.
+const payments = [];
+const paymentsByKey = new Map();
+// Every post to the conversion and the payment door as it arrived, replays and refusals included:
+// the conversions and payments lists above hold only what was taken.
+const posts = [];
+// A one-shot refusal of the payment door: the next `count` posts answer this and write nothing.
+const doorRefusal = { count: 0, status: 409, error: "" };
 
 // ---------------------------------------------------------------------------
 // The QD-5 world: the orders a quote became, their invoices, and the payments
@@ -295,7 +348,7 @@ const conversions = [];
 
 const orders = new Map(); // order id -> { id, order_no, quote_id, status, origin, accept_seq, total_cents, created_at }
 const invoices = new Map(); // invoice id -> { id, invoice_no, order_id, quote_id, status, total_cents, balance_cents, source, created_at }
-const payments = new Map(); // namespaced key -> the stored answer (for a replay)
+const orderPayments = new Map(); // namespaced key -> the stored answer (for a replay)
 let orderCounter = 2000;
 let invoiceCounter = 3000;
 let paymentCounter = 4000;
@@ -675,7 +728,7 @@ function seedWorld() {
   quotes.clear();
   orders.clear();
   invoices.clear();
-  payments.clear();
+  orderPayments.clear();
   orderCounter = 2000;
   invoiceCounter = 3000;
   paymentCounter = 4000;
@@ -1001,6 +1054,29 @@ function respondJson(response, status, payload, extraHeaders = {}) {
   response.end(JSON.stringify(payload));
 }
 
+// The credit gate's words, as the core's CreditRefusalMessage writes them (credit.go).
+function dollars(cents) {
+  const whole = String(Math.floor(cents / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return `$${whole}.${String(cents % 100).padStart(2, "0")}`;
+}
+
+function creditRefusal(quote) {
+  const buyer = customerById.get(quote.customer_id);
+  if (buyer === undefined) return null;
+  const tail = "the quote is unchanged and no order was created; accounts receivable can release or override the hold";
+  if (HELD_STANDINGS.get(buyer.id)?.on_hold === true) {
+    return `this conversion was refused by a credit policy (customer is on an active credit hold), ${tail}`;
+  }
+  if (buyer.credit_limit_cents <= 0) {
+    return `this customer cannot buy on account right now (account has no credit; cash or card only (COD)), ${tail}`;
+  }
+  if (buyer.open_balance_cents + quote.total_cents > buyer.credit_limit_cents) {
+    const over = buyer.open_balance_cents + quote.total_cents - buyer.credit_limit_cents;
+    return `this order is ${dollars(quote.total_cents)} against a ${dollars(buyer.credit_limit_cents)} credit limit with ${dollars(buyer.open_balance_cents)} already owing (order would put the balance ${over} cents over the ${buyer.credit_limit_cents} cents limit), ${tail}`;
+  }
+  return null;
+}
+
 function readBody(request, response, next) {
   let body = "";
   request.on("data", (chunk) => {
@@ -1053,7 +1129,7 @@ const server = createServer(async (request, response) => {
   // the cost list switch the wrong-role page flips. Test scaffolding; no
   // contract path shares the namespace.
   if (path === "/_stub/state") {
-    respondJson(response, 200, { workspaceWrites, itemsWrites, policyWrites, decisions, conversions, switches: { ...switches } });
+    respondJson(response, 200, { workspaceWrites, itemsWrites, policyWrites, decisions, conversions, payments, posts, switches: { ...switches } });
     return;
   }
   // Test scaffolding: one more quote with the given status, customer, lines and terms, so a race probe
@@ -1063,6 +1139,24 @@ const server = createServer(async (request, response) => {
       const lines = Array.isArray(body.lines) && body.lines.length > 0 ? body.lines : [{ p: "p-wall-std", q: 4 }];
       const made = seedQuote(typeof body.status === "string" ? body.status : "DRAFT", String(body.customer_id ?? "c-fenwick"), String(body.owner_flow ?? "sales"), lines, body.terms ?? {});
       respondJson(response, 200, { id: made.id, quote_no: made.quote_no });
+    });
+    return;
+  }
+  // The role wall: a role curation that withholds the convert action from the caller's profile.
+  if (path === "/_stub/convert-wall" && request.method === "PUT") {
+    readBody(request, response, (body) => {
+      switches.convertWall = body.on === true;
+      respondJson(response, 200, { convertWall: switches.convertWall });
+    });
+    return;
+  }
+  // The payment door refuses its next `count` posts with this answer and writes nothing.
+  if (path === "/_stub/door-refusal" && request.method === "PUT") {
+    readBody(request, response, (body) => {
+      doorRefusal.count = Number(body.count ?? 1);
+      doorRefusal.status = Number(body.status ?? 409);
+      doorRefusal.error = String(body.error ?? "");
+      respondJson(response, 200, { ...doorRefusal });
     });
     return;
   }
@@ -1174,6 +1268,36 @@ const server = createServer(async (request, response) => {
     });
     return;
   }
+  if (path === "/_stub/feedback-mode" && request.method === "PUT") {
+    readBody(request, response, (body) => {
+      feedbackMode.value = ["fail", "no-number"].includes(body.mode) ? body.mode : "ok";
+      respondJson(response, 200, { mode: feedbackMode.value });
+    });
+    return;
+  }
+  if (path === "/_stub/feedback" && request.method === "GET") {
+    respondJson(response, 200, { filed: feedbackFiled });
+    return;
+  }
+  // The feedback route: a multipart body, kept raw (the readBody helper parses JSON).
+  if (path === "/api/v1/feedback" && request.method === "POST") {
+    const chunks = [];
+    request.on("data", (chunk) => chunks.push(chunk));
+    request.on("end", () => {
+      const text = Buffer.concat(chunks).toString("latin1");
+      const field = (name) => {
+        const match = new RegExp(`name="${name}"\\r\\n\\r\\n([^\\r]*)`).exec(text);
+        return match === null ? "" : match[1];
+      };
+      if (feedbackMode.value === "fail") {
+        respondJson(response, 502, { error: "the board is not answering" });
+        return;
+      }
+      feedbackFiled.push({ type: field("type"), message: field("message"), screen: field("screen"), images: (text.match(/name="images"/g) ?? []).length });
+      respondJson(response, 201, feedbackMode.value === "no-number" ? {} : { issue_number: `HH-${feedbackFiled.length}` });
+    });
+    return;
+  }
   // Put the whole in-memory world back to its seeded state, so a suite that
   // changes quotes, policy or switches leaves the next one a clean stub.
   if (path === "/_stub/reset" && request.method === "POST") {
@@ -1189,6 +1313,13 @@ const server = createServer(async (request, response) => {
     policyWrites.length = 0;
     decisions.length = 0;
     conversions.length = 0;
+    payments.length = 0;
+    paymentsByKey.clear();
+    posts.length = 0;
+    doorRefusal.count = 0;
+    switches.convertWall = false;
+    feedbackFiled.length = 0;
+    feedbackMode.value = "ok";
     acceptance.allow_multi_accept = false;
     resetPolicy();
     resetScopeRules();
@@ -1784,20 +1915,19 @@ const server = createServer(async (request, response) => {
       respondJson(response, 404, { error: "no quote with that id" });
       return;
     }
+    posts.push({ kind: "convert", quote_id: quote.id, key: null });
     readBody(request, response, (body) => {
       if (quote.status !== "ACCEPTED") {
         respondJson(response, 409, { error: `quote: this quote is ${quote.status.toLowerCase()}, only an accepted quote converts` });
         return;
       }
-      // The credit gate: every plain conversion draws on credit, so a customer
-      // with no credit account is refused as cash only (the core's COD policy
-      // wording); their path to money is the QD-5 one action.
-      const customer = customerById.get(quote.customer_id);
-      if ((customer?.credit_limit_cents ?? 0) <= 0) {
-        respondJson(response, 409, {
-          error:
-            "this customer cannot buy on account right now (account has no credit; cash or card only (COD)), the quote is unchanged and no order was created; accounts receivable can release or override the hold",
-        });
+      // The plain conversion books the order unpaid, so it draws on the account: the real gate
+      // (credit.go checkCredit with termsAreCredit true) refuses a customer with no credit at
+      // all under the COD policy, an over-limit account under the credit policy, and any held
+      // account whatever its limit.
+      const refused = creditRefusal(quote);
+      if (refused !== null) {
+        respondJson(response, 409, { error: refused });
         return;
       }
       quote.status = "CONVERTED";
@@ -1895,6 +2025,13 @@ const server = createServer(async (request, response) => {
       return;
     }
     readBody(request, response, (body) => {
+      // Every post as it arrived, replays and refusals included, and the one-shot refusal the suite arms.
+      posts.push({ kind: "order-payment", quote_id: quote.id, key: String(body.idempotency_key ?? ""), header: request.headers["idempotency-key"] ?? null });
+      if (doorRefusal.count > 0) {
+        doorRefusal.count -= 1;
+        respondJson(response, doorRefusal.status, { error: doorRefusal.error });
+        return;
+      }
       const method = String(body.method ?? "").trim().toUpperCase();
       const reference = String(body.reference ?? "").trim();
       const key = String(body.idempotency_key ?? "");
@@ -1943,6 +2080,8 @@ const server = createServer(async (request, response) => {
           return;
         }
         quote.status = "CONVERTED";
+        quote.fulfilment = "PICKUP";
+        conversions.push({ quote_id: quote.id, fulfillment: null });
         order = newOrder(quote, "COUNTER");
         converted = true;
       } else {
@@ -1951,7 +2090,7 @@ const server = createServer(async (request, response) => {
       }
       // The replay is told apart first and answered with the stored payment, so a replay is never refused for a
       // balance it has since moved.
-      const stored = payments.get(namespaced);
+      const stored = orderPayments.get(namespaced);
       if (stored === undefined && switches.paymentKeyCrossed) {
         // The crossed key: this key already took a DIFFERENT payment than the one posted. The
         // phantom is a real stored CARD 5.00 applied to the invoice, so a later family read
@@ -1960,7 +2099,7 @@ const server = createServer(async (request, response) => {
         paymentCounter += 1;
         crossedInvoice.balance_cents -= 500;
         crossedInvoice.status = crossedInvoice.balance_cents === 0 ? "PAID" : "PARTIALLY_PAID";
-        payments.set(namespaced, {
+        orderPayments.set(namespaced, {
           method: "CARD",
           amount_cents: 500,
           answer: {
@@ -2044,7 +2183,8 @@ const server = createServer(async (request, response) => {
         replayed: false,
         converted,
       };
-      payments.set(namespaced, { method, amount_cents: amount, answer });
+      orderPayments.set(namespaced, { method, amount_cents: amount, answer });
+      payments.push({ quote_id: quote.id, body, header: request.headers["idempotency-key"] ?? null });
       // The ghost: the payment was taken and stored, but the answer never reaches the desk.
       if (switches.paymentGhost) {
         respondJson(response, 500, { error: "internal" });
@@ -2199,7 +2339,9 @@ const server = createServer(async (request, response) => {
       // 0140), never admin; the app offers the settings entry to everyone and
       // the server answers who may write.
       profile: caller.account.role_code === "sales_manager" ? "manager" : "staff",
-      role_items: roleItemsByProfile.get(asked ?? profileOf(caller)) ?? [],
+      role_items: switches.convertWall
+        ? [{ kind: "action", id: "quote.convert_order", position: 0, visible: false }]
+        : (roleItemsByProfile.get(asked ?? profileOf(caller)) ?? []),
       user_items: myItems.get(userId) ?? [],
       workspace: { ...workspace, open_ref: workspace.open_ref === "" ? undefined : workspace.open_ref },
       policy,
@@ -2278,7 +2420,7 @@ const server = createServer(async (request, response) => {
   if (request.method === "GET" && path === "/api/v1/products/counter-search") {
     const q = (url.searchParams.get("q") ?? "").toLowerCase();
     const hits = PRODUCTS.filter((product) => {
-      const hay = [product.sku, product.name, product.description, ...product.aliases].join(" ").toLowerCase();
+      const hay = [product.sku, product.name, product.category, product.description, ...product.aliases].join(" ").toLowerCase();
       return q === "" || hay.includes(q);
     }).map((product) => ({
       product_id: product.product_id,
@@ -2294,6 +2436,32 @@ const server = createServer(async (request, response) => {
       list_price_cents: product.list_cents,
     }));
     respondJson(response, 200, { items: hits });
+    return;
+  }
+
+  if (request.method === "POST" && path === "/api/v1/pos/counter-prices") {
+    // The customer aware price picture: the server's answer, one entry per asked product. The account's own
+    // rule is the customer's price and retail stands beside it.
+    readBody(request, response, (body) => {
+      const customer = customerById.get(String(body.customer_id ?? ""));
+      const items = Array.isArray(body.items) ? body.items : [];
+      const prices = [];
+      for (const item of items) {
+        const product = productById.get(String(item.product_id ?? ""));
+        if (product === undefined) continue;
+        const off = customer === undefined ? 0 : customer.percent_off;
+        const customerCents = Math.round((product.list_cents * (100 - off)) / 100);
+        prices.push({
+          product_id: product.product_id,
+          price_uom: product.sold_by,
+          retail_cents: product.list_cents,
+          customer_cents: customerCents,
+          saving_cents: product.list_cents - customerCents,
+          basis: off > 0 ? "ACCOUNT" : "",
+        });
+      }
+      respondJson(response, 200, { customer_type: customer === undefined ? "" : customer.customer_type, prices });
+    });
     return;
   }
 
@@ -2331,6 +2499,11 @@ const server = createServer(async (request, response) => {
     const q = (url.searchParams.get("q") ?? "").toLowerCase();
     const rows = CUSTOMERS.filter((customer) => customer.name.toLowerCase().includes(q) || customer.account_no.toLowerCase().includes(q));
     respondJson(response, 200, rows);
+    return;
+  }
+
+  if (request.method === "GET" && path === "/api/v1/pos/account-standing") {
+    respondJson(response, 200, HELD_STANDINGS.get(url.searchParams.get("customer_id") ?? "") ?? {});
     return;
   }
 

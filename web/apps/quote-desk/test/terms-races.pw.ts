@@ -71,6 +71,8 @@ test("a terms save answer that was out when the person kept typing does not land
 
 test("a scan right after the customer is picked waits for the quote's read and adds the line", async ({ page }) => {
   await signIn(page);
+  await page.getByRole("button", { name: "New quote", exact: true }).click();
+  await expect(page.getByTestId("qb-identity")).toBeVisible();
   const held = gate();
   await page.route(/\/api\/v1\/quotes\/q-1004$/, async (route) => {
     await held.opened;
@@ -80,7 +82,7 @@ test("a scan right after the customer is picked waits for the quote's read and a
   await picker.getByPlaceholder("Search name or account #…").fill("Maple");
   await picker.getByRole("option", { name: /Maple Ridge Contracting/ }).click();
   const readSeen = page.waitForRequest((r) => /\/quotes\/q-1004$/.test(r.url()));
-  const scan = page.getByTestId("pos-scan-input");
+  const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
   await scan.fill("PSN-100");
   await scan.press("Enter");
   await readSeen;

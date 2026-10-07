@@ -2,6 +2,7 @@
 // in the grid and Save policy touched the row above. The four switches now
 // share a row of their own, and Save policy has its own breathing room.
 import { expect, test } from "@playwright/test";
+import { row, showList } from "./switch-helpers.js";
 
 // The stub keeps the person's layout row, which now remembers the open quote: every test starts from the seeded world.
 test.beforeEach(async ({ request }) => {
@@ -16,6 +17,9 @@ test("the policy switches share one row and Save policy keeps its distance", asy
   await page.goto("/");
   await page.getByRole("button", { name: "Sales manager", exact: true }).click();
   await expect(page.getByTestId("qb-list")).toBeVisible();
+  await showList(page);
+  await row(page, "Q-1001").click();
+  await expect(page.getByTestId("qb-context")).toBeVisible();
   await page.getByText("Quote detail & admin").click();
   await page.locator("qd-quote-settings").getByTestId("qs-screen").locator("summary").click();
   await expect(page.getByTestId("qs-policy")).toBeVisible();

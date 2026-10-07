@@ -59,7 +59,7 @@ import (
 //     the share, then the invoice FOR UPDATE, then step 4 (it writes no payments row).
 //   - the group and whole-order invoice writers: the order row its caller locked, then step 4 only
 //     (a new invoice).
-//   - the quote counter door, once it lands: the order row, LockPaymentsSequenceTx, then steps 3
+//   - the quote counter door (QD-5): the order row, LockPaymentsSequenceTx, then steps 3
 //     and 4 on its own transaction.
 //   - till MarkNSF: the payment row, then step 2 (LockPaymentsSequenceTx, not advancing: the
 //     serialising lock, it writes no payments feed row), then steps 3 (its allocated invoice rows

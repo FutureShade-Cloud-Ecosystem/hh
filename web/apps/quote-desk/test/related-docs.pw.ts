@@ -6,7 +6,7 @@
 // never lands on the one open now; an older read of the same quote never
 // lands over a newer one).
 import { expect, test, type Page } from "@playwright/test";
-import { armedHold, hold, settle, signIn } from "./switch-helpers.js";
+import { armedHold, hold, settle, showList, signIn } from "./switch-helpers.js";
 import { shot } from "./shot";
 
 const panel = (page: Page) => page.locator("qd-related-docs");
@@ -19,6 +19,7 @@ async function dispatchReload(page: Page): Promise<void> {
 }
 
 async function openQuote(page: Page, quoteNo: string): Promise<void> {
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: quoteNo }).first().click();
   const detail = page.getByTestId("qb-detail");
   if ((await detail.getAttribute("open")) === null) await page.getByText("Quote detail & admin").click();
@@ -68,6 +69,7 @@ test("guard related documents read: a family read for the quote left never lands
   await dispatchReload(page);
   await expect.poll(() => gated.held.seen.length).toBe(1);
   // The family reads of the open quote are out; the person opens the cash customer's accepted quote.
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Q-2102" }).first().click();
   await expect(page.getByTestId("qe-title")).toContainText("Q-2102");
   await gated.held.release();

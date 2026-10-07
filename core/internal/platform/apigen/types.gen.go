@@ -882,6 +882,25 @@ type PaymentsReversalResult struct {
 	ReopenedInvoices  []string `json:"reopened_invoices"`
 }
 
+type PaymentCardAttemptSummary struct {
+	Ref           string    `json:"ref"`
+	Id            string    `json:"id"`
+	Status        string    `json:"status"`
+	AmountCents   int64     `json:"amount_cents"`
+	BranchId      string    `json:"branch_id"`
+	TillSessionId string    `json:"till_session_id"`
+	CreatedAt     time.Time `json:"created_at"`
+	SaleKey       string    `json:"sale_key"`
+	ChargeRef     string    `json:"charge_ref"`
+	ReversalRef   string    `json:"reversal_ref"`
+	LastError     string    `json:"last_error"`
+}
+
+type PaymentCardAttemptResolve struct {
+	Resolution string `json:"resolution"`
+	Note       string `json:"note"`
+}
+
 type AssistArgSpec struct {
 	Name     string `json:"name"`
 	Label    string `json:"label"`
@@ -1088,15 +1107,28 @@ type Product struct {
 	IsFeatured                     bool                `json:"is_featured"`
 	IsSpecialOrder                 bool                `json:"is_special_order"`
 	ContractorPricingEventDiscount bool                `json:"contractor_pricing_event_discount"`
-	FullSkidQuantity               *int32              `json:"full_skid_quantity,omitempty"`
-	LayerQuantity                  *int32              `json:"layer_quantity,omitempty"`
-	PalletCount                    *int32              `json:"pallet_count,omitempty"`
-	MinimumOrderQty                *string             `json:"minimum_order_qty,omitempty"`
+	FullSkidQuantity               *int32              `json:"full_skid_quantity"`
+	LayerQuantity                  *int32              `json:"layer_quantity"`
+	PalletCount                    *int32              `json:"pallet_count"`
+	MinimumOrderQty                *string             `json:"minimum_order_qty"`
 	IsActive                       bool                `json:"is_active"`
-	Metadata                       *map[string]any     `json:"metadata,omitempty"`
+	Metadata                       *map[string]any     `json:"metadata"`
 	OnHandByBranch                 *map[string]float64 `json:"on_hand_by_branch,omitempty"`
 	ListPriceCents                 *int64              `json:"list_price_cents,omitempty"`
 	ListPriceUom                   *string             `json:"list_price_uom,omitempty"`
+}
+
+type UomView struct {
+	Code      string `json:"code"`
+	Name      string `json:"name"`
+	Dimension string `json:"dimension"`
+	IsActive  bool   `json:"is_active"`
+}
+
+type UomViewPage struct {
+	Items      []UomView `json:"items"`
+	NextCursor *string   `json:"next_cursor,omitempty"`
+	Limit      *int32    `json:"limit,omitempty"`
 }
 
 type ProductPage struct {
@@ -1157,13 +1189,13 @@ type ProductCoverageBasis struct {
 	BaseDimension      string   `json:"base_dimension"`
 	SellUom            string   `json:"sell_uom"`
 	SellDimension      string   `json:"sell_dimension"`
-	SellUomFactor      *float64 `json:"sell_uom_factor,omitempty"`
-	CoverageSfPerUnit  *float64 `json:"coverage_sf_per_unit,omitempty"`
+	SellUomFactor      *float64 `json:"sell_uom_factor"`
+	CoverageSfPerUnit  *float64 `json:"coverage_sf_per_unit"`
 	CoverageSource     string   `json:"coverage_source"`
-	PalletFactor       *float64 `json:"pallet_factor,omitempty"`
+	PalletFactor       *float64 `json:"pallet_factor"`
 	BreakPalletAllowed bool     `json:"break_pallet_allowed"`
 	WasteFactorPct     float64  `json:"waste_factor_pct"`
-	DensityTPerCyd     *float64 `json:"density_t_per_cyd,omitempty"`
+	DensityTPerCyd     *float64 `json:"density_t_per_cyd"`
 }
 
 type ProductCoverageResults struct {
@@ -2016,15 +2048,15 @@ type DispatchScheduleInput struct {
 	AddressLine     string   `json:"address_line"`
 	City            string   `json:"city"`
 	PostalCode      string   `json:"postal_code"`
-	Latitude        *float64 `json:"latitude,omitempty"`
-	Longitude       *float64 `json:"longitude,omitempty"`
+	Latitude        *float64 `json:"latitude"`
+	Longitude       *float64 `json:"longitude"`
 	Instructions    string   `json:"instructions"`
 	CommitState     string   `json:"commit_state"`
 	RequestedDate   string   `json:"requested_date"`
 	DateState       *string  `json:"date_state,omitempty"`
-	WeightKg        *float64 `json:"weight_kg,omitempty"`
-	VolumeM3        *float64 `json:"volume_m3,omitempty"`
-	PalletPositions *int32   `json:"pallet_positions,omitempty"`
+	WeightKg        *float64 `json:"weight_kg"`
+	VolumeM3        *float64 `json:"volume_m3"`
+	PalletPositions *int32   `json:"pallet_positions"`
 }
 
 type DispatchAssignInput struct {
@@ -3539,7 +3571,7 @@ type InvCountLine struct {
 	ProductName        *string  `json:"product_name,omitempty"`
 	LocationId         string   `json:"location_id"`
 	SnapshotQtyBase    float64  `json:"snapshot_qty_base"`
-	CountedQtyBase     *float64 `json:"counted_qty_base,omitempty"`
+	CountedQtyBase     *float64 `json:"counted_qty_base"`
 	VarianceBase       float64  `json:"variance_base"`
 	UnitCostCents      int64    `json:"unit_cost_cents"`
 	VarianceValueCents int64    `json:"variance_value_cents"`
@@ -3636,6 +3668,100 @@ type InvCountReconRunPage struct {
 	Items      []InvCountReconRun `json:"items"`
 	NextCursor *string            `json:"next_cursor,omitempty"`
 	Limit      *int32             `json:"limit,omitempty"`
+}
+
+type LoadReceivablesRecord map[string]any
+
+type LoadReceivablesItem struct {
+	LegacyId   string                `json:"legacy_id"`
+	DerivedKey *string               `json:"derived_key,omitempty"`
+	Requires   []LoadKeyRef          `json:"requires"`
+	Record     LoadReceivablesRecord `json:"record"`
+}
+
+type LoadReceivablesUpsertRequest struct {
+	SourceSystem string                `json:"source_system"`
+	BatchId      string                `json:"batch_id"`
+	Items        []LoadReceivablesItem `json:"items"`
+}
+
+type LoadReceivablesResult struct {
+	BatchId string                 `json:"batch_id"`
+	Counts  LoadBatchCounts        `json:"counts"`
+	Items   []LoadBatchItemOutcome `json:"items"`
+}
+
+type LoadKeyRef struct {
+	Kind     string `json:"kind"`
+	LegacyId string `json:"legacy_id"`
+}
+
+type LoadKeysResolveRequest struct {
+	SourceSystem string       `json:"source_system"`
+	Items        []LoadKeyRef `json:"items"`
+}
+
+type LoadKeyResolution struct {
+	Kind     string  `json:"kind"`
+	LegacyId string  `json:"legacy_id"`
+	HhId     *string `json:"hh_id"`
+}
+
+type LoadKeysResolveCounts struct {
+	Found   int32 `json:"found"`
+	Missing int32 `json:"missing"`
+}
+
+type LoadKeysResolveResult struct {
+	Items  []LoadKeyResolution   `json:"items"`
+	Counts LoadKeysResolveCounts `json:"counts"`
+}
+
+type LoadBatchItemOutcome struct {
+	LegacyId string  `json:"legacy_id"`
+	Status   string  `json:"status"`
+	HhId     *string `json:"hh_id,omitempty"`
+	Reason   *string `json:"reason,omitempty"`
+	Field    *string `json:"field,omitempty"`
+	Detail   *string `json:"detail,omitempty"`
+}
+
+type LoadBatchCounts struct {
+	Created   int32 `json:"created"`
+	Attached  int32 `json:"attached"`
+	Updated   int32 `json:"updated"`
+	Unchanged int32 `json:"unchanged"`
+	Refused   int32 `json:"refused"`
+}
+
+type LoadSubmitItem struct {
+	LegacyId   string         `json:"legacy_id"`
+	DerivedKey *string        `json:"derived_key,omitempty"`
+	Record     map[string]any `json:"record"`
+	Requires   *[]LoadKeyRef  `json:"requires,omitempty"`
+}
+
+type LoadSubmitRequest struct {
+	SourceSystem string           `json:"source_system"`
+	BatchId      string           `json:"batch_id"`
+	Items        []LoadSubmitItem `json:"items"`
+}
+
+type LoadSubmitResult struct {
+	BatchId string                 `json:"batch_id"`
+	Counts  LoadBatchCounts        `json:"counts"`
+	Items   []LoadBatchItemOutcome `json:"items"`
+}
+
+type LoadBatchView struct {
+	BatchId      string                 `json:"batch_id"`
+	SourceSystem string                 `json:"source_system"`
+	Kind         string                 `json:"kind"`
+	Caller       string                 `json:"caller"`
+	State        string                 `json:"state"`
+	Counts       LoadBatchCounts        `json:"counts"`
+	Items        []LoadBatchItemOutcome `json:"items"`
+	CreatedAt    time.Time              `json:"created_at"`
 }
 
 type MessagingChannel struct {
@@ -3899,7 +4025,8 @@ type FeedbackSubmission struct {
 }
 
 type FeedbackResult struct {
-	IssueId string `json:"issue_id"`
+	IssueId     string  `json:"issue_id"`
+	IssueNumber *string `json:"issue_number,omitempty"`
 }
 
 type OrderViewLine struct {
@@ -4425,7 +4552,7 @@ type TaskStageRequest struct {
 }
 
 type TaskShortageRequest struct {
-	OrderLineNo *int32 `json:"order_line_no,omitempty"`
+	OrderLineNo *int32 `json:"order_line_no"`
 	ProductId   string `json:"product_id"`
 	Sku         string `json:"sku"`
 	Description string `json:"description"`
@@ -7934,7 +8061,7 @@ type WarrantyVendorProfileInput struct {
 	VendorId   string           `json:"vendor_id"`
 	Status     string           `json:"status"`
 	Coverage   string           `json:"coverage"`
-	TermMonths *int32           `json:"term_months,omitempty"`
+	TermMonths *int32           `json:"term_months"`
 	Channel    string           `json:"channel"`
 	ChannelRef string           `json:"channel_ref"`
 	Docs       []WarrantyDocRef `json:"docs"`
@@ -7945,7 +8072,7 @@ type WarrantyProductOverrideInput struct {
 	ProfileId  string `json:"profile_id"`
 	ProductId  string `json:"product_id"`
 	Coverage   string `json:"coverage"`
-	TermMonths *int32 `json:"term_months,omitempty"`
+	TermMonths *int32 `json:"term_months"`
 	Notes      string `json:"notes"`
 }
 
@@ -8103,7 +8230,7 @@ type WarrantyEvidenceInput struct {
 
 type WarrantySettlementInput struct {
 	Outcome        string `json:"outcome"`
-	ExpectedCents  *int64 `json:"expected_cents,omitempty"`
+	ExpectedCents  *int64 `json:"expected_cents"`
 	RealizedCents  int64  `json:"realized_cents"`
 	Note           string `json:"note"`
 	ManualOverride bool   `json:"manual_override"`

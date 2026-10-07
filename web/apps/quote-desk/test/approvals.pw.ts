@@ -8,6 +8,7 @@
 // detail text carries no margin and no figure appears anywhere in the panels.
 import { expect, test, type APIRequestContext, type Browser, type Page } from "@playwright/test";
 import { shot } from "./shot";
+import { showList } from "./switch-helpers.js";
 
 async function signIn(page: Page, role = "Sales"): Promise<void> {
   await page.goto("/");
@@ -16,9 +17,21 @@ async function signIn(page: Page, role = "Sales"): Promise<void> {
 }
 
 async function openQuote(page: Page, text: string): Promise<void> {
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: text }).first().click();
+  await expect(page.getByTestId("qb-context")).toContainText(text);
   const detail = page.getByTestId("qb-detail");
   if ((await detail.getAttribute("open")) === null) await page.getByText("Quote detail & admin").click();
+}
+
+/**
+ * The requester's way to the approvals view under the split-list
+ * navigation: the quote page's disclosure carries the Approvals way in,
+ * which walks the desk to the list page's approvals view.
+ */
+async function openApprovals(page: Page, text = "Q-1001"): Promise<void> {
+  await openQuote(page, text);
+  await page.getByRole("button", { name: "Approvals", exact: true }).click();
   await expect(page.getByTestId("ap-box")).toBeVisible();
 }
 
@@ -37,6 +50,10 @@ async function fileAsSales(page: Page, disc = "10"): Promise<void> {
   await dialog(page).getByTestId("fr-request").click();
   await expect(dialog(page).getByTestId("fr-request-state")).toContainText("pending");
   await dialog(page).getByTestId("fr-close").click();
+  // The approvals view is the list page's own content now: walk to it
+  // through the disclosure's way in.
+  await page.getByRole("button", { name: "Approvals", exact: true }).click();
+  await expect(page.getByTestId("ap-box")).toBeVisible();
   await expect(approvals(page).getByTestId("ap-row")).toHaveCount(1);
 }
 
@@ -50,13 +67,15 @@ test.afterAll(async ({ request }) => {
 async function asManager(browser: Browser): Promise<Page> {
   const page = await (await browser.newContext({ viewport: { width: 1440, height: 900 } })).newPage();
   await signIn(page, "Sales manager");
-  await openQuote(page, "Q-1001");
+  // The Sales manager's own way in: the list page's tabs carry Approvals.
+  await page.getByTestId("qd-list-tabs").getByRole("button", { name: "Approvals", exact: true }).click();
+  await expect(page.getByTestId("ap-box")).toBeVisible();
   return page;
 }
 
 test("with nothing filed the list says nobody is held up", async ({ page }) => {
   await signIn(page);
-  await openQuote(page, "Q-1001");
+  await openApprovals(page);
   await expect(approvals(page).getByTestId("ap-empty")).toHaveText("Nobody is held up.");
   await expect(approvals(page).getByTestId("ap-row")).toHaveCount(0);
 });
@@ -108,7 +127,7 @@ test("Sales sees the request it filed with no decide; on a colleague's request t
   await expect(own.getByTestId("ap-own")).toBeVisible();
   await plant(request, 2, "other");
   await signIn(page);
-  await openQuote(page, "Q-1001");
+  await openApprovals(page);
   const row = approvals(page).getByTestId("ap-row").filter({ hasNot: page.getByTestId("ap-own") }).first();
   // The contract carries no may_decide flag, so a colleague's pending row offers the controls.
   await expect(row.getByRole("button", { name: /^Approve/ })).toBeVisible();
@@ -153,6 +172,7 @@ test("a caller off the cost list: the refusal dialog carries no figures, the fil
 });
 
 async function paverRefusalHasNoFigures(page: Page): Promise<void> {
+  await openQuote(page, "Q-1001");
   const paver = edit(page).getByTestId("qe-line").first();
   await paver.locator('[data-field="disc"]').fill("12");
   await paver.getByRole("button", { name: "Save" }).click();
@@ -187,7 +207,7 @@ test("one 403 locks only its own row: the other rows keep their decide controls"
   await plant(request, 1, "other");
   await plant(request, 2, "other");
   await signIn(page);
-  await openQuote(page, "Q-1001");
+  await openApprovals(page);
   const rows = approvals(page).getByTestId("ap-row");
   await expect(rows).toHaveCount(2);
   await rows.nth(0).getByRole("button", { name: /^Approve/ }).click();

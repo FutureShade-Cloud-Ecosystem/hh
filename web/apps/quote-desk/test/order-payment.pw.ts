@@ -9,13 +9,14 @@
 // shown (the app guesses nothing by role). Deterministic throughout: answers
 // are held behind gates the tests open, never sleeps.
 import { expect, test, type Page } from "@playwright/test";
-import { armedHold, countRequests, hold, settle, signIn, writes } from "./switch-helpers.js";
+import { armedHold, countRequests, hold, settle, showList, signIn, writes } from "./switch-helpers.js";
 import { shot } from "./shot";
 
 const pay = (page: Page) => page.locator("qd-order-payment");
 const docs = (page: Page) => page.locator("qd-related-docs");
 
 async function openQuote(page: Page, quoteNo: string): Promise<void> {
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: quoteNo }).first().click();
   const detail = page.getByTestId("qb-detail");
   if ((await detail.getAttribute("open")) === null) await page.getByText("Quote detail & admin").click();
@@ -284,6 +285,7 @@ test("a payment that lands after the person left says nothing on the quote now o
   await held.asked;
   // The payment is out; the person opens another quote the payment panel is offered on, so a
   // receipt, an error or a note leaking onto it has somewhere to land and would be seen.
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Q-2102" }).first().click();
   await expect(page.getByTestId("qe-title")).toContainText("Q-2102");
   await held.release();
@@ -294,6 +296,7 @@ test("a payment that lands after the person left says nothing on the quote now o
   await expect(pay(page).getByTestId("op-notice")).toHaveCount(0);
   // Coming back to the quote that was paid: the note says the receipt is below, with the
   // server's own figures, and the documents show the invoice.
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Q-2101" }).first().click();
   await expect(pay(page).getByTestId("op-notice")).toContainText("A payment was taken on this quote while you were away");
   await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("CA$10.00");
@@ -312,6 +315,7 @@ test("a payment refused while the person is on another quote says nothing there"
   await take(page, "10.00");
   await held.asked;
   // The other quote is one the payment panel is offered on, so a late refusal would have somewhere to land.
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Q-2102" }).first().click();
   await expect(page.getByTestId("qe-title")).toContainText("Q-2102");
   await held.release();
@@ -330,6 +334,7 @@ test("guard payment read: a read for the quote left never lands on the one open 
   gated.arm();
   await dispatchReload(page);
   await expect.poll(() => gated.held.seen.length).toBe(1);
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Q-1001" }).first().click();
   await expect(page.getByTestId("qe-title")).toContainText("Q-1001");
   await gated.held.release();
@@ -366,8 +371,10 @@ test("a payment whose outcome is not known is kept for its quote across switches
   await take(page, "10.00", "AUTH 9", "CARD");
   await expect(pay(page).getByTestId("op-unknown")).toContainText("not known");
   // The person opens another quote and comes back.
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Q-1001" }).first().click();
   await expect(page.getByTestId("qe-title")).toContainText("Q-1001");
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Q-2101" }).first().click();
   await expect(pay(page).getByTestId("op-box")).toBeVisible();
   // The not-known note survived the switch, the attempt's figures are still held, and the retry is the SAME attempt.
@@ -389,8 +396,10 @@ test("a payment still out for its quote keeps the controls held on return, and l
   const held = await hold(page, /\/api\/v1\/quotes\/q-2101\/order-payment$/, { method: "POST", snapshot: true });
   await take(page, "10.00");
   await held.asked;
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Q-1001" }).first().click();
   await expect(page.getByTestId("qe-title")).toContainText("Q-1001");
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Q-2101" }).first().click();
   await expect(pay(page).getByTestId("op-box")).toBeVisible();
   // The attempt is still out for this quote: the button is held and the fields are locked to it, so no second key can leave.
@@ -412,6 +421,7 @@ test("a late answer with no readable outcome is recorded for its own quote only"
   await take(page, "10.00");
   await held.asked;
   // The other quote is one the payment panel is offered on, so an unknown note leaking there has somewhere to land.
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Q-2102" }).first().click();
   await expect(page.getByTestId("qe-title")).toContainText("Q-2102");
   await held.release();
@@ -420,6 +430,7 @@ test("a late answer with no readable outcome is recorded for its own quote only"
   await expect(pay(page).getByTestId("op-error")).toHaveCount(0);
   await expect(pay(page).getByTestId("op-receipt")).toHaveCount(0);
   // Back on the quote the payment belongs to: the not-known note is there, the fields are held, and the retry is the same attempt.
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Q-2101" }).first().click();
   await expect(pay(page).getByTestId("op-unknown")).toContainText("not known");
   await expect(pay(page).locator('[data-field="amount"]')).toBeDisabled();
@@ -446,6 +457,7 @@ test("New Quote keeps the payment seam mounted, so a payment that lands while co
   await settle(page);
   // Back on the quote that was paid: the note is there, the receipt is there, and only one
   // payment ever left the browser.
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Q-2101" }).first().click();
   await expect(pay(page).getByTestId("op-notice")).toContainText("A payment was taken on this quote while you were away");
   const receipt = pay(page).getByTestId("op-receipt");
@@ -842,8 +854,10 @@ test("a retry is marked in flight: returning to the quote while it is out holds 
   const retry = await hold(page, /\/api\/v1\/quotes\/q-2101\/order-payment$/, { method: "POST" });
   await pay(page).getByTestId("op-take").click();
   await retry.asked;
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Q-1001" }).first().click();
   await expect(page.getByTestId("qe-title")).toContainText("Q-1001");
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Q-2101" }).first().click();
   await expect(pay(page).getByTestId("op-box")).toBeVisible();
   // The attempt is still out for this quote: the button is held on return, so no third POST can
@@ -869,8 +883,10 @@ test("Paid in full is not said beside an attempt whose outcome is not known: the
   // re-read that shows it. The attempt is still open, so the paid state is not said beside it: the
   // panel says the owed nothing with the attempt's status, and keeps the retry that asks the server
   // for the payment's receipt.
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Q-1001" }).first().click();
   await expect(page.getByTestId("qe-title")).toContainText("Q-1001");
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Q-2101" }).first().click();
   await expect(pay(page).getByTestId("op-box")).toBeVisible();
   await expect(pay(page).getByTestId("op-unknown")).toContainText("not known");

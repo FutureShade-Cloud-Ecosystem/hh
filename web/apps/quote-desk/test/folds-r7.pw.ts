@@ -1,7 +1,13 @@
 // Round 7 folds: the compose view and the panels, the refused create's reason, the hold expiry panel at New Quote and
 // the sign out flush's store close.
-import { expect, test } from "@playwright/test";
-import { countRequests, hold, open, quiet, row, settle, signIn } from "./switch-helpers.js";
+import { expect, test, type Page } from "@playwright/test";
+import { countRequests, hold, open, quiet, row, settle, signIn, showList } from "./switch-helpers.js";
+
+/** The compose page under the split-list navigation: the New quote button walks the desk to #/quotes/new. */
+async function newQuote(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "New quote", exact: true }).click();
+  await expect(page.getByTestId("qb-identity")).toBeVisible();
+}
 
 test.beforeEach(async ({ request }) => {
   await request.post("/_stub/reset");
@@ -14,6 +20,7 @@ const QUOTE_PANELS = ["qd-quote-edit", "qd-quote-assist", "qd-quote-history", "q
 
 test("compose draws none of the quote panels and leaves no blank gap in the detail", async ({ page }) => {
   await signIn(page, "Sales");
+  await newQuote(page);
   await expect(page.getByTestId("qb-title")).toHaveText("New Quote");
   await page.getByText("Quote detail & admin").click();
   const seen = await page.locator("qd-quote-builder").evaluate((builder, tags) => {
@@ -41,6 +48,7 @@ test("compose draws none of the quote panels and leaves no blank gap in the deta
 test("an open quote renders the payment seam in the detail, and the builder's fan-out query is answered by its panels", async ({ page }) => {
   await signIn(page, "Sales");
   const reads = countRequests(page, /GET .*\/quotes\/q-1001\/related-documents$/);
+  await showList(page);
   await row(page, "Q-1001").click();
   await expect(page.getByTestId("qb-context")).toContainText("Q-1001");
   await page.getByText("Quote detail & admin").click();
@@ -63,6 +71,7 @@ test("an open quote renders the payment seam in the detail, and the builder's fa
 
 test("an open quote draws its panels in the detail", async ({ page }) => {
   await signIn(page, "Sales");
+  await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Q-1001" }).first().click();
   await expect(page.getByTestId("qb-context")).toContainText("Q-1001");
   await page.getByText("Quote detail & admin").click();

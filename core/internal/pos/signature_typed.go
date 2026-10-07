@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -98,6 +99,13 @@ type TypedNameSignatureProvider struct {
 	store posStore
 	audit audit.Recorder
 	now   func() time.Time
+
+	// bindMu orders the lazy bind's fill against every read of the fields it fills. The service
+	// binds at first capture (captureTypedProvider), so several first captures can fill and read
+	// store, audit and now at the same moment, and without the lock that is a data race the race
+	// detector reports on both capture paths. boundDeps is the read side. vault is set at
+	// construction and never written again, so it needs no guard.
+	bindMu sync.Mutex
 }
 
 // NewTypedNameSignatureProvider wires the shared sealer (the SimulatedSignatureProvider constructor
@@ -113,6 +121,8 @@ func NewTypedNameSignatureProvider(vault Sealer) *TypedNameSignatureProvider {
 }
 
 func (p *TypedNameSignatureProvider) bind(store posStore, rec audit.Recorder, now func() time.Time) {
+	p.bindMu.Lock()
+	defer p.bindMu.Unlock()
 	if p.store == nil {
 		p.store = store
 	}
@@ -122,6 +132,17 @@ func (p *TypedNameSignatureProvider) bind(store posStore, rec audit.Recorder, no
 	if p.now == nil && now != nil {
 		p.now = now
 	}
+}
+
+// boundDeps reads the lazily bound store, audit recorder and clock under the same lock bind fills
+// under, so a capture that races a concurrent first bind reads the three fields after the fill
+// instead of against it. The meanings travel unchanged: a nil store or recorder keeps the pool
+// capture skipping the row and the trail, and a nil clock keeps sealTypedAttestation's wall-clock
+// fallback.
+func (p *TypedNameSignatureProvider) boundDeps() (posStore, audit.Recorder, func() time.Time) {
+	p.bindMu.Lock()
+	defer p.bindMu.Unlock()
+	return p.store, p.audit, p.now
 }
 
 // Capture satisfies SignatureProvider and REFUSES. There is no honest way to produce a typed-name
@@ -168,8 +189,9 @@ var sigRandRead = rand.Read
 
 // sealTypedAttestation mints the reference, seals the payload, and returns the row both capture
 // paths persist plus the reference the caller and the audit row carry. Shared so a pool capture and
-// a tx capture write the SAME evidence shape.
-func (p *TypedNameSignatureProvider) sealTypedAttestation(ctx context.Context, name string, in TypedAttestation) (signatureRow, string, error) {
+// a tx capture write the SAME evidence shape. The clock arrives from the capture path's bound
+// snapshot: nil keeps the wall-clock fallback.
+func (p *TypedNameSignatureProvider) sealTypedAttestation(ctx context.Context, clock func() time.Time, name string, in TypedAttestation) (signatureRow, string, error) {
 	var b [8]byte
 	if _, err := sigRandRead(b[:]); err != nil {
 		return signatureRow{}, "", err
@@ -177,8 +199,8 @@ func (p *TypedNameSignatureProvider) sealTypedAttestation(ctx context.Context, n
 	ref := "sig_" + hex.EncodeToString(b[:])
 	actor := identity.StaffUserIDFromContext(ctx)
 	now := time.Now
-	if p.now != nil {
-		now = p.now
+	if clock != nil {
+		now = clock
 	}
 
 	payload, err := json.Marshal(SealedAttestation{
@@ -221,24 +243,25 @@ func signatureAuditEntry(in TypedAttestation, actor, ref string) audit.Sensitive
 // handler). A caller already inside a transaction must call CaptureTypedTx instead, a pool write
 // here would be a second acquisition while that transaction holds its connection.
 func (p *TypedNameSignatureProvider) CaptureTyped(ctx context.Context, in TypedAttestation) (string, error) {
+	store, rec, clock := p.boundDeps()
 	name, err := validateTypedAttestation(in)
 	if err != nil {
 		return "", err
 	}
-	row, ref, err := p.sealTypedAttestation(ctx, name, in)
+	row, ref, err := p.sealTypedAttestation(ctx, clock, name, in)
 	if err != nil {
 		return "", err
 	}
-	if p.store != nil {
-		if _, err := p.store.InsertSignature(ctx, row); err != nil {
+	if store != nil {
+		if _, err := store.InsertSignature(ctx, row); err != nil {
 			return "", err
 		}
 	}
-	if p.audit != nil {
+	if rec != nil {
 		// The pool capture's audit write stays best effort: this caller has no transaction, so
 		// there is nothing to abort, and the standalone capture has always declined to fail the
 		// response over the trail row. CaptureTypedTx is the strict one.
-		_ = p.audit.Record(ctx, signatureAuditEntry(in, row.CapturedBy, ref))
+		_ = rec.Record(ctx, signatureAuditEntry(in, row.CapturedBy, ref))
 	}
 	return ref, nil
 }
@@ -269,6 +292,7 @@ type txRidingAudit interface {
 // rather than answer success for a capture that persisted nothing, which on a transaction path
 // would commit the caller's mutation believing it carried evidence.
 func (p *TypedNameSignatureProvider) CaptureTypedTx(ctx context.Context, tx pgx.Tx, in TypedAttestation) (string, error) {
+	store, rec, clock := p.boundDeps()
 	name, err := validateTypedAttestation(in)
 	if err != nil {
 		return "", err
@@ -276,18 +300,18 @@ func (p *TypedNameSignatureProvider) CaptureTypedTx(ctx context.Context, tx pgx.
 	if tx == nil {
 		return "", clientErr(http.StatusInternalServerError, "pos: capturing inside a transaction requires that transaction")
 	}
-	if p.store == nil {
+	if store == nil {
 		return "", clientErr(http.StatusInternalServerError, "pos: the signature provider is not bound to a store, it cannot capture inside a transaction")
 	}
 	var ride txRidingAudit
-	if p.audit != nil {
-		r, ok := p.audit.(txRidingAudit)
+	if rec != nil {
+		r, ok := rec.(txRidingAudit)
 		if !ok {
 			return "", clientErr(http.StatusInternalServerError, "pos: the wired audit recorder cannot write on the caller's transaction")
 		}
 		ride = r
 	}
-	row, ref, err := p.sealTypedAttestation(ctx, name, in)
+	row, ref, err := p.sealTypedAttestation(ctx, clock, name, in)
 	if err != nil {
 		return "", err
 	}
@@ -295,7 +319,7 @@ func (p *TypedNameSignatureProvider) CaptureTypedTx(ctx context.Context, tx pgx.
 	// the module's ONE pos_signature insert), the same statement the pool capture persists through,
 	// so the row commits or rolls back with the caller's write and the two capture paths cannot
 	// carry statements that drift apart.
-	if _, err := p.store.InsertSignatureTx(ctx, tx, row); err != nil {
+	if _, err := store.InsertSignatureTx(ctx, tx, row); err != nil {
 		return "", err
 	}
 	if ride != nil {
