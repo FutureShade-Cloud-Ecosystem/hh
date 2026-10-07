@@ -286,3 +286,40 @@ test("a popped window never saves the layout its opener told it, even when the w
   for (const body of puts) expect(body).not.toContain('"counter_layout":"PANELS"');
   await popped.close();
 });
+
+test("a popped window's own unsaved choices are saved once the workspace read recovers, under the stored layout", async ({
+  page,
+  context,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page);
+  await pickLayout(page, "panels");
+  let refusing = true;
+  await context.route("**/api/v1/pos/workspace**", (route) =>
+    refusing && route.request().method() === "GET" ? route.fulfill({ status: 500, body: "{}" }) : route.continue(),
+  );
+  const poppedPromise = context.waitForEvent("page");
+  await page.getByRole("button", { name: "Pop out" }).click();
+  const popped = await poppedPromise;
+  const puts: string[] = [];
+  popped.on("request", (request) => {
+    if (request.method() === "PUT" && request.url().includes("/api/v1/pos/workspace")) puts.push(request.postData() ?? "");
+  });
+  await expect(popped.getByTestId("pos-twopane")).toBeVisible();
+  // The person's own choice in the popped window (the results view flip) while the row cannot be read.
+  await popped.getByTestId("pos-browse").locator("summary").click();
+  const pressedBefore = await popped.locator('[data-testid^="lookup-view-"][aria-pressed="true"]').getAttribute("data-testid");
+  await popped.locator('[data-testid^="lookup-view-"][aria-pressed="false"]').first().click();
+  await popped.waitForTimeout(800);
+  expect(puts, "nothing is written while the row cannot be read").toEqual([]);
+  // The stored layout moves on elsewhere (the opener goes back to Steps), then the read recovers.
+  await pickLayout(page, "stepper");
+  refusing = false;
+  // The held back choice is saved by itself, without another gesture, over the layout the row holds now:
+  // the hinted PANELS is never what lands.
+  await expect.poll(() => puts.length, { timeout: 15_000 }).toBeGreaterThan(0);
+  const saved = puts[puts.length - 1] ?? "";
+  expect(saved).toContain('"counter_layout":"STEPPER"');
+  expect(saved).toContain(pressedBefore === "lookup-view-cards" ? '"lookup_presentation":"ROWS"' : '"lookup_presentation":"CARDS"');
+  await popped.close();
+});

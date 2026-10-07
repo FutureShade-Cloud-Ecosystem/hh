@@ -247,6 +247,10 @@ export interface PosOrderSnapshot {
  */
 const LINE_FLASH_MS = 1600;
 
+/** How many times a hinted window retries its held back workspace save, and how far apart. */
+const WS_HOLD_RETRIES = 4;
+const WS_HOLD_RETRY_MS = 3000;
+
 @customElement('hos-pos-terminal')
 export class HosPosTerminal extends LitElement {
   @state() private cart: CartLine[] = [];
@@ -4944,7 +4948,11 @@ export class HosPosTerminal extends LitElement {
   }
 
  /** Debounced save: a drag emits dozens of positions; only the settled one is worth a write. */
+  /** Retries left to the held back save of a hinted window (see persistWorkspace); a gesture resets it. */
+  private wsHoldRetries = 0;
+
   private schedulePersist(): void {
+    this.wsHoldRetries = 0;
     if (this.wsPersistTimer) window.clearTimeout(this.wsPersistTimer);
     this.wsPersistTimer = window.setTimeout(() => {
       this.wsPersistTimer = 0;
@@ -4976,15 +4984,29 @@ export class HosPosTerminal extends LitElement {
     } catch {
       // Round 7 review P3-1: a layout this window was only TOLD (a pop-out's hint) is not a choice
       // the person made here, and with the stored row unreadable there is nothing to overlay it on,
-      // so the whole-view fallback would write it. That save is held back (the dirty fields stay, the
-      // next gesture saves again once the row reads) rather than overwrite the stored layout.
-      if (this.layoutHint !== '' && !this.wsDirty.has('counterLayout')) return;
+      // so the whole-view fallback would write it. The workspace row is whole-or-absent (0220): a save
+      // that left counter_layout out would be read as the default layout and overwrite the stored
+      // pick, so the person's other unsaved choices (divider, pills) cannot be written without the
+      // row either. They stay dirty and the save is retried a few times (each retry re-reads the row
+      // and then overlays only what changed here), so they land as soon as the row reads.
+      if (this.layoutHint !== '' && !this.wsDirty.has('counterLayout')) {
+        if (this.wsHoldRetries < WS_HOLD_RETRIES) {
+          this.wsHoldRetries += 1;
+          if (this.wsPersistTimer) window.clearTimeout(this.wsPersistTimer);
+          this.wsPersistTimer = window.setTimeout(() => {
+            this.wsPersistTimer = 0;
+            void this.persistWorkspace();
+          }, WS_HOLD_RETRY_MS);
+        }
+        return;
+      }
       body = { ...sent, maximized: '' }; // re-read failed: the whole local view, as before
     }
     try {
       // rev 3→8: workspaceSaveBodyV8 = the rev-3 body + margin_hidden (0170), one whole-or-absent
       // row either way; maximize stays excluded by construction; the earlier composers stand.
       await putWorkspacePrefs({ idempotency_key: newIdempotencyKey(), ...workspaceSaveBodyV9(body) });
+      this.wsHoldRetries = 0;
  // A field is clean once saved: unless a gesture moved it again while this save was in
       // flight (its queued save must still carry it).
       const now = this.wsView();
