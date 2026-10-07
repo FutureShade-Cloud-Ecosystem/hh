@@ -46,15 +46,41 @@ type builder struct {
 
 func (b *builder) add(r row) { b.rows = append(b.rows, r) }
 
-// day returns midnight-relative calendar date `off` days from the clock's day, as a DATE literal.
+// THE HOUSE ZONE IS DUPLICATED HERE, ON PURPOSE, the same posture each module keeps
+// (gl/businessday.go and dashboard/window.go argue it at length): a shared constant would couple
+// this command to another module's package over a fact they merely agree about, and copies that
+// agree beat an import graph that does not. The rule the copies hold: daily means the dealer's day,
+// and a UTC midnight rolls the day over at dinner time in Ontario, which for the day-keyed rows is
+// the difference between stamping tonight's sale tonight and stamping it tomorrow. The zone drift
+// gate in dashboard/window_test.go walks the backend's internal packages; this copy sits in the
+// command's own package, beside tzdata_test.go's proof that the shipped binary resolves the zone.
+const houseZone = "America/Toronto"
+
+// houseLocation resolves the house zone, falling back to UTC if the tzdata is missing from the
+// image rather than failing the seed: the same trade gl/businessday.go makes. main.go embeds
+// time/tzdata, so the fallback is the insurance, never the plan.
+func houseLocation() *time.Location {
+	loc, err := time.LoadLocation(houseZone)
+	if err != nil {
+		return time.UTC
+	}
+	return loc
+}
+
+// day returns midnight-relative calendar date `off` days from the clock's day IN THE HOUSE ZONE,
+// as a DATE literal. The clock itself stays UTC everywhere else; only the CALENDAR the day is read
+// on is the dealer's, the "daily means the dealer's day" invariant every other daily read in the
+// system already obeys (the sales.today window, the rollup day, the ledger's period).
 func (b *builder) day(off int) time.Time {
-	y, m, d := b.in.Now.UTC().Date()
+	y, m, d := b.in.Now.In(houseLocation()).Date()
 	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC).AddDate(0, 0, off)
 }
 
 // dayStamp is the plan's calendar day as the segment that goes INTO a day-keyed id: 20260903. It is
-// derived from b.day(0) and not from a second format of b.in.Now, so a day-keyed row's key and the
-// scheduled_date/created_at on that same row can never disagree about which day it is.
+// the HOUSE ZONE's day (b.day(0) above) and not a second format of b.in.Now, so a day-keyed row's
+// key and the scheduled_date/created_at on that same row can never disagree about which day it is,
+// and the counter till's acceptance run, which reads the stamp off its own clock in the house zone,
+// finds the sale the seed wrote under the day it is still busy being.
 func (b *builder) dayStamp() string { return b.day(0).Format("20060102") }
 
 // dayID is demoID for a row that MUST be re-minted on each new calendar day rather than recognised.
