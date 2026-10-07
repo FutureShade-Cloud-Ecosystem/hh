@@ -134,6 +134,12 @@ test("A P2-1 an edit panel save refused after sign out reads nothing and opens n
   await patch.asked;
   // The next person is another role: the same role would be resumed on the quote it had open.
   await signOutAndInAs(page, "Sales manager");
+  // The next person is on the very quote the refusal belongs to when it lands (the page it would show over).
+  await showList(page);
+  await row(page, "Q-1001").click();
+  await openDetail(page);
+  await expect(page.getByTestId("qe-title")).toContainText("Q-1001");
+  await settle(page);
   const touched: string[] = [];
   page.on("request", (request) => {
     if (/\/api\/v1\/quotes\/q-1001/.test(request.url())) touched.push(`${request.method()} ${request.url()}`);
@@ -142,6 +148,7 @@ test("A P2-1 an edit panel save refused after sign out reads nothing and opens n
   await settle(page);
   expect(touched).toEqual([]);
   await expect(page.getByTestId("fr-reason")).toHaveCount(0);
+  await expect(page.getByTestId("qe-error")).not.toContainText("margin floor");
 });
 
 test("A P2-1 a panel that has left the page reads nothing when it is asked to reload", async ({ page }) => {
