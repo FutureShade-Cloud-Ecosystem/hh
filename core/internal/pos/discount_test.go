@@ -401,6 +401,16 @@ func TestDiscount_ATicketTotalOfZeroIsRefusedInWordsAtThePreviewAndTheRing(t *te
 			}
 			wantRefusal(t, ringErr, http.StatusUnprocessableEntity, c.want)
 			wantRefusal(t, prevErr, http.StatusUnprocessableEntity, c.want)
+			// Round 9 (PR 249 review P3-3): the words fit the discount that caused them. A refusal
+			// caused by a line discount does not talk about a ticket discount, and a ticket one does.
+			for _, err := range []error{ringErr, prevErr} {
+				if c.ticket == nil && strings.Contains(err.Error(), "ticket discount") {
+					t.Fatalf("a line discount's refusal names a ticket discount: %q", err)
+				}
+				if c.ticket != nil && !strings.Contains(err.Error(), "ticket discount") {
+					t.Fatalf("a ticket discount's refusal must name the ticket rule: %q", err)
+				}
+			}
 			if ringErr.Error() != prevErr.Error() {
 				t.Fatalf("the preview and the ring must say the same words: %q vs %q", prevErr, ringErr)
 			}

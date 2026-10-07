@@ -188,3 +188,14 @@ test('a ticket discount must leave something to pay: the dialog refuses past the
   // A line discount carries no such rule: a line may be free beside other lines.
   assert.equal(parseDiscountEntry('percent', '100').ok, true);
 });
+
+import { isStaleDiscountRefusal, STALE_DISCOUNT_WORDS } from './_pos-discount.ts';
+
+test('the stale discount refusal is told from every other 422, and its words name the way out', () => {
+  const stale = { status: 422, error: 'pos: the discount was approved for a different quantity or price: ask a manager again' };
+  assert.equal(isStaleDiscountRefusal(stale), true);
+  assert.equal(isStaleDiscountRefusal({ status: 422, error: 'pos: a discount cannot be more than the line' }), false);
+  assert.equal(isStaleDiscountRefusal({ ...stale, status: 500 }), false);
+  assert.match(STALE_DISCOUNT_WORDS, /re-read/);
+  assert.match(STALE_DISCOUNT_WORDS, /ask a manager again/i);
+});

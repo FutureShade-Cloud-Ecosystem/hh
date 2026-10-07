@@ -95,12 +95,16 @@ test("a one pixel swatch picture falls through to the category's drawn tile", as
   expect(await img.getAttribute("src")).not.toContain("/api/v1/products/");
 });
 
-test("a real sized picture still wins over the tile", async ({ page }) => {
-  // A 9x9 PNG is a picture, not a swatch (8px and under is): built here so the test needs no file.
+/** A PNG of the given edge whose pixel (x, y) is pixel(x, y): built here so a test needs no file. */
+async function makePng(size: number, pixel: (x: number, y: number) => [number, number, number]): Promise<Buffer> {
   const { deflateSync } = await import("node:zlib");
-  const size = 9;
-  const row = Buffer.concat([Buffer.from([0]), Buffer.alloc(size * 3, 0x80)]);
-  const raw = Buffer.concat(Array.from({ length: size }, () => row));
+  const rows: Buffer[] = [];
+  for (let y = 0; y < size; y += 1) {
+    const bytes = [0];
+    for (let x = 0; x < size; x += 1) bytes.push(...pixel(x, y));
+    rows.push(Buffer.from(bytes));
+  }
+  const raw = Buffer.concat(rows);
   const crcTable = Array.from({ length: 256 }, (_, n) => {
     let c = n;
     for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
@@ -124,12 +128,22 @@ test("a real sized picture still wins over the tile", async ({ page }) => {
   header.writeUInt32BE(size, 4);
   header[8] = 8;
   header[9] = 2;
-  const png = Buffer.concat([
+  return Buffer.concat([
     Buffer.from("89504e470d0a1a0a", "hex"),
     chunk("IHDR", header),
     chunk("IDAT", deflateSync(raw)),
     chunk("IEND", Buffer.alloc(0)),
   ]);
+}
+
+/** A picture with real texture: a two tone checker, far from one flat colour. */
+const checker = (x: number, y: number): [number, number, number] => ((x + y) % 2 === 0 ? [200, 180, 140] : [90, 70, 50]);
+
+test("a real sized picture still wins over the tile", async ({ page }) => {
+  // A 9x9 PNG is a picture, not a swatch (8px and under is).
+  const size = 9;
+  // A real sized picture with texture (a flat fill of any size is a swatch, see the blank leg below).
+  const png = await makePng(size, checker);
   await page.route("**/api/v1/products/*/image", (route) =>
     route.fulfill({ status: 200, contentType: "image/png", body: png }),
   );
@@ -142,5 +156,30 @@ test("a real sized picture still wins over the tile", async ({ page }) => {
   await expect
     .poll(() => img.evaluate((el: HTMLImageElement) => (el.complete ? el.naturalWidth : 0)))
     .toBe(size);
+  await expect(img).toHaveAttribute("src", /\/api\/v1\/products\/.+\/image/);
+});
+
+// Round 9: a stored picture with real extent but one flat colour (a charcoal square on a paver) reads
+// as a missing picture. It is a swatch however wide it is: the category's tile shows instead.
+test("a flat colour picture of real size falls through to the category's drawn tile", async ({ page }) => {
+  const png = await makePng(64, () => [54, 54, 58]);
+  await page.route("**/api/v1/products/*/image", (route) => route.fulfill({ status: 200, contentType: "image/png", body: png }));
+  await everyPickHasAPicture(page);
+  await signInToItems(page);
+  await page.getByTestId("hot-group").filter({ hasText: "Pavers" }).click();
+  const img = page.getByTestId("hot-item").locator("img").first();
+  await expect(img).toHaveAttribute("src", /^data:image\/svg\+xml|pavers/);
+  expect(await img.getAttribute("src")).not.toContain("/api/v1/products/");
+});
+
+test("a textured picture of real size still wins over the tile", async ({ page }) => {
+  const png = await makePng(64, checker);
+  await page.route("**/api/v1/products/*/image", (route) => route.fulfill({ status: 200, contentType: "image/png", body: png }));
+  await everyPickHasAPicture(page);
+  await signInToItems(page);
+  await page.getByTestId("hot-group").filter({ hasText: "Pavers" }).click();
+  const img = page.getByTestId("hot-item").locator("img").first();
+  await expect.poll(() => img.evaluate((el: HTMLImageElement) => (el.complete ? el.naturalWidth : 0))).toBe(64);
+  await page.waitForTimeout(300);
   await expect(img).toHaveAttribute("src", /\/api\/v1\/products\/.+\/image/);
 });

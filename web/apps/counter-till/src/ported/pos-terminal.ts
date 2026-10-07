@@ -182,6 +182,8 @@ import {
   discountsThatStand,
   discountWire,
   discountWords,
+  isStaleDiscountRefusal,
+  STALE_DISCOUNT_WORDS,
   ticketBasis,
   ticketCarriesDiscount,
 } from './_pos-discount.js';
@@ -1499,6 +1501,11 @@ export class HosPosTerminal extends LitElement {
     .readback .m {
       text-align: right;
     }
+    .readback .rbdisc {
+      display: block;
+      font-size: 11px;
+      color: var(--hos-text-dim);
+    }
     .readback .rbsave {
       margin-left: 8px;
       font-size: 10px;
@@ -1606,6 +1613,9 @@ export class HosPosTerminal extends LitElement {
         min-width: 0;
         max-width: 100%;
         overflow-x: auto;
+        /* Round 9: at phone width the bar takes the whole row under the title instead of sharing
+           it, so the four steps get the full width and fit (the stepper's own phone rules). */
+        flex: 1 1 100%;
       }
       .session {
         flex-wrap: wrap;
@@ -2747,6 +2757,20 @@ export class HosPosTerminal extends LitElement {
     .sold-discounts .amt {
       font-family: var(--hos-font-mono);
       color: var(--hos-stone-amber-text);
+    }
+    /* The lines and the subtotal are plain figures; only what came off wears the discount amber. */
+    .sold-discounts .line .amt,
+    .sold-discounts .total .amt {
+      color: var(--hos-text);
+    }
+    .sold-discounts .total .what,
+    .sold-discounts .total .amt {
+      font-weight: 600;
+    }
+    /* The tax row is a plain figure under the subtotal, not a second total. */
+    .sold-discounts .tax .what,
+    .sold-discounts .tax .amt {
+      font-weight: 400;
     }
     .sold-facts .k {
       font-size: 10px;
@@ -3934,6 +3958,7 @@ export class HosPosTerminal extends LitElement {
       if (res.ok) {
         this.ringKeyMemo = null; // committed: the next sale mints fresh
         this.ring = { state: 'done', sale: res.sale };
+        if (this.utilWhere === 'foot') this.clearUtil(); // an earlier edit's banner is not news on a good sale
         this.showSplit = false;
         this.revealSaleOutcome();
         void this.refreshCustomerAfterRing();
@@ -3973,10 +3998,25 @@ export class HosPosTerminal extends LitElement {
         this.ring = { state: 'error', msg: splitMismatchWords(res.err, formatMoney) };
         return;
       }
+      if (isStaleDiscountRefusal(res.err)) {
+        this.ring = { state: 'error', msg: STALE_DISCOUNT_WORDS };
+        void this.rereadPrices();
+        return;
+      }
       this.ring = { state: 'error', msg: counterRingMessage(res.err) };
     } catch {
       this.ring = { state: 'error', msg: 'Network error: retry; the sale is replay-safe.' };
     }
+  }
+
+  /**
+   * After the server refused a discount as stale: re-read every line's price (the way a customer
+   * switch does) so a discount struck from an old base drops with the price words, rather than being
+   * sent again on the same stale base until the quantity is nudged.
+   */
+  private async rereadPrices(): Promise<void> {
+    for (let i = 0; i < this.cart.length; i++) await this.reprice(i);
+    this.enforceDiscountApproval();
   }
 
   private async ringSale(tender: 'ACCOUNT' | 'CASH' | 'CARD'): Promise<void> {
@@ -4046,6 +4086,7 @@ export class HosPosTerminal extends LitElement {
       if (res.ok) {
         this.ringKeyMemo = null; // committed: the next sale mints fresh
         this.ring = { state: 'done', sale: res.sale };
+        if (this.utilWhere === 'foot') this.clearUtil(); // an earlier edit's banner is not news on a good sale
         this.revealSaleOutcome();
         void this.refreshCustomerAfterRing();
         return;
@@ -4083,6 +4124,11 @@ export class HosPosTerminal extends LitElement {
       }
       // DIB-379/F2: surface the server's real detail for EVERY ring failure (409 no-till-session, 503
  // an unwired guard, 422 policy/validation refusals, …), not just 422: see ringErrorMessage.
+      if (isStaleDiscountRefusal(res.err)) {
+        this.ring = { state: 'error', msg: STALE_DISCOUNT_WORDS };
+        void this.rereadPrices();
+        return;
+      }
       this.ring = { state: 'error', msg: counterRingMessage(res.err) };
     } catch {
       // Network error: the key is safe to retry verbatim (idempotent endpoint).
@@ -6528,7 +6574,7 @@ ${this.receiptMsg ? html`<div class="banner bad" role="alert">${this.receiptMsg}
         <span class="v">${this.customer ? this.customer.name : 'Walk-in customer'}</span>
       </div>
       <ul class="rblines">
-        ${this.cart.map((l) => {
+        ${this.cart.map((l, i) => {
           const p = pricePicture(this.ticketQuotes[l.product.id]);
           const word = basisWord(p.basis);
           return html`<li>
@@ -6539,9 +6585,15 @@ ${this.receiptMsg ? html`<div class="banner bad" role="alert">${this.receiptMsg}
                 ? html`<span class="rbsave" data-testid="readback-saving"
                     >Save ${formatMoney(perLineSavingCents(p.savingCents, l.qty))}${word ? ` · ${word}` : ''}</span
                   >`
+                : nothing}${l.discount
+                ? html`<span class="rbdisc" data-testid="readback-line-discount"
+                    >${discountWords(l.discount, this.previewLineOff(i), formatMoney)}${this.previewLineOff(i) === undefined
+                      ? nothing
+                      : html` <span class="dm">${formatMoney(-(this.previewLineOff(i) as number))}</span>`}</span
+                  >`
                 : nothing}</span
             >
-            <span class="m">${l.priceMissing ? 'price pending' : formatMoney(l.lineTotalCents)}</span>
+            <span class="m">${l.priceMissing ? 'price pending' : this.lineShownTotal(l, i)}</span>
           </li>`;
         })}
       </ul>
@@ -7137,6 +7189,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
     }
     this.ticketChanged();
     this.discountTarget = null;
+    if (this.utilWhere === 'foot') this.clearUtil(); // the yes just given retires the note about the last one
   }
 
   private onDiscountRemove(): void {
@@ -7518,7 +7571,17 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
   private renderSoldDiscounts(sale: SaleResult) {
     const ds = sale.discounts ?? [];
     if (ds.length === 0) return nothing;
+    // The lines come first at their price before any discount, then the discounts, then the subtotal
+    // they leave: the card adds up by itself, as the receipt does.
+    const lines = this.cart.map(
+      (l) => html`<div class="d line" data-testid="sold-line">
+        <span class="what">${l.qty} ${l.product.name}</span>
+        <span class="who"></span>
+        <span class="amt">${l.priceMissing ? '(not priced)' : formatMoney(l.lineTotalCents)}</span>
+      </div>`,
+    );
     return html`<div class="sold-discounts" data-testid="sold-discounts">
+      ${lines}
       ${ds.map(
         (d: SaleDiscount) => html`<div class="d" data-testid="sold-discount">
           <span class="what">${d.scope === 'SALE' ? 'Whole ticket' : (this.cart[(d.line_no ?? 0) - 1]?.product.name ?? `Line ${d.line_no ?? ''}`)}</span>
@@ -7526,6 +7589,18 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
           <span class="amt">${formatMoney(-d.amount_cents)}</span>
         </div>`,
       )}
+      <div class="d total" data-testid="sold-subtotal">
+        <span class="what">Subtotal</span>
+        <span class="who"></span>
+        <span class="amt">${formatMoney(sale.subtotal_cents)}</span>
+      </div>
+      ${typeof sale.tax_cents === 'number'
+        ? html`<div class="d total tax" data-testid="sold-tax">
+            <span class="what">Tax</span>
+            <span class="who"></span>
+            <span class="amt">${formatMoney(sale.tax_cents)}</span>
+          </div>`
+        : nothing}
     </div>`;
   }
 

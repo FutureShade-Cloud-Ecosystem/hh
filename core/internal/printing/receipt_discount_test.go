@@ -27,19 +27,24 @@ func TestReceipt_NamesTheRoleThatApprovedEachDiscount(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		for _, want := range []string{"Discount approved by Sales Manager", "$10.00 off", "Discount approved by Branch Manager", "-$7.00"} {
+		for _, want := range []string{"Discount approved by Sales Manager", "$10.00 off", "Ticket discount, approved by Branch Manager", "-$7.00"} {
 			if !strings.Contains(html, want) {
 				t.Errorf("%s receipt lacks %q", name, want)
 			}
 		}
-		if got := strings.Count(html, "Discount approved by"); got != 2 {
-			t.Errorf("%s receipt prints %d approval rows, want 2", name, got)
+		// Round 9 (PR 249 review P3-4): the ticket's row says it is the whole ticket's, so the customer
+		// can tell it from a line's; only the line's row says "Discount approved by".
+		if got := strings.Count(html, "Discount approved by"); got != 1 {
+			t.Errorf("%s receipt prints %d line approval rows, want 1", name, got)
+		}
+		if got := strings.Count(html, "Ticket discount, approved by"); got != 1 {
+			t.Errorf("%s receipt prints %d ticket discount rows, want 1", name, got)
 		}
 	}
 	rec.Lines[0].DiscountCents, rec.Lines[0].DiscountApprovedByLabel = 0, ""
 	rec.SaleDiscountCents, rec.SaleDiscountApprovedByLabel = 0, ""
 	html, _ := RenderReceiptHTML(rec)
-	if strings.Contains(html, "Discount approved by") {
+	if strings.Contains(html, "Discount approved by") || strings.Contains(html, "Ticket discount") {
 		t.Error("a sale with no discount must print no approval row")
 	}
 }

@@ -107,6 +107,9 @@ func (s *Service) priceAndAssess(ctx context.Context, in saleMoneyInput) (saleMo
 	// A discount may not take the whole ticket: the ring's payment rail refuses a zero amount, so
 	// the preview and the ring say so alike, in words, here where they share one path.
 	if len(applied) > 0 && subtotal <= 0 {
+		if in.discount == nil {
+			return saleMoney{}, errDiscountZeroTotalLine
+		}
 		return saleMoney{}, errDiscountZeroTotal
 	}
 
