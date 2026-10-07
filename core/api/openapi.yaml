@@ -13926,7 +13926,7 @@ paths:
       tags:
         - staff-tasks
       summary: Record what the yard actually pulled, per line (replaces the recorded pick)
-      description: PUT replaces the whole recorded pick with what is sent; the schema uniqueness on (task, order line) says the same thing in the database.
+      description: PUT replaces the whole recorded pick with what is sent; the schema uniqueness on (task, order line) says the same thing in the database. A short line needs a reason; a quantity above the ordered one is refused with 400, for the yard manager as for the yard team. The caller must reach the task's branch (403 otherwise). A short pick becomes a backorder on the order line and tells the order's sales rep.
       x-role: requireStaff
       x-access:
         surfaces:
@@ -13964,7 +13964,7 @@ paths:
       tags:
         - staff-tasks
       summary: Record or change the skid count on the pick's order, with a reason
-      description: PUT replaces the order's recorded skid count with the count sent. A reason from the same list as a short pick is required on every change; OTHER also needs a note. The same count again is not a change (changed is false). The skid deposit that follows the count is recorded, not billed; the response carries it before and after. Refused with 409 when the order's status cannot take it.
+      description: PUT replaces the order's recorded skid count with the count sent. A reason from the same list as a short pick is required on every change; OTHER also needs a note. The same count again is not a change (changed is false). The skid deposit that follows the count is recorded, not billed; the response carries it before and after. The caller must reach the task's branch (403 otherwise). Refused with 409 when the order's status cannot take it.
       x-role: requireStaff
       x-access:
         surfaces:

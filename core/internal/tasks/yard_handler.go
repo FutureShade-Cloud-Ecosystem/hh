@@ -65,6 +65,29 @@ func (h *Handler) yardBranchFence(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
+// taskBranchFence holds a yard WRITE to the branch of the task it names: a branch-scoped caller must
+// reach that branch, a GLOBAL caller reaches every one. The recording doors change an order's money
+// and tell its rep, so a yard caller at one branch must not be able to reach another branch's order
+// by naming its task. An unknown task is the same 404 every other door answers, never a leak. Returns
+// false after writing the refusal.
+func (h *Handler) taskBranchFence(w http.ResponseWriter, r *http.Request) bool {
+	caller, ok := identity.StaffContextFromContext(r.Context())
+	if !ok || caller.UserID == "" {
+		httpx.Error(w, http.StatusUnauthorized, "yard: unauthenticated")
+		return false
+	}
+	t, err := h.svc.store.GetTask(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.writeYardErr(w, r, err)
+		return false
+	}
+	if t.BranchID != "" && !caller.CanAccessBranch(t.BranchID) {
+		httpx.Error(w, http.StatusForbidden, "yard: branch out of scope")
+		return false
+	}
+	return true
+}
+
 func (h *Handler) pickQueue(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	if !h.yardBranchFence(w, r) {
 		return
@@ -193,6 +216,9 @@ type recordPickRequest struct {
 // pick is replaced by what is sent: a picker who corrects a number is not appending a second opinion,
 // and the schema's UNIQUE (task_id, order_line_no) says the same thing in the database.
 func (h *Handler) recordPick(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	if !h.taskBranchFence(w, r) {
+		return
+	}
 	var req recordPickRequest
 	if !decodeJSON(w, r, &req) {
 		return
@@ -232,6 +258,9 @@ type recordSkidsResponse struct {
 // recordSkids records or changes the order's skid count with a reason. PUT, because the count sent
 // replaces the recorded one. The actor is the verified staff caller, never the body.
 func (h *Handler) recordSkids(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	if !h.taskBranchFence(w, r) {
+		return
+	}
 	var req recordSkidsRequest
 	if !decodeJSON(w, r, &req) {
 		return
