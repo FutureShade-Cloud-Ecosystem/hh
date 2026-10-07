@@ -73,7 +73,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 
 	// A-18 (W2): product catalogue, then A-07 (W3): pricing over it.
 	productRepo := product.NewRepository(pool)
-	productSvc := product.NewService(productRepo).WithUomReader(productRepo)
+	productSvc := product.NewService(productRepo).WithUomReader(productRepo).WithCategoryReader(productRepo)
 	productHandler := product.NewHandler(productSvc, log).WithUserLinker(link)
 	productHandler.RegisterRoutes(r, g)
 	productHandler.RegisterSearchRoute(r, g)

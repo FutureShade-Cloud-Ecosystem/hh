@@ -14,12 +14,38 @@
 // Green: passes after the fix because the pop-out lands on /till/?popout= (till).
 import { expect, test, type Page } from "@playwright/test";
 
-/** Mint a demo session as Sales and navigate to the till. */
+/**
+ * Land on the till as Sales the way the box does (row 1040): the front door's key is in the tab
+ * and the till adopts it. Under /till/ a visit with no session goes to the front door, so the
+ * till's own cards are no longer the way in here.
+ */
 async function signIn(page: Page): Promise<void> {
-  const minted = await page.request.post("/api/v1/demo/session", { data: { flow: "sales" } });
-  expect(minted.ok()).toBe(true);
+  const issuedAtSeconds = Math.floor(Date.now() / 1000);
+  const segment = (value: unknown) => Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
+  const token = `${segment({ alg: "ES256", typ: "JWT" })}.${segment({
+    iss: "hh-demo-stub",
+    sub: "demo-account-sales",
+    aud: "staff",
+    iat: issuedAtSeconds,
+    exp: issuedAtSeconds + 60 * 60,
+  })}.c3R1Yi1zaWduYXR1cmUtYnl0ZXM`;
+  const record = {
+    token,
+    tokenExpiresAtMs: (issuedAtSeconds + 60 * 60) * 1000,
+    flow: "sales",
+    roleLabel: "Sales",
+    user: { userId: "demo-account-sales", email: "sales@demo.invalid", name: "Sales (demo)" },
+    roleCode: "inside_sales",
+    roleName: "Inside Sales",
+    tier: 3,
+    scope: "BRANCH",
+  };
+  await page.addInitScript((value) => {
+    if (window.name === "seeded") return;
+    window.name = "seeded";
+    window.sessionStorage.setItem("hh-demo.front-door.session.v1", value);
+  }, JSON.stringify(record));
   await page.goto("/till/");
-  await page.getByRole("button", { name: "Sales", exact: true }).click();
   await expect(page.getByTestId("pos-page-title")).toHaveText("New Counter Sale");
 }
 

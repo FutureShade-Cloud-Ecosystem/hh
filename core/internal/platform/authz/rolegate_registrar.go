@@ -99,6 +99,18 @@ func censusIndex() map[string]apigen.Route {
 	return byPattern
 }
 
+// RouteAccessFor returns the x-access annotation the census carries for one staff route, by method
+// and path as the document spells them (for example "POST", "/api/v1/pos/sales"). ok is false for a
+// route the census does not know or one that carries no annotation, so a caller that derives an
+// access from the document fails loudly at wiring when the route it names has moved.
+func RouteAccessFor(method, path string) (RouteAccess, bool) {
+	route, ok := censusIndex()[method+" "+path]
+	if !ok || !staffXRole(route.XRole) || len(route.Surfaces) == 0 {
+		return RouteAccess{}, false
+	}
+	return RouteAccess{Surfaces: route.Surfaces, Level: roleconfig.Level(route.Level), List: route.List}, true
+}
+
 // RoleGateRegistrar wraps a Registrar and attaches the role gate to every
 // staff route registered through it, and the machine gate to every
 // machine worded route when the wiring carried one (the composition root

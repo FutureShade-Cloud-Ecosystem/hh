@@ -36,6 +36,8 @@ func NewHandler(svc *Service, log *slog.Logger) *Handler {
 // the read route (write path stays unavailable rather than shipping unguarded).
 func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/customers/search", g.RequireStaff(h.staff(h.search)))
+	// One account by id, credit limit and current balance included, behind the search's own grants.
+	r.Handle("GET /api/v1/customers/{id}", g.RequireStaff(h.staff(h.get)))
 	// DIB-482: reading whether a customer may be texted is a STAFF read, anyone who might send them
 	// something needs to know the answer before they promise it.
 	r.Handle("GET /api/v1/customers/{id}/sms-consent", g.RequireStaff(h.staff(h.smsConsent)))
@@ -48,6 +50,17 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// writes. It is a legal record about a person, not a preference toggle, and the guard is the
 	// cheapest available statement of that.
 	r.Handle("PUT /api/v1/customers/{id}/sms-consent", g.RequireManager(h.staff(h.setSMSConsent)))
+}
+
+// get backs the one-account read. GET /api/v1/customers/{id}. An account the caller's branches do not
+// reach is a 404, the same answer as an id nobody has (account_read.go).
+func (h *Handler) get(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+	out, err := h.svc.GetAccount(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 // smsConsent backs the consent control's read. GET /api/v1/customers/{id}/sms-consent.

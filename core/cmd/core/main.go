@@ -456,6 +456,10 @@ func registerRoutesWithRoleConfig(r httpx.Registrar, getenv func(string) string,
 	money := wireMoney(r, pool, g, log, cfg.StaffBaseURL, roleCfg)
 	ops := wireOperations(r, pool, g, log, money, os.Getenv("CORE_STREAM_TICKET_KEY"), belt.outbox)
 	tops := wireTops(r, pool, g, log, money, ops, cfg, belt)
+	if err := wirePaymentGrant(r, g, roleGate, tops.posHandler); err != nil {
+		pool.Close()
+		return nil, err
+	}
 
 	// The customer-quote surface (HH-3.6 C5, THE AUDIT RE-POINT SITE): the
 	// store over the shared pool, the signing keys over the environment

@@ -45,7 +45,7 @@ export default defineConfig({
   // The base-aware pop-out leg needs the app served under /till/, so it has
   // its own config (test/popout-base-aware.config.ts) and runs after this one;
   // the default-build legs have theirs (test/default-build.config.ts).
-  testIgnore: ["**/acceptance/**", "**/popout-base-aware.pw.ts", "**/default-build/**"],
+  testIgnore: ["**/acceptance/**", "**/popout-base-aware.pw.ts", "**/handoff-prefixed.pw.ts", "**/default-build/**"],
   // The stub holds the demo world in memory (an open drawer, committed
   // sales, parked tickets), so the suite runs its tests in order, one
   // worker, and each test reads only what it itself caused.
