@@ -1036,8 +1036,11 @@ export class QdQuoteWorkarea extends LitElement {
       border-color: var(--hos-stone-amber, var(--hh-accent));
       color: var(--hos-stone-amber-text, var(--hh-accent-text));
     }
+    /* The design system's disabled pair, a token swap and never a fade of the live colours. */
     .abtn:disabled {
-      opacity: 0.5;
+      background: var(--hh-disabled-fill);
+      color: var(--hh-disabled-ink);
+      border-color: var(--hh-disabled-line);
       cursor: default;
     }
     .sendwrap {
@@ -1063,7 +1066,9 @@ export class QdQuoteWorkarea extends LitElement {
       background: var(--hos-stone-amber-hover, var(--hh-accent));
     }
     .sendbtn:disabled {
-      opacity: 0.5;
+      background: var(--hh-disabled-fill);
+      color: var(--hh-disabled-ink);
+      border-color: var(--hh-disabled-line);
       cursor: default;
     }
     .key {
@@ -1075,6 +1080,13 @@ export class QdQuoteWorkarea extends LitElement {
       padding: 1px var(--hos-s-4, 4px);
       margin-left: var(--hos-s-8, 8px);
       opacity: 0.85;
+      white-space: nowrap;
+    }
+    /* A phone has no Ctrl key: the hint is not drawn there, so it never wraps inside the button. */
+    @media (max-width: 480px) {
+      .key {
+        display: none;
+      }
     }
     .sendpop {
       position: absolute;
