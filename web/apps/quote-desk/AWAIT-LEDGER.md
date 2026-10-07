@@ -235,7 +235,8 @@ does by setting the property). The reviewers are asked to rule on whether those 
 | quote-workarea.ts | QdQuoteWorkarea.loadConfig | await | 1 | SAFE | The screen's configuration and the person's layout row. Not tied to a quote; a failed read leaves the shipped layout and says so. | - | - |
 | quote-workarea.ts | QdQuoteWorkarea.loadSalespeople | await | 1 | SAFE | The salesperson list for the select. Not tied to a quote. | - | - |
 | quote-workarea.ts | QdQuoteWorkarea.moveColumn | void call | 1 | SAFE | Starts the column save and does not wait for it; the started method carries the guard on its own rows. | - | - |
-| quote-workarea.ts | QdQuoteWorkarea.onActionClick | void call | 11 | SAFE | Starts a reset, an add, a remove, a copy, a preview, a send, a conversion, a save or the read of the quote again; each is ruled on its own row. | - | - |
+| quote-workarea.ts | QdQuoteWorkarea.onActionClick | void call | 12 | SAFE | Starts a reset, an add, a remove, a copy, a preview, a send, a conversion, a save or the read of the quote again; each is ruled on its own row. | - | - |
+| quote-workarea.ts | QdQuoteWorkarea.onActionClick | then | 1 | SAFE | Gives focus back to the Preview button after Close has drawn; interface only. | wa-preview-focus-back, wa-preview-scroll | P2-3 Preview opens where the person is looking; P2-3 Preview opens where the person is looking |
 | quote-workarea.ts | QdQuoteWorkarea.onAddProduct | void call | 1 | SAFE | Starts addProduct and does not wait for it; the started method carries the guard on its own rows. | - | - |
 | quote-workarea.ts | QdQuoteWorkarea.onCustomerPicked | void call | 1 | SAFE | Starts the create and does not wait for it; the started method carries the guard on its own rows. | - | - |
 | quote-workarea.ts | QdQuoteWorkarea.onFieldChange | void call | 3 | SAFE | Starts a quantity, a discount or an expiry save; each is ruled on its own row. | - | - |

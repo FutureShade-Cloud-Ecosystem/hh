@@ -2107,5 +2107,19 @@
     "find": "      if (done.status === 409) {\n",
     "replace": "      if (false as boolean) {\n",
     "test": "P2-2 after a refusal for a moved total"
+  },
+  {
+    "id": "wa-preview-scroll",
+    "file": "src/quote-workarea.ts",
+    "find": "    pane?.scrollIntoView({ block: \"start\", behavior: \"instant\" as ScrollBehavior });\n",
+    "replace": "",
+    "test": "P2-3 Preview opens where the person is looking"
+  },
+  {
+    "id": "wa-preview-focus-back",
+    "file": "src/quote-workarea.ts",
+    "find": "        void this.updateComplete.then(() => this.renderRoot.querySelector<HTMLElement>('[data-testid=\"qb-preview\"]')?.focus());\n",
+    "replace": "",
+    "test": "P2-3 Preview opens where the person is looking"
   }
 ]

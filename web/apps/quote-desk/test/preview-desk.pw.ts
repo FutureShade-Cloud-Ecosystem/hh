@@ -58,3 +58,22 @@ test("a preview closes when another quote opens", async ({ page }) => {
   await open(page, "Q-1001");
   await expect(page.getByTestId("qb-preview-pane")).toHaveCount(0);
 });
+
+test("P2-3 Preview opens where the person is looking, takes focus, and gives it back on close", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 700 });
+  await seed(page, { customer_id: "c-fenwick" });
+  await signIn(page);
+  await open(page, "Q-1004");
+  await page.getByTestId("qb-preview").scrollIntoViewIfNeeded();
+  await page.getByTestId("qb-preview").click();
+  const pane = page.getByTestId("qb-preview-pane");
+  await expect(pane).toBeVisible();
+  await expect.poll(async () => {
+    const box = await pane.boundingBox();
+    return box !== null && box.y >= -1 && box.y < 700;
+  }).toBe(true);
+  await expect(page.getByTestId("qb-preview-close")).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(pane).toHaveCount(0);
+  await expect(page.getByTestId("qb-preview")).toBeFocused();
+});

@@ -1466,6 +1466,11 @@ export class QdQuoteWorkarea extends LitElement {
     const page = document.createElement("pd-quote-public") as HTMLElement & { showQuote(value: unknown): void };
     page.showQuote(this.previewRaw);
     host.append(page);
+    // The pane opens above the workspace, off screen when the button was pressed low on the page: it is brought
+    // into view and takes focus (its Close button), and Close gives focus back to the Preview button.
+    const pane = this.renderRoot.querySelector<HTMLElement>('[data-testid="qb-preview-pane"]');
+    pane?.scrollIntoView({ block: "start", behavior: "instant" as ScrollBehavior });
+    this.renderRoot.querySelector<HTMLElement>('[data-testid="qb-preview-close"]')?.focus({ preventScroll: true });
   }
 
   /** Who cleared a price below the floor, in words: the name from the roster the desk read, else "a manager", never the id. */
@@ -1947,6 +1952,7 @@ export class QdQuoteWorkarea extends LitElement {
         break;
       case "preview-close":
         this.previewRaw = null;
+        void this.updateComplete.then(() => this.renderRoot.querySelector<HTMLElement>('[data-testid="qb-preview"]')?.focus());
         break;
       case "print":
         void this.doPrint();
