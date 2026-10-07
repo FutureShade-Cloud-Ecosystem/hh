@@ -28,7 +28,8 @@ async function pickLayout(page: Page, layout: "panels" | "stepper"): Promise<voi
   await page.getByTestId("pos-view").click();
   const radio = page.getByTestId(`pos-layout-${layout}`);
   if ((await radio.getAttribute("aria-checked")) !== "true") {
-    const saved = page.waitForRequest((r) => r.method() === "PUT" && r.url().includes("/api/v1/pos/workspace"));
+    // The response, not the request: a test that ends before the save lands leaves the stub on the old pick.
+    const saved = page.waitForResponse((r) => r.request().method() === "PUT" && r.url().includes("/api/v1/pos/workspace"));
     await radio.click();
     await saved;
   } else {
@@ -248,3 +249,32 @@ for (const layout of ["panels", "stepper"] as const) {
     await popped.close();
   });
 }
+
+test("a popped window never saves the layout its opener told it, even when the workspace read fails", async ({
+  page,
+  context,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page);
+  await pickLayout(page, "panels");
+  await context.route("**/api/v1/pos/workspace**", (route) =>
+    route.request().method() === "GET" ? route.fulfill({ status: 500, body: "{}" }) : route.continue(),
+  );
+  const poppedPromise = context.waitForEvent("page");
+  await page.getByRole("button", { name: "Pop out" }).click();
+  const popped = await poppedPromise;
+  const puts: string[] = [];
+  popped.on("request", (request) => {
+    if (request.method() === "PUT" && request.url().includes("/api/v1/pos/workspace")) puts.push(request.postData() ?? "");
+  });
+  await expect(popped.getByTestId("pos-twopane")).toBeVisible();
+  // Another workspace gesture (the results view flip) saves through the failed re-read: no save may
+  // carry the hinted layout (it is held back until the row reads again).
+  await popped.getByTestId("pos-browse").locator("summary").click();
+  const flip = popped.locator('[data-testid^="lookup-view-"][aria-pressed="false"]').first();
+  await flip.click();
+  await expect(popped.locator('[data-testid^="lookup-view-"][aria-pressed="false"]')).toHaveCount(1);
+  await popped.waitForTimeout(1500);
+  for (const body of puts) expect(body).not.toContain('"counter_layout":"PANELS"');
+  await popped.close();
+});

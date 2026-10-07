@@ -4974,6 +4974,11 @@ export class HosPosTerminal extends LitElement {
       const stored = await getWorkspacePrefs(this.branchId);
       body = mergeWorkspaceForSave(stored, sent, dirty);
     } catch {
+      // Round 7 review P3-1: a layout this window was only TOLD (a pop-out's hint) is not a choice
+      // the person made here, and with the stored row unreadable there is nothing to overlay it on,
+      // so the whole-view fallback would write it. That save is held back (the dirty fields stay, the
+      // next gesture saves again once the row reads) rather than overwrite the stored layout.
+      if (this.layoutHint !== '' && !this.wsDirty.has('counterLayout')) return;
       body = { ...sent, maximized: '' }; // re-read failed: the whole local view, as before
     }
     try {
