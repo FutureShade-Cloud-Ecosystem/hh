@@ -37,6 +37,21 @@ export async function customerSearch(
   });
 }
 
+export async function customerGetAccount(
+  client: ApiClient,
+  id: string | number,
+  call?: ApiCallOptions
+): Promise<Result<CustomerAccount>> {
+  return client.request<CustomerAccount>({
+    method: "GET",
+    path: "/api/v1/customers/{id}",
+    pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "customerGetAccount",
+  });
+}
+
 export async function customerUpdateBillingAddress(
   client: ApiClient,
   id: string | number,

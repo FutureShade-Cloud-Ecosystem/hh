@@ -342,6 +342,10 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 	money := wireMoney(r, pool, g, log, cfg.StaffBaseURL, roleCfg)
 	ops := wireOperations(r, pool, g, log, money, getenv("CORE_STREAM_TICKET_KEY"), belt.outbox)
 	tops := wireTops(r, pool, g, log, money, ops, cfg, belt)
+	if err := wirePaymentGrant(r, g, roleGate, tops.posHandler); err != nil {
+		pool.Close()
+		return nil, err
+	}
 
 	// The customer-quote surface over the shared audit seam: the same
 	// construction main.go makes, signing keys from the environment.

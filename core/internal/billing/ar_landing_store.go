@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -256,7 +257,7 @@ func (r *ARLandingRepository) ReminderContextFor(ctx context.Context, customerID
 	// the one a collections conversation is actually about, so it is the one the message names.
 	err := r.pool.QueryRow(ctx, `
 		SELECT c.id::text, c.name, c.account_no::text,
-		       COALESCE(i.invoice_no::text, ''), COALESCE(i.due_date, CURRENT_DATE),
+		       COALESCE(i.invoice_no::text, ''), COALESCE(i.due_date, $3::date),
 		       COALESCE(i.balance_cents, 0)
 		  FROM customers c
 		  LEFT JOIN LATERAL (
@@ -270,7 +271,7 @@ func (r *ARLandingRepository) ReminderContextFor(ctx context.Context, customerID
 		        ORDER BY iv.due_date
 		        LIMIT 1
 		  ) i ON TRUE
-		 WHERE c.id = $1::uuid`, customerID, nullUUID(invoiceID)).
+		 WHERE c.id = $1::uuid`, customerID, nullUUID(invoiceID), houseday.Today(nil)).
 		Scan(&rc.CustomerID, &rc.CustomerName, &rc.AccountNo, &rc.InvoiceNo, &rc.DueDate, &rc.BalanceCents)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ReminderContext{}, ErrNotFound

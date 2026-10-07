@@ -149,15 +149,16 @@ func TestIntegration_Trenton_SalePreview_MatchesTheRing(t *testing.T) {
 	// reason (the pos seam pins evidence false, the relief falls back to
 	// the standard rate), so the exempt world here is the ungated one a
 	// person's decision may zero: an effective-dated zero-rate MANUAL row,
-	// planted for this leg and removed on the way out. The totals show no
+	// planted for this leg and removed on the way out, dated the house zone's day
+	// (the day the engine reads), never Postgres's CURRENT_DATE, which is the session zone's. The totals show no
 	// tax line and the total is the subtotal, in the preview and in the
 	// committed ring alike.
 	ctx := context.Background()
 	var rateRowID string
 	if err := s.pool.QueryRow(ctx, `
 		INSERT INTO tax_rates (jurisdiction, reason_code, rate_bps, effective_from)
-		VALUES ('ON','MANUAL_TAX_REVIEW',0,CURRENT_DATE)
-		RETURNING id::text`).Scan(&rateRowID); err != nil {
+		VALUES ('ON','MANUAL_TAX_REVIEW',0,$1::date)
+		RETURNING id::text`, timeNowDate()).Scan(&rateRowID); err != nil {
 		t.Fatalf("plant the zero-rate MANUAL row: %v", err)
 	}
 	t.Cleanup(func() {
