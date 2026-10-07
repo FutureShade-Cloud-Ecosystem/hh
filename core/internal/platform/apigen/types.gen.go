@@ -6761,6 +6761,23 @@ type QuoteLineComparison struct {
 	Options []QuoteComparisonRow `json:"options"`
 }
 
+type QuoteAcceptOnBehalfRequest struct {
+	Channel             string  `json:"channel"`
+	Note                *string `json:"note,omitempty"`
+	QuantitiesConfirmed bool    `json:"quantities_confirmed"`
+}
+
+type QuoteDecisionResult struct {
+	QuoteId        string    `json:"quote_id"`
+	QuoteNo        string    `json:"quote_no"`
+	Status         string    `json:"status"`
+	PreviousStatus string    `json:"previous_status"`
+	Channel        *string   `json:"channel,omitempty"`
+	OnBehalf       bool      `json:"on_behalf"`
+	DecidedAt      time.Time `json:"decided_at"`
+	Replayed       bool      `json:"replayed"`
+}
+
 type QuoteConvertRequest struct {
 	Fulfillment *string `json:"fulfillment,omitempty"`
 }

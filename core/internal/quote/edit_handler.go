@@ -51,6 +51,9 @@ func (h *StaffHandler) RegisterStaffRoutes(r httpx.Registrar, g *guards.Guards) 
 	// Registering this at requireManager instead would have been the wrong gate, inside/outside
 	// sales are Tier-3 frontline roles and they are the people who do this.
 	r.Handle("POST /api/v1/quotes/{id}/convert", g.RequireStaff(h.staff(h.convertQuote)))
+	// The staff doors that record the customer's decision (staff_decision.go): the same selling-role
+	// gate as convert, in the service, because that is where the caller is resolved.
+	r.Handle("POST /api/v1/quotes/{id}/accept", g.RequireStaff(h.staff(h.acceptQuote)))
 	r.Handle("POST /api/v1/quotes/{id}/order-payment", g.RequireStaff(h.staff(h.takeOrderPayment)))
 	// DIB-59 comparison. A POST because the alternates are a request BODY, not a filter, but it is a
 	// strictly read-only operation: it writes nothing, to any table, including pricing_audit_log.
@@ -334,6 +337,31 @@ func (h *StaffHandler) convertQuote(w http.ResponseWriter, r *http.Request, _ gu
 	httpx.WriteJSON(w, http.StatusCreated, res)
 }
 
+// acceptQuote records that the customer accepted by phone, text, email or in person. The body is
+// required: how the customer said it, and the statement that they confirmed the quantities, are the
+// record. quantities_confirmed is a pointer so a missing field is a 400 in words, not a silent false.
+func (h *StaffHandler) acceptQuote(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+	var body struct {
+		Channel             string `json:"channel"`
+		Note                string `json:"note"`
+		QuantitiesConfirmed *bool  `json:"quantities_confirmed"`
+	}
+	if err := decodeBody(w, r, &body); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	res, err := h.svc.AcceptOnBehalf(r.Context(), r.PathValue("id"), StaffAcceptIn{
+		Channel: body.Channel, Note: body.Note,
+		QuantitiesConfirmed: body.QuantitiesConfirmed != nil && *body.QuantitiesConfirmed,
+		IdempotencyKey:      r.Header.Get("Idempotency-Key"),
+	})
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
 // takeOrderPayment is the QD-5 counter door: take payment on a converted quote's order (or, for a
 // customer with no credit, convert and pay as one action). The body is required: a payment with no
 // tender, amount and key is not a payment.
@@ -435,7 +463,12 @@ func (h *StaffHandler) writeErr(w http.ResponseWriter, err error) {
 	var floorRefusal *FloorRefusalError
 	var nothingToApprove *NothingToApproveError
 	var paymentConflict *OrderPaymentConflictError
+	var decisionRefused *DecisionRefusedError
 	switch {
+	case errors.As(err, &decisionRefused):
+		httpx.Error(w, http.StatusConflict, decisionRefused.Error())
+	case errors.Is(err, ErrIdempotencyKeyReused):
+		httpx.Error(w, http.StatusConflict, err.Error())
 	case errors.As(err, &paymentConflict):
 		httpx.Error(w, http.StatusConflict, paymentConflict.Error())
 	// - DIB-483 / M3-G7B: the credit refusal keeps its REASON -

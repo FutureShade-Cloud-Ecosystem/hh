@@ -19716,6 +19716,56 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/quotes/{id}/accept:
+    post:
+      operationId: quoteAcceptOnBehalf
+      tags:
+        - staff-quote
+      summary: Record that the customer accepted a quote by phone, text, email or in person
+      description: "A salesperson marks a quote accepted on the customer's behalf. SENT moves to ACCEPTED, and so does a DRAFT that has never been sent provided it has at least one line: a customer who agrees to what the salesperson read out has accepted a quote that was never sent. The body names the channel the customer used, an optional note, and quantities_confirmed, the staff member's statement that the customer confirmed the quantities; it is required and must be true. The status move, the audit row (staff on the customer's behalf, channel, note, the statement) and the change history row commit in one transaction, and the quote's follow-ups stop. A note carrying a long run of digits is redacted whole at the audit boundary. Limited to the selling roles that may convert, by the same rule, and to the caller's branches. A 409 names why in words: expired, already accepted (naming the order when there is one), converted, lost, or a draft with no lines. An optional Idempotency-Key header (a UUID) makes a retry safe: a repeat under the same key on the same quote answers the first outcome with replayed true and writes nothing, whatever the quote's status is by then; the same key with a different channel is a 409."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - quote-desk
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: A UUID chosen once per decision and resent unchanged on every retry of it. Scoped to the quote.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteAcceptOnBehalfRequest"
+      responses:
+        "200":
+          description: The quote's new status and the decision's record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteDecisionResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/quotes/{id}/order-payment:
     post:
       operationId: quoteTakeOrderPayment
@@ -45997,6 +46047,68 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/QuoteComparisonRow"
+    QuoteAcceptOnBehalfRequest:
+      type: object
+      required:
+        - channel
+        - quantities_confirmed
+      properties:
+        channel:
+          type: string
+          enum:
+            - phone
+            - text
+            - email
+            - in_person
+          description: How the customer told the salesperson
+        note:
+          type: string
+          maxLength: 500
+          description: The salesperson's own note for the record
+        quantities_confirmed:
+          type: boolean
+          description: The staff member's statement that the customer confirmed the quantities. Required, and must be true.
+    QuoteDecisionResult:
+      type: object
+      required:
+        - quote_id
+        - quote_no
+        - status
+        - previous_status
+        - on_behalf
+        - decided_at
+        - replayed
+      properties:
+        quote_id:
+          type: string
+        quote_no:
+          type: string
+        status:
+          type: string
+          enum:
+            - ACCEPTED
+            - LOST
+        previous_status:
+          type: string
+          enum:
+            - DRAFT
+            - SENT
+        channel:
+          type: string
+          enum:
+            - phone
+            - text
+            - email
+            - in_person
+        on_behalf:
+          type: boolean
+          description: Always true, staff recorded the decision for the customer
+        decided_at:
+          type: string
+          format: date-time
+        replayed:
+          type: boolean
+          description: True when this is the first outcome of an earlier request under the same key; nothing was written
     QuoteConvertRequest:
       type: object
       description: The optional conversion body. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8). An absent or empty fulfillment leaves the column out of the insert and the database default applies; DELIVERY is refused in words because a delivery is booked by scheduling a stop, not chosen at conversion.

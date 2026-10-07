@@ -5811,6 +5811,21 @@ export type QuoteLineComparison = {
   line_no: number;
   options: QuoteComparisonRow[];
 };
+export type QuoteAcceptOnBehalfRequest = {
+  channel: "phone" | "text" | "email" | "in_person";
+  note?: string;
+  quantities_confirmed: boolean;
+};
+export type QuoteDecisionResult = {
+  quote_id: string;
+  quote_no: string;
+  status: "ACCEPTED" | "LOST";
+  previous_status: "DRAFT" | "SENT";
+  channel?: "phone" | "text" | "email" | "in_person";
+  on_behalf: boolean;
+  decided_at: string;
+  replayed: boolean;
+};
 export type QuoteConvertRequest = {
   fulfillment?: "PICKUP" | "WILL_CALL";
 };
