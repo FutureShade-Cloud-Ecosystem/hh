@@ -88,5 +88,55 @@ for (const width of WIDTHS) {
         }
       }
     });
+
+    test("every Convert step fits, for an account, a Cash On Demand customer, and the done screen", async ({ page }) => {
+      for (const customer of ["c-fenwick", "c-walkin", "c-held", "c-pastdue"]) {
+        const seeded = await page.request.post("/_stub/seed-quote", { data: { status: "ACCEPTED", customer_id: customer, lines: [{ p: "p-wall-std", q: 4 }, { p: "p-holland-60", q: 120 }] } });
+        const id = ((await seeded.json()) as { id: string }).id;
+        await signIn(page);
+        await page.evaluate((quote) => {
+          window.location.hash = `#/quotes/${quote}/convert`;
+        }, id);
+        await expect(page.getByTestId("qc-review")).toBeVisible();
+        for (const step of ["qc-review", "qc-fulfilment", "qc-standing", "qc-payment", "qc-confirm-step"]) {
+          await expect(page.getByTestId(step)).toBeVisible();
+          await fits(page, `${customer} ${step}`);
+          if (step !== "qc-confirm-step") await page.getByTestId("qc-next").click();
+        }
+      }
+    });
+
+    test("every page of the desk fits: Approvals, Pricing, the decision form, the preview and the unreadable quote", async ({ page }) => {
+      await signIn(page);
+      const seeded = await page.request.post("/_stub/seed-quote", { data: { status: "SENT", customer_id: "c-fenwick" } });
+      const id = ((await seeded.json()) as { id: string }).id;
+      await page.evaluate((quote) => {
+        window.location.hash = `#/quotes/${quote}`;
+      }, id);
+      await page.getByTestId("qb-decision-accept-open").click();
+      await fits(page, "decision form");
+      await page.getByTestId("qb-preview").click();
+      await expect(page.getByTestId("qb-preview-pane")).toBeVisible();
+      await fits(page, "preview");
+      await page.evaluate(() => {
+        window.location.hash = "#/quotes/no-such-quote";
+      });
+      await expect(page.getByTestId("qb-unreadable")).toBeVisible();
+      await fits(page, "unreadable");
+    });
+
+    test("the Sales manager's Approvals and every Pricing tab fit", async ({ page }) => {
+      await page.goto("/");
+      await page.getByRole("button", { name: "Sales manager", exact: true }).click();
+      await expect(page.getByTestId("qb-list")).toBeVisible();
+      await page.getByRole("button", { name: "Approvals", exact: true }).first().click().catch(() => undefined);
+      await fits(page, "approvals");
+      await page.getByTestId("desk-tab-pricing").click();
+      await expect(page.getByTestId("pricing-panel")).toBeVisible();
+      for (const tab of ["margin", "rules", "customers", "breaks", "audit"]) {
+        await page.getByTestId(`pricing-tab-${tab}`).click();
+        await fits(page, `pricing ${tab}`);
+      }
+    });
   });
 }

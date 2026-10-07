@@ -227,6 +227,24 @@ export class QuoteConvert extends HHElement {
       }
       .facts dd {
         margin: 0;
+        min-width: 0;
+        overflow-wrap: anywhere;
+      }
+      /* The phone (320 to 480): the lines table and the facts fit the screen, their words wrapping rather than
+         pushing the page sideways. */
+      @media (max-width: 480px) {
+        .facts {
+          grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+          gap: var(--hh-s-4) var(--hh-s-8);
+        }
+        table {
+          font-size: 0.8rem;
+        }
+        th,
+        td {
+          padding: var(--hh-s-8) var(--hh-s-4);
+          overflow-wrap: anywhere;
+        }
       }
       .notice {
         border: 1px solid var(--hh-line);
