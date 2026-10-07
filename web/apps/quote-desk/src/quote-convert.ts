@@ -197,6 +197,12 @@ export class QuoteConvert extends HHElement {
         grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: var(--hh-s-12);
       }
+      /* The phone: one field to a row, so a field's words and its placeholder are never cut ("Cas"). */
+      @media (max-width: 640px) {
+        .fields {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      }
       label {
         display: flex;
         flex-direction: column;

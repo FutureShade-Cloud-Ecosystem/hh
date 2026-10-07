@@ -380,6 +380,18 @@ export class QdQuoteWorkarea extends LitElement {
       align-items: stretch;
       min-height: max(calc(100vh - var(--qb-chrome, 250px)), 430px);
     }
+    /* The phone: the two panels stack in one column, whatever split the person saved for a wide screen
+       (the saved tracks ride an inline style, so this rule says important). */
+    @media (max-width: 720px) {
+      .workspace {
+        grid-template-columns: minmax(0, 1fr) !important;
+        gap: var(--hos-s-12, 12px);
+        min-height: 0;
+      }
+      .divider {
+        display: none;
+      }
+    }
     .panel {
       border: 1px solid var(--hos-line, var(--hh-line));
       border-radius: var(--hos-radius-card, 10px);

@@ -263,6 +263,19 @@ export class QdQuoteBuilder extends LitElement {
         grid-column: 1 / -1;
       }
     }
+    /* The phone: the status tabs wrap onto rows inside the toolbar instead of reaching past the screen. */
+    @media (max-width: 640px) {
+      .toolbar .tools {
+        min-width: 0;
+        max-width: 100%;
+      }
+      .toolbar .segmented {
+        display: flex;
+        flex-wrap: wrap;
+        max-width: 100%;
+        border-radius: var(--hh-radius-card, 12px);
+      }
+    }
     button:focus-visible,
     input:focus-visible {
       outline: 2px solid var(--hos-stone-amber-text, var(--hh-accent-text));

@@ -58,6 +58,7 @@ export class HosPosFlowSteps extends LitElement {
       }
       nav {
         display: flex;
+        flex-wrap: wrap;
         align-items: center;
         gap: var(--hos-space-2);
       }

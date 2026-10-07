@@ -154,8 +154,11 @@ const styles = css`
     .who {
       justify-self: center;
     }
+    /* The phone's narrowest screens: the cluster wraps onto a second row rather than reaching past the edge. */
     .controls {
       justify-self: center;
+      flex-wrap: wrap;
+      justify-content: center;
     }
   }
   .controls button {
