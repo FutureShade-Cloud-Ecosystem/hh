@@ -769,3 +769,50 @@ func TestIntegration_Receipt_PrintsWhoApprovedTheDiscounts(t *testing.T) {
 		}
 	}
 }
+
+// The receipt of an order carries the dealer's quantity notice: the dealer default row's wording, and a
+// branch row over it, read through the receipt's own branch header.
+func TestIntegration_Receipt_CarriesTheQuantityNotice(t *testing.T) {
+	pool := intPool(t)
+	sale, branchID := ringCashSale(t, pool)
+	ctx := globalCtx(t, pool)
+	receipts, _ := printingSvcs(pool)
+	bg := context.Background()
+	if _, err := pool.Exec(bg, `INSERT INTO quote_policy (branch_id, send_sms_enabled)
+		SELECT NULL, TRUE WHERE NOT EXISTS (SELECT 1 FROM quote_policy WHERE branch_id IS NULL)`); err != nil {
+		t.Fatalf("ensure dealer row: %v", err)
+	}
+	if _, err := pool.Exec(bg, `UPDATE quote_policy SET quantity_notice = DEFAULT WHERE branch_id IS NULL`); err != nil {
+		t.Fatalf("reset dealer notice: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(bg, `UPDATE quote_policy SET quantity_notice = DEFAULT WHERE branch_id IS NULL`)
+		_, _ = pool.Exec(bg, `DELETE FROM quote_policy WHERE branch_id = $1`, branchID)
+	})
+
+	rec, err := receipts.Receipt(ctx, sale.OrderID)
+	if err != nil {
+		t.Fatalf("receipt: %v", err)
+	}
+	if rec.QuantityNotice != defaultQuantityNotice {
+		t.Errorf("notice = %q, want the default", rec.QuantityNotice)
+	}
+	html, _ := RenderReceiptHTML(rec)
+	if !strings.Contains(html, defaultQuantityNotice) {
+		t.Error("the default notice must be printed on the roll")
+	}
+
+	if _, err := pool.Exec(bg, `UPDATE quote_policy SET quantity_notice = 'Dealer words on quantities.' WHERE branch_id IS NULL`); err != nil {
+		t.Fatalf("dealer notice: %v", err)
+	}
+	if rec, err = receipts.Receipt(ctx, sale.OrderID); err != nil || rec.QuantityNotice != "Dealer words on quantities." {
+		t.Fatalf("dealer wording = %q, %v", rec.QuantityNotice, err)
+	}
+	if _, err := pool.Exec(bg, `INSERT INTO quote_policy (branch_id, quantity_notice) VALUES ($1, 'Branch words on quantities.')
+		ON CONFLICT (branch_id) DO UPDATE SET quantity_notice = EXCLUDED.quantity_notice`, branchID); err != nil {
+		t.Fatalf("branch notice: %v", err)
+	}
+	if rec, err = receipts.Receipt(ctx, sale.OrderID); err != nil || rec.QuantityNotice != "Branch words on quantities." {
+		t.Fatalf("branch must win: %q, %v", rec.QuantityNotice, err)
+	}
+}

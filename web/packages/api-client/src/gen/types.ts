@@ -5793,6 +5793,27 @@ export type QuoteView = {
   tax_cents: number;
   total_cents: number;
   updated_at: string;
+  quantity_notice: string;
+  acceptances: QuoteAcceptanceRecord[];
+};
+export type QuoteAcceptanceRecord = {
+  source: "CUSTOMER" | "STAFF_ON_BEHALF";
+  typed_name?: string;
+  accepted_at: string;
+  quantities_confirmed: boolean;
+  amount_cents: number;
+  channel?: string;
+  note?: string;
+  quantity_notice?: string;
+  lines?: QuoteAcceptedLine[];
+};
+export type QuoteAcceptedLine = {
+  line_no: number;
+  description: string;
+  qty_entered: string;
+  uom_entered: string;
+  unit_price_cents: number;
+  line_total_cents: number;
 };
 export type QuoteViewLine = {
   line_no: number;
@@ -5971,6 +5992,7 @@ export type QuotePolicy = {
   include_product_images: boolean;
   quick_chip_set: string[];
   effective_chips?: string[];
+  quantity_notice: string;
   workspace_split_pct: number;
   workspace_arrangement: "PRIMARY_LEFT" | "PRIMARY_RIGHT";
 };
@@ -6055,6 +6077,7 @@ export type QuoteShareLinkList = {
 };
 export type QuotePublicView = {
   quote_no: string;
+  quantity_notice: string;
   customer_name: string;
   status: "DRAFT" | "SENT" | "ACCEPTED" | "CONVERTED" | "EXPIRED" | "LOST";
   valid_until?: string;
@@ -6090,10 +6113,12 @@ export type QuotePublicLine = {
 export type QuotePublicAcceptRequest = {
   typed_name: string;
   accepted: boolean;
+  quantities_confirmed: boolean;
 };
 export type QuoteAcceptanceResult = {
   quote_no: string;
   typed_name: string;
+  quantities_confirmed: boolean;
   accepted_at: string;
   subtotal_cents: number;
   tax_cents: number;

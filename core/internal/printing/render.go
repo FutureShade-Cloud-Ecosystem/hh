@@ -123,6 +123,7 @@ var receiptTmpl = template.Must(template.New("receipt").Funcs(template.FuncMap{
   .center { text-align: center; }
   .right { text-align: right; }
   .rule { border-top: 1px dashed #000; margin: 8px 0; }
+  .qty-notice { font-size: 11px; margin: 6px 0; text-align: left; overflow-wrap: anywhere; }
   .order-no { font-size: 20px; font-weight: 700; letter-spacing: .04em; margin: 6px 0 2px; }
   table { width: 100%; border-collapse: collapse; }
   td, th { padding: 1px 0; vertical-align: top; }
@@ -199,6 +200,8 @@ var receiptTmpl = template.Must(template.New("receipt").Funcs(template.FuncMap{
       {{end}}
     </tbody>
   </table>
+
+  {{if .QuantityNotice}}<div class="qty-notice">{{.QuantityNotice}}</div>{{end}}
 
   <div class="rule"></div>
 
@@ -277,6 +280,7 @@ var receiptPageTmpl = template.Must(template.New("receipt-page").Funcs(template.
   .center { text-align: center; }
   .right { text-align: right; }
   .rule { border-top: 1px solid #000; margin: 14px 0; }
+  .qty-notice { font-size: 12px; margin: 10px 0; overflow-wrap: anywhere; }
   .order-no { font-size: 24px; font-weight: 700; letter-spacing: .04em; margin: 10px 0 4px; }
   table { width: 100%; border-collapse: collapse; }
   td, th { padding: 4px 0; vertical-align: top; }
@@ -352,6 +356,8 @@ var receiptPageTmpl = template.Must(template.New("receipt-page").Funcs(template.
       {{end}}
     </tbody>
   </table>
+
+  {{if .QuantityNotice}}<div class="qty-notice">{{.QuantityNotice}}</div>{{end}}
 
   <div class="rule"></div>
 

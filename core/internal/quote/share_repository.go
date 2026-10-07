@@ -137,13 +137,15 @@ func (r *Repository) PublicQuote(ctx context.Context, quoteID string) (PublicQuo
 		SELECT q.quote_no::text, COALESCE(c.name,''), q.status, COALESCE(q.valid_until::text,''),
 		       q.subtotal_cents, q.tax_cents, q.total_cents, q.updated_at,
 		       q.customer_notes, q.deposit_required, q.deposit_pct, q.include_images,
-		       q.fulfillment, q.delivery_address, COALESCE(q.requested_date::text,''), q.delivery_fee_cents
+		       q.fulfillment, q.delivery_address, COALESCE(q.requested_date::text,''), q.delivery_fee_cents,
+		       COALESCE((SELECT qp.quantity_notice FROM quote_policy qp WHERE qp.branch_id = q.branch_id),
+		                (SELECT qp.quantity_notice FROM quote_policy qp WHERE qp.branch_id IS NULL), $2)
 		  FROM quotes q LEFT JOIN customers c ON c.id = q.customer_id
-		 WHERE q.id = $1`, quoteID).
+		 WHERE q.id = $1`, quoteID, DefaultQuantityNotice).
 		Scan(&v.QuoteNo, &v.CustomerName, &v.Status, &v.ValidUntil,
 			&v.SubtotalCents, &v.TaxCents, &v.TotalCents, &v.AsOf,
 			&v.CustomerNotes, &v.DepositRequired, &v.DepositPct, &v.IncludeImages,
-			&v.Fulfillment, &v.DeliveryAddress, &v.RequestedDate, &v.DeliveryFeeCents)
+			&v.Fulfillment, &v.DeliveryAddress, &v.RequestedDate, &v.DeliveryFeeCents, &v.QuantityNotice)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return v, ErrNotFound
@@ -352,7 +354,7 @@ func (r *Repository) AcceptQuoteGuarded(ctx context.Context, in acceptWrite, hoo
 		}
 	}
 	out = AcceptanceResult{
-		QuoteNo: quoteNo, TypedName: in.TypedName, AcceptedAt: in.Now,
+		QuoteNo: quoteNo, TypedName: in.TypedName, AcceptedAt: in.Now, QuantitiesConfirmed: in.QuantitiesConfirmed,
 		SubtotalCents: subtotal, TaxCents: tax, TotalCents: total,
 		Repeat: repeat, priorStatus: status, idemKey: in.IdempotencyKey,
 	}
@@ -364,13 +366,28 @@ func (r *Repository) AcceptQuoteGuarded(ctx context.Context, in acceptWrite, hoo
 	}
 	// The acceptance record SNAPSHOTS the money and the document number (C1): it must stay meaningful
 	// even if the quote row is later gone, so it never reads back through quote_id at display time.
+	// The record also keeps what the customer was shown (0368): the lines as they stand under this lock
+	// and the notice wording in force for the quote's branch, read in the same statement.
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO quote_acceptances
 		  (quote_id, share_link_id, quote_no, typed_name,
-		   accepted_subtotal_cents, accepted_tax_cents, accepted_total_cents, audit_seq, accepted_at)
-		VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, NULLIF($8,0), $9)
+		   accepted_subtotal_cents, accepted_tax_cents, accepted_total_cents, audit_seq, accepted_at,
+		   quantities_confirmed, quantity_notice, accepted_lines)
+		VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, NULLIF($8,0), $9, $10,
+		  COALESCE((SELECT qp.quantity_notice FROM quote_policy qp
+		             WHERE qp.branch_id = (SELECT branch_id FROM quotes WHERE id = $1::uuid)),
+		           (SELECT qp.quantity_notice FROM quote_policy qp WHERE qp.branch_id IS NULL), $11),
+		  COALESCE((SELECT jsonb_agg(jsonb_build_object(
+		              'line_no', ql.line_no,
+		              'description', COALESCE(NULLIF(ql.description,''), p.name, ''),
+		              'qty_entered', ql.qty_entered::text, 'uom_entered', ql.uom_entered::text,
+		              'unit_price_cents', ql.unit_price_cents, 'line_total_cents', ql.line_total_cents)
+		              ORDER BY ql.line_no)
+		            FROM quote_lines ql LEFT JOIN products p ON p.id = ql.product_id
+		           WHERE ql.quote_id = $1::uuid), '[]'::jsonb))
 		RETURNING accepted_at`,
-		in.QuoteID, in.ShareLinkID, quoteNo, in.TypedName, subtotal, tax, total, seq, in.Now).
+		in.QuoteID, in.ShareLinkID, quoteNo, in.TypedName, subtotal, tax, total, seq, in.Now,
+		in.QuantitiesConfirmed, DefaultQuantityNotice).
 		Scan(&out.AcceptedAt); err != nil {
 		return AcceptanceResult{}, fmt.Errorf("record quote acceptance: %w", err)
 	}

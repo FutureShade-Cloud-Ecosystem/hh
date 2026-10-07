@@ -6717,25 +6717,48 @@ type QuoteSummaryPage struct {
 }
 
 type QuoteView struct {
-	Id             string          `json:"id"`
-	QuoteNo        string          `json:"quote_no"`
-	CustomerId     string          `json:"customer_id"`
-	CustomerName   string          `json:"customer_name"`
-	BranchId       string          `json:"branch_id"`
-	Status         string          `json:"status"`
-	ValidUntil     *string         `json:"valid_until,omitempty"`
-	Expired        bool            `json:"expired"`
-	EditableFields []string        `json:"editable_fields"`
-	CanConvert     bool            `json:"can_convert"`
-	CanAccept      bool            `json:"can_accept"`
-	CanReject      bool            `json:"can_reject"`
-	OwnerId        *string         `json:"owner_id,omitempty"`
-	OwnerName      *string         `json:"owner_name,omitempty"`
-	Lines          []QuoteViewLine `json:"lines"`
-	SubtotalCents  int64           `json:"subtotal_cents"`
-	TaxCents       int64           `json:"tax_cents"`
-	TotalCents     int64           `json:"total_cents"`
-	UpdatedAt      time.Time       `json:"updated_at"`
+	Id             string                  `json:"id"`
+	QuoteNo        string                  `json:"quote_no"`
+	CustomerId     string                  `json:"customer_id"`
+	CustomerName   string                  `json:"customer_name"`
+	BranchId       string                  `json:"branch_id"`
+	Status         string                  `json:"status"`
+	ValidUntil     *string                 `json:"valid_until,omitempty"`
+	Expired        bool                    `json:"expired"`
+	EditableFields []string                `json:"editable_fields"`
+	CanConvert     bool                    `json:"can_convert"`
+	CanAccept      bool                    `json:"can_accept"`
+	CanReject      bool                    `json:"can_reject"`
+	OwnerId        *string                 `json:"owner_id,omitempty"`
+	OwnerName      *string                 `json:"owner_name,omitempty"`
+	Lines          []QuoteViewLine         `json:"lines"`
+	SubtotalCents  int64                   `json:"subtotal_cents"`
+	TaxCents       int64                   `json:"tax_cents"`
+	TotalCents     int64                   `json:"total_cents"`
+	UpdatedAt      time.Time               `json:"updated_at"`
+	QuantityNotice string                  `json:"quantity_notice"`
+	Acceptances    []QuoteAcceptanceRecord `json:"acceptances"`
+}
+
+type QuoteAcceptanceRecord struct {
+	Source              string               `json:"source"`
+	TypedName           *string              `json:"typed_name,omitempty"`
+	AcceptedAt          time.Time            `json:"accepted_at"`
+	QuantitiesConfirmed bool                 `json:"quantities_confirmed"`
+	AmountCents         int64                `json:"amount_cents"`
+	Channel             *string              `json:"channel,omitempty"`
+	Note                *string              `json:"note,omitempty"`
+	QuantityNotice      *string              `json:"quantity_notice,omitempty"`
+	Lines               *[]QuoteAcceptedLine `json:"lines,omitempty"`
+}
+
+type QuoteAcceptedLine struct {
+	LineNo         int32  `json:"line_no"`
+	Description    string `json:"description"`
+	QtyEntered     string `json:"qty_entered"`
+	UomEntered     string `json:"uom_entered"`
+	UnitPriceCents int64  `json:"unit_price_cents"`
+	LineTotalCents int64  `json:"line_total_cents"`
 }
 
 type QuoteViewLine struct {
@@ -6940,6 +6963,7 @@ type QuotePolicy struct {
 	IncludeProductImages bool      `json:"include_product_images"`
 	QuickChipSet         []string  `json:"quick_chip_set"`
 	EffectiveChips       *[]string `json:"effective_chips,omitempty"`
+	QuantityNotice       string    `json:"quantity_notice"`
 	WorkspaceSplitPct    int32     `json:"workspace_split_pct"`
 	WorkspaceArrangement string    `json:"workspace_arrangement"`
 }
@@ -7034,6 +7058,7 @@ type QuoteShareLinkList struct {
 
 type QuotePublicView struct {
 	QuoteNo          string            `json:"quote_no"`
+	QuantityNotice   string            `json:"quantity_notice"`
 	CustomerName     string            `json:"customer_name"`
 	Status           string            `json:"status"`
 	ValidUntil       *string           `json:"valid_until,omitempty"`
@@ -7069,18 +7094,20 @@ type QuotePublicLine struct {
 }
 
 type QuotePublicAcceptRequest struct {
-	TypedName string `json:"typed_name"`
-	Accepted  bool   `json:"accepted"`
+	TypedName           string `json:"typed_name"`
+	Accepted            bool   `json:"accepted"`
+	QuantitiesConfirmed bool   `json:"quantities_confirmed"`
 }
 
 type QuoteAcceptanceResult struct {
-	QuoteNo          string    `json:"quote_no"`
-	TypedName        string    `json:"typed_name"`
-	AcceptedAt       time.Time `json:"accepted_at"`
-	SubtotalCents    int64     `json:"subtotal_cents"`
-	TaxCents         int64     `json:"tax_cents"`
-	TotalCents       int64     `json:"total_cents"`
-	RepeatAcceptance *bool     `json:"repeat_acceptance,omitempty"`
+	QuoteNo             string    `json:"quote_no"`
+	TypedName           string    `json:"typed_name"`
+	QuantitiesConfirmed bool      `json:"quantities_confirmed"`
+	AcceptedAt          time.Time `json:"accepted_at"`
+	SubtotalCents       int64     `json:"subtotal_cents"`
+	TaxCents            int64     `json:"tax_cents"`
+	TotalCents          int64     `json:"total_cents"`
+	RepeatAcceptance    *bool     `json:"repeat_acceptance,omitempty"`
 }
 
 type QuoteSMSShareRequest struct {

@@ -596,7 +596,7 @@ func TestDemoWorld_Quotes(t *testing.T) {
 		}
 		return a, seq, anchor
 	}
-	acc := qwPublicPost(rec.inner, "/api/public/v1/quotes/"+quoteToken("Q2")+"/accept", `{"typed_name":"Customer representative (demo)","accepted":true}`)
+	acc := qwPublicPost(rec.inner, "/api/public/v1/quotes/"+quoteToken("Q2")+"/accept", `{"typed_name":"Customer representative (demo)","accepted":true,"quantities_confirmed":true}`)
 	acc.ok(t, http.StatusOK)
 	realAudit, realSeq, realAnchor := auditOf(quoteID("Q2"))
 	seedAudit, seedSeq, seedAnchor := auditOf(quoteID("Q3"))

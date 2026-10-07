@@ -92,7 +92,7 @@ func TestIntegration_ShareLink_MintViewAccept(t *testing.T) {
 	}
 
 	// Accept.
-	res, err := svc.AcceptByToken(context.Background(), minted.Token, "  Dana Reyes  ", true)
+	res, err := svc.AcceptByToken(context.Background(), minted.Token, "  Dana Reyes  ", true, true)
 	if err != nil {
 		t.Fatalf("accept: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestIntegration_ShareLink_AcceptanceSurvivesTheQuote(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
-	if _, err := svc.AcceptByToken(context.Background(), minted.Token, "Dana Reyes", true); err != nil {
+	if _, err := svc.AcceptByToken(context.Background(), minted.Token, "Dana Reyes", true, true); err != nil {
 		t.Fatalf("accept: %v", err)
 	}
 	// Delete the quote out from under the acceptance. quote_lines + share_links cascade; the
@@ -218,7 +218,7 @@ func TestIntegration_ShareLink_Lifecycle(t *testing.T) {
 		if !errors.Is(err, ErrLinkGone) {
 			t.Fatalf("an expired link must answer GONE (410), got %v", err)
 		}
-		if _, err := svc.AcceptByToken(ctx, minted.Token, "Dana", true); !errors.Is(err, ErrLinkGone) {
+		if _, err := svc.AcceptByToken(ctx, minted.Token, "Dana", true, true); !errors.Is(err, ErrLinkGone) {
 			t.Fatalf("an expired link must not accept, got %v", err)
 		}
 	})
@@ -276,7 +276,7 @@ func TestIntegration_ShareLink_Lifecycle(t *testing.T) {
 			t.Fatal("a token resolved to the wrong quote")
 		}
 		// Accepting with A's token must accept A, never B.
-		if _, err := svc.AcceptByToken(ctx, mintedA.Token, "Dana", true); err != nil {
+		if _, err := svc.AcceptByToken(ctx, mintedA.Token, "Dana", true, true); err != nil {
 			t.Fatalf("accept A: %v", err)
 		}
 		var statusB string
@@ -299,7 +299,7 @@ func TestIntegration_ShareLink_Lifecycle(t *testing.T) {
 		if err == nil {
 			// Minting on a lapsed quote is itself refused; if that ever changes, the accept must still
 			// refuse, so assert that too.
-			_, aerr := svc.AcceptByToken(ctx, minted.Token, "Dana", true)
+			_, aerr := svc.AcceptByToken(ctx, minted.Token, "Dana", true, true)
 			var qe *QuoteExpiredError
 			if !errors.As(aerr, &qe) {
 				t.Fatalf("a lapsed quote must refuse acceptance, got %v", aerr)
@@ -331,14 +331,14 @@ func TestIntegration_Accept_RequiresNameAndAffirmative(t *testing.T) {
 	}
 
 	t.Run("no typed name is refused", func(t *testing.T) {
-		if _, err := svc.AcceptByToken(ctx, minted.Token, "   ", true); err == nil {
+		if _, err := svc.AcceptByToken(ctx, minted.Token, "   ", true, true); err == nil {
 			t.Fatal("an acceptance with no name must be refused")
 		}
 	})
 	t.Run("no affirmative is refused", func(t *testing.T) {
 		// The affirmative is a REQUIRED separate act. An attestation someone could produce by accident
 		// is not worth recording.
-		if _, err := svc.AcceptByToken(ctx, minted.Token, "Dana Reyes", false); err == nil {
+		if _, err := svc.AcceptByToken(ctx, minted.Token, "Dana Reyes", false, true); err == nil {
 			t.Fatal("an acceptance without the explicit affirmative must be refused")
 		}
 	})
@@ -385,7 +385,7 @@ func TestIntegration_Accept_IsAtomicWithItsTrail(t *testing.T) {
 		t.Fatalf("mint: %v", err)
 	}
 	ctx := context.Background()
-	if _, err := svc.AcceptByToken(ctx, minted.Token, "Dana Reyes", true); err == nil {
+	if _, err := svc.AcceptByToken(ctx, minted.Token, "Dana Reyes", true, true); err == nil {
 		t.Fatal("want the acceptance to fail when the recorder fails")
 	}
 	var status string
@@ -465,7 +465,7 @@ func TestIntegration_Accept_RefusedWhenNotSent(t *testing.T) {
 				t.Fatalf("force status %s: %v", status, err)
 			}
 
-			_, err := svc.AcceptByToken(context.Background(), token, "Dana Reyes", true)
+			_, err := svc.AcceptByToken(context.Background(), token, "Dana Reyes", true, true)
 			if !errors.Is(err, ErrNotAcceptable) {
 				t.Fatalf("accepting a %s quote must return ErrNotAcceptable; got %v", status, err)
 			}
@@ -495,7 +495,7 @@ func TestIntegration_Accept_RefusedWhenExpired(t *testing.T) {
 			t.Fatalf("lapse quote: %v", err)
 		}
 		var expired *QuoteExpiredError
-		_, err := svc.AcceptByToken(context.Background(), token, "Dana Reyes", true)
+		_, err := svc.AcceptByToken(context.Background(), token, "Dana Reyes", true, true)
 		if !errors.As(err, &expired) {
 			t.Fatalf("accepting a lapsed quote must return QuoteExpiredError; got %v", err)
 		}
@@ -508,7 +508,7 @@ func TestIntegration_Accept_RefusedWhenExpired(t *testing.T) {
 	// guard that always refused would pass the case above on its own.
 	t.Run("future succeeds", func(t *testing.T) {
 		svc, quoteID, token := mintedFor(t, pool, now, "2026-08-15")
-		if _, err := svc.AcceptByToken(context.Background(), token, "Dana Reyes", true); err != nil {
+		if _, err := svc.AcceptByToken(context.Background(), token, "Dana Reyes", true, true); err != nil {
 			t.Fatalf("a quote inside its window must be acceptable; got %v", err)
 		}
 		if n := acceptanceRows(t, pool, quoteID); n != 1 {
@@ -520,7 +520,7 @@ func TestIntegration_Accept_RefusedWhenExpired(t *testing.T) {
 		// Pins D2a: NULL valid_until means the quote never lapses. This is our own ruling, so it gets a
 		// test rather than living only in a comment.
 		svc, quoteID, token := mintedFor(t, pool, now, nil)
-		if _, err := svc.AcceptByToken(context.Background(), token, "Dana Reyes", true); err != nil {
+		if _, err := svc.AcceptByToken(context.Background(), token, "Dana Reyes", true, true); err != nil {
 			t.Fatalf("a quote with NULL valid_until must never expire; got %v", err)
 		}
 		if n := acceptanceRows(t, pool, quoteID); n != 1 {
@@ -708,7 +708,7 @@ func TestIntegration_PublicQuote_CarriesStoredTax(t *testing.T) {
 		if err != nil {
 			t.Fatalf("mint: %v", err)
 		}
-		res, err := svc.AcceptByToken(context.Background(), minted.Token, "Dana Reyes", true)
+		res, err := svc.AcceptByToken(context.Background(), minted.Token, "Dana Reyes", true, true)
 		if err != nil {
 			t.Fatalf("accept: %v", err)
 		}

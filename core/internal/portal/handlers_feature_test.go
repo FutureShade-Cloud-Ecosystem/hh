@@ -554,3 +554,26 @@ func TestNilSeam_Is501(t *testing.T) {
 		t.Fatalf("nil billing seam = %d, want 501", w.Code)
 	}
 }
+
+// The portal's accept would mark a dealer quote ACCEPTED with no typed name, no quantities
+// confirmation and no acceptance record. It is refused in words until it can carry all three; the
+// customer's share link is the one door that records an acceptance.
+func TestAcceptQuote_RefusedUntilItCarriesTheConfirmationAndARecord(t *testing.T) {
+	store := &fakeQuoteStore{}
+	h := NewHandler(nil, nil).WithQuotes(quote.NewService(store))
+
+	r := reqWithCaller(http.MethodPost, "/api/portal/v1/quotes/q-1/accept", `{"quantities_confirmed":true,"typed_name":"Dana Reyes"}`, tenantA)
+	r.SetPathValue("id", "q-1")
+	w := httptest.NewRecorder()
+	h.acceptQuote(w, r)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("portal accept = %d, want 422; body %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "link") {
+		t.Errorf("the refusal must point to the share link: %s", w.Body.String())
+	}
+	if store.gotCustomerID != "" {
+		t.Errorf("the quote must not be touched, store saw scope %q", store.gotCustomerID)
+	}
+}
