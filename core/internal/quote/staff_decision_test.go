@@ -18,7 +18,7 @@ func TestStaffDecision_GateIsTheConvertPredicate(t *testing.T) {
 	codes = append(codes, "YARD_TEAM", "DRIVERS", "YARD_MANAGER", "HR", "PROCUREMENT_MANAGER",
 		"LOGISTICS_MANAGER", "PAYABLES_RECEIVABLES")
 
-	accept := StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true}
+	accept := StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true, ExpectedTotalCents: i64(1)}
 	reject := StaffRejectIn{Channel: "phone", ReasonCode: "price"}
 	for _, role := range codes {
 		caller := sellerCtx(role)
@@ -63,18 +63,24 @@ func TestStaffDecision_ConvertRefusalWordsUnchanged(t *testing.T) {
 	}
 }
 
+func i64(v int64) *int64 { return &v }
+
 func TestStaffDecision_InputGrading(t *testing.T) {
 	svc := func() *StaffService {
 		return staffSvcOver(newSeamStore(), sellerCtx("INSIDE_SALES")).withCaller(qCallerFrom)
 	}
 	ctx := qCtxAs(sellerCtx("INSIDE_SALES"))
 	bad := map[string]func() error{
+		"accept without the total read to the customer": func() error {
+			_, err := svc().AcceptOnBehalf(ctx, qOrg, StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true})
+			return err
+		},
 		"accept without a channel": func() error {
-			_, err := svc().AcceptOnBehalf(ctx, qOrg, StaffAcceptIn{QuantitiesConfirmed: true})
+			_, err := svc().AcceptOnBehalf(ctx, qOrg, StaffAcceptIn{QuantitiesConfirmed: true, ExpectedTotalCents: i64(1)})
 			return err
 		},
 		"accept with an unknown channel": func() error {
-			_, err := svc().AcceptOnBehalf(ctx, qOrg, StaffAcceptIn{Channel: "carrier pigeon", QuantitiesConfirmed: true})
+			_, err := svc().AcceptOnBehalf(ctx, qOrg, StaffAcceptIn{Channel: "carrier pigeon", QuantitiesConfirmed: true, ExpectedTotalCents: i64(1)})
 			return err
 		},
 		"accept without the quantity statement": func() error {
@@ -82,11 +88,11 @@ func TestStaffDecision_InputGrading(t *testing.T) {
 			return err
 		},
 		"accept with a bad key": func() error {
-			_, err := svc().AcceptOnBehalf(ctx, qOrg, StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true, IdempotencyKey: "nope"})
+			_, err := svc().AcceptOnBehalf(ctx, qOrg, StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true, ExpectedTotalCents: i64(1), IdempotencyKey: "nope"})
 			return err
 		},
 		"accept with an over long note": func() error {
-			_, err := svc().AcceptOnBehalf(ctx, qOrg, StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true, Note: strings.Repeat("x", 501)})
+			_, err := svc().AcceptOnBehalf(ctx, qOrg, StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true, ExpectedTotalCents: i64(1), Note: strings.Repeat("x", 501)})
 			return err
 		},
 		"reject without a reason code": func() error {

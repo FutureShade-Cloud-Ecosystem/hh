@@ -5817,6 +5817,7 @@ export type QuoteAcceptOnBehalfRequest = {
   channel: "phone" | "text" | "email" | "in_person";
   note?: string;
   quantities_confirmed: boolean;
+  expected_total_cents: number;
 };
 export type QuoteRejectOnBehalfRequest = {
   channel: "phone" | "text" | "email" | "in_person";
@@ -5831,6 +5832,7 @@ export type QuoteDecisionResult = {
   channel?: "phone" | "text" | "email" | "in_person";
   on_behalf: boolean;
   decided_at: string;
+  total_cents: number;
   replayed: boolean;
 };
 export type QuoteConvertRequest = {

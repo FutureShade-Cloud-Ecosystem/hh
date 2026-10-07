@@ -62,7 +62,10 @@ type StaffAcceptIn struct {
 	Channel             string
 	Note                string
 	QuantitiesConfirmed bool
-	IdempotencyKey      string
+	// ExpectedTotalCents is the quote total the staff member read to the customer. Required: the
+	// accept is refused when the quote's total is anything else at commit.
+	ExpectedTotalCents *int64
+	IdempotencyKey     string
 }
 
 // StaffRejectIn is the staff reject payload: the customer said no. The reason is a code from a closed
@@ -88,6 +91,8 @@ type StaffDecisionResult struct {
 	Channel        string    `json:"channel,omitempty"`
 	OnBehalf       bool      `json:"on_behalf"`
 	DecidedAt      time.Time `json:"decided_at"`
+	// TotalCents is the quote total at the decision: the amount accepted, or the amount lost.
+	TotalCents int64 `json:"total_cents"`
 	// Replayed is true when this answer is the first outcome of an earlier request with the same key;
 	// nothing was written by this call.
 	Replayed bool `json:"replayed"`
@@ -102,6 +107,7 @@ type decisionSpec struct {
 	reasonCode string
 	qtyOK      bool
 	key        string
+	expected   *int64 // an accept's required precondition: the total the customer was read
 }
 
 // decisionWrite is what the guarded write needs; decisionHooks is what must commit with it.
@@ -113,11 +119,15 @@ type decisionWrite struct {
 	Key     string
 	ActorID string
 	Now     time.Time
+	// Expected, when set, is the quote total the caller read to the customer; the write refuses when
+	// the locked quote's total is anything else.
+	Expected *int64
 }
 
 type decisionHooks struct {
 	// record writes the audit rows on the write's own transaction; prev is the status before.
-	record func(ctx context.Context, tx pgx.Tx, prev, quoteNo string) error
+	// total is the quote total under the lock, the amount accepted or lost.
+	record func(ctx context.Context, tx pgx.Tx, prev string, total int64) error
 	// release closes the quote's soft stock holds on the same transaction. Set only by a reject, and
 	// nil when the reservation seam is unwired.
 	release func(ctx context.Context, tx pgx.Tx) error
@@ -125,12 +135,13 @@ type decisionHooks struct {
 
 // decisionOutcome is what the guarded write answers.
 type decisionOutcome struct {
-	QuoteNo   string
-	Prev      string
-	Status    string
-	Channel   string
-	DecidedAt time.Time
-	Replayed  bool
+	QuoteNo    string
+	Prev       string
+	Status     string
+	Channel    string
+	DecidedAt  time.Time
+	TotalCents int64
+	Replayed   bool
 }
 
 // decisionStore is asserted OFF the injected staffStore, the module's established pattern, so every
@@ -177,6 +188,11 @@ func (s *StaffService) AcceptOnBehalf(ctx context.Context, idOrNo string, in Sta
 		return StaffDecisionResult{}, httpx.BadRequestf(
 			"confirm that the customer confirmed the quantities before the quote is marked accepted")
 	}
+	if in.ExpectedTotalCents == nil || *in.ExpectedTotalCents < 0 {
+		return StaffDecisionResult{}, httpx.BadRequestf(
+			"expected_total_cents is required: send the quote total you read to the customer")
+	}
+	sp.expected = in.ExpectedTotalCents
 	if sp.note, err = normalizeDecisionNote(in.Note); err != nil {
 		return StaffDecisionResult{}, err
 	}
@@ -258,14 +274,15 @@ func (s *StaffService) decide(ctx context.Context, caller identity.StaffContext,
 	}
 	out, err := ds.DecideQuoteGuarded(ctx, decisionWrite{
 		QuoteID: quoteID, To: sp.to, Action: sp.action, Channel: sp.channel, Key: sp.key,
-		ActorID: caller.UserID, Now: s.now(),
+		ActorID: caller.UserID, Now: s.now(), Expected: sp.expected,
 	}, s.decisionHooks(caller, quoteID, sp))
 	if err != nil {
 		return StaffDecisionResult{}, err
 	}
 	return StaffDecisionResult{
 		QuoteID: quoteID, QuoteNo: out.QuoteNo, Status: out.Status, PreviousStatus: out.Prev,
-		Channel: out.Channel, OnBehalf: true, DecidedAt: out.DecidedAt, Replayed: out.Replayed,
+		Channel: out.Channel, OnBehalf: true, DecidedAt: out.DecidedAt, TotalCents: out.TotalCents,
+		Replayed: out.Replayed,
 	}, nil
 }
 
@@ -285,14 +302,18 @@ func (s *StaffService) decisionHooks(caller identity.StaffContext, quoteID strin
 // decisionAuditHook writes the two rows on the decision's own transaction: the decision row, carrying
 // everything staff said, and the QUOTE_CHANGED status row the change history shows. A failure rolls
 // the status move back with it.
-func (s *StaffService) decisionAuditHook(caller identity.StaffContext, quoteID string, sp decisionSpec) func(context.Context, pgx.Tx, string, string) error {
-	return func(ctx context.Context, tx pgx.Tx, prev, _ string) error {
+func (s *StaffService) decisionAuditHook(caller identity.StaffContext, quoteID string, sp decisionSpec) func(context.Context, pgx.Tx, string, int64) error {
+	return func(ctx context.Context, tx pgx.Tx, prev string, total int64) error {
 		if s.auditTx == nil {
 			return nil
 		}
 		extra := map[string]any{
 			"field": "status", "before": prev, "after": sp.to,
 			"channel": sp.channel, "on_behalf": true, "actor_role": caller.RoleCode,
+			// The amount the decision was made on, like the customer door's row: an acceptance that
+			// cannot say what was accepted is not much of a record. An int, so it passes the audit
+			// boundary unredacted.
+			"amount_cents": total,
 		}
 		if sp.qtyOK {
 			extra["quantities_confirmed"] = true

@@ -335,7 +335,16 @@ paths:
         salesperson read out has accepted a quote that was never sent. The
         body names the channel the customer used, an optional note, and
         quantities_confirmed, the staff member's statement that the customer
-        confirmed the quantities; it is required and must be true. The status
+        confirmed the quantities; it is required and must be true. It also
+        names expected_total_cents, the quote total the staff member read to
+        the customer, which is required: if the quote's total is anything
+        else when the accept commits (a colleague edited a line meanwhile) the
+        accept is refused with a 409 naming both totals and nothing is
+        written. The audit row carries the total as amount_cents, and the
+        result returns it as total_cents. A staff accept has no
+        quote_acceptances row (that record is the customer's: a share link and
+        a typed name); its record is the QUOTE_ACCEPTED audit row with
+        purpose STAFF_QUOTE_DECISION. The status
         move, the audit row (staff on the customer's behalf, channel, note,
         the statement) and the change history row commit in one transaction,
         and the quote's follow-ups stop. A note carrying a long run of digits
@@ -1904,7 +1913,7 @@ components:
           items: { $ref: "#/components/schemas/QuoteComparisonRow" }
     QuoteAcceptOnBehalfRequest:
       type: object
-      required: [channel, quantities_confirmed]
+      required: [channel, quantities_confirmed, expected_total_cents]
       properties:
         channel:
           type: string
@@ -1919,6 +1928,14 @@ components:
           description: >-
             The staff member's statement that the customer confirmed the
             quantities. Required, and must be true.
+        expected_total_cents:
+          type: integer
+          format: int64
+          minimum: 0
+          description: >-
+            The quote total, in cents, the staff member read to the customer.
+            Required. The accept is refused with a 409 if the quote's total
+            differs when it commits.
     QuoteRejectOnBehalfRequest:
       type: object
       required: [channel, reason_code]
@@ -1936,7 +1953,7 @@ components:
           description: The salesperson's own note; required when the reason is other
     QuoteDecisionResult:
       type: object
-      required: [quote_id, quote_no, status, previous_status, on_behalf, decided_at, replayed]
+      required: [quote_id, quote_no, status, previous_status, on_behalf, decided_at, total_cents, replayed]
       properties:
         quote_id: { type: string }
         quote_no: { type: string }
@@ -1947,6 +1964,10 @@ components:
           type: boolean
           description: Always true, staff recorded the decision for the customer
         decided_at: { type: string, format: date-time }
+        total_cents:
+          type: integer
+          format: int64
+          description: The quote total at the decision, the amount accepted or lost
         replayed:
           type: boolean
           description: True when this is the first outcome of an earlier request under the same key; nothing was written

@@ -346,6 +346,7 @@ func (h *StaffHandler) acceptQuote(w http.ResponseWriter, r *http.Request, _ gua
 		Channel             string `json:"channel"`
 		Note                string `json:"note"`
 		QuantitiesConfirmed *bool  `json:"quantities_confirmed"`
+		ExpectedTotalCents  *int64 `json:"expected_total_cents"`
 	}
 	if err := decodeBody(w, r, &body); err != nil {
 		h.writeErr(w, err)
@@ -354,6 +355,7 @@ func (h *StaffHandler) acceptQuote(w http.ResponseWriter, r *http.Request, _ gua
 	res, err := h.svc.AcceptOnBehalf(r.Context(), r.PathValue("id"), StaffAcceptIn{
 		Channel: body.Channel, Note: body.Note,
 		QuantitiesConfirmed: body.QuantitiesConfirmed != nil && *body.QuantitiesConfirmed,
+		ExpectedTotalCents:  body.ExpectedTotalCents,
 		IdempotencyKey:      r.Header.Get("Idempotency-Key"),
 	})
 	if err != nil {

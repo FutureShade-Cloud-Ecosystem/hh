@@ -21,6 +21,8 @@ const (
 	decKeyB = "7c1d8f2e-0000-4000-8000-00000000a002"
 )
 
+func i64p(v int64) *int64 { return &v }
+
 func decisionNow() time.Time { return time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC) }
 
 func decisionCaller(role, branch string) context.Context {
@@ -55,7 +57,7 @@ func TestIntegration_StaffAccept_SentBecomesAcceptedWithItsRecord(t *testing.T) 
 	ctx := decisionCaller("INSIDE_SALES", intTrenton)
 
 	res, err := svc.AcceptOnBehalf(ctx, quoteID, StaffAcceptIn{
-		Channel: "Phone", Note: "Dana called back, wants it Friday", QuantitiesConfirmed: true, IdempotencyKey: decKeyA,
+		Channel: "Phone", Note: "Dana called back, wants it Friday", QuantitiesConfirmed: true, ExpectedTotalCents: i64p(2000), IdempotencyKey: decKeyA,
 	})
 	if err != nil {
 		t.Fatalf("accept: %v", err)
@@ -111,7 +113,7 @@ func TestIntegration_StaffAccept_DraftWithLinesYesEmptyNo(t *testing.T) {
 	pool := intPool(t)
 	svc := shareSvc(t, pool, decisionNow())
 	ctx := decisionCaller("INSIDE_SALES", intTrenton)
-	in := StaffAcceptIn{Channel: "in_person", QuantitiesConfirmed: true}
+	in := StaffAcceptIn{Channel: "in_person", QuantitiesConfirmed: true, ExpectedTotalCents: i64p(2000)}
 
 	_, withLines, _, _ := seedQuote(t, pool, "DRAFT", nil)
 	res, err := svc.AcceptOnBehalf(ctx, withLines, in)
@@ -159,7 +161,7 @@ func TestIntegration_StaffDecision_RefusalsAreInWordsAndWriteNothing(t *testing.
 				before := decAuditCount(t, pool, quoteID)
 				var err error
 				if door == "accept" {
-					_, err = svc.AcceptOnBehalf(ctx, quoteID, StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true})
+					_, err = svc.AcceptOnBehalf(ctx, quoteID, StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true, ExpectedTotalCents: i64p(2000)})
 				} else {
 					_, err = svc.RejectOnBehalf(ctx, quoteID, StaffRejectIn{Channel: "phone", ReasonCode: "price"})
 				}
@@ -185,7 +187,7 @@ func TestIntegration_StaffAccept_IdempotentByKey(t *testing.T) {
 	_, quoteID, _, _ := seedQuote(t, pool, "SENT", nil)
 	svc := shareSvc(t, pool, decisionNow())
 	ctx := decisionCaller("INSIDE_SALES", intTrenton)
-	in := StaffAcceptIn{Channel: "text", QuantitiesConfirmed: true, IdempotencyKey: decKeyA}
+	in := StaffAcceptIn{Channel: "text", QuantitiesConfirmed: true, ExpectedTotalCents: i64p(2000), IdempotencyKey: decKeyA}
 
 	first, err := svc.AcceptOnBehalf(ctx, quoteID, in)
 	if err != nil {
@@ -224,10 +226,10 @@ func TestIntegration_StaffAccept_IdempotentByKey(t *testing.T) {
 
 	// Without a key a second accept is simply refused: staff re-asserting is a mistake worth saying.
 	_, q2, _, _ := seedQuote(t, pool, "SENT", nil)
-	if _, err := svc.AcceptOnBehalf(ctx, q2, StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true}); err != nil {
+	if _, err := svc.AcceptOnBehalf(ctx, q2, StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true, ExpectedTotalCents: i64p(2000)}); err != nil {
 		t.Fatalf("unkeyed first: %v", err)
 	}
-	if _, err := svc.AcceptOnBehalf(ctx, q2, StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true}); err == nil {
+	if _, err := svc.AcceptOnBehalf(ctx, q2, StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true, ExpectedTotalCents: i64p(2000)}); err == nil {
 		t.Error("an unkeyed second accept must be refused")
 	}
 	_ = decKeyB
@@ -237,7 +239,7 @@ func TestIntegration_StaffAccept_AuthzAndBranch(t *testing.T) {
 	pool := intPool(t)
 	_, quoteID, _, _ := seedQuote(t, pool, "SENT", nil)
 	svc := shareSvc(t, pool, decisionNow())
-	in := StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true}
+	in := StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true, ExpectedTotalCents: i64p(2000)}
 
 	var notSelling *NotSellingRoleError
 	if _, err := svc.AcceptOnBehalf(decisionCaller("YARD_TEAM", intTrenton), quoteID, in); !errors.As(err, &notSelling) {
@@ -272,7 +274,11 @@ func TestIntegration_StaffAccept_ThenConvert(t *testing.T) {
 	svc := qd1Svc(t, pool, decisionNow())
 	ctx := qd1WithRole(qCtxAs(intStaff(intTrenton)), "INSIDE_SALES", intTrenton, seller)
 
-	if _, err := svc.AcceptOnBehalf(ctx, quoteID, StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true}); err != nil {
+	var total int64
+	if err := pool.QueryRow(context.Background(), `SELECT total_cents FROM quotes WHERE id=$1`, quoteID).Scan(&total); err != nil {
+		t.Fatalf("read total: %v", err)
+	}
+	if _, err := svc.AcceptOnBehalf(ctx, quoteID, StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true, ExpectedTotalCents: i64p(total)}); err != nil {
 		t.Fatalf("accept: %v", err)
 	}
 	res, err := svc.ConvertQuote(ctx, quoteID, ConvertOptions{})
@@ -363,7 +369,7 @@ func TestIntegration_StaffReject_IdempotentByKey(t *testing.T) {
 		t.Error("a replay must write nothing")
 	}
 	// The key belongs to one decision: the other door, or another channel, is refused.
-	if _, err := svc.AcceptOnBehalf(ctx, quoteID, StaffAcceptIn{Channel: "text", QuantitiesConfirmed: true, IdempotencyKey: decKeyB}); !errors.Is(err, ErrIdempotencyKeyReused) {
+	if _, err := svc.AcceptOnBehalf(ctx, quoteID, StaffAcceptIn{Channel: "text", QuantitiesConfirmed: true, ExpectedTotalCents: i64p(2000), IdempotencyKey: decKeyB}); !errors.Is(err, ErrIdempotencyKeyReused) {
 		t.Errorf("same key on the accept door: want ErrIdempotencyKeyReused, got %v", err)
 	}
 	other := in
@@ -449,7 +455,7 @@ func TestIntegration_StaffReject_ReleasesSoftHoldsOnTheSameTransaction(t *testin
 	_, q2, _, _ := seedQuote(t, pool, "SENT", nil)
 	keep := &decisionReserver{}
 	if _, err := shareSvc(t, pool, decisionNow()).WithStockReserver(keep).AcceptOnBehalf(ctx, q2,
-		StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true}); err != nil {
+		StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true, ExpectedTotalCents: i64p(2000)}); err != nil {
 		t.Fatalf("accept: %v", err)
 	}
 	if len(keep.releases) != 0 {
@@ -507,7 +513,7 @@ func TestIntegration_StaffDecision_StopsFollowUps(t *testing.T) {
 
 			var err error
 			if door == "accept" {
-				_, err = svc.AcceptOnBehalf(ctx, quoteID, StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true, IdempotencyKey: decKeyA})
+				_, err = svc.AcceptOnBehalf(ctx, quoteID, StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true, ExpectedTotalCents: i64p(2000), IdempotencyKey: decKeyA})
 			} else {
 				_, err = svc.RejectOnBehalf(ctx, quoteID, StaffRejectIn{Channel: "phone", ReasonCode: "price", IdempotencyKey: decKeyA})
 			}
@@ -532,7 +538,7 @@ func TestIntegration_StaffDecision_FollowUpsLeftAloneWhenNothingMoves(t *testing
 	ctx := decisionCaller("INSIDE_SALES", intTrenton)
 
 	_, bare, _, _ := seedQuote(t, pool, "SENT", nil)
-	if _, err := svc.AcceptOnBehalf(ctx, bare, StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true}); err != nil {
+	if _, err := svc.AcceptOnBehalf(ctx, bare, StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true, ExpectedTotalCents: i64p(2000)}); err != nil {
 		t.Fatalf("a quote with no plan: %v", err)
 	}
 
@@ -544,7 +550,7 @@ func TestIntegration_StaffDecision_FollowUpsLeftAloneWhenNothingMoves(t *testing
 	if _, err := NewFollowUpRepository(pool).EnsurePlan(context.Background(), lost, ChannelEmail, []int{3}, decisionNow()); err != nil {
 		t.Fatalf("plan: %v", err)
 	}
-	if _, err := svc.AcceptOnBehalf(ctx, lost, StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true}); err == nil {
+	if _, err := svc.AcceptOnBehalf(ctx, lost, StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true, ExpectedTotalCents: i64p(2000)}); err == nil {
 		t.Fatal("a lost quote must refuse")
 	}
 	if f := followUpState(t, pool, lost); !f.enabled || f.tot != 0 {
@@ -584,7 +590,7 @@ func TestIntegration_StaffDecision_OfferMatchesTheWritePath(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s/%s read: %v", st.name, role, err)
 			}
-			_, acceptErr := svc.AcceptOnBehalf(ctx, mk(), StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true})
+			_, acceptErr := svc.AcceptOnBehalf(ctx, mk(), StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true, ExpectedTotalCents: i64p(2000)})
 			_, rejectErr := svc.RejectOnBehalf(ctx, mk(), StaffRejectIn{Channel: "phone", ReasonCode: "price"})
 			if view.CanAccept != (acceptErr == nil) {
 				t.Errorf("%s as %s: can_accept=%v but the door says %v", st.name, role, view.CanAccept, acceptErr)
@@ -594,4 +600,113 @@ func TestIntegration_StaffDecision_OfferMatchesTheWritePath(t *testing.T) {
 			}
 		}
 	}
+}
+
+// - the total the customer was read -
+
+func decAcceptAmount(t *testing.T, pool *pgxpool.Pool, quoteID string) (int64, bool) {
+	t.Helper()
+	var amt *int64
+	err := pool.QueryRow(context.Background(), `
+		SELECT (changes->>'amount_cents')::bigint FROM audit_log
+		 WHERE entity_type='quote' AND entity_id=$1 AND action=$2`, quoteID, audit.ActQuoteAccepted).Scan(&amt)
+	if err != nil || amt == nil {
+		return 0, false
+	}
+	return *amt, true
+}
+
+// The quote moved after the salesperson read it to the customer: the accept is refused in words, names
+// both totals, writes nothing, and works once the salesperson reads the new total.
+func TestIntegration_StaffAccept_RefusesWhenTheTotalMoved(t *testing.T) {
+	pool := intPool(t)
+	_, quoteID, _, _ := seedQuote(t, pool, "SENT", nil)
+	svc := shareSvc(t, pool, decisionNow())
+	ctx := decisionCaller("INSIDE_SALES", intTrenton)
+
+	if _, err := svc.EditLineQty(ctx, quoteID, 1, "5"); err != nil {
+		t.Fatalf("edit: %v", err)
+	}
+	var now int64
+	if err := pool.QueryRow(context.Background(), `SELECT total_cents FROM quotes WHERE id=$1`, quoteID).Scan(&now); err != nil {
+		t.Fatalf("read total: %v", err)
+	}
+	if now == 2000 {
+		t.Fatal("fixture: the edit must move the total")
+	}
+	before := decAuditCount(t, pool, quoteID)
+
+	_, err := svc.AcceptOnBehalf(ctx, quoteID, StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true, ExpectedTotalCents: i64p(2000)})
+	var refused *DecisionRefusedError
+	if !errors.As(err, &refused) || !strings.Contains(err.Error(), "changed") {
+		t.Fatalf("a stale total must be refused in words, got %v", err)
+	}
+	for _, want := range []string{"$20.00", "$"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal must name the totals (%q): %v", want, err)
+		}
+	}
+	if decStatus(t, pool, quoteID) != "SENT" || decAuditCount(t, pool, quoteID) != before {
+		t.Error("a refused accept must change nothing")
+	}
+
+	res, err := svc.AcceptOnBehalf(ctx, quoteID, StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true, ExpectedTotalCents: i64p(now)})
+	if err != nil {
+		t.Fatalf("accept at the current total: %v", err)
+	}
+	if res.TotalCents != now {
+		t.Errorf("the result must carry the total accepted: %+v", res)
+	}
+	if amt, ok := decAcceptAmount(t, pool, quoteID); !ok || amt != now {
+		t.Errorf("the audit row must carry amount_cents %d, got %d (present %v)", now, amt, ok)
+	}
+}
+
+// Raced: an edit and an accept at the same moment. Every run ends one of two ways and never a third:
+// the accept lands at the total the customer was read, or it is refused and the quote is untouched.
+func TestIntegration_StaffAccept_RacedAgainstAnEdit(t *testing.T) {
+	pool := intPool(t)
+	svc := shareSvc(t, pool, decisionNow())
+	ctx := decisionCaller("INSIDE_SALES", intTrenton)
+	landed, refusedRuns := 0, 0
+	for i := 0; i < 16; i++ {
+		_, quoteID, _, _ := seedQuote(t, pool, "SENT", nil)
+		start := make(chan struct{})
+		var aerr, eerr error
+		done := make(chan struct{}, 2)
+		go func() {
+			<-start
+			_, aerr = svc.AcceptOnBehalf(ctx, quoteID, StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true, ExpectedTotalCents: i64p(2000)})
+			done <- struct{}{}
+		}()
+		go func() {
+			<-start
+			_, eerr = svc.EditLineQty(ctx, quoteID, 1, "7")
+			done <- struct{}{}
+		}()
+		close(start)
+		<-done
+		<-done
+		var total int64
+		if err := pool.QueryRow(context.Background(), `SELECT total_cents FROM quotes WHERE id=$1`, quoteID).Scan(&total); err != nil {
+			t.Fatalf("read total: %v", err)
+		}
+		switch {
+		case aerr == nil:
+			landed++
+			amt, ok := decAcceptAmount(t, pool, quoteID)
+			if decStatus(t, pool, quoteID) != "ACCEPTED" || total != 2000 || !ok || amt != 2000 || eerr == nil {
+				t.Fatalf("run %d: an accept that landed must be at the read total with the edit refused: total=%d amount=%d/%v edit=%v", i, total, amt, ok, eerr)
+			}
+		default:
+			refusedRuns++
+			if decStatus(t, pool, quoteID) != "SENT" || eerr != nil || total == 2000 {
+				t.Fatalf("run %d: a refused accept must leave the edited quote SENT: status=%s total=%d edit=%v accept=%v", i, decStatus(t, pool, quoteID), total, eerr, aerr)
+			}
+			if _, ok := decAcceptAmount(t, pool, quoteID); ok {
+				t.Fatalf("run %d: a refused accept left an acceptance row", i)
+			}
+		}
+	}
+	t.Logf("16 races: %d accepts landed, %d refused", landed, refusedRuns)
 }

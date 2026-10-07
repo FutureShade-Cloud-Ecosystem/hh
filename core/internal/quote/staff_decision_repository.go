@@ -36,9 +36,10 @@ func (r *Repository) DecideQuoteGuarded(ctx context.Context, w decisionWrite, ho
 
 	var status, quoteNo string
 	var validUntil *time.Time
+	var total int64
 	if err := tx.QueryRow(ctx, `
-		SELECT status, quote_no::text, valid_until FROM quotes WHERE id = $1 FOR UPDATE`, w.QuoteID).
-		Scan(&status, &quoteNo, &validUntil); err != nil {
+		SELECT status, quote_no::text, valid_until, total_cents FROM quotes WHERE id = $1 FOR UPDATE`, w.QuoteID).
+		Scan(&status, &quoteNo, &validUntil, &total); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return out, ErrNotFound
 		}
@@ -56,6 +57,14 @@ func (r *Repository) DecideQuoteGuarded(ctx context.Context, w decisionWrite, ho
 	if err := r.judgeDecision(ctx, tx, w, status, validUntil); err != nil {
 		return out, err
 	}
+	// The precondition, judged under the same lock the move is written under: the total the customer
+	// was read must still be the total. Refused here, nothing has been written yet.
+	if w.Expected != nil && *w.Expected != total {
+		return out, &DecisionRefusedError{Msg: fmt.Sprintf(
+			"quote: the quote total changed since you read it to the customer, it was %s and is now %s; "+
+				"read the customer the current quote, then accept it again",
+			centsText(*w.Expected), centsText(total))}
+	}
 	var decidedAt time.Time
 	if err := tx.QueryRow(ctx, quoteSeqCTE+`
 		UPDATE quotes SET status = $2, updated_at = now(), updated_by = NULLIF($3,'')::uuid,
@@ -72,14 +81,15 @@ func (r *Repository) DecideQuoteGuarded(ctx context.Context, w decisionWrite, ho
 		}
 	}
 	if hooks.record != nil {
-		if err := hooks.record(ctx, tx, status, quoteNo); err != nil {
+		if err := hooks.record(ctx, tx, status, total); err != nil {
 			return out, err
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return out, fmt.Errorf("commit quote decision: %w", err)
 	}
-	return decisionOutcome{QuoteNo: quoteNo, Prev: status, Status: w.To, Channel: w.Channel, DecidedAt: decidedAt}, nil
+	return decisionOutcome{QuoteNo: quoteNo, Prev: status, Status: w.To, Channel: w.Channel,
+		DecidedAt: decidedAt, TotalCents: total}, nil
 }
 
 // judgeDecision refuses, in words, every state a staff decision cannot happen from. Called under the
@@ -120,14 +130,15 @@ func (r *Repository) judgeDecision(ctx context.Context, tx pgx.Tx, w decisionWri
 // decision or a different channel is ErrIdempotencyKeyReused, never a replay.
 func (r *Repository) findKeyedDecision(ctx context.Context, tx rowQuerier, w decisionWrite, quoteNo string) (decisionOutcome, bool, error) {
 	var action, channel, before, after string
+	var amount int64
 	var at time.Time
 	err := tx.QueryRow(ctx, `
 		SELECT al.action, COALESCE(al.changes->>'channel',''), COALESCE(al.changes->>'before',''),
-		       COALESCE(al.changes->>'after',''), al.created_at
+		       COALESCE(al.changes->>'after',''), COALESCE((al.changes->>'amount_cents')::bigint, 0), al.created_at
 		  FROM audit_log al
 		 WHERE al.entity_type = 'quote' AND al.entity_id = $1::uuid
 		   AND al.changes->>'purpose' = $3 AND al.changes->>'client_id' = $2
-		 ORDER BY al.seq LIMIT 1`, w.QuoteID, w.Key, decisionPurpose).Scan(&action, &channel, &before, &after, &at)
+		 ORDER BY al.seq LIMIT 1`, w.QuoteID, w.Key, decisionPurpose).Scan(&action, &channel, &before, &after, &amount, &at)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return decisionOutcome{}, false, nil
 	}
@@ -137,7 +148,7 @@ func (r *Repository) findKeyedDecision(ctx context.Context, tx rowQuerier, w dec
 	if action != w.Action || channel != w.Channel {
 		return decisionOutcome{}, false, ErrIdempotencyKeyReused
 	}
-	return decisionOutcome{QuoteNo: quoteNo, Prev: before, Status: after, Channel: channel, DecidedAt: at, Replayed: true}, true, nil
+	return decisionOutcome{QuoteNo: quoteNo, Prev: before, Status: after, Channel: channel, DecidedAt: at, TotalCents: amount, Replayed: true}, true, nil
 }
 
 // stopFollowUpsTx ends the quote's follow-up cadence on the decision's transaction: the steps not yet
@@ -162,4 +173,13 @@ func stopFollowUpsTx(ctx context.Context, tx pgx.Tx, w decisionWrite, now time.T
 		return fmt.Errorf("stop follow-ups for decision: %w", err)
 	}
 	return nil
+}
+
+// centsText writes cents as dollars for a refusal a person reads.
+func centsText(c int64) string {
+	sign := ""
+	if c < 0 {
+		sign, c = "-", -c
+	}
+	return fmt.Sprintf("%s$%d.%02d", sign, c/100, c%100)
 }

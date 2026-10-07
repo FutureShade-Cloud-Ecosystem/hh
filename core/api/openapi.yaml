@@ -19722,7 +19722,7 @@ paths:
       tags:
         - staff-quote
       summary: Record that the customer accepted a quote by phone, text, email or in person
-      description: "A salesperson marks a quote accepted on the customer's behalf. SENT moves to ACCEPTED, and so does a DRAFT that has never been sent provided it has at least one line: a customer who agrees to what the salesperson read out has accepted a quote that was never sent. The body names the channel the customer used, an optional note, and quantities_confirmed, the staff member's statement that the customer confirmed the quantities; it is required and must be true. The status move, the audit row (staff on the customer's behalf, channel, note, the statement) and the change history row commit in one transaction, and the quote's follow-ups stop. A note carrying a long run of digits is redacted whole at the audit boundary. Limited to the selling roles that may convert, by the same rule, and to the caller's branches. A 409 names why in words: expired, already accepted (naming the order when there is one), converted, lost, or a draft with no lines. An optional Idempotency-Key header (a UUID) makes a retry safe: a repeat under the same key on the same quote answers the first outcome with replayed true and writes nothing, whatever the quote's status is by then; the same key with a different channel is a 409."
+      description: "A salesperson marks a quote accepted on the customer's behalf. SENT moves to ACCEPTED, and so does a DRAFT that has never been sent provided it has at least one line: a customer who agrees to what the salesperson read out has accepted a quote that was never sent. The body names the channel the customer used, an optional note, and quantities_confirmed, the staff member's statement that the customer confirmed the quantities; it is required and must be true. It also names expected_total_cents, the quote total the staff member read to the customer, which is required: if the quote's total is anything else when the accept commits (a colleague edited a line meanwhile) the accept is refused with a 409 naming both totals and nothing is written. The audit row carries the total as amount_cents, and the result returns it as total_cents. A staff accept has no quote_acceptances row (that record is the customer's: a share link and a typed name); its record is the QUOTE_ACCEPTED audit row with purpose STAFF_QUOTE_DECISION. The status move, the audit row (staff on the customer's behalf, channel, note, the statement) and the change history row commit in one transaction, and the quote's follow-ups stop. A note carrying a long run of digits is redacted whole at the audit boundary. Limited to the selling roles that may convert, by the same rule, and to the caller's branches. A 409 names why in words: expired, already accepted (naming the order when there is one), converted, lost, or a draft with no lines. An optional Idempotency-Key header (a UUID) makes a retry safe: a repeat under the same key on the same quote answers the first outcome with replayed true and writes nothing, whatever the quote's status is by then; the same key with a different channel is a 409."
       x-role: requireStaff
       x-access:
         surfaces:
@@ -46110,6 +46110,7 @@ components:
       required:
         - channel
         - quantities_confirmed
+        - expected_total_cents
       properties:
         channel:
           type: string
@@ -46126,6 +46127,11 @@ components:
         quantities_confirmed:
           type: boolean
           description: The staff member's statement that the customer confirmed the quantities. Required, and must be true.
+        expected_total_cents:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The quote total, in cents, the staff member read to the customer. Required. The accept is refused with a 409 if the quote's total differs when it commits.
     QuoteRejectOnBehalfRequest:
       type: object
       required:
@@ -46162,6 +46168,7 @@ components:
         - previous_status
         - on_behalf
         - decided_at
+        - total_cents
         - replayed
       properties:
         quote_id:
@@ -46191,6 +46198,10 @@ components:
         decided_at:
           type: string
           format: date-time
+        total_cents:
+          type: integer
+          format: int64
+          description: The quote total at the decision, the amount accepted or lost
         replayed:
           type: boolean
           description: True when this is the first outcome of an earlier request under the same key; nothing was written

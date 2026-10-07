@@ -6767,6 +6767,7 @@ type QuoteAcceptOnBehalfRequest struct {
 	Channel             string  `json:"channel"`
 	Note                *string `json:"note,omitempty"`
 	QuantitiesConfirmed bool    `json:"quantities_confirmed"`
+	ExpectedTotalCents  int64   `json:"expected_total_cents"`
 }
 
 type QuoteRejectOnBehalfRequest struct {
@@ -6783,6 +6784,7 @@ type QuoteDecisionResult struct {
 	Channel        *string   `json:"channel,omitempty"`
 	OnBehalf       bool      `json:"on_behalf"`
 	DecidedAt      time.Time `json:"decided_at"`
+	TotalCents     int64     `json:"total_cents"`
 	Replayed       bool      `json:"replayed"`
 }
 
