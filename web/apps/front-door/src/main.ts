@@ -3,4 +3,5 @@
 // ported surface, so there is no second sheet), and the app root's
 // registration is the only side effect.
 import "@hardscapehouse/design-system/src/tokens.css";
+import "./page.css";
 import "./app-root.js";

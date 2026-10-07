@@ -503,6 +503,12 @@ export class HosPosTerminal extends LitElement {
    * the choice, because its header carries the swap button beside the theme, and remembers it per
    * browser; the terminal only draws it. It arrives as the `data-panes-swapped` attribute ("true" or "false").
    */
+  /**
+   * Round 7: a popped window is told the layout its opener was in (PANELS or STEPPER, or empty), so
+   * it keeps the layout the person was using even when the workspace row has not carried the pick
+   * across yet. It wins over the row's answer in this window and is never saved as a preference.
+   */
+  @property({ attribute: 'data-layout-hint' }) layoutHint = '';
   @property({ attribute: 'data-panes-swapped', converter: (value: string | null) => value === 'true' }) panesSwapped = false;
   /**
    * Row 955: the till's Returns is its own surface. While it is up the sale stays mounted (nothing
@@ -2217,7 +2223,7 @@ export class HosPosTerminal extends LitElement {
       font-family: var(--hos-font-mono);
       width: 44px;
       text-align: center;
-      background: var(--hos-deep-earth);
+      background: var(--hos-field);
       border: 1px solid var(--hos-line);
       color: var(--hos-text);
       border-radius: var(--hos-radius-control);
@@ -2328,7 +2334,7 @@ export class HosPosTerminal extends LitElement {
     input,
     textarea {
       width: 100%;
-      background: var(--hos-deep-earth);
+      background: var(--hos-field);
       color: var(--hos-text);
       border: 1px solid var(--hos-control-line);
       border-radius: var(--hos-radius-control);
@@ -2867,7 +2873,8 @@ export class HosPosTerminal extends LitElement {
 
   // DIB-195: apply the popped-in order exactly once, the first update where `restore` is set.
   // Guarded so a later re-render never re-applies (which would clobber the cashier's edits).
-  protected willUpdate(): void {
+  protected willUpdate(changed: Map<PropertyKey, unknown>): void {
+    if (changed.has('layoutHint')) this.applyLayoutHint();
     if (!this.restored && this.restore) {
       this.restored = true;
       this.applySnapshot(this.restore);
@@ -4748,6 +4755,12 @@ export class HosPosTerminal extends LitElement {
     } catch {
       /* defaults hold */
     }
+    this.applyLayoutHint();
+  }
+
+  /** The opener's layout, when this window was told one (see layoutHint). */
+  private applyLayoutHint(): void {
+    if (this.layoutHint === 'PANELS' || this.layoutHint === 'STEPPER') this.counterLayout = this.layoutHint;
   }
 
   /**

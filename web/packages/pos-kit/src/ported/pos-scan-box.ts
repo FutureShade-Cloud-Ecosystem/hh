@@ -128,7 +128,7 @@ export class HosPosScanBox extends LitElement {
       input {
         flex: 1;
         min-width: 0;
-        background: var(--hos-deep-earth);
+        background: var(--hos-field);
         color: var(--hos-text);
         border: 1px solid var(--hos-line);
         border-radius: var(--hos-radius-control);

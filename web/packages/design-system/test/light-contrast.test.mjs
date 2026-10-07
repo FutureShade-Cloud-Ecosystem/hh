@@ -88,3 +88,40 @@ test('the light widget shadow lifts in step with elev-1: a brief first layer at 
       `role cards ride this shadow, and row 987 lifts it in step with elev-1 so they lift like the rest`,
   );
 });
+
+// ROUND 7 (the visual review of the demo box): hairline borders on white still barely read on
+// the till's step cards, the panes and the table rows. The line steps darker so a card, a pane
+// and a row each have an edge the eye finds, the resting shadow's contact layer steps up with it,
+// and every input takes ONE light fill (the card's white) so a field on a white card is not a
+// grey slab. The ink holds above (text-dim and accent-text at AA on the page and the card) bind
+// the page, which is why the separation comes from the line and the shadow, never a darker page.
+const LINE_CARD_R7 = 2.5;
+const LINE_PAGE_R7 = 2.0;
+const HAIRLINE_ALPHA_R7 = 0.2;
+const ELEV_CONTACT_ALPHA_R7 = 0.14;
+
+test('round 7: the line reads against the white card at 2.5:1 and against the page at 2.0:1', () => {
+  const line = flat('--hh-line');
+  const card = flat('--hh-card');
+  const page = flat('--hh-page');
+  assert.ok(line && card && page, 'the light block must declare flat --hh-line, --hh-card and --hh-page');
+  const onCard = contrast(line, card);
+  const onPage = contrast(line, page);
+  assert.ok(onCard >= LINE_CARD_R7, `line ${line} on card ${card} reads ${onCard.toFixed(2)}:1, under the round 7 ${LINE_CARD_R7}:1 floor`);
+  assert.ok(onPage >= LINE_PAGE_R7, `line ${line} on page ${page} reads ${onPage.toFixed(2)}:1, under the round 7 ${LINE_PAGE_R7}:1 floor`);
+});
+
+test('round 7: the light hairline and the elev-1 contact layer step up with the line', () => {
+  const hairline = parseFloat(value('--hh-hairline').split(',')[3]);
+  assert.ok(hairline >= HAIRLINE_ALPHA_R7, `the light hairline alpha ${hairline} is under ${HAIRLINE_ALPHA_R7}`);
+  const elev = value('--hh-elev-1');
+  const first = elev.match(/rgba\([^)]*\)/);
+  assert.ok(first, `elev-1 must start with an rgba layer, got: ${elev}`);
+  const alpha = parseFloat(first[0].split(',')[3]);
+  assert.ok(alpha >= ELEV_CONTACT_ALPHA_R7, `elev-1's first layer alpha ${alpha} is under ${ELEV_CONTACT_ALPHA_R7}`);
+});
+
+test('round 7: one light input fill, the card white, declared as --hh-field', () => {
+  assert.equal(value('--hh-field')?.toUpperCase(), value('--hh-card').toUpperCase(),
+    'the light --hh-field must be the card white: one fill for every input, never the page grey');
+});

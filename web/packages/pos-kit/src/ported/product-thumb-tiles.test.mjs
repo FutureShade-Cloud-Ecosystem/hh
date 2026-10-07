@@ -100,3 +100,30 @@ test("the chain: a real picture first, the tile when it fails or is absent, the 
   assert.equal(picture({ ...base, category: "", hasImage: false, failed: false }).kind, "glyph");
   assert.equal(picture({ ...base, category: "Gift cards", hasImage: false, failed: false }).kind, "glyph");
 });
+
+// Round 7: a stored picture that is only a swatch (the demo seed's 1x1 mulch PNGs) is not a picture
+// of the product. The chain skips it for the category's drawn tile, and for the glyph when the
+// category has no tile, never a flat square that reads as a missing picture.
+import { isSwatchSized } from "./product-thumb-logic.ts";
+
+test("a swatch sized picture is recognised, a photograph and an unloaded one are not", () => {
+  assert.equal(isSwatchSized(1, 1), true);
+  assert.equal(isSwatchSized(2, 2), true);
+  assert.equal(isSwatchSized(8, 8), true);
+  assert.equal(isSwatchSized(9, 9), false);
+  assert.equal(isSwatchSized(96, 96), false);
+  // Thin but long is a strip photograph, not a swatch.
+  assert.equal(isSwatchSized(1, 400), false);
+  // Not loaded yet (natural size 0 by 0): the answer waits for the load.
+  assert.equal(isSwatchSized(0, 0), false);
+});
+
+test("a swatch picture yields the category's tile, and the glyph where there is no tile", () => {
+  const base = { imageSrc: "/api/v1/products/p/image", hasImage: true, failed: false };
+  const tile = productTileUrl("Mulch", "light");
+  assert.ok(tile !== null);
+  assert.deepEqual(thumbSource({ ...base, swatch: true, tileSrc: tile }), { kind: "tile", src: tile });
+  assert.deepEqual(thumbSource({ ...base, swatch: true, tileSrc: null }), { kind: "glyph", src: "" });
+  // A real picture still comes first.
+  assert.deepEqual(thumbSource({ ...base, swatch: false, tileSrc: tile }), { kind: "image", src: base.imageSrc });
+});

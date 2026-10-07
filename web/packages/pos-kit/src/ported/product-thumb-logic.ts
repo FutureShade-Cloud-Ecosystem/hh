@@ -15,12 +15,27 @@ export interface ThumbSourceInput {
   failed: boolean;
   /** The category's drawn tile in the document's theme, or null when the category has none. */
   tileSrc: string | null;
+  /** The picture loaded and is only a swatch (see isSwatchSized): it does not stand for the product. */
+  swatch?: boolean;
+}
+
+/** A stored picture this small (a pixel or a few) is a colour swatch, not a photograph. */
+const SWATCH_EDGE_PX = 8;
+
+/**
+ * Whether a loaded picture is a swatch: both edges a handful of pixels. A swatch scaled to a thumbnail
+ * is a flat colour square that reads as a missing picture (round 7: the demo's mulch colours carry a
+ * 1x1 PNG each), so the chain skips it for the category's drawn tile. An unloaded picture (0 by 0)
+ * is not a swatch: the answer waits for the load.
+ */
+export function isSwatchSized(width: number, height: number): boolean {
+  return width > 0 && height > 0 && width <= SWATCH_EDGE_PX && height <= SWATCH_EDGE_PX;
 }
 
 export type ThumbSource = { kind: 'image' | 'tile'; src: string } | { kind: 'glyph'; src: '' };
 
 export function thumbSource(input: ThumbSourceInput): ThumbSource {
-  if (input.imageSrc !== '' && input.hasImage !== false && !input.failed) {
+  if (input.imageSrc !== '' && input.hasImage !== false && !input.failed && input.swatch !== true) {
     return { kind: 'image', src: input.imageSrc };
   }
   return input.tileSrc === null ? { kind: 'glyph', src: '' } : { kind: 'tile', src: input.tileSrc };

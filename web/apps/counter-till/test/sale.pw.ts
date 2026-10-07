@@ -1164,7 +1164,7 @@ test("a split with a card leg carries the simulated word on the confirmation and
   const sold = page.getByTestId("sold-panel");
   await expect(sold).toBeVisible();
   await expect(sold.getByTestId("sold-simulated-notice")).toContainText("Simulated card: no card was charged");
-  await expect(sold).toContainText("Split: Cash and Card");
+  await expect(sold).toContainText("Split: Cash $4.00 and Card $0.52");
 
   // The read: the legs are the wire's own, one cash and one card.
   const bearer = await salesBearer(page);

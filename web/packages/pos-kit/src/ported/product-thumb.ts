@@ -3,7 +3,7 @@
 import { LitElement, css, html } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { productImageUrl } from './pos-api.js';
-import { thumbSource } from './product-thumb-logic.js';
+import { isSwatchSized, thumbSource } from './product-thumb-logic.js';
 import { productTile } from './ports.js';
 
 type ProductTileTheme = 'light' | 'dark';
@@ -52,6 +52,8 @@ export class HosProductThumb extends LitElement {
   @property() category = '';
 
   @state() private failed = false;
+  /** The real picture loaded and is only a swatch: the drawn tile stands in (isSwatchSized). */
+  @state() private swatch = false;
   @state() private theme: ProductTileTheme = 'dark';
 
   private themeWatch?: MutationObserver;
@@ -105,6 +107,12 @@ export class HosProductThumb extends LitElement {
     super.disconnectedCallback();
   }
 
+  private onLoad(event: Event): void {
+    // A picture that is only a pixel or a few is a swatch: the category's tile reads as the product.
+    const img = event.target as HTMLImageElement;
+    if (isSwatchSized(img.naturalWidth, img.naturalHeight)) this.swatch = true;
+  }
+
   private onError(): void {
     // One-way latch: once the byte route has said no, stop asking on every re-render.
     this.failed = true;
@@ -113,7 +121,10 @@ export class HosProductThumb extends LitElement {
   protected willUpdate(changed: Map<string, unknown>): void {
  // A new product gets a fresh chance: otherwise a list that reuses this element for row 2 would
     // inherit row 1's failure and show a placeholder for a product that does have a picture.
-    if (changed.has('productId')) this.failed = false;
+    if (changed.has('productId')) {
+      this.failed = false;
+      this.swatch = false;
+    }
   }
 
   render() {
@@ -122,6 +133,7 @@ export class HosProductThumb extends LitElement {
       imageSrc: this.productId !== '' ? productImageUrl(this.productId) : '',
       hasImage: this.hasImage,
       failed: this.failed,
+      swatch: this.swatch,
       tileSrc: productTile(this.category, this.theme),
     });
     return html`<div class="box" style="width:${px};height:${px}">
@@ -133,6 +145,7 @@ export class HosProductThumb extends LitElement {
             loading="lazy"
             decoding="async"
             @error=${picture.kind === 'image' ? this.onError : undefined}
+            @load=${picture.kind === 'image' ? this.onLoad : undefined}
           />`}
     </div>`;
   }

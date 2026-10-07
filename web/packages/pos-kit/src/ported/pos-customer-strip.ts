@@ -35,7 +35,7 @@ export class HosPosCustomerStrip extends LitElement {
       flex-wrap: wrap;
       gap: 16px;
       align-items: baseline;
-      background: var(--hos-deep-earth);
+      background: var(--hos-field);
       border: 1px solid var(--hos-line);
       border-radius: 10px;
       padding: 12px 14px;

@@ -29,6 +29,8 @@
 
   /* Canvases, surfaces, line, inks: role for role with the base sheet. */
   --hos-deep-earth: var(--hh-page);
+  /* The one input fill: the page's deep tone in dark, the card white in light (round 7). */
+  --hos-field: var(--hh-field);
   --hos-slate-warm: var(--hh-card);
   --hos-line: var(--hh-line);
   /* The boundary a non-filled control is seen by (WCAG 1.4.11, 3:1 in both themes); --hos-line is a hairline. */
@@ -216,6 +218,7 @@
   --hos-color-scheme: dark;
 
   --hos-deep-earth: #05070b;
+  --hos-field: #05070b;
   --hos-slate-warm: #131a27;
   --hos-line: #2e3947;
   --hos-scrim: rgba(0, 0, 0, 0.78);
