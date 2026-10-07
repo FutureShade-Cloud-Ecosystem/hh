@@ -250,6 +250,8 @@ export class QuoteConvert extends HHElement {
   #stockKnown = false;
   #branchLabel = "";
   #standing: StandingRead | null = null;
+  /** The quote whose heading already took focus. */
+  #headingFocused = "";
   /** Whether the caller's role may take a payment (PR 239); null where the read said nothing, and the server then decides. */
   #grant: boolean | null = null;
   #hold: AccountStandingRead | null = null;
@@ -301,6 +303,14 @@ export class QuoteConvert extends HHElement {
   }
 
   protected override updated(): void {
+    // The surface is a page of its own: once its quote has answered, its heading takes focus (once per quote).
+    if (this.#phase !== "loading" && this.#headingFocused !== this.quoteId) {
+      const heading = this.renderRoot.querySelector<HTMLElement>('[data-testid="qc-title"], [role="alert"] h2');
+      if (heading !== null) {
+        this.#headingFocused = this.quoteId;
+        heading.focus();
+      }
+    }
     // The uncontrolled fields take their value from the state after each render.
     this.#sync('[data-field="pay-amount"]', this.#payAmountRaw);
     this.#sync('[data-field="pay-reference"]', this.#payReference);
@@ -320,6 +330,7 @@ export class QuoteConvert extends HHElement {
     if (client === null || quoteId === "") return;
     const seq = ++this.#seq;
     this.#reset();
+    this.#headingFocused = "";
     this.#phase = "loading";
     this.requestUpdate();
     const quote = await client.readQuote(quoteId);
@@ -663,7 +674,7 @@ export class QuoteConvert extends HHElement {
     return html`
       <div class="wrap">
         <div>
-          <h2 data-testid="qc-title">Convert ${view.quote_no} to an order</h2>
+          <h2 data-testid="qc-title" tabindex="-1">Convert ${view.quote_no} to an order</h2>
           <p class="sub">${view.customer_name}</p>
         </div>
         ${this.#done === null ? this.#renderSteps() : nothing}
@@ -678,7 +689,7 @@ export class QuoteConvert extends HHElement {
     return html`
       <div class="wrap">
         <div class="card" data-testid=${testid} role="alert">
-          <h2>${heading}</h2>
+          <h2 tabindex="-1">${heading}</h2>
           <p>${this.#message}</p>
           <div class="nav"><button type="button" class="btn btn-secondary" data-action="to-quotes" data-testid="qc-back-to-quotes">Back to Quotes</button></div>
         </div>

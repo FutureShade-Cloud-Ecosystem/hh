@@ -495,6 +495,8 @@ export class QuoteDeskApp extends HHElement {
     this.#message = lines.length > 0 ? lines.join(" ") : null;
     this.#view = "quotes";
     this.#surface = "entry";
+    // The tab's title goes back to the entry page's own: it must not keep the last quote's number.
+    document.title = "Quote Desk";
     // The shared surface's session-owned module state goes with the session.
     clearSessionState();
     this.requestUpdate();

@@ -165,6 +165,10 @@ export class QdQuoteWorkarea extends LitElement {
   @state() private view: QuoteView | null = null;
   /** The quote id whose first read failed with nothing to show: the page says it could not be opened (never a new quote shell). */
   @state() private unreadable = "";
+  /** The status the read of the unreadable quote answered: a quote the server says is not there is told apart from a read that failed in passing. */
+  @state() private unreadableStatus: number | undefined = undefined;
+  /** The quote whose unreadable heading already took focus, so a re-render never takes it again. */
+  private unreadableFocused = "";
   @state() private terms: TermsRef | null = null;
   @state() private config: SurfaceConfig | null = null;
   @state() private glance: GlanceIn | null = null;
@@ -1412,6 +1416,17 @@ export class QdQuoteWorkarea extends LitElement {
     this.wireShared();
     this.syncFields();
     this.mountPreview();
+    this.focusUnreadable();
+  }
+
+  /** The unreadable page is a new page: its heading takes focus, once, unless the person already put it somewhere. */
+  private focusUnreadable(): void {
+    if (this.unreadable === "" || this.unreadable !== this.quoteId || this.view !== null || this.unreadableFocused === this.unreadable) return;
+    const title = this.renderRoot.querySelector<HTMLElement>('[data-testid="qb-title"]');
+    if (title === null) return;
+    this.unreadableFocused = this.unreadable;
+    const held = document.activeElement;
+    if (held === null || held === document.body || held.tagName === "QD-QUOTE-BUILDER" || held === this) title.focus();
   }
 
   /**
@@ -1681,12 +1696,14 @@ export class QdQuoteWorkarea extends LitElement {
       this.error = "Could not read this quote.";
       if (this.view === null) {
         this.unreadable = ctx.id;
+        this.unreadableStatus = view.status;
         this.announceRead(ctx.id, "", false);
       }
       return;
     }
     this.view = view.value;
     this.unreadable = "";
+    this.unreadableFocused = "";
     this.announceRead(ctx.id, view.value.quote_no, true);
     const late = this.lateNotes.get(ctx.id);
     if (late !== undefined) {
@@ -1849,6 +1866,10 @@ export class QdQuoteWorkarea extends LitElement {
         // The settings region lives under the quote detail disclosure; the
         // builder answers this event by opening it.
         window.dispatchEvent(new CustomEvent(OPEN_SETTINGS_EVENT));
+        break;
+      case "retry-read":
+        this.unreadable = "";
+        void this.loadAll();
         break;
       case "add-another":
         this.focusScan();
@@ -3621,10 +3642,15 @@ export class QdQuoteWorkarea extends LitElement {
 
   /** The page for a quote that could not be opened: a plain way back, none of the new quote's controls. */
   private renderUnreadable() {
+    // Not there, or not this person's, is the server's answer to stay with; anything else may pass, so it offers a retry.
+    const refused = this.unreadableStatus === 404 || this.unreadableStatus === 403 || this.unreadableStatus === 401;
     return html`<div class="composewrap">
       <div class="composecard" data-testid="qb-unreadable">
         <h1 class="pagetitle" tabindex="-1" data-testid="qb-title">This quote could not be opened</h1>
-        <p class="pagectx">It may not exist, or you may not be allowed to see it.</p>
+        ${refused
+          ? html`<p class="pagectx">It may not exist, or you may not be allowed to see it.</p>`
+          : html`<p class="pagectx">It could not be read right now. Try again in a moment.</p>
+              <button type="button" class="backlink" data-action="retry-read" data-testid="qb-retry-read">Try again</button>`}
         <button type="button" class="backlink" data-action="all-quotes" data-testid="qb-all-quotes">
           <span aria-hidden="true">${drawIcon(iconForId("pencil:left"), 12)}</span> All quotes
         </button>
