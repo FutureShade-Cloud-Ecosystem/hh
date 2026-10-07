@@ -50,3 +50,26 @@ test("guard payment words: an account read that answers after another quote open
   await expect(box).toContainText("Cash On Demand");
   await expect(page.locator("qd-order-payment").getByTestId("op-tenders")).toBeVisible();
 });
+
+test("the demo's Cash On Demand account (zero-day terms and a credit line) is told it is Cash On Demand and to convert first", async ({ page }) => {
+  const seeded = await page.request.post("/_stub/seed-quote", { data: { status: "ACCEPTED", customer_id: "c-cod-terms" } });
+  const id = ((await seeded.json()) as { id: string }).id;
+  await signIn(page);
+  await page.evaluate((q) => {
+    window.location.hash = `#/quotes/${q}`;
+  }, id);
+  const box = page.locator("qd-order-payment").getByTestId("op-box");
+  await expect(box).toBeVisible();
+  await expect(box).toContainText("Cash On Demand");
+  await expect(box).not.toContainText("on account (0 days)");
+  await expect(box).toContainText("Convert to Order");
+  await expect(page.locator("qd-order-payment").getByTestId("op-tenders")).toHaveCount(0);
+  // The guided surface says the same about the terms.
+  await page.evaluate((q) => {
+    window.location.hash = `#/quotes/${q}/convert`;
+  }, id);
+  await page.getByTestId("qc-next").click();
+  await page.getByTestId("qc-next").click();
+  await expect(page.getByTestId("qc-terms")).toContainText("Cash On Demand");
+  await expect(page.getByTestId("qc-terms")).not.toContainText("0 days");
+});

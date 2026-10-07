@@ -156,8 +156,10 @@ export function standingOf(read: StandingIn | null, hold: HoldRead | null): Stan
       gateText: "There is no credit account to check. The whole payment is taken to create the order, and the server decides.",
     };
   }
+  const codTerms = read.paymentTermsDays === 0;
   const facts = `Credit limit ${moneyWord(read.creditLimitCents)}, open balance ${moneyWord(read.openBalanceCents)}, as the server reports them.`;
-  const termsText = `Account customer, ${read.paymentTermsDays} days.`;
+  // Zero-day terms are the product's Cash On Demand account even where a credit line stands: said as the terms, not as "0 days".
+  const termsText = codTerms ? COD_TERMS_TEXT : `Account customer, ${read.paymentTermsDays} days.`;
   if (hold === null) {
     return {
       terms: "ACCOUNT",

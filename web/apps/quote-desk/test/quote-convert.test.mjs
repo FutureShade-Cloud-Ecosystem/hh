@@ -143,3 +143,12 @@ test("a Cash On Demand refusal says to reload when the quote may have changed", 
   assert.match(codRefusalWords(400, "a customer with no credit account pays the whole agreed total of $10.00"), /reload/i);
   assert.match(codRefusalWords(409, "convert this quote to an order first"), /reload/i);
 });
+
+test("zero-day terms with a credit line are the product's Cash On Demand account, said as the terms", () => {
+  const cod = standingOf({ name: "A", paymentTermsDays: 0, creditLimitCents: 500000, openBalanceCents: 0 }, { standing: "clear", onHold: false, pastDueCents: null, oldestBucket: null });
+  assert.equal(cod.termsText, "Cash On Demand: nothing is released until it is paid.");
+  assert.doesNotMatch(cod.termsText, /0 days/);
+  assert.match(cod.gateText, /\$5,000\.00/);
+  const net = standingOf({ name: "A", paymentTermsDays: 30, creditLimitCents: 500000, openBalanceCents: 0 }, null);
+  assert.match(net.termsText, /30 days/);
+});

@@ -856,6 +856,10 @@ export class QdOrderPayment extends PanelBase {
   /** What an accepted quote's payment panel says, by the customer's account. */
   private acceptedWords(): string {
     const a = this.account;
+    if (a !== null && a.onAccount && a.days === 0) {
+      // The product's own Cash On Demand account: zero-day terms, and a credit line. It converts first, and nothing is released until it is paid.
+      return "This quote is accepted. This customer is Cash On Demand (pay before release): it is converted first with Convert to Order, and nothing is released until it is paid.";
+    }
     if (a !== null && a.onAccount) {
       return `This quote is accepted. This customer is on account (${a.days} days), so it is converted first with Convert to Order, and any payment is taken on the order it becomes.`;
     }

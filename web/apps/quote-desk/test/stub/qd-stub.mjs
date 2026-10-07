@@ -273,6 +273,17 @@ const CUSTOMERS = [
     open_balance_cents: 0,
     percent_off: 0,
   },
+  // The demo core's Cash On Demand account: zero-day terms WITH a credit line (the product's own rule is the terms, not the line).
+  {
+    id: "c-cod-terms",
+    account_no: "C10",
+    name: "Cash On Demand customer (demo)",
+    customer_type: "CONTRACTOR",
+    payment_terms_days: 0,
+    credit_limit_cents: 500000,
+    open_balance_cents: 0,
+    percent_off: 0,
+  },
   // An account with money past due that is not on hold: the standing read says past_due.
   {
     id: "c-pastdue",
