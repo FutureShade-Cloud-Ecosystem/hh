@@ -37,6 +37,7 @@
 import { LitElement, css, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import "./quote-search-add.js";
+import { personName } from "./_names.js";
 // The customer page's own element (the public desk's), rendered in the desk for Preview: one page, never a copy.
 import "../../public-desk/src/quote-public.js";
 import "@hardscapehouse/pos-kit/src/ported/pos-product-grid.js";
@@ -1423,6 +1424,11 @@ export class QdQuoteWorkarea extends LitElement {
     const page = document.createElement("pd-quote-public") as HTMLElement & { showQuote(value: unknown): void };
     page.showQuote(this.previewRaw);
     host.append(page);
+  }
+
+  /** Who cleared a price below the floor, in words: the name from the roster the desk read, else "a manager", never the id. */
+  private clearedByName(id: string): string {
+    return personName(id, new Map(this.salespeople.map((s) => [s.id, s.name])), "a manager");
   }
 
   private renderPreviewPane() {
@@ -3047,12 +3053,12 @@ export class QdQuoteWorkarea extends LitElement {
         case "line.item":
           return html`<td data-role="item">
             <div class="iname">
-              ${l.description === "" ? l.product_id.slice(0, 8) : l.description}
+              ${l.description === "" ? "A product" : l.description}
               ${l.rule_price_below_floor === true
                 ? html`<span class="floormark" data-testid="qb-rule-under-floor" title="This product's own rule price sits under the margin floor; the pricing editors see it in the log.">rule under floor</span>`
                 : nothing}
               ${l.floor_cleared_by !== undefined
-                ? html`<span class="clearedby" title="The price below the floor was cleared by this manager.">cleared by ${l.floor_cleared_by}</span>`
+                ? html`<span class="clearedby" title="The price below the floor was cleared by this manager.">cleared by ${this.clearedByName(l.floor_cleared_by)}</span>`
                 : nothing}
             </div>
             ${extra?.sku != null ? html`<div class="isku">${extra.sku}</div>` : nothing}
@@ -3357,7 +3363,7 @@ export class QdQuoteWorkarea extends LitElement {
                 />
               </div>
               <div>
-                <label class="f" for="qb-dfee">Delivery fee (CA$)</label>
+                <label class="f" for="qb-dfee">Delivery fee ($)</label>
                 <input
                   id="qb-dfee"
                   data-field="delivery-fee"

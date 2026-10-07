@@ -88,7 +88,7 @@ test("a floor raised with no branch named still meets a rule limited to one bran
   await expect(page.getByTestId("floor-item")).toHaveCount(1);
   await expect(page.getByTestId("floor-item").first()).toContainText("WALL-12");
   await expect(page.getByTestId("floor-item").first()).toContainText("for Contractor at TRT");
-  await expect(page.getByTestId("floor-item").first()).toContainText("price CA$7.65 per ea, unchanged");
+  await expect(page.getByTestId("floor-item").first()).toContainText("price $7.65 per ea, unchanged");
 });
 
 test("confirming saves the policy and logs the confirmation against it", async ({ page }) => {

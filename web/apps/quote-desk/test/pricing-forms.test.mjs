@@ -172,7 +172,7 @@ test("a rule form refuses what it can see is wrong, in words", () => {
 test("a rule's value and key read as the list shows them", () => {
   assert.equal(ruleValueText(ruleRow), "18.00% off");
   assert.equal(ruleValueText({ ...ruleRow, calcType: "MARKUP_ON_COST", discountBps: null, markupBps: 2500 }), "+25.00% on cost");
-  assert.equal(ruleValueText({ ...ruleRow, calcType: "ABSOLUTE", discountBps: null, priceCents: 1999 }), "CA$19.99 / SF");
+  assert.equal(ruleValueText({ ...ruleRow, calcType: "ABSOLUTE", discountBps: null, priceCents: 1999 }), "$19.99 / SF");
 });
 
 // ── customer prices ────────────────────────────────────────────────────────────
@@ -234,8 +234,8 @@ test("schedules with an unapplied tier are counted so the note can name how many
 test("a tier's adjustment reads signed, discounts down and surcharges up", () => {
   assert.equal(tierValueDisplay(breakRow.items[0]), "-5.00%");
   assert.equal(tierValueDisplay(breakRow.items[1]), "+10.00%");
-  assert.equal(tierValueDisplay({ ...breakRow.items[0], valueType: "ABS_OFF", discountCents: 250 }), "-CA$2.50");
-  assert.equal(tierValueDisplay({ ...breakRow.items[1], valueType: "SURCHARGE_ABS", surchargeCents: 99 }), "+CA$0.99");
+  assert.equal(tierValueDisplay({ ...breakRow.items[0], valueType: "ABS_OFF", discountCents: 250 }), "-$2.50");
+  assert.equal(tierValueDisplay({ ...breakRow.items[1], valueType: "SURCHARGE_ABS", surchargeCents: 99 }), "+$0.99");
 });
 
 test("a break form round trips a schedule and sends each tier's own value field", () => {

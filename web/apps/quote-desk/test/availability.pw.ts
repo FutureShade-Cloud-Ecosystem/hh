@@ -52,7 +52,7 @@ test("a thin line says so in words and its peek shows every branch the server re
   await expect(rows.nth(0)).toContainText("TRE (this branch): 2 available");
   await expect(rows.nth(1)).toContainText("BEL: 60 available");
   // The caller is on the cost list: the average cost rides, in money words.
-  await expect(rows.nth(1)).toContainText("avg cost CA$");
+  await expect(rows.nth(1)).toContainText("avg cost $");
   await shot(panel(page), "availability-peek");
   // The peek closes again.
   await thin.getByRole("button", { name: "Other branches" }).click();
@@ -75,7 +75,7 @@ test("the average cost is absent for an off list caller, and never a zero", asyn
   await panel(page).getByRole("button", { name: "Other branches" }).click();
   await expect(panel(page).getByTestId("av-branch")).toHaveCount(2);
   await expect(panel(page).getByTestId("av-peek")).not.toContainText(/cost/i);
-  await expect(panel(page).getByTestId("av-peek")).not.toContainText("CA$");
+  await expect(panel(page).getByTestId("av-peek")).not.toContainText("$");
 });
 
 test("each grade carries its own word and look: none and thin and unreported are different answers", async ({ page, request }) => {

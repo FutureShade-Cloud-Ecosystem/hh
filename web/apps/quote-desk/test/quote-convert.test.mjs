@@ -53,8 +53,8 @@ test("the standing states the server's facts and does no arithmetic of its own",
   const account = standingOf({ name: "A", paymentTermsDays: 30, creditLimitCents: 500000, openBalanceCents: 125000 }, null);
   assert.equal(account.terms, "ACCOUNT");
   assert.match(account.termsText, /30 days/);
-  assert.match(account.gateText, /CA\$5,000\.00/);
-  assert.match(account.gateText, /CA\$1,250\.00/);
+  assert.match(account.gateText, /\$5,000\.00/);
+  assert.match(account.gateText, /\$1,250\.00/);
   assert.doesNotMatch(account.gateText, /within|over by/);
   // An account at its limit is stated, never judged: the server decides at confirm.
   const full = standingOf({ name: "A", paymentTermsDays: 30, creditLimitCents: 100000, openBalanceCents: 95000 }, null);
@@ -62,14 +62,14 @@ test("the standing states the server's facts and does no arithmetic of its own",
   const held = standingOf({ name: "A", paymentTermsDays: 30, creditLimitCents: 100000, openBalanceCents: 0 }, { standing: "on_hold", onHold: true, pastDueCents: 12000, oldestBucket: "60" });
   assert.equal(held.gate, "hold");
   assert.match(held.gateText, /credit hold/);
-  assert.match(held.gateText, /CA\$120\.00/);
+  assert.match(held.gateText, /\$120\.00/);
   // The standing read's own word: clear is said, past due is said with its amount, an unread standing is not clear.
   const quiet = standingOf({ name: "A", paymentTermsDays: 30, creditLimitCents: 100000, openBalanceCents: 0 }, { standing: "clear", onHold: false, pastDueCents: null, oldestBucket: null });
   assert.equal(quiet.gate, "clear");
   assert.match(quiet.gateText, /good standing/);
   const late = standingOf({ name: "A", paymentTermsDays: 30, creditLimitCents: 100000, openBalanceCents: 0 }, { standing: "past_due", onHold: false, pastDueCents: 45000, oldestBucket: "30" });
   assert.equal(late.gate, "pastdue");
-  assert.match(late.gateText, /CA\$450\.00/);
+  assert.match(late.gateText, /\$450\.00/);
   const unread = standingOf({ name: "A", paymentTermsDays: 30, creditLimitCents: 100000, openBalanceCents: 0 }, null);
   assert.equal(unread.gate, "server");
   assert.doesNotMatch(unread.gateText, /good standing|clear/i);
@@ -111,7 +111,7 @@ test("the idempotency key follows the intended payment", () => {
 test("a payment settled after the person left is said in plain words", () => {
   const taken = awayNotice({ orderNo: "SO-1", quoteNo: "Q-7", amountCents: 5000, paid: { paymentNo: "PAY-3" } });
   assert.match(taken, /SO-1/);
-  assert.match(taken, /payment of CA\$50\.00 was taken/);
+  assert.match(taken, /payment of \$50\.00 was taken/);
   const not = awayNotice({ orderNo: "SO-1", quoteNo: "Q-7", amountCents: 5000, paid: null, said: "the payments desk is closed" });
   assert.match(not, /was not taken/);
   assert.match(not, /Nothing was charged/);

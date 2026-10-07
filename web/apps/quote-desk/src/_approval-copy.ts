@@ -8,6 +8,7 @@
 // approve is spoken from the roles the server names and never decided here.
 // Not ported from the ERP: the refusal softener (this app shows the server's
 // refusal text verbatim) and the return reasons (another panel's).
+import { withoutIds } from "./_names.js";
 import { humanizeBps } from "./_guard-format.js";
 
 /** The policy the margin floor requests carry. */
@@ -54,7 +55,7 @@ export function policyLabel(policyType: string): string {
  * the server wrote none.
  */
 export function approvalDetail(detail: string): string {
-  return humanizeBps(detail || "").trim() || "Override requested";
+  return humanizeBps(withoutIds(detail || "")).trim() || "Override requested";
 }
 
 /**

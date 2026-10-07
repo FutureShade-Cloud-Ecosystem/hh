@@ -7,14 +7,14 @@ are shown as sent and never rewritten; where this app writes the sentence, the w
 ## The money word
 
 - The desk's own figures and sentences come from `moneyWord` (`_quote-edit.ts`): integer cents in,
-  `CA$` out, a minus when negative. Every figure the desk names itself is a `CA$` figure: the
-  preview ("Taking CA$12.50 by Cash"), the figures line ("balance CA$27.06"), the desk's own
-  refusal ("The payment is more than the balance of CA$27.06"), the receipt rows, and the entry
+  `$` out, a minus when negative. Every figure the desk names itself is a `$` figure: the
+  preview ("Taking $12.50 by Cash"), the figures line ("balance $27.06"), the desk's own
+  refusal ("The payment is more than the balance of $27.06"), the receipt rows, and the entry
   page's notes at sign out.
 - The server's own sentences arrive with the server's `$` figures (for example "the payment is
   more than the balance of $27.06"). They are shown as the server sent them, beside the desk's
-  `CA$` figures, never rewritten to match: rewriting a server sentence would put words in the
-  server's mouth. One voice per sentence: a sentence is wholly the desk's (CA$) or wholly the
+  `$` figures, never rewritten to match: rewriting a server sentence would put words in the
+  server's mouth. One voice per sentence: a sentence is wholly the desk's ($) or wholly the
   server's (as sent).
 
 ## The fields
@@ -24,7 +24,7 @@ are shown as sent and never rewritten; where this app writes the sentence, the w
   "outstanding", or "total".
 - The pre invoice bound (what the one action raises the invoice for, before any order or invoice
   exists) is "the agreed total", and only that: it is a different field from the balance, and the
-  figures line names it once ("Quote Q is Accepted at CA$63.28, the agreed total").
+  figures line names it once ("Quote Q is Accepted at $63.28, the agreed total").
 - The tender is the contract's own name (CASH, CARD, CHEQUE, EFT), spoken as Cash, Card, Cheque,
   EFT in the desk's sentences.
 

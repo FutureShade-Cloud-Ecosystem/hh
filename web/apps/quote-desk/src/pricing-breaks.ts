@@ -440,7 +440,7 @@ export class QdPricingBreaks extends PricingTabBase {
           <select aria-label="Tier ${i + 1} kind" data-field="tier-valueType-${i}"></select>
         </div>
         <div class="field">
-          <label>${percent ? "Percent" : "Dollars (CA$)"}</label>
+          <label>${percent ? "Percent" : "Dollars ($)"}</label>
           <input class="mono" inputmode="decimal" aria-label="Tier ${i + 1} value" data-field="tier-valueInput-${i}" />
         </div>
         <div class="field">

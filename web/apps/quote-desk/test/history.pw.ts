@@ -50,7 +50,7 @@ test("each action is one entry, in order, with its consequences beneath and the 
   const first = history(page).getByTestId("qh-group").first();
   await expect(first).toContainText("Quantity, line 2: 2 → 6");
   await expect(first).toContainText("Sales (demo)");
-  await expect(first).toContainText("Line total: CA$22.96 → CA$68.88");
+  await expect(first).toContainText("Line total: $22.96 → $68.88");
   await expect(first).toContainText("Quote subtotal");
   // Action two: a discount on the same line, among the rows as its own entry.
   await sand.locator('[data-field="disc"]').fill("5");

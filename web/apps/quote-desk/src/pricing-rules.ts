@@ -478,7 +478,7 @@ export class QdPricingRules extends PricingTabBase {
                   <input id="pr-pct" class="mono" inputmode="decimal" data-field="valuePct" data-testid="pr-value" />
                 </div>`
               : html`<div class="field">
-                  <label for="pr-dollars">Fixed price (CA$)</label>
+                  <label for="pr-dollars">Fixed price ($)</label>
                   <input id="pr-dollars" class="mono" inputmode="decimal" data-field="priceDollars" data-testid="pr-price" />
                 </div>`}
             <div class="field">

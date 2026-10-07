@@ -102,7 +102,7 @@ test("a rule that would put products under the floor is shown before saving, and
   await page.getByTestId("pr-save").click();
   await expect(page.getByTestId("floor-dialog")).toBeVisible();
   await expect(page.getByTestId("floor-headline")).toHaveText("This price puts 2 products under their margin floor.");
-  await expect(page.getByTestId("floor-item").first()).toContainText("price CA$3.12 per sf (was CA$4.26)");
+  await expect(page.getByTestId("floor-item").first()).toContainText("price $3.12 per sf (was $4.26)");
   await page.getByTestId("floor-decline").click();
   await expect(page.getByTestId("floor-dialog")).toHaveCount(0);
   await expect(page.getByTestId("pr-dialog")).toBeVisible();

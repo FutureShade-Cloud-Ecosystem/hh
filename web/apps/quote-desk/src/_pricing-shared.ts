@@ -54,12 +54,12 @@ export function formatPct(bps: number): string {
   return `${twoDecimals(bps)}%`;
 }
 
-/** Integer cents as money: 123456 is "CA$1,234.56". */
+/** Integer cents as money: 123456 is "$1,234.56". */
 export function formatMoney(cents: number): string {
   const sign = cents < 0 ? "-" : "";
   const abs = Math.abs(cents);
   const whole = Math.trunc(abs / 100).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  return `${sign}CA$${whole}.${String(abs % 100).padStart(2, "0")}`;
+  return `${sign}$${whole}.${String(abs % 100).padStart(2, "0")}`;
 }
 
 /** Category ids the seed names, until the contract carries a category list. */

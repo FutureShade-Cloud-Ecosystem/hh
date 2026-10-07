@@ -56,9 +56,9 @@ test("bpsText and centsText fill an edit box from the wire's integers", () => {
 test("formatPct and formatMoney render integers as words", () => {
   assert.equal(formatPct(3000), "30.00%");
   assert.equal(formatPct(1), "0.01%");
-  assert.equal(formatMoney(123456), "CA$1,234.56");
-  assert.equal(formatMoney(5), "CA$0.05");
-  assert.equal(formatMoney(-250), "-CA$2.50");
+  assert.equal(formatMoney(123456), "$1,234.56");
+  assert.equal(formatMoney(5), "$0.05");
+  assert.equal(formatMoney(-250), "-$2.50");
 });
 
 test("categories are named for the six seeded ids and degrade to a short id otherwise", () => {

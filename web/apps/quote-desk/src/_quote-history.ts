@@ -8,6 +8,7 @@
 // showing them as separate entries would make one edit look like five. The
 // discount changes ride the same trail (QD-2 adds the rows server side).
 import { moneyWord } from "./_quote-edit.js";
+import { looksLikeId } from "./_names.js";
 
 /** One column level change, field for field the contract's QuoteFieldChange. */
 export interface QuoteFieldChange {
@@ -43,14 +44,22 @@ export function fieldLabel(field: string): string {
 /** Fields whose before and after are integer cents and must read as money. */
 const MONEY_FIELDS = new Set(["unit_price_cents", "line_total_cents", "subtotal_cents", "total_cents"]);
 
+/** What the desk can prove an id names: a product's name or a person's name; undefined when it can prove nothing. */
+export type NameOf = (id: string) => string | undefined;
+
 /**
  * One side of a before to after pair. An empty side is a creation's before or
  * a removal's after, and reads as the word "none", never a blank or a zero.
+ * A side the server gives as an id (the product of an added or removed line,
+ * the person who cleared a price) is said as a name the desk can prove, else
+ * as the plain word for what it is: never as the id.
  */
-export function formatChangeValue(field: string, value: string | undefined): string {
+export function formatChangeValue(field: string, value: string | undefined, nameOf: NameOf = () => undefined): string {
   if (value === undefined || value === "") return "none";
+  if (field === "floor_cleared_by") return nameOf(value) ?? "a manager";
+  if (field === "line_added" || field === "line_removed") return nameOf(value) ?? "a product";
   if (field === "disc_pct") return Number.isFinite(Number(value)) ? `${value}%` : value;
-  if (!MONEY_FIELDS.has(field)) return value;
+  if (!MONEY_FIELDS.has(field)) return looksLikeId(value) ? "a record" : value;
   const cents = Number(value);
   return Number.isFinite(cents) ? moneyWord(cents) : value;
 }
@@ -95,15 +104,15 @@ export function summariseGroup(group: readonly QuoteFieldChange[]): QuoteFieldCh
   return group[0];
 }
 
-/** Who made a change: the display name, else a short id, else "system" for an automated change. */
+/** Who made a change: the display name, else the plain words for a person the desk cannot name, else the system for an automated change. */
 export function changeActor(c: Pick<QuoteFieldChange, "actor_name" | "actor_id">): string {
   if (c.actor_name !== undefined && c.actor_name !== "") return c.actor_name;
-  if (c.actor_id !== undefined && c.actor_id !== "") return c.actor_id.slice(0, 8);
-  return "system";
+  if (c.actor_id !== undefined && c.actor_id !== "") return "a staff member";
+  return "the system";
 }
 
 /** The headline of one change: the field, the line it moved on, and both sides. */
-export function historyHeadline(c: QuoteFieldChange): string {
+export function historyHeadline(c: QuoteFieldChange, nameOf: NameOf = () => undefined): string {
   const line = c.line_no > 0 ? `, line ${c.line_no}` : "";
-  return `${fieldLabel(c.field)}${line}: ${formatChangeValue(c.field, c.before)} → ${formatChangeValue(c.field, c.after)}`;
+  return `${fieldLabel(c.field)}${line}: ${formatChangeValue(c.field, c.before, nameOf)} → ${formatChangeValue(c.field, c.after, nameOf)}`;
 }

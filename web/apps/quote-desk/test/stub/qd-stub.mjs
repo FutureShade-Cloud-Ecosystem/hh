@@ -649,7 +649,7 @@ function floorDecision(caller, product, customer, discPct) {
   const floorBps = product.floor_bps + switches.floorRaiseBps;
   if (margin >= floorBps) return null;
   const isManager = caller.account.role_code === "sales_manager";
-  if (isManager) return { cleared: true, by: USERS[caller.flow].display_name };
+  if (isManager) return { cleared: true, by: USERS[caller.flow].user_id };
   return {
     cleared: false,
     body: {
@@ -2423,8 +2423,9 @@ const server = createServer(async (request, response) => {
       approvalCards.set(request.id, {
         quote_id: quote.id,
         requested_by: userId,
-        detail: `Quote ${quote.quote_no}, line ${lineNo}, ${product.name}, ${disc}% discount` +
-          `, margin ${(askedMargin / 100).toFixed(1)}% against a floor of ${((product.floor_bps + switches.floorRaiseBps) / 100).toFixed(1)}%`,
+        // The core's own shape, an id in parentheses after the line included: the desk says it in words.
+        detail: `quote ${quote.quote_no} line ${lineNo} (a7000000-0000-4000-9000-${String(PRODUCTS.indexOf(product) + 1).padStart(12, "0")}): ${disc} percent discount` +
+          `, resulting margin ${askedMargin} bps against the ${product.floor_bps + switches.floorRaiseBps} bps floor`,
       });
       respondJson(response, 201, { filed: true, may_clear_itself: false, request });
     });

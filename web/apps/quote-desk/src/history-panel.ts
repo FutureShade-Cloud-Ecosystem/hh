@@ -22,11 +22,14 @@ import {
   type QuoteFieldChange,
 } from "./_quote-history.js";
 import { spokenRefusal } from "./_quote-workarea.js";
+import { readRoster } from "./staff-roster.js";
 
 @customElement("qd-quote-history")
 export class QdQuoteHistory extends PanelBase {
   @state() private changes: QuoteFieldChange[] = [];
   @state() private loaded = false;
+  /** What the desk can prove an id names: the roster it was told and the products of this quote's lines. */
+  @state() private names: ReadonlyMap<string, string> = new Map();
 
   static styles = [
     panelStyles,
@@ -98,7 +101,22 @@ export class QdQuoteHistory extends PanelBase {
     }
     this.changes = result.value;
     this.loaded = true;
+    void this.loadNames(ctx.id, ctx);
   }
+
+  /** The names behind the ids the trail carries: best effort, and a read that fails leaves the plain words. */
+  private async loadNames(quoteId: string, ctx: typeof this.ctx): Promise<void> {
+    const client = this.client;
+    if (client === null || ctx.stale) return;
+    const read = await ctx.guarded(Promise.all([client.readQuote(quoteId), readRoster()]));
+    if (read === undefined) return;
+    const [view, roster] = read;
+    const names = new Map(roster);
+    if (view.ok) for (const line of view.value.lines) if (line.description !== "") names.set(line.product_id, line.description);
+    this.names = names;
+  }
+
+  private readonly nameOf = (id: string): string | undefined => this.names.get(id);
 
   private whenLabel(iso: string): string {
     const d = new Date(iso);
@@ -112,11 +130,11 @@ export class QdQuoteHistory extends PanelBase {
     const rest = group.filter((c) => c !== lead);
     return html`
       <li data-testid="qh-group">
-        <div class="head">${historyHeadline(lead)}</div>
+        <div class="head">${historyHeadline(lead, this.nameOf)}</div>
         <div class="meta">${changeActor(lead)} · ${this.whenLabel(lead.occurred_at)}</div>
         ${rest.length > 0
           ? html`<div class="detail">
-              ${rest.map((c) => html`<span>${fieldLabel(c.field)}: ${formatChangeValue(c.field, c.before)} → ${formatChangeValue(c.field, c.after)}</span>`)}
+              ${rest.map((c) => html`<span>${fieldLabel(c.field)}: ${formatChangeValue(c.field, c.before, this.nameOf)} → ${formatChangeValue(c.field, c.after, this.nameOf)}</span>`)}
             </div>`
           : nothing}
       </li>

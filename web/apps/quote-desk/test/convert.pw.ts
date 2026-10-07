@@ -54,7 +54,7 @@ interface Seen {
   posts: Array<{ kind: string; quote_id: string; key: string | null }>;
 }
 
-/** "CA$1,234.56" in integer cents, read off the screen the way a person reads it. */
+/** "$1,234.56" in integer cents, read off the screen the way a person reads it. */
 function centsOf(text: string): number {
   const match = /(\d[\d,]*)\.(\d{2})/.exec(text);
   if (match === null) throw new Error(`no amount in "${text}"`);
@@ -85,7 +85,7 @@ test("A review lists every line with its quantity and total, the customer, and w
   await expect(lines).toHaveCount(1);
   await expect(lines.first()).toContainText("Clear Stone");
   await expect(lines.first()).toContainText("3");
-  await expect(page.getByTestId("qc-total")).toContainText("CA$");
+  await expect(page.getByTestId("qc-total")).toContainText("$");
   // Two at the branch against three asked: the order will wait, said in plain words.
   await expect(page.getByTestId("qc-line-warning").first()).toContainText("wait on stock");
   await shot(page, "after-convert-review-step-desktop");
@@ -117,8 +117,8 @@ test("C standing renders the terms and the credit status before confirming", asy
   await expect(page.getByTestId("qc-standing")).toBeVisible();
   await expect(page.getByTestId("qc-terms")).toContainText("30 days");
   // The facts are the server's own, said as facts; the screen does no sum of its own.
-  await expect(page.getByTestId("qc-credit")).toContainText("CA$5,000.00");
-  await expect(page.getByTestId("qc-credit")).toContainText("CA$1,250.00");
+  await expect(page.getByTestId("qc-credit")).toContainText("$5,000.00");
+  await expect(page.getByTestId("qc-credit")).toContainText("$1,250.00");
   await expect(page.getByTestId("qc-credit")).toContainText("the server decides");
   await expect(page.getByTestId("qc-credit")).not.toContainText("within");
   await expect(page.getByTestId("qc-credit")).not.toContainText("over by");
@@ -131,7 +131,7 @@ test("C a known over-limit customer is told before confirming, and the refusal a
   await next(page);
   await next(page);
   // The screen never promises a pass or announces a failure it computed: it shows the server's figures.
-  await expect(page.getByTestId("qc-credit")).toContainText("CA$1,000.00");
+  await expect(page.getByTestId("qc-credit")).toContainText("$1,000.00");
   await expect(page.getByTestId("qc-credit")).not.toContainText("over by");
   await expect(page.getByTestId("qc-credit")).not.toContainText("within");
   await next(page);
@@ -161,7 +161,7 @@ test("D a Cash On Demand customer pays the whole amount through the payment door
   await expect(page.getByTestId("qc-payment")).toBeVisible();
   await expect(page.getByTestId("qc-pay-cod-note")).toContainText("Cash On Demand");
   await expect(page.getByTestId("qc-pay-cod-note")).toContainText("nothing is released until it is paid");
-  await expect(page.getByTestId("qc-pay-due")).toContainText("CA$");
+  await expect(page.getByTestId("qc-pay-due")).toContainText("$");
   expect(centsOf(await page.getByTestId("qc-pay-due").innerText())).toBe(total);
   await expect(page.getByTestId("qc-pay-skip")).toHaveCount(0);
   await expect(page.getByTestId("qc-pay-amount")).toHaveCount(0);
@@ -235,7 +235,7 @@ test("C a credit hold the server reports is shown, and the server's refusal at c
   await next(page);
   await next(page);
   await expect(page.getByTestId("qc-credit")).toContainText("credit hold");
-  await expect(page.getByTestId("qc-credit")).toContainText("CA$120.00");
+  await expect(page.getByTestId("qc-credit")).toContainText("$120.00");
   await next(page);
   await next(page);
   await page.getByTestId("qc-confirm").click();
@@ -489,7 +489,7 @@ test("a payment typed for the order is still taken, and said, when the person le
   }, other);
   await expect(page.getByTestId("qc-review")).toBeVisible();
   await held.release();
-  await expect(page.getByTestId("qb-convert-notice")).toContainText("payment of CA$50.00 was taken");
+  await expect(page.getByTestId("qb-convert-notice")).toContainText("payment of $50.00 was taken");
   await expect(page.getByTestId("qb-convert-notice")).toContainText("SO-");
   const seen = await state(page);
   expect(seen.payments).toHaveLength(1);
@@ -560,7 +560,7 @@ test("guard convert payment: a payment out after the conversion when the person 
   }, other);
   await expect(page.getByTestId("qc-review")).toBeVisible();
   await held.release();
-  await expect(page.getByTestId("qb-convert-notice")).toContainText("payment of CA$50.00 was taken");
+  await expect(page.getByTestId("qb-convert-notice")).toContainText("payment of $50.00 was taken");
   await expect(page.getByTestId("qb-convert-notice")).toContainText("SO-");
   await expect(page.getByTestId("qc-done")).toHaveCount(0);
   expect((await state(page)).payments).toHaveLength(1);

@@ -119,8 +119,8 @@ test("share link states: live, revoked, expired", () => {
 
 test("the comparison words: a delta with its sign, the basis, and a blocked row says below floor", () => {
   assert.equal(comparisonDeltaLabel({ is_current: true, delta_cents: 0 }), "none");
-  assert.equal(comparisonDeltaLabel({ is_current: false, delta_cents: -253 }), "-CA$2.53");
-  assert.equal(comparisonDeltaLabel({ is_current: false, delta_cents: 41 }), "+CA$0.41");
+  assert.equal(comparisonDeltaLabel({ is_current: false, delta_cents: -253 }), "-$2.53");
+  assert.equal(comparisonDeltaLabel({ is_current: false, delta_cents: 41 }), "+$0.41");
   assert.equal(comparisonBasis({ blocked: false, source: "TIER_CATEGORY" }), "TIER_CATEGORY");
   assert.equal(comparisonBasis({ blocked: true, source: "X", block_policy: "category_margin_floor" }), "below floor (category_margin_floor)");
   assert.equal(comparisonBasis({ blocked: true, source: "X" }), "below floor");
@@ -167,7 +167,7 @@ test("field labels and values: money as dollars, the discount as a percent, an e
   assert.equal(fieldLabel("disc_pct"), "Discount");
   assert.equal(fieldLabel("floor_cleared_by"), "Floor cleared by");
   assert.equal(fieldLabel("something_new"), "something_new");
-  assert.equal(formatChangeValue("unit_price_cents", "2057"), "CA$20.57");
+  assert.equal(formatChangeValue("unit_price_cents", "2057"), "$20.57");
   assert.equal(formatChangeValue("disc_pct", "10"), "10%");
   assert.equal(formatChangeValue("qty_entered", undefined), "none");
   assert.equal(formatChangeValue("qty_entered", ""), "none");
@@ -175,10 +175,10 @@ test("field labels and values: money as dollars, the discount as a percent, an e
   assert.equal(formatChangeValue("disc_pct", ""), "none");
 });
 
-test("the actor is the display name, else a short id, else system; the headline names field, line and both sides", () => {
+test("the actor is the display name, else words for a person unnamed, else the system; the headline names field, line and both sides", () => {
   assert.equal(changeActor({ actor_name: "Sales (demo)" }), "Sales (demo)");
-  assert.equal(changeActor({ actor_id: "abcdef1234567890" }), "abcdef12");
-  assert.equal(changeActor({}), "system");
+  assert.equal(changeActor({ actor_id: "abcdef1234567890" }), "a staff member");
+  assert.equal(changeActor({}), "the system");
   assert.equal(
     historyHeadline(change({ field: "disc_pct", line_no: 2, before: "", after: "10" })),
     "Discount, line 2: none → 10%",
@@ -240,7 +240,7 @@ test("writeRefusalLine speaks the server's sentence the way a counter person rea
 });
 
 test("a zero difference reads as a plain amount, not a signed one", () => {
-  assert.equal(comparisonDeltaLabel({ is_current: false, delta_cents: 0 }), "CA$0.00");
+  assert.equal(comparisonDeltaLabel({ is_current: false, delta_cents: 0 }), "$0.00");
 });
 
 test("the curation draft resolves the registry, hides cost columns by default, and moves and toggles without touching the minimum panels", () => {

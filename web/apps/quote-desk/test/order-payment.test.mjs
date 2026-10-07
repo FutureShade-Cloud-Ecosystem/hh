@@ -203,15 +203,15 @@ test("the desk's own sentences speak one money word and one word for the owed fi
   // never "total" for the owed figure; the agreed total is named only for the pre invoice bound.
   const quote = doc("QUOTE", "ACCEPTED", 6328);
   const withBalance = figuresLine(quote, null, [], 6328, 0);
-  assert.ok(withBalance.includes("balance CA$63.28"), withBalance);
-  // Every dollar sign in a desk sentence is a CA dollar: no bare $ figure beside the CA$ one.
-  const figures = withBalance.match(/CA\$\d[\d,.]*/g) ?? [];
+  assert.ok(withBalance.includes("balance $63.28"), withBalance);
+  // Every dollar sign in a desk sentence is a CA dollar: no bare $ figure beside the $ one.
+  const figures = withBalance.match(/\$\d[\d,.]*/g) ?? [];
   assert.ok(figures.length >= 2, withBalance);
   assert.equal((withBalance.match(/\$/g) ?? []).length, figures.length, withBalance);
   assert.ok(!/[^a-z]total[^a-z]/.test(withBalance.split(", the agreed total")[1] ?? ""), withBalance);
   const line = figuresLine(null, doc("ORDER", "CONVERTED", 3706), [doc("INVOICE", "PARTIALLY_PAID", 3706)], 2706, 1);
-  assert.ok(line.includes("balance CA$27.06"), line);
-  const lineFigures = line.match(/CA\$\d[\d,.]*/g) ?? [];
+  assert.ok(line.includes("balance $27.06"), line);
+  const lineFigures = line.match(/\$\d[\d,.]*/g) ?? [];
   assert.equal((line.match(/\$/g) ?? []).length, lineFigures.length, line);
   const afterDocuments = line.split("\u00b7").slice(1).join("\u00b7");
   assert.ok(!/[^a-z]total[^a-z]/.test(afterDocuments), line);
@@ -223,26 +223,26 @@ test("the desk's own sentences speak one money word and one word for the owed fi
 test("the figures line names the documents in their own words and the balance when the reads carry it", () => {
   const quote = doc("QUOTE", "ACCEPTED", 6328);
   // Before any order: the agreed total is the bound.
-  assert.equal(figuresLine(quote, null, [], 6328, 0), "Quote QUOTE-1 is Accepted at CA$63.28, the agreed total · balance CA$63.28");
-  assert.equal(figuresLine(quote, null, [], null, 0), "Quote QUOTE-1 is Accepted at CA$63.28, the agreed total");
+  assert.equal(figuresLine(quote, null, [], 6328, 0), "Quote QUOTE-1 is Accepted at $63.28, the agreed total · balance $63.28");
+  assert.equal(figuresLine(quote, null, [], null, 0), "Quote QUOTE-1 is Accepted at $63.28, the agreed total");
   // An order with no invoice yet.
   const order = doc("ORDER", "DRAFT", 3706);
-  assert.equal(figuresLine(null, order, [], 3706, 1), "Order ORDER-1 is Draft at CA$37.06 · balance CA$37.06");
+  assert.equal(figuresLine(null, order, [], 3706, 1), "Order ORDER-1 is Draft at $37.06 · balance $37.06");
   // An invoice, part paid, with the receipt's live balance.
   const invoice = doc("INVOICE", "PARTIALLY_PAID", 3706, "inv-9");
   assert.equal(
     figuresLine(null, order, [invoice], 2706, 1),
-    "Order ORDER-1 is Draft at CA$37.06 · Invoice INVOICE-1 is Part paid at CA$37.06 · balance CA$27.06",
+    "Order ORDER-1 is Draft at $37.06 · Invoice INVOICE-1 is Part paid at $37.06 · balance $27.06",
   );
   // The same invoice without the receipt: the state is carried, the figure is not.
   assert.equal(
     figuresLine(null, order, [invoice], null, 1),
-    "Order ORDER-1 is Draft at CA$37.06 · Invoice INVOICE-1 is Part paid at CA$37.06 · the balance it still owes is not carried by this read, the server holds it",
+    "Order ORDER-1 is Draft at $37.06 · Invoice INVOICE-1 is Part paid at $37.06 · the balance it still owes is not carried by this read, the server holds it",
   );
   // More than one order: the server says which one to pay, and no balance is named.
   assert.equal(
     figuresLine(quote, order, [], null, 2),
-    "Order ORDER-1 is Draft at CA$37.06 · the server holds 2 orders for this quote and will say which one to pay",
+    "Order ORDER-1 is Draft at $37.06 · the server holds 2 orders for this quote and will say which one to pay",
   );
   assert.equal(figuresLine(null, null, [], null, 0), "");
 });
@@ -268,8 +268,8 @@ test("the receipt rows are the server's figures in the order a counter reads the
       "Order=SO-2001",
       "Payment=P-4001",
       "Tender=Cheque",
-      "Amount=CA$40.00",
-      "Balance on the invoice=CA$30.68",
+      "Amount=$40.00",
+      "Balance on the invoice=$30.68",
       "Received by=you",
       "Reference as recorded=CHQ 2211",
     ],

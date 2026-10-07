@@ -63,9 +63,9 @@ test("this branch's own row is marked", () => {
 
 test("average cost appears only when the server sent one, and never as a zero for unknown", () => {
   assert.doesNotMatch(branchRowLabel(branch({ available_base: 5 }), "x"), /cost/);
-  assert.match(branchRowLabel(branch({ available_base: 5, avg_cost_cents: 2599 }), "x"), /avg cost CA\$25\.99/);
-  assert.doesNotMatch(branchRowLabel(branch({ available_base: 5, avg_cost_cents: undefined }), "x"), /cost|CA\$0/);
-  assert.match(branchRowLabel(branch({ available_base: 5, avg_cost_cents: 0 }), "x"), /avg cost CA\$0\.00/);
+  assert.match(branchRowLabel(branch({ available_base: 5, avg_cost_cents: 2599 }), "x"), /avg cost \$25\.99/);
+  assert.doesNotMatch(branchRowLabel(branch({ available_base: 5, avg_cost_cents: undefined }), "x"), /cost|\$0/);
+  assert.match(branchRowLabel(branch({ available_base: 5, avg_cost_cents: 0 }), "x"), /avg cost \$0\.00/);
 });
 
 test("soft held note speaks only when something is soft held", () => {

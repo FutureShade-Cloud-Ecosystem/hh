@@ -152,8 +152,8 @@ test("the margin labels speak percent and stay silent where the fields are absen
 test("the identity card's words: initials, the credit line, the type tag", () => {
   assert.equal(initialsOf("Maple Ridge Contracting"), "MR");
   assert.equal(initialsOf("  "), "?");
-  assert.equal(creditLine({ credit_limit_cents: 500000, open_balance_cents: 125000 }, (c) => `CA$${c}`), "Outstanding CA$125000 · Credit available CA$375000");
-  assert.equal(creditLine({ credit_limit_cents: 500000, open_balance_cents: 0 }, (c) => `CA$${c}`), "Account current · Credit available CA$500000");
+  assert.equal(creditLine({ credit_limit_cents: 500000, open_balance_cents: 125000 }, (c) => `$${c}`), "Outstanding $125000 · Credit available $375000");
+  assert.equal(creditLine({ credit_limit_cents: 500000, open_balance_cents: 0 }, (c) => `$${c}`), "Account current · Credit available $500000");
   assert.equal(customerTypeTag("CONTRACTOR"), "Contractor");
   assert.equal(customerTypeTag(""), "");
 });

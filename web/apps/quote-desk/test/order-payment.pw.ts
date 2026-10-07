@@ -82,12 +82,12 @@ test.afterAll(async ({ request }) => {
 test("the cash customer's one action converts, invoices and pays in full, and the documents appear", async ({ page }) => {
   await signIn(page);
   await openWithPayment(page, "Q-2102");
-  await expect(pay(page).getByTestId("op-figures")).toContainText("CA$63.28");
+  await expect(pay(page).getByTestId("op-figures")).toContainText("$63.28");
   await take(page, "63.28");
   const receipt = pay(page).getByTestId("op-receipt");
   await expect(receipt).toBeVisible();
-  await expect(receipt.getByTestId("op-receipt-amount")).toHaveText("CA$63.28");
-  await expect(receipt.getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("CA$0.00");
+  await expect(receipt.getByTestId("op-receipt-amount")).toHaveText("$63.28");
+  await expect(receipt.getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("$0.00");
   await expect(receipt.getByTestId("op-receipt-tender")).toHaveText("Cash");
   await expect(receipt.getByTestId("op-receipt-received-by")).toHaveText("you");
   await expect(receipt.getByTestId("op-receipt-reference-as-recorded")).toHaveText("none given");
@@ -106,13 +106,13 @@ test("a credit customer's deposit is taken and the balance the server answered i
   await shot(pay(page).getByTestId("op-box"), "order-payment-form");
   await take(page, "10.00", "AUTH 123", "CARD");
   const receipt = pay(page).getByTestId("op-receipt");
-  await expect(receipt.getByTestId("op-receipt-amount")).toHaveText("CA$10.00");
-  await expect(receipt.getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("CA$27.06");
+  await expect(receipt.getByTestId("op-receipt-amount")).toHaveText("$10.00");
+  await expect(receipt.getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("$27.06");
   await expect(receipt.getByTestId("op-receipt-tender")).toHaveText("Card");
   await expect(receipt.getByTestId("op-receipt-reference-as-recorded")).toHaveText("AUTH 123");
   await expect(pay(page).getByTestId("op-converted-note")).toHaveCount(0);
   // The figures line names the invoice the server raised, from the family read, never a computed figure.
-  await expect(pay(page).getByTestId("op-figures")).toContainText(/Invoice INV-\d+ is Part paid at CA\$37\.06/);
+  await expect(pay(page).getByTestId("op-figures")).toContainText(/Invoice INV-\d+ is Part paid at \$37\.06/);
   await shot(pay(page).getByTestId("op-box"), "order-payment-deposit");
   // The dark theme, cycled from Auto through Light to Dark.
   await page.getByTestId("theme-control").click();
@@ -132,8 +132,8 @@ test("an unknown outcome says so plainly and a retry with the SAME key replays t
   await pay(page).getByTestId("op-take").click();
   const receipt = pay(page).getByTestId("op-receipt");
   await expect(receipt).toBeVisible();
-  await expect(receipt.getByTestId("op-receipt-amount")).toHaveText("CA$10.00");
-  await expect(receipt.getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("CA$27.06");
+  await expect(receipt.getByTestId("op-receipt-amount")).toHaveText("$10.00");
+  await expect(receipt.getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("$27.06");
   await expect(pay(page).getByTestId("op-replayed-note")).toContainText("nothing was posted a second time");
   await expect(pay(page).getByTestId("op-unknown")).toHaveCount(0);
   const keys = await postedKeys(page);
@@ -153,7 +153,7 @@ test("an unknown outcome with no answer at all keeps the key, and the retry post
   await expect(pay(page).getByTestId("op-unknown")).toBeVisible();
   await page.unroute(/\/order-payment$/, swallow);
   await pay(page).getByTestId("op-take").click();
-  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("CA$5.00");
+  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("$5.00");
   await expect(pay(page).getByTestId("op-replayed-note")).toHaveCount(0);
   const keys = await postedKeys(page);
   expect(keys).toHaveLength(2);
@@ -175,7 +175,7 @@ test("a refusal keeps the key, so the corrected retry is the same attempt", asyn
   await take(page, "99.00");
   await expect(pay(page).getByTestId("op-error")).toHaveText("The payment is more than the balance of $27.06");
   await take(page, "27.06");
-  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("CA$27.06");
+  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("$27.06");
   const keys = await postedKeys(page);
   expect(keys).toHaveLength(2);
   expect(keys[0]).toBe(keys[1]);
@@ -186,26 +186,26 @@ test("the figures name the balance the reads carry, and a payment over it is ref
   await signIn(page);
   await openWithPayment(page, "Q-2101");
   // No invoice yet: the door raises the order's agreed invoice, whose opening balance is the agreed total.
-  await expect(pay(page).getByTestId("op-figures")).toContainText("balance CA$37.06");
+  await expect(pay(page).getByTestId("op-figures")).toContainText("balance $37.06");
   const seen = writes(page);
   await take(page, "99.00");
-  await expect(pay(page).getByTestId("op-error")).toHaveText("The payment is more than the balance of CA$37.06");
+  await expect(pay(page).getByTestId("op-error")).toHaveText("The payment is more than the balance of $37.06");
   expect(seen.filter((line) => line.includes("order-payment"))).toEqual([]);
   // After a deposit, the balance the receipt answered is the live one the reads carry.
   await take(page, "10.00");
-  await expect(pay(page).getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("CA$27.06");
-  await expect(pay(page).getByTestId("op-figures")).toContainText("balance CA$27.06");
+  await expect(pay(page).getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("$27.06");
+  await expect(pay(page).getByTestId("op-figures")).toContainText("balance $27.06");
   await take(page, "30.00");
-  await expect(pay(page).getByTestId("op-error")).toHaveText("The payment is more than the balance of CA$27.06");
+  await expect(pay(page).getByTestId("op-error")).toHaveText("The payment is more than the balance of $27.06");
 });
 
 test("an accepted quote's payment is bounded by the agreed total before anything is sent", async ({ page }) => {
   await signIn(page);
   await openWithPayment(page, "Q-2102");
-  await expect(pay(page).getByTestId("op-figures")).toContainText("balance CA$63.28");
+  await expect(pay(page).getByTestId("op-figures")).toContainText("balance $63.28");
   const seen = writes(page);
   await take(page, "99.00");
-  await expect(pay(page).getByTestId("op-error")).toHaveText("The payment is more than the balance of CA$63.28");
+  await expect(pay(page).getByTestId("op-error")).toHaveText("The payment is more than the balance of $63.28");
   expect(seen.filter((line) => line.includes("order-payment"))).toEqual([]);
 });
 
@@ -217,8 +217,8 @@ test("a new deliberate payment after a taken one mints a fresh key", async ({ pa
   await expect(pay(page).getByTestId("op-receipt")).toBeVisible();
   await take(page, "10.00");
   const receipt = pay(page).getByTestId("op-receipt");
-  await expect(receipt.getByTestId("op-receipt-amount")).toHaveText("CA$10.00");
-  await expect(receipt.getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("CA$17.06");
+  await expect(receipt.getByTestId("op-receipt-amount")).toHaveText("$10.00");
+  await expect(receipt.getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("$17.06");
   await expect(pay(page).getByTestId("op-replayed-note")).toHaveCount(0);
   const keys = await postedKeys(page);
   expect(keys).toHaveLength(2);
@@ -299,8 +299,8 @@ test("a payment that lands after the person left says nothing on the quote now o
   await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: "Q-2101" }).first().click();
   await expect(pay(page).getByTestId("op-notice")).toContainText("A payment was taken on this quote while you were away");
-  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("CA$10.00");
-  await expect(pay(page).getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("CA$27.06");
+  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("$10.00");
+  await expect(pay(page).getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("$27.06");
   await expect(docs(page).locator(".chip").filter({ hasText: /Invoice INV-\d+ · Part paid/ })).toBeVisible();
 });
 
@@ -356,11 +356,11 @@ test("guard payment read order: an older read of the quote answered late never l
   await expect.poll(() => gated.held.seen.length).toBe(1);
   // A newer read of the same quote (a new share cycle) begins and succeeds while the older one is still out.
   await dispatchReload(page);
-  await expect(pay(page).getByTestId("op-figures")).toContainText("CA$37.06");
+  await expect(pay(page).getByTestId("op-figures")).toContainText("$37.06");
   await gated.held.release();
   await settle(page);
   await expect(pay(page).getByTestId("op-unread")).toHaveCount(0);
-  await expect(pay(page).getByTestId("op-figures")).toContainText("CA$37.06");
+  await expect(pay(page).getByTestId("op-figures")).toContainText("$37.06");
   await expect(docs(page).getByTestId("rd-error")).toHaveCount(0);
 });
 
@@ -382,8 +382,8 @@ test("a payment whose outcome is not known is kept for its quote across switches
   await expect(pay(page).getByTestId("op-take")).toBeEnabled();
   await pay(page).getByTestId("op-take").click();
   const receipt = pay(page).getByTestId("op-receipt");
-  await expect(receipt.getByTestId("op-receipt-amount")).toHaveText("CA$10.00");
-  await expect(receipt.getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("CA$27.06");
+  await expect(receipt.getByTestId("op-receipt-amount")).toHaveText("$10.00");
+  await expect(receipt.getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("$27.06");
   await expect(pay(page).getByTestId("op-replayed-note")).toContainText("nothing was posted a second time");
   const keys = await postedKeys(page);
   expect(keys).toHaveLength(2);
@@ -408,8 +408,8 @@ test("a payment still out for its quote keeps the controls held on return, and l
   await held.release();
   await settle(page);
   const receipt = pay(page).getByTestId("op-receipt");
-  await expect(receipt.getByTestId("op-receipt-amount")).toHaveText("CA$10.00");
-  await expect(receipt.getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("CA$27.06");
+  await expect(receipt.getByTestId("op-receipt-amount")).toHaveText("$10.00");
+  await expect(receipt.getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("$27.06");
   const keys = await postedKeys(page);
   expect(keys).toHaveLength(1);
 });
@@ -435,7 +435,7 @@ test("a late answer with no readable outcome is recorded for its own quote only"
   await expect(pay(page).getByTestId("op-unknown")).toContainText("not known");
   await expect(pay(page).locator('[data-field="amount"]')).toBeDisabled();
   await pay(page).getByTestId("op-take").click();
-  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("CA$10.00");
+  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("$10.00");
   const keys = await postedKeys(page);
   expect(keys).toHaveLength(2);
   expect(keys[0]).toBe(keys[1]);
@@ -461,8 +461,8 @@ test("New Quote keeps the payment seam mounted, so a payment that lands while co
   await page.getByTestId("qb-list-row").filter({ hasText: "Q-2101" }).first().click();
   await expect(pay(page).getByTestId("op-notice")).toContainText("A payment was taken on this quote while you were away");
   const receipt = pay(page).getByTestId("op-receipt");
-  await expect(receipt.getByTestId("op-receipt-amount")).toHaveText("CA$10.00");
-  await expect(receipt.getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("CA$27.06");
+  await expect(receipt.getByTestId("op-receipt-amount")).toHaveText("$10.00");
+  await expect(receipt.getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("$27.06");
   const keys = await postedKeys(page);
   expect(keys).toHaveLength(1);
 });
@@ -480,16 +480,16 @@ test("a ghosted 10 cash cannot become a 5 card: while the outcome is not known t
   await expect(pay(page).getByTestId("op-tenders").getByRole("button", { name: "CASH", exact: true })).toHaveAttribute("aria-disabled", "true");
   // The retry is the same attempt: the same key replays the ghost's payment.
   await pay(page).getByTestId("op-take").click();
-  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("CA$10.00");
-  await expect(pay(page).getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("CA$27.06");
+  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("$10.00");
+  await expect(pay(page).getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("$27.06");
   let keys = await postedKeys(page);
   expect(keys).toHaveLength(2);
   expect(keys[0]).toBe(keys[1]);
   // A new deliberate payment after the taken one mints a fresh key and may be 5 CARD.
   await page.request.put("/_stub/payment-ghost", { data: { ghost: false } });
   await take(page, "5.00", "", "CARD");
-  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("CA$5.00");
-  await expect(pay(page).getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("CA$22.06");
+  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("$5.00");
+  await expect(pay(page).getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("$22.06");
   keys = await postedKeys(page);
   expect(keys).toHaveLength(3);
   expect(keys[2]).not.toBe(keys[0]);
@@ -522,7 +522,7 @@ test("a 409 that says the key took a different payment holds the attempt instead
   await expect(pay(page).locator('[data-field="amount"]')).toBeEnabled();
   await page.request.put("/_stub/payment-key-crossed", { data: { crossed: false } });
   await take(page, "5.00", "", "CARD");
-  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("CA$5.00");
+  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("$5.00");
   keys = await postedKeys(page);
   expect(keys).toHaveLength(3);
   expect(keys[2]).not.toBe(keys[0]);
@@ -541,9 +541,9 @@ test("a decimal comma is refused in words that teach the point, never sent, and 
   expect(seen.filter((line) => line.includes("order-payment"))).toEqual([]);
   // The parsed figure is on the screen before Take payment is pressed, in the receipt's own money word.
   await pay(page).locator('[data-field="amount"]').fill("12.50");
-  await expect(pay(page).getByTestId("op-preview")).toHaveText("Taking CA$12.50 by Cash");
+  await expect(pay(page).getByTestId("op-preview")).toHaveText("Taking $12.50 by Cash");
   await pay(page).getByTestId("op-tenders").getByRole("button", { name: "CARD", exact: true }).click();
-  await expect(pay(page).getByTestId("op-preview")).toHaveText("Taking CA$12.50 by Card");
+  await expect(pay(page).getByTestId("op-preview")).toHaveText("Taking $12.50 by Card");
   // An amount no counter can name exactly is refused in words too.
   await pay(page).locator('[data-field="amount"]').fill("99999999999999999999");
   await pay(page).getByTestId("op-take").click();
@@ -593,14 +593,14 @@ test("a paid invoice shows a Paid in full state in place of the form", async ({ 
   await signIn(page);
   await openWithPayment(page, "Q-2101");
   await take(page, "37.06");
-  await expect(pay(page).getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("CA$0.00");
+  await expect(pay(page).getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("$0.00");
   await expect(pay(page).getByTestId("op-paid")).toContainText("Paid in full");
   // No live amount, no tender, no Take payment when nothing is owed.
   await expect(pay(page).getByTestId("op-take")).toHaveCount(0);
   await expect(pay(page).locator('[data-field="amount"]')).toHaveCount(0);
   await expect(pay(page).getByTestId("op-tenders")).toHaveCount(0);
   // The receipt of the payment that settled it stays.
-  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("CA$37.06");
+  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("$37.06");
   await expect(pay(page).getByTestId("op-receipt-earlier")).toHaveCount(0);
 });
 
@@ -608,18 +608,18 @@ test("the receipt of an earlier payment is marked as that, never as the result o
   await signIn(page);
   await openWithPayment(page, "Q-2101");
   await take(page, "10.00");
-  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("CA$10.00");
+  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("$10.00");
   await expect(pay(page).getByTestId("op-receipt-earlier")).toHaveCount(0);
   // A second attempt, refused before it is sent: the receipt stays, marked as the earlier
   // payment's, so it cannot read as this refusal's result.
   await take(page, "30.00");
-  await expect(pay(page).getByTestId("op-error")).toHaveText("The payment is more than the balance of CA$27.06");
+  await expect(pay(page).getByTestId("op-error")).toHaveText("The payment is more than the balance of $27.06");
   await expect(pay(page).getByTestId("op-receipt")).toBeVisible();
   await expect(pay(page).getByTestId("op-receipt-earlier")).toContainText("earlier payment");
-  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("CA$10.00");
+  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("$10.00");
   // A taken payment replaces the mark with its own receipt.
   await take(page, "17.06");
-  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("CA$17.06");
+  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("$17.06");
   await expect(pay(page).getByTestId("op-receipt-earlier")).toHaveCount(0);
 });
 
@@ -646,7 +646,7 @@ test("the form does not render over an unread family: the read failure is shown 
   await expect(pay(page).getByTestId("op-take")).toBeVisible();
   await gated.held.release();
   await settle(page);
-  await expect(pay(page).getByTestId("op-figures")).toContainText("CA$37.06");
+  await expect(pay(page).getByTestId("op-figures")).toContainText("$37.06");
 });
 
 test("an amount that is not a number this desk can send is refused before any post", async ({ page }) => {
@@ -670,7 +670,7 @@ test("a mixed grouping is rejected on input with the grouping words, never sent"
   expect(seen.filter((line) => line.includes("order-payment"))).toEqual([]);
   // One kind of separator throughout is still read as the figure it is.
   await pay(page).locator('[data-field="amount"]').fill("1,000,000.00");
-  await expect(pay(page).getByTestId("op-preview")).toHaveText("Taking CA$1,000,000.00 by Cash");
+  await expect(pay(page).getByTestId("op-preview")).toHaveText("Taking $1,000,000.00 by Cash");
 });
 
 test("Start a new payment unlocks only over a read that landed: a read superseded while it was out keeps the attempt held", async ({ page }) => {
@@ -703,7 +703,7 @@ test("a credit that moved the order to Paid while the desk held the old Part pai
   await signIn(page);
   await openWithPayment(page, "Q-2101");
   await take(page, "10.00");
-  await expect(pay(page).getByTestId("op-figures")).toContainText("balance CA$27.06");
+  await expect(pay(page).getByTestId("op-figures")).toContainText("balance $27.06");
   // On another tab, a credit of the whole rest moves the order to Paid; this desk's only balance
   // figure is its last receipt's, and nothing crosses the tabs to tell it.
   const other = await context.newPage();
@@ -713,9 +713,9 @@ test("a credit that moved the order to Paid while the desk held the old Part pai
   await take(other, "27.06");
   await credit.asked;
   await credit.release();
-  await expect(pay(other).getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("CA$0.00");
+  await expect(pay(other).getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("$0.00");
   // The desk still shows the figures of its last read: Part paid, the receipt's balance.
-  await expect(pay(page).getByTestId("op-figures")).toContainText("balance CA$27.06");
+  await expect(pay(page).getByTestId("op-figures")).toContainText("balance $27.06");
   // The desk tries the receipt's figure: the server refuses it in its own words, and the desk
   // answers the refusal with a re-read, so the panel shows what the server now holds: Paid.
   await take(page, "27.06");
@@ -729,15 +729,15 @@ test("the take path's re-read is its own share cycle: it asks the server again, 
   await signIn(page);
   const reads = countRequests(page, /GET .*\/quotes\/q-2101\/related-documents$/);
   await openWithPayment(page, "Q-2101");
-  await expect(pay(page).getByTestId("op-figures")).toContainText("balance CA$37.06");
+  await expect(pay(page).getByTestId("op-figures")).toContainText("balance $37.06");
   await take(page, "10.00");
-  await expect(pay(page).getByTestId("op-figures")).toContainText("balance CA$27.06");
+  await expect(pay(page).getByTestId("op-figures")).toContainText("balance $27.06");
   // Another tab credits the whole rest, so the server moves the order to Paid off this desk's screen.
   const other = await context.newPage();
   await signIn(other);
   await openWithPayment(other, "Q-2101");
   await take(other, "27.06");
-  await expect(pay(other).getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("CA$0.00");
+  await expect(pay(other).getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("$0.00");
   await other.close();
   // The desk still holds its receipt's Part paid balance. It sends the stale figure and the server
   // refuses it; the refusal's re-read must be a FRESH family read (its own share cycle, never the
@@ -756,7 +756,7 @@ test("the seam makes one related documents read per read cycle, shared by the fa
   await signIn(page);
   const reads = countRequests(page, /GET .*\/quotes\/q-2101\/related-documents$/);
   await openWithPayment(page, "Q-2101");
-  await expect(pay(page).getByTestId("op-figures")).toContainText("CA$37.06");
+  await expect(pay(page).getByTestId("op-figures")).toContainText("$37.06");
   await expect(docs(page).getByTestId("rd-box")).toBeVisible();
   // One quote open, one family read: the two panels share the cycle's read.
   expect(reads()).toBe(1);
@@ -806,7 +806,7 @@ test("a payment still out at sign out is kept as a known attempt for the next si
   await signIn(other);
   await openWithPayment(other, "Q-2101");
   await take(other, "5.00", "", "CARD");
-  await expect(pay(other).getByTestId("op-receipt-amount")).toHaveText("CA$5.00");
+  await expect(pay(other).getByTestId("op-receipt-amount")).toHaveText("$5.00");
   // The next sign in on the page the payment was kept on meets it as a known attempt (the entry
   // the sign out landed on: no reload, so the kept attempt is the same page's memory, as kept).
   await page.getByRole("button", { name: "Sales", exact: true }).click();
@@ -818,10 +818,10 @@ test("a payment still out at sign out is kept as a known attempt for the next si
   // The retry is the kept attempt: the same key, so the server replays the first result.
   await pay(page).getByTestId("op-take").click();
   const receipt = pay(page).getByTestId("op-receipt");
-  await expect(receipt.getByTestId("op-receipt-amount")).toHaveText("CA$10.00");
+  await expect(receipt.getByTestId("op-receipt-amount")).toHaveText("$10.00");
   // One ghost payment, not two: the balance carries the ghost's 10 and the tab's deliberate 5,
   // and the replay note says nothing was posted a second time.
-  await expect(receipt.getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("CA$22.06");
+  await expect(receipt.getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("$22.06");
   await expect(pay(page).getByTestId("op-replayed-note")).toContainText("nothing was posted a second time");
   const first = await postedKeys(page);
   expect(first).toHaveLength(2);
@@ -841,7 +841,7 @@ test("sign out waits for a payment that lands inside the bound and says on the e
   await held.release();
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible({ timeout: 15000 });
   await expect(page.locator("p.notice")).toContainText("was taken");
-  await expect(page.locator("p.notice")).toContainText("CA$10.00");
+  await expect(page.locator("p.notice")).toContainText("$10.00");
 });
 
 test("a retry is marked in flight: returning to the quote while it is out holds the button, so two retries never race", async ({ page }) => {
@@ -866,8 +866,8 @@ test("a retry is marked in flight: returning to the quote while it is out holds 
   await retry.release();
   await settle(page);
   const receipt = pay(page).getByTestId("op-receipt");
-  await expect(receipt.getByTestId("op-receipt-amount")).toHaveText("CA$10.00");
-  await expect(receipt.getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("CA$27.06");
+  await expect(receipt.getByTestId("op-receipt-amount")).toHaveText("$10.00");
+  await expect(receipt.getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("$27.06");
   const keys = await postedKeys(page);
   expect(keys).toHaveLength(2);
   expect(keys[0]).toBe(keys[1]);
@@ -896,7 +896,7 @@ test("Paid in full is not said beside an attempt whose outcome is not known: the
   await expect(pay(page).getByTestId("op-paid-unknown")).toContainText("not known");
   // The retry fetches the receipt by replay and ends the attempt; only then is Paid in full said.
   await pay(page).getByTestId("op-take").click();
-  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("CA$37.06");
+  await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("$37.06");
   await expect(pay(page).getByTestId("op-paid")).toContainText("Paid in full");
   await expect(pay(page).getByTestId("op-paid-unknown")).toHaveCount(0);
 });

@@ -85,7 +85,8 @@ test("Sales files a request and the Sales manager sees it with the server's deta
   const row = approvals(page).getByTestId("ap-row").first();
   await expect(row).toHaveAttribute("data-status", "PENDING");
   const sales = await row.getByTestId("ap-detail").innerText();
-  expect(sales).toMatch(/^Quote Q-1001, line 1, .*, 10% discount, margin [\d.]+% against a floor of [\d.]+%$/);
+  expect(sales).toMatch(/^quote Q-1001 line 1: 10 percent discount, resulting margin [\d.]+% against the [\d.]+% floor$/);
+  expect(sales, "no id in the sentence").not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/);
 
   const manager = await asManager(browser);
   const mrow = approvals(manager).getByTestId("ap-row").first();
@@ -166,7 +167,8 @@ test("a caller off the cost list: the refusal dialog carries no figures, the fil
   const row = approvals(page).getByTestId("ap-row").first();
   // The core builds the detail from its own figures and the filer reads it in the filer's own card.
   const detail = await row.getByTestId("ap-detail").innerText();
-  expect(detail).toMatch(/^Quote Q-1001, line 1, .*, 10% discount, margin [\d.]+% against a floor of [\d.]+%$/);
+  expect(detail).toMatch(/^quote Q-1001 line 1: 10 percent discount, resulting margin [\d.]+% against the [\d.]+% floor$/);
+  expect(detail, "no id in the sentence").not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/);
   // The refusal dialog carries no figures for a caller off the list.
   await paverRefusalHasNoFigures(page);
 });

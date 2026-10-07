@@ -162,9 +162,9 @@ export function canConvert(view: QuoteView | null): boolean {
   return view?.can_convert === true;
 }
 
-/** The one money word this panel and the history speak: integer cents in, CA$ out, a minus when negative. */
+/** The one money word this panel and the history speak: integer cents in, $ out, a minus when negative. */
 export function moneyWord(cents: number): string {
-  return `${cents < 0 ? "-" : ""}CA$${centsAmount(cents)}`;
+  return `${cents < 0 ? "-" : ""}$${centsAmount(cents)}`;
 }
 
 /** validateDate accepts an empty value (which clears the expiry) or a real YYYY-MM-DD date. */

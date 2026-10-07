@@ -21,6 +21,8 @@
 import { css, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { money } from "@hardscapehouse/pos-kit/src/ported/pos-api.js";
+import { readRoster } from "./staff-roster.js";
+import { personName } from "./_names.js";
 import { nextActive } from "@hardscapehouse/pos-kit/src/ported/_customer-picker.js";
 import "./panel-seams.js";
 import { familyShare } from "./_related-docs.js";
@@ -76,6 +78,8 @@ const LATE_QTY_NOTE = "The quantity you changed was saved while you were away, b
 @customElement("qd-quote-edit")
 export class QdQuoteEdit extends PanelBase {
   @state() private view: QuoteView | null = null;
+  /** The people the desk can name by id (the roster it was told), for who cleared a price. */
+  @state() private roster: ReadonlyMap<string, string> = new Map();
   /** The discount each line carries, from the terms read (the quote view itself carries none). */
   @state() private discByLine: Record<number, number> = {};
   @state() private discEnabled = false;
@@ -192,6 +196,11 @@ export class QdQuoteEdit extends PanelBase {
       this.error = this.refuse(result, "read this quote");
       this.view = null;
       return;
+    }
+    if (result.value.lines.some((l) => l.floor_cleared_by !== undefined) && this.roster.size === 0) {
+      const people = await ctx.guarded(readRoster());
+      if (people === undefined) return;
+      this.roster = people;
     }
     // An expiry typed and not saved is the person's: it differs from the expiry the last read showed.
     const expiryUnsaved = this.expiryDraft !== (this.view?.valid_until ?? "");
@@ -766,7 +775,7 @@ export class QdQuoteEdit extends PanelBase {
               <td>
                 ${l.description}
                 ${l.rule_price_below_floor === true ? html`<div class="floor">Rule price is below the floor</div>` : nothing}
-                ${l.floor_cleared_by !== undefined ? html`<div class="floor">Floor cleared by ${l.floor_cleared_by}</div>` : nothing}
+                ${l.floor_cleared_by !== undefined ? html`<div class="floor">Floor cleared by ${personName(l.floor_cleared_by, this.roster, "a manager")}</div>` : nothing}
               </td>
               <td class="num">
                 ${mayQty

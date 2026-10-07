@@ -868,7 +868,7 @@ export class QuoteConvert extends HHElement {
           ${cod
             ? nothing
             : html`<label>
-                Amount (CA$)
+                Amount ($)
                 <input class="control" data-field="pay-amount" data-testid="qc-pay-amount" inputmode="decimal" autocomplete="off" placeholder="0.00" />
               </label>`}
           <label>

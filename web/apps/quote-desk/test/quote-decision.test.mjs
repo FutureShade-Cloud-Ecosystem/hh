@@ -19,7 +19,7 @@ test("a decline needs a channel and a reason, and a note when the reason is some
 });
 
 test("the notices say what was recorded and that nothing was sent", () => {
-  assert.match(acceptedNotice("Q-7", "phone", 12345), /Q-7 was accepted for the customer, on the phone, at CA\$123\.45/);
+  assert.match(acceptedNotice("Q-7", "phone", 12345), /Q-7 was accepted for the customer, on the phone, at \$123\.45/);
   assert.match(declinedNotice("Q-7", "in_person"), /closed as lost for the customer, in person\. Nothing was sent/);
 });
 
