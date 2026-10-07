@@ -2244,7 +2244,7 @@ export class QdQuoteWorkarea extends LitElement {
     // The first line of a New quote makes the quote: the customer picked in compose is created for now, and this add waits for it.
     if (this.quoteId === "" && this.composeCustomer !== null && this.creating === null) void this.createFor(this.composeCustomer);
     // The quote does not exist yet: say so until the create and the line both land (the Added word is spoken then).
-    if (this.quoteId === "" && this.composeCustomer !== null) this.speakAddOk(p.name !== undefined ? `Adding ${p.name} to the new quote.` : "Adding the line to the new quote.");
+    if (this.quoteId === "" && this.composeCustomer !== null) this.renderRoot.querySelector<HTMLElement & { say?: (message: string) => void }>("quote-search-add")?.say?.(p.name !== undefined ? `Adding ${p.name} to the new quote.` : "Adding the line to the new quote.");
     // A scan right after the customer is picked lands while the quote is still being made or read: it waits
     // for them rather than being told to pick a customer who has just been picked.
     // Only while compose is on screen: a scan on an open quote is for that quote and waits for no create.

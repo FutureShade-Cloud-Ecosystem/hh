@@ -2132,7 +2132,7 @@
   {
     "id": "wa-adding-said",
     "file": "src/quote-workarea.ts",
-    "find": "    if (this.quoteId === \"\" && this.composeCustomer !== null) this.speakAddOk(p.name !== undefined ? `Adding ${p.name} to the new quote.` : \"Adding the line to the new quote.\");\n",
+    "find": "    if (this.quoteId === \"\" && this.composeCustomer !== null) this.renderRoot.querySelector<HTMLElement & { say?: (message: string) => void }>(\"quote-search-add\")?.say?.(p.name !== undefined ? `Adding ${p.name} to the new quote.` : \"Adding the line to the new quote.\");\n",
     "replace": "",
     "test": "R13 a slow first create says Adding"
   }
