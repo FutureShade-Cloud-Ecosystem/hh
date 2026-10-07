@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -673,11 +674,11 @@ func (r *Repository) InsertBill(ctx context.Context, tx pgx.Tx, in insertBillPar
 		INSERT INTO purchasing_bills (bill_no, vendor_id, branch_id, po_id, status, match_state, bill_date,
 		                              due_date, subtotal_cents, tax_cents, total_cents, created_by,
 		                              currency, fx_rate)
-		VALUES ($1,$2,$3,$4,'DRAFT',$5,COALESCE($6::date, CURRENT_DATE),$7::date,$8,$9,$10,$11,$12,$13)
+		VALUES ($1,$2,$3,$4,'DRAFT',$5,COALESCE($6::date, $14::date),$7::date,$8,$9,$10,$11,$12,$13)
 		RETURNING id::text`,
 		in.BillNo, in.VendorID, in.BranchID, nullStr(in.POID), in.Match, nullStr(in.BillDate),
 		nullStr(in.DueDate), in.Subtotal, in.Tax, in.Total, nullStr(in.CreatedBy),
-		in.Currency, in.FXRate).Scan(&id)
+		in.Currency, in.FXRate, houseday.Today(nil)).Scan(&id)
 	if isUniqueViolation(err) {
 		return "", conflict("purchasing: bill %q has already been entered for this vendor", in.BillNo)
 	}

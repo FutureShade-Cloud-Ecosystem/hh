@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -199,10 +200,13 @@ func (r *Repository) ReadEligibilityProfileMasked(ctx context.Context, profileID
 	// NEVER selects proof_identifier_enc, the cashier only ever sees the mask.
 	const q = `
 SELECT id::text, purchaser_type, proof_identifier_mask, COALESCE(ontario_eligibility,'UNKNOWN'),
-       eligibility_type, COALESCE(tcrd_expiry < CURRENT_DATE, FALSE)
+       eligibility_type, COALESCE(tcrd_expiry < $2::date, FALSE)
   FROM purchaser_eligibility_profile WHERE id = $1`
+	// The certificate lapses with the dealer's day, so today is decided in Go in the house zone
+	// and bound, not read from CURRENT_DATE, which is the database session's zone.
+	houseDay := houseday.Today(nil)
 	var p eligibilityMasked
-	err := r.pool.QueryRow(ctx, q, profileID).Scan(
+	err := r.pool.QueryRow(ctx, q, profileID, houseDay).Scan(
 		&p.ProfileID, &p.PurchaserType, &p.MaskedIdentifier, &p.OntarioEligibility, &p.EligibilityType, &p.Expired,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {

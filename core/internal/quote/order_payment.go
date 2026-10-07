@@ -24,6 +24,10 @@ type OrderPaymentInput struct {
 	AmountCents    int64
 	Reference      string
 	IdempotencyKey string
+	// Fulfillment is the optional fulfilment choice the action's conversion carries (PICKUP or
+	// WILL_CALL), graded by the same normalizer the plain convert uses. Empty is unspecified, and the
+	// order takes the column default as it always did.
+	Fulfillment string
 }
 
 // OrderPaymentResult is what the till's receipt needs.
@@ -116,9 +120,6 @@ func (e *OrderPaymentConflictError) Error() string { return e.Msg }
 // order or billing refusal across the seam without the quote package importing either module.
 func NewOrderPaymentConflict(msg string) error { return &OrderPaymentConflictError{Msg: msg} }
 
-// yardManagerRole is the one role the cash customer's combined action admits beyond the selling roles.
-const yardManagerRole = "YARD_MANAGER"
-
 // counterTenders are the tenders the payments settle accepts at a desk (payments.CounterTenders).
 // Declared here because the quote package imports no money module; the settle validates the same
 // set again, so a drift here is a refusal in the wrong place, never a wrong posting.
@@ -197,6 +198,14 @@ func (s *StaffService) TakeOrderPayment(ctx context.Context, idOrNo string, in O
 	if len(in.Reference) > maxPaymentReferenceLen {
 		return OrderPaymentResult{}, httpx.BadRequestf("the payment reference is limited to %d characters", maxPaymentReferenceLen)
 	}
+	// The fulfilment choice is graded here, before anything is looked up or written, by the one
+	// normalizer the plain convert grades with, so a bad value is the same 400 in the same words at
+	// both doors and a refused choice leaves the quote and the money exactly as they were.
+	fulfilment, err := normalizeFulfillment(in.Fulfillment)
+	if err != nil {
+		return OrderPaymentResult{}, err
+	}
+	in.Fulfillment = fulfilment
 	ps, ok := s.store.(orderPaymentStore)
 	if !ok || s.invoicer == nil || s.payer == nil {
 		return OrderPaymentResult{}, ErrEditNotConfigured
@@ -261,7 +270,7 @@ func (s *StaffService) takeOrderPaymentTx(ctx context.Context, tx pgx.Tx, ps ord
 		// than ringing a sale, so the Yard manager, who rings sales on the till, is admitted here
 		// (the principal's ruling on decision 3); nothing in the action is editable. The separate
 		// conversion of a quote, with no payment, keeps the selling role rule and still refuses it.
-		if !identity.CanSellOnCredit(caller) && caller.RoleCode != yardManagerRole {
+		if !identity.CanConvertAndPay(caller) {
 			return OrderPaymentResult{}, &NotSellingRoleError{RoleCode: caller.RoleCode}
 		}
 		if in.AmountCents != pf.TotalCents {
@@ -277,7 +286,7 @@ func (s *StaffService) takeOrderPaymentTx(ctx context.Context, tx pgx.Tx, ps ord
 		// tells the credit gate this order is paid at the counter in this same action. The conversion
 		// re-asserts the total under its own lock.
 		res, err := runConvert(withTx(ctx, tx), s.convertStore(), s.audit, pf.CustomerID, quoteID, caller.UserID,
-			ConvertOptions{paidAtCounter: true, paidTotalCents: pf.TotalCents})
+			ConvertOptions{Fulfillment: in.Fulfillment, paidAtCounter: true, paidTotalCents: pf.TotalCents})
 		if err != nil {
 			return OrderPaymentResult{}, err
 		}

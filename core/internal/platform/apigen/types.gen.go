@@ -1131,6 +1131,19 @@ type UomViewPage struct {
 	Limit      *int32    `json:"limit,omitempty"`
 }
 
+type CategoryView struct {
+	Id       string `json:"id"`
+	Code     string `json:"code"`
+	Name     string `json:"name"`
+	IsActive bool   `json:"is_active"`
+}
+
+type CategoryViewPage struct {
+	Items      []CategoryView `json:"items"`
+	NextCursor *string        `json:"next_cursor,omitempty"`
+	Limit      *int32         `json:"limit,omitempty"`
+}
+
 type ProductPage struct {
 	Items      []Product `json:"items"`
 	NextCursor *string   `json:"next_cursor,omitempty"`
@@ -4953,9 +4966,14 @@ type PosHotkeys struct {
 }
 
 type PosAccountStanding struct {
+	Standing     string  `json:"standing"`
 	PastDueCents *int64  `json:"past_due_cents,omitempty"`
 	OldestBucket *string `json:"oldest_bucket,omitempty"`
 	OnHold       *bool   `json:"on_hold,omitempty"`
+}
+
+type PosPaymentGrant struct {
+	CanTakePayment bool `json:"can_take_payment"`
 }
 
 type PosAddonSuggestion struct {
@@ -6818,10 +6836,11 @@ type QuoteConvertResult struct {
 }
 
 type QuoteOrderPaymentRequest struct {
-	Method         string `json:"method"`
-	AmountCents    int64  `json:"amount_cents"`
-	Reference      string `json:"reference"`
-	IdempotencyKey string `json:"idempotency_key"`
+	Method         string  `json:"method"`
+	AmountCents    int64   `json:"amount_cents"`
+	Reference      string  `json:"reference"`
+	IdempotencyKey string  `json:"idempotency_key"`
+	Fulfillment    *string `json:"fulfillment,omitempty"`
 }
 
 type QuoteOrderPaymentResult struct {

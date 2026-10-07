@@ -451,13 +451,20 @@ paths:
       tags: [staff-pos]
       summary: Read one customer's past-due position for the counter
       description: >-
-        A fact, not a gate: the past-due amount, the oldest aging bucket, and
-        the hold flag. The dealer's balance_visibility policy is applied at the
-        marshal layer; a walk-in, a current account, and a disallowed caller all
-        answer an empty object.
+        A fact, not a gate, and every case answers distinctly. The standing
+        word names the case: walk_in (no customer_id), clear (nothing past
+        due, no hold), past_due, or on_hold (an active credit hold, whether or
+        not anything is past due). The past-due amount, the oldest aging
+        bucket and the hold flag ride beside it when they apply. A caller the
+        dealer's balance_visibility policy withholds balances from, or whose
+        grants do not reach the branch, is a 403; an unknown customer is a 404;
+        a malformed customer_id is a 400; a read that could not be made (the
+        AR, hold or policy read failed) is a 503. Never an empty 200. Counter
+        Till or Quote Desk at read: the Quote Desk's Convert to Order asks it
+        before it confirms.
       x-role: requireStaff
       x-access:
-        surfaces: [counter-till]
+        surfaces: [counter-till, quote-desk]
         level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -465,7 +472,7 @@ paths:
         - { name: customer_id, in: query, required: false, schema: { type: string, format: uuid } }
       responses:
         "200":
-          description: The standing answer; empty when there is nothing to say
+          description: The standing answer, always carrying its standing word
           content:
             application/json:
               schema:
@@ -473,6 +480,52 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          description: The standing could not be read
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/pos/payment-grant:
+    get:
+      operationId: posPaymentGrant
+      tags: [staff-pos]
+      summary: Read whether the caller holds the grant the till's payment routes require
+      description: >-
+        One question a client asks before it offers to take a payment: does
+        the signed-in user hold the grant the till sale and the payment on a
+        converted quote's order both need (Counter Till at Work)? The answer
+        is the role gate's own, the same walk over the caller's whole row of
+        roles and the dealer's configuration, taken for the access the
+        document annotates on those payment routes, so it moves with them.
+        The payment door's own not-selling-role rule is folded in, by the
+        one predicate the door calls, so a platform role that passes every
+        gate level but is refused the convert and pay is answered false.
+        A caller holding the Counter Till or the Quote Desk at read is
+        answered, true or false; a caller with neither meets the gate's 403.
+        It is a fact about grants only, never an authorisation: the payment
+        routes still gate every call.
+      x-addition: "the grant check the Quote Desk asks before it offers payment; no ERP source route"
+      x-role: requireStaff
+      x-access:
+        surfaces: [counter-till, quote-desk]
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: Whether the caller holds the payment grant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosPaymentGrant"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: The grant could not be read
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /api/v1/pos/addon-suggestions:
     get:
       operationId: posAddonSuggestions
@@ -2198,13 +2251,24 @@ components:
     PosAccountStanding:
       type: object
       description: >-
-        One customer's past-due position, and no more of it than that. The zero
-        value marshals as an empty object: a walk-in, a current account, an
-        unreadable AR read and a disallowed caller all look identical.
+        One customer's standing, and no more of it than that. The standing
+        word is always present and names the case; the three older fields
+        are present exactly when they were before: past_due_cents and
+        oldest_bucket only when money is past due, on_hold only when true.
+      required: [standing]
       properties:
+        standing:
+          type: string
+          enum: [walk_in, clear, past_due, on_hold]
         past_due_cents: { type: integer, format: int64 }
         oldest_bucket: { type: string, enum: ["30", "60", "90+"] }
         on_hold: { type: boolean, description: "Mirrors the credit gate; enforcement happens at the ring, not here" }
+    PosPaymentGrant:
+      type: object
+      description: Whether the caller holds the grant the till's payment routes require
+      required: [can_take_payment]
+      properties:
+        can_take_payment: { type: boolean }
     PosAddonSuggestion:
       type: object
       description: >-

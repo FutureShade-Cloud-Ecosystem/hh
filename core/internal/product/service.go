@@ -96,8 +96,9 @@ type Service struct {
 	stock      StockReader
 	branchQty  BranchStockReader
 	listPrices ListPriceReader
-	uoms       UomReader  // the staff units list's catalogue read, nil until WithUomReader
-	images     imageStore // GABLE:product-images-ui, nil until WithImages is called
+	uoms       UomReader      // the staff units list's catalogue read, nil until WithUomReader
+	categories CategoryReader // the staff categories list's read, nil until WithCategoryReader
+	images     imageStore     // GABLE:product-images-ui, nil until WithImages is called
 }
 
 func NewService(store productStore) *Service { return &Service{store: store} }

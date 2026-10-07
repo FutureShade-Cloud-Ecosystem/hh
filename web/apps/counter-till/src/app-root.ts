@@ -493,10 +493,10 @@ export class CounterTillApp extends HHElement {
       houseDay: () => houseDayInZone(HOUSE_ZONE),
       user: () => this.#clerkIdentity,
       token: () => this.#sessions.current?.token ?? "",
-      // The drawn category tiles are a demo seam for now (decision log row 893): Vite
-      // substitutes MODE at build time, so a default build carries no tile resolver and a
-      // product with no picture keeps the stone-stack glyph (test/product-tiles-build.test.mjs).
-      productTile: import.meta.env.MODE === "demo" ? productTileUrl : undefined,
+      // The drawn category tiles ship in every build (decision log row 1057): a product with no
+      // picture shows its category's tile for every dealer, and keeps the stone-stack glyph only
+      // where the tiles do not know the category (test/product-tiles-build.test.mjs).
+      productTile: productTileUrl,
     });
   }
 
@@ -551,10 +551,11 @@ export class CounterTillApp extends HHElement {
    * The front door's handoff (HH-DEMO-1 D2 polish, item 6): the front door
    * mints the demo session and holds it for the box under its own session
    * storage key; when this app boots from a module tile's navigation,
-   * the record is read, handed to AuthController.adopt (custody takes the
-   * token into private memory and rewrites the display mirror itself), and
-   * the key is dropped in the same step, so a later visit to this app never
-   * re-adopts a spent handoff. The clerk facts the chrome and the receipt
+   * the record is read and handed to AuthController.adopt (custody takes the
+   * token into private memory and rewrites the display mirror itself). The
+   * key stays in the tab until Sign out or Switch role (decision log row
+   * 1040), so a reload, a second visit or a visit after the Quote Desk keeps
+   * the session; a record that fails a read is dropped. The clerk facts the chrome and the receipt
    * read ride the same record (the front door validated the mint already;
    * this read validates the record again before custody sees any of it). An
    * absent or unusable record is the ordinary direct visit; the entry page
@@ -566,16 +567,26 @@ export class CounterTillApp extends HHElement {
   async #adoptFromFrontDoor(): Promise<void> {
     if (this.#sessions.current !== null) return;
     const read = readFrontDoorHandoff();
-    if (read.kind === "absent") return;
-    clearFrontDoorHandoff();
-    if (read.kind === "unusable") return;
+    if (read.kind === "absent") {
+      this.#toFrontDoor();
+      return;
+    }
+    if (read.kind === "unusable") {
+      clearFrontDoorHandoff();
+      this.#toFrontDoor();
+      return;
+    }
     const handed = read.session;
     const adopted = this.#controller.adopt({
       token: handed.token,
       tokenExpiresAtMs: handed.tokenExpiresAtMs,
       user: handed.user,
     });
-    if (!adopted) return;
+    if (!adopted) {
+      clearFrontDoorHandoff();
+      this.#toFrontDoor();
+      return;
+    }
     this.#clerkUserId = handed.user.userId;
     this.#clerkRoleCode = handed.roleCode;
     this.#clerkIdentity = {
@@ -590,7 +601,16 @@ export class CounterTillApp extends HHElement {
     this.#till = { label: handed.roleLabel };
     this.#activeFlow = handed.flow;
     this.requestUpdate();
-    await this.#initTill();
+    await this.#initTill(true);
+  }
+
+  /**
+   * A demo build that finds no session sends the person to the front door to pick a role (decision
+   * log row 1040). Only where the till is served under its own prefix (the box: BASE_URL is /till/):
+   * at the origin root the till's own entry cards are the way in, and the front door is not there.
+   */
+  #toFrontDoor(): void {
+    if (import.meta.env.BASE_URL !== "/") window.location.assign("/");
   }
 
   disconnectedCallback(): void {
@@ -793,6 +813,8 @@ export class CounterTillApp extends HHElement {
     this.#busy = true;
     this.requestUpdate();
     await this.#controller.signOut();
+    // The front door's key was kept in the tab for the session (row 1040); it goes with the session.
+    clearFrontDoorHandoff();
     this.#busy = false;
     this.#till = null;
     this.#activeFlow = null;
@@ -808,6 +830,7 @@ export class CounterTillApp extends HHElement {
     // the next person's boxes and branch facts are earned by their own login.
     clearSessionState();
     this.requestUpdate();
+    if (import.meta.env.MODE === "demo") this.#toFrontDoor();
   }
 
   /**
@@ -819,7 +842,7 @@ export class CounterTillApp extends HHElement {
    * wall that keeps the terminal down: without the branch nothing on the
    * surface can fence itself, so the refusal says so and the cards come back.
    */
-  async #initTill(): Promise<void> {
+  async #initTill(fromHandoff = false): Promise<void> {
     const branch = await this.#tillClient.resolveBranch();
     if (!branch.ok) {
       this.#message = `The till did not start: ${branch.error}`;
@@ -830,6 +853,14 @@ export class CounterTillApp extends HHElement {
       this.#clerkIdentity = null;
       await this.#controller.signOut();
       this.requestUpdate();
+      // A session the server refuses (ended or revoked) must not be re-adopted by every load: the
+      // key goes, and the person picks a role again at the front door (no loop: the front door
+      // shows the picker once its key is gone). Only the handoff's own adopt does this; a session
+      // minted by the cards route has no key to drop.
+      if (fromHandoff) {
+        clearFrontDoorHandoff();
+        this.#toFrontDoor();
+      }
       return;
     }
     this.#branch = branch.value;

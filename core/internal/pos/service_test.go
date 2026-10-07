@@ -27,6 +27,9 @@ import (
 type fakeStore struct {
 	tr *[]string
 
+	// policyErr, when set, fails every policy read (the standing read's unreadable-policy leg).
+	policyErr error
+
 	walkInID  string
 	customers map[string]customerRec
 	cached    map[string]Sale
@@ -302,6 +305,9 @@ func (f *fakeStore) InsertSignatureTx(_ context.Context, _ pgx.Tx, sig signature
 // -- W7 counter-v2 fakes -----------------------------------------------------
 
 func (f *fakeStore) ReadPosPolicy(_ context.Context, branchID string) (PosPolicy, error) {
+	if f.policyErr != nil {
+		return PosPolicy{}, f.policyErr
+	}
 	if p, ok := f.policies[branchID]; ok {
 		return p, nil
 	}

@@ -245,12 +245,16 @@ type Service struct {
 	// an un-curated counter is a working counter (quickpicks.go).
 	curation SurfaceCuration
 	// aging is the AR read behind the Customer step's past-due fact (standing.go). Nil until wired,
-	// and nil says nothing, never an error, and never "this account is current".
-	aging  AgingReader
-	tender TenderTaker
-	credit CreditGate
-	sig    SignatureProvider
-	tax    TaxAssessor
+	// and nil answers the read unavailable, never "this account is current".
+	aging AgingReader
+	// holds and accounts are the standing read's other two facts (standing.go): the active credit
+	// hold, and that the account exists at all. Nil answers the read unavailable, never empty.
+	holds    HoldReader
+	accounts AccountChecker
+	tender   TenderTaker
+	credit   CreditGate
+	sig      SignatureProvider
+	tax      TaxAssessor
 	// taxRules is the optional round-rule read behind the counter tax-rate
 	// read's round_mode word (taxrate.go). Nil answers INVOICE_TOTAL, the
 	// flat engine's actual behavior.

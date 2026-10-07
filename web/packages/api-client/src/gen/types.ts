@@ -975,6 +975,17 @@ export type UomViewPage = {
   next_cursor?: string | null;
   limit?: number;
 };
+export type CategoryView = {
+  id: string;
+  code: string;
+  name: string;
+  is_active: boolean;
+};
+export type CategoryViewPage = {
+  items: CategoryView[];
+  next_cursor?: string | null;
+  limit?: number;
+};
 export type ProductPage = {
   items: Product[];
   next_cursor?: string | null;
@@ -4227,9 +4238,13 @@ export type PosHotkeys = {
   keys: PosHotkey[];
 };
 export type PosAccountStanding = {
+  standing: "walk_in" | "clear" | "past_due" | "on_hold";
   past_due_cents?: number;
   oldest_bucket?: "30" | "60" | "90+";
   on_hold?: boolean;
+};
+export type PosPaymentGrant = {
+  can_take_payment: boolean;
 };
 export type PosAddonSuggestion = {
   product_id: string;
@@ -5865,6 +5880,7 @@ export type QuoteOrderPaymentRequest = {
   amount_cents: number;
   reference: string;
   idempotency_key: string;
+  fulfillment?: "PICKUP" | "WILL_CALL";
 };
 export type QuoteOrderPaymentResult = {
   order_id: string;

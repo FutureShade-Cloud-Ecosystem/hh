@@ -170,7 +170,7 @@ func newSvc(f *fakeStore) (*Service, *fakeRecorder) {
 		repo:  f,
 		audit: rec,
 		log:   slog.Default(),
-		now:   func() time.Time { return time.Date(2026, 7, 7, 0, 0, 0, 0, time.UTC) },
+		now:   func() time.Time { return time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC) },
 	}
 	return svc, rec
 }
