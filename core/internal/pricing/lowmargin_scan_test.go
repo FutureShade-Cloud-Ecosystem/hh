@@ -42,6 +42,9 @@ func (f *fakeScan) LowMarginSalesLines(_ context.Context, flt LowMarginFilter) (
 		if flt.DocType == ScanDocsOrders && ln.DocType != DocTypeOrder {
 			continue
 		}
+		if flt.SalespersonID != "" && ln.SalespersonID != flt.SalespersonID {
+			continue
+		}
 		out = append(out, ln)
 	}
 	return out, f.err

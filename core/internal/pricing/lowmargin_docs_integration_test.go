@@ -318,3 +318,84 @@ func TestIntegration_LowMarginDocs_AnEditedOrderLineDoesNotInheritTheClearing(t 
 		t.Errorf("an edited order line must not carry the quote line's clearing: %+v", got)
 	}
 }
+
+// Step 3 over a real Postgres: the salesperson, branch, document date range and cleared only filters,
+// the margin sort, and the cursor page.
+func TestIntegration_LowMarginDocs_FiltersSortAndCursorPage(t *testing.T) {
+	pool := intPool(t)
+	svc := realSvc(pool)
+	ctx := context.Background()
+	lmUser(t, pool, lmSalesUser, "Outside Sales, Trenton")
+	lmUser(t, pool, lmManagerUser, "Sales Manager, Trenton")
+	stamp := fmt.Sprintf(`{"floor_clear":{"cleared_by":%q,"authority":"MANAGER_SCOPE"}}`, lmManagerUser)
+	tag := time.Now().UnixNano()
+	old := time.Now().AddDate(0, 0, -20)
+	// qa: the salesperson's, cleared, 850 net. qb: the manager's own, uncleared, 870 net.
+	// qc: the salesperson's, uncleared, 900 net, but dated twenty days back.
+	seedLMQuote(t, pool, lmQuote{ID: "0d4a0000-0000-4000-9000-000000000301", No: fmt.Sprintf("Q-LMF-A-%d", tag),
+		Salesperson: lmSalesUser, Lines: []lmQuoteLine{{GrossUnit: 850, Metadata: stamp}}})
+	seedLMQuote(t, pool, lmQuote{ID: "0d4a0000-0000-4000-9000-000000000302", No: fmt.Sprintf("Q-LMF-B-%d", tag),
+		CreatedBy: lmManagerUser, Lines: []lmQuoteLine{{GrossUnit: 870}}})
+	seedLMQuote(t, pool, lmQuote{ID: "0d4a0000-0000-4000-9000-000000000303", No: fmt.Sprintf("Q-LMF-C-%d", tag),
+		Salesperson: lmSalesUser, CreatedAt: old, Lines: []lmQuoteLine{{GrossUnit: 900}}})
+	mine := func(rows []LowMarginScanRow) []string {
+		var out []string
+		for _, r := range rows {
+			if len(r.DocNo) > 6 && r.DocNo[:6] == "Q-LMF-" {
+				out = append(out, r.DocNo[6:7])
+			}
+		}
+		return out
+	}
+	run := func(mut func(*LowMarginFilter)) []string {
+		f := lmWindow()
+		f.DocType = ScanDocsQuotes
+		mut(&f)
+		rows, err := svc.LowMarginScan(ctx, f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return mine(rows)
+	}
+	want := func(name string, got []string, w ...string) {
+		t.Helper()
+		if !eq(got, w) {
+			t.Errorf("%s: %v, want %v", name, got, w)
+		}
+	}
+	want("ascending", run(func(f *LowMarginFilter) {}), "A", "B", "C")
+	want("descending", run(func(f *LowMarginFilter) { f.Sort = SortMarginDesc }), "C", "B", "A")
+	want("salesperson", run(func(f *LowMarginFilter) { f.SalespersonID = lmSalesUser }), "A", "C")
+	want("a creator is the salesperson when none is named", run(func(f *LowMarginFilter) { f.SalespersonID = lmManagerUser }), "B")
+	want("cleared only", run(func(f *LowMarginFilter) { f.ClearedOnly = true }), "A")
+	want("date range excludes the old quote", run(func(f *LowMarginFilter) { f.From = time.Now().AddDate(0, 0, -5) }), "A", "B")
+	want("date range reaches the old quote", run(func(f *LowMarginFilter) {
+		f.From, f.To = time.Now().AddDate(0, 0, -25), time.Now().AddDate(0, 0, -10)
+	}), "C")
+	want("another branch holds none of them", run(func(f *LowMarginFilter) { f.BranchID = "5d1b3f6e-0000-4000-9000-0000000000ff" }))
+	want("this branch holds all", run(func(f *LowMarginFilter) { f.BranchID = lmTrenton }), "A", "B", "C")
+
+	// The cursor page: two at a time over the whole quotes report, every row once.
+	f := lmWindow()
+	f.DocType = ScanDocsQuotes
+	all, err := svc.LowMarginScan(ctx, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var walked []string
+	cursor := ""
+	for i := 0; i < 50; i++ {
+		page, err := svc.LowMarginScanPage(ctx, f, cursor, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		walked = append(walked, ids(page.Items)...)
+		if page.NextCursor == nil {
+			break
+		}
+		cursor = *page.NextCursor
+	}
+	if !eq(walked, ids(all)) {
+		t.Errorf("paged walk %v differs from the whole report %v", walked, ids(all))
+	}
+}

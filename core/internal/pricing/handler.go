@@ -541,12 +541,15 @@ func (h *Handler) lowMarginReport(w http.ResponseWriter, r *http.Request, _ guar
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
-// lowMarginScan is the principal's AUTO-POPULATED daily low-margin report (D-PA-3): it grades the ACTUAL sold
-// price of every committed sale line in the window against current per-branch WAC cost, and returns
-// the breaching (warn/critical) rows worst-first plus cost-missing lines as invalid. Read-gated
-// exactly like the batch preview (Sales+). from/to are dates (YYYY-MM-DD or RFC3339) defaulting to
-// the last 30 days so the report is not empty between sales; branch_id is an optional filter. A
-// malformed from/to/branch_id returns 400, never a 500 (sweep #46 bad-input hygiene).
+// lowMarginScan is the low margin report the managers scan (D-PA-3): it grades the price every
+// document line holds (a committed order line, or a quote line, per doc_type: quotes, orders or both,
+// the default) against current per-branch WAC cost and answers the breaching (warn/critical) rows,
+// cost-missing lines as invalid, as a cursor page sorted by margin (sort: margin_asc, the default, or
+// margin_desc). from/to are the document's own dates (YYYY-MM-DD or RFC3339) defaulting to the last
+// 30 days so the report is not empty between sales; branch_id, salesperson_id and cleared_only
+// (true: only lines cleared below the floor) narrow it. The route's gate (the managers who clear
+// floors and the roles above them, who may see cost) is the route's access annotation, not this handler's. A
+// malformed parameter returns 400, never a 500 (sweep #46 bad-input hygiene).
 func (h *Handler) lowMarginScan(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
 	q := r.URL.Query()
 	now := time.Now()
@@ -570,15 +573,45 @@ func (h *Handler) lowMarginScan(w http.ResponseWriter, r *http.Request, _ guards
 		httpx.Error(w, http.StatusBadRequest, "doc_type must be quotes, orders or both")
 		return
 	}
-	rows, err := h.svc.LowMarginScan(r.Context(), LowMarginFilter{From: from, To: to, BranchID: branchID, DocType: docType})
+	sortKey := q.Get("sort")
+	switch sortKey {
+	case "", SortMarginAsc, SortMarginDesc:
+	default:
+		httpx.Error(w, http.StatusBadRequest, "sort must be margin_asc or margin_desc")
+		return
+	}
+	salespersonID := q.Get("salesperson_id")
+	if salespersonID != "" && !uuidRe.MatchString(salespersonID) {
+		httpx.Error(w, http.StatusBadRequest, "salesperson_id must be a uuid")
+		return
+	}
+	clearedOnly := false
+	switch q.Get("cleared_only") {
+	case "", "false":
+	case "true":
+		clearedOnly = true
+	default:
+		httpx.Error(w, http.StatusBadRequest, "cleared_only must be true or false")
+		return
+	}
+	limit := 0
+	if raw := q.Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > scanPageMax {
+			httpx.Error(w, http.StatusBadRequest, "limit must be a whole number from 1 to 200")
+			return
+		}
+		limit = n
+	}
+	page, err := h.svc.LowMarginScanPage(r.Context(), LowMarginFilter{
+		From: from, To: to, BranchID: branchID, DocType: docType,
+		SalespersonID: salespersonID, ClearedOnly: clearedOnly, Sort: sortKey,
+	}, q.Get("cursor"), limit)
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
 	}
-	if rows == nil {
-		rows = []LowMarginScanRow{}
-	}
-	httpx.WriteJSON(w, http.StatusOK, rows)
+	httpx.WriteJSON(w, http.StatusOK, page)
 }
 
 // parseScanDate parses an OPTIONAL scan-window bound (YYYY-MM-DD or RFC3339), returning fallback when

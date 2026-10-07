@@ -421,10 +421,31 @@ const (
 // LowMarginFilter is what one report request asks the live-sales feed for. From is inclusive and To
 // exclusive, both on the document's own created time; BranchID "" is every branch; DocType is one of
 // the ScanDocs values, "" meaning both.
+//
+// SalespersonID narrows to one salesperson's documents (a staff user id); ClearedOnly to the lines a
+// manager or an approval cleared below the floor; Sort is SortMarginAsc (the default, worst first) or
+// SortMarginDesc. The feed reads the first four; the service applies ClearedOnly and Sort.
 type LowMarginFilter struct {
-	From, To time.Time
-	BranchID string
-	DocType  string
+	From, To      time.Time
+	BranchID      string
+	DocType       string
+	SalespersonID string
+	ClearedOnly   bool
+	Sort          string
+}
+
+// The report's two sort orders, by the line's margin. A row with no margin (a line with no cost on
+// file, level invalid) sits after every graded row in either order.
+const (
+	SortMarginAsc  = "margin_asc"
+	SortMarginDesc = "margin_desc"
+)
+
+// LowMarginPage is one cursor page of the report. NextCursor is nil on the last page.
+type LowMarginPage struct {
+	Items      []LowMarginScanRow `json:"items"`
+	NextCursor *string            `json:"next_cursor"`
+	Limit      int                `json:"limit"`
 }
 
 // LowMarginSaleLine is ONE raw document line the D-PA-3 scan reads from the live-sales feed: a

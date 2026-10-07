@@ -2,6 +2,8 @@ package pricing
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -1684,6 +1686,13 @@ func (s *Service) LowMarginScan(ctx context.Context, f LowMarginFilter) ([]LowMa
 	default:
 		return nil, badReq("doc_type must be quotes, orders or both")
 	}
+	switch f.Sort {
+	case "":
+		f.Sort = SortMarginAsc
+	case SortMarginAsc, SortMarginDesc:
+	default:
+		return nil, badReq("sort must be margin_asc or margin_desc")
+	}
 	if s.scan == nil {
 		return nil, errNoDB // the live-sales feed seam is unwired (DB-free build)
 	}
@@ -1746,16 +1755,115 @@ func (s *Service) LowMarginScan(ctx context.Context, f LowMarginFilter) ([]LowMa
 		row.Level = level
 		out = append(out, row)
 	}
-	// Worst-first among valid breaching rows; invalid ("no cost") rows group at the end so they stay
-	// visible without skewing the margin ordering (their MarginBps is 0).
-	sort.SliceStable(out, func(i, j int) bool {
-		iInvalid, jInvalid := out[i].Level == "invalid", out[j].Level == "invalid"
-		if iInvalid != jInvalid {
-			return !iInvalid
+	if f.ClearedOnly {
+		// An invalid row is a line the report could not grade; a cleared line it could not grade is
+		// still a cleared line, so the filter keeps it, never hides one.
+		kept := out[:0]
+		for _, r := range out {
+			if r.ClearedBelowFloor {
+				kept = append(kept, r)
+			}
 		}
-		return out[i].MarginBps < out[j].MarginBps
-	})
+		out = kept
+	}
+	// Valid breaching rows by margin, worst first unless descending; invalid ("no cost") rows group at
+	// the end in either order so they stay visible without skewing the margin ordering (their
+	// MarginBps is 0). The line id breaks every tie, so the order is total and a cursor can name a
+	// place in it.
+	sort.SliceStable(out, func(i, j int) bool { return scanRowBefore(out[i], out[j], f.Sort == SortMarginDesc) })
 	return out, nil
+}
+
+// scanRowBefore is the report's total order: graded rows before invalid ones, then by margin
+// (ascending, or descending when desc), then by line id.
+func scanRowBefore(a, b LowMarginScanRow, desc bool) bool {
+	aInvalid, bInvalid := a.Level == "invalid", b.Level == "invalid"
+	if aInvalid != bInvalid {
+		return !aInvalid
+	}
+	if a.MarginBps != b.MarginBps {
+		if desc {
+			return a.MarginBps > b.MarginBps
+		}
+		return a.MarginBps < b.MarginBps
+	}
+	return a.LineID < b.LineID
+}
+
+// The report's page sizes, the contract's Limit parameter.
+const (
+	scanPageDefault = 50
+	scanPageMax     = 200
+)
+
+// scanCursor names a place in the report's order: the last row served, and the sort it was served
+// under (a cursor is only good for the order it came from).
+type scanCursor struct {
+	Sort    string `json:"s"`
+	Invalid bool   `json:"i,omitempty"`
+	Margin  int64  `json:"m"`
+	LineID  string `json:"l"`
+}
+
+func encodeScanCursor(c scanCursor) string {
+	b, _ := json.Marshal(c)
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+func decodeScanCursor(raw string) (scanCursor, bool) {
+	var c scanCursor
+	b, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil || json.Unmarshal(b, &c) != nil || c.LineID == "" {
+		return scanCursor{}, false
+	}
+	return c, true
+}
+
+// LowMarginScanPage is the report as one cursor page: the rows LowMarginScan answers, after the
+// cursor's place in their order (the start when cursor is empty), at most limit of them (0 is the
+// default of fifty, the most is two hundred). The cursor is a place in the order, not a count, so a
+// row that appears or goes between pages never repeats or skips a row the walker has not reached.
+func (s *Service) LowMarginScanPage(ctx context.Context, f LowMarginFilter, cursor string, limit int) (LowMarginPage, error) {
+	switch {
+	case limit == 0:
+		limit = scanPageDefault
+	case limit < 0 || limit > scanPageMax:
+		return LowMarginPage{}, badReq("limit must be between 1 and 200")
+	}
+	sortKey := f.Sort
+	if sortKey == "" {
+		sortKey = SortMarginAsc
+	}
+	var after *LowMarginScanRow
+	if cursor != "" {
+		c, ok := decodeScanCursor(cursor)
+		if !ok || c.Sort != sortKey {
+			return LowMarginPage{}, badReq("cursor is not valid for this report, start again without one")
+		}
+		after = &LowMarginScanRow{LineID: c.LineID, MarginBps: c.Margin}
+		if c.Invalid {
+			after.Level = "invalid"
+		}
+	}
+	rows, err := s.LowMarginScan(ctx, f)
+	if err != nil {
+		return LowMarginPage{}, err
+	}
+	desc := sortKey == SortMarginDesc
+	start := 0
+	if after != nil {
+		start = sort.Search(len(rows), func(i int) bool { return scanRowBefore(*after, rows[i], desc) })
+	}
+	rows = rows[start:]
+	page := LowMarginPage{Items: []LowMarginScanRow{}, Limit: limit}
+	if len(rows) > limit {
+		last := rows[limit-1]
+		next := encodeScanCursor(scanCursor{Sort: sortKey, Invalid: last.Level == "invalid", Margin: last.MarginBps, LineID: last.LineID})
+		page.NextCursor = &next
+		rows = rows[:limit]
+	}
+	page.Items = append(page.Items, rows...)
+	return page, nil
 }
 
 // - helpers -

@@ -110,8 +110,10 @@ func TestLowMarginScanHandler_DocTypeParam(t *testing.T) {
 	if rec := get("/api/v1/pricing/reports/low-margin/scan?doc_type=quotes"); rec.Code != http.StatusOK {
 		t.Fatalf("doc_type=quotes → %d (%s)", rec.Code, rec.Body.String())
 	} else {
-		var rows []map[string]any
-		if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil || len(rows) != 1 || rows[0]["doc_type"] != "quote" {
+		var page struct {
+			Items []map[string]any `json:"items"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil || len(page.Items) != 1 || page.Items[0]["doc_type"] != "quote" {
 			t.Errorf("want one quote row carrying doc_type quote, got %s (%v)", rec.Body.String(), err)
 		}
 	}

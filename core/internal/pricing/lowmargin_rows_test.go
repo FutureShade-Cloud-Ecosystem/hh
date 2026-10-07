@@ -106,11 +106,13 @@ func TestLowMarginRow_JSONNames(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("%d %s", rec.Code, rec.Body.String())
 	}
-	var rows []map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil || len(rows) != 1 {
+	var page struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil || len(page.Items) != 1 {
 		t.Fatalf("%v %s", err, rec.Body.String())
 	}
-	r := rows[0]
+	r := page.Items[0]
 	for k, want := range map[string]any{
 		"salesperson": "Outside Sales, Trenton", "cleared_below_floor": true,
 		"cleared_by": "Sales Manager, Trenton", "clear_authority": "APPROVAL",
