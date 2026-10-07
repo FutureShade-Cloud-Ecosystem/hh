@@ -88,3 +88,20 @@ test("the kept key survives a reload under /till/, and Sign out sends the person
   await expect(page).toHaveURL((url) => url.pathname === "/");
   expect(await page.evaluate((key) => window.sessionStorage.getItem(key), HANDOFF_KEY)).toBeNull();
 });
+
+test("a session the server refuses is dropped and the person goes to the front door, with no loop", async ({
+  page,
+}) => {
+  await standInFrontDoor(page);
+  await page.route("**/api/v1/branches**", (route) =>
+    route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ error: "session ended" }) }),
+  );
+  await seedHandoff(page, handoffRecord());
+  await page.goto("");
+  await expect(page).toHaveURL((url) => url.pathname === "/");
+  // The front door's page is the one place left: it sees no key, so it shows the picker, not a signed in role.
+  expect(await page.evaluate((key) => window.sessionStorage.getItem(key), HANDOFF_KEY)).toBeNull();
+  // Going back to the till finds no key and no session, and lands on the front door again: no ghost adopt.
+  await page.goto("/till/");
+  await expect(page).toHaveURL((url) => url.pathname === "/");
+});

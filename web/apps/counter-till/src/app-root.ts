@@ -601,7 +601,7 @@ export class CounterTillApp extends HHElement {
     this.#till = { label: handed.roleLabel };
     this.#activeFlow = handed.flow;
     this.requestUpdate();
-    await this.#initTill();
+    await this.#initTill(true);
   }
 
   /**
@@ -842,7 +842,7 @@ export class CounterTillApp extends HHElement {
    * wall that keeps the terminal down: without the branch nothing on the
    * surface can fence itself, so the refusal says so and the cards come back.
    */
-  async #initTill(): Promise<void> {
+  async #initTill(fromHandoff = false): Promise<void> {
     const branch = await this.#tillClient.resolveBranch();
     if (!branch.ok) {
       this.#message = `The till did not start: ${branch.error}`;
@@ -853,6 +853,14 @@ export class CounterTillApp extends HHElement {
       this.#clerkIdentity = null;
       await this.#controller.signOut();
       this.requestUpdate();
+      // A session the server refuses (ended or revoked) must not be re-adopted by every load: the
+      // key goes, and the person picks a role again at the front door (no loop: the front door
+      // shows the picker once its key is gone). Only the handoff's own adopt does this; a session
+      // minted by the cards route has no key to drop.
+      if (fromHandoff) {
+        clearFrontDoorHandoff();
+        this.#toFrontDoor();
+      }
       return;
     }
     this.#branch = branch.value;
