@@ -167,6 +167,23 @@ export function moneyWord(cents: number): string {
   return `${cents < 0 ? "-" : ""}$${centsAmount(cents)}`;
 }
 
+/**
+ * Two quantities added as exact decimals, at the finer of their two scales: "0.1" and 0.2 make "0.3", never the
+ * float sum 0.30000000000000004. Money and quantity are never binary float arithmetic. A value that is not a plain
+ * non-negative decimal (or that JavaScript writes in exponent form) adds to nothing, and the caller does not guess.
+ */
+export function addDecimal(a: string, b: number): string | null {
+  const plain = /^\d+(\.\d+)?$/;
+  const second = String(b);
+  if (!plain.test(a) || !plain.test(second)) return null;
+  const [ai, af = ""] = a.split(".");
+  const [bi, bf = ""] = second.split(".");
+  const scale = Math.max(af.length, bf.length);
+  const whole = (i: string, f: string): bigint => BigInt(i + f.padEnd(scale, "0"));
+  const sum = (whole(ai, af) + whole(bi, bf)).toString().padStart(scale + 1, "0");
+  return scale === 0 ? sum : `${sum.slice(0, sum.length - scale)}.${sum.slice(sum.length - scale)}`;
+}
+
 /** validateDate accepts an empty value (which clears the expiry) or a real YYYY-MM-DD date. */
 export function validateDate(raw: string): string | null {
   const s = raw.trim();

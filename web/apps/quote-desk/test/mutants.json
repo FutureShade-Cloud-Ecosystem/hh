@@ -1999,8 +1999,8 @@
   {
     "id": "wa-preview-leave",
     "file": "src/quote-workarea.ts",
-    "find": "    this.mintedToken = \"\";\n    this.previewRaw = null;\n",
-    "replace": "    this.mintedToken = \"\";\n",
+    "find": "    this.raisedFrom = null;\n    this.previewRaw = null;\n",
+    "replace": "    this.raisedFrom = null;\n",
     "test": "a preview closes when another quote opens"
   },
   {
@@ -2034,8 +2034,8 @@
   {
     "id": "wa-raise-line",
     "file": "src/quote-workarea.ts",
-    "find": "await ctx.guarded(deferredSend(capture, () => client.editLine(ctx.id, existing.line_no, { qty: String(raised) })), this.lateWrite(ctx, \"raise this quantity\"))",
-    "replace": "await client.editLine(ctx.id, existing.line_no, { qty: String(raised) })",
+    "find": "await ctx.guarded(deferredSend(capture, () => client.editLine(ctx.id, existing.line_no, { qty: raised })), this.lateWrite(ctx, \"raise this quantity\"))",
+    "replace": "await client.editLine(ctx.id, existing.line_no, { qty: raised })",
     "test": "guard raise line:"
   },
   {
@@ -2121,5 +2121,19 @@
     "find": "        void this.updateComplete.then(() => this.renderRoot.querySelector<HTMLElement>('[data-testid=\"qb-preview\"]')?.focus());\n",
     "replace": "",
     "test": "P2-3 Preview opens where the person is looking"
+  },
+  {
+    "id": "wa-raise-exact",
+    "file": "src/quote-workarea.ts",
+    "find": "const raised = existing === undefined ? null : addDecimal(existing.qty_entered, qty);",
+    "replace": "const raised = existing === undefined ? null : String(Number(existing.qty_entered) + qty);",
+    "test": "a raise adds exact decimals"
+  },
+  {
+    "id": "wa-raise-undo-restores",
+    "file": "src/quote-workarea.ts",
+    "find": "void this.saveQty(lineRow, was.qty);",
+    "replace": "void this.saveQty(lineRow, was.qty + \"0\");",
+    "test": "the raise can be undone"
   }
 ]

@@ -53,6 +53,7 @@ import type { PosProduct } from "@hardscapehouse/pos-kit/src/ported/pos-api.js";
 import type { PickerCustomer } from "@hardscapehouse/pos-kit/src/ported/_customer-picker.js";
 import type { Salesperson } from "@hardscapehouse/pos-kit/src/ported/pos-api.js";
 import {
+  addDecimal,
   canConvert,
   canEdit,
   EDIT_LINE_ADD,
@@ -700,6 +701,11 @@ export class QdQuoteWorkarea extends LitElement {
       color: var(--hos-safety-red, var(--hh-negative));
       border-color: var(--hos-safety-red, var(--hh-negative));
     }
+    .raisednote {
+      margin: var(--hos-s-8, 8px) 0 0;
+      font-size: var(--qb-caption);
+      color: var(--hos-text-dim, var(--hh-text-dim));
+    }
     .addanother {
       display: flex;
       width: 100%;
@@ -1277,6 +1283,7 @@ export class QdQuoteWorkarea extends LitElement {
     this.scope.open(this.quoteId);
     this.converted = null;
     this.mintedToken = "";
+    this.raisedFrom = null;
     this.previewRaw = null;
     this.error = "";
     this.notice = "";
@@ -1908,6 +1915,13 @@ export class QdQuoteWorkarea extends LitElement {
         this.unreadable = "";
         void this.loadAll();
         break;
+      case "raise-undo": {
+        const was = this.raisedFrom;
+        this.raisedFrom = null;
+        const lineRow = was === null ? undefined : this.view?.lines.find((row) => row.line_no === was.lineNo);
+        if (was !== null && lineRow !== undefined && was.quoteId === this.quoteId) void this.saveQty(lineRow, was.qty);
+        break;
+      }
       case "add-another":
         this.focusScan();
         this.renderRoot.querySelector("quote-search-add")?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -2178,6 +2192,9 @@ export class QdQuoteWorkarea extends LitElement {
     });
   }
 
+  /** The last raise of a line's quantity by an add, kept so it can be undone; gone when anything else changes the ticket. */
+  @state() private raisedFrom: { quoteId: string; lineNo: number; qty: string } | null = null;
+
   private async addProduct(p: { id: string; uom: string; name?: string }, qty = 1): Promise<void> {
     const client = this.client;
     if (client === null) return;
@@ -2229,17 +2246,18 @@ export class QdQuoteWorkarea extends LitElement {
     // The same product, in the same unit, at the same price (no discount on the line it is already on) is the
     // quantity of that line, not a second line: raised, and said in words.
     const existing = this.view.lines.find((l) => l.product_id === p.id && l.uom_entered === p.uom && (this.termsLine(l.line_no)?.discPct ?? 0) === 0);
-    const raised = existing === undefined ? Number.NaN : Number(existing.qty_entered) + qty;
-    if (existing !== undefined && Number.isFinite(raised)) {
+    const raised = existing === undefined ? null : addDecimal(existing.qty_entered, qty);
+    if (existing !== undefined && raised !== null) {
       const releaseRaise = this.holdBusy(ctx);
       this.error = "";
       this.notice = "";
-      const bumped = await ctx.guarded(deferredSend(capture, () => client.editLine(ctx.id, existing.line_no, { qty: String(raised) })), this.lateWrite(ctx, "raise this quantity"));
+      const bumped = await ctx.guarded(deferredSend(capture, () => client.editLine(ctx.id, existing.line_no, { qty: raised })), this.lateWrite(ctx, "raise this quantity"));
       if (bumped === undefined) return;
       releaseRaise();
       if (wasUnsent(bumped)) return;
       if (bumped.ok) {
         this.speakAdd(`${p.name ?? existing.description} is already on the quote, so its quantity is now ${raised}.`, "ok");
+        this.raisedFrom = { quoteId: ctx.id, lineNo: existing.line_no, qty: existing.qty_entered };
         this.ticketMoved();
         await this.afterCartChange(ctx);
       } else {
@@ -2268,6 +2286,7 @@ export class QdQuoteWorkarea extends LitElement {
   private async saveQty(line: QuoteViewLine, raw: string): Promise<void> {
     const client = this.client;
     if (client === null) return;
+    this.raisedFrom = null;
     const qty = raw.trim();
     if (qty === "" || Number(qty) <= 0 || !Number.isFinite(Number(qty))) {
       this.error = "Quantity must be a positive number.";
@@ -3000,6 +3019,12 @@ export class QdQuoteWorkarea extends LitElement {
             <hos-pos-product-grid></hos-pos-product-grid>
           </div>
           ${this.renderLinesTable()}
+          ${this.raisedFrom !== null && this.raisedFrom.quoteId === this.quoteId
+            ? html`<p class="raisednote" data-testid="qb-raise-note">
+                Quantity raised on a line that was already here.
+                <button type="button" class="backlink" data-action="raise-undo" data-testid="qb-raise-undo">Undo</button>
+              </p>`
+            : nothing}
           <button type="button" class="addanother" data-action="add-another" data-testid="qb-add-another">
             <span aria-hidden="true">${drawIcon(iconForId("pencil:add"), 13)}</span> Add another item
           </button>
