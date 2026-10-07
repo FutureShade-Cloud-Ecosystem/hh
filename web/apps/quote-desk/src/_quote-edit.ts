@@ -300,19 +300,3 @@ export function comparisonBasis(row: { blocked: boolean; source: string; block_p
   if (!row.blocked) return row.source;
   return row.block_policy !== undefined && row.block_policy !== "" ? `below floor (${row.block_policy})` : "below floor";
 }
-
-/**
- * The fulfilment choices at conversion. The default is the empty option, not
- * Pickup: an unchosen fulfilment says nothing to the server and lets its own
- * default apply. Delivery is deliberately absent: a delivery is a scheduled
- * stop booked in dispatch, not a word typed here.
- */
-export const FULFILMENT_CHOICES: ReadonlyArray<{ value: "" | "WILL_CALL"; label: string }> = [
-  { value: "", label: "Pickup at the counter (default)" },
-  { value: "WILL_CALL", label: "Will-call: hold it on the rack" },
-];
-
-/** The convert request body: empty when nothing was chosen, the choice otherwise. */
-export function convertBody(choice: string): { fulfillment?: "WILL_CALL" } {
-  return choice === "WILL_CALL" ? { fulfillment: "WILL_CALL" } : {};
-}

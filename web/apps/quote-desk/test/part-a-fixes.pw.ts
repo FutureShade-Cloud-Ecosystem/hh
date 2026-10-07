@@ -177,18 +177,6 @@ test("a quote row is reached with Tab and opened with Enter", async ({ page }) =
   await expect(page.getByTestId("qb-context")).toContainText("Q-");
 });
 
-test("convert sends nothing for the default fulfilment and the chosen one when chosen", async ({ page, request }) => {
-  await signIn(page);
-  await showList(page);
-  await page.getByTestId("qb-list-row").filter({ hasText: "Accepted" }).first().click();
-  await page.getByText("Quote detail & admin").click();
-  await page.getByTestId("qe-convert").click();
-  await expect(page.getByTestId("qe-converted")).toContainText("Converted to order SO-");
-  const state = await (await request.get("/_stub/state")).json();
-  expect(state.conversions).toHaveLength(1);
-  expect(state.conversions[0].fulfillment).toBeNull();
-});
-
 test("the desk raises no Lit change-in-update warning from the customer picker", async ({ page }) => {
   const warnings: string[] = [];
   page.on("console", (message) => {

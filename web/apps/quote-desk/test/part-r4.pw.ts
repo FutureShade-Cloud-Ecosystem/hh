@@ -421,15 +421,6 @@ const LATE_CASES: LateCase[] = [
     },
   },
   {
-    name: "a conversion",
-    seed: { customer_id: "c-fenwick", status: "ACCEPTED" },
-    url: /\/quotes\/q-1004\/convert$/,
-    method: "POST",
-    trigger: async (page) => {
-      await page.getByTestId("qb-convert").click();
-    },
-  },
-  {
     name: "a link made to copy",
     url: /\/quotes\/q-1004\/share-links$/,
     method: "POST",
@@ -510,16 +501,12 @@ test("B P2-1 work area: a terms save answered after leaving the quote tells the 
   await lateCase(page, LATE_CASES[5] as LateCase);
 });
 
-test("B P2-1 work area: a conversion answered after leaving the quote tells the screens that quote changed", async ({ page }) => {
+test("B P2-1 work area: a link made to copy answered after leaving the quote tells the screens that quote changed", async ({ page }) => {
   await lateCase(page, LATE_CASES[6] as LateCase);
 });
 
-test("B P2-1 work area: a link made to copy answered after leaving the quote tells the screens that quote changed", async ({ page }) => {
-  await lateCase(page, LATE_CASES[7] as LateCase);
-});
-
 test("B P2-1 work area: a text share made by a send answered after leaving the quote tells the screens that quote changed", async ({ page }) => {
-  await lateCase(page, LATE_CASES[8] as LateCase);
+  await lateCase(page, LATE_CASES[7] as LateCase);
 });
 
 test("B P2-1 work area: a quantity change refused after leaving and returning is said on return", async ({ page }) => {

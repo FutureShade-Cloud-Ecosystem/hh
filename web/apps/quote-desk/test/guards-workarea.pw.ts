@@ -167,22 +167,6 @@ test("guard validity: a refused expiry change that answers after another quote o
   await expect(page.getByTestId("qb-error")).toHaveText("");
 });
 
-test("guard convert: a conversion that answers after another quote opened shows no order number there", async ({ page }) => {
-  const accepted = await seed(page, { customer_id: "c-fenwick", status: "ACCEPTED" });
-  expect(accepted).toBe("q-1004");
-  await signIn(page);
-  await open(page, "Q-1004");
-  await expect(page.getByTestId("qb-convert")).toBeVisible();
-  const held = await hold(page, /\/quotes\/q-1004\/convert$/, { method: "POST" });
-  await page.getByTestId("qb-convert").click();
-  await held.asked;
-  await open(page, "Q-1001");
-  await expect(page.getByTestId("qb-line")).toHaveCount(2);
-  await held.release();
-  await settle(page);
-  await expect(page.getByTestId("qb-convert-done")).toHaveCount(0);
-});
-
 test("guard customer search: the account facts found for the quote just left never show on the quote now open", async ({ page }) => {
   await seed(page, { customer_id: "c-fenwick" });
   await signIn(page);
@@ -349,26 +333,6 @@ test("guard validity reload: a validity change whose re-read answers after anoth
   await gated.held.release();
   await settle(page);
   expect(await changed()).toBe(0);
-});
-
-test("guard convert reload: a conversion whose re-read answers after another quote opened announces nothing", async ({ page }) => {
-  await seed(page, { customer_id: "c-fenwick", status: "ACCEPTED" });
-  await signIn(page);
-  await open(page, "Q-1004");
-  await expect(page.getByTestId("qb-convert")).toBeVisible();
-  const gated = await armedHold(page, /\/api\/v1\/quotes\/q-1004$/, "GET");
-  gated.arm();
-  await page.getByTestId("qb-convert").click();
-  // Every read of the quote stays held, whoever asks (the work area re-reads first, the panels beside it read too), and the
-  // person leaves only once the page has gone quiet round them: the work area's own re-read is certainly one of them.
-  await gated.held.asked;
-  await settle(page);
-  await open(page, "Q-1001");
-  const changed = await watchEvent(page, "quote-changed");
-  await gated.held.release();
-  await settle(page);
-  expect(await changed()).toBe(0);
-  await expect(page.getByTestId("qb-convert-done")).toHaveCount(0);
 });
 
 test("guard copy link clipboard: a copy that finishes after another quote opened says nothing there", async ({ page }) => {

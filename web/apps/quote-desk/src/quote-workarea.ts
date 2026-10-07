@@ -38,6 +38,7 @@ import { LitElement, css, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import "./quote-search-add.js";
 import { personName } from "./_names.js";
+import { convertRoute, routeHash } from "./quote-router.js";
 import { LATE_REFUSAL_EVENT } from "./floor-refusal.js";
 // The customer page's own element (the public desk's), rendered in the desk for Preview: one page, never a copy.
 import "../../public-desk/src/quote-public.js";
@@ -196,7 +197,6 @@ export class QdQuoteWorkarea extends LitElement {
   @state() private columnsOpen = false;
   /** The product grid's view: cards or one dense row per product (tab memory, the grid's own presentation). */
   @state() private presentation: "CARDS" | "ROWS" = "CARDS";
-  @state() private converted: { orderNo: string } | null = null;
   @state() private clockNow = new Date();
   /** The panel geometry, held on the store and mirrored for the render. */
   @state() private wsEcho = 0;
@@ -1286,7 +1286,6 @@ export class QdQuoteWorkarea extends LitElement {
   private leaveQuote(previousId: string): void {
     this.flushTermsOf(previousId);
     this.scope.open(this.quoteId);
-    this.converted = null;
     this.mintedToken = "";
     this.raisedFrom = null;
     this.previewRaw = null;
@@ -1983,7 +1982,7 @@ export class QdQuoteWorkarea extends LitElement {
         this.sendOpen = !this.sendOpen;
         break;
       case "convert":
-        void this.doConvert();
+        this.openConvert();
         break;
       default:
         break;
@@ -2892,24 +2891,12 @@ export class QdQuoteWorkarea extends LitElement {
     }
   }
 
-  private async doConvert(): Promise<void> {
-    const client = this.client;
-    if (client === null || this.busy || this.quoteId === "") return;
-    const ctx = this.ctx;
-    const release = this.holdBusy(ctx);
-    this.error = "";
-    const result = await ctx.guarded(client.convertQuote(ctx.id), this.lateWrite(ctx, "convert this quote"));
-    if (result === undefined) return;
-    release();
-    if (!result.ok) {
-      this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "convert this quote"));
-      await this.loadAll();
-      return;
-    }
-    this.converted = { orderNo: result.value.orderNo };
-    await this.loadAll();
-    if (ctx.stale) return;
-    this.quoteChanged();
+  /**
+   * Every Convert to Order entry point opens the guided surface (standing, fulfilment, payment before release, a
+   * confirm) at its own address. The bare conversion, one request that converts at once, is not reachable from here.
+   */
+  private openConvert(): void {
+    if (this.quoteId !== "") window.location.hash = routeHash(convertRoute(this.quoteId));
   }
 
   // ── render ─────────────────────────────────────────────────────────────────
@@ -3690,9 +3677,7 @@ export class QdQuoteWorkarea extends LitElement {
             </button>`
           : nothing}
       </div>
-      ${this.converted !== null
-        ? html`<p class="ok" role="status" data-testid="qb-convert-done">Converted to order ${this.converted.orderNo}.</p>`
-        : nothing}
+
     `;
   }
 

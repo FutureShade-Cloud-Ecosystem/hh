@@ -278,7 +278,7 @@ test("compare scores alternates read only: the current line, a priced alternate,
   await expect(page.getByTestId("qe-compare")).toHaveCount(0);
 });
 
-test("an accepted quote offers convert and no edit; the fulfilment choice rides the conversion", async ({ page }) => {
+test("an accepted quote offers convert and no edit; convert opens the guided surface", async ({ page }) => {
   await signIn(page);
   await openQuote(page, "Accepted");
   await expect(page.getByTestId("qe-frozen")).toHaveText("This quote is accepted and can no longer be changed.");
@@ -286,13 +286,10 @@ test("an accepted quote offers convert and no edit; the fulfilment choice rides 
   await expect(panel(page).getByRole("button", { name: "Remove" })).toHaveCount(0);
   await expect(panel(page).getByText("Add a line", { exact: true })).toHaveCount(0);
   await expect(page.getByTestId("qe-share-note")).toHaveText("This quote is accepted and cannot be shared.");
-  await page.getByTestId("qe-fulfilment").selectOption("WILL_CALL");
   await page.getByTestId("qe-convert").click();
-  await expect(page.getByTestId("qe-converted")).toContainText("Converted to order SO-");
-  await expect(page.getByTestId("qe-convert")).toHaveCount(0);
+  await expect(page.getByTestId("qc-title")).toBeVisible();
   const state = await (await page.request.get("/_stub/state")).json();
-  expect(state.conversions).toHaveLength(1);
-  expect(state.conversions[0].fulfillment).toBe("WILL_CALL");
+  expect(state.conversions).toHaveLength(0);
 });
 
 test("a caller the server offers nothing sees no edit control, only the reasons", async ({ page }) => {

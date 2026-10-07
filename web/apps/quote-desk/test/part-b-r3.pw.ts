@@ -160,22 +160,6 @@ test("P2-3 a link minted after leaving and returning to the quote shows in its l
   await expect(edit(page).getByTestId("qe-link")).toHaveCount(1);
 });
 
-test("P2-3 a conversion that lands after leaving and returning to the quote shows the quote converted", async ({ page }) => {
-  await signIn(page);
-  await openQuote(page, "Q-1003");
-  const post = await hold(page, /\/api\/v1\/quotes\/q-1003\/convert$/, { method: "POST" });
-  await edit(page).getByTestId("qe-convert").click();
-  await post.asked;
-  await showList(page);
-  await row(page, "Q-1002").click();
-  await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1002");
-  await showList(page);
-  await row(page, "Q-1003").click();
-  await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1003");
-  post.open();
-  await expect(edit(page).getByTestId("qe-title")).toContainText("Converted");
-});
-
 test("P3 a floor refusal answered after the person returned to the quote is shown on it", async ({ page }) => {
   await signIn(page, "Sales");
   await openQuote(page, "Q-1001");
@@ -220,15 +204,6 @@ test("P3 saving one line keeps the unsaved figures typed on the other lines", as
   await expect(page.getByTestId("qe-notice")).toHaveText("Saved.");
   await expect(lines.first().locator('[data-field="qty"]')).toHaveValue("6");
   await expect(lines.nth(1).locator('[data-field="qty"]')).toHaveValue("9");
-});
-
-test("P3 the fulfilment chosen for one conversion is not preselected on the next quote", async ({ page }) => {
-  await seed(page, { customer_id: "c-fenwick", status: "ACCEPTED" });
-  await signIn(page);
-  await openQuote(page, "Q-1003");
-  await edit(page).getByTestId("qe-fulfilment").selectOption("WILL_CALL");
-  await openQuote(page, "Q-1004");
-  await expect(edit(page).getByTestId("qe-fulfilment")).toHaveValue("");
 });
 
 async function openScreenSettings(page: Page): Promise<void> {

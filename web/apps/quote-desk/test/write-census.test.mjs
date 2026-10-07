@@ -49,7 +49,7 @@ test("the census lists every write of the src, immediate ones too", () => {
   const rows = srcWriteCensus();
   assert.ok(rows.some((row) => row.call === "putTerms" && row.way === "sender"));
   assert.ok(rows.some((row) => row.call === "putMyWorkspace" && row.way === "sender"));
-  assert.ok(rows.some((row) => row.call === "convertQuote" && row.way === "immediate"));
+  assert.ok(rows.some((row) => row.call === "removeLine" && row.way === "immediate"));
 });
 
 // The shape queueTermsPut had at b7edd1c: the send chained on the previous answer with then(), no check before it.

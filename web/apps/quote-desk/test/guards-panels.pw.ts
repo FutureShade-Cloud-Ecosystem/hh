@@ -284,34 +284,6 @@ test("guard edit compare: a refused comparison for the quote left shows no error
   await expect(page.getByTestId("qe-error")).toHaveText("");
 });
 
-test("guard edit convert answer: a conversion answered after another quote opened shows no order number there", async ({ page }) => {
-  await signIn(page);
-  await openQuote(page, "Q-1003");
-  const post = await hold(page, /\/api\/v1\/quotes\/q-1003\/convert$/, { method: "POST" });
-  await edit(page).getByTestId("qe-convert").click();
-  await post.asked;
-  await openQuote(page, "Q-1002");
-  await post.release();
-  await settle(page);
-  await expect(edit(page).getByTestId("qe-converted")).toHaveCount(0);
-});
-
-test("guard edit convert reload: a conversion whose re-read answers after another quote opened announces nothing", async ({ page }) => {
-  await signIn(page);
-  await openQuote(page, "Q-1003");
-  await quiet(page);
-  const gated = await armedHold(page, /\/api\/v1\/quotes\/q-1003$/, "GET");
-  gated.arm();
-  await edit(page).getByTestId("qe-convert").click();
-  await gated.held.asked;
-  gated.disarm();
-  await openQuote(page, "Q-1002");
-  const changed = await watchEvent(page, "quote-changed");
-  await gated.held.release();
-  await settle(page);
-  expect(await changed()).toBe(0);
-});
-
 // ── the history panel ──
 
 test("guard history read: the changes of the quote left never show under the quote now open", async ({ page }) => {

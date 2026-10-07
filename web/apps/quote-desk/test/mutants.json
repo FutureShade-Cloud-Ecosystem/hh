@@ -49,13 +49,6 @@
     "test": "guard validity:"
   },
   {
-    "id": "wa-convert",
-    "file": "src/quote-workarea.ts",
-    "find": "await ctx.guarded(client.convertQuote(ctx.id), this.lateWrite(ctx, \"convert this quote\"))",
-    "replace": "await client.convertQuote(ctx.id)",
-    "test": "guard convert:"
-  },
-  {
     "id": "wa-customer-search",
     "file": "src/quote-workarea.ts",
     "find": "await ctx.guardedRead(seq, searchCustomers(name, 10, this.branchId))",
@@ -232,13 +225,6 @@
     "test": "P2-3 a link minted after leaving"
   },
   {
-    "id": "ep-convert-late-callback",
-    "file": "src/edit-panel.ts",
-    "find": "const result = await ctx.guarded(client.convertQuote(ctx.id, this.convertFulfilment), (late) => this.lateAnswer(ctx, late, \"convert this quote\"));",
-    "replace": "const result = await ctx.guarded(client.convertQuote(ctx.id, this.convertFulfilment));",
-    "test": "P2-3 a conversion that lands after leaving"
-  },
-  {
     "id": "ep-late-refusal-other-quote",
     "file": "src/edit-panel.ts",
     "find": "    if (now.stale || now.id !== ctx.id) return;\n",
@@ -258,13 +244,6 @@
     "find": ".filter(([lineNo]) => Number(lineNo) !== resetLine && present.has(Number(lineNo))));",
     "replace": ".filter(() => false));",
     "test": "P3 saving one line keeps the unsaved figures"
-  },
-  {
-    "id": "ep-fulfilment-clears",
-    "file": "src/edit-panel.ts",
-    "find": "      this.convertFulfilment = \"\";\n",
-    "replace": "",
-    "test": "P3 the fulfilment chosen for one conversion"
   },
   {
     "id": "ss-policy-held-while-saving",
@@ -391,13 +370,6 @@
     "find": "      await this.loadAll();\n      if (ctx.stale) return;\n      this.quoteChanged();\n    } else {\n      this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, \"change the expiry date\"));",
     "replace": "      await this.loadAll();\n      this.quoteChanged();\n    } else {\n      this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, \"change the expiry date\"));",
     "test": "guard validity reload:"
-  },
-  {
-    "id": "wa-convert-reload",
-    "file": "src/quote-workarea.ts",
-    "find": "    this.converted = { orderNo: result.value.orderNo };\n    await this.loadAll();\n    if (ctx.stale) return;",
-    "replace": "    this.converted = { orderNo: result.value.orderNo };\n    await this.loadAll();",
-    "test": "guard convert reload:"
   },
   {
     "id": "wa-copy-clipboard",
@@ -573,20 +545,6 @@
     "find": "const result = await ctx.guarded(client.compareLine(ctx.id, lineNo, this.compareAlts.map((a) => a.product_id)));\n    if (result === undefined || ask !== this.compareAsk) return;",
     "replace": "const result = await client.compareLine(ctx.id, lineNo, this.compareAlts.map((a) => a.product_id));",
     "test": "guard edit compare:"
-  },
-  {
-    "id": "ep-convert-answer",
-    "file": "src/edit-panel.ts",
-    "find": "const result = await ctx.guarded(client.convertQuote(ctx.id, this.convertFulfilment), (late) => this.lateAnswer(ctx, late, \"convert this quote\"));\n    if (result === undefined) return;",
-    "replace": "const result = await client.convertQuote(ctx.id, this.convertFulfilment);",
-    "test": "guard edit convert answer:"
-  },
-  {
-    "id": "ep-convert-reload",
-    "file": "src/edit-panel.ts",
-    "find": "    await this.load();\n    if (ctx.stale) return;\n    this.announceChanged();\n  }\n\n  // \u2500\u2500 delegation",
-    "replace": "    await this.load();\n    this.announceChanged();\n  }\n\n  // \u2500\u2500 delegation",
-    "test": "guard edit convert reload:"
   },
   {
     "id": "hs-read-guard",
@@ -996,13 +954,6 @@
     "find": "this.queueTermsPut(ctx.id, () => deferredSend(capture, () => client.putTerms(ctx.id, termsBody(t)))),\n      this.lateWrite(ctx, \"save the quote terms\"),",
     "replace": "this.queueTermsPut(ctx.id, () => deferredSend(capture, () => client.putTerms(ctx.id, termsBody(t)))),",
     "test": "B P2-1 work area: a terms save answered after leaving"
-  },
-  {
-    "id": "wa-late-convert",
-    "file": "src/quote-workarea.ts",
-    "find": ", this.lateWrite(ctx, \"convert this quote\")",
-    "replace": "",
-    "test": "B P2-1 work area: a conversion answered after leaving"
   },
   {
     "id": "wa-late-mint",

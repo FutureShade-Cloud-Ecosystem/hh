@@ -54,6 +54,7 @@ import {
   type QuoteView,
   type QuoteViewLine,
 } from "./_quote-edit.js";
+import { convertRoute, routeHash } from "./quote-router.js";
 import { floorRefusalMessage, openFloorRefusalDialog, parseFloorRefusal } from "./floor-refusal.js";
 import { spokenRefusal } from "./_quote-workarea.js";
 import type { QuoteContext } from "./quote-context.js";
@@ -101,8 +102,6 @@ export class QdQuoteEdit extends PanelBase {
   @state() private compareHits: CatalogHit[] = [];
   @state() private compareActive = -1;
   @state() private compareAlts: CatalogHit[] = [];
-  @state() private convertFulfilment = "";
-  @state() private converted: { orderId: string; orderNo: string } | null = null;
 
   static styles = [
     panelStyles,
@@ -147,8 +146,6 @@ export class QdQuoteEdit extends PanelBase {
       this.discDraft = {};
       this.expiryDraft = "";
       this.links = [];
-      this.converted = null;
-      this.convertFulfilment = "";
       this.compareLine = null;
       this.compareRows = [];
       this.compareAlts = [];
@@ -622,31 +619,11 @@ export class QdQuoteEdit extends PanelBase {
   // ── convert ───────────────────────────────────────────────────────────────
 
   /**
-   * Convert from the counter. The offer is the server's (can_convert); the
-   * outcome is kept after the quote moves to Converted, because the order
-   * number is what the counter needs to read back and the very next read
-   * makes the offer disappear. A refusal is shown verbatim: a credit refusal
-   * naming the limit and the shortfall IS the useful part.
+   * Convert from the counter opens the guided surface at its own address: standing, fulfilment, payment before
+   * release, and a confirm. The offer is the server's (can_convert). The bare conversion is not reachable from here.
    */
-  private async doConvert(): Promise<void> {
-    const client = this.client;
-    const ctx = this.ctx;
-    if (client === null || this.busy || ctx.id === "") return;
-    this.busy = true;
-    this.error = "";
-    this.notice = "";
-    const result = await ctx.guarded(client.convertQuote(ctx.id, this.convertFulfilment), (late) => this.lateAnswer(ctx, late, "convert this quote"));
-    if (result === undefined) return;
-    this.busy = false;
-    if (!result.ok) {
-      this.error = this.refuse(result, "convert this quote");
-      await this.load();
-      return;
-    }
-    this.converted = result.value;
-    await this.load();
-    if (ctx.stale) return;
-    this.announceChanged();
+  private openConvert(): void {
+    if (this.quoteId !== "") window.location.hash = routeHash(convertRoute(this.quoteId));
   }
 
   // ── delegation ────────────────────────────────────────────────────────────
@@ -694,7 +671,7 @@ export class QdQuoteEdit extends PanelBase {
         void this.revokeLink(control.getAttribute("data-link") ?? "");
         break;
       case "convert":
-        void this.doConvert();
+        this.openConvert();
         break;
     }
   }
@@ -711,7 +688,6 @@ export class QdQuoteEdit extends PanelBase {
   }
 
   protected override onFieldChange(field: string, control: HTMLElement): void {
-    if (field === "fulfilment") this.convertFulfilment = (control as HTMLSelectElement).value;
   }
 
   // ── the uncontrolled fields ───────────────────────────────────────────────
@@ -736,7 +712,6 @@ export class QdQuoteEdit extends PanelBase {
     this.syncValue('[data-field="add-search"]', this.addQuery);
     this.syncValue('[data-field="add-qty"]', this.addQty);
     this.syncValue('[data-field="cmp-search"]', this.compareQuery);
-    this.syncValue('[data-field="fulfilment"]', this.convertFulfilment);
     this.syncValue('[data-field="link-url"]', this.mintedToken === "" ? "" : this.shareUrl(this.mintedToken));
     // Option ids carry the combobox's active descendant; ids are not bound in
     // the template, so they are set here from position.
@@ -911,32 +886,15 @@ export class QdQuoteEdit extends PanelBase {
   }
 
   private renderConvert(view: QuoteView) {
-    // The outcome is checked first: a successful conversion moves the quote to
-    // Converted, which makes the offer false on the very next read, and this
-    // method re-runs after that read. Gating on the offer first would erase
-    // the confirmation the instant it was earned.
-    if (this.converted !== null) {
-      return html`
-        <fieldset>
-          <legend>Convert to order</legend>
-          <p class="ok" role="status" data-testid="qe-converted">Converted to order ${this.converted.orderNo}.</p>
-        </fieldset>
-      `;
-    }
     if (!canConvert(view)) return nothing;
     return html`
       <fieldset>
         <legend>Convert to order</legend>
         <p class="sub">
-          This quote is accepted. Converting it commits the order, and the stock this quote is holding becomes a firm
-          reservation. On an account customer the credit is checked at that moment, and a refusal names the limit and the shortfall.
+          This quote is accepted. Converting it opens the guided steps: the customer's standing, how it leaves, any payment, and a
+          confirm. Nothing is converted until you confirm there.
         </p>
-        <label for="convert-fulfilment">How is it leaving?</label>
         <div class="row flush-top">
-          <select id="convert-fulfilment" data-field="fulfilment" data-testid="qe-fulfilment">
-            <option value="">Pickup at the counter (default)</option>
-            <option value="WILL_CALL">Will-call: hold it on the rack</option>
-          </select>
           <button type="button" class="primary" data-action="convert" data-testid="qe-convert" ?disabled=${this.busy}>Convert to order</button>
         </div>
       </fieldset>

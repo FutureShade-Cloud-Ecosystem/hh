@@ -35,7 +35,7 @@ import {
   staffQuoteassist,
   staffSettings,
 } from "@hardscapehouse/api-client";
-import { convertBody, type QuoteView } from "./_quote-edit.js";
+import type { QuoteView } from "./_quote-edit.js";
 import type { RelatedDoc } from "./_related-docs.js";
 import type { QuoteFieldChange } from "./_quote-history.js";
 import {
@@ -850,22 +850,6 @@ export class QdClient {
   }
 
   /**
-   * Convert an accepted quote to its order. The fulfilment choice rides only
-   * when one was made (convertBody), so the default request says nothing and
-   * the server's own default applies.
-   */
-  async convertQuote(quoteId: string, fulfilment = ""): Promise<Result<{ orderId: string; orderNo: string }>> {
-    const result = await staffQuote.quoteConvertQuote(this.#client, quoteId, convertBody(fulfilment));
-    if (!result.ok) return result;
-    const record = result.value as unknown;
-    if (!isRecord(record)) return err("the conversion answer is not readable");
-    const orderId = stringAt(record, "order_id");
-    const orderNo = stringAt(record, "order_no");
-    if (orderId === null || orderNo === null) return err("the conversion answer is missing its order number");
-    return ok({ orderId, orderNo });
-  }
-
-  /**
    * The document family of a quote or of one of its orders: the quote, the
    * order or orders it became and their invoices, as normalized rows. Asking
    * from either end returns the same family; the row the caller asked from
@@ -884,7 +868,7 @@ export class QdClient {
 
   /**
    * The guided surface's conversion: the chosen fulfilment rides explicitly, both of the contract's
-   * two values (the bare button's convertBody sends only Will-call and leaves Pickup to the default).
+   * two values (Pickup and Will-call both ride the request).
    */
   async convertWithFulfilment(quoteId: string, fulfillment: "PICKUP" | "WILL_CALL"): Promise<Result<{ orderId: string; orderNo: string }>> {
     const result = await staffQuote.quoteConvertQuote(this.#client, quoteId, { fulfillment });

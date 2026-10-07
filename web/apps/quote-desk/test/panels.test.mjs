@@ -12,8 +12,6 @@ import {
   catalogHitStatus,
   comparisonBasis,
   comparisonDeltaLabel,
-  convertBody,
-  FULFILMENT_CHOICES,
   frozenSentence,
   isShareable,
   shareLinkState,
@@ -124,16 +122,6 @@ test("the comparison words: a delta with its sign, the basis, and a blocked row 
   assert.equal(comparisonBasis({ blocked: false, source: "TIER_CATEGORY" }), "TIER_CATEGORY");
   assert.equal(comparisonBasis({ blocked: true, source: "X", block_policy: "category_margin_floor" }), "below floor (category_margin_floor)");
   assert.equal(comparisonBasis({ blocked: true, source: "X" }), "below floor");
-});
-
-test("the convert body says nothing when no fulfilment was chosen, and the choice list has the two the contract names", () => {
-  assert.deepEqual(convertBody(""), {});
-  assert.deepEqual(convertBody("WILL_CALL"), { fulfillment: "WILL_CALL" });
-  assert.deepEqual(convertBody("DELIVERY"), {});
-  assert.deepEqual(
-    FULFILMENT_CHOICES.map((c) => c.value),
-    ["", "WILL_CALL"],
-  );
 });
 
 // ── the change history ─────────────────────────────────────────────────────────
