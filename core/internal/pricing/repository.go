@@ -825,7 +825,7 @@ func (r *Repository) ListAudit(ctx context.Context, f AuditFilter) ([]AuditLogRo
 // product_branch_costs is a LEFT JOIN keyed on (product_id, branch_id), the SAME per-branch WAC row
 // inventory.BranchCostCents reads, so avg_unit_cost_cents is NULL when the product has no cost on file
 // at the document's branch (surfaced as invalid, never coalesced to 0). Numeric qty is cast to float8
-// for a clean scan. BranchIDs is the caller's branch wall (nil reads every branch). The salesperson filter names a staff user id and matches the document's
+// for a clean scan. A tombstone (deleted_at, a sync fact) on a document or a line keeps it off the report. BranchIDs is the caller's branch wall (nil reads every branch). The salesperson filter names a staff user id and matches the document's
 // salesperson as the row reports it (sp, the quote's salesperson else its creator). An order line's discount percent is read from the line's metadata (the pair an
 // order converted from a quote keeps); a quote line's from its own column.
 func (r *Repository) LowMarginSalesLines(ctx context.Context, f LowMarginFilter) ([]LowMarginSaleLine, error) {
@@ -854,13 +854,14 @@ func (r *Repository) LowMarginSalesLines(ctx context.Context, f LowMarginFilter)
 	  LEFT JOIN LATERAL (
 	        SELECT ql.metadata->'floor_clear' AS fc
 	          FROM quote_lines ql
-	         WHERE ql.quote_id = o.quote_id AND ql.line_no = ol.line_no
+	         WHERE ql.quote_id = o.quote_id AND ql.line_no = ol.line_no AND ql.deleted_at IS NULL
 	           AND ql.product_id = ol.product_id AND ql.unit_price_cents = ol.unit_price_cents
 	           AND jsonb_typeof(ql.metadata->'floor_clear') = 'object') oqc ON TRUE
 	  LEFT JOIN users sp ON sp.id = COALESCE(oq.salesperson_id, o.created_by)
 	  LEFT JOIN users cb ON cb.id::text = oqc.fc->>'cleared_by'
 	 WHERE $4::text <> 'quotes'
 	   AND ol.product_id IS NOT NULL
+	   AND ol.deleted_at IS NULL AND o.deleted_at IS NULL
 	   AND o.created_at >= $1 AND o.created_at < $2
 	   AND ($3::uuid IS NULL OR o.branch_id = $3::uuid)
 	   AND ($6::uuid[] IS NULL OR o.branch_id = ANY($6::uuid[]))
@@ -887,6 +888,7 @@ func (r *Repository) LowMarginSalesLines(ctx context.Context, f LowMarginFilter)
 	  LEFT JOIN users cb ON cb.id::text = ql.metadata->'floor_clear'->>'cleared_by'
 	 WHERE $4::text <> 'orders'
 	   AND ql.product_id IS NOT NULL
+	   AND ql.deleted_at IS NULL AND qt.deleted_at IS NULL
 	   AND qt.created_at >= $1 AND qt.created_at < $2
 	   AND ($3::uuid IS NULL OR qt.branch_id = $3::uuid)
 	   AND ($6::uuid[] IS NULL OR qt.branch_id = ANY($6::uuid[]))

@@ -421,3 +421,83 @@ func TestIntegration_LowMarginDocs_BranchWallInTheQuery(t *testing.T) {
 		t.Errorf("another branch, and an empty grant, must read nothing")
 	}
 }
+
+// Tombstones (deleted_at, a sync fact) are never report rows: a deleted quote, a deleted line of a
+// live quote, a deleted order and a deleted order line all stay off the report, and a deleted line
+// does not count toward its document's margin.
+func TestIntegration_LowMarginDocs_TombstonesNeverAppear(t *testing.T) {
+	pool := intPool(t)
+	svc := realSvc(pool)
+	ctx := context.Background()
+	tag := time.Now().UnixNano()
+	live := fmt.Sprintf("Q-LMT-LIVE-%d", tag)
+	gone := fmt.Sprintf("Q-LMT-GONE-%d", tag)
+	lineGone := fmt.Sprintf("Q-LMT-LINE-%d", tag)
+	seedLMQuote(t, pool, lmQuote{ID: "0d4a0000-0000-4000-9000-000000000401", No: live, Lines: []lmQuoteLine{{GrossUnit: 850}}})
+	seedLMQuote(t, pool, lmQuote{ID: "0d4a0000-0000-4000-9000-000000000402", No: gone, Lines: []lmQuoteLine{{GrossUnit: 850}}})
+	seedLMQuote(t, pool, lmQuote{ID: "0d4a0000-0000-4000-9000-000000000403", No: lineGone,
+		Lines: []lmQuoteLine{{GrossUnit: 850}, {GrossUnit: 2400}}})
+	for _, q := range []string{
+		`UPDATE quotes SET deleted_at = now() WHERE id = '0d4a0000-0000-4000-9000-000000000402'`,
+		// the second line (healthy, 2400) of the third quote is the one deleted
+		`UPDATE quote_lines SET deleted_at = now() WHERE quote_id = '0d4a0000-0000-4000-9000-000000000403' AND line_no = 2`,
+	} {
+		if _, err := pool.Exec(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Two orders, one deleted whole, one with a deleted line.
+	ordGone, ordLine := fmt.Sprintf("SO-LMT-GONE-%d", tag), fmt.Sprintf("SO-LMT-LINE-%d", tag)
+	for id, no := range map[string]string{"0d4a0000-0000-4000-9000-000000000404": ordGone, "0d4a0000-0000-4000-9000-000000000405": ordLine} {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO orders (id, order_no, customer_id, branch_id, status, fulfillment)
+			VALUES ($1, $2, (SELECT id FROM customers WHERE account_no = 'WALK-IN'), $3, 'INVOICED', 'PICKUP')`, id, no, lmTrenton); err != nil {
+			t.Fatal(err)
+		}
+		id := id
+		t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM orders WHERE id = $1`, id) })
+		for line, unit := range []int64{850, 2400} {
+			if _, err := pool.Exec(ctx, `
+				INSERT INTO order_lines (order_id, line_no, product_id, description, qty_entered, uom_entered, qty_base, unit_price_cents, price_uom, line_total_cents)
+				VALUES ($1, $2, (SELECT id FROM products WHERE sku = 'DBS-UL-BRUSSELS'), 'Brussels Block', 40, 'SF', 164, $3, 'SF', $4)`,
+				id, line+1, unit, unit*40); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for _, q := range []string{
+		`UPDATE orders SET deleted_at = now() WHERE id = '0d4a0000-0000-4000-9000-000000000404'`,
+		`UPDATE order_lines SET deleted_at = now() WHERE order_id = '0d4a0000-0000-4000-9000-000000000405' AND line_no = 2`,
+	} {
+		if _, err := pool.Exec(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err := svc.LowMarginScan(ctx, lmWindow())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lmRowsByDoc(rows, live)) != 1 {
+		t.Errorf("the live quote must be a row: %+v", rows)
+	}
+	if n := len(lmRowsByDoc(rows, gone)); n != 0 {
+		t.Errorf("a deleted quote is on the report (%d rows)", n)
+	}
+	if n := len(lmRowsByDoc(rows, ordGone)); n != 0 {
+		t.Errorf("a deleted order is on the report (%d rows)", n)
+	}
+	// The surviving critical line of a document whose healthy line was deleted: one row, and its
+	// document margin is the one line's own (the deleted line adds no revenue).
+	for _, no := range []string{lineGone, ordLine} {
+		got := lmRowsByDoc(rows, no)
+		if len(got) != 1 {
+			t.Errorf("%s: want only the surviving line, got %+v", no, got)
+			continue
+		}
+		if got[0].DocMarginBps == nil {
+			t.Errorf("%s: no document margin, want 1558 off the surviving line alone", no)
+		} else if *got[0].DocMarginBps != 1558 {
+			t.Errorf("%s: document margin %d, want 1558 off the surviving line alone", no, *got[0].DocMarginBps)
+		}
+	}
+}
