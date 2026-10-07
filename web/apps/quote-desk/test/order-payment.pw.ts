@@ -259,9 +259,13 @@ test("an order already invoiced another route is refused with the clerk wording,
   await shot(pay(page).getByTestId("op-box"), "order-payment-refused-clerk");
 });
 
-test("an accepted quote of a customer with credit is refused with the convert-first wording", async ({ page }) => {
+test("an accepted quote whose customer's account could not be read still shows the server's convert-first refusal in its words", async ({ page }) => {
+  // With the account read the desk offers no form for a customer on account; where that read fails the form stays,
+  // the desk says it does not know how they pay, and the server's refusal is shown verbatim.
+  await page.route(/\/api\/v1\/customers\/c0000000-0000-4000-9000-000000000001$/, (route) => route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "down" }) }));
   await signIn(page);
   await openWithPayment(page, "Q-1003");
+  await expect(pay(page).getByTestId("op-box")).toContainText("could not be read");
   await take(page, "10.00");
   await expect(pay(page).getByTestId("op-error")).toContainText("Convert this quote to an order first");
   await expect(pay(page).getByTestId("op-error")).toContainText("converts through the conversion door and then pays");

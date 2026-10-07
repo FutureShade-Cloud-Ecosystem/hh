@@ -497,6 +497,13 @@ export class QdOrderPayment extends PanelBase {
     this.quoteNos.set(ctx.id, view.value.quote_no);
     this.family = family.value;
     this.loaded = true;
+    // The words of an accepted quote follow the customer's own account: its terms and credit limit, as the server holds them.
+    this.account = null;
+    if (view.value.status === "ACCEPTED") {
+      const standing = await ctx.guardedRead(seq, client.customerStanding(view.value.customer_id, view.value.customer_name));
+      if (standing === undefined) return false;
+      this.account = standing.ok && standing.value !== null ? { days: standing.value.paymentTermsDays, onAccount: standing.value.creditLimitCents > 0 } : null;
+    }
     const late = this.lateNotes.get(ctx.id);
     if (late !== undefined) {
       this.lateNotes.delete(ctx.id);
@@ -504,6 +511,9 @@ export class QdOrderPayment extends PanelBase {
     }
     return true;
   }
+
+  /** What the customer's account says about how they pay: on account (with its terms), or none; null where it could not be read. */
+  @state() private account: { days: number; onAccount: boolean } | null = null;
 
   /** The order rows of the family: what the quote became, as the server holds it. */
   private get orderRows(): RelatedDoc[] {
@@ -843,6 +853,18 @@ export class QdOrderPayment extends PanelBase {
   // ── render ────────────────────────────────────────────────────────────────
 
   /** The server's own figures for what this payment lands on: the quote's agreed total before any order exists, then the order row and the invoice row, with the balance the reads carry (figuresLine holds the wording; no figure is computed here). */
+  /** What an accepted quote's payment panel says, by the customer's account. */
+  private acceptedWords(): string {
+    const a = this.account;
+    if (a !== null && a.onAccount) {
+      return `This quote is accepted. This customer is on account (${a.days} days), so it is converted first with Convert to Order, and any payment is taken on the order it becomes.`;
+    }
+    if (a !== null) {
+      return "This quote is accepted. This customer is Cash On Demand, with no credit account: this one action converts the quote, raises the invoice and takes the payment in full. The server decides, and its refusal names what to do.";
+    }
+    return "This quote is accepted. The customer's account could not be read, so how they pay is not known here: the server decides, and its refusal names what to do.";
+  }
+
   private renderFigures(): TemplateResult | typeof nothing {
     const rows = this.orderRows;
     const quote = this.family.find((row) => row.kind === "QUOTE") ?? null;
@@ -898,13 +920,21 @@ export class QdOrderPayment extends PanelBase {
       `;
     }
     if (!this.offered) return nothing;
+    // An account customer's accepted quote is converted first; the payment is taken on the order it becomes.
+    const convertFirst = this.status === "ACCEPTED" && this.account !== null && this.account.onAccount;
+    if (convertFirst) {
+      return html`
+        <fieldset data-testid="op-box">
+          <legend>Take payment at the counter</legend>
+          <p class="sub">${this.acceptedWords()}</p>
+        </fieldset>
+      `;
+    }
     return html`
       <fieldset data-testid="op-box">
         <legend>Take payment at the counter</legend>
         <p class="sub">
-          ${this.status === "ACCEPTED"
-            ? "This quote is accepted. For a customer with no credit account this one action converts the quote, raises the invoice and takes the payment in full; the server decides, and its refusal names what to do."
-            : "Payment on the order this quote became. The server holds the figures and decides the amount rules; its refusal names what to do."}
+          ${this.status === "ACCEPTED" ? this.acceptedWords() : "Payment on the order this quote became. The server holds the figures and decides the amount rules; its refusal names what to do."}
         </p>
         ${this.renderFigures()}
         ${this.paidInFull

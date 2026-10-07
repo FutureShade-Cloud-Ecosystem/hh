@@ -2086,5 +2086,12 @@
     "find": "void this.saveQty(lineRow, was.qty);",
     "replace": "void this.saveQty(lineRow, was.qty + \"0\");",
     "test": "the raise can be undone"
+  },
+  {
+    "id": "op-standing-guard",
+    "file": "src/order-payment-panel.ts",
+    "find": "const standing = await ctx.guardedRead(seq, client.customerStanding(view.value.customer_id, view.value.customer_name));\n      if (standing === undefined) return false;",
+    "replace": "const standing = await client.customerStanding(view.value.customer_id, view.value.customer_name);",
+    "test": "guard payment words:"
   }
 ]
