@@ -1587,3 +1587,21 @@ read with the `q.` aliases), PR 178's fix shape. The new red-first legs
 quotes at one created_at with quote numbers 100, 101 and 102 and page from the first one's pair: red before the fix with the
 next page empty, green with it, each with a recorded message naming the cursor's position and the missing rows. The quote
 package was never in `red=`; nothing leaves the integration job's exclusion list.
+
+
+## The demo dealer's refund approval limit is off, and the web counter till still pins the old 250.00 threshold (recorded by the hardening lane; appended; the entries above are never edited)
+
+The Dibbits ruling landed in the core: the role configuration gained the `refund_approval_limit_enabled` switch
+(`core/internal/roleconfig`), and the demo build loads the decided default with the switch off (`demoRoleConfig` in
+`core/cmd/core/demo_on.go`), so no refund on a demo box, of any size, ever asks for an approver. The decided default itself keeps
+the limit on at 250.00 for every real dealer. Two web surfaces still model the old demo policy and belong to the counter till's
+own lane, recorded here rather than touched across the boundary:
+
+- `web/apps/counter-till/test/stub/demo-stub.mjs` pins `APPROVAL_AMOUNT_CENTS = 25000` with a comment saying it pins the demo
+  dealer's configuration; under the demo's new policy no amount is the demo's answer.
+- `web/apps/counter-till/test/acceptance/20-sales.pw.ts` walks the above 250.00 refusal and the manager credential completing it
+  against a live demo box; under the demo's new policy that return commits as the clerk with no dialog.
+
+Neither file is in this lane's Touches. The core's own proofs hold both sides: the no-limit leg
+(`core/internal/pos/refund_limit_off_test.go`) and the limit dealer's leg (the refund rule and per sale files), and the demo load's
+pin (`core/cmd/core/demo_on_test.go`, the demo tag).

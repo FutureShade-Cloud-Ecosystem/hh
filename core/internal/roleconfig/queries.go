@@ -138,6 +138,22 @@ func (c *Config) RefundAmountWithoutApprovalCents() int64 {
 	return c.settings.RefundAmountWithoutApprovalCents
 }
 
+// RefundRequiresApproval reports whether the sale's cumulative refunds at
+// cumulativeCents ask for an approver under the dealer's configuration:
+// false for every amount when the limit is off (the Dibbits ruling: the
+// dealer set no refund approval threshold at all, refunds running from
+// tens of dollars to thousands, so no refund ever needs an approver), and
+// otherwise the amount comparison X7 names, at or under the amount asking
+// nobody. The amount is the data; this folds the limit switch in and is
+// the rule the guards call, in one place, so a second comparison that
+// forgot the switch cannot exist.
+func (c *Config) RefundRequiresApproval(cumulativeCents int64) bool {
+	if !c.settings.RefundApprovalLimitEnabled {
+		return false
+	}
+	return cumulativeCents > c.settings.RefundAmountWithoutApprovalCents
+}
+
 // RefundApprovers returns who approves a refund above the amount, of the
 // sale's branch (X7).
 func (c *Config) RefundApprovers() []string {
