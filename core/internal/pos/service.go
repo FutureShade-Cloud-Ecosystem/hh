@@ -121,6 +121,11 @@ type posStore interface {
 	// DIB-488 rev 6 (item D): salesperson reads, validation + the counter selector (non-tx; M2 debt)
 	ReadStaffName(ctx context.Context, userID string) (string, bool, error)
 	ListSalespeople(ctx context.Context) ([]Salesperson, error)
+	// The counter discount's approver reads (discount.go): the active logins holding a role grant
+	// that reaches the branch, one row per grant; userID narrows to one login ("" lists all).
+	ListDiscountStaff(ctx context.Context, orgID, branchID, userID string) ([]discountStaffRow, error)
+	// The manual discounts a committed sale carries, read back for a replay and a reopen.
+	ReadSaleDiscounts(ctx context.Context, orderID string) ([]SaleDiscount, error)
 	// DIB-488 rev 8, all display-only M2-debt cross-reads (repository_rev8.go):
 	// item 9: the DISCOVERED catalogue weight (kg per base unit) riding the stock glance
 	ReadProductWeightKg(ctx context.Context, productID string) (float64, bool, error)
@@ -511,7 +516,7 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 			return Sale{}, errCashTenderedNotCash
 		}
 	}
-	if cached, found, err := s.store.FindSaleByKey(ctx, in.IdempotencyKey); err != nil {
+	if cached, found, err := s.findSaleByKey(ctx, in.IdempotencyKey); err != nil {
 		return Sale{}, err
 	} else if found {
 		cached.Replayed = true
@@ -558,6 +563,7 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 		branchID:     in.BranchID,
 		lines:        in.Lines,
 		taxReason:    taxReason,
+		discount:     in.Discount,
 	})
 	if err != nil {
 		return Sale{}, err
@@ -896,9 +902,13 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 				IdempotencyKey: in.IdempotencyKey, OrderID: orderID, InvoiceID: invoiceID, PaymentID: paymentID,
 				BranchID: in.BranchID, TillSessionID: in.TillSessionID, SaleType: saleType, CashSale: in.CashSale,
 				Tender: tender, TaxReasonCode: taxReason, OfflineOrigin: in.Offline, CreatedBy: actor,
-				SplitTender: isSplit,
+				SplitTender: isSplit, Discount: priced.saleDiscount,
 			})
 			if err != nil {
+				return err
+			}
+			// The pricing log row of every manual discount, on THIS transaction (discount.go).
+			if err := s.logDiscounts(ctx, tx, orderID, actor, priced.discounts); err != nil {
 				return err
 			}
 			// DIB-165: the legs. Written AFTER pos_sale (they reference it) and inside this tx, so the
@@ -984,6 +994,7 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 				// DIB-488 rev 8 (item 11): the job facts echoed back for the sold panel.
 				JobAddress: jobAddress, JobReference: jobReference,
 			}
+			out.DiscountCents, out.Discounts = reportDiscounts(priced.discounts)
 			if in.CashTenderedCents > 0 {
 				out.ChangeDueCents = in.CashTenderedCents - total
 			}
@@ -1063,6 +1074,8 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 	// status. When a real status writer advances the column (the choke-point order.Service.SetStatus,
 	// or a future POS fulfilment write), THAT writer emits its own transition.
 	s.recordStatusChange(ctx, out.OrderID, "", "CONFIRMED", actor, in.BranchID, "pos_ring")
+	// Every manual discount and the manager who approved it, one audit row each (discount.go).
+	s.recordDiscountAudit(ctx, out.OrderID, actor, in.BranchID, priced.discounts)
 	// Q-044: PAYMENT_RECEIVED for the tender is recorded HERE, post-commit, through the till's hook
 	// (the till still owns the audit semantics; the sole payments-row writer stays A-03). Mid-tx
 	// recording produced an orphan row under rollback AND a duplicate under rollback-retry; the hook
@@ -1172,7 +1185,7 @@ func (s *Service) captureCardLegs(ctx context.Context, in SaleInput, captures []
 			case till.CardCaptureBound:
 				// The leg already belongs to a committed sale (normally the pool precheck above
 				// answered first; this is the race it can lose). Answer that sale, verbatim.
-				if sale, found, ferr := s.store.FindSaleByKey(ctx, in.IdempotencyKey); ferr == nil && found {
+				if sale, found, ferr := s.findSaleByKey(ctx, in.IdempotencyKey); ferr == nil && found {
 					sale.Replayed = true
 					ring.replay = &sale
 					return ring, nil
@@ -1276,7 +1289,7 @@ func (s *Service) settleFailedCardRing(ctx context.Context, ring *cardRing) (Sal
 		}
 		switch comp.Kind {
 		case till.CardCompCommitted:
-			if sale, found, ferr := s.store.FindSaleByKey(ctx, ring.saleKey); ferr == nil && found {
+			if sale, found, ferr := s.findSaleByKey(ctx, ring.saleKey); ferr == nil && found {
 				sale.Replayed = true
 				return sale, nil
 			}
