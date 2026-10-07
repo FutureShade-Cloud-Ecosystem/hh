@@ -2133,7 +2133,8 @@ export class QdQuoteWorkarea extends LitElement {
 
   /** The search and add box's pick: the line goes in at quantity 1 in the product's sell unit. */
   private readonly onLineAdd = (event: CustomEvent<{ productId: string; unit: string }>): void => {
-    void this.addProduct({ id: event.detail.productId, uom: event.detail.unit });
+    const name = (event.target as { lastAddedName?: string } | null)?.lastAddedName;
+    void this.addProduct({ id: event.detail.productId, uom: event.detail.unit, ...(name !== undefined && name !== "" ? { name } : {}) });
   };
 
   private readonly onAddProduct = (event: CustomEvent<{ product: PosProduct }>): void => {
@@ -2174,7 +2175,15 @@ export class QdQuoteWorkarea extends LitElement {
    * The one outcome line beside the gun: the scan box's own message region
    * when it is mounted, the notice lines otherwise.
    */
+  /** A good word on an add: under the box where the person is looking, and as the notice. */
+  private speakAddOk(msg: string): void {
+    this.renderRoot.querySelector<HTMLElement & { say?: (message: string) => void }>("quote-search-add")?.say?.(msg);
+    this.speakAdd(msg, "ok");
+  }
+
   private speakAdd(msg: string, kind: "ok" | "warn" | "err"): void {
+    // A warning or a refusal ends the add: the "Adding" under the box must not stay as if it were still going.
+    if (kind !== "ok") this.renderRoot.querySelector<HTMLElement & { say?: (message: string) => void }>("quote-search-add")?.say?.("");
     const box = this.renderRoot.querySelector<HTMLElement & { announce?: (msg: string, kind: "ok" | "warn" | "err") => void }>("quote-search-add");
     if (box?.announce) {
       box.announce(msg, kind);
@@ -2222,6 +2231,8 @@ export class QdQuoteWorkarea extends LitElement {
     });
     // The first line of a New quote makes the quote: the customer picked in compose is created for now, and this add waits for it.
     if (this.quoteId === "" && this.composeCustomer !== null && this.creating === null) void this.createFor(this.composeCustomer);
+    // The quote does not exist yet: say so until the create and the line both land (the Added word is spoken then).
+    if (this.quoteId === "" && this.composeCustomer !== null) this.speakAddOk(p.name !== undefined ? `Adding ${p.name} to the new quote.` : "Adding the line to the new quote.");
     // A scan right after the customer is picked lands while the quote is still being made or read: it waits
     // for them rather than being told to pick a customer who has just been picked.
     // Only while compose is on screen: a scan on an open quote is for that quote and waits for no create.
@@ -2293,7 +2304,7 @@ export class QdQuoteWorkarea extends LitElement {
     release();
     if (wasUnsent(result)) return;
     if (result.ok) {
-      this.speakAdd(p.name !== undefined ? `Added ${p.name}` : "Line added.", "ok");
+      this.speakAddOk(p.name !== undefined ? `Added ${p.name}` : "Line added.");
       await this.afterCartChange(ctx);
     } else {
       // The refusal belongs beside the gun, once.

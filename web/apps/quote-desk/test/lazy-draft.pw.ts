@@ -143,3 +143,36 @@ test("R11 P3 a first line added while another change is still saving says so ins
   await expect(page.getByTestId("qb-error")).not.toContainText("Pick a customer");
   expect(made).toEqual([]);
 });
+
+test("R13 a slow first create says Adding the product to the new quote, and Added only once the quote and the line both landed", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Sales", exact: true }).click();
+  await expect(page.getByTestId("qb-list")).toBeVisible();
+  const create = await hold(page, /\/api\/v1\/quotes$/, { method: "POST" });
+  await pick(page);
+  const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
+  await scan.fill("PSN-100");
+  await scan.press("Enter");
+  await create.asked;
+  const status = page.getByTestId("search-add-status");
+  await expect(status).toContainText(/^Adding .+ to the new quote\.$/);
+  await expect(page.getByText(/\bAdded\b/)).toHaveCount(0);
+  await create.release();
+  await expect(page.getByTestId("qb-line")).toHaveCount(1);
+  await expect(status).toContainText(/^Added /);
+});
+
+test("R13 a refused first create ends the Adding word, it does not stay as if the line were going in", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Sales", exact: true }).click();
+  await expect(page.getByTestId("qb-list")).toBeVisible();
+  const create = await hold(page, /\/api\/v1\/quotes$/, { method: "POST", refuse: { status: 422, error: "Not now." } });
+  await pick(page);
+  const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
+  await scan.fill("PSN-100");
+  await scan.press("Enter");
+  await create.asked;
+  await create.release();
+  await expect(page.getByTestId("qb-error")).toBeVisible();
+  await expect(page.getByTestId("search-add-status")).not.toContainText("Adding");
+});

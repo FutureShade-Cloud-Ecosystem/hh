@@ -402,10 +402,19 @@ export class QuoteSearchAdd extends HHElement {
 
   // ── the add ────────────────────────────────────────────────────────────
 
+  /** The name of the product just added, read by the work area for its own words (the event's detail stays the line's facts). */
+  lastAddedName = "";
+
   private add(hit: CounterHit): void {
+    this.lastAddedName = hit.name;
     this.dispatchEvent(new CustomEvent<QuoteLineAddDetail>(QUOTE_LINE_ADD, { detail: addDetail(hit), bubbles: true, composed: true }));
-    this.added = `Added ${hit.name}`;
+    // Nothing is claimed here: the work area says Adding, then Added, once the line has really landed.
     this.clear();
+  }
+
+  /** The work area's word on the add, shown under the box: Adding while the quote or the line is still out, Added once both landed. */
+  say(message: string): void {
+    this.added = message;
   }
 
   /** The box is ready for the next item: emptied, no list, and the caret stays in it. */

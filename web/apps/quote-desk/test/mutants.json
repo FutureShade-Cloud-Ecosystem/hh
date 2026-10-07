@@ -2128,5 +2128,12 @@
     "find": "${this.accountRead ? acceptedPaymentWords(this.account) : \"Reading the customer's account.\"}",
     "replace": "${acceptedPaymentWords(this.account)}",
     "test": "while the customer's account is being read the panel says so"
+  },
+  {
+    "id": "wa-adding-said",
+    "file": "src/quote-workarea.ts",
+    "find": "    if (this.quoteId === \"\" && this.composeCustomer !== null) this.speakAddOk(p.name !== undefined ? `Adding ${p.name} to the new quote.` : \"Adding the line to the new quote.\");\n",
+    "replace": "",
+    "test": "R13 a slow first create says Adding"
   }
 ]
