@@ -8,12 +8,15 @@
 // must never be wiped, reset, truncated or reseeded. So: nothing here deletes, nothing truncates,
 // and nothing mints from a shared sequence. Every write is an INSERT with an explicit deterministic
 // id and ON CONFLICT DO NOTHING (ids.go explains the derivation; apply.go is the only writer and
-// can express no other statement kind). The ONE exception is the scrub-name rename pass (the
-// demoseed_scrubname pair, demo build only): fixed-id UPDATEs of customers.name that rename the
-// migration-planted demo customers off their scrub placeholders, each statement naming the exact
-// placeholder it renames, so nothing outside the fixed list moves and a second run matches no row
-// (that pair's header holds the full reasoning). Running it twice produces the same world: the
-// second run's inserts all conflict, create nothing, and report `created=0`.
+// can express no other statement kind). The TWO exceptions are demo-build-only pairs, each a fixed
+// list of guarded UPDATEs that repair rows this command itself (or a migration) already planted,
+// never a live tester's row: the scrub-name rename pass (the demoseed_scrubname pair), which moves
+// migration-planted demo customers off their scrub placeholders, and the seed-repair pass (the
+// demoseed_repair pair), which re-homes the one account whose home branch a later ruling moved.
+// Each statement in them names the row by fixed id AND the exact value being repaired, so nothing
+// outside the fixed list moves, a second run matches no row, and a hand-edited row is left alone.
+// Running it twice produces the same world: the second run's inserts all conflict, create nothing,
+// and report `created=0`.
 //
 // -plan IS THE DEFAULT. A command that can write to staging should not do so because somebody
 // pressed enter with no arguments. -apply is required, and it is the only flag that writes.
@@ -142,6 +145,9 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 	// says how many migration-planted customers -apply renames, the default build's
 	// says nothing because it carries no rename at all.
 	scrubNamesPlan(out)
+	// The seed-repair pass is the demo build's too (the repair pair): the plan says
+	// which guarded repair -apply would make on a database an earlier plan seeded.
+	repairDemoWorldPlan(out, branches)
 	fmt.Fprintf(out, "  plan           %d rows across %d tables, dated %s … %s\n\n",
 		summary.Rows, len(summary.ByTable), summary.FirstDate, summary.LastDate)
 	writeSummary(out, summary)
@@ -176,6 +182,14 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 		_ = tx.Rollback(ctx)
 		return fmt.Errorf("demoseed: nothing was written: %w", err)
 	}
+	// The seed-repair pass (the repair pair), inside the same transaction for the same reason:
+	// the world lands all-or-nothing. One guarded UPDATE, demo build only, its guarantees argued
+	// in demoseed_repair_demo.go beside the scrub-name pass it follows.
+	repaired, err := repairDemoWorld(ctx, tx, now, branches)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		return fmt.Errorf("demoseed: nothing was written: %w", err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("demoseed: commit: %w", err)
 	}
@@ -185,7 +199,10 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 	if renamed > 0 {
 		fmt.Fprintf(out, "renamed:  %d migration-planted demo customer(s) off their scrub placeholder names\n", renamed)
 	}
-	if res.Created == 0 && renamed == 0 {
+	if repaired > 0 {
+		fmt.Fprintf(out, "repaired: %d row(s) the old plan homed at the wrong branch\n", repaired)
+	}
+	if res.Created == 0 && renamed == 0 && repaired == 0 {
 		fmt.Fprintln(out, "the demo world was already complete, this run changed nothing.")
 	}
 	for _, t := range sortedKeys(res.ByTable) {

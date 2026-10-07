@@ -120,8 +120,20 @@ type custSpec struct {
 // RETAIL walk-ups (list price, no rule), four CONTRACTOR accounts (account price via a customer
 // rule), two BUILDER accounts, one GOVERNMENT account, and one contractor deliberately ON HOLD so
 // the credit gate has something to refuse.
+//
+// RULING, C01 IS HOMED AT THE BRANCH THE DEMO LOGINS WORK. The staff customer search is
+// branch-fenced (customer/search_scope.go, U-park E4): it admits accounts homed to the searched
+// branch and accounts with no home, and that fence is the product's own security posture, not a
+// gap for a demo to route around. Every demo login carries exactly one branch grant, at Trenton,
+// and the quote world's documents sit at Trenton, so a customer homed to the other branch is
+// invisible to every search a tester can run while holding quotes the same tester is looking at:
+// Northline's quote was on the Quote Desk and "Northline" answered nothing at the till's picker,
+// the same account visible one screen over and unfindable on this one. C01's home is therefore
+// Trenton, beside its quotes. Its older order book stays where it always was, on the other
+// branch's dashboards, which read orders.branch_id and never the customer's home; the repair for
+// databases seeded before this ruling sits in the demoseed_repair pair.
 var demoCustomers = []custSpec{
-	{"C01", "Northline Hardscapes Ltd (demo)", "CONTRACTOR", 30, 5_000_000, 0, false},
+	{"C01", "Northline Hardscapes Ltd (demo)", "CONTRACTOR", 30, 5_000_000, 1, false},
 	{"C02", "Bay Ridge Landscaping (demo)", "CONTRACTOR", 30, 2_500_000, 1, false},
 	{"C03", "Quinte Paving & Design (demo)", "CONTRACTOR", 45, 7_500_000, 1, false},
 	{"C04", "Harbourview Builders (demo)", "BUILDER", 60, 12_000_000, 0, false},
