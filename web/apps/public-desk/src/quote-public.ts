@@ -218,6 +218,7 @@ export class QuotePublicPage extends HHElement {
       /* The dealer's notice that the quantities are the customer's to confirm: a quiet callout under
          the lines, in the page's own tokens, so it reads the same on screen and on paper. */
       .qtynotice {
+        overflow-wrap: anywhere;
         margin: var(--hh-s-12) 0 0;
         padding: var(--hh-s-8) var(--hh-s-12);
         border: 1px solid var(--hh-line);

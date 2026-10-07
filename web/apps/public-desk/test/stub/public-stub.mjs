@@ -315,6 +315,10 @@ const DEFAULT_QUANTITY_NOTICE =
 QUOTES["q-notice-29"] = structuredClone(QUOTES["q-terms-28"]);
 QUOTES["q-notice-29"].quote_no = "Q-29";
 QUOTES["q-notice-29"].quantity_notice = "Check every quantity against your plan before you accept.";
+// A notice with no break in it, the longest the dealer may save: the page must wrap it, not widen.
+QUOTES["q-long-32"] = structuredClone(QUOTES["q-terms-28"]);
+QUOTES["q-long-32"].quote_no = "Q-32";
+QUOTES["q-long-32"].quantity_notice = "x".repeat(500);
 for (const quote of Object.values(QUOTES)) {
   if (quote.quantity_notice === undefined) quote.quantity_notice = DEFAULT_QUANTITY_NOTICE;
 }

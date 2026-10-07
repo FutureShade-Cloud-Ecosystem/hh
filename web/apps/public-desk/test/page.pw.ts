@@ -1496,3 +1496,12 @@ test("a line without a photo shows its category's drawn tile; a photo still wins
   await expect(rows.nth(2).locator("svg.thumbmark")).toBeVisible();
   await expect(rows.nth(2).locator("img.tile")).toHaveCount(0);
 });
+
+test("a long unbroken notice wraps inside the page: no sideways scroll on a phone", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/?t=q-long-32");
+  await expect(page.getByRole("heading", { name: "Quote #Q-32" })).toBeVisible();
+  await expect(page.locator(".qtynotice")).toBeVisible();
+  const widths = await page.evaluate(() => ({ doc: document.documentElement.scrollWidth, view: window.innerWidth }));
+  expect(widths.doc).toBeLessThanOrEqual(widths.view);
+});
