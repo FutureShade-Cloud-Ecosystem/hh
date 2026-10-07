@@ -201,7 +201,7 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 		fmt.Fprintf(out, "renamed:  %d migration-planted demo customer(s) off their scrub placeholder names\n", renamed)
 	}
 	if repaired > 0 {
-		fmt.Fprintf(out, "repaired: %d row(s) the old plan homed at the wrong branch\n", repaired)
+		fmt.Fprintf(out, "repaired: %d row(s) an older seed left wrong (a home branch, an empty product application)\n", repaired)
 	}
 	if res.Created == 0 && renamed == 0 && repaired == 0 {
 		fmt.Fprintln(out, "the demo world was already complete, this run changed nothing.")

@@ -111,3 +111,29 @@ func TestDefaultBuildCarriesNoHomeBranchRepair(t *testing.T) {
 		}
 	}
 }
+
+// productApplicationRepairSignatures are the product-application repair's load-bearing literals:
+// the one guarded UPDATE and the plan's own words about it. The statement text is carried by
+// nothing a default build compiles.
+var productApplicationRepairSignatures = []string{
+	`UPDATE products SET application = $1, updated_at = $2 WHERE id = $3::uuid AND (application IS NULL OR application = '')`,
+	"get their family with -apply",
+}
+
+// TestDefaultBuildCarriesNoProductApplicationRepair holds the same gate for the product repair:
+// the default binary carries none of it, and the demo binary carries both markers or this test has
+// stopped probing.
+func TestDefaultBuildCarriesNoProductApplicationRepair(t *testing.T) {
+	def := buildCoreBinary(t, "core-default-prodrepair", "")
+	for _, sig := range productApplicationRepairSignatures {
+		if bytes.Contains(def, []byte(sig)) {
+			t.Errorf("the default build carries the product repair's %q; the repair must compile only into the demo build", sig)
+		}
+	}
+	demo := buildCoreBinary(t, "core-demo-prodrepair", "-tags=demo")
+	for _, sig := range productApplicationRepairSignatures {
+		if !bytes.Contains(demo, []byte(sig)) {
+			t.Errorf("the demo build has lost the product repair's %q, so the default leg above passes vacuously", sig)
+		}
+	}
+}
