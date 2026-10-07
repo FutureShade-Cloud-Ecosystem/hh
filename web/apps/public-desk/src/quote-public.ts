@@ -151,35 +151,6 @@ export class QuotePublicPage extends HHElement {
          (redundant with the item's own words for a customer) folds away, so
          the thumbnail column plus four columns fit a 390px card. CSS mirrors
          the px of --hh-bp-sm, the sheet's own convention. */
-      @media (max-width: 480px) {
-        th.uom,
-        td.uom {
-          display: none;
-        }
-        /* The figures stay whole on a phone: a tighter table, so the Amount column is never cut or scrolled to. */
-        table {
-          font-size: 0.8rem;
-        }
-        th,
-        td {
-          padding-left: var(--hh-s-2);
-          padding-right: var(--hh-s-2);
-        }
-        th.item,
-        td.item {
-          min-width: 3.5rem;
-          overflow-wrap: anywhere;
-        }
-      }
-      @media (max-width: 360px) {
-        table {
-          font-size: 0.72rem;
-        }
-        th.item,
-        td.item {
-          min-width: 2.5rem;
-        }
-      }
       th {
         text-align: left;
         color: var(--hh-text-dim);
@@ -194,6 +165,30 @@ export class QuotePublicPage extends HHElement {
       td.num,
       th.num {
         text-align: right;
+      }
+      @media (max-width: 480px) {
+        th.uom,
+        td.uom {
+          display: none;
+        }
+        /* The figures stay whole on a phone: tighter cell padding, and the Amount column holds the right edge while the
+           rest of the row scrolls inside its own box. The words stay the page's body size, never smaller. */
+        th,
+        td {
+          padding-left: var(--hh-s-2);
+          padding-right: var(--hh-s-2);
+        }
+        th.item,
+        td.item {
+          min-width: 3.5rem;
+          overflow-wrap: anywhere;
+        }
+        th.amount,
+        td.amount {
+          position: sticky;
+          right: 0;
+          background: var(--hh-card);
+        }
       }
       /* The row stripe, ported: the design system's row pair on the body's
          rows, header and totals excluded by the child combinator, zero
@@ -1008,7 +1003,7 @@ export class QuotePublicPage extends HHElement {
                 <th class="num">Qty</th>
                 <th class="uom">UoM</th>
                 <th class="num">Unit</th>
-                <th class="num">Amount</th>
+                <th class="num amount">Amount</th>
               </tr>
             </thead>
             <tbody>
@@ -1031,7 +1026,7 @@ export class QuotePublicPage extends HHElement {
                   <td class="num">${l.qtyEntered}</td>
                   <td class="uom">${l.uomEntered}</td>
                   <td class="num">${formatMoney(l.unitPriceCents)}</td>
-                  <td class="num">${formatMoney(l.lineTotalCents)}</td>
+                  <td class="num amount">${formatMoney(l.lineTotalCents)}</td>
                 </tr>`,
               )}
             </tbody>

@@ -155,11 +155,24 @@ for (const width of WIDTHS) {
       await page.getByTestId("qb-preview").click();
       await expect(page.getByTestId("qb-preview-pane")).toBeVisible();
       await fits(page, "the preview open");
-      // The Amount column is whole: the table fits the box that holds it, so nothing is cut or has to be scrolled to.
+      // The Amount column is in view whole (the table's own box may scroll for the rest), and the words are the
+      // page's body size or more, never smaller.
       const clipped = await page.locator("pd-quote-public").evaluate((host) => {
-        const wrap = host.shadowRoot?.querySelector(".tablewrap") as HTMLElement | null;
-        if (wrap === null || wrap === undefined) return ["no table box"];
-        return wrap.scrollWidth > wrap.clientWidth + 1 ? [`table ${wrap.scrollWidth}px in a box of ${wrap.clientWidth}px`] : [];
+        const root = host.shadowRoot as ShadowRoot;
+        const wrap = root.querySelector(".tablewrap") as HTMLElement | null;
+        const amount = root.querySelector("th:last-child") as HTMLElement | null;
+        const cell = root.querySelector("tbody td:last-child") as HTMLElement | null;
+        if (wrap === null || amount === null || cell === null) return ["no table"];
+        const out: string[] = [];
+        const box = wrap.getBoundingClientRect();
+        for (const el of [amount, cell]) {
+          const r = el.getBoundingClientRect();
+          if (r.right > box.right + 1 || r.left < box.left - 1) out.push("the Amount column is out of view");
+        }
+        const body = parseFloat(getComputedStyle(root.host).fontSize) * 0.88;
+        const size = parseFloat(getComputedStyle(cell).fontSize);
+        if (size + 0.5 < Math.min(body, 14)) out.push(`the table text is ${size}px`);
+        return out;
       });
       expect(clipped).toEqual([]);
     });
