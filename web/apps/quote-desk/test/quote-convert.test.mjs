@@ -59,14 +59,20 @@ test("the standing states the server's facts and does no arithmetic of its own",
   // An account at its limit is stated, never judged: the server decides at confirm.
   const full = standingOf({ name: "A", paymentTermsDays: 30, creditLimitCents: 100000, openBalanceCents: 95000 }, null);
   assert.doesNotMatch(full.gateText, /within|over by/);
-  const held = standingOf({ name: "A", paymentTermsDays: 30, creditLimitCents: 100000, openBalanceCents: 0 }, { onHold: true, pastDueCents: 12000, oldestBucket: "60" });
+  const held = standingOf({ name: "A", paymentTermsDays: 30, creditLimitCents: 100000, openBalanceCents: 0 }, { standing: "on_hold", onHold: true, pastDueCents: 12000, oldestBucket: "60" });
   assert.equal(held.gate, "hold");
   assert.match(held.gateText, /credit hold/);
   assert.match(held.gateText, /CA\$120\.00/);
-  // No hold on file is not a promise that there is none: the read cannot tell the two apart.
-  const quiet = standingOf({ name: "A", paymentTermsDays: 30, creditLimitCents: 100000, openBalanceCents: 0 }, { onHold: false, pastDueCents: null, oldestBucket: null });
-  assert.equal(quiet.gate, "server");
-  assert.doesNotMatch(quiet.gateText, /no hold|clear/i);
+  // The standing read's own word: clear is said, past due is said with its amount, an unread standing is not clear.
+  const quiet = standingOf({ name: "A", paymentTermsDays: 30, creditLimitCents: 100000, openBalanceCents: 0 }, { standing: "clear", onHold: false, pastDueCents: null, oldestBucket: null });
+  assert.equal(quiet.gate, "clear");
+  assert.match(quiet.gateText, /good standing/);
+  const late = standingOf({ name: "A", paymentTermsDays: 30, creditLimitCents: 100000, openBalanceCents: 0 }, { standing: "past_due", onHold: false, pastDueCents: 45000, oldestBucket: "30" });
+  assert.equal(late.gate, "pastdue");
+  assert.match(late.gateText, /CA\$450\.00/);
+  const unread = standingOf({ name: "A", paymentTermsDays: 30, creditLimitCents: 100000, openBalanceCents: 0 }, null);
+  assert.equal(unread.gate, "server");
+  assert.doesNotMatch(unread.gateText, /good standing|clear/i);
 });
 
 test("a Cash On Demand refusal is said in the server's words with no credit advice", () => {

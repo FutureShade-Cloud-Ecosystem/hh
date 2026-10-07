@@ -273,6 +273,17 @@ const CUSTOMERS = [
     open_balance_cents: 0,
     percent_off: 0,
   },
+  // An account with money past due that is not on hold: the standing read says past_due.
+  {
+    id: "c-pastdue",
+    account_no: "C07",
+    name: "Pastdue Paving Ltd",
+    customer_type: "CONTRACTOR",
+    payment_terms_days: 30,
+    credit_limit_cents: 400000,
+    open_balance_cents: 150000,
+    percent_off: 0,
+  },
   // An account inside its limit that sits on an active credit hold: the server's gate
   // refuses its order whatever the limit says (core/internal/till/holds.go).
   {
@@ -290,7 +301,10 @@ const CUSTOMERS = [
 // The account standing the counter reads for a customer: the past due and the hold flag.
 // Every other customer answers the empty object, exactly as the contract's read does for
 // a walk-in, a current account and a caller it will not tell.
-const HELD_STANDINGS = new Map([["c-held", { past_due_cents: 12000, oldest_bucket: "60", on_hold: true }]]);
+const HELD_STANDINGS = new Map([
+  ["c-held", { standing: "on_hold", past_due_cents: 12000, oldest_bucket: "60", on_hold: true }],
+  ["c-pastdue", { standing: "past_due", past_due_cents: 45000, oldest_bucket: "30" }],
+]);
 
 const customerById = new Map([
   ...CUSTOMERS.map((c) => [c.id, c]),
@@ -324,7 +338,7 @@ const HST_RATE_BPS = 1300;
 // the suite flips, and the submissions seen, for the sender's assertions.
 const feedbackFiled = [];
 const feedbackMode = { value: "ok" };
-const switches = { convertWall: false, callerOnCostList: true, callerIsGeneralManager: false, floorRaiseBps: 0, approvalsShape: "page", quotePageSize: 0, paymentRoleRefused: false, paymentGhost: false, paymentKeyCrossed: false };
+const switches = { convertWall: false, callerOnCostList: true, callerIsGeneralManager: false, floorRaiseBps: 0, approvalsShape: "page", quotePageSize: 0, paymentRoleRefused: false, paymentGhost: false, paymentKeyCrossed: false, paymentGrantRefused: false };
 
 // Every write the stub sees, for the suite's layout save assertions. The
 // ledger is test scaffolding: no contract path reads it.
@@ -1235,6 +1249,13 @@ const server = createServer(async (request, response) => {
     });
     return;
   }
+  if (path === "/_stub/payment-grant" && request.method === "PUT") {
+    readBody(request, response, (body) => {
+      switches.paymentGrantRefused = body.refused === true;
+      respondJson(response, 200, { refused: switches.paymentGrantRefused });
+    });
+    return;
+  }
   if (path === "/_stub/payment-ghost" && request.method === "PUT") {
     readBody(request, response, (body) => {
       switches.paymentGhost = body.ghost === true;
@@ -1343,6 +1364,7 @@ const server = createServer(async (request, response) => {
     switches.paymentRoleRefused = false;
     switches.paymentGhost = false;
     switches.paymentKeyCrossed = false;
+    switches.paymentGrantRefused = false;
     respondJson(response, 200, { reset: true });
     return;
   }
@@ -2087,7 +2109,7 @@ const server = createServer(async (request, response) => {
     }
     readBody(request, response, (body) => {
       // Every post as it arrived, replays and refusals included, and the one-shot refusal the suite arms.
-      posts.push({ kind: "order-payment", quote_id: quote.id, key: String(body.idempotency_key ?? ""), header: request.headers["idempotency-key"] ?? null });
+      posts.push({ kind: "order-payment", quote_id: quote.id, key: String(body.idempotency_key ?? ""), header: request.headers["idempotency-key"] ?? null, fulfillment: body.fulfillment ?? null });
       if (doorRefusal.count > 0) {
         doorRefusal.count -= 1;
         respondJson(response, doorRefusal.status, { error: doorRefusal.error });
@@ -2141,8 +2163,8 @@ const server = createServer(async (request, response) => {
           return;
         }
         quote.status = "CONVERTED";
-        quote.fulfilment = "PICKUP";
-        conversions.push({ quote_id: quote.id, fulfillment: null });
+        quote.fulfilment = body.fulfillment === "WILL_CALL" ? "WILL_CALL" : "PICKUP";
+        conversions.push({ quote_id: quote.id, fulfillment: body.fulfillment ?? null });
         order = newOrder(quote, "COUNTER");
         converted = true;
       } else {
@@ -2564,7 +2586,39 @@ const server = createServer(async (request, response) => {
   }
 
   if (request.method === "GET" && path === "/api/v1/pos/account-standing") {
-    respondJson(response, 200, HELD_STANDINGS.get(url.searchParams.get("customer_id") ?? "") ?? {});
+    const asked = url.searchParams.get("customer_id") ?? "";
+    // The contract's PosAccountStanding: the standing is always said (walk_in for no account on file).
+    respondJson(response, 200, HELD_STANDINGS.get(asked) ?? { standing: customerById.has(asked) && (customerById.get(asked)?.credit_limit_cents ?? 0) > 0 ? "clear" : "walk_in" });
+    return;
+  }
+
+  // PR 239's payment grant: whether this caller's role may take a payment at all.
+  if (request.method === "GET" && path === "/api/v1/pos/payment-grant") {
+    respondJson(response, 200, { can_take_payment: !switches.paymentGrantRefused });
+    return;
+  }
+
+  // PR 239's customer by id read: the limit and the balance the standing step names.
+  match = /^\/api\/v1\/customers\/([^/]+)$/.exec(path);
+  if (match !== null && request.method === "GET" && match[1] !== "search") {
+    const customer = customerById.get(decodeURIComponent(match[1]));
+    if (customer === undefined) {
+      respondJson(response, 404, { error: "no customer with that id" });
+      return;
+    }
+    respondJson(response, 200, {
+      customer_id: customer.id,
+      account_no: customer.account_no,
+      name: customer.name,
+      customer_type: customer.customer_type,
+      branch_id: TRENTON_ID,
+      payment_terms_days: customer.payment_terms_days,
+      credit_limit_cents: customer.credit_limit_cents,
+      on_hold: HELD_STANDINGS.get(customer.id)?.on_hold === true,
+      tax_exempt: false,
+      balance_cents: customer.open_balance_cents,
+      is_active: true,
+    });
     return;
   }
 

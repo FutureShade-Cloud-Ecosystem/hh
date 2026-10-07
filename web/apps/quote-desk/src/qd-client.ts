@@ -531,6 +531,8 @@ export interface StandingRead {
 
 /** The counter's account standing read: the past due position and the hold flag, as the server answers them. */
 export interface AccountStandingRead {
+  /** The server's own word for the account: no account on file, current, past due, or on hold (PR 239). */
+  standing: "walk_in" | "clear" | "past_due" | "on_hold";
   onHold: boolean;
   pastDueCents: number | null;
   oldestBucket: string | null;
@@ -845,13 +847,19 @@ export class QdClient {
    */
   async takeOrderPayment(
     quoteId: string,
-    input: { method: "CASH" | "CARD" | "CHEQUE" | "EFT"; amountCents: number; reference: string; idempotencyKey: string },
+    input: { method: "CASH" | "CARD" | "CHEQUE" | "EFT"; amountCents: number; reference: string; idempotencyKey: string; fulfillment?: "PICKUP" | "WILL_CALL" },
   ): Promise<Result<OrderPaymentAnswer>> {
     const result = await this.#client.request<unknown>({
       method: "POST",
       path: "/api/v1/quotes/{id}/order-payment",
       pathParams: { id: quoteId },
-      body: { method: input.method, amount_cents: input.amountCents, reference: input.reference, idempotency_key: input.idempotencyKey },
+      body: {
+        method: input.method,
+        amount_cents: input.amountCents,
+        reference: input.reference,
+        idempotency_key: input.idempotencyKey,
+        ...(input.fulfillment === undefined ? {} : { fulfillment: input.fulfillment }),
+      },
       idempotencyKey: input.idempotencyKey,
       operationId: "quoteTakeOrderPayment",
     });
@@ -861,41 +869,50 @@ export class QdClient {
   }
 
   /**
-   * The customer's credit posture for the standing step, from the customer search the desk already
-   * speaks (the account's terms, limit and open balance). The row is matched by id; an answer with no
-   * such row is null, never a guess.
+   * The customer's credit posture for the standing step, from the customer by id read (PR 239): the
+   * account's terms, its credit limit and its open balance as the server holds them.
    */
   async customerStanding(customerId: string, customerName: string): Promise<Result<StandingRead | null>> {
-    const result = await staffCustomer.customerSearch(this.#client, { q: customerName, limit: 20 });
+    const result = await staffCustomer.customerGetAccount(this.#client, customerId);
     if (!result.ok) return result;
-    const rows = result.value as unknown;
-    if (!Array.isArray(rows)) return err("the customer search answer is not readable");
-    for (const row of rows) {
-      if (!isRecord(row) || stringAt(row, "id") !== customerId) continue;
-      const terms = integerAt(row, "payment_terms_days");
-      const limit = integerAt(row, "credit_limit_cents");
-      const open = integerAt(row, "open_balance_cents");
-      if (terms === null || limit === null || open === null) return err("the customer's credit facts are not readable");
-      return ok({ name: customerName, paymentTermsDays: terms, creditLimitCents: limit, openBalanceCents: open });
-    }
-    return ok(null);
+    const row = result.value as unknown;
+    if (!isRecord(row)) return err("the customer's account is not readable");
+    const terms = integerAt(row, "payment_terms_days");
+    const limit = integerAt(row, "credit_limit_cents");
+    const open = integerAt(row, "balance_cents");
+    if (terms === null || limit === null || open === null) return err("the customer's credit facts are not readable");
+    return ok({ name: stringAt(row, "name") ?? customerName, paymentTermsDays: terms, creditLimitCents: limit, openBalanceCents: open });
   }
 
   /**
-   * The counter's account standing for one customer: the past due amount, the oldest bucket and the
-   * hold flag. The contract answers the empty object for a walk-in, a current account, a caller it
-   * will not tell and an unreadable read alike, so an absent hold is never a promise of none.
+   * The counter's account standing for one customer (PR 239): the server's own `standing` (clear, past due,
+   * on hold, or walk in), the past due amount and the oldest bucket. An answer with no readable standing is
+   * a refusal in words, never a guess that the account is clear.
    */
   async accountStanding(branchId: string, customerId: string): Promise<Result<AccountStandingRead>> {
     const result = await staffPos.posAccountStanding(this.#client, { branch_id: branchId, customer_id: customerId });
     if (!result.ok) return result;
     const record = result.value as unknown;
     if (!isRecord(record)) return err("the account standing answer is not readable");
+    const standing = record["standing"];
+    if (standing !== "walk_in" && standing !== "clear" && standing !== "past_due" && standing !== "on_hold") {
+      return err("the account standing answer carried no standing");
+    }
     return ok({
-      onHold: record["on_hold"] === true,
+      standing,
+      onHold: standing === "on_hold" || record["on_hold"] === true,
       pastDueCents: integerAt(record, "past_due_cents"),
       oldestBucket: stringAt(record, "oldest_bucket"),
     });
+  }
+
+  /** Whether this caller's role may take a payment at all (PR 239), asked before the surface offers one. */
+  async paymentGrant(): Promise<Result<boolean>> {
+    const result = await staffPos.posPaymentGrant(this.#client);
+    if (!result.ok) return result;
+    const record = result.value as unknown;
+    if (!isRecord(record) || typeof record["can_take_payment"] !== "boolean") return err("the payment grant answer is not readable");
+    return ok(record["can_take_payment"]);
   }
 
   /**

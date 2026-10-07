@@ -244,6 +244,8 @@ export class QuoteConvert extends HHElement {
   #stockKnown = false;
   #branchLabel = "";
   #standing: StandingRead | null = null;
+  /** Whether the caller's role may take a payment (PR 239); null where the read said nothing, and the server then decides. */
+  #grant: boolean | null = null;
   #hold: AccountStandingRead | null = null;
   /** The plain conversion was refused under the COD policy: the server itself said this customer has no credit account. */
   #codLearned = false;
@@ -352,10 +354,11 @@ export class QuoteConvert extends HHElement {
     }
     this.#phase = "ready";
     this.requestUpdate();
-    const [stock, standing, hold] = await Promise.all([
+    const [stock, standing, hold, grant] = await Promise.all([
       client.availability(quoteId),
       client.customerStanding(view.customer_id, view.customer_name),
       client.accountStanding(view.branch_id, view.customer_id),
+      client.paymentGrant(),
     ]);
     if (seq !== this.#seq) return;
     if (stock.ok) {
@@ -367,8 +370,7 @@ export class QuoteConvert extends HHElement {
     }
     this.#standing = standing.ok ? standing.value : null;
     this.#hold = hold.ok ? hold.value : null;
-    // The door takes no fulfilment, so a Cash On Demand order is made as Pickup.
-    if (this.#isCod()) this.#fulfilment = "PICKUP";
+    this.#grant = grant.ok ? grant.value : null;
     this.requestUpdate();
   }
 
@@ -379,6 +381,7 @@ export class QuoteConvert extends HHElement {
     this.#branchLabel = "";
     this.#standing = null;
     this.#hold = null;
+    this.#grant = null;
     this.#codLearned = false;
     this.#step = "review";
     this.#fulfilment = "PICKUP";
@@ -409,7 +412,7 @@ export class QuoteConvert extends HHElement {
       this.requestUpdate();
     } else if (action === "fulfil") {
       const value = control.getAttribute("data-fulfil");
-      if (value === "PICKUP" || (value === "WILL_CALL" && !this.#isCod())) {
+      if (value === "PICKUP" || value === "WILL_CALL") {
         this.#fulfilment = value;
         this.requestUpdate();
       }
@@ -469,6 +472,10 @@ export class QuoteConvert extends HHElement {
    */
   #plan(): boolean {
     this.#payError = "";
+    if (this.#grant === false) {
+      this.#planned = null;
+      return !this.#isCod();
+    }
     let amountCents: number;
     if (this.#isCod()) {
       amountCents = this.#view?.total_cents ?? 0;
@@ -524,7 +531,6 @@ export class QuoteConvert extends HHElement {
         // The real gate refused the plain conversion under the COD policy: this customer has no
         // credit account, so the order is made by the payment door with the whole payment.
         this.#codLearned = true;
-        this.#fulfilment = "PICKUP";
         this.#payError = "";
         this.#step = "payment";
         this.requestUpdate();
@@ -561,6 +567,7 @@ export class QuoteConvert extends HHElement {
       amountCents: planned.amountCents,
       reference: planned.reference,
       idempotencyKey: planned.key,
+      fulfillment: this.#fulfilment,
     });
     if (paid.ok) {
       this.dispatchEvent(new CustomEvent("quote-converted", { detail: { orderId: paid.value.orderId, quoteId }, bubbles: true, composed: true }));
@@ -766,7 +773,6 @@ export class QuoteConvert extends HHElement {
               data-fulfil=${f.value}
               data-testid=${f.value === "PICKUP" ? "qc-fulfil-pickup" : "qc-fulfil-will-call"}
               aria-pressed=${this.#fulfilment === f.value ? "true" : "false"}
-              ?disabled=${cod && f.value === "WILL_CALL"}
             >
               <span class="name">${f.label}</span>
               <span class="hint">${f.hint}</span>
@@ -774,7 +780,7 @@ export class QuoteConvert extends HHElement {
           )}
         </div>
         ${cod
-          ? html`<p class="sub" data-testid="qc-fulfil-cod-note">A Cash On Demand order is created and paid in one action, and that action takes no fulfilment choice, so it is created as Pickup.</p>`
+          ? html`<p class="sub" data-testid="qc-fulfil-cod-note">A Cash On Demand order is created and paid in one action, and this choice goes with it.</p>`
           : nothing}
         <p class="sub" data-testid="qc-delivery-note">${DELIVERY_NOTE}</p>
         ${this.#nav({ back: true, next: "Continue to customer standing" })}
@@ -784,9 +790,19 @@ export class QuoteConvert extends HHElement {
 
   #renderStanding(view: QuoteView): TemplateResult {
     const standing = this.#standingNow();
-    const tone: ChipTone = standing.gate === "hold" ? "stop" : standing.gate === "server" ? "neutral" : "watch";
+    const tone: ChipTone = standing.gate === "hold" ? "stop" : standing.gate === "clear" || standing.gate === "server" ? "neutral" : "watch";
     const gateWord =
-      standing.gate === "hold" ? "Credit hold reported" : standing.gate === "cod" ? "Cash On Demand" : standing.gate === "server" ? "The server decides at confirm" : "Credit not reported";
+      standing.gate === "hold"
+        ? "Credit hold reported"
+        : standing.gate === "pastdue"
+          ? "Past due"
+          : standing.gate === "clear"
+            ? "Good standing"
+            : standing.gate === "cod"
+              ? "Cash On Demand"
+              : standing.gate === "server"
+                ? "The server decides at confirm"
+                : "Credit not reported";
     return html`
       <section class="card" data-testid="qc-standing" aria-label="Customer standing">
         <h3>${view.customer_name}: standing before confirming</h3>
@@ -801,6 +817,24 @@ export class QuoteConvert extends HHElement {
   #renderPayment(): TemplateResult {
     const cod = this.#isCod();
     const due = this.#view?.total_cents ?? 0;
+    if (this.#grant === false) {
+      // The server's own grant says this role takes no payment: no field is offered, and a customer with no credit
+      // account, whose order is made only by taking the whole payment, cannot be converted from here.
+      return html`
+        <section class="card" data-testid="qc-payment" aria-label="Payment">
+          <h3>Payment</h3>
+          <p class="notice" data-testid="qc-pay-no-grant">
+            ${cod
+              ? "This customer is on Cash On Demand, so the order is made only by taking the whole payment, and your role may not take a payment. Ask a role that may to convert this quote."
+              : "Your role may not take a payment here. The order is made without one; a payment can be taken at the counter."}
+          </p>
+          <div class="nav">
+            <button type="button" class="btn btn-secondary" data-action="back" data-testid="qc-back">Back</button>
+            ${cod ? nothing : html`<button type="button" class="btn btn-primary" data-action="next" data-testid="qc-next">Continue to confirm</button>`}
+          </div>
+        </section>
+      `;
+    }
     return html`
       <section class="card" data-testid="qc-payment" aria-label="Payment">
         <h3>${cod ? "Take the whole payment" : "Take a deposit or a payment (optional)"}</h3>

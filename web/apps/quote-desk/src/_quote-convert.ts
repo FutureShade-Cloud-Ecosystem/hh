@@ -106,6 +106,7 @@ export interface StandingIn {
 
 /** What the counter's account standing read says; an absent field is the read saying nothing. */
 export interface HoldRead {
+  standing: "walk_in" | "clear" | "past_due" | "on_hold";
   onHold: boolean;
   pastDueCents: number | null;
   oldestBucket: string | null;
@@ -116,7 +117,7 @@ export interface Standing {
   terms: "ACCOUNT" | "COD" | "UNKNOWN";
   termsText: string;
   /** "hold" where the server reports a credit hold; "server" where the server's own check decides at confirm. */
-  gate: "hold" | "server" | "cod" | "unknown";
+  gate: "hold" | "pastdue" | "clear" | "server" | "cod" | "unknown";
   gateText: string;
 }
 
@@ -142,7 +143,7 @@ export function standingOf(read: StandingIn | null, hold: HoldRead | null): Stan
   if (read === null) {
     return {
       terms: "UNKNOWN",
-      termsText: "Terms not reported.",
+      termsText: "The customer's terms could not be read.",
       gate: "unknown",
       gateText: `The customer's account could not be read. ${SERVER_DECIDES}`,
     };
@@ -157,8 +158,16 @@ export function standingOf(read: StandingIn | null, hold: HoldRead | null): Stan
   }
   const facts = `Credit limit ${moneyWord(read.creditLimitCents)}, open balance ${moneyWord(read.openBalanceCents)}, as the server reports them.`;
   const termsText = `Account customer, ${read.paymentTermsDays} days.`;
-  if (hold !== null && hold.onHold) {
-    const pastDue = hold.pastDueCents !== null && hold.pastDueCents > 0 ? ` Past due ${moneyWord(hold.pastDueCents)}${hold.oldestBucket === null ? "" : `, oldest ${hold.oldestBucket} days`}.` : "";
+  if (hold === null) {
+    return {
+      terms: "ACCOUNT",
+      termsText,
+      gate: "server",
+      gateText: `${facts} The account's standing could not be read, so a credit hold is not confirmed here. ${SERVER_DECIDES}`,
+    };
+  }
+  const pastDue = hold.pastDueCents !== null && hold.pastDueCents > 0 ? ` Past due ${moneyWord(hold.pastDueCents)}${hold.oldestBucket === null ? "" : `, oldest ${hold.oldestBucket} days`}.` : "";
+  if (hold.onHold) {
     return {
       terms: "ACCOUNT",
       termsText,
@@ -166,11 +175,27 @@ export function standingOf(read: StandingIn | null, hold: HoldRead | null): Stan
       gateText: `${facts} The server reports a credit hold on this account.${pastDue} The order is refused while the hold stands, so ask accounts receivable to release it first.`,
     };
   }
+  if (hold.standing === "past_due") {
+    return {
+      terms: "ACCOUNT",
+      termsText,
+      gate: "pastdue",
+      gateText: `${facts} The account is past due but not on hold.${pastDue} ${SERVER_DECIDES}`,
+    };
+  }
+  if (hold.standing === "walk_in") {
+    return {
+      terms: "ACCOUNT",
+      termsText,
+      gate: "server",
+      gateText: `${facts} The server reports no standing on file for this customer. ${SERVER_DECIDES}`,
+    };
+  }
   return {
     terms: "ACCOUNT",
     termsText,
-    gate: "server",
-    gateText: `${facts} The standing read shows nothing against this account, but it answers the same way when it cannot say, so credit holds are not confirmed here. ${SERVER_DECIDES}`,
+    gate: "clear",
+    gateText: `${facts} The account is in good standing: nothing past due and no credit hold. The server still checks the credit limit when you confirm, and the server decides.`,
   };
 }
 

@@ -149,9 +149,9 @@ test("D a Cash On Demand customer pays the whole amount through the payment door
   await arriveCod(page);
   const total = centsOf(await page.getByTestId("qc-total").innerText());
   await next(page);
-  // The door takes no fulfilment, so the order is made as Pickup and Will-call is not offered.
-  await expect(page.getByTestId("qc-fulfil-will-call")).toBeDisabled();
-  await expect(page.getByTestId("qc-fulfil-cod-note")).toContainText("Pickup");
+  // The door takes the fulfilment (PR 239), so Will-call is offered for a Cash On Demand customer too.
+  await expect(page.getByTestId("qc-fulfil-will-call")).toBeEnabled();
+  await expect(page.getByTestId("qc-fulfil-cod-note")).toContainText("created and paid in one action");
   await next(page);
   await expect(page.getByTestId("qc-terms")).toContainText("Cash On Demand");
   await expect(page.getByTestId("qc-terms")).toContainText("nothing is released until it is paid");
@@ -209,11 +209,11 @@ test("D a Cash On Demand refusal is said in the server's words, with no credit h
 });
 
 test("D when the customer read is unavailable the refusal names Cash On Demand and leads to the payment, not credit advice", async ({ page }) => {
-  await page.route(/\/api\/v1\/customers\/search/, (route) => route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "down" }) }));
+  await page.route(/\/api\/v1\/customers\/[^/]+$/, (route) => route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "down" }) }));
   await arriveCod(page);
   await next(page);
   await next(page);
-  await expect(page.getByTestId("qc-terms")).toContainText("not reported");
+  await expect(page.getByTestId("qc-terms")).toContainText("could not be read");
   await next(page);
   await next(page);
   await page.getByTestId("qc-confirm").click();
@@ -243,13 +243,21 @@ test("C a credit hold the server reports is shown, and the server's refusal at c
   await expect(page.getByTestId("qc-refusal")).toContainText("Nothing was created");
 });
 
-test("C a customer with no hold on file is not told the account is clear", async ({ page }) => {
+test("C a customer the standing read calls clear is told the account is in good standing", async ({ page }) => {
   await arrive(page, "q-1003");
   await next(page);
   await next(page);
-  await expect(page.getByTestId("qc-credit")).not.toContainText("clear");
-  await expect(page.getByTestId("qc-credit")).not.toContainText("no hold");
-  await expect(page.getByTestId("qc-credit")).toContainText("holds");
+  await expect(page.getByTestId("qc-credit")).toContainText("good standing");
+  await expect(page.getByTestId("qc-credit")).toContainText("the server decides");
+});
+
+test("C a customer whose standing read fails is not told the account is clear", async ({ page }) => {
+  await page.route(/\/api\/v1\/pos\/account-standing/, (route) => route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "down" }) }));
+  await arrive(page, "q-1003");
+  await next(page);
+  await next(page);
+  await expect(page.getByTestId("qc-credit")).not.toContainText("good standing");
+  await expect(page.getByTestId("qc-credit")).toContainText("could not be read");
 });
 
 test("D paying fifty dollars cash posts the payment with its idempotency key", async ({ page }) => {
