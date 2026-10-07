@@ -384,3 +384,37 @@ test("a stale discount refusal re-reads the prices and drops the discount in wor
   await expect(page.getByTestId("pos-line-discount")).toBeVisible();
   await expect(page.getByText(/price changed|price .*changed/i).first()).toBeVisible();
 });
+
+// Round 9 (P3-2): a red banner from an earlier edit (the discount removed because the quantity
+// changed) does not stay on screen through a good sale, nor beside a fresh discount.
+test("an earlier red banner clears on a fresh discount and on a completed sale", async ({ page }) => {
+  await signIn(page, "stepper");
+  await ensureSession(page);
+  await tenHolland(page);
+  await openStep(page, "items");
+  const give = async () => {
+    await page.getByTestId("pos-line-discount").click();
+    await page.getByTestId("discount-value").fill("10");
+    await page.getByTestId("discount-approver").selectOption({ label: "Sales manager · Sales Manager" });
+    await page.getByTestId("discount-apply").click();
+    await expect(page.getByTestId("pos-line-discount-chip")).toContainText("10% off");
+  };
+  await give();
+  // Nudging the quantity removes the discount, in words (a red banner).
+  const qty = page.getByLabel("Quantity: Holland Stone 60 mm", { exact: true });
+  await qty.fill("9");
+  await qty.press("Enter");
+  const banner = page.locator("#till-message");
+  await expect(banner).toContainText("discount was removed");
+  // A fresh discount retires that banner.
+  await give();
+  await expect(banner).toHaveCount(0);
+  // Remove it again, then ring: the Paid card carries no leftover error.
+  await qty.fill("8");
+  await qty.press("Enter");
+  await expect(banner).toContainText("discount was removed");
+  await openPaymentStep(page, "stepper");
+  await page.getByTestId("pos-complete-sale").click();
+  await expect(page.getByTestId("sold-panel")).toBeVisible();
+  await expect(banner).toHaveCount(0);
+});

@@ -3944,6 +3944,7 @@ export class HosPosTerminal extends LitElement {
       if (res.ok) {
         this.ringKeyMemo = null; // committed: the next sale mints fresh
         this.ring = { state: 'done', sale: res.sale };
+        if (this.utilWhere === 'foot') this.clearUtil(); // an earlier edit's banner is not news on a good sale
         this.showSplit = false;
         this.revealSaleOutcome();
         void this.refreshCustomerAfterRing();
@@ -4071,6 +4072,7 @@ export class HosPosTerminal extends LitElement {
       if (res.ok) {
         this.ringKeyMemo = null; // committed: the next sale mints fresh
         this.ring = { state: 'done', sale: res.sale };
+        if (this.utilWhere === 'foot') this.clearUtil(); // an earlier edit's banner is not news on a good sale
         this.revealSaleOutcome();
         void this.refreshCustomerAfterRing();
         return;
@@ -7173,6 +7175,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
     }
     this.ticketChanged();
     this.discountTarget = null;
+    if (this.utilWhere === 'foot') this.clearUtil(); // the yes just given retires the note about the last one
   }
 
   private onDiscountRemove(): void {
