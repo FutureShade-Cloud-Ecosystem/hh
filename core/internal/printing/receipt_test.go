@@ -21,6 +21,7 @@ import (
 type fakeReceiptStore struct {
 	sale  receiptSale
 	found bool
+	lines []ReceiptLine // when set, served instead of the one default line
 }
 
 func (f *fakeReceiptStore) ReadReceiptSale(_ context.Context, id string, global bool, branchIDs []string) (receiptSale, bool, error) {
@@ -44,6 +45,9 @@ func (f *fakeReceiptStore) ReadReceiptSale(_ context.Context, id string, global 
 }
 
 func (f *fakeReceiptStore) ReadReceiptLines(_ context.Context, _ string) ([]ReceiptLine, error) {
+	if f.lines != nil {
+		return append([]ReceiptLine(nil), f.lines...), nil
+	}
 	return []ReceiptLine{{
 		LineNo: 1, SKU: "DBS-UL-BRUSSELS", Description: "Brussels Block",
 		Qty: 10, UOM: "SF", UnitPriceCents: 1234, PriceUOM: "SF", LineTotalCents: 12340,

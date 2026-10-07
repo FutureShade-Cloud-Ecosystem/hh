@@ -139,7 +139,7 @@ func (r *Repository) ReadReceiptLines(ctx context.Context, orderID string) ([]Re
 		       COALESCE(NULLIF(btrim(ol.description),''), NULLIF(btrim(p.name),''), 'Item'),
 		       ol.qty_entered, ol.uom_entered::text,
 		       ol.unit_price_cents, ol.price_uom::text, ol.line_total_cents,
-		       ol.discount_cents, COALESCE(dsr.label, ol.discount_approved_role, '')
+		       ol.discount_cents, COALESCE(dsr.label, ol.discount_approved_role, ''), ol.sale_discount_cents
 		  FROM order_lines ol
 		  LEFT JOIN products p ON p.id = ol.product_id
 		  LEFT JOIN staff_role dsr ON dsr.id = ol.discount_approved_role
@@ -154,7 +154,7 @@ func (r *Repository) ReadReceiptLines(ctx context.Context, orderID string) ([]Re
 		var l ReceiptLine
 		if err := rows.Scan(&l.LineNo, &l.SKU, &l.Description, &l.Qty, &l.UOM,
 			&l.UnitPriceCents, &l.PriceUOM, &l.LineTotalCents,
-			&l.DiscountCents, &l.DiscountApprovedByLabel); err != nil {
+			&l.DiscountCents, &l.DiscountApprovedByLabel, &l.SaleDiscountShareCents); err != nil {
 			return nil, err
 		}
 		out = append(out, l)

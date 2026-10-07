@@ -25,7 +25,7 @@ func TestReceipt_NamesTheRoleThatApprovedEachDiscount(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		for _, want := range []string{"Discount approved by Sales Manager", "$10.00 off", "Discount approved by Branch Manager", "$7.00 off"} {
+		for _, want := range []string{"Discount approved by Sales Manager", "$10.00 off", "Discount approved by Branch Manager", "-$7.00"} {
 			if !strings.Contains(html, want) {
 				t.Errorf("%s receipt lacks %q", name, want)
 			}
@@ -39,5 +39,47 @@ func TestReceipt_NamesTheRoleThatApprovedEachDiscount(t *testing.T) {
 	html, _ := RenderReceiptHTML(rec)
 	if strings.Contains(html, "Discount approved by") {
 		t.Error("a sale with no discount must print no approval row")
+	}
+}
+
+// The paper must add up for the person holding it: each line prints at its price before the ticket
+// discount (a line's own discount shown on that line), then the ticket discount row, then a
+// Subtotal equal to the lines less the ticket discount. Stored line totals are net of the ticket
+// discount's share, so the service adds the share back for the printed line.
+func TestReceipt_LinesAddUpToTheSubtotalBeforeAndAfterTheTicketDiscount(t *testing.T) {
+	qs := &fakeQueueStore{markFind: true, markUpd: true}
+	store := &fakeReceiptStore{found: true,
+		sale: receiptSale{
+			OrderID: saleOrderID, OrderNo: "#SO-9", BranchID: trentonID, InvoiceNo: "#INV-9",
+			Tender: "CASH", SaleType: "COLLECT_NOW", Status: "COMMITTED",
+			// 208 + 394 + 1453 = 2055 stored; the ticket discount of 300 was shared 20 + 40 + 240 = 300.
+			// Lines before the ticket discount: 228 + 434 + 1693 = 2355; subtotal 2055.
+			SubtotalCents: 2055, TaxCents: 267, TotalCents: 2322,
+			SaleDiscountCents: 300, SaleDiscountLabel: "Branch Manager",
+			SoldAt: time.Now(),
+		},
+		lines: []ReceiptLine{
+			{LineNo: 1, Description: "A", Qty: 1, UOM: "PC", UnitPriceCents: 228, LineTotalCents: 208, SaleDiscountShareCents: 20},
+			{LineNo: 2, Description: "B", Qty: 2, UOM: "PC", UnitPriceCents: 241, LineTotalCents: 394, SaleDiscountShareCents: 40,
+				DiscountCents: 48, DiscountApprovedByLabel: "Sales Manager"},
+			{LineNo: 3, Description: "C", Qty: 7, UOM: "PC", UnitPriceCents: 242, LineTotalCents: 1453, SaleDiscountShareCents: 240},
+		}}
+	svc := NewReceiptService(store, NewQueueService(qs))
+	rec, err := svc.Receipt(staffFor(trentonID), saleOrderID)
+	if err != nil {
+		t.Fatalf("receipt: %v", err)
+	}
+	var lines int64
+	for _, l := range rec.Lines {
+		lines += l.LineTotalCents
+	}
+	if lines != 2355 {
+		t.Fatalf("the printed lines must be priced before the ticket discount (2355), got %d", lines)
+	}
+	if lines-rec.SaleDiscountCents != rec.SubtotalCents {
+		t.Fatalf("lines %d less the ticket discount %d must equal the subtotal %d", lines, rec.SaleDiscountCents, rec.SubtotalCents)
+	}
+	if rec.SubtotalCents+rec.TaxCents != rec.TotalCents {
+		t.Fatalf("subtotal and tax must make the total")
 	}
 }

@@ -2709,6 +2709,31 @@ export class HosPosTerminal extends LitElement {
       flex-direction: column;
       gap: 2px;
     }
+    /* Row 1047 item 3: the paid card's discounts, one row each, in the receipt's reading. */
+    .sold-discounts {
+      margin-top: 10px;
+      padding-top: 8px;
+      border-top: 1px solid var(--hos-line);
+      display: grid;
+      gap: 4px;
+    }
+    .sold-discounts .d {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 16px;
+      font-size: 13px;
+      align-items: baseline;
+    }
+    .sold-discounts .what {
+      color: var(--hos-text);
+    }
+    .sold-discounts .who {
+      color: var(--hos-text-dim);
+    }
+    .sold-discounts .amt {
+      font-family: var(--hos-font-mono);
+      color: var(--hos-stone-amber-text);
+    }
     .sold-facts .k {
       font-size: 10px;
       text-transform: uppercase;
@@ -6035,8 +6060,8 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
               ? html`<div class="reliefchip">tax relief: ${this.reliefReason}</div>`
               : nothing}
             <div class="totals">
-              <div class="trow"><span>Subtotal</span><span class="num">${this.moneyOrMarker(this.subtotal())}</span></div>
               ${this.ringDone() ? nothing : this.renderDiscountRows('trow', true)}
+              <div class="trow"><span>Subtotal</span><span class="num">${this.subtotalText()}</span></div>
               ${this.ringDone() ? nothing : this.renderPreviewRows('trow', {
                     tax: 'pos-preview-tax',
                     total: 'pos-preview-total',
@@ -6452,8 +6477,8 @@ ${this.receiptMsg ? html`<div class="banner bad" role="alert">${this.receiptMsg}
       </ul>
       <div class="rbrow"><span>${fulfilmentLabel(this.saleType)}</span><span></span></div>
       ${this.requestedDate ? html`<div class="rbrow"><span>Requested</span><span>${this.requestedDate}</span></div>` : nothing}
-      <div class="rbrow"><span>Subtotal</span><span class="m">${this.moneyOrMarker(this.subtotal())}</span></div>
       ${this.renderDiscountRows('rbrow', false)}
+      <div class="rbrow"><span>Subtotal</span><span class="m">${this.subtotalText()}</span></div>
       ${this.renderPreviewRows('rbrow', {
         tax: 'readback-preview-tax',
         total: 'readback-preview-total',
@@ -7082,19 +7107,32 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
   }
 
   /**
-   * The totals' Discount row (the server's cents, every discount together) and the ticket's own
-   * action. Subtotal here is the list sum; Subtotal less Discount, plus the tax, is the Total.
+   * What a line shows as its total: its price less its OWN discount, the server's cents (the
+   * preview's per line answer), so the column, the receipt and the paid card all read the same
+   * way: the lines, then the ticket discount, then the Subtotal. A discounted line whose
+   * preview has not answered says pending, never the list figure beside a discount chip.
+   */
+  private lineShownTotal(l: CartLine, i: number): string {
+    if (l.priceMissing) return '(not priced)';
+    if (!l.discount) return formatMoney(l.lineTotalCents);
+    const off = this.previewLineOff(i);
+    return off === undefined ? '(pending)' : formatMoney(l.lineTotalCents - off);
+  }
+
+  /**
+   * The ticket's own discount: its action (a chip once one stands) and, above the Subtotal, its
+   * row in the server's cents, in the receipt's order. withAction false (the read back) shows
+   * the row only.
    */
   private renderDiscountRows(rowClass: string, withAction: boolean): TemplateResult | typeof nothing {
     if (this.cart.length === 0) return nothing;
     const p = this.preview;
-    const active = this.discountActive();
-    const row = !active
+    const row = this.ticketDiscount === null
       ? nothing
-      : p.kind === 'ready' && p.discountCents > 0
-        ? html`<div class="${rowClass} discrow" data-testid="pos-discount-row"><span>Discount</span><span class="num m">${formatMoney(-p.discountCents)}</span></div>`
+      : p.kind === 'ready' && p.saleDiscountCents > 0
+        ? html`<div class="${rowClass} discrow" data-testid="pos-ticket-discount-row"><span>Ticket discount</span><span class="num m">${formatMoney(-p.saleDiscountCents)}</span></div>`
         : p.kind === 'pending'
-          ? html`<div class="${rowClass} discrow" data-testid="pos-discount-row" aria-busy="true"><span>Discount</span><span class="num m">pending</span></div>`
+          ? html`<div class="${rowClass} discrow" data-testid="pos-ticket-discount-row" aria-busy="true"><span>Ticket discount</span><span class="num m">pending</span></div>`
           : nothing;
     const action = !withAction
       ? nothing
@@ -7111,7 +7149,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
               : 'Discount the ticket'}
           </button>
         </div>`;
-    return html`${row}${action}`;
+    return html`${action}${row}`;
   }
 
   private renderStockLine(l: CartLine) {
@@ -7214,7 +7252,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
             : html`<div class="lprice" title=${l.priceUom && l.priceUom !== l.uom ? `Priced per ${l.priceUom}` : 'Unit price'}>
                   ${formatMoney(l.unitPriceCents)}${l.priceUom && l.priceUom !== l.uom ? ` / ${l.priceUom}` : ''}
                 </div>
-                <div class="ltot">${formatMoney(l.lineTotalCents)}</div>`}
+                <div class="ltot">${this.lineShownTotal(l, i)}</div>`}
           ${/* rev 8 (item 9): line qty × unit weight, lbs: the explicit blank word when the data cannot say. */ ''}
           <div class="lweight" data-testid="pos-line-weight" title=${w === null ? 'No weight on file for this item' : 'Line weight: quantity × unit weight'}>
             ${w === null ? '(none)' : formatLbs(w)}
@@ -7257,7 +7295,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
               ${this.renderLineDiscount(l, i)}
             </div>
             ${this.renderQtyStepper(l, i)}
-            <div class="ltot">${l.priceMissing ? 'price pending' : formatMoney(l.lineTotalCents)}</div>
+            <div class="ltot">${l.priceMissing ? 'price pending' : this.lineShownTotal(l, i)}</div>
             <button class="rm" @click=${() => this.removeLine(i)} title="Remove line" aria-label="Remove ${l.product.name}">
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M4 7h16M10 7V5h4v2M6.5 7l1 13h9l1-13M10 11v6M14 11v6"></path>
@@ -7342,12 +7380,6 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
         ${(sale.tender === 'CARD' || sale.tenders?.some((leg) => leg.method === 'CARD')) && this.cardRail === 'test'
           ? html`<div class="f" data-testid="sold-simulated-notice"><span class="k">Card</span><span class="v">Simulated card: no card was charged</span></div>`
           : nothing}
-        ${(sale.discounts ?? []).map(
-          (d: SaleDiscount) => html`<div class="f" data-testid="sold-discount">
-            <span class="k">Discount approved by</span>
-            <span class="v">${d.approved_by_label} · ${formatMoney(d.amount_cents)} off${d.scope === 'LINE' ? ` (line ${d.line_no ?? ''})` : ' (ticket)'}</span>
-          </div>`,
-        )}
         ${(sale.deposit_cents ?? 0) > 0
           ? html`<div class="f"><span class="k">Deposit</span><span class="v">${formatMoney(sale.deposit_cents ?? 0)}</span></div>`
           : nothing}
@@ -7370,6 +7402,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
           ? html`<div class="f"><span class="k">Salesperson</span><span class="v">${sale.salesperson_name || this.salespersonNameFor(sale.salesperson_id ?? '')}</span></div>`
           : nothing}
       </div>
+      ${this.renderSoldDiscounts(sale)}
       ${c.note ? html`<div class="sold-note">${c.note}</div>` : nothing}
       <div class="sold-actions">
         ${/* DIB-410's receipt action, moved out of the anonymous utility row into the panel where a
@@ -7396,6 +7429,25 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
         </button>
         <button @click=${this.newSaleClicked}>Next sale</button>
       </div>
+    </div>`;
+  }
+
+  /**
+   * The paid card's discounts, in the receipt's reading: one row each, the item (or the whole
+   * ticket), the words "Discount approved by <role label>", and what came off from the sale's own
+   * cents. Lines come first, then the ticket, the order the server answers in.
+   */
+  private renderSoldDiscounts(sale: SaleResult) {
+    const ds = sale.discounts ?? [];
+    if (ds.length === 0) return nothing;
+    return html`<div class="sold-discounts" data-testid="sold-discounts">
+      ${ds.map(
+        (d: SaleDiscount) => html`<div class="d" data-testid="sold-discount">
+          <span class="what">${d.scope === 'SALE' ? 'Whole ticket' : (this.cart[(d.line_no ?? 0) - 1]?.product.name ?? `Line ${d.line_no ?? ''}`)}</span>
+          <span class="who">Discount approved by ${d.approved_by_label}</span>
+          <span class="amt">${formatMoney(-d.amount_cents)}</span>
+        </div>`,
+      )}
     </div>`;
   }
 

@@ -110,6 +110,12 @@ func (s *ReceiptService) Receipt(ctx context.Context, id string) (Receipt, error
 	if err != nil {
 		return Receipt{}, err
 	}
+	// The paper must add up: stored line totals are net of the ticket discount's share, so each
+	// printed line adds its share back (priced before the ticket discount) and the ticket discount
+	// row below the lines takes it off once, ending at the Subtotal.
+	for i := range lines {
+		lines[i].LineTotalCents += lines[i].SaleDiscountShareCents
+	}
 	tenders, err := s.store.ReadReceiptTenders(ctx, sale.PaymentID, sale.InvoiceID)
 	if err != nil {
 		return Receipt{}, err
@@ -328,6 +334,10 @@ type ReceiptLine struct {
 	// DiscountApprovedByLabel the role label of the manager who approved it, "" when none.
 	DiscountCents           int64
 	DiscountApprovedByLabel string
+	// SaleDiscountShareCents is the line's share of the ticket discount as stored. The receipt
+	// prints each line BEFORE the ticket discount, so the paper adds up (the ticket discount row
+	// follows the lines): the service adds the share back onto LineTotalCents and zeroes nothing.
+	SaleDiscountShareCents int64
 }
 
 // ReceiptTender is one line of "how this was paid". A tendered sale carries its payments rows; an

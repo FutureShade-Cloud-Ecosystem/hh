@@ -138,14 +138,19 @@ for (const layout of ["stepper", "panels"] as const) {
 
     const chip = page.getByTestId("pos-line-discount-chip");
     await expect(chip).toContainText("10% off ($4.00), approved by Sales manager");
+    // The line reads like the receipt: its price less its own discount.
+    await expect(page.getByTestId("pos-line-row").first().locator(".ltot")).toContainText("$36.00");
     await openPaymentStep(page, layout);
     const totals = page.getByTestId("pos-totals-card");
-    await expect(totals.getByTestId("pos-discount-row")).toContainText("-$4.00");
+    await expect(totals).toContainText("Subtotal");
+    await expect(totals.locator(".trow").filter({ hasText: "Subtotal" })).toContainText("$36.00");
+    await expect(totals.getByTestId("pos-ticket-discount-row")).toHaveCount(0);
     await expect(totals.getByTestId("pos-preview-total")).toContainText("$40.68"); // 40.00 - 4.00 + 13% = 40.68
 
     // The whole ticket, in dollars, by the other manager: the server shares it over the lines.
     await giveDiscount(page, () => page.getByTestId("pos-ticket-discount").click(), "amount", "2", "Branch manager · Branch Manager");
-    await expect(totals.getByTestId("pos-discount-row")).toContainText("-$6.00");
+    await expect(totals.getByTestId("pos-ticket-discount-row")).toContainText("-$2.00");
+    await expect(totals.locator(".trow").filter({ hasText: "Subtotal" })).toContainText("$34.00");
     await expect(totals.getByTestId("pos-ticket-discount")).toContainText("Ticket: $2.00 off, approved by Branch manager");
     await expect(totals.getByTestId("pos-preview-total")).toContainText("$38.42"); // 34.00 + 13%
 
@@ -158,9 +163,12 @@ for (const layout of ["stepper", "panels"] as const) {
     expect(body.discount).toEqual({ amount_cents: 200, approved_by: "c0c0a0a0-0000-4000-8000-000000000002" });
     const paid = sold.getByTestId("sold-discount");
     await expect(paid).toHaveCount(2);
-    await expect(paid.nth(0)).toContainText("Discount approved by");
-    await expect(paid.nth(0)).toContainText("Sales Manager");
-    await expect(paid.nth(1)).toContainText("Branch Manager");
+    await expect(paid.nth(0)).toContainText("Holland Stone 60 mm");
+    await expect(paid.nth(0)).toContainText("Discount approved by Sales Manager");
+    await expect(paid.nth(0)).toContainText("-$4.00");
+    await expect(paid.nth(1)).toContainText("Whole ticket");
+    await expect(paid.nth(1)).toContainText("Discount approved by Branch Manager");
+    await expect(paid.nth(1)).toContainText("-$2.00");
     await expect(sold.locator(".sold-amount")).toContainText("$38.42");
   });
 }
@@ -181,7 +189,7 @@ test("an approver is required, a discount the ring refuses says so in its words,
   await page.getByTestId("pos-ticket-discount").click();
   await page.getByTestId("discount-remove").click();
   await expect(totals.getByTestId("pos-preview-total")).toContainText("$45.20");
-  await expect(totals.getByTestId("pos-discount-row")).toHaveCount(0);
+  await expect(totals.getByTestId("pos-ticket-discount-row")).toHaveCount(0);
   await expect(page.getByTestId("pos-ticket-discount")).toContainText("Discount the ticket");
 });
 
