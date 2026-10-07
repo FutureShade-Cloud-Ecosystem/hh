@@ -404,13 +404,13 @@ test("guard copy link error: a link that could not be made for the quote left le
   await expect(page.getByTestId("qb-error")).toHaveText(said);
 });
 
-test("guard preview error: a preview that could not be made for the quote left leaves the sentence on the quote open", async ({ page }) => {
+test("guard print error: a print link that could not be made for the quote left leaves the sentence on the quote open", async ({ page }) => {
   await stubBrowserChannels(page);
   await seed(page, { customer_id: "c-fenwick" });
   await signIn(page);
   await open(page, "Q-1004");
   const mint = await hold(page, /\/api\/v1\/quotes\/q-1004\/share-links$/, { method: "POST" });
-  await page.getByTestId("qb-preview").click();
+  await page.getByTestId("qb-print").click();
   await mint.asked;
   await open(page, "Q-1001");
   await errorOnOpenQuote(page);
@@ -419,6 +419,41 @@ test("guard preview error: a preview that could not be made for the quote left l
   await settle(page);
   await expect(page.getByTestId("qb-error")).toHaveText(said);
   expect(await page.evaluate(() => (window as unknown as { __opened: string[] }).__opened)).toEqual([]);
+});
+
+test("guard print reload: a print whose re-read answers after another quote opened announces nothing", async ({ page }) => {
+  await stubBrowserChannels(page);
+  await seed(page, { customer_id: "c-fenwick" });
+  await signIn(page);
+  await open(page, "Q-1004");
+  const gated = await armedHold(page, /\/api\/v1\/quotes\/q-1004$/, "GET");
+  gated.arm();
+  await page.getByTestId("qb-print").click();
+  await gated.held.asked;
+  gated.disarm();
+  await open(page, "Q-1001");
+  const changed = await watchEvent(page, "quote-changed");
+  await gated.held.release();
+  await settle(page);
+  expect(await changed()).toBe(0);
+});
+
+test("guard preview error: a preview that could not be shown for the quote left leaves the sentence on the quote open", async ({ page }) => {
+  await stubBrowserChannels(page);
+  await seed(page, { customer_id: "c-fenwick" });
+  await signIn(page);
+  await open(page, "Q-1004");
+  const read = await hold(page, /\/api\/v1\/quotes\/q-1004\/customer-view$/, { method: "GET" });
+  await page.getByTestId("qb-preview").click();
+  await read.asked;
+  await open(page, "Q-1001");
+  await errorOnOpenQuote(page);
+  const said = await page.getByTestId("qb-error").innerText();
+  await read.release();
+  await settle(page);
+  await expect(page.getByTestId("qb-error")).toHaveText(said);
+  // The preview of the quote left never opens over the quote now on screen.
+  await expect(page.getByTestId("qb-preview-pane")).toHaveCount(0);
 });
 
 test("guard send error: a send that could not be made for the quote left leaves the sentence on the quote open", async ({ page }) => {
@@ -436,21 +471,18 @@ test("guard send error: a send that could not be made for the quote left leaves 
   await expect(page.getByTestId("qb-error")).toHaveText(said);
 });
 
-test("guard preview reload: a preview whose re-read answers after another quote opened announces nothing", async ({ page }) => {
+test("guard preview late answer: a preview whose answer lands after another quote opened shows nothing there", async ({ page }) => {
   await stubBrowserChannels(page);
   await seed(page, { customer_id: "c-fenwick" });
   await signIn(page);
   await open(page, "Q-1004");
-  const gated = await armedHold(page, /\/api\/v1\/quotes\/q-1004$/, "GET");
-  gated.arm();
+  const read = await hold(page, /\/api\/v1\/quotes\/q-1004\/customer-view$/, { method: "GET" });
   await page.getByTestId("qb-preview").click();
-  await gated.held.asked;
-  gated.disarm();
+  await read.asked;
   await open(page, "Q-1001");
-  const changed = await watchEvent(page, "quote-changed");
-  await gated.held.release();
+  await read.release();
   await settle(page);
-  expect(await changed()).toBe(0);
+  await expect(page.getByTestId("qb-preview-pane")).toHaveCount(0);
 });
 
 test("guard send terms save: a send whose terms save answers after another quote opened mints no link", async ({ page }) => {

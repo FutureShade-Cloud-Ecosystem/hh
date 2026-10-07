@@ -1793,6 +1793,42 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  // The preview read (PR 238): the customer's own page as the desk's session may read it. It never mints a link
+  // and never moves the status; the answer says preview true and acceptable false, so no accept area exists.
+  match = /^\/api\/v1\/quotes\/([^/]+)\/customer-view$/.exec(path);
+  if (match !== null && request.method === "GET") {
+    const quote = quoteOr404(match[1]);
+    if (quote === null) {
+      respondJson(response, 404, { error: "no quote with that id" });
+      return;
+    }
+    const terms = termsOf(quote);
+    respondJson(response, 200, {
+      quote_no: quote.quote_no,
+      customer_name: quote.customer_name,
+      status: quote.status,
+      valid_until: quote.valid_until === "" ? undefined : quote.valid_until,
+      expired: quote.expired,
+      lines: quote.lines.map((line, index) => ({
+        line_no: line.line_no,
+        description: line.description,
+        qty_entered: line.qty_entered,
+        uom_entered: line.uom_entered,
+        unit_price_cents: line.unit_price_cents,
+        line_total_cents: line.line_total_cents,
+        ...(terms.lines[index].disc_pct ? { disc_pct: terms.lines[index].disc_pct, pre_discount_total_cents: terms.lines[index].pre_discount_total_cents } : {}),
+      })),
+      subtotal_cents: quote.subtotal_cents,
+      tax_cents: quote.tax_cents,
+      total_cents: quote.total_cents,
+      as_of: "2026-01-01T00:00:00Z",
+      acceptable: false,
+      preview: true,
+      customer_notes: terms.customer_notes === "" ? undefined : terms.customer_notes,
+    });
+    return;
+  }
+
   match = /^\/api\/v1\/quotes\/([^/]+)\/share-links$/.exec(path);
   if (match !== null && request.method === "POST") {
     const quote = quoteOr404(match[1]);

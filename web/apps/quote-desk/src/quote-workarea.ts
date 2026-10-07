@@ -37,6 +37,8 @@
 import { LitElement, css, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import "./quote-search-add.js";
+// The customer page's own element (the public desk's), rendered in the desk for Preview: one page, never a copy.
+import "../../public-desk/src/quote-public.js";
 import "@hardscapehouse/pos-kit/src/ported/pos-product-grid.js";
 import "@hardscapehouse/pos-kit/src/ported/product-thumb.js";
 import "@hardscapehouse/pos-kit/src/ported/pos-flow-steps.js";
@@ -196,6 +198,8 @@ export class QdQuoteWorkarea extends LitElement {
   private clockTimer: ReturnType<typeof setInterval> | undefined;
   private termsTimer: ReturnType<typeof setTimeout> | undefined;
   private mintedToken = "";
+  /** The raw customer-view answer Preview shows in the desk, or null when no preview is open. */
+  @state() private previewRaw: unknown = null;
   /** The context of the quote on screen: every read and write captures it at its start and checks it after each await. */
   private readonly scope = new QuoteScope();
   private dragging = false;
@@ -950,6 +954,25 @@ export class QdQuoteWorkarea extends LitElement {
       font-size: var(--qb-caption);
       color: var(--hos-text-dim, var(--hh-text-dim));
     }
+    .previewpane {
+      border: 1px solid var(--hos-line, var(--hh-line));
+      border-radius: var(--hh-radius-card, 8px);
+      background: var(--hos-card, var(--hh-card));
+      margin: var(--hos-s-12, 12px) 0;
+      padding: var(--hos-s-12, 12px);
+    }
+    .previewhead {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--hos-s-8, 8px);
+    }
+    .previewband {
+      margin: 0;
+      font-size: var(--qb-body);
+      font-weight: 600;
+    }
     .actions {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -1226,6 +1249,7 @@ export class QdQuoteWorkarea extends LitElement {
     this.scope.open(this.quoteId);
     this.converted = null;
     this.mintedToken = "";
+    this.previewRaw = null;
     this.error = "";
     this.notice = "";
     this.floorSpoken = "";
@@ -1374,6 +1398,30 @@ export class QdQuoteWorkarea extends LitElement {
   protected override updated(): void {
     this.wireShared();
     this.syncFields();
+    this.mountPreview();
+  }
+
+  /**
+   * The customer page's element is made here, handed its answer BEFORE it is attached: a hosted page never reads
+   * a link or loads, so no request goes out for it and no accept area can exist.
+   */
+  private mountPreview(): void {
+    const host = this.renderRoot.querySelector<HTMLElement>('[data-role="preview-host"]');
+    if (host === null || host.childElementCount > 0 || this.previewRaw === null) return;
+    const page = document.createElement("pd-quote-public") as HTMLElement & { showQuote(value: unknown): void };
+    page.showQuote(this.previewRaw);
+    host.append(page);
+  }
+
+  private renderPreviewPane() {
+    if (this.previewRaw === null) return nothing;
+    return html`<section class="previewpane" data-testid="qb-preview-pane" aria-label="Preview of the customer's quote">
+      <div class="previewhead">
+        <p class="previewband" data-testid="qb-preview-band">Preview: this is what your customer will see. Nothing has been sent.</p>
+        <button type="button" class="abtn" data-action="preview-close" data-testid="qb-preview-close">Close preview</button>
+      </div>
+      <div data-role="preview-host"></div>
+    </section>`;
   }
 
   private wireShared(): void {
@@ -1824,10 +1872,13 @@ export class QdQuoteWorkarea extends LitElement {
         void this.doCopyLink();
         break;
       case "preview":
-        void this.doPreview(false);
+        void this.doPreview();
+        break;
+      case "preview-close":
+        this.previewRaw = null;
         break;
       case "print":
-        void this.doPreview(true);
+        void this.doPrint();
         break;
       case "send":
         void this.doSend();
@@ -2628,7 +2679,34 @@ export class QdQuoteWorkarea extends LitElement {
     }
   }
 
-  private async doPreview(print: boolean): Promise<void> {
+  /**
+   * Preview: the customer page's own element, shown in the desk from the customer-view read with the desk's
+   * session. It never mints a link and never moves the quote's status; Copy link and Send are the sending acts.
+   */
+  private async doPreview(): Promise<void> {
+    const client = this.client;
+    if (client === null || this.busy) return;
+    const ctx = this.ctx;
+    const release = this.holdBusy(ctx);
+    this.error = "";
+    try {
+      const answer = await ctx.guarded(client.customerView(ctx.id));
+      if (answer === undefined) return;
+      if (!answer.ok) {
+        this.error = spokenRefusal(quoteErrorMessage(answer.status, answer.error, "show the preview"));
+        return;
+      }
+      this.previewRaw = answer.value;
+    } catch (e) {
+      if (ctx.stale) return;
+      this.error = e instanceof Error ? e.message : "Could not show the preview.";
+    } finally {
+      release();
+    }
+  }
+
+  /** Print is a sending act like Copy link: it makes the customer link (marking a draft Sent) and opens it for paper. */
+  private async doPrint(): Promise<void> {
     if (this.busy) return;
     const ctx = this.ctx;
     const capture = this.captureFor(ctx);
@@ -2636,13 +2714,13 @@ export class QdQuoteWorkarea extends LitElement {
     try {
       // ensureLink throws once the quote has been left, so the lines below only run on the quote that asked.
       const token = await this.ensureLink(ctx, capture);
-      window.open(this.shareUrl(token, print), "_blank", "noopener");
+      window.open(this.shareUrl(token, true), "_blank", "noopener");
       await this.loadAll();
       if (ctx.stale) return;
       this.quoteChanged();
     } catch (e) {
       if (ctx.stale) return;
-      this.error = e instanceof Error ? e.message : "Could not open the preview.";
+      this.error = e instanceof Error ? e.message : "Could not open the print page.";
     } finally {
       release();
     }
@@ -3400,7 +3478,7 @@ export class QdQuoteWorkarea extends LitElement {
               class="abtn"
               data-action="preview"
               data-testid="qb-preview"
-              ?disabled=${!shareable && this.mintedToken === ""}
+              title="Shows the customer's page here. Nothing is sent and the quote's status does not change."
             >
               Preview
             </button>`
@@ -3411,9 +3489,10 @@ export class QdQuoteWorkarea extends LitElement {
               class="abtn"
               data-action="print"
               data-testid="qb-print"
+              title="Creates the customer's link${v.status === "DRAFT" ? " and marks the quote Sent" : ""}, then opens it for paper."
               ?disabled=${!shareable && this.mintedToken === ""}
             >
-              Print
+              Print${v.status === "DRAFT" ? " (marks Sent)" : ""}
             </button>`
           : nothing}
         ${has("quote.copy_link")
@@ -3422,9 +3501,10 @@ export class QdQuoteWorkarea extends LitElement {
               class="abtn"
               data-action="copy-link"
               data-testid="qb-copy-link"
+              title="Creates the customer's link${v.status === "DRAFT" ? " and marks the quote Sent" : ""}. Nothing is emailed."
               ?disabled=${!shareable && this.mintedToken === ""}
             >
-              Copy Link
+              Copy Link${v.status === "DRAFT" ? " (marks Sent)" : ""}
             </button>`
           : nothing}
         ${has("quote.send")
@@ -3565,6 +3645,7 @@ export class QdQuoteWorkarea extends LitElement {
       ws.arrangement === "PRIMARY_RIGHT" ? html`${secondary}${divider}${primary}` : html`${primary}${divider}${secondary}`;
     return html`
       ${this.renderTopbar()}
+      ${this.renderPreviewPane()}
       <div class="workspace" data-testid="qb-workspace" data-arrangement=${ws.arrangement}>
         ${pair}
       </div>

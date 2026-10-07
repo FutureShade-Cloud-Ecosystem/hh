@@ -762,6 +762,15 @@ export class QdClient {
     return ok({ lines, margin_bps: bps, partial: value["partial"] === true });
   }
 
+  /**
+   * The customer's page as the desk's own session may read it (PR 238): the raw answer, handed on to the
+   * customer page's own element, which validates it. It mints no link and moves no status.
+   */
+  async customerView(quoteId: string): Promise<Result<unknown>> {
+    const result = await staffQuote.quoteCustomerViewPreview(this.#client, quoteId);
+    return result.ok ? ok(result.value as unknown) : result;
+  }
+
   /** Mint the share link: minting IS the email send, DRAFT moves to SENT. */
   async mintShareLink(quoteId: string): Promise<Result<string>> {
     const result = await staffQuote.quoteMintShareLink(this.#client, quoteId, {});

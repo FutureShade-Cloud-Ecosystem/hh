@@ -374,8 +374,8 @@
   {
     "id": "wa-cart-after-read",
     "file": "src/quote-workarea.ts",
-    "find": "    await this.loadAll();\n    if (ctx.stale) return;\n    this.quoteChanged();\n  }\n\n  // ── the workspace",
-    "replace": "    await this.loadAll();\n    this.quoteChanged();\n  }\n\n  // ── the workspace",
+    "find": "    await this.loadAll();\n    if (ctx.stale) return;\n    this.quoteChanged();\n  }\n\n  // \u2500\u2500 the workspace",
+    "replace": "    await this.loadAll();\n    this.quoteChanged();\n  }\n\n  // \u2500\u2500 the workspace",
     "test": "guard cart change after read:"
   },
   {
@@ -421,18 +421,11 @@
     "test": "guard copy link error:"
   },
   {
-    "id": "wa-preview-catch",
+    "id": "wa-preview-read",
     "file": "src/quote-workarea.ts",
-    "find": "      if (ctx.stale) return;\n      this.error = e instanceof Error ? e.message : \"Could not open the preview.\";",
-    "replace": "      this.error = e instanceof Error ? e.message : \"Could not open the preview.\";",
+    "find": "await ctx.guarded(client.customerView(ctx.id));\n      if (answer === undefined) return;",
+    "replace": "await client.customerView(ctx.id);",
     "test": "guard preview error:"
-  },
-  {
-    "id": "wa-preview-reload",
-    "file": "src/quote-workarea.ts",
-    "find": "      window.open(this.shareUrl(token, print), \"_blank\", \"noopener\");\n      await this.loadAll();\n      if (ctx.stale) return;",
-    "replace": "      window.open(this.shareUrl(token, print), \"_blank\", \"noopener\");\n      await this.loadAll();",
-    "test": "guard preview reload:"
   },
   {
     "id": "wa-send-terms",
@@ -591,8 +584,8 @@
   {
     "id": "ep-convert-reload",
     "file": "src/edit-panel.ts",
-    "find": "    await this.load();\n    if (ctx.stale) return;\n    this.announceChanged();\n  }\n\n  // ── delegation",
-    "replace": "    await this.load();\n    this.announceChanged();\n  }\n\n  // ── delegation",
+    "find": "    await this.load();\n    if (ctx.stale) return;\n    this.announceChanged();\n  }\n\n  // \u2500\u2500 delegation",
+    "replace": "    await this.load();\n    this.announceChanged();\n  }\n\n  // \u2500\u2500 delegation",
     "test": "guard edit convert reload:"
   },
   {
@@ -1955,10 +1948,10 @@
     "test": "a branch change reads the rows"
   },
   {
-    "id": "wa-preview-busy",
+    "id": "wa-print-busy",
     "file": "src/quote-workarea.ts",
-    "find": "  private async doPreview(print: boolean): Promise<void> {\n    if (this.busy) return;\n",
-    "replace": "  private async doPreview(print: boolean): Promise<void> {\n",
+    "find": "  private async doPrint(): Promise<void> {\n    if (this.busy) return;\n",
+    "replace": "  private async doPrint(): Promise<void> {\n",
     "test": "Send Quote is one send"
   },
   {
@@ -2002,5 +1995,26 @@
     "find": "    if (changed.has(\"route\") && changed.get(\"route\") !== undefined) void this.focusHeading();\n",
     "replace": "",
     "test": "split page: each route sets the document title"
+  },
+  {
+    "id": "wa-preview-leave",
+    "file": "src/quote-workarea.ts",
+    "find": "    this.mintedToken = \"\";\n    this.previewRaw = null;\n",
+    "replace": "    this.mintedToken = \"\";\n",
+    "test": "a preview closes when another quote opens"
+  },
+  {
+    "id": "wa-print-catch",
+    "file": "src/quote-workarea.ts",
+    "find": "      if (ctx.stale) return;\n      this.error = e instanceof Error ? e.message : \"Could not open the print page.\";",
+    "replace": "      this.error = e instanceof Error ? e.message : \"Could not open the print page.\";",
+    "test": "guard print error:"
+  },
+  {
+    "id": "wa-print-reload",
+    "file": "src/quote-workarea.ts",
+    "find": "      window.open(this.shareUrl(token, true), \"_blank\", \"noopener\");\n      await this.loadAll();\n      if (ctx.stale) return;",
+    "replace": "      window.open(this.shareUrl(token, true), \"_blank\", \"noopener\");\n      await this.loadAll();",
+    "test": "guard print reload:"
   }
 ]
