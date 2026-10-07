@@ -838,13 +838,26 @@ func (r *Repository) LowMarginSalesLines(ctx context.Context, f LowMarginFilter)
 	       ol.qty_entered::float8, ol.uom_entered::text, ol.unit_price_cents,
 	       CASE WHEN COALESCE(ol.metadata->>'disc_pct', '') ~ '^[0-9]{1,3}$'
 	            THEN LEAST((ol.metadata->>'disc_pct')::int, 100) ELSE 0 END,
-	       ol.price_uom::text, pbc.avg_unit_cost_cents
+	       ol.price_uom::text, pbc.avg_unit_cost_cents,
+	       ol.line_total_cents, ROUND(pbc.avg_unit_cost_cents * ol.qty_base)::bigint,
+	       COALESCE(sp.id::text, ''), COALESCE(sp.display_name, ''),
+	       oqc.fc IS NOT NULL, COALESCE(oqc.fc->>'cleared_by', ''), COALESCE(cb.display_name, ''),
+	       COALESCE(oqc.fc->>'authority', '')
 	  FROM order_lines ol
 	  JOIN orders o    ON o.id = ol.order_id
 	  JOIN customers c ON c.id = o.customer_id
 	  JOIN products p  ON p.id = ol.product_id
 	  LEFT JOIN product_branch_costs pbc
 	         ON pbc.product_id = ol.product_id AND pbc.branch_id = o.branch_id
+	  LEFT JOIN quotes oq ON oq.id = o.quote_id
+	  LEFT JOIN LATERAL (
+	        SELECT ql.metadata->'floor_clear' AS fc
+	          FROM quote_lines ql
+	         WHERE ql.quote_id = o.quote_id AND ql.line_no = ol.line_no
+	           AND ql.product_id = ol.product_id AND ql.unit_price_cents = ol.unit_price_cents
+	           AND jsonb_typeof(ql.metadata->'floor_clear') = 'object') oqc ON TRUE
+	  LEFT JOIN users sp ON sp.id = COALESCE(oq.salesperson_id, o.created_by)
+	  LEFT JOIN users cb ON cb.id::text = oqc.fc->>'cleared_by'
 	 WHERE $4::text <> 'quotes'
 	   AND ol.product_id IS NOT NULL
 	   AND o.created_at >= $1 AND o.created_at < $2
@@ -856,13 +869,19 @@ func (r *Repository) LowMarginSalesLines(ctx context.Context, f LowMarginFilter)
 	       qt.customer_id::text, c.customer_type,
 	       ql.product_id::text, COALESCE(p.category_id::text, ''), p.sku::text, p.name,
 	       ql.qty_entered::float8, ql.uom_entered::text, ql.unit_price_cents, ql.disc_pct,
-	       ql.price_uom::text, pbc.avg_unit_cost_cents
+	       ql.price_uom::text, pbc.avg_unit_cost_cents,
+	       ql.line_total_cents, ROUND(pbc.avg_unit_cost_cents * ql.qty_base)::bigint,
+	       COALESCE(sp.id::text, ''), COALESCE(sp.display_name, ''),
+	       COALESCE(jsonb_typeof(ql.metadata->'floor_clear') = 'object', FALSE), COALESCE(ql.metadata->'floor_clear'->>'cleared_by', ''),
+	       COALESCE(cb.display_name, ''), COALESCE(ql.metadata->'floor_clear'->>'authority', '')
 	  FROM quote_lines ql
 	  JOIN quotes qt   ON qt.id = ql.quote_id
 	  JOIN customers c ON c.id = qt.customer_id
 	  JOIN products p  ON p.id = ql.product_id
 	  LEFT JOIN product_branch_costs pbc
 	         ON pbc.product_id = ql.product_id AND pbc.branch_id = qt.branch_id
+	  LEFT JOIN users sp ON sp.id = COALESCE(qt.salesperson_id, qt.created_by)
+	  LEFT JOIN users cb ON cb.id::text = ql.metadata->'floor_clear'->>'cleared_by'
 	 WHERE $4::text <> 'orders'
 	   AND ql.product_id IS NOT NULL
 	   AND qt.created_at >= $1 AND qt.created_at < $2
@@ -884,6 +903,8 @@ func (r *Repository) LowMarginSalesLines(ctx context.Context, f LowMarginFilter)
 			&ln.DocType, &ln.LineID, &ln.DocID, &ln.DocNo, &ln.DocAt, &ln.BranchID,
 			&ln.CustomerID, &ln.CustomerType, &ln.ProductID, &ln.CategoryID, &ln.SKU, &ln.ProductName,
 			&ln.QtyEntered, &ln.UOMEntered, &ln.UnitPriceCents, &ln.DiscPct, &ln.PriceUOM, &ln.AvgUnitCostCents,
+			&ln.LineTotalCents, &ln.LineCostCents, &ln.SalespersonID, &ln.SalespersonLabel,
+			&ln.ClearedBelowFloor, &ln.ClearedByID, &ln.ClearedByLabel, &ln.ClearAuthority,
 		); err != nil {
 			return nil, err
 		}

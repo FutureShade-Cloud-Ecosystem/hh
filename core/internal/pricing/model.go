@@ -459,6 +459,24 @@ type LowMarginSaleLine struct {
 	DiscPct          int
 	PriceUOM         string
 	AvgUnitCostCents *int64 // per product BASE uom; nil = no product_branch_costs row (cost missing)
+
+	// The document's own figures for this line, for the document's overall margin: the line's total
+	// (net of its discount) and its cost (the base unit cost times the base quantity, rounded once to
+	// cents; nil when the cost is unknown).
+	LineTotalCents int64
+	LineCostCents  *int64
+
+	// Who sold it: the document's salesperson (a quote's salesperson, else its creator; an order's
+	// quote's salesperson, else its creator) as an id and a display label. Empty when none is on file.
+	SalespersonID    string
+	SalespersonLabel string
+	// The clearing stamp the line carries: set when a manager (or an approval) cleared this line below
+	// the margin floor. For an order line the stamp is the one on the quote line it was copied from,
+	// found only while the order line still holds that quote line's product and price.
+	ClearedBelowFloor bool
+	ClearedByID       string
+	ClearedByLabel    string
+	ClearAuthority    string // MANAGER_SCOPE | APPROVAL
 }
 
 // LowMarginScanRow is one GRADED row of the principal's daily low-margin report (D-PA-3). A row is either a
@@ -489,4 +507,17 @@ type LowMarginScanRow struct {
 	FloorBps            int64     `json:"floor_bps"`
 	Level               string    `json:"level"`            // warn | critical | invalid
 	Reason              string    `json:"reason,omitempty"` // set only when level == "invalid"
+	// Who sold the document, as the staff member's display label.
+	SalespersonID string `json:"salesperson_id,omitempty"`
+	Salesperson   string `json:"salesperson,omitempty"`
+	// ClearedBelowFloor is the clearing stamp's fact: a manager (MANAGER_SCOPE) or an approval
+	// (APPROVAL) cleared this line below the margin floor, and ClearedBy names who, as a display label.
+	ClearedBelowFloor bool   `json:"cleared_below_floor"`
+	ClearedByID       string `json:"cleared_by_id,omitempty"`
+	ClearedBy         string `json:"cleared_by,omitempty"`
+	ClearAuthority    string `json:"clear_authority,omitempty"`
+	// DocMarginBps is the document's own overall margin over its product lines, so a below floor line
+	// inside a healthy quote reads as one. Absent (never a partial figure) when any product line of the
+	// document has no cost on file or the document has no revenue to divide by.
+	DocMarginBps *int64 `json:"doc_margin_bps,omitempty"`
 }

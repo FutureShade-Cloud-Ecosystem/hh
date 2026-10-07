@@ -178,3 +178,143 @@ func TestIntegration_LowMarginDocs_ADiscountedOrderLineIsGradedNet(t *testing.T)
 		t.Errorf("a discounted order line must be graded at its net price 850: %+v", got)
 	}
 }
+
+// lmUser plants a staff user with a display label and returns its id; removed at cleanup.
+func lmUser(t *testing.T, pool *pgxpool.Pool, id, label string) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO users (id, email, display_name, status) VALUES ($1, $2, $3, 'ACTIVE')`,
+		id, id+"@lowmargin.test", label); err != nil {
+		t.Fatalf("seed user %s: %v", label, err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, id) })
+}
+
+const (
+	lmSalesUser   = "0d4a0000-0000-4000-9000-0000000000a1"
+	lmManagerUser = "0d4a0000-0000-4000-9000-0000000000a2"
+)
+
+// Step 2 over a real Postgres: the salesperson's display label, the clearing stamp the quote line
+// already carries (who, on what authority), and the document's own overall margin, a below floor line
+// inside a healthy quote. The same clearing is found for the order the quote became, through the
+// quote line it was copied from.
+func TestIntegration_LowMarginDocs_RowsCarrySalespersonClearingAndDocumentMargin(t *testing.T) {
+	pool := intPool(t)
+	svc := realSvc(pool)
+	ctx := context.Background()
+	lmUser(t, pool, lmSalesUser, "Outside Sales, Trenton")
+	lmUser(t, pool, lmManagerUser, "Sales Manager, Trenton")
+	no := fmt.Sprintf("Q-LMR-%d", time.Now().UnixNano())
+	stamp := fmt.Sprintf(`{"floor_clear":{"cleared_by":%q,"authority":"MANAGER_SCOPE","disc_pct":15,"margin_bps":1552}}`, lmManagerUser)
+	quoteID := "0d4a0000-0000-4000-9000-000000000201"
+	seedLMQuote(t, pool, lmQuote{ID: quoteID, No: no, Salesperson: lmSalesUser,
+		Lines: []lmQuoteLine{
+			{GrossUnit: 1000, DiscPct: 15, Metadata: stamp}, // net 850: critical, cleared by the manager
+			{GrossUnit: 2400, DiscPct: 0},                   // healthy, not a row, but it lifts the quote's margin
+		}})
+
+	f := lmWindow()
+	f.DocType = ScanDocsQuotes
+	rows, err := svc.LowMarginScan(ctx, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := lmRowsByDoc(rows, no)
+	if len(got) != 1 {
+		t.Fatalf("want the one below floor line of the quote, got %+v", got)
+	}
+	r := got[0]
+	if r.Salesperson != "Outside Sales, Trenton" || r.SalespersonID != lmSalesUser {
+		t.Errorf("salesperson: %q / %q", r.Salesperson, r.SalespersonID)
+	}
+	if !r.ClearedBelowFloor || r.ClearedBy != "Sales Manager, Trenton" || r.ClearedByID != lmManagerUser || r.ClearAuthority != "MANAGER_SCOPE" {
+		t.Errorf("clearing: %+v", r)
+	}
+	// Revenue 34000 + 96000, cost 28700 on each line: (130000-57400)*1e4/130000 = 5584.
+	if r.DocMarginBps == nil || *r.DocMarginBps != 5584 {
+		t.Errorf("document margin = %v, want 5584", r.DocMarginBps)
+	}
+
+	// The order the quote became: the order line is found cleared through its quote line.
+	ono := fmt.Sprintf("SO-LMR-%d", time.Now().UnixNano())
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO orders (id, order_no, customer_id, branch_id, quote_id, status, fulfillment, created_by)
+		VALUES ('0d4a0000-0000-4000-9000-000000000202', $1, (SELECT id FROM customers WHERE account_no = 'WALK-IN'), $2, $3, 'INVOICED', 'PICKUP', $4)`,
+		ono, lmTrenton, quoteID, lmManagerUser); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM orders WHERE id = '0d4a0000-0000-4000-9000-000000000202'`)
+	})
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO order_lines (order_id, line_no, product_id, description, qty_entered, uom_entered, qty_base,
+		                         unit_price_cents, price_uom, line_total_cents, metadata)
+		SELECT '0d4a0000-0000-4000-9000-000000000202', line_no, product_id, description, qty_entered, uom_entered, qty_base,
+		       unit_price_cents, price_uom, line_total_cents,
+		       CASE WHEN disc_pct > 0 THEN jsonb_build_object('disc_pct', disc_pct) ELSE '{}'::jsonb END
+		  FROM quote_lines WHERE quote_id = $1`, quoteID); err != nil {
+		t.Fatal(err)
+	}
+	f.DocType = ScanDocsOrders
+	rows, err = svc.LowMarginScan(ctx, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	og := lmRowsByDoc(rows, ono)
+	if len(og) != 1 {
+		t.Fatalf("want the order's below floor line, got %+v", og)
+	}
+	o := og[0]
+	if !o.ClearedBelowFloor || o.ClearedBy != "Sales Manager, Trenton" || o.ClearAuthority != "MANAGER_SCOPE" {
+		t.Errorf("the order line must carry its quote line's clearing: %+v", o)
+	}
+	// The order's salesperson is the quote's salesperson, not whoever converted it.
+	if o.Salesperson != "Outside Sales, Trenton" {
+		t.Errorf("order salesperson = %q, want the quote's", o.Salesperson)
+	}
+	if o.DocMarginBps == nil || *o.DocMarginBps != 5584 {
+		t.Errorf("order document margin = %v, want 5584", o.DocMarginBps)
+	}
+}
+
+// An order line whose price was edited after the quote is no longer the line that was cleared: it
+// does not inherit the stamp.
+func TestIntegration_LowMarginDocs_AnEditedOrderLineDoesNotInheritTheClearing(t *testing.T) {
+	pool := intPool(t)
+	svc := realSvc(pool)
+	ctx := context.Background()
+	lmUser(t, pool, lmManagerUser, "Sales Manager, Trenton")
+	stamp := fmt.Sprintf(`{"floor_clear":{"cleared_by":%q,"authority":"APPROVAL"}}`, lmManagerUser)
+	quoteID := "0d4a0000-0000-4000-9000-000000000203"
+	seedLMQuote(t, pool, lmQuote{ID: quoteID, No: fmt.Sprintf("Q-LME-%d", time.Now().UnixNano()),
+		Lines: []lmQuoteLine{{GrossUnit: 1000, DiscPct: 15, Metadata: stamp}}})
+	ono := fmt.Sprintf("SO-LME-%d", time.Now().UnixNano())
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO orders (id, order_no, customer_id, branch_id, quote_id, status, fulfillment)
+		VALUES ('0d4a0000-0000-4000-9000-000000000204', $1, (SELECT id FROM customers WHERE account_no = 'WALK-IN'), $2, $3, 'INVOICED', 'PICKUP')`,
+		ono, lmTrenton, quoteID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM orders WHERE id = '0d4a0000-0000-4000-9000-000000000204'`)
+	})
+	// The price on the order differs from the cleared quote line's: 800, not the quote's gross 1000.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO order_lines (order_id, line_no, product_id, description, qty_entered, uom_entered, qty_base,
+		                         unit_price_cents, price_uom, line_total_cents)
+		VALUES ('0d4a0000-0000-4000-9000-000000000204', 1, (SELECT id FROM products WHERE sku = 'DBS-UL-BRUSSELS'),
+		        'Brussels Block', 40, 'SF', 164, 800, 'SF', 32000)`); err != nil {
+		t.Fatal(err)
+	}
+	f := lmWindow()
+	f.DocType = ScanDocsOrders
+	rows, err := svc.LowMarginScan(ctx, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := lmRowsByDoc(rows, ono)
+	if len(got) != 1 || got[0].ClearedBelowFloor {
+		t.Errorf("an edited order line must not carry the quote line's clearing: %+v", got)
+	}
+}

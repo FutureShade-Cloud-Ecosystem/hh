@@ -1691,6 +1691,7 @@ func (s *Service) LowMarginScan(ctx context.Context, f LowMarginFilter) ([]LowMa
 	if err != nil {
 		return nil, fmt.Errorf("low-margin scan: %w", err)
 	}
+	docMargins := documentMargins(lines)
 	out := make([]LowMarginScanRow, 0, len(lines))
 	for _, ln := range lines {
 		row := LowMarginScanRow{
@@ -1699,6 +1700,9 @@ func (s *Service) LowMarginScan(ctx context.Context, f LowMarginFilter) ([]LowMa
 			ProductID: ln.ProductID, SKU: ln.SKU, ProductName: ln.ProductName,
 			QtyEntered: ln.QtyEntered, UOMEntered: ln.UOMEntered,
 			UnitPriceCents: netUnitCents(ln.UnitPriceCents, ln.DiscPct), DiscPct: ln.DiscPct, PriceUOM: ln.PriceUOM,
+			SalespersonID: ln.SalespersonID, Salesperson: ln.SalespersonLabel,
+			ClearedBelowFloor: ln.ClearedBelowFloor, ClearedByID: ln.ClearedByID, ClearedBy: ln.ClearedByLabel,
+			ClearAuthority: ln.ClearAuthority, DocMarginBps: docMargins[docKey(ln)],
 		}
 		// Category target/floor via the SAME resolution the classifier uses: the policy row when
 		// present, else the default target/floor band (finding #12, a no-policy category is graded
@@ -1755,6 +1759,43 @@ func (s *Service) LowMarginScan(ctx context.Context, f LowMarginFilter) ([]LowMa
 }
 
 // - helpers -
+
+// docKey names a line's document across the two kinds, whose ids are separate id spaces.
+func docKey(ln LowMarginSaleLine) string { return ln.DocType + ":" + ln.DocID }
+
+// documentMargins is each document's own overall margin in basis points over its product lines:
+// revenue is the lines' totals (net of discount), cost the lines' cost totals. A document with any
+// line whose cost is unknown or not positive, or whose revenue is not positive, has NO entry: a
+// margin over the costed lines alone would read as the document's and hide the blindness (design #5).
+func documentMargins(lines []LowMarginSaleLine) map[string]*int64 {
+	type tot struct {
+		revenue, cost int64
+		blind         bool
+	}
+	byDoc := map[string]*tot{}
+	for _, ln := range lines {
+		t := byDoc[docKey(ln)]
+		if t == nil {
+			t = &tot{}
+			byDoc[docKey(ln)] = t
+		}
+		if ln.LineCostCents == nil || *ln.LineCostCents <= 0 {
+			t.blind = true
+			continue
+		}
+		t.revenue += ln.LineTotalCents
+		t.cost += *ln.LineCostCents
+	}
+	out := make(map[string]*int64, len(byDoc))
+	for k, t := range byDoc {
+		if t.blind || t.revenue <= 0 {
+			continue
+		}
+		m := marginBps(t.revenue, t.cost)
+		out[k] = &m
+	}
+	return out
+}
 
 // netUnitCents is a document line's unit price taken net of its discount percent, half up once, the
 // arithmetic the quote's own discount write applies (quote.discountUnitCents). A zero or negative
