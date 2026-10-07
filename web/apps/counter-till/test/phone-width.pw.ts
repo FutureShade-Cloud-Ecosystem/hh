@@ -173,3 +173,78 @@ test("at desktop width the line table keeps its weight column and needs no sidew
   // table does not scroll inside its card.
   await expect(page.getByTestId("pos-lines")).toHaveCSS("overflow-x", "visible");
 });
+
+/** Round 9: the stepper fits its box at phone width; where it cannot, it scrolls inside itself, never clips. */
+for (const width of [390, 360, 320]) {
+  test(`at ${width} every step of the stepper is whole inside its box, or the box scrolls`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await signIn(page);
+    const read = await page.evaluate(() => {
+      const host = document
+        .querySelector("ct-app-root")
+        ?.shadowRoot?.querySelector("hos-pos-terminal")
+        ?.shadowRoot?.querySelector("hos-pos-flow-steps") as HTMLElement | null;
+      if (host === null || host === undefined) return null;
+      const box = host.getBoundingClientRect();
+      const buttons = Array.from(host.shadowRoot?.querySelectorAll("button") ?? []);
+      return {
+        scrolls: host.scrollWidth > host.clientWidth + 1,
+        overflowX: getComputedStyle(host).overflowX,
+        count: buttons.length,
+        outside: buttons
+          .map((b) => b.getBoundingClientRect())
+          .filter((r) => r.right > box.right + 0.5 || r.left < box.left - 0.5).length,
+        // A pill's own content (its numeral chip and its label) stays inside the pill: no step
+        // paints over its neighbour.
+        spilling: buttons.filter(
+          (b) => b.scrollWidth > b.clientWidth + 1 || Array.from(b.querySelectorAll("span")).some((span) => span.scrollWidth > span.clientWidth + 1 && !span.classList.contains("sr")),
+        ).length,
+        overlapping: buttons.filter((b, i) => i > 0 && b.getBoundingClientRect().left < (buttons[i - 1] as HTMLElement).getBoundingClientRect().right - 0.5).length,
+      };
+    });
+    expect(read).not.toBeNull();
+    expect(read!.count).toBe(4);
+    // Whole inside the box, or the box is one that scrolls (and says so by overflow-x).
+    if (read!.scrolls) expect(["auto", "scroll"]).toContain(read!.overflowX);
+    else expect(read!.outside).toBe(0);
+    // At the common phone widths it simply fits: no scrolling needed to reach Summary.
+    if (width >= 360) expect(read!.scrolls).toBe(false);
+    if (!read!.scrolls) {
+      expect(read!.spilling).toBe(0);
+      expect(read!.overlapping).toBe(0);
+    }
+  });
+}
+
+/**
+ * PR 253 review P2-2: no width from 320 to 480 cuts a step's label short. Sampled every 5 px: at
+ * each width every label shows whole (nothing ellipsised, nothing spilling out of its pill, no pill
+ * over its neighbour), either because the four fit or because the row scrolls inside itself.
+ */
+test("no width from 320 to 480 cuts a step label short, sampled every 5 px", async ({ page }) => {
+  await page.setViewportSize({ width: 480, height: 844 });
+  await signIn(page);
+  const cut: string[] = [];
+  for (let width = 320; width <= 480; width += 5) {
+    await page.setViewportSize({ width, height: 844 });
+    const read = await page.evaluate(() => {
+      const host = document
+        .querySelector("ct-app-root")
+        ?.shadowRoot?.querySelector("hos-pos-terminal")
+        ?.shadowRoot?.querySelector("hos-pos-flow-steps") as HTMLElement | null;
+      if (host === null || host === undefined) return null;
+      const buttons = Array.from(host.shadowRoot?.querySelectorAll("button") ?? []) as HTMLElement[];
+      const labels = buttons.map((b) => Array.from(b.querySelectorAll("span")).filter((s) => !s.classList.contains("sr") && !s.classList.contains("num"))[0] as HTMLElement);
+      return {
+        cut: labels.filter((l) => l.scrollWidth > l.clientWidth + 0.5 || getComputedStyle(l).textOverflow === "ellipsis" && l.scrollWidth > l.clientWidth).map((l) => l.textContent?.trim() ?? ""),
+        overlap: buttons.filter((b, i) => i > 0 && b.getBoundingClientRect().left < (buttons[i - 1] as HTMLElement).getBoundingClientRect().right - 0.5).length,
+        scrolls: host.scrollWidth > host.clientWidth + 1,
+        overflowX: getComputedStyle(host).overflowX,
+      };
+    });
+    if (read === null) throw new Error("the stepper did not render");
+    if (read.cut.length > 0 || read.overlap > 0) cut.push(`${width}px: cut ${read.cut.join("/")} overlap ${read.overlap}`);
+    if (read.scrolls && !["auto", "scroll"].includes(read.overflowX)) cut.push(`${width}px: overflows without a scroll box`);
+  }
+  expect(cut, "widths where a label is cut short").toEqual([]);
+});

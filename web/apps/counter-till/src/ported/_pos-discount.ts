@@ -174,3 +174,15 @@ export function discountRemovedWords(reason: 'quantity' | 'price' | null, ticket
   parts.push('Ask a manager again.');
   return parts.join(' ');
 }
+
+/**
+ * Whether a ring refusal is the server saying the manager's yes no longer fits the line (the quantity
+ * or the price it was struck from moved): the till re-reads the lines' prices on it, so the discount
+ * drops with the price words instead of being sent again on the same stale base.
+ */
+export function isStaleDiscountRefusal(err: { status: number; error: string }): boolean {
+  return err.status === 422 && /approved for a different quantity or price/i.test(err.error);
+}
+
+/** The words the ring's refusal gets once the lines have been re-read. */
+export const STALE_DISCOUNT_WORDS = 'The price changed since the discount was approved. The lines were re-read: ask a manager again.';

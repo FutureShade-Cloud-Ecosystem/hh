@@ -124,6 +124,44 @@ SELECT p.id::text, p.sku::text, p.name,
 	return scanQuickPickRows(rows)
 }
 
+// InStockApplicationRepresentatives returns ONE product per application (the catalogue's category
+// facet the hot list groups by) for every application that has a product with stock available: the
+// busiest seller first, then the catalogue's own featured and SKU order. It is what lets the quick-pick
+// grid show every category the yard holds stock in, including the ones a dealer's curated board
+// never named. Stock is available quantity (on hand less reserved) anywhere, the same figure the
+// POS glance reads.
+func (r *Repository) InStockApplicationRepresentatives(ctx context.Context) ([]quickPickRow, error) {
+	if r.pool == nil {
+		return nil, errNoPool
+	}
+	rows, err := r.pool.Query(ctx, `
+WITH sold AS (
+    SELECT ol.product_id, count(*)::int AS n
+      FROM order_lines ol
+     WHERE EXISTS (SELECT 1 FROM pos_sale ps WHERE ps.order_id = ol.order_id AND ps.status = 'COMMITTED')
+     GROUP BY ol.product_id
+)
+SELECT DISTINCT ON (lower(btrim(p.application)))
+       p.id::text, p.sku::text, p.name,
+       COALESCE(p.product_size,''), COALESCE(p.dimensions_lwh,''),
+       p.base_uom::text, COALESCE(p.sold_by,''),
+       EXISTS (SELECT 1 FROM product_images pi WHERE pi.product_id = p.id),
+       COALESCE(p.application,''), COALESCE(p.collection,'')
+  FROM products p
+  LEFT JOIN sold s ON s.product_id = p.id
+ WHERE p.is_active
+   AND btrim(COALESCE(p.application,'')) <> ''
+   AND EXISTS (SELECT 1 FROM stock_balances sb
+                WHERE sb.product_id = p.id AND sb.deleted_at IS NULL
+                  AND sb.on_hand_base - sb.qty_reserved > 0)
+ ORDER BY lower(btrim(p.application)), COALESCE(s.n, 0) DESC, p.is_featured DESC, p.sku`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanQuickPickRows(rows)
+}
+
 // scanQuickPickRows is the one scan both reads share, the column list is identical by design, so
 // a change to what a tile needs is a change in ONE place.
 func scanQuickPickRows(rows interface {

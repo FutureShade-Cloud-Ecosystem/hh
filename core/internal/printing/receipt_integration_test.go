@@ -762,7 +762,7 @@ func TestIntegration_Receipt_PrintsWhoApprovedTheDiscounts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s render: %v", name, err)
 		}
-		for _, want := range []string{"Discount approved by Sales Manager", "$7.00 off", "Discount approved by Branch Manager", "-$3.00"} {
+		for _, want := range []string{"Discount approved by Sales Manager", "$7.00 off", "Ticket discount, approved by Branch Manager", "-$3.00"} {
 			if !strings.Contains(html, want) {
 				t.Errorf("%s receipt lacks %q", name, want)
 			}

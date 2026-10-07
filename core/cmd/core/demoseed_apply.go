@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -99,6 +100,14 @@ type applyResult struct {
 // INSERT-only statement builder has no reachable path to a DELETE, a TRUNCATE or an UPDATE.
 type txExec interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+// rowQuery is the one READ capability the plan's reporting needs: whether a row the repair pass
+// would move still sits where the pass moves it from, so the plan says the repair only when the
+// apply would actually make it. A pool and a transaction both satisfy it; nothing in this command
+// gains any wider read than the one row count this interface names.
+type rowQuery interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
 // apply writes the plan inside one transaction.

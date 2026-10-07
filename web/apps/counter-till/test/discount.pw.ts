@@ -179,6 +179,15 @@ for (const layout of ["stepper", "panels"] as const) {
     await expect(paid.nth(1)).toContainText("Discount approved by Branch Manager");
     await expect(paid.nth(1)).toContainText("-$2.00");
     await expect(sold.locator(".sold-amount")).toContainText("$38.42");
+    // Round 9 (PR 249 review P3-5): the Paid card adds up by itself: the lines at their price, the
+    // discounts that came off, then the subtotal they leave.
+    const lines = sold.getByTestId("sold-line");
+    await expect(lines).toHaveCount(1);
+    await expect(lines.first()).toContainText("Holland Stone 60 mm");
+    await expect(lines.first()).toContainText("$40.00");
+    await expect(sold.getByTestId("sold-subtotal")).toContainText("$34.00");
+    // PR 253 review P3-1: the tax the sale carried, so the card adds up to what was paid.
+    await expect(sold.getByTestId("sold-tax")).toContainText("$4.42");
   });
 }
 
@@ -300,4 +309,121 @@ test("a ticket discount cannot take the whole ticket: the dialog says the rule a
   await page.getByTestId("pos-line-discount").click();
   await expect(page.getByTestId("discount-ticket-rule")).toHaveCount(0);
   await page.getByTestId("discount-cancel").click();
+});
+
+// Round 9: the Summary reads like the receipt. A discounted line shows its price less its own
+// discount (with the discount said under it), the ticket discount is its own row, and the lines, less
+// that row, add to the subtotal.
+test("the Summary shows line discounts on their lines, the ticket discount row, and a subtotal that sums", async ({
+  page,
+}) => {
+  await signIn(page, "stepper");
+  await ensureSession(page);
+  await tenHolland(page);
+  await openStep(page, "items");
+  await page.getByTestId("pos-line-discount").click();
+  await page.getByTestId("discount-value").fill("10");
+  await page.getByTestId("discount-approver").selectOption({ label: "Sales manager · Sales Manager" });
+  await page.getByTestId("discount-apply").click();
+  await expect(page.getByTestId("pos-line-discount-chip")).toContainText("10% off");
+  await openPaymentStep(page, "stepper");
+  await giveDiscount(page, () => page.getByTestId("pos-ticket-discount").click(), "amount", "2", "Branch manager · Branch Manager");
+
+  await page.getByTestId("step-head-summary").click();
+  const readback = page.getByTestId("pos-readback");
+  await expect(readback).toBeVisible();
+  const line = readback.locator("li").first();
+  // The line at its price less its own discount, and the discount said on the line.
+  await expect(line.locator(".m").first()).toHaveText("$36.00");
+  await expect(line.getByTestId("readback-line-discount")).toContainText("10% off");
+  await expect(line.getByTestId("readback-line-discount")).toContainText("-$4.00");
+  // The ticket discount is its own row; the subtotal sums the lines less it.
+  await expect(readback.getByTestId("pos-ticket-discount-row")).toContainText("-$2.00");
+  await expect(readback.locator(".rbrow").filter({ hasText: "Subtotal" })).toContainText("$34.00");
+  const lineTotals = await readback.locator("li > .m").allInnerTexts();
+  const cents = (t: string) => Math.round(Number(t.replace(/[^0-9.-]/g, "")) * 100);
+  const sum = lineTotals.reduce((a, t) => a + cents(t), 0);
+  expect(sum - 200).toBe(3400);
+});
+
+// Round 9 (P3 from PR 249's review): when a price rule changes server side while a discounted line
+// sits on the ticket, the ring refuses the stale yes. The till then re-reads the lines' prices, so
+// the discount drops with the price-changed words and the person is not stuck re-sending the same
+// stale base.
+test("a stale discount refusal re-reads the prices and drops the discount in words", async ({ page }) => {
+  await signIn(page, "stepper");
+  await ensureSession(page);
+  await tenHolland(page);
+  await openStep(page, "items");
+  await page.getByTestId("pos-line-discount").click();
+  await page.getByTestId("discount-value").fill("10");
+  await page.getByTestId("discount-approver").selectOption({ label: "Sales manager · Sales Manager" });
+  await page.getByTestId("discount-apply").click();
+  await expect(page.getByTestId("pos-line-discount-chip")).toContainText("10% off");
+  await openPaymentStep(page, "stepper");
+
+  // From now on the price rule has moved: every resolve answers 10% higher; the ring refuses once.
+  let resolves = 0;
+  await page.route("**/api/v1/pricing/resolve", async (route) => {
+    const real = await route.fetch();
+    const body = (await real.json()) as Record<string, number>;
+    resolves += 1;
+    body["final_cents"] = Math.round((body["final_cents"] as number) * 1.1);
+    body["line_total_cents"] = Math.round((body["line_total_cents"] as number) * 1.1);
+    await route.fulfill({ response: real, json: body });
+  });
+  let refused = false;
+  await page.route("**/api/v1/pos/sales", async (route) => {
+    if (route.request().method() === "POST" && !refused) {
+      refused = true;
+      await route.fulfill({
+        status: 422,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "pos: the discount was approved for a different quantity or price: ask a manager again" }),
+      });
+      return;
+    }
+    await route.continue();
+  });
+  await page.getByTestId("pos-complete-sale").click();
+  await expect.poll(() => resolves, { timeout: 8000 }).toBeGreaterThan(0);
+  // The discount dropped with the price words, and the Discount action is back for a fresh yes.
+  await openStep(page, "items");
+  await expect(page.getByTestId("pos-line-discount-chip")).toHaveCount(0);
+  await expect(page.getByTestId("pos-line-discount")).toBeVisible();
+  await expect(page.getByText(/price changed|price .*changed/i).first()).toBeVisible();
+});
+
+// Round 9 (P3-2): a red banner from an earlier edit (the discount removed because the quantity
+// changed) does not stay on screen through a good sale, nor beside a fresh discount.
+test("an earlier red banner clears on a fresh discount and on a completed sale", async ({ page }) => {
+  await signIn(page, "stepper");
+  await ensureSession(page);
+  await tenHolland(page);
+  await openStep(page, "items");
+  const give = async () => {
+    await page.getByTestId("pos-line-discount").click();
+    await page.getByTestId("discount-value").fill("10");
+    await page.getByTestId("discount-approver").selectOption({ label: "Sales manager · Sales Manager" });
+    await page.getByTestId("discount-apply").click();
+    await expect(page.getByTestId("pos-line-discount-chip")).toContainText("10% off");
+  };
+  await give();
+  // Nudging the quantity removes the discount, in words (a red banner).
+  const qty = page.getByLabel("Quantity: Holland Stone 60 mm", { exact: true });
+  await qty.fill("9");
+  await qty.press("Enter");
+  const banner = page.locator("#till-message");
+  await expect(banner).toContainText("discount was removed");
+  // A fresh discount retires that banner.
+  await give();
+  await expect(banner).toHaveCount(0);
+  // Remove it again, then ring: the Paid card carries no leftover error.
+  await qty.fill("8");
+  await qty.press("Enter");
+  await expect(banner).toContainText("discount was removed");
+  await openPaymentStep(page, "stepper");
+  await page.getByTestId("pos-complete-sale").click();
+  await expect(page.getByTestId("sold-panel")).toBeVisible();
+  await expect(banner).toHaveCount(0);
 });

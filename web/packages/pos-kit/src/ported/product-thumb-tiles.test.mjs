@@ -127,3 +127,23 @@ test("a swatch picture yields the category's tile, and the glyph where there is 
   // A real picture still comes first.
   assert.deepEqual(thumbSource({ ...base, swatch: false, tileSrc: tile }), { kind: "image", src: base.imageSrc });
 });
+
+// Round 9: a picture that is effectively one flat colour is a swatch at any size.
+import { isBlankPicture } from "./product-thumb-logic.ts";
+
+const fill = (n, rgba) => Uint8ClampedArray.from(Array.from({ length: n }, () => rgba).flat());
+
+test("a flat or transparent picture reads blank, a textured one does not", () => {
+  assert.equal(isBlankPicture(fill(256, [54, 54, 58, 255])), true);
+  assert.equal(isBlankPicture(fill(256, [54, 54, 58, 0])), true);
+  // A whisper of noise (a compressor's rounding) is still blank.
+  const noisy = fill(256, [54, 54, 58, 255]);
+  noisy[0] = 58;
+  assert.equal(isBlankPicture(noisy), true);
+  // A two tone checker is a texture.
+  const tex = Uint8ClampedArray.from(Array.from({ length: 256 }, (_, i) => (i % 2 === 0 ? [200, 180, 140, 255] : [90, 70, 50, 255])).flat());
+  assert.equal(isBlankPicture(tex), false);
+  // Transparent pixels are ignored, the opaque ones decide.
+  const half = Uint8ClampedArray.from([54, 54, 58, 255, 250, 250, 250, 0, 200, 200, 200, 255, 0, 0, 0, 255]);
+  assert.equal(isBlankPicture(half), false);
+});

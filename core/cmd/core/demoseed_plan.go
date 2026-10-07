@@ -116,12 +116,32 @@ type custSpec struct {
 	OnHold          bool
 }
 
-// Nine accounts, chosen so the counter surface has one of every pricing shape to render: two plain
+// Ten accounts, chosen so the counter surface has one of every pricing shape to render: two plain
 // RETAIL walk-ups (list price, no rule), four CONTRACTOR accounts (account price via a customer
-// rule), two BUILDER accounts, one GOVERNMENT account, and one contractor deliberately ON HOLD so
-// the credit gate has something to refuse.
+// rule), two BUILDER accounts, one GOVERNMENT account, one contractor deliberately ON HOLD so
+// the credit gate has something to refuse, and one Cash On Demand account so the pay-before-release
+// path has a face. THAT LAST ONE IS THE PRODUCT'S OWN RULE, not a label the seed invented: an
+// account with zero-day terms is the defining COD account (billing/credit_gate.go CanDispatch,
+// "payment_terms_days = 0 with an unpaid balance"), and it carries a real credit line because the
+// product's COD posture is not "cannot buy", it is "the goods do not leave until the money is in"
+// (the ring gates the uncaptured exposure against the limit, the dispatch gate holds the release).
+// Cash On Demand means pay before release, never cash on delivery. The name is a role label on
+// purpose (the house rule), the tester's way to find and type it, and the home is the branch the
+// demo logins work so the branch-fenced search answers it.
+//
+// RULING, C01 IS HOMED AT THE BRANCH THE DEMO LOGINS WORK. The staff customer search is
+// branch-fenced (customer/search_scope.go, U-park E4): it admits accounts homed to the searched
+// branch and accounts with no home, and that fence is the product's own security posture, not a
+// gap for a demo to route around. Every demo login carries exactly one branch grant, at Trenton,
+// and the quote world's documents sit at Trenton, so a customer homed to the other branch is
+// invisible to every search a tester can run while holding quotes the same tester is looking at:
+// Northline's quote was on the Quote Desk and "Northline" answered nothing at the till's picker,
+// the same account visible one screen over and unfindable on this one. C01's home is therefore
+// Trenton, beside its quotes. Its older order book stays where it always was, on the other
+// branch's dashboards, which read orders.branch_id and never the customer's home; the repair for
+// databases seeded before this ruling sits in the demoseed_repair pair.
 var demoCustomers = []custSpec{
-	{"C01", "Northline Hardscapes Ltd (demo)", "CONTRACTOR", 30, 5_000_000, 0, false},
+	{"C01", "Northline Hardscapes Ltd (demo)", "CONTRACTOR", 30, 5_000_000, 1, false},
 	{"C02", "Bay Ridge Landscaping (demo)", "CONTRACTOR", 30, 2_500_000, 1, false},
 	{"C03", "Quinte Paving & Design (demo)", "CONTRACTOR", 45, 7_500_000, 1, false},
 	{"C04", "Harbourview Builders (demo)", "BUILDER", 60, 12_000_000, 0, false},
@@ -130,6 +150,7 @@ var demoCustomers = []custSpec{
 	{"C07", "D. Lachance (demo retail)", "RETAIL", 0, 0, 1, false},
 	{"C08", "County of Hastings (demo)", "GOVERNMENT", 60, 20_000_000, 0, false},
 	{"C09", "Stonebrook Contracting (demo)", "CONTRACTOR", 30, 1_500_000, 0, true},
+	{"C10", "Cash On Demand customer (demo)", "CONTRACTOR", 0, 500_000, 1, false},
 }
 
 type prodSpec struct {

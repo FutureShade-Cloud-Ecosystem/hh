@@ -42,7 +42,8 @@ var tablesTheSeedWrites = []string{
 	"pos_sale", "pos_signature", "pricing_list_prices", "pricing_rules", "product_branch_costs",
 	"product_images",
 	"product_reorder_points", "product_uoms", "products", "quantity_break_headers",
-	"quantity_break_items", "stock_balances", "stock_moves", "task_events", "task_shortages",
+	"quantity_break_items", "quote_lines", "stock_balances", "stock_moves", "task_events",
+	"task_shortages",
 	"tasks", "will_call_pickups",
 }
 
