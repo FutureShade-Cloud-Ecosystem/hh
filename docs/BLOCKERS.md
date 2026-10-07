@@ -1605,3 +1605,21 @@ own lane, recorded here rather than touched across the boundary:
 Neither file is in this lane's Touches. The core's own proofs hold both sides: the no-limit leg
 (`core/internal/pos/refund_limit_off_test.go`) and the limit dealer's leg (the refund rule and per sale files), and the demo load's
 pin (`core/cmd/core/demo_on_test.go`, the demo tag).
+
+
+## The sale preview exempt leg is red on any host whose local day lags the database server's day (recorded by the hardening lane; appended; the entries above are never edited)
+
+`core/internal/pos/sale_preview_integration_test.go`, the exempt leg of
+`TestIntegration_Trenton_SalePreview_MatchesTheRing`, plants its zero rate MANUAL row at
+`CURRENT_DATE` (the Postgres server's zone, UTC on the gate image) while the assessor resolves
+"today" through `tax/model.go`'s `today(now)`, `now().Format("2006-01-02")`, the TEST PROCESS's
+local zone. On a host west of UTC (PDT, the workstation this was found on), in the evening hours
+where the UTC day has already rolled over but the host's has not, the process day is still yesterday
+against the server's CURRENT_DATE, the zero rate row is not
+yet in effect for the assessor, and the leg fails with a 1300 bps line under the MANUAL reason code.
+Verified red on origin/main against a fresh migrated and seeded gate database, and green on the same
+branch with `TZ=UTC` (the CI runner's condition, which is why the job never sees it). Not this lane's
+regression; the fix belongs to the tax module's owner, and the shape of it is the house's own rule:
+the assessor's "today" should read the house zone, not the process zone, the same defect class
+gl/businessday.go and dashboard/window.go close everywhere else. This lane ran its integration gate
+with `TZ=UTC` to match the CI runner.
