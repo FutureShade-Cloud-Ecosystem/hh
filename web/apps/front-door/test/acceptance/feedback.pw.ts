@@ -1,5 +1,5 @@
 // The feedback widget's acceptance spec (Feature Polish, decision log row
-// 958): the pill, the panel it opens, the capture, the paste, the remove, and
+// 958; round 7 moved the control into the bar): the bar's button, the panel it opens, the capture, the paste, the remove, and
 // a stubbed send. The stub answers the bridge's route in the contract's shape
 // and records what the widget posted; CI never reaches a real board. Written
 // red first: on main no pill exists to find.
@@ -7,7 +7,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 /** The widget lives in the design system's shadow DOM; its testids surface
  * through the penetrant locators Playwright rides. */
-const pill = (page: Page) => page.getByTestId("feedback-pill");
+const pill = (page: Page) => page.getByTestId("feedback-button");
 
 async function openPanel(page: Page): Promise<void> {
   await expect(pill(page)).toBeVisible();
@@ -37,28 +37,16 @@ test.beforeEach(async ({ request }) => {
   await request.post("/_stub/reset");
 });
 
-test("the pill renders, opens the panel, and the kinds are the plain words", async ({ page }) => {
+test("the bar button renders, opens the panel, and the kinds are the plain words", async ({ page }) => {
   await page.goto("/");
   await openPanel(page);
   await expect(page.getByTestId("feedback-kind-bug")).toHaveText("Something broke");
   await expect(page.getByTestId("feedback-kind-feedback")).toHaveText("Polish idea");
   await expect(page.getByTestId("feedback-kind-flag")).toHaveText("Flag for later");
   await expect(page.getByTestId("feedback-note")).toBeVisible();
-  // The pill sits in the reserved corner: about 22px off the bottom edge,
-  // never over the picker's cards or the header.
-  const box = await pill(page).boundingBox();
-  const viewportHeight = page.viewportSize()?.height ?? 720;
-  expect(box).not.toBeNull();
-  if (box !== null) {
-    const inset = viewportHeight - (box.y + box.height);
-    expect(inboxBounds(inset)).toBe(true);
-  }
+  // The control is in the bar: no floating pill sits over the picker's cards.
+  await expect(page.getByTestId("feedback-pill")).toBeHidden();
 });
-
-/** The pill's bottom inset is the reserved lane: 22px, give or take rendering. */
-function inboxBounds(inset: number): boolean {
-  return inset >= 16 && inset <= 30;
-}
 
 test("capture this screen returns a thumbnail of the view, the widget out of the shot", async ({ page }) => {
   await page.goto("/");
@@ -195,8 +183,8 @@ test("closing and reopening the panel shows the note and thumbnails as kept, and
     });
   await expect.poll(painted).toBeGreaterThan(0);
 
-  // Close with the pill, reopen with the pill.
-  await pill(page).click();
+  // Close with the panel's Close, reopen with the bar's button.
+  await page.getByRole("button", { name: "Close feedback" }).click();
   await expect(page.getByTestId("feedback-panel")).toHaveCount(0);
   await pill(page).click();
   await expect(page.getByTestId("feedback-panel")).toBeVisible();
@@ -228,8 +216,8 @@ async function pillIsTopmost(page: Page): Promise<string[]> {
       return hit;
     };
     const box = button.getBoundingClientRect();
-    // The corner probes sit 8px in, inside the pill's rounding.
-    const inset = 8;
+    // The corner probes sit 4px in, inside the button's rounding.
+    const inset = 4;
     const points: Array<[string, number, number]> = [
       ["top-left", box.left + inset, box.top + inset],
       ["top-right", box.right - inset, box.top + inset],
@@ -252,7 +240,7 @@ for (const size of [
   { width: 1440, height: 900 },
   { width: 1024, height: 768 },
 ]) {
-  test(`the pill is the topmost element at its corners at ${size.width}x${size.height}`, async ({ page }) => {
+  test(`the Feedback button is the topmost element at its corners at ${size.width}x${size.height}`, async ({ page }) => {
     await page.setViewportSize(size);
     await page.goto("/");
     await expect(pill(page)).toBeVisible();
@@ -284,18 +272,9 @@ test("a send answered with no work item number reads Sent. and not Sent: filed",
   await expect(page.getByTestId("feedback-sent")).toHaveText("Sent.");
 });
 
-test("trigger=external hides the pill and open() opens the panel for the host's own button", async ({ page }) => {
+test("the app mounts trigger=external: no pill, and show() opens the panel for the host's own button", async ({ page }) => {
   await page.goto("/");
-  await expect(pill(page)).toBeVisible();
-  // The widget is mounted by the app; flip it to the external trigger the way
-  // a host that owns its own button would mount it.
-  await page.evaluate(() => {
-    const widget = document.querySelector("fd-app-root")?.shadowRoot?.querySelector("hh-feedback") as
-      | (HTMLElement & { open?: unknown })
-      | null;
-    widget?.setAttribute("trigger", "external");
-  });
-  await expect(pill(page)).toBeHidden();
+  await expect(page.getByTestId("feedback-pill")).toBeHidden();
   await expect(page.getByTestId("feedback-panel")).toHaveCount(0);
   await page.evaluate(() => {
     const widget = document.querySelector("fd-app-root")?.shadowRoot?.querySelector("hh-feedback") as
@@ -313,5 +292,5 @@ test("trigger=external hides the pill and open() opens the panel for the host's 
   await page.getByTestId("feedback-note").focus();
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("feedback-panel")).toHaveCount(0);
-  await expect(pill(page)).toBeHidden();
+  await expect(page.getByTestId("feedback-pill")).toBeHidden();
 });
