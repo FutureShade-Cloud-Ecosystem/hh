@@ -138,5 +138,30 @@ for (const width of WIDTHS) {
         await fits(page, `pricing ${tab}`);
       }
     });
+
+    test("the quote detail bar opens without pushing the page sideways, and the preview's Amount column is whole", async ({ page }) => {
+      await signIn(page);
+      const seeded = await page.request.post("/_stub/seed-quote", {
+        data: { status: "DRAFT", customer_id: "c-fenwick", lines: [{ p: "p-holland-60", q: 120 }, { p: "p-polymer-sand", q: 2 }, { p: "p-edge-8", q: 10 }, { p: "p-wall-std", q: 4 }, { p: "p-clear-stone", q: 3 }] },
+      });
+      const id = ((await seeded.json()) as { id: string }).id;
+      await page.evaluate((quote) => {
+        window.location.hash = `#/quotes/${quote}`;
+      }, id);
+      await expect(page.getByTestId("qb-line")).toHaveCount(5);
+      await page.getByText("Quote detail & admin").click();
+      await expect(page.getByTestId("qe-box")).toBeVisible();
+      await fits(page, "the detail bar open");
+      await page.getByTestId("qb-preview").click();
+      await expect(page.getByTestId("qb-preview-pane")).toBeVisible();
+      await fits(page, "the preview open");
+      // The Amount column is whole: the table fits the box that holds it, so nothing is cut or has to be scrolled to.
+      const clipped = await page.locator("pd-quote-public").evaluate((host) => {
+        const wrap = host.shadowRoot?.querySelector(".tablewrap") as HTMLElement | null;
+        if (wrap === null || wrap === undefined) return ["no table box"];
+        return wrap.scrollWidth > wrap.clientWidth + 1 ? [`table ${wrap.scrollWidth}px in a box of ${wrap.clientWidth}px`] : [];
+      });
+      expect(clipped).toEqual([]);
+    });
   });
 }

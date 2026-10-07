@@ -729,7 +729,7 @@ export class QdQuoteEdit extends PanelBase {
     const anyDisc = view.lines.some((l) => (this.discByLine[l.line_no] ?? 0) > 0);
     const discColumn = showDisc || anyDisc;
     return html`
-      <table data-testid="qe-lines">
+      <div class="tscroll"><table data-testid="qe-lines">
         <thead>
           <tr>
             <th>#</th>
@@ -782,7 +782,7 @@ export class QdQuoteEdit extends PanelBase {
               </tr>`
             : nothing}
         </tbody>
-      </table>
+      </table></div>
     `;
   }
 
@@ -856,7 +856,7 @@ export class QdQuoteEdit extends PanelBase {
             </div>`
           : nothing}
         ${this.links.length > 0
-          ? html`<table class="gap-s" data-testid="qe-links">
+          ? html`<div class="tscroll"><table class="gap-s" data-testid="qe-links">
               <thead>
                 <tr>
                   <th>Issued</th>
@@ -879,7 +879,7 @@ export class QdQuoteEdit extends PanelBase {
                   </tr>`,
                 )}
               </tbody>
-            </table>`
+            </table></div>`
           : nothing}
       </fieldset>
     `;
@@ -940,7 +940,7 @@ export class QdQuoteEdit extends PanelBase {
             </ul>`
           : nothing}
         ${this.compareRows.length > 0
-          ? html`<table class="gap-s">
+          ? html`<div class="tscroll"><table class="gap-s">
                 <thead>
                   <tr>
                     <th>Option</th>
@@ -967,7 +967,7 @@ export class QdQuoteEdit extends PanelBase {
                     </tr>`,
                   )}
                 </tbody>
-              </table>
+              </table></div>
               <p class="picked" style="margin:6px 0 0">Comparison only: nothing here changes the quote or any price.</p>`
           : nothing}
       </fieldset>

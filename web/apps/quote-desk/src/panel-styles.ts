@@ -45,6 +45,11 @@ export const panelStyles = css`
     outline: 2px solid var(--hos-stone-amber-text, var(--hh-accent-text));
     outline-offset: 2px;
   }
+  /* A wide table scrolls inside its own box: the page never scrolls sideways for it (phone widths). */
+  .tscroll {
+    max-width: 100%;
+    overflow-x: auto;
+  }
   table {
     width: 100%;
     border-collapse: collapse;

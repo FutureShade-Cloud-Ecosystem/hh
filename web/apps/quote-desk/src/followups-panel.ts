@@ -169,7 +169,7 @@ export class QdQuoteFollowups extends PanelBase {
     const rows = timeline(this.history);
     if (rows.length === 0) return html`<p class="dim" data-testid="fu-empty">Nothing has been sent yet, and nothing is scheduled.</p>`;
     return html`
-      <table data-testid="fu-table">
+      <div class="tscroll"><table data-testid="fu-table">
         <thead>
           <tr>
             <th>Step</th>
@@ -190,7 +190,7 @@ export class QdQuoteFollowups extends PanelBase {
             </tr>`,
           )}
         </tbody>
-      </table>
+      </table></div>
     `;
   }
 

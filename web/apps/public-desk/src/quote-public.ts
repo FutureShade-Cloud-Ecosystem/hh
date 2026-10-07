@@ -156,6 +156,29 @@ export class QuotePublicPage extends HHElement {
         td.uom {
           display: none;
         }
+        /* The figures stay whole on a phone: a tighter table, so the Amount column is never cut or scrolled to. */
+        table {
+          font-size: 0.8rem;
+        }
+        th,
+        td {
+          padding-left: var(--hh-s-2);
+          padding-right: var(--hh-s-2);
+        }
+        th.item,
+        td.item {
+          min-width: 3.5rem;
+          overflow-wrap: anywhere;
+        }
+      }
+      @media (max-width: 360px) {
+        table {
+          font-size: 0.72rem;
+        }
+        th.item,
+        td.item {
+          min-width: 2.5rem;
+        }
       }
       th {
         text-align: left;

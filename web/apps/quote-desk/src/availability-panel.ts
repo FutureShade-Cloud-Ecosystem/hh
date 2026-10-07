@@ -214,7 +214,7 @@ export class QdQuoteAvailability extends PanelBase {
         ${this.loaded && this.lines.length === 0
           ? html`<p class="dim" data-testid="av-empty">This quote has no lines yet.</p>`
           : this.lines.length > 0
-            ? html`<table>
+            ? html`<div class="tscroll"><table>
                 <thead>
                   <tr>
                     <th>Line</th>
@@ -226,7 +226,7 @@ export class QdQuoteAvailability extends PanelBase {
                 <tbody>
                   ${this.lines.map((l) => this.renderLine(l))}
                 </tbody>
-              </table>`
+              </table></div>`
             : nothing}
         ${this.error !== "" ? html`<p class="err" role="alert" data-testid="av-error">${this.error}</p>` : nothing}
       </div>
