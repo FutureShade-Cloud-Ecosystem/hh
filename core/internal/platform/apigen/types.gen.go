@@ -6691,13 +6691,24 @@ type QuoteView struct {
 }
 
 type QuoteAcceptanceRecord struct {
-	Source              string    `json:"source"`
-	TypedName           *string   `json:"typed_name,omitempty"`
-	AcceptedAt          time.Time `json:"accepted_at"`
-	QuantitiesConfirmed bool      `json:"quantities_confirmed"`
-	AmountCents         int64     `json:"amount_cents"`
-	Channel             *string   `json:"channel,omitempty"`
-	Note                *string   `json:"note,omitempty"`
+	Source              string               `json:"source"`
+	TypedName           *string              `json:"typed_name,omitempty"`
+	AcceptedAt          time.Time            `json:"accepted_at"`
+	QuantitiesConfirmed bool                 `json:"quantities_confirmed"`
+	AmountCents         int64                `json:"amount_cents"`
+	Channel             *string              `json:"channel,omitempty"`
+	Note                *string              `json:"note,omitempty"`
+	QuantityNotice      *string              `json:"quantity_notice,omitempty"`
+	Lines               *[]QuoteAcceptedLine `json:"lines,omitempty"`
+}
+
+type QuoteAcceptedLine struct {
+	LineNo         int32  `json:"line_no"`
+	Description    string `json:"description"`
+	QtyEntered     string `json:"qty_entered"`
+	UomEntered     string `json:"uom_entered"`
+	UnitPriceCents int64  `json:"unit_price_cents"`
+	LineTotalCents int64  `json:"line_total_cents"`
 }
 
 type QuoteViewLine struct {

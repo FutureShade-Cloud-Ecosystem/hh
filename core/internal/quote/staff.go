@@ -335,6 +335,21 @@ type QuoteAcceptanceRecord struct {
 	// Channel and Note are staff row facts: how the customer said yes, and what staff wrote.
 	Channel string `json:"channel,omitempty"`
 	Note    string `json:"note,omitempty"`
+	// QuantityNotice and Lines are the customer row's dispute record: the notice wording that stood on
+	// the page and the lines as accepted, kept on the acceptance (0367) so later edits to either leave
+	// them untouched. Absent on a staff row and on acceptances taken before they were kept.
+	QuantityNotice string               `json:"quantity_notice,omitempty"`
+	Lines          []AcceptedLineRecord `json:"lines,omitempty"`
+}
+
+// AcceptedLineRecord is one line as it stood when the customer accepted.
+type AcceptedLineRecord struct {
+	LineNo         int    `json:"line_no"`
+	Description    string `json:"description"`
+	QtyEntered     string `json:"qty_entered"`
+	UOMEntered     string `json:"uom_entered"`
+	UnitPriceCents int64  `json:"unit_price_cents"`
+	LineTotalCents int64  `json:"line_total_cents"`
 }
 
 // QuoteCreate is the staff create payload.

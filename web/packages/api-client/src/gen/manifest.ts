@@ -811,6 +811,7 @@ export const SCHEMA_NAMES: readonly string[] = [
   "QuoteSummaryPage",
   "QuoteView",
   "QuoteAcceptanceRecord",
+  "QuoteAcceptedLine",
   "QuoteViewLine",
   "QuoteCreateRequest",
   "QuoteValidUntilWrite",

@@ -30,6 +30,7 @@ package quote
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -646,15 +647,17 @@ func (r *Repository) StaffDetail(ctx context.Context, quoteID string) (StaffQuot
 	// The acceptance history, on the same snapshot as the lines it speaks about: the customer's own
 	// acceptance rows beside the staff decisions made on their behalf (audit rows, no acceptance row).
 	arows, err := tx.Query(ctx, `
-		SELECT source, typed_name, at, quantities_confirmed, amount_cents, channel, note FROM (
+		SELECT source, typed_name, at, quantities_confirmed, amount_cents, channel, note, quantity_notice, lines FROM (
 		  SELECT 'CUSTOMER' AS source, typed_name, accepted_at AS at, quantities_confirmed,
-		         accepted_total_cents AS amount_cents, '' AS channel, '' AS note
+		         accepted_total_cents AS amount_cents, '' AS channel, '' AS note,
+		         quantity_notice, accepted_lines AS lines
 		    FROM quote_acceptances WHERE quote_id = $1
 		  UNION ALL
 		  SELECT 'STAFF_ON_BEHALF', '', created_at,
 		         COALESCE((changes->>'quantities_confirmed')::boolean, false),
 		         COALESCE((changes->>'amount_cents')::bigint, 0),
-		         COALESCE(changes->>'channel', ''), COALESCE(changes->>'note', '')
+		         COALESCE(changes->>'channel', ''), COALESCE(changes->>'note', ''),
+		         '', '[]'::jsonb
 		    FROM audit_log
 		   WHERE entity_type = 'quote' AND entity_id = $1 AND action = 'QUOTE_ACCEPTED'
 		     AND changes->>'purpose' = 'STAFF_QUOTE_DECISION'
@@ -666,8 +669,12 @@ func (r *Repository) StaffDetail(ctx context.Context, quoteID string) (StaffQuot
 	v.Acceptances = []QuoteAcceptanceRecord{}
 	for arows.Next() {
 		var a QuoteAcceptanceRecord
-		if err := arows.Scan(&a.Source, &a.TypedName, &a.AcceptedAt, &a.QuantitiesConfirmed, &a.AmountCents, &a.Channel, &a.Note); err != nil {
+		var lines []byte
+		if err := arows.Scan(&a.Source, &a.TypedName, &a.AcceptedAt, &a.QuantitiesConfirmed, &a.AmountCents, &a.Channel, &a.Note, &a.QuantityNotice, &lines); err != nil {
 			return v, fmt.Errorf("scan quote acceptance: %w", err)
+		}
+		if err := json.Unmarshal(lines, &a.Lines); err != nil {
+			return v, fmt.Errorf("decode accepted lines: %w", err)
 		}
 		v.Acceptances = append(v.Acceptances, a)
 	}

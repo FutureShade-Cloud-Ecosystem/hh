@@ -1724,6 +1724,31 @@ components:
         note:
           type: string
           description: Staff rows only, what the staff member wrote
+        quantity_notice:
+          type: string
+          description: >-
+            Customer rows only, the notice wording that stood on the page at the
+            accept; absent on acceptances taken before it was kept
+        lines:
+          type: array
+          description: >-
+            Customer rows only, the lines as they stood at the accept, kept so a
+            later edit leaves the record alone; absent on acceptances taken
+            before they were kept
+          items: { $ref: "#/components/schemas/QuoteAcceptedLine" }
+    QuoteAcceptedLine:
+      type: object
+      description: >-
+        One line as the customer accepted it. The staff quote resource is the
+        canonical dealer_quote (DECISIONS.md D8).
+      required: [line_no, description, qty_entered, uom_entered, unit_price_cents, line_total_cents]
+      properties:
+        line_no: { type: integer, format: int32 }
+        description: { type: string }
+        qty_entered: { type: string }
+        uom_entered: { type: string }
+        unit_price_cents: { type: integer, format: int64 }
+        line_total_cents: { type: integer, format: int64 }
     QuoteViewLine:
       type: object
       description: >-

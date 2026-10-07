@@ -366,15 +366,28 @@ func (r *Repository) AcceptQuoteGuarded(ctx context.Context, in acceptWrite, hoo
 	}
 	// The acceptance record SNAPSHOTS the money and the document number (C1): it must stay meaningful
 	// even if the quote row is later gone, so it never reads back through quote_id at display time.
+	// The record also keeps what the customer was shown (0367): the lines as they stand under this lock
+	// and the notice wording in force for the quote's branch, read in the same statement.
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO quote_acceptances
 		  (quote_id, share_link_id, quote_no, typed_name,
 		   accepted_subtotal_cents, accepted_tax_cents, accepted_total_cents, audit_seq, accepted_at,
-		   quantities_confirmed)
-		VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, NULLIF($8,0), $9, $10)
+		   quantities_confirmed, quantity_notice, accepted_lines)
+		VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, NULLIF($8,0), $9, $10,
+		  COALESCE((SELECT qp.quantity_notice FROM quote_policy qp
+		             WHERE qp.branch_id = (SELECT branch_id FROM quotes WHERE id = $1::uuid)),
+		           (SELECT qp.quantity_notice FROM quote_policy qp WHERE qp.branch_id IS NULL), $11),
+		  COALESCE((SELECT jsonb_agg(jsonb_build_object(
+		              'line_no', ql.line_no,
+		              'description', COALESCE(NULLIF(ql.description,''), p.name, ''),
+		              'qty_entered', ql.qty_entered::text, 'uom_entered', ql.uom_entered::text,
+		              'unit_price_cents', ql.unit_price_cents, 'line_total_cents', ql.line_total_cents)
+		              ORDER BY ql.line_no)
+		            FROM quote_lines ql LEFT JOIN products p ON p.id = ql.product_id
+		           WHERE ql.quote_id = $1::uuid), '[]'::jsonb))
 		RETURNING accepted_at`,
 		in.QuoteID, in.ShareLinkID, quoteNo, in.TypedName, subtotal, tax, total, seq, in.Now,
-		in.QuantitiesConfirmed).
+		in.QuantitiesConfirmed, DefaultQuantityNotice).
 		Scan(&out.AcceptedAt); err != nil {
 		return AcceptanceResult{}, fmt.Errorf("record quote acceptance: %w", err)
 	}

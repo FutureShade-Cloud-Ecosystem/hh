@@ -5759,6 +5759,16 @@ export type QuoteAcceptanceRecord = {
   amount_cents: number;
   channel?: string;
   note?: string;
+  quantity_notice?: string;
+  lines?: QuoteAcceptedLine[];
+};
+export type QuoteAcceptedLine = {
+  line_no: number;
+  description: string;
+  qty_entered: string;
+  uom_entered: string;
+  unit_price_cents: number;
+  line_total_cents: number;
 };
 export type QuoteViewLine = {
   line_no: number;
