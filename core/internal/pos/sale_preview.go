@@ -169,14 +169,22 @@ type SalePreview struct {
 	DiscountCents     int64             `json:"discount_cents,omitempty"`
 	SaleDiscountCents int64             `json:"sale_discount_cents,omitempty"`
 	Lines             []SalePreviewLine `json:"lines,omitempty"`
+	// TicketBaseCents is the subtotal after the line discounts, before any ticket discount: what
+	// a ticket discount is struck from and approved against. TicketDiscountMaxCents is the most a
+	// ticket discount may take off (the base less one cent), so the till never works either out.
+	TicketBaseCents        int64 `json:"ticket_base_cents,omitempty"`
+	TicketDiscountMaxCents int64 `json:"ticket_discount_max_cents,omitempty"`
 }
 
 // SalePreviewLine is one ticket line's priced answer: the net the line charges and what came off.
 type SalePreviewLine struct {
-	LineNo            int   `json:"line_no"`
-	LineTotalCents    int64 `json:"line_total_cents"` // net of every discount
-	DiscountCents     int64 `json:"discount_cents,omitempty"`
-	SaleDiscountCents int64 `json:"sale_discount_cents,omitempty"`
+	LineNo         int   `json:"line_no"`
+	LineTotalCents int64 `json:"line_total_cents"` // net of every discount
+	// BeforeTicketDiscountCents is the line's price less its own discount, before its share of
+	// the ticket discount: the figure the receipt prints for the line.
+	BeforeTicketDiscountCents int64 `json:"before_ticket_discount_cents"`
+	DiscountCents             int64 `json:"discount_cents,omitempty"`
+	SaleDiscountCents         int64 `json:"sale_discount_cents,omitempty"`
 }
 
 // SalePreview prices a would-be ticket through the ring's own resolver and
@@ -231,6 +239,10 @@ func (s *Service) SalePreview(ctx context.Context, in SalePreviewInput) (SalePre
 		TotalCents:    priced.total,
 		TaxReasonCode: taxReason,
 	}
+	if priced.subtotal > 0 {
+		out.TicketBaseCents = priced.subtotal + priced.saleDiscount.AmountCents
+		out.TicketDiscountMaxCents = out.TicketBaseCents - 1
+	}
 	if total, _ := reportDiscounts(priced.discounts); total > 0 {
 		out.DiscountCents = total
 		out.SaleDiscountCents = priced.saleDiscount.AmountCents
@@ -238,7 +250,8 @@ func (s *Service) SalePreview(ctx context.Context, in SalePreviewInput) (SalePre
 		for i, l := range priced.lines {
 			out.Lines[i] = SalePreviewLine{
 				LineNo: l.LineNo, LineTotalCents: l.LineTotalCents,
-				DiscountCents: l.DiscountCents, SaleDiscountCents: l.SaleDiscountCents,
+				BeforeTicketDiscountCents: l.LineTotalCents + l.SaleDiscountCents,
+				DiscountCents:             l.DiscountCents, SaleDiscountCents: l.SaleDiscountCents,
 			}
 		}
 	}

@@ -39748,6 +39748,15 @@ components:
           type: integer
           format: int64
           description: The ticket discount's own cents
+        ticket_base_cents:
+          type: integer
+          format: int64
+          description: "The subtotal after the line discounts, before any ticket discount: what a ticket discount is approved against"
+        ticket_discount_max_cents:
+          type: integer
+          format: int64
+          description: The most a ticket discount may take off (the base less one cent)
+          so a sale never totals $0.00: null
         lines:
           type: array
           description: One row per ticket line when a discount applies, so the till shows the server's cents
@@ -39759,6 +39768,7 @@ components:
       required:
         - line_no
         - line_total_cents
+        - before_ticket_discount_cents
       properties:
         line_no:
           type: integer
@@ -39767,6 +39777,11 @@ components:
           type: integer
           format: int64
           description: Net of every discount
+        before_ticket_discount_cents:
+          type: integer
+          format: int64
+          description: The line's price less its own discount
+          before its share of the ticket discount (the figure the receipt prints): null
         discount_cents:
           type: integer
           format: int64

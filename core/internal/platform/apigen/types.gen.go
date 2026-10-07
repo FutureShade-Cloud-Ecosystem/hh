@@ -4733,21 +4733,24 @@ type PosSalePreviewInput struct {
 }
 
 type PosSalePreview struct {
-	SubtotalCents     int64                   `json:"subtotal_cents"`
-	TaxCents          int64                   `json:"tax_cents"`
-	TaxLines          []PosSalePreviewTaxLine `json:"tax_lines"`
-	TotalCents        int64                   `json:"total_cents"`
-	TaxReasonCode     string                  `json:"tax_reason_code"`
-	DiscountCents     *int64                  `json:"discount_cents,omitempty"`
-	SaleDiscountCents *int64                  `json:"sale_discount_cents,omitempty"`
-	Lines             *[]PosSalePreviewLine   `json:"lines,omitempty"`
+	SubtotalCents          int64                   `json:"subtotal_cents"`
+	TaxCents               int64                   `json:"tax_cents"`
+	TaxLines               []PosSalePreviewTaxLine `json:"tax_lines"`
+	TotalCents             int64                   `json:"total_cents"`
+	TaxReasonCode          string                  `json:"tax_reason_code"`
+	DiscountCents          *int64                  `json:"discount_cents,omitempty"`
+	SaleDiscountCents      *int64                  `json:"sale_discount_cents,omitempty"`
+	TicketBaseCents        *int64                  `json:"ticket_base_cents,omitempty"`
+	TicketDiscountMaxCents *int64                  `json:"ticket_discount_max_cents,omitempty"`
+	Lines                  *[]PosSalePreviewLine   `json:"lines,omitempty"`
 }
 
 type PosSalePreviewLine struct {
-	LineNo            int32  `json:"line_no"`
-	LineTotalCents    int64  `json:"line_total_cents"`
-	DiscountCents     *int64 `json:"discount_cents,omitempty"`
-	SaleDiscountCents *int64 `json:"sale_discount_cents,omitempty"`
+	LineNo                    int32  `json:"line_no"`
+	LineTotalCents            int64  `json:"line_total_cents"`
+	BeforeTicketDiscountCents int64  `json:"before_ticket_discount_cents"`
+	DiscountCents             *int64 `json:"discount_cents,omitempty"`
+	SaleDiscountCents         *int64 `json:"sale_discount_cents,omitempty"`
 }
 
 type PosSalePreviewTaxLine struct {

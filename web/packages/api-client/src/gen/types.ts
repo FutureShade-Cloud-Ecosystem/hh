@@ -4039,11 +4039,14 @@ export type PosSalePreview = {
   tax_reason_code: "STD_ON_HST_13" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "MANUAL_TAX_REVIEW" | "RELIEF_DECLINED_EVIDENCE";
   discount_cents?: number;
   sale_discount_cents?: number;
+  ticket_base_cents?: number;
+  ticket_discount_max_cents?: number;
   lines?: PosSalePreviewLine[];
 };
 export type PosSalePreviewLine = {
   line_no: number;
   line_total_cents: number;
+  before_ticket_discount_cents: number;
   discount_cents?: number;
   sale_discount_cents?: number;
 };

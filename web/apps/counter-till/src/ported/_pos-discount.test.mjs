@@ -77,14 +77,20 @@ test('the preview answer carries the server discount cents, per line, or none', 
   assert.deepEqual(plain.lines, []);
   const got = readPreview({
     subtotal_cents: 17100, tax_cents: 2223, total_cents: 19323, discount_cents: 2900, sale_discount_cents: 1900,
-    lines: [{ line_no: 1, line_total_cents: 7300, discount_cents: 1000, sale_discount_cents: 900 }, { line_no: 2, line_total_cents: 9800, sale_discount_cents: 1000 }],
+    ticket_base_cents: 19000, ticket_discount_max_cents: 18999,
+    lines: [
+      { line_no: 1, line_total_cents: 7300, before_ticket_discount_cents: 8200, discount_cents: 1000, sale_discount_cents: 900 },
+      { line_no: 2, line_total_cents: 9800, before_ticket_discount_cents: 10800, sale_discount_cents: 1000 },
+    ],
   });
   assert.equal(got.kind, 'ready');
   assert.equal(got.discountCents, 2900);
   assert.equal(got.saleDiscountCents, 1900);
+  assert.equal(got.ticketBaseCents, 19000);
+  assert.equal(got.ticketDiscountMaxCents, 18999);
   assert.deepEqual(got.lines, [
-    { lineNo: 1, lineTotalCents: 7300, discountCents: 1000, saleDiscountCents: 900 },
-    { lineNo: 2, lineTotalCents: 9800, discountCents: 0, saleDiscountCents: 1000 },
+    { lineNo: 1, lineTotalCents: 7300, beforeTicketDiscountCents: 8200, discountCents: 1000, saleDiscountCents: 900 },
+    { lineNo: 2, lineTotalCents: 9800, beforeTicketDiscountCents: 10800, discountCents: 0, saleDiscountCents: 1000 },
   ]);
   // A malformed discount figure is not an answer.
   assert.equal(readPreview({ subtotal_cents: 400, tax_cents: 52, total_cents: 452, discount_cents: 1.5 }).kind, 'unavailable');
@@ -173,7 +179,7 @@ test('the words say what happened and what to do', () => {
 import { ticketDiscountRule } from './_pos-discount.ts';
 
 test('a ticket discount must leave something to pay: the dialog refuses past the maximum and says the rule', () => {
-  const rule = { baseCents: 4000, money: (c) => `$${(c / 100).toFixed(2)}` };
+  const rule = { maxCents: 3999, money: (c) => `$${(c / 100).toFixed(2)}` };
   assert.equal(ticketDiscountRule(rule), 'A ticket discount must leave something to pay: the most you can take off is $39.99 (the ticket total less one cent).');
   assert.deepEqual(parseDiscountEntry('percent', '100', rule), { ok: false, words: ticketDiscountRule(rule) });
   assert.equal(parseDiscountEntry('percent', '99.99', rule).ok, true);

@@ -23,15 +23,15 @@ const AMOUNT_WORDS = 'A dollar discount is more than $0.00, up to two decimals (
  * parser. Refused in words, nothing sent: zero, a sign, more decimals than the cent allows, any
  * non digit. Whether the discount is more than the line or the ticket is the core's to say.
  */
-/** The ticket's rule: its subtotal after the line discounts, and the money words. */
+/** The ticket's rule: the most a ticket discount may take off (the server's figure) and the money words. */
 export interface TicketRule {
-  baseCents: number;
+  maxCents: number;
   money: (cents: number) => string;
 }
 
 /** The rule a ticket discount lives under, said in words (the dialog shows it before anything is typed). */
 export function ticketDiscountRule(rule: TicketRule): string {
-  return `A ticket discount must leave something to pay: the most you can take off is ${rule.money(rule.baseCents - 1)} (the ticket total less one cent).`;
+  return `A ticket discount must leave something to pay: the most you can take off is ${rule.money(rule.maxCents)} (the ticket total less one cent).`;
 }
 
 export function parseDiscountEntry(mode: DiscountMode, text: string, ticket?: TicketRule): DiscountEntry {
@@ -39,7 +39,7 @@ export function parseDiscountEntry(mode: DiscountMode, text: string, ticket?: Ti
   if (mode === 'amount') {
     const cents = parseAmountToCents(trimmed);
     if (cents === null || cents <= 0) return { ok: false, words: AMOUNT_WORDS };
-    if (ticket && cents > ticket.baseCents - 1) return { ok: false, words: ticketDiscountRule(ticket) };
+    if (ticket && cents > ticket.maxCents) return { ok: false, words: ticketDiscountRule(ticket) };
     return { ok: true, discount: { amountCents: cents } };
   }
   const m = trimmed.match(/^([0-9]{1,3})(?:\.([0-9]{1,2}))?$/);

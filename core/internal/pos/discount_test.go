@@ -261,6 +261,12 @@ func TestDiscount_PreviewEqualsTheRing(t *testing.T) {
 		prev.DiscountCents != sale.DiscountCents {
 		t.Fatalf("preview %+v is not the ring %+v", prev, sale)
 	}
+	// The preview answers the figures the till would otherwise have to work out: the ticket's base
+	// (the subtotal after the line discounts), the most a ticket discount may take off, and each
+	// line's price less its own discount.
+	if prev.TicketBaseCents != 8750 || prev.TicketDiscountMaxCents != 8749 || prev.Lines[0].BeforeTicketDiscountCents != 8750-0 {
+		t.Fatalf("preview base %d max %d before %d: %+v", prev.TicketBaseCents, prev.TicketDiscountMaxCents, prev.Lines[0].BeforeTicketDiscountCents, prev)
+	}
 	if len(prev.Lines) != 1 || prev.Lines[0].DiscountCents != 1250 || prev.Lines[0].SaleDiscountCents != 333 || prev.SaleDiscountCents != 333 {
 		t.Fatalf("preview lines do not carry the discounts: %+v", prev)
 	}

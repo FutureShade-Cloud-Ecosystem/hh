@@ -36,6 +36,9 @@ export type PreviewState =
       /** Every manual discount together, and the ticket discount's own share: the server's cents. */
       discountCents: number;
       saleDiscountCents: number;
+      /** The subtotal after the line discounts (what a ticket discount is approved against) and the most a ticket discount may take off: the server's figures, never worked out here. */
+      ticketBaseCents: number;
+      ticketDiscountMaxCents: number;
       /** Per line, only when a discount applies: the net the line charges and what came off. */
       lines: PreviewDiscountLine[];
     }
@@ -46,6 +49,8 @@ export type PreviewState =
 export interface PreviewDiscountLine {
   lineNo: number;
   lineTotalCents: number;
+  /** The line's price less its own discount: the figure the receipt prints and the line shows. */
+  beforeTicketDiscountCents: number;
   discountCents: number;
   saleDiscountCents: number;
 }
@@ -98,17 +103,31 @@ export function readPreview(answer: unknown, status = 200): PreviewState {
   const whole = (v: unknown): number | null => (v === undefined ? 0 : typeof v === 'number' && Number.isInteger(v) ? v : null);
   const discount = whole(a.discount_cents);
   const saleDiscount = whole(a.sale_discount_cents);
-  if (discount === null || saleDiscount === null) return { kind: 'unavailable' };
+  const base = whole(a.ticket_base_cents);
+  const max = whole(a.ticket_discount_max_cents);
+  if (discount === null || saleDiscount === null || base === null || max === null) return { kind: 'unavailable' };
   const lines: PreviewDiscountLine[] = [];
   if (Array.isArray(a.lines)) {
     for (const raw of a.lines) {
       const l = (raw ?? {}) as Record<string, unknown>;
       const own = whole(l.discount_cents);
       const share = whole(l.sale_discount_cents);
-      if (!Number.isInteger(l.line_no) || !Number.isInteger(l.line_total_cents) || own === null || share === null) {
+      if (
+        !Number.isInteger(l.line_no) ||
+        !Number.isInteger(l.line_total_cents) ||
+        !Number.isInteger(l.before_ticket_discount_cents) ||
+        own === null ||
+        share === null
+      ) {
         return { kind: 'unavailable' };
       }
-      lines.push({ lineNo: l.line_no as number, lineTotalCents: l.line_total_cents as number, discountCents: own, saleDiscountCents: share });
+      lines.push({
+        lineNo: l.line_no as number,
+        lineTotalCents: l.line_total_cents as number,
+        beforeTicketDiscountCents: l.before_ticket_discount_cents as number,
+        discountCents: own,
+        saleDiscountCents: share,
+      });
     }
   }
   return {
@@ -118,6 +137,8 @@ export function readPreview(answer: unknown, status = 200): PreviewState {
     totalCents: n as number,
     discountCents: discount,
     saleDiscountCents: saleDiscount,
+    ticketBaseCents: base,
+    ticketDiscountMaxCents: max,
     lines,
   };
 }

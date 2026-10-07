@@ -1600,6 +1600,8 @@ const server = createServer(async (request, response) => {
         tax_lines: tax > 0 ? [{ reason_code: "STD_ON_HST_13", rate_bps: HST_RATE_BPS, tax_cents: tax }] : [],
         total_cents: subtotal + tax,
         tax_reason_code: "STD_ON_HST_13",
+        ticket_base_cents: subtotal + discounted.saleCents,
+        ticket_discount_max_cents: subtotal + discounted.saleCents - 1,
         ...(discounted.discountCents > 0
           ? {
               discount_cents: discounted.discountCents,
@@ -1607,6 +1609,7 @@ const server = createServer(async (request, response) => {
               lines: discounted.nets.map((net, i) => ({
                 line_no: i + 1,
                 line_total_cents: net,
+                before_ticket_discount_cents: net + discounted.rows[i].sale,
                 ...(discounted.rows[i].discount > 0 ? { discount_cents: discounted.rows[i].discount } : {}),
                 ...(discounted.rows[i].sale > 0 ? { sale_discount_cents: discounted.rows[i].sale } : {}),
               })),

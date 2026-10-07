@@ -2993,12 +2993,17 @@ export class HosPosTerminal extends LitElement {
 
   /**
    * What a ticket discount is struck from: the subtotal after the line discounts, the server's
-   * figure (the preview's subtotal plus the ticket discount's own share). Null while the ticket
+   * figure (the preview's ticket_base_cents). Null while the ticket
    * is still being priced with line discounts on it: the yes is given for a known base.
    */
+  /** The most a ticket discount may take off, from the server (the preview's ticket_discount_max_cents). */
+  private ticketMaxCents(): number | null {
+    return this.preview.kind === 'ready' && this.preview.ticketDiscountMaxCents > 0 ? this.preview.ticketDiscountMaxCents : null;
+  }
+
   private ticketBaseCents(): number | null {
     const p = this.preview;
-    if (p.kind === 'ready') return p.subtotalCents + p.saleDiscountCents;
+    if (p.kind === 'ready') return p.ticketBaseCents;
     return this.cart.some((l) => l.discount) ? null : this.subtotal();
   }
 
@@ -6987,7 +6992,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
             .branchId=${this.branchId}
             .subject=${this.discountSubject()}
             .existing=${this.discountExisting()}
-            .ticketBaseCents=${this.discountTarget.kind === 'ticket' ? this.ticketBaseCents() : null}
+            .ticketMaxCents=${this.discountTarget.kind === 'ticket' ? this.ticketMaxCents() : null}
             @pos-discount-apply=${(e: CustomEvent<CartDiscount>) => this.onDiscountApply(e.detail)}
             @pos-discount-remove=${() => this.onDiscountRemove()}
             @pos-discount-close=${() => (this.discountTarget = null)}
@@ -7185,8 +7190,8 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
   private lineShownTotal(l: CartLine, i: number): string {
     if (l.priceMissing) return '(not priced)';
     if (!l.discount) return formatMoney(l.lineTotalCents);
-    const off = this.previewLineOff(i);
-    return off === undefined ? '(pending)' : formatMoney(l.lineTotalCents - off);
+    const shown = this.preview.kind === 'ready' ? this.preview.lines.find((x) => x.lineNo === i + 1) : undefined;
+    return shown === undefined ? '(pending)' : formatMoney(shown.beforeTicketDiscountCents);
   }
 
   /**
@@ -7211,7 +7216,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
             type="button"
             class="dbtn ${this.ticketDiscount ? 'chip' : ''}"
             data-testid="pos-ticket-discount"
-            ?disabled=${this.discountLocked() || !this.hasPricedLine()}
+            ?disabled=${this.discountLocked() || !this.hasPricedLine() || (this.ticketDiscount === null && p.kind !== 'ready')}
             @click=${() => this.openDiscount({ kind: 'ticket' })}
           >
             ${this.ticketDiscount
