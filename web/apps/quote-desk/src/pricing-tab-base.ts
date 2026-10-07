@@ -28,7 +28,8 @@ import {
   warningNotes,
   type FloorChange,
 } from "./_pricing-floor.js";
-import type { FloorPreview } from "./_pricing-wire.js";
+import type { CategoryRow, FloorPreview } from "./_pricing-wire.js";
+import { categoryLabel } from "./_pricing-shared.js";
 
 /** Fired (bubbling, composed) when the server refuses with 403: the host shows the refusal and drops the controls. */
 export const PRICING_REFUSED_EVENT = "pricing-refused";
@@ -403,7 +404,47 @@ export abstract class PricingTabBase extends PanelBase {
     `;
   }
 
+  /** The dealer's categories as the catalogue read answers them: every category list on the Pricing screens is this, never a built-in list. */
+  @state() protected catalogue: CategoryRow[] = [];
+  private catalogueOf: PricingClient | null = null;
+  /** A tab that reads the catalogue on each of its own reloads (the margin policy) says so, and the base reads it once only for the others. */
+  protected readsCatalogueOnReload = false;
+
+  /** The [id, name] pairs a category picker offers: the catalogue's active categories by name. */
+  protected categoryChoices(): Array<[string, string]> {
+    return this.catalogue
+      .filter((c) => c.active)
+      .map((c): [string, string] => [c.id, c.name])
+      .sort((a, b) => a[1].localeCompare(b[1]) || a[0].localeCompare(b[0]));
+  }
+
+  /** A category's name: the catalogue's, else the plain word. */
+  protected categoryNameOf = (id: string): string => this.catalogue.find((c) => c.id === id)?.name ?? categoryLabel(id);
+
+  /** Said where the categories could not be read: a picker then offers nothing, rather than a guess. */
+  @state() protected catalogueError = "";
+  private catalogueSeq = 0;
+
+  /** Read the catalogue's categories (again). An older answer never lands over a newer one, and a closed panel's lands nowhere. */
+  protected async loadCatalogue(pricing: PricingClient): Promise<void> {
+    const ctx = this.ctx;
+    const seq = (this.catalogueSeq += 1);
+    const read = await ctx.guarded(pricing.listCategories());
+    if (read === undefined || this.pricing !== pricing || seq !== this.catalogueSeq) return;
+    if (!read.ok) {
+      this.catalogue = [];
+      this.catalogueError = `The categories could not be read, so a category cannot be added now. ${spokenRefusal(read.error)}`;
+      return;
+    }
+    this.catalogueError = "";
+    this.catalogue = read.value;
+  }
+
   protected override updated(changed: Map<string, unknown>): void {
+    if (this.pricing !== null && this.catalogueOf !== this.pricing && !this.readsCatalogueOnReload) {
+      this.catalogueOf = this.pricing;
+      void this.loadCatalogue(this.pricing);
+    }
     if (this.floorPrompt === null) return;
     // The kits' gate allows no bound title attribute: the yard's full name rides in a data
     // attribute and is laid on the item's native tooltip here, where the DOM is in hand.

@@ -18,7 +18,7 @@ import { err, ok } from "@hardscapehouse/api-client";
 import { PricingTabBase } from "./pricing-tab-base.js";
 import { pricingStyles } from "./pricing-styles.js";
 import { spokenRefusal } from "./_quote-workarea.js";
-import { CATEGORY_OPTIONS, CUSTOMER_TYPES, categoryLabel, scopeLabel } from "./_pricing-shared.js";
+import { CUSTOMER_TYPES, scopeLabel } from "./_pricing-shared.js";
 import {
   EDITABLE_SCOPES,
   emptyRuleForm,
@@ -324,12 +324,18 @@ export class QdPricingRules extends PricingTabBase {
     super.updated(changed);
     this.fillSelect("filter-scope", [["", "All scopes"], ...EDITABLE_SCOPES.map((s) => [s, SCOPE_OPTION[s] ?? scopeLabel(s)] as const)], this.fScope);
     this.fillSelect("filter-type", [["", "All customer types"], ...CUSTOMER_TYPES.map((t) => [t, t] as const)], this.fType);
-    this.fillSelect("filter-category", [["", "All categories"], ...CATEGORY_OPTIONS.map((c) => [c.id, c.name] as const)], this.fCategory);
+    this.fillSelect("filter-category", [["", "All categories"], ...this.categoryChoices()], this.fCategory);
     if (this.dialogOpen) {
       const f = this.form;
       this.fillSelect("scope", this.scopeChoices(f).map((s) => [s, SCOPE_OPTION[s] ?? scopeLabel(s)] as const), f.scope);
       this.fillSelect("customerType", CUSTOMER_TYPES.map((t) => [t, t] as const), f.customerType);
-      this.fillSelect("categoryId", CATEGORY_OPTIONS.map((c) => [c.id, c.name] as const), f.categoryId);
+      // A category the catalogue does not hold is never what the form is left on: it starts on the catalogue's first.
+      const first = this.categoryChoices()[0]?.[0];
+      if (first !== undefined && !this.categoryChoices().some(([id]) => id === f.categoryId) && f.id === "") {
+        this.form = { ...this.form, categoryId: first };
+        return;
+      }
+      this.fillSelect("categoryId", this.categoryChoices(), f.categoryId);
       this.fillSelect("branchId", [["", "All branches"], ...this.branchNames.map((b) => [b.id, b.name] as const)], f.branchId);
       this.fillSelect("calcType", ruleCalcOptions(f.scope).map((c) => [c, CALC_LABEL[c]] as const), f.calcType);
       this.syncFields({
@@ -384,7 +390,7 @@ export class QdPricingRules extends PricingTabBase {
                           <tr class="${r.isActive ? "" : "inactive"}" data-testid="pr-row">
                             <td><span class="scopechip">${scopeLabel(r.scope)}</span></td>
                             <td>
-                              <div>${ruleAppliesTo(r, this.branchName, categoryLabel, this.customerName)}</div>
+                              <div>${ruleAppliesTo(r, this.branchName, this.categoryNameOf, this.customerName)}</div>
                               <div class="dim small">${r.detailText !== "" ? r.detailText : "-"}</div>
                             </td>
                             <td class="r mono amber">${ruleValueText(r)}</td>
@@ -524,7 +530,7 @@ export class QdPricingRules extends PricingTabBase {
           </div>
           <div class="dialog-body">
             <div class="confirm-note">
-              This retires the ${ruleAppliesTo(r, this.branchName, categoryLabel, this.customerName)} rule (${ruleValueText(r)}). The rule stops matching but its history is kept and logged.
+              This retires the ${ruleAppliesTo(r, this.branchName, this.categoryNameOf, this.customerName)} rule (${ruleValueText(r)}). The rule stops matching but its history is kept and logged.
             </div>
             ${this.formError !== "" ? html`<div class="err" role="alert" data-testid="pr-retire-error">${this.formError}</div>` : nothing}
           </div>

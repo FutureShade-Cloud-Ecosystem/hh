@@ -21,7 +21,6 @@ import "./customer-picker.js";
 import { PricingTabBase } from "./pricing-tab-base.js";
 import { pricingStyles } from "./pricing-styles.js";
 import { spokenRefusal } from "./_quote-workarea.js";
-import { CATEGORY_OPTIONS, categoryLabel } from "./_pricing-shared.js";
 import { emptyOverrideForm, overrideFormFromRow, overrideSave, overrideValueText, type OverrideForm } from "./_pricing-forms.js";
 import type { OverrideRow } from "./_pricing-wire.js";
 
@@ -278,7 +277,13 @@ export class QdPricingCustomers extends PricingTabBase {
     }
     if (this.dialogOpen) {
       const f = this.form;
-      this.fillSelect("categoryId", CATEGORY_OPTIONS.map((c) => [c.id, c.name] as const), f.categoryId);
+      // A category the catalogue does not hold is never what the form is left on: it starts on the catalogue's first.
+      const first = this.categoryChoices()[0]?.[0];
+      if (first !== undefined && !this.categoryChoices().some(([id]) => id === f.categoryId) && f.id === "") {
+        this.form = { ...this.form, categoryId: first };
+        return;
+      }
+      this.fillSelect("categoryId", this.categoryChoices(), f.categoryId);
       this.fillSelect("calcType", CALC_OPTIONS, f.calcType);
       this.syncFields({ valuePct: f.valuePct, priceUom: f.priceUom, notes: f.notes });
       const category = this.renderRoot.querySelector<HTMLSelectElement>('select[data-field="categoryId"]');
@@ -322,7 +327,7 @@ export class QdPricingCustomers extends PricingTabBase {
                       ${this.overrides.map(
                         (o) => html`
                           <tr data-testid="pc-row">
-                            <td>${categoryLabel(o.categoryId)}</td>
+                            <td>${this.categoryNameOf(o.categoryId)}</td>
                             <td class="r mono amber">${overrideValueText(o)}</td>
                             <td class="dim">${o.notes !== "" ? o.notes : "-"}</td>
                             <td class="r">
@@ -397,7 +402,7 @@ export class QdPricingCustomers extends PricingTabBase {
             <button type="button" class="x" data-action="close" aria-label="Close">&times;</button>
           </div>
           <div class="dialog-body">
-            <div class="confirm-note">Remove the ${categoryLabel(o.categoryId)} price (${overrideValueText(o)})? The customer goes back to system pricing for this category.</div>
+            <div class="confirm-note">Remove the ${this.categoryNameOf(o.categoryId)} price (${overrideValueText(o)})? The customer goes back to system pricing for this category.</div>
             ${this.formError !== "" ? html`<div class="err" role="alert" data-testid="pc-delete-error">${this.formError}</div>` : nothing}
           </div>
           <div class="dialog-foot">

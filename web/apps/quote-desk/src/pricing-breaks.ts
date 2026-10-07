@@ -22,7 +22,6 @@ import { err, ok } from "@hardscapehouse/api-client";
 import { PricingTabBase } from "./pricing-tab-base.js";
 import { pricingStyles } from "./pricing-styles.js";
 import { spokenRefusal } from "./_quote-workarea.js";
-import { CATEGORY_OPTIONS, categoryLabel } from "./_pricing-shared.js";
 import {
   BREAK_SURCHARGE_NOTE,
   BREAK_UOMS,
@@ -270,7 +269,13 @@ export class QdPricingBreaks extends PricingTabBase {
     if (this.dialogOpen) {
       const f = this.form;
       this.fillSelect("scopeKind", [["category", "Category"], ["product", "Product"]], f.scopeKind);
-      this.fillSelect("categoryId", CATEGORY_OPTIONS.map((c) => [c.id, c.name] as const), f.categoryId);
+      // A category the catalogue does not hold is never what the form is left on: it starts on the catalogue's first.
+      const first = this.categoryChoices()[0]?.[0];
+      if (first !== undefined && !this.categoryChoices().some(([id]) => id === f.categoryId) && f.id === "") {
+        this.form = { ...this.form, categoryId: first };
+        return;
+      }
+      this.fillSelect("categoryId", this.categoryChoices(), f.categoryId);
       this.fillSelect("thresholdUom", BREAK_UOMS.map((u) => [u, u] as const), f.thresholdUom);
       const values: Record<string, string | boolean> = { code: f.code, name: f.name, productId: f.productId };
       f.tiers.forEach((t, i) => {
@@ -288,7 +293,7 @@ export class QdPricingBreaks extends PricingTabBase {
 
   private scopeText(h: BreakRow): string {
     if (h.productId !== undefined) return `product · ${this.productNames[h.productId] ?? "a product"}`;
-    return `category · ${categoryLabel(h.categoryId ?? "")}`;
+    return `category · ${this.categoryNameOf(h.categoryId ?? "")}`;
   }
 
   render() {
