@@ -223,3 +223,25 @@ test("a role without the grant to accept or reject sees no decision section, and
   const refused = await page.request.post(`/api/v1/quotes/${id}/accept`, { data: { channel: "phone", quantities_confirmed: true, expected_total_cents: 1 }, headers: { Authorization: "Bearer x" } });
   expect([401, 403]).toContain(refused.status());
 });
+
+test("the decision form looks like the desk's own: bordered full-height fields, a real checkbox, and a statement that does not contradict itself", async ({ page }) => {
+  const id = await seedSent(page);
+  await openById(page, id);
+  await page.getByTestId("qb-decision-accept-open").click();
+  // The person's statement stands alone; the dealer's notice is information beside it, never part of the sentence.
+  await expect(page.getByTestId("qb-decision-statement-text")).toHaveText("The customer confirmed the quantities on this quote.");
+  await expect(page.getByTestId("qb-decision-notice")).toContainText("All quantities are to be confirmed by the customer");
+  const box = (await page.getByTestId("qb-decision-statement").boundingBox())!;
+  expect(box.width, "a checkbox of the desk's size").toBeGreaterThanOrEqual(18);
+  for (const field of ["qb-decision-channel", "qb-decision-note"]) {
+    const el = page.getByTestId(field);
+    const look = await el.evaluate((node) => {
+      const style = getComputedStyle(node);
+      return { border: parseFloat(style.borderTopWidth), height: node.getBoundingClientRect().height, radius: parseFloat(style.borderTopLeftRadius), font: parseFloat(style.fontSize) };
+    });
+    expect(look.border, `${field} has a border`).toBeGreaterThanOrEqual(1);
+    expect(look.height, `${field} is the desk's field height`).toBeGreaterThanOrEqual(40);
+    expect(look.radius, `${field} is rounded like the desk's fields`).toBeGreaterThanOrEqual(4);
+    expect(look.font, `${field} reads at the desk's size`).toBeGreaterThanOrEqual(13);
+  }
+});

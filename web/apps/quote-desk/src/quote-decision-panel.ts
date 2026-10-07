@@ -42,11 +42,15 @@ export class QdQuoteDecision extends PanelBase {
       :host {
         margin-top: 12px;
       }
+      /* The desk's own card and fields: the quote page's bordered, rounded, full height controls. */
       .decision {
         border: 1px solid var(--hos-line, var(--hh-line));
         border-radius: var(--hos-radius-card, var(--hh-radius-card));
-        padding: 12px 16px;
+        padding: var(--hos-s-16, 16px);
         background: var(--hos-slate-warm, var(--hh-card));
+      }
+      .decision h3 {
+        margin: 0 0 var(--hos-s-4, 4px);
       }
       .row {
         display: flex;
@@ -64,15 +68,49 @@ export class QdQuoteDecision extends PanelBase {
       textarea,
       select {
         font: inherit;
-        font-size: var(--qp-body);
+        font-size: 1rem;
+        box-sizing: border-box;
+        width: 100%;
         max-width: 100%;
+        min-height: var(--hh-h-input, 44px);
+        padding: var(--hos-s-4, 4px) var(--hos-s-8, 8px);
+        border: 1px solid var(--hos-control-line, var(--hh-control-line, var(--hh-line)));
+        border-radius: var(--hos-radius-control, 6px);
+        background: var(--hos-deep-earth, var(--hh-page));
+        color: var(--hos-text, var(--hh-text));
+      }
+      textarea {
+        min-height: 4.5rem;
+        resize: vertical;
+      }
+      label.f select {
+        min-width: 14rem;
       }
       .statement {
         display: flex;
-        gap: 8px;
-        align-items: flex-start;
-        margin-top: 8px;
-        font-size: var(--qp-body);
+        gap: var(--hos-s-8, 8px);
+        align-items: center;
+        margin-top: var(--hos-s-12, 12px);
+        font-size: 1rem;
+      }
+      .statement input[type="checkbox"] {
+        width: 1.35rem;
+        height: 1.35rem;
+        flex: none;
+        accent-color: var(--hos-stone-amber, var(--hh-accent));
+      }
+      .notice {
+        margin: var(--hos-s-8, 8px) 0 0;
+        padding-left: var(--hos-s-12, 12px);
+        border-left: 3px solid var(--hos-line, var(--hh-line));
+        font-size: var(--qp-caption);
+        color: var(--hos-text-dim, var(--hh-text-dim));
+      }
+      button {
+        font: inherit;
+        min-height: var(--hh-h-input, 44px);
+        padding: 0 var(--hos-s-16, 16px);
+        border-radius: var(--hos-radius-control, 6px);
       }
       .total {
         font-size: var(--qp-body);
@@ -233,8 +271,11 @@ export class QdQuoteDecision extends PanelBase {
       <div class="row">${this.renderChannel()}</div>
       <div class="statement">
         <input type="checkbox" id="qd-statement" data-field="decision-statement" data-testid="qb-decision-statement" />
-        <label for="qd-statement" data-testid="qb-decision-statement-text">The customer confirmed the quantities. ${view.quantity_notice}</label>
+        <label for="qd-statement" data-testid="qb-decision-statement-text">The customer confirmed the quantities on this quote.</label>
       </div>
+      ${view.quantity_notice !== ""
+        ? html`<p class="notice" data-testid="qb-decision-notice">The quote tells the customer: ${view.quantity_notice}</p>`
+        : nothing}
       <div class="row">
         <label class="f" style="flex: 1 1 18rem"
           >Note (optional)
