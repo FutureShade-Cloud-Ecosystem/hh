@@ -285,7 +285,12 @@ type StaffQuoteView struct {
 	// model with two versions of itself.
 	//
 	// An ABSENT field must be read as "no", never as "yes".
-	CanConvert    bool            `json:"can_convert"`
+	CanConvert bool `json:"can_convert"`
+	// CanAccept and CanReject are the same kind of server-computed offer for the staff decision doors
+	// (staff_decision.go): whether THIS caller may record the customer's accept, or decline, on THIS
+	// quote right now. Absent or false means no; the client evaluates nothing.
+	CanAccept     bool            `json:"can_accept"`
+	CanReject     bool            `json:"can_reject"`
 	Lines         []QuoteViewLine `json:"lines"`
 	SubtotalCents int64           `json:"subtotal_cents"`
 	TaxCents      int64           `json:"tax_cents"`
@@ -353,6 +358,12 @@ func (s *StaffService) StaffQuoteRead(ctx context.Context, quoteID string) (Staf
 	view.CanConvert = (view.Status == "ACCEPTED" ||
 		(view.Status == "CONVERTED" && s.multiAcceptOn(ctx))) &&
 		identity.CanSellOnCredit(caller)
+	// The staff decision offers (staff_decision.go): the conjunction the doors enforce under the row
+	// lock, a selling role on a SENT or never sent quote that has not expired, and for an accept a
+	// draft needs a line.
+	decidable := (view.Status == "SENT" || view.Status == "DRAFT") && !view.Expired && identity.CanSellOnCredit(caller)
+	view.CanReject = decidable
+	view.CanAccept = decidable && (view.Status == "SENT" || len(view.Lines) > 0)
 	return view, nil
 }
 

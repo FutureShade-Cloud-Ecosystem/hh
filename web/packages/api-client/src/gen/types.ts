@@ -5713,6 +5713,8 @@ export type QuoteView = {
   expired: boolean;
   editable_fields: ("line_qty" | "line_add" | "line_remove" | "valid_until")[];
   can_convert: boolean;
+  can_accept: boolean;
+  can_reject: boolean;
   owner_id?: string;
   owner_name?: string;
   lines: QuoteViewLine[];

@@ -1608,11 +1608,11 @@ components:
       type: object
       description: >-
         One quote as the staff builder renders it: the header, the lines, the
-        money, and the server-computed edit and convert offers. The staff
-        quote resource is the canonical dealer_quote (DECISIONS.md D8). An
-        absent editable_fields or a false can_convert means no; the client
-        evaluates nothing.
-      required: [id, quote_no, customer_id, customer_name, branch_id, status, expired, editable_fields, can_convert, lines, subtotal_cents, tax_cents, total_cents, updated_at]
+        money, and the server-computed edit, convert, accept and reject
+        offers. The staff quote resource is the canonical dealer_quote
+        (DECISIONS.md D8). An absent editable_fields or a false offer means
+        no; the client evaluates nothing.
+      required: [id, quote_no, customer_id, customer_name, branch_id, status, expired, editable_fields, can_convert, can_accept, can_reject, lines, subtotal_cents, tax_cents, total_cents, updated_at]
       properties:
         id: { type: string, format: uuid }
         quote_no: { type: string }
@@ -1636,6 +1636,18 @@ components:
         can_convert:
           type: boolean
           description: Whether this caller may convert this quote to an order right now
+        can_accept:
+          type: boolean
+          description: >-
+            Whether this caller may record the customer's accept on this quote
+            right now (a selling role, SENT or a never sent draft with a line,
+            not expired); the same conjunction the accept door enforces
+        can_reject:
+          type: boolean
+          description: >-
+            Whether this caller may record the customer's decline on this quote
+            right now (a selling role, SENT or a never sent draft, not
+            expired); the same conjunction the reject door enforces
         owner_id:
           type: string
           format: uuid

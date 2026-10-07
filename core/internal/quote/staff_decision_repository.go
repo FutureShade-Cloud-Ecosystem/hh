@@ -63,6 +63,9 @@ func (r *Repository) DecideQuoteGuarded(ctx context.Context, w decisionWrite, ho
 		 WHERE id = $1 RETURNING updated_at`, w.QuoteID, w.To, w.ActorID).Scan(&decidedAt); err != nil {
 		return out, fmt.Errorf("move quote to %s: %w", w.To, err)
 	}
+	if err := stopFollowUpsTx(ctx, tx, w, decidedAt); err != nil {
+		return out, err
+	}
 	if hooks.release != nil {
 		if err := hooks.release(ctx, tx); err != nil {
 			return out, fmt.Errorf("release quote holds: %w", err)
@@ -135,4 +138,28 @@ func (r *Repository) findKeyedDecision(ctx context.Context, tx rowQuerier, w dec
 		return decisionOutcome{}, false, ErrIdempotencyKeyReused
 	}
 	return decisionOutcome{QuoteNo: quoteNo, Prev: before, Status: after, Channel: channel, DecidedAt: at, Replayed: true}, true, nil
+}
+
+// stopFollowUpsTx ends the quote's follow-up cadence on the decision's transaction: the steps not yet
+// taken are written CANCELLED with the reason, the plan is turned off, and a step already sent stays as
+// it was. A quote with no enabled plan has nothing to stop. The sweep would end the cadence at its next
+// run anyway (a terminal status ends it); this makes the quote say so the moment staff record the
+// answer, which is when the salesperson looks.
+func stopFollowUpsTx(ctx context.Context, tx pgx.Tx, w decisionWrite, now time.Time) error {
+	plan, err := scanPlan(tx.QueryRow(ctx, `SELECT `+planCols+`
+		FROM quote_followup_plans WHERE quote_id = $1 AND enabled FOR UPDATE`, w.QuoteID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read follow-up plan for decision: %w", err)
+	}
+	why := "customer accepted, recorded by staff"
+	if w.To == "LOST" {
+		why = "customer declined, recorded by staff"
+	}
+	if _, err := (&FollowUpRepository{}).cancelRemainingTx(ctx, tx, plan, why, now); err != nil {
+		return fmt.Errorf("stop follow-ups for decision: %w", err)
+	}
+	return nil
 }

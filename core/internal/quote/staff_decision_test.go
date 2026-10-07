@@ -1,6 +1,7 @@
 package quote
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -111,6 +112,36 @@ func TestStaffDecision_InputGrading(t *testing.T) {
 		br = err
 		if strings.Contains(br.Error(), "not implemented") || strings.Contains(br.Error(), "not configured") {
 			t.Errorf("%s: want a 400 in words, got %v", name, err)
+		}
+	}
+}
+
+// The offer follows the same predicate and the same states as the doors: a selling role on a SENT quote
+// is offered both, a non seller neither, and no state the doors refuse is offered. (The integration
+// matrix drives the doors themselves over every role and state; this is the no database half.)
+func TestStaffDecision_OfferFollowsRoleAndStatus(t *testing.T) {
+	for _, tc := range []struct {
+		role, status string
+		accept, rej  bool
+	}{
+		{"INSIDE_SALES", "SENT", true, true},
+		{"INSIDE_SALES", "DRAFT", false, true}, // the fake's draft has no lines: nothing to accept yet
+		{"INSIDE_SALES", "ACCEPTED", false, false},
+		{"INSIDE_SALES", "CONVERTED", false, false},
+		{"INSIDE_SALES", "LOST", false, false},
+		{"INSIDE_SALES", "EXPIRED", false, false},
+		{"YARD_TEAM", "SENT", false, false},
+		{"", "SENT", false, false},
+	} {
+		store := newSeamStore()
+		store.fakeStaffStore = newFakeStaffStore(tc.status)
+		view, err := staffSvcOver(store, sellerCtx(tc.role)).StaffQuoteRead(context.Background(), qOrg)
+		if err != nil {
+			t.Fatalf("%s/%s: read: %v", tc.role, tc.status, err)
+		}
+		if view.CanAccept != tc.accept || view.CanReject != tc.rej {
+			t.Errorf("%s on %s: can_accept=%v can_reject=%v, want %v %v",
+				tc.role, tc.status, view.CanAccept, view.CanReject, tc.accept, tc.rej)
 		}
 	}
 }

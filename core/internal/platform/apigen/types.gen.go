@@ -6648,6 +6648,8 @@ type QuoteView struct {
 	Expired        bool            `json:"expired"`
 	EditableFields []string        `json:"editable_fields"`
 	CanConvert     bool            `json:"can_convert"`
+	CanAccept      bool            `json:"can_accept"`
+	CanReject      bool            `json:"can_reject"`
 	OwnerId        *string         `json:"owner_id,omitempty"`
 	OwnerName      *string         `json:"owner_name,omitempty"`
 	Lines          []QuoteViewLine `json:"lines"`

@@ -456,3 +456,142 @@ func TestIntegration_StaffReject_ReleasesSoftHoldsOnTheSameTransaction(t *testin
 		t.Errorf("an accept must not release the holds: %v", keep.releases)
 	}
 }
+
+// - follow-ups stop -
+
+type followUpCounts struct {
+	enabled              bool
+	why                  string
+	sent, cancelled, tot int
+}
+
+func followUpState(t *testing.T, pool *pgxpool.Pool, quoteID string) followUpCounts {
+	t.Helper()
+	var f followUpCounts
+	if err := pool.QueryRow(context.Background(),
+		`SELECT enabled, COALESCE(disabled_why,'') FROM quote_followup_plans WHERE quote_id=$1`, quoteID).
+		Scan(&f.enabled, &f.why); err != nil {
+		t.Fatalf("read plan: %v", err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*) FILTER (WHERE status='SENT'), count(*) FILTER (WHERE status='CANCELLED'), count(*)
+		  FROM quote_followup_events WHERE quote_id=$1`, quoteID).Scan(&f.sent, &f.cancelled, &f.tot); err != nil {
+		t.Fatalf("count steps: %v", err)
+	}
+	return f
+}
+
+// A quote with a follow-up cadence stops being followed up the moment staff record the customer's
+// answer, not at the next sweep: the steps not yet taken are written CANCELLED with the reason, the
+// plan is turned off, and a step already sent stays as sent. The same transaction as the status move.
+func TestIntegration_StaffDecision_StopsFollowUps(t *testing.T) {
+	pool := intPool(t)
+	for _, door := range []string{"accept", "reject"} {
+		t.Run(door, func(t *testing.T) {
+			_, quoteID, _, _ := seedQuote(t, pool, "SENT", nil)
+			t.Cleanup(func() {
+				_, _ = pool.Exec(context.Background(), `DELETE FROM quote_followup_events WHERE quote_id = $1`, quoteID)
+				_, _ = pool.Exec(context.Background(), `DELETE FROM quote_followup_plans WHERE quote_id = $1`, quoteID)
+			})
+			started := decisionNow().AddDate(0, 0, -4)
+			if _, err := NewFollowUpRepository(pool).EnsurePlan(context.Background(), quoteID, ChannelEmail, []int{3, 7, 14}, started); err != nil {
+				t.Fatalf("plan: %v", err)
+			}
+			if _, err := pool.Exec(context.Background(), `
+				INSERT INTO quote_followup_events (quote_id, step_day, channel, status, scheduled_for)
+				VALUES ($1, 3, $2, 'SENT', $3)`, quoteID, ChannelEmail, started.AddDate(0, 0, 3)); err != nil {
+				t.Fatalf("seed a sent step: %v", err)
+			}
+			svc := shareSvc(t, pool, decisionNow())
+			ctx := decisionCaller("INSIDE_SALES", intTrenton)
+
+			var err error
+			if door == "accept" {
+				_, err = svc.AcceptOnBehalf(ctx, quoteID, StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true, IdempotencyKey: decKeyA})
+			} else {
+				_, err = svc.RejectOnBehalf(ctx, quoteID, StaffRejectIn{Channel: "phone", ReasonCode: "price", IdempotencyKey: decKeyA})
+			}
+			if err != nil {
+				t.Fatalf("%s: %v", door, err)
+			}
+			f := followUpState(t, pool, quoteID)
+			if f.enabled || f.why == "" {
+				t.Errorf("the plan must be turned off with a reason: enabled=%v why=%q", f.enabled, f.why)
+			}
+			if f.sent != 1 || f.cancelled != 2 || f.tot != 3 {
+				t.Errorf("the sent step stays and the two untaken steps are cancelled: %+v", f)
+			}
+		})
+	}
+}
+
+// A quote that never had a cadence is no obstacle, and a refused decision stops nothing.
+func TestIntegration_StaffDecision_FollowUpsLeftAloneWhenNothingMoves(t *testing.T) {
+	pool := intPool(t)
+	svc := shareSvc(t, pool, decisionNow())
+	ctx := decisionCaller("INSIDE_SALES", intTrenton)
+
+	_, bare, _, _ := seedQuote(t, pool, "SENT", nil)
+	if _, err := svc.AcceptOnBehalf(ctx, bare, StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true}); err != nil {
+		t.Fatalf("a quote with no plan: %v", err)
+	}
+
+	_, lost, _, _ := seedQuote(t, pool, "LOST", nil)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM quote_followup_events WHERE quote_id = $1`, lost)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM quote_followup_plans WHERE quote_id = $1`, lost)
+	})
+	if _, err := NewFollowUpRepository(pool).EnsurePlan(context.Background(), lost, ChannelEmail, []int{3}, decisionNow()); err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if _, err := svc.AcceptOnBehalf(ctx, lost, StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true}); err == nil {
+		t.Fatal("a lost quote must refuse")
+	}
+	if f := followUpState(t, pool, lost); !f.enabled || f.tot != 0 {
+		t.Errorf("a refused decision must leave the plan alone: %+v", f)
+	}
+}
+
+// The offer is the write path's own answer: the view says can_accept / can_reject exactly when the
+// door would take it, for every role and every state, so a button that appears is a button that works.
+func TestIntegration_StaffDecision_OfferMatchesTheWritePath(t *testing.T) {
+	pool := intPool(t)
+	svc := shareSvc(t, pool, decisionNow())
+	roles := []string{"INSIDE_SALES", "OUTSIDE_SALES", "SALES_MANAGER", "BRANCH_MANAGER", "GENERAL_MANAGER",
+		"FINANCIAL_CONTROLLER", "YARD_TEAM", "DRIVERS", "YARD_MANAGER", "HR", "PROCUREMENT_MANAGER"}
+	states := []struct {
+		name, status string
+		validUntil   any
+		empty        bool
+	}{
+		{"draft", "DRAFT", nil, false}, {"empty draft", "DRAFT", nil, true}, {"sent", "SENT", nil, false},
+		{"sent and expired", "SENT", "2026-07-01", false}, {"accepted", "ACCEPTED", nil, false},
+		{"converted", "CONVERTED", nil, false}, {"lost", "LOST", nil, false}, {"expired", "EXPIRED", nil, false},
+	}
+	for _, st := range states {
+		for _, role := range roles {
+			mk := func() string {
+				_, q, _, _ := seedQuote(t, pool, st.status, st.validUntil)
+				if st.empty {
+					if _, err := pool.Exec(context.Background(), `DELETE FROM quote_lines WHERE quote_id=$1`, q); err != nil {
+						t.Fatalf("empty: %v", err)
+					}
+				}
+				return q
+			}
+			ctx := decisionCaller(role, intTrenton)
+			view, err := svc.StaffQuoteRead(ctx, mk())
+			if err != nil {
+				t.Fatalf("%s/%s read: %v", st.name, role, err)
+			}
+			_, acceptErr := svc.AcceptOnBehalf(ctx, mk(), StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true})
+			_, rejectErr := svc.RejectOnBehalf(ctx, mk(), StaffRejectIn{Channel: "phone", ReasonCode: "price"})
+			if view.CanAccept != (acceptErr == nil) {
+				t.Errorf("%s as %s: can_accept=%v but the door says %v", st.name, role, view.CanAccept, acceptErr)
+			}
+			if view.CanReject != (rejectErr == nil) {
+				t.Errorf("%s as %s: can_reject=%v but the door says %v", st.name, role, view.CanReject, rejectErr)
+			}
+		}
+	}
+}
