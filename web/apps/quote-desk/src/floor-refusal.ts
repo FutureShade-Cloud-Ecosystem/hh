@@ -130,6 +130,9 @@ export const FLOOR_REFUSAL_SEAM_EVENT = "qd-floor-refusal";
 /** The dialog hands the host a refusal it did not open (its quote is not on screen): { quoteId, lineNo }. */
 export const FLOOR_REFUSAL_DROPPED_EVENT = "qd-floor-refusal-dropped";
 
+/** A write the server refused after the person had left its quote: the host says it on the list, and the quote says it when they return. */
+export const LATE_REFUSAL_EVENT = "qd-late-refusal";
+
 /**
  * The window event the dialog fires when it closes, so the surface that
  * spoke the refusal's plain message in its outcome line can take it down: the

@@ -66,7 +66,7 @@ import {
 } from "./_quote-edit.js";
 import { spokenRefusal } from "./_quote-workarea.js";
 import { OPEN_SETTINGS_EVENT } from "./panel-seams.js";
-import { FLOOR_REFUSAL_DROPPED_EVENT } from "./floor-refusal.js";
+import { FLOOR_REFUSAL_DROPPED_EVENT, LATE_REFUSAL_EVENT } from "./floor-refusal.js";
 import {
   COMPOSE_ROUTE,
   LIST_ROUTE,
@@ -359,6 +359,7 @@ export class QdQuoteBuilder extends LitElement {
     this.renderRoot.addEventListener("all-quotes", this.onAllQuotes as EventListener);
     this.renderRoot.addEventListener("quote-read", this.onQuoteRead as EventListener);
     this.renderRoot.addEventListener(FLOOR_REFUSAL_DROPPED_EVENT, this.onRefusalDropped as EventListener);
+    this.renderRoot.addEventListener(LATE_REFUSAL_EVENT, this.onLateRefusal as EventListener);
     window.addEventListener(OPEN_SETTINGS_EVENT, this.onOpenSettings);
     window.addEventListener(CONVERT_NOTICE_EVENT, this.onConvertNotice as EventListener);
   }
@@ -390,6 +391,7 @@ export class QdQuoteBuilder extends LitElement {
     this.renderRoot.removeEventListener("all-quotes", this.onAllQuotes as EventListener);
     this.renderRoot.removeEventListener("quote-read", this.onQuoteRead as EventListener);
     this.renderRoot.removeEventListener(FLOOR_REFUSAL_DROPPED_EVENT, this.onRefusalDropped as EventListener);
+    this.renderRoot.removeEventListener(LATE_REFUSAL_EVENT, this.onLateRefusal as EventListener);
     window.removeEventListener(OPEN_SETTINGS_EVENT, this.onOpenSettings);
     window.removeEventListener(CONVERT_NOTICE_EVENT, this.onConvertNotice as EventListener);
   }
@@ -627,6 +629,13 @@ export class QdQuoteBuilder extends LitElement {
     const row = this.rows.find((r) => r.id === event.detail.quoteId);
     const name = row?.quoteNo ?? "a quote you left";
     this.listNotice = `A change to line ${event.detail.lineNo} of ${name} was refused: it is below the margin floor. Nothing was changed or sent for approval. Open the quote to ask for approval.`;
+  };
+
+  /** A write refused after the person left its quote: said on the list, and the quote says it again when they return to it. */
+  private readonly onLateRefusal = (event: CustomEvent<{ quoteId: string; text: string }>): void => {
+    const row = this.rows.find((r) => r.id === event.detail.quoteId);
+    const name = row?.quoteNo ?? "a quote you left";
+    this.listNotice = `A change to ${name} was refused after you left it: ${event.detail.text} Nothing was changed.`;
   };
 
   private readonly onAllQuotes = (): void => {

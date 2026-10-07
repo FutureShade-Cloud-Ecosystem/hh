@@ -38,6 +38,7 @@ import { LitElement, css, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import "./quote-search-add.js";
 import { personName } from "./_names.js";
+import { LATE_REFUSAL_EVENT } from "./floor-refusal.js";
 // The customer page's own element (the public desk's), rendered in the desk for Preview: one page, never a copy.
 import "../../public-desk/src/quote-public.js";
 import "@hardscapehouse/pos-kit/src/ported/pos-product-grid.js";
@@ -1303,10 +1304,26 @@ export class QdQuoteWorkarea extends LitElement {
         this.dispatchEvent(new CustomEvent("quote-changed", { detail: { quoteId: ctx.id }, bubbles: true, composed: true }));
         return;
       }
-      if (this.ctx.id !== ctx.id) return;
-      this.error = spokenRefusal(quoteErrorMessage(late.status, late.error, what));
+      const said = this.lateRefusalWords(late, what);
+      if (this.ctx.id !== ctx.id) {
+        // The person is somewhere else: the refusal is never silent. It waits for the quote (said when they come back to
+        // it) and goes to the host, which says it on the list.
+        this.lateRefusals.set(ctx.id, said);
+        this.dispatchEvent(new CustomEvent(LATE_REFUSAL_EVENT, { detail: { quoteId: ctx.id, text: said }, bubbles: true, composed: true }));
+        return;
+      }
+      this.error = said;
     };
   }
+
+  /** The refusal of a write that answered late, in the words the quote would have said: the typed floor refusal in its own sentence. */
+  private lateRefusalWords(late: Extract<Result<unknown>, { ok: false }>, what: string): string {
+    const refusal = late.status === 409 ? parseFloorRefusal(late.error) : null;
+    return refusal !== null ? floorRefusalMessage(refusal) : spokenRefusal(quoteErrorMessage(late.status, late.error, what));
+  }
+
+  /** A refusal that landed while the person was on another screen, kept for the quote it belongs to until they come back. */
+  private readonly lateRefusals = new Map<string, string>();
 
   /** Hold the Send and add controls while a write is out; the last write to answer lets go. A stale hold was reset with the quote. */
   private holdBusy(ctx: QuoteContext): () => void {
@@ -1710,6 +1727,11 @@ export class QdQuoteWorkarea extends LitElement {
     if (late !== undefined) {
       this.lateNotes.delete(ctx.id);
       this.notice = late;
+    }
+    const refused = this.lateRefusals.get(ctx.id);
+    if (refused !== undefined) {
+      this.lateRefusals.delete(ctx.id);
+      this.error = refused;
     }
     // Drafts return to the server's truth after a re-read, except the box the
     // person is typing in right now: a late re-read must never wipe the figure

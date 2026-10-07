@@ -1021,8 +1021,8 @@
   {
     "id": "wa-late-refusal-said",
     "file": "src/quote-workarea.ts",
-    "find": "      this.error = spokenRefusal(quoteErrorMessage(late.status, late.error, what));\n    };",
-    "replace": "      void what;\n    };",
+    "find": "      this.error = said;\n    };",
+    "replace": "      void said;\n    };",
     "test": "B P2-1 work area: a quantity change refused after leaving and returning"
   },
   {
@@ -1231,8 +1231,8 @@
   {
     "id": "wa-late-note-said",
     "file": "src/quote-workarea.ts",
-    "find": "      this.notice = late;\n    }\n    // Drafts return",
-    "replace": "    }\n    // Drafts return",
+    "find": "      this.notice = late;\n    }\n    const refused = this.lateRefusals.get(ctx.id);",
+    "replace": "    }\n    const refused = this.lateRefusals.get(ctx.id);",
     "test": "P3 a link made for the quote left by the work area is said"
   },
   {
@@ -2044,5 +2044,19 @@
     "find": "this.searchCapped = page >= MAX_LIST_PAGES && this.search.trim() !== \"\" && this.nextCursor !== \"\";",
     "replace": "this.searchCapped = false;",
     "test": "a search that reaches the page cap says it stopped"
+  },
+  {
+    "id": "wa-late-refusal-listed",
+    "file": "src/quote-workarea.ts",
+    "find": "        this.dispatchEvent(new CustomEvent(LATE_REFUSAL_EVENT, { detail: { quoteId: ctx.id, text: said }, bubbles: true, composed: true }));\n",
+    "replace": "",
+    "test": "a floor refusal that lands after the person moved to another quote is said on the list"
+  },
+  {
+    "id": "wa-late-refusal-kept",
+    "file": "src/quote-workarea.ts",
+    "find": "      this.lateRefusals.delete(ctx.id);\n      this.error = refused;",
+    "replace": "      this.lateRefusals.delete(ctx.id);",
+    "test": "a floor refusal that lands after the person moved to a new quote is said on the list"
   }
 ]
