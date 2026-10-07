@@ -170,14 +170,15 @@ func (s *ReceiptService) Receipt(ctx context.Context, id string) (Receipt, error
 		Lines:             lines,
 		Tenders:           tenders,
 		SubtotalCents:     sale.SubtotalCents,
-		TaxCents:          sale.TaxCents,
-		TotalCents:        sale.TotalCents,
-		BalanceCents:      sale.BalanceCents,
-		ChangeDueCents:    changeDue,
-		DepositCents:      deposit,
-		TaxLabel:          hstLabel(head.HSTRateBps),
-		ReprintCount:      priorPrints,
-		PrintedAt:         s.now(),
+		SaleDiscountCents: sale.SaleDiscountCents, SaleDiscountApprovedByLabel: sale.SaleDiscountLabel,
+		TaxCents:       sale.TaxCents,
+		TotalCents:     sale.TotalCents,
+		BalanceCents:   sale.BalanceCents,
+		ChangeDueCents: changeDue,
+		DepositCents:   deposit,
+		TaxLabel:       hstLabel(head.HSTRateBps),
+		ReprintCount:   priorPrints,
+		PrintedAt:      s.now(),
 	}
 
 	// The print record is written HERE, in the request that produced the paper, and its failure
@@ -280,6 +281,11 @@ type Receipt struct {
 	Lines   []ReceiptLine
 	Tenders []ReceiptTender
 
+	// The whole-ticket manual discount and the role label of the manager who approved it; the
+	// subtotal below is already net of it and of every line discount.
+	SaleDiscountCents           int64
+	SaleDiscountApprovedByLabel string
+
 	SubtotalCents int64
 	TaxCents      int64
 	TotalCents    int64
@@ -317,7 +323,11 @@ type ReceiptLine struct {
 	UOM            string
 	UnitPriceCents int64
 	PriceUOM       string
-	LineTotalCents int64
+	LineTotalCents int64 // what the line charged: net of every discount
+	// DiscountCents is the line's own manual discount (already out of LineTotalCents) and
+	// DiscountApprovedByLabel the role label of the manager who approved it, "" when none.
+	DiscountCents           int64
+	DiscountApprovedByLabel string
 }
 
 // ReceiptTender is one line of "how this was paid". A tendered sale carries its payments rows; an

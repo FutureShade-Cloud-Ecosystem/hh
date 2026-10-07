@@ -189,6 +189,12 @@ var receiptTmpl = template.Must(template.New("receipt").Funcs(template.FuncMap{
         <td class="right">{{money .UnitPriceCents}}{{if .PriceUOM}}/{{.PriceUOM}}{{end}}</td>
         <td class="right">{{money .LineTotalCents}}</td>
       </tr>
+      {{if gt .DiscountCents 0}}
+      <tr class="line-discount">
+        <td class="desc muted" colspan="3">Discount approved by {{.DiscountApprovedByLabel}}</td>
+        <td class="right muted">{{money .DiscountCents}} off</td>
+      </tr>
+      {{end}}
       {{end}}
     </tbody>
   </table>
@@ -196,6 +202,9 @@ var receiptTmpl = template.Must(template.New("receipt").Funcs(template.FuncMap{
   <div class="rule"></div>
 
   <table class="totals">
+    {{if gt .SaleDiscountCents 0}}
+    <tr class="sale-discount muted"><td>Discount approved by {{.SaleDiscountApprovedByLabel}}</td><td class="right">{{money .SaleDiscountCents}} off</td></tr>
+    {{end}}
     <tr><td>Subtotal</td><td class="right">{{money .SubtotalCents}}</td></tr>
     <tr class="tax"><td>{{.TaxLabel}}</td><td class="right">{{money .TaxCents}}</td></tr>
     <tr class="grand"><td>Total</td><td class="right">{{money .TotalCents}}</td></tr>
@@ -332,6 +341,12 @@ var receiptPageTmpl = template.Must(template.New("receipt-page").Funcs(template.
         <td class="right">{{money .UnitPriceCents}}{{if .PriceUOM}}/{{.PriceUOM}}{{end}}</td>
         <td class="right">{{money .LineTotalCents}}</td>
       </tr>
+      {{if gt .DiscountCents 0}}
+      <tr class="line-discount">
+        <td class="desc muted" colspan="3">Discount approved by {{.DiscountApprovedByLabel}}</td>
+        <td class="right muted">{{money .DiscountCents}} off</td>
+      </tr>
+      {{end}}
       {{end}}
     </tbody>
   </table>
@@ -339,6 +354,9 @@ var receiptPageTmpl = template.Must(template.New("receipt-page").Funcs(template.
   <div class="rule"></div>
 
   <table class="totals">
+    {{if gt .SaleDiscountCents 0}}
+    <tr class="sale-discount muted"><td>Discount approved by {{.SaleDiscountApprovedByLabel}}</td><td class="right">{{money .SaleDiscountCents}} off</td></tr>
+    {{end}}
     <tr><td>Subtotal</td><td class="right">{{money .SubtotalCents}}</td></tr>
     <tr class="tax"><td>{{.TaxLabel}}</td><td class="right">{{money .TaxCents}}</td></tr>
     <tr class="grand"><td>Total</td><td class="right">{{money .TotalCents}}</td></tr>

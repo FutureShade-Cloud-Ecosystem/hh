@@ -62,6 +62,9 @@ type SaleInput struct {
 	DepositCents      int64       `json:"deposit_cents,omitempty"`  // unpaid-at-ring only (ACCOUNT/COD); 0 < deposit < total
 	DepositMethod     string      `json:"deposit_method,omitempty"` // CASH|CARD|CHEQUE, taken through the till at ring
 	Lines             []LineInput `json:"lines"`
+	// Discount is the optional whole-ticket discount, struck from the subtotal after every line
+	// discount. It names the manager who approved it (discount.go).
+	Discount *DiscountInput `json:"discount,omitempty"`
 	// DIB-165 split tender: 2..6 legs that must sum EXACTLY to the sale total. When set, `tender`
 	// above is ignored (the primary leg is derived) and `deposit_cents` is refused, a split settles
 	// the sale itself. See split_tender.go.
@@ -75,6 +78,9 @@ type LineInput struct {
 	ProductID  string  `json:"product_id"`
 	QtyEntered float64 `json:"qty_entered"`
 	UOMEntered string  `json:"uom_entered"`
+	// Discount is the optional manual discount on this line (discount.go): a percent or an
+	// amount, with the manager who said yes at the counter.
+	Discount *DiscountInput `json:"discount,omitempty"`
 }
 
 // Sale is the committed result (also returned verbatim on an idempotent replay).
@@ -108,6 +114,10 @@ type Sale struct {
 	// submission order (the receipt prints them). Both are absent on a single-tender sale.
 	SplitTender bool              `json:"split_tender,omitempty"`
 	Tenders     []TenderLegResult `json:"tenders,omitempty"`
+	// DiscountCents is every manual discount on the sale together; Discounts lists them, each
+	// with the role of the manager who approved it (the receipt's "Discount approved by").
+	DiscountCents int64          `json:"discount_cents,omitempty"`
+	Discounts     []SaleDiscount `json:"discounts,omitempty"`
 }
 
 // ReliefDecision is the per-transaction FN relief assessment recorded with the sale (US-A19-06).
@@ -183,6 +193,9 @@ type SaleView struct {
 	// rather than only the primary tender.
 	SplitTender bool              `json:"split_tender,omitempty"`
 	Tenders     []TenderLegResult `json:"tenders,omitempty"`
+	// The manual discounts the sale carries (discount.go), absent when there were none.
+	DiscountCents int64          `json:"discount_cents,omitempty"`
+	Discounts     []SaleDiscount `json:"discounts,omitempty"`
 }
 
 // SaleViewLine is one reopened line with its resolved (engine) price, no evidence.
@@ -194,7 +207,11 @@ type SaleViewLine struct {
 	UOMEntered     string  `json:"uom_entered"`
 	UnitPriceCents int64   `json:"unit_price_cents"`
 	PriceUOM       string  `json:"price_uom"`
-	LineTotalCents int64   `json:"line_total_cents"`
+	LineTotalCents int64   `json:"line_total_cents"` // what was charged: net of every discount
+	// DiscountCents is this line's own discount, SaleDiscountCents its share of the whole-ticket
+	// discount; both are already out of LineTotalCents and absent when there was none.
+	DiscountCents     int64 `json:"discount_cents,omitempty"`
+	SaleDiscountCents int64 `json:"sale_discount_cents,omitempty"`
 }
 
 // ReliefAssessInput drives the per-transaction "Assess tax relief" entry point (US-A19-06). It is a
@@ -258,8 +275,15 @@ type orderLineRow struct {
 	QtyBase        float64
 	UnitPriceCents int64
 	PriceUOM       string
-	LineTotalCents int64
+	LineTotalCents int64 // net of every discount: what the customer pays and what a return refunds against
 	TaxCents       int64 // per-line tax (0042 order_lines.tax_cents / invoice_lines.tax_cents); largest-remainder split of the header tax
+	// The manual discount facts (0365, discount.go). DiscountCents is the line's own discount,
+	// SaleDiscountCents its share of the ticket discount, both already out of LineTotalCents.
+	DiscountCents      int64
+	DiscountPercentBps int    // the percent entered, 0 when the discount was an amount
+	DiscountApprovedBy string // staff id of the approving manager, "" with no discount
+	DiscountRoleID     string // that manager's role (staff_role id) when approving
+	SaleDiscountCents  int64
 }
 
 type invoiceRow struct {
@@ -299,6 +323,8 @@ type posSaleRow struct {
 	OfflineOrigin  bool
 	CreatedBy      string
 	SplitTender    bool // DIB-165, TRUE when pos_sale_tenders carries the legs
+	// The whole-ticket discount (0365), zero value when none.
+	Discount saleDiscountRow
 }
 
 type taxSnapshotRow struct {

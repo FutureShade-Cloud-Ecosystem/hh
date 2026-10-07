@@ -39095,6 +39095,67 @@ components:
           type: number
         uom_entered:
           type: string
+        discount:
+          $ref: "#/components/schemas/PosDiscountInput"
+    PosDiscountInput:
+      type: object
+      description: "One manual counter discount: a percent or an amount, and the manager who said yes at the counter. The discount is verbal, no approval queue, but it always names its approver so it is auditable. Exactly one of percent_bps and amount_cents. The approver must be a login from the discount-approvers read for the sale's branch; otherwise the ring refuses in words (422). A line discount comes off the line total; a ticket discount comes off the subtotal after the line discounts and is shared over the lines. The till still rings at rule and tier prices with no margin floor: a discount is a manager's word on top of that price."
+      required:
+        - approved_by
+      properties:
+        percent_bps:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 10000
+          description: Basis points, 1250 is 12.5 percent
+        amount_cents:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Cents off; not more than what it comes off
+        approved_by:
+          type: string
+          format: uuid
+          description: The approving manager's staff id
+    PosSaleDiscount:
+      type: object
+      description: One manual discount on a committed sale, with the role of the manager who approved it
+      required:
+        - scope
+        - amount_cents
+        - approved_by
+        - approved_by_role
+        - approved_by_label
+      properties:
+        scope:
+          type: string
+          enum:
+            - LINE
+            - SALE
+        line_no:
+          type: integer
+          format: int32
+          description: The line
+          for a LINE discount: null
+        percent_bps:
+          type: integer
+          format: int32
+          description: The percent entered; absent for an amount
+        amount_cents:
+          type: integer
+          format: int64
+          description: What came off
+          in cents: null
+        approved_by:
+          type: string
+          format: uuid
+        approved_by_role:
+          type: string
+          description: The approver's role id when approving
+        approved_by_label:
+          type: string
+          description: The role label the receipt prints (Discount approved by ...)
     PosTenderLegInput:
       type: object
       description: One leg of a split settlement. The legs (2 to 6) must sum exactly to the sale total, with at most one ACCOUNT leg. Each card leg carries its own token.
@@ -39254,6 +39315,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PosLineInput"
+        discount:
+          $ref: "#/components/schemas/PosDiscountInput"
         tenders:
           type: array
           description: Split settlement legs; when set, tender is ignored and deposit_cents is refused
@@ -39386,6 +39449,15 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PosTenderLegResult"
+        discount_cents:
+          type: integer
+          format: int64
+          description: Every manual discount on the sale together; absent when there was none
+        discounts:
+          type: array
+          description: Each manual discount and the role of the manager who approved it
+          items:
+            $ref: "#/components/schemas/PosSaleDiscount"
     PosSalePreviewInput:
       type: object
       description: "The read-only preview body: the sale's own facts without any tender, no replay key and no drawer. Every price is resolved server-side exactly as the ring resolves it for the same body."
@@ -39420,6 +39492,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PosLineInput"
+        discount:
+          $ref: "#/components/schemas/PosDiscountInput"
     PosSalePreview:
       type: object
       description: "The preview answer: the ticket's own totals in integer cents, exactly as the ring computes them for the same body. A ticket that collects no tax shows no tax line and its total is its subtotal."
@@ -39453,6 +39527,41 @@ components:
             - FED_S87_VENDOR_DELIVERY
             - MANUAL_TAX_REVIEW
             - RELIEF_DECLINED_EVIDENCE
+        discount_cents:
+          type: integer
+          format: int64
+          description: Every manual discount together; absent when there is none
+        sale_discount_cents:
+          type: integer
+          format: int64
+          description: The ticket discount's own cents
+        lines:
+          type: array
+          description: One row per ticket line when a discount applies, so the till shows the server's cents
+          items:
+            $ref: "#/components/schemas/PosSalePreviewLine"
+    PosSalePreviewLine:
+      type: object
+      description: One ticket line as the ring would charge it
+      required:
+        - line_no
+        - line_total_cents
+      properties:
+        line_no:
+          type: integer
+          format: int32
+        line_total_cents:
+          type: integer
+          format: int64
+          description: Net of every discount
+        discount_cents:
+          type: integer
+          format: int64
+          description: The line's own discount
+        sale_discount_cents:
+          type: integer
+          format: int64
+          description: The line's share of the ticket discount
     PosSalePreviewTaxLine:
       type: object
       description: One tax line the ring would bind for the body
@@ -39553,6 +39662,13 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PosTenderLegResult"
+        discount_cents:
+          type: integer
+          format: int64
+        discounts:
+          type: array
+          items:
+            $ref: "#/components/schemas/PosSaleDiscount"
     PosSaleViewLine:
       type: object
       description: One reopened line with its resolved engine price
@@ -39584,6 +39700,14 @@ components:
         price_uom:
           type: string
         line_total_cents:
+          type: integer
+          format: int64
+          description: What was charged
+          net of every discount: null
+        discount_cents:
+          type: integer
+          format: int64
+        sale_discount_cents:
           type: integer
           format: int64
     PosSaleSummary:

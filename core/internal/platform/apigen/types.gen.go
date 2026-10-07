@@ -4593,9 +4593,26 @@ type TaskAdvanceRule struct {
 }
 
 type PosLineInput struct {
-	ProductId  string  `json:"product_id"`
-	QtyEntered float64 `json:"qty_entered"`
-	UomEntered string  `json:"uom_entered"`
+	ProductId  string            `json:"product_id"`
+	QtyEntered float64           `json:"qty_entered"`
+	UomEntered string            `json:"uom_entered"`
+	Discount   *PosDiscountInput `json:"discount,omitempty"`
+}
+
+type PosDiscountInput struct {
+	PercentBps  *int32 `json:"percent_bps,omitempty"`
+	AmountCents *int64 `json:"amount_cents,omitempty"`
+	ApprovedBy  string `json:"approved_by"`
+}
+
+type PosSaleDiscount struct {
+	Scope           string `json:"scope"`
+	LineNo          *int32 `json:"line_no,omitempty"`
+	PercentBps      *int32 `json:"percent_bps,omitempty"`
+	AmountCents     int64  `json:"amount_cents"`
+	ApprovedBy      string `json:"approved_by"`
+	ApprovedByRole  string `json:"approved_by_role"`
+	ApprovedByLabel string `json:"approved_by_label"`
 }
 
 type PosTenderLegInput struct {
@@ -4639,6 +4656,7 @@ type PosSaleInput struct {
 	DepositCents      *int64               `json:"deposit_cents,omitempty"`
 	DepositMethod     *string              `json:"deposit_method,omitempty"`
 	Lines             []PosLineInput       `json:"lines"`
+	Discount          *PosDiscountInput    `json:"discount,omitempty"`
 	Tenders           *[]PosTenderLegInput `json:"tenders,omitempty"`
 }
 
@@ -4675,6 +4693,8 @@ type PosSale struct {
 	JobReference      *string               `json:"job_reference,omitempty"`
 	SplitTender       *bool                 `json:"split_tender,omitempty"`
 	Tenders           *[]PosTenderLegResult `json:"tenders,omitempty"`
+	DiscountCents     *int64                `json:"discount_cents,omitempty"`
+	Discounts         *[]PosSaleDiscount    `json:"discounts,omitempty"`
 }
 
 type PosSalePreviewInput struct {
@@ -4684,14 +4704,25 @@ type PosSalePreviewInput struct {
 	Fulfilment *string            `json:"fulfilment,omitempty"`
 	Relief     *PosReliefDecision `json:"relief,omitempty"`
 	Lines      []PosLineInput     `json:"lines"`
+	Discount   *PosDiscountInput  `json:"discount,omitempty"`
 }
 
 type PosSalePreview struct {
-	SubtotalCents int64                   `json:"subtotal_cents"`
-	TaxCents      int64                   `json:"tax_cents"`
-	TaxLines      []PosSalePreviewTaxLine `json:"tax_lines"`
-	TotalCents    int64                   `json:"total_cents"`
-	TaxReasonCode string                  `json:"tax_reason_code"`
+	SubtotalCents     int64                   `json:"subtotal_cents"`
+	TaxCents          int64                   `json:"tax_cents"`
+	TaxLines          []PosSalePreviewTaxLine `json:"tax_lines"`
+	TotalCents        int64                   `json:"total_cents"`
+	TaxReasonCode     string                  `json:"tax_reason_code"`
+	DiscountCents     *int64                  `json:"discount_cents,omitempty"`
+	SaleDiscountCents *int64                  `json:"sale_discount_cents,omitempty"`
+	Lines             *[]PosSalePreviewLine   `json:"lines,omitempty"`
+}
+
+type PosSalePreviewLine struct {
+	LineNo            int32  `json:"line_no"`
+	LineTotalCents    int64  `json:"line_total_cents"`
+	DiscountCents     *int64 `json:"discount_cents,omitempty"`
+	SaleDiscountCents *int64 `json:"sale_discount_cents,omitempty"`
 }
 
 type PosSalePreviewTaxLine struct {
@@ -4718,17 +4749,21 @@ type PosSaleView struct {
 	Lines         []PosSaleViewLine     `json:"lines"`
 	SplitTender   *bool                 `json:"split_tender,omitempty"`
 	Tenders       *[]PosTenderLegResult `json:"tenders,omitempty"`
+	DiscountCents *int64                `json:"discount_cents,omitempty"`
+	Discounts     *[]PosSaleDiscount    `json:"discounts,omitempty"`
 }
 
 type PosSaleViewLine struct {
-	LineNo         int32   `json:"line_no"`
-	ProductId      string  `json:"product_id"`
-	Description    string  `json:"description"`
-	QtyEntered     float64 `json:"qty_entered"`
-	UomEntered     string  `json:"uom_entered"`
-	UnitPriceCents int64   `json:"unit_price_cents"`
-	PriceUom       string  `json:"price_uom"`
-	LineTotalCents int64   `json:"line_total_cents"`
+	LineNo            int32   `json:"line_no"`
+	ProductId         string  `json:"product_id"`
+	Description       string  `json:"description"`
+	QtyEntered        float64 `json:"qty_entered"`
+	UomEntered        string  `json:"uom_entered"`
+	UnitPriceCents    int64   `json:"unit_price_cents"`
+	PriceUom          string  `json:"price_uom"`
+	LineTotalCents    int64   `json:"line_total_cents"`
+	DiscountCents     *int64  `json:"discount_cents,omitempty"`
+	SaleDiscountCents *int64  `json:"sale_discount_cents,omitempty"`
 }
 
 type PosSaleSummary struct {

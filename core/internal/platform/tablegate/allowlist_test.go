@@ -660,7 +660,7 @@ var allowlist = []allowlistEntry{
 	{
 		module: "pos",
 		file:   "core/internal/pos/repository.go",
-		tables: []string{"customer_transactions", "customers", "invoices", "locations", "order_lines", "orders", "payments", "product_reorder_points", "product_uoms", "products", "stock_balances", "user_roles", "users"},
+		tables: []string{"customer_transactions", "customers", "invoices", "locations", "order_lines", "orders", "payments", "product_reorder_points", "product_uoms", "products", "staff_role", "staff_role_grant", "stock_balances", "user_roles", "users"},
 		writes: []string{"customer_transactions", "events_outbox", "invoice_lines", "invoices", "order_lines", "orders", "payment_allocations", "scope_sequences"},
 		// the POS sale ring: one counter sale writes the order and its lines,
 		// raises the invoice and its lines, the AR transaction and the tender
@@ -668,7 +668,7 @@ var allowlist = []allowlistEntry{
 		// behind posStore so they can be re-homed; the payments INSERT is
 		// till.TakeTender's, the allocation of that payment is the ring's).
 		// The reads are the counter's catalogue, stock and supervisor facts.
-		reason: "the POS ring writes the sale's documents (order, lines, invoice, AR transaction, tender allocation) in one transaction and reads the catalogue, stock, tax snapshot and supervisor facts the counter acts on",
+		reason: "the POS ring writes the sale's documents (order, lines, invoice, AR transaction, tender allocation) in one transaction and reads the catalogue, stock, tax snapshot and supervisor facts the counter acts on; the counter discount reads the staff role grants and the role catalogue to judge who may approve a discount at the branch (ListDiscountStaff) and the role label a committed discount's approver held (ReadSaleDiscounts), read only, the dealer's list of who may approve staying in roleconfig",
 	},
 	{
 		module: "pos",
@@ -763,8 +763,8 @@ var allowlist = []allowlistEntry{
 	{
 		module: "printing",
 		file:   "core/internal/printing/receipt_repository.go",
-		tables: []string{"customers", "invoices", "locations", "order_lines", "orders", "payment_allocations", "payments", "pos_sale", "pos_sale_tenders", "products", "system_settings", "users"},
-		reason: "receipt assembly reads the whole printed truth: org name and HST settings, the branch, the sale, its lines and tenders, the invoice it billed, the payments and allocations, the customer and the staff who took it, read only",
+		tables: []string{"customers", "invoices", "locations", "order_lines", "orders", "payment_allocations", "payments", "pos_sale", "pos_sale_tenders", "products", "staff_role", "system_settings", "users"},
+		reason: "receipt assembly reads the whole printed truth: org name and HST settings, the branch, the sale, its lines and tenders, the invoice it billed, the payments and allocations, the customer and the staff who took it, and the role label of the manager who approved a discount (Discount approved by), read only",
 	},
 	{
 		module: "procurement",

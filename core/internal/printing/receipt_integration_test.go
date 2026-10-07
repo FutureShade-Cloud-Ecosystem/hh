@@ -729,3 +729,43 @@ func TestIntegration_Receipt_NoDepositOnASplitWithAnAccountLeg(t *testing.T) {
 		t.Fatal("the balance due row must carry the account remainder")
 	}
 }
+
+// A sale that carries manual discounts prints the role label of the manager who approved each
+// one, read from the committed rows (order_lines and pos_sale, migration 0365), on both papers.
+// The discounts are planted on the rung sale's rows directly: the approver rule itself is the pos
+// module's own integration leg, this one holds the receipt's reads and its words.
+func TestIntegration_Receipt_PrintsWhoApprovedTheDiscounts(t *testing.T) {
+	pool := intPool(t)
+	sale, _ := ringCashSale(t, pool)
+	ctx := globalCtx(t, pool)
+	var approver string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM users LIMIT 1`).Scan(&approver); err != nil {
+		t.Skipf("no seeded user: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE order_lines SET discount_cents = 700, discount_percent_bps = 500,
+		discount_approved_by = $2::uuid, discount_approved_role = 'sales_manager'
+		WHERE order_id = $1::uuid AND line_no = 1`, sale.OrderID, approver); err != nil {
+		t.Fatalf("plant the line discount: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE pos_sale SET discount_cents = 300,
+		discount_approved_by = $2::uuid, discount_approved_role = 'branch_manager'
+		WHERE order_id = $1::uuid`, sale.OrderID, approver); err != nil {
+		t.Fatalf("plant the ticket discount: %v", err)
+	}
+	receipts, _ := printingSvcs(pool)
+	rec, err := receipts.Receipt(ctx, sale.OrderID)
+	if err != nil {
+		t.Fatalf("receipt: %v", err)
+	}
+	for name, render := range map[string]func(Receipt) (string, error){"roll": RenderReceiptHTML, "page": RenderReceiptPageHTML} {
+		html, err := render(rec)
+		if err != nil {
+			t.Fatalf("%s render: %v", name, err)
+		}
+		for _, want := range []string{"Discount approved by Sales Manager", "$7.00 off", "Discount approved by Branch Manager", "$3.00 off"} {
+			if !strings.Contains(html, want) {
+				t.Errorf("%s receipt lacks %q", name, want)
+			}
+		}
+	}
+}
