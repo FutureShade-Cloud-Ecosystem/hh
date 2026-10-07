@@ -48,7 +48,9 @@ const BRAND_LABEL = 'HH Yard, a Hardscape House product';
 const styles = css`
   header {
     display: grid;
-    grid-template-columns: 1fr auto 1fr;
+    /* The left cell takes the room its brand and the Demo pill need on one row (a longer role word in the middle
+       must not push the pill under the logo); where the screen is too narrow for that, the pill wraps as before. */
+    grid-template-columns: minmax(max-content, 1fr) auto minmax(0, 1fr);
     align-items: center;
     gap: var(--hh-s-12);
     box-sizing: border-box;
@@ -137,6 +139,11 @@ const styles = css`
     display: inline-flex;
     align-items: center;
     gap: var(--hh-s-8);
+  }
+  @media (max-width: 1280px) {
+    header {
+      grid-template-columns: 1fr auto 1fr;
+    }
   }
   @media (max-width: 480px) {
     header {
