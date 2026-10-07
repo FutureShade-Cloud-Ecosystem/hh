@@ -1587,39 +1587,3 @@ read with the `q.` aliases), PR 178's fix shape. The new red-first legs
 quotes at one created_at with quote numbers 100, 101 and 102 and page from the first one's pair: red before the fix with the
 next page empty, green with it, each with a recorded message naming the cursor's position and the missing rows. The quote
 package was never in `red=`; nothing leaves the integration job's exclusion list.
-
-
-## The demo dealer's refund approval limit is off, and the web counter till still pins the old 250.00 threshold (recorded by the hardening lane; appended; the entries above are never edited)
-
-The Dibbits ruling landed in the core: the role configuration gained the `refund_approval_limit_enabled` switch
-(`core/internal/roleconfig`), and the demo build loads the decided default with the switch off (`demoRoleConfig` in
-`core/cmd/core/demo_on.go`), so no refund on a demo box, of any size, ever asks for an approver. The decided default itself keeps
-the limit on at 250.00 for every real dealer. Two web surfaces still model the old demo policy and belong to the counter till's
-own lane, recorded here rather than touched across the boundary:
-
-- `web/apps/counter-till/test/stub/demo-stub.mjs` pins `APPROVAL_AMOUNT_CENTS = 25000` with a comment saying it pins the demo
-  dealer's configuration; under the demo's new policy no amount is the demo's answer.
-- `web/apps/counter-till/test/acceptance/20-sales.pw.ts` walks the above 250.00 refusal and the manager credential completing it
-  against a live demo box; under the demo's new policy that return commits as the clerk with no dialog.
-
-Neither file is in this lane's Touches. The core's own proofs hold both sides: the no-limit leg
-(`core/internal/pos/refund_limit_off_test.go`) and the limit dealer's leg (the refund rule and per sale files), and the demo load's
-pin (`core/cmd/core/demo_on_test.go`, the demo tag).
-
-
-## The sale preview exempt leg is red on any host whose local day lags the database server's day (recorded by the hardening lane; appended; the entries above are never edited)
-
-`core/internal/pos/sale_preview_integration_test.go`, the exempt leg of
-`TestIntegration_Trenton_SalePreview_MatchesTheRing`, plants its zero rate MANUAL row at
-`CURRENT_DATE` (the Postgres server's zone, UTC on the gate image) while the assessor resolves
-"today" through `tax/model.go`'s `today(now)`, `now().Format("2006-01-02")`, the TEST PROCESS's
-local zone. On a host west of UTC (PDT, the workstation this was found on), in the evening hours
-where the UTC day has already rolled over but the host's has not, the process day is still yesterday
-against the server's CURRENT_DATE, the zero rate row is not
-yet in effect for the assessor, and the leg fails with a 1300 bps line under the MANUAL reason code.
-Verified red on origin/main against a fresh migrated and seeded gate database, and green on the same
-branch with `TZ=UTC` (the CI runner's condition, which is why the job never sees it). Not this lane's
-regression; the fix belongs to the tax module's owner, and the shape of it is the house's own rule:
-the assessor's "today" should read the house zone, not the process zone, the same defect class
-gl/businessday.go and dashboard/window.go close everywhere else. This lane ran its integration gate
-with `TZ=UTC` to match the CI runner.
