@@ -5985,6 +5985,7 @@ export type QuotePublicView = {
   total_cents: number;
   as_of: string;
   acceptable: boolean;
+  preview?: boolean;
   customer_notes?: string;
   deposit_required?: boolean;
   deposit_pct?: number;

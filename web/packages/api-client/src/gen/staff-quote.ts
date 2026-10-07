@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { QuoteAcceptanceSettings, QuoteAcceptanceSettingsWrite, QuoteBranchStockList, QuoteConvertRequest, QuoteConvertResult, QuoteCreateRequest, QuoteEditHistory, QuoteEditResult, QuoteFloorApprovalAnswer, QuoteFloorApprovalRequest, QuoteFollowUpHistory, QuoteHoldExpiryView, QuoteHoldList, QuoteHoldReleaseResult, QuoteHoldResyncResult, QuoteLineAddRequest, QuoteLineAvailabilityList, QuoteLineCompareRequest, QuoteLineComparison, QuoteLinePatchRequest, QuoteMargin, QuoteMintedShareLink, QuoteOrderPaymentRequest, QuoteOrderPaymentResult, QuotePolicy, QuoteRelatedDocumentList, QuoteSMSShareRequest, QuoteSMSShareResult, QuoteShareLinkList, QuoteShareLinkMintRequest, QuoteSummaryPage, QuoteTerms, QuoteTermsInput, QuoteValidUntilWrite, QuoteView } from "./types.js";
+import type { QuoteAcceptanceSettings, QuoteAcceptanceSettingsWrite, QuoteBranchStockList, QuoteConvertRequest, QuoteConvertResult, QuoteCreateRequest, QuoteEditHistory, QuoteEditResult, QuoteFloorApprovalAnswer, QuoteFloorApprovalRequest, QuoteFollowUpHistory, QuoteHoldExpiryView, QuoteHoldList, QuoteHoldReleaseResult, QuoteHoldResyncResult, QuoteLineAddRequest, QuoteLineAvailabilityList, QuoteLineCompareRequest, QuoteLineComparison, QuoteLinePatchRequest, QuoteMargin, QuoteMintedShareLink, QuoteOrderPaymentRequest, QuoteOrderPaymentResult, QuotePolicy, QuotePublicView, QuoteRelatedDocumentList, QuoteSMSShareRequest, QuoteSMSShareResult, QuoteShareLinkList, QuoteShareLinkMintRequest, QuoteSummaryPage, QuoteTerms, QuoteTermsInput, QuoteValidUntilWrite, QuoteView } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -186,6 +186,21 @@ export async function quoteConvertQuote(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "quoteConvertQuote",
+  });
+}
+
+export async function quoteCustomerViewPreview(
+  client: ApiClient,
+  id: string | number,
+  call?: ApiCallOptions
+): Promise<Result<QuotePublicView>> {
+  return client.request<QuotePublicView>({
+    method: "GET",
+    path: "/api/v1/quotes/{id}/customer-view",
+    pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "quoteCustomerViewPreview",
   });
 }
 

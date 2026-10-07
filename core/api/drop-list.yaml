@@ -88,3 +88,5 @@ additions:
     reason: "The grant check a client asks before it offers to take a payment (the Quote Desk server reads): whether the caller holds the grant the till sale and the payment on a converted quote's order both require, answered by the role gate's own walk; the ERP has no read of the caller's grants; no ERP source route."
   - route: "GET /api/v1/product-categories"
     reason: "The staff read of the product categories (id, code, name, is_active) for the pricing screens, Dealer Admin at read like the pricing reads; the ERP has the category list only inside its product filters; no ERP source route."
+  - route: "GET /api/v1/quotes/{id}/customer-view"
+    reason: "The staff preview of the customer's quote page: the public view built by the same code path, never minting a link, moving the status, scheduling a follow-up or logging a view, with acceptable false and preview true; no ERP source route."

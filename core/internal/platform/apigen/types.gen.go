@@ -6956,6 +6956,7 @@ type QuotePublicView struct {
 	TotalCents       int64             `json:"total_cents"`
 	AsOf             time.Time         `json:"as_of"`
 	Acceptable       bool              `json:"acceptable"`
+	Preview          *bool             `json:"preview,omitempty"`
 	CustomerNotes    *string           `json:"customer_notes,omitempty"`
 	DepositRequired  *bool             `json:"deposit_required,omitempty"`
 	DepositPct       *int32            `json:"deposit_pct,omitempty"`

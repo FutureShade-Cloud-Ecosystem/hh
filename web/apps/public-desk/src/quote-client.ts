@@ -40,6 +40,8 @@ export interface QuoteViewRef {
   totalCents: number;
   asOf: string;
   acceptable: boolean;
+  /** True only on the staff preview of this page: nothing has been sent, and nothing can be accepted. */
+  preview: boolean;
   customerNotes: string | null;
   depositRequired: boolean | null;
   depositPct: number | null;
@@ -208,6 +210,7 @@ export function validateQuoteView(value: unknown): QuoteViewRef | null {
     totalCents,
     asOf,
     acceptable,
+    preview: booleanAt(record, "preview") === true,
     customerNotes: stringAt(record, "customer_notes"),
     depositRequired: booleanAt(record, "deposit_required"),
     depositPct: integerAt(record, "deposit_pct"),

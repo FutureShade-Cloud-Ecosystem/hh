@@ -49,6 +49,24 @@ tokens. Two deliberate departures, both house rules:
   sent the JSON error envelope). The page carries no copy addressed to its
   builders: everything on it is written for the customer.
 
+## The staff preview
+
+The page can show the quote as the customer would see it without sending it.
+The contract's `quoteCustomerViewPreview` (`GET /api/v1/quotes/{id}/customer-view`)
+answers the same view a link holder reads, built by the same core code, with
+`acceptable` false and `preview` true; it mints no link, moves no status and
+schedules nothing. The page has no session and the sinks gate keeps it that
+way, so it never fetches the preview itself: the Quote Desk fetches the view
+with its own session and hands the endpoint's answer, as it came off the wire,
+to the element with `showQuote(value)`. The page trusts nothing it is handed:
+it validates the answer itself with `validateQuoteView`, and a hosted page is a
+preview by construction, so a null, a malformed view or any view whose
+`preview` is not true shows only "This preview could not be shown." A view with
+`preview` true renders a band ("Preview: this is what your customer will see.
+Nothing has been sent."), the same page, and no accept area, no typed name and
+no closed card; a hosted page never renders an accept control whatever the
+view carries.
+
 ## The acceptance key
 
 Every attempt of one acceptance carries the same idempotency key, derived from the
