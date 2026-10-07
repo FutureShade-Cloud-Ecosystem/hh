@@ -15,6 +15,12 @@
 // $60.00, the full Wall block line is $360.00 over the $250.00 approval
 // amount, the second cash sale's line the same again, the first card sale's
 // edger $89.00, and the second card sale's sandstone edger $75.00.
+//
+// The demo dealer's configuration turns the approval rule off (decision log
+// rows 1047 and 1073), and the stub starts the same way, so the legs that
+// exercise the approval path switch the stub to a dealer that keeps the
+// 250.00 rule first and put it back after; one leg at the end pins the demo's
+// own side, a refund over 250.00 committing as the clerk with no approval.
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 // The stub's open drawer at the demo branch, by its own id (the uuid helper's
@@ -47,6 +53,16 @@ async function signIn(page: Page, role: "Sales" | "Sales manager"): Promise<void
   await expect(page.getByTestId("signed-in-role")).toHaveText(role);
 }
 
+/** Switch the stub between the demo dealer (no threshold) and a dealer that keeps the 250.00 rule. */
+async function setApprovalLimit(page: Page, enabled: boolean): Promise<void> {
+  const answer = await page.request.post("/_stub/refund-approval-limit", { data: { enabled } });
+  expect((await answer.json()) as { approvalLimitEnabled: boolean }).toEqual({ approvalLimitEnabled: enabled });
+}
+
+test.afterEach(async ({ page }) => {
+  await setApprovalLimit(page, false);
+});
+
 async function drawerExpectedCash(page: Page): Promise<number> {
   const mint = await page.request.post("/api/v1/demo/session", { data: { flow: "sales" } });
   const minted = (await mint.json()) as { token?: string };
@@ -64,12 +80,14 @@ async function stubState(page: Page): Promise<{
   keys: string[];
   lastReturnBody: Record<string, unknown>;
   sightings: { path: string; approverHeader: boolean }[];
+  returns: { clerk: string; approver: string | null }[];
 }> {
   const answer = await page.request.get("/_stub/state");
   return (await answer.json()) as {
     keys: string[];
     lastReturnBody: Record<string, unknown>;
     sightings: { path: string; approverHeader: boolean }[];
+    returns: { clerk: string; approver: string | null }[];
   };
 }
 
@@ -99,6 +117,7 @@ test("a return of one line in cash within 250.00 commits, and the drawer's Z rep
 });
 
 test("a return above 250.00 is refused with the amount and the approvers named, and completes through the Sales manager's card with the header still reading Sales", async ({ page }) => {
+  await setApprovalLimit(page, true);
   await signIn(page, "Sales");
   await findSale(page, "CT-1001");
   await page.getByLabel(WALLBLOCK_LINE).fill("6");
@@ -147,6 +166,7 @@ test("a return above 250.00 is refused with the amount and the approvers named, 
 });
 
 test("a sign out under an in flight approval leaves the desk blank for the next person", async ({ page }) => {
+  await setApprovalLimit(page, true);
   // The re-read's P3, the receipt half: the send's answer landing after the
   // sign out writes nothing, the receipt included. The harness holds the
   // approval send's response until the till has changed hands.
@@ -285,6 +305,7 @@ test("a second find clears the last draft's fields on the screen and in the body
 });
 
 test("a changed draft drops the refusal it earned and the idempotency key it rode in on", async ({ page }) => {
+  await setApprovalLimit(page, true);
   // The review round's P2-5: a kept key on a changed draft would replay the
   // old return's answer for a different return. The third cash sale carries
   // this test's own line, untouched by the tests before it.
@@ -323,6 +344,31 @@ test("a plain refusal without the approval key shows its own words and opens no 
   );
   await expect(page.getByTestId("refund-refusal")).toHaveCount(0);
   await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("the demo dealer has no approval threshold: a return above 250.00 commits as the clerk with no refusal and no dialog", async ({ page }) => {
+  // Decision log rows 1047 and 1073: refund_approval_limit_enabled is false for
+  // the demo dealer, so the same $360.00 return the dealer-with-the-rule leg
+  // above refuses commits straight away, rung by the clerk, nobody approving.
+  await signIn(page, "Sales");
+  await findSale(page, "CT-1003");
+  await page.getByLabel(WALLBLOCK_LINE).fill("6");
+  await page.getByRole("button", { name: "Cash", exact: true }).click();
+  await page.getByRole("button", { name: "Refund cash" }).click();
+
+  const receipt = page.getByTestId("refund-receipt");
+  await expect(receipt).toContainText("$360.00");
+  await expect(receipt).toContainText("Rung by Sales (demo).");
+  await expect(receipt).not.toContainText("Approved by");
+  await expect(page.getByTestId("refund-refusal")).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.getByTestId("signed-in-role")).toHaveText("Sales");
+  const state = await stubState(page);
+  const posts = state.sightings.filter((sighting) => sighting.path === "/api/v1/pos/returns");
+  expect(posts[posts.length - 1].approverHeader).toBe(false);
+  const committed = state.returns[state.returns.length - 1];
+  expect(committed.clerk).toBe("demo-account-sales");
+  expect(committed.approver).toBeNull();
 });
 
 test("an unknown sale number is refused in words and lays out nothing", async ({ page }) => {
