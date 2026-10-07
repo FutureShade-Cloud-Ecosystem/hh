@@ -1,10 +1,10 @@
-// The drawn product tiles are a demo seam for now (decision log row 893, the same seam as the
-// adopt path): the till wires the design system's tile resolver into the ports only in a demo
-// mode build. The proof is the shipped bundle, because the Vite mode gate is constant folded at
-// build time. This test builds the app both ways into its own scratch directory and looks for the
-// resolver's own vocabulary and the tiles' drawings (the small SVGs are inlined as data URIs, so
-// their text, not a file name, is what a build carries): a default build holds none of it, so a
-// product with no picture keeps today's glyph; a demo build holds all of it.
+// The drawn product tiles ship in every build (decision log row 1057: any product without a photo
+// shows its category's drawn tile in every dealer's system, not the demo only). The proof is the
+// shipped bundle, because a bundler may drop what no path reaches: this test builds the app both
+// ways into its own scratch directory and looks for the resolver's own vocabulary and the tiles'
+// drawings (the small SVGs are inlined as data URIs, so their text, not a file name, is what a
+// build carries). Both a default build and a demo build hold all of it. The demo-only seams (the
+// front door handoff and its key) stay out of the default build: see no-default-adopt.test.mjs.
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -39,11 +39,11 @@ function build(label, args) {
 const RESOLVER_WORD = "screenings";
 const TILE_PLATE = /fill-opacity=(%22|"|')0\.94/;
 
-test("a default build of the till carries no tile resolver and no tile drawing", () => {
+test("a default build of the till carries the tile resolver and the tile drawings", () => {
   const bundle = build("default", []);
   assert.ok(bundle.length > 0, "the default build produced nothing");
-  assert.ok(!bundle.includes(RESOLVER_WORD), "the default bundle carries the tile resolver");
-  assert.ok(!TILE_PLATE.test(bundle), "the default bundle carries a tile drawing");
+  assert.ok(bundle.includes(RESOLVER_WORD), "the default bundle carries no tile resolver");
+  assert.ok(TILE_PLATE.test(bundle), "the default bundle carries no tile drawing");
 });
 
 test("a demo mode build of the till carries the tile resolver and the tile drawings", () => {
@@ -52,12 +52,10 @@ test("a demo mode build of the till carries the tile resolver and the tile drawi
   assert.ok(TILE_PLATE.test(bundle), "the demo bundle carries no tile drawing");
 });
 
-test("the tile resolver is wired only inside the demo build mode gate, at source", () => {
+test("the tile resolver is wired unconditionally, at source", () => {
   const source = readFileSync(join(appDir, "src", "app-root.ts"), "utf8").replace(/\s+/g, " ");
-  assert.ok(
-    source.includes('productTile: import.meta.env.MODE === "demo" ? productTileUrl : undefined'),
-    "app-root must wire productTile only when the build mode is demo",
-  );
+  assert.ok(source.includes("productTile: productTileUrl,"), "app-root must wire productTile in every build");
+  assert.ok(!/productTile: [^,]*MODE/.test(source), "the tile resolver must not sit behind a build mode gate");
 });
 
 after(() => {

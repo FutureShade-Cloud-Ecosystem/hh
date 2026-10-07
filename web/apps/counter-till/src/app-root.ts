@@ -493,10 +493,10 @@ export class CounterTillApp extends HHElement {
       houseDay: () => houseDayInZone(HOUSE_ZONE),
       user: () => this.#clerkIdentity,
       token: () => this.#sessions.current?.token ?? "",
-      // The drawn category tiles are a demo seam for now (decision log row 893): Vite
-      // substitutes MODE at build time, so a default build carries no tile resolver and a
-      // product with no picture keeps the stone-stack glyph (test/product-tiles-build.test.mjs).
-      productTile: import.meta.env.MODE === "demo" ? productTileUrl : undefined,
+      // The drawn category tiles ship in every build (decision log row 1057): a product with no
+      // picture shows its category's tile for every dealer, and keeps the stone-stack glyph only
+      // where the tiles do not know the category (test/product-tiles-build.test.mjs).
+      productTile: productTileUrl,
     });
   }
 
