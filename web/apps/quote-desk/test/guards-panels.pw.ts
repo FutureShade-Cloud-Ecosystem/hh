@@ -43,7 +43,9 @@ test("guard edit read: the quote read for the quote left never shows on the quot
   await showList(page);
   await row(page, "Q-1002").click();
   await openDetail(page);
-  const slow = await hold(page, /\/api\/v1\/quotes\/q-1001$/, { method: "GET", match: () => true });
+  // The work area reads the quote first and the panels after it: the work area's read passes, every read after it is held.
+  let reads = 0;
+  const slow = await hold(page, /\/api\/v1\/quotes\/q-1001$/, { method: "GET", match: () => (reads += 1) > 1 });
   await showList(page);
   await row(page, "Q-1001").click();
   await slow.asked;

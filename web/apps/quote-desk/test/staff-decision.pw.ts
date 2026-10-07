@@ -137,7 +137,9 @@ test("guard decision read: the read of the quote just left never lands on the qu
   const a = await seedWith(page, 4);
   const b = await seedWith(page, 9);
   await signIn(page);
-  const read = await hold(page, new RegExp(`/api/v1/quotes/${a}$`), { method: "GET" });
+  // The work area's read passes; the panels' reads of the quote, which come after it, are held.
+  let reads = 0;
+  const read = await hold(page, new RegExp(`/api/v1/quotes/${a}$`), { method: "GET", match: () => (reads += 1) > 1 });
   await goTo(page, a);
   await read.asked;
   await goTo(page, b);
