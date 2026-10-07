@@ -2167,6 +2167,28 @@ export class QdQuoteWorkarea extends LitElement {
       this.speakAdd(`This quote is ${quoteStatusPhrase(this.view.status)} and can no longer be changed.`, "err");
       return;
     }
+    // The same product, in the same unit, at the same price (no discount on the line it is already on) is the
+    // quantity of that line, not a second line: raised, and said in words.
+    const existing = this.view.lines.find((l) => l.product_id === p.id && l.uom_entered === p.uom && (this.termsLine(l.line_no)?.discPct ?? 0) === 0);
+    const raised = existing === undefined ? Number.NaN : Number(existing.qty_entered) + qty;
+    if (existing !== undefined && Number.isFinite(raised)) {
+      const releaseRaise = this.holdBusy(ctx);
+      this.error = "";
+      this.notice = "";
+      const bumped = await ctx.guarded(deferredSend(capture, () => client.editLine(ctx.id, existing.line_no, { qty: String(raised) })), this.lateWrite(ctx, "raise this quantity"));
+      if (bumped === undefined) return;
+      releaseRaise();
+      if (wasUnsent(bumped)) return;
+      if (bumped.ok) {
+        this.speakAdd(`${p.name ?? existing.description} is already on the quote, so its quantity is now ${raised}.`, "ok");
+        this.ticketMoved();
+        await this.afterCartChange(ctx);
+      } else {
+        this.speakAdd(spokenRefusal(quoteErrorMessage(bumped.status, bumped.error, "raise this quantity")), "err");
+        await this.loadAll();
+      }
+      return;
+    }
     const release = this.holdBusy(ctx);
     this.error = "";
     this.notice = "";
@@ -2876,7 +2898,7 @@ export class QdQuoteWorkarea extends LitElement {
       <h3>Quote basics</h3>
       <ul>
         <li><b>Customer first</b>: pick the account (or start typing a name); the quote opens on it.</li>
-        <li><b>Scan or search</b>: the one box takes a barcode, a SKU or a name; the add puts it on the quote at engine prices.</li>
+        <li><b>Search</b>: the one box takes a code, a SKU or a name; the add puts it on the quote at engine prices.</li>
         <li><b>Terms</b>: validity, deposit and notes ride the quote and print on what the customer sees.</li>
         <li><b>Send</b>: emails (and texts) the customer their quote link; follow up reminders are automatic. Convert turns an accepted quote into an order.</li>
       </ul>
@@ -3031,7 +3053,7 @@ export class QdQuoteWorkarea extends LitElement {
           ${lines.length === 0
             ? html`<tr>
                 <td data-role="empty-cell">
-                  <span class="empty">No lines yet. Scan or search a product above.</span>
+                  <span class="empty">No lines yet. Search for a product above.</span>
                 </td>
               </tr>`
             : nothing}

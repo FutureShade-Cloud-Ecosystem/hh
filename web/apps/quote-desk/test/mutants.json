@@ -2030,5 +2030,12 @@
     "find": "const done = await ctx.guarded(call, this.lateWrite(ctx, (late) => spokenRefusal(quoteErrorMessage(late.status, late.error, \"record the decision\"))));",
     "replace": "const done = await call;",
     "test": "guard decision write:"
+  },
+  {
+    "id": "wa-raise-line",
+    "file": "src/quote-workarea.ts",
+    "find": "await ctx.guarded(deferredSend(capture, () => client.editLine(ctx.id, existing.line_no, { qty: String(raised) })), this.lateWrite(ctx, \"raise this quantity\"))",
+    "replace": "await client.editLine(ctx.id, existing.line_no, { qty: String(raised) })",
+    "test": "guard raise line:"
   }
 ]

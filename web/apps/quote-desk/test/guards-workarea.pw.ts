@@ -69,6 +69,23 @@ test("guard terms save answer: a terms save that answers after another quote ope
   await expect(page.getByTestId("qb-po")).toHaveValue("");
 });
 
+test("guard raise line: a raise that answers after another quote opened says nothing on that quote", async ({ page }) => {
+  await seed(page, { customer_id: "c-fenwick", lines: [{ p: "p-polymer-sand", q: 2 }] });
+  await signIn(page);
+  await open(page, "Q-1004");
+  await expect(page.getByTestId("qb-line")).toHaveCount(1);
+  const held = await hold(page, /\/quotes\/q-1004\/lines\/1$/, { method: "PATCH" });
+  const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
+  await scan.fill("PSN-100");
+  await scan.press("Enter");
+  await held.asked;
+  await open(page, "Q-1001");
+  await held.release();
+  await settle(page);
+  await expect(page.getByText(/already on the quote/)).toHaveCount(0);
+  await expect(page.getByTestId("qb-error")).toHaveText("");
+});
+
 test("guard add line: an add that answers after another quote opened says nothing on that quote", async ({ page }) => {
   await seed(page, { customer_id: "c-fenwick" });
   await signIn(page);
