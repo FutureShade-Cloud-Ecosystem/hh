@@ -254,7 +254,7 @@ SELECT ps.id::text, o.id::text, o.order_no, o.customer_id::text, o.branch_id::te
 	}
 	rows, err := r.pool.Query(ctx,
 		`SELECT line_no, COALESCE(product_id::text,''), description, qty_entered, uom_entered,
-		        unit_price_cents, price_uom, line_total_cents
+		        unit_price_cents, price_uom, line_total_cents, discount_cents, sale_discount_cents
 		   FROM order_lines WHERE order_id = $1 ORDER BY line_no`, v.OrderID)
 	if err != nil {
 		return SaleView{}, false, err
@@ -263,12 +263,27 @@ SELECT ps.id::text, o.id::text, o.order_no, o.customer_id::text, o.branch_id::te
 	for rows.Next() {
 		var ln SaleViewLine
 		if err := rows.Scan(&ln.LineNo, &ln.ProductID, &ln.Description, &ln.QtyEntered, &ln.UOMEntered,
-			&ln.UnitPriceCents, &ln.PriceUOM, &ln.LineTotalCents); err != nil {
+			&ln.UnitPriceCents, &ln.PriceUOM, &ln.LineTotalCents, &ln.DiscountCents, &ln.SaleDiscountCents); err != nil {
 			return SaleView{}, false, err
 		}
 		v.Lines = append(v.Lines, ln)
 	}
-	return v, true, rows.Err()
+	if err := rows.Err(); err != nil {
+		return SaleView{}, false, err
+	}
+	rows.Close()
+	// The manual discounts and who approved them, so a reopen and a reprint show the same receipt.
+	ds, err := r.ReadSaleDiscounts(ctx, v.OrderID)
+	if err != nil {
+		return SaleView{}, false, err
+	}
+	for _, d := range ds {
+		v.DiscountCents += d.AmountCents
+	}
+	if len(ds) > 0 {
+		v.Discounts = ds
+	}
+	return v, true, nil
 }
 
 // -- the M2-debt writes (inside the Sale tx) -------------------------------
@@ -302,11 +317,16 @@ func (r *Repository) InsertOrderLines(ctx context.Context, tx pgx.Tx, orderID st
 	for _, l := range lines {
 		const q = `
 INSERT INTO order_lines (order_id, line_no, product_id, description, qty_entered, uom_entered, qty_base,
-                         unit_price_cents, price_uom, line_total_cents, tax_cents)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id::text`
+                         unit_price_cents, price_uom, line_total_cents, tax_cents,
+                         discount_cents, discount_percent_bps, discount_approved_by, discount_approved_role,
+                         sale_discount_cents, discount_approved_qty, discount_approved_base_cents)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING id::text`
 		var id string
 		if err := tx.QueryRow(ctx, q, orderID, l.LineNo, nullStr(l.ProductID), l.Description, l.QtyEntered,
-			l.UOMEntered, l.QtyBase, l.UnitPriceCents, l.PriceUOM, l.LineTotalCents, l.TaxCents).Scan(&id); err != nil {
+			l.UOMEntered, l.QtyBase, l.UnitPriceCents, l.PriceUOM, l.LineTotalCents, l.TaxCents,
+			l.DiscountCents, nullInt(l.DiscountPercentBps), nullStr(l.DiscountApprovedBy),
+			nullStr(l.DiscountRoleID), l.SaleDiscountCents, nullFloat(l.DiscountApprovedQty),
+			nullInt64(l.DiscountApprovedBase)).Scan(&id); err != nil {
 			return nil, err
 		}
 		ids = append(ids, id)
@@ -379,12 +399,14 @@ func (r *Repository) InsertPosSale(ctx context.Context, tx pgx.Tx, s posSaleRow)
 	const q = `
 INSERT INTO pos_sale (idempotency_key, order_id, invoice_id, payment_id, branch_id, till_session_id,
                       sale_type, cash_sale, tender, tax_reason_code, offline_origin, created_by,
-                      split_tender)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id::text`
+                      split_tender, discount_cents, discount_percent_bps, discount_approved_by,
+                      discount_approved_role, discount_approved_base_cents)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING id::text`
 	var id string
 	err := tx.QueryRow(ctx, q, s.IdempotencyKey, s.OrderID, nullStr(s.InvoiceID), nullStr(s.PaymentID),
 		s.BranchID, nullStr(s.TillSessionID), s.SaleType, s.CashSale, s.Tender, s.TaxReasonCode,
-		s.OfflineOrigin, nullStr(s.CreatedBy), s.SplitTender).Scan(&id)
+		s.OfflineOrigin, nullStr(s.CreatedBy), s.SplitTender, s.Discount.AmountCents,
+		nullInt(s.Discount.PercentBps), nullStr(s.Discount.ApprovedBy), nullStr(s.Discount.RoleID), nullInt64(s.Discount.ApprovedBase)).Scan(&id)
 	return id, err
 }
 
@@ -504,6 +526,101 @@ func (r *Repository) ListSalespeople(ctx context.Context) ([]Salesperson, error)
 		out = append(out, s)
 	}
 	return out, rows.Err()
+}
+
+// ListDiscountStaff reads the logins the counter discount's approver rule may judge: ACTIVE staff
+// with one live role grant that reaches the branch (a global role, or a grant on that branch), one
+// row per grant in tier order so a login's highest role leads. userID narrows to one login. The
+// platform grant tables are the authority every guard resolves from (D3); the dealer's list of
+// who may approve is NOT here, it is the service's read of the role configuration. The org
+// predicate is the request org the guard resolved (the scope every grant read carries), and
+// falls back to the branch's own org only when the call carries none.
+func (r *Repository) ListDiscountStaff(ctx context.Context, orgID, branchID, userID string) ([]discountStaffRow, error) {
+	if r.pool == nil {
+		return nil, errNoPool
+	}
+	rows, err := r.pool.Query(ctx, `
+SELECT u.id::text, u.display_name, sr.id, sr.label, sr.tier::int
+  FROM users u
+  JOIN staff_role_grant g ON g.platform_user_id = u.platform_user_id AND g.deleted_at IS NULL
+  JOIN staff_role sr ON sr.id = g.role_id AND sr.deleted_at IS NULL
+ WHERE u.status = 'ACTIVE' AND u.deleted_at IS NULL AND u.platform_user_id IS NOT NULL
+   AND g.org_id = COALESCE(NULLIF($3, '')::uuid, (SELECT l.org_id FROM locations l WHERE l.id = $1::uuid))
+   AND (sr.scope = 'global' OR g.branch_id = $1::uuid)
+   AND ($2 = '' OR u.id::text = $2)
+ ORDER BY u.display_name, u.id::text, sr.tier, sr.id`, branchID, userID, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []discountStaffRow
+	for rows.Next() {
+		var d discountStaffRow
+		if err := rows.Scan(&d.UserID, &d.Name, &d.RoleID, &d.RoleLabel, &d.Tier); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// ReadSaleDiscounts reads the manual discounts one committed sale carries, lines first in line
+// order then the ticket discount, the role labels read from the role catalogue by the role the
+// approver held at the time. A sale with none answers an empty list.
+func (r *Repository) ReadSaleDiscounts(ctx context.Context, orderID string) ([]SaleDiscount, error) {
+	if r.pool == nil {
+		return nil, errNoPool
+	}
+	rows, err := r.pool.Query(ctx, `
+SELECT 'LINE', ol.line_no, COALESCE(ol.discount_percent_bps, 0), ol.discount_cents,
+       ol.discount_approved_by::text, ol.discount_approved_role, COALESCE(sr.label, ol.discount_approved_role)
+  FROM order_lines ol
+  LEFT JOIN staff_role sr ON sr.id = ol.discount_approved_role
+ WHERE ol.order_id = $1 AND ol.discount_cents > 0
+UNION ALL
+SELECT 'SALE', 0, COALESCE(ps.discount_percent_bps, 0), ps.discount_cents,
+       ps.discount_approved_by::text, ps.discount_approved_role, COALESCE(sr.label, ps.discount_approved_role)
+  FROM pos_sale ps
+  LEFT JOIN staff_role sr ON sr.id = ps.discount_approved_role
+ WHERE ps.order_id = $1 AND ps.discount_cents > 0
+ ORDER BY 1, 2`, orderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SaleDiscount
+	for rows.Next() {
+		var d SaleDiscount
+		if err := rows.Scan(&d.Scope, &d.LineNo, &d.PercentBps, &d.AmountCents,
+			&d.ApprovedBy, &d.ApprovedByRole, &d.ApprovedByLabel); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// nullFloat and nullInt64 map 0 → SQL NULL for the optional approval columns.
+func nullFloat(f float64) any {
+	if f == 0 {
+		return nil
+	}
+	return f
+}
+
+func nullInt64(n int64) any {
+	if n == 0 {
+		return nil
+	}
+	return n
+}
+
+// nullInt maps 0 → SQL NULL for the optional percent column.
+func nullInt(n int) any {
+	if n == 0 {
+		return nil
+	}
+	return n
 }
 
 // nullStr maps "" → SQL NULL so optional UUID/text columns are not fed an empty string.

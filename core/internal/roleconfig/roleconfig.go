@@ -1,6 +1,6 @@
 // Package roleconfig holds the dealer's role configuration the core's
 // guards read (D48): each staff role's level on each surface, the cross
-// cutting role lists the rules name, and the nine dealer settings. It is
+// cutting role lists the rules name, and the eleven dealer settings. It is
 // plain, framework free Go: no UI, no framework, no database, no schema.
 //
 // The decided default (ROLE-ACCESS-r3 and its data role-access-r3.json)
@@ -169,13 +169,23 @@ const RoleGeneralManager = "general_manager"
 // level on it above none (X4: no money settings).
 const SurfaceMoneyDesk = "money-desk"
 
-// The JSON keys of the ten dealer settings. A misspelled key in a
+// The JSON keys of the eleven dealer settings. A misspelled key in a
 // configuration is refused, not ignored, so a setting can never silently
 // fall back to a zero value.
 const (
-	SettingCostVisibility                = "cost_visibility"
-	SettingCreditAtTill                  = "credit_at_till"
-	SettingRefundAmountWithoutApproval   = "refund_amount_without_approval_cents"
+	SettingCostVisibility              = "cost_visibility"
+	SettingCreditAtTill                = "credit_at_till"
+	SettingRefundAmountWithoutApproval = "refund_amount_without_approval_cents"
+	// SettingRefundApprovalLimitEnabled is the refund approval threshold's
+	// switch (X7, the Dibbits ruling): false is the dealer with no threshold
+	// at all, where no refund ever needs an approver whatever the amount
+	// setting holds; true is every dealer who sets a number, the amount rule
+	// exactly as it stood. A boolean rather than a null amount because the
+	// loader's rule is that a null setting is no setting: null is refused
+	// everywhere it appears, and the settings vocabulary already carries
+	// switches (credit_at_till, manager_own_branch_floor_clearing,
+	// general_manager_selling).
+	SettingRefundApprovalLimitEnabled    = "refund_approval_limit_enabled"
 	SettingRefundApprovers               = "refund_approvers"
 	SettingManagerOwnBranchFloorClearing = "manager_own_branch_floor_clearing"
 	SettingPricingEditors                = "pricing_editors"
@@ -199,12 +209,13 @@ const (
 	MaxRefundApprovalWindowSeconds = 3600
 )
 
-// settingKeys lists the ten keys. Load refuses a document where one is
-// missing or one beyond these ten appears.
+// settingKeys lists the eleven keys. Load refuses a document where one is
+// missing or one beyond these eleven appears.
 var settingKeys = []string{
 	SettingCostVisibility,
 	SettingCreditAtTill,
 	SettingRefundAmountWithoutApproval,
+	SettingRefundApprovalLimitEnabled,
 	SettingRefundApprovers,
 	SettingManagerOwnBranchFloorClearing,
 	SettingPricingEditors,
@@ -262,7 +273,7 @@ type Document struct {
 	Settings map[string]json.RawMessage `json:"settings"`
 }
 
-// Settings are the nine dealer settings the rulings name, decoded and
+// Settings are the eleven dealer settings the rulings name, decoded and
 // typed. Money is integer cents (the refund amount 250.00 is held as
 // 25000), never a float.
 type Settings struct {
@@ -274,6 +285,11 @@ type Settings struct {
 	// RefundAmountWithoutApprovalCents is the refund amount without
 	// approval, in integer cents.
 	RefundAmountWithoutApprovalCents int64
+	// RefundApprovalLimitEnabled reports whether the refund approval
+	// threshold exists at all (X7, the Dibbits ruling): false is no
+	// threshold, no refund ever needs an approver; true reads the amount
+	// above.
+	RefundApprovalLimitEnabled bool
 	// RefundApprovers names who approves a refund above the amount, of the
 	// sale's branch (X7).
 	RefundApprovers []string

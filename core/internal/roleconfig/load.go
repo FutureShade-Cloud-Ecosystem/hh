@@ -374,7 +374,7 @@ func validateLists(lists Lists) (Lists, []string) {
 	}, issues
 }
 
-// validateSettings decodes the nine dealer settings by name. A missing
+// validateSettings decodes the eleven dealer settings by name. A missing
 // setting, an unknown key, a value of the wrong shape (JSON null
 // included), an unknown or duplicate role name, and a negative refund
 // amount are all refusals.
@@ -406,6 +406,7 @@ func validateSettings(raw map[string]json.RawMessage) (Settings, []string) {
 	settings.CostVisibility = decodeRoleList(raw[SettingCostVisibility], SettingCostVisibility, &issues)
 	settings.CreditAtTill = decodeBool(raw[SettingCreditAtTill], SettingCreditAtTill, &issues)
 	settings.RefundAmountWithoutApprovalCents = decodeCents(raw[SettingRefundAmountWithoutApproval], SettingRefundAmountWithoutApproval, &issues)
+	settings.RefundApprovalLimitEnabled = decodeBool(raw[SettingRefundApprovalLimitEnabled], SettingRefundApprovalLimitEnabled, &issues)
 	settings.RefundApprovers = decodeApproverList(raw[SettingRefundApprovers], SettingRefundApprovers, &issues)
 	settings.ManagerOwnBranchFloorClearing = decodeBool(raw[SettingManagerOwnBranchFloorClearing], SettingManagerOwnBranchFloorClearing, &issues)
 	settings.PricingEditors = decodeRoleList(raw[SettingPricingEditors], SettingPricingEditors, &issues)

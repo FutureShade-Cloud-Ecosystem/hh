@@ -71,6 +71,8 @@ type fakeStore struct {
 	products        map[string][2]string     // product id → {sku, name}
 	stockMeta       map[string]fakeStockMeta // DIB-488: canned glance unit meta per product
 	staff           map[string]string        // DIB-488 rev 6: user id → display name (ACTIVE staff)
+	discountStaff   []discountStaffRow       // the counter discount's candidate logins (discount_test.go)
+	discountReads   []SaleDiscount           // canned ReadSaleDiscounts answer
 	// -- DIB-488 rev 8 canned state (interface compliance, the rev-1/2/5/6 fake-extension class) --
 	weights       map[string]float64  // product id → kg per base unit (absent = none on file)
 	branchCosts   map[string]int64    // product id → WAC cents at the (single) test branch
@@ -568,6 +570,20 @@ func (f *fakeStore) ReadStaffName(_ context.Context, userID string) (string, boo
 	return name, ok, nil
 }
 
+func (f *fakeStore) ListDiscountStaff(_ context.Context, _, _, userID string) ([]discountStaffRow, error) {
+	var out []discountStaffRow
+	for _, r := range f.discountStaff {
+		if userID == "" || r.UserID == userID {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) ReadSaleDiscounts(_ context.Context, _ string) ([]SaleDiscount, error) {
+	return f.discountReads, nil
+}
+
 func (f *fakeStore) ListSalespeople(_ context.Context) ([]Salesperson, error) {
 	var out []Salesperson
 	for id, name := range f.staff {
@@ -639,11 +655,12 @@ func (f *fakeStore) TopSellingApplications(_ context.Context, limit int) ([]stri
 // line (what the quote flow's floor would say); the till prices through the counter resolve and
 // ignores that verdict (D48 row 481, D49).
 type fakeResolver struct {
-	tr      *[]string
-	price   pricing.LinePrice
-	blocked bool
-	policy  string
-	err     error
+	discountLogs []pricing.CounterDiscountRecord // the pricing log rows the ring wrote for manual discounts
+	tr           *[]string
+	price        pricing.LinePrice
+	blocked      bool
+	policy       string
+	err          error
 }
 
 func (r *fakeResolver) DeriveCounterLinePrice(_ context.Context, _ pricing.ResolveInput) (pricing.LinePrice, error) {
@@ -657,6 +674,12 @@ func (r *fakeResolver) DeriveCounterLinePrice(_ context.Context, _ pricing.Resol
 	lp.Breakdown.Blocked = r.blocked
 	lp.Breakdown.BlockPolicy = r.policy
 	return lp, nil
+}
+
+// RecordCounterDiscountTx makes the fake resolver the pricing log's counter-discount door.
+func (r *fakeResolver) RecordCounterDiscountTx(_ context.Context, _ pgx.Tx, rec pricing.CounterDiscountRecord) error {
+	r.discountLogs = append(r.discountLogs, rec)
+	return nil
 }
 
 // fakeTender is the till seam.

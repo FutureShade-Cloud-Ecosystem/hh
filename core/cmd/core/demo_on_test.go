@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 )
 
 // The environment each wiring test starts from: a box that says demo
@@ -191,5 +193,35 @@ func TestDemoServeRefusesATokenExpiryOverTheCeiling(t *testing.T) {
 	err = demoServe(getenv, lookup, environ)
 	if err == nil || strings.Contains(err.Error(), "CORE_DEMO_TOKEN_TTL") {
 		t.Fatalf("an at-ceiling expiry was refused as over it: %v", err)
+	}
+}
+
+// The demo dealer's one policy difference from the decided default: the
+// refund approval limit is off on the demo load (the Dibbits ruling), so no
+// refund in the demo, of any size, ever asks for an approver; the default
+// itself stays a limit dealer, the gate every real dealer inherits. The
+// mirror keeps the two loads honest in one place: if the demo ever goes
+// back to a plain Default(), or the default's own switch flips, this fails.
+func TestDemoRoleConfig_RefundApprovalLimitOffOnTheDemoLoadOnly(t *testing.T) {
+	demo, err := demoRoleConfig()
+	if err != nil {
+		t.Fatalf("demoRoleConfig: %v", err)
+	}
+	if demo.RefundRequiresApproval(9_000_000_000) {
+		t.Fatal("the demo dealer has no refund approval threshold: no cumulative, however large, may ask for an approver")
+	}
+	// The rest of the demo's policy is the decided default's, the one
+	// difference switched: the amount and the approvers still read, so a
+	// later switch back to a limit serves the default's numbers.
+	if got := demo.RefundAmountWithoutApprovalCents(); got != 25000 {
+		t.Fatalf("the demo keeps the default's configured amount, got %d", got)
+	}
+
+	prod, err := roleconfig.Default()
+	if err != nil {
+		t.Fatalf("roleconfig.Default: %v", err)
+	}
+	if !prod.RefundRequiresApproval(25001) {
+		t.Fatal("the decided default must keep the limit on: a dealer who sets a number keeps the gate")
 	}
 }

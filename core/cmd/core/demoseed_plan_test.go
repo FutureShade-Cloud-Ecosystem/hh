@@ -1128,3 +1128,80 @@ func TestPlan_AnUnassignedStopIsNotCommitted(t *testing.T) {
 			"that is on no truck, and dispatch.due_to_commit counts none of them", requested, unassigned)
 	}
 }
+
+// TestPlan_DayStampIsTheHouseZoneDay. The house rule: daily means the
+// dealer's day, the house zone's calendar, never UTC's (a UTC midnight
+// rolls the day over at dinner time in Ontario). The day keyed counter
+// sale's number carries the stamp, the row's own dates carry the day, and
+// the plan's reported day keys carry it too, so all three must read the
+// HOUSE zone's day. The clock pinned here is the boundary case: just after
+// UTC midnight, still the previous evening in the house zone, where the
+// two calendars disagree and only one of them is the dealer's.
+func TestPlan_DayStampIsTheHouseZoneDay(t *testing.T) {
+	// 00:30 UTC is 19:30 the previous evening in the house zone (Eastern
+	// Standard Time, UTC minus 5), so the UTC calendar already says the
+	// 15th while the dealer is still working the 14th.
+	in := testInput(t)
+	in.Now = time.Date(2026, 1, 15, 0, 30, 0, 0, time.UTC)
+	rows, sum, err := buildPlan(in)
+	if err != nil {
+		t.Fatalf("buildPlan: %v", err)
+	}
+
+	const want = "20260114" // the house zone's day at the pinned clock
+	found := false
+	for _, r := range rows {
+		if r.table != "orders" {
+			continue
+		}
+		var no string
+		var date time.Time
+		for i, c := range r.cols {
+			switch c {
+			case "order_no":
+				no, _ = r.vals[i].(string)
+			case "requested_date":
+				date, _ = r.vals[i].(time.Time)
+			}
+		}
+		if !strings.HasPrefix(no, demoPrefix+"TRT-T2-") {
+			continue
+		}
+		found = true
+		if got := strings.TrimPrefix(no, demoPrefix+"TRT-T2-"); got != want {
+			t.Fatalf("the day keyed counter sale numbers itself %s, the house zone's day is %s: the stamp must be the dealer's day, never the UTC one", got, want)
+		}
+		// The row's own requested_date must agree with its stamp, the
+		// dayStamp invariant: one day, read one way, on the whole row.
+		if got := date.Format("20060102"); got != want {
+			t.Fatalf("the day keyed row's requested_date is %s, the house zone's day is %s: the stamp and the dates may not disagree about which day it is", got, want)
+		}
+	}
+	if !found {
+		t.Fatal("no DEMO-TRT-T2 order in the plan: the day keyed counter sale is missing, the test has nothing to hold")
+	}
+	dayKeyCarriesTheHouseDay(t, sum, want)
+}
+
+// DayKeyCarriesTheHouseDay holds the id minter's half of the same ruling:
+// the day keys the plan REPORTS (the operator's "what a deploy adds" line)
+// name the house zone's day, so a deploy in the evening after UTC midnight
+// still mints the evening's rows, not tomorrow's.
+func dayKeyCarriesTheHouseDay(t *testing.T, sum planSummary, want string) {
+	t.Helper()
+	sawHouseDay, sawUTCDay := false, false
+	for _, k := range sum.DayKeys {
+		if strings.Contains(k, ":"+want+":") {
+			sawHouseDay = true
+		}
+		if strings.Contains(k, ":20260115:") {
+			sawUTCDay = true
+		}
+	}
+	if !sawHouseDay {
+		t.Fatalf("the plan reports no day key on the house zone's day %s: %v", want, sum.DayKeys)
+	}
+	if sawUTCDay {
+		t.Fatalf("the plan reports a day key on the UTC day 20260115, which is not the dealer's day at the pinned clock: %v", sum.DayKeys)
+	}
+}

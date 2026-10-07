@@ -518,6 +518,9 @@ export const LINE_FIELD_RULES: Record<keyof Required<CartLine>, LineFieldRule> =
   lineTotalCents: 'carry', // re-derived
   breakdown: 'carry', // re-derived
   priceMissing: 'carry', // re-derived (a merge that resolves clears it)
+  // A manager's yes was given for THIS line at THIS quantity: a merge would carry it onto units
+  // nobody approved, so a line with a discount takes no merge and the add appends instead.
+  discount: 'block',
 };
 
 /**
@@ -778,6 +781,7 @@ export const PRICE_ANSWER_FIELDS: Record<keyof Required<CartLine>, PriceFieldOwn
   lineTotalCents: 'engine',
   breakdown: 'engine',
   priceMissing: 'engine',
+  discount: 'operator', // the manager's yes at the counter: a pricing answer never writes it
 };
 
 /** The money half of a /pricing/resolve answer, in cart-line terms. */

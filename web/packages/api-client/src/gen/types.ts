@@ -3940,6 +3940,31 @@ export type PosLineInput = {
   product_id: string;
   qty_entered: number;
   uom_entered: string;
+  discount?: PosDiscountInput;
+};
+export type PosDiscountInput = {
+  percent_bps?: number;
+  amount_cents?: number;
+  approved_by: string;
+  approved_qty?: number;
+  approved_base_cents: number;
+};
+export type PosDiscountApprover = {
+  id: string;
+  name: string;
+  role_label: string;
+};
+export type PosDiscountApproverList = {
+  items: PosDiscountApprover[];
+};
+export type PosSaleDiscount = {
+  scope: "LINE" | "SALE";
+  line_no?: number;
+  percent_bps?: number;
+  amount_cents: number;
+  approved_by: string;
+  approved_by_role: string;
+  approved_by_label: string;
 };
 export type PosTenderLegInput = {
   method: "ACCOUNT" | "CASH" | "CARD" | "CHEQUE";
@@ -3980,6 +4005,7 @@ export type PosSaleInput = {
   deposit_cents?: number;
   deposit_method?: "CASH" | "CARD" | "CHEQUE";
   lines: PosLineInput[];
+  discount?: PosDiscountInput;
   tenders?: PosTenderLegInput[];
 };
 export type PosTenderLegResult = {
@@ -4014,6 +4040,8 @@ export type PosSale = {
   job_reference?: string;
   split_tender?: boolean;
   tenders?: PosTenderLegResult[];
+  discount_cents?: number;
+  discounts?: PosSaleDiscount[];
 };
 export type PosSalePreviewInput = {
   branch_id: string;
@@ -4022,6 +4050,7 @@ export type PosSalePreviewInput = {
   fulfilment?: "PICKUP" | "WILL_CALL" | "DELIVERY";
   relief?: PosReliefDecision;
   lines: PosLineInput[];
+  discount?: PosDiscountInput;
 };
 export type PosSalePreview = {
   subtotal_cents: number;
@@ -4029,6 +4058,18 @@ export type PosSalePreview = {
   tax_lines: PosSalePreviewTaxLine[];
   total_cents: number;
   tax_reason_code: "STD_ON_HST_13" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "MANUAL_TAX_REVIEW" | "RELIEF_DECLINED_EVIDENCE";
+  discount_cents?: number;
+  sale_discount_cents?: number;
+  ticket_base_cents?: number;
+  ticket_discount_max_cents?: number;
+  lines?: PosSalePreviewLine[];
+};
+export type PosSalePreviewLine = {
+  line_no: number;
+  line_total_cents: number;
+  before_ticket_discount_cents: number;
+  discount_cents?: number;
+  sale_discount_cents?: number;
 };
 export type PosSalePreviewTaxLine = {
   reason_code: string;
@@ -4053,6 +4094,8 @@ export type PosSaleView = {
   lines: PosSaleViewLine[];
   split_tender?: boolean;
   tenders?: PosTenderLegResult[];
+  discount_cents?: number;
+  discounts?: PosSaleDiscount[];
 };
 export type PosSaleViewLine = {
   line_no: number;
@@ -4063,6 +4106,8 @@ export type PosSaleViewLine = {
   unit_price_cents: number;
   price_uom: string;
   line_total_cents: number;
+  discount_cents?: number;
+  sale_discount_cents?: number;
 };
 export type PosSaleSummary = {
   sale_id: string;
