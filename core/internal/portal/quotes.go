@@ -95,20 +95,17 @@ func (h *Handler) getQuote(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, d)
 }
 
-// acceptQuote marks a SENT quote ACCEPTED.
-func (h *Handler) acceptQuote(w http.ResponseWriter, r *http.Request) {
-	if h.quoteSvc == nil {
-		httpx.NotImplemented(w, "quote accept not implemented")
-		return
-	}
-	ctx := r.Context()
-	caller := callerFrom(ctx)
-	q, err := h.quoteSvc.Accept(ctx, caller.CustomerID, r.PathValue("id"))
-	if err != nil {
-		h.writeErr(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, q)
+// portalAcceptRefusal is the portal accept's answer. The customer's share link is the one door that
+// records an acceptance: it needs the typed name, the confirmation of the quantities and a link to
+// anchor the record on (quote_acceptances requires all three). This door carries none of them, so it
+// would mark the quote ACCEPTED with nothing held to show the customer confirmed the quantities, the
+// thing the confirmation exists to prevent. It is refused in words, and touches nothing, until it can
+// carry the same fields and write the same record.
+const portalAcceptRefusal = "a quote is accepted through the link the dealer sent you, where you confirm the quantities and type your name; ask the dealer for the link"
+
+// acceptQuote refuses: see portalAcceptRefusal.
+func (h *Handler) acceptQuote(w http.ResponseWriter, _ *http.Request) {
+	httpx.Error(w, http.StatusUnprocessableEntity, portalAcceptRefusal)
 }
 
 // rejectQuote marks a SENT/ACCEPTED quote LOST.

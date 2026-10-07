@@ -23059,28 +23059,24 @@ paths:
       operationId: tenantAcceptQuote
       tags:
         - tenant-quotes
-      summary: Mark a SENT dealer quote ACCEPTED
-      description: An out-of-state transition is a 409.
+      summary: Refused, a quote is accepted through the dealer's share link
+      description: Always a 422 in words, touching nothing. An acceptance needs the customer's typed name, their confirmation of the quantities and a share link to anchor the record on; this door carries none of them, so it would mark a quote accepted with nothing to show the quantities were confirmed. The share link's accept is the one door that records an acceptance.
       x-role: capability:submit_rfq
       security:
         - TenantBearer: []
       parameters:
         - $ref: "#/components/parameters/Id"
       responses:
-        "200":
-          description: The quote after the transition
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TenantQuote"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
+        "422":
+          description: Refused; the words point to the share link
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/tenant/quotes/{id}/reject:
     post:
       operationId: tenantRejectQuote

@@ -2413,7 +2413,6 @@ export const SUCCESS_SCHEMAS: Readonly<Record<string, string>> = {
   "tenantGetProjectRollup": "TenantProjectDashboard",
   "tenantListQuotes": "TenantQuotePage",
   "tenantGetQuote": "TenantQuoteDetail",
-  "tenantAcceptQuote": "TenantQuote",
   "tenantConvertQuote": "TenantQuoteConvertResult",
   "tenantRejectQuote": "TenantQuote",
   "tenantRefreshToken": "TenantRefreshResponse",
