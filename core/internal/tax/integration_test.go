@@ -54,7 +54,7 @@ func intSvc(t *testing.T, pool *pgxpool.Pool) *Service {
 	return &Service{
 		repo: NewRepository(pool),
 		log:  slog.Default(),
-		now:  func() time.Time { return time.Date(2026, 7, 7, 0, 0, 0, 0, time.UTC) },
+		now:  func() time.Time { return time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC) },
 	}
 }
 
