@@ -643,10 +643,22 @@ func (r *Repository) StaffDetail(ctx context.Context, quoteID string) (StaffQuot
 	}
 	rows.Close()
 
-	// The acceptance history, on the same snapshot as the lines it speaks about.
+	// The acceptance history, on the same snapshot as the lines it speaks about: the customer's own
+	// acceptance rows beside the staff decisions made on their behalf (audit rows, no acceptance row).
 	arows, err := tx.Query(ctx, `
-		SELECT typed_name, accepted_at, quantities_confirmed
-		  FROM quote_acceptances WHERE quote_id = $1 ORDER BY accepted_at, id`, quoteID)
+		SELECT source, typed_name, at, quantities_confirmed, amount_cents, channel, note FROM (
+		  SELECT 'CUSTOMER' AS source, typed_name, accepted_at AS at, quantities_confirmed,
+		         accepted_total_cents AS amount_cents, '' AS channel, '' AS note
+		    FROM quote_acceptances WHERE quote_id = $1
+		  UNION ALL
+		  SELECT 'STAFF_ON_BEHALF', '', created_at,
+		         COALESCE((changes->>'quantities_confirmed')::boolean, false),
+		         COALESCE((changes->>'amount_cents')::bigint, 0),
+		         COALESCE(changes->>'channel', ''), COALESCE(changes->>'note', '')
+		    FROM audit_log
+		   WHERE entity_type = 'quote' AND entity_id = $1 AND action = 'QUOTE_ACCEPTED'
+		     AND changes->>'purpose' = 'STAFF_QUOTE_DECISION'
+		) h ORDER BY at, source`, quoteID)
 	if err != nil {
 		return v, fmt.Errorf("read quote acceptances: %w", err)
 	}
@@ -654,7 +666,7 @@ func (r *Repository) StaffDetail(ctx context.Context, quoteID string) (StaffQuot
 	v.Acceptances = []QuoteAcceptanceRecord{}
 	for arows.Next() {
 		var a QuoteAcceptanceRecord
-		if err := arows.Scan(&a.TypedName, &a.AcceptedAt, &a.QuantitiesConfirmed); err != nil {
+		if err := arows.Scan(&a.Source, &a.TypedName, &a.AcceptedAt, &a.QuantitiesConfirmed, &a.AmountCents, &a.Channel, &a.Note); err != nil {
 			return v, fmt.Errorf("scan quote acceptance: %w", err)
 		}
 		v.Acceptances = append(v.Acceptances, a)

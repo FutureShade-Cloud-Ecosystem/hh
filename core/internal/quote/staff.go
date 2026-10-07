@@ -308,13 +308,33 @@ type StaffQuoteView struct {
 	validUntil *time.Time
 }
 
-// QuoteAcceptanceRecord is one row of a quote's acceptance history, read back from the stored
-// acceptance record. QuantitiesConfirmed is false on acceptances taken before the question existed,
-// which says plainly that no confirmation was captured.
+// Acceptance history sources.
+const (
+	// AcceptSourceCustomer: the customer's own acceptance through their link (a quote_acceptances row).
+	AcceptSourceCustomer = "CUSTOMER"
+	// AcceptSourceStaff: staff accepted on the customer's behalf after the customer said yes by
+	// another channel. That writes no quote_acceptances row (that table is the customer's record: link
+	// and typed name required); its record is the QUOTE_ACCEPTED audit row with the staff decision
+	// purpose, which this history projects.
+	AcceptSourceStaff = "STAFF_ON_BEHALF"
+)
+
+// QuoteAcceptanceRecord is one row of a quote's acceptance history: the customer's own acceptances
+// from the stored acceptance record, and staff acceptances on their behalf from the decision's audit
+// row, in time order. QuantitiesConfirmed is false on customer acceptances taken before the
+// confirmation existed, which says plainly that none was captured.
 type QuoteAcceptanceRecord struct {
-	TypedName           string    `json:"typed_name"`
+	Source string `json:"source"`
+	// TypedName is the customer's typed name; empty (and absent) on a staff row, the customer typed none.
+	TypedName           string    `json:"typed_name,omitempty"`
 	AcceptedAt          time.Time `json:"accepted_at"`
 	QuantitiesConfirmed bool      `json:"quantities_confirmed"`
+	// AmountCents is what was accepted: the snapshot total on a customer row, the amount the staff
+	// member read to the customer on a staff row.
+	AmountCents int64 `json:"amount_cents"`
+	// Channel and Note are staff row facts: how the customer said yes, and what staff wrote.
+	Channel string `json:"channel,omitempty"`
+	Note    string `json:"note,omitempty"`
 }
 
 // QuoteCreate is the staff create payload.

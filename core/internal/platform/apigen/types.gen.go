@@ -6680,9 +6680,13 @@ type QuoteView struct {
 }
 
 type QuoteAcceptanceRecord struct {
-	TypedName           string    `json:"typed_name"`
+	Source              string    `json:"source"`
+	TypedName           *string   `json:"typed_name,omitempty"`
 	AcceptedAt          time.Time `json:"accepted_at"`
 	QuantitiesConfirmed bool      `json:"quantities_confirmed"`
+	AmountCents         int64     `json:"amount_cents"`
+	Channel             *string   `json:"channel,omitempty"`
+	Note                *string   `json:"note,omitempty"`
 }
 
 type QuoteViewLine struct {

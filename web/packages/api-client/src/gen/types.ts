@@ -5741,9 +5741,13 @@ export type QuoteView = {
   acceptances: QuoteAcceptanceRecord[];
 };
 export type QuoteAcceptanceRecord = {
-  typed_name: string;
+  source: "CUSTOMER" | "STAFF_ON_BEHALF";
+  typed_name?: string;
   accepted_at: string;
   quantities_confirmed: boolean;
+  amount_cents: number;
+  channel?: string;
+  note?: string;
 };
 export type QuoteViewLine = {
   line_no: number;

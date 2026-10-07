@@ -1699,14 +1699,31 @@ components:
     QuoteAcceptanceRecord:
       type: object
       description: >-
-        One row of a quote's acceptance history. quantities_confirmed is false
-        on an acceptance taken before the confirmation existed. The staff
+        One row of a quote's acceptance history, oldest first: the customer's
+        own acceptance, or staff accepting on the customer's behalf after the
+        customer said yes by another channel. quantities_confirmed is false on
+        a customer acceptance taken before the confirmation existed. The staff
         quote resource is the canonical dealer_quote (DECISIONS.md D8).
-      required: [typed_name, accepted_at, quantities_confirmed]
+      required: [source, accepted_at, quantities_confirmed, amount_cents]
       properties:
-        typed_name: { type: string }
+        source:
+          type: string
+          enum: [CUSTOMER, STAFF_ON_BEHALF]
+        typed_name:
+          type: string
+          description: The customer's typed name; absent on a staff row, the customer typed none
         accepted_at: { type: string, format: date-time }
         quantities_confirmed: { type: boolean }
+        amount_cents:
+          type: integer
+          format: int64
+          description: What was accepted; on a staff row, the amount the staff member read to the customer
+        channel:
+          type: string
+          description: Staff rows only, how the customer said yes (phone, text, email or in_person)
+        note:
+          type: string
+          description: Staff rows only, what the staff member wrote
     QuoteViewLine:
       type: object
       description: >-
