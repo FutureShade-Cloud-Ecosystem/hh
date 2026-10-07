@@ -678,11 +678,13 @@ var allowlist = []allowlistEntry{
 	{
 		module: "pos",
 		file:   "core/internal/pos/repository_quickpicks.go",
-		tables: []string{"order_lines", "product_categories", "product_images", "products"},
+		tables: []string{"order_lines", "product_categories", "product_images", "products", "stock_balances"},
 		// the file's own header: both reads stay inside the POS read boundary
 		// the same way the rev-8 add-on reads do; they compute nothing about
-		// price.
-		reason: "quick pick tiles read the catalogue and committed lines for display only, stated in the file header; read only",
+		// price. The category representatives read stock_balances only to know
+		// whether a category has stock available (on hand less reserved), the
+		// figure the POS glance reads, so the grid can show every stocked category.
+		reason: "quick pick tiles read the catalogue and committed lines for display only, stated in the file header; the category representatives also read whether stock is available in a category, read only",
 	},
 	{
 		module: "pos",

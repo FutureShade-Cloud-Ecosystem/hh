@@ -143,6 +143,9 @@ type posStore interface {
 	// curates anything, the TopSellingApplications idiom one level down.
 	ReadProductsBySKU(ctx context.Context, skus []string) ([]quickPickRow, error)
 	TopSellingProducts(ctx context.Context, limit int) ([]quickPickRow, error)
+	// InStockApplicationRepresentatives is one in-stock product per application (category), so the
+	// grid can show every category the yard holds stock in, whatever was curated.
+	InStockApplicationRepresentatives(ctx context.Context) ([]quickPickRow, error)
 	// FN relief, masked-only profile read (non-tx)
 	ReadEligibilityProfileMasked(ctx context.Context, profileID string) (eligibilityMasked, error)
 	// operator reopen (non-tx read)

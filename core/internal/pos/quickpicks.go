@@ -162,6 +162,7 @@ func (s *Service) QuickPicks(ctx context.Context, in QuickPickInput) (QuickPicks
 	if len(rows) > limit {
 		rows = rows[:limit]
 	}
+	rows = s.withEveryStockedCategory(ctx, rows, limit)
 	for _, r := range rows {
 		uom := r.SoldBy
 		if uom == "" {
@@ -175,6 +176,40 @@ func (s *Service) QuickPicks(ctx context.Context, in QuickPickInput) (QuickPicks
 	}
 	s.priceQuickPicks(ctx, in, &out)
 	return out, nil
+}
+
+// withEveryStockedCategory appends, after the rows already chosen (curated or derived, in their
+// order), one in-stock representative for each category (application) the yard holds stock in that
+// the rows do not already carry. A curated board shows what the dealer put on it, and a stocked
+// category left off it (round 9: Pavers beside a board of mulch, aggregates and soils) was simply
+// missing from the drill. The grid's cap still holds, and an unreadable read adds nothing: the
+// chosen rows are never lost to it.
+func (s *Service) withEveryStockedCategory(ctx context.Context, rows []quickPickRow, limit int) []quickPickRow {
+	if len(rows) >= limit {
+		return rows
+	}
+	reps, err := s.store.InStockApplicationRepresentatives(ctx)
+	if err != nil || len(reps) == 0 {
+		return rows
+	}
+	have := make(map[string]bool, len(rows))
+	haveSKU := make(map[string]bool, len(rows))
+	for _, r := range rows {
+		have[strings.ToLower(strings.TrimSpace(r.Application))] = true
+		haveSKU[strings.ToLower(r.SKU)] = true
+	}
+	for _, r := range reps {
+		if len(rows) >= limit {
+			break
+		}
+		key := strings.ToLower(strings.TrimSpace(r.Application))
+		if key == "" || have[key] || haveSKU[strings.ToLower(r.SKU)] {
+			continue
+		}
+		have[key] = true
+		rows = append(rows, r)
+	}
+	return rows
 }
 
 // curatedQuickPickSKUs reads the kit for this surface and returns the curated SKUs in curated
