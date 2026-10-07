@@ -426,8 +426,11 @@ const (
 // manager or an approval cleared below the floor; Sort is SortMarginAsc (the default, worst first) or
 // SortMarginDesc. The feed reads the first four; the service applies ClearedOnly and Sort.
 type LowMarginFilter struct {
-	From, To      time.Time
-	BranchID      string
+	From, To time.Time
+	BranchID string
+	// BranchIDs is the branch wall: nil is every branch (a global caller), a non-nil list (possibly
+	// empty, which reads nothing) is the only branches the feed may return documents of.
+	BranchIDs     []string
 	DocType       string
 	SalespersonID string
 	ClearedOnly   bool

@@ -825,7 +825,7 @@ func (r *Repository) ListAudit(ctx context.Context, f AuditFilter) ([]AuditLogRo
 // product_branch_costs is a LEFT JOIN keyed on (product_id, branch_id), the SAME per-branch WAC row
 // inventory.BranchCostCents reads, so avg_unit_cost_cents is NULL when the product has no cost on file
 // at the document's branch (surfaced as invalid, never coalesced to 0). Numeric qty is cast to float8
-// for a clean scan. The salesperson filter names a staff user id and matches the document's
+// for a clean scan. BranchIDs is the caller's branch wall (nil reads every branch). The salesperson filter names a staff user id and matches the document's
 // salesperson as the row reports it (sp, the quote's salesperson else its creator). An order line's discount percent is read from the line's metadata (the pair an
 // order converted from a quote keeps); a quote line's from its own column.
 func (r *Repository) LowMarginSalesLines(ctx context.Context, f LowMarginFilter) ([]LowMarginSaleLine, error) {
@@ -863,6 +863,7 @@ func (r *Repository) LowMarginSalesLines(ctx context.Context, f LowMarginFilter)
 	   AND ol.product_id IS NOT NULL
 	   AND o.created_at >= $1 AND o.created_at < $2
 	   AND ($3::uuid IS NULL OR o.branch_id = $3::uuid)
+	   AND ($6::uuid[] IS NULL OR o.branch_id = ANY($6::uuid[]))
 	   AND ($5::uuid IS NULL OR sp.id = $5::uuid)
 	   AND ( o.status IN ('INVOICED','FULFILLED','CLOSED')
 	         OR EXISTS (SELECT 1 FROM pos_sale ps WHERE ps.order_id = o.id AND ps.status = 'COMMITTED') )
@@ -888,13 +889,14 @@ func (r *Repository) LowMarginSalesLines(ctx context.Context, f LowMarginFilter)
 	   AND ql.product_id IS NOT NULL
 	   AND qt.created_at >= $1 AND qt.created_at < $2
 	   AND ($3::uuid IS NULL OR qt.branch_id = $3::uuid)
+	   AND ($6::uuid[] IS NULL OR qt.branch_id = ANY($6::uuid[]))
 	   AND ($5::uuid IS NULL OR sp.id = $5::uuid)
 	 ORDER BY 5 DESC, 2`
 	docType := f.DocType
 	if docType == "" {
 		docType = ScanDocsBoth
 	}
-	rows, err := r.pool.Query(ctx, q, f.From, f.To, nullStr(f.BranchID), docType, nullStr(f.SalespersonID))
+	rows, err := r.pool.Query(ctx, q, f.From, f.To, nullStr(f.BranchID), docType, nullStr(f.SalespersonID), f.BranchIDs)
 	if err != nil {
 		return nil, err
 	}

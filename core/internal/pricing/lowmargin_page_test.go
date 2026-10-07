@@ -9,8 +9,6 @@ import (
 	"strconv"
 	"testing"
 	"time"
-
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 )
 
 // Sorting by margin (ascending by default, descending on ask), the filters a manager narrows with
@@ -192,7 +190,7 @@ func TestLowMarginScanHandler_PageEnvelopeAndQueryParams(t *testing.T) {
 	h := NewHandler(scanSvc(scan), nil)
 	get := func(q string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
-		h.lowMarginScan(rec, httptest.NewRequest(http.MethodGet, "/api/v1/pricing/reports/low-margin/scan"+q, nil), guards.StaffCaller{})
+		h.lowMarginScan(rec, httptest.NewRequest(http.MethodGet, "/api/v1/pricing/reports/low-margin/scan"+q, nil), globalCaller())
 		return rec
 	}
 	rec := get("?limit=2&sort=margin_desc&cleared_only=false&salesperson_id=5d1b3f6e-0000-4000-9000-0000000000aa")

@@ -7,8 +7,6 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
-
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 )
 
 // What a manager needs on each row to scan a quote or order for a below floor price: who sold it,
@@ -102,7 +100,7 @@ func TestLowMarginRow_JSONNames(t *testing.T) {
 	ln.ClearedBelowFloor, ln.ClearedByLabel, ln.ClearAuthority = true, "Sales Manager, Trenton", "APPROVAL"
 	h := NewHandler(scanSvc(&fakeScan{lines: []LowMarginSaleLine{ln}}), nil)
 	rec := httptest.NewRecorder()
-	h.lowMarginScan(rec, httptest.NewRequest(http.MethodGet, "/api/v1/pricing/reports/low-margin/scan", nil), guards.StaffCaller{})
+	h.lowMarginScan(rec, httptest.NewRequest(http.MethodGet, "/api/v1/pricing/reports/low-margin/scan", nil), globalCaller())
 	if rec.Code != http.StatusOK {
 		t.Fatalf("%d %s", rec.Code, rec.Body.String())
 	}

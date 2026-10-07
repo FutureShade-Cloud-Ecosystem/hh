@@ -8,8 +8,6 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
-
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 )
 
 // The low margin report covers quotes as well as orders. A document type filter (quotes, orders,
@@ -104,7 +102,7 @@ func TestLowMarginScanHandler_DocTypeParam(t *testing.T) {
 	h := NewHandler(scanSvc(scan), nil)
 	get := func(url string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
-		h.lowMarginScan(rec, httptest.NewRequest(http.MethodGet, url, nil), guards.StaffCaller{})
+		h.lowMarginScan(rec, httptest.NewRequest(http.MethodGet, url, nil), globalCaller())
 		return rec
 	}
 	if rec := get("/api/v1/pricing/reports/low-margin/scan?doc_type=quotes"); rec.Code != http.StatusOK {

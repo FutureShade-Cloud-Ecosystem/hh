@@ -3,6 +3,7 @@ package pricing
 import (
 	"context"
 	"errors"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"net/http"
 	"net/http/httptest"
@@ -45,9 +46,33 @@ func (f *fakeScan) LowMarginSalesLines(_ context.Context, flt LowMarginFilter) (
 		if flt.SalespersonID != "" && ln.SalespersonID != flt.SalespersonID {
 			continue
 		}
+		if flt.BranchID != "" && ln.BranchID != flt.BranchID {
+			continue
+		}
+		if flt.BranchIDs != nil && !containsStr(flt.BranchIDs, ln.BranchID) {
+			continue
+		}
 		out = append(out, ln)
 	}
 	return out, f.err
+}
+
+func containsStr(xs []string, x string) bool {
+	for _, v := range xs {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+// globalCaller and branchCaller are the two kinds of staff caller the report's wall tells apart.
+func globalCaller() guards.StaffCaller {
+	return guards.StaffCaller{StaffAuthority: identity.StaffAuthority{Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}}
+}
+
+func branchCaller(branches ...string) guards.StaffCaller {
+	return guards.StaffCaller{StaffAuthority: identity.StaffAuthority{Tier: identity.TierManager, Scope: identity.ScopeBranch, Branches: branches}}
 }
 
 // scanSvc wires a Service with the Brussels SF factor (4.10) + a PAVER policy (target 3300 / floor
@@ -244,7 +269,7 @@ func TestLowMarginScanHandler_BadInput_400(t *testing.T) {
 	}
 	for _, url := range bad {
 		rec := httptest.NewRecorder()
-		h.lowMarginScan(rec, httptest.NewRequest(http.MethodGet, url, nil), guards.StaffCaller{})
+		h.lowMarginScan(rec, httptest.NewRequest(http.MethodGet, url, nil), globalCaller())
 		if rec.Code < 400 || rec.Code >= 500 {
 			t.Errorf("%s → status %d, want 4xx", url, rec.Code)
 		}
@@ -258,7 +283,7 @@ func TestLowMarginScanHandler_DefaultsAndOK(t *testing.T) {
 	h := NewHandler(scanSvc(scan), nil)
 
 	rec := httptest.NewRecorder()
-	h.lowMarginScan(rec, httptest.NewRequest(http.MethodGet, "/api/v1/pricing/reports/low-margin/scan", nil), guards.StaffCaller{})
+	h.lowMarginScan(rec, httptest.NewRequest(http.MethodGet, "/api/v1/pricing/reports/low-margin/scan", nil), globalCaller())
 	if rec.Code != http.StatusOK {
 		t.Fatalf("default scan → status %d (%s), want 200", rec.Code, rec.Body.String())
 	}
@@ -269,7 +294,7 @@ func TestLowMarginScanHandler_DefaultsAndOK(t *testing.T) {
 	branch := "5d1b3f6e-0000-4000-9000-000000000001"
 	rec2 := httptest.NewRecorder()
 	h.lowMarginScan(rec2, httptest.NewRequest(http.MethodGet,
-		"/api/v1/pricing/reports/low-margin/scan?from=2026-07-01&to=2026-07-15&branch_id="+branch, nil), guards.StaffCaller{})
+		"/api/v1/pricing/reports/low-margin/scan?from=2026-07-01&to=2026-07-15&branch_id="+branch, nil), globalCaller())
 	if rec2.Code != http.StatusOK {
 		t.Fatalf("valid scan → status %d (%s), want 200", rec2.Code, rec2.Body.String())
 	}

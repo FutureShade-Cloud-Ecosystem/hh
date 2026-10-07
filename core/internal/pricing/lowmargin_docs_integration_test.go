@@ -399,3 +399,25 @@ func TestIntegration_LowMarginDocs_FiltersSortAndCursorPage(t *testing.T) {
 		t.Errorf("paged walk %v differs from the whole report %v", walked, ids(all))
 	}
 }
+
+// The branch wall in the feed's own SQL: nil reads every branch, a list reads only those, an empty
+// list reads nothing.
+func TestIntegration_LowMarginDocs_BranchWallInTheQuery(t *testing.T) {
+	pool := intPool(t)
+	svc := realSvc(pool)
+	count := func(ids []string) int {
+		f := lmWindow()
+		f.BranchIDs = ids
+		rows, err := svc.LowMarginScan(context.Background(), f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(lmRowsByDoc(rows, "#SO-DPA3-CRIT"))
+	}
+	if count(nil) != 1 || count([]string{lmTrenton}) != 1 {
+		t.Errorf("nil and the granted branch must read the seeded Trenton order")
+	}
+	if count([]string{"5d1b3f6e-0000-4000-9000-0000000000ff"}) != 0 || count([]string{}) != 0 {
+		t.Errorf("another branch, and an empty grant, must read nothing")
+	}
+}
