@@ -268,6 +268,9 @@ function validateView(value: unknown): QuoteView | null {
     expired: value["expired"] === true,
     editable_fields: editable,
     can_convert: canConvert === true,
+    can_accept: value["can_accept"] === true,
+    can_reject: value["can_reject"] === true,
+    quantity_notice: typeof value["quantity_notice"] === "string" ? value["quantity_notice"] : "",
     owner_id: stringAt(value, "owner_id") ?? undefined,
     owner_name: stringAt(value, "owner_name") ?? undefined,
     lines,
@@ -529,6 +532,21 @@ export interface StandingRead {
   openBalanceCents: number;
 }
 
+/** What a staff decision answers: the quote's new status, as the server holds it. */
+export interface DecisionAnswer {
+  status: "ACCEPTED" | "LOST";
+  totalCents: number;
+  replayed: boolean;
+}
+
+function readDecisionAnswer(value: unknown): DecisionAnswer | null {
+  if (!isRecord(value)) return null;
+  const status = value["status"];
+  const total = integerAt(value, "total_cents");
+  if ((status !== "ACCEPTED" && status !== "LOST") || total === null) return null;
+  return { status, totalCents: total, replayed: value["replayed"] === true };
+}
+
 /** The counter's account standing read: the past due position and the hold flag, as the server answers them. */
 export interface AccountStandingRead {
   /** The server's own word for the account: no account on file, current, past due, or on hold (PR 239). */
@@ -771,6 +789,44 @@ export class QdClient {
   async customerView(quoteId: string): Promise<Result<unknown>> {
     const result = await staffQuote.quoteCustomerViewPreview(this.#client, quoteId);
     return result.ok ? ok(result.value as unknown) : result;
+  }
+
+  /**
+   * Record the customer's yes for them (PR 247): the channel they said it by, the total read to them (the server
+   * refuses the accept when the quote has moved) and the statement that they confirmed the quantities. The key
+   * rides the Idempotency-Key header, so a retry after a lost answer replays the first outcome.
+   */
+  async acceptOnBehalf(
+    quoteId: string,
+    input: { channel: "phone" | "text" | "email" | "in_person"; note: string; expectedTotalCents: number },
+    idempotencyKey: string,
+  ): Promise<Result<DecisionAnswer>> {
+    const result = await staffQuote.quoteAcceptOnBehalf(
+      this.#client,
+      quoteId,
+      { channel: input.channel, ...(input.note === "" ? {} : { note: input.note }), quantities_confirmed: true, expected_total_cents: input.expectedTotalCents },
+      { idempotencyKey },
+    );
+    if (!result.ok) return result;
+    const answer = readDecisionAnswer(result.value as unknown);
+    return answer === null ? err("the decision answer is not readable") : ok(answer);
+  }
+
+  /** Record the customer's no for them: the channel, a reason from the closed list, and a note (required for Other). */
+  async rejectOnBehalf(
+    quoteId: string,
+    input: { channel: "phone" | "text" | "email" | "in_person"; reason: "price" | "competitor" | "project_cancelled" | "timing" | "no_response" | "other"; note: string },
+    idempotencyKey: string,
+  ): Promise<Result<DecisionAnswer>> {
+    const result = await staffQuote.quoteRejectOnBehalf(
+      this.#client,
+      quoteId,
+      { channel: input.channel, reason_code: input.reason, ...(input.note === "" ? {} : { note: input.note }) },
+      { idempotencyKey },
+    );
+    if (!result.ok) return result;
+    const answer = readDecisionAnswer(result.value as unknown);
+    return answer === null ? err("the decision answer is not readable") : ok(answer);
   }
 
   /** Mint the share link: minting IS the email send, DRAFT moves to SENT. */

@@ -2016,5 +2016,19 @@
     "find": "      window.open(this.shareUrl(token, true), \"_blank\", \"noopener\");\n      await this.loadAll();\n      if (ctx.stale) return;",
     "replace": "      window.open(this.shareUrl(token, true), \"_blank\", \"noopener\");\n      await this.loadAll();",
     "test": "guard print reload:"
+  },
+  {
+    "id": "qdp-read-guard",
+    "file": "src/quote-decision-panel.ts",
+    "find": "await ctx.guardedRead(seq, client.readQuote(ctx.id));",
+    "replace": "await client.readQuote(ctx.id);",
+    "test": "guard decision read:"
+  },
+  {
+    "id": "qdp-write-guard",
+    "file": "src/quote-decision-panel.ts",
+    "find": "const done = await ctx.guarded(call, this.lateWrite(ctx, (late) => spokenRefusal(quoteErrorMessage(late.status, late.error, \"record the decision\"))));",
+    "replace": "const done = await call;",
+    "test": "guard decision write:"
   }
 ]

@@ -351,6 +351,10 @@ const shareLinks = new Map();
 const floorRequests = new Map(); // `${quoteId}:${lineNo}` -> request row
 // The conversions seen, for the suite's fulfilment assertion (scaffolding).
 const conversions = [];
+// The staff accepts and rejects on the customer's behalf (PR 247), as they arrived, and the replay store by key.
+const staffDecisions = [];
+const staffDecisionAnswers = new Map();
+const decisionSwitches = { moved: false, failCount: 0 };
 // The order payments seen: the body and the Idempotency-Key header each carried, and the first answer per key.
 const payments = [];
 const paymentsByKey = new Map();
@@ -849,6 +853,10 @@ function viewOf(caller, quote) {
     expired: quote.expired,
     editable_fields: editable,
     can_convert: quote.status === "ACCEPTED",
+    can_accept: (quote.status === "DRAFT" || quote.status === "SENT") && !quote.expired,
+    can_reject: (quote.status === "DRAFT" || quote.status === "SENT") && !quote.expired,
+    quantity_notice: "All quantities are to be confirmed by the customer. Please review them before you accept it.",
+    acceptances: quote.staffAcceptances ?? [],
     owner_id: quote.owner_id,
     owner_name: quote.owner_name,
     lines: quote.lines.map((line) => ({
@@ -1154,7 +1162,7 @@ const server = createServer(async (request, response) => {
   // the cost list switch the wrong-role page flips. Test scaffolding; no
   // contract path shares the namespace.
   if (path === "/_stub/state") {
-    respondJson(response, 200, { workspaceWrites, itemsWrites, policyWrites, decisions, conversions, payments, posts, switches: { ...switches } });
+    respondJson(response, 200, { workspaceWrites, itemsWrites, policyWrites, decisions, staffDecisions, conversions, payments, posts, switches: { ...switches } });
     return;
   }
   // Test scaffolding: one more quote with the given status, customer, lines and terms, so a race probe
@@ -1182,6 +1190,20 @@ const server = createServer(async (request, response) => {
       doorRefusal.status = Number(body.status ?? 409);
       doorRefusal.error = String(body.error ?? "");
       respondJson(response, 200, { ...doorRefusal });
+    });
+    return;
+  }
+  if (path === "/_stub/decision-moved" && request.method === "PUT") {
+    readBody(request, response, (body) => {
+      decisionSwitches.moved = body.moved === true;
+      respondJson(response, 200, { ...decisionSwitches });
+    });
+    return;
+  }
+  if (path === "/_stub/decision-fail" && request.method === "PUT") {
+    readBody(request, response, (body) => {
+      decisionSwitches.failCount = Number(body.count ?? 1);
+      respondJson(response, 200, { ...decisionSwitches });
     });
     return;
   }
@@ -1365,6 +1387,10 @@ const server = createServer(async (request, response) => {
     switches.paymentGhost = false;
     switches.paymentKeyCrossed = false;
     switches.paymentGrantRefused = false;
+    staffDecisions.length = 0;
+    staffDecisionAnswers.clear();
+    decisionSwitches.moved = false;
+    decisionSwitches.failCount = 0;
     respondJson(response, 200, { reset: true });
     return;
   }
@@ -1812,6 +1838,82 @@ const server = createServer(async (request, response) => {
       return;
     }
     respondJson(response, 200, glanceOf(quote));
+    return;
+  }
+
+  // PR 247: staff accept or reject on the customer's behalf. The channel is closed, an accept carries the total
+  // the staff member read and the quantities statement, a reject a reason from a closed list; a keyed replay
+  // answers the first outcome and records nothing more.
+  match = /^\/api\/v1\/quotes\/([^/]+)\/(accept|reject)$/.exec(path);
+  if (match !== null && request.method === "POST") {
+    const quote = quoteOr404(match[1]);
+    if (quote === null) {
+      respondJson(response, 404, { error: "no quote with that id" });
+      return;
+    }
+    const kind = match[2];
+    readBody(request, response, (body) => {
+      const key = String(request.headers["idempotency-key"] ?? "");
+      staffDecisions.push({ kind, quote_id: quote.id, key, body });
+      if (decisionSwitches.failCount > 0) {
+        decisionSwitches.failCount -= 1;
+        respondJson(response, 500, { error: "quote: the decision could not be recorded right now" });
+        return;
+      }
+      const replay = staffDecisionAnswers.get(`${quote.id}:${key}`);
+      if (replay !== undefined) {
+        respondJson(response, 200, { ...replay, replayed: true });
+        return;
+      }
+      if (!["phone", "text", "email", "in_person"].includes(String(body.channel))) {
+        respondJson(response, 400, { error: "quote: the channel must be phone, text, email or in_person" });
+        return;
+      }
+      if (quote.status !== "DRAFT" && quote.status !== "SENT") {
+        respondJson(response, 409, { error: `quote: this quote is ${quote.status.toLowerCase()}, so a decision cannot be recorded` });
+        return;
+      }
+      if (decisionSwitches.moved) {
+        quote.total_cents += 100;
+        decisionSwitches.moved = false;
+      }
+      const previous = quote.status;
+      if (kind === "accept") {
+        if (body.quantities_confirmed !== true) {
+          respondJson(response, 422, { error: "quote: confirm that the customer confirmed the quantities before the quote is marked accepted" });
+          return;
+        }
+        if (body.expected_total_cents !== quote.total_cents) {
+          respondJson(response, 409, { error: `quote: the quote total is now ${coreMoney(quote.total_cents)}, not the ${coreMoney(Number(body.expected_total_cents))} you read to the customer; read it again` });
+          return;
+        }
+        quote.status = "ACCEPTED";
+        quote.staffAcceptances = [...(quote.staffAcceptances ?? []), { source: "STAFF_ON_BEHALF", accepted_at: new Date().toISOString(), quantities_confirmed: true, amount_cents: quote.total_cents, channel: body.channel, ...(body.note ? { note: body.note } : {}) }];
+      } else {
+        if (!["price", "competitor", "project_cancelled", "timing", "no_response", "other"].includes(String(body.reason_code))) {
+          respondJson(response, 400, { error: "quote: the reason must be one of the listed reasons" });
+          return;
+        }
+        if (body.reason_code === "other" && String(body.note ?? "").trim() === "") {
+          respondJson(response, 422, { error: "quote: a reason of other needs a note" });
+          return;
+        }
+        quote.status = "LOST";
+      }
+      const answer = {
+        quote_id: quote.id,
+        quote_no: quote.quote_no,
+        status: quote.status,
+        previous_status: previous,
+        channel: body.channel,
+        on_behalf: true,
+        decided_at: new Date().toISOString(),
+        total_cents: quote.total_cents,
+        replayed: false,
+      };
+      staffDecisionAnswers.set(`${quote.id}:${key}`, answer);
+      respondJson(response, 200, answer);
+    });
     return;
   }
 

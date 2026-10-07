@@ -45,6 +45,11 @@ export interface QuoteView {
   expired: boolean;
   editable_fields: string[];
   can_convert: boolean;
+  /** The server's own offer of recording the customer's yes or no for them (PR 247). */
+  can_accept: boolean;
+  can_reject: boolean;
+  /** The dealer's notice that the quantities are the customer's to confirm; the staff accept attests it. */
+  quantity_notice: string;
   owner_id?: string;
   owner_name?: string;
   lines: QuoteViewLine[];

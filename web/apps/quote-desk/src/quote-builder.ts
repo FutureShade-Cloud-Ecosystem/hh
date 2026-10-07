@@ -34,6 +34,7 @@ import { CONVERT_NOTICE_EVENT } from "./_quote-convert.js";
 import "./panel-seams.js";
 import "./edit-panel.js";
 import "./related-docs-panel.js";
+import "./quote-decision-panel.js";
 import "./order-payment-panel.js";
 import "./history-panel.js";
 import "./settings-panel.js";
@@ -412,7 +413,7 @@ export class QdQuoteBuilder extends LitElement {
       area.branchName = this.branchDisplayName();
     }
     for (const seam of this.renderRoot.querySelectorAll<HTMLElement & Record<string, unknown>>(
-      "qd-panel-seam, qd-quote-edit, qd-related-docs, qd-order-payment, qd-quote-assist, qd-quote-history, qd-quote-followups, qd-quote-hold-expiry, qd-quote-availability, qd-quote-guard, qd-approvals, qd-quote-settings, qd-floor-refusal",
+      "qd-panel-seam, qd-quote-decision, qd-quote-edit, qd-related-docs, qd-order-payment, qd-quote-assist, qd-quote-history, qd-quote-followups, qd-quote-hold-expiry, qd-quote-availability, qd-quote-guard, qd-approvals, qd-quote-settings, qd-floor-refusal",
     )) {
       seam.quoteId = openQuoteId;
       seam.branchId = branchId;
@@ -624,7 +625,7 @@ export class QdQuoteBuilder extends LitElement {
   private reloadDetailPanels(): void {
     this.renderRoot
       ?.querySelectorAll<HTMLElement & { reload?: () => void }>(
-        "qd-quote-workarea, qd-panel-seam, qd-quote-edit, qd-related-docs, qd-order-payment, qd-quote-history, qd-quote-settings, qd-quote-assist, qd-quote-followups, qd-quote-hold-expiry, qd-quote-availability, qd-quote-guard, qd-approvals",
+        "qd-quote-workarea, qd-panel-seam, qd-quote-decision, qd-quote-edit, qd-related-docs, qd-order-payment, qd-quote-history, qd-quote-settings, qd-quote-assist, qd-quote-followups, qd-quote-hold-expiry, qd-quote-availability, qd-quote-guard, qd-approvals",
       )
       .forEach((el) => el.reload?.());
   }
@@ -822,6 +823,7 @@ export class QdQuoteBuilder extends LitElement {
         ${this.renderListPage()}
         <section class="quotepage" aria-label="The quote">
           <qd-quote-workarea></qd-quote-workarea>
+          <qd-quote-decision></qd-quote-decision>
           <qd-floor-refusal></qd-floor-refusal>
           <details class="box" style="margin-top: 12px" data-testid="qb-detail">
             <summary style="cursor: pointer">Quote detail &amp; admin</summary>
