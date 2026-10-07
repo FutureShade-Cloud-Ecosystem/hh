@@ -9,7 +9,7 @@ test.afterAll(async ({ request }) => {
   await request.post("/_stub/reset");
 });
 
-test("the title's focus ring stays above the subtitle, light and dark", async ({ page }) => {
+test("the title's focus ring stays above the subtitle, light and brand", async ({ page }) => {
   await signIn(page);
   await open(page, "Q-1001");
   for (const theme of ["light", "dark"]) {

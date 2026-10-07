@@ -122,7 +122,7 @@ test("the Quote Desk's landing carries the badge favicon links and serves the se
 
 // Item D: the badge is the same yellow square carrying the near black H in
 // both themes, as the front door's lockup draws it.
-test("the mark is the near black H on the badge yellow square under both themes", async ({ page }) => {
+test("the mark is the near black H on the badge yellow square under both themes (light and brand)", async ({ page }) => {
   await signIn(page);
   for (const theme of ["dark", "light"]) {
     await page.evaluate((t) => {

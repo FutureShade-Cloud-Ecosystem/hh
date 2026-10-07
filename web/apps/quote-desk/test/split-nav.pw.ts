@@ -251,7 +251,7 @@ test("split E: the Sales manager's tabs also carry Approvals, and Sales sees nei
 
 for (const theme of ["light", "dark"] as const) {
   for (const [name, size] of [["desktop", { width: 1440, height: 900 }], ["tablet", { width: 768, height: 1024 }]] as const) {
-    test(`split button: the New quote plus is the label's size and centred on its line (${theme}, ${name})`, async ({ page }) => {
+    test(`split button: the New quote plus is the label's size and centred on its line (${theme === "dark" ? "brand" : theme}, ${name})`, async ({ page }) => {
       await page.setViewportSize(size);
       await signIn(page);
       await page.evaluate((t) => document.documentElement.setAttribute("data-theme", t), theme);
@@ -289,7 +289,7 @@ for (const theme of ["light", "dark"] as const) {
 
 for (const theme of ["light", "dark"] as const) {
   for (const [name, size] of [["desktop", { width: 1440, height: 900 }], ["tablet", { width: 768, height: 1024 }]] as const) {
-    test(`split button: the quote page's New Quote plus is the label's size and centred on its line (${theme}, ${name})`, async ({ page }) => {
+    test(`split button: the quote page's New Quote plus is the label's size and centred on its line (${theme === "dark" ? "brand" : theme}, ${name})`, async ({ page }) => {
       await page.setViewportSize(size);
       await signIn(page);
       await page.evaluate((t) => document.documentElement.setAttribute("data-theme", t), theme);

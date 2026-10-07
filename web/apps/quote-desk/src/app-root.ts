@@ -131,7 +131,7 @@ export class QuoteDeskApp extends HHElement {
   /** The mint's own IdentityUser block, in the ported surface's session shape. */
   #deskIdentity: AuthUser | null = null;
   #branch: BranchRef | null = null;
-  /** The theme choice: Auto follows the system, Light and Dark pin it; tab memory only (see theme.ts). */
+  /** The theme choice: Auto follows the system, Light and Brand pin it; tab memory only (see theme.ts). */
   readonly #theme = new ThemeController(() => this.requestUpdate());
   /** What a screen reader hears after a Theme press: focus stays on the button, so the new name is not re-read. */
   #themeStatus = "";
@@ -550,7 +550,7 @@ export class QuoteDeskApp extends HHElement {
         data-action="theme"
         data-testid="theme-control"
         aria-label=${themeControlLabel(choice)}
-        title="Cycle the theme: Auto, Light, Dark"
+        title="Cycle the theme: Auto, Light, Brand"
       >
         Theme: ${THEME_LABEL[choice]}
       </button>

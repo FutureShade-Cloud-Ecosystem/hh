@@ -154,7 +154,7 @@ const SIZES = [
 
 for (const scheme of ["light", "dark"] as const) {
   for (const size of SIZES) {
-    test(`bounds at ${size.width}x${size.height}, ${scheme}: no working control is covered by the widget`, async ({ page }) => {
+    test(`bounds at ${size.width}x${size.height}, ${scheme === "dark" ? "brand" : scheme}: no working control is covered by the widget`, async ({ page }) => {
       await page.emulateMedia({ colorScheme: scheme });
       await page.setViewportSize(size);
       await openQuote(page);

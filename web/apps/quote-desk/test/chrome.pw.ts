@@ -64,13 +64,13 @@ for (const width of [1440, 820]) {
 
 // The theme control (visual review round 1, P2-5): the ERP's light look was
 // unreachable. The bar's theme slot carries the till's cycle (Auto, Light,
-// Dark); the dark sheet is the tokens' default and light is the opt-in
+// Brand); the brand sheet (the dark half) is the tokens' default and light is the opt-in
 // data-theme attribute. This suite serves a demo mode build (playwright.config.ts
 // runs vite --mode demo), and a demo build starts on Light (decision log row
-// 978), so the cycle here runs Light, Dark, Auto. That a default build starts
+// 978), so the cycle here runs Light, Brand, Auto. That a default build starts
 // on Auto is proved on the shipped bundle by test/demo-light-default.test.mjs,
 // which builds both ways; the two together cover both starting states.
-test("the theme control starts on Light in the demo build and cycles Light, Dark, Auto", async ({ browser }) => {
+test("the theme control starts on Light in the demo build and cycles Light, Brand, Auto", async ({ browser }) => {
   const context = await browser.newContext({ colorScheme: "dark" });
   const page = await context.newPage();
   await page.goto("/");
@@ -86,7 +86,7 @@ test("the theme control starts on Light in the demo build and cycles Light, Dark
   const [red, green, blue] = ground.match(/\d+/g)!.map(Number);
   expect(red + green + blue).toBeGreaterThan(600);
   await toggle.click();
-  await expect(toggle).toHaveText("Theme: Dark");
+  await expect(toggle).toHaveText("Theme: Brand");
   await expect(root).not.toHaveAttribute("data-theme", /.+/);
   await toggle.click();
   await expect(toggle).toHaveText("Theme: Auto");

@@ -93,7 +93,7 @@ test("a credit customer's deposit is taken and the balance the server answered i
   // The figures line names the invoice the server raised, from the family read, never a computed figure.
   await expect(pay(page).getByTestId("op-figures")).toContainText(/Invoice INV-\d+ is Part paid at \$37\.06/);
   await shot(pay(page).getByTestId("op-box"), "order-payment-deposit");
-  // The dark theme, cycled from Auto through Light to Dark.
+  // The brand theme, cycled from Auto through Light to Brand.
   await page.getByTestId("theme-control").click();
   await page.getByTestId("theme-control").click();
   await shot(pay(page).getByTestId("op-box"), "order-payment-deposit-dark");

@@ -15,7 +15,7 @@ test.afterAll(async ({ request }) => {
 
 test.use({ viewport: { width: 1440, height: 900 } });
 
-async function setTheme(page: Page, word: "Light" | "Dark"): Promise<void> {
+async function setTheme(page: Page, word: "Light" | "Brand"): Promise<void> {
   const control = page.getByTestId("theme-control");
   for (let i = 0; i < 3; i += 1) {
     if ((await control.textContent())?.includes(word)) return;
@@ -66,7 +66,7 @@ async function clippedBy(page: Page, tab: "margin" | "rules" | "customers" | "br
   return page.getByTestId(TAB_PANEL[tab]).evaluate((card) => card.scrollWidth - card.clientWidth);
 }
 
-for (const theme of ["Light", "Dark"] as const) {
+for (const theme of ["Light", "Brand"] as const) {
   test(`every tab, loaded and populated, fits 1440 wide and reads in ${theme}`, async ({ page }) => {
     await signIn(page);
     await setTheme(page, theme);
@@ -151,7 +151,7 @@ test("the margin boxes are filled boxes, and the code and id inputs sit left", a
     expect(got.border, "the light line token").toBe("rgb(148, 164, 180)");
     expect(got.fill, "the light page token, steady over the stripe").toBe("rgb(231, 236, 241)");
   }
-  await setTheme(page, "Dark");
+  await setTheme(page, "Brand");
   for (const box of [plain, striped]) {
     const got = await box.evaluate((el) => {
       const probe = document.createElement("div");
@@ -172,9 +172,9 @@ test("the margin boxes are filled boxes, and the code and id inputs sit left", a
   expect(await page.getByTestId("pb-product").evaluate((el) => getComputedStyle(el).textAlign)).toBe("left");
 });
 
-test("the rule editor and the floor warning in dark", async ({ page }) => {
+test("the rule editor and the floor warning in brand mode", async ({ page }) => {
   await signIn(page);
-  await setTheme(page, "Dark");
+  await setTheme(page, "Brand");
   await openPricing(page);
   await openTab(page, "rules");
   await page.getByTestId("pr-row").filter({ hasText: "Contractor, Pavers" }).getByTestId("pr-edit").click();
