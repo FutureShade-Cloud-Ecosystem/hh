@@ -18,11 +18,12 @@ test.afterAll(async ({ request }) => {
 
 const QUOTE_PANELS = ["qd-quote-edit", "qd-quote-assist", "qd-quote-history", "qd-quote-followups", "qd-quote-hold-expiry", "qd-quote-availability", "qd-quote-guard"];
 
-test("compose draws none of the quote panels and leaves no blank gap in the detail", async ({ page }) => {
+test("compose draws none of the quote panels, and the detail bar is not shown at all", async ({ page }) => {
   await signIn(page, "Sales");
   await newQuote(page);
   await expect(page.getByTestId("qb-title")).toHaveText("New Quote");
-  await page.getByText("Quote detail & admin").click();
+  // The bar has no quote to detail here (round 10): it is not shown, and its panels stay mounted for late answers.
+  await expect(page.getByText("Quote detail & admin")).toBeHidden();
   const seen = await page.locator("qd-quote-builder").evaluate((builder, tags) => {
     const root = builder.shadowRoot as ShadowRoot;
     const panels = tags.map((tag) => {
@@ -40,12 +41,11 @@ test("compose draws none of the quote panels and leaves no blank gap in the deta
     expect(panel.height, `${panel.tag} takes no room in compose`).toBe(0);
     expect(panel.drawn, `${panel.tag} draws nothing without a quote`).toEqual([]);
   }
-  expect(seen.gaps.length).toBeGreaterThan(0);
-  for (const gap of seen.gaps) expect(gap, "no blank space between the boxes that do show").toBeLessThanOrEqual(14);
+  expect(seen.gaps, "nothing of the bar takes room in compose").toEqual([]);
   await expect(page.getByTestId("qg-box")).toHaveCount(0);
 });
 
-test("an open quote renders the payment seam in the detail, and the builder's fan-out query is answered by its panels", async ({ page }) => {
+test("an open quote renders the payment seam on the quote page, and the builder's fan-out query is answered by its panels", async ({ page }) => {
   await signIn(page, "Sales");
   const reads = countRequests(page, /GET .*\/quotes\/q-1001\/related-documents$/);
   await showList(page);

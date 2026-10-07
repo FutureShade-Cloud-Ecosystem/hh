@@ -281,6 +281,9 @@ export class QdQuoteBuilder extends LitElement {
       outline: 2px solid var(--hos-stone-amber-text, var(--hh-accent-text));
       outline-offset: 2px;
     }
+    details[data-hidden="true"] {
+      display: none;
+    }
     .box {
       border: 1px solid var(--hos-line, var(--hh-line));
       border-radius: 8px;
@@ -417,6 +420,9 @@ export class QdQuoteBuilder extends LitElement {
     if (searchBox !== null) searchBox.placeholder = "Search by number or customer";
     if (route.kind === "quote") this.lastQuoteId = route.id;
     const openQuoteId = route.kind === "quote" ? route.id : route.kind === "compose" ? "" : this.lastQuoteId;
+    // The panels beside the work area read a quote only once the work area has read it: a quote the server
+    // says is not there is asked for once, not once by every panel.
+    const panelQuoteId = this.lastRead.id === openQuoteId && this.lastRead.ok ? openQuoteId : "";
     const branchId = this.selectedBranch() || this.myBranch;
     const area = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("qd-quote-workarea");
     if (area !== null) {
@@ -428,7 +434,7 @@ export class QdQuoteBuilder extends LitElement {
     for (const seam of this.renderRoot.querySelectorAll<HTMLElement & Record<string, unknown>>(
       "qd-panel-seam, qd-quote-decision, qd-quote-edit, qd-related-docs, qd-order-payment, qd-quote-assist, qd-quote-history, qd-quote-followups, qd-quote-hold-expiry, qd-quote-availability, qd-quote-guard, qd-approvals, qd-quote-settings, qd-floor-refusal",
     )) {
-      seam.quoteId = openQuoteId;
+      seam.quoteId = panelQuoteId;
       seam.branchId = branchId;
       if (seam.tagName !== "QD-PANEL-SEAM") seam.client = this.client;
     }
@@ -575,6 +581,8 @@ export class QdQuoteBuilder extends LitElement {
   private readonly onQuoteRead = (event: CustomEvent<{ quoteId: string; quoteNo: string; ok: boolean }>): void => {
     this.lastRead = { id: event.detail.quoteId, no: event.detail.quoteNo, ok: event.detail.ok };
     document.title = this.pageTitle();
+    // The panels wait on this answer for their quote: the wiring pass hands it to them now.
+    this.requestUpdate();
   };
 
   /** The document title of the page the route names. */
@@ -636,11 +644,15 @@ export class QdQuoteBuilder extends LitElement {
   };
 
   private reloadDetailPanels(): void {
-    this.renderRoot
-      ?.querySelectorAll<HTMLElement & { reload?: () => void }>(
+    const panels = Array.from(
+      this.renderRoot?.querySelectorAll<HTMLElement & { reload?: () => void }>(
         "qd-quote-workarea, qd-panel-seam, qd-quote-decision, qd-quote-edit, qd-related-docs, qd-order-payment, qd-quote-history, qd-quote-settings, qd-quote-assist, qd-quote-followups, qd-quote-hold-expiry, qd-quote-availability, qd-quote-guard, qd-approvals",
-      )
-      .forEach((el) => el.reload?.());
+      ) ?? [],
+    );
+    // The edit panel goes first: it begins the read cycle the related documents and the payment panel join, and
+    // those two stand above it on the page now, so the document order is no longer the order they must run in.
+    panels.sort((a, b) => Number(b.tagName === "QD-QUOTE-EDIT") - Number(a.tagName === "QD-QUOTE-EDIT"));
+    panels.forEach((el) => el.reload?.());
   }
 
   /** The panels no single quote owns: they re-read on any edit, whichever quote it names. */
@@ -711,6 +723,12 @@ export class QdQuoteBuilder extends LitElement {
   // ── the branch facts ───────────────────────────────────────────────────────
 
   /** The quote the work area holds (the quote page's route, or the one it kept when the person walked to the list). */
+  /** The detail bar has nothing to detail on a New quote page or a quote that could not be read. */
+  private detailBarHidden(): boolean {
+    const open = this.openQuoteId();
+    return open === "" || (this.lastRead.id === open && !this.lastRead.ok);
+  }
+
   private openQuoteId(): string {
     const route = this.route;
     if (route.kind === "quote") return route.id;
@@ -838,7 +856,13 @@ export class QdQuoteBuilder extends LitElement {
           <qd-quote-workarea></qd-quote-workarea>
           <qd-quote-decision></qd-quote-decision>
           <qd-floor-refusal></qd-floor-refusal>
-          <details class="box" style="margin-top: 12px" data-testid="qb-detail">
+          <!-- The related documents and the order's payment stand on the quote page, where a person sees them.
+               Both render nothing for a page with no quote, and stay mounted like every panel below. -->
+          <div data-seam=${SEAM_PAYMENT} data-seam-label="Related documents and the order's payment (QD-5)">
+            <qd-related-docs></qd-related-docs>
+            <qd-order-payment></qd-order-payment>
+          </div>
+          <details class="box" style="margin-top: 12px" data-testid="qb-detail" data-hidden=${this.detailBarHidden() ? "true" : "false"}>
             <summary style="cursor: pointer">Quote detail &amp; admin</summary>
             <div class="stack seams" style="margin-top: 10px">
               ${this.openQuoteId() === ""
@@ -850,10 +874,6 @@ export class QdQuoteBuilder extends LitElement {
                    for another quote was already this way, and the list page and New Quote take that same proven path. -->
               <div class="stack" data-testid="qb-quote-panels" data-compose=${this.openQuoteId() === "" ? "true" : "false"}>
             <qd-quote-edit data-seam=${SEAM_EDIT_PANEL}></qd-quote-edit>
-            <div data-seam=${SEAM_PAYMENT} data-seam-label="Related documents and the order's payment (QD-5)">
-              <qd-related-docs></qd-related-docs>
-              <qd-order-payment></qd-order-payment>
-            </div>
             <qd-quote-assist data-seam=${SEAM_ASSIST}></qd-quote-assist>
             <qd-quote-history data-seam=${SEAM_HISTORY}></qd-quote-history>
             <qd-quote-followups data-seam=${SEAM_FOLLOWUPS}></qd-quote-followups>

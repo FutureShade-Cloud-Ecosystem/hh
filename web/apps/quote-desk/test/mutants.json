@@ -1329,8 +1329,8 @@
   {
     "id": "op-seam-mounted",
     "file": "src/quote-builder.ts",
-    "find": "            <div data-seam=${SEAM_PAYMENT} data-seam-label=\"Related documents and the order's payment (QD-5)\">\n              <qd-related-docs></qd-related-docs>\n              <qd-order-payment></qd-order-payment>\n            </div>",
-    "replace": "            ${this.openQuoteId() === \"\"\n              ? nothing\n              : html`<div data-seam=${SEAM_PAYMENT} data-seam-label=\"Related documents and the order's payment (QD-5)\">\n                  <qd-related-docs></qd-related-docs>\n                  <qd-order-payment></qd-order-payment>\n                </div>`}",
+    "find": "          <div data-seam=${SEAM_PAYMENT} data-seam-label=\"Related documents and the order's payment (QD-5)\">\n            <qd-related-docs></qd-related-docs>\n            <qd-order-payment></qd-order-payment>\n          </div>",
+    "replace": "          ${this.openQuoteId() === \"\"\n            ? nothing\n            : html`<div data-seam=${SEAM_PAYMENT} data-seam-label=\"Related documents and the order's payment (QD-5)\">\n                <qd-related-docs></qd-related-docs>\n                <qd-order-payment></qd-order-payment>\n              </div>`}",
     "test": "New Quote keeps the payment seam"
   },
   {

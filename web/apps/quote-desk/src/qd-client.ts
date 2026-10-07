@@ -1104,9 +1104,26 @@ export class QdClient {
     return policy === null ? err("the saved quote policy is not readable") : ok(policy);
   }
 
+  /**
+   * Reads the server refused this signed-in person: asked once, then answered from here, so the page does not
+   * ask again (and the console does not fill with the same refusal) for what the role cannot read. Keyed by the
+   * caller, so another person's sign in starts clean.
+   */
+  #refused = { caller: "", reads: new Map<string, Result<never>>() };
+
+  async #readOnceRefused<T>(key: string, read: () => Promise<Result<T>>): Promise<Result<T>> {
+    const caller = this.#callerId();
+    if (this.#refused.caller !== caller) this.#refused = { caller, reads: new Map() };
+    const known = this.#refused.reads.get(key);
+    if (known !== undefined) return known as Result<T>;
+    const result = await read();
+    if (!result.ok && result.status === 403) this.#refused.reads.set(key, result as Result<never>);
+    return result;
+  }
+
   /** The dealer's one acceptance switch. */
   async getAcceptance(): Promise<Result<AcceptanceView>> {
-    const result = await staffQuote.quoteGetAcceptanceSettings(this.#client);
+    const result = await this.#readOnceRefused("acceptance", () => staffQuote.quoteGetAcceptanceSettings(this.#client));
     if (!result.ok) return result;
     const view = readAcceptance(result.value);
     return view === null ? err("the acceptance settings are not readable") : ok(view);
@@ -1121,7 +1138,7 @@ export class QdClient {
 
   /** The scope rule table, switched-off rules included. */
   async listScopeRules(): Promise<Result<ScopeRuleRow[]>> {
-    const result = await staffQuoteassist.quoteAssistListScopeRules(this.#client);
+    const result = await this.#readOnceRefused("scope-rules", () => staffQuoteassist.quoteAssistListScopeRules(this.#client));
     if (!result.ok) return result;
     const rules = readScopeRules(result.value);
     return rules === null ? err("the scope rules are not readable") : ok(rules);
