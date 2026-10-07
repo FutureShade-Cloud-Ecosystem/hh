@@ -144,8 +144,12 @@ SELECT id::text, return_no, order_id::text, invoice_id::text, refund_method,
        subtotal_cents, tax_cents, total_cents, fee_cents, COALESCE(refund_payment_id::text,''), pickup_status, status
   FROM pos_returns WHERE idempotency_key = $1`
 
-// returnOrderContextQuery is the original committed POS sale behind one
-// order id or number.
+// returnOrderContextQuery is the original committed POS sale behind one order id or one typed
+// reference. Numbers are stored with a hash (#SO-TRT-21, #INV-17) and the clerk reads them off a
+// slip without it, so the reference ($2, already trimmed, upper cased and stripped of a leading hash
+// by normalizeSaleRef) matches the order number or the invoice number with or without the hash, and a
+// bare run of digits matches the number a branch's order numbers end in (the exact numbers rank
+// first, then the newest sale).
 const returnOrderContextQuery = `
 SELECT o.id::text, o.order_no, o.branch_id::text, o.customer_id::text,
        COALESCE(ps.invoice_id::text,''), COALESCE(i.status,''), ps.tender, COALESCE(pay.gateway_ref,'')
@@ -153,7 +157,15 @@ SELECT o.id::text, o.order_no, o.branch_id::text, o.customer_id::text,
   JOIN orders o ON o.id = ps.order_id
   LEFT JOIN invoices i ON i.id = ps.invoice_id
   LEFT JOIN payments pay ON pay.id = ps.payment_id
- WHERE ($1 <> '' AND ps.order_id::text = $1) OR ($1 = '' AND o.order_no = $2)`
+ WHERE ($1 <> '' AND ps.order_id::text = $1)
+    OR ($1 = '' AND $2 <> '' AND (
+         upper(o.order_no) IN ($2, '#' || $2)
+         OR upper(i.invoice_no) IN ($2, '#' || $2)
+         OR ($2 ~ '^[0-9]+$' AND o.order_no LIKE '%-' || $2
+             AND ($3::text[] IS NULL OR o.branch_id::text = ANY($3::text[])))))
+ ORDER BY (upper(o.order_no) IN ($2, '#' || $2) OR upper(i.invoice_no) IN ($2, '#' || $2)) DESC,
+          o.created_at DESC
+ LIMIT 1`
 
 func (r *Repository) FindReturnByKey(ctx context.Context, key string) (Return, bool, error) {
 	if r.pool == nil {
@@ -192,13 +204,21 @@ func (r *Repository) FindReturnByKeyTx(ctx context.Context, tx pgx.Tx, key strin
 }
 
 func (r *Repository) ReturnOrderContext(ctx context.Context, orderID, orderNo string) (returnOrderCtx, bool, error) {
+	return r.ReturnOrderContextFor(ctx, orderID, orderNo, nil)
+}
+
+// ReturnOrderContextFor is the same read for a typed reference scoped to the branches the caller
+// reaches: reach nil is a caller who reaches every branch, a non-nil slice (possibly empty) limits the
+// bare digits arm to those branch ids. Exact order and invoice numbers stay unscoped, so a full
+// number from another branch still meets the branch wall.
+func (r *Repository) ReturnOrderContextFor(ctx context.Context, orderID, orderNo string, reach []string) (returnOrderCtx, bool, error) {
 	if r.pool == nil {
 		return returnOrderCtx{}, false, errNoPool
 	}
 	// The original ring must be a committed POS sale (a pos_sale facet row exists). gateway_ref rides
 	// the ORIGINAL capture's payments row, the CARD refund rail reverses against it.
 	var oc returnOrderCtx
-	err := r.pool.QueryRow(ctx, returnOrderContextQuery, orderID, orderNo).Scan(&oc.OrderID, &oc.OrderNo, &oc.BranchID,
+	err := r.pool.QueryRow(ctx, returnOrderContextQuery, orderID, orderNo, reach).Scan(&oc.OrderID, &oc.OrderNo, &oc.BranchID,
 		&oc.CustomerID, &oc.InvoiceID, &oc.InvoiceStatus, &oc.SaleTender, &oc.GatewayRef)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return returnOrderCtx{}, false, nil
@@ -213,7 +233,7 @@ func (r *Repository) ReturnOrderContext(ctx context.Context, orderID, orderNo st
 // tx twin the in-transaction replay check needs (see FindReturnByKeyTx).
 func (r *Repository) ReturnOrderContextTx(ctx context.Context, tx pgx.Tx, orderID, orderNo string) (returnOrderCtx, bool, error) {
 	var oc returnOrderCtx
-	err := tx.QueryRow(ctx, returnOrderContextQuery, orderID, orderNo).Scan(&oc.OrderID, &oc.OrderNo, &oc.BranchID,
+	err := tx.QueryRow(ctx, returnOrderContextQuery, orderID, orderNo, nil).Scan(&oc.OrderID, &oc.OrderNo, &oc.BranchID,
 		&oc.CustomerID, &oc.InvoiceID, &oc.InvoiceStatus, &oc.SaleTender, &oc.GatewayRef)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return returnOrderCtx{}, false, nil
@@ -244,10 +264,11 @@ func (r *Repository) ListReturnableLines(ctx context.Context, orderID string) ([
 		return nil, errNoPool
 	}
 	const q = `
-SELECT ol.id::text, COALESCE(ol.product_id::text,''), ol.description, ol.qty_base::float8,
+SELECT ol.id::text, COALESCE(ol.product_id::text,''), COALESCE(NULLIF(ol.description, ''), p.name, ''), ol.qty_base::float8,
        ol.unit_price_cents, ol.line_total_cents, ol.tax_cents,
        COALESCE((SELECT SUM(rl.qty_base) FROM pos_return_lines rl WHERE rl.order_line_id = ol.id), 0)::float8
   FROM order_lines ol
+  LEFT JOIN products p ON p.id = ol.product_id
  WHERE ol.order_id::text = $1
  ORDER BY ol.line_no`
 	rows, err := r.pool.Query(ctx, q, orderID)

@@ -60,7 +60,7 @@ you, in this package and in any package that adopts its rules.
 
 ## What is here (cycle HH-4a, Plane HH-30)
 
-- `src/tokens.css`: the sheet. One base vocabulary for internal apps (dark
+- `src/tokens.css`: the sheet. One base vocabulary for internal apps (brand mode
   default, light opt-in on `[data-theme="light"]`), the `hh-pro` brand override
   for the standalone shell (`[data-brand="hh-pro"]`, HH Pro's dealer layer in
   its own oklch values), and the contractor `--cbrand-*` layer for the public

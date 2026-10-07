@@ -1677,6 +1677,91 @@ export class HosPosTerminal extends LitElement {
       white-space: nowrap;
       text-align: right; /* rev 8 (item 3): its own aligned column now */
     }
+    /* ROUND 11: at phone width the line stacks instead of scrolling its money columns out of sight.
+       Row one is the picture, the name and the remove control; row two the quantity stepper, the unit
+       and the line total; row three the unit price (and the margin where the role sees it), each
+       labelled. Every column is on screen at 320 to 519, none cut: the eight tracks of the desktop
+       table cannot share a 250px card, and a table the person must scroll hides the price. The table
+       keeps its own overflow-x as a safety net; it has nothing to scroll here. */
+    @media (max-width: 559px) {
+      .linegrid,
+      .linegrid.withmargin {
+        display: block;
+      }
+      .linehead {
+        display: none;
+      }
+      .linerow {
+        display: grid;
+        grid-template-columns: 36px auto auto minmax(0, 1fr) 32px;
+        column-gap: 6px;
+        row-gap: 6px;
+        align-items: center;
+      }
+      .linerow hos-product-thumb {
+        grid-column: 1;
+        grid-row: 1 / span 4;
+        align-self: start;
+      }
+      .linerow .lmain {
+        grid-column: 2 / 5;
+        grid-row: 1;
+      }
+      .linerow .rm {
+        grid-column: 5;
+        grid-row: 1;
+        align-self: start;
+      }
+      .linerow .stepper {
+        grid-column: 2;
+        grid-row: 2;
+      }
+      .linerow .lunit {
+        grid-column: 3;
+        grid-row: 2;
+      }
+      .linerow .ltot {
+        grid-column: 4 / 6;
+        grid-row: 2;
+        text-align: right;
+      }
+      .linerow .lprice {
+        grid-column: 2 / 6;
+        grid-row: 3;
+        text-align: left;
+      }
+      /* Touch targets: the stepper's buttons and the remove control are 32px square here, the desktop
+         table keeps its compact 20px and 28px. */
+      .linerow .stepper button,
+      .linerow .rm {
+        min-width: 32px;
+        min-height: 32px;
+      }
+      .linerow .stepper .qty {
+        min-height: 32px;
+      }
+      .linerow .lprice::before {
+        content: 'Price ';
+        color: var(--hos-text-dim);
+        font-family: var(--hos-font-ui);
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.09em;
+      }
+      /* The margin has its own row so a long price ($1,234.56 / SF) never meets it. */
+      .linerow .lmargin {
+        grid-column: 2 / 6;
+        grid-row: 4;
+        text-align: left;
+      }
+      .linerow .lmargin::before {
+        content: 'Margin ';
+        font-family: var(--hos-font-ui);
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.09em;
+      }
+    }
  /* The DIB-488 stock-status line: status colours via the existing token roles only. */
     .stockline {
       font-size: 11px;

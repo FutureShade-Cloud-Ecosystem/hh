@@ -22,6 +22,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readdirSync } from 'node:fs';
+import { join } from 'node:path';
 
 import {
   PALETTE_NAMES,
@@ -29,6 +31,7 @@ import {
   declaredPairs,
   palette,
   palettes,
+  pkgDir,
   readPkg,
   resolveColor,
 } from './_lib/sheet.mjs';
@@ -135,9 +138,41 @@ test('every ink resolves in every palette (guards the matrix above)', () => {
 // ── solid fills: judged as shapes at the non-text bar, against where they sit ──
 
 const FILL_PAIRS = [
-  { fill: '--hh-danger-fill', surfaces: ['--hh-page', '--hh-card', '--hh-ground'] },
+  { fill: '--hh-danger-fill', surfaces: ['--hh-page', '--hh-ground'] },
   { fill: '--hh-success-fill', surfaces: ['--hh-page', '--hh-card'] },
 ];
+
+// The danger fill against every surface a danger button can land on: under white ink the fill
+// must be no lighter than about L 0.18 (4.5:1), and the brand mode card (#173550) needs it no
+// darker than about L 0.20 for 3:1, so no single red holds both there. A surface that falls
+// under 3:1 is allowed only in a dark palette, and only while EVERY source that draws a danger
+// button (the base styles and each harness kit sheet) carries the edge token as its boundary
+// (the .btn-primary pattern), with the edge white. Losing the edge in any one sheet fails.
+const DANGER_SURFACES = ['--hh-page', '--hh-card', '--hh-ground', '--hh-widget', '--hh-widget-raised'];
+const dangerSources = () => [
+  'src/primitives.ts',
+  ...readdirSync(join(pkgDir, 'harness', 'sheets')).filter((f) => f.endsWith('.css')).map((f) => `harness/sheets/${f}`),
+];
+
+test('the danger fill clears 3:1 on its surfaces, or in the dark half every danger button draws its own edge', () => {
+  for (const name of PALETTE_NAMES) {
+    const v = palette(name);
+    for (const surface of DANGER_SURFACES) {
+      const ratio = contrast(resolveColor(v['--hh-danger-fill'], v), resolveColor(v[surface], v));
+      if (ratio >= NON_TEXT) continue;
+      assert.equal(name.endsWith('dark'), true, `${name}: danger fill on ${surface} ${ratio.toFixed(2)}:1 and no dark-half exception applies`);
+      assert.equal(v['--hh-danger-fill-edge'].toUpperCase(), '#FFFFFF', `${name}: the edge is the ink white where the fill alone is under 3:1 (${surface})`);
+      for (const file of dangerSources()) {
+        const rule = readPkg(file).match(/\.btn-danger\s*\{([^}]*)\}/);
+        assert.ok(rule, `${file} draws no .btn-danger rule to check`);
+        assert.ok(
+          /border-color:\s*var\(--hh-danger-fill-edge\)/.test(rule[1]),
+          `${file}: .btn-danger must carry the fill-edge border, ${surface} is ${ratio.toFixed(2)}:1 under it in ${name}`,
+        );
+      }
+    }
+  }
+});
 
 test(`solid fills stay visible against the surfaces they sit on (non-text 3:1): every palette`, () => {
   for (const name of PALETTE_NAMES) {

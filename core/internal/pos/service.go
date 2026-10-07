@@ -190,6 +190,8 @@ type posStore interface {
 	// connection).
 	FindReturnByKeyTx(ctx context.Context, tx pgx.Tx, key string) (Return, bool, error)
 	ReturnOrderContext(ctx context.Context, orderID, orderNo string) (returnOrderCtx, bool, error)
+	// ReturnOrderContextFor scopes a typed bare number to the branches the caller reaches (nil: all).
+	ReturnOrderContextFor(ctx context.Context, orderID, orderNo string, reach []string) (returnOrderCtx, bool, error)
 	ReturnOrderContextTx(ctx context.Context, tx pgx.Tx, orderID, orderNo string) (returnOrderCtx, bool, error)
 	ListReturnableLines(ctx context.Context, orderID string) ([]ReturnableLineView, error)
 	LockReturnableLine(ctx context.Context, tx pgx.Tx, orderID, orderLineID string) (returnableLine, bool, error)

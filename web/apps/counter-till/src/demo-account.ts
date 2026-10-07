@@ -35,7 +35,7 @@
 //
 // The theme is untouched by this seam: it is a data-theme attribute on the
 // document root, and the till's own theme controller keeps cycling Auto,
-// Light and Dark over an adopted session exactly as over a minted one.
+// Light and Brand over an adopted session exactly as over a minted one.
 import { ThrowSafeMirror, type StorageLike } from "@hardscapehouse/auth";
 
 /** The front door's own session record key: the mint, token included. */

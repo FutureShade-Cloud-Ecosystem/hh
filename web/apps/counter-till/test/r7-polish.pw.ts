@@ -147,7 +147,7 @@ test("the Paid card of a split sale says each leg with its amount", async ({ pag
 });
 
 /** Choose the theme through the bar's cycling control until its label says it. */
-async function pickTheme(page: Page, word: "Light" | "Dark"): Promise<void> {
+async function pickTheme(page: Page, word: "Light" | "Brand"): Promise<void> {
   const control = page.getByTestId("theme-control");
   for (let turn = 0; turn < 3; turn += 1) {
     if (((await control.innerText()) ?? "").includes(word)) break;
@@ -205,13 +205,13 @@ test("light theme: panes and cards have an edge that reads, and every input shar
   expect(read.strip).toBe("rgb(255, 255, 255)");
 });
 
-test("dark theme keeps its inset fields: the input fill is the page's deep tone", async ({ page }) => {
+test("brand theme keeps its inset fields: the input fill is the page's deep tone", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await signIn(page);
   await pickLayout(page, "panels");
-  await pickTheme(page, "Dark");
+  await pickTheme(page, "Brand");
   const fill = await page.getByTestId("pos-scan-input").evaluate((el) => getComputedStyle(el).backgroundColor);
-  expect(fill).toBe("rgb(7, 24, 39)");
+  expect(fill).toBe("rgb(15, 41, 68)");
   await pickTheme(page, "Light");
 });
 
