@@ -77,7 +77,7 @@ test("guard related documents read: a family read for the quote left never lands
   // Q-2102's own family is itself alone: no order chip ever lands on it, and its figures stay its own.
   await expect(panel(page).getByTestId("rd-empty")).toBeVisible();
   await expect(panel(page).locator(".chip").filter({ hasText: "SO-2001" })).toHaveCount(0);
-  await expect(page.locator("qd-order-payment").getByTestId("op-figures")).toContainText("Q-2102");
+  await expect(page.locator("qd-order-payment").getByTestId("op-box")).not.toContainText("SO-2001");
 });
 
 test("guard related documents order: an older read of the quote answered late never lands over a newer one", async ({ page }) => {

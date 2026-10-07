@@ -27,13 +27,14 @@ test("an account customer's accepted quote says to convert first, and offers no 
   await expect(page.locator("qd-order-payment").getByTestId("op-tenders")).toHaveCount(0);
 });
 
-test("a Cash On Demand customer's accepted quote says so, and offers the one action", async ({ page }) => {
+test("a no-credit customer's accepted quote says so, and sends the person to Convert to Order", async ({ page }) => {
   await signIn(page);
   await openQuote(page, "Q-2102");
   const box = page.locator("qd-order-payment").getByTestId("op-box");
   await expect(box).toContainText("Cash On Demand");
   await expect(box).toContainText("no credit account");
-  await expect(page.locator("qd-order-payment").getByTestId("op-tenders")).toBeVisible();
+  await expect(page.locator("qd-order-payment").getByTestId("op-tenders")).toHaveCount(0);
+  await expect(page.locator("qd-order-payment").getByTestId("op-convert")).toBeEnabled();
 });
 
 test("guard payment words: an account read that answers after another quote opened does not change its words", async ({ page }) => {
@@ -48,7 +49,7 @@ test("guard payment words: an account read that answers after another quote open
   await slow.release();
   await settle(page);
   await expect(box).toContainText("Cash On Demand");
-  await expect(page.locator("qd-order-payment").getByTestId("op-tenders")).toBeVisible();
+  await expect(box).not.toContainText("30 days");
 });
 
 test("the demo's Cash On Demand account (zero-day terms and a credit line) is told it is Cash On Demand and to convert first", async ({ page }) => {

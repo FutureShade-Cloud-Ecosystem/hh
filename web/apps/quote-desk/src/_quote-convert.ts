@@ -131,7 +131,35 @@ const SERVER_DECIDES = "The server checks the credit account and any credit hold
  * gate refuses such a customer's plain conversion and takes the whole payment at its own door.
  */
 export function isCashOnDemand(read: StandingIn | null): boolean {
-  return read !== null && read.creditLimitCents <= 0;
+  return read !== null && accountKind(read) === "NO_CREDIT";
+}
+
+/**
+ * How a customer pays, read once for the desk's every surface (the guided Convert and the payment panel): no credit
+ * line at all, the product's own Cash On Demand account (zero-day terms, and a credit line beside them), or an
+ * account on terms. The one place the rule is written; the words stay the callers' own.
+ */
+export type AccountKind = "NO_CREDIT" | "COD_TERMS" | "ON_ACCOUNT";
+
+export function accountKind(read: StandingIn): AccountKind {
+  if (read.creditLimitCents <= 0) return "NO_CREDIT";
+  if (read.paymentTermsDays === 0) return "COD_TERMS";
+  return "ON_ACCOUNT";
+}
+
+/** The sentence an accepted quote's payment panel says about how its customer pays, and where the person goes. */
+export function acceptedPaymentWords(read: StandingIn | null): string {
+  if (read === null) {
+    return "This quote is accepted. The customer's account could not be read, so how they pay is not known here. Convert to Order opens the steps, and the server decides at the end.";
+  }
+  const kind = accountKind(read);
+  if (kind === "NO_CREDIT") {
+    return "This quote is accepted. This customer has no credit account (Cash On Demand): Convert to Order opens the steps, and its Payment step takes the whole payment before anything is released.";
+  }
+  if (kind === "COD_TERMS") {
+    return "This quote is accepted. This customer is Cash On Demand (pay before release): Convert to Order opens the steps, and nothing is released until it is paid.";
+  }
+  return `This quote is accepted. This customer is on account (${read.paymentTermsDays} days): Convert to Order opens the steps, and any payment is taken on the order it becomes.`;
 }
 
 /**
@@ -156,7 +184,7 @@ export function standingOf(read: StandingIn | null, hold: HoldRead | null): Stan
       gateText: "There is no credit account to check. The whole payment is taken to create the order, and the server decides.",
     };
   }
-  const codTerms = read.paymentTermsDays === 0;
+  const codTerms = accountKind(read) === "COD_TERMS";
   const facts = `Credit limit ${moneyWord(read.creditLimitCents)}, open balance ${moneyWord(read.openBalanceCents)}, as the server reports them.`;
   // Zero-day terms are the product's Cash On Demand account even where a credit line stands: said as the terms, not as "0 days".
   const termsText = codTerms ? COD_TERMS_TEXT : `Account customer, ${read.paymentTermsDays} days.`;

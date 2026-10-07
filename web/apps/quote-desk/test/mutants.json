@@ -2121,5 +2121,12 @@
     "find": "      this.error = \"Another change is still being saved.\";\n",
     "replace": "",
     "test": "R11 P3 a first line added while another change is still saving says so"
+  },
+  {
+    "id": "op-account-reading",
+    "file": "src/order-payment-panel.ts",
+    "find": "${this.accountRead ? acceptedPaymentWords(this.account) : \"Reading the customer's account.\"}",
+    "replace": "${acceptedPaymentWords(this.account)}",
+    "test": "while the customer's account is being read the panel says so"
   }
 ]

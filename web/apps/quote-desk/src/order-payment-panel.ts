@@ -72,7 +72,9 @@ import {
   type TenderMethod,
 } from "./_order-payment.js";
 import { familyShare } from "./_related-docs.js";
-import type { OrderPaymentAnswer } from "./qd-client.js";
+import type { OrderPaymentAnswer, StandingRead } from "./qd-client.js";
+import { acceptedPaymentWords } from "./_quote-convert.js";
+import { convertRoute, routeHash } from "./quote-router.js";
 import { SIGN_OUT_EVENT, UNSENT_WAIT_MS, waitUpTo, type SignOutDetail } from "./quote-context.js";
 import type { QuoteContext } from "./quote-context.js";
 import type { Result } from "@hardscapehouse/api-client";
@@ -499,10 +501,12 @@ export class QdOrderPayment extends PanelBase {
     this.loaded = true;
     // The words of an accepted quote follow the customer's own account: its terms and credit limit, as the server holds them.
     this.account = null;
+    this.accountRead = false;
     if (view.value.status === "ACCEPTED") {
       const standing = await ctx.guardedRead(seq, client.customerStanding(view.value.customer_id, view.value.customer_name));
       if (standing === undefined) return false;
-      this.account = standing.ok && standing.value !== null ? { days: standing.value.paymentTermsDays, onAccount: standing.value.creditLimitCents > 0 } : null;
+      this.account = standing.ok ? standing.value : null;
+      this.accountRead = true;
     }
     const late = this.lateNotes.get(ctx.id);
     if (late !== undefined) {
@@ -513,7 +517,9 @@ export class QdOrderPayment extends PanelBase {
   }
 
   /** What the customer's account says about how they pay: on account (with its terms), or none; null where it could not be read. */
-  @state() private account: { days: number; onAccount: boolean } | null = null;
+  @state() private account: StandingRead | null = null;
+  /** True once the account read has answered (well or not): until then the panel says it is reading, never the wrong words. */
+  @state() private accountRead = false;
 
   /** The order rows of the family: what the quote became, as the server holds it. */
   private get orderRows(): RelatedDoc[] {
@@ -553,6 +559,8 @@ export class QdOrderPayment extends PanelBase {
   }
 
   private async take(): Promise<void> {
+    // Only the order a quote became takes a payment here: converting is the guided surface's alone.
+    if (this.status !== "CONVERTED") return;
     const client = this.client;
     if (client === null || this.busy) return;
     const ctx = this.ctx;
@@ -823,6 +831,10 @@ export class QdOrderPayment extends PanelBase {
   protected override onClickAction(action: string, control: HTMLElement): void {
     if (action === "take-payment") void this.take();
     if (action === "start-new") void this.startNew();
+    if (action === "open-convert") {
+      if (this.quoteId !== "") window.location.hash = routeHash(convertRoute(this.quoteId));
+      return;
+    }
     if (action === "retry-read") {
       // The retry of the read is its own cycle: it must ask the server again, not join the cycle
       // that just failed.
@@ -853,22 +865,6 @@ export class QdOrderPayment extends PanelBase {
   // ── render ────────────────────────────────────────────────────────────────
 
   /** The server's own figures for what this payment lands on: the quote's agreed total before any order exists, then the order row and the invoice row, with the balance the reads carry (figuresLine holds the wording; no figure is computed here). */
-  /** What an accepted quote's payment panel says, by the customer's account. */
-  private acceptedWords(): string {
-    const a = this.account;
-    if (a !== null && a.onAccount && a.days === 0) {
-      // The product's own Cash On Demand account: zero-day terms, and a credit line. It converts first, and nothing is released until it is paid.
-      return "This quote is accepted. This customer is Cash On Demand (pay before release): it is converted first with Convert to Order, and nothing is released until it is paid.";
-    }
-    if (a !== null && a.onAccount) {
-      return `This quote is accepted. This customer is on account (${a.days} days), so it is converted first with Convert to Order, and any payment is taken on the order it becomes.`;
-    }
-    if (a !== null) {
-      return "This quote is accepted. This customer is Cash On Demand, with no credit account: this one action converts the quote, raises the invoice and takes the payment in full. The server decides, and its refusal names what to do.";
-    }
-    return "This quote is accepted. The customer's account could not be read, so how they pay is not known here: the server decides, and its refusal names what to do.";
-  }
-
   private renderFigures(): TemplateResult | typeof nothing {
     const rows = this.orderRows;
     const quote = this.family.find((row) => row.kind === "QUOTE") ?? null;
@@ -924,13 +920,17 @@ export class QdOrderPayment extends PanelBase {
       `;
     }
     if (!this.offered) return nothing;
-    // An account customer's accepted quote is converted first; the payment is taken on the order it becomes.
-    const convertFirst = this.status === "ACCEPTED" && this.account !== null && this.account.onAccount;
-    if (convertFirst) {
+    // An accepted quote converts in one way only, the guided surface (standing, fulfilment, payment before release, a
+    // confirm). This panel takes payments on the order a quote became; before that it says how the customer pays and
+    // sends the person there.
+    if (this.status === "ACCEPTED") {
       return html`
         <fieldset data-testid="op-box">
           <legend>Take payment at the counter</legend>
-          <p class="sub">${this.acceptedWords()}</p>
+          <p class="sub">${this.accountRead ? acceptedPaymentWords(this.account) : "Reading the customer's account."}</p>
+          <div class="row">
+            <button type="button" class="primary" data-action="open-convert" data-testid="op-convert" ?disabled=${!this.accountRead}>Convert to Order</button>
+          </div>
         </fieldset>
       `;
     }
@@ -938,7 +938,7 @@ export class QdOrderPayment extends PanelBase {
       <fieldset data-testid="op-box">
         <legend>Take payment at the counter</legend>
         <p class="sub">
-          ${this.status === "ACCEPTED" ? this.acceptedWords() : "Payment on the order this quote became. The server holds the figures and decides the amount rules; its refusal names what to do."}
+          Payment on the order this quote became. The server holds the figures and decides the amount rules; its refusal names what to do.
         </p>
         ${this.renderFigures()}
         ${this.paidInFull

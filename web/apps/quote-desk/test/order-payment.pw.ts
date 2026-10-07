@@ -79,27 +79,6 @@ test.afterAll(async ({ request }) => {
   await request.post("/_stub/reset");
 });
 
-test("the cash customer's one action converts, invoices and pays in full, and the documents appear", async ({ page }) => {
-  await signIn(page);
-  await openWithPayment(page, "Q-2102");
-  await expect(pay(page).getByTestId("op-figures")).toContainText("$63.28");
-  await take(page, "63.28");
-  const receipt = pay(page).getByTestId("op-receipt");
-  await expect(receipt).toBeVisible();
-  await expect(receipt.getByTestId("op-receipt-amount")).toHaveText("$63.28");
-  await expect(receipt.getByTestId("op-receipt-balance-on-the-invoice")).toHaveText("$0.00");
-  await expect(receipt.getByTestId("op-receipt-tender")).toHaveText("Cash");
-  await expect(receipt.getByTestId("op-receipt-received-by")).toHaveText("you");
-  await expect(receipt.getByTestId("op-receipt-reference-as-recorded")).toHaveText("none given");
-  await expect(pay(page).getByTestId("op-converted-note")).toContainText("the order never existed unpaid");
-  // The one action changed the quote: every view re-read, so the family shows the order and the paid invoice.
-  await expect(docs(page).locator(".chip").filter({ hasText: /Order SO-\d+/ })).toBeVisible();
-  await expect(docs(page).locator(".chip").filter({ hasText: /Invoice INV-\d+ · Paid/ })).toBeVisible();
-  await expect(page.getByTestId("qe-title")).toContainText("Converted");
-  await expect(pay(page).getByTestId("op-error")).toHaveCount(0);
-  await shot(pay(page).getByTestId("op-box"), "order-payment-cash-one-action");
-});
-
 test("a credit customer's deposit is taken and the balance the server answered is shown", async ({ page }) => {
   await signIn(page);
   await openWithPayment(page, "Q-2101");
@@ -199,16 +178,6 @@ test("the figures name the balance the reads carry, and a payment over it is ref
   await expect(pay(page).getByTestId("op-error")).toHaveText("The payment is more than the balance of $27.06");
 });
 
-test("an accepted quote's payment is bounded by the agreed total before anything is sent", async ({ page }) => {
-  await signIn(page);
-  await openWithPayment(page, "Q-2102");
-  await expect(pay(page).getByTestId("op-figures")).toContainText("balance $63.28");
-  const seen = writes(page);
-  await take(page, "99.00");
-  await expect(pay(page).getByTestId("op-error")).toHaveText("The payment is more than the balance of $63.28");
-  expect(seen.filter((line) => line.includes("order-payment"))).toEqual([]);
-});
-
 test("a new deliberate payment after a taken one mints a fresh key", async ({ page }) => {
   await signIn(page);
   // Seed a second credit quote so the panel's first payment is a deposit and the second is another payment.
@@ -257,28 +226,6 @@ test("an order already invoiced another route is refused with the clerk wording,
   await expect(pay(page).getByTestId("op-error")).toContainText("already invoiced as INV-3001 by another route");
   await expect(pay(page).getByTestId("op-error")).toContainText("who record the payment against that invoice");
   await shot(pay(page).getByTestId("op-box"), "order-payment-refused-clerk");
-});
-
-test("an accepted quote whose customer's account could not be read still shows the server's convert-first refusal in its words", async ({ page }) => {
-  // With the account read the desk offers no form for a customer on account; where that read fails the form stays,
-  // the desk says it does not know how they pay, and the server's refusal is shown verbatim.
-  await page.route(/\/api\/v1\/customers\/c0000000-0000-4000-9000-000000000001$/, (route) => route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "down" }) }));
-  await signIn(page);
-  await openWithPayment(page, "Q-1003");
-  await expect(pay(page).getByTestId("op-box")).toContainText("could not be read");
-  await take(page, "10.00");
-  await expect(pay(page).getByTestId("op-error")).toContainText("Convert this quote to an order first");
-  await expect(pay(page).getByTestId("op-error")).toContainText("converts through the conversion door and then pays");
-});
-
-test("a cash customer's one action with the wrong amount is refused in the server's words about the whole total", async ({ page }) => {
-  await signIn(page);
-  await openWithPayment(page, "Q-2102");
-  await take(page, "10.00");
-  await expect(pay(page).getByTestId("op-error")).toContainText("A customer with no credit account pays the whole agreed total of $63.28");
-  await expect(pay(page).getByTestId("op-receipt")).toHaveCount(0);
-  // Nothing was converted by the refused attempt.
-  await expect(page.getByTestId("qe-title")).toContainText("Accepted");
 });
 
 test("a payment that lands after the person left says nothing on the quote now open, and is said on return", async ({ page }) => {
