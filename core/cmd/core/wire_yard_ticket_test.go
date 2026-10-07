@@ -1,10 +1,13 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tasks"
 )
 
 // The pick ticket carries what the order line was ordered for, so a yard that finds the rest of a
@@ -31,5 +34,16 @@ func TestBackorderClearedTextNamesTheLineWhatWasClearedAndTheNewQuantity(t *test
 		if !strings.Contains(got, want) {
 			t.Errorf("the notice must say %q: %s", want, got)
 		}
+	}
+}
+
+// A short pick the order cannot take (a shipped plan, a line already out) reaches the yard as a 409
+// refusal, never a 500.
+func TestYardOrderRefusalMapsToTheYardsRefusals(t *testing.T) {
+	if err := yardOrderRefusal(fmt.Errorf("%w: line 1 has 2.0000 on groups already out", order.ErrLineInUse)); !errors.Is(err, tasks.ErrOrderRefused) {
+		t.Fatalf("a line already out is a refusal: %v", err)
+	}
+	if err := yardOrderRefusal(fmt.Errorf("line 1: %w", order.ErrAboveOrdered)); !errors.Is(err, tasks.ErrAboveOrdered) {
+		t.Fatalf("above ordered is its own refusal: %v", err)
 	}
 }

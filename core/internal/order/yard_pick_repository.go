@@ -214,6 +214,9 @@ RETURNING revision`, id, reason, note, in.ActorID).Scan(&eff.Revision); err != n
 		return YardLineOutcome{}, nil, fmt.Errorf("%w: %s already fulfilled on line %d", ErrLineInUse, rat4(fulfilled), l.LineNo)
 	}
 
+	if err := adjustPlanTx(ctx, tx, in.OrderID, id, l.LineNo, new(big.Rat).Sub(newB, curB)); err != nil {
+		return YardLineOutcome{}, nil, err
+	}
 	newTotal := proratedTotal(orderedTotal, picked, orderedE)
 	backEntered := new(big.Rat).Sub(orderedE, picked)
 	backBase := new(big.Rat).Sub(orderedB, newB)
