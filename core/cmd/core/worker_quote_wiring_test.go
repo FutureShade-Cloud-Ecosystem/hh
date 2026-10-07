@@ -165,3 +165,38 @@ func TestWorkerSmsDispatcherOwnsTheQuoteTopics(t *testing.T) {
 		t.Fatalf("the mail transport recorded %+v, want one EMAIL to customer@fx.invalid", m)
 	}
 }
+
+type fxQuoteStatus map[string]string
+
+func (w fxQuoteStatus) QuoteStatus(_ context.Context, id string) (string, error) { return w[id], nil }
+
+// The worker's registration set carries the belt's quote status reader into the follow-up handlers:
+// a follow-up email queued for a quote that has since been accepted or lost is dropped at delivery
+// (published, nothing mailed), and one for a still open quote is mailed.
+func TestWorkerSmsDispatcherDropsFollowupsForClosedQuotes(t *testing.T) {
+	t.Setenv("SMS_PROVIDER", "stub")
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	belt := buildSmsBelt(nil, log)
+	belt.quoteStatus = fxQuoteStatus{"fx-open": "SENT", "fx-acc": "ACCEPTED", "fx-lost": "LOST"}
+	mail := &captureNotifier{}
+	store := &captureOutbox{}
+	d := notify.NewDispatcher(store, log)
+	registerSmsConsumers(belt, mail, d, log)
+
+	for _, q := range []string{"fx-acc", "fx-lost", "fx-open"} {
+		store.add(messagingprovider.TopicQuoteFollowupEmail, messagingprovider.QuoteFollowupNotice{
+			QuoteID: q, CustomerID: "fx-cust-1", StepDay: 7, Email: "customer@fx.invalid",
+		})
+	}
+	if n := d.DrainOnce(context.Background()); n != 3 {
+		t.Fatalf("DrainOnce processed %d rows, want 3", n)
+	}
+	for _, s := range store.settled {
+		if string(s.got.Status) != "PUBLISHED" {
+			t.Errorf("a dropped notice must publish, not retry or dead-letter: %q (%q)", string(s.got.Status), s.got.LastError)
+		}
+	}
+	if len(mail.sent) != 1 {
+		t.Fatalf("the mail transport recorded %d message(s), want only the open quote's one", len(mail.sent))
+	}
+}

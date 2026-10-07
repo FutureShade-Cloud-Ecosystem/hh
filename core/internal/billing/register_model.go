@@ -18,7 +18,7 @@ package billing
 // customer is holding that document; a counter clerk taking a cheque needs every one of them, and a
 // screen that hid them would be hiding the customer's own paperwork from the person serving them.
 //
-// THE ACCOUNT'S POSITION IS. "This contractor is CA$81k into a CA$60k limit" is a fact about the
+// THE ACCOUNT'S POSITION IS. "This contractor is $81k into a $60k limit" is a fact about the
 // customer's business rather than about this transaction. It is what internal/till's AR reads are
 // already manager-gated for, in as many words, and it is gated here to the same tier, by BYTE
 // ABSENCE at the marshal layer (ar_invoice_policy.account_position_visibility, fail closed), never by
@@ -179,7 +179,7 @@ type RegisterPage struct {
 	Counts RegisterCounts `json:"counts"`
 	Total  int            `json:"total"`
 	AsOf   time.Time      `json:"as_of"`
-	// SelectionCents is ABSENT here on purpose: the bulk bar's "3 selected · CA$X" figure is asked
+	// SelectionCents is ABSENT here on purpose: the bulk bar's "3 selected · $X" figure is asked
 	// for separately (registerSelection) rather than summed in the browser, because a number the
 	// operator is about to act on must come from the same place the action will read it from.
 }

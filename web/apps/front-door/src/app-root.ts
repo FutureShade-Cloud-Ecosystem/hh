@@ -40,7 +40,11 @@
 import { html, css, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
-import { ApiClient, staffDemo } from "@hardscapehouse/api-client";
+import { ApiClient, staffDemo, staffFeedback, staffIdentity } from "@hardscapehouse/api-client";
+import {
+  HHFeedback,
+  type FeedbackSender,
+} from "@hardscapehouse/design-system/src/feedback.js";
 // The ported icon registry: the one registry, the shared POS kit's own files
 // (moved once out of the Counter Till's app so the box's apps import the same
 // pieces). Only type imports reach the kit's ports from here, so the front
@@ -58,6 +62,7 @@ import {
   validateMint,
   type FrontDoorSession,
 } from "./session.js";
+import { countMarginApprovals } from "./approvals-count.js";
 import { applyTheme } from "./theme.js";
 
 const DEMO_ORG = "hh-demo";
@@ -97,7 +102,10 @@ export class FrontDoorApp extends HHElement {
          nothing jumps. */
       header {
         display: grid;
-        grid-template-columns: 1fr auto 1fr;
+        /* The side tracks never shrink under their content (round 7: on Manager Home the longer
+           role word left the lockup's track too narrow and the Demo badge dropped under the
+           logo); they still share what is left equally, so the word stays centred when it can. */
+        grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr);
         align-items: center;
         gap: var(--hh-s-12);
         box-sizing: border-box;
@@ -107,14 +115,14 @@ export class FrontDoorApp extends HHElement {
       }
       .demo-banner-cell {
         display: flex;
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
         align-items: center;
         gap: var(--hh-s-12);
       }
       /* The brand lockup, the ERP shell's own (hh-rd2's builder list, the
          reference): the HH mark at the left, the product name with the house
-         line under it. Gold is a fill, never an ink, so the mark's "HH" is
-         the near-black ink the gold fill carries; the accent word takes the
+         line under it. Gold is a fill, never an ink, so the mark's H is the
+         near-black ink the gold fill carries; the accent word takes the
          gold-as-ink token, which is dark gold in the light theme. */
       .brand {
         display: flex;
@@ -126,14 +134,20 @@ export class FrontDoorApp extends HHElement {
         width: 30px;
         height: 30px;
         flex: none;
-        display: grid;
-        place-items: center;
-        border-radius: var(--hh-radius-control);
+        /* The Hardscape House badge, on yellow: the square is the badge's
+           gold ground (the badge yellow IS --hh-accent), square cornered as
+           the source colourways are, and the inline mark-only SVG draws the
+           measured H in the ink a gold fill carries, through currentColor.
+           The path is principal/assets/hh-logos/svg/mark.svg, pixel measured
+           from the 3000 px colourways; the design system package carries the
+           same files under assets/hh-badge. */
         background: var(--hh-accent);
         color: var(--hh-accent-ink);
-        font-size: 12px;
-        font-weight: 800;
-        letter-spacing: -0.02em;
+      }
+      .brand-mark svg {
+        width: 100%;
+        height: 100%;
+        display: block;
       }
       .brand-names {
         display: flex;
@@ -171,14 +185,23 @@ export class FrontDoorApp extends HHElement {
         align-items: center;
         gap: var(--hh-s-8);
       }
-      @media (max-width: 480px) {
+      /* Too narrow for one row (the lockup, the badge, the word and the controls need about
+         1000px): the zones stack and centre, and the badge may wrap under the lockup here. */
+      @media (max-width: 1000px) {
         header {
           grid-template-columns: 1fr;
           justify-items: center;
         }
         .demo-banner-cell {
           justify-self: center;
+          flex-wrap: wrap;
+          justify-content: center;
         }
+        .controls {
+          justify-self: center;
+        }
+      }
+      @media (max-width: 480px) {
         /* The band needs the room more than the house line does; the mark
            and the product name stay, the part that identifies the app. */
         .brand-sub {
@@ -508,6 +531,10 @@ export class FrontDoorApp extends HHElement {
       /* The modules the box does not serve yet, grouped under their own word
          and drawn quieter and smaller than the live tiles: present, honest,
          clearly second. */
+      .tile .approval-note {
+        font-size: 12px;
+        color: var(--hh-text-dim);
+      }
       .coming-next {
         margin: var(--hh-s-32) 0 0;
       }
@@ -588,6 +615,10 @@ export class FrontDoorApp extends HHElement {
   #refusals = new Map<string, string>();
   /** The polite region's sentence. Empty is the resting value. */
   #notice = "";
+  /** The staff client carries the session's bearer token. */
+  readonly #staffClient: ApiClient;
+  /** Count of pending margin approvals for the manager, fetched on session adopt. */
+  #approvalCount = 0;
 
   constructor() {
     super();
@@ -600,10 +631,64 @@ export class FrontDoorApp extends HHElement {
       baseUrl: "",
       headers: async () => ({ "X-Org": DEMO_ORG }),
     });
+    // The feedback widget's client: the mint's own bearer when a role is
+    // signed in (the feedback route is staff guarded), and no credential
+    // before that, so the widget's panel says what happened rather than the
+    // gate. The token is read per request from the store, never held here.
+    this.#feedbackClient = new ApiClient({
+      baseUrl: "",
+      headers: async () => {
+        const headers: Record<string, string> = { "X-Org": DEMO_ORG };
+        const session = this.#store.current();
+        if (session !== null) headers["Authorization"] = `Bearer ${session.token}`;
+        return headers;
+      },
+    });
+    this.#staffClient = new ApiClient({
+      baseUrl: "",
+      headers: async () => ({
+        Authorization: `Bearer ${this.#session !== null ? this.#session.token : ""}`,
+      }),
+    });
   }
+
+  /** The feedback bridge's client (the widget's sender rides it). */
+  readonly #feedbackClient: ApiClient;
+
+  /** The sender the widget calls on Send; the wire and its errors stay here. */
+  #feedbackSender: FeedbackSender = async (request) => {
+    const answer = await staffFeedback.feedbackCreateMultipart(this.#feedbackClient, {
+      type: request.type,
+      message: request.message,
+      screen: request.screen,
+      url: request.url,
+      user_agent: request.userAgent,
+      images: request.images.map((image) => image.blob),
+    });
+    if (answer.ok) {
+      return { ok: true, issueNumber: answer.value.issue_number ?? "" };
+    }
+    return { ok: false, error: answer.error };
+  };
+
+  /** Whether the shared Feedback panel is open, as the widget reports it. */
+  #feedbackOpen = false;
+
+  readonly #onFeedbackToggle = (event: Event): void => {
+    const open = (event as CustomEvent<{ open: boolean }>).detail.open === true;
+    this.#feedbackOpen = open;
+    this.requestUpdate();
+    // Closing the panel hands focus back to the button that opened it.
+    if (!open) {
+      void this.updateComplete.then(() => {
+        this.renderRoot.querySelector<HTMLElement>('[data-testid="feedback-button"]')?.focus();
+      });
+    }
+  };
 
   connectedCallback(): void {
     super.connectedCallback();
+    this.addEventListener("hh-feedback-toggle", this.#onFeedbackToggle);
     this.addEventListener("click", this.#onHostClick);
     // Light is the box's default, the sheet's own attribute contract.
     applyTheme("light");
@@ -614,10 +699,12 @@ export class FrontDoorApp extends HHElement {
     if (restored !== null) {
       this.#session = restored;
       this.#screen = { kind: "home" };
+      void this.#loadApprovals();
     }
   }
 
   disconnectedCallback(): void {
+    this.removeEventListener("hh-feedback-toggle", this.#onFeedbackToggle);
     this.removeEventListener("click", this.#onHostClick);
     super.disconnectedCallback();
   }
@@ -631,6 +718,10 @@ export class FrontDoorApp extends HHElement {
     if (action === "choose") {
       const flow = control.getAttribute("data-flow");
       if (typeof flow === "string" && flow !== "") this.#choose(flow);
+    }
+    if (action === "feedback") {
+      const widget = this.renderRoot.querySelector("hh-feedback");
+      if (widget instanceof HHFeedback) widget.show();
     }
     if (action === "open-module") {
       const href = control.getAttribute("data-href");
@@ -701,6 +792,7 @@ export class FrontDoorApp extends HHElement {
     this.#session = minted;
     this.#screen = { kind: "home" };
     this.#notice = "";
+    void this.#loadApprovals();
     this.requestUpdate();
   }
 
@@ -708,8 +800,29 @@ export class FrontDoorApp extends HHElement {
   #endSession(): void {
     this.#store.clear();
     this.#session = null;
+    this.#approvalCount = 0;
     this.#screen = { kind: "picker" };
     this.#refusals = new Map();
+  }
+
+  /** Fetch pending approval count for the sales manager role. */
+  async #loadApprovals(): Promise<void> {
+    const session = this.#session;
+    if (session === null) return;
+    if (session.roleCode !== "sales_manager") {
+      this.#approvalCount = 0;
+      return;
+    }
+    const count = await countMarginApprovals((cursor) =>
+      staffIdentity.identityListApprovals(this.#staffClient, {
+        status: "PENDING",
+        ...(cursor !== undefined ? { cursor } : {}),
+      }),
+    );
+    // The session changed while the request was out: the answer is for someone else.
+    if (this.#session !== session) return;
+    this.#approvalCount = count ?? 0;
+    this.requestUpdate();
   }
 
   render(): TemplateResult {
@@ -723,7 +836,17 @@ export class FrontDoorApp extends HHElement {
       <div class="stage">
         <p class="notice" role="status" aria-live="polite" aria-atomic="true">${this.#notice}</p>
       </div>
+      <hh-feedback screen="Front door" trigger="external"></hh-feedback>
     `;
+  }
+
+  /** The widget's sender rides the property, never a template binding (the
+   * design system's position gate refuses . bindings in dependents too). */
+  protected override updated(): void {
+    const widget = this.renderRoot.querySelector("hh-feedback");
+    if (widget instanceof HHFeedback && widget.send !== this.#feedbackSender) {
+      widget.send = this.#feedbackSender;
+    }
   }
 
   #header(): TemplateResult {
@@ -733,7 +856,11 @@ export class FrontDoorApp extends HHElement {
       <header>
         <div class="demo-banner-cell">
           <div class="brand" role="img" aria-label="HH Yard, a Hardscape House product">
-            <span class="brand-mark" aria-hidden="true">HH</span>
+            <span class="brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 3000 3000">
+                <path fill="currentColor" d="M644.94 465.17 H1386.06 A29.15 29.15 0 0 1 1415.21 494.32 V1306.38 A84.79 84.79 0 0 0 1500 1391.17 H2355.05 A29.15 29.15 0 0 1 2384.2 1420.32 V2505.68 A29.15 29.15 0 0 1 2355.05 2534.83 H1613.94 A29.15 29.15 0 0 1 1584.79 2505.68 V1940.1 A84.79 84.79 0 0 0 1415.21 1940.1 V2505.68 A29.15 29.15 0 0 1 1386.06 2534.83 H644.94 A29.15 29.15 0 0 1 615.79 2505.68 V494.32 A29.15 29.15 0 0 1 644.94 465.17 Z M1613.94 465.17 H2355.05 A29.15 29.15 0 0 1 2384.2 494.32 V1192.85 A29.15 29.15 0 0 1 2355.05 1222 H1613.94 A29.15 29.15 0 0 1 1584.79 1192.85 V494.32 A29.15 29.15 0 0 1 1613.94 465.17 Z" />
+              </svg>
+            </span>
             <span class="brand-names">
               <span class="brand-product">HH <span class="accent">Yard</span></span>
               <span class="brand-sub">a Hardscape House product</span>
@@ -746,6 +873,9 @@ export class FrontDoorApp extends HHElement {
         </div>
         <p class="who" data-testid="header-word">${session === null ? "Pick a role" : session.roleLabel}</p>
         <div class="controls">
+          <button type="button" class="btn-secondary" data-action="feedback" data-testid="feedback-button" aria-haspopup="dialog" aria-expanded=${this.#feedbackOpen ? "true" : "false"} title="Send feedback about this screen">
+            Feedback
+          </button>
           ${signedIn
             ? html`
                 <button type="button" class="btn-secondary" data-action="switch-role">Switch role</button>
@@ -852,6 +982,10 @@ export class FrontDoorApp extends HHElement {
   }
 
   #tile(tile: ModuleTile): TemplateResult {
+    const approvalNote =
+      tile.name === "Quote Desk" && this.#approvalCount > 0
+        ? html`<span class="approval-note">${this.#approvalCount} approval${this.#approvalCount === 1 ? "" : "s"} waiting</span>`
+        : nothing;
     return html`
       <button
         type="button"
@@ -864,6 +998,7 @@ export class FrontDoorApp extends HHElement {
         <span class="words">
           <span class="module">${tile.name}</span>
           <span class="what">${tileBlurb(tile)}</span>
+          ${approvalNote}
           <span class="cta" aria-hidden="true">Open the ${tile.name}</span>
         </span>
       </button>

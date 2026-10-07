@@ -169,7 +169,7 @@ export class HosPosProductGrid extends LitElement {
     }
     input,
     select {
-      background: var(--hos-deep-earth);
+      background: var(--hos-field);
       color: var(--hos-text);
       border: 1px solid var(--hos-line);
       border-radius: var(--hos-radius-control);
@@ -899,6 +899,7 @@ export class HosPosProductGrid extends LitElement {
               .productId=${h.product_id}
               .hasImage=${h.has_image}
               .alt=${h.name}
+              .category=${h.application ?? ''}
               .size=${44}
             ></hos-product-thumb>
             <div class="hitmain">
@@ -949,6 +950,7 @@ export class HosPosProductGrid extends LitElement {
             .productId=${h.product_id}
             .hasImage=${h.has_image}
             alt=""
+            .category=${h.application ?? ''}
             .size=${30}
           ></hos-product-thumb>
           <div class="name">${h.name}</div>
@@ -1045,7 +1047,7 @@ export class HosPosProductGrid extends LitElement {
             }
           }}
         >
-          <hos-product-thumb .productId=${p.id} .hasImage=${p.has_image ?? false} alt="" .size=${30}></hos-product-thumb>
+          <hos-product-thumb .productId=${p.id} .hasImage=${p.has_image ?? false} alt="" .category=${p.application} .size=${30}></hos-product-thumb>
           <div class="name">${p.name}</div>
           <div class="sku">${p.sku}</div>
           <div class="cat">${p.application || p.color_family || 'Product'}</div>
@@ -1086,7 +1088,7 @@ export class HosPosProductGrid extends LitElement {
             }}
           >
             <div class="hitrow">
-              <hos-product-thumb .productId=${p.id} .hasImage=${p.has_image ?? false} .alt=${p.name} .size=${44}></hos-product-thumb>
+              <hos-product-thumb .productId=${p.id} .hasImage=${p.has_image ?? false} .alt=${p.name} .category=${p.application} .size=${44}></hos-product-thumb>
               <div class="hitmain">
                 <div class="name">${p.name}</div>
                 <div class="sku">${p.sku}</div>

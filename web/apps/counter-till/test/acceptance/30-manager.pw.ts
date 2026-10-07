@@ -1,3 +1,4 @@
+import { openReturns } from "./helpers.js";
 import {
   expect,
   SEEDED,
@@ -176,6 +177,7 @@ test("a return within 250.00 under the manager: refunded, and the drawer drops b
   const before = await expectedCash(page, bearer, drawerId);
   const zPath = `/api/v1/till/sessions/${drawerId}/zreport`;
   const zBefore = await apiPicture(page, bearer, zPath);
+  await openReturns(page);
   await page.getByLabel("Sale number").fill(orderNo);
   await page.getByRole("button", { name: "Find sale" }).click();
   await expect(page.getByTestId("returns-sale")).toContainText(orderNo);
@@ -212,6 +214,7 @@ test("a return above 250.00 as the manager: no refusal, no dialog, recorded as t
   const rung = await ringCash(page, "900.00");
   const orderNo = rung.order_no;
 
+  await openReturns(page);
   await page.getByLabel("Sale number").fill(orderNo);
   await page.getByRole("button", { name: "Find sale" }).click();
   await expect(page.getByTestId("returns-sale")).toContainText(orderNo);
@@ -234,6 +237,7 @@ test("a return above 250.00 as the manager: no refusal, no dialog, recorded as t
 
 test("a Kingston sale: the same wall to the manager", async ({ page }, testInfo) => {
   await signIn(page, "Sales manager");
+  await openReturns(page);
   await page.getByLabel("Sale number").fill(SEEDED.kingstonSale);
   await page.getByRole("button", { name: "Find sale" }).click();
   await expect(page.getByTestId("returns-notice")).toContainText("The lookup was refused");

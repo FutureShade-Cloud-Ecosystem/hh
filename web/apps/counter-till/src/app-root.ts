@@ -27,8 +27,13 @@
 // without it, so no call ever leaves this app unresolved.
 import { html, css, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
+import { productTileUrl } from "@hardscapehouse/design-system/src/assets/product-tiles/index.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
-import { ApiClient } from "@hardscapehouse/api-client";
+import { ApiClient, staffFeedback } from "@hardscapehouse/api-client";
+import {
+  HHFeedback,
+  type FeedbackSender,
+} from "@hardscapehouse/design-system/src/feedback.js";
 import { AuthController, SessionStore, authHeaderProvider } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { clearFrontDoorHandoff, readFrontDoorHandoff } from "./demo-account.js";
@@ -39,6 +44,7 @@ import {
   type BranchRef,
 } from "./till-client.js";
 import { demoBanner, demoBannerStyles } from "./demo-banner.js";
+import { readPanesSwapped, writePanesSwapped } from "./pane-memory.js";
 import { THEME_LABEL, ThemeController, themeControlLabel, themeStatusText } from "./theme.js";
 import { entryStyles, renderEntry, type FlowsState } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { ReturnsFlow } from "./returns/flow.js";
@@ -84,6 +90,9 @@ export class CounterTillApp extends HHElement {
         display: flex;
         align-items: center;
         gap: var(--hh-s-12);
+        /* The bar's controls wrap onto a second line at phone width instead of widening the page. */
+        flex-wrap: wrap;
+        min-width: 0;
       }
       .role-name {
         margin: 0;
@@ -91,6 +100,69 @@ export class CounterTillApp extends HHElement {
       }
       main {
         padding: var(--hh-s-20);
+      }
+      /* THE PANELS VIEW IS A SCREEN: when the terminal's counter layout is
+         the detached panels, its surface gets the window's height below this
+         app's own bar (the surfacebar's 48px plus its 8px margin), so the
+         grid inside fills down to the pinned bottom bars and the page below
+         (the returns desk) flows on past the fold. The stepper layout keeps
+         the natural page height it has always had: the rule is scoped to the
+         terminal's own layout pick, which the terminal reflects as an
+         attribute when it changes. The Quote Desk's workarea is the
+         reference pattern. */
+      main.on-till:has(hos-pos-terminal[data-counter-layout="PANELS"]) .till-screen {
+        /* The window is a column: the bar takes the height it really has (the badge and the
+           wrapped controls move it, so no guessed pixel figure) and the surface takes the rest.
+           What follows the screen (a notice, the returns desk) flows on below the fold. */
+        display: flex;
+        flex-direction: column;
+        height: 100dvh;
+        box-sizing: border-box;
+      }
+      /* The screen is the window, so the main's own foot padding would push the page 20px past it:
+         the Panels screen carries none (the stepper keeps its breathing room under a long page). */
+      main.on-till:has(hos-pos-terminal[data-counter-layout="PANELS"]) {
+        padding-bottom: 0;
+      }
+      .surface[data-hidden="true"] {
+        display: none !important;
+      }
+      /* Returns is its own screen: it takes what the bar leaves and scrolls inside itself. */
+      .till-screen > .returns {
+        flex: 1 1 0;
+        min-height: 0;
+        overflow-y: auto;
+        margin-top: 0;
+        padding-top: var(--hh-s-16);
+      }
+      /* The Returns link wears the bar's button face (an anchor takes none of the button rules). */
+      .nav-link {
+        display: inline-flex;
+        align-items: center;
+        text-decoration: none;
+        font-family: inherit;
+        font-size: 11px;
+        line-height: normal;
+        padding: 7px 12px;
+        border: 1px solid var(--hh-control-line);
+        border-radius: var(--hh-radius-control);
+        color: var(--hh-text-dim);
+        background: transparent;
+      }
+      .nav-link:hover {
+        border-color: var(--hh-accent-text);
+        color: var(--hh-accent-text);
+      }
+      .nav-link:focus-visible {
+        outline: 2px solid var(--hh-focus-ring);
+        outline-offset: 2px;
+      }
+      .till-screen > .surfacebar {
+        flex: none;
+      }
+      main.on-till:has(hos-pos-terminal[data-counter-layout="PANELS"]) .till-screen > .surface {
+        flex: 1 1 0;
+        min-height: 0;
       }
       /* The terminal paints its own full-bleed chrome; the app's padding would
          letterbox it, so the mounted surface sits edge to edge. */
@@ -139,6 +211,56 @@ export class CounterTillApp extends HHElement {
       header .title-row {
         gap: var(--hh-s-12);
         margin-left: auto;
+      }
+      /* The till's header badge: same mark and size as the front door's lockup,
+         at the left edge before the Demo pill. Gold is a fill, never an ink. */
+      header .brand,
+      .surfacebar .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+      }
+      header .brand-mark,
+      .surfacebar .brand-mark {
+        width: 30px;
+        height: 30px;
+        flex: none;
+        background: var(--hh-accent);
+        color: var(--hh-accent-ink);
+      }
+      header .brand-mark svg,
+      .surfacebar .brand-mark svg {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+      header .brand-names,
+      .surfacebar .brand-names {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        min-width: 0;
+      }
+      header .brand-product,
+      .surfacebar .brand-product {
+        font-size: 16px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        line-height: 1.05;
+      }
+      header .brand-product .accent,
+      .surfacebar .brand-product .accent {
+        color: var(--hh-accent-text);
+      }
+      header .brand-sub,
+      .surfacebar .brand-sub {
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.055em;
+        line-height: 1.2;
+        color: var(--hh-text-dim);
+        white-space: nowrap;
       }
       header .signed-in {
         margin: 0;
@@ -227,6 +349,16 @@ export class CounterTillApp extends HHElement {
   readonly #theme = new ThemeController(() => this.requestUpdate());
   /** What a screen reader hears after a Theme press: focus stays on the button, so the new name is not re-read. */
   #themeStatus = "";
+  /** Row 976: the till's layout (the terminal reports it) and whether the two panes are swapped. */
+  #counterLayout = "";
+  #panesSwapped = readPanesSwapped();
+  /** Round 7: this window is a pop-out (opened with ?popout=<flow>): it offers no Pop out of its own. */
+  readonly #isPopout = new URLSearchParams(window.location.search).get("popout") !== null;
+  /** The layout the opener was in, carried on the pop-out's address (a layout word, never a credential). */
+  readonly #layoutHint = ((): string => {
+    const hint = new URLSearchParams(window.location.search).get("layout");
+    return hint === "PANELS" || hint === "STEPPER" ? hint : "";
+  })();
   #flowsState: FlowsState = { kind: "loading" };
   /** The one flows read this element makes; the pop-out's tap waits for it. */
   #flowsLoaded: Promise<void> = Promise.resolve();
@@ -255,6 +387,20 @@ export class CounterTillApp extends HHElement {
    * multi-card layout, the terminal's own choice to switch).
    */
   #surface: "entry" | "terminal" = "entry";
+  /**
+   * Row 955: which surface of the till is up. The sale is the till; Returns is its own surface at
+   * `#/returns`, reached by the Returns link in the bar (a plain anchor: no script writes the
+   * address). The sale stays mounted while Returns is up, so a ticket in progress is never lost.
+   */
+  #route: "sale" | "returns" = "sale";
+  readonly #onHashChange = (): void => {
+    this.#route = this.#readRoute();
+    this.requestUpdate();
+  };
+
+  #readRoute(): "sale" | "returns" {
+    return new URL(window.location.href).hash.startsWith("#/returns") ? "returns" : "sale";
+  }
   /** A refusal in words for the chrome while the terminal is mounted (the pop-out's, say). */
   #chromeMessage: string | null = null;
 
@@ -270,6 +416,22 @@ export class CounterTillApp extends HHElement {
       activeOrg: () => DEMO_ORG,
     });
     const client = new ApiClient({ baseUrl: "", fetch: capture.fetch, headers: staffHeaders });
+    // The feedback widget's sender rides the staff client: the feedback
+    // route is staff guarded and the till's own custody holds the bearer.
+    this.#feedbackSender = async (request) => {
+      const answer = await staffFeedback.feedbackCreateMultipart(client, {
+        type: request.type,
+        message: request.message,
+        screen: request.screen,
+        url: request.url,
+        user_agent: request.userAgent,
+        images: request.images.map((image) => image.blob),
+      });
+      if (answer.ok) {
+        return { ok: true, issueNumber: answer.value.issue_number ?? "" };
+      }
+      return { ok: false, error: answer.error };
+    };
     // The demo adapter's own client carries no staff bearer: the demo routes
     // are pre-auth by design (the tap-a-role sign-in), and the served gate
     // holds the pages and the demo mint behind basic authentication, where a
@@ -331,17 +493,26 @@ export class CounterTillApp extends HHElement {
       houseDay: () => houseDayInZone(HOUSE_ZONE),
       user: () => this.#clerkIdentity,
       token: () => this.#sessions.current?.token ?? "",
+      // The drawn category tiles ship in every build (decision log row 1057): a product with no
+      // picture shows its category's tile for every dealer, and keeps the stone-stack glyph only
+      // where the tiles do not know the category (test/product-tiles-build.test.mjs).
+      productTile: productTileUrl,
     });
   }
 
   connectedCallback(): void {
     super.connectedCallback();
+    this.#route = this.#readRoute();
+    window.addEventListener("hashchange", this.#onHashChange);
     // The kits' wiring rule, carried for this app's own templates: listen on
     // the HOST and read the control off composedPath(), never @click in a
     // template and never event.target.closest, because the shadow boundary
     // retargets the target to this element (the design system's README holds
     // both halves). Click is composed, so the host hears it.
     this.addEventListener("click", this.#onHostClick);
+    // The terminal reports which layout it is in (composed, so the host hears it): the design
+    // system's position gate allows no @ binding here, so the listener lives in code.
+    this.addEventListener("pos-counter-layout", this.#onCounterLayout as EventListener);
     // The returns desk's fields ride the same host delegation: one input
     // listener on the host, the control read off composedPath() by its
     // data-field name, so a re-render strands no listener. The inputs are
@@ -380,10 +551,11 @@ export class CounterTillApp extends HHElement {
    * The front door's handoff (HH-DEMO-1 D2 polish, item 6): the front door
    * mints the demo session and holds it for the box under its own session
    * storage key; when this app boots from a module tile's navigation,
-   * the record is read, handed to AuthController.adopt (custody takes the
-   * token into private memory and rewrites the display mirror itself), and
-   * the key is dropped in the same step, so a later visit to this app never
-   * re-adopts a spent handoff. The clerk facts the chrome and the receipt
+   * the record is read and handed to AuthController.adopt (custody takes the
+   * token into private memory and rewrites the display mirror itself). The
+   * key stays in the tab until Sign out or Switch role (decision log row
+   * 1040), so a reload, a second visit or a visit after the Quote Desk keeps
+   * the session; a record that fails a read is dropped. The clerk facts the chrome and the receipt
    * read ride the same record (the front door validated the mint already;
    * this read validates the record again before custody sees any of it). An
    * absent or unusable record is the ordinary direct visit; the entry page
@@ -395,16 +567,26 @@ export class CounterTillApp extends HHElement {
   async #adoptFromFrontDoor(): Promise<void> {
     if (this.#sessions.current !== null) return;
     const read = readFrontDoorHandoff();
-    if (read.kind === "absent") return;
-    clearFrontDoorHandoff();
-    if (read.kind === "unusable") return;
+    if (read.kind === "absent") {
+      this.#toFrontDoor();
+      return;
+    }
+    if (read.kind === "unusable") {
+      clearFrontDoorHandoff();
+      this.#toFrontDoor();
+      return;
+    }
     const handed = read.session;
     const adopted = this.#controller.adopt({
       token: handed.token,
       tokenExpiresAtMs: handed.tokenExpiresAtMs,
       user: handed.user,
     });
-    if (!adopted) return;
+    if (!adopted) {
+      clearFrontDoorHandoff();
+      this.#toFrontDoor();
+      return;
+    }
     this.#clerkUserId = handed.user.userId;
     this.#clerkRoleCode = handed.roleCode;
     this.#clerkIdentity = {
@@ -419,12 +601,23 @@ export class CounterTillApp extends HHElement {
     this.#till = { label: handed.roleLabel };
     this.#activeFlow = handed.flow;
     this.requestUpdate();
-    await this.#initTill();
+    await this.#initTill(true);
+  }
+
+  /**
+   * A demo build that finds no session sends the person to the front door to pick a role (decision
+   * log row 1040). Only where the till is served under its own prefix (the box: BASE_URL is /till/):
+   * at the origin root the till's own entry cards are the way in, and the front door is not there.
+   */
+  #toFrontDoor(): void {
+    if (import.meta.env.BASE_URL !== "/") window.location.assign("/");
   }
 
   disconnectedCallback(): void {
     this.removeEventListener("click", this.#onHostClick);
+    this.removeEventListener("pos-counter-layout", this.#onCounterLayout as EventListener);
     this.removeEventListener("input", this.#onHostInput);
+    window.removeEventListener("hashchange", this.#onHashChange);
     this.#theme.stop();
     super.disconnectedCallback();
   }
@@ -452,6 +645,14 @@ export class CounterTillApp extends HHElement {
     if (field === "reason-code") this.#returns.setReasonCode(control.value);
   };
 
+  readonly #onCounterLayout = (event: CustomEvent<{ layout: string }>): void => {
+    this.#counterLayout = event.detail.layout;
+    this.requestUpdate();
+  };
+
+  /** The feedback widget's sender; built once beside the staff client. */
+  #feedbackSender: FeedbackSender = async () => ({ ok: false, error: "not ready" });
+
   readonly #onHostClick = (event: MouseEvent): void => {
     const control = event
       .composedPath()
@@ -461,9 +662,18 @@ export class CounterTillApp extends HHElement {
     if (control.getAttribute("data-action") === "choose" && typeof flow === "string" && flow !== "") {
       void this.#chooseFlow(flow);
     }
+    if (control.getAttribute("data-action") === "swap-panes") {
+      this.#panesSwapped = !this.#panesSwapped;
+      writePanesSwapped(this.#panesSwapped);
+      this.requestUpdate();
+    }
     if (control.getAttribute("data-action") === "theme") {
       this.#theme.cycle();
       this.#themeStatus = themeStatusText(this.#theme.choice);
+    }
+    if (control.getAttribute("data-action") === "feedback") {
+      const widget = this.renderRoot.querySelector("hh-feedback");
+      if (widget instanceof HHFeedback) widget.show();
     }
     if (control.getAttribute("data-action") === "sign-out") {
       void this.#signOut();
@@ -505,11 +715,20 @@ export class CounterTillApp extends HHElement {
    * silent no-click.
    */
   #popOut(flow: string): void {
-    const popped = window.open(`/?popout=${encodeURIComponent(flow)}`, "ct-popout");
+    // The opener's layout rides along so the window keeps the layout the person was using; the
+    // server's workspace row may not have it yet (a save still on its way, a second mint).
+    const layout = this.#counterLayout === "PANELS" || this.#counterLayout === "STEPPER" ? `&layout=${this.#counterLayout}` : "";
+    const popped = window.open(
+      `${import.meta.env.BASE_URL}?popout=${encodeURIComponent(flow)}${layout}`,
+      "ct-popout",
+      `popup=yes,width=${window.outerWidth},height=${window.outerHeight}`,
+    );
     if (popped === null) {
       this.#chromeMessage =
         "The browser blocked the second window: allow pop-ups for this till and press Pop out again.";
       this.requestUpdate();
+    } else {
+      popped.focus();
     }
   }
 
@@ -594,6 +813,8 @@ export class CounterTillApp extends HHElement {
     this.#busy = true;
     this.requestUpdate();
     await this.#controller.signOut();
+    // The front door's key was kept in the tab for the session (row 1040); it goes with the session.
+    clearFrontDoorHandoff();
     this.#busy = false;
     this.#till = null;
     this.#activeFlow = null;
@@ -609,6 +830,7 @@ export class CounterTillApp extends HHElement {
     // the next person's boxes and branch facts are earned by their own login.
     clearSessionState();
     this.requestUpdate();
+    if (import.meta.env.MODE === "demo") this.#toFrontDoor();
   }
 
   /**
@@ -620,7 +842,7 @@ export class CounterTillApp extends HHElement {
    * wall that keeps the terminal down: without the branch nothing on the
    * surface can fence itself, so the refusal says so and the cards come back.
    */
-  async #initTill(): Promise<void> {
+  async #initTill(fromHandoff = false): Promise<void> {
     const branch = await this.#tillClient.resolveBranch();
     if (!branch.ok) {
       this.#message = `The till did not start: ${branch.error}`;
@@ -631,6 +853,14 @@ export class CounterTillApp extends HHElement {
       this.#clerkIdentity = null;
       await this.#controller.signOut();
       this.requestUpdate();
+      // A session the server refuses (ended or revoked) must not be re-adopted by every load: the
+      // key goes, and the person picks a role again at the front door (no loop: the front door
+      // shows the picker once its key is gone). Only the handoff's own adopt does this; a session
+      // minted by the cards route has no key to drop.
+      if (fromHandoff) {
+        clearFrontDoorHandoff();
+        this.#toFrontDoor();
+      }
       return;
     }
     this.#branch = branch.value;
@@ -640,6 +870,62 @@ export class CounterTillApp extends HHElement {
     setBranches([{ id: branch.value.id, name: branch.value.name }]);
     this.#surface = "terminal";
     this.requestUpdate();
+  }
+
+  /** The brand lockup for the till header: the same mark and size as the front door. */
+  #brandLockup(): TemplateResult {
+    return html`
+      <div class="brand" data-testid="till-header-badge">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 3000 3000">
+            <path
+              fill="currentColor"
+              d="M644.94 465.17 H1386.06 A29.15 29.15 0 0 1 1415.21 494.32 V1306.38 A84.79 84.79 0 0 0 1500 1391.17 H2355.05 A29.15 29.15 0 0 1 2384.2 1420.32 V2505.68 A29.15 29.15 0 0 1 2355.05 2534.83 H1613.94 A29.15 29.15 0 0 1 1584.79 2505.68 V1940.1 A84.79 84.79 0 0 0 1415.21 1940.1 V2505.68 A29.15 29.15 0 0 1 1386.06 2534.83 H644.94 A29.15 29.15 0 0 1 615.79 2505.68 V494.32 A29.15 29.15 0 0 1 644.94 465.17 Z M1613.94 465.17 H2355.05 A29.15 29.15 0 0 1 2384.2 494.32 V1192.85 A29.15 29.15 0 0 1 2355.05 1222 H1613.94 A29.15 29.15 0 0 1 1584.79 1192.85 V494.32 A29.15 29.15 0 0 1 1613.94 465.17 Z"
+            />
+          </svg>
+        </span>
+        <span class="brand-names">
+          <span class="brand-product">HH <span class="accent">Yard</span></span>
+          <span class="brand-sub">Counter Till</span>
+        </span>
+      </div>
+    `;
+  }
+
+  /** Row 976: the Swap panes icon button, shown only while the till is in its two-pane view. */
+  #swapControl(): TemplateResult | typeof nothing {
+    if (this.#counterLayout !== "PANELS") return nothing;
+    return html`
+      <button
+        type="button"
+        class="btn-secondary icon-btn"
+        data-action="swap-panes"
+        data-testid="swap-panes"
+        aria-label="Swap panes"
+        aria-pressed=${this.#panesSwapped ? "true" : "false"}
+        title="Swap panes"
+      >
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 8h15M15 4l4 4-4 4" />
+          <path d="M20 16H5M9 12l-4 4 4 4" />
+        </svg>
+      </button>
+    `;
+  }
+
+  /** The Feedback control of the bar: opens the shared widget's panel. */
+  #feedbackControl(): TemplateResult {
+    return html`
+      <button
+        type="button"
+        class="btn-secondary"
+        data-action="feedback"
+        data-testid="feedback-button"
+        title="Send feedback about this screen"
+      >
+        Feedback
+      </button>
+    `;
   }
 
   /** The Theme control of the account area: one button, its value beside the word. */
@@ -672,15 +958,17 @@ export class CounterTillApp extends HHElement {
         ? nothing
         : html`
             <header>
+              ${this.#brandLockup()}
               ${demoPresent ? demoBanner() : nothing}
               <div class="title-row">
                 <h1>Counter Till</h1>
                 ${this.#till === null
-                  ? html`<p class="signed-in">${this.#themeControl()}</p>`
+                  ? html`<p class="signed-in">${this.#themeControl()}${this.#feedbackControl()}</p>`
                   : html`
                       <p class="signed-in">
                         <span class="role-name" data-testid="signed-in-role">${this.#signedInRoleLabel()}</span>
                         ${this.#themeControl()}
+                        ${this.#feedbackControl()}
                         <button type="button" class="btn-secondary" data-action="sign-out" ?disabled=${this.#busy}>
                           Sign out
                         </button>
@@ -693,34 +981,62 @@ export class CounterTillApp extends HHElement {
         ${this.#surface === "terminal"
           ? html`
               <h2 class="visually-hidden">Till</h2>
+              <div class="till-screen">
               <div class="surfacebar">
+                ${this.#brandLockup()}
                 ${demoPresent ? demoBanner() : nothing}
                 <p class="signed-in">
                   <span class="role-name" data-testid="signed-in-role">${this.#signedInRoleLabel()}</span>
+                  ${this.#route === "returns"
+                    ? html`<a class="btn-secondary nav-link" href="#/" data-testid="till-sale-entry">Back to the sale</a>`
+                    : html`<a class="btn-secondary nav-link" href="#/returns" data-testid="till-returns-entry">Returns</a>`}
+                  ${this.#route === "sale" ? this.#swapControl() : nothing}
                   ${this.#themeControl()}
-                  <button
-                    type="button"
-                    class="btn-secondary"
-                    data-action="pop-out"
-                    data-flow=${this.#activeFlow ?? nothing}
-                    title="Open the till on a second window"
-                  >
-                    Pop out
-                  </button>
+                  ${this.#feedbackControl()}
+                  ${this.#isPopout
+                    ? nothing
+                    : html`<button
+                        type="button"
+                        class="btn-secondary"
+                        data-action="pop-out"
+                        data-flow=${this.#activeFlow ?? nothing}
+                        title="Open the till on a second window"
+                      >
+                        Pop out
+                      </button>`}
                   <button type="button" class="btn-secondary" data-action="sign-out" ?disabled=${this.#busy}>
                     Sign out
                   </button>
                 </p>
               </div>
-              <div class="surface">
-                <hos-pos-terminal></hos-pos-terminal>
+              <div class="surface" data-hidden="${this.#route === "returns" ? "true" : "false"}">
+                <hos-pos-terminal
+                  data-paused="${this.#route === "returns" ? "true" : "false"}"
+                  data-panes-swapped="${this.#panesSwapped ? "true" : "false"}"
+                  data-layout-hint="${this.#isPopout ? this.#layoutHint : ""}"
+                ></hos-pos-terminal>
+              </div>
+              ${this.#route === "returns" ? renderReturns(this.#returns) : nothing}
               </div>
               ${this.#chromeMessage === null ? nothing : html`<p class="notice" role="status">${this.#chromeMessage}</p>`}
-              ${renderReturns(this.#returns)}
             `
           : renderEntry({ flows: this.#flowsState, busy: this.#busy, message: this.#message })}
       </main>
+      <!-- The feedback widget: the shared panel, opened by the bar's Feedback
+           button (trigger external: no floating pill, so nothing of the
+           till's own surface is ever under it). The lift attribute keeps the
+           open panel above the pinned hotkey legend. -->
+      <hh-feedback screen="Counter Till" trigger="external" lift></hh-feedback>
     `;
+  }
+
+  /** The widget's sender rides the property, never a template binding (the
+   * design system's position gate refuses . bindings in dependents too). */
+  protected override updated(): void {
+    const widget = this.renderRoot.querySelector("hh-feedback");
+    if (widget instanceof HHFeedback && widget.send !== this.#feedbackSender) {
+      widget.send = this.#feedbackSender;
+    }
   }
 }
 

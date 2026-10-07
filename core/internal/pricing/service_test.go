@@ -899,7 +899,7 @@ func TestResolve_BreakWithoutAnAnchor_DoesNotCompete(t *testing.T) {
 		t.Fatalf("a zero anchor is no anchor: the override 5000 holds, got %s/%d", bd0.Source, bd0.FinalCents)
 	}
 	// A SURCHARGE_ABS tier can never win at all, with or without an anchor: the surcharge amount
-	// alone (CA$3.00) is never a price, and the source never claims the break won.
+	// alone ($3.00) is never a price, and the source never claims the break won.
 	st := &fakeStore{override: override, breaks: []QuantityBreak{{
 		HeaderID: "h2", ProductID: "blu60", Name: "Partial-skid surcharge", ThresholdUOM: "SF", FromQty: 0,
 		ValueType: BreakSurchargeAbs, SurchargeCents: p64(300), PriceUOM: "SF",

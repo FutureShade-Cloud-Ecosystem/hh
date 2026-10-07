@@ -236,9 +236,13 @@ export interface StoredPanels {
  *
  * Versioned in the name rather than inside the value: if the shape of a stored layout ever has to
  * change, the old key is simply not read, and a person gets the default tiling back instead of a
- * half-understood box. That is cheaper than a migration for something worth this little.
+ * half-understood box. That is cheaper than a migration for something worth this little. The v2
+ * bump is exactly that case once over: the grid's frame changed class (a capped centred measure
+ * with a guessed fixed height became the window-filling screen the fill work ships), and pixel
+ * boxes arranged against the old frame would sit clamped in a corner of the new one rather than
+ * filling it; a stored v1 layout is dropped and the fresh default tiling takes its place.
  */
-export const PANELS_KEY = 'hos-pos-panels-v1';
+export const PANELS_KEY = 'hos-pos-panels-v2';
 
 /** readPanels: whatever this device remembers, or null.
  * HH note: the reference read the browser's local store here and caught everything; the seam

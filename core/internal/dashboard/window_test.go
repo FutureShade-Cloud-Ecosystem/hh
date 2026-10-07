@@ -191,7 +191,7 @@ func TestHouseZone_EveryCopyInTheBackendNamesTheSameZone(t *testing.T) {
 	// dashboard/window.go and pos/sale_lookup.go. Raise it when a seventh module takes its own copy.
 	// NEVER lower it to make a failure go away, a copy that disappeared either moved (say so here)
 	// or was deleted, and a deleted copy means a module went back to reading the server's clock.
-	const zoneFloor = 6
+	const zoneFloor = 7
 
 	type site struct {
 		file, konst string

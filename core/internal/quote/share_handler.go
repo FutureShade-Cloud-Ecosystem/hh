@@ -23,6 +23,8 @@ func (h *StaffHandler) RegisterShareRoutes(r httpx.Registrar, g *guards.Guards) 
 	}
 	r.Handle("POST /api/v1/quotes/{id}/share-links", g.RequireStaff(h.staff(h.mintShareLink)))
 	r.Handle("GET /api/v1/quotes/{id}/share-links", g.RequireStaff(h.staff(h.listShareLinks)))
+	// The preview of the customer's page: a pure read, so it sits beside the quote reads and never mints.
+	r.Handle("GET /api/v1/quotes/{id}/customer-view", g.RequireStaff(h.staff(h.customerViewPreview)))
 	r.Handle("DELETE /api/v1/quotes/{id}/share-links/{linkId}", g.RequireStaff(h.staff(h.revokeShareLink)))
 }
 
@@ -75,6 +77,15 @@ func (h *StaffHandler) revokeShareLink(w http.ResponseWriter, r *http.Request, _
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (h *StaffHandler) customerViewPreview(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+	view, err := h.svc.CustomerViewPreview(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.writeShareErr(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, view)
+}
+
 func (h *StaffHandler) publicQuote(w http.ResponseWriter, r *http.Request) {
 	view, err := h.svc.PublicQuoteByToken(r.Context(), r.PathValue("token"))
 	if err != nil {
@@ -88,12 +99,14 @@ func (h *StaffHandler) publicAccept(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		TypedName string `json:"typed_name"`
 		Accepted  bool   `json:"accepted"`
+		// QuantitiesConfirmed is the customer's separate confirmation of the quantities; absent reads false.
+		QuantitiesConfirmed bool `json:"quantities_confirmed"`
 	}
 	if err := decodeBody(w, r, &body); err != nil {
 		h.writeShareErr(w, err)
 		return
 	}
-	res, err := h.svc.AcceptByTokenKeyed(r.Context(), r.PathValue("token"), body.TypedName, body.Accepted, r.Header.Get("Idempotency-Key"))
+	res, err := h.svc.AcceptByTokenKeyed(r.Context(), r.PathValue("token"), body.TypedName, body.Accepted, body.QuantitiesConfirmed, r.Header.Get("Idempotency-Key"))
 	if err != nil {
 		h.writeShareErr(w, err)
 		return
@@ -114,6 +127,8 @@ func (h *StaffHandler) writeShareErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrLinkNotFound):
 		// A token that never existed. 404 with no detail: an unauthenticated caller learns nothing.
 		httpx.Error(w, http.StatusNotFound, "not found")
+	case errors.Is(err, ErrQuantitiesUnconfirmed):
+		httpx.Error(w, http.StatusUnprocessableEntity, err.Error())
 	case errors.Is(err, ErrNotAcceptable):
 		httpx.Error(w, http.StatusConflict, err.Error())
 	case errors.Is(err, ErrIdempotencyKeyReused):

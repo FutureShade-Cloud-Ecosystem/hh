@@ -1,10 +1,11 @@
 // The eleven screens of the plan's section 2 as the clerk: the way in, the
 // drawer, a sale, a contractor's pavers, an account the credit gate refuses,
 // tender and receipt, parked sales, a return within 250.00, a return above it
-// with the manager walking over, a Kingston sale refused, and beyond the till.
+// that commits with no approval at the demo dealer, a Kingston sale refused, and beyond the till.
 // Driven against the demo image's own app and core; every figure the screen
 // shows is held against what the core answers through its own reads, and a
 // screenshot names every screen.
+import { openReturns } from "./helpers.js";
 import type { Page } from "@playwright/test";
 import {
   expect,
@@ -22,7 +23,6 @@ import {
   openParked,
   openStep,
   openingFloat,
-  paceMint,
   pickCustomer,
   returnLineInputs,
   ring,
@@ -171,24 +171,33 @@ test("tender and receipt: cash with change due, held against the core's own read
 }, testInfo) => {
   await signIn(page, "Sales");
   await searchAndAdd(page, "DEMO-EDGE-ALU", "Aluminum Edging 8ft (demo)");
-  // The pre-ring payment step, held against the core's own prices: the card's
-  // shape is exactly the Subtotal row and the row naming the ring (row 661),
-  // and the core's tax and total figures stand nowhere on it once this sale's
-  // own answer is read below. This is the proof behind the testers' page's
-  // sentence that until a sale is rung the till shows the lines' prices and
-  // their subtotal.
+  // The pre-ring payment step, held against the core's own prices (rows 985
+  // and 661, round 7): the card's shape is the Subtotal row, then the Tax and
+  // Total rows the server's sale-preview states (three rows, never the
+  // browser's own arithmetic, never the old "added at the ring" words), and
+  // below, once the sale is rung and read, the core's own tax and total for
+  // this sale must equal what the card showed before the ring. This is the
+  // proof behind the testers' page's sentence that before the ring the till
+  // shows the lines' prices, their subtotal, and the server's tax and total.
   await openStep(page, "payment");
   const preRingCard = page.getByTestId("pos-totals-card");
-  await expect(preRingCard.locator(".trow")).toHaveCount(2);
+  await expect(preRingCard.getByTestId("pos-preview-total")).toBeVisible();
+  await expect(preRingCard.locator(".trow")).toHaveCount(3);
   await expect(preRingCard).toContainText("Subtotal");
-  await expect(preRingCard).toContainText("added at the ring");
+  await expect(preRingCard.getByTestId("pos-preview-tax")).toContainText("Tax");
+  await expect(preRingCard.getByTestId("pos-preview-total")).toContainText("Total");
+  await expect(preRingCard.getByTestId("pos-preview-pending")).toHaveCount(0);
+  await expect(preRingCard.getByTestId("pos-ring-words")).toHaveCount(0);
+  await expect(preRingCard).not.toContainText("added at the ring");
   await expect(preRingCard).not.toContainText("(est.");
+  const previewTax = (await preRingCard.getByTestId("pos-preview-tax").innerText()).replace(/^Tax\s*/, "").trim();
+  const previewTotal = (await preRingCard.getByTestId("pos-preview-total").innerText()).replace(/^Total\s*/, "").trim();
   // The cash tile words the ring instead of computing a change figure: the
   // proof behind the testers' page's sentence that before the ring the till
   // states no change figure, even with an amount typed.
   await page.getByLabel(/Cash tendered in dollars/).fill("60.00");
   await expect(page.getByTestId("cash-change-preview")).toContainText("the ring's own answer");
-  await expect(page.getByTestId("cash-change-preview")).not.toContainText("CA$");
+  await expect(page.getByTestId("cash-change-preview")).not.toContainText("$");
   const rung = await ringCash(page, "60.00");
   const sold = page.getByTestId("sold-panel");
   const bearer = await mint(page, "sales");
@@ -198,6 +207,9 @@ test("tender and receipt: cash with change due, held against the core's own read
   await expect(sold).toContainText(String(sale.order_no));
   await expect(sold).toContainText(String(sale.invoice_no));
   await expect(sold).toContainText(cad(total));
+  // What the card showed before the ring is the core's own figure for this sale.
+  expect(previewTax).toBe(cad(sale.tax_cents as number));
+  expect(previewTotal).toBe(cad(total));
   await expect(sold.getByTestId("sold-change-due")).toContainText(dollars(6000));
   await expect(sold.getByTestId("sold-change-due")).toContainText(dollars(6000 - total));
   // The confirmation shows the total; the subtotal and the tax are the
@@ -261,11 +273,12 @@ test("tender and receipt: cash with change due, held against the core's own read
   await reprinted.close();
   // A cash confirmation carries no card notice.
   await expect(sold.getByTestId("sold-simulated-notice")).toHaveCount(0);
-  // The ring's advance closed the payment step; reopened, the pre-ring card
-  // is the same template, so the core's own figures judge it where it lives:
-  // the browser's one assembly (the subtotal) equals the core's, and the
-  // core's tax and total for THIS sale stand nowhere on the card (the
-  // positive pins before the ring prove this locator sees what it judges).
+  // The ring's advance closed the payment step; reopened, the card is the
+  // same template with the preview rows dropped once the ring is done, so the
+  // core's own figures judge it where it lives: the browser's one assembly
+  // (the subtotal) equals the core's, and the core's tax and total for THIS
+  // sale stand nowhere on the card (the pre-ring pins above prove this
+  // locator sees what it judges).
   await openStep(page, "payment");
   await expect(preRingCard).toContainText(cad(sale.subtotal_cents as number));
   await expect(preRingCard).not.toContainText(cad(sale.tax_cents as number));
@@ -379,6 +392,7 @@ test("a return within 250.00: refunded in cash, and the drawer's expected cash d
   const before = await expectedCash(page, bearer, drawerId);
   const zPath = `/api/v1/till/sessions/${drawerId}/zreport`;
   const zBefore = await apiPicture(page, bearer, zPath);
+  await openReturns(page);
   await page.getByLabel("Sale number").fill(orderNo);
   await page.getByRole("button", { name: "Find sale" }).click();
   await expect(page.getByTestId("returns-sale")).toContainText(orderNo);
@@ -419,11 +433,14 @@ test("a return within 250.00: refunded in cash, and the drawer's expected cash d
   await shotParts(page, "sales-08-return-within", testInfo, [zBefore, receiptPicture, zAfter]);
 });
 
-test("a return above 250.00: refused with the amount and approvers named, completed by the manager's card at the clerk's till", async ({
+test("a return above 250.00 at the demo dealer: no approval threshold, so the clerk's own refund commits with no refusal and no dialog", async ({
   page,
 }, testInfo) => {
+  // The demo dealer's configuration turns the refund approval threshold off
+  // (refund_approval_limit_enabled false, decision log rows 1047 and 1073): a
+  // refund of any size commits as the clerk, with nobody approving it.
   await signIn(page, "Sales");
-  // A sale whose refund crosses the dealer's approval amount: sixty wall blocks.
+  // A sale whose refund would have crossed the old 250.00 amount: sixty wall blocks.
   await searchAndAdd(page, "DEMO-WALL-BLOCK", "Retaining Wall Block 8x18 (demo)");
   await setQuantity(page, "Retaining Wall Block 8x18 (demo)", "60");
   await expect(lineRow(page, "Retaining Wall Block 8x18 (demo)").locator(".ltot")).toHaveText(cad(75000));
@@ -431,50 +448,35 @@ test("a return above 250.00: refused with the amount and approvers named, comple
   const rung = await ringCash(page, "900.00");
   const orderNo = rung.order_no;
 
+  await openReturns(page);
   await page.getByLabel("Sale number").fill(orderNo);
   await page.getByRole("button", { name: "Find sale" }).click();
   await expect(page.getByTestId("returns-sale")).toContainText(orderNo);
   await returnLineInputs(page).first().fill("60");
   await page.getByRole("button", { name: "Cash", exact: true }).click();
+  const bearer0 = await mint(page, "sales");
   const payoutsOf = async (): Promise<number> => {
     const drawer = await openDrawer(page, bearer0);
     const read = await staffGet(page, bearer0, `/api/v1/till/sessions/${drawer}`);
     const rows = read.body.movements as Array<{ movement_type: string; amount_cents: number }>;
     return rows.filter((m) => m.movement_type === "PAID_OUT" && m.amount_cents === 84750).length;
   };
-  const bearer0 = await mint(page, "sales");
   const payoutsBefore = await payoutsOf();
   await page.getByRole("button", { name: "Refund cash" }).click();
-
-  const refusal = page.getByTestId("refund-refusal");
-  await expect(refusal).toContainText("$250.00");
-  await expect(refusal).toContainText("Sales manager");
-  await expect(refusal).toContainText("Branch manager");
-  await expect(page.getByRole("dialog")).toHaveCount(0);
-  await shot(page, "sales-09-refused", testInfo);
-
-  // The manager walks over and taps their own card at the clerk's till.
-  await refusal.getByRole("button", { name: "Manager approval" }).click();
-  const dialog = page.getByRole("dialog", { name: "Manager approval" });
-  await expect(dialog).toBeVisible();
-  await expect(dialog).toContainText("the till stays the clerk's");
-  await shot(page, "sales-09-dialog", testInfo);
-  // The approver's card mints the manager credential: the same paced tap a
-  // person gives it.
-  await paceMint(page);
-  await dialog.getByRole("button", { name: "Sales manager" }).click();
 
   const refund = page.getByTestId("refund-receipt");
   await expect(refund).toBeVisible();
   await expect(refund).toContainText("$847.50");
-  await expect(refund).toContainText("Approved by Sales manager (demo).");
   await expect(refund).toContainText("Rung by Sales (demo).");
+  // No refusal, no dialog and no approver line at any point of the path.
+  await expect(refund).not.toContainText("Approved by");
+  await expect(page.getByTestId("refund-refusal")).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   // The till is still the clerk's.
   await expect(page.getByTestId("signed-in-role")).toHaveText("Sales");
-  await expect(page.getByRole("dialog")).toHaveCount(0);
-  // The approved refund went through once: the core holds exactly one return
-  // for the sale (its line fully returned) and exactly one drawer movement
-  // paying it out of the shared drawer, named for the return.
+  // The refund went through once, on the first send: the core holds exactly
+  // one return for the sale (its line fully returned) and exactly one drawer
+  // movement paying it out of the shared drawer.
   const bearer2 = await mint(page, "sales");
   const lookupPath = `/api/v1/pos/returns/lookup?order_no=${encodeURIComponent(orderNo)}`;
   const after = await staffGet(page, bearer2, lookupPath);
@@ -492,20 +494,19 @@ test("a return above 250.00: refused with the amount and approvers named, comple
     reference: string;
   }>;
   const payouts = movements.filter((m) => m.movement_type === "PAID_OUT" && m.amount_cents === 84750);
-  // The refused attempt moved nothing and the approved one moved once: the
-  // shared drawer gained exactly one payout of the refund.
-  expect(payouts.length - payoutsBefore, "exactly one drawer movement carries the approved refund").toBe(1);
+  expect(payouts.length - payoutsBefore, "exactly one drawer movement carries the refund").toBe(1);
   // The picture holds the three places the claim lives: the receipt naming
-  // both people, the sale's lines read back with the single return, and the
-  // drawer's own record with the single payout.
+  // the clerk alone, the sale's lines read back with the single return, and
+  // the drawer's own record with the single payout.
   const receiptPicture = await page.getByTestId("refund-receipt").screenshot();
   const lookupPicture = await apiPicture(page, bearer2, lookupPath);
   const detailPicture = await apiPicture(page, bearer2, detailPath);
-  await shotParts(page, "sales-09-approved", testInfo, [receiptPicture, lookupPicture, detailPicture]);
+  await shotParts(page, "sales-09-committed", testInfo, [receiptPicture, lookupPicture, detailPicture]);
 });
 
 test("a Kingston sale: refused in words before anything lays out", async ({ page }, testInfo) => {
   await signIn(page, "Sales");
+  await openReturns(page);
   await page.getByLabel("Sale number").fill(SEEDED.kingstonSale);
   await page.getByRole("button", { name: "Find sale" }).click();
   await expect(page.getByTestId("returns-notice")).toContainText("The lookup was refused");

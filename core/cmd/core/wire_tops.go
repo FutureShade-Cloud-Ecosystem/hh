@@ -51,6 +51,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/quote"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/quoteassist"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/reporting"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tax"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tour"
@@ -65,11 +66,14 @@ import (
 // itself is shared (the yard's stage transaction enqueues through the
 // outbox, the quote automation queues through the resolver).
 type smsBelt struct {
-	notifier  notify.Notifier
-	outbox    *messagingprovider.Outbox
-	resolver  *messagingprovider.ConsentResolver
-	prefs     *messagingprovider.PrefsStore
-	policySet bool
+	// quoteStatus re-reads a quote's status when a follow-up notice is delivered, so a notice queued
+	// before the customer answered is dropped. Nil (a belt with no pool) checks nothing.
+	quoteStatus messagingprovider.QuoteStatusReader
+	notifier    notify.Notifier
+	outbox      *messagingprovider.Outbox
+	resolver    *messagingprovider.ConsentResolver
+	prefs       *messagingprovider.PrefsStore
+	policySet   bool
 	// policy is the send-window and rate gate the sms drain consults; the worker's claim store is a
 	// second Outbox over a different pool and must share this one pointer (its rate state is the gate).
 	policy *messagingprovider.SendPolicy
@@ -128,15 +132,52 @@ type topsSpine struct {
 	cardRail      *payment.Service
 	cardCharger   cardChargerAdapter
 	cardRefunder  posCardRefunderAdapter
+	// posHandler is held so the composition root can register the payment grant read, which needs
+	// the role gate built after the module wiring (pos/grant.go).
+	posHandler *pos.Handler
+	// posSvc is held so a wiring test can read the role configuration the till's service was built with.
+	posSvc *pos.Service
+}
+
+// feedbackActorNames resolves a linked ERP user id to the display name and
+// role label the feedback work item names the submitter by (the row 949
+// rule: the board records under one bridge user, so the item's text is the
+// only place the sender is named, and the raw id never reaches it). A nil
+// pool (scaffold) or an unlinked user answers not-ok and the item names the
+// role alone; neither ever refuses the submission. A user with several roles
+// is named by the earliest granted, the role name breaking a tie, so the same
+// user always reads the same.
+func feedbackActorNames(pool *pgxpool.Pool) feedback.ActorNames {
+	if pool == nil {
+		return nil
+	}
+	return func(ctx context.Context, userID string) (name, role string, ok bool) {
+		var displayName, roleName string
+		err := pool.QueryRow(ctx, `
+			SELECT u.display_name, COALESCE(r.name, '')
+			  FROM users u
+			  LEFT JOIN user_roles ur ON ur.user_id = u.id
+			  LEFT JOIN roles r ON r.id = ur.role_id
+			 WHERE u.id = $1::uuid AND u.deleted_at IS NULL
+			 ORDER BY ur.created_at ASC NULLS LAST, r.name ASC
+			 LIMIT 1`, userID).Scan(&displayName, &roleName)
+		if err != nil {
+			return "", "", false
+		}
+		return displayName, roleName, true
+	}
 }
 
 // wireTops constructs and registers the tops modules over the money spine
 // and the operations spine, in the pin's order, closing every seam whose
 // owner lands here. It returns the tops spine the worker role consumes.
+// roleCfg is the one role configuration the composition root holds (the
+// default's, or the demo's); the till's POS service is built from it, never
+// from a second load.
 // Nothing here starts anything: the dispatchers, the jobs runner, the
 // retention sweep and the reconciler are worker-role loops (D37), and the
 // sms belt's dispatcher is built beside them in the worker.
-func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog.Logger, spine *moneySpine, ops *operationsSpine, cfg config.Config, sharedSmsBelt *smsBelt) *topsSpine {
+func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog.Logger, spine *moneySpine, ops *operationsSpine, cfg config.Config, roleCfg *roleconfig.Config, sharedSmsBelt *smsBelt) *topsSpine {
 	link := linkedUserID(pool)
 	auditSvc := spine.auditSvc
 	orderRepo := spine.orderRepo
@@ -244,7 +285,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithAudit(auditSvc).
 		WithAuditTrail(auditSvc).
 		WithActorNames(staffNameAdapter{repo: orderRepo}).
-		WithClock(time.Now), loadRoleConfig(), g, link)
+		WithClock(time.Now), roleCfg, g, link)
 	posHandler := pos.NewHandler(posSvc, log).WithUserLinker(link)
 	posHandler.RegisterRoutes(r, g)
 
@@ -345,7 +386,9 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	w3bStatementSvc := billing.NewStatementService(billingRepo).WithAudit(auditSvc)
 	billing.NewMonthEndHandler(w3bCreditSvc, w3bStatementSvc, log).
 		WithUserLinker(link).RegisterRoutes(r, g)
-	posSvc.WithAgingReader(posAgingAdapter{svc: w3bCreditSvc})
+	posSvc.WithAgingReader(posAgingAdapter{svc: w3bCreditSvc}).
+		WithHoldReader(ops.tillRepo).
+		WithAccountChecker(posAccountAdapter{svc: customerSvc})
 
 	arLandingRepo := billing.NewARLandingRepository(pool)
 	arLandingSvc := billing.NewARLandingService(arLandingRepo).
@@ -399,10 +442,18 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithSource(messagingprovider.NewPgARAging(pool))
 
 	// #16 in-app feedback, wired only when the Plane bridge is fully
-	// configured; the key stays server-side.
+	// configured; the key stays server-side. The module comes from the
+	// configured NAME (resolved against the board's module list, never an
+	// id), and the work item names the submitter through the actor-name
+	// resolver over the linked row, so the raw user id never reaches the
+	// board (the row 949 rule).
 	if cfg.PlaneAPIURL != "" && cfg.PlaneAPIKey != "" && cfg.PlaneProject != "" && cfg.PlaneWorkspace != "" {
-		feedbackSvc := feedback.New(cfg.PlaneAPIURL, cfg.PlaneWorkspace, cfg.PlaneProject, cfg.PlaneAPIKey)
-		feedback.NewHandler(feedbackSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
+		feedbackSvc := feedback.New(cfg.PlaneAPIURL, cfg.PlaneWorkspace, cfg.PlaneProject, cfg.PlaneAPIKey).
+			WithModule(cfg.PlaneFeedbackModule)
+		feedback.NewHandler(feedbackSvc, log).
+			WithUserLinker(link).
+			WithActorNames(feedbackActorNames(pool)).
+			RegisterRoutes(r, g)
 		log.Info("feedback: Plane bridge wired", "project", cfg.PlaneProject)
 	} else {
 		log.Info("feedback: Plane bridge not configured - /api/v1/feedback not wired")
@@ -609,6 +660,8 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		cardRail:      paySvc,
 		cardCharger:   cardCharger,
 		cardRefunder:  cardRefunder,
+		posHandler:    posHandler,
+		posSvc:        posSvc,
 	}
 }
 

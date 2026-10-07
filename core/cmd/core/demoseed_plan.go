@@ -138,8 +138,12 @@ type prodSpec struct {
 	ListCents      int64
 	WeightKg       string // per BASE unit, as a NUMERIC literal
 	Category       string // "PAVER" | "BULK", resolved to an existing product_categories row
-	Image          bool
-	SkidQty        int // full_skid_quantity, and the PLT product_uoms factor; 0 = not palletised
+	// Application is the product's family as the counter shows it ("Paver", "Wall", "Sand"). It is
+	// also the one category-like word every till and Quote Desk surface carries for a product, so it
+	// is what chooses the product's drawn tile (the design system's product tiles): the demo plants
+	// no photographs, every demo product's picture is its family's tile.
+	Application string
+	SkidQty     int // full_skid_quantity, and the PLT product_uoms factor; 0 = not palletised
 }
 
 // RULING: every demo product prices in its BASE uom (base_uom = price_uom). The catalogue supports
@@ -149,16 +153,16 @@ type prodSpec struct {
 // world that does not exercise one conversion, so the seed keeps its arithmetic exact and leaves
 // the SF-priced case to the real catalogue. Recorded in NOTES.
 var demoProducts = []prodSpec{
-	{"P01", demoPrefix + "PAV-HOLLAND", "Holland Paver, Charcoal (demo)", "PC", 595, "2.6000", "PAVER", true, 480},
-	{"P02", demoPrefix + "PAV-BRUSSELS", "Brussels Dimensional, Sandstone (demo)", "PC", 745, "3.1000", "PAVER", true, 400},
-	{"P03", demoPrefix + "PAV-COURTSTONE", "Courtstone, Basalt (demo)", "PC", 890, "3.4000", "PAVER", false, 360},
-	{"P04", demoPrefix + "WALL-BLOCK", "Retaining Wall Block 8x18 (demo)", "PC", 1250, "15.4000", "PAVER", true, 60},
-	{"P05", demoPrefix + "STEP-SLAB", "Step Slab 24x48, Natural (demo)", "PC", 9800, "118.0000", "PAVER", false, 12},
-	{"P06", demoPrefix + "AGG-HPB", "HPB Bedding Stone (demo)", "T", 4950, "1000.0000", "BULK", false, 0},
-	{"P07", demoPrefix + "AGG-GA", "Granular A (demo)", "T", 3250, "1000.0000", "BULK", false, 0},
-	{"P08", demoPrefix + "AGG-SAND", "Concrete Sand (demo)", "T", 3850, "1000.0000", "BULK", true, 0},
-	{"P09", demoPrefix + "MULCH-BLACK", "Black Cedar Mulch (demo)", "CYD", 5400, "350.0000", "BULK", false, 0},
-	{"P10", demoPrefix + "EDGE-ALU", "Aluminum Edging 8ft (demo)", "EA", 2100, "1.8000", "PAVER", false, 50},
+	{"P01", demoPrefix + "PAV-HOLLAND", "Holland Paver, Charcoal (demo)", "PC", 595, "2.6000", "PAVER", "Paver", 480},
+	{"P02", demoPrefix + "PAV-BRUSSELS", "Brussels Dimensional, Sandstone (demo)", "PC", 745, "3.1000", "PAVER", "Paver", 400},
+	{"P03", demoPrefix + "PAV-COURTSTONE", "Courtstone, Basalt (demo)", "PC", 890, "3.4000", "PAVER", "Paver", 360},
+	{"P04", demoPrefix + "WALL-BLOCK", "Retaining Wall Block 8x18 (demo)", "PC", 1250, "15.4000", "PAVER", "Wall", 60},
+	{"P05", demoPrefix + "STEP-SLAB", "Step Slab 24x48, Natural (demo)", "PC", 9800, "118.0000", "PAVER", "Step", 12},
+	{"P06", demoPrefix + "AGG-HPB", "HPB Bedding Stone (demo)", "T", 4950, "1000.0000", "BULK", "Base", 0},
+	{"P07", demoPrefix + "AGG-GA", "Granular A (demo)", "T", 3250, "1000.0000", "BULK", "Base", 0},
+	{"P08", demoPrefix + "AGG-SAND", "Concrete Sand (demo)", "T", 3850, "1000.0000", "BULK", "Sand", 0},
+	{"P09", demoPrefix + "MULCH-BLACK", "Black Cedar Mulch (demo)", "CYD", 5400, "350.0000", "BULK", "Mulch", 0},
+	{"P10", demoPrefix + "EDGE-ALU", "Aluminum Edging 8ft (demo)", "EA", 2100, "1.8000", "PAVER", "Edging", 50},
 }
 
 // customerRule is one pricing_rules row, always scoped to ONE demo customer (see the file header).
@@ -681,8 +685,8 @@ var demoParked = []parkedSpec{
 // identity.sellingRoles admits neither LOGISTICS_MANAGER nor YARD_TEAM nor DRIVERS; a JE approval is
 // filed by the ledger and refuses a caller-facing filer outright. FREIGHT_ABOVE_QUOTE is filed by
 // the DISPATCHER, from the load board, when a split would charge a customer more delivery than they
-// were quoted, which is precisely the dispatcher persona's job (0200's
-// Scrubname0008 Whitlock). So one policy fits, twice, once per branch,
+// were quoted, which is precisely the dispatcher persona's job (the login 0200 planted, now "Dispatch persona
+// (demo)"). So one policy fits, twice, once per branch,
 // and the alternative was to plant a margin override under a driver's name.
 //
 // WHO IT WAITS ON. CanApprove routes FREIGHT_ABOVE_QUOTE to identity's rail-approver set -

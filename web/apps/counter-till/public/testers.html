@@ -86,11 +86,11 @@
 <p data-claim="simulated">Cards are simulated. A card sale says <em>Simulated card: no card was charged</em>, and a card refund says that nothing reached a card. No card number is ever typed anywhere: there is no field for one.</p>
 <p data-claim="account-balance">An account sale bills the customer's account: the receipt names the invoice, and the account's card in the Customer step shows the fresh balance.</p>
 
-<h2>Refunds, and the manager walking over</h2>
-<p data-claim="return-within">The returns desk finds a sale by its number. A refund within the dealer's approval amount, 250.00, commits for the clerk, and a cash refund comes out of the drawer: the drawer's expected cash drops by it.</p>
-<p data-claim="refund-refused">A refund above 250.00 is refused to the clerk, and the refusal names the amount and the roles that may approve it: the Sales manager or the Branch manager.</p>
-<p data-claim="manager-card">That is when the manager walks over. At the clerk's till, the manager taps their own card, the same refund goes through once, and the receipt records it as the manager's decision with the clerk named beside. The till stays the clerk's: signing in as the manager was one tap on one dialog, not a change of seats.</p>
-<p data-claim="manager-own">Signed in as the Sales manager, the same refund completes at once with no second approval.</p>
+<h2>Refunds</h2>
+<p data-claim="return-within">The returns desk finds a sale by its number. A refund commits for the clerk, and a cash refund comes out of the drawer: the drawer's expected cash drops by it.</p>
+<p data-claim="refund-any-size">This demo dealer has no refund approval limit, so a refund of any size commits at the counter for the clerk. Try a large one, such as sixty wall blocks: nothing is refused.</p>
+<p data-claim="refund-no-dialog">No manager has to walk over. There is no approval dialog, and the receipt names the clerk who rang the refund and no approver. The till stays the clerk's.</p>
+<p data-claim="manager-own">Signed in as the Sales manager, the same refund completes at once, and the receipt says <em>Approved by the Sales manager on this till</em> beside the manager's own name.</p>
 
 <h2>The walls</h2>
 <p data-claim="other-branch">One branch never sees another's. A sale that belongs to Kingston is refused at this counter before any money moves, whichever of the three refund ways is tried, even though the sale number is real; the cash and account rails name the branch fence, and the card rail refuses a seeded card sale first for its missing card reference.</p>
@@ -105,7 +105,7 @@
 <ul>
   <li data-claim="known-seeded-card">The card sales that come with the starting world carry no card reference, so a card refund of one is refused. Refund such a sale in cash or to the account, or return a card sale you rang yourself in this round.</li>
   <li data-claim="restart">A restart of the box signs everyone out. Sign in again from the role cards.</li>
-  <li data-claim="signout-reload">Signing out, or just reloading the page, ends the session: the till keeps no session between visits. A reload also drops the ticket being built: nothing is kept between visits.</li>
+  <li data-claim="signout-reload">Signing out ends the session. Reloading the page in the same tab keeps the session until you sign out, and a new tab starts at the front door. A reload still drops the ticket being built.</li>
   <li data-claim="beyond-reads">With browser developer tools, a technical tester reaches a few reads beyond the till, and none of them is fenced to a branch yet: the manager's sign-in reaches the will-call queue and the scan trail, either sign-in reaches the transaction trail, and the audit list stays walled to both. This is known, and it is named here rather than hidden: the fence work for those reads is a later item, and no Branch Manager login exists on this box.</li>
 </ul>
 

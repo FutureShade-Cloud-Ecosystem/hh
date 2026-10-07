@@ -20,6 +20,8 @@ type Handler struct {
 	userLink identity.UserIDLinker
 	svc      *Service
 	log      *slog.Logger
+	// grants answers the payment grant read (grant.go); nil answers it unavailable.
+	grants GrantReader
 }
 
 // NewHandler wires the service.
@@ -34,6 +36,11 @@ func NewHandler(svc *Service, log *slog.Logger) *Handler {
 // queue transitions, admin for the policy write (the till handler's three-guard shape).
 func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("POST /api/v1/pos/sales", g.RequireStaff(h.staff(h.createSale)))
+	// The read-only sale preview (the row 985 item): the sale's own body
+	// without any tender, priced through the ring's own resolver, writing
+	// nothing. Staff only, the same role walls the sale takes, so the
+	// counter sees the total it is about to ring.
+	r.Handle("POST /api/v1/pos/sale-preview", g.RequireStaff(h.staff(h.previewSale)))
 	// DIB-165 past-sale / till-session lookup. The literal path binds ahead of nothing here, it is a
 	// distinct pattern from /sales/{id} under Go's ServeMux rules, so both coexist.
 	r.Handle("GET /api/v1/pos/sales", g.RequireStaff(h.staff(h.lookupSales)))
@@ -43,6 +50,9 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/pos/stock-glance", g.RequireStaff(h.staff(h.stockGlance)))
 	// DIB-488 rev 6 (item D): the counter's salesperson selector, active staff, id + name only.
 	r.Handle("GET /api/v1/pos/salespeople", g.RequireStaff(h.staff(h.listSalespeople)))
+	// The managers a till person may name when giving a discount at the branch (discount.go): id,
+	// display name and role label of the logins the dealer's own-branch clearing list admits.
+	r.Handle("GET /api/v1/pos/discount-approvers", g.RequireStaff(h.staff(h.listDiscountApprovers)))
 	// DIB-488 rev 8 (item 10): the role-gated margin glance, requireStaff at the door, the
 	// dealer's margin_visibility gate at the MARSHAL layer inside (non-allowed roles get `{}`).
 	r.Handle("POST /api/v1/pos/margin-glance", g.RequireStaff(h.staff(h.marginGlance)))
@@ -316,6 +326,22 @@ func (h *Handler) createSale(w http.ResponseWriter, r *http.Request, caller guar
 	httpx.WriteJSON(w, status, sale)
 }
 
+// previewSale answers the read-only sale preview: the same body the ring
+// takes minus every tender, answered with the totals the ring would compute
+// for it. No row is written; the walls are the sale's own.
+func (h *Handler) previewSale(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in SalePreviewInput
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	out, err := h.svc.SalePreview(r.Context(), in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
 // lookupSales serves the past-sale search (DIB-165). Branch-fenced in the service.
 func (h *Handler) lookupSales(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	q := r.URL.Query()
@@ -385,6 +411,16 @@ func (h *Handler) capture(w http.ResponseWriter, r *http.Request, caller guards.
 // listSalespeople answers the counter's salesperson selector (DIB-488 rev 6, item D).
 func (h *Handler) listSalespeople(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	out, err := h.svc.ListSalespeople(r.Context())
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+// listDiscountApprovers answers the counter's "Approved by" picker for one branch.
+func (h *Handler) listDiscountApprovers(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	out, err := h.svc.ListDiscountApprovers(r.Context(), strings.TrimSpace(r.URL.Query().Get("branch_id")))
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
@@ -508,7 +544,18 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	var nt ErrNoOpenTill
 	var ra ErrRefundApprovalRequired
 	var mgr ErrCardChargeNeedsManager
+	var sm ErrSplitTotalMismatch
 	switch {
+	case errors.As(err, &sm):
+		// The split-tender sum refusal (DIB-165) is a problem body a person
+		// can read: the stable word, the two amounts as integer cents
+		// fields, and the dollar sentence. The till renders from the
+		// fields; no message ever prints cents.
+		httpx.ErrorWith(w, http.StatusUnprocessableEntity, "split_total_mismatch", map[string]any{
+			"tendered_cents": sm.TenderedCents,
+			"total_cents":    sm.TotalCents,
+			"message":        splitMismatchMessage(sm.TenderedCents, sm.TotalCents),
+		})
 	case errors.Is(err, ErrSaleFailedCardReversed):
 		// The sale did not go through and every card charge it took was reversed: the client
 		// clears its key and rings again.
@@ -535,6 +582,11 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		// shape: what failed, what it means for the ticket. Never a bare 500,
 		// and never a 200 with a zero rate.
 		httpx.Error(w, http.StatusServiceUnavailable, ErrTaxRailUnavailable.Error())
+	case errors.Is(err, ErrStandingUnavailable):
+		// The standing could not be read (a seam unwired, an AR, hold or policy read failed): the
+		// 503 the caller can act on, with the cause in the log. Never a 200 that reads as "clear".
+		h.log.Error("pos: account standing unavailable", "path", r.URL.Path, "err", err)
+		httpx.Error(w, http.StatusServiceUnavailable, ErrStandingUnavailable.Error())
 	case errors.As(err, &cb):
 		httpx.ErrorWith(w, http.StatusConflict, "credit_blocked", map[string]any{"policy": cb.Policy, "queue": "staff_approvals"})
 	case errors.As(err, &ra):

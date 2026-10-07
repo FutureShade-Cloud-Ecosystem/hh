@@ -46,6 +46,11 @@ import (
 // persisted per link, so changing this constant never retroactively extends or kills a live link.
 const defaultShareTTL = 30 * 24 * time.Hour
 
+// ErrQuantitiesUnconfirmed: the accept arrived without the customer's confirmation of the quantities.
+// Mapped to 422, in words the customer can act on. Customers blame the dealer for quantities they
+// chose, so the confirmation is a required act of its own, never implied by the name or the tick.
+var ErrQuantitiesUnconfirmed = errors.New("please confirm that you have reviewed the quantities on this quote before you accept it")
+
 // maxTypedName bounds the attested name. Long enough for any real name; short enough that the column
 // cannot be used as free-text storage.
 const maxTypedName = 120
@@ -133,6 +138,9 @@ type PublicQuoteView struct {
 	// Acceptable is whether this link may still be used to accept: the quote is SENT, not expired, and
 	// the link is live. Drives whether the accept form renders at all.
 	Acceptable bool `json:"acceptable"`
+	// Preview is true only on the staff preview of the customer's page (CustomerViewPreview). The
+	// public token read never sets it, so the customer's payload is unchanged.
+	Preview bool `json:"preview,omitempty"`
 
 	// - DIB-506: the terms the work area put on the quote, customer-visible by design -
 	// All omitempty: a quote whose terms were never touched serves the exact pre-0173 payload.
@@ -145,6 +153,10 @@ type PublicQuoteView struct {
 	DeliveryAddress  string `json:"delivery_address,omitempty"`
 	RequestedDate    string `json:"requested_date,omitempty"`
 	DeliveryFeeCents int64  `json:"delivery_fee_cents,omitempty"`
+
+	// QuantityNotice is the dealer's notice that the quantities are the customer's to confirm. Always
+	// present: the page shows it near the lines and on the printed page whatever the quote's state.
+	QuantityNotice string `json:"quantity_notice"`
 }
 
 // PublicQuoteLine is the customer-visible shape of a line. Note what is absent: no product_id (an
@@ -178,6 +190,10 @@ type AcceptanceResult struct {
 	SubtotalCents int64     `json:"subtotal_cents"`
 	TaxCents      int64     `json:"tax_cents"`
 	TotalCents    int64     `json:"total_cents"`
+	// QuantitiesConfirmed echoes that the customer confirmed the quantities before accepting. Always
+	// true on a fresh acceptance (the accept is refused without it); a replay reads it back from the
+	// stored record.
+	QuantitiesConfirmed bool `json:"quantities_confirmed"`
 	// Repeat is DIB-491's honesty flag: true when this acceptance is a REPEAT of one already recorded
 	// (multi-accept ON). The confirmation page can then say so, per C2, a customer who accepts twice
 	// deserves a page that admits it was twice, not one that pretends this was the first time.
@@ -218,7 +234,9 @@ type acceptWrite struct {
 	QuoteID     string
 	ShareLinkID string
 	TypedName   string
-	Now         time.Time
+	// QuantitiesConfirmed is the customer's confirmation of the quantities, stored on the record.
+	QuantitiesConfirmed bool
+	Now                 time.Time
 	// IdempotencyKey is the optional, already validated and lowercased Idempotency-Key. Empty means
 	// the caller sent none and the acceptance behaves exactly as it did before the key existed.
 	IdempotencyKey string
@@ -385,12 +403,9 @@ func (s *StaffService) resolveLive(ctx context.Context, rawToken string) (ShareL
 	return link, quoteID, nil
 }
 
-// PublicQuoteByToken serves the customer-facing quote view for a live token, and logs the view.
-func (s *StaffService) PublicQuoteByToken(ctx context.Context, rawToken string) (PublicQuoteView, error) {
-	link, quoteID, err := s.resolveLive(ctx, rawToken)
-	if err != nil {
-		return PublicQuoteView{}, err
-	}
+// customerView builds the customer's page for a quote: the one code path behind both the token read
+// and the staff preview, so the two cannot drift. It writes nothing.
+func (s *StaffService) customerView(ctx context.Context, quoteID string) (PublicQuoteView, error) {
 	view, err := s.shares.PublicQuote(ctx, quoteID)
 	if err != nil {
 		return PublicQuoteView{}, err
@@ -405,6 +420,19 @@ func (s *StaffService) PublicQuoteByToken(ctx context.Context, rawToken string) 
 	if !view.Acceptable && (view.Status == "ACCEPTED" || view.Status == "CONVERTED") && !view.Expired {
 		view.Acceptable = s.multiAcceptOn(ctx)
 	}
+	return view, nil
+}
+
+// PublicQuoteByToken serves the customer-facing quote view for a live token, and logs the view.
+func (s *StaffService) PublicQuoteByToken(ctx context.Context, rawToken string) (PublicQuoteView, error) {
+	link, quoteID, err := s.resolveLive(ctx, rawToken)
+	if err != nil {
+		return PublicQuoteView{}, err
+	}
+	view, err := s.customerView(ctx, quoteID)
+	if err != nil {
+		return PublicQuoteView{}, err
+	}
 	// R4: log every view against the token. Best-effort, a logging failure must not deny a customer
 	// the quote they were legitimately sent.
 	_ = s.shares.LogShareEvent(ctx, link.ID, "VIEW")
@@ -416,12 +444,12 @@ func (s *StaffService) PublicQuoteByToken(ctx context.Context, rawToken string) 
 // The status flip, the acceptance record and the audit row all land on ONE transaction under the quote
 // row lock (R3), so an acceptance is exactly as reconstructable as a staff edit, and an acceptance
 // can never exist without the trail that explains it, or vice versa.
-func (s *StaffService) AcceptByToken(ctx context.Context, rawToken, typedName string, affirmed bool) (AcceptanceResult, error) {
-	return s.AcceptByTokenKeyed(ctx, rawToken, typedName, affirmed, "")
+func (s *StaffService) AcceptByToken(ctx context.Context, rawToken, typedName string, affirmed, quantitiesConfirmed bool) (AcceptanceResult, error) {
+	return s.AcceptByTokenKeyed(ctx, rawToken, typedName, affirmed, quantitiesConfirmed, "")
 }
 
 // AcceptByTokenKeyed is AcceptByToken carrying the optional Idempotency-Key (see share_idempotency.go).
-func (s *StaffService) AcceptByTokenKeyed(ctx context.Context, rawToken, typedName string, affirmed bool, idemKey string) (AcceptanceResult, error) {
+func (s *StaffService) AcceptByTokenKeyed(ctx context.Context, rawToken, typedName string, affirmed, quantitiesConfirmed bool, idemKey string) (AcceptanceResult, error) {
 	idemKey, kerr := normalizeIdempotencyKey(idemKey)
 	if kerr != nil {
 		return AcceptanceResult{}, kerr
@@ -431,7 +459,7 @@ func (s *StaffService) AcceptByTokenKeyed(ctx context.Context, rawToken, typedNa
 		if errors.Is(err, ErrLinkGone) && idemKey != "" {
 			// QD-3d: the retry of a committed acceptance can arrive after its link died. Its first
 			// outcome is replayed (read only, nothing written); anything else stays the 410.
-			res, ok, rerr := s.replayThroughDeadLink(ctx, link, quoteID, typedName, affirmed, idemKey)
+			res, ok, rerr := s.replayThroughDeadLink(ctx, link, quoteID, typedName, affirmed, quantitiesConfirmed, idemKey)
 			if rerr != nil {
 				return AcceptanceResult{}, rerr
 			}
@@ -453,9 +481,12 @@ func (s *StaffService) AcceptByTokenKeyed(ctx context.Context, rawToken, typedNa
 	if !affirmed {
 		return AcceptanceResult{}, httpx.BadRequestf("you must confirm that you accept this quote")
 	}
+	if !quantitiesConfirmed {
+		return AcceptanceResult{}, ErrQuantitiesUnconfirmed
+	}
 	res, err := s.shares.AcceptQuoteGuarded(ctx, acceptWrite{
 		QuoteID: quoteID, ShareLinkID: link.ID, TypedName: name, Now: s.now(),
-		IdempotencyKey: idemKey,
+		QuantitiesConfirmed: true, IdempotencyKey: idemKey,
 	}, acceptHooks{
 		record: func(ctx context.Context, tx pgx.Tx, r AcceptanceResult) (int64, error) {
 			return s.recordAcceptance(ctx, tx, quoteID, link.ID, r)
@@ -478,13 +509,16 @@ func (s *StaffService) AcceptByTokenKeyed(ctx context.Context, rawToken, typedNa
 // over long typed name and no matching acceptance are all that 410, so a dead link reveals nothing
 // more. The affirmative is checked as on a live link (the same 400). A lookup failure is an error, not
 // the 410: the outcome is unknown, and the 410 must keep its meaning.
-func (s *StaffService) replayThroughDeadLink(ctx context.Context, link ShareLink, quoteID, typedName string, affirmed bool, idemKey string) (AcceptanceResult, bool, error) {
+func (s *StaffService) replayThroughDeadLink(ctx context.Context, link ShareLink, quoteID, typedName string, affirmed, quantitiesConfirmed bool, idemKey string) (AcceptanceResult, bool, error) {
 	name := strings.TrimSpace(typedName)
 	if name == "" || len(name) > maxTypedName {
 		return AcceptanceResult{}, false, nil
 	}
 	if !affirmed {
 		return AcceptanceResult{}, false, httpx.BadRequestf("you must confirm that you accept this quote")
+	}
+	if !quantitiesConfirmed {
+		return AcceptanceResult{}, false, ErrQuantitiesUnconfirmed
 	}
 	res, found, err := s.shares.ReplayKeyedAcceptance(ctx, acceptWrite{
 		QuoteID: quoteID, ShareLinkID: link.ID, TypedName: name, IdempotencyKey: idemKey,
@@ -563,4 +597,42 @@ func (s *StaffService) recordAcceptance(ctx context.Context, tx pgx.Tx, quoteID,
 		return 0, nil
 	}
 	return seq, nil
+}
+
+// CustomerViewPreview is the staff read of the customer's page by quote id: the same view a link
+// holder gets (customerView), without minting a link, moving the quote's status, scheduling a
+// follow-up or logging a view. "Sent and shared are the same act" holds for Copy link and Send; a
+// preview is neither, so it never sends. Acceptable is always false and Preview is true, so the page
+// can band it and offer no accept. Gated like the other staff quote reads: an active staff caller
+// with access to the quote's branch.
+func (s *StaffService) CustomerViewPreview(ctx context.Context, quoteID string) (PublicQuoteView, error) {
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return PublicQuoteView{}, err
+	}
+	if caller.Status != identity.StatusActive {
+		return PublicQuoteView{}, ErrForbidden
+	}
+	if s.shares == nil {
+		return PublicQuoteView{}, ErrForbidden
+	}
+	rGlobal, rBranches := callerBranchScope(caller)
+	quoteID, err = s.store.ResolveQuoteID(ctx, quoteID, rGlobal, rBranches)
+	if err != nil {
+		return PublicQuoteView{}, err
+	}
+	_, branchID, _, _, err := s.store.QuoteEditHeader(ctx, quoteID)
+	if err != nil {
+		return PublicQuoteView{}, err
+	}
+	if !caller.CanAccessBranch(branchID) {
+		return PublicQuoteView{}, ErrForbidden
+	}
+	view, err := s.customerView(ctx, quoteID)
+	if err != nil {
+		return PublicQuoteView{}, err
+	}
+	view.Acceptable = false
+	view.Preview = true
+	return view, nil
 }

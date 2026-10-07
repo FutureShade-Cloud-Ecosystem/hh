@@ -172,8 +172,8 @@ func TestMoney_FormatsCentsWithoutInventingAnything(t *testing.T) {
 		in   int64
 		want string
 	}{
-		{0, "CA$0.00"}, {5, "CA$0.05"}, {99999, "CA$999.99"},
-		{549180, "CA$5,491.80"}, {104864000, "CA$1,048,640.00"}, {-47460, "−CA$474.60"},
+		{0, "$0.00"}, {5, "$0.05"}, {99999, "$999.99"},
+		{549180, "$5,491.80"}, {104864000, "$1,048,640.00"}, {-47460, "−$474.60"},
 	} {
 		if got := money(tc.in); got != tc.want {
 			t.Fatalf("money(%d) = %s, want %s", tc.in, got, tc.want)
@@ -195,7 +195,7 @@ func TestTrimQty_DropsStoredScaleForDisplayOnly(t *testing.T) {
 
 func TestReminderBody_SameFactsEveryTone_ConsequenceOnlyInFinal(t *testing.T) {
 	due := day(2026, time.May, 27)
-	facts := "CA$4,542.60"
+	facts := "$4,542.60"
 	var bodies []string
 	for _, tone := range []string{ToneFriendly, ToneFirm, ToneFinal} {
 		b := reminderBody(tone, "Quinte Hardscapes Inc.", "INV-2019", 454260, due)
@@ -249,7 +249,7 @@ func TestCentsCell_IsASummableNumberNotASentence(t *testing.T) {
 			t.Fatalf("centsCell(%d) = %s, want %s", in, got, want)
 		}
 	}
-	if strings.ContainsAny(centsCell(549180), "CA$,") {
+	if strings.ContainsAny(centsCell(549180), "$,") {
 		t.Fatal("an export cell carries no currency mark or separator, the destination is a sum")
 	}
 }
@@ -266,7 +266,7 @@ func TestRenderInvoiceHTML_PrintsServerFiguresAndEscapes(t *testing.T) {
 			AppliedCents: 150000, BalanceCents: 399180},
 	}
 	html := renderInvoiceHTML(d, "Dibbits, Trenton")
-	for _, want := range []string{"INV-2117", "CA$4,860.00", "CA$631.80", "CA$5,491.80", "−CA$1,500.00", "CA$3,991.80",
+	for _, want := range []string{"INV-2117", "$4,860.00", "$631.80", "$5,491.80", "−$1,500.00", "$3,991.80",
 		"Dibbits, Trenton", "18", "Quinte &amp; Sons &lt;Hardscapes&gt;"} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("the printed invoice is missing %q", want)

@@ -703,7 +703,7 @@ export async function pricingLowMarginReport(
 
 export async function pricingLowMarginScan(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; from?: string; to?: string; branch_id?: string },
+  opts?: { cursor?: string; limit?: number; from?: string; to?: string; branch_id?: string; doc_type?: "quotes" | "orders" | "both"; salesperson_id?: string; cleared_only?: boolean; sort?: "margin_asc" | "margin_desc" },
   call?: ApiCallOptions
 ): Promise<Result<PricingLowMarginScanPage>> {
   return client.request<PricingLowMarginScanPage>({

@@ -127,7 +127,7 @@ export class HosPosCustomerPicker extends LitElement {
       box-sizing: border-box;
       border: 1px solid var(--hos-line);
       border-radius: var(--hos-radius-control);
-      background: var(--hos-deep-earth);
+      background: var(--hos-field);
       color: var(--hos-text);
       padding: 10px 12px;
       font-family: inherit;
@@ -139,7 +139,7 @@ export class HosPosCustomerPicker extends LitElement {
       border-radius: var(--hos-radius-control);
       padding: 11px 14px;
       margin-bottom: 8px;
-      background: var(--hos-deep-earth);
+      background: var(--hos-field);
       display: grid;
       grid-template-columns: 1fr auto;
       gap: 10px;
@@ -232,7 +232,7 @@ export class HosPosCustomerPicker extends LitElement {
       height: 40px;
       border: 1px solid var(--hos-line);
       border-radius: var(--hos-radius-control);
-      background: var(--hos-deep-earth);
+      background: var(--hos-field);
       color: var(--hos-text-dim);
       cursor: pointer;
       padding: 0;
@@ -245,7 +245,7 @@ export class HosPosCustomerPicker extends LitElement {
     .createform {
       border: 1px solid var(--hos-line);
       border-radius: var(--hos-radius-control);
-      background: var(--hos-deep-earth);
+      background: var(--hos-field);
       padding: 12px 14px;
       margin-bottom: 12px;
     }

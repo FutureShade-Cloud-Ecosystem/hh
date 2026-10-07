@@ -26,7 +26,7 @@ test('every theme-capable role is DECLARED in the light half, not inherited', ()
   const light = parseDeclarations(blocks.light);
   const perTheme = [
     '--hh-page', '--hh-card', '--hh-line', '--hh-control-line', '--hh-text', '--hh-text-dim',
-    '--hh-row', '--hh-row-alt',
+    '--hh-row', '--hh-row-alt', '--hh-field',
     '--hh-accent-text', '--hh-focus-ring',
     '--hh-danger', '--hh-danger-fill', '--hh-danger-fill-ink',
     '--hh-info', '--hh-success', '--hh-success-fill',

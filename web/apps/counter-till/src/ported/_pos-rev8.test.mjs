@@ -25,7 +25,7 @@ import {
 } from '@hardscapehouse/pos-kit/src/ported/_pos-rev8.ts';
 import { defaultView, resolveWorkspaceView, workspaceSaveBody, workspaceSaveBodyV8, mergeWorkspaceForSave, WORKSPACE_FIELDS } from '@hardscapehouse/pos-kit/src/ported/_pos-workspace.ts';
 
-const money = (c) => `CA$${(c / 100).toFixed(2)}`;
+const money = (c) => `$${(c / 100).toFixed(2)}`;
 
 // The scan box, the grid and the picker moved into @hardscapehouse/pos-kit
 // (web/packages/pos-kit, src/ported, same names); the terminal stayed here.
@@ -103,7 +103,7 @@ test('txbarSegments: items + weight ALWAYS; margin/profit only when present AND 
   const base = { itemCount: 4, totalWeightLbs: 12690, marginBps: 3030, estProfitCents: 145618, marginHidden: false };
   assert.deepEqual(
     txbarSegments(base, money).map((s) => s.text),
-    ['4 Items', 'Total Weight 12,690 lbs', 'Margin 30.3%', 'Est. Profit CA$1456.18'],
+    ['4 Items', 'Total Weight 12,690 lbs', 'Margin 30.3%', 'Est. Profit $1456.18'],
   );
  // Quick-hide OFF the margin segments: items+weight stand.
   assert.deepEqual(
@@ -290,7 +290,8 @@ test('FLOOR (7): a distinct totals card LEADS the Payment step; the subtotal lea
   const body = terminalSrc.slice(terminalSrc.indexOf('private renderPaymentBody()'));
   assert.ok(body.indexOf('data-testid="pos-totals-card"') < body.indexOf('class="paytiles"'),
     'the totals card renders ABOVE the tender tiles inside the payment step');
-  assert.match(terminalSrc, /data-testid="pos-ring-words"/, 'the row that names the ring for the tax and the total');
+  assert.match(terminalSrc, /words: 'pos-ring-words'/, 'the row that names the ring for the tax and the total when the preview cannot be read');
+  assert.match(terminalSrc, /tax: 'pos-preview-tax'[\s\S]*total: 'pos-preview-total'/, 'the preview rows: the server-stated tax and total (row 985)');
   assert.ok(!/\.totalscard \.trow\.grand/.test(terminalSrc), 'no oversized gold Total row: the ring states the total');
 });
 

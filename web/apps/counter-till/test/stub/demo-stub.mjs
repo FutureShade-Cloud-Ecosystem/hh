@@ -30,6 +30,7 @@
 //   GET  /api/v1/pos/workspace              -> PosWorkspacePrefs (PUT writes, DELETE resets)
 //   GET  /api/v1/pos/hotkeys                -> PosHotkeys (the shipped default: no keys)
 //   GET  /api/v1/pos/salespeople            -> { items: [{id, name}] }
+//   GET  /api/v1/pos/discount-approvers     -> { items: [{id, name, role_label}] }
 //   GET  /api/v1/pos/quick-picks            -> PosQuickPicks (the demo dealer's three-tile hot list)
 //   GET  /api/v1/products                   -> PosProduct[] (the browse grid's read)
 //   GET  /api/v1/products/scan              -> CounterHit | 404
@@ -265,6 +266,11 @@ const WALK_IN = {
   on_hold: false,
 };
 
+let previewCalls = 0; // how many previews the stub has answered (the legs read it through /_stub/state)
+/** 26600 reads $266.00, the way the contract's refusal sentence speaks. */
+function dollarsWord(cents) {
+  return `$${(cents / 100).toLocaleString("en-CA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
 const HST_RATE_BPS = 1300; // the Ontario rate, as basis points
 
 // The dealer's house zone: the same constant the core itself compiles. The
@@ -505,11 +511,16 @@ let LAST_RETURN_BODY = null;
 const RETURN_META = new Map();
 
 // The approval above which a refund needs a manager, and the roles that hold
-// the approval, as the demo dealer's configuration sets them (D49's 250.00
-// and its two approver roles). The real values are RT-B's configuration read;
-// this stub pins the demo's.
+// the approval, as a dealer that keeps the rule sets them (D49's 250.00 and
+// its two approver roles). The demo dealer's configuration turns the rule off
+// (refund_approval_limit_enabled false, decision log rows 1047 and 1073), so
+// the stub starts in the demo's mode: no refund asks for an approval. Setting
+// CT_REFUND_APPROVAL_LIMIT=on starts it the other way, and the harness-only
+// POST /_stub/refund-approval-limit flips it mid run, which is how the suite
+// keeps the approval path under test for a dealer where the rule applies.
 const APPROVAL_AMOUNT_CENTS = 25000;
 const APPROVER_ROLES = ["sales_manager", "branch_manager"];
+let approvalLimitEnabled = process.env.CT_REFUND_APPROVAL_LIMIT === "on";
 
 let RETURN_SEQ = 0;
 
@@ -543,6 +554,99 @@ function resolveLine(customerId, productId, branchId) {
     saving_cents: retail - customerCents,
     basis: percentOff > 0 ? "ACCOUNT" : undefined,
   };
+}
+
+
+// The counter discount (row 1047 item 3), the core's own rules in the stub's words: a line or the
+// ticket may carry a percent (basis points) or an amount and the manager who said yes; the approver
+// must be one the discount-approvers read names. The percent rounds half up to the cent, the ticket
+// discount comes off the subtotal after the line discounts and is shared over the lines by largest
+// remainder, and every line total below is net of both, which is what a return refunds against.
+const DISCOUNT_APPROVERS = [
+  { id: "c0c0a0a0-0000-4000-8000-000000000001", name: "Sales manager", role_label: "Sales Manager" },
+  { id: "c0c0a0a0-0000-4000-8000-000000000002", name: "Branch manager", role_label: "Branch Manager" },
+];
+
+const ZERO_TOTAL_WORDS =
+  "a sale cannot total $0.00: a discount must leave something to pay (a ticket discount can take off at most the ticket total less one cent)";
+
+function discountRefusal(error) {
+  return { refusal: { status: 422, body: { error } } };
+}
+
+function oneDiscount(raw, base, what, label, qty) {
+  const percent = raw.percent_bps ?? 0;
+  const amount = raw.amount_cents ?? 0;
+  if (!Number.isInteger(percent) || !Number.isInteger(amount) || percent < 0 || amount < 0 || (percent > 0) === (amount > 0)) {
+    return discountRefusal(`${label}: a discount is either a percent or an amount, not both and not neither`);
+  }
+  let cents = amount;
+  if (percent > 0) {
+    if (percent > 10000) return discountRefusal(`${label}: a discount percent must be more than 0 and no more than 100`);
+    cents = Math.floor((base * percent + 5000) / 10000);
+    if (cents === 0) return discountRefusal(`${label}: that discount comes to less than a cent`);
+  } else if (amount > base) {
+    return discountRefusal(`${label}: a discount cannot be more than ${what}`);
+  }
+  const approver = typeof raw.approved_by === "string" ? raw.approved_by : "";
+  if (approver === "") return discountRefusal(`${label}: a discount needs the manager who approved it (approved_by)`);
+  const who = DISCOUNT_APPROVERS.find((a) => a.id === approver);
+  if (who === undefined) return discountRefusal(`${label}: that person cannot approve a discount at this branch`);
+  // A yes is for the quantity and base it was given for (the core's own check, in its words).
+  const line = qty !== null;
+  if (!(raw.approved_base_cents > 0) || (line && !(raw.approved_qty > 0))) {
+    return discountRefusal(`${label}: a discount carries the quantity and the amount it was approved for`);
+  }
+  if (raw.approved_base_cents !== base || (line && raw.approved_qty !== qty)) {
+    return discountRefusal(`${label}: the discount was approved for a different quantity or price: ask a manager again`);
+  }
+  return { cents, percent, who };
+}
+
+// grossTotals: each line's list total; rawLines: the body's lines; ticket: the body's discount or undefined.
+function applyStubDiscounts(grossTotals, rawLines, ticket) {
+  const nets = grossTotals.slice();
+  const rows = grossTotals.map(() => ({ discount: 0, sale: 0 }));
+  const discounts = [];
+  for (let i = 0; i < grossTotals.length; i += 1) {
+    const raw = rawLines[i]?.discount;
+    if (raw === undefined || raw === null) continue;
+    const got = oneDiscount(raw, grossTotals[i], "the line", `line ${i + 1}`, rawLines[i]?.qty_entered ?? 0);
+    if (got.refusal) return got;
+    nets[i] -= got.cents;
+    rows[i].discount = got.cents;
+    discounts.push({
+      scope: "LINE", line_no: i + 1, ...(got.percent > 0 ? { percent_bps: got.percent } : {}), amount_cents: got.cents,
+      approved_by: got.who.id, approved_by_role: "sales_manager", approved_by_label: got.who.role_label,
+    });
+  }
+  let saleCents = 0;
+  if (ticket !== undefined && ticket !== null) {
+    const base = nets.reduce((sum, n) => sum + n, 0);
+    const got = oneDiscount(ticket, base, "the ticket", "ticket", null);
+    if (got.refusal) return got;
+    saleCents = got.cents;
+    // Largest remainder over the net line totals, ties to the lowest line.
+    const shares = nets.map((n) => Math.floor((got.cents * n) / base));
+    let left = got.cents - shares.reduce((sum, n) => sum + n, 0);
+    const order = nets
+      .map((n, i) => ({ i, rem: (got.cents * n) % base }))
+      .sort((a, b) => b.rem - a.rem || a.i - b.i);
+    for (const { i } of order) {
+      if (left <= 0) break;
+      shares[i] += 1;
+      left -= 1;
+    }
+    for (let i = 0; i < nets.length; i += 1) {
+      nets[i] -= shares[i];
+      rows[i].sale = shares[i];
+    }
+    discounts.push({
+      scope: "SALE", ...(got.percent > 0 ? { percent_bps: got.percent } : {}), amount_cents: got.cents,
+      approved_by: got.who.id, approved_by_role: "sales_manager", approved_by_label: got.who.role_label,
+    });
+  }
+  return { nets, rows, discounts, saleCents, discountCents: discounts.reduce((sum, d) => sum + d.amount_cents, 0) };
 }
 
 function taxCents(subtotal) {
@@ -776,7 +880,7 @@ function returnsRefusal(caller, body, approver) {
     }
   }
   const totalCents = returnTotal(sale, body.lines);
-  if (totalCents > APPROVAL_AMOUNT_CENTS && !APPROVER_ROLES.includes(caller.account.role_code) && !approver.present) {
+  if (approvalLimitEnabled && totalCents > APPROVAL_AMOUNT_CENTS && !APPROVER_ROLES.includes(caller.account.role_code) && !approver.present) {
     return {
       status: 409,
       body: {
@@ -911,6 +1015,9 @@ function counterHit(product, branchId) {
     sku: product.sku,
     name: product.name,
     description: product.description,
+    // The real counter search carries the product's application word; the
+    // thumb chooses its drawn tile by it.
+    application: product.category,
     base_uom: product.base_uom,
     sold_by: product.sold_by,
     has_image: false,
@@ -923,7 +1030,7 @@ function counterHit(product, branchId) {
 // The catalogue list read the browse grid fills from: every row enriched with
 // the retail anchor and the per-branch on-hand (the list read's own contract:
 // absent-is-honest, and the demo world carries both), the featured flag, and
-// no image (the thumb placeholder is the honest tile).
+// no image (the category's drawn tile is the picture).
 function productRow(product) {
   return {
     id: product.product_id,
@@ -1046,7 +1153,19 @@ const server = createServer(async (request, response) => {
       keys: KEYS_SEEN,
       lastReturnBody: LAST_RETURN_BODY,
       sightings: SIGHTINGS,
+      previewCalls,
+      approvalLimitEnabled,
       returns: [...RETURN_META.entries()].map(([key, meta]) => ({ key, ...meta })),
+    });
+    return;
+  }
+
+  if (request.method === "POST" && path === "/_stub/refund-approval-limit") {
+    // Harness-only: switches the stub between the demo dealer's configuration
+    // (no approval threshold) and a dealer that keeps the 250.00 rule.
+    readBody(request, (parsed) => {
+      approvalLimitEnabled = parsed !== null && typeof parsed === "object" && parsed.enabled === true;
+      respondJson(response, 200, { approvalLimitEnabled });
     });
     return;
   }
@@ -1448,6 +1567,75 @@ const server = createServer(async (request, response) => {
   // price: every line is priced here through the same table the price read
   // answers from. The credit gate runs before any money moves, exactly where
   // the core's own gate sits.
+  if (request.method === "POST" && path === "/api/v1/pos/sale-preview") {
+    // The read-only preview (PR 222): the ring's own subtotal, tax and total for the body, with
+    // nothing written. The tender-less body of a sale; a test that needs it slow holds the route itself.
+    readBody(request, (parsed) => {
+      const branchId = typeof parsed.branch_id === "string" ? parsed.branch_id : "";
+      if (branchId !== callerBranch) {
+        respondJson(response, 403, { error: "that branch is not one your grant reaches" });
+        return;
+      }
+      const lines = Array.isArray(parsed.lines) ? parsed.lines : [];
+      if (lines.length === 0) {
+        respondJson(response, 400, { error: "a sale rings at least one line" });
+        return;
+      }
+      const customer = customerFor(typeof parsed.customer_id === "string" ? parsed.customer_id : "");
+      if (customer === null) {
+        respondJson(response, 400, { error: "that customer is not in this dealer's book" });
+        return;
+      }
+      const gross = [];
+      for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index] ?? {};
+        const productId = typeof line.product_id === "string" ? line.product_id : "";
+        const qty = typeof line.qty_entered === "number" ? line.qty_entered : 0;
+        const resolved = resolveLine(customer.id, productId, branchId);
+        if (resolved === null || qty <= 0) {
+          respondJson(response, 400, { error: `line ${index + 1} could not be priced by the engine` });
+          return;
+        }
+        gross.push(lineTotalCents(resolved.customer_cents, qty));
+      }
+      const discounted = applyStubDiscounts(gross, lines, parsed.discount);
+      if (discounted.refusal) {
+        respondJson(response, discounted.refusal.status, discounted.refusal.body);
+        return;
+      }
+      const subtotal = discounted.nets.reduce((sum, n) => sum + n, 0);
+      if (discounted.discountCents > 0 && subtotal <= 0) {
+        respondJson(response, 422, { error: ZERO_TOTAL_WORDS });
+        return;
+      }
+      const tax = taxCents(subtotal);
+      previewCalls += 1;
+      respondJson(response, 200, {
+        subtotal_cents: subtotal,
+        tax_cents: tax,
+        tax_lines: tax > 0 ? [{ reason_code: "STD_ON_HST_13", rate_bps: HST_RATE_BPS, tax_cents: tax }] : [],
+        total_cents: subtotal + tax,
+        tax_reason_code: "STD_ON_HST_13",
+        ticket_base_cents: subtotal + discounted.saleCents,
+        ticket_discount_max_cents: subtotal + discounted.saleCents - 1,
+        ...(discounted.discountCents > 0
+          ? {
+              discount_cents: discounted.discountCents,
+              sale_discount_cents: discounted.saleCents,
+              lines: discounted.nets.map((net, i) => ({
+                line_no: i + 1,
+                line_total_cents: net,
+                before_ticket_discount_cents: net + discounted.rows[i].sale,
+                ...(discounted.rows[i].discount > 0 ? { discount_cents: discounted.rows[i].discount } : {}),
+                ...(discounted.rows[i].sale > 0 ? { sale_discount_cents: discounted.rows[i].sale } : {}),
+              })),
+            }
+          : {}),
+      });
+    });
+    return;
+  }
+
   if (request.method === "POST" && path === "/api/v1/pos/sales") {
     readBody(request, (parsed) => {
       const branchId = typeof parsed.branch_id === "string" ? parsed.branch_id : "";
@@ -1505,6 +1693,8 @@ const server = createServer(async (request, response) => {
       }
       let subtotal = 0;
       const outLines = [];
+      const priced = [];
+      const grossTotals = [];
       for (let index = 0; index < lines.length; index += 1) {
         const line = lines[index] ?? {};
         const productId = typeof line.product_id === "string" ? line.product_id : "";
@@ -1514,7 +1704,21 @@ const server = createServer(async (request, response) => {
           respondJson(response, 400, { error: `line ${index + 1} could not be priced by the engine` });
           return;
         }
-        const total = lineTotalCents(resolved.customer_cents, qty);
+        priced.push({ line, qty, resolved });
+        grossTotals.push(lineTotalCents(resolved.customer_cents, qty));
+      }
+      const discounted = applyStubDiscounts(grossTotals, lines, parsed.discount);
+      if (discounted.refusal) {
+        respondJson(response, discounted.refusal.status, discounted.refusal.body);
+        return;
+      }
+      if (discounted.discountCents > 0 && discounted.nets.reduce((sum, n) => sum + n, 0) <= 0) {
+        respondJson(response, 422, { error: ZERO_TOTAL_WORDS });
+        return;
+      }
+      for (let index = 0; index < priced.length; index += 1) {
+        const { line, qty, resolved } = priced[index];
+        const total = discounted.nets[index];
         subtotal += total;
         outLines.push({
           line_no: index + 1,
@@ -1528,6 +1732,8 @@ const server = createServer(async (request, response) => {
           unit_price_cents: resolved.customer_cents,
           price_uom: resolved.price_uom,
           line_total_cents: total,
+          ...(discounted.rows[index].discount > 0 ? { discount_cents: discounted.rows[index].discount } : {}),
+          ...(discounted.rows[index].sale > 0 ? { sale_discount_cents: discounted.rows[index].sale } : {}),
           tax_cents: Math.round((total * HST_RATE_BPS) / 10000),
         });
       }
@@ -1588,7 +1794,14 @@ const server = createServer(async (request, response) => {
           sum += amount;
         }
         if (sum !== total) {
-          respondJson(response, 400, { error: "the legs do not sum exactly to the sale's total" });
+          // The contract's refusal (row 985): the stable word, the two amounts as
+          // integer cents fields, and a sentence in dollars.
+          respondJson(response, 422, {
+            error: "split_total_mismatch",
+            tendered_cents: sum,
+            total_cents: total,
+            message: `The tenders add up to ${dollarsWord(sum)}, but the sale total is ${dollarsWord(total)}.`,
+          });
           return;
         }
         // The core's own capture shape: an ACCOUNT leg captures nothing (its
@@ -1722,6 +1935,8 @@ const server = createServer(async (request, response) => {
         gateway_ref: gatewayRef,
         tenders,
         lines: outLines,
+        discount_cents: discounted.discountCents > 0 ? discounted.discountCents : undefined,
+        discounts: discounted.discounts.length > 0 ? discounted.discounts : undefined,
       };
       sales.set(orderId, sale);
       if (idempotencyKey !== "") salesByKey.set(idempotencyKey, orderId);
@@ -1919,6 +2134,16 @@ const server = createServer(async (request, response) => {
     // The demo dealer curates nothing: the shipped default is the answer, and
     // the client's fallback roster stands either way.
     respondJson(response, 200, { source: "default", keys: [] });
+    return;
+  }
+
+  if (request.method === "GET" && path === "/api/v1/pos/discount-approvers") {
+    const branchId = url.searchParams.get("branch_id") ?? "";
+    if (branchId !== callerBranch) {
+      respondJson(response, 403, { error: "that branch is not one your grant reaches" });
+      return;
+    }
+    respondJson(response, 200, { items: DISCOUNT_APPROVERS });
     return;
   }
 
@@ -2498,6 +2723,8 @@ function saleResponseBody(sale, replayed) {
     change_due_cents: sale.change_due_cents,
     deposit_cents: sale.deposit_cents,
     tenders: sale.tenders,
+    discount_cents: sale.discount_cents,
+    discounts: sale.discounts,
   };
 }
 

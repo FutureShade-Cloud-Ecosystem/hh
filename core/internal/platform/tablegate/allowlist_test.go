@@ -56,7 +56,7 @@ var allowlist = []allowlistEntry{
 		// the item's given first entry, verbatim from the source.
 		module: "pricing",
 		file:   "core/internal/pricing/repository.go",
-		tables: []string{"customers", "order_lines", "orders", "pos_sale", "product_branch_costs", "products"},
+		tables: []string{"customers", "order_lines", "orders", "pos_sale", "product_branch_costs", "products", "quote_lines", "quotes", "users"},
 		// the file's own comment: LowMarginSalesLines reads the COMMITTED
 		// sold lines for the principal's daily low-margin report (D-PA-3).
 		// This is the ONE deliberately cross-module reporting query in the
@@ -65,8 +65,13 @@ var allowlist = []allowlistEntry{
 		// live-sales feed; it never WRITES those tables. product_branch_costs
 		// is the LEFT JOIN keyed on (product_id, branch_id) that supplies
 		// avg_unit_cost_cents, and pos_sale is the COMMITTED facet that
-		// catches POS cash sales the orders.status arm never sees.
-		reason: "D-PA-3 daily low-margin report: the one deliberately cross-module reporting query, read only, stated in the function's own comment",
+		// catches POS cash sales the orders.status arm never sees. The
+		// report covers quotes as well as orders, so the same query reads
+		// quotes and quote_lines (the quote's own prices and the clearing
+		// stamp on the line's metadata, which an order line reaches through
+		// its quote), and LEFT JOINs users for the salesperson's and the
+		// clearer's display labels (the users pattern above).
+		reason: "D-PA-3 low-margin report over orders and quotes: the one deliberately cross-module reporting query, read only, stated in the function's own comment",
 	},
 	{
 		module: "assist",
@@ -660,7 +665,7 @@ var allowlist = []allowlistEntry{
 	{
 		module: "pos",
 		file:   "core/internal/pos/repository.go",
-		tables: []string{"customer_transactions", "customers", "invoices", "locations", "order_lines", "orders", "payments", "product_reorder_points", "product_uoms", "products", "stock_balances", "user_roles", "users"},
+		tables: []string{"customer_transactions", "customers", "invoices", "locations", "order_lines", "orders", "payments", "product_reorder_points", "product_uoms", "products", "staff_role", "staff_role_grant", "stock_balances", "user_roles", "users"},
 		writes: []string{"customer_transactions", "events_outbox", "invoice_lines", "invoices", "order_lines", "orders", "payment_allocations", "scope_sequences"},
 		// the POS sale ring: one counter sale writes the order and its lines,
 		// raises the invoice and its lines, the AR transaction and the tender
@@ -668,7 +673,7 @@ var allowlist = []allowlistEntry{
 		// behind posStore so they can be re-homed; the payments INSERT is
 		// till.TakeTender's, the allocation of that payment is the ring's).
 		// The reads are the counter's catalogue, stock and supervisor facts.
-		reason: "the POS ring writes the sale's documents (order, lines, invoice, AR transaction, tender allocation) in one transaction and reads the catalogue, stock, tax snapshot and supervisor facts the counter acts on",
+		reason: "the POS ring writes the sale's documents (order, lines, invoice, AR transaction, tender allocation) in one transaction and reads the catalogue, stock, tax snapshot and supervisor facts the counter acts on; the counter discount reads the staff role grants and the role catalogue to judge who may approve a discount at the branch (ListDiscountStaff) and the role label a committed discount's approver held (ReadSaleDiscounts), read only, the dealer's list of who may approve staying in roleconfig",
 	},
 	{
 		module: "pos",
@@ -763,8 +768,8 @@ var allowlist = []allowlistEntry{
 	{
 		module: "printing",
 		file:   "core/internal/printing/receipt_repository.go",
-		tables: []string{"customers", "invoices", "locations", "order_lines", "orders", "payment_allocations", "payments", "pos_sale", "pos_sale_tenders", "products", "system_settings", "users"},
-		reason: "receipt assembly reads the whole printed truth: org name and HST settings, the branch, the sale, its lines and tenders, the invoice it billed, the payments and allocations, the customer and the staff who took it, read only",
+		tables: []string{"customers", "invoices", "locations", "order_lines", "orders", "payment_allocations", "payments", "pos_sale", "pos_sale_tenders", "products", "quote_policy", "staff_role", "system_settings", "users"},
+		reason: "receipt assembly reads the whole printed truth: org name, HST and quantity notice settings, the branch, the sale, its lines and tenders, the invoice it billed, the payments and allocations, the customer and the staff who took it, and the role label of the manager who approved a discount (Discount approved by), read only",
 	},
 	{
 		module: "procurement",
@@ -835,9 +840,9 @@ var allowlist = []allowlistEntry{
 	{
 		module: "quote",
 		file:   "core/internal/quote/edit_repository.go",
-		tables: []string{"customers", "locations", "products", "users"},
+		tables: []string{"audit_log", "customers", "locations", "products", "users"},
 		writes: []string{"scope_sequences"},
-		reason: "the quote editor joins the customer, branch, product and preparer facts the document shows; the 0213 seq stamp marks its rows",
+		reason: "the quote editor joins the customer, branch, product and preparer facts the document shows, and its acceptance history reads the quote's own staff decision rows from audit_log (a staff accept writes no acceptance row; the audit row is its record), read only; the 0213 seq stamp marks its rows",
 	},
 	{
 		module: "quote",
@@ -897,6 +902,13 @@ var allowlist = []allowlistEntry{
 		tables: []string{"customers", "product_images", "products"},
 		writes: []string{"scope_sequences"},
 		reason: "the public share payload resolves the customer name, product facts and the image the public page shows; the 0213 seq stamp marks its rows",
+	},
+	{
+		module: "quote",
+		file:   "core/internal/quote/staff_decision_repository.go",
+		tables: []string{"audit_log"},
+		writes: []string{"scope_sequences"},
+		reason: "the staff accept and reject replay a keyed decision from the audit trail inside the decision's own transaction under the quote row lock (the share_idempotency.go shape, read only), and the 0213 seq stamp marks the quote row it moves",
 	},
 	{
 		module: "quote",

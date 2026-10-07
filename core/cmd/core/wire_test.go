@@ -48,7 +48,7 @@ func TestServeSetRegistration_NoDuplicatePatterns(t *testing.T) {
 	// pool, the contact source dark, every registrar registering beside
 	// the shims and the two earlier clusters with no duplicate pattern.
 	belt := buildSmsBelt(nil, log)
-	tops := wireTops(mux, nil, sg.Guards, log, spine, ops, config.Load(), belt)
+	tops := wireTops(mux, nil, sg.Guards, log, spine, ops, config.Load(), mustRoleConfigForWire(), belt)
 	if tops == nil {
 		t.Fatal("wireTops returned no spine")
 	}

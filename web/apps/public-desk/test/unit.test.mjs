@@ -11,11 +11,13 @@ import {
   INVOICE_TAX_NOTE,
   acceptanceAmountPhrase,
   acceptanceRefusal,
+  acceptReady,
+  acceptHint,
   carriesTax,
   showsImages,
   totalsBlock,
 } from "../src/_quote-public.js";
-import { formatMoney, quoteStatusPhrase, withFullStop } from "../src/format.js";
+import { formatMoney, plainDay, plainWhen, quoteNumberLabel, quoteStatusPhrase, withFullStop } from "../src/format.js";
 import { createHash } from "node:crypto";
 import { createAcceptKeys, deriveAcceptKey } from "../src/accept-key.js";
 import { isKeyReuseRefusal, validateAcceptance, validateQuoteView } from "../src/quote-client.js";
@@ -72,14 +74,25 @@ test("the acceptance amount phrase names the HST inside a taxed total", () => {
   assert.equal(acceptanceAmountPhrase(UNTAXED), "$96.65 before HST");
 });
 
-test("the typed name gate refuses blank and unticked, and passes the honest form", () => {
-  assert.equal(acceptanceRefusal("", false), "Please type your full name.");
-  assert.equal(acceptanceRefusal("   ", false), "Please type your full name.");
+test("the accept gate refuses unreviewed quantities, a blank name and an unticked attestation, and passes the honest form", () => {
   assert.equal(
-    acceptanceRefusal("Sample Customer", false),
+    acceptanceRefusal("Sample Customer", true, false),
+    "Please tick the box to confirm you have reviewed the quantities on this quote.",
+  );
+  assert.equal(acceptanceRefusal("", false, true), "Please type your full name.");
+  assert.equal(acceptanceRefusal("   ", false, true), "Please type your full name.");
+  assert.equal(
+    acceptanceRefusal("Sample Customer", false, true),
     "Please tick the box to confirm you accept this quote.",
   );
-  assert.equal(acceptanceRefusal("Sample Customer", true), null);
+  assert.equal(acceptanceRefusal("Sample Customer", true, true), null);
+});
+
+test("the accept button is ready only with the quantities box, a name and the confirmation", () => {
+  assert.equal(acceptReady("Sample Customer", true, true), true);
+  assert.equal(acceptReady("Sample Customer", true, false), false);
+  assert.equal(acceptReady("Sample Customer", false, true), false);
+  assert.equal(acceptReady("  ", true, true), false);
 });
 
 test("thumbnails render only when the dealer chose images and a line carries one", () => {
@@ -173,6 +186,14 @@ test("a complete quote view parses field by field", () => {
   assert.equal(view.acceptable, true);
 });
 
+test("the dealer's quantity notice is read as sent, and absent is honest, never a sentence of the page's own", () => {
+  const words = "Check every quantity against your plan before you accept.";
+  assert.equal(validateQuoteView({ ...FULL_VIEW, quantity_notice: words }).quantityNotice, words);
+  assert.equal(validateQuoteView(FULL_VIEW).quantityNotice, null);
+  assert.equal(validateQuoteView({ ...FULL_VIEW, quantity_notice: "" }).quantityNotice, null);
+  assert.equal(validateQuoteView({ ...FULL_VIEW, quantity_notice: 7 }).quantityNotice, null);
+});
+
 test("an answer missing a field, or carrying a wrong one, is refused whole", () => {
   assert.equal(validateQuoteView(null), null);
   assert.equal(validateQuoteView("nope"), null);
@@ -222,6 +243,18 @@ test("the acceptance result parses, and an answer without its timestamp is refus
   assert.notEqual(ok, null);
   assert.equal(ok.typedName, "Sample Customer");
   assert.equal(ok.totalCents, 10922);
+  // The echo of the confirmation is read, and never assumed.
+  assert.equal(ok.quantitiesConfirmed, false);
+  const confirmed = validateAcceptance({
+    quote_no: "Q-25",
+    typed_name: "Sample Customer",
+    accepted_at: "the-accepted-at-marker",
+    subtotal_cents: 9665,
+    tax_cents: 1257,
+    total_cents: 10922,
+    quantities_confirmed: true,
+  });
+  assert.equal(confirmed.quantitiesConfirmed, true);
 
   const noTime = {
     quote_no: "Q-25",
@@ -235,19 +268,32 @@ test("the acceptance result parses, and an answer without its timestamp is refus
   assert.equal(validateAcceptance(undefined), null);
 });
 
-test("the vendored Outfit faces ship with their licence text beside them", async () => {
-  const { readdirSync, readFileSync } = await import("node:fs");
+test("the page rides the design system's shared Inter, with its licence beside the faces, and keeps no face of its own", async () => {
+  const { existsSync, readdirSync, readFileSync } = await import("node:fs");
   const { dirname, join } = await import("node:path");
   const { fileURLToPath } = await import("node:url");
-  const fonts = join(dirname(fileURLToPath(import.meta.url)), "..", "public", "fonts");
+  const here = dirname(fileURLToPath(import.meta.url));
+  // The type pass (row 942) moved the vendored face into the design system:
+  // this app once carried four Outfit woff2 under public/fonts, and that copy
+  // is gone for the shared Inter every importing app receives through the
+  // token sheet. The licence still sits beside the faces it licenses.
+  const own = join(here, "..", "public", "fonts");
+  assert.ok(!existsSync(own), "the public desk must not vendor a face of its own any more");
+  const fonts = join(here, "..", "..", "..", "packages", "design-system", "src", "fonts");
   const files = readdirSync(fonts);
-  assert.equal(files.filter((name) => name.startsWith("outfit-") && name.endsWith(".woff2")).length, 4);
+  assert.equal(files.filter((name) => name.startsWith("inter-") && name.endsWith(".woff2")).length, 4);
   assert.ok(files.includes("OFL.txt"), "OFL.txt must sit beside the font files");
   const text = readFileSync(join(fonts, "OFL.txt"), "utf8");
-  assert.match(text, /^Copyright .* The Outfit Project Authors/);
+  assert.match(text, /^Copyright .* The Inter Project Authors/);
   assert.match(text, /SIL OPEN FONT LICENSE Version 1\.1/);
   assert.match(text, /PERMISSION & CONDITIONS/);
   assert.match(text, /DISCLAIMER/);
+  // And the sheet that reaches this app's bundle registers the face itself:
+  // the @font-face rules live in the token sheet main.ts imports, so no app
+  // file of ours names a font URL.
+  const sheet = readFileSync(join(here, "..", "..", "..", "packages", "design-system", "src", "tokens.css"), "utf8");
+  assert.match(sheet, /font-family:\s*'Inter'/);
+  assert.match(sheet, /url\('\.\/fonts\/inter-latin-400-normal\.woff2'\)/);
 });
 
 // -- the acceptance key: derived, never stored.
@@ -298,4 +344,55 @@ test("only the server's own key reuse refusal is a key reuse refusal", () => {
   assert.equal(isKeyReuseRefusal({ status: 409, error: "This quote has already been accepted." }), false);
   assert.equal(isKeyReuseRefusal({ status: 400, error: "quote: this idempotency key was used for a different acceptance" }), false);
   assert.equal(isKeyReuseRefusal({ error: "quote: this idempotency key was used for a different acceptance" }), false);
+});
+
+test("the quote number carries its mark once, whichever way the core serves it", () => {
+  assert.equal(quoteNumberLabel("#Q-6"), "#Q-6");
+  assert.equal(quoteNumberLabel("Q-6"), "#Q-6");
+  assert.equal(quoteNumberLabel("##Q-6"), "#Q-6");
+});
+
+test("a moment and a day read in the page's own words, never as raw stamps", () => {
+  assert.match(plainWhen("2026-10-06T19:49:47Z"), /^[A-Z][a-z]+ \d{1,2}, \d{4} at \d{1,2}:\d{2} [ap]\.m\. \S+$/);
+  assert.equal(plainWhen("not a time"), "not a time", "an unreadable stamp is shown as it arrived, never invented");
+  assert.equal(plainDay("2026-10-27"), "October 27, 2026");
+  assert.equal(plainDay("2026-02-31"), "2026-02-31", "a day that does not exist is shown as it arrived");
+  assert.equal(plainDay("soon"), "soon");
+});
+
+test("the preview flag is read only when the core sets it", () => {
+  const base = JSON.parse(JSON.stringify(FULL_VIEW));
+  assert.equal(validateQuoteView(base).preview, false, "a customer's own view carries no preview flag");
+  assert.equal(validateQuoteView({ ...base, preview: true }).preview, true);
+  assert.equal(validateQuoteView({ ...base, preview: "yes" }).preview, false, "only a true boolean counts");
+});
+
+test("the disabled Accept button says what is still missing, in the order the form reads", () => {
+  assert.equal(
+    acceptHint("", false, false),
+    "To accept, tick the quantities box, type your full name and tick the confirmation.",
+  );
+  assert.equal(acceptHint("", false, true), "To accept, type your full name and tick the confirmation.");
+  assert.equal(acceptHint("Sample Customer", false, true), "To accept, tick the confirmation.");
+  assert.equal(acceptHint("Sample Customer", true, false), "To accept, tick the quantities box.");
+  assert.equal(acceptHint("   ", true, true), "To accept, type your full name.");
+  assert.equal(acceptHint("Sample Customer", true, true), null);
+});
+
+test("quote-client keeps its statements closed and its lines free of trailing space", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { dirname, join } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "quote-client.ts"), "utf8");
+  const lines = source.split("\n");
+  assert.deepEqual(
+    lines.map((l, i) => (/\s$/.test(l) ? i + 1 : 0)).filter(Boolean),
+    [],
+    "no line ends in white space",
+  );
+  assert.deepEqual(
+    lines.map((l, i) => (/^\s*return .*[^;{(,\[\s]$/.test(l) ? i + 1 : 0)).filter(Boolean),
+    [],
+    "every single line return ends in a semicolon",
+  );
 });

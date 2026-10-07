@@ -285,16 +285,71 @@ type StaffQuoteView struct {
 	// model with two versions of itself.
 	//
 	// An ABSENT field must be read as "no", never as "yes".
-	CanConvert    bool            `json:"can_convert"`
+	CanConvert bool `json:"can_convert"`
+	// CanAccept and CanReject are the same kind of server-computed offer for the staff decision doors
+	// (staff_decision.go): whether THIS caller may record the customer's accept, or decline, on THIS
+	// quote right now. Absent or false means no; the client evaluates nothing.
+	CanAccept     bool            `json:"can_accept"`
+	CanReject     bool            `json:"can_reject"`
 	Lines         []QuoteViewLine `json:"lines"`
 	SubtotalCents int64           `json:"subtotal_cents"`
 	TaxCents      int64           `json:"tax_cents"`
 	TotalCents    int64           `json:"total_cents"`
 	UpdatedAt     time.Time       `json:"updated_at"`
+	// Acceptances is the acceptance history, oldest first: who accepted, when, and whether they
+	// confirmed the quantities. Empty (never null) on a quote nobody has accepted.
+	Acceptances []QuoteAcceptanceRecord `json:"acceptances"`
+	// QuantityNotice is the dealer's notice that the quantities are the customer's to confirm, branch
+	// row over dealer default, so staff see the words the customer sees.
+	QuantityNotice string `json:"quantity_notice"`
 
 	// validUntil is the parsed form the service uses to compute Expired/EditableFields. Unexported -
 	// it never crosses the wire.
 	validUntil *time.Time
+}
+
+// Acceptance history sources.
+const (
+	// AcceptSourceCustomer: the customer's own acceptance through their link (a quote_acceptances row).
+	AcceptSourceCustomer = "CUSTOMER"
+	// AcceptSourceStaff: staff accepted on the customer's behalf after the customer said yes by
+	// another channel. That writes no quote_acceptances row (that table is the customer's record: link
+	// and typed name required); its record is the QUOTE_ACCEPTED audit row with the staff decision
+	// purpose, which this history projects.
+	AcceptSourceStaff = "STAFF_ON_BEHALF"
+)
+
+// QuoteAcceptanceRecord is one row of a quote's acceptance history: the customer's own acceptances
+// from the stored acceptance record, and staff acceptances on their behalf from the decision's audit
+// row, in time order. QuantitiesConfirmed is false on customer acceptances taken before the
+// confirmation existed, which says plainly that none was captured.
+type QuoteAcceptanceRecord struct {
+	Source string `json:"source"`
+	// TypedName is the customer's typed name; empty (and absent) on a staff row, the customer typed none.
+	TypedName           string    `json:"typed_name,omitempty"`
+	AcceptedAt          time.Time `json:"accepted_at"`
+	QuantitiesConfirmed bool      `json:"quantities_confirmed"`
+	// AmountCents is what was accepted: the snapshot total on a customer row, the amount the staff
+	// member read to the customer on a staff row.
+	AmountCents int64 `json:"amount_cents"`
+	// Channel and Note are staff row facts: how the customer said yes, and what staff wrote.
+	Channel string `json:"channel,omitempty"`
+	Note    string `json:"note,omitempty"`
+	// QuantityNotice and Lines are the customer row's dispute record: the notice wording that stood on
+	// the page and the lines as accepted, kept on the acceptance (0368) so later edits to either leave
+	// them untouched. Absent on a staff row and on acceptances taken before they were kept.
+	QuantityNotice string               `json:"quantity_notice,omitempty"`
+	Lines          []AcceptedLineRecord `json:"lines,omitempty"`
+}
+
+// AcceptedLineRecord is one line as it stood when the customer accepted.
+type AcceptedLineRecord struct {
+	LineNo         int    `json:"line_no"`
+	Description    string `json:"description"`
+	QtyEntered     string `json:"qty_entered"`
+	UOMEntered     string `json:"uom_entered"`
+	UnitPriceCents int64  `json:"unit_price_cents"`
+	LineTotalCents int64  `json:"line_total_cents"`
 }
 
 // QuoteCreate is the staff create payload.
@@ -353,6 +408,12 @@ func (s *StaffService) StaffQuoteRead(ctx context.Context, quoteID string) (Staf
 	view.CanConvert = (view.Status == "ACCEPTED" ||
 		(view.Status == "CONVERTED" && s.multiAcceptOn(ctx))) &&
 		identity.CanSellOnCredit(caller)
+	// The staff decision offers (staff_decision.go): the conjunction the doors enforce under the row
+	// lock, a selling role on a SENT or never sent quote that has not expired, and for an accept a
+	// draft needs a line.
+	decidable := (view.Status == "SENT" || view.Status == "DRAFT") && !view.Expired && identity.CanSellOnCredit(caller)
+	view.CanReject = decidable
+	view.CanAccept = decidable && (view.Status == "SENT" || len(view.Lines) > 0)
 	return view, nil
 }
 

@@ -45,6 +45,9 @@ type receiptSale struct {
 	CustomerName      string
 	CustomerAcct      string
 	CashierName       string
+	// The whole-ticket manual discount (pos_sale 0366) and the role label of its approver.
+	SaleDiscountCents int64
+	SaleDiscountLabel string
 }
 
 // branchHeader is the letterhead: the branch row from locations plus the org fields from
@@ -55,7 +58,14 @@ type branchHeader struct {
 	Code       string
 	Address    string
 	HSTRateBps int
+	// QuantityNotice is quote_policy.quantity_notice for this branch (branch row over the dealer
+	// default), or the house wording when no policy row exists.
+	QuantityNotice string
 }
+
+// defaultQuantityNotice is the house wording, the same sentence as quote.DefaultQuantityNotice and the
+// 0367 column default (a test pins the two equal; printing may not import quote outside tests).
+const defaultQuantityNotice = "All quantities are to be confirmed by the customer. Please review them before you accept it."
 
 // ReadReceiptSale reads one COMMITTED sale by pos_sale id, order id, or the VISIBLE "#SO-" number.
 // An uncommitted/void sale is NOT a receipt, the read filters on status so no paper is produced for
@@ -94,8 +104,10 @@ SELECT o.id::text, o.order_no, o.branch_id::text,
                   JOIN payment_allocations pa ON pa.payment_id = p.id
                  WHERE pa.invoice_id = i.id AND p.status <> 'VOID'
                    AND p.received_at = i.created_at), 0),
-       ps.created_at, COALESCE(c.name,''), COALESCE(c.account_no,''), COALESCE(u.display_name,'')
+       ps.created_at, COALESCE(c.name,''), COALESCE(c.account_no,''), COALESCE(u.display_name,''),
+       ps.discount_cents, COALESCE(dsr.label, ps.discount_approved_role, '')
   FROM pos_sale ps
+  LEFT JOIN staff_role dsr ON dsr.id = ps.discount_approved_role
   JOIN orders o ON o.id = ps.order_id
   LEFT JOIN invoices i ON i.id = ps.invoice_id
   LEFT JOIN customers c ON c.id = o.customer_id
@@ -108,7 +120,8 @@ SELECT o.id::text, o.order_no, o.branch_id::text,
 		&s.InvoiceID, &s.InvoiceNo, &s.PaymentID, &s.Tender, &s.SaleType, &s.Status, &s.SplitTender,
 		&s.SubtotalCents, &s.TaxCents, &s.TotalCents, &s.BalanceCents,
 		&s.CashTenderedCents, &s.DepositCents,
-		&s.SoldAt, &s.CustomerName, &s.CustomerAcct, &s.CashierName)
+		&s.SoldAt, &s.CustomerName, &s.CustomerAcct, &s.CashierName,
+		&s.SaleDiscountCents, &s.SaleDiscountLabel)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return receiptSale{}, false, nil
 	}
@@ -132,9 +145,11 @@ func (r *Repository) ReadReceiptLines(ctx context.Context, orderID string) ([]Re
 		SELECT ol.line_no, COALESCE(p.sku,''),
 		       COALESCE(NULLIF(btrim(ol.description),''), NULLIF(btrim(p.name),''), 'Item'),
 		       ol.qty_entered, ol.uom_entered::text,
-		       ol.unit_price_cents, ol.price_uom::text, ol.line_total_cents
+		       ol.unit_price_cents, ol.price_uom::text, ol.line_total_cents,
+		       ol.discount_cents, COALESCE(dsr.label, ol.discount_approved_role, ''), ol.sale_discount_cents
 		  FROM order_lines ol
 		  LEFT JOIN products p ON p.id = ol.product_id
+		  LEFT JOIN staff_role dsr ON dsr.id = ol.discount_approved_role
 		 WHERE ol.order_id = $1::uuid
 		 ORDER BY ol.line_no`, orderID)
 	if err != nil {
@@ -145,7 +160,8 @@ func (r *Repository) ReadReceiptLines(ctx context.Context, orderID string) ([]Re
 	for rows.Next() {
 		var l ReceiptLine
 		if err := rows.Scan(&l.LineNo, &l.SKU, &l.Description, &l.Qty, &l.UOM,
-			&l.UnitPriceCents, &l.PriceUOM, &l.LineTotalCents); err != nil {
+			&l.UnitPriceCents, &l.PriceUOM, &l.LineTotalCents,
+			&l.DiscountCents, &l.DiscountApprovedByLabel, &l.SaleDiscountShareCents); err != nil {
 			return nil, err
 		}
 		out = append(out, l)
@@ -211,7 +227,7 @@ func (r *Repository) ReadBranchHeader(ctx context.Context, branchID string) (bra
 	if r.pool == nil {
 		return branchHeader{}, errNoPool
 	}
-	h := branchHeader{HSTRateBps: 1300}
+	h := branchHeader{HSTRateBps: 1300, QuantityNotice: defaultQuantityNotice}
 	var addr []byte
 	err := r.pool.QueryRow(ctx,
 		`SELECT name, code::text, address FROM locations WHERE id = $1::uuid`, branchID).
@@ -220,6 +236,15 @@ func (r *Repository) ReadBranchHeader(ctx context.Context, branchID string) (bra
 		return branchHeader{}, err
 	}
 	h.Address = formatAddress(addr)
+
+	// The dealer's quantity notice: the branch's own row over the dealer default (the 0043 idiom
+	// quote_policy follows), read only. No row at all keeps the house wording.
+	if err := r.pool.QueryRow(ctx, `
+		SELECT quantity_notice FROM quote_policy
+		 WHERE branch_id = $1::uuid OR branch_id IS NULL
+		 ORDER BY branch_id NULLS LAST LIMIT 1`, branchID).Scan(&h.QuantityNotice); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return branchHeader{}, err
+	}
 
 	rows, err := r.pool.Query(ctx,
 		`SELECT key::text, value FROM system_settings WHERE key IN ('org_name','hst_rate_bps')`)

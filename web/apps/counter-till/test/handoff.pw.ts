@@ -63,16 +63,22 @@ test("a boot from the front door's key lands signed in as the handed role, no se
   await expect(page.getByTestId("signed-in-role")).toHaveText("Sales", { timeout: 15_000 });
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Sales manager", exact: true })).toHaveCount(0);
-  // The handoff key is spent in the same step; custody's mirror is written
-  // as every other sign in leaves it.
+  // The handoff key stays in the tab until Sign out (row 1040), so a reload or a second visit
+  // keeps the session; custody's mirror is written as every other sign in leaves it.
   const stored = await page.evaluate(
     (keys) => keys.map((key) => window.sessionStorage.getItem(key) !== null),
     [HANDOFF_KEY, MIRROR_KEY],
   );
-  expect(stored).toEqual([false, true]);
-  // Sign out ends it the ordinary way: the entry cards come back.
+  expect(stored).toEqual([true, true]);
+  // A reload boots over the kept key and lands signed in again, no picker.
+  await page.reload();
+  await expect(page.getByTestId("signed-in-role")).toHaveText("Sales", { timeout: 15_000 });
+  await expect(page.getByRole("button", { name: "Sales", exact: true })).toHaveCount(0);
+  // Sign out ends it the ordinary way: the entry cards come back, and the key goes with the session.
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
+  const afterSignOut = await page.evaluate((key) => window.sessionStorage.getItem(key), HANDOFF_KEY);
+  expect(afterSignOut).toBeNull();
 });
 
 test("a handoff record that fails a read is dropped and the entry page comes up", async ({ page }) => {

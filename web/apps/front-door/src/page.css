@@ -1,0 +1,8 @@
+/* The page itself carries no browser default frame: the user agent's 8px body margin showed the
+   document's own white around the front door's bar and cards (round 7). The ground is the sheet's
+   page colour, so any pixel the app does not paint is the same ground and never a stripe. */
+html,
+body {
+  margin: 0;
+  background: var(--hh-page);
+}

@@ -56,11 +56,11 @@ export function dollars(cents: number): string {
 
 /**
  * The ported surface's own money word on a line, the total card and the sold
- * panel: "CA$5.95". The returns desk (HH's own view) keeps the plain "$"
+ * panel: "$5.95". The returns desk (HH's own view) keeps the plain "$"
  * words, so both renderings are mirrored here.
  */
 export function cad(cents: number): string {
-  return `CA${dollars(cents)}`;
+  return dollars(cents);
 }
 
 /** The column's percent from basis points, as the app's helper rounds it. */
@@ -599,8 +599,17 @@ export async function settle(page: Page): Promise<void> {
   await expect
     .poll(() => inFlight.get(page)?.count ?? 0, { intervals: [100], timeout: 15_000 })
     .toBe(0);
+  // Row 955: Returns is its own surface at #/returns, and the sale surface
+  // (the flow stepper, the session bar's answer) is hidden while it is up
+  // (kept mounted so a ticket in progress is never lost). On Returns the
+  // loaded chrome is the returns desk itself, and the sale's stepper must be
+  // hidden; otherwise a mounted till shows its stepper and the session bar.
+  const returnsUp = await page.getByTestId("returns").isVisible();
   const till = page.locator("hos-pos-flow-steps");
-  if ((await till.count()) > 0) {
+  if (returnsUp) {
+    await expect(page.getByTestId("returns")).toBeVisible();
+    if ((await till.count()) > 0) await expect(till.first()).toBeHidden();
+  } else if ((await till.count()) > 0) {
     await expect(till).toBeVisible();
     await expect(
       page.getByTestId("session-dot").or(page.getByRole("button", { name: "Open Session" })),
@@ -681,4 +690,10 @@ export async function shotParts(
   await composer.waitForFunction(() => Array.from(document.images).every((image) => image.complete));
   await composer.screenshot({ path: join(shotDir(testInfo), `${name}.png`), fullPage: true });
   await composer.close();
+}
+
+/** Row 955: Returns is its own surface; open it from the bar (a no-op when it is already up). */
+export async function openReturns(page: Page): Promise<void> {
+  if (!(await page.getByTestId("returns").isVisible())) await page.getByTestId("till-returns-entry").click();
+  await expect(page.getByTestId("returns")).toBeVisible();
 }

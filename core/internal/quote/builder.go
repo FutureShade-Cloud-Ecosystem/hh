@@ -35,8 +35,10 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
 )
 
@@ -81,7 +83,17 @@ type QuotePolicy struct {
 	EffectiveChips       []string `json:"effective_chips,omitempty"`
 	WorkspaceSplitPct    int      `json:"workspace_split_pct"`
 	WorkspaceArrangement string   `json:"workspace_arrangement"`
+	// QuantityNotice is the dealer's notice that the quantities are the customer's to confirm, carried
+	// on the customer's page, the printed page and the staff quote. Blank on a write means the default.
+	QuantityNotice string `json:"quantity_notice"`
 }
+
+// DefaultQuantityNotice is the house wording, the column default of quote_policy.quantity_notice (0367).
+const DefaultQuantityNotice = "All quantities are to be confirmed by the customer. Please review them before you accept it."
+
+// maxQuantityNotice bounds the notice; it matches the column's CHECK so the service refuses in words
+// before the CHECK could 500.
+const maxQuantityNotice = 500
 
 // QuotePolicyFor resolves the effective policy for a branch (staff read; the knobs are dealer
 // configuration, not gated data, the DATA the cost knob governs is gated at the glance).
@@ -135,6 +147,13 @@ func validateQuotePolicy(p QuotePolicy) (QuotePolicy, error) {
 		return p, err
 	}
 	p.WorkspaceSplitPct, p.WorkspaceArrangement = split, arr
+	p.QuantityNotice = strings.TrimSpace(p.QuantityNotice)
+	if p.QuantityNotice == "" {
+		p.QuantityNotice = DefaultQuantityNotice
+	}
+	if utf8.RuneCountInString(p.QuantityNotice) > maxQuantityNotice {
+		return p, httpx.BadRequestf("the quantity notice is too long, keep it to %d characters", maxQuantityNotice)
+	}
 	return p, nil
 }
 

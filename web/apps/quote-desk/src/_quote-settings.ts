@@ -39,6 +39,9 @@ function inRange(n: number, lo: number, hi: number): boolean {
   return Number.isInteger(n) && n >= lo && n <= hi;
 }
 
+/** The server's cap on the dealer's quantity notice, in characters; a blank notice goes back to the default wording there. */
+export const QUANTITY_NOTICE_MAX = 500;
+
 /**
  * validatePolicy mirrors the server's bounds so the form answers at once and
  * names the knob. The server re-validates regardless and its sentence wins.
@@ -67,6 +70,9 @@ export function firstPolicyProblem(p: QuotePolicyWire): { field: string; message
   }
   if (!(ARRANGEMENTS as readonly string[]).includes(p.workspace_arrangement)) {
     return { field: "workspace_arrangement", message: "Choose a default arrangement." };
+  }
+  if (Array.from(p.quantity_notice).length > QUANTITY_NOTICE_MAX) {
+    return { field: "quantity_notice", message: `The quantity notice is limited to ${QUANTITY_NOTICE_MAX} characters.` };
   }
   return null;
 }

@@ -30,6 +30,7 @@ package quote
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -597,11 +598,14 @@ func (r *Repository) StaffDetail(ctx context.Context, quoteID string) (StaffQuot
 	err = tx.QueryRow(ctx, `
 		SELECT q.id::text, q.quote_no::text, q.customer_id::text, COALESCE(c.name,''), q.branch_id::text,
 		       q.status, q.valid_until, q.subtotal_cents, q.tax_cents, q.total_cents, q.updated_at,
-		       COALESCE(q.salesperson_id::text, COALESCE(q.created_by::text, ''))
+		       COALESCE(q.salesperson_id::text, COALESCE(q.created_by::text, '')),
+		       COALESCE((SELECT qp.quantity_notice FROM quote_policy qp WHERE qp.branch_id = q.branch_id),
+		                (SELECT qp.quantity_notice FROM quote_policy qp WHERE qp.branch_id IS NULL), $2)
 		  FROM quotes q LEFT JOIN customers c ON c.id = q.customer_id
-		 WHERE q.id = $1`, quoteID).
+		 WHERE q.id = $1`, quoteID, DefaultQuantityNotice).
 		Scan(&v.ID, &v.QuoteNo, &v.CustomerID, &v.CustomerName, &v.BranchID,
-			&v.Status, &validUntil, &v.SubtotalCents, &v.TaxCents, &v.TotalCents, &v.UpdatedAt, &v.OwnerID)
+			&v.Status, &validUntil, &v.SubtotalCents, &v.TaxCents, &v.TotalCents, &v.UpdatedAt, &v.OwnerID,
+			&v.QuantityNotice)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return v, ErrNotFound
@@ -637,6 +641,45 @@ func (r *Repository) StaffDetail(ctx context.Context, quoteID string) (StaffQuot
 	}
 	if err := rows.Err(); err != nil {
 		return v, fmt.Errorf("iterate quote lines: %w", err)
+	}
+	rows.Close()
+
+	// The acceptance history, on the same snapshot as the lines it speaks about: the customer's own
+	// acceptance rows beside the staff decisions made on their behalf (audit rows, no acceptance row).
+	arows, err := tx.Query(ctx, `
+		SELECT source, typed_name, at, quantities_confirmed, amount_cents, channel, note, quantity_notice, lines FROM (
+		  SELECT 'CUSTOMER' AS source, typed_name, accepted_at AS at, quantities_confirmed,
+		         accepted_total_cents AS amount_cents, '' AS channel, '' AS note,
+		         quantity_notice, accepted_lines AS lines
+		    FROM quote_acceptances WHERE quote_id = $1
+		  UNION ALL
+		  SELECT 'STAFF_ON_BEHALF', '', created_at,
+		         COALESCE((changes->>'quantities_confirmed')::boolean, false),
+		         COALESCE((changes->>'amount_cents')::bigint, 0),
+		         COALESCE(changes->>'channel', ''), COALESCE(changes->>'note', ''),
+		         '', '[]'::jsonb
+		    FROM audit_log
+		   WHERE entity_type = 'quote' AND entity_id = $1 AND action = 'QUOTE_ACCEPTED'
+		     AND changes->>'purpose' = 'STAFF_QUOTE_DECISION'
+		) h ORDER BY at, source`, quoteID)
+	if err != nil {
+		return v, fmt.Errorf("read quote acceptances: %w", err)
+	}
+	defer arows.Close()
+	v.Acceptances = []QuoteAcceptanceRecord{}
+	for arows.Next() {
+		var a QuoteAcceptanceRecord
+		var lines []byte
+		if err := arows.Scan(&a.Source, &a.TypedName, &a.AcceptedAt, &a.QuantitiesConfirmed, &a.AmountCents, &a.Channel, &a.Note, &a.QuantityNotice, &lines); err != nil {
+			return v, fmt.Errorf("scan quote acceptance: %w", err)
+		}
+		if err := json.Unmarshal(lines, &a.Lines); err != nil {
+			return v, fmt.Errorf("decode accepted lines: %w", err)
+		}
+		v.Acceptances = append(v.Acceptances, a)
+	}
+	if err := arows.Err(); err != nil {
+		return v, fmt.Errorf("iterate quote acceptances: %w", err)
 	}
 	return v, nil
 }
@@ -682,9 +725,9 @@ func (r *Repository) ListStaffQuotes(ctx context.Context, global bool, branchIDs
 		       q.updated_at, q.created_at::text,
 		       COALESCE(q.salesperson_id::text, COALESCE(q.created_by::text, ''))
 		  FROM quotes q LEFT JOIN customers c ON c.id = q.customer_id
-		 WHERE %s AND ($%d::timestamptz IS NULL OR (q.created_at, q.quote_no) < ($%d::timestamptz, $%d::text))
+		 WHERE %s AND ($%d::timestamptz IS NULL OR q.created_at < $%d::timestamptz OR (q.created_at = $%d::timestamptz AND q.quote_no > $%d::text))
 		 ORDER BY q.created_at DESC, q.quote_no LIMIT $%d`,
-		where, len(args)-2, len(args)-2, len(args)-1, len(args)), args...)
+		where, len(args)-2, len(args)-2, len(args)-2, len(args)-1, len(args)), args...)
 	if err != nil {
 		return nil, fmt.Errorf("list staff quotes: %w", err)
 	}

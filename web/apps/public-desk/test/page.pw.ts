@@ -43,6 +43,7 @@ test("the lane's reference shots, against the stub, on demand", async ({ page })
   await page.screenshot({ path: `${dir}/share-quote.png` });
 
   await page.locator("#name").fill("Sample Customer");
+  await page.locator("#qty-confirm").check();
   await page.locator("#affirm").check();
   await page.screenshot({ path: `${dir}/accept-state.png` });
 });
@@ -97,6 +98,7 @@ test("thumbnail object URLs live until the page goes: a refused accept never rev
   await expect(thumbs).toHaveCount(3);
   await page.route("**/accept", (route) => route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "quote: this quote is not awaiting acceptance (it is SENT)" }) }));
   await page.locator("#name").fill("Sample Customer");
+  await page.locator("#qty-confirm").check();
   await page.locator("#affirm").check();
   await page.getByRole("button", { name: "Accept quote" }).click();
   await expect(page.getByRole("alert")).toHaveText("This quote cannot be accepted right now. Please contact us.");
@@ -154,9 +156,10 @@ test("a dead link reads as a deliberate page: heading on the refusal, room above
 test("the page stands on the token's pale ground so the white cards lift off it", async ({ page }) => {
   await page.goto(`/?t=${GOOD_TOKEN}`);
   await expect(page.getByRole("heading", { name: "Quote #Q-25" })).toBeVisible();
-  // The light half of --hh-page is #F5F7FA: the reference's grey-blue ground
-  // under white cards. The page pinned light in index.html, so the body must
-  // resolve exactly that token, not the default white canvas.
+  // The light half of --hh-page is #E7ECF1: the grey-blue ground under white
+  // cards, stepped darker with the light contrast round (decision log row
+  // 987). The page pinned light in index.html, so the body must resolve
+  // exactly that token, not the default white canvas.
   const ground = await page.evaluate(() => ({
     body: getComputedStyle(document.body).backgroundColor,
     card: (() => {
@@ -164,27 +167,31 @@ test("the page stands on the token's pale ground so the white cards lift off it"
       return card ? getComputedStyle(card).backgroundColor : null;
     })(),
   }));
-  expect(ground.body).toBe("rgb(245, 247, 250)");
+  expect(ground.body).toBe("rgb(231, 236, 241)");
   expect(ground.card).toBe("rgb(255, 255, 255)");
 });
 
-test("the page's UI face is Outfit itself, self-hosted, not a system fallback", async ({ page }) => {
+test("the page's UI face is the shared Inter itself, self-hosted from the bundle, not a system fallback", async ({ page }) => {
   await page.goto(`/?t=${GOOD_TOKEN}`);
   await expect(page.getByRole("heading", { name: "Quote #Q-25" })).toBeVisible();
   // document.fonts is the closest provable check, and load() is the honest
   // half of it: it answers with the faces it actually MATCHED, so an absent
   // @font-face (check()'s vacuous true) fails here as an empty answer. The
-  // three weights are the ones the page renders: body, labels and button, title.
+  // three weights are the ones the page renders: body, labels and button,
+  // title. The face is the design system's shared Inter now (the type pass,
+  // row 942): the token sheet this app imports carries the @font-face rules
+  // and the vendored bytes, so the load proves the shared face reached the
+  // customer document through the bundle alone.
   const faces = await page.evaluate(async () => {
     const out: Record<string, boolean> = {};
-    for (const weight of ["400", "600", "700"]) {
-      const matched = await document.fonts.load(`${weight} 16px Outfit`);
+    for (const weight of ["400", "500", "600", "700"]) {
+      const matched = await document.fonts.load(`${weight} 16px Inter`);
       out[weight] = matched.length > 0 && matched.every((face) => face.status === "loaded");
     }
     await document.fonts.ready;
     return out;
   });
-  expect(faces).toEqual({ 400: true, 600: true, 700: true });
+  expect(faces).toEqual({ 400: true, 500: true, 600: true, 700: true });
 });
 
 test("the line table never overflows its card or the page, with thumbnails, at phone and tablet widths", async ({ page }) => {
@@ -234,28 +241,46 @@ test("a revoked link is refused as gone, and an unknown one as not found", async
   await expect(page.getByText("This link is missing its access code. Please use the full link you were sent.")).toBeVisible();
 });
 
-test("the typed name acceptance is refused when blank, then when unticked, then accepted when typed", async ({ page }) => {
+test("the Accept button waits for the quantities box, the name and the confirmation, then the accept carries all three", async ({ page }) => {
   await page.goto(`/?t=${GOOD_TOKEN}`);
   const accept = page.getByRole("button", { name: "Accept quote" });
 
-  await accept.click();
-  await expect(page.getByRole("alert")).toContainText("Please type your full name.");
+  // The quantities box sits above the name, and nothing is ready until all three are in.
+  const qty = page.locator("#qty-confirm");
+  await expect(qty).toBeVisible();
+  await expect(page.getByText("I have reviewed the quantities on this quote and they are what I want.")).toBeVisible();
+  const qtyBox = await qty.boundingBox();
+  const nameBox = await page.locator("#name").boundingBox();
+  expect(qtyBox !== null && nameBox !== null && qtyBox.y < nameBox.y).toBe(true);
+  await expect(accept).toBeDisabled();
 
+  await qty.check();
+  await expect(accept).toBeDisabled();
   await page.locator("#name").fill("Sample Customer");
-  await accept.click();
-  await expect(page.getByRole("alert")).toContainText("Please tick the box to confirm you accept this quote.");
+  await expect(accept).toBeDisabled();
+  await page.locator("#affirm").check();
+  await expect(accept).toBeEnabled();
+
+  // Taking any one of the three back disables it again.
+  await qty.uncheck();
+  await expect(accept).toBeDisabled();
+  await qty.check();
+  await page.locator("#name").fill("   ");
+  await expect(accept).toBeDisabled();
+  await page.locator("#name").fill("Sample Customer");
+  await expect(accept).toBeEnabled();
 
   const posted = acceptCall(page);
-  await page.locator("#affirm").check();
   await accept.click();
   const request = (await posted).request();
-  expect(request.postDataJSON()).toEqual({ typed_name: "Sample Customer", accepted: true });
+  expect(request.postDataJSON()).toEqual({ typed_name: "Sample Customer", accepted: true, quantities_confirmed: true });
 
   // The confirmation echoes the totals, so the customer's own record of what
   // they agreed to does not depend on their having read the page carefully:
   // the quote's totals and the echo's totals both render.
   await expect(page.getByRole("heading", { name: "Thank you: quote Q-25 accepted" })).toBeVisible();
   await expect(page.getByText("Accepted by Sample Customer on")).toBeVisible();
+  await expect(page.getByText("You confirmed the quantities on this quote.")).toBeVisible();
   await expect(page.getByText("Total $109.22")).toHaveCount(2);
   // The success is MARKED, not bare body text: the check rides the heading's
   // words (colour never encodes state alone).
@@ -276,6 +301,7 @@ test("a second accept is shown as already accepted", async ({ page }) => {
   // core's refusal is written for staff and never reaches a customer.
   await page.goto("/?t=q-refuse-27");
   await page.locator("#name").fill("Sample Customer");
+  await page.locator("#qty-confirm").check();
   await page.locator("#affirm").check();
   const posted = acceptCall(page);
   await page.getByRole("button", { name: "Accept quote" }).click();
@@ -349,12 +375,14 @@ async function readyToAccept(page: Page, token: string): Promise<void> {
   await page.goto(`/?t=${token}`);
   await expect(page.getByRole("heading", { name: "Quote #Q-28" })).toBeVisible();
   await page.locator("#name").fill("Sample Customer");
+  await page.locator("#qty-confirm").check();
   await page.locator("#affirm").check();
 }
 
 async function expectFormKept(page: Page): Promise<void> {
   await expect(page.getByRole("heading", { name: "Quote #Q-28" })).toBeVisible();
   await expect(page.locator("#name")).toHaveValue("Sample Customer");
+  await expect(page.locator("#qty-confirm")).toBeChecked();
   await expect(page.locator("#affirm")).toBeChecked();
   await expect(page.getByRole("button", { name: "Accept quote" })).toBeEnabled();
 }
@@ -544,7 +572,7 @@ test("every line shows the same image cell: the photo or the no-photo mark, neve
     return Array.from(root?.querySelectorAll("tbody tr") ?? []).map((row) => {
       const box = row.querySelector("td .thumbslot");
       if (box === null) return "missing";
-      const marked = box.querySelector("img.thumb, svg.thumbmark") !== null;
+      const marked = box.querySelector("img.thumb, img.tile, svg.thumbmark") !== null;
       return getComputedStyle(box).borderTopWidth !== "0px" && marked ? "boxed" : "bare";
     });
   });
@@ -555,6 +583,11 @@ test("the accept button takes the design system's accent token, not a brand over
   // A quote that is still open: the demo quote is accepted by an earlier test.
   await page.goto("/?t=q-terms-28");
   await expect(page.getByRole("button", { name: "Accept quote" })).toBeVisible();
+  // The accent is the ENABLED fill: a disabled button is grey by design, so ready the form first.
+  await page.locator("#qty-confirm").check();
+  await page.locator("#name").fill("Sample Customer");
+  await page.locator("#affirm").check();
+  await expect(page.getByRole("button", { name: "Accept quote" })).toBeEnabled();
   // The page pins no brand override, so the base brand layer stands and the
   // pressable fill is the design system's own accent, the same accent the
   // Quote Desk staff app presses.
@@ -659,6 +692,7 @@ test("multi-accept on: a failed repeat accept, with the quote already ACCEPTED b
   );
   await page.goto("/?t=q-multi-504");
   await page.locator("#name").fill("Sample Customer");
+  await page.locator("#qty-confirm").check();
   await page.locator("#affirm").check();
   await page.getByRole("button", { name: "Accept quote" }).click();
   // Nothing proves the repeat was not recorded: the status could not move.
@@ -819,6 +853,7 @@ test("the same after a reload of the page: the key is derived again, still ONE a
   await page.reload();
   await expect(page.getByRole("heading", { name: "Quote #Q-28" })).toBeVisible();
   await page.locator("#name").fill("Sample Customer");
+  await page.locator("#qty-confirm").check();
   await page.locator("#affirm").check();
   await page.getByRole("button", { name: "Accept quote" }).click();
   await expect(page.getByRole("heading", { name: "Thank you: quote Q-28 accepted" })).toBeVisible();
@@ -839,6 +874,7 @@ test("a different typed name sends a different key and, with multi-accept on, a 
   await page.reload();
   await expect(page.getByText(REPEAT_NOTE)).toBeVisible();
   await page.locator("#name").fill("Another Customer");
+  await page.locator("#qty-confirm").check();
   await page.locator("#affirm").check();
   await page.getByRole("button", { name: "Accept quote" }).click();
   await expect(page.getByText("Accepted by Another Customer on")).toBeVisible();
@@ -855,6 +891,7 @@ test("the key is the typed name AS SENT: stray white space around it does not ch
   await page.goto("/?t=q-terms-28");
   await page.route("**/accept", (route) => route.abort("failed"));
   await page.locator("#name").fill("  Sample Customer  ");
+  await page.locator("#qty-confirm").check();
   await page.locator("#affirm").check();
   await page.getByRole("button", { name: "Accept quote" }).click();
   await expect(page.getByRole("alert")).toHaveText(UNCONFIRMED);
@@ -1078,10 +1115,11 @@ test("a 409 whose re-read shows ACCEPTED ends on the closed accepted card, with 
   // Someone else accepts with another name while this tab is open: multi-accept is off.
   const other = await page.request.post(ACCEPT_PATH(token), {
     headers: { "content-type": "application/json" },
-    data: { typed_name: "Another Customer", accepted: true },
+    data: { typed_name: "Another Customer", accepted: true, quantities_confirmed: true },
   });
   expect(other.status()).toBe(200);
   await page.locator("#name").fill("Sample Customer");
+  await page.locator("#qty-confirm").check();
   await page.locator("#affirm").check();
   const refused = page.waitForResponse((r) => r.url().endsWith("/accept") && r.status() === 409);
   await page.getByRole("button", { name: "Accept quote" }).click();
@@ -1316,3 +1354,235 @@ for (const [token, status, error] of [
     await expect(page.locator("#name")).toHaveJSProperty("readOnly", true);
   });
 }
+
+// The page's two small faults: the quote number once, and the time in the page's own words.
+test("the title shows the quote number once, and the time is plain words", async ({ page }) => {
+  await page.goto("/?t=q-hash-6");
+  await expect(page.getByRole("heading", { name: "Quote #Q-6" })).toBeVisible();
+  await expect(page.getByText("##Q-6")).toHaveCount(0);
+  const sub = page.locator(".sub").first();
+  await expect(sub).toContainText("Prepared for Fenwick Builders Ltd");
+  await expect(sub).toContainText(/last updated [A-Z][a-z]+ \d{1,2}, \d{4} at \d{1,2}:\d{2} [ap]\.m\. \S+/);
+  await expect(sub).not.toContainText("as of");
+  await expect(sub).not.toContainText(/\d{4}-\d{2}-\d{2}/);
+  await expect(sub).not.toContainText(/\d:\d{2}:\d{2}/);
+});
+
+// The preview: the same page, handed the staff read of the customer's view. It states plainly that
+// nothing was sent, and offers no accept area and no typed name. The page itself never reads a staff
+// session (the sinks gate holds that), so the Quote Desk fetches the view with its own session and
+// hands the validated view to the element; the test stands in for that host.
+test("a preview shows the band and no way to accept", async ({ page }) => {
+  await page.goto("/");
+  // The host hands the page the endpoint's own JSON; the page validates it itself.
+  await hostPreview(page, { fetchFrom: "q-preview-draft" });
+  const band = page.getByText("Preview: this is what your customer will see. Nothing has been sent.");
+  await expect(band).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Quote #Q-7" })).toBeVisible();
+  await expectNoAcceptControl(page);
+  await expect(page.getByText("Accept this quote")).toHaveCount(0);
+  await expect(page.getByText("is not awaiting acceptance")).toHaveCount(0);
+});
+
+// Hand the page a view the way the Quote Desk would: through showQuote, on a page with no link token.
+async function hostPreview(page: Page, what: { fetchFrom: string; patch?: Record<string, unknown>; raw?: unknown }): Promise<void> {
+  await page.evaluate(async (w) => {
+    let value: unknown = w.raw;
+    if (w.raw === undefined) {
+      const view = await (await fetch(`/api/public/v1/quotes/${w.fetchFrom}`)).json();
+      value = { ...view, ...(w.patch ?? {}) };
+      for (const [k, v] of Object.entries(w.patch ?? {})) if (v === undefined) delete (value as Record<string, unknown>)[k];
+    }
+    // The page's own module, served by Vite in the browser; the test's typecheck cannot resolve a root path.
+    // @ts-expect-error resolved by the browser, not by tsc
+    await import("/src/quote-public.ts");
+    document.querySelector("pd-quote-public")?.remove();
+    const el = document.createElement("pd-quote-public") as HTMLElement & { showQuote(v: unknown): void };
+    document.body.append(el);
+    el.showQuote(value);
+  }, what);
+}
+
+async function expectNoAcceptControl(page: Page): Promise<void> {
+  await expect(page.locator("#name")).toHaveCount(0);
+  await expect(page.locator("#affirm")).toHaveCount(0);
+  await expect(page.locator("#qty-confirm")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /accept/i })).toHaveCount(0);
+}
+
+// The page never trusts its host: whatever it is handed, a hosted page is a preview or it is refused,
+// and it never renders an accept control or crashes.
+for (const [name, what] of [
+  ["null", { fetchFrom: "q-preview-draft", raw: null }],
+  ["a malformed view", { fetchFrom: "q-preview-draft", raw: { quote_no: "#Q-7" } }],
+  ["a view that is not an object", { fetchFrom: "q-preview-draft", raw: "nope" }],
+  ["a link shaped view: preview false, acceptable true, SENT", { fetchFrom: "q-demo-25", patch: { preview: false, acceptable: true, status: "SENT" } }],
+  ["a view with the preview flag missing", { fetchFrom: "q-demo-25" }],
+] as const) {
+  test(`a hosted page refuses ${name}: no crash, no accept control`, async ({ page }) => {
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.goto("/");
+    await hostPreview(page, what);
+    await expect(page.getByText("This preview could not be shown.")).toBeVisible();
+    await expectNoAcceptControl(page);
+    await expect(page.getByText("Loading your quote")).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+}
+
+// The quantity notice: the dealer's own words that the quantities are the customer's to confirm, near
+// the lines, on the printed page and in the preview. Customers blame the dealer for quantities they chose.
+test("the dealer's quantity notice shows near the lines, whatever the dealer wrote", async ({ page }) => {
+  await page.goto("/?t=q-notice-29");
+  const notice = page.getByText("Check every quantity against your plan before you accept.");
+  await expect(notice).toBeVisible();
+  const table = await page.locator("table").boundingBox();
+  const note = await notice.boundingBox();
+  const totals = await page.locator(".totals").boundingBox();
+  expect(table !== null && note !== null && totals !== null && note.y >= table.y + table.height - 1 && note.y < totals.y).toBe(true);
+  // The default wording is what a dealer who wrote none serves.
+  await page.goto("/?t=q-terms-28");
+  await expect(page.getByText("All quantities are to be confirmed by the customer. Please review them before you accept it.")).toBeVisible();
+});
+
+test("the quantity notice is on the printed page", async ({ page }) => {
+  await page.emulateMedia({ media: "print" });
+  await page.goto("/?t=q-notice-29&print=1");
+  await expect(page.getByRole("heading", { name: "Quote #Q-29" })).toBeVisible();
+  await expect(page.getByText("Check every quantity against your plan before you accept.")).toBeVisible();
+});
+
+test("the preview shows the quantity notice and still offers no accept control", async ({ page }) => {
+  await page.goto("/");
+  await hostPreview(page, { fetchFrom: "q-notice-29", patch: { preview: true, acceptable: false, status: "DRAFT" } });
+  await expect(page.getByText("Check every quantity against your plan before you accept.")).toBeVisible();
+  await expectNoAcceptControl(page);
+});
+
+test("a 422 from the core is a definite refusal: the quantities words, nothing recorded, the form kept", async ({ page }) => {
+  await readyToAccept(page, "q-qty-422");
+  await page.route("**/accept", (route) =>
+    route.fulfill({
+      status: 422,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "please confirm that you have reviewed the quantities on this quote before you accept it" }),
+    }),
+  );
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByRole("alert")).toHaveText(
+    "Please confirm that you have reviewed the quantities on this quote. Your acceptance was not recorded.",
+  );
+  await expect(page.locator("#name")).toHaveJSProperty("readOnly", false);
+});
+
+test("a line without a photo shows its category's drawn tile; a photo still wins; an unknown category keeps the mark", async ({
+  page,
+}) => {
+  await page.goto("/?t=q-tiles-31");
+  await expect(page.getByRole("heading", { name: "Quote #Q-31" })).toBeVisible();
+  const rows = page.locator("tbody tr");
+  await expect(rows).toHaveCount(3);
+  // The photo wins on the line that has one.
+  await expect(rows.nth(0).locator("img.thumb")).toBeVisible();
+  await expect(rows.nth(0).locator("img.tile")).toHaveCount(0);
+  // No photo, a category the tiles know (named by the line): the mulch tile, a drawn image.
+  const tile = rows.nth(1).locator("img.tile");
+  await expect(tile).toBeVisible();
+  await expect(tile).toHaveAttribute("src", /^data:image\/svg\+xml|mulch/);
+  await expect(rows.nth(1).locator("svg.thumbmark")).toHaveCount(0);
+  await expect(rows.nth(1).locator("img.thumb")).toHaveCount(0);
+  // No photo and nothing the tiles know: the drawn no-photo mark, as before.
+  await expect(rows.nth(2).locator("svg.thumbmark")).toBeVisible();
+  await expect(rows.nth(2).locator("img.tile")).toHaveCount(0);
+});
+
+test("a long unbroken notice wraps inside the page: no sideways scroll on a phone", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/?t=q-long-32");
+  await expect(page.getByRole("heading", { name: "Quote #Q-32" })).toBeVisible();
+  await expect(page.locator(".qtynotice")).toBeVisible();
+  const widths = await page.evaluate(() => ({ doc: document.documentElement.scrollWidth, view: window.innerWidth }));
+  expect(widths.doc).toBeLessThanOrEqual(widths.view);
+});
+
+test("the disabled Accept button explains itself, tied to the button, and the hint goes when the form is ready", async ({ page }) => {
+  await page.goto("/?t=q-demo-25-hint");
+  const accept = page.getByRole("button", { name: "Accept quote" });
+  await expect(accept).toBeDisabled();
+  const hint = page.locator("#accept-hint");
+  await expect(hint).toBeVisible();
+  await expect(hint).toHaveText("To accept, tick the quantities box, type your full name and tick the confirmation.");
+  await expect(accept).toHaveAttribute("aria-describedby", "accept-hint");
+  await page.locator("#qty-confirm").check();
+  await expect(hint).toHaveText("To accept, type your full name and tick the confirmation.");
+  await page.locator("#name").fill("Sample Customer");
+  await expect(hint).toHaveText("To accept, tick the confirmation.");
+  await page.locator("#affirm").check();
+  await expect(accept).toBeEnabled();
+  await expect(page.locator("#accept-hint")).toHaveCount(0);
+  await expect(accept).not.toHaveAttribute("aria-describedby", /.+/);
+});
+
+test("print=1 prints the quote and the notice, not the accept card: a paper copy has nothing to tick", async ({ page }) => {
+  await page.emulateMedia({ media: "print" });
+  await page.goto("/?t=q-print-33&print=1");
+  await expect(page.getByRole("heading", { name: "Quote #Q-28" })).toBeVisible();
+  await expect(page.getByText("All quantities are to be confirmed by the customer.")).toBeVisible();
+  await expect(page.locator("#qty-confirm")).toHaveCount(0);
+  await expect(page.locator("#name")).toHaveCount(0);
+  await expect(page.locator("#affirm")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Accept quote" })).toHaveCount(0);
+  await expect(page.getByText("Accept this quote")).toHaveCount(0);
+  // The same link on screen still offers the form.
+  await page.emulateMedia({ media: "screen" });
+  await page.goto("/?t=q-print-33");
+  await expect(page.locator("#qty-confirm")).toBeVisible();
+});
+
+// The look: the notice reads as information, not as another field, and the quantities tick is one of the
+// card's own ticks (the same row, the same type) rather than a bolted on line.
+test("the notice is an information callout: an icon, a tinted ground, no field border", async ({ page }) => {
+  await page.goto("/?t=q-print-33");
+  const notice = page.locator(".qtynotice");
+  await expect(notice).toBeVisible();
+  await expect(notice.locator("svg.noticeicon")).toHaveCount(1);
+  const look = await page.evaluate(() => {
+    const root = document.querySelector("pd-quote-public")?.shadowRoot as ShadowRoot;
+    const n = getComputedStyle(root.querySelector(".qtynotice") as Element);
+    const card = getComputedStyle(root.querySelector(".card") as Element);
+    const input = getComputedStyle(root.querySelector("#name") as Element);
+    return {
+      ground: n.backgroundColor, cardGround: card.backgroundColor,
+      top: n.borderTopWidth, left: n.borderLeftWidth, leftColour: n.borderLeftColor,
+      inputBorder: input.borderTopColor, noticeTopColour: n.borderTopColor,
+    };
+  });
+  expect(look.ground).not.toBe(look.cardGround);
+  expect(look.top).toBe("0px");
+  expect(look.left).toBe("4px");
+  expect(look.leftColour).not.toBe(look.inputBorder);
+});
+
+test("the quantities tick is one of the card's own ticks: the same row and the same type as the confirmation", async ({ page }) => {
+  await page.goto("/?t=q-print-33");
+  const same = await page.evaluate(() => {
+    const root = document.querySelector("pd-quote-public")?.shadowRoot as ShadowRoot;
+    const read = (id: string) => {
+      const input = root.querySelector(`#${id}`) as HTMLInputElement;
+      const row = input.closest(".tick") as HTMLElement | null;
+      const label = root.querySelector(`label[for="${id}"]`) as HTMLElement;
+      const r = row === null ? null : getComputedStyle(row);
+      const l = getComputedStyle(label);
+      return {
+        hasRow: row !== null,
+        rowBorder: r?.borderTopWidth, rowRadius: r?.borderTopLeftRadius, rowPad: r?.paddingTop,
+        weight: l.fontWeight, size: l.fontSize, boxSize: getComputedStyle(input).width,
+      };
+    };
+    return { qty: read("qty-confirm"), affirm: read("affirm") };
+  });
+  expect(same.qty.hasRow).toBe(true);
+  expect(same.affirm.hasRow).toBe(true);
+  expect(same.qty).toEqual(same.affirm);
+});

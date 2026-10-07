@@ -206,6 +206,11 @@ type OrderViewLine struct {
 	FulfilledBase  string `json:"fulfilled_base"`
 	UnitPriceCents int64  `json:"unit_price_cents"`
 	LineTotalCents int64  `json:"line_total_cents"`
+	// BackorderEntered and BackorderBase are the quantity the yard picked short and the order still
+	// owes the customer (migration 0369), in the line's own unit and in base. The line's quantity
+	// above is what is to be fulfilled now; ordered = quantity + backorder.
+	BackorderEntered string `json:"backorder_entered"`
+	BackorderBase    string `json:"backorder_base"`
 }
 
 // EditResult is what a successful edit returns to the caller: the new line state (absent for a
@@ -273,6 +278,9 @@ type lineEditHooks struct {
 	// error ROLLS BACK the whole edit (B2-1: the trail is atomic with the write). before is zero for an
 	// add; after is zero for a remove.
 	record func(ctx context.Context, tx pgx.Tx, before, after LineSnapshot, totals OrderTotals) error
+	// cleared runs inside the same tx when the edit cleared a short line's backorder (see
+	// yard_pick_edit.go). nil = no one is listening; the clearing still happens.
+	cleared func(ctx context.Context, tx pgx.Tx, c ClearedBackorder) error
 }
 
 // dateEditHooks is the record-only hook for the requested-date write (not money-moving → no precheck).
@@ -512,6 +520,7 @@ func (s *Service) EditLineQty(ctx context.Context, orderID string, lineNo int, q
 	if lp.QtyBase < fulfilled {
 		return EditResult{}, fmt.Errorf("%w: %.4f already fulfilled", ErrLineInUse, fulfilled)
 	}
+	var cleared []ClearedBackorder
 	_, after, totals, status, err := es.UpdateLineGuarded(ctx, lineEditWrite{
 		OrderID: orderID, LineNo: lineNo, AllowedFrom: rule.fromList(),
 		QtyEntered: qtyEntered, QtyBase: formatQty(lp.QtyBase),
@@ -519,10 +528,12 @@ func (s *Service) EditLineQty(ctx context.Context, orderID string, lineNo int, q
 	}, lineEditHooks{
 		precheck: s.lineMoneyPrecheck(orderID),
 		record:   s.lineAuditHook(caller.UserID, orderID, FieldLineQty),
+		cleared:  s.clearedHook(caller.UserID, orderID, &cleared),
 	})
 	if err != nil {
 		return EditResult{}, nameEditField(err, FieldLineQty)
 	}
+	s.announceCleared(ctx, caller.UserID, orderID, cleared)
 	return EditResult{Line: &after, Totals: totals, Status: status}, nil
 }
 
@@ -602,13 +613,16 @@ func (s *Service) RemoveLine(ctx context.Context, orderID string, lineNo int) (E
 	if allocated > 0 || fulfilled > 0 {
 		return EditResult{}, fmt.Errorf("%w: %.4f allocated, %.4f fulfilled", ErrLineInUse, allocated, fulfilled)
 	}
+	var cleared []ClearedBackorder
 	_, totals, status, err := es.DeleteLineGuarded(ctx, orderID, lineNo, rule.fromList(), lineEditHooks{
 		precheck: s.lineMoneyPrecheck(orderID),
 		record:   s.lineAuditHook(caller.UserID, orderID, FieldLineRemove),
+		cleared:  s.clearedHook(caller.UserID, orderID, &cleared),
 	})
 	if err != nil {
 		return EditResult{}, nameEditField(err, FieldLineRemove)
 	}
+	s.announceCleared(ctx, caller.UserID, orderID, cleared)
 	return EditResult{Totals: totals, Status: status}, nil
 }
 

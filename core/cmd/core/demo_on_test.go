@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 )
 
 // The environment each wiring test starts from: a box that says demo
@@ -93,6 +95,54 @@ func TestDemoServeRefusesAProviderVariable(t *testing.T) {
 	}
 }
 
+// G4's one exception, through the serve entry: the feedback bridge is the one
+// outbound a demo box may carry (the Feature Polish ruling), so the bridge's
+// own five variables pass the provider gate. The proof the gate was passed is
+// the NEXT guard's refusal: the made-up database stops the serve with the
+// database's own error, never with an outbound provider error naming a bridge
+// variable. Written red first: on main every PLANE_ name refused the boot.
+func TestDemoServeAcceptsTheFeedbackBridgeVariables(t *testing.T) {
+	for _, name := range []string{
+		"PLANE_API_URL", "PLANE_API_KEY", "PLANE_PROJECT_ID",
+		"PLANE_WORKSPACE_SLUG", "PLANE_FEEDBACK_MODULE",
+	} {
+		env := serveEnv(t)
+		env[name] = "bridge-value"
+		getenv, lookup, environ := envFuncs(env)
+		err := demoServe(getenv, lookup, environ)
+		if err == nil {
+			t.Fatalf("%s: the made-up database must still stop the serve", name)
+		}
+		if strings.Contains(err.Error(), name) || strings.Contains(err.Error(), "outbound provider") {
+			t.Fatalf("%s: the bridge variable refused the boot: %v", name, err)
+		}
+	}
+}
+
+// The exception is exactly the bridge's five names: every other PLANE_
+// variable still refuses the boot, and so do the other denied prefixes. This
+// is the regression guard the ruling asked to keep.
+func TestDemoServeStillRefusesEveryOtherProviderPrefix(t *testing.T) {
+	for _, kv := range []string{
+		"PLANE_SOMETHING_NEW=1",
+		"BISTRACK_API_KEY=x",
+		"TWILIO_AUTH_TOKEN=x",
+		"HOS_PAYMENT_API_KEY=x",
+		"HOS_ASSIST_ANTHROPIC_API_KEY=x",
+	} {
+		env := serveEnv(t)
+		getenv, lookup, environ := envFuncs(env)
+		picture := append(environ(), kv)
+		err := demoServe(getenv, lookup, func() []string { return picture })
+		if err == nil {
+			t.Fatalf("%s: accepted", kv)
+		}
+		if !strings.Contains(err.Error(), "outbound provider") {
+			t.Fatalf("%s: refusal %q is not the provider guard's", kv, err)
+		}
+	}
+}
+
 // G3 through the serve entry: the database check runs inside
 // demoRegisterRoutes, before anything registers or serves, so a
 // non-demo database stops demoServe with the guard's own refusal and the
@@ -143,5 +193,35 @@ func TestDemoServeRefusesATokenExpiryOverTheCeiling(t *testing.T) {
 	err = demoServe(getenv, lookup, environ)
 	if err == nil || strings.Contains(err.Error(), "CORE_DEMO_TOKEN_TTL") {
 		t.Fatalf("an at-ceiling expiry was refused as over it: %v", err)
+	}
+}
+
+// The demo dealer's one policy difference from the decided default: the
+// refund approval limit is off on the demo load (the Dibbits ruling), so no
+// refund in the demo, of any size, ever asks for an approver; the default
+// itself stays a limit dealer, the gate every real dealer inherits. The
+// mirror keeps the two loads honest in one place: if the demo ever goes
+// back to a plain Default(), or the default's own switch flips, this fails.
+func TestDemoRoleConfig_RefundApprovalLimitOffOnTheDemoLoadOnly(t *testing.T) {
+	demo, err := demoRoleConfig()
+	if err != nil {
+		t.Fatalf("demoRoleConfig: %v", err)
+	}
+	if demo.RefundRequiresApproval(9_000_000_000) {
+		t.Fatal("the demo dealer has no refund approval threshold: no cumulative, however large, may ask for an approver")
+	}
+	// The rest of the demo's policy is the decided default's, the one
+	// difference switched: the amount and the approvers still read, so a
+	// later switch back to a limit serves the default's numbers.
+	if got := demo.RefundAmountWithoutApprovalCents(); got != 25000 {
+		t.Fatalf("the demo keeps the default's configured amount, got %d", got)
+	}
+
+	prod, err := roleconfig.Default()
+	if err != nil {
+		t.Fatalf("roleconfig.Default: %v", err)
+	}
+	if !prod.RefundRequiresApproval(25001) {
+		t.Fatal("the decided default must keep the limit on: a dealer who sets a number keeps the gate")
 	}
 }

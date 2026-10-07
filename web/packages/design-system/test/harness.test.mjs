@@ -59,6 +59,22 @@ test('the committed static harness is a fresh build of the page and its sheets, 
   const onDisk = existsSync(sheetsDir) ? readdirSync(sheetsDir).sort() : [];
   const expected = harnessSheets().map((s) => `${s.tag}.css`).sort();
   assert.deepEqual(onDisk, expected, 'harness/sheets must hold exactly one sheet per kit, nothing else');
+
+  // The vendored face is held the same way: the build copies src/fonts beside
+  // the pages, the inlined token sheet registers Inter through page-relative
+  // ./fonts/ URLs, and a stale or missing copy means the committed pages open
+  // in the fallback face. Exact byte equality with src/fonts, nothing else.
+  const fontsSrc = join(pkgDir, 'src', 'fonts');
+  const fontsDir = join(pkgDir, 'harness', 'fonts');
+  const fontsOnDisk = existsSync(fontsDir) ? readdirSync(fontsDir).sort() : [];
+  const fontsExpected = readdirSync(fontsSrc).sort();
+  assert.deepEqual(fontsOnDisk, fontsExpected, 'harness/fonts must hold exactly the vendored face files, nothing else');
+  for (const name of fontsExpected) {
+    assert.ok(
+      readFileSync(join(fontsDir, name)).equals(readFileSync(join(fontsSrc, name))),
+      `harness/fonts/${name} is stale: run npm run build:harness and commit the result`,
+    );
+  }
   for (const { tag, css } of harnessSheets()) {
     assert.equal(
       readFileSync(join(sheetsDir, `${tag}.css`), 'utf8'),

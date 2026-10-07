@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
-    "test": "node --import ../../packages/api-client/src/_ts-js-loader.mjs --test test/unit.test.mjs test/sinks.test.mjs test/theme.test.mjs test/no-default-adopt.test.mjs src/ported/*.test.mjs && playwright test",
+    "test": "node --import ../../packages/api-client/src/_ts-js-loader.mjs --test test/unit.test.mjs test/sinks.test.mjs test/theme.test.mjs test/no-default-adopt.test.mjs test/demo-light-default.test.mjs test/product-tiles-build.test.mjs src/ported/*.test.mjs && playwright test && playwright test --config test/popout-base-aware.config.ts && playwright test --config test/default-build.config.ts",
     "acceptance": "playwright test --config test/acceptance.config.ts"
   },
   "dependencies": {

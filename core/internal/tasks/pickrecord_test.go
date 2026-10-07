@@ -39,7 +39,7 @@ func TestRecordPick_ZeroIsAnAnswerAndBlankIsNot(t *testing.T) {
 	ctx := context.Background()
 
 	got, err := svc.RecordPick(ctx, taskID, "u-1", []PickedLineInput{
-		{OrderLineNo: 1, Description: "Armour stone", QtyOrdered: "10", QtyPicked: "0", UOM: "EA"},
+		{OrderLineNo: 1, Description: "Armour stone", QtyOrdered: "10", QtyPicked: "0", UOM: "EA", ShortReason: ShortReasonNotInYard},
 	})
 	if err != nil {
 		t.Fatalf("a pick of nothing must be recordable: %v", err)
@@ -76,12 +76,12 @@ func TestRecordPick_ACorrectionReplacesTheNumberRatherThanAppendingASecond(t *te
 	ctx := context.Background()
 
 	if _, err := svc.RecordPick(ctx, taskID, "u-1", []PickedLineInput{
-		{OrderLineNo: 1, QtyOrdered: "10", QtyPicked: "7", UOM: "EA"},
+		{OrderLineNo: 1, QtyOrdered: "10", QtyPicked: "7", UOM: "EA", ShortReason: ShortReasonCountCorrection},
 	}); err != nil {
 		t.Fatalf("first record: %v", err)
 	}
 	got, err := svc.RecordPick(ctx, taskID, "u-1", []PickedLineInput{
-		{OrderLineNo: 1, QtyOrdered: "10", QtyPicked: "9", UOM: "EA"},
+		{OrderLineNo: 1, QtyOrdered: "10", QtyPicked: "9", UOM: "EA", ShortReason: ShortReasonCountCorrection},
 	})
 	if err != nil {
 		t.Fatalf("correction: %v", err)
@@ -135,7 +135,7 @@ func TestRecordPick_DoesNotFileAShortage(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := svc.RecordPick(ctx, taskID, "u-1", []PickedLineInput{
-		{OrderLineNo: 1, QtyOrdered: "10", QtyPicked: "7", UOM: "EA"},
+		{OrderLineNo: 1, QtyOrdered: "10", QtyPicked: "7", UOM: "EA", ShortReason: ShortReasonDamaged},
 	}); err != nil {
 		t.Fatalf("record: %v", err)
 	}

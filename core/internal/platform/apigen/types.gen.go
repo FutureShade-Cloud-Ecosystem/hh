@@ -1131,6 +1131,19 @@ type UomViewPage struct {
 	Limit      *int32    `json:"limit,omitempty"`
 }
 
+type CategoryView struct {
+	Id       string `json:"id"`
+	Code     string `json:"code"`
+	Name     string `json:"name"`
+	IsActive bool   `json:"is_active"`
+}
+
+type CategoryViewPage struct {
+	Items      []CategoryView `json:"items"`
+	NextCursor *string        `json:"next_cursor,omitempty"`
+	Limit      *int32         `json:"limit,omitempty"`
+}
+
 type ProductPage struct {
 	Items      []Product `json:"items"`
 	NextCursor *string   `json:"next_cursor,omitempty"`
@@ -4030,22 +4043,25 @@ type FeedbackResult struct {
 }
 
 type OrderViewLine struct {
-	LineNo         int32  `json:"line_no"`
-	ProductId      string `json:"product_id"`
-	Description    string `json:"description"`
-	QtyEntered     string `json:"qty_entered"`
-	UomEntered     string `json:"uom_entered"`
-	QtyBase        string `json:"qty_base"`
-	AllocatedBase  string `json:"allocated_base"`
-	FulfilledBase  string `json:"fulfilled_base"`
-	UnitPriceCents int64  `json:"unit_price_cents"`
-	LineTotalCents int64  `json:"line_total_cents"`
+	LineNo           int32  `json:"line_no"`
+	ProductId        string `json:"product_id"`
+	Description      string `json:"description"`
+	QtyEntered       string `json:"qty_entered"`
+	UomEntered       string `json:"uom_entered"`
+	QtyBase          string `json:"qty_base"`
+	AllocatedBase    string `json:"allocated_base"`
+	FulfilledBase    string `json:"fulfilled_base"`
+	UnitPriceCents   int64  `json:"unit_price_cents"`
+	LineTotalCents   int64  `json:"line_total_cents"`
+	BackorderEntered string `json:"backorder_entered"`
+	BackorderBase    string `json:"backorder_base"`
 }
 
 type OrderView struct {
 	Id             string          `json:"id"`
 	Status         string          `json:"status"`
 	BranchId       string          `json:"branch_id"`
+	HasBackorder   bool            `json:"has_backorder"`
 	LegalActions   []string        `json:"legal_actions"`
 	EditableFields []string        `json:"editable_fields"`
 	Lines          []OrderViewLine `json:"lines"`
@@ -4454,13 +4470,14 @@ type TaskCancelRequest struct {
 }
 
 type TaskPickLine struct {
-	LineNo      int32   `json:"line_no"`
-	ProductId   *string `json:"product_id,omitempty"`
-	Sku         *string `json:"sku,omitempty"`
-	Description string  `json:"description"`
-	QtyOrdered  string  `json:"qty_ordered"`
-	Uom         string  `json:"uom"`
-	Location    *string `json:"location,omitempty"`
+	LineNo         int32   `json:"line_no"`
+	ProductId      *string `json:"product_id,omitempty"`
+	Sku            *string `json:"sku,omitempty"`
+	Description    string  `json:"description"`
+	QtyOrdered     string  `json:"qty_ordered"`
+	QtyBackordered *string `json:"qty_backordered,omitempty"`
+	Uom            string  `json:"uom"`
+	Location       *string `json:"location,omitempty"`
 }
 
 type TaskPickTicket struct {
@@ -4506,6 +4523,8 @@ type TaskPickedLine struct {
 	Uom         string    `json:"uom"`
 	PickedBy    *string   `json:"picked_by,omitempty"`
 	PickedAt    time.Time `json:"picked_at"`
+	ShortReason *string   `json:"short_reason,omitempty"`
+	ShortNote   *string   `json:"short_note,omitempty"`
 }
 
 type TaskPickQueueEntry struct {
@@ -4528,17 +4547,34 @@ type TaskPendingTicketPage struct {
 }
 
 type TaskRecordPickLine struct {
-	OrderLineNo int32  `json:"order_line_no"`
-	ProductId   string `json:"product_id"`
-	Sku         string `json:"sku"`
-	Description string `json:"description"`
-	QtyOrdered  string `json:"qty_ordered"`
-	QtyPicked   string `json:"qty_picked"`
-	Uom         string `json:"uom"`
+	OrderLineNo int32   `json:"order_line_no"`
+	ProductId   string  `json:"product_id"`
+	Sku         string  `json:"sku"`
+	Description string  `json:"description"`
+	QtyOrdered  string  `json:"qty_ordered"`
+	QtyPicked   string  `json:"qty_picked"`
+	Uom         string  `json:"uom"`
+	ShortReason *string `json:"short_reason,omitempty"`
+	ShortNote   *string `json:"short_note,omitempty"`
 }
 
 type TaskRecordPickRequest struct {
 	Lines []TaskRecordPickLine `json:"lines"`
+}
+
+type TaskRecordSkidsRequest struct {
+	SkidCount int32   `json:"skid_count"`
+	Reason    string  `json:"reason"`
+	Note      *string `json:"note,omitempty"`
+}
+
+type TaskRecordSkidsResult struct {
+	SkidCount            int32  `json:"skid_count"`
+	PreviousSkidCount    *int32 `json:"previous_skid_count"`
+	DepositCents         int64  `json:"deposit_cents"`
+	PreviousDepositCents int64  `json:"previous_deposit_cents"`
+	Changed              bool   `json:"changed"`
+	OrderNo              string `json:"order_no"`
 }
 
 type TaskRecordPickResult struct {
@@ -4593,9 +4629,38 @@ type TaskAdvanceRule struct {
 }
 
 type PosLineInput struct {
-	ProductId  string  `json:"product_id"`
-	QtyEntered float64 `json:"qty_entered"`
-	UomEntered string  `json:"uom_entered"`
+	ProductId  string            `json:"product_id"`
+	QtyEntered float64           `json:"qty_entered"`
+	UomEntered string            `json:"uom_entered"`
+	Discount   *PosDiscountInput `json:"discount,omitempty"`
+}
+
+type PosDiscountInput struct {
+	PercentBps        *int32   `json:"percent_bps,omitempty"`
+	AmountCents       *int64   `json:"amount_cents,omitempty"`
+	ApprovedBy        string   `json:"approved_by"`
+	ApprovedQty       *float64 `json:"approved_qty,omitempty"`
+	ApprovedBaseCents int64    `json:"approved_base_cents"`
+}
+
+type PosDiscountApprover struct {
+	Id        string `json:"id"`
+	Name      string `json:"name"`
+	RoleLabel string `json:"role_label"`
+}
+
+type PosDiscountApproverList struct {
+	Items []PosDiscountApprover `json:"items"`
+}
+
+type PosSaleDiscount struct {
+	Scope           string `json:"scope"`
+	LineNo          *int32 `json:"line_no,omitempty"`
+	PercentBps      *int32 `json:"percent_bps,omitempty"`
+	AmountCents     int64  `json:"amount_cents"`
+	ApprovedBy      string `json:"approved_by"`
+	ApprovedByRole  string `json:"approved_by_role"`
+	ApprovedByLabel string `json:"approved_by_label"`
 }
 
 type PosTenderLegInput struct {
@@ -4639,6 +4704,7 @@ type PosSaleInput struct {
 	DepositCents      *int64               `json:"deposit_cents,omitempty"`
 	DepositMethod     *string              `json:"deposit_method,omitempty"`
 	Lines             []PosLineInput       `json:"lines"`
+	Discount          *PosDiscountInput    `json:"discount,omitempty"`
 	Tenders           *[]PosTenderLegInput `json:"tenders,omitempty"`
 }
 
@@ -4675,6 +4741,45 @@ type PosSale struct {
 	JobReference      *string               `json:"job_reference,omitempty"`
 	SplitTender       *bool                 `json:"split_tender,omitempty"`
 	Tenders           *[]PosTenderLegResult `json:"tenders,omitempty"`
+	DiscountCents     *int64                `json:"discount_cents,omitempty"`
+	Discounts         *[]PosSaleDiscount    `json:"discounts,omitempty"`
+}
+
+type PosSalePreviewInput struct {
+	BranchId   string             `json:"branch_id"`
+	CustomerId string             `json:"customer_id"`
+	SaleType   *string            `json:"sale_type,omitempty"`
+	Fulfilment *string            `json:"fulfilment,omitempty"`
+	Relief     *PosReliefDecision `json:"relief,omitempty"`
+	Lines      []PosLineInput     `json:"lines"`
+	Discount   *PosDiscountInput  `json:"discount,omitempty"`
+}
+
+type PosSalePreview struct {
+	SubtotalCents          int64                   `json:"subtotal_cents"`
+	TaxCents               int64                   `json:"tax_cents"`
+	TaxLines               []PosSalePreviewTaxLine `json:"tax_lines"`
+	TotalCents             int64                   `json:"total_cents"`
+	TaxReasonCode          string                  `json:"tax_reason_code"`
+	DiscountCents          *int64                  `json:"discount_cents,omitempty"`
+	SaleDiscountCents      *int64                  `json:"sale_discount_cents,omitempty"`
+	TicketBaseCents        *int64                  `json:"ticket_base_cents,omitempty"`
+	TicketDiscountMaxCents *int64                  `json:"ticket_discount_max_cents,omitempty"`
+	Lines                  *[]PosSalePreviewLine   `json:"lines,omitempty"`
+}
+
+type PosSalePreviewLine struct {
+	LineNo                    int32  `json:"line_no"`
+	LineTotalCents            int64  `json:"line_total_cents"`
+	BeforeTicketDiscountCents int64  `json:"before_ticket_discount_cents"`
+	DiscountCents             *int64 `json:"discount_cents,omitempty"`
+	SaleDiscountCents         *int64 `json:"sale_discount_cents,omitempty"`
+}
+
+type PosSalePreviewTaxLine struct {
+	ReasonCode string `json:"reason_code"`
+	RateBps    int32  `json:"rate_bps"`
+	TaxCents   int64  `json:"tax_cents"`
 }
 
 type PosSaleView struct {
@@ -4695,17 +4800,21 @@ type PosSaleView struct {
 	Lines         []PosSaleViewLine     `json:"lines"`
 	SplitTender   *bool                 `json:"split_tender,omitempty"`
 	Tenders       *[]PosTenderLegResult `json:"tenders,omitempty"`
+	DiscountCents *int64                `json:"discount_cents,omitempty"`
+	Discounts     *[]PosSaleDiscount    `json:"discounts,omitempty"`
 }
 
 type PosSaleViewLine struct {
-	LineNo         int32   `json:"line_no"`
-	ProductId      string  `json:"product_id"`
-	Description    string  `json:"description"`
-	QtyEntered     float64 `json:"qty_entered"`
-	UomEntered     string  `json:"uom_entered"`
-	UnitPriceCents int64   `json:"unit_price_cents"`
-	PriceUom       string  `json:"price_uom"`
-	LineTotalCents int64   `json:"line_total_cents"`
+	LineNo            int32   `json:"line_no"`
+	ProductId         string  `json:"product_id"`
+	Description       string  `json:"description"`
+	QtyEntered        float64 `json:"qty_entered"`
+	UomEntered        string  `json:"uom_entered"`
+	UnitPriceCents    int64   `json:"unit_price_cents"`
+	PriceUom          string  `json:"price_uom"`
+	LineTotalCents    int64   `json:"line_total_cents"`
+	DiscountCents     *int64  `json:"discount_cents,omitempty"`
+	SaleDiscountCents *int64  `json:"sale_discount_cents,omitempty"`
 }
 
 type PosSaleSummary struct {
@@ -4883,9 +4992,14 @@ type PosHotkeys struct {
 }
 
 type PosAccountStanding struct {
+	Standing     string  `json:"standing"`
 	PastDueCents *int64  `json:"past_due_cents,omitempty"`
 	OldestBucket *string `json:"oldest_bucket,omitempty"`
 	OnHold       *bool   `json:"on_hold,omitempty"`
+}
+
+type PosPaymentGrant struct {
+	CanTakePayment bool `json:"can_take_payment"`
 }
 
 type PosAddonSuggestion struct {
@@ -5640,10 +5754,11 @@ type PricingLowMarginEntry struct {
 }
 
 type PricingLowMarginScanRow struct {
-	OrderLineId         string    `json:"order_line_id"`
-	OrderId             string    `json:"order_id"`
-	OrderNo             string    `json:"order_no"`
-	SoldAt              time.Time `json:"sold_at"`
+	DocType             string    `json:"doc_type"`
+	LineId              string    `json:"line_id"`
+	DocId               string    `json:"doc_id"`
+	DocNo               string    `json:"doc_no"`
+	DocAt               time.Time `json:"doc_at"`
 	BranchId            string    `json:"branch_id"`
 	CustomerId          *string   `json:"customer_id,omitempty"`
 	CustomerType        string    `json:"customer_type"`
@@ -5653,6 +5768,7 @@ type PricingLowMarginScanRow struct {
 	QtyEntered          float64   `json:"qty_entered"`
 	UomEntered          string    `json:"uom_entered"`
 	UnitPriceCents      int64     `json:"unit_price_cents"`
+	DiscPct             *int32    `json:"disc_pct,omitempty"`
 	PriceUom            string    `json:"price_uom"`
 	CostInPriceUomCents int64     `json:"cost_in_price_uom_cents"`
 	MarginBps           int64     `json:"margin_bps"`
@@ -5660,6 +5776,15 @@ type PricingLowMarginScanRow struct {
 	FloorBps            int64     `json:"floor_bps"`
 	Level               string    `json:"level"`
 	Reason              *string   `json:"reason,omitempty"`
+	SalespersonId       *string   `json:"salesperson_id,omitempty"`
+	Salesperson         *string   `json:"salesperson,omitempty"`
+	ClearedBelowFloor   bool      `json:"cleared_below_floor"`
+	ClearedById         *string   `json:"cleared_by_id,omitempty"`
+	ClearedBy           *string   `json:"cleared_by,omitempty"`
+	ClearAuthority      *string   `json:"clear_authority,omitempty"`
+	ClearDiscPct        *int32    `json:"clear_disc_pct,omitempty"`
+	ClearMarginBps      *int64    `json:"clear_margin_bps,omitempty"`
+	DocMarginBps        *int64    `json:"doc_margin_bps,omitempty"`
 }
 
 type PricingQuantityBreakItem struct {
@@ -6095,7 +6220,7 @@ type PricingAuditLogPage struct {
 type PricingLowMarginScanPage struct {
 	Items      []PricingLowMarginScanRow `json:"items"`
 	NextCursor *string                   `json:"next_cursor,omitempty"`
-	Limit      *int32                    `json:"limit,omitempty"`
+	Limit      int32                     `json:"limit"`
 }
 
 type PricingQuantityBreakPage struct {
@@ -6671,23 +6796,48 @@ type QuoteSummaryPage struct {
 }
 
 type QuoteView struct {
-	Id             string          `json:"id"`
-	QuoteNo        string          `json:"quote_no"`
-	CustomerId     string          `json:"customer_id"`
-	CustomerName   string          `json:"customer_name"`
-	BranchId       string          `json:"branch_id"`
-	Status         string          `json:"status"`
-	ValidUntil     *string         `json:"valid_until,omitempty"`
-	Expired        bool            `json:"expired"`
-	EditableFields []string        `json:"editable_fields"`
-	CanConvert     bool            `json:"can_convert"`
-	OwnerId        *string         `json:"owner_id,omitempty"`
-	OwnerName      *string         `json:"owner_name,omitempty"`
-	Lines          []QuoteViewLine `json:"lines"`
-	SubtotalCents  int64           `json:"subtotal_cents"`
-	TaxCents       int64           `json:"tax_cents"`
-	TotalCents     int64           `json:"total_cents"`
-	UpdatedAt      time.Time       `json:"updated_at"`
+	Id             string                  `json:"id"`
+	QuoteNo        string                  `json:"quote_no"`
+	CustomerId     string                  `json:"customer_id"`
+	CustomerName   string                  `json:"customer_name"`
+	BranchId       string                  `json:"branch_id"`
+	Status         string                  `json:"status"`
+	ValidUntil     *string                 `json:"valid_until,omitempty"`
+	Expired        bool                    `json:"expired"`
+	EditableFields []string                `json:"editable_fields"`
+	CanConvert     bool                    `json:"can_convert"`
+	CanAccept      bool                    `json:"can_accept"`
+	CanReject      bool                    `json:"can_reject"`
+	OwnerId        *string                 `json:"owner_id,omitempty"`
+	OwnerName      *string                 `json:"owner_name,omitempty"`
+	Lines          []QuoteViewLine         `json:"lines"`
+	SubtotalCents  int64                   `json:"subtotal_cents"`
+	TaxCents       int64                   `json:"tax_cents"`
+	TotalCents     int64                   `json:"total_cents"`
+	UpdatedAt      time.Time               `json:"updated_at"`
+	QuantityNotice string                  `json:"quantity_notice"`
+	Acceptances    []QuoteAcceptanceRecord `json:"acceptances"`
+}
+
+type QuoteAcceptanceRecord struct {
+	Source              string               `json:"source"`
+	TypedName           *string              `json:"typed_name,omitempty"`
+	AcceptedAt          time.Time            `json:"accepted_at"`
+	QuantitiesConfirmed bool                 `json:"quantities_confirmed"`
+	AmountCents         int64                `json:"amount_cents"`
+	Channel             *string              `json:"channel,omitempty"`
+	Note                *string              `json:"note,omitempty"`
+	QuantityNotice      *string              `json:"quantity_notice,omitempty"`
+	Lines               *[]QuoteAcceptedLine `json:"lines,omitempty"`
+}
+
+type QuoteAcceptedLine struct {
+	LineNo         int32  `json:"line_no"`
+	Description    string `json:"description"`
+	QtyEntered     string `json:"qty_entered"`
+	UomEntered     string `json:"uom_entered"`
+	UnitPriceCents int64  `json:"unit_price_cents"`
+	LineTotalCents int64  `json:"line_total_cents"`
 }
 
 type QuoteViewLine struct {
@@ -6794,6 +6944,31 @@ type QuoteLineComparison struct {
 	Options []QuoteComparisonRow `json:"options"`
 }
 
+type QuoteAcceptOnBehalfRequest struct {
+	Channel             string  `json:"channel"`
+	Note                *string `json:"note,omitempty"`
+	QuantitiesConfirmed bool    `json:"quantities_confirmed"`
+	ExpectedTotalCents  int64   `json:"expected_total_cents"`
+}
+
+type QuoteRejectOnBehalfRequest struct {
+	Channel    string  `json:"channel"`
+	ReasonCode string  `json:"reason_code"`
+	Note       *string `json:"note,omitempty"`
+}
+
+type QuoteDecisionResult struct {
+	QuoteId        string    `json:"quote_id"`
+	QuoteNo        string    `json:"quote_no"`
+	Status         string    `json:"status"`
+	PreviousStatus string    `json:"previous_status"`
+	Channel        *string   `json:"channel,omitempty"`
+	OnBehalf       bool      `json:"on_behalf"`
+	DecidedAt      time.Time `json:"decided_at"`
+	TotalCents     int64     `json:"total_cents"`
+	Replayed       bool      `json:"replayed"`
+}
+
 type QuoteConvertRequest struct {
 	Fulfillment *string `json:"fulfillment,omitempty"`
 }
@@ -6804,10 +6979,11 @@ type QuoteConvertResult struct {
 }
 
 type QuoteOrderPaymentRequest struct {
-	Method         string `json:"method"`
-	AmountCents    int64  `json:"amount_cents"`
-	Reference      string `json:"reference"`
-	IdempotencyKey string `json:"idempotency_key"`
+	Method         string  `json:"method"`
+	AmountCents    int64   `json:"amount_cents"`
+	Reference      string  `json:"reference"`
+	IdempotencyKey string  `json:"idempotency_key"`
+	Fulfillment    *string `json:"fulfillment,omitempty"`
 }
 
 type QuoteOrderPaymentResult struct {
@@ -6866,6 +7042,7 @@ type QuotePolicy struct {
 	IncludeProductImages bool      `json:"include_product_images"`
 	QuickChipSet         []string  `json:"quick_chip_set"`
 	EffectiveChips       *[]string `json:"effective_chips,omitempty"`
+	QuantityNotice       string    `json:"quantity_notice"`
 	WorkspaceSplitPct    int32     `json:"workspace_split_pct"`
 	WorkspaceArrangement string    `json:"workspace_arrangement"`
 }
@@ -6960,6 +7137,7 @@ type QuoteShareLinkList struct {
 
 type QuotePublicView struct {
 	QuoteNo          string            `json:"quote_no"`
+	QuantityNotice   string            `json:"quantity_notice"`
 	CustomerName     string            `json:"customer_name"`
 	Status           string            `json:"status"`
 	ValidUntil       *string           `json:"valid_until,omitempty"`
@@ -6970,6 +7148,7 @@ type QuotePublicView struct {
 	TotalCents       int64             `json:"total_cents"`
 	AsOf             time.Time         `json:"as_of"`
 	Acceptable       bool              `json:"acceptable"`
+	Preview          *bool             `json:"preview,omitempty"`
 	CustomerNotes    *string           `json:"customer_notes,omitempty"`
 	DepositRequired  *bool             `json:"deposit_required,omitempty"`
 	DepositPct       *int32            `json:"deposit_pct,omitempty"`
@@ -6994,18 +7173,20 @@ type QuotePublicLine struct {
 }
 
 type QuotePublicAcceptRequest struct {
-	TypedName string `json:"typed_name"`
-	Accepted  bool   `json:"accepted"`
+	TypedName           string `json:"typed_name"`
+	Accepted            bool   `json:"accepted"`
+	QuantitiesConfirmed bool   `json:"quantities_confirmed"`
 }
 
 type QuoteAcceptanceResult struct {
-	QuoteNo          string    `json:"quote_no"`
-	TypedName        string    `json:"typed_name"`
-	AcceptedAt       time.Time `json:"accepted_at"`
-	SubtotalCents    int64     `json:"subtotal_cents"`
-	TaxCents         int64     `json:"tax_cents"`
-	TotalCents       int64     `json:"total_cents"`
-	RepeatAcceptance *bool     `json:"repeat_acceptance,omitempty"`
+	QuoteNo             string    `json:"quote_no"`
+	TypedName           string    `json:"typed_name"`
+	QuantitiesConfirmed bool      `json:"quantities_confirmed"`
+	AcceptedAt          time.Time `json:"accepted_at"`
+	SubtotalCents       int64     `json:"subtotal_cents"`
+	TaxCents            int64     `json:"tax_cents"`
+	TotalCents          int64     `json:"total_cents"`
+	RepeatAcceptance    *bool     `json:"repeat_acceptance,omitempty"`
 }
 
 type QuoteSMSShareRequest struct {
@@ -7694,19 +7875,22 @@ type TenantOrder struct {
 	TaxCents           int64     `json:"tax_cents"`
 	TotalCents         int64     `json:"total_cents"`
 	CreatedAt          time.Time `json:"created_at"`
+	HasBackorder       *bool     `json:"has_backorder,omitempty"`
 }
 
 type TenantOrderLine struct {
-	LineNo         int32  `json:"line_no"`
-	ProductId      string `json:"product_id"`
-	Description    string `json:"description"`
-	QtyEntered     string `json:"qty_entered"`
-	UomEntered     string `json:"uom_entered"`
-	QtyBase        string `json:"qty_base"`
-	AllocatedBase  string `json:"allocated_base"`
-	FulfilledBase  string `json:"fulfilled_base"`
-	UnitPriceCents int64  `json:"unit_price_cents"`
-	LineTotalCents int64  `json:"line_total_cents"`
+	LineNo           int32   `json:"line_no"`
+	ProductId        string  `json:"product_id"`
+	Description      string  `json:"description"`
+	QtyEntered       string  `json:"qty_entered"`
+	UomEntered       string  `json:"uom_entered"`
+	QtyBase          string  `json:"qty_base"`
+	AllocatedBase    string  `json:"allocated_base"`
+	FulfilledBase    string  `json:"fulfilled_base"`
+	UnitPriceCents   int64   `json:"unit_price_cents"`
+	LineTotalCents   int64   `json:"line_total_cents"`
+	BackorderEntered *string `json:"backorder_entered,omitempty"`
+	BackorderBase    *string `json:"backorder_base,omitempty"`
 }
 
 type TenantOrderDetail struct {

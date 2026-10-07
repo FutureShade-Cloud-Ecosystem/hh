@@ -31,6 +31,13 @@ export const baseStyles = css`
     /* The sheet declares the scheme per half; the kits follow it, so form
        controls and scrollbars inside a kit answer the theme too. */
     color-scheme: var(--hh-color-scheme);
+    /* Tabular figures inside the kit as well (row 942): the sheet sets the
+       same pair on the document root, but a kit can be embedded where that
+       half never loaded, and a shadow root inherits only what the host page
+       set. Inter renders every digit one width, so columns of money,
+       quantities and codes line up without a mono face. */
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
   }
   * { box-sizing: border-box; }
 

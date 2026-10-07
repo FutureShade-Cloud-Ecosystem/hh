@@ -121,6 +121,11 @@ type posStore interface {
 	// DIB-488 rev 6 (item D): salesperson reads, validation + the counter selector (non-tx; M2 debt)
 	ReadStaffName(ctx context.Context, userID string) (string, bool, error)
 	ListSalespeople(ctx context.Context) ([]Salesperson, error)
+	// The counter discount's approver reads (discount.go): the active logins holding a role grant
+	// that reaches the branch, one row per grant; userID narrows to one login ("" lists all).
+	ListDiscountStaff(ctx context.Context, orgID, branchID, userID string) ([]discountStaffRow, error)
+	// The manual discounts a committed sale carries, read back for a replay and a reopen.
+	ReadSaleDiscounts(ctx context.Context, orderID string) ([]SaleDiscount, error)
 	// DIB-488 rev 8, all display-only M2-debt cross-reads (repository_rev8.go):
 	// item 9: the DISCOVERED catalogue weight (kg per base unit) riding the stock glance
 	ReadProductWeightKg(ctx context.Context, productID string) (float64, bool, error)
@@ -240,12 +245,16 @@ type Service struct {
 	// an un-curated counter is a working counter (quickpicks.go).
 	curation SurfaceCuration
 	// aging is the AR read behind the Customer step's past-due fact (standing.go). Nil until wired,
-	// and nil says nothing, never an error, and never "this account is current".
-	aging  AgingReader
-	tender TenderTaker
-	credit CreditGate
-	sig    SignatureProvider
-	tax    TaxAssessor
+	// and nil answers the read unavailable, never "this account is current".
+	aging AgingReader
+	// holds and accounts are the standing read's other two facts (standing.go): the active credit
+	// hold, and that the account exists at all. Nil answers the read unavailable, never empty.
+	holds    HoldReader
+	accounts AccountChecker
+	tender   TenderTaker
+	credit   CreditGate
+	sig      SignatureProvider
+	tax      TaxAssessor
 	// taxRules is the optional round-rule read behind the counter tax-rate
 	// read's round_mode word (taxrate.go). Nil answers INVOICE_TOTAL, the
 	// flat engine's actual behavior.
@@ -357,6 +366,10 @@ func (s *Service) WithAudit(r audit.Recorder) *Service { s.audit = r; return s }
 // (roleconfig.Default, Load or Validate): a refused configuration yields
 // no Config to guard with.
 func (s *Service) WithRoleConfig(c *roleconfig.Config) *Service { s.roles = c; return s }
+
+// RoleConfig returns the role configuration the service answers its rules
+// from, so a composition test can prove which one the wiring handed it.
+func (s *Service) RoleConfig() *roleconfig.Config { return s.roles }
 
 // WithUserLinker injects the ERP users.id linker the committed decision
 // uses to name the approver in the same identifier space as the clerk.
@@ -507,7 +520,7 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 			return Sale{}, errCashTenderedNotCash
 		}
 	}
-	if cached, found, err := s.store.FindSaleByKey(ctx, in.IdempotencyKey); err != nil {
+	if cached, found, err := s.findSaleByKey(ctx, in.IdempotencyKey); err != nil {
 		return Sale{}, err
 	} else if found {
 		cached.Replayed = true
@@ -538,60 +551,31 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 		return Sale{}, err
 	}
 
-	// 3. Price every line through the counter resolve (the cashier never types a price, and the
-	// price the customer's rules and tiers give is accepted: no margin floor at the till, D48 row
-	// 481, D49). A line that cannot be priced at all (no retail anchor, no uom conversion) is
-	// still a client-correctable 4xx, never a plausible zero.
-	lines := make([]orderLineRow, len(in.Lines))
-	var subtotal int64
-	for i, li := range in.Lines {
-		lp, err := s.pricing.DeriveCounterLinePrice(ctx, pricing.ResolveInput{
-			CustomerID:   customerID,
-			CustomerType: cust.CustomerType,
-			ProductID:    li.ProductID,
-			BranchID:     in.BranchID,
-			QtyEntered:   li.QtyEntered,
-			UOMEntered:   li.UOMEntered,
-		})
-		if err != nil {
-			// A pricing FAILURE (e.g. a walk-in RETAIL line with no retail anchor or no uom conversion
-			// factor) is a client-correctable 4xx, not a server fault. Surface it with the SAME status the
-			// /pricing endpoints return, scoped to the offending line, so the cashier sees a real message.
-			// Before this, the raw pricing sentinel fell through the handler's writeErr default to a bare
-			// HTTP 500 "internal error", and because a walk-in CASH ring resolves RETAIL pricing, a
-			// retail-pricing gap 500'd the whole sale (DIB-197). Every tender hits this same line-pricing
-			// step, so the mapping fixes them all without touching a successfully-priced sale.
-			if st, msg, ok := pricing.ClientStatus(err); ok {
-				return Sale{}, clientErr(st, "line %d: %s", i+1, msg)
-			}
-			return Sale{}, err
-		}
-		lines[i] = orderLineRow{
-			LineNo:         i + 1,
-			ProductID:      li.ProductID,
-			QtyEntered:     li.QtyEntered,
-			UOMEntered:     li.UOMEntered,
-			QtyBase:        lp.QtyBase,
-			UnitPriceCents: lp.UnitPriceCents,
-			PriceUOM:       lp.PriceUOM,
-			LineTotalCents: lp.LineTotalCents,
-		}
-		subtotal += lp.LineTotalCents
-	}
-
-	// 4. Totals, assessed through the TaxAssessor seam (M5 owns the real engine). The default FlatHSTAssessor
-	//    returns flat 13% (D-A19-9), so at scaffold the binding tax is bit-identical to the old flatHST13.
-	//    Relief sets the reason code + snapshot, but the BINDING collected tax stays the assessed value at gate.
+	// 3 and 4. Price every line and assess the totals through the shared
+	// resolver (priceAndAssess, sale_preview.go): the SAME pricing and tax
+	// code path the read-only sale preview answers a ticket with, extracted
+	// here verbatim, never a copy. A line that cannot be priced at all (no
+	// retail anchor, no uom conversion) is still a client-correctable 4xx,
+	// never a plausible zero.
 	taxReason := TaxStdON13
 	if in.Relief != nil && in.Relief.ReasonCode != "" {
 		taxReason = in.Relief.ReasonCode
 	}
-	quote, err := s.taxAssessor().AssessSale(ctx, TaxQuoteInput{BranchID: in.BranchID, SubtotalCents: subtotal, ReasonCode: taxReason})
+	priced, err := s.priceAndAssess(ctx, saleMoneyInput{
+		customerID:   customerID,
+		customerType: cust.CustomerType,
+		branchID:     in.BranchID,
+		lines:        in.Lines,
+		taxReason:    taxReason,
+		discount:     in.Discount,
+	})
 	if err != nil {
 		return Sale{}, err
 	}
-	tax := quote.TaxCents
-	total := subtotal + tax
+	lines := priced.lines
+	subtotal := priced.subtotal
+	tax := priced.tax
+	total := priced.total
 
 	// Per-line tax_cents, the largest-remainder split of the header tax over the line totals (writes to the
 	// 0042 order_lines.tax_cents / invoice_lines.tax_cents columns). The parts sum EXACTLY to the header tax,
@@ -922,9 +906,13 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 				IdempotencyKey: in.IdempotencyKey, OrderID: orderID, InvoiceID: invoiceID, PaymentID: paymentID,
 				BranchID: in.BranchID, TillSessionID: in.TillSessionID, SaleType: saleType, CashSale: in.CashSale,
 				Tender: tender, TaxReasonCode: taxReason, OfflineOrigin: in.Offline, CreatedBy: actor,
-				SplitTender: isSplit,
+				SplitTender: isSplit, Discount: priced.saleDiscount,
 			})
 			if err != nil {
+				return err
+			}
+			// The pricing log row of every manual discount, on THIS transaction (discount.go).
+			if err := s.logDiscounts(ctx, tx, orderID, actor, priced.discounts); err != nil {
 				return err
 			}
 			// DIB-165: the legs. Written AFTER pos_sale (they reference it) and inside this tx, so the
@@ -955,8 +943,8 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 				// assessed tax the ring actually collected. At the standard rate this row is byte-identical
 				// to the old flat-constant write.
 				if _, err := s.store.InsertTaxSnapshot(ctx, tx, taxSnapshotRow{
-					OrderID: orderID, TaxReasonCode: taxReason, RuleVersion: ruleVersionW4, RateBps: quote.RateBps,
-					FullHSTCents: flatHST13(subtotal), OnCreditCents: quote.OnCreditCents,
+					OrderID: orderID, TaxReasonCode: taxReason, RuleVersion: ruleVersionW4, RateBps: priced.rateBps,
+					FullHSTCents: flatHST13(subtotal), OnCreditCents: priced.onCreditCents,
 					NetCollectedCents: tax, Automated: false,
 					EvidenceDocID: in.Relief.EvidenceDocID,
 				}); err != nil {
@@ -1010,6 +998,7 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 				// DIB-488 rev 8 (item 11): the job facts echoed back for the sold panel.
 				JobAddress: jobAddress, JobReference: jobReference,
 			}
+			out.DiscountCents, out.Discounts = reportDiscounts(priced.discounts)
 			if in.CashTenderedCents > 0 {
 				out.ChangeDueCents = in.CashTenderedCents - total
 			}
@@ -1089,6 +1078,8 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 	// status. When a real status writer advances the column (the choke-point order.Service.SetStatus,
 	// or a future POS fulfilment write), THAT writer emits its own transition.
 	s.recordStatusChange(ctx, out.OrderID, "", "CONFIRMED", actor, in.BranchID, "pos_ring")
+	// Every manual discount and the manager who approved it, one audit row each (discount.go).
+	s.recordDiscountAudit(ctx, out.OrderID, actor, in.BranchID, priced.discounts)
 	// Q-044: PAYMENT_RECEIVED for the tender is recorded HERE, post-commit, through the till's hook
 	// (the till still owns the audit semantics; the sole payments-row writer stays A-03). Mid-tx
 	// recording produced an orphan row under rollback AND a duplicate under rollback-retry; the hook
@@ -1198,7 +1189,7 @@ func (s *Service) captureCardLegs(ctx context.Context, in SaleInput, captures []
 			case till.CardCaptureBound:
 				// The leg already belongs to a committed sale (normally the pool precheck above
 				// answered first; this is the race it can lose). Answer that sale, verbatim.
-				if sale, found, ferr := s.store.FindSaleByKey(ctx, in.IdempotencyKey); ferr == nil && found {
+				if sale, found, ferr := s.findSaleByKey(ctx, in.IdempotencyKey); ferr == nil && found {
 					sale.Replayed = true
 					ring.replay = &sale
 					return ring, nil
@@ -1302,7 +1293,7 @@ func (s *Service) settleFailedCardRing(ctx context.Context, ring *cardRing) (Sal
 		}
 		switch comp.Kind {
 		case till.CardCompCommitted:
-			if sale, found, ferr := s.store.FindSaleByKey(ctx, ring.saleKey); ferr == nil && found {
+			if sale, found, ferr := s.findSaleByKey(ctx, ring.saleKey); ferr == nil && found {
 				sale.Replayed = true
 				return sale, nil
 			}

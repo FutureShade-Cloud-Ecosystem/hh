@@ -59,6 +59,26 @@ test("the work area's Screen settings button opens the settings region", async (
   await expect(page.getByTestId("qs-validity-days")).toHaveValue("30");
 });
 
+test("the dealer's quantity notice is shown, held to its 500 characters, edited and read back", async ({ page }) => {
+  await signIn(page);
+  await openScreenSettings(page);
+  const notice = page.getByTestId("qs-quantity-notice");
+  await expect(notice).toHaveValue(/All quantities are to be confirmed by the customer/);
+  await notice.fill("x".repeat(501));
+  await expect(page.getByTestId("qs-quantity-notice-count")).toContainText("501 of 500");
+  await page.getByTestId("qs-policy-save").click();
+  await expect(page.getByTestId("qs-error")).toContainText("limited to 500 characters");
+  expect((await ledger(page)).policyWrites).toHaveLength(0);
+  await notice.fill("Quantities are yours to confirm.");
+  await page.getByTestId("qs-policy-save").click();
+  await expect(page.getByTestId("qs-notice")).toContainText("Quote settings saved");
+  await page.reload();
+  await page.getByRole("button", { name: "Sales manager", exact: true }).click();
+  await openScreenSettings(page);
+  await expect(page.getByTestId("qs-quantity-notice")).toHaveValue("Quantities are yours to confirm.");
+  await page.request.post("/_stub/reset");
+});
+
 test("the quote policy saves a branch row, validated first, and reads back", async ({ page }) => {
   await signIn(page);
   await openScreenSettings(page);

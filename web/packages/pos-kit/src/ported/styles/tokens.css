@@ -29,6 +29,8 @@
 
   /* Canvases, surfaces, line, inks: role for role with the base sheet. */
   --hos-deep-earth: var(--hh-page);
+  /* The one input fill: the page's deep tone in dark, the card white in light (round 7). */
+  --hos-field: var(--hh-field);
   --hos-slate-warm: var(--hh-card);
   --hos-line: var(--hh-line);
   /* The boundary a non-filled control is seen by (WCAG 1.4.11, 3:1 in both themes); --hos-line is a hairline. */
@@ -51,7 +53,11 @@
   --hos-row: var(--hh-row);
   --hos-row-alt: var(--hh-row-alt);
 
-  /* Type. The faces are the base sheet's stacks; no webfont ships here. */
+  /* Type. The faces are the base sheet's stacks, which the type pass (row
+     942) set to Inter first for BOTH roles: the aliases below resolve to
+     Inter through --hh-font-ui and --hh-font-mono, and the vendored face and
+     the tabular figures rule ship with the base sheet this sheet rides; no
+     webfont ships here and none is needed. */
   --hos-font-ui: var(--hh-font-ui);
   --hos-font-mono: var(--hh-font-mono);
   --hos-color-scheme: var(--hh-color-scheme);
@@ -152,10 +158,13 @@
   --hos-pane-columns: var(--hh-pane-columns);
 
   /* LOCAL (flagged): the feedback pill's reserved lane, measured as
-     inset + pill + inset, so a surface's last row can keep itself clear. */
+     inset + pill + inset, so a surface's last row can keep itself clear. The
+     till lifts the pill by --hos-fab-lift so it sits wholly above the pinned
+     hotkey legend (35px) instead of under it; the lane counts that lift. */
   --hos-fab-inset: 22px;
   --hos-fab-size: 38px;
-  --hos-fab-lane: calc(var(--hos-fab-size) + var(--hos-fab-inset) * 2);
+  --hos-fab-lift: 26px;
+  --hos-fab-lane: calc(var(--hos-fab-size) + var(--hos-fab-inset) * 2 + var(--hos-fab-lift));
 
   /* Elevation: dark lifts with the surface step and keeps shadows for raised
      surfaces; the scrim puts the page behind a dialog. */
@@ -209,6 +218,7 @@
   --hos-color-scheme: dark;
 
   --hos-deep-earth: #05070b;
+  --hos-field: #05070b;
   --hos-slate-warm: #131a27;
   --hos-line: #2e3947;
   --hos-scrim: rgba(0, 0, 0, 0.78);

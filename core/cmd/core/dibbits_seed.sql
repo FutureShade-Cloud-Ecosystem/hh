@@ -1,5 +1,5 @@
 -- M7 Dibbits demo seed (W1). Loaded by cmd/seed (prod-guarded, idempotent).
--- Real Dibbits suppliers (Tanya's doc) + a representative hardscape catalogue.
+-- Real Dibbits suppliers (the Dibbits supplier list) + a representative hardscape catalogue.
 -- All SKUs prefixed 'DBS-' (greppable + the empty-DB guard keys on it).
 -- Fixed UUIDs for determinism. Money = integer cents CAD. Every qty carries a UOM.
 -- Branches (fixed, from 0003): TRT 5d1b3f6e-0000-4000-9000-000000000001 · KGN ...002
@@ -11,48 +11,48 @@
 -- password (cannot log in until provisioned), proving the status gate.
 INSERT INTO users (id, email, display_name, status, password_hash) VALUES
   ('d7000000-0000-4000-9000-000000000001', 'demo@dibbits.local', 'Demo Operator', 'ACTIVE', '$2a$10$ja7jD99TS1QsOtU.7dVDIu.HwgOK2pBERc60C4IyjMEi49IvR/dGO'),
-  ('d7000000-0000-4000-9000-000000000002', 'alex.morgan@dibbits.example',  'Alex Morgan (sample)',  'ACTIVE', '$2a$10$ja7jD99TS1QsOtU.7dVDIu.HwgOK2pBERc60C4IyjMEi49IvR/dGO'),
-  ('d7000000-0000-4000-9000-000000000003', 'sam.rivera@dibbits.example',   'Sam Rivera (sample)',   'ACTIVE', '$2a$10$ja7jD99TS1QsOtU.7dVDIu.HwgOK2pBERc60C4IyjMEi49IvR/dGO'),
-  ('d7000000-0000-4000-9000-000000000005', 'casey.doyle@dibbits.example',  'Casey Doyle (sample)',  'ACTIVE', '$2a$10$ja7jD99TS1QsOtU.7dVDIu.HwgOK2pBERc60C4IyjMEi49IvR/dGO'),
-  ('d7000000-0000-4000-9000-000000000006', 'jordan.blake@dibbits.example', 'Jordan Blake (sample)', 'ACTIVE', '$2a$10$ja7jD99TS1QsOtU.7dVDIu.HwgOK2pBERc60C4IyjMEi49IvR/dGO'),
+  ('d7000000-0000-4000-9000-000000000002', 'alex.morgan@dibbits.example',  'General manager (sample)',   'ACTIVE', '$2a$10$ja7jD99TS1QsOtU.7dVDIu.HwgOK2pBERc60C4IyjMEi49IvR/dGO'),
+  ('d7000000-0000-4000-9000-000000000003', 'sam.rivera@dibbits.example',   'Sales manager (sample)',     'ACTIVE', '$2a$10$ja7jD99TS1QsOtU.7dVDIu.HwgOK2pBERc60C4IyjMEi49IvR/dGO'),
+  ('d7000000-0000-4000-9000-000000000005', 'casey.doyle@dibbits.example',  'Yard manager (sample)',      'ACTIVE', '$2a$10$ja7jD99TS1QsOtU.7dVDIu.HwgOK2pBERc60C4IyjMEi49IvR/dGO'),
+  ('d7000000-0000-4000-9000-000000000006', 'jordan.blake@dibbits.example', 'Financial controller (sample)', 'ACTIVE', '$2a$10$ja7jD99TS1QsOtU.7dVDIu.HwgOK2pBERc60C4IyjMEi49IvR/dGO'),
   ('d7000000-0000-4000-9000-000000000007', 'new.hire@dibbits.example',     'New Hire (sample)',     'INVITED', NULL),
   -- Platform owner (SUPER_ADMIN, migration 0043; password reset by migration 0044 -
   -- a throwaway bootstrap credential, not a real password; see 0044's comment).
   -- Real account, not a "(sample)", mirrored here so a fresh `make reset` DB carries it
   -- too; the staging DB gets it from the migrations.
-  ('d7000000-0000-4000-9000-000000000010', 'colton@futurebuild.ai',        'Colton, Platform Admin', 'ACTIVE',
+  ('d7000000-0000-4000-9000-000000000010', 'colton@futurebuild.ai',        'Platform admin (sample)', 'ACTIVE',
    '$2a$10$n4gHBpnG/4nV9G2tu40QiOnfcPOryTWh3dzRYi5hdSzMgyMsXzLG6')
 ON CONFLICT (email) DO NOTHING;
 
 -- demo role assignments (so the Staff & Roles screen opens with real people; New Hire left unassigned)
 INSERT INTO user_roles (user_id, role_id) VALUES
-  ('d7000000-0000-4000-9000-000000000002','e7000000-0000-4000-9000-000000000001'), -- Alex Morgan → General Manager
-  ('d7000000-0000-4000-9000-000000000006','e7000000-0000-4000-9000-000000000002'), -- Jordan Blake → Financial Controller
-  ('d7000000-0000-4000-9000-000000000003','e7000000-0000-4000-9000-000000000006'), -- Sam Rivera → Sales Manager
-  ('d7000000-0000-4000-9000-000000000005','e7000000-0000-4000-9000-000000000007'), -- Casey Doyle → Yard Manager
-  ('d7000000-0000-4000-9000-000000000010','e7000000-0000-4000-9000-000000000014')  -- Colton → Platform Administrator (SUPER_ADMIN)
+  ('d7000000-0000-4000-9000-000000000002','e7000000-0000-4000-9000-000000000001'), -- General manager login → General Manager
+  ('d7000000-0000-4000-9000-000000000006','e7000000-0000-4000-9000-000000000002'), -- Financial controller login → Financial Controller
+  ('d7000000-0000-4000-9000-000000000003','e7000000-0000-4000-9000-000000000006'), -- Sales manager login → Sales Manager
+  ('d7000000-0000-4000-9000-000000000005','e7000000-0000-4000-9000-000000000007'), -- Yard manager login → Yard Manager
+  ('d7000000-0000-4000-9000-000000000010','e7000000-0000-4000-9000-000000000014')  -- Platform admin login → Platform Administrator (SUPER_ADMIN)
 ON CONFLICT (user_id, role_id) DO NOTHING;
 
 INSERT INTO user_branch_grants (user_id, branch_id) VALUES
-  ('d7000000-0000-4000-9000-000000000003','5d1b3f6e-0000-4000-9000-000000000001'), -- Sam Rivera → Trenton
-  ('d7000000-0000-4000-9000-000000000005','5d1b3f6e-0000-4000-9000-000000000002')  -- Casey Doyle → Kingston
+  ('d7000000-0000-4000-9000-000000000003','5d1b3f6e-0000-4000-9000-000000000001'), -- Sales manager login → Trenton
+  ('d7000000-0000-4000-9000-000000000005','5d1b3f6e-0000-4000-9000-000000000002')  -- Yard manager login → Kingston
 ON CONFLICT (user_id, branch_id) DO NOTHING;
 
--- DIB-378/C1-b: migration 0052 seeds the Alex↔Sam and Sam↔Casey DM channels + their EXPLICIT
+-- DIB-378/C1-b: migration 0052 seeds the general manager ↔ sales manager and sales manager ↔ yard manager DM channels + their EXPLICIT
 -- msg_members in ONE migrate-time statement that JOINs the demo staff by fixed id, but those users
 -- are created by THIS file, not by any migration, so on a migrate-then-seed DB (dev/UAT, never
 -- staging, which runs migrations only) that JOIN matches nothing and both DMs land with zero members
--- (TestIntegration_DMExplicitMembership fails: "Alex should be in the Alex↔Sam DM"). Backfill the
+-- (TestIntegration_DMExplicitMembership fails: "the general manager should be in the general manager ↔ sales manager DM"). Backfill the
 -- same membership here, now that the users above are guaranteed to exist. 0052 itself is untouched -
 -- it is correct as written for staging. Idempotent (ON CONFLICT DO NOTHING); guarded on msg_channels
 -- so this no-ops harmlessly if 0052 hasn't run.
 INSERT INTO msg_members (channel_id, user_id, role, source)
 SELECT c.id, u.id, 'MEMBER', 'EXPLICIT'
   FROM (VALUES
-    ('a5000000-0000-4000-9000-0000000000d1'::uuid, 'd7000000-0000-4000-9000-000000000002'::uuid), -- Alex ↔ Sam DM: Alex
-    ('a5000000-0000-4000-9000-0000000000d1'::uuid, 'd7000000-0000-4000-9000-000000000003'::uuid), -- Alex ↔ Sam DM: Sam
-    ('a5000000-0000-4000-9000-0000000000d2'::uuid, 'd7000000-0000-4000-9000-000000000003'::uuid), -- Sam ↔ Casey DM: Sam
-    ('a5000000-0000-4000-9000-0000000000d2'::uuid, 'd7000000-0000-4000-9000-000000000005'::uuid)   -- Sam ↔ Casey DM: Casey
+    ('a5000000-0000-4000-9000-0000000000d1'::uuid, 'd7000000-0000-4000-9000-000000000002'::uuid), -- GM ↔ sales manager DM: general manager
+    ('a5000000-0000-4000-9000-0000000000d1'::uuid, 'd7000000-0000-4000-9000-000000000003'::uuid), -- GM ↔ sales manager DM: sales manager
+    ('a5000000-0000-4000-9000-0000000000d2'::uuid, 'd7000000-0000-4000-9000-000000000003'::uuid), -- sales manager ↔ yard manager DM: sales manager
+    ('a5000000-0000-4000-9000-0000000000d2'::uuid, 'd7000000-0000-4000-9000-000000000005'::uuid)   -- sales manager ↔ yard manager DM: yard manager
   ) AS c(id, uid)
   JOIN msg_channels ch ON ch.id = c.id
   JOIN users u ON u.id = c.uid
@@ -480,7 +480,7 @@ DECLARE
   trt        UUID := '5d1b3f6e-0000-4000-9000-000000000001'; -- Trenton
   kgn        UUID := '5d1b3f6e-0000-4000-9000-000000000002'; -- Kingston
   owner_a    UUID := 'd7000000-0000-4000-9000-000000000001'; -- Demo Operator
-  owner_b    UUID := 'd7000000-0000-4000-9000-000000000003'; -- Sam Rivera
+  owner_b    UUID := 'd7000000-0000-4000-9000-000000000003'; -- Sales manager login
   cust1      UUID := 'c7000000-0000-4000-9000-000000000001'; -- Quinte Hardscapes
   cust3      UUID := 'c7000000-0000-4000-9000-000000000003'; -- Limestone City Interlock
   cust7      UUID := 'c7000000-0000-4000-9000-000000000007'; -- Homeowner J. Tremblay (retail)
@@ -507,7 +507,7 @@ BEGIN
     VALUES (c1, prod_ul,'Unilock Brussels Block', 320, 'SF', (now()-INTERVAL '400 days')::date, (now()-INTERVAL '380 days')::date);
   INSERT INTO warranty_claim_events (claim_id, event_type, from_phase, to_phase, actor_id, note, occurred_at) VALUES
     (c1,'CREATED',      NULL,   'INTAKE', owner_a,'Logged from office intake.',  now()-INTERVAL '20 days'),
-    (c1,'PHASE_CHANGE','INTAKE','TRIAGE', owner_a,'Sam picked it up for triage.',now()-INTERVAL '18 days');
+    (c1,'PHASE_CHANGE','INTAKE','TRIAGE', owner_a,'The sales manager picked it up for triage.',now()-INTERVAL '18 days');
 
   -- Claim 2, WAITING_ON_DECISION, Techo-Bloc, Trenton. SLA stamped on Submit. Back-dated 45 days.
   INSERT INTO warranty_claims (id, claim_no, customer_id, job_address, vendor_id, owner_id, branch_id, phase, source,

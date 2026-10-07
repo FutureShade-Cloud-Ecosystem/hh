@@ -172,6 +172,7 @@ export interface QuotePolicyWire {
   include_product_images: boolean;
   quick_chip_set: string[];
   effective_chips?: string[];
+  quantity_notice: string;
   workspace_split_pct: number;
   workspace_arrangement: (typeof ARRANGEMENTS)[number];
 }
@@ -188,11 +189,13 @@ export function readPolicy(value: unknown): QuotePolicyWire | null {
   const sms = bool(value, "send_sms_enabled");
   const images = bool(value, "include_product_images");
   const chips = strings(value, "quick_chip_set");
+  const notice = value["quantity_notice"];
   if (
     !(COST_VISIBILITIES as readonly unknown[]).includes(visibility) ||
     !(ARRANGEMENTS as readonly unknown[]).includes(arrangement) ||
     validity === null || deposit === null || split === null ||
-    discounts === null || email === null || sms === null || images === null || chips === null
+    discounts === null || email === null || sms === null || images === null || chips === null ||
+    typeof notice !== "string"
   ) {
     return null;
   }
@@ -205,6 +208,7 @@ export function readPolicy(value: unknown): QuotePolicyWire | null {
     send_sms_enabled: sms,
     include_product_images: images,
     quick_chip_set: chips,
+    quantity_notice: notice,
     workspace_split_pct: split,
     workspace_arrangement: arrangement as QuotePolicyWire["workspace_arrangement"],
   };

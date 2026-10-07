@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { Task, TaskAdvanceRule, TaskCancelRequest, TaskCreateRequest, TaskDoneRequest, TaskPage, TaskPendingTicketPage, TaskPickQueueEntry, TaskPickQueuePage, TaskRecordPickRequest, TaskRecordPickResult, TaskShortage, TaskShortageRequest, TaskShortageResolveRequest, TaskStageRequest, TaskWeightRequestBody, TaskWeightResult, TaskWeightSubmitBody } from "./types.js";
+import type { Task, TaskAdvanceRule, TaskCancelRequest, TaskCreateRequest, TaskDoneRequest, TaskPage, TaskPendingTicketPage, TaskPickQueueEntry, TaskPickQueuePage, TaskRecordPickRequest, TaskRecordPickResult, TaskRecordSkidsRequest, TaskRecordSkidsResult, TaskShortage, TaskShortageRequest, TaskShortageResolveRequest, TaskStageRequest, TaskWeightRequestBody, TaskWeightResult, TaskWeightSubmitBody } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -210,6 +210,23 @@ export async function yardResolveShortage(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "yardResolveShortage",
+  });
+}
+
+export async function yardRecordSkids(
+  client: ApiClient,
+  id: string | number,
+  body: TaskRecordSkidsRequest,
+  call?: ApiCallOptions
+): Promise<Result<TaskRecordSkidsResult>> {
+  return client.request<TaskRecordSkidsResult>({
+    method: "PUT",
+    path: "/api/v1/yard/picks/{id}/skids",
+    pathParams: { id },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "yardRecordSkids",
   });
 }
 

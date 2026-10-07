@@ -115,7 +115,7 @@ export const PORTED_PROPERTY_OR_EVENT = new Set([
   '@change', '@click', '@error', '@focus', '@focusin', '@hos-customer-picker-close',
   '@hos-customer-selected', '@input', '@keydown', '@open-order', '@order-changed',
   '@order-lifecycle-loaded', '@order-status-changed', '@pointercancel', '@pointerdown',
-  '@pointermove', '@pointerup', '@pos-add-echo', '@pos-add-product', '@pos-drop-exit',
+  '@pointermove', '@pointerup', '@pos-add-echo', '@pos-add-product', '@pos-discount-apply', '@pos-discount-close', '@pos-discount-remove', '@pos-drop-exit',
   '@pos-flow-goto', '@pos-legend-dismiss', '@pos-panel-focus', '@pos-parked-close',
   '@pos-parked-discard', '@pos-parked-resume', '@pos-relief-applied', '@pos-relief-close',
   '@pos-return-close',
@@ -124,12 +124,12 @@ export const PORTED_PROPERTY_OR_EVENT = new Set([
   '@pricing-doc-close', '@quick-start-clear', '@quick-start-continue', '@quick-start-park',
   '@related-doc-open', '@submit', '@till-close-cancel', '@till-closed',
   '.active', '.alt', '.branchId', '.breakdown', '.busy', '.checked', '.complete',
-  '.curated', '.customer', '.customerId', '.customerName', '.doc', '.externalTerm',
+  '.category', '.curated', '.customer', '.customerId', '.customerName', '.doc', '.existing', '.externalTerm',
   '.fault', '.hasCustomer', '.hasImage', '.hint', '.homeBranchId', '.info', '.label',
   '.n', '.open', '.openLines', '.orderId', '.presentation', '.productId', '.refId',
   '.retry', '.roster', '.rows', '.sessionId', '.showChips', '.size', '.state', '.step',
-  '.steps', '.subtotalCents', '.summary', '.term', '.ticket', '.ticketEpoch',
-  '.tillSessionId', '.totalCents', '.value', '.vocabulary',
+  '.steps', '.subject', '.subtotalCents', '.summary', '.term', '.ticket', '.ticketEpoch',
+  '.ticketMaxCents', '.tillSessionId', '.totalCents', '.value', '.vocabulary',
 ]);
 
 /** The boolean bindings besides ?disabled the ported files use. */
@@ -605,6 +605,7 @@ export const IMPORT_ALLOW_LIST = {
     './_lib/render.mjs': ['renderKit', 'renderTemplate'],
     './_lib/sheet.mjs': ['PALETTE_NAMES', 'contrast', 'declaredPairs', 'definedTokens', 'parseDeclarations', 'palette', 'palettes', 'pkgDir', 'readPkg', 'referencedTokens', 'resolveColor', 'shippedStyleFiles', 'sheetBlocks', 'stripComments'],
     './color.mjs': ['contrast', 'oklchToHex', 'parseOklch'],
+    '../src/assets/product-tiles/index.js': ['PRODUCT_TILE_KEYS', 'productTileKey', 'productTileUrl'],
     '../src/harness-page.js': ['HARNESS_STATES', 'HARNESS_TITLE', 'KITS', 'WIDTHS', 'buildHarnessPage', 'harnessSheets'],
     '../src/header.js': ['HosAppHeader'],
     '../src/kits/dashboard.js': ['DashboardKit'],
@@ -617,7 +618,10 @@ export const IMPORT_ALLOW_LIST = {
     '../src/state.js': ['KIT_STATES', 'STATE_META', 'kitShell', 'stateIndicator'],
   },
   harness: {
-    'node:fs': ['mkdirSync', 'readFileSync', 'writeFileSync'],
+    // readdirSync and statSync joined the build when the type pass made it
+    // copy the vendored face beside the pages (it walks src/fonts and proves
+    // each entry is a file); a reviewer sees the names arrive here.
+    'node:fs': ['mkdirSync', 'readFileSync', 'readdirSync', 'statSync', 'writeFileSync'],
     'node:http': ['createServer'],
     'node:net': ['default'],
     'node:path': ['dirname', 'join'],
@@ -1197,6 +1201,12 @@ export const walkSources = (dir, prefix, out, skipFiles = [], rootDir = dir) => 
       // package's ROOT only, by their full path: a folder of either name
       // anywhere else is walked, so a source file cannot hide inside one.
       // .git is never a source tree, at any depth.
+      // src/vendor is excluded BY NAME, stated here: it holds the vendored
+      // capture library's own bytes, whose local `svg` names and imports are
+      // the library's internals, not this package's template discipline. The
+      // raw-markup gate (test/no-raw-markup.test.mjs) still walks it: its rule
+      // binds any render path in this package, vendored included, which is why
+      // the vendored file carries its one patch.
       if (abs === join(rootDir, 'node_modules') || abs === join(rootDir, 'dist') || rel === 'src/vendor' || entry === '.git') continue;
       walkSources(abs, rel, out, skipFiles, rootDir);
     } else if (SOURCE_RE.test(entry) && !skipFiles.includes(rel)) {

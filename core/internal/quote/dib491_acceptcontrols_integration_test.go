@@ -121,13 +121,13 @@ func TestIntegration_DIB491_FlagOff_DoubleAcceptRefusedWithTheDocumentNamed(t *t
 	setCreditLimit(t, pool, cust, 1_000_00)
 
 	// First acceptance, the ordinary path, untouched.
-	if _, err := svc.AcceptByToken(context.Background(), token, "Dana Reyes", true); err != nil {
+	if _, err := svc.AcceptByToken(context.Background(), token, "Dana Reyes", true, true); err != nil {
 		t.Fatalf("first accept: %v", err)
 	}
 
 	// Second acceptance while ACCEPTED: refused, atomically, with the STATE and the way forward.
 	var already *AlreadyAcceptedError
-	_, err := svc.AcceptByToken(context.Background(), token, "Dana Reyes", true)
+	_, err := svc.AcceptByToken(context.Background(), token, "Dana Reyes", true, true)
 	if !errors.As(err, &already) {
 		t.Fatalf("re-accepting an ACCEPTED quote with the switch off must return AlreadyAcceptedError; got %v", err)
 	}
@@ -148,7 +148,7 @@ func TestIntegration_DIB491_FlagOff_DoubleAcceptRefusedWithTheDocumentNamed(t *t
 	}
 
 	// The accept door names the ORDER now.
-	_, err = svc.AcceptByToken(context.Background(), token, "Dana Reyes", true)
+	_, err = svc.AcceptByToken(context.Background(), token, "Dana Reyes", true, true)
 	if !errors.As(err, &already) {
 		t.Fatalf("re-accepting a CONVERTED quote must return AlreadyAcceptedError; got %v", err)
 	}
@@ -200,7 +200,7 @@ func TestIntegration_DIB491_FlagOn_EveryAcceptCarriesProvenance(t *testing.T) {
 	repo := NewRepository(pool)
 
 	// Accept + convert, the PORTAL door (no staff context on the ctx).
-	if _, err := svc.AcceptByToken(context.Background(), token, "Dana Reyes", true); err != nil {
+	if _, err := svc.AcceptByToken(context.Background(), token, "Dana Reyes", true, true); err != nil {
 		t.Fatalf("first accept: %v", err)
 	}
 	if _, err := repo.Convert(context.Background(), cust, quoteID, ConvertOptions{}); err != nil {
@@ -208,7 +208,7 @@ func TestIntegration_DIB491_FlagOn_EveryAcceptCarriesProvenance(t *testing.T) {
 	}
 
 	// The REPEAT acceptance: allowed, honest about being a repeat, and status is NOT dragged back.
-	res, err := svc.AcceptByToken(context.Background(), token, "Dana Reyes", true)
+	res, err := svc.AcceptByToken(context.Background(), token, "Dana Reyes", true, true)
 	if err != nil {
 		t.Fatalf("repeat accept with the switch on: %v", err)
 	}
@@ -356,7 +356,7 @@ func TestIntegration_DIB491_Lineage_SameFamilyFromEitherEnd(t *testing.T) {
 	setCreditLimit(t, pool, cust, 1_000_00)
 	repo := NewRepository(pool)
 
-	if _, err := svc.AcceptByToken(context.Background(), token, "Dana Reyes", true); err != nil {
+	if _, err := svc.AcceptByToken(context.Background(), token, "Dana Reyes", true, true); err != nil {
 		t.Fatalf("accept: %v", err)
 	}
 	res1, err := repo.Convert(context.Background(), cust, quoteID, ConvertOptions{})

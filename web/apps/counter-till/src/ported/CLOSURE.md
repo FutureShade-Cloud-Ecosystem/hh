@@ -66,8 +66,8 @@ for the lines, no currency marks, no layout); styling it is the core's
 printing module, outside this lane, and the principal sequences it.
 
 One deliberate deviation from the reference, on HH's rule (the visual
-review's blocking zero): the reference's empty draft reads Subtotal CA$0.00,
-HST CA$0.00, Total CA$0.00, and the ring button carries the zero. HH's rule
+review's blocking zero): the reference's empty draft reads Subtotal $0.00,
+HST $0.00, Total $0.00, and the ring button carries the zero. HH's rule
 is explicit: an empty draft shows a blank marker, never a plausible zero.
 The mounted surface shows the app's own `(not priced)` marker in the totals
 card, the Complete sale button's amount, the Items

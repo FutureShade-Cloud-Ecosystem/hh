@@ -11,6 +11,7 @@
 import type { PosCustomer } from '@hardscapehouse/pos-kit/src/ported/pos-customer-strip.js';
 import type { CartLine } from '@hardscapehouse/pos-kit/src/ported/pos-api.js';
 import { balanceAfterDepositCents } from '@hardscapehouse/pos-kit/src/ported/ports.js';
+import { formatDollars } from '@hardscapehouse/pos-kit/src/ported/_money-format.js';
 
 // One parked ticket's client-side display snapshot, captured in parkCurrent() before the order
 // is reset. `customer` is the full account (or null for walk-in); `subtotalCents` is the ticket's
@@ -154,22 +155,30 @@ export function saleConfirmation(sale: {
   deposit_cents?: number;
   replayed?: boolean;
   split_tender?: boolean;
-  tenders?: Array<{ method: string }>;
+  tenders?: Array<{ method: string; amount_cents?: number }>;
 }): SaleConfirmation {
   const deposit = sale.deposit_cents ?? 0;
   const paidInFull = !!sale.payment_id && deposit === 0;
   const isCOD = sale.sale_type === 'COD';
   // The visual read's G4: a split settled across two rails confirmed under ONE leg's word, the
   // screen understating the other leg's money. A split names itself and names its legs, in the
-  // tiles' own words, in the order the legs were submitted, each rail said once. An answer that
-  // names the split but lists no legs falls back to the sale's own tender word.
+  // tiles' own words, in the order the legs were submitted, each with the amount the server
+  // states for it (round 7: "Cash and Card" alone left the split's money unsaid). A leg the answer
+  // gives no amount for keeps its word alone, each such rail said once, never a made-up zero. An
+  // answer that names the split but lists no legs falls back to the sale's own tender word.
   const legs = sale.split_tender === true ? sale.tenders ?? [] : [];
   const legWords: string[] = [];
   for (const leg of legs) {
     const word = tenderLabel(leg.method);
-    if (!legWords.includes(word)) legWords.push(word);
+    if (typeof leg.amount_cents === 'number' && Number.isInteger(leg.amount_cents)) {
+      legWords.push(`${word} ${formatDollars(leg.amount_cents)}`);
+    } else if (!legWords.includes(word)) {
+      legWords.push(word);
+    }
   }
-  const tenderWords = legWords.length >= 1 ? `Split: ${legWords.join(' and ')}` : tenderLabel(sale.tender);
+  const legList =
+    legWords.length > 1 ? `${legWords.slice(0, -1).join(', ')} and ${legWords[legWords.length - 1]}` : legWords.join('');
+  const tenderWords = legWords.length >= 1 ? `Split: ${legList}` : tenderLabel(sale.tender);
   // A ring retried over a flaky counter connection returns the ORIGINAL sale rather than making a
   // second one. Saying so is the whole point of the ticket: the clerk who pressed Cash twice needs
   // to know the second press did not take a second payment.
@@ -509,6 +518,9 @@ export const LINE_FIELD_RULES: Record<keyof Required<CartLine>, LineFieldRule> =
   lineTotalCents: 'carry', // re-derived
   breakdown: 'carry', // re-derived
   priceMissing: 'carry', // re-derived (a merge that resolves clears it)
+  // A manager's yes was given for THIS line at THIS quantity: a merge would carry it onto units
+  // nobody approved, so a line with a discount takes no merge and the add appends instead.
+  discount: 'block',
 };
 
 /**
@@ -769,6 +781,7 @@ export const PRICE_ANSWER_FIELDS: Record<keyof Required<CartLine>, PriceFieldOwn
   lineTotalCents: 'engine',
   breakdown: 'engine',
   priceMissing: 'engine',
+  discount: 'operator', // the manager's yes at the counter: a pricing answer never writes it
 };
 
 /** The money half of a /pricing/resolve answer, in cart-line terms. */

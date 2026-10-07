@@ -126,7 +126,14 @@ var listReaders = map[string]func(*roleconfig.Config) []string{
 	// admin) is refused beside the level, exactly as the price writes name
 	// their editors.
 	roleconfig.SettingCostVisibility: func(c *roleconfig.Config) []string { return c.CostVisibility() },
+	// The low margin report names a list derived from the floor lists and the cost list together
+	// (roleconfig.LowMarginReportReaders): a role that clears or decides a floor, or sits above one,
+	// and may see cost. Not a stored setting, so the name is the route's own.
+	ListLowMarginReport: func(c *roleconfig.Config) []string { return c.LowMarginReportReaders() },
 }
+
+// ListLowMarginReport is the x-access list name of the low margin report route.
+const ListLowMarginReport = "low_margin_report"
 
 // valid checks the annotation against roleconfig's vocabulary. An empty
 // surface list, an unknown surface, an unknown level, none as the level (a
@@ -232,26 +239,10 @@ func (g *RoleGate) Middleware(access RouteAccess) (func(http.Handler) http.Handl
 			// level check; an unknown role name is a grant row outside the
 			// configuration's vocabulary, a data defect answered by the
 			// 503 family, never read as level none.
-			levelOK := false
-			for _, role := range roles {
-				if isPlatformStaffRole(role) {
-					levelOK = true
-					break
-				}
-				for _, surface := range surfaces {
-					cell, err := g.cfg.Level(role, surface)
-					if err != nil {
-						RefuseUnavailable(w)
-						return
-					}
-					if cell.AtLeast(level) {
-						levelOK = true
-						break
-					}
-				}
-				if levelOK {
-					break
-				}
+			levelOK, err := g.levelAdmits(roles, surfaces, level)
+			if err != nil {
+				RefuseUnavailable(w)
+				return
 			}
 			// The named list is the rule's own wall beside the level: a
 			// caller no held role puts on the list is refused whatever its
@@ -278,6 +269,63 @@ func (g *RoleGate) Middleware(access RouteAccess) (func(http.Handler) http.Handl
 			next.ServeHTTP(w, r)
 		})
 	}, nil
+}
+
+// levelAdmits is the gate's level walk, one function for the request path and for Holds so the two
+// can never disagree: true when at least one held role is a platform role or has a configured level
+// that reaches the route's level on at least one served surface. An unknown role name is a grant
+// row outside the configuration's vocabulary, a data defect, and answers the error (the request
+// path answers it with the 503 family), never level none.
+func (g *RoleGate) levelAdmits(roles, surfaces []string, level roleconfig.Level) (bool, error) {
+	for _, role := range roles {
+		if isPlatformStaffRole(role) {
+			return true, nil
+		}
+		for _, surface := range surfaces {
+			cell, err := g.cfg.Level(role, surface)
+			if err != nil {
+				return false, err
+			}
+			if cell.AtLeast(level) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+// Holds reports whether the platform user holds, in the org, the access a route's annotation names,
+// by the very walk the gate runs on a request (levelAdmits above, and the named list when the access
+// names one). It is the answer to "would the gate admit me to that route", asked ahead of the call,
+// so a client can decline to offer an action the caller would be refused. The error is the 503
+// family's cause: the roles could not be read, or the caller holds a role outside the
+// configuration's vocabulary. An inactive account is the identity package's error, passed through.
+func (g *RoleGate) Holds(ctx context.Context, platformUserID, orgID string, access RouteAccess) (bool, error) {
+	if err := access.valid(); err != nil {
+		return false, err
+	}
+	roles, err := g.roles.ResolveRoles(ctx, platformUserID, orgID)
+	if err != nil {
+		return false, err
+	}
+	if len(roles) == 0 {
+		return false, nil
+	}
+	levelOK, err := g.levelAdmits(roles, access.Surfaces, access.Level)
+	if err != nil || !levelOK {
+		return false, err
+	}
+	if access.List != "" {
+		for _, listed := range listReaders[access.List](g.cfg) {
+			for _, role := range roles {
+				if role == listed {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
+	}
+	return true, nil
 }
 
 // staffScopeFor re-runs the staff leg's resolution half for a second gate

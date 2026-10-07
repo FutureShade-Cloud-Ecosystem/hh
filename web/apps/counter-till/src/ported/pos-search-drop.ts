@@ -417,7 +417,7 @@ export class HosPosSearchDrop extends LitElement {
       @focus=${() => (this.roveIdx = i)}
       @click=${() => this.add(h)}
     >
-      <hos-product-thumb .productId=${h.product_id} .hasImage=${h.has_image} alt="" .size=${34}></hos-product-thumb>
+      <hos-product-thumb .productId=${h.product_id} .hasImage=${h.has_image} .category=${h.application ?? ''} alt="" .size=${34}></hos-product-thumb>
       <span class="id">
         <span class="name">${h.name}</span>
         <span class="meta"
@@ -436,7 +436,7 @@ export class HosPosSearchDrop extends LitElement {
   private renderPrice(h: CounterHit) {
     const p = pricePicture(this.quotes[h.product_id]);
     if (p.unpriceable) {
-      // Never CA$0.00, and never a blank cell that reads as a missing column: the row says it will
+      // Never $0.00, and never a blank cell that reads as a missing column: the row says it will
  // price on the ticket, which is true: addProduct resolves the line server-side.
       return html`<span class="price"><span class="none">prices on add</span></span>`;
     }

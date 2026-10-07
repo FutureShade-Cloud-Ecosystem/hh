@@ -2,7 +2,7 @@
 
 // A-19 POS client helpers. Thin typed wrappers over the staff API (Bearer JWT via api()).
 import { api, getSessionToken } from './ports.js';
-import { centsAmount } from './_money-format.js';
+import { formatDollars } from './_money-format.js';
 import { asRows } from './_response-shape.js'; // loader-boundary coercion (DIB-471): no ad-hoc arrays
 import type { CounterQuote } from './_pos-searchdrop.js';
 import type { PriceBreakdown } from './price-breakdown.js';
@@ -48,8 +48,54 @@ export interface CartLine {
   priceUom: string;
   lineTotalCents: number;
   breakdown: PriceBreakdown | null;
- /** rev 5: pricing/resolve failed for this line: render "price pending", never a hard CA$0.00. */
+ /** rev 5: pricing/resolve failed for this line: render "price pending", never a hard $0.00. */
   priceMissing?: boolean;
+  /**
+   * The line's manual discount, a manager's verbal yes recorded (row 1047 item 3): the person at
+   * the till owns it, no pricing answer ever writes it, and a line carrying one never merges.
+   */
+  discount?: CartDiscount;
+}
+
+/**
+ * One manual discount as the till holds it: a percent (basis points) or an amount in cents, and
+ * the manager who approved it. The cents the discount takes off are the SERVER's (the sale
+ * preview answers them); this carries only what the person entered.
+ */
+export interface CartDiscount {
+  percentBps?: number;
+  amountCents?: number;
+  /** The approving manager's staff id: the body's approved_by. */
+  approvedBy: string;
+  /** The approver's display name, for the screen only. */
+  approvedByName: string;
+  /**
+   * What the manager's yes was given for: a line discount's quantity and line total before the
+   * discount, a ticket discount's subtotal after the line discounts. Sent with the discount; the
+   * ring refuses one that no longer matches, and the till drops it first, in words.
+   */
+  approvedQty?: number;
+  approvedBaseCents?: number;
+  /** A ticket discount only: the signature of the ticket it was approved on. */
+  basis?: string;
+}
+
+/** One manager the till may name as a discount's approver (GET /pos/discount-approvers). */
+export interface DiscountApprover {
+  id: string;
+  name: string;
+  role_label: string;
+}
+
+/** One manual discount a committed sale reports, with the role of the manager who approved it. */
+export interface SaleDiscount {
+  scope: 'LINE' | 'SALE';
+  line_no?: number;
+  percent_bps?: number;
+  amount_cents: number;
+  approved_by: string;
+  approved_by_role: string;
+  approved_by_label: string;
 }
 
 export interface SaleResult {
@@ -80,6 +126,9 @@ export interface SaleResult {
   // ── DIB-488 rev 8 (item 11) ── the JOB facts echoed back (sold panel + replay-verbatim).
   job_address?: string;
   job_reference?: string;
+  /** Every manual discount on the sale together, and each one with its approver's role label. */
+  discount_cents?: number;
+  discounts?: SaleDiscount[];
 }
 
 export interface ReliefOutcome {
@@ -114,7 +163,7 @@ export interface StockGlance {
 // Money via a clearly-flagged LOCAL STOPGAP: swap for M8 fmt.ts the moment it lands (mirrors
 // price-breakdown.ts:34 / D-A07-7).
 export function money(cents: number): string {
-  return `CA$${centsAmount(cents)}`; // LOCAL STOPGAP
+  return formatDollars(Math.abs(cents)); // magnitude only, as before; the caller owns any sign
 }
 
 // HH note: the reference fetched the catalogue here with a bare browser call, no bearer and no
@@ -199,19 +248,34 @@ export interface SaleError {
   error: string;
   policy?: string;
   line?: number;
+  /** `split_total_mismatch` carries its two amounts as integer cents and a sentence (row 985). */
+  tendered_cents?: number;
+  total_cents?: number;
+  message?: string;
 }
 
 // createSale returns either a SaleResult or a structured SaleError (409 credit/price, 402 decline).
 export async function createSale(body: SalePost): Promise<{ ok: true; sale: SaleResult } | { ok: false; err: SaleError }> {
   const res = await api('/api/v1/pos/sales', { method: 'POST', body: JSON.stringify(body) });
   if (res.ok) return { ok: true, sale: (await res.json()) as SaleResult };
-  let parsed: { error?: string; policy?: string; line?: number } = {};
+  let parsed: { error?: string; policy?: string; line?: number; tendered_cents?: number; total_cents?: number; message?: string } = {};
   try {
     parsed = (await res.json()) as typeof parsed;
   } catch {
     /* non-JSON body */
   }
-  return { ok: false, err: { status: res.status, error: parsed.error ?? 'sale_failed', policy: parsed.policy, line: parsed.line } };
+  return {
+    ok: false,
+    err: {
+      status: res.status,
+      error: parsed.error ?? 'sale_failed',
+      policy: parsed.policy,
+      line: parsed.line,
+      tendered_cents: parsed.tendered_cents,
+      total_cents: parsed.total_cents,
+      message: parsed.message,
+    },
+  };
 }
 
 export async function assessRelief(body: {
@@ -274,6 +338,19 @@ export async function listSalespeople(): Promise<Salesperson[]> {
   const res = await api('/api/v1/pos/salespeople');
   if (!res.ok) throw new Error(`salespeople ${res.status}`);
   const body = (await res.json()) as { items: Salesperson[] };
+  return body.items ?? [];
+}
+
+/**
+ * The managers a till person may name as the approver of a discount at the branch: the same list
+ * the ring's own rule judges approved_by against, so a name from here is a name the ring accepts.
+ * Throws on a non-2xx so the dialog says the list could not be read, never an empty picker that
+ * reads as "nobody may approve".
+ */
+export async function listDiscountApprovers(branchId: string): Promise<DiscountApprover[]> {
+  const res = await api(`/api/v1/pos/discount-approvers?branch_id=${encodeURIComponent(branchId)}`);
+  if (!res.ok) throw new Error(`discount approvers ${res.status}`);
+  const body = (await res.json()) as { items: DiscountApprover[] };
   return body.items ?? [];
 }
 

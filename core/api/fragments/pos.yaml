@@ -49,6 +49,7 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/PosSplitTotalMismatch" }
     get:
       operationId: posLookupSales
       tags: [staff-pos]
@@ -106,6 +107,44 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/pos/sale-preview:
+    post:
+      operationId: posSalePreview
+      tags: [staff-pos]
+      summary: Read the totals the ring would compute for this ticket, writing nothing
+      description: >-
+        The read-only sale preview. The body is the sale's own (lines,
+        customer, branch, sale type, fulfilment, relief) without any
+        tender, and the answer is the server-resolved subtotal, each tax
+        line and the total in integer cents, exactly as the ring would
+        compute them for that body: the preview prices the ticket through
+        the ring's own pricing and tax resolver, never a copy. Writes
+        nothing: no order, no hold, no number used, no replay key. Staff
+        only, the same role walls the sale takes. A ticket that collects
+        no tax shows no tax line and its total is its subtotal.
+      x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
+        reason: prices a ticket through the ring's own resolver and writes nothing
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosSalePreviewInput"
+      responses:
+        "200":
+          description: The ticket's own subtotal, tax lines and total, as the ring computes them
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosSalePreview"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /api/v1/pos/assess-relief:
     post:
       operationId: posAssessRelief
@@ -253,6 +292,41 @@ paths:
                 $ref: "#/components/schemas/PosSalespersonPage"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/pos/discount-approvers:
+    get:
+      operationId: posListDiscountApprovers
+      tags: [staff-pos]
+      summary: List the managers a till person may name as the approver of a discount
+      description: >-
+        The "Approved by" picker of the counter's Discount action: the active
+        logins whose grants reach the branch and whose role the dealer's
+        configuration lets clear a price in its own branch (the same
+        own-branch clearing list the quote side's floor clearing reads), one
+        row per login by display name, with the role label the receipt prints.
+        The list is the rule the sale applies to approved_by, so a name from
+        this list is a name the ring accepts. The branch wall every branch
+        read takes applies.
+      x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
+        reason: lists the managers who may approve a counter discount and writes nothing
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The approvers at the branch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosDiscountApproverList"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /api/v1/pos/margin-glance:
     post:
       operationId: posMarginGlance
@@ -377,13 +451,20 @@ paths:
       tags: [staff-pos]
       summary: Read one customer's past-due position for the counter
       description: >-
-        A fact, not a gate: the past-due amount, the oldest aging bucket, and
-        the hold flag. The dealer's balance_visibility policy is applied at the
-        marshal layer; a walk-in, a current account, and a disallowed caller all
-        answer an empty object.
+        A fact, not a gate, and every case answers distinctly. The standing
+        word names the case: walk_in (no customer_id), clear (nothing past
+        due, no hold), past_due, or on_hold (an active credit hold, whether or
+        not anything is past due). The past-due amount, the oldest aging
+        bucket and the hold flag ride beside it when they apply. A caller the
+        dealer's balance_visibility policy withholds balances from, or whose
+        grants do not reach the branch, is a 403; an unknown customer is a 404;
+        a malformed customer_id is a 400; a read that could not be made (the
+        AR, hold or policy read failed) is a 503. Never an empty 200. Counter
+        Till or Quote Desk at read: the Quote Desk's Convert to Order asks it
+        before it confirms.
       x-role: requireStaff
       x-access:
-        surfaces: [counter-till]
+        surfaces: [counter-till, quote-desk]
         level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -391,7 +472,7 @@ paths:
         - { name: customer_id, in: query, required: false, schema: { type: string, format: uuid } }
       responses:
         "200":
-          description: The standing answer; empty when there is nothing to say
+          description: The standing answer, always carrying its standing word
           content:
             application/json:
               schema:
@@ -399,6 +480,52 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          description: The standing could not be read
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/pos/payment-grant:
+    get:
+      operationId: posPaymentGrant
+      tags: [staff-pos]
+      summary: Read whether the caller holds the grant the till's payment routes require
+      description: >-
+        One question a client asks before it offers to take a payment: does
+        the signed-in user hold the grant the till sale and the payment on a
+        converted quote's order both need (Counter Till at Work)? The answer
+        is the role gate's own, the same walk over the caller's whole row of
+        roles and the dealer's configuration, taken for the access the
+        document annotates on those payment routes, so it moves with them.
+        The payment door's own not-selling-role rule is folded in, by the
+        one predicate the door calls, so a platform role that passes every
+        gate level but is refused the convert and pay is answered false.
+        A caller holding the Counter Till or the Quote Desk at read is
+        answered, true or false; a caller with neither meets the gate's 403.
+        It is a fact about grants only, never an authorisation: the payment
+        routes still gate every call.
+      x-addition: "the grant check the Quote Desk asks before it offers payment; no ERP source route"
+      x-role: requireStaff
+      x-access:
+        surfaces: [counter-till, quote-desk]
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: Whether the caller holds the payment grant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosPaymentGrant"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: The grant could not be read
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /api/v1/pos/addon-suggestions:
     get:
       operationId: posAddonSuggestions
@@ -1518,6 +1645,36 @@ components:
                       route's other 409 refusals answer the plain envelope
                       without the key.
                     $ref: "#/components/schemas/PosRefundApproval"
+    PosSplitTotalMismatch:
+      description: >-
+        The split-tender sum refusal, and the body is the Error envelope
+        carrying the amounts beside it. The refusal names itself in the
+        error string "split_total_mismatch": the submitted legs do not sum
+        exactly to the sale total, and only that refusal carries the two
+        cents fields and the message key, so the till's screen can show
+        both amounts without parsing a sentence. A client discriminates on
+        the error string, never on the keys' absence. The message speaks
+        dollars and plain words; no message ever prints cents.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Error"
+              - type: object
+                properties:
+                  tendered_cents:
+                    type: integer
+                    format: int64
+                    description: What the submitted legs sum to
+                  total_cents:
+                    type: integer
+                    format: int64
+                    description: The sale total the legs must settle exactly
+                  message:
+                    type: string
+                    description: >-
+                      The dollar sentence, for example "The tenders add up
+                      to $266.00, but the sale total is $300.58."
 
   schemas:
     # ── POS: sale ring ───────────────────────────────────────────────────────
@@ -1533,6 +1690,69 @@ components:
         product_id: { type: string, format: uuid }
         qty_entered: { type: number }
         uom_entered: { type: string }
+        discount:
+          $ref: "#/components/schemas/PosDiscountInput"
+    PosDiscountInput:
+      type: object
+      description: >-
+        One manual counter discount: a percent or an amount, and the manager
+        who said yes at the counter. The discount is verbal, no approval
+        queue, but it always names its approver so it is auditable. Exactly
+        one of percent_bps and amount_cents. The approver must be a login
+        from the discount-approvers read for the sale's branch; otherwise
+        the ring refuses in words (422). A line discount comes off the line
+        total; a ticket discount comes off the subtotal after the line
+        discounts and is shared over the lines. The till still rings at rule
+        and tier prices with no margin floor: a discount is a manager's
+        word on top of that price.
+      required: [approved_by, approved_base_cents]
+      properties:
+        percent_bps: { type: integer, format: int32, minimum: 1, maximum: 10000, description: "Basis points, 1250 is 12.5 percent" }
+        amount_cents: { type: integer, format: int64, minimum: 1, description: Cents off; not more than what it comes off }
+        approved_by: { type: string, format: uuid, description: The approving manager's staff id }
+        approved_qty:
+          type: number
+          description: >-
+            A line discount only: the quantity the manager's yes was given for.
+            The ring refuses the discount if the line's quantity is no longer this.
+        approved_base_cents:
+          type: integer
+          format: int64
+          minimum: 1
+          description: >-
+            What the yes was given for in cents: a line discount's line total
+            before the discount, a ticket discount's subtotal after the line
+            discounts. The ring refuses a discount whose base no longer matches
+            (422, ask a manager again), so a manager's percent never grows with
+            the quantity or the ticket. The ticket total must also stay above
+            zero: a sale cannot total $0.00.
+    PosDiscountApprover:
+      type: object
+      description: One manager a till person may name
+      required: [id, name, role_label]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        role_label: { type: string, description: The role label the receipt prints, never a name }
+    PosDiscountApproverList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PosDiscountApprover" }
+    PosSaleDiscount:
+      type: object
+      description: One manual discount on a committed sale, with the role of the manager who approved it
+      required: [scope, amount_cents, approved_by, approved_by_role, approved_by_label]
+      properties:
+        scope: { type: string, enum: [LINE, SALE] }
+        line_no: { type: integer, format: int32, description: The line, for a LINE discount }
+        percent_bps: { type: integer, format: int32, description: The percent entered; absent for an amount }
+        amount_cents: { type: integer, format: int64, description: What came off, in cents }
+        approved_by: { type: string, format: uuid }
+        approved_by_role: { type: string, description: The approver's role id when approving }
+        approved_by_label: { type: string, description: "The role label the receipt prints (Discount approved by ...)" }
     PosTenderLegInput:
       type: object
       description: >-
@@ -1607,6 +1827,8 @@ components:
         lines:
           type: array
           items: { $ref: "#/components/schemas/PosLineInput" }
+        discount:
+          $ref: "#/components/schemas/PosDiscountInput"
         tenders:
           type: array
           description: Split settlement legs; when set, tender is ignored and deposit_cents is refused
@@ -1656,6 +1878,76 @@ components:
         tenders:
           type: array
           items: { $ref: "#/components/schemas/PosTenderLegResult" }
+        discount_cents: { type: integer, format: int64, description: Every manual discount on the sale together; absent when there was none }
+        discounts:
+          type: array
+          description: Each manual discount and the role of the manager who approved it
+          items: { $ref: "#/components/schemas/PosSaleDiscount" }
+    PosSalePreviewInput:
+      type: object
+      description: >-
+        The read-only preview body: the sale's own facts without any
+        tender, no replay key and no drawer. Every price is resolved
+        server-side exactly as the ring resolves it for the same body.
+      required: [branch_id, customer_id, lines]
+      properties:
+        branch_id: { type: string, format: uuid }
+        customer_id: { type: string, description: Empty resolves to the house walk-in }
+        sale_type: { type: string, enum: [COLLECT_NOW, COLLECT_LATER, DELIVERED, COD] }
+        fulfilment:
+          type: string
+          enum: [PICKUP, WILL_CALL, DELIVERY]
+          description: COD only; other sale types carry fulfilment in sale_type
+        relief: { $ref: "#/components/schemas/PosReliefDecision" }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/PosLineInput" }
+        discount:
+          $ref: "#/components/schemas/PosDiscountInput"
+    PosSalePreview:
+      type: object
+      description: >-
+        The preview answer: the ticket's own totals in integer cents,
+        exactly as the ring computes them for the same body. A ticket that
+        collects no tax shows no tax line and its total is its subtotal.
+      required: [subtotal_cents, tax_cents, tax_lines, total_cents, tax_reason_code]
+      properties:
+        subtotal_cents: { type: integer, format: int64 }
+        tax_cents: { type: integer, format: int64, description: The sum of the tax lines }
+        tax_lines:
+          type: array
+          description: Empty when the ticket collects no tax
+          items: { $ref: "#/components/schemas/PosSalePreviewTaxLine" }
+        total_cents: { type: integer, format: int64 }
+        tax_reason_code:
+          type: string
+          enum: [STD_ON_HST_13, ON_FN_POS_8, FED_S87_VENDOR_DELIVERY, MANUAL_TAX_REVIEW, RELIEF_DECLINED_EVIDENCE]
+        discount_cents: { type: integer, format: int64, description: Every manual discount together; absent when there is none }
+        sale_discount_cents: { type: integer, format: int64, description: The ticket discount's own cents }
+        ticket_base_cents: { type: integer, format: int64, description: "The subtotal after the line discounts, before any ticket discount: what a ticket discount is approved against" }
+        ticket_discount_max_cents: { type: integer, format: int64, description: The most a ticket discount may take off (the base less one cent), so a sale never totals $0.00 }
+        lines:
+          type: array
+          description: One row per ticket line when a discount applies, so the till shows the server's cents
+          items: { $ref: "#/components/schemas/PosSalePreviewLine" }
+    PosSalePreviewLine:
+      type: object
+      description: One ticket line as the ring would charge it
+      required: [line_no, line_total_cents, before_ticket_discount_cents]
+      properties:
+        line_no: { type: integer, format: int32 }
+        line_total_cents: { type: integer, format: int64, description: Net of every discount }
+        before_ticket_discount_cents: { type: integer, format: int64, description: The line's price less its own discount, before its share of the ticket discount (the figure the receipt prints) }
+        discount_cents: { type: integer, format: int64, description: The line's own discount }
+        sale_discount_cents: { type: integer, format: int64, description: The line's share of the ticket discount }
+    PosSalePreviewTaxLine:
+      type: object
+      description: One tax line the ring would bind for the body
+      required: [reason_code, rate_bps, tax_cents]
+      properties:
+        reason_code: { type: string }
+        rate_bps: { type: integer, format: int32 }
+        tax_cents: { type: integer, format: int64 }
     PosSaleView:
       type: object
       description: The operator-reopen read; no evidence identifiers, no granular flow log
@@ -1684,6 +1976,10 @@ components:
         tenders:
           type: array
           items: { $ref: "#/components/schemas/PosTenderLegResult" }
+        discount_cents: { type: integer, format: int64 }
+        discounts:
+          type: array
+          items: { $ref: "#/components/schemas/PosSaleDiscount" }
     PosSaleViewLine:
       type: object
       description: One reopened line with its resolved engine price
@@ -1696,7 +1992,9 @@ components:
         uom_entered: { type: string }
         unit_price_cents: { type: integer, format: int64 }
         price_uom: { type: string }
-        line_total_cents: { type: integer, format: int64 }
+        line_total_cents: { type: integer, format: int64, description: What was charged, net of every discount }
+        discount_cents: { type: integer, format: int64 }
+        sale_discount_cents: { type: integer, format: int64 }
     PosSaleSummary:
       type: object
       description: One row of the past-sale list; enough to recognise a sale, not enough to be a receipt
@@ -1956,13 +2254,24 @@ components:
     PosAccountStanding:
       type: object
       description: >-
-        One customer's past-due position, and no more of it than that. The zero
-        value marshals as an empty object: a walk-in, a current account, an
-        unreadable AR read and a disallowed caller all look identical.
+        One customer's standing, and no more of it than that. The standing
+        word is always present and names the case; the three older fields
+        are present exactly when they were before: past_due_cents and
+        oldest_bucket only when money is past due, on_hold only when true.
+      required: [standing]
       properties:
+        standing:
+          type: string
+          enum: [walk_in, clear, past_due, on_hold]
         past_due_cents: { type: integer, format: int64 }
         oldest_bucket: { type: string, enum: ["30", "60", "90+"] }
         on_hold: { type: boolean, description: "Mirrors the credit gate; enforcement happens at the ring, not here" }
+    PosPaymentGrant:
+      type: object
+      description: Whether the caller holds the grant the till's payment routes require
+      required: [can_take_payment]
+      properties:
+        can_take_payment: { type: boolean }
     PosAddonSuggestion:
       type: object
       description: >-

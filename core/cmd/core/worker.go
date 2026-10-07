@@ -133,6 +133,7 @@ func worker(getenv func(string) string) error {
 	// shared dispatcher would race the frozen handler map; sms_outbox is a
 	// disjoint table, and a carrier outage cannot touch a GL journal.
 	smsDispatcher := notify.NewDispatcher(claims.sms, log)
+	graph.tops.sms.quoteStatus = quoteStatusAdapter{repo: quote.NewFollowUpRepository(pool)}
 	registerSmsConsumers(graph.tops.sms, graph.tops.notifier, smsDispatcher, log)
 	go smsDispatcher.Run(ctx)
 
@@ -272,7 +273,20 @@ func registerSmsConsumers(belt *smsBelt, mail notify.Notifier, d *notify.Dispatc
 	// the producers enqueue, with the link still in the row.
 	messagingprovider.NewConsumer(belt.notifier, belt.resolver, log).
 		WithEmailNotifier(mail).
+		WithQuoteStatus(belt.quoteStatus).
 		RegisterQuoteHandlers(d)
+}
+
+// quoteStatusAdapter answers the follow-up delivery handlers' status re-read over the quote module's
+// own cadence reader. A quote that no longer exists answers "", which the handlers drop.
+type quoteStatusAdapter struct{ repo *quote.FollowUpRepository }
+
+func (a quoteStatusAdapter) QuoteStatus(ctx context.Context, quoteID string) (string, error) {
+	h, err := a.repo.Header(ctx, quoteID)
+	if errors.Is(err, quote.ErrNotFound) {
+		return "", nil
+	}
+	return h.Status, err
 }
 
 // approvalSourceAdapter satisfies messaging's reconcile-source seam over

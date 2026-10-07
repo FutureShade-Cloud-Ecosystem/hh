@@ -200,6 +200,7 @@ const POLICY = {
   send_sms_enabled: false,
   include_product_images: true,
   quick_chip_set: ["Pavers"],
+  quantity_notice: "All quantities are to be confirmed by the customer.",
   workspace_split_pct: 58,
   workspace_arrangement: "PRIMARY_LEFT",
 };
@@ -211,6 +212,9 @@ test("validatePolicy mirrors the server's bounds and names the knob", () => {
   assert.match(validatePolicy({ ...POLICY, default_deposit_pct: 101 }), /Default deposit/);
   assert.match(validatePolicy({ ...POLICY, workspace_split_pct: 19 }), /panel split/);
   assert.match(validatePolicy({ ...POLICY, workspace_split_pct: 81 }), /panel split/);
+  assert.equal(validatePolicy({ ...POLICY, quantity_notice: "x".repeat(500) }), null);
+  assert.equal(validatePolicy({ ...POLICY, quantity_notice: "" }), null);
+  assert.match(validatePolicy({ ...POLICY, quantity_notice: "x".repeat(501) }), /quantity notice is limited to 500/);
   assert.match(validatePolicy({ ...POLICY, default_validity_days: 1.5 }), /Default validity/);
   assert.match(validatePolicy({ ...POLICY, cost_visibility: "EVERYONE" }), /visibility/);
   assert.match(validatePolicy({ ...POLICY, workspace_arrangement: "SIDEWAYS" }), /arrangement/);

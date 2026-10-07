@@ -145,6 +145,10 @@ type Service struct {
 	// PARK: no order→invoice writer exists in the tree outside the POS ring, so readiness is computed
 	// and published while the button stays absent rather than fabricating an invoice number.
 	invoicer MultiShipInvoicer
+	// standing is the billing read behind the yard pick notice facts (yard_pick.go); nil = none.
+	standing InvoiceStandingReader
+	// backorderNotifier tells the rep when an order edit clears a short line's backorder (yard_pick_edit.go).
+	backorderNotifier BackorderNotifier
 }
 
 // txRecorder is the transactional half of the audit seam: write one row on the caller's transaction so
@@ -548,6 +552,8 @@ type OrderView struct {
 	SubtotalCents int64           `json:"subtotal_cents"`
 	TaxCents      int64           `json:"tax_cents"`
 	TotalCents    int64           `json:"total_cents"`
+	// HasBackorder is true while any line is short and still owed (migration 0369).
+	HasBackorder bool `json:"has_backorder"`
 }
 
 // OrderRead returns one order's current status + this caller's legal actions. Authority mirrors the
@@ -593,6 +599,11 @@ func (s *Service) OrderRead(ctx context.Context, orderID string) (OrderView, err
 	if es, eerr := s.editStore(); eerr == nil {
 		if lines, totals, taxCents, lerr := es.OrderLines(ctx, orderID); lerr == nil {
 			view.Lines = lines
+			for _, l := range lines {
+				if r, ok := ratOf(l.BackorderBase); ok && r.Sign() > 0 {
+					view.HasBackorder = true
+				}
+			}
 			view.SubtotalCents, view.TaxCents, view.TotalCents = totals.SubtotalCents, taxCents, totals.TotalCents
 		}
 	}

@@ -17,13 +17,10 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 )
 
-// seededSalesByDayTitle is the name migration 0143 plants for sales_by_day.
-// Both title assertions below pin THIS string, not the human title
-// "Sales by Day": the seed's names are scrubbed, so the human title is
-// planted nowhere, and an assertion the seed cannot satisfy fails on
-// every freshly migrated database (which is how this read on main
-// before the pin).
-const seededSalesByDayTitle = "Scrubname0027 by Scrubname0009"
+// seededSalesByDayTitle is the name sales_by_day carries once every migration has run: 0143 planted a
+// scrub placeholder where "Sales" and "Day" belong, and 0363 put the words back. Both title assertions
+// below pin THIS string.
+const seededSalesByDayTitle = "Sales by Day"
 
 // TestIntegration_Catalog_MatchesSeededTemplates, the two halves of a report definition must agree in
 // BOTH directions, and the parameter schema must line up with the query's bind count.

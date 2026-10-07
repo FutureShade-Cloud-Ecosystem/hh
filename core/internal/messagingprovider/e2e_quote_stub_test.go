@@ -210,3 +210,43 @@ func TestRegisterQuoteHandlers_ShareTopicIsSecret(t *testing.T) {
 		t.Fatalf("the quote share topic must be registered SECRET so the raw share token does not linger at rest")
 	}
 }
+
+type statusMap map[string]string
+
+func (s statusMap) QuoteStatus(_ context.Context, id string) (string, error) { return s[id], nil }
+
+// A follow-up notice queued while the quote was open is dropped at delivery once the quote is no
+// longer open: the customer accepted or declined (here, or by phone with staff recording it) after the
+// sweep enqueued the step. The row is published with a skip, never dead-lettered, and nothing is sent
+// by either channel. A notice for a still open quote goes out as before.
+func TestStubMode_FollowupForAClosedQuoteIsDroppedAtDelivery(t *testing.T) {
+	consent := stubConsent{byCustomer: map[string]Recipient{"cust-1": {Name: "Mark Quinte", Phone: "+16135551001"}}}
+	notifier, _ := Select(Settings{}, nil)
+	sms := notifier.(*StubNotifier)
+	mail := NewStubNotifier(nil)
+	store := &memStore{}
+	d := notify.NewDispatcher(store, nil)
+	NewConsumer(sms, consent, nil).WithEmailNotifier(mail).
+		WithQuoteStatus(statusMap{"q-open": "SENT", "q-acc": "ACCEPTED", "q-lost": "LOST", "q-conv": "CONVERTED", "q-exp": "EXPIRED"}).
+		RegisterQuoteHandlers(d)
+
+	for _, q := range []string{"q-acc", "q-lost", "q-conv", "q-exp", "q-gone"} {
+		store.add(TopicQuoteFollowupSMS, QuoteFollowupNotice{QuoteID: q, CustomerID: "cust-1", StepDay: 3})
+		store.add(TopicQuoteFollowupEmail, QuoteFollowupNotice{QuoteID: q, CustomerID: "cust-1", StepDay: 7, Email: "mark@example.test"})
+	}
+	store.add(TopicQuoteFollowupSMS, QuoteFollowupNotice{QuoteID: "q-open", CustomerID: "cust-1", StepDay: 3})
+	store.add(TopicQuoteFollowupEmail, QuoteFollowupNotice{QuoteID: "q-open", CustomerID: "cust-1", StepDay: 7, Email: "mark@example.test"})
+
+	if n := d.DrainOnce(context.Background()); n != 12 {
+		t.Fatalf("drained %d rows, want 12", n)
+	}
+	if len(store.dead) != 0 || len(store.published) != 12 {
+		t.Fatalf("a dropped notice is published with a skip: published=%d dead=%v pending=%v", len(store.published), store.dead, store.pending)
+	}
+	if got := len(sms.Sent()); got != 1 {
+		t.Errorf("only the open quote's text may go out, %d texts sent", got)
+	}
+	if got := len(mail.Sent()); got != 1 {
+		t.Errorf("only the open quote's email may go out, %d emails sent", got)
+	}
+}

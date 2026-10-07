@@ -810,41 +810,101 @@ func (r *Repository) ListAudit(ctx context.Context, f AuditFilter) ([]AuditLogRo
 
 // - D-PA-3 daily low-margin scan (live-sales feed) -
 
-// LowMarginSalesLines reads the COMMITTED sold lines in [from, to) (optionally scoped to one branch)
-// for the principal's daily low-margin report (D-PA-3). This is the ONE deliberately cross-module reporting
-// query in the pricing repo, it joins orders/customers/products (normally read only through the
-// zero-trust catalog seam) because the report IS a live-sales feed; it never WRITES those tables.
+// LowMarginSalesLines reads the document lines in [From, To) (optionally scoped to one branch) for the
+// low-margin report (D-PA-3): the COMMITTED order lines and, when the filter asks, the quote lines.
+// This is the ONE deliberately cross-module reporting query in the pricing repo, it joins
+// orders/quotes/customers/products (normally read only through the zero-trust catalog seam) because
+// the report IS a live-sales feed; it never WRITES those tables.
 //
-// Committed-sale predicate (design #6): a line is included when its order is INVOICED/FULFILLED/CLOSED
-// OR it has a COMMITTED pos_sale facet. The pos_sale branch is LOAD-BEARING for POS cash sales, the
-// POS ring inserts the order at CONFIRMED and never advances orders.status (internal/pos/service.go),
-// so a cash counter sale is caught ONLY by the facet, not the status set. product_branch_costs is a
-// LEFT JOIN keyed on (product_id, branch_id), the SAME per-branch WAC row inventory.BranchCostCents
-// reads, so avg_unit_cost_cents is NULL when the product has no cost on file at the sale's branch
-// (surfaced as invalid, never coalesced to 0). Numeric qty is cast to float8 for a clean scan.
-func (r *Repository) LowMarginSalesLines(ctx context.Context, from, to time.Time, branchID string) ([]LowMarginSaleLine, error) {
+// Committed-sale predicate (design #6): an order line is included when its order is
+// INVOICED/FULFILLED/CLOSED OR it has a COMMITTED pos_sale facet. The pos_sale branch is LOAD-BEARING
+// for POS cash sales, the POS ring inserts the order at CONFIRMED and never advances orders.status
+// (internal/pos/service.go), so a cash counter sale is caught ONLY by the facet, not the status set.
+// A line with nothing left to deliver (a yard zero pick, 0369) is not a sale and is not graded.
+// A quote line carries no commitment test: a quote is a price the dealer has put in front of a
+// customer, in any status, and the report's job there is to show what was priced below the floor.
+// product_branch_costs is a LEFT JOIN keyed on (product_id, branch_id), the SAME per-branch WAC row
+// inventory.BranchCostCents reads, so avg_unit_cost_cents is NULL when the product has no cost on file
+// at the document's branch (surfaced as invalid, never coalesced to 0). Numeric qty is cast to float8
+// for a clean scan. A tombstone (deleted_at, a sync fact) on a document or a line keeps it off the report. BranchIDs is the caller's branch wall (nil reads every branch). The salesperson filter names a staff user id and matches the document's
+// salesperson as the row reports it (sp, the quote's salesperson else its creator). An order line's discount percent is read from the line's metadata (the pair an
+// order converted from a quote keeps); a quote line's from its own column.
+func (r *Repository) LowMarginSalesLines(ctx context.Context, f LowMarginFilter) ([]LowMarginSaleLine, error) {
 	if r.pool == nil {
 		return nil, errNoDB
 	}
 	const q = `
-	SELECT ol.id::text, o.id::text, o.order_no::text, o.created_at, o.branch_id::text,
+	SELECT 'order', ol.id::text, o.id::text, o.order_no::text, o.created_at, o.branch_id::text,
 	       o.customer_id::text, c.customer_type,
 	       ol.product_id::text, COALESCE(p.category_id::text, ''), p.sku::text, p.name,
-	       ol.qty_entered::float8, ol.uom_entered::text, ol.unit_price_cents, ol.price_uom::text,
-	       pbc.avg_unit_cost_cents
+	       ol.qty_entered::float8, ol.uom_entered::text, ol.unit_price_cents,
+	       CASE WHEN COALESCE(ol.metadata->>'disc_pct', '') ~ '^[0-9]{1,3}$'
+	            THEN LEAST((ol.metadata->>'disc_pct')::int, 100) ELSE 0 END,
+	       ol.price_uom::text, pbc.avg_unit_cost_cents,
+	       ol.line_total_cents, ROUND(pbc.avg_unit_cost_cents * ol.qty_base)::bigint,
+	       COALESCE(sp.id::text, ''), COALESCE(sp.display_name, ''),
+	       oqc.fc IS NOT NULL, COALESCE(oqc.fc->>'cleared_by', ''), COALESCE(cb.display_name, ''),
+	       COALESCE(oqc.fc->>'authority', ''),
+	       CASE WHEN oqc.fc->>'disc_pct' ~ '^[0-9]{1,3}$' THEN (oqc.fc->>'disc_pct')::int END,
+	       CASE WHEN oqc.fc->>'margin_bps' ~ '^-?[0-9]{1,9}$' THEN (oqc.fc->>'margin_bps')::bigint END
 	  FROM order_lines ol
 	  JOIN orders o    ON o.id = ol.order_id
 	  JOIN customers c ON c.id = o.customer_id
 	  JOIN products p  ON p.id = ol.product_id
 	  LEFT JOIN product_branch_costs pbc
 	         ON pbc.product_id = ol.product_id AND pbc.branch_id = o.branch_id
-	 WHERE ol.product_id IS NOT NULL
+	  LEFT JOIN quotes oq ON oq.id = o.quote_id
+	  LEFT JOIN LATERAL (
+	        SELECT ql.metadata->'floor_clear' AS fc
+	          FROM quote_lines ql
+	         WHERE ql.quote_id = o.quote_id AND ql.line_no = ol.line_no AND ql.deleted_at IS NULL
+	           AND ql.product_id = ol.product_id AND ql.unit_price_cents = ol.unit_price_cents
+	           AND jsonb_typeof(ql.metadata->'floor_clear') = 'object') oqc ON TRUE
+	  LEFT JOIN users sp ON sp.id = COALESCE(oq.salesperson_id, o.created_by)
+	  LEFT JOIN users cb ON cb.id::text = oqc.fc->>'cleared_by'
+	 WHERE $4::text <> 'quotes'
+	   AND ol.product_id IS NOT NULL
+	   AND ol.qty_base > 0
+	   AND ol.deleted_at IS NULL AND o.deleted_at IS NULL
 	   AND o.created_at >= $1 AND o.created_at < $2
 	   AND ($3::uuid IS NULL OR o.branch_id = $3::uuid)
+	   AND ($6::uuid[] IS NULL OR o.branch_id = ANY($6::uuid[]))
+	   AND ($5::uuid IS NULL OR sp.id = $5::uuid)
 	   AND ( o.status IN ('INVOICED','FULFILLED','CLOSED')
 	         OR EXISTS (SELECT 1 FROM pos_sale ps WHERE ps.order_id = o.id AND ps.status = 'COMMITTED') )
-	 ORDER BY o.created_at DESC, ol.id`
-	rows, err := r.pool.Query(ctx, q, from, to, nullStr(branchID))
+	UNION ALL
+	SELECT 'quote', ql.id::text, qt.id::text, qt.quote_no::text, qt.created_at, qt.branch_id::text,
+	       qt.customer_id::text, c.customer_type,
+	       ql.product_id::text, COALESCE(p.category_id::text, ''), p.sku::text, p.name,
+	       ql.qty_entered::float8, ql.uom_entered::text, ql.unit_price_cents, ql.disc_pct,
+	       ql.price_uom::text, pbc.avg_unit_cost_cents,
+	       ql.line_total_cents, ROUND(pbc.avg_unit_cost_cents * ql.qty_base)::bigint,
+	       COALESCE(sp.id::text, ''), COALESCE(sp.display_name, ''),
+	       COALESCE(jsonb_typeof(ql.metadata->'floor_clear') = 'object', FALSE), COALESCE(ql.metadata->'floor_clear'->>'cleared_by', ''),
+	       COALESCE(cb.display_name, ''), COALESCE(ql.metadata->'floor_clear'->>'authority', ''),
+	       CASE WHEN ql.metadata->'floor_clear'->>'disc_pct' ~ '^[0-9]{1,3}$' THEN (ql.metadata->'floor_clear'->>'disc_pct')::int END,
+	       CASE WHEN ql.metadata->'floor_clear'->>'margin_bps' ~ '^-?[0-9]{1,9}$' THEN (ql.metadata->'floor_clear'->>'margin_bps')::bigint END
+	  FROM quote_lines ql
+	  JOIN quotes qt   ON qt.id = ql.quote_id
+	  JOIN customers c ON c.id = qt.customer_id
+	  JOIN products p  ON p.id = ql.product_id
+	  LEFT JOIN product_branch_costs pbc
+	         ON pbc.product_id = ql.product_id AND pbc.branch_id = qt.branch_id
+	  LEFT JOIN users sp ON sp.id = COALESCE(qt.salesperson_id, qt.created_by)
+	  LEFT JOIN users cb ON cb.id::text = ql.metadata->'floor_clear'->>'cleared_by'
+	 WHERE $4::text <> 'orders'
+	   AND ql.product_id IS NOT NULL
+	   AND ql.deleted_at IS NULL AND qt.deleted_at IS NULL
+	   AND qt.created_at >= $1 AND qt.created_at < $2
+	   AND ($3::uuid IS NULL OR qt.branch_id = $3::uuid)
+	   AND ($6::uuid[] IS NULL OR qt.branch_id = ANY($6::uuid[]))
+	   AND ($5::uuid IS NULL OR sp.id = $5::uuid)
+	 ORDER BY 5 DESC, 2`
+	docType := f.DocType
+	if docType == "" {
+		docType = ScanDocsBoth
+	}
+	rows, err := r.pool.Query(ctx, q, f.From, f.To, nullStr(f.BranchID), docType, nullStr(f.SalespersonID), f.BranchIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -853,9 +913,12 @@ func (r *Repository) LowMarginSalesLines(ctx context.Context, from, to time.Time
 	for rows.Next() {
 		var ln LowMarginSaleLine
 		if err := rows.Scan(
-			&ln.OrderLineID, &ln.OrderID, &ln.OrderNo, &ln.SoldAt, &ln.BranchID,
+			&ln.DocType, &ln.LineID, &ln.DocID, &ln.DocNo, &ln.DocAt, &ln.BranchID,
 			&ln.CustomerID, &ln.CustomerType, &ln.ProductID, &ln.CategoryID, &ln.SKU, &ln.ProductName,
-			&ln.QtyEntered, &ln.UOMEntered, &ln.UnitPriceCents, &ln.PriceUOM, &ln.AvgUnitCostCents,
+			&ln.QtyEntered, &ln.UOMEntered, &ln.UnitPriceCents, &ln.DiscPct, &ln.PriceUOM, &ln.AvgUnitCostCents,
+			&ln.LineTotalCents, &ln.LineCostCents, &ln.SalespersonID, &ln.SalespersonLabel,
+			&ln.ClearStamped, &ln.ClearedByID, &ln.ClearedByLabel, &ln.ClearAuthority,
+			&ln.ClearStampDiscPct, &ln.ClearStampMarginBps,
 		); err != nil {
 			return nil, err
 		}

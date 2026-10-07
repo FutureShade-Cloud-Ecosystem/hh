@@ -55,7 +55,10 @@ const (
 	ActPriceOverride    = "PRICE_OVERRIDE"
 	ActTillOverride     = "TILL_OVERRIDE"
 	ActSaleCompleted    = "SALE_COMPLETED"
-	ActTaxReliefAssess  = "TAX_RELIEF_ASSESS"
+	// ActPosDiscountApproved is one manual counter discount and the manager who approved it
+	// (pos/discount.go): the auditable record of the verbal yes at the counter.
+	ActPosDiscountApproved = "POS_DISCOUNT_APPROVED"
+	ActTaxReliefAssess     = "TAX_RELIEF_ASSESS"
 	// order-change history (Q-044): entity-grain rows beyond the coarse HTTP middleware record
 	ActReturnCompleted    = "RETURN_COMPLETED"     // one committed POS return (method + return_no)
 	ActOrderStatusChanged = "ORDER_STATUS_CHANGED" // any orders.status transition (detail old→new)
@@ -70,7 +73,8 @@ const (
 	// ORDER_CHANGED with entity_type "quote") so the admin viewer and the per-entity history reads can
 	// filter on action alone, as the order history already does.
 	ActQuoteChanged  = "QUOTE_CHANGED"  // a quote field/line change (detail old→new)
-	ActQuoteAccepted = "QUOTE_ACCEPTED" // a customer acceptance via share link (DIB-57)
+	ActQuoteAccepted = "QUOTE_ACCEPTED" // a customer acceptance via share link (DIB-57), or staff accepting on the customer's behalf
+	ActQuoteRejected = "QUOTE_REJECTED" // staff marking a quote lost on the customer's behalf
 	// messaging consent (DIB-482): a member of staff recording, or withdrawing, a customer's
 	// permission to be sent text messages. Shares ORDER_CHANGED's {field, before, after} Extra shape
 	// exactly, so it needs no new allowlist keys, see allowedExtraKeys in service.go. A DISTINCT

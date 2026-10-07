@@ -3,6 +3,10 @@
 import { LitElement, css, html } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { productImageUrl } from './pos-api.js';
+import { isSwatchSized, thumbSource } from './product-thumb-logic.js';
+import { productTile } from './ports.js';
+
+type ProductTileTheme = 'light' | 'dark';
 
 /**
  * hos-product-thumb: the product-images-ui ticket. The one product thumbnail in the app.
@@ -17,6 +21,12 @@ import { productImageUrl } from './pos-api.js';
  * THE FALLBACK IS A REAL GLYPH, NOT AN EMPTY BOX. An empty box of the right size is indistinguishable
  * from an image that has not loaded yet, so a slow connection looks like missing data. The placeholder
  * is a drawn stone-stack mark on the panel colour: unmistakably "no photo", never "loading".
+ *
+ * THE CHAIN IS: REAL PICTURE, THEN THE CATEGORY'S DRAWN TILE, THEN THE GLYPH. The tile is the design
+ * system's product tile for the product's category, in the document's theme, handed in by the host
+ * through the ports seam (product-thumb-logic.ts holds the chain). It is an img with the same alt the real picture carries, so a real photo
+ * replacing a tile changes no screen. The glyph is left for a product whose category the tiles
+ * do not know.
  *
  * hasImage lets a caller that already knows (the counter search returns has_image per hit) skip the
  * request entirely. When it is undefined the component simply tries, and falls back on error: so a
@@ -38,8 +48,15 @@ export class HosProductThumb extends LitElement {
  * a hint only: the error fallback still applies if the byte route disagrees.
    */
   @property({ type: Boolean, attribute: 'has-image' }) hasImage?: boolean;
+  /** The product's category name as the surface carries it (its application); picks the tile. */
+  @property() category = '';
 
   @state() private failed = false;
+  /** The real picture loaded and is only a swatch: the drawn tile stands in (isSwatchSized). */
+  @state() private swatch = false;
+  @state() private theme: ProductTileTheme = 'dark';
+
+  private themeWatch?: MutationObserver;
 
   static styles = css`
     :host {
@@ -70,6 +87,32 @@ export class HosProductThumb extends LitElement {
     }
   `;
 
+  // The tile has a light and a dark drawing; the document root's data-theme is the one place the
+  // theme lives (the dark sheet is the absence of the attribute), so the thumb follows it.
+  private readTheme(): ProductTileTheme {
+    return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+  }
+
+  connectedCallback(): void {
+    super.connectedCallback();
+    this.theme = this.readTheme();
+    this.themeWatch = new MutationObserver(() => {
+      this.theme = this.readTheme();
+    });
+    this.themeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  }
+
+  disconnectedCallback(): void {
+    this.themeWatch?.disconnect();
+    super.disconnectedCallback();
+  }
+
+  private onLoad(event: Event): void {
+    // A picture that is only a pixel or a few is a swatch: the category's tile reads as the product.
+    const img = event.target as HTMLImageElement;
+    if (isSwatchSized(img.naturalWidth, img.naturalHeight)) this.swatch = true;
+  }
+
   private onError(): void {
     // One-way latch: once the byte route has said no, stop asking on every re-render.
     this.failed = true;
@@ -78,22 +121,32 @@ export class HosProductThumb extends LitElement {
   protected willUpdate(changed: Map<string, unknown>): void {
  // A new product gets a fresh chance: otherwise a list that reuses this element for row 2 would
     // inherit row 1's failure and show a placeholder for a product that does have a picture.
-    if (changed.has('productId')) this.failed = false;
+    if (changed.has('productId')) {
+      this.failed = false;
+      this.swatch = false;
+    }
   }
 
   render() {
     const px = `${this.size}px`;
-    const show = this.productId !== '' && this.hasImage !== false && !this.failed;
+    const picture = thumbSource({
+      imageSrc: this.productId !== '' ? productImageUrl(this.productId) : '',
+      hasImage: this.hasImage,
+      failed: this.failed,
+      swatch: this.swatch,
+      tileSrc: productTile(this.category, this.theme),
+    });
     return html`<div class="box" style="width:${px};height:${px}">
-      ${show
-        ? html`<img
-            src=${productImageUrl(this.productId)}
+      ${picture.kind === 'glyph'
+        ? this.placeholder()
+        : html`<img
+            src=${picture.src}
             alt=${this.alt}
             loading="lazy"
             decoding="async"
-            @error=${this.onError}
-          />`
-        : this.placeholder()}
+            @error=${picture.kind === 'image' ? this.onError : undefined}
+            @load=${picture.kind === 'image' ? this.onLoad : undefined}
+          />`}
     </div>`;
   }
 

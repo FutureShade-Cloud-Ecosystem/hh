@@ -179,6 +179,49 @@ const QUOTES = {
     acceptable: true,
     include_images: true,
   },
+  // The tile quote (decision log row 1057): images are ON; the first line carries a photo, the second
+  // carries none and names a product whose category the tiles know, the third carries none and names
+  // nothing the tiles know.
+  "q-tiles-31": {
+    quote_no: "Q-31",
+    customer_name: "Quinte Hardscapes Inc",
+    status: "SENT",
+    valid_until: dayFromNow(28),
+    expired: false,
+    lines: [
+      {
+        line_no: 1,
+        description: "Banas Natural Step",
+        qty_entered: "1.0000",
+        uom_entered: "PC",
+        unit_price_cents: 2057,
+        line_total_cents: 2057,
+        image_ref: "p-banas",
+      },
+      {
+        line_no: 2,
+        description: "Black Mulch",
+        qty_entered: "1.0000",
+        uom_entered: "CYD",
+        unit_price_cents: 5400,
+        line_total_cents: 5400,
+      },
+      {
+        line_no: 3,
+        description: "Gift certificate",
+        qty_entered: "1.0000",
+        uom_entered: "EA",
+        unit_price_cents: 1000,
+        line_total_cents: 1000,
+      },
+    ],
+    subtotal_cents: 8457,
+    tax_cents: 1099,
+    total_cents: 9556,
+    as_of: nowIso(),
+    acceptable: true,
+    include_images: true,
+  },
   "q-terms-28": {
     quote_no: "Q-28",
     customer_name: "Fenwick Builders Ltd",
@@ -214,6 +257,21 @@ const QUOTES = {
   },
 };
 
+// The core serves the quote number WITH its own "#" ("#Q-6"), so the page must show the mark once.
+// The as_of is a fixed instant so the page's own words for it can be asserted.
+QUOTES["q-hash-6"] = structuredClone(QUOTES["q-terms-28"]);
+QUOTES["q-hash-6"].quote_no = "#Q-6";
+QUOTES["q-hash-6"].as_of = "2026-10-06T19:49:47Z";
+
+// A staff preview of the customer's page: the core's preview flag set, acceptable false, the status
+// still DRAFT. It is served to the Quote Desk's own session, never to this page, so the tests hand it
+// to the element directly (see test/page.pw.ts).
+QUOTES["q-preview-draft"] = structuredClone(QUOTES["q-terms-28"]);
+QUOTES["q-preview-draft"].quote_no = "#Q-7";
+QUOTES["q-preview-draft"].status = "DRAFT";
+QUOTES["q-preview-draft"].acceptable = false;
+QUOTES["q-preview-draft"].preview = true;
+
 // Fresh copies of the terms quote for the tests whose acceptance really
 // commits in the stub while the answer is lost on the way back.
 for (const token of [
@@ -244,9 +302,29 @@ for (const token of [
   "q-proxy-429",
   "q-dead-landed",
   "q-dead-unrecorded",
+  "q-qty-422",
+  "q-demo-25-hint",
+  "q-print-33",
 ]) {
   QUOTES[token] = structuredClone(QUOTES["q-terms-28"]);
 }
+
+// The dealer's quantity notice: the core serves it on every quote's public view (branch row over the
+// dealer default, and the default wording when the dealer wrote none). One quote carries a dealer's own
+// wording, so the page is proven to show what it is sent and not a sentence of its own.
+const DEFAULT_QUANTITY_NOTICE =
+  "All quantities are to be confirmed by the customer. Please review them before you accept it.";
+QUOTES["q-notice-29"] = structuredClone(QUOTES["q-terms-28"]);
+QUOTES["q-notice-29"].quote_no = "Q-29";
+QUOTES["q-notice-29"].quantity_notice = "Check every quantity against your plan before you accept.";
+// A notice with no break in it, the longest the dealer may save: the page must wrap it, not widen.
+QUOTES["q-long-32"] = structuredClone(QUOTES["q-terms-28"]);
+QUOTES["q-long-32"].quote_no = "Q-32";
+QUOTES["q-long-32"].quantity_notice = "x".repeat(500);
+for (const quote of Object.values(QUOTES)) {
+  if (quote.quantity_notice === undefined) quote.quantity_notice = DEFAULT_QUANTITY_NOTICE;
+}
+// Tokens cloned after this point (none today) must carry it too: the clone copies the field.
 
 // The link the server revoked: the route answers 410, not 404, because the
 // link EXISTED and died. The page says so, and says what to do next.
@@ -453,6 +531,13 @@ const server = createServer(async (request, response) => {
       return;
     }
     const typedName = body.typed_name.trim();
+    // The core's own 422 for an accept without the quantities confirmation, in words, recording nothing.
+    if (body.quantities_confirmed !== true) {
+      respondJson(response, 422, {
+        error: "please confirm that you have reviewed the quantities on this quote before you accept it",
+      });
+      return;
+    }
     // The key is looked up before the quote's status is judged, as the core
     // does under the quote lock: a repeat answers the first outcome even when
     // the quote has since left the acceptable state.
@@ -485,6 +570,7 @@ const server = createServer(async (request, response) => {
       subtotal_cents: quote.subtotal_cents,
       tax_cents: quote.tax_cents,
       total_cents: quote.total_cents,
+      quantities_confirmed: true,
     };
     const rows = ACCEPTANCES.get(token) ?? [];
     rows.push({ typed_name: typedName, key: key ?? null });

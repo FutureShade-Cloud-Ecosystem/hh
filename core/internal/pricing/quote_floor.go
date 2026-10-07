@@ -241,3 +241,58 @@ func (s *Service) RecordFloorDecisionTx(ctx context.Context, tx pgx.Tx, rec Floo
 	}
 	return s.txAud.AppendAuditTx(ctx, tx, floorAuditEntry(rec))
 }
+
+// CounterDiscountRecord is one manual counter discount, the row the pricing log keeps of it
+// (service in pos/discount.go). The approver is the manager who said yes at the counter.
+type CounterDiscountRecord struct {
+	ApproverID  string // the approving manager's staff id: the row's user
+	ClerkID     string // who rang it
+	OrderID     string
+	LineNo      int // 0 for the whole-ticket discount
+	ProductID   string
+	BaseCents   int64 // what the discount was struck from
+	NetCents    int64
+	PercentBps  int
+	AmountCents int64
+}
+
+// counterDiscountEntry renders one CounterDiscountRecord as its pricing_audit_log row, in the
+// quote clearing's own style: a BYPASS row with the manager scope reason (a manager cleared this
+// price by word, no approval record), keyed to the line's product, or to the order for the
+// whole-ticket discount, and pointing at the order. The user is the manager who approved it, the
+// clerk who rang it rides the new value. Money is integer cents throughout.
+func counterDiscountEntry(rec CounterDiscountRecord) AuditEntry {
+	field, entity := "sale", rec.OrderID
+	if rec.LineNo > 0 {
+		field, entity = fmt.Sprintf("line_%d", rec.LineNo), rec.ProductID
+	}
+	if entity == "" {
+		entity = rec.OrderID
+	}
+	pct := ""
+	if rec.PercentBps > 0 {
+		pct = fmt.Sprintf(" at %d bps", rec.PercentBps)
+	}
+	return AuditEntry{
+		EntityType:    "margin_enforcement",
+		EntityID:      entity,
+		Action:        "BYPASS",
+		FieldName:     field,
+		OldValue:      fmt.Sprintf("counter %d%s", rec.BaseCents, pct),
+		NewValue:      fmt.Sprintf("net %d off %d rung by %s", rec.NetCents, rec.AmountCents, rec.ClerkID),
+		UserID:        rec.ApproverID,
+		RefEntityType: RefOrder,
+		RefEntityID:   rec.OrderID,
+		BypassReason:  BypassManagerScope,
+	}
+}
+
+// RecordCounterDiscountTx writes one manual counter discount to pricing_audit_log ON the sale's
+// own transaction: the row commits with the sale or not at all, and a failed append fails the
+// sale rather than vanishing (the RecordFloorDecisionTx discipline).
+func (s *Service) RecordCounterDiscountTx(ctx context.Context, tx pgx.Tx, rec CounterDiscountRecord) error {
+	if s.txAud == nil {
+		return errNoTxAudit
+	}
+	return s.txAud.AppendAuditTx(ctx, tx, counterDiscountEntry(rec))
+}

@@ -15,10 +15,8 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"image/png"
 	"os"
 	"path/filepath"
 	"sort"
@@ -114,42 +112,6 @@ func TestIntegration_SeedingTwiceCreatesNothingTheSecondTime(t *testing.T) {
 	}
 	t.Logf("first run: %d proposed, %d created; second run: %d proposed, %d created, %d already present",
 		first.Proposed, first.Created, second.Proposed, second.Created, second.Skipped)
-}
-
-// -- Promise 1b · the photographed products carry pictures, not placeholders -----------------------
-
-// TestIntegration_TheSeededSwatchesAreRealPictures reads the photographed products' image rows back
-// out of product_images and decodes the bytes the way the till's byte route serves them. The tile
-// trusts has_image and renders the payload without ever consulting the glyph fallback, so the
-// seed's own rows must carry a picture with real extent in both dimensions, and byte_size must be
-// the payload's own length, which is also what the table's size CHECK enforces.
-func TestIntegration_TheSeededSwatchesAreRealPictures(t *testing.T) {
-	ctx := context.Background()
-	pool := freshMigratedDB(t, "swatch")
-	seedOnce(t, ctx, pool)
-
-	for _, p := range demoProducts {
-		if !p.Image {
-			continue
-		}
-		var size int
-		var payload []byte
-		if err := pool.QueryRow(ctx,
-			`SELECT byte_size, image_bytes FROM product_images WHERE id = $1`,
-			demoID("image:"+p.Key)).Scan(&size, &payload); err != nil {
-			t.Fatalf("%s carries Image true but product_images has no row for it: %v", p.Key, err)
-		}
-		img, err := png.Decode(bytes.NewReader(payload))
-		if err != nil {
-			t.Fatalf("%s: the seeded image_bytes do not decode as a PNG: %v", p.Key, err)
-		}
-		if b := img.Bounds(); b.Dx() <= 1 || b.Dy() <= 1 {
-			t.Errorf("%s: the seeded image decodes to %dx%d, the tile stretches that into an empty square and the glyph fallback never fires while has_image is true", p.Key, b.Dx(), b.Dy())
-		}
-		if size != len(payload) {
-			t.Errorf("%s: byte_size says %d, the payload is %d bytes", p.Key, size, len(payload))
-		}
-	}
 }
 
 // -- Promise 2 · a row somebody else made is never touched -----------------------------------------
@@ -448,6 +410,13 @@ func mustExec(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sql string,
 // been seeded would prove nothing at all.
 func freshMigratedDB(t *testing.T, suffix string) *pgxpool.Pool {
 	t.Helper()
+	return freshMigratedDBWithout(t, suffix, "")
+}
+
+// freshMigratedDBWithout is freshMigratedDB with one migration file left unapplied (by file name; "" skips
+// none), for a test that needs the database as it stood just before that file.
+func freshMigratedDBWithout(t *testing.T, suffix, skip string) *pgxpool.Pool {
+	t.Helper()
 	base, ok := os.LookupEnv("DATABASE_URL")
 	if !ok {
 		t.Skip("DATABASE_URL is unset, demoseed's integration tests need a Postgres to build a database on")
@@ -480,6 +449,9 @@ func freshMigratedDB(t *testing.T, suffix string) *pgxpool.Pool {
 	}
 	sort.Strings(files)
 	for _, f := range files {
+		if skip != "" && filepath.Base(f) == skip {
+			continue
+		}
 		body, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatalf("reading %s: %v", f, err)

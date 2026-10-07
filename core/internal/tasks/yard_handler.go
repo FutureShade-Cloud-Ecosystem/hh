@@ -26,6 +26,7 @@ import (
 //	GET  /api/v1/yard/picks/{id}                      one pick: task + ticket + full shortage history
 //	POST /api/v1/yard/picks/{id}/stage                IN_PROGRESS → STAGED (+ counter EVENT)
 //	PUT  /api/v1/yard/picks/{id}/lines                record what was ACTUALLY pulled, per line (0187)
+//	PUT  /api/v1/yard/picks/{id}/skids                record or change the order's skid count, with a reason (0370)
 //	POST /api/v1/yard/picks/{id}/shortages            report a shortage (+ counter EVENT)
 //	POST /api/v1/yard/picks/{id}/shortages/{sid}/resolve   clear one (+ counter EVENT)
 func (h *Handler) RegisterYardRoutes(r httpx.Registrar, g *guards.Guards) {
@@ -34,6 +35,7 @@ func (h *Handler) RegisterYardRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/yard/picks/{id}", g.RequireStaff(h.staff(h.pickDetail)))
 	r.Handle("POST /api/v1/yard/picks/{id}/stage", g.RequireStaff(h.staff(h.stage)))
 	r.Handle("PUT /api/v1/yard/picks/{id}/lines", g.RequireStaff(h.staff(h.recordPick)))
+	r.Handle("PUT /api/v1/yard/picks/{id}/skids", g.RequireStaff(h.staff(h.recordSkids)))
 	r.Handle("POST /api/v1/yard/picks/{id}/shortages", g.RequireStaff(h.staff(h.reportShortage)))
 	r.Handle("POST /api/v1/yard/picks/{id}/shortages/{sid}/resolve", g.RequireStaff(h.staff(h.resolveShortage)))
 }
@@ -57,6 +59,29 @@ func (h *Handler) yardBranchFence(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	}
 	if !caller.CanAccessBranch(branchID) {
+		httpx.Error(w, http.StatusForbidden, "yard: branch out of scope")
+		return false
+	}
+	return true
+}
+
+// taskBranchFence holds a yard WRITE to the branch of the task it names: a branch-scoped caller must
+// reach that branch, a GLOBAL caller reaches every one. The recording doors change an order's money
+// and tell its rep, so a yard caller at one branch must not be able to reach another branch's order
+// by naming its task. An unknown task is the same 404 every other door answers, never a leak. Returns
+// false after writing the refusal.
+func (h *Handler) taskBranchFence(w http.ResponseWriter, r *http.Request) bool {
+	caller, ok := identity.StaffContextFromContext(r.Context())
+	if !ok || caller.UserID == "" {
+		httpx.Error(w, http.StatusUnauthorized, "yard: unauthenticated")
+		return false
+	}
+	t, err := h.svc.store.GetTask(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.writeYardErr(w, r, err)
+		return false
+	}
+	if t.BranchID != "" && !caller.CanAccessBranch(t.BranchID) {
 		httpx.Error(w, http.StatusForbidden, "yard: branch out of scope")
 		return false
 	}
@@ -182,6 +207,8 @@ type recordPickRequest struct {
 		QtyOrdered  string `json:"qty_ordered"`
 		QtyPicked   string `json:"qty_picked"`
 		UOM         string `json:"uom"`
+		ShortReason string `json:"short_reason"`
+		ShortNote   string `json:"short_note"`
 	} `json:"lines"`
 }
 
@@ -189,6 +216,9 @@ type recordPickRequest struct {
 // pick is replaced by what is sent: a picker who corrects a number is not appending a second opinion,
 // and the schema's UNIQUE (task_id, order_line_no) says the same thing in the database.
 func (h *Handler) recordPick(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	if !h.taskBranchFence(w, r) {
+		return
+	}
 	var req recordPickRequest
 	if !decodeJSON(w, r, &req) {
 		return
@@ -198,6 +228,7 @@ func (h *Handler) recordPick(w http.ResponseWriter, r *http.Request, caller guar
 		lines = append(lines, PickedLineInput{
 			OrderLineNo: l.OrderLineNo, ProductID: l.ProductID, SKU: l.SKU,
 			Description: l.Description, QtyOrdered: l.QtyOrdered, QtyPicked: l.QtyPicked, UOM: l.UOM,
+			ShortReason: l.ShortReason, ShortNote: l.ShortNote,
 		})
 	}
 	picked, err := h.svc.RecordPick(r.Context(), r.PathValue("id"),
@@ -207,6 +238,49 @@ func (h *Handler) recordPick(w http.ResponseWriter, r *http.Request, caller guar
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": picked})
+}
+
+type recordSkidsRequest struct {
+	SkidCount *int   `json:"skid_count"`
+	Reason    string `json:"reason"`
+	Note      string `json:"note"`
+}
+
+type recordSkidsResponse struct {
+	SkidCount            int    `json:"skid_count"`
+	PreviousSkidCount    *int   `json:"previous_skid_count"`
+	DepositCents         int64  `json:"deposit_cents"`
+	PreviousDepositCents int64  `json:"previous_deposit_cents"`
+	Changed              bool   `json:"changed"`
+	OrderNo              string `json:"order_no"`
+}
+
+// recordSkids records or changes the order's skid count with a reason. PUT, because the count sent
+// replaces the recorded one. The actor is the verified staff caller, never the body.
+func (h *Handler) recordSkids(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	if !h.taskBranchFence(w, r) {
+		return
+	}
+	var req recordSkidsRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.SkidCount == nil {
+		httpx.Error(w, http.StatusBadRequest, "skid_count is required, zero is an answer")
+		return
+	}
+	res, err := h.svc.RecordSkids(r.Context(), SkidInput{
+		TaskID: r.PathValue("id"), ActorID: identity.StaffUserIDFromContext(r.Context()),
+		SkidCount: *req.SkidCount, Reason: req.Reason, Note: req.Note,
+	})
+	if err != nil {
+		h.writeYardErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, recordSkidsResponse{
+		SkidCount: res.CountAfter, PreviousSkidCount: res.CountBefore, DepositCents: res.DepositAfterCents,
+		PreviousDepositCents: res.DepositBeforeCents, Changed: res.Changed, OrderNo: res.Order.OrderNo,
+	})
 }
 
 type stageRequest struct {
@@ -298,6 +372,12 @@ func (h *Handler) writeYardErr(w http.ResponseWriter, r *http.Request, err error
 		httpx.Error(w, http.StatusServiceUnavailable, "pick source not configured")
 	case errors.Is(err, ErrShortageNotFound):
 		httpx.Error(w, http.StatusNotFound, "shortage not found")
+	case errors.Is(err, ErrYardOrderUnwired):
+		httpx.Error(w, http.StatusServiceUnavailable, "yard order changes not configured")
+	case errors.Is(err, ErrAboveOrdered):
+		httpx.Error(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, ErrOrderRefused):
+		httpx.Error(w, http.StatusConflict, err.Error())
 	case errors.Is(err, ErrShortageResolved):
 		httpx.Error(w, http.StatusConflict, "shortage already resolved")
 	default:

@@ -69,7 +69,7 @@ func TestIntegration_QD3h_KeyedGoneNeverFollowedByCommit(t *testing.T) {
 				slow.shares = p
 				first := make(chan answerOrErr, 1)
 				go func() {
-					r, err := slow.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, qd3dKeyA)
+					r, err := slow.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, true, qd3dKeyA)
 					first <- answerOrErr{res: r, err: err}
 				}()
 				select {
@@ -117,7 +117,7 @@ func TestIntegration_QD3h_UnkeyedAcceptUnchanged(t *testing.T) {
 	slow.shares = p
 	first := make(chan answerOrErr, 1)
 	go func() {
-		r, err := slow.AcceptByTokenKeyed(context.Background(), token, qd3fCustomer, true, "")
+		r, err := slow.AcceptByTokenKeyed(context.Background(), token, qd3fCustomer, true, true, "")
 		first <- answerOrErr{res: r, err: err}
 	}()
 	<-p.reached

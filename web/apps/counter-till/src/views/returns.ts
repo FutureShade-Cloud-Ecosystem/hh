@@ -84,7 +84,7 @@ export const returnsStyles = css`
     font-family: inherit;
     font-size: 13px;
     color: var(--hos-text);
-    background: var(--hos-deep-earth);
+    background: var(--hos-field);
     border: 1px solid var(--hh-control-line);
     border-radius: var(--hos-radius-control);
     padding: var(--hh-s-8) var(--hh-s-12);
@@ -132,7 +132,7 @@ export const returnsStyles = css`
     font-family: inherit;
     font-size: 13px;
     color: var(--hos-text);
-    background: var(--hos-deep-earth);
+    background: var(--hos-field);
     border: 1px solid var(--hh-control-line);
     border-radius: var(--hos-radius-control);
     padding: var(--hh-s-8) var(--hh-s-12);
@@ -169,7 +169,7 @@ export const returnsStyles = css`
     font-family: inherit;
     font-size: 13px;
     color: var(--hos-text);
-    background: var(--hos-deep-earth);
+    background: var(--hos-field);
     border: 1px solid var(--hh-control-line);
     border-radius: var(--hos-radius-control);
     padding: var(--hh-s-8) var(--hh-s-12);

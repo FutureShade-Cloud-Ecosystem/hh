@@ -937,6 +937,7 @@ const POLICY = {
   include_product_images: true,
   quick_chip_set: ["Pavers", "Sand and base", "Walls"],
   effective_chips: ["Pavers", "Sand and base", "Walls"],
+  quantity_notice: "All quantities are to be confirmed by the customer. Please review them before you accept it.",
   workspace_split_pct: 58,
   workspace_arrangement: "PRIMARY_LEFT",
 };
@@ -1494,7 +1495,17 @@ const server = createServer(async (request, response) => {
         respondJson(response, 422, { error: "quote: the panel split must be between 20 and 80 percent" });
         return;
       }
+      if (typeof body.quantity_notice !== "string") {
+        respondJson(response, 422, { error: "quote: the quantity notice is required" });
+        return;
+      }
+      if (Array.from(body.quantity_notice).length > 500) {
+        respondJson(response, 400, { error: "the quantity notice is too long, keep it to 500 characters" });
+        return;
+      }
       const { effective_chips: _skip, ...row } = body;
+      // A blank notice goes back to the default wording, as the core's policy write does.
+      if (row.quantity_notice.trim() === "") row.quantity_notice = POLICY.quantity_notice;
       policyRows.set(dealerRow ? "" : body.branch_id, row);
       policyWrites.push({ scope: dealerRow ? "dealer" : "branch", user_id: userId, branch_id: body.branch_id ?? null, default_validity_days: body.default_validity_days });
       respondJson(response, 200, { ...effectivePolicy(dealerRow ? "" : body.branch_id), ...(dealerRow ? {} : { branch_id: body.branch_id }) });

@@ -25,19 +25,21 @@ import {
  * three invoices, three receipts for one pile of stone: and a return against any of them had no
  * single sale to reverse.
  *
- * THE SETTLEMENT IS THE RING'S OWN ANSWER. The server refuses a split whose legs do not sum exactly
- * to the sale's total, and migration 0100's deferred trigger refuses it again at COMMIT. The till
- * computes no total of its own before the ring (decision log row 661), so the panel compares the
- * legs against nothing: it shows the typed sum (arithmetic over the operator's own entries), words
- * the shape refusals the server would also refuse, states that the legs settle the server's total
- * at the ring, and arms Ring on that shape alone. The total arithmetic (the live remainder, the
- * Rest fill) comes back when the counter is served a server-stated total; the `totalCents` input
- * takes one, never a browser assembly. All of the pre-ring read lives in _pos-split.ts's
- * splitDraftRead (the seam file ports.ts owns the sum), DOM-free and unit-tested.
+ * THE TOTAL IS THE SERVER'S (rows 661 and 985). The till computes no total of its own: the terminal
+ * passes the total the sale-preview stated, and only a current one. With it the panel states Total to
+ * split and Left to assign, fills the last leg with the remainder, and arms Ring only when the legs
+ * equal it. With none (the preview pending, unreadable, or stale after the ticket changed) the panel
+ * says the total is pending and Ring stays disabled: it never compares legs against nothing. The
+ * server still refuses a split whose legs miss its total, and migration 0100's deferred trigger
+ * refuses it again at COMMIT. The arithmetic lives in pos-kit's evaluateSplit and autoFillRemainder.
  *
  * The panel emits `pos-split-ring` with the wire-shaped legs; the terminal owns the actual POST, so
  * there is exactly one place in the app that rings a sale.
  */
+/** The tender names a person reads: Account, Card, Cash (the wire words stay upper case). */
+const METHOD_LABELS: Record<string, string> = { ACCOUNT: 'Account', CARD: 'Card', CASH: 'Cash', CHEQUE: 'Cheque' };
+const METHOD_ORDER: DraftLeg['method'][] = SPLIT_METHODS.slice().sort((a, b) => (METHOD_LABELS[a] ?? a).localeCompare(METHOD_LABELS[b] ?? b));
+
 @customElement('hos-pos-split-tender')
 export class HosPosSplitTender extends LitElement {
   /**
@@ -55,6 +57,13 @@ export class HosPosSplitTender extends LitElement {
   @property({ attribute: 'customer-name' }) customerName = '';
   /** Disables the controls while the parent's ring is in flight. */
   @property({ type: Boolean }) busy = false;
+
+  /**
+   * Row 985: once the server has stated the total, the LAST leg follows the remainder until the
+   * person types into it themselves (it stays an ordinary editable box). Typing in any other leg,
+   * changing a method or the total, moves the last leg to what is left.
+   */
+  private lastLegTouched = false;
 
   // Two legs is the smallest legal split, so the panel opens ready to be typed into rather than
   // making the cashier click "add tender" twice before anything can happen.
@@ -98,7 +107,7 @@ export class HosPosSplitTender extends LitElement {
       }
       select,
       input {
-        background: var(--hos-deep-earth);
+        background: var(--hos-field);
         color: var(--hos-text);
         border: 1px solid var(--hos-line);
         border-radius: 8px;
@@ -168,6 +177,11 @@ export class HosPosSplitTender extends LitElement {
         padding-top: 12px;
         border-top: 1px solid var(--hos-line);
       }
+      .total {
+        font-family: var(--hos-font-mono);
+        font-size: 15px;
+        margin-bottom: 2px;
+      }
       .remaining {
         font-family: var(--hos-font-mono);
         font-size: 15px;
@@ -203,25 +217,44 @@ export class HosPosSplitTender extends LitElement {
   private setMethod(i: number, method: DraftLeg['method']): void {
     const next = [...this.legs];
     next[i] = { ...next[i], method };
-    this.legs = next;
+    this.legs = this.withLastFilled(next);
   }
 
   private setAmount(i: number, raw: string): void {
     const next = [...this.legs];
     next[i] = { ...next[i], raw };
-    this.legs = next;
+    if (i === next.length - 1) this.lastLegTouched = true;
+    this.legs = this.withLastFilled(next);
   }
 
   private addLeg(): void {
     if (this.legs.length >= MAX_SPLIT_LEGS) return;
-    this.legs = [...this.legs, { method: 'CASH', raw: '' }];
+    this.lastLegTouched = false;
+    this.legs = this.withLastFilled([...this.legs, { method: 'CASH', raw: '' }]);
   }
 
   private removeLeg(i: number): void {
     // Two is the floor: dropping to one would silently turn a split into an ordinary sale with the
     // panel still open, which is a confusing state to be in when you press Ring.
     if (this.legs.length <= 2) return;
-    this.legs = this.legs.filter((_, n) => n !== i);
+    this.lastLegTouched = false;
+    this.legs = this.withLastFilled(this.legs.filter((_, n) => n !== i));
+  }
+
+  /** The legs with the last one set to the remainder, while a server total is stated and it is untouched. */
+  private withLastFilled(legs: { method: DraftLeg['method']; raw: string }[]): { method: DraftLeg['method']; raw: string }[] {
+    if (this.totalCents === null || this.lastLegTouched || legs.length === 0) return legs;
+    const draft = legs.map((l) => ({ method: l.method, amountCents: parseAmountCents(l.raw) }));
+    const last = legs.length - 1;
+    const rest = autoFillRemainder(draft, this.totalCents, last);
+    const out = [...legs];
+    out[last] = { ...out[last], raw: rest > 0 ? plainDollars(rest) : '' };
+    return out;
+  }
+
+  protected willUpdate(changed: Map<PropertyKey, unknown>): void {
+    // A new total from the server (the lines, the customer or the fulfilment moved) re-fills the last leg.
+    if (changed.has('totalCents')) this.legs = this.withLastFilled(this.legs);
   }
 
   /** fill puts exactly what is left into one leg: the counter's whole reason to trust this panel. */
@@ -257,8 +290,15 @@ export class HosPosSplitTender extends LitElement {
    */
   private reads(legs: DraftLeg[]): { typedCents: number; remainingCents: number; armed: boolean; problem: string } {
     if (this.totalCents === null) {
+      // No server total in hand (the preview is pending, unreadable, or stale after the ticket
+      // changed): the legs are compared with nothing and Ring split sale stays disabled.
       const shape = splitDraftRead(legs, this.hasCustomer, this.hasLines);
-      return { typedCents: shape.typedCents, remainingCents: 0, armed: shape.problem === '', problem: shape.problem };
+      return {
+        typedCents: shape.typedCents,
+        remainingCents: 0,
+        armed: false,
+        problem: shape.problem === '' ? 'Ring split sale arms when the total arrives.' : shape.problem,
+      };
     }
     const live = evaluateSplit(legs, this.totalCents, this.hasCustomer);
     return { typedCents: live.tenderedCents, remainingCents: live.remainingCents, armed: live.ready, problem: live.problem };
@@ -281,7 +321,7 @@ export class HosPosSplitTender extends LitElement {
                 ?disabled=${this.busy}
                 @change=${(e: Event) => this.setMethod(i, (e.target as HTMLSelectElement).value as DraftLeg['method'])}
               >
-                ${SPLIT_METHODS.map((m) => html`<option value=${m} ?selected=${m === leg.method}>${m}</option>`)}
+                ${METHOD_ORDER.map((m) => html`<option value=${m} ?selected=${m === leg.method}>${METHOD_LABELS[m] ?? m}</option>`)}
               </select>
               <input
                 class="amt"
@@ -336,22 +376,17 @@ export class HosPosSplitTender extends LitElement {
         <div class="foot">
           <div>
             ${this.totalCents === null
-              ? html`<div class="remaining" data-testid="split-typed">${fmtCents(read.typedCents)} typed so far</div>`
-              : html`<div class="remaining ${remainingClass}" data-testid="split-remaining">
-                  ${read.remainingCents === 0
-                    ? 'Settled exactly'
-                    : read.remainingCents > 0
-                    ? `${fmtCents(read.remainingCents)} remaining`
-                    : `${fmtCents(-read.remainingCents)} over`}
+              ? html`<div class="remaining" data-testid="split-total-pending">Total to split: pending</div>`
+              : html`<div class="total" data-testid="split-total">Total to split ${fmtCents(this.totalCents)}</div>
+                <div class="remaining ${remainingClass}" data-testid="split-remaining">
+                  ${read.remainingCents < 0
+                    ? `Over by ${fmtCents(-read.remainingCents)}`
+                    : `Left to assign ${fmtCents(read.remainingCents)}`}
                 </div>`}
             ${/* aria-live: the line changes on every keystroke and is the one thing a
                screen-reader user needs to hear without leaving the amount box. */ ''}
             <div class="problem" role="status" aria-live="polite" data-testid="split-problem">
-              ${this.totalCents === null
-                ? read.problem === ''
-                  ? "The legs settle the server's total at the ring."
-                  : read.problem
-                : read.problem || nothing}
+              ${read.problem || nothing}
             </div>
           </div>
           <div>

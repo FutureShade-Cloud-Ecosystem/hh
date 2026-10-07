@@ -975,6 +975,17 @@ export type UomViewPage = {
   next_cursor?: string | null;
   limit?: number;
 };
+export type CategoryView = {
+  id: string;
+  code: string;
+  name: string;
+  is_active: boolean;
+};
+export type CategoryViewPage = {
+  items: CategoryView[];
+  next_cursor?: string | null;
+  limit?: number;
+};
 export type ProductPage = {
   items: Product[];
   next_cursor?: string | null;
@@ -3420,11 +3431,14 @@ export type OrderViewLine = {
   fulfilled_base: string;
   unit_price_cents: number;
   line_total_cents: number;
+  backorder_entered: string;
+  backorder_base: string;
 };
 export type OrderView = {
   id: string;
   status: "DRAFT" | "CONFIRMED" | "PICKING" | "READY" | "PARTIALLY_FULFILLED" | "FULFILLED" | "INVOICED" | "CLOSED" | "CANCELLED";
   branch_id: string;
+  has_backorder: boolean;
   legal_actions: ("CONFIRMED" | "PICKING" | "READY" | "CANCELLED")[];
   editable_fields: ("line_qty" | "line_add" | "line_remove" | "requested_date")[];
   lines: OrderViewLine[];
@@ -3788,6 +3802,7 @@ export type TaskPickLine = {
   sku?: string;
   description: string;
   qty_ordered: string;
+  qty_backordered?: string;
   uom: string;
   location?: string;
 };
@@ -3832,6 +3847,8 @@ export type TaskPickedLine = {
   uom: string;
   picked_by?: string;
   picked_at: string;
+  short_reason?: string;
+  short_note?: string;
 };
 export type TaskPickQueueEntry = {
   task: Task;
@@ -3857,9 +3874,24 @@ export type TaskRecordPickLine = {
   qty_ordered: string;
   qty_picked: string;
   uom: string;
+  short_reason?: "CONDENSED_SKIDS" | "DAMAGED" | "NOT_IN_YARD" | "COUNT_CORRECTION" | "OTHER";
+  short_note?: string;
 };
 export type TaskRecordPickRequest = {
   lines: TaskRecordPickLine[];
+};
+export type TaskRecordSkidsRequest = {
+  skid_count: number;
+  reason: "CONDENSED_SKIDS" | "DAMAGED" | "NOT_IN_YARD" | "COUNT_CORRECTION" | "OTHER";
+  note?: string;
+};
+export type TaskRecordSkidsResult = {
+  skid_count: number;
+  previous_skid_count: number | null;
+  deposit_cents: number;
+  previous_deposit_cents: number;
+  changed: boolean;
+  order_no: string;
 };
 export type TaskRecordPickResult = {
   items: TaskPickedLine[];
@@ -3908,6 +3940,31 @@ export type PosLineInput = {
   product_id: string;
   qty_entered: number;
   uom_entered: string;
+  discount?: PosDiscountInput;
+};
+export type PosDiscountInput = {
+  percent_bps?: number;
+  amount_cents?: number;
+  approved_by: string;
+  approved_qty?: number;
+  approved_base_cents: number;
+};
+export type PosDiscountApprover = {
+  id: string;
+  name: string;
+  role_label: string;
+};
+export type PosDiscountApproverList = {
+  items: PosDiscountApprover[];
+};
+export type PosSaleDiscount = {
+  scope: "LINE" | "SALE";
+  line_no?: number;
+  percent_bps?: number;
+  amount_cents: number;
+  approved_by: string;
+  approved_by_role: string;
+  approved_by_label: string;
 };
 export type PosTenderLegInput = {
   method: "ACCOUNT" | "CASH" | "CARD" | "CHEQUE";
@@ -3948,6 +4005,7 @@ export type PosSaleInput = {
   deposit_cents?: number;
   deposit_method?: "CASH" | "CARD" | "CHEQUE";
   lines: PosLineInput[];
+  discount?: PosDiscountInput;
   tenders?: PosTenderLegInput[];
 };
 export type PosTenderLegResult = {
@@ -3982,6 +4040,41 @@ export type PosSale = {
   job_reference?: string;
   split_tender?: boolean;
   tenders?: PosTenderLegResult[];
+  discount_cents?: number;
+  discounts?: PosSaleDiscount[];
+};
+export type PosSalePreviewInput = {
+  branch_id: string;
+  customer_id: string;
+  sale_type?: "COLLECT_NOW" | "COLLECT_LATER" | "DELIVERED" | "COD";
+  fulfilment?: "PICKUP" | "WILL_CALL" | "DELIVERY";
+  relief?: PosReliefDecision;
+  lines: PosLineInput[];
+  discount?: PosDiscountInput;
+};
+export type PosSalePreview = {
+  subtotal_cents: number;
+  tax_cents: number;
+  tax_lines: PosSalePreviewTaxLine[];
+  total_cents: number;
+  tax_reason_code: "STD_ON_HST_13" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "MANUAL_TAX_REVIEW" | "RELIEF_DECLINED_EVIDENCE";
+  discount_cents?: number;
+  sale_discount_cents?: number;
+  ticket_base_cents?: number;
+  ticket_discount_max_cents?: number;
+  lines?: PosSalePreviewLine[];
+};
+export type PosSalePreviewLine = {
+  line_no: number;
+  line_total_cents: number;
+  before_ticket_discount_cents: number;
+  discount_cents?: number;
+  sale_discount_cents?: number;
+};
+export type PosSalePreviewTaxLine = {
+  reason_code: string;
+  rate_bps: number;
+  tax_cents: number;
 };
 export type PosSaleView = {
   order_id: string;
@@ -4001,6 +4094,8 @@ export type PosSaleView = {
   lines: PosSaleViewLine[];
   split_tender?: boolean;
   tenders?: PosTenderLegResult[];
+  discount_cents?: number;
+  discounts?: PosSaleDiscount[];
 };
 export type PosSaleViewLine = {
   line_no: number;
@@ -4011,6 +4106,8 @@ export type PosSaleViewLine = {
   unit_price_cents: number;
   price_uom: string;
   line_total_cents: number;
+  discount_cents?: number;
+  sale_discount_cents?: number;
 };
 export type PosSaleSummary = {
   sale_id: string;
@@ -4165,9 +4262,13 @@ export type PosHotkeys = {
   keys: PosHotkey[];
 };
 export type PosAccountStanding = {
+  standing: "walk_in" | "clear" | "past_due" | "on_hold";
   past_due_cents?: number;
   oldest_bucket?: "30" | "60" | "90+";
   on_hold?: boolean;
+};
+export type PosPaymentGrant = {
+  can_take_payment: boolean;
 };
 export type PosAddonSuggestion = {
   product_id: string;
@@ -4837,10 +4938,11 @@ export type PricingLowMarginEntry = {
   reason?: string;
 };
 export type PricingLowMarginScanRow = {
-  order_line_id: string;
-  order_id: string;
-  order_no: string;
-  sold_at: string;
+  doc_type: "quote" | "order";
+  line_id: string;
+  doc_id: string;
+  doc_no: string;
+  doc_at: string;
   branch_id: string;
   customer_id?: string;
   customer_type: string;
@@ -4850,6 +4952,7 @@ export type PricingLowMarginScanRow = {
   qty_entered: number;
   uom_entered: string;
   unit_price_cents: number;
+  disc_pct?: number;
   price_uom: string;
   cost_in_price_uom_cents: number;
   margin_bps: number;
@@ -4857,6 +4960,15 @@ export type PricingLowMarginScanRow = {
   floor_bps: number;
   level: "warn" | "critical" | "invalid";
   reason?: string;
+  salesperson_id?: string;
+  salesperson?: string;
+  cleared_below_floor: boolean;
+  cleared_by_id?: string;
+  cleared_by?: string;
+  clear_authority?: "MANAGER_SCOPE" | "APPROVAL";
+  clear_disc_pct?: number;
+  clear_margin_bps?: number;
+  doc_margin_bps?: number;
 };
 export type PricingQuantityBreakItem = {
   id?: string;
@@ -5252,7 +5364,7 @@ export type PricingAuditLogPage = {
 export type PricingLowMarginScanPage = {
   items: PricingLowMarginScanRow[];
   next_cursor?: string | null;
-  limit?: number;
+  limit: number;
 };
 export type PricingQuantityBreakPage = {
   items: PricingQuantityBreakHeader[];
@@ -5744,6 +5856,8 @@ export type QuoteView = {
   expired: boolean;
   editable_fields: ("line_qty" | "line_add" | "line_remove" | "valid_until")[];
   can_convert: boolean;
+  can_accept: boolean;
+  can_reject: boolean;
   owner_id?: string;
   owner_name?: string;
   lines: QuoteViewLine[];
@@ -5751,6 +5865,27 @@ export type QuoteView = {
   tax_cents: number;
   total_cents: number;
   updated_at: string;
+  quantity_notice: string;
+  acceptances: QuoteAcceptanceRecord[];
+};
+export type QuoteAcceptanceRecord = {
+  source: "CUSTOMER" | "STAFF_ON_BEHALF";
+  typed_name?: string;
+  accepted_at: string;
+  quantities_confirmed: boolean;
+  amount_cents: number;
+  channel?: string;
+  note?: string;
+  quantity_notice?: string;
+  lines?: QuoteAcceptedLine[];
+};
+export type QuoteAcceptedLine = {
+  line_no: number;
+  description: string;
+  qty_entered: string;
+  uom_entered: string;
+  unit_price_cents: number;
+  line_total_cents: number;
 };
 export type QuoteViewLine = {
   line_no: number;
@@ -5842,6 +5977,28 @@ export type QuoteLineComparison = {
   line_no: number;
   options: QuoteComparisonRow[];
 };
+export type QuoteAcceptOnBehalfRequest = {
+  channel: "phone" | "text" | "email" | "in_person";
+  note?: string;
+  quantities_confirmed: boolean;
+  expected_total_cents: number;
+};
+export type QuoteRejectOnBehalfRequest = {
+  channel: "phone" | "text" | "email" | "in_person";
+  reason_code: "price" | "competitor" | "project_cancelled" | "timing" | "no_response" | "other";
+  note?: string;
+};
+export type QuoteDecisionResult = {
+  quote_id: string;
+  quote_no: string;
+  status: "ACCEPTED" | "LOST";
+  previous_status: "DRAFT" | "SENT";
+  channel?: "phone" | "text" | "email" | "in_person";
+  on_behalf: boolean;
+  decided_at: string;
+  total_cents: number;
+  replayed: boolean;
+};
 export type QuoteConvertRequest = {
   fulfillment?: "PICKUP" | "WILL_CALL";
 };
@@ -5854,6 +6011,7 @@ export type QuoteOrderPaymentRequest = {
   amount_cents: number;
   reference: string;
   idempotency_key: string;
+  fulfillment?: "PICKUP" | "WILL_CALL";
 };
 export type QuoteOrderPaymentResult = {
   order_id: string;
@@ -5906,6 +6064,7 @@ export type QuotePolicy = {
   include_product_images: boolean;
   quick_chip_set: string[];
   effective_chips?: string[];
+  quantity_notice: string;
   workspace_split_pct: number;
   workspace_arrangement: "PRIMARY_LEFT" | "PRIMARY_RIGHT";
 };
@@ -5990,6 +6149,7 @@ export type QuoteShareLinkList = {
 };
 export type QuotePublicView = {
   quote_no: string;
+  quantity_notice: string;
   customer_name: string;
   status: "DRAFT" | "SENT" | "ACCEPTED" | "CONVERTED" | "EXPIRED" | "LOST";
   valid_until?: string;
@@ -6000,6 +6160,7 @@ export type QuotePublicView = {
   total_cents: number;
   as_of: string;
   acceptable: boolean;
+  preview?: boolean;
   customer_notes?: string;
   deposit_required?: boolean;
   deposit_pct?: number;
@@ -6024,10 +6185,12 @@ export type QuotePublicLine = {
 export type QuotePublicAcceptRequest = {
   typed_name: string;
   accepted: boolean;
+  quantities_confirmed: boolean;
 };
 export type QuoteAcceptanceResult = {
   quote_no: string;
   typed_name: string;
+  quantities_confirmed: boolean;
   accepted_at: string;
   subtotal_cents: number;
   tax_cents: number;
@@ -6615,6 +6778,7 @@ export type TenantOrder = {
   tax_cents: number;
   total_cents: number;
   created_at: string;
+  has_backorder?: boolean;
 };
 export type TenantOrderLine = {
   line_no: number;
@@ -6627,6 +6791,8 @@ export type TenantOrderLine = {
   fulfilled_base: string;
   unit_price_cents: number;
   line_total_cents: number;
+  backorder_entered?: string;
+  backorder_base?: string;
 };
 export type TenantOrderDetail = TenantOrder & { lines: TenantOrderLine[]; delivery_instructions: string };
 export type TenantOrderPage = {

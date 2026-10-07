@@ -31,6 +31,7 @@ import {
   moveDraftItem,
   policyBody,
   PROFILES,
+  QUANTITY_NOTICE_MAX,
   toggleChip,
   toggleDraftItem,
   writeRefusalLine,
@@ -98,6 +99,7 @@ export class QdSurfaceSettings extends PanelBase {
         margin-top: 0;
       }
       .knobs input,
+      .knobs textarea,
       .knobs select {
         width: 100%;
         box-sizing: border-box;
@@ -385,6 +387,7 @@ export class QdSurfaceSettings extends PanelBase {
   protected override onFieldInput(field: string, control: HTMLElement): void {
     const value = (control as HTMLInputElement).value;
     const numeric = NUMERIC_FIELDS.find((n) => n === field);
+    if (field === "quantity_notice") this.edit({ quantity_notice: value });
     if (numeric !== undefined) {
       this.numDraft = { ...this.numDraft, [numeric]: value };
       this.edit({ [numeric]: value.trim() === "" ? Number.NaN : Number(value) } as Partial<QuotePolicyWire>);
@@ -436,6 +439,7 @@ export class QdSurfaceSettings extends PanelBase {
     const p = this.policy;
     if (p !== null) {
       for (const field of NUMERIC_FIELDS) this.syncValue(`[data-field="${field}"]`, this.numDraft[field] ?? String(p[field]));
+      this.syncValue('[data-field="quantity_notice"]', p.quantity_notice);
       this.syncValue('[data-field="cost_visibility"]', p.cost_visibility);
       this.syncValue('[data-field="workspace_arrangement"]', p.workspace_arrangement);
       for (const field of ["line_discounts_enabled", "include_product_images", "send_email_enabled", "send_sms_enabled"] as const) {
@@ -530,6 +534,11 @@ export class QdSurfaceSettings extends PanelBase {
             <option value="PRIMARY_LEFT">Products left</option>
             <option value="PRIMARY_RIGHT">Products right</option>
           </select>
+        </div>
+        <div class="span">
+          <label class="f" for="qs-notice">Quantity notice (the words the customer sees; blank restores the default)</label>
+          <textarea id="qs-notice" data-field="quantity_notice" data-testid="qs-quantity-notice" rows="3" aria-invalid=${this.invalidMark("quantity_notice")} ?disabled=${locked}></textarea>
+          <span class="picked" data-testid="qs-quantity-notice-count">${Array.from(this.policy?.quantity_notice ?? "").length} of ${QUANTITY_NOTICE_MAX} characters</span>
         </div>
         <div class="span checks">
           <label class="check"><input type="checkbox" data-field="line_discounts_enabled" data-testid="qs-line-discounts" ?disabled=${locked} /> Per-line discounts</label>

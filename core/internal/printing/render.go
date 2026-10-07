@@ -119,9 +119,11 @@ var receiptTmpl = template.Must(template.New("receipt").Funcs(template.FuncMap{
   }
   h1 { font-size: 14px; margin: 0 0 2px; letter-spacing: .02em; }
   .muted { color: #444; }
+  .line-discount td.right, .sale-discount td.right { white-space: nowrap; }
   .center { text-align: center; }
   .right { text-align: right; }
   .rule { border-top: 1px dashed #000; margin: 8px 0; }
+  .qty-notice { font-size: 11px; margin: 6px 0; text-align: left; overflow-wrap: anywhere; }
   .order-no { font-size: 20px; font-weight: 700; letter-spacing: .04em; margin: 6px 0 2px; }
   table { width: 100%; border-collapse: collapse; }
   td, th { padding: 1px 0; vertical-align: top; }
@@ -189,13 +191,24 @@ var receiptTmpl = template.Must(template.New("receipt").Funcs(template.FuncMap{
         <td class="right">{{money .UnitPriceCents}}{{if .PriceUOM}}/{{.PriceUOM}}{{end}}</td>
         <td class="right">{{money .LineTotalCents}}</td>
       </tr>
+      {{if gt .DiscountCents 0}}
+      <tr class="line-discount">
+        <td class="desc muted" colspan="3">Discount approved by {{.DiscountApprovedByLabel}}</td>
+        <td class="right muted">{{money .DiscountCents}} off</td>
+      </tr>
+      {{end}}
       {{end}}
     </tbody>
   </table>
 
+  {{if .QuantityNotice}}<div class="qty-notice">{{.QuantityNotice}}</div>{{end}}
+
   <div class="rule"></div>
 
   <table class="totals">
+    {{if gt .SaleDiscountCents 0}}
+    <tr class="sale-discount muted"><td>Discount approved by {{.SaleDiscountApprovedByLabel}}</td><td class="right">-{{money .SaleDiscountCents}}</td></tr>
+    {{end}}
     <tr><td>Subtotal</td><td class="right">{{money .SubtotalCents}}</td></tr>
     <tr class="tax"><td>{{.TaxLabel}}</td><td class="right">{{money .TaxCents}}</td></tr>
     <tr class="grand"><td>Total</td><td class="right">{{money .TotalCents}}</td></tr>
@@ -263,9 +276,11 @@ var receiptPageTmpl = template.Must(template.New("receipt-page").Funcs(template.
   }
   h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: .02em; }
   .muted { color: #444; }
+  .line-discount td.right, .sale-discount td.right { white-space: nowrap; }
   .center { text-align: center; }
   .right { text-align: right; }
   .rule { border-top: 1px solid #000; margin: 14px 0; }
+  .qty-notice { font-size: 12px; margin: 10px 0; overflow-wrap: anywhere; }
   .order-no { font-size: 24px; font-weight: 700; letter-spacing: .04em; margin: 10px 0 4px; }
   table { width: 100%; border-collapse: collapse; }
   td, th { padding: 4px 0; vertical-align: top; }
@@ -332,13 +347,24 @@ var receiptPageTmpl = template.Must(template.New("receipt-page").Funcs(template.
         <td class="right">{{money .UnitPriceCents}}{{if .PriceUOM}}/{{.PriceUOM}}{{end}}</td>
         <td class="right">{{money .LineTotalCents}}</td>
       </tr>
+      {{if gt .DiscountCents 0}}
+      <tr class="line-discount">
+        <td class="desc muted" colspan="3">Discount approved by {{.DiscountApprovedByLabel}}</td>
+        <td class="right muted">{{money .DiscountCents}} off</td>
+      </tr>
+      {{end}}
       {{end}}
     </tbody>
   </table>
 
+  {{if .QuantityNotice}}<div class="qty-notice">{{.QuantityNotice}}</div>{{end}}
+
   <div class="rule"></div>
 
   <table class="totals">
+    {{if gt .SaleDiscountCents 0}}
+    <tr class="sale-discount muted"><td>Discount approved by {{.SaleDiscountApprovedByLabel}}</td><td class="right">-{{money .SaleDiscountCents}}</td></tr>
+    {{end}}
     <tr><td>Subtotal</td><td class="right">{{money .SubtotalCents}}</td></tr>
     <tr class="tax"><td>{{.TaxLabel}}</td><td class="right">{{money .TaxCents}}</td></tr>
     <tr class="grand"><td>Total</td><td class="right">{{money .TotalCents}}</td></tr>

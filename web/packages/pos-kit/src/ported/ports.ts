@@ -25,7 +25,7 @@
 //      has wired its host throws the port message rather than returning a
 //      plausible answer. An honest refusal beats a quiet zero at a counter.
 
-import { centsAmount } from "./_money-format.js";
+import { formatDollars } from "./_money-format.js";
 import { DEMO_CARD_TOKEN, HOUSE_ZONE, houseDayInZone } from "./host-facts.js";
 
 /**
@@ -58,6 +58,12 @@ export interface PortHost {
   user(): AuthUser | null;
   /** The live bearer, only ever to hand a session across a window boundary. */
   token(): string;
+  /**
+   * The drawn product tile for a category in a theme (the design system's product tiles), or
+   * null when the category has none. Optional: a host that does not wire it leaves a product
+   * with no real picture on the stacked-stone glyph.
+   */
+  productTile?(category: string, theme: 'light' | 'dark'): string | null;
 }
 
 /** True when the host has been wired and carries a live session. */
@@ -73,6 +79,11 @@ let host: PortHost | null = null;
  */
 export function wirePorts(wired: PortHost): void {
   host = wired;
+}
+
+/** The host's drawn tile for a category, or null: unwired, or a category the tiles do not know. */
+export function productTile(category: string, theme: 'light' | 'dark'): string | null {
+  return host?.productTile?.(category, theme) ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -563,12 +574,11 @@ export interface SplitReadiness {
 export const MAX_SPLIT_LEGS = 6;
 
 /**
- * The split panel's money word: centsAmount's grouped spelling (the one place
- * integer cents become a readable amount), with this panel's own CA$ prefix
- * and minus, exactly as the reference's fmtCents kept its own decoration.
+ * The split panel's money word: the shared dollars spelling (the one place
+ * integer cents become a customer facing amount): `$1,234.00`, with a minus.
  */
 function splitFmt(cents: number): string {
-  return `CA$${cents < 0 ? "-" : ""}${centsAmount(cents)}`;
+  return formatDollars(cents);
 }
 
 /**

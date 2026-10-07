@@ -21,6 +21,7 @@ import (
 	// time/tzdata is embedded by main.go; the serve path here relies on
 	// it the same way.
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -152,10 +153,11 @@ func demoServe(getenv func(string) string, lookupEnv func(string) (string, bool)
 	// anyone looking at it, which is G4's stated blind spot and not an
 	// oversight of this wiring.
 	if err := boot.RefuseProviderVars(environ(), boot.ProviderDeny{
-		Prefixes:    demoEnvDenyPrefixes,
-		Names:       demoEnvDenyNames,
-		CardVar:     demoEnvCardProcessorVar,
-		CardAllowed: demoEnvCardProcessorValue,
+		Prefixes:         demoEnvDenyPrefixes,
+		PrefixExceptions: demoEnvPlaneBridgeAllowNames,
+		Names:            demoEnvDenyNames,
+		CardVar:          demoEnvCardProcessorVar,
+		CardAllowed:      demoEnvCardProcessorValue,
 	}); err != nil {
 		return err
 	}
@@ -307,10 +309,12 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 	// build's registerRoutes makes, in the same place (this mirror's own
 	// rule: when the default wiring gains a step, this mirror gains the
 	// same step in the same place). The demo world loads the same decided
-	// default and a refusal stops the demo boot; every registration below
-	// lands through the wrapping registrar, so a demo bearer is held to
-	// the dealer's configuration exactly as a platform bearer is.
-	roleCfg, err := roleconfig.Default()
+	// default with the demo dealer's one policy difference switched on it
+	// (demoRoleConfig below) and a refusal stops the demo boot; every
+	// registration below lands through the wrapping registrar, so a demo
+	// bearer is held to the dealer's configuration exactly as a platform
+	// bearer is.
+	roleCfg, err := demoRoleConfig()
 	if err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("role configuration: %w", err)
@@ -337,7 +341,11 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 	belt := buildSmsBelt(pool, log)
 	money := wireMoney(r, pool, g, log, cfg.StaffBaseURL, roleCfg)
 	ops := wireOperations(r, pool, g, log, money, getenv("CORE_STREAM_TICKET_KEY"), belt.outbox)
-	tops := wireTops(r, pool, g, log, money, ops, cfg, belt)
+	tops := wireTops(r, pool, g, log, money, ops, cfg, roleCfg, belt)
+	if err := wirePaymentGrant(r, g, roleGate, tops.posHandler); err != nil {
+		pool.Close()
+		return nil, err
+	}
 
 	// The customer-quote surface over the shared audit seam: the same
 	// construction main.go makes, signing keys from the environment.
@@ -381,4 +389,29 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 		cfg: cfg, log: log, pool: pool, verify: verifier, link: linkedUserID(pool), g: g,
 		money: money, ops: ops, tops: tops, smsBelt: belt, demoMint: iss.Mint, listenAddr: demoCfg.listenAddr,
 	}, nil
+}
+
+// demoRoleConfig is the default's demo path: the decided default document
+// with the demo dealer's one policy difference, the refund approval limit
+// off (the Dibbits ruling: the demo yard's refunds run from tens of dollars
+// to thousands, so no amount is the right amount and no refund in the demo
+// ever asks for an approver). The demo reads the embedded default, so the
+// difference is switched ON THE DEMO LOAD, here, and nowhere else: the
+// default itself stays a limit dealer (its amount and its switch unchanged)
+// because that is the configuration every real dealer inherits, and a
+// dealer who sets a number keeps the gate exactly as it stood. The rewrite
+// runs through the same Validate the startup path uses, so a demo
+// configuration the load checks would refuse still stops the boot rather
+// than serving a guess.
+func demoRoleConfig() (*roleconfig.Config, error) {
+	var doc roleconfig.Document
+	if err := json.Unmarshal(roleconfig.DefaultData(), &doc); err != nil {
+		return nil, err
+	}
+	raw, err := json.Marshal(false)
+	if err != nil {
+		return nil, err
+	}
+	doc.Settings[roleconfig.SettingRefundApprovalLimitEnabled] = raw
+	return roleconfig.Validate(&doc)
 }

@@ -3530,6 +3530,42 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /api/v1/product-categories:
+    get:
+      operationId: productListCategories
+      tags:
+        - staff-product
+      summary: Read the product categories
+      description: "One cursor page of the caller's org's categories in code order, the code the stable ordering key (unique), each as id, code, name and is_active. Retired categories are returned and marked, because a margin policy or an override can still name one. Dealer Admin at read, the grant the pricing reads use: the route serves the pricing screens, a named exception to this tag's default. A cursor the core did not mint is a 400."
+      x-addition: the staff read of the product categories for the pricing screens (the Quote Desk server reads); no ERP source route
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - dealer-admin
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: One cursor page of the categories
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CategoryViewPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: The category read is not wired on this deployment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/customers/search:
     get:
       operationId: customerSearch
@@ -3609,6 +3645,38 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/customers/{id}:
+    get:
+      operationId: customerGetAccount
+      tags:
+        - staff-customer
+      summary: Read one customer account by id, credit limit and balance included
+      description: The resolved account the create and address writes answer, with the credit limit and the current balance (the latest ledger running balance, the same basis as the search's open balance; an account with no ledger rows answers 0). Behind the search's own grants. An account homed to a branch the caller's grants do not reach is a 404, the same answer as an id nobody has, never a 403 that would confirm it exists. A global caller reaches every branch. The walk-in house account and an inactive account are returned as stored, is_active says which.
+      x-addition: the staff read of one customer account by id with its credit limit and balance (the Quote Desk server reads); no ERP source route
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - counter-till
+          - quote-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The account with its credit limit and current balance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerAccount"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/customers/{id}/billing-address:
     put:
       operationId: customerUpdateBillingAddress
@@ -13926,7 +13994,7 @@ paths:
       tags:
         - staff-tasks
       summary: Record what the yard actually pulled, per line (replaces the recorded pick)
-      description: PUT replaces the whole recorded pick with what is sent; the schema uniqueness on (task, order line) says the same thing in the database.
+      description: PUT replaces the whole recorded pick with what is sent; the schema uniqueness on (task, order line) says the same thing in the database. A short line needs a reason; a quantity above the ordered one is refused with 400, for the yard manager as for the yard team. The caller must reach the task's branch (403 otherwise). A short pick becomes a backorder on the order line and tells the order's sales rep.
       x-role: requireStaff
       x-access:
         surfaces:
@@ -13948,6 +14016,44 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TaskRecordPickResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/yard/picks/{id}/skids:
+    put:
+      operationId: yardRecordSkids
+      tags:
+        - staff-tasks
+      summary: Record or change the skid count on the pick's order, with a reason
+      description: PUT replaces the order's recorded skid count with the count sent. A reason from the same list as a short pick is required on every change; OTHER also needs a note. The same count again is not a change (changed is false). The skid deposit that follows the count is recorded, not billed; the response carries it before and after. The caller must reach the task's branch (403 otherwise). Refused with 409 when the order's status cannot take it.
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - yard-pick
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskRecordSkidsRequest"
+      responses:
+        "200":
+          description: The recorded skid count
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskRecordSkidsResult"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -14192,6 +14298,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "409":
           $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/PosSplitTotalMismatch"
     get:
       operationId: posLookupSales
       tags:
@@ -14277,6 +14385,40 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/pos/sale-preview:
+    post:
+      operationId: posSalePreview
+      tags:
+        - staff-pos
+      summary: Read the totals the ring would compute for this ticket, writing nothing
+      description: "The read-only sale preview. The body is the sale's own (lines, customer, branch, sale type, fulfilment, relief) without any tender, and the answer is the server-resolved subtotal, each tax line and the total in integer cents, exactly as the ring would compute them for that body: the preview prices the ticket through the ring's own pricing and tax resolver, never a copy. Writes nothing: no order, no hold, no number used, no replay key. Staff only, the same role walls the sale takes. A ticket that collects no tax shows no tax line and its total is its subtotal."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - counter-till
+        level: read
+        reason: prices a ticket through the ring's own resolver and writes nothing
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosSalePreviewInput"
+      responses:
+        "200":
+          description: The ticket's own subtotal, tax lines and total, as the ring computes them
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosSalePreview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/pos/assess-relief:
     post:
       operationId: posAssessRelief
@@ -14438,6 +14580,40 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/pos/discount-approvers:
+    get:
+      operationId: posListDiscountApprovers
+      tags:
+        - staff-pos
+      summary: List the managers a till person may name as the approver of a discount
+      description: "The \"Approved by\" picker of the counter's Discount action: the active logins whose grants reach the branch and whose role the dealer's configuration lets clear a price in its own branch (the same own-branch clearing list the quote side's floor clearing reads), one row per login by display name, with the role label the receipt prints. The list is the rule the sale applies to approved_by, so a name from this list is a name the ring accepts. The branch wall every branch read takes applies."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - counter-till
+        level: read
+        reason: lists the managers who may approve a counter discount and writes nothing
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The approvers at the branch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosDiscountApproverList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/pos/margin-glance:
     post:
       operationId: posMarginGlance
@@ -14580,11 +14756,12 @@ paths:
       tags:
         - staff-pos
       summary: Read one customer's past-due position for the counter
-      description: "A fact, not a gate: the past-due amount, the oldest aging bucket, and the hold flag. The dealer's balance_visibility policy is applied at the marshal layer; a walk-in, a current account, and a disallowed caller all answer an empty object."
+      description: "A fact, not a gate, and every case answers distinctly. The standing word names the case: walk_in (no customer_id), clear (nothing past due, no hold), past_due, or on_hold (an active credit hold, whether or not anything is past due). The past-due amount, the oldest aging bucket and the hold flag ride beside it when they apply. A caller the dealer's balance_visibility policy withholds balances from, or whose grants do not reach the branch, is a 403; an unknown customer is a 404; a malformed customer_id is a 400; a read that could not be made (the AR, hold or policy read failed) is a 503. Never an empty 200. Counter Till or Quote Desk at read: the Quote Desk's Convert to Order asks it before it confirms."
       x-role: requireStaff
       x-access:
         surfaces:
           - counter-till
+          - quote-desk
         level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -14602,7 +14779,7 @@ paths:
             format: uuid
       responses:
         "200":
-          description: The standing answer; empty when there is nothing to say
+          description: The standing answer, always carrying its standing word
           content:
             application/json:
               schema:
@@ -14613,6 +14790,47 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          description: The standing could not be read
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/pos/payment-grant:
+    get:
+      operationId: posPaymentGrant
+      tags:
+        - staff-pos
+      summary: Read whether the caller holds the grant the till's payment routes require
+      description: "One question a client asks before it offers to take a payment: does the signed-in user hold the grant the till sale and the payment on a converted quote's order both need (Counter Till at Work)? The answer is the role gate's own, the same walk over the caller's whole row of roles and the dealer's configuration, taken for the access the document annotates on those payment routes, so it moves with them. The payment door's own not-selling-role rule is folded in, by the one predicate the door calls, so a platform role that passes every gate level but is refused the convert and pay is answered false. A caller holding the Counter Till or the Quote Desk at read is answered, true or false; a caller with neither meets the gate's 403. It is a fact about grants only, never an authorisation: the payment routes still gate every call."
+      x-addition: the grant check the Quote Desk asks before it offers payment; no ERP source route
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - counter-till
+          - quote-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: Whether the caller holds the payment grant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosPaymentGrant"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: The grant could not be read
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/pos/addon-suggestions:
     get:
       operationId: posAddonSuggestions
@@ -16564,13 +16782,15 @@ paths:
       operationId: pricingLowMarginScan
       tags:
         - staff-pricing
-      summary: Grade committed sale lines against current cost in a window
-      description: "The auto-populated low-margin report over the live-sales feed: grades the actual charged price of every committed sale line in the window against current per-branch cost, returning breaching rows worst first and cost-missing lines as invalid. from and to accept RFC3339 or date only."
+      summary: The low margin report, quotes and orders graded against current cost
+      description: "The low margin report the managers scan. It grades the price every document line holds (a committed order line, or a quote line at the quote's own price, net of the line's discount) against current per-branch cost and answers the lines below target (warn) or below the floor (critical), with lines whose cost is unknown as invalid, as a cursor page sorted by margin. Each row names the salesperson, the margin against the floor and the target, whether the line was cleared below the floor and by whom, and the document's own overall margin. from and to are the document's own dates, RFC3339 or date only. Held to the managers who clear or decide a floor and the roles above them, and to the cost and margin list: a role that may not see cost is refused. A caller that is not global scope reads only the documents of the branches it is granted; a branch_id outside the grant is a 403. Deleted quotes, orders and lines never appear."
       x-role: requireStaff
       x-access:
         surfaces:
           - quote-desk
+          - money-desk
         level: read
+        list: low_margin_report
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -16578,13 +16798,13 @@ paths:
         - name: from
           in: query
           required: false
-          description: Lower window bound, RFC3339 or date only
+          description: Lower bound of the document date, RFC3339 or date only (default thirty days back)
           schema:
             type: string
         - name: to
           in: query
           required: false
-          description: Upper window bound, RFC3339 or date only, inclusive of the named day
+          description: Upper bound of the document date, RFC3339 or date only, inclusive of the named day
           schema:
             type: string
         - name: branch_id
@@ -16593,6 +16813,40 @@ paths:
           schema:
             type: string
             format: uuid
+        - name: doc_type
+          in: query
+          required: false
+          description: Which documents to read, quotes, orders or both (the default)
+          schema:
+            type: string
+            enum:
+              - quotes
+              - orders
+              - both
+        - name: salesperson_id
+          in: query
+          required: false
+          description: Only this salesperson's documents (a staff user id)
+          schema:
+            type: string
+            format: uuid
+        - name: cleared_only
+          in: query
+          required: false
+          description: Only the lines below the floor now that a clearing stamp covers
+          schema:
+            type: boolean
+            default: false
+        - name: sort
+          in: query
+          required: false
+          description: Order by the line's margin, worst first (margin_asc, the default) or best first; lines with no margin come last either way
+          schema:
+            type: string
+            enum:
+              - margin_asc
+              - margin_desc
+            default: margin_asc
       responses:
         "200":
           description: The page of graded rows
@@ -19760,13 +20014,119 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/quotes/{id}/accept:
+    post:
+      operationId: quoteAcceptOnBehalf
+      tags:
+        - staff-quote
+      summary: Record that the customer accepted a quote by phone, text, email or in person
+      description: "A salesperson marks a quote accepted on the customer's behalf. SENT moves to ACCEPTED, and so does a DRAFT that has never been sent provided it has at least one line: a customer who agrees to what the salesperson read out has accepted a quote that was never sent. The body names the channel the customer used, an optional note, and quantities_confirmed, the staff member's statement that the customer confirmed the quantities; it is required and must be true. It also names expected_total_cents, the quote total the staff member read to the customer, which is required: if the quote's total is anything else when the accept commits (a colleague edited a line meanwhile) the accept is refused with a 409 naming both totals and nothing is written. The audit row carries the total as amount_cents, and the result returns it as total_cents. A staff accept has no quote_acceptances row (that record is the customer's: a share link and a typed name); its record is the QUOTE_ACCEPTED audit row with purpose STAFF_QUOTE_DECISION. The status move, the audit row (staff on the customer's behalf, channel, note, the statement) and the change history row commit in one transaction, and the quote's follow-ups stop. A note carrying a long run of digits is redacted whole at the audit boundary. Limited to the selling roles that may convert, by the same rule, and to the caller's branches. A 409 names why in words: expired, already accepted (naming the order when there is one), converted, lost, or a draft with no lines. An optional Idempotency-Key header (a UUID) makes a retry safe: a repeat under the same key on the same quote answers the first outcome with replayed true and writes nothing, whatever the quote's status is by then; the same key with a different channel is a 409."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - quote-desk
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: A UUID chosen once per decision and resent unchanged on every retry of it. Scoped to the quote.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteAcceptOnBehalfRequest"
+      responses:
+        "200":
+          description: The quote's new status and the decision's record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteDecisionResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          description: "quantities_confirmed is missing or false: the staff member has not stated that the customer confirmed the quantities"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/quotes/{id}/reject:
+    post:
+      operationId: quoteRejectOnBehalf
+      tags:
+        - staff-quote
+      summary: Record that the customer declined a quote
+      description: "A salesperson marks a quote lost on the customer's behalf. A SENT or never sent DRAFT quote moves to LOST with the channel the customer used, a reason code (price, competitor, project_cancelled, timing, no_response or other) and a note, which is required when the reason is other. The status move, the audit row and the change history row commit in one transaction, the quote's soft stock holds are released on it, and the quote's follow-ups stop. The refusals are the accept door's, in words with a 409: expired, already accepted or converted (an accepted quote is never turned into a lost one here), and already lost. Limited to the selling roles that may convert, by the same rule, and to the caller's branches. An optional Idempotency-Key header (a UUID) makes a retry safe exactly as it does on accept; the same key on the accept door, or with another channel, is a 409."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - quote-desk
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: A UUID chosen once per decision and resent unchanged on every retry of it. Scoped to the quote.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteRejectOnBehalfRequest"
+      responses:
+        "200":
+          description: The quote's new status and the decision's record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteDecisionResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/quotes/{id}/order-payment:
     post:
       operationId: quoteTakeOrderPayment
       tags:
         - staff-quote
       summary: Take payment at the counter on a converted quote's order
-      description: "The counter's payment door on the quote desk. For a converted quote in the caller's branch it finds the order the quote became, raises that order's invoice at the agreed totals if none exists (every line at its agreed total, plus the delivery fee and its tax for a delivery quote, so the invoice equals the quote's agreed total), and records the payment through the payments settle with the caller stamped as the receiver. Billing the order again when it leaves the yard returns the same document. A customer with a credit account may pay a part (a deposit); a customer with no credit account pays the whole of what the invoice still owes (on a fresh order, the whole agreed total), and for such a customer an ACCEPTED quote is converted, billed and paid as one action: the conversion, the invoice and the payment are written in one transaction, so either all three exist or none does, and a cash customer's order never exists unpaid. For a customer with a credit account the order already exists when the payment is taken; the invoice and the payment are then written together, so a payment that fails leaves no invoice and no balance behind. The Yard manager is admitted at the cash customer's one action, on an accepted quote only; the separate conversion of a quote keeps its selling role rule. An order that already has an invoice raised another way (by shipment group, say) is refused with a 409 and nothing is raised, so the order is never billed twice. The counter's invoice does not move the order out of the yard: it is confirmed, picked and handed over as usual, and is invoiced when it leaves. A replayed idempotency_key posts nothing and answers the first payment; the same key with a different method or amount is a 409. The role rule is Work or above on the Counter Till at the order's branch."
+      description: "The counter's payment door on the quote desk. For a converted quote in the caller's branch it finds the order the quote became, raises that order's invoice at the agreed totals if none exists (every line at its agreed total, plus the delivery fee and its tax for a delivery quote, so the invoice equals the quote's agreed total), and records the payment through the payments settle with the caller stamped as the receiver. Billing the order again when it leaves the yard returns the same document. A customer with a credit account may pay a part (a deposit); a customer with no credit account pays the whole of what the invoice still owes (on a fresh order, the whole agreed total), and for such a customer an ACCEPTED quote is converted, billed and paid as one action: the conversion, the invoice and the payment are written in one transaction, so either all three exist or none does, and a cash customer's order never exists unpaid. For a customer with a credit account the order already exists when the payment is taken; the invoice and the payment are then written together, so a payment that fails leaves no invoice and no balance behind. The Yard manager is admitted at the cash customer's one action, on an accepted quote only; the separate conversion of a quote keeps its selling role rule. An order that already has an invoice raised another way (by shipment group, say) is refused with a 409 and nothing is raised, so the order is never billed twice. The counter's invoice does not move the order out of the yard: it is confirmed, picked and handed over as usual, and is invoiced when it leaves. A replayed idempotency_key posts nothing and answers the first payment; the same key with a different method or amount is a 409. The optional fulfillment (PICKUP or WILL_CALL) is the one the plain convert takes, validated by the same rule with the same 400, and rides the conversion this action makes for a customer with no credit account, so a Cash On Demand order need not be Pickup. The role rule is Work or above on the Counter Till at the order's branch."
       x-addition: the counter's payment door on a converted quote's order (plan 1.1, QD-5); no ERP source route
       x-role: requireStaff
       x-access:
@@ -20280,6 +20640,39 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/quotes/{id}/customer-view:
+    get:
+      operationId: quoteCustomerViewPreview
+      tags:
+        - staff-quote
+      summary: Preview the customer's page for a quote, without sending it
+      description: The same view a share-link holder reads (QuotePublicView, built by the same code path), by quote id. It never mints a link, never moves the quote's status, never schedules a follow-up and never logs a view. The acceptable flag is always false and preview is true, so the page can say plainly that nothing has been sent and offer no way to accept.
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - quote-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The customer's view of the quote, marked as a preview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuotePublicView"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/quotes/{id}/share-links/{linkId}:
     delete:
       operationId: quoteRevokeShareLink
@@ -20390,6 +20783,12 @@ paths:
           $ref: "#/components/responses/Conflict"
         "410":
           description: The link existed and died (revoked or expired)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: The quantities were not confirmed; refused in words and nothing is recorded
           content:
             application/json:
               schema:
@@ -22812,28 +23211,24 @@ paths:
       operationId: tenantAcceptQuote
       tags:
         - tenant-quotes
-      summary: Mark a SENT dealer quote ACCEPTED
-      description: An out-of-state transition is a 409.
+      summary: Refused, a quote is accepted through the dealer's share link
+      description: Always a 422 in words, touching nothing. An acceptance needs the customer's typed name, their confirmation of the quantities and a share link to anchor the record on; this door carries none of them, so it would mark a quote accepted with nothing to show the quantities were confirmed. The share link's accept is the one door that records an acceptance.
       x-role: capability:submit_rfq
       security:
         - TenantBearer: []
       parameters:
         - $ref: "#/components/parameters/Id"
       responses:
-        "200":
-          description: The quote after the transition
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TenantQuote"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
+        "422":
+          description: Refused; the words point to the share link
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/tenant/quotes/{id}/reject:
     post:
       operationId: tenantRejectQuote
@@ -25168,6 +25563,26 @@ components:
                   approval:
                     description: Present exactly when the error string is "refund_approval_required", the approval refusal; the route's other 409 refusals answer the plain envelope without the key.
                     $ref: "#/components/schemas/PosRefundApproval"
+    PosSplitTotalMismatch:
+      description: "The split-tender sum refusal, and the body is the Error envelope carrying the amounts beside it. The refusal names itself in the error string \"split_total_mismatch\": the submitted legs do not sum exactly to the sale total, and only that refusal carries the two cents fields and the message key, so the till's screen can show both amounts without parsing a sentence. A client discriminates on the error string, never on the keys' absence. The message speaks dollars and plain words; no message ever prints cents."
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Error"
+              - type: object
+                properties:
+                  tendered_cents:
+                    type: integer
+                    format: int64
+                    description: What the submitted legs sum to
+                  total_cents:
+                    type: integer
+                    format: int64
+                    description: The sale total the legs must settle exactly
+                  message:
+                    type: string
+                    description: The dollar sentence, for example "The tenders add up to $266.00, but the sale total is $300.58."
   schemas:
     Error:
       type: object
@@ -28710,6 +29125,40 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/UomView"
+        next_cursor:
+          type:
+            - string
+            - "null"
+        limit:
+          type: integer
+          format: int32
+    CategoryView:
+      type: object
+      description: One row of the product categories
+      required:
+        - id
+        - code
+        - name
+        - is_active
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+        name:
+          type: string
+        is_active:
+          type: boolean
+    CategoryViewPage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CategoryView"
         next_cursor:
           type:
             - string
@@ -37345,6 +37794,8 @@ components:
         - fulfilled_base
         - unit_price_cents
         - line_total_cents
+        - backorder_entered
+        - backorder_base
       properties:
         line_no:
           type: integer
@@ -37373,6 +37824,12 @@ components:
         line_total_cents:
           type: integer
           format: int64
+        backorder_entered:
+          type: string
+          description: DECIMAL as string. The quantity the yard picked short that the order still owes the customer, in the line's own unit. qty_entered is what is to be fulfilled now; ordered = qty_entered + backorder_entered.
+        backorder_base:
+          type: string
+          description: DECIMAL as string. The same quantity in the base unit.
     OrderView:
       type: object
       description: "The staff order read: current status plus the manual actions and editable fields THIS caller has right now, computed server-side from the same matrices the write path enforces, plus lines and money."
@@ -37386,6 +37843,7 @@ components:
         - subtotal_cents
         - tax_cents
         - total_cents
+        - has_backorder
       properties:
         id:
           type: string
@@ -37404,6 +37862,9 @@ components:
             - CANCELLED
         branch_id:
           type: string
+        has_backorder:
+          type: boolean
+          description: True while any line is short and still owed; each line carries its own backorder quantity
         legal_actions:
           type: array
           description: The manual moves this caller may take now, named by their target status
@@ -38702,7 +39163,10 @@ components:
           type: string
         qty_ordered:
           type: string
-          description: DECIMAL as string
+          description: DECIMAL as string. What the order line was ordered for, including any quantity held on backorder, so a yard that finds the rest sends the true number.
+        qty_backordered:
+          type: string
+          description: DECIMAL as string. The part of qty_ordered held on backorder; absent when none.
         uom:
           type: string
         location:
@@ -38843,6 +39307,12 @@ components:
         picked_at:
           type: string
           format: date-time
+        short_reason:
+          type: string
+          description: Why the line came up short; absent on a full pick
+        short_note:
+          type: string
+          description: The yard's note on a short line; absent when none was given
     TaskPickQueueEntry:
       type: object
       description: "One row of the yard board: the task (the operational truth) joined in memory to its pick ticket, shortage history and recorded pick."
@@ -38921,6 +39391,19 @@ components:
           description: DECIMAL as string
         uom:
           type: string
+        short_reason:
+          type: string
+          enum:
+            - CONDENSED_SKIDS
+            - DAMAGED
+            - NOT_IN_YARD
+            - COUNT_CORRECTION
+            - OTHER
+          description: Required when qty_picked is below qty_ordered. A picked quantity above the ordered one is refused with 400.
+        short_note:
+          type: string
+          maxLength: 400
+          description: Required when short_reason is OTHER
     TaskRecordPickRequest:
       type: object
       required:
@@ -38930,6 +39413,57 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/TaskRecordPickLine"
+    TaskRecordSkidsRequest:
+      type: object
+      required:
+        - skid_count
+        - reason
+      properties:
+        skid_count:
+          type: integer
+          format: int32
+          minimum: 0
+          description: The skids the order leaves on; zero is an answer
+        reason:
+          type: string
+          enum:
+            - CONDENSED_SKIDS
+            - DAMAGED
+            - NOT_IN_YARD
+            - COUNT_CORRECTION
+            - OTHER
+        note:
+          type: string
+          maxLength: 400
+          description: Required when reason is OTHER
+    TaskRecordSkidsResult:
+      type: object
+      required:
+        - skid_count
+        - previous_skid_count
+        - deposit_cents
+        - previous_deposit_cents
+        - changed
+        - order_no
+      properties:
+        skid_count:
+          type: integer
+          format: int32
+        previous_skid_count:
+          type:
+            - integer
+            - "null"
+          format: int32
+        deposit_cents:
+          type: integer
+          format: int64
+        previous_deposit_cents:
+          type: integer
+          format: int64
+        changed:
+          type: boolean
+        order_no:
+          type: string
     TaskRecordPickResult:
       type: object
       required:
@@ -39086,6 +39620,102 @@ components:
           type: number
         uom_entered:
           type: string
+        discount:
+          $ref: "#/components/schemas/PosDiscountInput"
+    PosDiscountInput:
+      type: object
+      description: "One manual counter discount: a percent or an amount, and the manager who said yes at the counter. The discount is verbal, no approval queue, but it always names its approver so it is auditable. Exactly one of percent_bps and amount_cents. The approver must be a login from the discount-approvers read for the sale's branch; otherwise the ring refuses in words (422). A line discount comes off the line total; a ticket discount comes off the subtotal after the line discounts and is shared over the lines. The till still rings at rule and tier prices with no margin floor: a discount is a manager's word on top of that price."
+      required:
+        - approved_by
+        - approved_base_cents
+      properties:
+        percent_bps:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 10000
+          description: Basis points, 1250 is 12.5 percent
+        amount_cents:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Cents off; not more than what it comes off
+        approved_by:
+          type: string
+          format: uuid
+          description: The approving manager's staff id
+        approved_qty:
+          type: number
+          description: "A line discount only: the quantity the manager's yes was given for. The ring refuses the discount if the line's quantity is no longer this."
+        approved_base_cents:
+          type: integer
+          format: int64
+          minimum: 1
+          description: "What the yes was given for in cents: a line discount's line total before the discount, a ticket discount's subtotal after the line discounts. The ring refuses a discount whose base no longer matches (422, ask a manager again), so a manager's percent never grows with the quantity or the ticket. The ticket total must also stay above zero: a sale cannot total $0.00."
+    PosDiscountApprover:
+      type: object
+      description: One manager a till person may name
+      required:
+        - id
+        - name
+        - role_label
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        role_label:
+          type: string
+          description: The role label the receipt prints
+          never a name: null
+    PosDiscountApproverList:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PosDiscountApprover"
+    PosSaleDiscount:
+      type: object
+      description: One manual discount on a committed sale, with the role of the manager who approved it
+      required:
+        - scope
+        - amount_cents
+        - approved_by
+        - approved_by_role
+        - approved_by_label
+      properties:
+        scope:
+          type: string
+          enum:
+            - LINE
+            - SALE
+        line_no:
+          type: integer
+          format: int32
+          description: The line
+          for a LINE discount: null
+        percent_bps:
+          type: integer
+          format: int32
+          description: The percent entered; absent for an amount
+        amount_cents:
+          type: integer
+          format: int64
+          description: What came off
+          in cents: null
+        approved_by:
+          type: string
+          format: uuid
+        approved_by_role:
+          type: string
+          description: The approver's role id when approving
+        approved_by_label:
+          type: string
+          description: The role label the receipt prints (Discount approved by ...)
     PosTenderLegInput:
       type: object
       description: One leg of a split settlement. The legs (2 to 6) must sum exactly to the sale total, with at most one ACCOUNT leg. Each card leg carries its own token.
@@ -39245,6 +39875,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PosLineInput"
+        discount:
+          $ref: "#/components/schemas/PosDiscountInput"
         tenders:
           type: array
           description: Split settlement legs; when set, tender is ignored and deposit_cents is refused
@@ -39377,6 +40009,150 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PosTenderLegResult"
+        discount_cents:
+          type: integer
+          format: int64
+          description: Every manual discount on the sale together; absent when there was none
+        discounts:
+          type: array
+          description: Each manual discount and the role of the manager who approved it
+          items:
+            $ref: "#/components/schemas/PosSaleDiscount"
+    PosSalePreviewInput:
+      type: object
+      description: "The read-only preview body: the sale's own facts without any tender, no replay key and no drawer. Every price is resolved server-side exactly as the ring resolves it for the same body."
+      required:
+        - branch_id
+        - customer_id
+        - lines
+      properties:
+        branch_id:
+          type: string
+          format: uuid
+        customer_id:
+          type: string
+          description: Empty resolves to the house walk-in
+        sale_type:
+          type: string
+          enum:
+            - COLLECT_NOW
+            - COLLECT_LATER
+            - DELIVERED
+            - COD
+        fulfilment:
+          type: string
+          enum:
+            - PICKUP
+            - WILL_CALL
+            - DELIVERY
+          description: COD only; other sale types carry fulfilment in sale_type
+        relief:
+          $ref: "#/components/schemas/PosReliefDecision"
+        lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/PosLineInput"
+        discount:
+          $ref: "#/components/schemas/PosDiscountInput"
+    PosSalePreview:
+      type: object
+      description: "The preview answer: the ticket's own totals in integer cents, exactly as the ring computes them for the same body. A ticket that collects no tax shows no tax line and its total is its subtotal."
+      required:
+        - subtotal_cents
+        - tax_cents
+        - tax_lines
+        - total_cents
+        - tax_reason_code
+      properties:
+        subtotal_cents:
+          type: integer
+          format: int64
+        tax_cents:
+          type: integer
+          format: int64
+          description: The sum of the tax lines
+        tax_lines:
+          type: array
+          description: Empty when the ticket collects no tax
+          items:
+            $ref: "#/components/schemas/PosSalePreviewTaxLine"
+        total_cents:
+          type: integer
+          format: int64
+        tax_reason_code:
+          type: string
+          enum:
+            - STD_ON_HST_13
+            - ON_FN_POS_8
+            - FED_S87_VENDOR_DELIVERY
+            - MANUAL_TAX_REVIEW
+            - RELIEF_DECLINED_EVIDENCE
+        discount_cents:
+          type: integer
+          format: int64
+          description: Every manual discount together; absent when there is none
+        sale_discount_cents:
+          type: integer
+          format: int64
+          description: The ticket discount's own cents
+        ticket_base_cents:
+          type: integer
+          format: int64
+          description: "The subtotal after the line discounts, before any ticket discount: what a ticket discount is approved against"
+        ticket_discount_max_cents:
+          type: integer
+          format: int64
+          description: The most a ticket discount may take off (the base less one cent)
+          so a sale never totals $0.00: null
+        lines:
+          type: array
+          description: One row per ticket line when a discount applies, so the till shows the server's cents
+          items:
+            $ref: "#/components/schemas/PosSalePreviewLine"
+    PosSalePreviewLine:
+      type: object
+      description: One ticket line as the ring would charge it
+      required:
+        - line_no
+        - line_total_cents
+        - before_ticket_discount_cents
+      properties:
+        line_no:
+          type: integer
+          format: int32
+        line_total_cents:
+          type: integer
+          format: int64
+          description: Net of every discount
+        before_ticket_discount_cents:
+          type: integer
+          format: int64
+          description: The line's price less its own discount
+          before its share of the ticket discount (the figure the receipt prints): null
+        discount_cents:
+          type: integer
+          format: int64
+          description: The line's own discount
+        sale_discount_cents:
+          type: integer
+          format: int64
+          description: The line's share of the ticket discount
+    PosSalePreviewTaxLine:
+      type: object
+      description: One tax line the ring would bind for the body
+      required:
+        - reason_code
+        - rate_bps
+        - tax_cents
+      properties:
+        reason_code:
+          type: string
+        rate_bps:
+          type: integer
+          format: int32
+        tax_cents:
+          type: integer
+          format: int64
     PosSaleView:
       type: object
       description: The operator-reopen read; no evidence identifiers, no granular flow log
@@ -39461,6 +40237,13 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PosTenderLegResult"
+        discount_cents:
+          type: integer
+          format: int64
+        discounts:
+          type: array
+          items:
+            $ref: "#/components/schemas/PosSaleDiscount"
     PosSaleViewLine:
       type: object
       description: One reopened line with its resolved engine price
@@ -39492,6 +40275,14 @@ components:
         price_uom:
           type: string
         line_total_cents:
+          type: integer
+          format: int64
+          description: What was charged
+          net of every discount: null
+        discount_cents:
+          type: integer
+          format: int64
+        sale_discount_cents:
           type: integer
           format: int64
     PosSaleSummary:
@@ -40041,8 +40832,17 @@ components:
             $ref: "#/components/schemas/PosHotkey"
     PosAccountStanding:
       type: object
-      description: "One customer's past-due position, and no more of it than that. The zero value marshals as an empty object: a walk-in, a current account, an unreadable AR read and a disallowed caller all look identical."
+      description: "One customer's standing, and no more of it than that. The standing word is always present and names the case; the three older fields are present exactly when they were before: past_due_cents and oldest_bucket only when money is past due, on_hold only when true."
+      required:
+        - standing
       properties:
+        standing:
+          type: string
+          enum:
+            - walk_in
+            - clear
+            - past_due
+            - on_hold
         past_due_cents:
           type: integer
           format: int64
@@ -40055,6 +40855,14 @@ components:
         on_hold:
           type: boolean
           description: Mirrors the credit gate; enforcement happens at the ring, not here
+    PosPaymentGrant:
+      type: object
+      description: Whether the caller holds the grant the till's payment routes require
+      required:
+        - can_take_payment
+      properties:
+        can_take_payment:
+          type: boolean
     PosAddonSuggestion:
       type: object
       description: One suggestion tile. list_price_cents is display only; the add path re-prices through the engine.
@@ -42561,12 +43369,13 @@ components:
           type: string
     PricingLowMarginScanRow:
       type: object
-      description: "One graded row of the live-sales low-margin scan: the actual sold price graded against current per-branch cost. level is warn (below target, at or above floor), critical (below floor) or invalid (cost unknown or a non-positive charged price). Money is pre-tax."
+      description: "One graded row of the low margin report: a document line (a committed order line or a quote line) graded at the price the document holds, net of the line's discount, against current per-branch cost. level is warn (below target, at or above floor), critical (below floor) or invalid (cost unknown or a non-positive price). Money is pre-tax."
       required:
-        - order_line_id
-        - order_id
-        - order_no
-        - sold_at
+        - doc_type
+        - line_id
+        - doc_id
+        - doc_no
+        - doc_at
         - branch_id
         - customer_type
         - product_id
@@ -42581,18 +43390,25 @@ components:
         - target_bps
         - floor_bps
         - level
+        - cleared_below_floor
       properties:
-        order_line_id:
+        doc_type:
+          type: string
+          enum:
+            - quote
+            - order
+        line_id:
           type: string
           format: uuid
-        order_id:
+        doc_id:
           type: string
           format: uuid
-        order_no:
+        doc_no:
           type: string
-        sold_at:
+        doc_at:
           type: string
           format: date-time
+          description: When the document was created
         branch_id:
           type: string
           format: uuid
@@ -42615,7 +43431,11 @@ components:
         unit_price_cents:
           type: integer
           format: int64
-          description: The actual sold price per price_uom
+          description: The price the document holds per price_uom, net of the line's discount percent
+        disc_pct:
+          type: integer
+          format: int32
+          description: The line's discount percent, absent when none
         price_uom:
           type: string
         cost_in_price_uom_cents:
@@ -42625,6 +43445,7 @@ components:
         margin_bps:
           type: integer
           format: int64
+          description: The line's margin off its own total and cost, each rounded once, the figures the document margin sums
         target_bps:
           type: integer
           format: int64
@@ -42639,7 +43460,39 @@ components:
             - invalid
         reason:
           type: string
-          description: Set only when level is invalid
+        salesperson_id:
+          type: string
+          format: uuid
+          description: The document's salesperson, the quote's salesperson else its creator
+        salesperson:
+          type: string
+          description: The salesperson's display label
+        cleared_below_floor:
+          type: boolean
+          description: True only when the line is below its floor now and a clearing stamp covers it. The stamp stands for the discount it cleared and anything shallower, so a line since discounted deeper, or since brought back above the floor, is not cleared.
+        cleared_by_id:
+          type: string
+          format: uuid
+        cleared_by:
+          type: string
+          description: Who cleared it, as a display label, on any stamped line whatever the verdict
+        clear_authority:
+          type: string
+          enum:
+            - MANAGER_SCOPE
+            - APPROVAL
+        clear_disc_pct:
+          type: integer
+          format: int32
+          description: The discount percent the stamp cleared, beside the line's current disc_pct
+        clear_margin_bps:
+          type: integer
+          format: int64
+          description: The margin the stamp cleared at, beside the line's current margin_bps
+        doc_margin_bps:
+          type: integer
+          format: int64
+          description: The document's own overall margin over its product lines, absent when any of them has no cost on file
     PricingQuantityBreakItem:
       type: object
       description: "One tier of a schedule: a [from_qty, to_qty) band in the header's threshold_uom with an adjustment of value_type. A null to_qty is the open-ended top tier."
@@ -44097,6 +44950,7 @@ components:
       type: object
       required:
         - items
+        - limit
       properties:
         items:
           type: array
@@ -45713,7 +46567,7 @@ components:
           format: int32
     QuoteView:
       type: object
-      description: "One quote as the staff builder renders it: the header, the lines, the money, and the server-computed edit and convert offers. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8). An absent editable_fields or a false can_convert means no; the client evaluates nothing."
+      description: "One quote as the staff builder renders it: the header, the lines, the money, and the server-computed edit, convert, accept and reject offers. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8). An absent editable_fields or a false offer means no; the client evaluates nothing."
       required:
         - id
         - quote_no
@@ -45724,11 +46578,15 @@ components:
         - expired
         - editable_fields
         - can_convert
+        - can_accept
+        - can_reject
         - lines
         - subtotal_cents
         - tax_cents
         - total_cents
         - updated_at
+        - acceptances
+        - quantity_notice
       properties:
         id:
           type: string
@@ -45771,6 +46629,12 @@ components:
         can_convert:
           type: boolean
           description: Whether this caller may convert this quote to an order right now
+        can_accept:
+          type: boolean
+          description: Whether this caller may record the customer's accept on this quote right now (a selling role, SENT or a never sent draft with a line, not expired); the same conjunction the accept door enforces
+        can_reject:
+          type: boolean
+          description: Whether this caller may record the customer's decline on this quote right now (a selling role, SENT or a never sent draft, not expired); the same conjunction the reject door enforces
         owner_id:
           type: string
           format: uuid
@@ -45794,6 +46658,80 @@ components:
         updated_at:
           type: string
           format: date-time
+        quantity_notice:
+          type: string
+          description: The dealer's quantity notice for this quote's branch, the words the customer sees
+        acceptances:
+          type: array
+          description: The acceptance history, oldest first; empty on a quote nobody has accepted
+          items:
+            $ref: "#/components/schemas/QuoteAcceptanceRecord"
+    QuoteAcceptanceRecord:
+      type: object
+      description: "One row of a quote's acceptance history, oldest first: the customer's own acceptance, or staff accepting on the customer's behalf after the customer said yes by another channel. quantities_confirmed is false on a customer acceptance taken before the confirmation existed. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8)."
+      required:
+        - source
+        - accepted_at
+        - quantities_confirmed
+        - amount_cents
+      properties:
+        source:
+          type: string
+          enum:
+            - CUSTOMER
+            - STAFF_ON_BEHALF
+        typed_name:
+          type: string
+          description: The customer's typed name; absent on a staff row, the customer typed none
+        accepted_at:
+          type: string
+          format: date-time
+        quantities_confirmed:
+          type: boolean
+        amount_cents:
+          type: integer
+          format: int64
+          description: What was accepted; on a staff row, the amount the staff member read to the customer
+        channel:
+          type: string
+          description: Staff rows only, how the customer said yes (phone, text, email or in_person)
+        note:
+          type: string
+          description: Staff rows only, what the staff member wrote
+        quantity_notice:
+          type: string
+          description: Customer rows only, the notice wording that stood on the page at the accept; absent on acceptances taken before it was kept
+        lines:
+          type: array
+          description: Customer rows only, the lines as they stood at the accept, kept so a later edit leaves the record alone; absent on acceptances taken before they were kept
+          items:
+            $ref: "#/components/schemas/QuoteAcceptedLine"
+    QuoteAcceptedLine:
+      type: object
+      description: One line as the customer accepted it. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8).
+      required:
+        - line_no
+        - description
+        - qty_entered
+        - uom_entered
+        - unit_price_cents
+        - line_total_cents
+      properties:
+        line_no:
+          type: integer
+          format: int32
+        description:
+          type: string
+        qty_entered:
+          type: string
+        uom_entered:
+          type: string
+        unit_price_cents:
+          type: integer
+          format: int64
+        line_total_cents:
+          type: integer
+          format: int64
     QuoteViewLine:
       type: object
       description: One line as the staff quote surface renders it. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8); this line view is the ERP wire shape, distinct from the skeleton QuoteLine that dealer_quote and customer_quote share.
@@ -46095,6 +47033,106 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/QuoteComparisonRow"
+    QuoteAcceptOnBehalfRequest:
+      type: object
+      required:
+        - channel
+        - quantities_confirmed
+        - expected_total_cents
+      properties:
+        channel:
+          type: string
+          enum:
+            - phone
+            - text
+            - email
+            - in_person
+          description: How the customer told the salesperson
+        note:
+          type: string
+          maxLength: 500
+          description: The salesperson's own note for the record
+        quantities_confirmed:
+          type: boolean
+          description: The staff member's statement that the customer confirmed the quantities. Required, and must be true.
+        expected_total_cents:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The quote total, in cents, the staff member read to the customer. Required. The accept is refused with a 409 if the quote's total differs when it commits.
+    QuoteRejectOnBehalfRequest:
+      type: object
+      required:
+        - channel
+        - reason_code
+      properties:
+        channel:
+          type: string
+          enum:
+            - phone
+            - text
+            - email
+            - in_person
+          description: How the customer told the salesperson
+        reason_code:
+          type: string
+          enum:
+            - price
+            - competitor
+            - project_cancelled
+            - timing
+            - no_response
+            - other
+        note:
+          type: string
+          maxLength: 500
+          description: The salesperson's own note; required when the reason is other
+    QuoteDecisionResult:
+      type: object
+      required:
+        - quote_id
+        - quote_no
+        - status
+        - previous_status
+        - on_behalf
+        - decided_at
+        - total_cents
+        - replayed
+      properties:
+        quote_id:
+          type: string
+        quote_no:
+          type: string
+        status:
+          type: string
+          enum:
+            - ACCEPTED
+            - LOST
+        previous_status:
+          type: string
+          enum:
+            - DRAFT
+            - SENT
+        channel:
+          type: string
+          enum:
+            - phone
+            - text
+            - email
+            - in_person
+        on_behalf:
+          type: boolean
+          description: Always true, staff recorded the decision for the customer
+        decided_at:
+          type: string
+          format: date-time
+        total_cents:
+          type: integer
+          format: int64
+          description: The quote total at the decision, the amount accepted or lost
+        replayed:
+          type: boolean
+          description: True when this is the first outcome of an earlier request under the same key; nothing was written
     QuoteConvertRequest:
       type: object
       description: The optional conversion body. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8). An absent or empty fulfillment leaves the column out of the insert and the database default applies; DELIVERY is refused in words because a delivery is booked by scheduling a stop, not chosen at conversion.
@@ -46143,6 +47181,12 @@ components:
           type: string
           minLength: 1
           maxLength: 64
+        fulfillment:
+          type: string
+          enum:
+            - PICKUP
+            - WILL_CALL
+          description: "Optional. The fulfilment the order is created with when this action converts the quote (a customer with no credit account), graded exactly as the plain convert grades it: DELIVERY is refused in words, and an absent value leaves the default, Pickup. Ignored when the quote is already converted, because an order's fulfilment is chosen at its conversion."
     QuoteOrderPaymentResult:
       type: object
       description: "What the till's receipt needs: the payment, the invoice it settled against, the order and the balance now on the invoice. On a replay the payment fields (the reference and the receiver included) are the first payment's as stored, and replayed is true."
@@ -46302,6 +47346,7 @@ components:
         - quick_chip_set
         - workspace_split_pct
         - workspace_arrangement
+        - quantity_notice
       properties:
         branch_id:
           type: string
@@ -46340,6 +47385,11 @@ components:
           description: What the chip row renders; read-only, never written
           items:
             type: string
+        quantity_notice:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: The notice that the quantities are the customer's to confirm, shown on the customer's page, the printed page and the staff quote; a blank write goes back to the default wording
         workspace_split_pct:
           type: integer
           format: int32
@@ -46625,9 +47675,13 @@ components:
         - total_cents
         - as_of
         - acceptable
+        - quantity_notice
       properties:
         quote_no:
           type: string
+        quantity_notice:
+          type: string
+          description: The dealer's notice that the quantities are the customer's to confirm; shown near the lines and on the printed page
         customer_name:
           type: string
         status:
@@ -46664,6 +47718,9 @@ components:
         acceptable:
           type: boolean
           description: Whether this link may still be used to accept; drives whether the accept form renders
+        preview:
+          type: boolean
+          description: True only on the staff preview of the page; nothing has been sent and acceptable is false
         customer_notes:
           type: string
         deposit_required:
@@ -46723,10 +47780,11 @@ components:
           description: Present only when the dealer's include-product-images choice is on and the product has a primary image; it addresses the already public product-image byte route, which an img tag can send no Authorization header to
     QuotePublicAcceptRequest:
       type: object
-      description: "The acceptance payload: a typed full name plus an explicit affirmative, two required acts. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8)."
+      description: "The acceptance payload: a typed full name, an explicit affirmative and the customer's confirmation of the quantities, three required acts. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8)."
       required:
         - typed_name
         - accepted
+        - quantities_confirmed
       properties:
         typed_name:
           type: string
@@ -46734,6 +47792,9 @@ components:
         accepted:
           type: boolean
           description: Must be true; the affirmative is a required separate act
+        quantities_confirmed:
+          type: boolean
+          description: Must be true; the customer confirms the quantities as a separate act, and an absent or false value is refused with 422
     QuoteAcceptanceResult:
       type: object
       description: The acceptance confirmation; it echoes the agreed totals so the customer's own record does not depend on a careful reading of the page. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8).
@@ -46744,11 +47805,15 @@ components:
         - subtotal_cents
         - tax_cents
         - total_cents
+        - quantities_confirmed
       properties:
         quote_no:
           type: string
         typed_name:
           type: string
+        quantities_confirmed:
+          type: boolean
+          description: Echoes the customer's confirmation of the quantities, as stored on the acceptance record
         accepted_at:
           type: string
           format: date-time
@@ -48851,6 +49916,9 @@ components:
         created_at:
           type: string
           format: date-time
+        has_backorder:
+          type: boolean
+          description: True while any line is short and still owed; absent means false, so recorded captures without it stay valid.
     TenantOrderLine:
       type: object
       description: One order_lines row with allocation and fulfillment progress for the status tracker. Quantities are DECIMAL serialized as strings.
@@ -48894,6 +49962,12 @@ components:
         line_total_cents:
           type: integer
           format: int64
+        backorder_entered:
+          type: string
+          description: DECIMAL as string. What was picked short that the order still owes the customer, in the line's own unit; qty_entered is what is to be fulfilled now, and ordered = qty_entered + backorder_entered. Absent in recorded captures that predate it.
+        backorder_base:
+          type: string
+          description: DECIMAL as string
     TenantOrderDetail:
       type: object
       description: One order with its lines and the contractor's delivery note

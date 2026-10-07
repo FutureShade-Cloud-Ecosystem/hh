@@ -704,6 +704,7 @@
     ],
     "credit_at_till": true,
     "refund_amount_without_approval_cents": 25000,
+    "refund_approval_limit_enabled": true,
     "refund_approvers": [
       "sales_manager",
       "branch_manager"

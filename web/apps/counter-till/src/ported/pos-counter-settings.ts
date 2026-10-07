@@ -953,6 +953,7 @@ export class HosPosCounterSettings extends LitElement {
             ({ sku, product }, i) => html`<div class="trow">
               <hos-product-thumb
                 .productId=${product?.id ?? ''}
+                .category=${product?.application ?? ''}
                 alt=""
                 .size=${34}
                 data-stamp=${this.photoStamp[product?.id ?? ''] ?? 0}
