@@ -1,7 +1,7 @@
 // The counter's theme choice: the reference's account-menu Theme control
 // (app-shell.ts toggleTheme, themeAfter) in HH's terms. Three choices, a
 // cycle rather than a toggle: Auto follows the system's light setting (and
-// follows it live), Light and Dark pin the choice. The dark sheet is the
+// follows it live), Light and Brand pin the choice. The brand sheet (the dark half) is the
 // tokens' own default (the absence of the attribute) and the light sheet is
 // the opt-in `data-theme="light"` on the document root, the same contract the
 // design system's sheet states.
@@ -20,10 +20,10 @@ export const THEME_ORDER: readonly ThemeChoice[] = ["auto", "light", "dark"];
 export const THEME_LABEL: Record<ThemeChoice, string> = {
   auto: "Auto",
   light: "Light",
-  dark: "Dark",
+  dark: "Brand",
 };
 
-/** The choice that follows this one in the cycle (Auto, Light, Dark, Auto). */
+/** The choice that follows this one in the cycle (Auto, Light, Brand, Auto). */
 export function themeAfter(choice: ThemeChoice): ThemeChoice {
   const index = THEME_ORDER.indexOf(choice);
   return THEME_ORDER[(index + 1) % THEME_ORDER.length];

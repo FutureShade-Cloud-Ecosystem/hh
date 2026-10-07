@@ -5,13 +5,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { themeAfter, themeAttribute, themeControlLabel, themeStatusText } from "../src/theme.js";
 
-test("the cycle visits Auto, Light and Dark and returns to Auto", () => {
+test("the cycle visits Auto, Light and Brand and returns to Auto", () => {
   assert.equal(themeAfter("auto"), "light");
   assert.equal(themeAfter("light"), "dark");
   assert.equal(themeAfter("dark"), "auto");
 });
 
-test("Auto follows the system's light setting; Light and Dark pin it", () => {
+test("Auto follows the system's light setting; Light and Brand pin it", () => {
   assert.equal(themeAttribute("auto", true), "light");
   assert.equal(themeAttribute("auto", false), null);
   assert.equal(themeAttribute("light", false), "light");
@@ -20,11 +20,11 @@ test("Auto follows the system's light setting; Light and Dark pin it", () => {
 
 test("the control's name says what is on and what the press brings", () => {
   assert.equal(themeControlLabel("auto"), "Theme: Auto. Press for Light.");
-  assert.equal(themeControlLabel("dark"), "Theme: Dark. Press for Auto.");
+  assert.equal(themeControlLabel("dark"), "Theme: Brand. Press for Auto.");
 });
 
 test("a press announces the state that took effect", () => {
   assert.equal(themeStatusText("light"), "Theme is now Light.");
-  assert.equal(themeStatusText("dark"), "Theme is now Dark.");
+  assert.equal(themeStatusText("dark"), "Theme is now Brand.");
   assert.equal(themeStatusText("auto"), "Theme is now Auto, following the system.");
 });

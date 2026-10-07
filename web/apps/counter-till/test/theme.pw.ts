@@ -1,20 +1,20 @@
 // The theme choice in the account area: in a demo build the till starts on
-// Light, the control cycles Light, Dark and Auto on the document root, and
+// Light, the control cycles Light, Brand and Auto on the document root, and
 // Auto follows the system's light setting. The dark sheet is the tokens' own
-// default, so Dark is the absence of the attribute.
+// default, so Brand is the absence of the attribute.
 import { expect, test } from "@playwright/test";
 
 test.describe("with the system on light", () => {
   test.use({ colorScheme: "light" });
 
-  test("the demo build starts on Light and the control cycles Dark, Auto, Light", async ({ page }) => {
+  test("the demo build starts on Light and the control cycles Brand, Auto, Light", async ({ page }) => {
     await page.goto("/");
     const root = page.locator("html");
     const control = page.getByTestId("theme-control");
     await expect(control).toContainText("Theme: Light");
     await expect(root).toHaveAttribute("data-theme", "light");
     await control.click();
-    await expect(control).toContainText("Theme: Dark");
+    await expect(control).toContainText("Theme: Brand");
     await expect(root).not.toHaveAttribute("data-theme", /.*/);
     await control.click();
     await expect(control).toContainText("Theme: Auto");
@@ -70,7 +70,7 @@ test.describe("live behaviour", () => {
     await expect(status).toHaveAttribute("aria-live", "polite");
     await expect(status).toHaveText("");
     await page.getByTestId("theme-control").click();
-    await expect(status).toHaveText("Theme is now Dark.");
+    await expect(status).toHaveText("Theme is now Brand.");
     await page.getByTestId("theme-control").click();
     await expect(status).toHaveText("Theme is now Auto, following the system.");
   });

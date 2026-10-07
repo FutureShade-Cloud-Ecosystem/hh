@@ -89,6 +89,10 @@ export const baseStyles = css`
   .btn-danger {
     background: var(--hh-danger-fill);
     color: var(--hh-danger-fill-ink);
+    /* On the brand mode card the fill alone is 2.78:1: no red can be both 4.5:1 under white
+       ink and 3:1 against that card, so the button's own 1px edge is its boundary in brand
+       mode (white there, transparent in light), the same pattern .btn-primary uses. */
+    border-color: var(--hh-danger-fill-edge);
   }
   /* THE disabled rule, stated once: a token swap, never a fade. Filled kinds
      drop their fill and go grey; the grey pair clears AA in both halves. */

@@ -345,7 +345,7 @@ export class CounterTillApp extends HHElement {
   readonly #controller: AuthController;
   readonly #approverCredential: OneTimeCredential;
   readonly #tillClient: TillClient;
-  /** The theme choice: Auto follows the system, Light and Dark pin it; tab memory only (see theme.ts). */
+  /** The theme choice: Auto follows the system, Light and Brand pin it; tab memory only (see theme.ts). */
   readonly #theme = new ThemeController(() => this.requestUpdate());
   /** What a screen reader hears after a Theme press: focus stays on the button, so the new name is not re-read. */
   #themeStatus = "";
@@ -520,7 +520,7 @@ export class CounterTillApp extends HHElement {
     // here, and a draft's fresh mount shows the flow's own defaults.
     this.addEventListener("input", this.#onHostInput);
     // The system's light setting is honoured from the first paint; the Theme
-    // control in the account area cycles Auto, Light and Dark.
+    // control in the account area cycles Auto, Light and Brand.
     this.#theme.start();
     // The flows read happens once; the pop-out, when this window is one,
     // chains on the same answer rather than asking the route twice.
@@ -938,7 +938,7 @@ export class CounterTillApp extends HHElement {
         data-action="theme"
         data-testid="theme-control"
         aria-label=${themeControlLabel(choice)}
-        title="Cycle the theme: Auto, Light, Dark"
+        title="Cycle the theme: Auto, Light, Brand"
       >
         Theme: ${THEME_LABEL[choice]}
       </button>

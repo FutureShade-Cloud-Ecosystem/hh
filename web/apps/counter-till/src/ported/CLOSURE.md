@@ -127,7 +127,7 @@ own commit on `till/ui-3-polish`.
   approval dialog and its receipt are unchanged; the ported Return dialog
   stays unreachable.
 - Theme (GAP 3): the Theme control sits in the account area beside Pop out and
-  Sign out (and on the entry page's header). It cycles Auto, Light and Dark;
+  Sign out (and on the entry page's header). It cycles Auto, Light and Brand;
   Auto follows the system's light setting live. The reference persists its
   choice in local storage; this app's committed sink gate refuses every
   storage path, so the choice rests in tab memory only and a reload, a
