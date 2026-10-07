@@ -20,7 +20,7 @@ export async function openTab(page: Page, tab: "margin" | "rules" | "customers" 
 
 export async function setMode(
   page: Page,
-  body: { mode?: string; audit_allowed?: boolean; shape?: string; fail_next?: { kind: string; status?: number; message?: string } | null; fail_confirm?: boolean; force_preview?: Record<string, unknown> | null; product_names?: boolean },
+  body: { drop_policies?: string[]; catalogue?: string[]; rule_categories?: string[]; mode?: string; audit_allowed?: boolean; shape?: string; fail_next?: { kind: string; status?: number; message?: string } | null; fail_confirm?: boolean; force_preview?: Record<string, unknown> | null; product_names?: boolean },
 ): Promise<void> {
   await page.request.put("/_stub/pricing-mode", { data: body });
 }

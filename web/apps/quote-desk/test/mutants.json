@@ -1572,6 +1572,20 @@
     "test": "Switch role ends the session and returns to the front door at /"
   },
   {
+    "id": "pm-proven-order",
+    "file": "src/pricing-margin.ts",
+    "find": "    if (reads === undefined || seq !== this.loadSeq) return;",
+    "replace": "    if (reads === undefined) return;",
+    "test": "P3-1 an older read of the categories the pricing proves, answered late, does not shrink the Add picker"
+  },
+  {
+    "id": "pm-add-bound",
+    "file": "src/pricing-margin.ts",
+    "find": "      { kind: \"category_policy\", categoryId: id, write },\n      async () => {\n        const result = await pricing.upsertPolicy(id, write);\n        if (!result.ok) return err(result.error, result.status);\n        savedRow = result.value;\n        return ok(id);\n      },\n      () => {\n        const saved = savedRow;\n        if (saved !== null) {\n          this.rows = [...this.rows",
+    "replace": "      { kind: \"category_policy\", categoryId: id, write },\n      async () => {\n        const result = await pricing.upsertPolicy(this.addDraft.category, write);\n        if (!result.ok) return err(result.error, result.status);\n        savedRow = result.value;\n        return ok(id);\n      },\n      () => {\n        const saved = savedRow;\n        if (saved !== null) {\n          this.rows = [...this.rows",
+    "test": "P3-1 the Add category save is bound to the category and numbers picked when it began"
+  },
+  {
     "id": "sa-search-landing",
     "file": "src/quote-search-add.ts",
     "find": "    if (seq !== this.seq) return; // a newer keystroke owns the box\n",

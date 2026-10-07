@@ -86,6 +86,8 @@ let world;
 function seedWorld() {
   seq = 100;
   world = {
+    // The categories the dealer's catalogue holds (product_categories). The server's PUT refuses any other id.
+    catalogue: new Set(Object.values(CAT)),
     policies: new Map([
       [CAT.pavers, { category_id: CAT.pavers, margin_target_bps: 3300, margin_floor_bps: 2000, margin_enforcement_disabled: false }],
       [CAT.walls, { category_id: CAT.walls, margin_target_bps: 3000, margin_floor_bps: 2000, margin_enforcement_disabled: false }],
@@ -366,6 +368,12 @@ export function handlePricing({ request, response, path, url, callerOf, readBody
       if (body.fail_next !== undefined) switches.failNext = body.fail_next;
       if (body.product_names !== undefined) switches.productNames = body.product_names;
       if (typeof body.fail_confirm === "boolean") switches.failConfirm = body.fail_confirm;
+      // Category ids whose margin policy the world does not hold (the live demo holds two): the add row's picker lists them.
+      if (Array.isArray(body.drop_policies)) for (const id of body.drop_policies) world.policies.delete(id);
+      // The catalogue the world holds from now on (a migrate-only database holds Pavers and Bulk): the policy PUT refuses the rest.
+      if (Array.isArray(body.catalogue)) world.catalogue = new Set(body.catalogue);
+      // Category ids a tier rule is scoped to: the pricing reads then prove those categories exist.
+      if (Array.isArray(body.rule_categories)) for (const id of body.rule_categories) world.rules.push(rule("TIER_CATEGORY", { customer_type: "RETAIL", category_id: id }, "PCT_OFF_LIST", { discount_bps: 0 }, "SF", 10, "Retail default"));
       // Fields laid over the next previews' answer (not_graded, no_cost, truncated, items), or null to stop.
       if (body.force_preview !== undefined) switches.forcePreview = body.force_preview;
       respondJson(response, 200, { ...switches });
@@ -476,12 +484,15 @@ export function handlePricing({ request, response, path, url, callerOf, readBody
       if (failing("save")) return;
       const id = m[1];
       const cur = world.policies.get(id);
-      if (cur === undefined) return respondJson(response, 404, { error: "not found" });
       if (!validBps(body.margin_target_bps) || !validBps(body.margin_floor_bps)) return respondJson(response, 422, { error: "margin must be between 0% and 100%" });
       if (body.margin_floor_bps > body.margin_target_bps) return respondJson(response, 422, { error: "margin floor must be at or below the target" });
+      // The policy's category is a foreign key to product_categories: the server maps the violation to a 422 with this sentence.
+      if (!world.catalogue.has(id)) return respondJson(response, 422, { error: "references a nonexistent customer, product, category or branch" });
       const next = { category_id: id, margin_target_bps: body.margin_target_bps, margin_floor_bps: body.margin_floor_bps, margin_enforcement_disabled: body.margin_enforcement_disabled === true };
+      // The server's PUT creates or replaces: a category with no policy yet is created.
       for (const field of ["margin_target_bps", "margin_floor_bps", "margin_enforcement_disabled"]) {
-        if (cur[field] !== next[field]) logRow(userId, "category_policy", id, "UPDATE", field, String(cur[field]), String(next[field]), { type: "category", id });
+        if (cur === undefined) logRow(userId, "category_policy", id, "CREATE", field, "", String(next[field]), { type: "category", id });
+        else if (cur[field] !== next[field]) logRow(userId, "category_policy", id, "UPDATE", field, String(cur[field]), String(next[field]), { type: "category", id });
       }
       world.policies.set(id, next);
       world.ledger.writes.push({ kind: "policy", id });
