@@ -256,7 +256,8 @@ export class QdQuoteWorkarea extends LitElement {
       color: var(--hos-stone-amber-text, var(--hh-accent-text));
     }
     .headid .pagetitle {
-      margin: 0;
+      /* The room under the title is the focus ring's: the ring (outline and its offset) sits above the subtitle. */
+      margin: 0 0 var(--hos-s-4, 4px);
       font-size: var(--qb-title);
       font-weight: 700;
       line-height: 1.2;

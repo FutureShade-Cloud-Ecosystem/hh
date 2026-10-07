@@ -30,7 +30,7 @@ import {
  * KEYBOARD CONTRACT (ARIA 1.2 combobox):
  *   type          → debounced search, list opens
  *   Down / Up     → move the highlight, wrapping; Down from nothing lands on the FIRST row
- *   Enter         → commit the highlighted row (never a row the user cannot see)
+ *   Enter         → commit the highlighted row (never a row the user cannot see), or the lone match when there is exactly one
  *   Escape        → close the list, keep what was typed
  *   Tab           → leave the field; an open list closes without committing
  * Nothing here is mouse-only: every row is a real <li role="option"> driven by aria-activedescendant,
@@ -585,6 +585,11 @@ export class HosCustomerPicker extends LitElement {
       if (this.open && this.active >= 0 && this.active < this.results.length) {
         e.preventDefault(); // else the surrounding form would submit on the same keystroke
         this.choose(this.results[this.active]);
+      } else if (this.open && this.active < 0 && this.results.length === 1 && !this.loading) {
+        // A lone match is the one the person means: Enter takes it. With several and none highlighted Enter picks
+        // nobody, so the picker never guesses an account.
+        e.preventDefault();
+        this.choose(this.results[0]);
       }
       return;
     }

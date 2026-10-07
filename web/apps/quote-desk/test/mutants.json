@@ -2037,5 +2037,12 @@
     "find": "await ctx.guarded(deferredSend(capture, () => client.editLine(ctx.id, existing.line_no, { qty: String(raised) })), this.lateWrite(ctx, \"raise this quantity\"))",
     "replace": "await client.editLine(ctx.id, existing.line_no, { qty: String(raised) })",
     "test": "guard raise line:"
+  },
+  {
+    "id": "qb-search-capped",
+    "file": "src/quote-builder.ts",
+    "find": "this.searchCapped = page >= MAX_LIST_PAGES && this.search.trim() !== \"\" && this.nextCursor !== \"\";",
+    "replace": "this.searchCapped = false;",
+    "test": "a search that reaches the page cap says it stopped"
   }
 ]

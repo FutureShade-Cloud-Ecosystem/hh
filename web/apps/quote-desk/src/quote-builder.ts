@@ -133,6 +133,8 @@ export class QdQuoteBuilder extends LitElement {
   @state() private listNotice = "";
   /** True while a search is reading the later pages: the empty answer waits for it. */
   @state() private searching = false;
+  /** True when the last search stopped at the page cap with more quotes still unread: the list says so. */
+  @state() private searchCapped = false;
   @state() private branches: BranchRow[] = [];
   /** The branch this login reaches (the person's own branch): the work area's fallback branch for a new quote. */
   @state() private myBranch = "";
@@ -490,8 +492,10 @@ export class QdQuoteBuilder extends LitElement {
     // The newest call is the one that reads on: a call that finds a newer one gone ahead of it stops.
     const gen = ++this.searchGen;
     this.searching = this.search.trim() !== "" && this.nextCursor !== "";
+    this.searchCapped = false;
     try {
-      for (let page = 0; page < MAX_LIST_PAGES && this.search.trim() !== "" && this.nextCursor !== ""; page += 1) {
+      let page = 0;
+      for (; page < MAX_LIST_PAGES && this.search.trim() !== "" && this.nextCursor !== ""; page += 1) {
         const seq = ++this.listSeq;
         const result = await client.listQuotes(this.statusFilter, this.nextCursor);
         if (seq !== this.listSeq || gen !== this.searchGen) return;
@@ -503,6 +507,8 @@ export class QdQuoteBuilder extends LitElement {
         this.rows = [...this.rows, ...result.value.rows.filter((r) => !known.has(r.id))];
         this.nextCursor = result.value.nextCursor ?? "";
       }
+      // The loop ended on the cap, not on the end of the list: the search did not read every quote, and says so.
+      this.searchCapped = page >= MAX_LIST_PAGES && this.search.trim() !== "" && this.nextCursor !== "";
     } finally {
       if (gen === this.searchGen) this.searching = false;
     }
@@ -777,6 +783,9 @@ export class QdQuoteBuilder extends LitElement {
           ${button({ label: "New quote", kind: "primary", action: "new-quote", iconMarkup: icon("plus") })}
         </div>
         ${this.listNotice !== "" ? html`<p class="empty" role="status" style="margin: 0 0 10px" data-testid="qd-list-notice">${this.listNotice}</p>` : nothing}
+        ${this.searchCapped && this.search.trim() !== ""
+          ? html`<p class="empty" role="status" style="margin: 0 0 10px" data-testid="qd-search-capped">The search read ${MAX_LIST_PAGES} pages of quotes and stopped there, and more quotes are not yet read. Use the status tabs or a fuller number or customer name to narrow it, or load more quotes.</p>`
+          : nothing}
         <div class="toolbar" data-testid="qd-list-toolbar">
           <div class="tools">
             ${textInput({ label: "Search quotes", field: "list-search", type: "search" })}
