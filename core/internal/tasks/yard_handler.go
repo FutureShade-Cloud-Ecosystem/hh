@@ -26,7 +26,7 @@ import (
 //	GET  /api/v1/yard/picks/{id}                      one pick: task + ticket + full shortage history
 //	POST /api/v1/yard/picks/{id}/stage                IN_PROGRESS → STAGED (+ counter EVENT)
 //	PUT  /api/v1/yard/picks/{id}/lines                record what was ACTUALLY pulled, per line (0187)
-//	PUT  /api/v1/yard/picks/{id}/skids                record or change the order's skid count, with a reason (0367)
+//	PUT  /api/v1/yard/picks/{id}/skids                record or change the order's skid count, with a reason (0370)
 //	POST /api/v1/yard/picks/{id}/shortages            report a shortage (+ counter EVENT)
 //	POST /api/v1/yard/picks/{id}/shortages/{sid}/resolve   clear one (+ counter EVENT)
 func (h *Handler) RegisterYardRoutes(r httpx.Registrar, g *guards.Guards) {

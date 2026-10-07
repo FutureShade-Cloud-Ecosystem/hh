@@ -1,6 +1,6 @@
 package order
 
-// yard_pick.go, a short pick at the yard becomes a backorder on the order line (migration 0366).
+// yard_pick.go, a short pick at the yard becomes a backorder on the order line (migration 0369).
 //
 // WHAT HAPPENS. The yard recorded fewer than the order line asked for. The line's quantity to
 // fulfil drops to what was picked, the rest is held as a backorder on the same line, the line total

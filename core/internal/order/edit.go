@@ -207,7 +207,7 @@ type OrderViewLine struct {
 	UnitPriceCents int64  `json:"unit_price_cents"`
 	LineTotalCents int64  `json:"line_total_cents"`
 	// BackorderEntered and BackorderBase are the quantity the yard picked short and the order still
-	// owes the customer (migration 0366), in the line's own unit and in base. The line's quantity
+	// owes the customer (migration 0369), in the line's own unit and in base. The line's quantity
 	// above is what is to be fulfilled now; ordered = quantity + backorder.
 	BackorderEntered string `json:"backorder_entered"`
 	BackorderBase    string `json:"backorder_base"`

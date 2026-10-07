@@ -552,7 +552,7 @@ type OrderView struct {
 	SubtotalCents int64           `json:"subtotal_cents"`
 	TaxCents      int64           `json:"tax_cents"`
 	TotalCents    int64           `json:"total_cents"`
-	// HasBackorder is true while any line is short and still owed (migration 0366).
+	// HasBackorder is true while any line is short and still owed (migration 0369).
 	HasBackorder bool `json:"has_backorder"`
 }
 

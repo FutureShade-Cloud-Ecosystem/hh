@@ -2,7 +2,7 @@
 
 package pricing
 
-// A line the yard picked short (order migration 0366) reaches the low margin report with its quantity,
+// A line the yard picked short (order migration 0369) reaches the low margin report with its quantity,
 // line total and base quantity all reduced to what was delivered, the unit price unchanged and a
 // backorder held beside them. The report grades unit price against unit cost, so a shorted line must
 // grade exactly as the same line unshorted, and report the quantity actually delivered. (The shape is

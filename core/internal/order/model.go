@@ -21,7 +21,7 @@ type Order struct {
 	TaxCents      int64     `json:"tax_cents"`
 	TotalCents    int64     `json:"total_cents"`
 	CreatedAt     time.Time `json:"created_at"`
-	// HasBackorder is true while any line is short and still owed (migration 0366). Absent means
+	// HasBackorder is true while any line is short and still owed (migration 0369). Absent means
 	// false, so a recorded capture without it stays valid.
 	HasBackorder bool `json:"has_backorder,omitempty"`
 }
