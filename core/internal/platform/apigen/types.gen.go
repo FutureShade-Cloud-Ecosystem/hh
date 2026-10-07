@@ -5653,6 +5653,8 @@ type PricingLowMarginScanRow struct {
 	ClearedById         *string   `json:"cleared_by_id,omitempty"`
 	ClearedBy           *string   `json:"cleared_by,omitempty"`
 	ClearAuthority      *string   `json:"clear_authority,omitempty"`
+	ClearDiscPct        *int32    `json:"clear_disc_pct,omitempty"`
+	ClearMarginBps      *int64    `json:"clear_margin_bps,omitempty"`
 	DocMarginBps        *int64    `json:"doc_margin_bps,omitempty"`
 }
 

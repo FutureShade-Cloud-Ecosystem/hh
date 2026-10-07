@@ -4849,6 +4849,8 @@ export type PricingLowMarginScanRow = {
   cleared_by_id?: string;
   cleared_by?: string;
   clear_authority?: "MANAGER_SCOPE" | "APPROVAL";
+  clear_disc_pct?: number;
+  clear_margin_bps?: number;
   doc_margin_bps?: number;
 };
 export type PricingQuantityBreakItem = {

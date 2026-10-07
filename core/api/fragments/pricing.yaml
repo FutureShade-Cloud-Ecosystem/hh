@@ -506,6 +506,9 @@ paths:
         from and to are the document's own dates, RFC3339 or date only. Held to
         the managers who clear or decide a floor and the roles above them, and
         to the cost and margin list: a role that may not see cost is refused.
+        A caller that is not global scope reads only the documents of the
+        branches it is granted; a branch_id outside the grant is a 403.
+        Deleted quotes, orders and lines never appear.
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk, money-desk]
@@ -542,7 +545,7 @@ paths:
         - name: cleared_only
           in: query
           required: false
-          description: Only the lines cleared below the floor
+          description: Only the lines below the floor now that a clearing stamp covers
           schema: { type: boolean, default: false }
         - name: sort
           in: query
@@ -2141,7 +2144,10 @@ components:
           type: integer
           format: int64
           description: The weighted average cost converted into price_uom
-        margin_bps: { type: integer, format: int64 }
+        margin_bps:
+          type: integer
+          format: int64
+          description: The line's margin off its own total and cost, each rounded once, the figures the document margin sums
         target_bps: { type: integer, format: int64 }
         floor_bps: { type: integer, format: int64 }
         level:
@@ -2158,14 +2164,26 @@ components:
           description: The salesperson's display label
         cleared_below_floor:
           type: boolean
-          description: A manager or an approval cleared this line below the margin floor
+          description: >-
+            True only when the line is below its floor now and a clearing stamp
+            covers it. The stamp stands for the discount it cleared and anything
+            shallower, so a line since discounted deeper, or since brought back
+            above the floor, is not cleared.
         cleared_by_id: { type: string, format: uuid }
         cleared_by:
           type: string
-          description: Who cleared it, as a display label
+          description: Who cleared it, as a display label, on any stamped line whatever the verdict
         clear_authority:
           type: string
           enum: [MANAGER_SCOPE, APPROVAL]
+        clear_disc_pct:
+          type: integer
+          format: int32
+          description: The discount percent the stamp cleared, beside the line's current disc_pct
+        clear_margin_bps:
+          type: integer
+          format: int64
+          description: The margin the stamp cleared at, beside the line's current margin_bps
         doc_margin_bps:
           type: integer
           format: int64
