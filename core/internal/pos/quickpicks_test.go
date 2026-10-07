@@ -492,3 +492,73 @@ func TestQuickPicks_TheRepresentativesNeverPushTheGridPastItsCap(t *testing.T) {
 		t.Fatalf("the cap holds: %d", len(out.Items))
 	}
 }
+
+// -- the append respects whose grid it is (PR 253 review P2-1) -----------------------------------
+
+func TestQuickPicks_ThePersonsOwnCuratedGridGetsNoRepresentatives(t *testing.T) {
+	cat := []quickPickRow{appRow("MUL-BLK", "Black Mulch", "Mulch")}
+	cfg := settings.SurfaceConfig{UserItems: []settings.Item{chip("mul-blk", 0, true)}}
+	h, st, _ := quickHarness(t, cat, nil, &cfg)
+	st.perApp = []quickPickRow{appRow("PAV-HOL", "Holland Paver", "Paver")}
+	out, err := h.svc.QuickPicks(context.Background(), QuickPickInput{})
+	if err != nil {
+		t.Fatalf("quick picks: %v", err)
+	}
+	if out.Source != "user" {
+		t.Fatalf("the person's set answered: %q", out.Source)
+	}
+	if got := skus(out.Items); len(got) != 1 || got[0] != "MUL-BLK" {
+		t.Fatalf("a grid a person curated is exactly that grid: %v", got)
+	}
+}
+
+func TestQuickPicks_ADerivedGridGetsTheMissingCategories(t *testing.T) {
+	top := []quickPickRow{appRow("MUL-BLK", "Black Mulch", "Mulch")}
+	h, st, _ := quickHarness(t, nil, top, nil)
+	st.perApp = []quickPickRow{appRow("PAV-HOL", "Holland Paver", "Paver")}
+	out, _ := h.svc.QuickPicks(context.Background(), QuickPickInput{})
+	if out.Source != "derived" {
+		t.Fatalf("nobody curated: %q", out.Source)
+	}
+	if got := skus(out.Items); len(got) != 2 || got[1] != "PAV-HOL" {
+		t.Fatalf("the derived grid gains the stocked category it lacks: %v", got)
+	}
+}
+
+func TestQuickPicks_ATileTheDealerHidSkipsTheAppendForThatProduct(t *testing.T) {
+	cat := []quickPickRow{appRow("MUL-BLK", "Black Mulch", "Mulch")}
+	// The dealer hid the Holland tile: "hidden" is how a dealer removes a tile, and it must not return.
+	cfg := settings.SurfaceConfig{RoleItems: []settings.Item{chip("mul-blk", 0, true), chip("pav-hol", 1, false)}}
+	h, st, _ := quickHarness(t, cat, nil, &cfg)
+	st.perApp = []quickPickRow{
+		appRow("PAV-HOL", "Holland Paver", "Paver"),
+		appRow("WALL-8", "Wall Block", "Wall"),
+	}
+	out, _ := h.svc.QuickPicks(context.Background(), QuickPickInput{})
+	got := skus(out.Items)
+	for _, s := range got {
+		if s == "PAV-HOL" {
+			t.Fatalf("a tile the kit hides was added back: %v", got)
+		}
+	}
+	if len(got) != 2 || got[1] != "WALL-8" {
+		t.Fatalf("the other missing category still gets its tile: %v", got)
+	}
+}
+
+func TestQuickPicks_AHiddenTileInTheUsersOwnSetOrTheDealersIsHiddenWhenDerived(t *testing.T) {
+	// Every dealer row hidden: the grid is derived, and the hidden SKU still does not come back
+	// through the representatives.
+	cfg := settings.SurfaceConfig{RoleItems: []settings.Item{chip("pav-hol", 0, false)}}
+	h, st, _ := quickHarness(t, nil, []quickPickRow{appRow("MUL-BLK", "Black Mulch", "Mulch")}, &cfg)
+	st.perApp = []quickPickRow{appRow("PAV-HOL", "Holland Paver", "Paver")}
+	out, _ := h.svc.QuickPicks(context.Background(), QuickPickInput{})
+	if out.Source != "derived" {
+		t.Fatalf("every dealer row hidden is a derived grid: %q", out.Source)
+	}
+	for _, s := range skus(out.Items) {
+		if s == "PAV-HOL" {
+			t.Fatalf("a hidden tile came back on a derived grid: %v", skus(out.Items))
+		}
+	}
+}

@@ -138,7 +138,7 @@ func (s *Service) QuickPicks(ctx context.Context, in QuickPickInput) (QuickPicks
 	}
 	out := QuickPicks{Source: "derived", CustomerType: "RETAIL", Items: []QuickPick{}}
 
-	skus, source := s.curatedQuickPickSKUs(ctx, in.BranchID, limit)
+	skus, source, hidden := s.curatedQuickPickSKUs(ctx, in.BranchID, limit)
 	out.Source = source
 	var rows []quickPickRow
 	var err error
@@ -162,7 +162,11 @@ func (s *Service) QuickPicks(ctx context.Context, in QuickPickInput) (QuickPicks
 	if len(rows) > limit {
 		rows = rows[:limit]
 	}
-	rows = s.withEveryStockedCategory(ctx, rows, limit)
+	// A grid a person curated is exactly that grid (the 0140/0149 ruling); only the dealer's default
+	// and the derived grid gain the stocked categories they lack, and never a tile the kit hides.
+	if out.Source != "user" {
+		rows = s.withEveryStockedCategory(ctx, rows, limit, hidden)
+	}
 	for _, r := range rows {
 		uom := r.SoldBy
 		if uom == "" {
@@ -184,7 +188,7 @@ func (s *Service) QuickPicks(ctx context.Context, in QuickPickInput) (QuickPicks
 // category left off it (round 9: Pavers beside a board of mulch, aggregates and soils) was simply
 // missing from the drill. The grid's cap still holds, and an unreadable read adds nothing: the
 // chosen rows are never lost to it.
-func (s *Service) withEveryStockedCategory(ctx context.Context, rows []quickPickRow, limit int) []quickPickRow {
+func (s *Service) withEveryStockedCategory(ctx context.Context, rows []quickPickRow, limit int, hidden map[string]bool) []quickPickRow {
 	if len(rows) >= limit {
 		return rows
 	}
@@ -203,7 +207,7 @@ func (s *Service) withEveryStockedCategory(ctx context.Context, rows []quickPick
 			break
 		}
 		key := strings.ToLower(strings.TrimSpace(r.Application))
-		if key == "" || have[key] || haveSKU[strings.ToLower(r.SKU)] {
+		if key == "" || have[key] || haveSKU[strings.ToLower(r.SKU)] || hidden[strings.ToLower(r.SKU)] {
 			continue
 		}
 		have[key] = true
@@ -215,22 +219,42 @@ func (s *Service) withEveryStockedCategory(ctx context.Context, rows []quickPick
 // curatedQuickPickSKUs reads the kit for this surface and returns the curated SKUs in curated
 // order, plus which level answered. The user's own set wins WHOLE (the 0140/0149 ruling): a
 // person who curated a grid gets exactly that grid, and the dealer default is not merged into it.
-func (s *Service) curatedQuickPickSKUs(ctx context.Context, branchID string, limit int) ([]string, string) {
+func (s *Service) curatedQuickPickSKUs(ctx context.Context, branchID string, limit int) ([]string, string, map[string]bool) {
 	kit := s.surfaceCuration()
 	if kit == nil {
-		return nil, "derived"
+		return nil, "derived", nil
 	}
 	cfg, err := kit.Config(ctx, QuickPickSurface, branchID)
 	if err != nil {
-		return nil, "derived" // an unreadable curation draws the derived grid, never a fault banner
+		return nil, "derived", nil // an unreadable curation draws the derived grid, never a fault banner
+	}
+	// The tiles the kit hides, from the person's set and the dealer's: "hidden" is how a dealer
+	// removes a tile, so nothing that adds tiles may bring one back.
+	hidden := hiddenItemIDs(cfg.UserItems)
+	for id := range hiddenItemIDs(cfg.RoleItems) {
+		hidden[id] = true
 	}
 	if ids := visibleItemIDs(cfg.UserItems, limit); len(ids) > 0 {
-		return ids, "user"
+		return ids, "user", hidden
 	}
 	if ids := visibleItemIDs(cfg.RoleItems, limit); len(ids) > 0 {
-		return ids, "dealer"
+		return ids, "dealer", hidden
 	}
-	return nil, "derived"
+	return nil, "derived", hidden
+}
+
+// hiddenItemIDs is the set of chip ids (lowercased SKUs) a kit item set hides.
+func hiddenItemIDs(items []settings.Item) map[string]bool {
+	out := map[string]bool{}
+	for _, it := range items {
+		if it.Kind != quickPickKind || it.Visible {
+			continue
+		}
+		if id := strings.ToLower(strings.TrimSpace(it.ID)); id != "" {
+			out[id] = true
+		}
+	}
+	return out
 }
 
 // visibleItemIDs pulls the visible chip ids out of a kit item set, in position order. The kit
