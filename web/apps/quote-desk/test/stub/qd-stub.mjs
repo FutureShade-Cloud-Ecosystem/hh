@@ -354,7 +354,7 @@ const conversions = [];
 // The staff accepts and rejects on the customer's behalf (PR 247), as they arrived, and the replay store by key.
 const staffDecisions = [];
 const staffDecisionAnswers = new Map();
-const decisionSwitches = { moved: false, failCount: 0 };
+const decisionSwitches = { moved: false, failCount: 0, grantRefused: false };
 // The order payments seen: the body and the Idempotency-Key header each carried, and the first answer per key.
 const payments = [];
 const paymentsByKey = new Map();
@@ -853,8 +853,9 @@ function viewOf(caller, quote) {
     expired: quote.expired,
     editable_fields: editable,
     can_convert: quote.status === "ACCEPTED",
-    can_accept: (quote.status === "DRAFT" || quote.status === "SENT") && !quote.expired,
-    can_reject: (quote.status === "DRAFT" || quote.status === "SENT") && !quote.expired,
+    // PR 247: the offer is the server's; a role without the grant to decide is offered neither.
+    can_accept: (quote.status === "DRAFT" || quote.status === "SENT") && !quote.expired && !decisionSwitches.grantRefused,
+    can_reject: (quote.status === "DRAFT" || quote.status === "SENT") && !quote.expired && !decisionSwitches.grantRefused,
     quantity_notice: "All quantities are to be confirmed by the customer. Please review them before you accept it.",
     acceptances: quote.staffAcceptances ?? [],
     owner_id: quote.owner_id,
@@ -1200,6 +1201,13 @@ const server = createServer(async (request, response) => {
     });
     return;
   }
+  if (path === "/_stub/decision-grant" && request.method === "PUT") {
+    readBody(request, response, (body) => {
+      decisionSwitches.grantRefused = body.refused === true;
+      respondJson(response, 200, { ...decisionSwitches });
+    });
+    return;
+  }
   if (path === "/_stub/decision-fail" && request.method === "PUT") {
     readBody(request, response, (body) => {
       decisionSwitches.failCount = Number(body.count ?? 1);
@@ -1391,6 +1399,7 @@ const server = createServer(async (request, response) => {
     staffDecisionAnswers.clear();
     decisionSwitches.moved = false;
     decisionSwitches.failCount = 0;
+    decisionSwitches.grantRefused = false;
     respondJson(response, 200, { reset: true });
     return;
   }
@@ -1852,6 +1861,10 @@ const server = createServer(async (request, response) => {
       return;
     }
     const kind = match[2];
+    if (decisionSwitches.grantRefused) {
+      respondJson(response, 403, { error: "Forbidden" });
+      return;
+    }
     readBody(request, response, (body) => {
       const key = String(request.headers["idempotency-key"] ?? "");
       staffDecisions.push({ kind, quote_id: quote.id, key, body });

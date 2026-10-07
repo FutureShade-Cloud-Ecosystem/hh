@@ -211,3 +211,15 @@ test("P2-2 after a refusal for a moved total the panel and the page show the ser
   expect(String(Number(sent[1]!.body.expected_total_cents) / 100)).toBe(String(Number(newTotal)));
   expect(sent[1]!.key).not.toBe(sent[0]!.key);
 });
+
+test("a role without the grant to accept or reject sees no decision section, and the server refuses it anyway", async ({ page }) => {
+  const id = await seedSent(page);
+  await page.request.put("/_stub/decision-grant", { data: { refused: true } });
+  await openById(page, id);
+  await expect(page.getByTestId("qb-context")).toBeVisible();
+  await expect(page.getByTestId("qb-decision")).toHaveCount(0);
+  await expect(page.getByTestId("qb-decision-accept-open")).toHaveCount(0);
+  await expect(page.getByTestId("qb-decision-reject-open")).toHaveCount(0);
+  const refused = await page.request.post(`/api/v1/quotes/${id}/accept`, { data: { channel: "phone", quantities_confirmed: true, expected_total_cents: 1 }, headers: { Authorization: "Bearer x" } });
+  expect([401, 403]).toContain(refused.status());
+});
