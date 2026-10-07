@@ -83,8 +83,14 @@ func newTillPaymentGrant(gate *authz.RoleGate) (*tillPaymentGrant, error) {
 	return g, nil
 }
 
-// HoldsPayment is true only when the gate would admit the caller to every payment route.
-func (g *tillPaymentGrant) HoldsPayment(ctx context.Context, platformUserID, orgID string) (bool, error) {
+// HoldsPayment is true only when the gate would admit the caller to every payment route AND the
+// payment door's own not-selling-role rule would let the caller convert and pay, by the one
+// predicate the door itself calls (identity.CanConvertAndPay). The platform roles pass every gate
+// level and are refused by the door, so the flag says false for them.
+func (g *tillPaymentGrant) HoldsPayment(ctx context.Context, platformUserID, orgID string, caller identity.StaffContext) (bool, error) {
+	if !identity.CanConvertAndPay(caller) {
+		return false, nil
+	}
 	for _, access := range g.accesses {
 		held, err := g.gate.Holds(ctx, platformUserID, orgID, access)
 		if err != nil || !held {

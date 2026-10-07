@@ -104,8 +104,10 @@ type HoldReader interface {
 	HasActiveHold(ctx context.Context, customerID string) (bool, error)
 }
 
-// AccountChecker answers whether a customer account exists, so an unknown id is a 404 and never a
-// "clear" account. The customer module owns the table; the composition root adapts it.
+// AccountChecker answers whether a customer account exists AND is reachable by the caller on the
+// context, so an unknown id and an account at a branch the caller cannot reach are the same 404 and
+// never a "clear" account or a hold word. The customer module owns the table and the reach fence;
+// the composition root adapts it.
 type AccountChecker interface {
 	AccountExists(ctx context.Context, customerID string) (bool, error)
 }

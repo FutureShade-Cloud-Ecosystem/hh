@@ -16,6 +16,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 )
@@ -26,27 +28,40 @@ const (
 	qdsrGrantOutside     = "3ef10000-0000-4000-8000-000000001421"
 )
 
-// qdsrPlantOutsideSales plants the one role the matrix fixtures lack: outside sales, a Quote Desk
-// seat with no Counter Till cell, the person this read exists for. Idempotent and never cleaned,
-// the matrix fixtures' own discipline.
-func qdsrPlantOutsideSales(t *testing.T, env *compEnv, pool *pgxpool.Pool) {
+// qdsrPlantRole plants one staff principal holding one role: a users row, the grant, the branch
+// grant for a branch role and the directory membership. Idempotent and never cleaned, the matrix
+// fixtures' own discipline.
+func qdsrPlantRole(t *testing.T, env *compEnv, pool *pgxpool.Pool, sub, userID, grantID, role string, branchRole bool) {
 	t.Helper()
 	ctx := context.Background()
 	if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, display_name, status, platform_user_id, org_id)
-		VALUES ($1, 'fxstaff.outside.sales.qdsr@fixture.test', 'Fixture Outside Sales QDSR', 'ACTIVE', $2, $3)
-		ON CONFLICT (id) DO NOTHING`, qdsrUserOutsideSales, qdsrSubOutsideSales, testkit.OrgNorthID); err != nil {
-		t.Fatalf("plant outside sales user: %v", err)
+		VALUES ($1, $2, $3, 'ACTIVE', $4, $5) ON CONFLICT (id) DO NOTHING`,
+		userID, sub+"@fixture.test", "Fixture "+role+" QDSR", sub, testkit.OrgNorthID); err != nil {
+		t.Fatalf("plant %s user: %v", role, err)
+	}
+	var branch any
+	if branchRole {
+		branch = testkit.BranchNorthAID
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO staff_role_grant (id, platform_user_id, role_id, org_id, branch_id)
-		VALUES ($1, $2, 'outside_sales', $3, $4) ON CONFLICT (id) DO NOTHING`,
-		qdsrGrantOutside, qdsrSubOutsideSales, testkit.OrgNorthID, testkit.BranchNorthAID); err != nil {
-		t.Fatalf("plant outside sales grant: %v", err)
+		VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING`,
+		grantID, sub, role, testkit.OrgNorthID, branch); err != nil {
+		t.Fatalf("plant %s grant: %v", role, err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO user_branch_grants (user_id, branch_id, org_id) VALUES ($1, $2, $3)
-		ON CONFLICT (user_id, branch_id) DO NOTHING`, qdsrUserOutsideSales, testkit.BranchNorthAID, testkit.OrgNorthID); err != nil {
-		t.Fatalf("plant outside sales branch grant: %v", err)
+	if branchRole {
+		if _, err := pool.Exec(ctx, `INSERT INTO user_branch_grants (user_id, branch_id, org_id) VALUES ($1, $2, $3)
+			ON CONFLICT (user_id, branch_id) DO NOTHING`, userID, testkit.BranchNorthAID, testkit.OrgNorthID); err != nil {
+			t.Fatalf("plant %s branch grant: %v", role, err)
+		}
 	}
-	env.appwrite.setTeam(qdsrSubOutsideSales, "org:"+testkit.OrgNorthSlug)
+	env.appwrite.setTeam(sub, "org:"+testkit.OrgNorthSlug)
+}
+
+// qdsrPlantOutsideSales plants the one role the matrix fixtures lack: outside sales, a Quote Desk
+// seat with no Counter Till cell, the person the grant read exists for.
+func qdsrPlantOutsideSales(t *testing.T, env *compEnv, pool *pgxpool.Pool) {
+	t.Helper()
+	qdsrPlantRole(t, env, pool, qdsrSubOutsideSales, qdsrUserOutsideSales, qdsrGrantOutside, "outside_sales", true)
 }
 
 // qdsrGrantAnswer reads the grant for one subject: the status and, on 200, the answer.
@@ -118,6 +133,66 @@ func TestQDSRPaymentGrantIsTheGatesOwnAnswer(t *testing.T) {
 
 // TestQDSRPaymentGrantFollowsTheDealersConfiguration is the no-code-change leg: a configuration
 // that lowers inside sales to Read on the Counter Till flips both the gate and the read.
+// TestQDSRPaymentGrantEqualsWhatTheDoorDoes holds the flag, per role, to the door: the gate admits
+// the till sale and the payment door (probed on the real routes), AND the door's own not-selling-role
+// rule (identity.CanConvertAndPay, the one predicate the door itself calls) would let the caller
+// convert and pay. The platform roles dealer_admin and fb_operator pass every gate level and are
+// refused the convert by the door, so the flag must say false for them; the integration-tag file
+// qdsr_orderpay_fulfilment_integration_test.go proves the door's own answer for every role.
+func TestQDSRPaymentGrantEqualsWhatTheDoorDoes(t *testing.T) {
+	fx := newXRoleFixture(t)
+	pool := fx.env.fixturePool()
+	t.Cleanup(pool.Close)
+	type fixtureRole struct{ sub, role string }
+	roles := []fixtureRole{
+		{testkit.SubInsideSales, "inside_sales"},
+		{testkit.SubSalesManager, "sales_manager"},
+		{testkit.SubGeneralMgr, "general_manager"},
+		{xrSubBranchManager, "branch_manager"},
+		{qdsrSubOutsideSales, "outside_sales"},
+		{"fxstaff-yard-manager-qdsr", "yard_manager"},
+		{"fxstaff-dealer-admin-qdsr", "dealer_admin"},
+		{"fxstaff-fb-operator-qdsr", "fb_operator"},
+	}
+	qdsrPlantOutsideSales(t, fx.env, pool)
+	qdsrPlantRole(t, fx.env, pool, "fxstaff-yard-manager-qdsr", "3ef10000-0000-4000-8000-000000001412", "3ef10000-0000-4000-8000-000000001422", "yard_manager", true)
+	qdsrPlantRole(t, fx.env, pool, "fxstaff-dealer-admin-qdsr", "3ef10000-0000-4000-8000-000000001413", "3ef10000-0000-4000-8000-000000001423", "dealer_admin", false)
+	qdsrPlantRole(t, fx.env, pool, "fxstaff-fb-operator-qdsr", "3ef10000-0000-4000-8000-000000001414", "3ef10000-0000-4000-8000-000000001424", "fb_operator", false)
+	for _, r := range roles {
+		code, _ := identity.ERPCodeFor(r.role)
+		door := identity.CanConvertAndPay(identity.StaffContext{RoleCode: code, Status: identity.StatusActive})
+		admitted := true
+		for _, route := range []struct{ method, path string }{
+			{http.MethodPost, "/api/v1/pos/sales"},
+			{http.MethodPost, "/api/v1/quotes/{id}/order-payment"},
+		} {
+			c, b := rgProbe(t, fx, route.method, route.path, rgHeaders(t, fx, r.sub))
+			if c == http.StatusForbidden && b == string(authz.BodyForbidden) {
+				admitted = false
+			}
+		}
+		code2, body, got := qdsrGrantAnswer(t, fx, r.sub)
+		if code2 != http.StatusOK {
+			t.Fatalf("%s: the grant read answers %d %s", r.role, code2, body)
+		}
+		if want := admitted && door; got != want {
+			t.Fatalf("%s: can_take_payment %v, want %v (gate admits both routes %v, door's selling rule %v)", r.role, got, want, admitted, door)
+		}
+	}
+	for _, role := range []string{"dealer_admin", "fb_operator"} {
+		for _, r := range roles {
+			if r.role == role {
+				if _, _, got := qdsrGrantAnswer(t, fx, r.sub); got {
+					t.Fatalf("%s passes every gate level but the door refuses its convert, the flag must be false", role)
+				}
+			}
+		}
+	}
+	if _, _, got := qdsrGrantAnswer(t, fx, testkit.SubInsideSales); !got {
+		t.Fatal("inside sales can take payment")
+	}
+}
+
 func TestQDSRPaymentGrantFollowsTheDealersConfiguration(t *testing.T) {
 	env := newCompEnv(t)
 	var doc roleconfig.Document

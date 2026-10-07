@@ -147,11 +147,14 @@ func TestStanding_TheAgingRowsOwnHoldFlagStillCounts(t *testing.T) {
 }
 
 func TestStanding_AnUnknownAccountIsA404NotClear(t *testing.T) {
-	h, _ := standingHarness(t, PastDue{}, nil)
+	h, a := standingHarness(t, behind(), nil)
 	h.svc.WithAccountChecker(&fakeAccounts{exists: false})
 	_, err := h.svc.Standing(context.Background(), AccountStandingInput{BranchID: "branch-trt", CustomerID: standingCust})
 	if standingStatus(err) != 404 {
 		t.Fatalf("an account nobody has is a 404: %v", err)
+	}
+	if len(a.asks) != 0 {
+		t.Fatalf("an account the caller cannot see costs no AR read, so no figure of it is ever fetched: %v", a.asks)
 	}
 }
 

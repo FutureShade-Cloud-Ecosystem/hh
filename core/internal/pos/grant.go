@@ -11,11 +11,11 @@ package pos
 // offer a button that is refused. There was no session or capabilities read to carry the answer:
 // the staff reads that name the caller (the assistant's own allowance) say nothing of grants.
 //
-// THE ANSWER IS THE GATE'S OWN. The reader behind it asks the role gate the question the gate asks
+// THE ANSWER IS THE GATE'S AND THE DOOR'S. The reader behind it asks the role gate the question the gate asks
 // of a request (authz.RoleGate.Holds, the same walk, the whole row of the caller's roles, the
 // platform roles, the dealer's configuration), for the access the document annotates on the payment
 // routes themselves, so a change to either moves this answer with it. It is a fact about the
-// caller's grants and nothing else: not a till session, not a quote, not a policy of the dealer's,
+// caller's grants and role and nothing else: not a till session, not a quote, not a policy of the dealer's,
 // and not an authorisation, the routes still gate every call.
 //
 // WHO MAY ASK. Anyone holding Counter Till or Quote Desk at read: the surfaces whose people have
@@ -28,6 +28,7 @@ import (
 	"net/http"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -40,7 +41,7 @@ type PaymentGrant struct {
 // role gate; the narrow interface keeps this package off the gate's internals and lets a test
 // answer without a database.
 type GrantReader interface {
-	HoldsPayment(ctx context.Context, platformUserID, orgID string) (bool, error)
+	HoldsPayment(ctx context.Context, platformUserID, orgID string, caller identity.StaffContext) (bool, error)
 }
 
 // WithGrantReader wires the grant read behind the route. A handler without one answers the route
@@ -58,7 +59,7 @@ func (h *Handler) paymentGrant(w http.ResponseWriter, r *http.Request, caller gu
 		httpx.Error(w, http.StatusServiceUnavailable, "the payment grant could not be read")
 		return
 	}
-	holds, err := h.grants.HoldsPayment(r.Context(), caller.PlatformUserID, caller.OrgID)
+	holds, err := h.grants.HoldsPayment(r.Context(), caller.PlatformUserID, caller.OrgID, identity.FromAuthority(caller.StaffAuthority))
 	if err != nil {
 		h.log.Error("pos: payment grant read failed", "path", r.URL.Path, "err", err)
 		httpx.Error(w, http.StatusServiceUnavailable, "the payment grant could not be read")

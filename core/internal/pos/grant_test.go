@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 )
 
@@ -21,7 +22,7 @@ type fakeGrants struct {
 	gotUser, org string
 }
 
-func (f *fakeGrants) HoldsPayment(_ context.Context, user, org string) (bool, error) {
+func (f *fakeGrants) HoldsPayment(_ context.Context, user, org string, _ identity.StaffContext) (bool, error) {
 	f.gotUser, f.org = user, org
 	return f.held, f.err
 }

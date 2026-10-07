@@ -22,6 +22,9 @@ func TestQDSRAccountStandingAnswersEveryCaseDistinctly(t *testing.T) {
 	qdsrPlant(t, pool,
 		qdsrAccount{id: qdsrClearID, accountNo: "QDSR-CLEAR", name: "Fixture Clear Account", branch: qdsrNorthA},
 		qdsrAccount{id: qdsrHeldID, accountNo: "QDSR-HELD", name: "Fixture Held Account", branch: qdsrNorthA, held: true},
+		qdsrAccount{id: qdsrOtherID, accountNo: "QDSR-ELSE", name: "Fixture Other Branch Held", branch: testkit.BranchNorthBID, held: true},
+		qdsrAccount{id: qdsrOther2ID, accountNo: "QDSR-ELSE2", name: "Fixture Other Branch Clear", branch: testkit.BranchNorthBID},
+		qdsrAccount{id: qdsrUnhomedID, accountNo: "QDSR-UNHOMED", name: "Fixture Unhomed Held", held: true},
 	)
 	base := "/api/v1/pos/account-standing?branch_id=" + qdsrNorthA
 	sales := testkit.SubInsideSales
@@ -54,6 +57,26 @@ func TestQDSRAccountStandingAnswersEveryCaseDistinctly(t *testing.T) {
 	code, body = qdsrGet(t, fx, sales, base+"&customer_id="+qdsrAbsentID)
 	if code != http.StatusNotFound {
 		t.Fatalf("an unknown account answers %d %s, want 404", code, body)
+	}
+	// The account's home branch is a wall too. An account homed to a branch the caller does not reach
+	// (held or clear) answers exactly as an id nobody has: the same status and the same body, so the
+	// read discloses neither the account's hold nor that it exists. An unhomed account is company
+	// wide and visible, as in the customer read.
+	code, unknownBody := qdsrGet(t, fx, sales, base+"&customer_id="+qdsrAbsentID)
+	for _, id := range []string{qdsrOtherID, qdsrOther2ID} {
+		code, body = qdsrGet(t, fx, sales, base+"&customer_id="+id)
+		if code != http.StatusNotFound || body != unknownBody {
+			t.Fatalf("another branch's account %s answers %d %s, want the unknown id's 404 %s", id, code, body, unknownBody)
+		}
+	}
+	code, body = qdsrGet(t, fx, sales, base+"&customer_id="+qdsrUnhomedID)
+	if u := qdsrJSON(t, code, body); u["standing"] != "on_hold" {
+		t.Fatalf("an unhomed account is company wide and answers %s", body)
+	}
+	// A global caller reaches every branch's account.
+	code, body = qdsrGet(t, fx, testkit.SubGeneralMgr, "/api/v1/pos/account-standing?branch_id="+qdsrNorthA+"&customer_id="+qdsrOtherID)
+	if g := qdsrJSON(t, code, body); g["standing"] != "on_hold" {
+		t.Fatalf("a global caller reads any branch's account: %s", body)
 	}
 	// A malformed id is the caller's mistake, never a server fault.
 	code, body = qdsrGet(t, fx, sales, base+"&customer_id=not-a-uuid")

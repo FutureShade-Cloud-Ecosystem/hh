@@ -12,8 +12,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/quote"
 )
 
@@ -116,5 +118,38 @@ func TestQDSR_OrderPaymentOnAnAlreadyConvertedOrderKeepsTheConversionsChoice(t *
 	}
 	if got := e.fulfilmentOf(res.OrderID); got != "WILL_CALL" {
 		t.Fatalf("an order's fulfilment is chosen at its conversion; a later payment must not change it, is %q", got)
+	}
+}
+
+// TestQDSR_TheDoorsSellingRuleIsTheOnePredicateForEveryRole drives the real door, for every
+// canonical staff role, on a fresh cash customer's accepted quote (the combined convert and pay),
+// and holds the outcome to identity.CanConvertAndPay, the predicate the payment grant read also
+// folds in. The door allows the role or refuses it with the not-selling-role answer, nothing else,
+// and the two always agree, so the grant flag can never say yes where the door says no.
+func TestQDSR_TheDoorsSellingRuleIsTheOnePredicateForEveryRole(t *testing.T) {
+	e := qdsrPaySetup(t)
+	roles := []string{"dealer_admin", "fb_operator", "financial_controller", "general_manager", "hr", "super_admin",
+		"branch_manager", "logistics_manager", "payables_receivables", "procurement_manager", "sales_manager",
+		"yard_manager", "driver", "inside_sales", "outside_sales", "yard_team"}
+	for _, role := range roles {
+		t.Run(role, func(t *testing.T) {
+			code, _ := identity.ERPCodeFor(role) // empty for a role with no ERP name, which sells nothing
+			q := e.seedQuote(0, 0, qd5Trenton)
+			ctx := identity.ContextWithStaff(context.Background(), identity.StaffContext{
+				UserID: e.userID, RoleCode: code, Tier: identity.TierFrontline, Scope: identity.ScopeGlobal,
+				Status: identity.StatusActive,
+			})
+			in := pay("CASH", q.Total, "k-role-"+role)
+			_, err := e.svc.TakeOrderPayment(ctx, q.QuoteID, in)
+			var notSelling *quote.NotSellingRoleError
+			refused := errors.As(err, &notSelling)
+			if err != nil && !refused {
+				t.Fatalf("the door answered %v, want success or the not-selling-role refusal", err)
+			}
+			want := identity.CanConvertAndPay(identity.StaffContext{RoleCode: code, Status: identity.StatusActive})
+			if allowed := err == nil; allowed != want {
+				t.Fatalf("role %s (%q): the door allows %v, the shared predicate says %v", role, code, allowed, want)
+			}
+		})
 	}
 }

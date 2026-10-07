@@ -463,6 +463,9 @@ paths:
         is the role gate's own, the same walk over the caller's whole row of
         roles and the dealer's configuration, taken for the access the
         document annotates on those payment routes, so it moves with them.
+        The payment door's own not-selling-role rule is folded in, by the
+        one predicate the door calls, so a platform role that passes every
+        gate level but is refused the convert and pay is answered false.
         A caller holding the Counter Till or the Quote Desk at read is
         answered, true or false; a caller with neither meets the gate's 403.
         It is a fact about grants only, never an authorisation: the payment
