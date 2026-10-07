@@ -51,6 +51,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/quote"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/quoteassist"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/reporting"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tax"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tour"
@@ -134,6 +135,8 @@ type topsSpine struct {
 	// posHandler is held so the composition root can register the payment grant read, which needs
 	// the role gate built after the module wiring (pos/grant.go).
 	posHandler *pos.Handler
+	// posSvc is held so a wiring test can read the role configuration the till's service was built with.
+	posSvc *pos.Service
 }
 
 // feedbackActorNames resolves a linked ERP user id to the display name and
@@ -168,10 +171,13 @@ func feedbackActorNames(pool *pgxpool.Pool) feedback.ActorNames {
 // wireTops constructs and registers the tops modules over the money spine
 // and the operations spine, in the pin's order, closing every seam whose
 // owner lands here. It returns the tops spine the worker role consumes.
+// roleCfg is the one role configuration the composition root holds (the
+// default's, or the demo's); the till's POS service is built from it, never
+// from a second load.
 // Nothing here starts anything: the dispatchers, the jobs runner, the
 // retention sweep and the reconciler are worker-role loops (D37), and the
 // sms belt's dispatcher is built beside them in the worker.
-func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog.Logger, spine *moneySpine, ops *operationsSpine, cfg config.Config, sharedSmsBelt *smsBelt) *topsSpine {
+func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog.Logger, spine *moneySpine, ops *operationsSpine, cfg config.Config, roleCfg *roleconfig.Config, sharedSmsBelt *smsBelt) *topsSpine {
 	link := linkedUserID(pool)
 	auditSvc := spine.auditSvc
 	orderRepo := spine.orderRepo
@@ -279,7 +285,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithAudit(auditSvc).
 		WithAuditTrail(auditSvc).
 		WithActorNames(staffNameAdapter{repo: orderRepo}).
-		WithClock(time.Now), loadRoleConfig(), g, link)
+		WithClock(time.Now), roleCfg, g, link)
 	posHandler := pos.NewHandler(posSvc, log).WithUserLinker(link)
 	posHandler.RegisterRoutes(r, g)
 
@@ -655,6 +661,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		cardCharger:   cardCharger,
 		cardRefunder:  cardRefunder,
 		posHandler:    posHandler,
+		posSvc:        posSvc,
 	}
 }
 

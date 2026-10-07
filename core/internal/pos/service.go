@@ -367,6 +367,10 @@ func (s *Service) WithAudit(r audit.Recorder) *Service { s.audit = r; return s }
 // no Config to guard with.
 func (s *Service) WithRoleConfig(c *roleconfig.Config) *Service { s.roles = c; return s }
 
+// RoleConfig returns the role configuration the service answers its rules
+// from, so a composition test can prove which one the wiring handed it.
+func (s *Service) RoleConfig() *roleconfig.Config { return s.roles }
+
 // WithUserLinker injects the ERP users.id linker the committed decision
 // uses to name the approver in the same identifier space as the clerk.
 func (s *Service) WithUserLinker(l identity.UserIDLinker) *Service { s.userLink = l; return s }

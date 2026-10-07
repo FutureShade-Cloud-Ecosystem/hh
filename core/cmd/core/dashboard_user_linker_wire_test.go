@@ -105,7 +105,7 @@ func dashFold(t *testing.T, pool *pgxpool.Pool, sg *testkit.StaffGuards) *http.S
 	belt := buildSmsBelt(pool, log)
 	money := wireMoney(mux, pool, sg.Guards, log, "", mustRoleConfigForWire())
 	ops := wireOperations(mux, pool, sg.Guards, log, money, "fx-ticket-key", belt.outbox)
-	wireTops(mux, pool, sg.Guards, log, money, ops, config.Config{PaymentVaultKey: dashVaultKey(t)}, belt)
+	wireTops(mux, pool, sg.Guards, log, money, ops, config.Config{PaymentVaultKey: dashVaultKey(t)}, mustRoleConfigForWire(), belt)
 	return mux
 }
 
