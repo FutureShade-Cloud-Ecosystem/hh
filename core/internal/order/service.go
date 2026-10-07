@@ -147,6 +147,8 @@ type Service struct {
 	invoicer MultiShipInvoicer
 	// standing is the billing read behind the yard pick notice facts (yard_pick.go); nil = none.
 	standing InvoiceStandingReader
+	// backorderNotifier tells the rep when an order edit clears a short line's backorder (yard_pick_edit.go).
+	backorderNotifier BackorderNotifier
 }
 
 // txRecorder is the transactional half of the audit seam: write one row on the caller's transaction so

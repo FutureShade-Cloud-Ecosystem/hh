@@ -87,6 +87,7 @@ type YardLineOutcome struct {
 
 // YardOrderFacts is the order's side of a notice: whose order it is and how its money stands.
 type YardOrderFacts struct {
+	OrderID          string
 	OrderNo          string
 	CustomerID       string
 	BranchID         string

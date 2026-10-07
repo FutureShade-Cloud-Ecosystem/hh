@@ -76,3 +76,24 @@ func (a yardOrderAdapter) RecordSkids(ctx context.Context, in tasks.YardSkidChan
 		ChangeID: out.ChangeID,
 	}, nil
 }
+
+// backorderNoticeAdapter satisfies order.BackorderNotifier over the yard's chat notifier, so the
+// order's rep hears that an edit cleared a short line's backorder through the same routing as the
+// short pick itself (the order's override, its salesperson, the customer's rep, else the counter).
+type backorderNoticeAdapter struct{ chat tasks.ChatNotifier }
+
+func (a backorderNoticeAdapter) BackorderCleared(ctx context.Context, n order.BackorderClearedNotice) error {
+	return a.chat.PostTaskEvent(ctx, tasks.TaskEventRef{
+		EventKey: n.Key, BranchID: n.Order.BranchID, Topic: "order.backorder_cleared",
+		Entity: "order:" + n.Order.OrderID, DeepLink: "/app/orders/" + n.Order.OrderID,
+		Summary:  backorderClearedText(n),
+		Audience: tasks.AudienceOrderRep, OrderID: n.Order.OrderID,
+		CustomerID: n.Order.CustomerID, RepUserID: n.Order.SalespersonID,
+	})
+}
+
+// backorderClearedText says what the edit did, in the order's own words.
+func backorderClearedText(n order.BackorderClearedNotice) string {
+	return fmt.Sprintf("Order %s, line %d (%s) was edited to %s %s, which is a new order quantity: the %s %s the yard had picked short and held on backorder is cleared, and the line is billed at the edit's price.",
+		n.Order.OrderNo, n.LineNo, n.Description, n.NewQty, n.UOM, n.ClearedQty, n.UOM)
+}

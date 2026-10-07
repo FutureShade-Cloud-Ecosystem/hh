@@ -102,6 +102,7 @@ type YardLineEffect struct {
 // YardOrderFacts is what the order module knows that a notice needs: who the order is for and whose
 // it is, what its total was and is, and how it stands against its invoice.
 type YardOrderFacts struct {
+	OrderID          string
 	OrderNo          string
 	CustomerID       string
 	BranchID         string

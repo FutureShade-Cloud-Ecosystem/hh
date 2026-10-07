@@ -515,6 +515,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// The yard's short pick: the order takes the shortfall as a backorder and the notice facts read
 	// the live invoice through billing (wire_yard_short.go).
 	orderSvc.WithInvoiceStanding(invoiceStandingAdapter{repo: billing.NewRepository(pool)})
+	orderSvc.WithBackorderNotifier(backorderNoticeAdapter{chat: yardChatNotifier{svc: messagingSvc, log: log}})
 	yardTasksSvc.WithYardOrderChanges(yardOrderAdapter{svc: orderSvc})
 	tasks.NewHandler(yardTasksSvc, log).WithUserLinker(link).RegisterYardRoutes(r, g)
 	tasks.NewHandler(yardTasksSvc, log).WithUserLinker(link).RegisterWeightRoutes(r, g)
