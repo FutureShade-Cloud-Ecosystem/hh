@@ -137,13 +137,15 @@ func (r *Repository) PublicQuote(ctx context.Context, quoteID string) (PublicQuo
 		SELECT q.quote_no::text, COALESCE(c.name,''), q.status, COALESCE(q.valid_until::text,''),
 		       q.subtotal_cents, q.tax_cents, q.total_cents, q.updated_at,
 		       q.customer_notes, q.deposit_required, q.deposit_pct, q.include_images,
-		       q.fulfillment, q.delivery_address, COALESCE(q.requested_date::text,''), q.delivery_fee_cents
+		       q.fulfillment, q.delivery_address, COALESCE(q.requested_date::text,''), q.delivery_fee_cents,
+		       COALESCE((SELECT qp.quantity_notice FROM quote_policy qp WHERE qp.branch_id = q.branch_id),
+		                (SELECT qp.quantity_notice FROM quote_policy qp WHERE qp.branch_id IS NULL), $2)
 		  FROM quotes q LEFT JOIN customers c ON c.id = q.customer_id
-		 WHERE q.id = $1`, quoteID).
+		 WHERE q.id = $1`, quoteID, DefaultQuantityNotice).
 		Scan(&v.QuoteNo, &v.CustomerName, &v.Status, &v.ValidUntil,
 			&v.SubtotalCents, &v.TaxCents, &v.TotalCents, &v.AsOf,
 			&v.CustomerNotes, &v.DepositRequired, &v.DepositPct, &v.IncludeImages,
-			&v.Fulfillment, &v.DeliveryAddress, &v.RequestedDate, &v.DeliveryFeeCents)
+			&v.Fulfillment, &v.DeliveryAddress, &v.RequestedDate, &v.DeliveryFeeCents, &v.QuantityNotice)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return v, ErrNotFound

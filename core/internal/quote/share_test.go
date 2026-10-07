@@ -36,6 +36,9 @@ var staffOnlyFields = []string{
 var publicQuoteViewKeys = []string{
 	"quote_no", "customer_name", "status", "valid_until", "expired", "lines",
 	"subtotal_cents", "tax_cents", "total_cents", "as_of", "acceptable",
+	// quantity_notice is the dealer's own wording that the quantities are the customer's to confirm:
+	// shown to the customer by design, and it carries nothing but the dealer's sentence.
+	"quantity_notice",
 }
 
 // TestPublicQuoteView_LeaksNoStaffField asserts KEY-SET EQUALITY, in both directions, over the public

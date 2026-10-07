@@ -5720,6 +5720,7 @@ export type QuoteView = {
   tax_cents: number;
   total_cents: number;
   updated_at: string;
+  quantity_notice: string;
   acceptances: QuoteAcceptanceRecord[];
 };
 export type QuoteAcceptanceRecord = {
@@ -5881,6 +5882,7 @@ export type QuotePolicy = {
   include_product_images: boolean;
   quick_chip_set: string[];
   effective_chips?: string[];
+  quantity_notice: string;
   workspace_split_pct: number;
   workspace_arrangement: "PRIMARY_LEFT" | "PRIMARY_RIGHT";
 };
@@ -5965,6 +5967,7 @@ export type QuoteShareLinkList = {
 };
 export type QuotePublicView = {
   quote_no: string;
+  quantity_notice: string;
   customer_name: string;
   status: "DRAFT" | "SENT" | "ACCEPTED" | "CONVERTED" | "EXPIRED" | "LOST";
   valid_until?: string;

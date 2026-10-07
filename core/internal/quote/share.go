@@ -153,6 +153,10 @@ type PublicQuoteView struct {
 	DeliveryAddress  string `json:"delivery_address,omitempty"`
 	RequestedDate    string `json:"requested_date,omitempty"`
 	DeliveryFeeCents int64  `json:"delivery_fee_cents,omitempty"`
+
+	// QuantityNotice is the dealer's notice that the quantities are the customer's to confirm. Always
+	// present: the page shows it near the lines and on the printed page whatever the quote's state.
+	QuantityNotice string `json:"quantity_notice"`
 }
 
 // PublicQuoteLine is the customer-visible shape of a line. Note what is absent: no product_id (an

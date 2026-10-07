@@ -45638,6 +45638,7 @@ components:
         - total_cents
         - updated_at
         - acceptances
+        - quantity_notice
       properties:
         id:
           type: string
@@ -45703,6 +45704,9 @@ components:
         updated_at:
           type: string
           format: date-time
+        quantity_notice:
+          type: string
+          description: The dealer's quantity notice for this quote's branch, the words the customer sees
         acceptances:
           type: array
           description: The acceptance history, oldest first; empty on a quote nobody has accepted
@@ -46231,6 +46235,7 @@ components:
         - quick_chip_set
         - workspace_split_pct
         - workspace_arrangement
+        - quantity_notice
       properties:
         branch_id:
           type: string
@@ -46269,6 +46274,11 @@ components:
           description: What the chip row renders; read-only, never written
           items:
             type: string
+        quantity_notice:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: The notice that the quantities are the customer's to confirm, shown on the customer's page, the printed page and the staff quote; a blank write goes back to the default wording
         workspace_split_pct:
           type: integer
           format: int32
@@ -46554,9 +46564,13 @@ components:
         - total_cents
         - as_of
         - acceptable
+        - quantity_notice
       properties:
         quote_no:
           type: string
+        quantity_notice:
+          type: string
+          description: The dealer's notice that the quantities are the customer's to confirm; shown near the lines and on the printed page
         customer_name:
           type: string
         status:

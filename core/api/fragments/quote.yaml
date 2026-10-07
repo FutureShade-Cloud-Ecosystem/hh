@@ -1502,7 +1502,7 @@ components:
         quote resource is the canonical dealer_quote (DECISIONS.md D8). An
         absent editable_fields or a false can_convert means no; the client
         evaluates nothing.
-      required: [id, quote_no, customer_id, customer_name, branch_id, status, expired, editable_fields, can_convert, lines, subtotal_cents, tax_cents, total_cents, updated_at, acceptances]
+      required: [id, quote_no, customer_id, customer_name, branch_id, status, expired, editable_fields, can_convert, lines, subtotal_cents, tax_cents, total_cents, updated_at, acceptances, quantity_notice]
       properties:
         id: { type: string, format: uuid }
         quote_no: { type: string }
@@ -1542,6 +1542,9 @@ components:
         tax_cents: { type: integer, format: int64 }
         total_cents: { type: integer, format: int64 }
         updated_at: { type: string, format: date-time }
+        quantity_notice:
+          type: string
+          description: The dealer's quantity notice for this quote's branch, the words the customer sees
         acceptances:
           type: array
           description: The acceptance history, oldest first; empty on a quote nobody has accepted
@@ -1949,7 +1952,7 @@ components:
         The quote-builder dealer policy row, resolved branch over the
         NULL-branch dealer default. The staff quote resource is the canonical
         dealer_quote (DECISIONS.md D8).
-      required: [cost_visibility, default_validity_days, default_deposit_pct, line_discounts_enabled, send_email_enabled, send_sms_enabled, include_product_images, quick_chip_set, workspace_split_pct, workspace_arrangement]
+      required: [cost_visibility, default_validity_days, default_deposit_pct, line_discounts_enabled, send_email_enabled, send_sms_enabled, include_product_images, quick_chip_set, workspace_split_pct, workspace_arrangement, quantity_notice]
       properties:
         branch_id:
           type: string
@@ -1971,6 +1974,14 @@ components:
           type: array
           description: What the chip row renders; read-only, never written
           items: { type: string }
+        quantity_notice:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: >-
+            The notice that the quantities are the customer's to confirm,
+            shown on the customer's page, the printed page and the staff
+            quote; a blank write goes back to the default wording
         workspace_split_pct: { type: integer, format: int32 }
         workspace_arrangement:
           type: string
@@ -2140,9 +2151,14 @@ components:
         What an anonymous share-link holder sees: a hand-built allowlist, not
         a projection of the staff model, so no staff-only field can leak. The
         staff quote resource is the canonical dealer_quote (DECISIONS.md D8).
-      required: [quote_no, customer_name, status, expired, lines, subtotal_cents, tax_cents, total_cents, as_of, acceptable]
+      required: [quote_no, customer_name, status, expired, lines, subtotal_cents, tax_cents, total_cents, as_of, acceptable, quantity_notice]
       properties:
         quote_no: { type: string }
+        quantity_notice:
+          type: string
+          description: >-
+            The dealer's notice that the quantities are the customer's to
+            confirm; shown near the lines and on the printed page
         customer_name: { type: string }
         status:
           type: string

@@ -597,11 +597,14 @@ func (r *Repository) StaffDetail(ctx context.Context, quoteID string) (StaffQuot
 	err = tx.QueryRow(ctx, `
 		SELECT q.id::text, q.quote_no::text, q.customer_id::text, COALESCE(c.name,''), q.branch_id::text,
 		       q.status, q.valid_until, q.subtotal_cents, q.tax_cents, q.total_cents, q.updated_at,
-		       COALESCE(q.salesperson_id::text, COALESCE(q.created_by::text, ''))
+		       COALESCE(q.salesperson_id::text, COALESCE(q.created_by::text, '')),
+		       COALESCE((SELECT qp.quantity_notice FROM quote_policy qp WHERE qp.branch_id = q.branch_id),
+		                (SELECT qp.quantity_notice FROM quote_policy qp WHERE qp.branch_id IS NULL), $2)
 		  FROM quotes q LEFT JOIN customers c ON c.id = q.customer_id
-		 WHERE q.id = $1`, quoteID).
+		 WHERE q.id = $1`, quoteID, DefaultQuantityNotice).
 		Scan(&v.ID, &v.QuoteNo, &v.CustomerID, &v.CustomerName, &v.BranchID,
-			&v.Status, &validUntil, &v.SubtotalCents, &v.TaxCents, &v.TotalCents, &v.UpdatedAt, &v.OwnerID)
+			&v.Status, &validUntil, &v.SubtotalCents, &v.TaxCents, &v.TotalCents, &v.UpdatedAt, &v.OwnerID,
+			&v.QuantityNotice)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return v, ErrNotFound

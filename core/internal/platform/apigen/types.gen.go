@@ -6655,6 +6655,7 @@ type QuoteView struct {
 	TaxCents       int64                   `json:"tax_cents"`
 	TotalCents     int64                   `json:"total_cents"`
 	UpdatedAt      time.Time               `json:"updated_at"`
+	QuantityNotice string                  `json:"quantity_notice"`
 	Acceptances    []QuoteAcceptanceRecord `json:"acceptances"`
 }
 
@@ -6840,6 +6841,7 @@ type QuotePolicy struct {
 	IncludeProductImages bool      `json:"include_product_images"`
 	QuickChipSet         []string  `json:"quick_chip_set"`
 	EffectiveChips       *[]string `json:"effective_chips,omitempty"`
+	QuantityNotice       string    `json:"quantity_notice"`
 	WorkspaceSplitPct    int32     `json:"workspace_split_pct"`
 	WorkspaceArrangement string    `json:"workspace_arrangement"`
 }
@@ -6934,6 +6936,7 @@ type QuoteShareLinkList struct {
 
 type QuotePublicView struct {
 	QuoteNo          string            `json:"quote_no"`
+	QuantityNotice   string            `json:"quantity_notice"`
 	CustomerName     string            `json:"customer_name"`
 	Status           string            `json:"status"`
 	ValidUntil       *string           `json:"valid_until,omitempty"`

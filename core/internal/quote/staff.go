@@ -294,6 +294,9 @@ type StaffQuoteView struct {
 	// Acceptances is the acceptance history, oldest first: who accepted, when, and whether they
 	// confirmed the quantities. Empty (never null) on a quote nobody has accepted.
 	Acceptances []QuoteAcceptanceRecord `json:"acceptances"`
+	// QuantityNotice is the dealer's notice that the quantities are the customer's to confirm, branch
+	// row over dealer default, so staff see the words the customer sees.
+	QuantityNotice string `json:"quantity_notice"`
 
 	// validUntil is the parsed form the service uses to compute Expired/EditableFields. Unexported -
 	// it never crosses the wire.
