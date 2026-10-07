@@ -179,6 +179,13 @@ for (const layout of ["stepper", "panels"] as const) {
     await expect(paid.nth(1)).toContainText("Discount approved by Branch Manager");
     await expect(paid.nth(1)).toContainText("-$2.00");
     await expect(sold.locator(".sold-amount")).toContainText("$38.42");
+    // Round 9 (PR 249 review P3-5): the Paid card adds up by itself: the lines at their price, the
+    // discounts that came off, then the subtotal they leave.
+    const lines = sold.getByTestId("sold-line");
+    await expect(lines).toHaveCount(1);
+    await expect(lines.first()).toContainText("Holland Stone 60 mm");
+    await expect(lines.first()).toContainText("$40.00");
+    await expect(sold.getByTestId("sold-subtotal")).toContainText("$34.00");
   });
 }
 

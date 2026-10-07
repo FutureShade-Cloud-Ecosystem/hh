@@ -2758,6 +2758,15 @@ export class HosPosTerminal extends LitElement {
       font-family: var(--hos-font-mono);
       color: var(--hos-stone-amber-text);
     }
+    /* The lines and the subtotal are plain figures; only what came off wears the discount amber. */
+    .sold-discounts .line .amt,
+    .sold-discounts .total .amt {
+      color: var(--hos-text);
+    }
+    .sold-discounts .total .what,
+    .sold-discounts .total .amt {
+      font-weight: 600;
+    }
     .sold-facts .k {
       font-size: 10px;
       text-transform: uppercase;
@@ -7557,7 +7566,17 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
   private renderSoldDiscounts(sale: SaleResult) {
     const ds = sale.discounts ?? [];
     if (ds.length === 0) return nothing;
+    // The lines come first at their price before any discount, then the discounts, then the subtotal
+    // they leave: the card adds up by itself, as the receipt does.
+    const lines = this.cart.map(
+      (l) => html`<div class="d line" data-testid="sold-line">
+        <span class="what">${l.qty} ${l.product.name}</span>
+        <span class="who"></span>
+        <span class="amt">${l.priceMissing ? '(not priced)' : formatMoney(l.lineTotalCents)}</span>
+      </div>`,
+    );
     return html`<div class="sold-discounts" data-testid="sold-discounts">
+      ${lines}
       ${ds.map(
         (d: SaleDiscount) => html`<div class="d" data-testid="sold-discount">
           <span class="what">${d.scope === 'SALE' ? 'Whole ticket' : (this.cart[(d.line_no ?? 0) - 1]?.product.name ?? `Line ${d.line_no ?? ''}`)}</span>
@@ -7565,6 +7584,11 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
           <span class="amt">${formatMoney(-d.amount_cents)}</span>
         </div>`,
       )}
+      <div class="d total" data-testid="sold-subtotal">
+        <span class="what">Subtotal</span>
+        <span class="who"></span>
+        <span class="amt">${formatMoney(sale.subtotal_cents)}</span>
+      </div>
     </div>`;
   }
 
