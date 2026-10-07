@@ -100,10 +100,19 @@ test("at 390 the line table drops its weight column and keeps qty, price and rem
   await expect(qty).toHaveValue("2");
   // The line's price is inside the viewport once the table scrolls it in.
   const price = lineRow.locator(".lprice");
-  await price.scrollIntoViewIfNeeded();
+  // Centred, as a person scrolling the ticket would: the stacked line's price is on its third row, and
+  // the minimal scroll Playwright makes can leave its bottom edge on the viewport's edge, under the
+  // pinned legend.
+  await price.evaluate((el) => el.scrollIntoView({ block: "center" }));
   await expect(price).toBeVisible();
-  const priceBox = (await price.boundingBox()) as { x: number; y: number; width: number; height: number };
-  expect(insideViewport(priceBox), "the line's price hangs outside the viewport at 390").toBe(true);
+  // Polled: the stacked line puts the price on its third row, and a scroll that is still settling
+  // (the page eases it) must not decide the answer.
+  await expect
+    .poll(
+      async () => insideViewport((await price.boundingBox()) as { x: number; y: number; width: number; height: number }),
+      { message: "the line's price hangs outside the viewport at 390" },
+    )
+    .toBe(true);
   // The remove control is reachable and acts: the press takes the line off.
   const remove = lineRow.getByRole("button", { name: "Remove Holland Stone 60 mm" });
   await remove.scrollIntoViewIfNeeded();
@@ -391,4 +400,20 @@ test("PR 255 review: the stepper and remove controls are at least 32 px on the s
     return out;
   });
   expect(bad, "widths where a control is under 32 px").toEqual([]);
+});
+
+test("PR 255 review: a long price and the margin never overlap on the stacked line", async ({ page }) => {
+  await marginRoleLine(page);
+  const bad = await lineChecksAt(page, [320, 340, 360, 390, 480, 559], ({ q }) => {
+    const out: string[] = [];
+    const price = q(".lprice");
+    const margin = q(".lmargin");
+    if (!price || !margin) return ["price or margin missing"];
+    const a = price.getBoundingClientRect();
+    const b = margin.getBoundingClientRect();
+    if (a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top) out.push("price and margin overlap");
+    if (price.scrollWidth > price.clientWidth + 1) out.push("the price is cut short");
+    return out;
+  });
+  expect(bad, "widths where price and margin meet").toEqual([]);
 });

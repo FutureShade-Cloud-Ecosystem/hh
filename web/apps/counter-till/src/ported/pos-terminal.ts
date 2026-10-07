@@ -1700,7 +1700,7 @@ export class HosPosTerminal extends LitElement {
       }
       .linerow hos-product-thumb {
         grid-column: 1;
-        grid-row: 1 / span 3;
+        grid-row: 1 / span 4;
         align-self: start;
       }
       .linerow .lmain {
@@ -1726,7 +1726,7 @@ export class HosPosTerminal extends LitElement {
         text-align: right;
       }
       .linerow .lprice {
-        grid-column: 2 / 5;
+        grid-column: 2 / 6;
         grid-row: 3;
         text-align: left;
       }
@@ -1748,9 +1748,11 @@ export class HosPosTerminal extends LitElement {
         text-transform: uppercase;
         letter-spacing: 0.09em;
       }
+      /* The margin has its own row so a long price ($1,234.56 / SF) never meets it. */
       .linerow .lmargin {
-        grid-column: 4 / 6;
-        grid-row: 3;
+        grid-column: 2 / 6;
+        grid-row: 4;
+        text-align: left;
       }
       .linerow .lmargin::before {
         content: 'Margin ';
