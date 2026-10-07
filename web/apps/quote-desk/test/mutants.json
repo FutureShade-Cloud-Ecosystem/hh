@@ -1411,6 +1411,80 @@
     "test": "Switch role ends the session and returns to the front door at /"
   },
   {
+    "id": "qc-load-order",
+    "file": "src/quote-convert.ts",
+    "find": "    if (seq !== this.#seq) return;\n    if (stock.ok) {",
+    "replace": "    if (stock.ok) {",
+    "test": "guard convert load order:"
+  },
+  {
+    "id": "qc-convert-answer",
+    "file": "src/quote-convert.ts",
+    "find": "    if (seq !== this.#seq) {\n      // The person left while the conversion was out.",
+    "replace": "    if (false as boolean) {\n      // The person left while the conversion was out.",
+    "test": "guard convert answer:"
+  },
+  {
+    "id": "qc-away-settles",
+    "file": "src/quote-convert.ts",
+    "find": "if (result.ok && planned !== null) await this.#settleAway(client, quoteId, quoteNo, result.value.orderNo, planned);",
+    "replace": "void planned;",
+    "test": "a payment typed for the order is still taken"
+  },
+  {
+    "id": "qc-cod-route",
+    "file": "src/quote-convert.ts",
+    "find": "    if (this.#isCod()) return this.#payAndConvert();\n",
+    "replace": "",
+    "test": "D a Cash On Demand customer pays the whole amount"
+  },
+  {
+    "id": "qc-busy-convert",
+    "file": "src/quote-convert.ts",
+    "find": "if (client === null || view === null || this.#busy) return;\n    if (this.#isCod())",
+    "replace": "if (client === null || view === null) return;\n    if (this.#isCod())",
+    "test": "idempotency: a double click on Confirm posts the conversion once"
+  },
+  {
+    "id": "qc-cod-answer",
+    "file": "src/quote-convert.ts",
+    "find": "    if (seq !== this.#seq) {\n      const words = paid.ok",
+    "replace": "    if (false as boolean) {\n      const words = paid.ok",
+    "test": "guard convert cod answer:"
+  },
+  {
+    "id": "qc-learn-cod",
+    "file": "src/quote-convert.ts",
+    "find": "        this.#codLearned = true;",
+    "replace": "        this.#codLearned = false;",
+    "test": "D when the customer read is unavailable"
+  },
+  {
+    "id": "qc-key-keeps",
+    "file": "src/_quote-convert.ts",
+    "find": "key: same ? prev.key : mint()",
+    "replace": "key: mint()",
+    "test": "the idempotency key follows the intended payment",
+    "runner": "node",
+    "testFile": "test/quote-convert.test.mjs"
+  },
+  {
+    "id": "qc-key-fresh",
+    "file": "src/_quote-convert.ts",
+    "find": "key: same ? prev.key : mint()",
+    "replace": "key: prev !== null ? prev.key : mint()",
+    "test": "the idempotency key follows the intended payment",
+    "runner": "node",
+    "testFile": "test/quote-convert.test.mjs"
+  },
+  {
+    "id": "qc-take-away",
+    "file": "src/quote-convert.ts",
+    "find": "      this.#announceAway(quoteId, awayNotice({ orderNo, quoteNo, amountCents: planned.amountCents, paid: paid.ok ? paid.value : null, said: paid.ok ? \"\" : spokenRefusal(paid.error) }));\n      return;",
+    "replace": "      void orderNo;\n      void quoteNo;\n      return;",
+    "test": "guard convert payment: a payment out after the conversion"
+  },
+  {
     "id": "sa-search-landing",
     "file": "src/quote-search-add.ts",
     "find": "    if (seq !== this.seq) return; // a newer keystroke owns the box\n",

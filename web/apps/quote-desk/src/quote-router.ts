@@ -7,6 +7,8 @@
 //                     with no hash at all lands here)
 //   #/quotes/new      the work area at its Customer step (compose)
 //   #/quotes/<id>     the work area with that quote's data
+//   #/quotes/<id>/convert  the guided Convert to Order surface for that quote
+//                     (a third screen: it shows in place of the desk, which stays mounted behind it)
 //
 // A hash route is chosen on purpose: the app is served from one page by the
 // box (the front door's tile and the handoff walk land on it), the history
@@ -24,7 +26,8 @@
 export type DeskRoute =
   | { kind: "list" }
   | { kind: "compose" }
-  | { kind: "quote"; id: string };
+  | { kind: "quote"; id: string }
+  | { kind: "convert"; id: string };
 
 /** The landing page's own route. */
 export const LIST_ROUTE: DeskRoute = { kind: "list" };
@@ -37,16 +40,22 @@ export function quoteRoute(id: string): DeskRoute {
   return { kind: "quote", id };
 }
 
+/** The guided convert surface's route for one quote. */
+export function convertRoute(id: string): DeskRoute {
+  return { kind: "convert", id };
+}
+
 /** The hash a route is written as. */
 export function routeHash(route: DeskRoute): string {
   if (route.kind === "list") return "#/quotes";
   if (route.kind === "compose") return "#/quotes/new";
+  if (route.kind === "convert") return `#/quotes/${route.id}/convert`;
   return `#/quotes/${route.id}`;
 }
 
-/** Whether the route is one of the quote pages (a quote or a new quote). */
+/** Whether the route is one of the quote pages (a quote or a new quote); the convert surface is its own screen. */
 export function routeIsQuotePage(route: DeskRoute): boolean {
-  return route.kind !== "list";
+  return route.kind === "quote" || route.kind === "compose";
 }
 
 /**
@@ -63,6 +72,7 @@ export function parseRoute(hash: string): DeskRoute {
   if (parts.length === 1) return LIST_ROUTE;
   if (parts.length === 2 && parts[1] === "new") return COMPOSE_ROUTE;
   if (parts.length === 2 && parts[1] !== "") return quoteRoute(parts[1]);
+  if (parts.length === 3 && parts[1] !== "new" && parts[2] === "convert") return convertRoute(parts[1] ?? "");
   return LIST_ROUTE;
 }
 
@@ -70,6 +80,6 @@ export function parseRoute(hash: string): DeskRoute {
 export function hashNames(hash: string, route: DeskRoute): boolean {
   const named = parseRoute(hash);
   if (named.kind !== route.kind) return false;
-  if (route.kind === "quote" && named.kind === "quote") return named.id === route.id;
+  if ((route.kind === "quote" && named.kind === "quote") || (route.kind === "convert" && named.kind === "convert")) return named.id === route.id;
   return true;
 }
