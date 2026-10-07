@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -152,11 +153,16 @@ func TestIntegration_StaffDecision_RefusalsAreInWordsAndWriteNothing(t *testing.
 		{"expired status", "EXPIRED", nil, "expired"},
 	}
 	for _, c := range cases {
-		for _, door := range []string{"accept"} {
+		for _, door := range []string{"accept", "reject"} {
 			t.Run(c.name+"/"+door, func(t *testing.T) {
 				_, quoteID, _, _ := seedQuote(t, pool, c.status, c.validUntil)
 				before := decAuditCount(t, pool, quoteID)
-				_, err := svc.AcceptOnBehalf(ctx, quoteID, StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true})
+				var err error
+				if door == "accept" {
+					_, err = svc.AcceptOnBehalf(ctx, quoteID, StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true})
+				} else {
+					_, err = svc.RejectOnBehalf(ctx, quoteID, StaffRejectIn{Channel: "phone", ReasonCode: "price"})
+				}
 				if err == nil {
 					t.Fatal("want a refusal")
 				}
@@ -211,6 +217,9 @@ func TestIntegration_StaffAccept_IdempotentByKey(t *testing.T) {
 	other.Channel = "email"
 	if _, err := svc.AcceptOnBehalf(ctx, quoteID, other); !errors.Is(err, ErrIdempotencyKeyReused) {
 		t.Errorf("same key, another channel: want ErrIdempotencyKeyReused, got %v", err)
+	}
+	if _, err := svc.RejectOnBehalf(ctx, quoteID, StaffRejectIn{Channel: "text", ReasonCode: "price", IdempotencyKey: decKeyA}); !errors.Is(err, ErrIdempotencyKeyReused) {
+		t.Errorf("same key on the other door: want ErrIdempotencyKeyReused, got %v", err)
 	}
 
 	// Without a key a second accept is simply refused: staff re-asserting is a mistake worth saying.
@@ -272,5 +281,178 @@ func TestIntegration_StaffAccept_ThenConvert(t *testing.T) {
 	}
 	if res.OrderID == "" {
 		t.Error("the conversion must mint an order")
+	}
+}
+
+func TestIntegration_StaffReject_SentBecomesLostWithItsRecord(t *testing.T) {
+	pool := intPool(t)
+	_, quoteID, _, _ := seedQuote(t, pool, "SENT", nil)
+	svc := shareSvc(t, pool, decisionNow())
+	ctx := decisionCaller("OUTSIDE_SALES", intTrenton)
+
+	res, err := svc.RejectOnBehalf(ctx, quoteID, StaffRejectIn{
+		Channel: "email", ReasonCode: "Competitor", Note: "went with the other yard", IdempotencyKey: decKeyA,
+	})
+	if err != nil {
+		t.Fatalf("reject: %v", err)
+	}
+	if res.Status != "LOST" || res.PreviousStatus != "SENT" || res.Channel != "email" || !res.OnBehalf || res.Replayed {
+		t.Errorf("result: %+v", res)
+	}
+	if got := decStatus(t, pool, quoteID); got != "LOST" {
+		t.Fatalf("status is %q, want LOST", got)
+	}
+	var purpose, reason, note, before, after string
+	var onBehalf bool
+	if err := pool.QueryRow(context.Background(), `
+		SELECT changes->>'purpose', changes->>'decline_reason', COALESCE(changes->>'note',''),
+		       changes->>'before', changes->>'after', (changes->>'on_behalf')::boolean
+		  FROM audit_log WHERE entity_type='quote' AND entity_id=$1 AND action=$2`,
+		quoteID, audit.ActQuoteRejected).Scan(&purpose, &reason, &note, &before, &after, &onBehalf); err != nil {
+		t.Fatalf("the reject must leave exactly one QUOTE_REJECTED row: %v", err)
+	}
+	if purpose != "STAFF_QUOTE_DECISION" || reason != "competitor" || note != "went with the other yard" ||
+		before != "SENT" || after != "LOST" || !onBehalf {
+		t.Errorf("audit row: purpose=%q reason=%q note=%q %s->%s on_behalf=%v", purpose, reason, note, before, after, onBehalf)
+	}
+	hist, err := svc.QuoteEditHistory(ctx, quoteID)
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+	found := false
+	for _, c := range hist.Changes {
+		if c.Field == "status" && c.Before == "SENT" && c.After == "LOST" && c.ActorID != "" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the change history must show status SENT to LOST by the staff member: %+v", hist.Changes)
+	}
+}
+
+// A quote nobody sent can be marked lost too: the customer said no to what was read out, and an empty
+// draft is no obstacle to saying no.
+func TestIntegration_StaffReject_DraftAllowed(t *testing.T) {
+	pool := intPool(t)
+	_, quoteID, _, _ := seedQuote(t, pool, "DRAFT", nil)
+	svc := shareSvc(t, pool, decisionNow())
+	res, err := svc.RejectOnBehalf(decisionCaller("INSIDE_SALES", intTrenton), quoteID,
+		StaffRejectIn{Channel: "phone", ReasonCode: "price"})
+	if err != nil || res.PreviousStatus != "DRAFT" || decStatus(t, pool, quoteID) != "LOST" {
+		t.Fatalf("a DRAFT must be markable lost: %+v %v", res, err)
+	}
+}
+
+func TestIntegration_StaffReject_IdempotentByKey(t *testing.T) {
+	pool := intPool(t)
+	_, quoteID, _, _ := seedQuote(t, pool, "SENT", nil)
+	svc := shareSvc(t, pool, decisionNow())
+	ctx := decisionCaller("INSIDE_SALES", intTrenton)
+	in := StaffRejectIn{Channel: "text", ReasonCode: "timing", IdempotencyKey: decKeyB}
+
+	first, err := svc.RejectOnBehalf(ctx, quoteID, in)
+	if err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	rows := decAuditCount(t, pool, quoteID)
+	again, err := svc.RejectOnBehalf(ctx, quoteID, in)
+	if err != nil || !again.Replayed || again.Status != "LOST" || !again.DecidedAt.Equal(first.DecidedAt) {
+		t.Fatalf("a retry under the same key must answer the first outcome: %+v %v", again, err)
+	}
+	if decAuditCount(t, pool, quoteID) != rows {
+		t.Error("a replay must write nothing")
+	}
+	// The key belongs to one decision: the other door, or another channel, is refused.
+	if _, err := svc.AcceptOnBehalf(ctx, quoteID, StaffAcceptIn{Channel: "text", QuantitiesConfirmed: true, IdempotencyKey: decKeyB}); !errors.Is(err, ErrIdempotencyKeyReused) {
+		t.Errorf("same key on the accept door: want ErrIdempotencyKeyReused, got %v", err)
+	}
+	other := in
+	other.Channel = "phone"
+	if _, err := svc.RejectOnBehalf(ctx, quoteID, other); !errors.Is(err, ErrIdempotencyKeyReused) {
+		t.Errorf("same key, another channel: want ErrIdempotencyKeyReused, got %v", err)
+	}
+}
+
+func TestIntegration_StaffReject_AuthzAndBranch(t *testing.T) {
+	pool := intPool(t)
+	_, quoteID, _, _ := seedQuote(t, pool, "SENT", nil)
+	svc := shareSvc(t, pool, decisionNow())
+	in := StaffRejectIn{Channel: "phone", ReasonCode: "price"}
+
+	var notSelling *NotSellingRoleError
+	if _, err := svc.RejectOnBehalf(decisionCaller("YARD_TEAM", intTrenton), quoteID, in); !errors.As(err, &notSelling) {
+		t.Errorf("a yard team member must be refused as a non seller, got %v", err)
+	}
+	if _, err := svc.RejectOnBehalf(decisionCaller("INSIDE_SALES", intKingston), quoteID, in); !errors.Is(err, ErrForbidden) && !errors.Is(err, ErrNotFound) {
+		t.Errorf("a seller in another branch must be refused flat, got %v", err)
+	}
+	if _, err := svc.RejectOnBehalf(context.Background(), quoteID, in); !errors.Is(err, ErrUnauthorized) {
+		t.Errorf("no caller: want ErrUnauthorized, got %v", err)
+	}
+	if got := decStatus(t, pool, quoteID); got != "SENT" {
+		t.Errorf("refused callers moved the quote to %q", got)
+	}
+	for _, role := range []string{"INSIDE_SALES", "OUTSIDE_SALES", "SALES_MANAGER", "BRANCH_MANAGER", "GENERAL_MANAGER", "FINANCIAL_CONTROLLER"} {
+		_, q, _, _ := seedQuote(t, pool, "SENT", nil)
+		if _, err := svc.RejectOnBehalf(decisionCaller(role, intTrenton), q, in); err != nil {
+			t.Errorf("%s must be able to reject on the customer's behalf: %v", role, err)
+		}
+	}
+}
+
+// decisionReserver records the soft hold releases a reject asks for, and can fail them.
+type decisionReserver struct {
+	releases []string
+	fail     error
+}
+
+func (d *decisionReserver) ReserveTx(context.Context, pgx.Tx, StockReserveInput) (StockReserveResult, error) {
+	return StockReserveResult{}, nil
+}
+
+func (d *decisionReserver) ReleaseBySourceTx(_ context.Context, _ pgx.Tx, sourceType, ref, status string) (int, error) {
+	if d.fail != nil {
+		return 0, d.fail
+	}
+	d.releases = append(d.releases, sourceType+"/"+ref+"/"+status)
+	return 1, nil
+}
+
+// A lost quote is no longer interest in that stock: the soft holds are released RELEASED on the same
+// transaction (reserve.go's lifecycle), and a release that fails rolls the reject back with it.
+func TestIntegration_StaffReject_ReleasesSoftHoldsOnTheSameTransaction(t *testing.T) {
+	pool := intPool(t)
+	_, quoteID, _, _ := seedQuote(t, pool, "SENT", nil)
+	ctx := decisionCaller("INSIDE_SALES", intTrenton)
+	in := StaffRejectIn{Channel: "phone", ReasonCode: "price"}
+
+	failing := &decisionReserver{fail: errors.New("stock down")}
+	if _, err := shareSvc(t, pool, decisionNow()).WithStockReserver(failing).RejectOnBehalf(ctx, quoteID, in); err == nil {
+		t.Fatal("a failed hold release must fail the reject")
+	}
+	if got := decStatus(t, pool, quoteID); got != "SENT" {
+		t.Fatalf("a failed release must roll the status back, it is %q", got)
+	}
+	if n := decAuditCount(t, pool, quoteID); n != 0 {
+		t.Errorf("a failed release must leave no audit row, found %d", n)
+	}
+
+	ok := &decisionReserver{}
+	if _, err := shareSvc(t, pool, decisionNow()).WithStockReserver(ok).RejectOnBehalf(ctx, quoteID, in); err != nil {
+		t.Fatalf("reject: %v", err)
+	}
+	if len(ok.releases) != 1 || ok.releases[0] != ResSourceQuote+"/"+quoteID+"/"+ResReleased {
+		t.Errorf("the soft holds must be released as RELEASED for this quote: %v", ok.releases)
+	}
+
+	// An accept keeps the holds: the quote is still going to become an order.
+	_, q2, _, _ := seedQuote(t, pool, "SENT", nil)
+	keep := &decisionReserver{}
+	if _, err := shareSvc(t, pool, decisionNow()).WithStockReserver(keep).AcceptOnBehalf(ctx, q2,
+		StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true}); err != nil {
+		t.Fatalf("accept: %v", err)
+	}
+	if len(keep.releases) != 0 {
+		t.Errorf("an accept must not release the holds: %v", keep.releases)
 	}
 }

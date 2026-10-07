@@ -18,11 +18,13 @@ func TestStaffDecision_GateIsTheConvertPredicate(t *testing.T) {
 		"LOGISTICS_MANAGER", "PAYABLES_RECEIVABLES")
 
 	accept := StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true}
+	reject := StaffRejectIn{Channel: "phone", ReasonCode: "price"}
 	for _, role := range codes {
 		caller := sellerCtx(role)
 		sells := identity.CanSellOnCredit(caller)
 		for name, call := range map[string]func(*StaffService) error{
 			"accept": func(s *StaffService) error { _, err := s.AcceptOnBehalf(qCtxAs(caller), qOrg, accept); return err },
+			"reject": func(s *StaffService) error { _, err := s.RejectOnBehalf(qCtxAs(caller), qOrg, reject); return err },
 		} {
 			store := newSeamStore()
 			err := call(staffSvcOver(store, caller).withCaller(qCallerFrom))
@@ -84,6 +86,18 @@ func TestStaffDecision_InputGrading(t *testing.T) {
 		},
 		"accept with an over long note": func() error {
 			_, err := svc().AcceptOnBehalf(ctx, qOrg, StaffAcceptIn{Channel: "phone", QuantitiesConfirmed: true, Note: strings.Repeat("x", 501)})
+			return err
+		},
+		"reject without a reason code": func() error {
+			_, err := svc().RejectOnBehalf(ctx, qOrg, StaffRejectIn{Channel: "phone"})
+			return err
+		},
+		"reject with an unknown reason code": func() error {
+			_, err := svc().RejectOnBehalf(ctx, qOrg, StaffRejectIn{Channel: "phone", ReasonCode: "vibes"})
+			return err
+		},
+		"reject as other without a note": func() error {
+			_, err := svc().RejectOnBehalf(ctx, qOrg, StaffRejectIn{Channel: "phone", ReasonCode: "other"})
 			return err
 		},
 	}

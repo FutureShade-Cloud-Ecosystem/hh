@@ -63,6 +63,11 @@ func (r *Repository) DecideQuoteGuarded(ctx context.Context, w decisionWrite, ho
 		 WHERE id = $1 RETURNING updated_at`, w.QuoteID, w.To, w.ActorID).Scan(&decidedAt); err != nil {
 		return out, fmt.Errorf("move quote to %s: %w", w.To, err)
 	}
+	if hooks.release != nil {
+		if err := hooks.release(ctx, tx); err != nil {
+			return out, fmt.Errorf("release quote holds: %w", err)
+		}
+	}
 	if hooks.record != nil {
 		if err := hooks.record(ctx, tx, status, quoteNo); err != nil {
 			return out, err

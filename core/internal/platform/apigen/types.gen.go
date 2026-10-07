@@ -6767,6 +6767,12 @@ type QuoteAcceptOnBehalfRequest struct {
 	QuantitiesConfirmed bool    `json:"quantities_confirmed"`
 }
 
+type QuoteRejectOnBehalfRequest struct {
+	Channel    string  `json:"channel"`
+	ReasonCode string  `json:"reason_code"`
+	Note       *string `json:"note,omitempty"`
+}
+
 type QuoteDecisionResult struct {
 	QuoteId        string    `json:"quote_id"`
 	QuoteNo        string    `json:"quote_no"`

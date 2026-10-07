@@ -65,6 +65,20 @@ type StaffAcceptIn struct {
 	IdempotencyKey      string
 }
 
+// StaffRejectIn is the staff reject payload: the customer said no. The reason is a code from a closed
+// list so lost quotes can be counted; the note carries the detail, and is required for "other".
+type StaffRejectIn struct {
+	Channel        string
+	ReasonCode     string
+	Note           string
+	IdempotencyKey string
+}
+
+// The reasons a customer gives for declining.
+var declineReasons = map[string]bool{
+	"price": true, "competitor": true, "project_cancelled": true, "timing": true, "no_response": true, "other": true,
+}
+
 // StaffDecisionResult is the outcome of a staff accept or reject.
 type StaffDecisionResult struct {
 	QuoteID        string    `json:"quote_id"`
@@ -104,6 +118,9 @@ type decisionWrite struct {
 type decisionHooks struct {
 	// record writes the audit rows on the write's own transaction; prev is the status before.
 	record func(ctx context.Context, tx pgx.Tx, prev, quoteNo string) error
+	// release closes the quote's soft stock holds on the same transaction. Set only by a reject, and
+	// nil when the reservation seam is unwired.
+	release func(ctx context.Context, tx pgx.Tx) error
 }
 
 // decisionOutcome is what the guarded write answers.
@@ -169,6 +186,37 @@ func (s *StaffService) AcceptOnBehalf(ctx context.Context, idOrNo string, in Sta
 	return s.decide(ctx, caller, idOrNo, sp)
 }
 
+// RejectOnBehalf moves a quote to LOST because the customer said no some way other than the portal.
+// The refusals are the accept door's: expired, already accepted, converted and already lost are all
+// refused in words, and an accepted quote is never quietly turned into a lost one. Its soft stock holds
+// are released on the same transaction, the reserve.go lifecycle for a quote that is lost. The
+// follow-ups stop, as they do for an accept.
+func (s *StaffService) RejectOnBehalf(ctx context.Context, idOrNo string, in StaffRejectIn) (StaffDecisionResult, error) {
+	caller, err := s.decisionCaller(ctx)
+	if err != nil {
+		return StaffDecisionResult{}, err
+	}
+	sp := decisionSpec{action: audit.ActQuoteRejected, to: "LOST"}
+	if sp.channel, err = normalizeDecisionChannel(in.Channel); err != nil {
+		return StaffDecisionResult{}, err
+	}
+	sp.reasonCode = strings.ReplaceAll(strings.ReplaceAll(strings.ToLower(strings.TrimSpace(in.ReasonCode)), " ", "_"), "-", "_")
+	if !declineReasons[sp.reasonCode] {
+		return StaffDecisionResult{}, httpx.BadRequestf(
+			"reason_code must be price, competitor, project_cancelled, timing, no_response or other")
+	}
+	if sp.note, err = normalizeDecisionNote(in.Note); err != nil {
+		return StaffDecisionResult{}, err
+	}
+	if sp.reasonCode == "other" && sp.note == "" {
+		return StaffDecisionResult{}, httpx.BadRequestf("add a note saying why when the reason is other")
+	}
+	if sp.key, err = normalizeIdempotencyKey(in.IdempotencyKey); err != nil {
+		return StaffDecisionResult{}, err
+	}
+	return s.decide(ctx, caller, idOrNo, sp)
+}
+
 // decisionCaller is the guard the doors share, in the convert door's order: authenticated, active,
 // then a selling role by the one predicate.
 func (s *StaffService) decisionCaller(ctx context.Context) (identity.StaffContext, error) {
@@ -211,7 +259,7 @@ func (s *StaffService) decide(ctx context.Context, caller identity.StaffContext,
 	out, err := ds.DecideQuoteGuarded(ctx, decisionWrite{
 		QuoteID: quoteID, To: sp.to, Action: sp.action, Channel: sp.channel, Key: sp.key,
 		ActorID: caller.UserID, Now: s.now(),
-	}, decisionHooks{record: s.decisionAuditHook(caller, quoteID, sp)})
+	}, s.decisionHooks(caller, quoteID, sp))
 	if err != nil {
 		return StaffDecisionResult{}, err
 	}
@@ -219,6 +267,19 @@ func (s *StaffService) decide(ctx context.Context, caller identity.StaffContext,
 		QuoteID: quoteID, QuoteNo: out.QuoteNo, Status: out.Status, PreviousStatus: out.Prev,
 		Channel: out.Channel, OnBehalf: true, DecidedAt: out.DecidedAt, Replayed: out.Replayed,
 	}, nil
+}
+
+// decisionHooks is what commits with the move: the audit rows always, and for a reject the release of
+// the quote's soft holds when the reservation seam is wired.
+func (s *StaffService) decisionHooks(caller identity.StaffContext, quoteID string, sp decisionSpec) decisionHooks {
+	h := decisionHooks{record: s.decisionAuditHook(caller, quoteID, sp)}
+	if sp.to == "LOST" && s.stock != nil {
+		h.release = func(ctx context.Context, tx pgx.Tx) error {
+			_, err := s.stock.ReleaseBySourceTx(ctx, tx, ResSourceQuote, quoteID, ResReleased)
+			return err
+		}
+	}
+	return h
 }
 
 // decisionAuditHook writes the two rows on the decision's own transaction: the decision row, carrying

@@ -54,6 +54,7 @@ func (h *StaffHandler) RegisterStaffRoutes(r httpx.Registrar, g *guards.Guards) 
 	// The staff doors that record the customer's decision (staff_decision.go): the same selling-role
 	// gate as convert, in the service, because that is where the caller is resolved.
 	r.Handle("POST /api/v1/quotes/{id}/accept", g.RequireStaff(h.staff(h.acceptQuote)))
+	r.Handle("POST /api/v1/quotes/{id}/reject", g.RequireStaff(h.staff(h.rejectQuote)))
 	r.Handle("POST /api/v1/quotes/{id}/order-payment", g.RequireStaff(h.staff(h.takeOrderPayment)))
 	// DIB-59 comparison. A POST because the alternates are a request BODY, not a filter, but it is a
 	// strictly read-only operation: it writes nothing, to any table, including pricing_audit_log.
@@ -354,6 +355,28 @@ func (h *StaffHandler) acceptQuote(w http.ResponseWriter, r *http.Request, _ gua
 		Channel: body.Channel, Note: body.Note,
 		QuantitiesConfirmed: body.QuantitiesConfirmed != nil && *body.QuantitiesConfirmed,
 		IdempotencyKey:      r.Header.Get("Idempotency-Key"),
+	})
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+// rejectQuote records that the customer declined: the channel, a reason code and a note.
+func (h *StaffHandler) rejectQuote(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+	var body struct {
+		Channel    string `json:"channel"`
+		ReasonCode string `json:"reason_code"`
+		Note       string `json:"note"`
+	}
+	if err := decodeBody(w, r, &body); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	res, err := h.svc.RejectOnBehalf(r.Context(), r.PathValue("id"), StaffRejectIn{
+		Channel: body.Channel, ReasonCode: body.ReasonCode, Note: body.Note,
+		IdempotencyKey: r.Header.Get("Idempotency-Key"),
 	})
 	if err != nil {
 		h.writeErr(w, err)

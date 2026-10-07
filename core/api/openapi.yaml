@@ -19766,6 +19766,56 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/quotes/{id}/reject:
+    post:
+      operationId: quoteRejectOnBehalf
+      tags:
+        - staff-quote
+      summary: Record that the customer declined a quote
+      description: "A salesperson marks a quote lost on the customer's behalf. A SENT or never sent DRAFT quote moves to LOST with the channel the customer used, a reason code (price, competitor, project_cancelled, timing, no_response or other) and a note, which is required when the reason is other. The status move, the audit row and the change history row commit in one transaction, the quote's soft stock holds are released on it, and the quote's follow-ups stop. The refusals are the accept door's, in words with a 409: expired, already accepted or converted (an accepted quote is never turned into a lost one here), and already lost. Limited to the selling roles that may convert, by the same rule, and to the caller's branches. An optional Idempotency-Key header (a UUID) makes a retry safe exactly as it does on accept; the same key on the accept door, or with another channel, is a 409."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - quote-desk
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: A UUID chosen once per decision and resent unchanged on every retry of it. Scoped to the quote.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteRejectOnBehalfRequest"
+      responses:
+        "200":
+          description: The quote's new status and the decision's record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteDecisionResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/quotes/{id}/order-payment:
     post:
       operationId: quoteTakeOrderPayment
@@ -46068,6 +46118,33 @@ components:
         quantities_confirmed:
           type: boolean
           description: The staff member's statement that the customer confirmed the quantities. Required, and must be true.
+    QuoteRejectOnBehalfRequest:
+      type: object
+      required:
+        - channel
+        - reason_code
+      properties:
+        channel:
+          type: string
+          enum:
+            - phone
+            - text
+            - email
+            - in_person
+          description: How the customer told the salesperson
+        reason_code:
+          type: string
+          enum:
+            - price
+            - competitor
+            - project_cancelled
+            - timing
+            - no_response
+            - other
+        note:
+          type: string
+          maxLength: 500
+          description: The salesperson's own note; required when the reason is other
     QuoteDecisionResult:
       type: object
       required:

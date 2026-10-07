@@ -5816,6 +5816,11 @@ export type QuoteAcceptOnBehalfRequest = {
   note?: string;
   quantities_confirmed: boolean;
 };
+export type QuoteRejectOnBehalfRequest = {
+  channel: "phone" | "text" | "email" | "in_person";
+  reason_code: "price" | "competitor" | "project_cancelled" | "timing" | "no_response" | "other";
+  note?: string;
+};
 export type QuoteDecisionResult = {
   quote_id: string;
   quote_no: string;
