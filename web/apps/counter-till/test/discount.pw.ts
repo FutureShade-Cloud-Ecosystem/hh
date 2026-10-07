@@ -301,3 +301,38 @@ test("a ticket discount cannot take the whole ticket: the dialog says the rule a
   await expect(page.getByTestId("discount-ticket-rule")).toHaveCount(0);
   await page.getByTestId("discount-cancel").click();
 });
+
+// Round 9: the Summary reads like the receipt. A discounted line shows its price less its own
+// discount (with the discount said under it), the ticket discount is its own row, and the lines, less
+// that row, add to the subtotal.
+test("the Summary shows line discounts on their lines, the ticket discount row, and a subtotal that sums", async ({
+  page,
+}) => {
+  await signIn(page, "stepper");
+  await ensureSession(page);
+  await tenHolland(page);
+  await openStep(page, "items");
+  await page.getByTestId("pos-line-discount").click();
+  await page.getByTestId("discount-value").fill("10");
+  await page.getByTestId("discount-approver").selectOption({ label: "Sales manager · Sales Manager" });
+  await page.getByTestId("discount-apply").click();
+  await expect(page.getByTestId("pos-line-discount-chip")).toContainText("10% off");
+  await openPaymentStep(page, "stepper");
+  await giveDiscount(page, () => page.getByTestId("pos-ticket-discount").click(), "amount", "2", "Branch manager · Branch Manager");
+
+  await page.getByTestId("step-head-summary").click();
+  const readback = page.getByTestId("pos-readback");
+  await expect(readback).toBeVisible();
+  const line = readback.locator("li").first();
+  // The line at its price less its own discount, and the discount said on the line.
+  await expect(line.locator(".m").first()).toHaveText("$36.00");
+  await expect(line.getByTestId("readback-line-discount")).toContainText("10% off");
+  await expect(line.getByTestId("readback-line-discount")).toContainText("-$4.00");
+  // The ticket discount is its own row; the subtotal sums the lines less it.
+  await expect(readback.getByTestId("pos-ticket-discount-row")).toContainText("-$2.00");
+  await expect(readback.locator(".rbrow").filter({ hasText: "Subtotal" })).toContainText("$34.00");
+  const lineTotals = await readback.locator("li > .m").allInnerTexts();
+  const cents = (t: string) => Math.round(Number(t.replace(/[^0-9.-]/g, "")) * 100);
+  const sum = lineTotals.reduce((a, t) => a + cents(t), 0);
+  expect(sum - 200).toBe(3400);
+});

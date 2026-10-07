@@ -1499,6 +1499,11 @@ export class HosPosTerminal extends LitElement {
     .readback .m {
       text-align: right;
     }
+    .readback .rbdisc {
+      display: block;
+      font-size: 11px;
+      color: var(--hos-text-dim);
+    }
     .readback .rbsave {
       margin-left: 8px;
       font-size: 10px;
@@ -6528,7 +6533,7 @@ ${this.receiptMsg ? html`<div class="banner bad" role="alert">${this.receiptMsg}
         <span class="v">${this.customer ? this.customer.name : 'Walk-in customer'}</span>
       </div>
       <ul class="rblines">
-        ${this.cart.map((l) => {
+        ${this.cart.map((l, i) => {
           const p = pricePicture(this.ticketQuotes[l.product.id]);
           const word = basisWord(p.basis);
           return html`<li>
@@ -6539,9 +6544,15 @@ ${this.receiptMsg ? html`<div class="banner bad" role="alert">${this.receiptMsg}
                 ? html`<span class="rbsave" data-testid="readback-saving"
                     >Save ${formatMoney(perLineSavingCents(p.savingCents, l.qty))}${word ? ` · ${word}` : ''}</span
                   >`
+                : nothing}${l.discount
+                ? html`<span class="rbdisc" data-testid="readback-line-discount"
+                    >${discountWords(l.discount, this.previewLineOff(i), formatMoney)}${this.previewLineOff(i) === undefined
+                      ? nothing
+                      : html` <span class="dm">${formatMoney(-(this.previewLineOff(i) as number))}</span>`}</span
+                  >`
                 : nothing}</span
             >
-            <span class="m">${l.priceMissing ? 'price pending' : formatMoney(l.lineTotalCents)}</span>
+            <span class="m">${l.priceMissing ? 'price pending' : this.lineShownTotal(l, i)}</span>
           </li>`;
         })}
       </ul>
