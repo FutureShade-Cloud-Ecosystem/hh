@@ -151,6 +151,65 @@ export class HosPosFlowSteps extends LitElement {
         white-space: nowrap;
         border: 0;
       }
+      /* Round 9: at phone width the four steps share the row instead of running off its end: the
+         connectors go (the pills already read as a sequence), each step takes an equal share and
+         shrinks its padding and gap. Below what even that fits, the host's own overflow-x scrolls
+         the row inside itself (the counter's rule for the bar), so nothing is ever clipped. */
+      @media (max-width: 480px) {
+        nav {
+          gap: 4px;
+        }
+        .connector {
+          display: none;
+        }
+        button {
+          flex: 1 1 0;
+          min-width: 0;
+          justify-content: center;
+          gap: 4px;
+          padding: 4px 6px 4px 4px;
+          font-size: 12px;
+        }
+        .num {
+          width: 20px;
+          height: 20px;
+          flex: none;
+        }
+      }
+      @media (max-width: 400px) {
+        nav {
+          gap: 3px;
+        }
+        button {
+          gap: 2px;
+          padding: 3px 4px 3px 3px;
+          font-size: 11px;
+          overflow: hidden;
+        }
+        button span:not(.num):not(.sr) {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          min-width: 0;
+        }
+        .num {
+          width: 16px;
+          height: 16px;
+          font-size: 9px;
+        }
+      }
+      /* Narrower than the four labels can share whole: each step keeps its own full width and the
+         host's overflow-x scrolls the row, rather than cutting a label short. */
+      @media (max-width: 340px) {
+        button {
+          flex: 0 0 auto;
+          overflow: visible;
+        }
+        button span:not(.num):not(.sr) {
+          overflow: visible;
+          text-overflow: clip;
+        }
+      }
     `,
   ];
 

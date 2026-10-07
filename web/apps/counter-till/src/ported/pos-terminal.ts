@@ -1611,6 +1611,9 @@ export class HosPosTerminal extends LitElement {
         min-width: 0;
         max-width: 100%;
         overflow-x: auto;
+        /* Round 9: at phone width the bar takes the whole row under the title instead of sharing
+           it, so the four steps get the full width and fit (the stepper's own phone rules). */
+        flex: 1 1 100%;
       }
       .session {
         flex-wrap: wrap;
