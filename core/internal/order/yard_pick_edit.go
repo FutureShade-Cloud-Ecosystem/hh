@@ -139,8 +139,22 @@ func clearShortfallTx(ctx context.Context, tx pgx.Tx, orderID string, lineNo int
 	if _, err := tx.Exec(ctx, `UPDATE order_lines SET backorder_entered = 0, backorder_base = 0 WHERE order_id = $1 AND line_no = $2`, orderID, lineNo); err != nil {
 		return nil, fmt.Errorf("clear backorder of line %d: %w", lineNo, err)
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM order_line_shortfalls WHERE order_id = $1 AND line_no = $2`, orderID, lineNo); err != nil {
-		return nil, fmt.Errorf("clear shortfall of line %d: %w", lineNo, err)
+	// The row is KEPT and only reset to the line as the edit left it, never deleted: its revision keys
+	// the rep's notices, and a deleted row would restart the count so a later short repeated an
+	// earlier notice's key and went unannounced. While the line has no backorder the row is ignored.
+	tag, err := tx.Exec(ctx, `
+UPDATE order_line_shortfalls sf SET ordered_entered = ol.qty_entered, ordered_base = ol.qty_base,
+       ordered_total_cents = ol.line_total_cents, reason = '', note = '', updated_at = now()
+  FROM order_lines ol WHERE ol.id = sf.order_line_id AND ol.order_id = $1 AND ol.line_no = $2
+   AND ol.qty_entered > 0 AND ol.qty_base > 0`, orderID, lineNo)
+	if err != nil {
+		return nil, fmt.Errorf("reset shortfall of line %d: %w", lineNo, err)
+	}
+	if tag.RowsAffected() == 0 {
+		// A line with no quantity left has no ordered values to hold; its row goes.
+		if _, err := tx.Exec(ctx, `DELETE FROM order_line_shortfalls WHERE order_id = $1 AND line_no = $2`, orderID, lineNo); err != nil {
+			return nil, fmt.Errorf("clear shortfall of line %d: %w", lineNo, err)
+		}
 	}
 	return c, nil
 }

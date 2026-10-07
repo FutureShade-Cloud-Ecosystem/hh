@@ -61,8 +61,13 @@ func TestIntegration_YardPick_AnEditOfAShortLineIsANewOrderQuantity(t *testing.T
 		t.Fatalf("the edit's quantity is the new order quantity, so nothing is left on backorder: %+v", b)
 	}
 	var n int
-	if err := pool.QueryRow(context.Background(), `SELECT count(*) FROM order_line_shortfalls WHERE order_id = $1`, ord).Scan(&n); err != nil || n != 0 {
-		t.Fatalf("the frozen ordered values for the line are cleared: %d %v", n, err)
+	var reason string
+	var ordered int64
+	if err := pool.QueryRow(context.Background(), `SELECT reason, ordered_total_cents, revision FROM order_line_shortfalls WHERE order_id = $1`, ord).Scan(&reason, &ordered, &n); err != nil {
+		t.Fatalf("the shortfall row is kept for its revision: %v", err)
+	}
+	if reason != "" || ordered != 1000 || n != 1 {
+		t.Fatalf("the frozen ordered values are reset to the edit's line and the revision survives: %q %d rev %d", reason, ordered, n)
 	}
 	if _, tot := liveTotals(t, pool, ord); tot != 1000 {
 		t.Fatalf("the money follows the edit's own pricing: %d", tot)
