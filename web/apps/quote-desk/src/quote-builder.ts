@@ -29,6 +29,8 @@
 import { LitElement, css, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import "./quote-workarea.js";
+import "./quote-convert.js";
+import { CONVERT_NOTICE_EVENT } from "./_quote-convert.js";
 import "./panel-seams.js";
 import "./edit-panel.js";
 import "./history-panel.js";
@@ -139,6 +141,8 @@ export class QdQuoteBuilder extends LitElement {
    * it is not cut in two.
    */
   private lastQuoteId = "";
+  /** What a payment settled after the person left the convert surface came to; said on whichever screen they are on. */
+  @state() private convertNotice = "";
 
   // The design system's shared sheet comes first: the toolbar's controls (the
   // search box, the status tabs) and the buttons take their faces from it,
@@ -302,6 +306,21 @@ export class QdQuoteBuilder extends LitElement {
     }
     /* The detail disclosure's seam rows: nothing shows today, so the row
        keeps its own height at zero until a panel lands in the seam. */
+    .away {
+      display: none;
+    }
+    .convert-notice {
+      display: flex;
+      gap: var(--hh-s-12);
+      align-items: center;
+      justify-content: space-between;
+      margin: var(--hh-s-12) var(--hh-s-16);
+      padding: var(--hh-s-12) var(--hh-s-16);
+      border: 1px solid var(--hh-line);
+      border-radius: var(--hh-radius-control);
+      background: var(--hh-widget);
+      color: var(--hh-text);
+    }
     .seams qd-panel-seam {
       display: block;
     }
@@ -319,6 +338,7 @@ export class QdQuoteBuilder extends LitElement {
     this.renderRoot.addEventListener("quote-read", this.onQuoteRead as EventListener);
     this.renderRoot.addEventListener(FLOOR_REFUSAL_DROPPED_EVENT, this.onRefusalDropped as EventListener);
     window.addEventListener(OPEN_SETTINGS_EVENT, this.onOpenSettings);
+    window.addEventListener(CONVERT_NOTICE_EVENT, this.onConvertNotice as EventListener);
   }
 
   protected override willUpdate(changed: Map<string, unknown>): void {
@@ -349,7 +369,15 @@ export class QdQuoteBuilder extends LitElement {
     this.renderRoot.removeEventListener("quote-read", this.onQuoteRead as EventListener);
     this.renderRoot.removeEventListener(FLOOR_REFUSAL_DROPPED_EVENT, this.onRefusalDropped as EventListener);
     window.removeEventListener(OPEN_SETTINGS_EVENT, this.onOpenSettings);
+    window.removeEventListener(CONVERT_NOTICE_EVENT, this.onConvertNotice as EventListener);
   }
+
+  /** A conversion's payment settled after the person left its surface: the outcome is said here. */
+  private readonly onConvertNotice = (event: CustomEvent<{ quoteId: string; text: string }>): void => {
+    this.convertNotice = event.detail.text;
+    // The surface may be gone, and its quote-changed with it: the list is refreshed from here.
+    this.onQuoteChanged(new CustomEvent("quote-changed", { detail: { quoteId: event.detail.quoteId } }));
+  };
 
   protected override updated(changed: Map<string, unknown>): void {
     // The wiring pass: the work area, the picker's own panels and the
@@ -360,6 +388,13 @@ export class QdQuoteBuilder extends LitElement {
     // The page's own title, and (on a change of route, never on the first draw) the page's heading takes focus.
     document.title = this.pageTitle();
     if (changed.has("route") && changed.get("route") !== undefined) void this.focusHeading();
+    // The guided convert surface receives its facts the same way: the router names its quote.
+    const convert = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("quote-convert");
+    if (convert !== null) {
+      convert.client = this.client;
+      convert.quoteId = route.kind === "convert" ? route.id : "";
+      convert.branchName = this.branchDisplayName();
+    }
     // The search box's words are the wiring pass's job like its value (the control's face carries no placeholder).
     const searchBox = this.renderRoot.querySelector<HTMLInputElement>('[data-field="list-search"]');
     if (searchBox !== null) searchBox.placeholder = "Search by number or customer";
@@ -530,6 +565,7 @@ export class QdQuoteBuilder extends LitElement {
     const route = this.route;
     if (route.kind === "list") return "Quotes";
     if (route.kind === "compose") return "New quote";
+    if (route.kind === "convert") return "Convert to order";
     if (this.lastRead.id === route.id) return this.lastRead.ok ? this.lastRead.no : "This quote could not be opened";
     const row = this.rows.find((r) => r.id === route.id);
     return row?.quoteNo ?? "Quote";
@@ -547,6 +583,8 @@ export class QdQuoteBuilder extends LitElement {
       this.renderRoot.querySelector<HTMLElement>('[data-testid="qd-list-title"]')?.focus();
       return;
     }
+    // The convert surface is its own screen and sets its own heading's place; the work area is not what it shows.
+    if (this.route.kind === "convert") return;
     const area = this.renderRoot.querySelector<HTMLElement & { updateComplete?: Promise<unknown> }>("qd-quote-workarea");
     await this.updateComplete;
     await area?.updateComplete;
@@ -605,6 +643,9 @@ export class QdQuoteBuilder extends LitElement {
     const action = control.getAttribute("data-action");
     if (action === "open") {
       this.walk(quoteRoute(control.getAttribute("data-quote") ?? ""));
+    }
+    if (action === "dismiss-convert-notice") {
+      this.convertNotice = "";
     }
     if (action === "refresh") {
       void this.loadList();
@@ -758,6 +799,20 @@ export class QdQuoteBuilder extends LitElement {
   }
 
   override render() {
+    // The convert route shows its own surface; the desk stays mounted behind it (hidden, never removed), so a write still out for the open quote keeps its late answer.
+    return html`
+      ${this.convertNotice === ""
+        ? nothing
+        : html`<div class="convert-notice" role="status" data-testid="qb-convert-notice">
+            <span>${this.convertNotice}</span>
+            <button type="button" class="btn btn-secondary" data-action="dismiss-convert-notice" data-testid="qb-convert-notice-dismiss">Dismiss</button>
+          </div>`}
+      ${this.route.kind === "convert" ? html`<quote-convert data-testid="qc-host"></quote-convert>` : nothing}
+      <div class="${this.route.kind === "convert" ? "away" : ""}">${this.renderDesk()}</div>
+    `;
+  }
+
+  private renderDesk() {
     return html`
       ${this.error !== "" ? html`<header><span class="err" role="alert">${this.error}</span></header>` : nothing}
       <div class="desksplit" data-view=${routeIsQuotePage(this.route) ? "quote" : "list"}>
