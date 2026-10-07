@@ -65,11 +65,14 @@ import (
 // itself is shared (the yard's stage transaction enqueues through the
 // outbox, the quote automation queues through the resolver).
 type smsBelt struct {
-	notifier  notify.Notifier
-	outbox    *messagingprovider.Outbox
-	resolver  *messagingprovider.ConsentResolver
-	prefs     *messagingprovider.PrefsStore
-	policySet bool
+	// quoteStatus re-reads a quote's status when a follow-up notice is delivered, so a notice queued
+	// before the customer answered is dropped. Nil (a belt with no pool) checks nothing.
+	quoteStatus messagingprovider.QuoteStatusReader
+	notifier    notify.Notifier
+	outbox      *messagingprovider.Outbox
+	resolver    *messagingprovider.ConsentResolver
+	prefs       *messagingprovider.PrefsStore
+	policySet   bool
 	// policy is the send-window and rate gate the sms drain consults; the worker's claim store is a
 	// second Outbox over a different pool and must share this one pointer (its rate state is the gate).
 	policy *messagingprovider.SendPolicy

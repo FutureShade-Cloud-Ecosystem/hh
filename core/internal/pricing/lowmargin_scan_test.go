@@ -3,6 +3,7 @@ package pricing
 import (
 	"context"
 	"errors"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"net/http"
 	"net/http/httptest"
@@ -23,14 +24,55 @@ import (
 type fakeScan struct {
 	lines     []LowMarginSaleLine
 	err       error
+	got       LowMarginFilter
 	gotFrom   time.Time
 	gotTo     time.Time
 	gotBranch string
 }
 
-func (f *fakeScan) LowMarginSalesLines(_ context.Context, from, to time.Time, branchID string) ([]LowMarginSaleLine, error) {
-	f.gotFrom, f.gotTo, f.gotBranch = from, to, branchID
-	return f.lines, f.err
+// LowMarginSalesLines mimics the feed's document type arm: it hands back only the lines of the kinds the
+// filter names, as the real query does, so a service that forgot to pass the filter on is caught.
+func (f *fakeScan) LowMarginSalesLines(_ context.Context, flt LowMarginFilter) ([]LowMarginSaleLine, error) {
+	f.got = flt
+	f.gotFrom, f.gotTo, f.gotBranch = flt.From, flt.To, flt.BranchID
+	var out []LowMarginSaleLine
+	for _, ln := range f.lines {
+		if flt.DocType == ScanDocsQuotes && ln.DocType != DocTypeQuote {
+			continue
+		}
+		if flt.DocType == ScanDocsOrders && ln.DocType != DocTypeOrder {
+			continue
+		}
+		if flt.SalespersonID != "" && ln.SalespersonID != flt.SalespersonID {
+			continue
+		}
+		if flt.BranchID != "" && ln.BranchID != flt.BranchID {
+			continue
+		}
+		if flt.BranchIDs != nil && !containsStr(flt.BranchIDs, ln.BranchID) {
+			continue
+		}
+		out = append(out, ln)
+	}
+	return out, f.err
+}
+
+func containsStr(xs []string, x string) bool {
+	for _, v := range xs {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+// globalCaller and branchCaller are the two kinds of staff caller the report's wall tells apart.
+func globalCaller() guards.StaffCaller {
+	return guards.StaffCaller{StaffAuthority: identity.StaffAuthority{Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}}
+}
+
+func branchCaller(branches ...string) guards.StaffCaller {
+	return guards.StaffCaller{StaffAuthority: identity.StaffAuthority{Tier: identity.TierManager, Scope: identity.ScopeBranch, Branches: branches}}
 }
 
 // scanSvc wires a Service with the Brussels SF factor (4.10) + a PAVER policy (target 3300 / floor
@@ -46,7 +88,7 @@ func scanSvc(scan *fakeScan) *Service {
 
 func brusselsLine(id string, price int64, cost *int64) LowMarginSaleLine {
 	return LowMarginSaleLine{
-		OrderLineID: id, OrderID: "ord-" + id, OrderNo: "SO-" + id, SoldAt: time.Now(),
+		DocType: DocTypeOrder, LineID: id, DocID: "ord-" + id, DocNo: "SO-" + id, DocAt: time.Now(),
 		BranchID: "trenton", CustomerType: "RETAIL", ProductID: "brussels", CategoryID: "pavers",
 		SKU: "DBS-UL-BRUSSELS", ProductName: "Unilock Brussels Block", QtyEntered: 40, UOMEntered: "SF",
 		UnitPriceCents: price, PriceUOM: "SF", AvgUnitCostCents: cost,
@@ -55,7 +97,7 @@ func brusselsLine(id string, price int64, cost *int64) LowMarginSaleLine {
 
 func rowByLine(rows []LowMarginScanRow, id string) (LowMarginScanRow, bool) {
 	for _, r := range rows {
-		if r.OrderLineID == id {
+		if r.LineID == id {
 			return r, true
 		}
 	}
@@ -72,7 +114,7 @@ func TestLowMarginScan_GradesActualSoldPrice(t *testing.T) {
 		brusselsLine("healthy", 1400, p64(cost)), // margin ((1400-718)*1e4)/1400 = 4871 bps ≥ 3300 → OMITTED
 		brusselsLine("nocost", 900, nil),         // no product_branch_costs row → INVALID (no cost on file)
 	}}
-	rows, err := scanSvc(scan).LowMarginScan(context.Background(), time.Now().AddDate(0, 0, -30), time.Now(), "")
+	rows, err := scanSvc(scan).LowMarginScan(context.Background(), LowMarginFilter{From: time.Now().AddDate(0, 0, -30), To: time.Now()})
 	if err != nil {
 		t.Fatalf("LowMarginScan: %v", err)
 	}
@@ -122,11 +164,11 @@ func TestLowMarginScan_GradesActualSoldPrice(t *testing.T) {
 	}
 
 	// Worst-first ordering among the valid breaching rows: critical (1552) before warn (2635).
-	if len(rows) >= 2 && rows[0].OrderLineID != "crit" {
-		t.Errorf("rows must be worst-first: got %q first, want crit", rows[0].OrderLineID)
+	if len(rows) >= 2 && rows[0].LineID != "crit" {
+		t.Errorf("rows must be worst-first: got %q first, want crit", rows[0].LineID)
 	}
 	// Invalid rows group at the end (after the two breaching rows).
-	if got := rows[len(rows)-1].OrderLineID; got != "nocost" {
+	if got := rows[len(rows)-1].LineID; got != "nocost" {
 		t.Errorf("invalid rows must group last, got %q last", got)
 	}
 }
@@ -138,7 +180,7 @@ func TestLowMarginScan_ZeroCostAndZeroPriceAreInvalid(t *testing.T) {
 		brusselsLine("zerocost", 900, p64(0)),  // cost 0 → treated as no cost on file → INVALID
 		brusselsLine("zeroprice", 0, p64(175)), // price 0 → ungradeable → INVALID
 	}}
-	rows, err := scanSvc(scan).LowMarginScan(context.Background(), time.Now().AddDate(0, 0, -1), time.Now(), "")
+	rows, err := scanSvc(scan).LowMarginScan(context.Background(), LowMarginFilter{From: time.Now().AddDate(0, 0, -1), To: time.Now()})
 	if err != nil {
 		t.Fatalf("LowMarginScan: %v", err)
 	}
@@ -166,7 +208,7 @@ func TestLowMarginScan_DefaultPolicyBand(t *testing.T) {
 		mk("dflt-crit", 800), // margin ((800-718)*1e4)/800 = 1025 bps < default floor 1200 → CRITICAL
 		mk("dflt-warn", 900), // margin ((900-718)*1e4)/900 = 2022 bps in [1200,3000) → WARN
 	}}
-	rows, err := scanSvc(scan).LowMarginScan(context.Background(), time.Now().AddDate(0, 0, -1), time.Now(), "")
+	rows, err := scanSvc(scan).LowMarginScan(context.Background(), LowMarginFilter{From: time.Now().AddDate(0, 0, -1), To: time.Now()})
 	if err != nil {
 		t.Fatalf("LowMarginScan: %v", err)
 	}
@@ -196,7 +238,7 @@ func TestLowMarginScan_BadWindow(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			_, err := svc.LowMarginScan(context.Background(), c.from, c.to, "")
+			_, err := svc.LowMarginScan(context.Background(), LowMarginFilter{From: c.from, To: c.to})
 			var bre badRequestError
 			if !errors.As(err, &bre) {
 				t.Fatalf("%s: want badRequestError (→400), got %v", c.name, err)
@@ -209,7 +251,7 @@ func TestLowMarginScan_BadWindow(t *testing.T) {
 // (503) rather than a nil-deref panic.
 func TestLowMarginScan_NoFeed(t *testing.T) {
 	svc := NewService(&fakeStore{}) // no scan store wired
-	_, err := svc.LowMarginScan(context.Background(), time.Now().AddDate(0, 0, -1), time.Now(), "")
+	_, err := svc.LowMarginScan(context.Background(), LowMarginFilter{From: time.Now().AddDate(0, 0, -1), To: time.Now()})
 	if !errors.Is(err, errNoDB) {
 		t.Fatalf("unwired scan feed → want errNoDB, got %v", err)
 	}
@@ -227,7 +269,7 @@ func TestLowMarginScanHandler_BadInput_400(t *testing.T) {
 	}
 	for _, url := range bad {
 		rec := httptest.NewRecorder()
-		h.lowMarginScan(rec, httptest.NewRequest(http.MethodGet, url, nil), guards.StaffCaller{})
+		h.lowMarginScan(rec, httptest.NewRequest(http.MethodGet, url, nil), globalCaller())
 		if rec.Code < 400 || rec.Code >= 500 {
 			t.Errorf("%s → status %d, want 4xx", url, rec.Code)
 		}
@@ -241,7 +283,7 @@ func TestLowMarginScanHandler_DefaultsAndOK(t *testing.T) {
 	h := NewHandler(scanSvc(scan), nil)
 
 	rec := httptest.NewRecorder()
-	h.lowMarginScan(rec, httptest.NewRequest(http.MethodGet, "/api/v1/pricing/reports/low-margin/scan", nil), guards.StaffCaller{})
+	h.lowMarginScan(rec, httptest.NewRequest(http.MethodGet, "/api/v1/pricing/reports/low-margin/scan", nil), globalCaller())
 	if rec.Code != http.StatusOK {
 		t.Fatalf("default scan → status %d (%s), want 200", rec.Code, rec.Body.String())
 	}
@@ -252,7 +294,7 @@ func TestLowMarginScanHandler_DefaultsAndOK(t *testing.T) {
 	branch := "5d1b3f6e-0000-4000-9000-000000000001"
 	rec2 := httptest.NewRecorder()
 	h.lowMarginScan(rec2, httptest.NewRequest(http.MethodGet,
-		"/api/v1/pricing/reports/low-margin/scan?from=2026-07-01&to=2026-07-15&branch_id="+branch, nil), guards.StaffCaller{})
+		"/api/v1/pricing/reports/low-margin/scan?from=2026-07-01&to=2026-07-15&branch_id="+branch, nil), globalCaller())
 	if rec2.Code != http.StatusOK {
 		t.Fatalf("valid scan → status %d (%s), want 200", rec2.Code, rec2.Body.String())
 	}

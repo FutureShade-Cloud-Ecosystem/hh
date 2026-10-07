@@ -4842,10 +4842,11 @@ export type PricingLowMarginEntry = {
   reason?: string;
 };
 export type PricingLowMarginScanRow = {
-  order_line_id: string;
-  order_id: string;
-  order_no: string;
-  sold_at: string;
+  doc_type: "quote" | "order";
+  line_id: string;
+  doc_id: string;
+  doc_no: string;
+  doc_at: string;
   branch_id: string;
   customer_id?: string;
   customer_type: string;
@@ -4855,6 +4856,7 @@ export type PricingLowMarginScanRow = {
   qty_entered: number;
   uom_entered: string;
   unit_price_cents: number;
+  disc_pct?: number;
   price_uom: string;
   cost_in_price_uom_cents: number;
   margin_bps: number;
@@ -4862,6 +4864,15 @@ export type PricingLowMarginScanRow = {
   floor_bps: number;
   level: "warn" | "critical" | "invalid";
   reason?: string;
+  salesperson_id?: string;
+  salesperson?: string;
+  cleared_below_floor: boolean;
+  cleared_by_id?: string;
+  cleared_by?: string;
+  clear_authority?: "MANAGER_SCOPE" | "APPROVAL";
+  clear_disc_pct?: number;
+  clear_margin_bps?: number;
+  doc_margin_bps?: number;
 };
 export type PricingQuantityBreakItem = {
   id?: string;
@@ -5257,7 +5268,7 @@ export type PricingAuditLogPage = {
 export type PricingLowMarginScanPage = {
   items: PricingLowMarginScanRow[];
   next_cursor?: string | null;
-  limit?: number;
+  limit: number;
 };
 export type PricingQuantityBreakPage = {
   items: PricingQuantityBreakHeader[];
@@ -5749,6 +5760,8 @@ export type QuoteView = {
   expired: boolean;
   editable_fields: ("line_qty" | "line_add" | "line_remove" | "valid_until")[];
   can_convert: boolean;
+  can_accept: boolean;
+  can_reject: boolean;
   owner_id?: string;
   owner_name?: string;
   lines: QuoteViewLine[];
@@ -5846,6 +5859,28 @@ export type QuoteLineComparison = {
   quote_id: string;
   line_no: number;
   options: QuoteComparisonRow[];
+};
+export type QuoteAcceptOnBehalfRequest = {
+  channel: "phone" | "text" | "email" | "in_person";
+  note?: string;
+  quantities_confirmed: boolean;
+  expected_total_cents: number;
+};
+export type QuoteRejectOnBehalfRequest = {
+  channel: "phone" | "text" | "email" | "in_person";
+  reason_code: "price" | "competitor" | "project_cancelled" | "timing" | "no_response" | "other";
+  note?: string;
+};
+export type QuoteDecisionResult = {
+  quote_id: string;
+  quote_no: string;
+  status: "ACCEPTED" | "LOST";
+  previous_status: "DRAFT" | "SENT";
+  channel?: "phone" | "text" | "email" | "in_person";
+  on_behalf: boolean;
+  decided_at: string;
+  total_cents: number;
+  replayed: boolean;
 };
 export type QuoteConvertRequest = {
   fulfillment?: "PICKUP" | "WILL_CALL";

@@ -16668,13 +16668,15 @@ paths:
       operationId: pricingLowMarginScan
       tags:
         - staff-pricing
-      summary: Grade committed sale lines against current cost in a window
-      description: "The auto-populated low-margin report over the live-sales feed: grades the actual charged price of every committed sale line in the window against current per-branch cost, returning breaching rows worst first and cost-missing lines as invalid. from and to accept RFC3339 or date only."
+      summary: The low margin report, quotes and orders graded against current cost
+      description: "The low margin report the managers scan. It grades the price every document line holds (a committed order line, or a quote line at the quote's own price, net of the line's discount) against current per-branch cost and answers the lines below target (warn) or below the floor (critical), with lines whose cost is unknown as invalid, as a cursor page sorted by margin. Each row names the salesperson, the margin against the floor and the target, whether the line was cleared below the floor and by whom, and the document's own overall margin. from and to are the document's own dates, RFC3339 or date only. Held to the managers who clear or decide a floor and the roles above them, and to the cost and margin list: a role that may not see cost is refused. A caller that is not global scope reads only the documents of the branches it is granted; a branch_id outside the grant is a 403. Deleted quotes, orders and lines never appear."
       x-role: requireStaff
       x-access:
         surfaces:
           - quote-desk
+          - money-desk
         level: read
+        list: low_margin_report
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -16682,13 +16684,13 @@ paths:
         - name: from
           in: query
           required: false
-          description: Lower window bound, RFC3339 or date only
+          description: Lower bound of the document date, RFC3339 or date only (default thirty days back)
           schema:
             type: string
         - name: to
           in: query
           required: false
-          description: Upper window bound, RFC3339 or date only, inclusive of the named day
+          description: Upper bound of the document date, RFC3339 or date only, inclusive of the named day
           schema:
             type: string
         - name: branch_id
@@ -16697,6 +16699,40 @@ paths:
           schema:
             type: string
             format: uuid
+        - name: doc_type
+          in: query
+          required: false
+          description: Which documents to read, quotes, orders or both (the default)
+          schema:
+            type: string
+            enum:
+              - quotes
+              - orders
+              - both
+        - name: salesperson_id
+          in: query
+          required: false
+          description: Only this salesperson's documents (a staff user id)
+          schema:
+            type: string
+            format: uuid
+        - name: cleared_only
+          in: query
+          required: false
+          description: Only the lines below the floor now that a clearing stamp covers
+          schema:
+            type: boolean
+            default: false
+        - name: sort
+          in: query
+          required: false
+          description: Order by the line's margin, worst first (margin_asc, the default) or best first; lines with no margin come last either way
+          schema:
+            type: string
+            enum:
+              - margin_asc
+              - margin_desc
+            default: margin_asc
       responses:
         "200":
           description: The page of graded rows
@@ -19854,6 +19890,112 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/QuoteConvertResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/quotes/{id}/accept:
+    post:
+      operationId: quoteAcceptOnBehalf
+      tags:
+        - staff-quote
+      summary: Record that the customer accepted a quote by phone, text, email or in person
+      description: "A salesperson marks a quote accepted on the customer's behalf. SENT moves to ACCEPTED, and so does a DRAFT that has never been sent provided it has at least one line: a customer who agrees to what the salesperson read out has accepted a quote that was never sent. The body names the channel the customer used, an optional note, and quantities_confirmed, the staff member's statement that the customer confirmed the quantities; it is required and must be true. It also names expected_total_cents, the quote total the staff member read to the customer, which is required: if the quote's total is anything else when the accept commits (a colleague edited a line meanwhile) the accept is refused with a 409 naming both totals and nothing is written. The audit row carries the total as amount_cents, and the result returns it as total_cents. A staff accept has no quote_acceptances row (that record is the customer's: a share link and a typed name); its record is the QUOTE_ACCEPTED audit row with purpose STAFF_QUOTE_DECISION. The status move, the audit row (staff on the customer's behalf, channel, note, the statement) and the change history row commit in one transaction, and the quote's follow-ups stop. A note carrying a long run of digits is redacted whole at the audit boundary. Limited to the selling roles that may convert, by the same rule, and to the caller's branches. A 409 names why in words: expired, already accepted (naming the order when there is one), converted, lost, or a draft with no lines. An optional Idempotency-Key header (a UUID) makes a retry safe: a repeat under the same key on the same quote answers the first outcome with replayed true and writes nothing, whatever the quote's status is by then; the same key with a different channel is a 409."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - quote-desk
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: A UUID chosen once per decision and resent unchanged on every retry of it. Scoped to the quote.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteAcceptOnBehalfRequest"
+      responses:
+        "200":
+          description: The quote's new status and the decision's record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteDecisionResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          description: "quantities_confirmed is missing or false: the staff member has not stated that the customer confirmed the quantities"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/quotes/{id}/reject:
+    post:
+      operationId: quoteRejectOnBehalf
+      tags:
+        - staff-quote
+      summary: Record that the customer declined a quote
+      description: "A salesperson marks a quote lost on the customer's behalf. A SENT or never sent DRAFT quote moves to LOST with the channel the customer used, a reason code (price, competitor, project_cancelled, timing, no_response or other) and a note, which is required when the reason is other. The status move, the audit row and the change history row commit in one transaction, the quote's soft stock holds are released on it, and the quote's follow-ups stop. The refusals are the accept door's, in words with a 409: expired, already accepted or converted (an accepted quote is never turned into a lost one here), and already lost. Limited to the selling roles that may convert, by the same rule, and to the caller's branches. An optional Idempotency-Key header (a UUID) makes a retry safe exactly as it does on accept; the same key on the accept door, or with another channel, is a 409."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - quote-desk
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: A UUID chosen once per decision and resent unchanged on every retry of it. Scoped to the quote.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteRejectOnBehalfRequest"
+      responses:
+        "200":
+          description: The quote's new status and the decision's record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteDecisionResult"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -42748,12 +42890,13 @@ components:
           type: string
     PricingLowMarginScanRow:
       type: object
-      description: "One graded row of the live-sales low-margin scan: the actual sold price graded against current per-branch cost. level is warn (below target, at or above floor), critical (below floor) or invalid (cost unknown or a non-positive charged price). Money is pre-tax."
+      description: "One graded row of the low margin report: a document line (a committed order line or a quote line) graded at the price the document holds, net of the line's discount, against current per-branch cost. level is warn (below target, at or above floor), critical (below floor) or invalid (cost unknown or a non-positive price). Money is pre-tax."
       required:
-        - order_line_id
-        - order_id
-        - order_no
-        - sold_at
+        - doc_type
+        - line_id
+        - doc_id
+        - doc_no
+        - doc_at
         - branch_id
         - customer_type
         - product_id
@@ -42768,18 +42911,25 @@ components:
         - target_bps
         - floor_bps
         - level
+        - cleared_below_floor
       properties:
-        order_line_id:
+        doc_type:
+          type: string
+          enum:
+            - quote
+            - order
+        line_id:
           type: string
           format: uuid
-        order_id:
+        doc_id:
           type: string
           format: uuid
-        order_no:
+        doc_no:
           type: string
-        sold_at:
+        doc_at:
           type: string
           format: date-time
+          description: When the document was created
         branch_id:
           type: string
           format: uuid
@@ -42802,7 +42952,11 @@ components:
         unit_price_cents:
           type: integer
           format: int64
-          description: The actual sold price per price_uom
+          description: The price the document holds per price_uom, net of the line's discount percent
+        disc_pct:
+          type: integer
+          format: int32
+          description: The line's discount percent, absent when none
         price_uom:
           type: string
         cost_in_price_uom_cents:
@@ -42812,6 +42966,7 @@ components:
         margin_bps:
           type: integer
           format: int64
+          description: The line's margin off its own total and cost, each rounded once, the figures the document margin sums
         target_bps:
           type: integer
           format: int64
@@ -42826,7 +42981,39 @@ components:
             - invalid
         reason:
           type: string
-          description: Set only when level is invalid
+        salesperson_id:
+          type: string
+          format: uuid
+          description: The document's salesperson, the quote's salesperson else its creator
+        salesperson:
+          type: string
+          description: The salesperson's display label
+        cleared_below_floor:
+          type: boolean
+          description: True only when the line is below its floor now and a clearing stamp covers it. The stamp stands for the discount it cleared and anything shallower, so a line since discounted deeper, or since brought back above the floor, is not cleared.
+        cleared_by_id:
+          type: string
+          format: uuid
+        cleared_by:
+          type: string
+          description: Who cleared it, as a display label, on any stamped line whatever the verdict
+        clear_authority:
+          type: string
+          enum:
+            - MANAGER_SCOPE
+            - APPROVAL
+        clear_disc_pct:
+          type: integer
+          format: int32
+          description: The discount percent the stamp cleared, beside the line's current disc_pct
+        clear_margin_bps:
+          type: integer
+          format: int64
+          description: The margin the stamp cleared at, beside the line's current margin_bps
+        doc_margin_bps:
+          type: integer
+          format: int64
+          description: The document's own overall margin over its product lines, absent when any of them has no cost on file
     PricingQuantityBreakItem:
       type: object
       description: "One tier of a schedule: a [from_qty, to_qty) band in the header's threshold_uom with an adjustment of value_type. A null to_qty is the open-ended top tier."
@@ -44283,6 +44470,7 @@ components:
       type: object
       required:
         - items
+        - limit
       properties:
         items:
           type: array
@@ -45899,7 +46087,7 @@ components:
           format: int32
     QuoteView:
       type: object
-      description: "One quote as the staff builder renders it: the header, the lines, the money, and the server-computed edit and convert offers. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8). An absent editable_fields or a false can_convert means no; the client evaluates nothing."
+      description: "One quote as the staff builder renders it: the header, the lines, the money, and the server-computed edit, convert, accept and reject offers. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8). An absent editable_fields or a false offer means no; the client evaluates nothing."
       required:
         - id
         - quote_no
@@ -45910,6 +46098,8 @@ components:
         - expired
         - editable_fields
         - can_convert
+        - can_accept
+        - can_reject
         - lines
         - subtotal_cents
         - tax_cents
@@ -45957,6 +46147,12 @@ components:
         can_convert:
           type: boolean
           description: Whether this caller may convert this quote to an order right now
+        can_accept:
+          type: boolean
+          description: Whether this caller may record the customer's accept on this quote right now (a selling role, SENT or a never sent draft with a line, not expired); the same conjunction the accept door enforces
+        can_reject:
+          type: boolean
+          description: Whether this caller may record the customer's decline on this quote right now (a selling role, SENT or a never sent draft, not expired); the same conjunction the reject door enforces
         owner_id:
           type: string
           format: uuid
@@ -46281,6 +46477,106 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/QuoteComparisonRow"
+    QuoteAcceptOnBehalfRequest:
+      type: object
+      required:
+        - channel
+        - quantities_confirmed
+        - expected_total_cents
+      properties:
+        channel:
+          type: string
+          enum:
+            - phone
+            - text
+            - email
+            - in_person
+          description: How the customer told the salesperson
+        note:
+          type: string
+          maxLength: 500
+          description: The salesperson's own note for the record
+        quantities_confirmed:
+          type: boolean
+          description: The staff member's statement that the customer confirmed the quantities. Required, and must be true.
+        expected_total_cents:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The quote total, in cents, the staff member read to the customer. Required. The accept is refused with a 409 if the quote's total differs when it commits.
+    QuoteRejectOnBehalfRequest:
+      type: object
+      required:
+        - channel
+        - reason_code
+      properties:
+        channel:
+          type: string
+          enum:
+            - phone
+            - text
+            - email
+            - in_person
+          description: How the customer told the salesperson
+        reason_code:
+          type: string
+          enum:
+            - price
+            - competitor
+            - project_cancelled
+            - timing
+            - no_response
+            - other
+        note:
+          type: string
+          maxLength: 500
+          description: The salesperson's own note; required when the reason is other
+    QuoteDecisionResult:
+      type: object
+      required:
+        - quote_id
+        - quote_no
+        - status
+        - previous_status
+        - on_behalf
+        - decided_at
+        - total_cents
+        - replayed
+      properties:
+        quote_id:
+          type: string
+        quote_no:
+          type: string
+        status:
+          type: string
+          enum:
+            - ACCEPTED
+            - LOST
+        previous_status:
+          type: string
+          enum:
+            - DRAFT
+            - SENT
+        channel:
+          type: string
+          enum:
+            - phone
+            - text
+            - email
+            - in_person
+        on_behalf:
+          type: boolean
+          description: Always true, staff recorded the decision for the customer
+        decided_at:
+          type: string
+          format: date-time
+        total_cents:
+          type: integer
+          format: int64
+          description: The quote total at the decision, the amount accepted or lost
+        replayed:
+          type: boolean
+          description: True when this is the first outcome of an earlier request under the same key; nothing was written
     QuoteConvertRequest:
       type: object
       description: The optional conversion body. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8). An absent or empty fulfillment leaves the column out of the insert and the database default applies; DELIVERY is refused in words because a delivery is booked by scheduling a stop, not chosen at conversion.

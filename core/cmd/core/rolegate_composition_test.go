@@ -131,7 +131,7 @@ func xrKnownLevel(s string) bool {
 // census calls staff carries a surface and a level in roleconfig's
 // vocabulary, and no registered route the census does not call staff
 // carries an annotation. This test leans on two things it cannot see: the
-// census half (all 606 document operations annotated, including the 31
+// census half (all 608 document operations annotated, including the 31
 // ledgered routes not yet registered) is the plain TestCensusStaffRoutes-
 // CarrySurfaceAndLevel beside this file, and the fact that the walk's
 // passing means the gate is truly in the chain is the registrar's own
@@ -179,7 +179,7 @@ func assertRouteAnnotated(t *testing.T, pattern string, route apigen.Route) {
 	if !xrKnownLevel(route.Level) {
 		t.Fatalf("staff route %s (%s) names unknown level %q", pattern, route.OperationID, route.Level)
 	}
-	if route.List != "" && route.List != roleconfig.SettingPricingEditors && route.List != roleconfig.SettingCostVisibility {
+	if route.List != "" && route.List != roleconfig.SettingPricingEditors && route.List != roleconfig.SettingCostVisibility && route.List != authz.ListLowMarginReport {
 		t.Fatalf("staff route %s (%s) names list %q, which no gate reader knows", pattern, route.OperationID, route.List)
 	}
 }

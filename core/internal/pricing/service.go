@@ -2,6 +2,8 @@ package pricing
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -160,7 +162,7 @@ type pricingStore interface {
 // *Repository, like batchStore) rather than a method on the zero-trust pricingStore, which reads
 // pricing-owned tables only. nil until wired; LowMarginScan returns errNoDB when it is unset.
 type salesScanStore interface {
-	LowMarginSalesLines(ctx context.Context, from, to time.Time, branchID string) ([]LowMarginSaleLine, error)
+	LowMarginSalesLines(ctx context.Context, f LowMarginFilter) ([]LowMarginSaleLine, error)
 }
 
 // txAuditStore is the transactional half of the audit append: the same row
@@ -1670,28 +1672,49 @@ func resolveErrReason(err error) string {
 // margin_bps = ((unit_price_cents − costInPriceUOM) × 10000) / unit_price_cents  (price ≤ 0 → invalid;
 // cost > price → negative margin → critical). Cost-missing / non-positive-price lines are SURFACED as
 // invalid, never omitted (design #5: a coalesced cost=0 would render 100% margin and hide the blindness).
-func (s *Service) LowMarginScan(ctx context.Context, from, to time.Time, branchID string) ([]LowMarginScanRow, error) {
-	if from.IsZero() || to.IsZero() {
+func (s *Service) LowMarginScan(ctx context.Context, f LowMarginFilter) ([]LowMarginScanRow, error) {
+	if f.From.IsZero() || f.To.IsZero() {
 		return nil, badReq("from and to are required")
 	}
-	if !to.After(from) {
+	if !f.To.After(f.From) {
 		return nil, badReq("to must be after from")
+	}
+	switch f.DocType {
+	case "":
+		f.DocType = ScanDocsBoth
+	case ScanDocsQuotes, ScanDocsOrders, ScanDocsBoth:
+	default:
+		return nil, badReq("doc_type must be quotes, orders or both")
+	}
+	switch f.Sort {
+	case "":
+		f.Sort = SortMarginAsc
+	case SortMarginAsc, SortMarginDesc:
+	default:
+		return nil, badReq("sort must be margin_asc or margin_desc")
 	}
 	if s.scan == nil {
 		return nil, errNoDB // the live-sales feed seam is unwired (DB-free build)
 	}
-	lines, err := s.scan.LowMarginSalesLines(ctx, from, to, branchID)
+	lines, err := s.scan.LowMarginSalesLines(ctx, f)
 	if err != nil {
 		return nil, fmt.Errorf("low-margin scan: %w", err)
 	}
+	docMargins := documentMargins(lines)
 	out := make([]LowMarginScanRow, 0, len(lines))
 	for _, ln := range lines {
 		row := LowMarginScanRow{
-			OrderLineID: ln.OrderLineID, OrderID: ln.OrderID, OrderNo: ln.OrderNo, SoldAt: ln.SoldAt,
+			DocType: ln.DocType, LineID: ln.LineID, DocID: ln.DocID, DocNo: ln.DocNo, DocAt: ln.DocAt,
 			BranchID: ln.BranchID, CustomerID: ln.CustomerID, CustomerType: ln.CustomerType,
 			ProductID: ln.ProductID, SKU: ln.SKU, ProductName: ln.ProductName,
 			QtyEntered: ln.QtyEntered, UOMEntered: ln.UOMEntered,
-			UnitPriceCents: ln.UnitPriceCents, PriceUOM: ln.PriceUOM,
+			UnitPriceCents: netUnitCents(ln.UnitPriceCents, ln.DiscPct), DiscPct: ln.DiscPct, PriceUOM: ln.PriceUOM,
+			SalespersonID: ln.SalespersonID, Salesperson: ln.SalespersonLabel,
+			DocMarginBps: docMargins[docKey(ln)],
+		}
+		if ln.ClearStamped {
+			row.ClearedByID, row.ClearedBy, row.ClearAuthority = ln.ClearedByID, ln.ClearedByLabel, ln.ClearAuthority
+			row.ClearDiscPct, row.ClearMarginBps = ln.ClearStampDiscPct, ln.ClearStampMarginBps
 		}
 		// Category target/floor via the SAME resolution the classifier uses: the policy row when
 		// present, else the default target/floor band (finding #12, a no-policy category is graded
@@ -1712,7 +1735,7 @@ func (s *Service) LowMarginScan(ctx context.Context, from, to time.Time, branchI
 			continue
 		}
 		// A non-positive charged price cannot be graded (margin denominator) → SURFACED invalid.
-		if ln.UnitPriceCents <= 0 {
+		if row.UnitPriceCents <= 0 {
 			row.Level, row.Reason = "invalid", "sold price must be greater than 0"
 			out = append(out, row)
 			continue
@@ -1727,27 +1750,183 @@ func (s *Service) LowMarginScan(ctx context.Context, from, to time.Time, branchI
 		}
 		costInPriceUOM := centsTimesFactor(*ln.AvgUnitCostCents, fRat)
 		row.CostInPriceUOMCents = costInPriceUOM
-		row.MarginBps = marginBps(ln.UnitPriceCents, costInPriceUOM)
+		row.MarginBps = marginBps(row.UnitPriceCents, costInPriceUOM)
+		if ln.LineTotalCents > 0 && ln.LineCostCents != nil && *ln.LineCostCents > 0 {
+			// The line's own total and cost, each rounded once: the figure the document's margin is
+			// summed from, so a one line document's row and document margins are the one number.
+			// (Off a rounded unit price the two disagreed by a few basis points.)
+			row.MarginBps = marginBps(ln.LineTotalCents, *ln.LineCostCents)
+		}
 		level, breaching := classifyMargin(row.MarginBps, target, floor)
 		if !breaching {
 			continue // a healthy line (margin ≥ target) is omitted, proves the filter
 		}
 		row.Level = level
+		// Cleared means below the floor now AND covered by a stamp: the stamp stands for the discount
+		// it cleared and anything shallower. A stamp that names no discount covers nothing.
+		row.ClearedBelowFloor = level == "critical" && ln.ClearStamped &&
+			ln.ClearStampDiscPct != nil && ln.DiscPct <= *ln.ClearStampDiscPct
 		out = append(out, row)
 	}
-	// Worst-first among valid breaching rows; invalid ("no cost") rows group at the end so they stay
-	// visible without skewing the margin ordering (their MarginBps is 0).
-	sort.SliceStable(out, func(i, j int) bool {
-		iInvalid, jInvalid := out[i].Level == "invalid", out[j].Level == "invalid"
-		if iInvalid != jInvalid {
-			return !iInvalid
+	if f.ClearedOnly {
+		// Cleared only is the lines below the floor now that a stamp covers (an invalid row, which
+		// could not be graded, is not one).
+		kept := out[:0]
+		for _, r := range out {
+			if r.ClearedBelowFloor {
+				kept = append(kept, r)
+			}
 		}
-		return out[i].MarginBps < out[j].MarginBps
-	})
+		out = kept
+	}
+	// Valid breaching rows by margin, worst first unless descending; invalid ("no cost") rows group at
+	// the end in either order so they stay visible without skewing the margin ordering (their
+	// MarginBps is 0). The line id breaks every tie, so the order is total and a cursor can name a
+	// place in it.
+	sort.SliceStable(out, func(i, j int) bool { return scanRowBefore(out[i], out[j], f.Sort == SortMarginDesc) })
 	return out, nil
 }
 
+// scanRowBefore is the report's total order: graded rows before invalid ones, then by margin
+// (ascending, or descending when desc), then by line id.
+func scanRowBefore(a, b LowMarginScanRow, desc bool) bool {
+	aInvalid, bInvalid := a.Level == "invalid", b.Level == "invalid"
+	if aInvalid != bInvalid {
+		return !aInvalid
+	}
+	if a.MarginBps != b.MarginBps {
+		if desc {
+			return a.MarginBps > b.MarginBps
+		}
+		return a.MarginBps < b.MarginBps
+	}
+	return a.LineID < b.LineID
+}
+
+// The report's page sizes, the contract's Limit parameter.
+const (
+	scanPageDefault = 50
+	scanPageMax     = 200
+)
+
+// scanCursor names a place in the report's order: the last row served, and the sort it was served
+// under (a cursor is only good for the order it came from).
+type scanCursor struct {
+	Sort    string `json:"s"`
+	Invalid bool   `json:"i,omitempty"`
+	Margin  int64  `json:"m"`
+	LineID  string `json:"l"`
+}
+
+func encodeScanCursor(c scanCursor) string {
+	b, _ := json.Marshal(c)
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+func decodeScanCursor(raw string) (scanCursor, bool) {
+	var c scanCursor
+	b, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil || json.Unmarshal(b, &c) != nil || c.LineID == "" {
+		return scanCursor{}, false
+	}
+	return c, true
+}
+
+// LowMarginScanPage is the report as one cursor page: the rows LowMarginScan answers, after the
+// cursor's place in their order (the start when cursor is empty), at most limit of them (0 is the
+// default of fifty, the most is two hundred). The cursor is a place in the order, not a count, so a
+// row that appears or goes between pages never repeats or skips a row the walker has not reached.
+func (s *Service) LowMarginScanPage(ctx context.Context, f LowMarginFilter, cursor string, limit int) (LowMarginPage, error) {
+	switch {
+	case limit == 0:
+		limit = scanPageDefault
+	case limit < 0 || limit > scanPageMax:
+		return LowMarginPage{}, badReq("limit must be between 1 and 200")
+	}
+	sortKey := f.Sort
+	if sortKey == "" {
+		sortKey = SortMarginAsc
+	}
+	var after *LowMarginScanRow
+	if cursor != "" {
+		c, ok := decodeScanCursor(cursor)
+		if !ok || c.Sort != sortKey {
+			return LowMarginPage{}, badReq("cursor is not valid for this report, start again without one")
+		}
+		after = &LowMarginScanRow{LineID: c.LineID, MarginBps: c.Margin}
+		if c.Invalid {
+			after.Level = "invalid"
+		}
+	}
+	rows, err := s.LowMarginScan(ctx, f)
+	if err != nil {
+		return LowMarginPage{}, err
+	}
+	desc := sortKey == SortMarginDesc
+	start := 0
+	if after != nil {
+		start = sort.Search(len(rows), func(i int) bool { return scanRowBefore(*after, rows[i], desc) })
+	}
+	rows = rows[start:]
+	page := LowMarginPage{Items: []LowMarginScanRow{}, Limit: limit}
+	if len(rows) > limit {
+		last := rows[limit-1]
+		next := encodeScanCursor(scanCursor{Sort: sortKey, Invalid: last.Level == "invalid", Margin: last.MarginBps, LineID: last.LineID})
+		page.NextCursor = &next
+		rows = rows[:limit]
+	}
+	page.Items = append(page.Items, rows...)
+	return page, nil
+}
+
 // - helpers -
+
+// docKey names a line's document across the two kinds, whose ids are separate id spaces.
+func docKey(ln LowMarginSaleLine) string { return ln.DocType + ":" + ln.DocID }
+
+// documentMargins is each document's own overall margin in basis points over its product lines:
+// revenue is the lines' totals (net of discount), cost the lines' cost totals. A document with any
+// line whose cost is unknown or not positive, or whose revenue is not positive, has NO entry: a
+// margin over the costed lines alone would read as the document's and hide the blindness (design #5).
+func documentMargins(lines []LowMarginSaleLine) map[string]*int64 {
+	type tot struct {
+		revenue, cost int64
+		blind         bool
+	}
+	byDoc := map[string]*tot{}
+	for _, ln := range lines {
+		t := byDoc[docKey(ln)]
+		if t == nil {
+			t = &tot{}
+			byDoc[docKey(ln)] = t
+		}
+		if ln.LineCostCents == nil || *ln.LineCostCents <= 0 {
+			t.blind = true
+			continue
+		}
+		t.revenue += ln.LineTotalCents
+		t.cost += *ln.LineCostCents
+	}
+	out := make(map[string]*int64, len(byDoc))
+	for k, t := range byDoc {
+		if t.blind || t.revenue <= 0 {
+			continue
+		}
+		m := marginBps(t.revenue, t.cost)
+		out[k] = &m
+	}
+	return out
+}
+
+// netUnitCents is a document line's unit price taken net of its discount percent, half up once, the
+// arithmetic the quote's own discount write applies (quote.discountUnitCents). A zero or negative
+// percent leaves the stored price alone.
+func netUnitCents(unitCents int64, discPct int) int64 {
+	if discPct <= 0 {
+		return unitCents
+	}
+	return (unitCents*int64(100-discPct) + 50) / 100
+}
 
 func withinValidity(r Rule, now time.Time) bool {
 	if r.ValidFrom != nil && now.Before(*r.ValidFrom) {

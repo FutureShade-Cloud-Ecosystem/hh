@@ -907,14 +907,14 @@ func TestIntegration_LowMarginScan(t *testing.T) {
 	pool := intPool(t)
 	svc := realSvc(pool)
 
-	rows, err := svc.LowMarginScan(ctx, time.Now().AddDate(0, 0, -30), time.Now().Add(time.Hour), "")
+	rows, err := svc.LowMarginScan(ctx, LowMarginFilter{From: time.Now().AddDate(0, 0, -30), To: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatalf("LowMarginScan: %v", err)
 	}
 	byOrder := map[string]LowMarginScanRow{}
 	for _, r := range rows {
 		if r.Level != "invalid" {
-			byOrder[r.OrderNo] = r
+			byOrder[r.DocNo] = r
 		}
 	}
 
@@ -928,8 +928,11 @@ func TestIntegration_LowMarginScan(t *testing.T) {
 	if crit.Level != "critical" {
 		t.Errorf("SO-DPA3-CRIT level = %q, want critical", crit.Level)
 	}
-	if crit.MarginBps != 1552 {
-		t.Errorf("SO-DPA3-CRIT margin_bps = %d, want 1552 ((850-718)*1e4/850)", crit.MarginBps)
+	// The margin is the line's own total and cost, each rounded once (34000 over 28700), the figure the
+	// document's margin sums from: (34000-28700)*1e4/34000 = 1558. Off the rounded unit figures it
+	// read 1552, a few basis points away from the document's own margin for the same one line.
+	if crit.MarginBps != 1558 {
+		t.Errorf("SO-DPA3-CRIT margin_bps = %d, want 1558 ((34000-28700)*1e4/34000)", crit.MarginBps)
 	}
 	if crit.CostInPriceUOMCents != 718 {
 		t.Errorf("SO-DPA3-CRIT cost/SF = %d, want 718 (175 x 4.10 = 717.5 exact, half away from zero)", crit.CostInPriceUOMCents)
@@ -945,13 +948,13 @@ func TestIntegration_LowMarginScan(t *testing.T) {
 	if warn.Level != "warn" {
 		t.Errorf("SO-DPA3-WARN level = %q, want warn", warn.Level)
 	}
-	if warn.MarginBps != 2635 {
-		t.Errorf("SO-DPA3-WARN margin_bps = %d, want 2635 ((975-718)*1e4/975)", warn.MarginBps)
+	if warn.MarginBps != 2641 {
+		t.Errorf("SO-DPA3-WARN margin_bps = %d, want 2641 ((39000-28700)*1e4/39000)", warn.MarginBps)
 	}
 
 	// The healthy 1400¢/SF line on the WARN order must NOT surface, only the 975¢/SF WARN line does.
 	for _, r := range rows {
-		if r.OrderNo == "#SO-DPA3-WARN" && r.UnitPriceCents == 1400 {
+		if r.DocNo == "#SO-DPA3-WARN" && r.UnitPriceCents == 1400 {
 			t.Errorf("healthy 1400¢/SF line must be omitted, but it surfaced: %+v", r)
 		}
 	}
