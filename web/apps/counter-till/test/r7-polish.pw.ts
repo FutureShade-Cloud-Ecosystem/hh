@@ -264,17 +264,25 @@ test("a popped window never saves the layout its opener told it, even when the w
   await page.getByRole("button", { name: "Pop out" }).click();
   const popped = await poppedPromise;
   const puts: string[] = [];
+  let rereads = 0;
   popped.on("request", (request) => {
-    if (request.method() === "PUT" && request.url().includes("/api/v1/pos/workspace")) puts.push(request.postData() ?? "");
+    if (!request.url().includes("/api/v1/pos/workspace")) return;
+    if (request.method() === "PUT") puts.push(request.postData() ?? "");
+    if (request.method() === "GET") rereads += 1;
   });
   await expect(popped.getByTestId("pos-twopane")).toBeVisible();
   // Another workspace gesture (the results view flip) saves through the failed re-read: no save may
   // carry the hinted layout (it is held back until the row reads again).
   await popped.getByTestId("pos-browse").locator("summary").click();
+  rereads = 0; // the window's own load read is behind us; only the gesture's save counts from here
   const flip = popped.locator('[data-testid^="lookup-view-"][aria-pressed="false"]').first();
   await flip.click();
   await expect(popped.locator('[data-testid^="lookup-view-"][aria-pressed="false"]')).toHaveCount(1);
-  await popped.waitForTimeout(1500);
+  // A save DID fire (it re-read the stored row, which is refused here), so the hold back is what kept
+  // the PUT away, not a save that never ran; and no PUT carries the hinted layout.
+  await expect.poll(() => rereads, { timeout: 5000 }).toBeGreaterThan(0);
+  await popped.waitForTimeout(500);
+  expect(puts, "the held back save wrote nothing while the row could not be read").toEqual([]);
   for (const body of puts) expect(body).not.toContain('"counter_layout":"PANELS"');
   await popped.close();
 });
