@@ -6960,6 +6960,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
             .branchId=${this.branchId}
             .subject=${this.discountSubject()}
             .existing=${this.discountExisting()}
+            .ticketBaseCents=${this.discountTarget.kind === 'ticket' ? this.ticketBaseCents() : null}
             @pos-discount-apply=${(e: CustomEvent<CartDiscount>) => this.onDiscountApply(e.detail)}
             @pos-discount-remove=${() => this.onDiscountRemove()}
             @pos-discount-close=${() => (this.discountTarget = null)}

@@ -562,6 +562,9 @@ const DISCOUNT_APPROVERS = [
   { id: "c0c0a0a0-0000-4000-8000-000000000002", name: "Branch manager", role_label: "Branch Manager" },
 ];
 
+const ZERO_TOTAL_WORDS =
+  "a sale cannot total $0.00: a discount must leave something to pay (a ticket discount can take off at most the ticket total less one cent)";
+
 function discountRefusal(error) {
   return { refusal: { status: 422, body: { error } } };
 }
@@ -1585,6 +1588,10 @@ const server = createServer(async (request, response) => {
         return;
       }
       const subtotal = discounted.nets.reduce((sum, n) => sum + n, 0);
+      if (discounted.discountCents > 0 && subtotal <= 0) {
+        respondJson(response, 422, { error: ZERO_TOTAL_WORDS });
+        return;
+      }
       const tax = taxCents(subtotal);
       previewCalls += 1;
       respondJson(response, 200, {
@@ -1684,6 +1691,10 @@ const server = createServer(async (request, response) => {
       const discounted = applyStubDiscounts(grossTotals, lines, parsed.discount);
       if (discounted.refusal) {
         respondJson(response, discounted.refusal.status, discounted.refusal.body);
+        return;
+      }
+      if (discounted.discountCents > 0 && discounted.nets.reduce((sum, n) => sum + n, 0) <= 0) {
+        respondJson(response, 422, { error: ZERO_TOTAL_WORDS });
         return;
       }
       for (let index = 0; index < priced.length; index += 1) {

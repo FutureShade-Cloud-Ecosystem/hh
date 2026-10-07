@@ -182,24 +182,23 @@ for (const layout of ["stepper", "panels"] as const) {
   });
 }
 
-test("an approver is required, a discount the ring refuses says so in its words, and a parked ticket cannot lose one", async ({
-  page,
-}) => {
+test("a discount the ring refuses says so in its words, and removing it puts the plain total back", async ({ page }) => {
   await signIn(page, "stepper");
   await ensureSession(page);
   await tenHolland(page);
+  // More than the whole line: the ring's own refusal reads in the total row, no figure guessed.
+  await giveDiscount(page, () => page.getByTestId("pos-line-discount").click(), "amount", "500", "Sales manager · Sales Manager");
   await openPaymentStep(page, "stepper");
-  // More than the whole ticket: the ring's own refusal reads in the total row, no figure guessed.
-  await giveDiscount(page, () => page.getByTestId("pos-ticket-discount").click(), "amount", "500", "Sales manager · Sales Manager");
   const totals = page.getByTestId("pos-totals-card");
-  await expect(totals.getByTestId("pos-preview-refused")).toContainText("a discount cannot be more than the ticket");
+  await expect(totals.getByTestId("pos-preview-refused")).toContainText("a discount cannot be more than the line");
   await expect(totals.getByTestId("pos-preview-total")).toHaveCount(0);
-  // Fix it, then remove it: the discount row and the chip go, the total is the plain one.
-  await page.getByTestId("pos-ticket-discount").click();
+  // Remove it: the total is the plain one.
+  await openStep(page, "items");
+  await page.getByTestId("pos-line-discount-chip").click();
   await page.getByTestId("discount-remove").click();
+  await openPaymentStep(page, "stepper");
   await expect(totals.getByTestId("pos-preview-total")).toContainText("$45.20");
-  await expect(totals.getByTestId("pos-ticket-discount-row")).toHaveCount(0);
-  await expect(page.getByTestId("pos-ticket-discount")).toContainText("Discount the ticket");
+  await expect(totals.getByTestId("pos-ticket-discount")).toContainText("Discount the ticket");
 });
 
 test("when the managers cannot be read the dialog says so and applies nothing", async ({ page }) => {
@@ -276,4 +275,29 @@ test("a manager's yes is for the line and quantity it was given: change either a
   await expect(page.getByTestId("pos-ticket-discount-row")).toHaveCount(0);
   await expect(page.getByTestId("pos-ticket-discount")).toContainText("Discount the ticket");
   await expect(page.getByText("The ticket discount was removed because the ticket changed. Ask a manager again.")).toBeVisible();
+});
+
+test("a ticket discount cannot take the whole ticket: the dialog says the rule and will not apply past it", async ({ page }) => {
+  await signIn(page, "stepper");
+  await ensureSession(page);
+  await tenHolland(page);
+  await openPaymentStep(page, "stepper");
+  await page.getByTestId("pos-ticket-discount").click();
+  await expect(page.getByTestId("discount-ticket-rule")).toContainText(
+    "A ticket discount must leave something to pay: the most you can take off is $39.99 (the ticket total less one cent).",
+  );
+  await page.getByTestId("discount-approver").selectOption({ label: "Sales manager · Sales Manager" });
+  await page.getByTestId("discount-value").fill("100");
+  await expect(page.getByTestId("discount-apply")).toBeDisabled();
+  await page.getByTestId("discount-mode-amount").click();
+  await page.getByTestId("discount-value").fill("40");
+  await expect(page.getByTestId("discount-apply")).toBeDisabled();
+  await page.getByTestId("discount-value").fill("39.99");
+  await expect(page.getByTestId("discount-apply")).toBeEnabled();
+  // A line discount has no such rule: it can be free beside other lines.
+  await page.getByTestId("discount-cancel").click();
+  await openStep(page, "items");
+  await page.getByTestId("pos-line-discount").click();
+  await expect(page.getByTestId("discount-ticket-rule")).toHaveCount(0);
+  await page.getByTestId("discount-cancel").click();
 });

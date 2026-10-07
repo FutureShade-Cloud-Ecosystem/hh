@@ -7,7 +7,8 @@ import {
 } from '@hardscapehouse/pos-kit/src/ported/pos-api.js';
 import { focusRing } from '@hardscapehouse/pos-kit/src/ported/styles/focus-ring.js';
 import { ModalFocus } from '@hardscapehouse/pos-kit/src/ported/modal-focus.js';
-import { parseDiscountEntry, percentText, type DiscountMode } from './_pos-discount.js';
+import { parseDiscountEntry, percentText, ticketDiscountRule, type DiscountMode } from './_pos-discount.js';
+import { formatMoney } from '../money.js';
 
 /**
  * The counter's Discount dialog (row 1047 item 3), for one ticket line or for the whole ticket.
@@ -27,6 +28,11 @@ export class HosPosDiscount extends LitElement {
   @property() branchId = '';
   /** What the discount is on, in words: "Holland paver" for a line, "the whole ticket". */
   @property() subject = '';
+  /**
+   * A ticket discount's base: the subtotal after the line discounts. Set only for the ticket; a
+   * ticket discount must leave something to pay, so the dialog says the rule and refuses past it.
+   */
+  @property({ type: Number }) ticketBaseCents: number | null = null;
   /** The discount already on the line or ticket, to edit or remove. */
   @property({ attribute: false }) existing: CartDiscount | null = null;
 
@@ -212,8 +218,12 @@ export class HosPosDiscount extends LitElement {
     this.dispatchEvent(new CustomEvent('pos-discount-close', { bubbles: true, composed: true }));
   }
 
+  private ticketRule() {
+    return this.ticketBaseCents === null ? undefined : { baseCents: this.ticketBaseCents, money: formatMoney };
+  }
+
   private entry() {
-    return parseDiscountEntry(this.mode, this.text);
+    return parseDiscountEntry(this.mode, this.text, this.ticketRule());
   }
 
   private chosen(): DiscountApprover | undefined {
@@ -255,6 +265,9 @@ export class HosPosDiscount extends LitElement {
           A discount is given only after a manager says yes. Name the manager who approved it: it is recorded on the sale.
         </div>
 
+        ${this.ticketRule()
+          ? html`<div class="notice" data-testid="discount-ticket-rule">${ticketDiscountRule(this.ticketRule()!)}</div>`
+          : nothing}
         <div class="lab" id="discount-mode-label">Take off</div>
         <div class="modes" role="radiogroup" aria-labelledby="discount-mode-label">
           <button

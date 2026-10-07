@@ -104,6 +104,11 @@ func (s *Service) priceAndAssess(ctx context.Context, in saleMoneyInput) (saleMo
 	for i := range lines {
 		subtotal += lines[i].LineTotalCents
 	}
+	// A discount may not take the whole ticket: the ring's payment rail refuses a zero amount, so
+	// the preview and the ring say so alike, in words, here where they share one path.
+	if len(applied) > 0 && subtotal <= 0 {
+		return saleMoney{}, errDiscountZeroTotal
+	}
 
 	// Totals, assessed through the TaxAssessor seam (M5 owns the real engine). The default
 	// FlatHSTAssessor returns flat 13% (D-A19-9), so at scaffold the binding tax is

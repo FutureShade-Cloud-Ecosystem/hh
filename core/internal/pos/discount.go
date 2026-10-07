@@ -129,6 +129,8 @@ var (
 		"pos: a discount carries the quantity and the amount it was approved for")
 	errDiscountStale = clientErr(http.StatusUnprocessableEntity,
 		"pos: the discount was approved for a different quantity or price: ask a manager again")
+	errDiscountZeroTotal = clientErr(http.StatusUnprocessableEntity,
+		"pos: a sale cannot total $0.00: a discount must leave something to pay (a ticket discount can take off at most the ticket total less one cent)")
 	errDiscountNothing = clientErr(http.StatusUnprocessableEntity,
 		"pos: that discount comes to less than a cent")
 )

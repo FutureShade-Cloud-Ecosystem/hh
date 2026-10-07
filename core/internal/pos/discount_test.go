@@ -361,3 +361,45 @@ func TestDiscount_ApprovalMustMatchTheLineAndTheTicket(t *testing.T) {
 		})
 	}
 }
+
+// A discount that leaves nothing to pay is refused in the same words at the preview and the ring
+// (the review's P2-3): the preview answered 200 with a zero total and the ring then refused with a
+// field name nobody saw. A line at 100 percent beside other lines stays fine.
+func TestDiscount_ATicketTotalOfZeroIsRefusedInWordsAtThePreviewAndTheRing(t *testing.T) {
+	zero := "cannot total $0.00"
+	cases := map[string]struct {
+		line, ticket *DiscountInput
+		want         string
+	}{
+		"ticket at 100 percent":        {ticket: atBase(DiscountInput{PercentBps: 10000, ApprovedBy: mgrSales}, 10000), want: zero},
+		"ticket amount is the ticket":  {ticket: atBase(DiscountInput{AmountCents: 10000, ApprovedBy: mgrSales}, 10000), want: zero},
+		"the only line at 100 percent": {line: atLine(DiscountInput{PercentBps: 10000, ApprovedBy: mgrSales}), want: zero},
+		"ticket one cent short":        {ticket: atBase(DiscountInput{AmountCents: 9999, ApprovedBy: mgrSales}, 10000)},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness()
+			withApprovers(h)
+			in := baseInput()
+			in.Lines[0].Discount, in.Discount = c.line, c.ticket
+			_, ringErr := h.svc.Sale(context.Background(), in)
+			_, prevErr := h.svc.SalePreview(context.Background(), SalePreviewInput{
+				BranchID: in.BranchID, CustomerID: in.CustomerID, Lines: in.Lines, Discount: in.Discount,
+			})
+			if c.want == "" {
+				if ringErr != nil || prevErr != nil {
+					t.Fatalf("one cent to pay is a sale: ring %v preview %v", ringErr, prevErr)
+				}
+				return
+			}
+			wantRefusal(t, ringErr, http.StatusUnprocessableEntity, c.want)
+			wantRefusal(t, prevErr, http.StatusUnprocessableEntity, c.want)
+			if ringErr.Error() != prevErr.Error() {
+				t.Fatalf("the preview and the ring must say the same words: %q vs %q", prevErr, ringErr)
+			}
+			if len(h.store.orders) != 0 || h.tender.called {
+				t.Fatalf("a refused ticket wrote or took money")
+			}
+		})
+	}
+}

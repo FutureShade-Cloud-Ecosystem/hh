@@ -167,3 +167,18 @@ test('the words say what happened and what to do', () => {
   assert.equal(discountRemovedWords('quantity', true),
     'The discount was removed because the quantity changed. The ticket discount was removed because the ticket changed. Ask a manager again.');
 });
+
+// A 100 percent ticket discount (the review's P2-3): the dialog prevents it before the request and
+// says the rule; the maximum is just under the ticket total.
+import { ticketDiscountRule } from './_pos-discount.ts';
+
+test('a ticket discount must leave something to pay: the dialog refuses past the maximum and says the rule', () => {
+  const rule = { baseCents: 4000, money: (c) => `$${(c / 100).toFixed(2)}` };
+  assert.equal(ticketDiscountRule(rule), 'A ticket discount must leave something to pay: the most you can take off is $39.99 (the ticket total less one cent).');
+  assert.deepEqual(parseDiscountEntry('percent', '100', rule), { ok: false, words: ticketDiscountRule(rule) });
+  assert.equal(parseDiscountEntry('percent', '99.99', rule).ok, true);
+  assert.deepEqual(parseDiscountEntry('amount', '40', rule), { ok: false, words: ticketDiscountRule(rule) });
+  assert.equal(parseDiscountEntry('amount', '39.99', rule).ok, true);
+  // A line discount carries no such rule: a line may be free beside other lines.
+  assert.equal(parseDiscountEntry('percent', '100').ok, true);
+});

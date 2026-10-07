@@ -129,7 +129,7 @@ export const PORTED_PROPERTY_OR_EVENT = new Set([
   '.n', '.open', '.openLines', '.orderId', '.presentation', '.productId', '.refId',
   '.retry', '.roster', '.rows', '.sessionId', '.showChips', '.size', '.state', '.step',
   '.steps', '.subject', '.subtotalCents', '.summary', '.term', '.ticket', '.ticketEpoch',
-  '.tillSessionId', '.totalCents', '.value', '.vocabulary',
+  '.ticketBaseCents', '.tillSessionId', '.totalCents', '.value', '.vocabulary',
 ]);
 
 /** The boolean bindings besides ?disabled the ported files use. */
