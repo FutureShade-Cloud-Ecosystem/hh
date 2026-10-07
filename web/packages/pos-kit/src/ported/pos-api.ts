@@ -50,6 +50,43 @@ export interface CartLine {
   breakdown: PriceBreakdown | null;
  /** rev 5: pricing/resolve failed for this line: render "price pending", never a hard $0.00. */
   priceMissing?: boolean;
+  /**
+   * The line's manual discount, a manager's verbal yes recorded (row 1047 item 3): the person at
+   * the till owns it, no pricing answer ever writes it, and a line carrying one never merges.
+   */
+  discount?: CartDiscount;
+}
+
+/**
+ * One manual discount as the till holds it: a percent (basis points) or an amount in cents, and
+ * the manager who approved it. The cents the discount takes off are the SERVER's (the sale
+ * preview answers them); this carries only what the person entered.
+ */
+export interface CartDiscount {
+  percentBps?: number;
+  amountCents?: number;
+  /** The approving manager's staff id: the body's approved_by. */
+  approvedBy: string;
+  /** The approver's display name, for the screen only. */
+  approvedByName: string;
+}
+
+/** One manager the till may name as a discount's approver (GET /pos/discount-approvers). */
+export interface DiscountApprover {
+  id: string;
+  name: string;
+  role_label: string;
+}
+
+/** One manual discount a committed sale reports, with the role of the manager who approved it. */
+export interface SaleDiscount {
+  scope: 'LINE' | 'SALE';
+  line_no?: number;
+  percent_bps?: number;
+  amount_cents: number;
+  approved_by: string;
+  approved_by_role: string;
+  approved_by_label: string;
 }
 
 export interface SaleResult {
@@ -80,6 +117,9 @@ export interface SaleResult {
   // ── DIB-488 rev 8 (item 11) ── the JOB facts echoed back (sold panel + replay-verbatim).
   job_address?: string;
   job_reference?: string;
+  /** Every manual discount on the sale together, and each one with its approver's role label. */
+  discount_cents?: number;
+  discounts?: SaleDiscount[];
 }
 
 export interface ReliefOutcome {
@@ -289,6 +329,19 @@ export async function listSalespeople(): Promise<Salesperson[]> {
   const res = await api('/api/v1/pos/salespeople');
   if (!res.ok) throw new Error(`salespeople ${res.status}`);
   const body = (await res.json()) as { items: Salesperson[] };
+  return body.items ?? [];
+}
+
+/**
+ * The managers a till person may name as the approver of a discount at the branch: the same list
+ * the ring's own rule judges approved_by against, so a name from here is a name the ring accepts.
+ * Throws on a non-2xx so the dialog says the list could not be read, never an empty picker that
+ * reads as "nobody may approve".
+ */
+export async function listDiscountApprovers(branchId: string): Promise<DiscountApprover[]> {
+  const res = await api(`/api/v1/pos/discount-approvers?branch_id=${encodeURIComponent(branchId)}`);
+  if (!res.ok) throw new Error(`discount approvers ${res.status}`);
+  const body = (await res.json()) as { items: DiscountApprover[] };
   return body.items ?? [];
 }
 

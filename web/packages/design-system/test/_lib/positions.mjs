@@ -115,7 +115,7 @@ export const PORTED_PROPERTY_OR_EVENT = new Set([
   '@change', '@click', '@error', '@focus', '@focusin', '@hos-customer-picker-close',
   '@hos-customer-selected', '@input', '@keydown', '@open-order', '@order-changed',
   '@order-lifecycle-loaded', '@order-status-changed', '@pointercancel', '@pointerdown',
-  '@pointermove', '@pointerup', '@pos-add-echo', '@pos-add-product', '@pos-drop-exit',
+  '@pointermove', '@pointerup', '@pos-add-echo', '@pos-add-product', '@pos-discount-apply', '@pos-discount-close', '@pos-discount-remove', '@pos-drop-exit',
   '@pos-flow-goto', '@pos-legend-dismiss', '@pos-panel-focus', '@pos-parked-close',
   '@pos-parked-discard', '@pos-parked-resume', '@pos-relief-applied', '@pos-relief-close',
   '@pos-return-close',
@@ -124,11 +124,11 @@ export const PORTED_PROPERTY_OR_EVENT = new Set([
   '@pricing-doc-close', '@quick-start-clear', '@quick-start-continue', '@quick-start-park',
   '@related-doc-open', '@submit', '@till-close-cancel', '@till-closed',
   '.active', '.alt', '.branchId', '.breakdown', '.busy', '.checked', '.complete',
-  '.category', '.curated', '.customer', '.customerId', '.customerName', '.doc', '.externalTerm',
+  '.category', '.curated', '.customer', '.customerId', '.customerName', '.doc', '.existing', '.externalTerm',
   '.fault', '.hasCustomer', '.hasImage', '.hint', '.homeBranchId', '.info', '.label',
   '.n', '.open', '.openLines', '.orderId', '.presentation', '.productId', '.refId',
   '.retry', '.roster', '.rows', '.sessionId', '.showChips', '.size', '.state', '.step',
-  '.steps', '.subtotalCents', '.summary', '.term', '.ticket', '.ticketEpoch',
+  '.steps', '.subject', '.subtotalCents', '.summary', '.term', '.ticket', '.ticketEpoch',
   '.tillSessionId', '.totalCents', '.value', '.vocabulary',
 ]);
 

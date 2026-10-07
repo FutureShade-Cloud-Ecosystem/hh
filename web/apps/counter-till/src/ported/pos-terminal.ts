@@ -165,6 +165,8 @@ import {
   resolveLine,
   newIdempotencyKey,
   type CartLine,
+  type CartDiscount,
+  type SaleDiscount,
   type ParkedTicket,
   stockGlance,
   type PosProduct,
@@ -174,6 +176,8 @@ import {
   type StockGlance,
 } from '@hardscapehouse/pos-kit/src/ported/pos-api.js';
 import './pos-panels.js';
+import './pos-discount.js';
+import { discountWire, discountWords, ticketCarriesDiscount } from './_pos-discount.js';
 import { previewBody, previewKey, readPreview, splitMismatchWords, type PreviewState } from './_pos-preview.js';
 import { focusRing } from '@hardscapehouse/pos-kit/src/ported/styles/focus-ring.js';
 import { ModalFocus } from '@hardscapehouse/pos-kit/src/ported/modal-focus.js';
@@ -230,6 +234,8 @@ export interface PosOrderSnapshot {
   jobAddress?: string;
   /** The job reference typed under More options. */
   jobReference?: string;
+  /** The whole ticket's manual discount and the manager who approved it (row 1047 item 3). */
+  ticketDiscount?: CartDiscount | null;
 }
 
 /**
@@ -522,6 +528,14 @@ export class HosPosTerminal extends LitElement {
    * While it loads the screen says pending; it is never a number the browser worked out.
    */
   @state() private preview: PreviewState = { kind: 'idle' };
+  /**
+   * Row 1047 item 3: the whole ticket's manual discount, a manager's verbal yes recorded with the
+   * manager's name. A line's own discount rides the line (CartLine.discount). The cents either
+   * takes off are the server's: the sale preview answers them.
+   */
+  @state() private ticketDiscount: CartDiscount | null = null;
+  /** Which discount the dialog is open on: one line (by index) or the whole ticket. */
+  @state() private discountTarget: { kind: 'line'; index: number } | { kind: 'ticket' } | null = null;
   private previewAsked = '';
   private previewDirty = false;
   private previewTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1655,6 +1669,43 @@ export class HosPosTerminal extends LitElement {
     }
     .stockline.out {
       color: var(--hos-safety-red);
+    }
+    /* Row 1047 item 3: the counter discount. The line's action and its chip sit under the stock
+       line in the item column; the ticket's sit in the totals card. Tokens only, so light and
+       dark both read. */
+    .ldisc {
+      margin-top: 4px;
+      font-size: 11px;
+    }
+    .dbtn {
+      background: transparent;
+      border: 1px solid var(--hos-line);
+      color: var(--hos-text-dim);
+      border-radius: 6px;
+      padding: 2px 9px;
+      font: inherit;
+      font-size: 11px;
+      cursor: pointer;
+      text-align: left;
+    }
+    .dbtn:hover:not(:disabled) {
+      color: var(--hos-text);
+      border-color: var(--hos-text-dim);
+    }
+    .dbtn.chip {
+      color: var(--hos-stone-amber-text);
+      white-space: normal;
+    }
+    .dbtn:disabled {
+      cursor: not-allowed;
+      opacity: 1;
+      color: var(--hos-text-dim);
+    }
+    .trow.discrow {
+      color: var(--hos-stone-amber-text);
+    }
+    .discact {
+      padding: 6px 0 3px;
     }
     /* ── rev 8 (item 8 · DIB-502): the suggested add-ons strip below the ticket ── */
     .addons {
@@ -2902,7 +2953,8 @@ export class HosPosTerminal extends LitElement {
       customerId: this.customer?.id ?? '',
       saleType: this.saleType,
       fulfilment: this.fulfilment,
-      lines: this.cart.map((l) => ({ productId: l.product.id, qty: l.qty, uom: l.uom })),
+      lines: this.cart.map((l) => ({ productId: l.product.id, qty: l.qty, uom: l.uom, discount: l.discount })),
+      discount: this.ticketDiscount,
     });
   }
 
@@ -2918,7 +2970,7 @@ export class HosPosTerminal extends LitElement {
         let next: PreviewState;
         try {
           const res = await api('/api/v1/pos/sale-preview', { method: 'POST', body: JSON.stringify(body) });
-          next = res.ok ? readPreview(await res.json()) : { kind: 'unavailable' };
+          next = readPreview(await res.json().catch(() => null), res.ok ? 200 : res.status);
         } catch {
           next = { kind: 'unavailable' };
         }
@@ -2978,6 +3030,7 @@ export class HosPosTerminal extends LitElement {
  // rev 8: the job facts are sale data too.
       jobAddress: this.jobAddress,
       jobReference: this.jobReference,
+      ticketDiscount: this.ticketDiscount,
     };
   }
 
@@ -3019,6 +3072,7 @@ export class HosPosTerminal extends LitElement {
     // rev 8: the job facts follow the sale; older snapshots restore to empty.
     this.jobAddress = s.jobAddress ?? '';
     this.jobReference = s.jobReference ?? '';
+    this.ticketDiscount = s.ticketDiscount ?? null;
  // rev 5: a snapshot restoring payMethod SPLIT must also restore the split panel: without it
     // the popped window shows the "compose the split legs below" hint over NO panel and no CTA
     // (a dead-end payment state until the cashier re-taps the tile twice).
@@ -3595,6 +3649,7 @@ export class HosPosTerminal extends LitElement {
 
   private removeLine(idx: number): void {
     this.cart = this.cart.filter((_, i) => i !== idx);
+    if (this.cart.length === 0) this.ticketDiscount = null; // no ticket left for the yes to stand on
     this.ticketChanged();
     this.scheduleTicketFacts(); // rev 8: fewer lines = a different margin footer + suggestion set
   }
@@ -3793,7 +3848,9 @@ export class HosPosTerminal extends LitElement {
         qty_entered: l.qty,
         uom_entered: l.uom,
         cost_cents: 0,
+        discount: discountWire(l.discount),
       })),
+      discount: discountWire(this.ticketDiscount),
     };
  // rev 5: an IDENTICAL retry reuses the previous attempt's key VERBATIM (stableRingKey): that
     // is what makes "retry; the sale is replay-safe" true. Any edit to the sale re-mints; every
@@ -3904,7 +3961,9 @@ export class HosPosTerminal extends LitElement {
         qty_entered: l.qty,
         uom_entered: l.uom,
         cost_cents: 0,
+        discount: discountWire(l.discount),
       })),
+      discount: discountWire(this.ticketDiscount),
     };
  // rev 5: same replay-safety rule as the split path: an identical retry reuses its key
     // verbatim (stableRingKey); any edit to the sale re-mints; success clears the memo.
@@ -3979,6 +4038,8 @@ export class HosPosTerminal extends LitElement {
 
   private newSale(): void {
     this.cart = [];
+    this.ticketDiscount = null; // a manager's yes belongs to the ticket it was given on
+    this.discountTarget = null;
     this.cartReplaced(); // D17: the next customer must not receive this one's pricing answers
     this.customer = null; // back to walk-in
     this.standing = {};
@@ -4203,6 +4264,12 @@ export class HosPosTerminal extends LitElement {
   private async parkCurrent(): Promise<void> {
     if (this.cart.length === 0) return;
     this.clearUtil();
+    // A parked ticket stores product, quantity and unit only, so a discount would not travel with
+    // it: refuse in words rather than lose a manager's yes silently (row 1047 item 3).
+    if (ticketCarriesDiscount(this.cart, this.ticketDiscount)) {
+      this.setUtil('This ticket has a discount, and a parked ticket cannot keep it. Remove the discount, or ring the sale.', 'bad');
+      return;
+    }
     try {
       const t = await parkTicket({
         branch_id: this.branchId,
@@ -5487,7 +5554,7 @@ export class HosPosTerminal extends LitElement {
         : this.openStep === 'payment'
           ? ''
           : this.hasPricedLine()
-            ? `subtotal ${formatMoney(this.subtotal())}`
+            ? `subtotal ${this.subtotalText()}`
             : '(not priced)',
       // DIB-512 (8) · one word per surface. Before the ring the collapsed Payment card says which
       // tender is CHOSEN; after it, salePillLabel decides the counter word for what the sale
@@ -5942,6 +6009,9 @@ ${/* Fulfilment: the EXISTING sale types (counter / will-call / delivered / COD 
     if (p.kind === 'pending') {
       return html`<div class="${rowClass}" data-testid=${ids.pending} aria-busy="true"><span>Tax and total</span><span class="num m">pending</span></div>`;
     }
+    if (p.kind === 'refused') {
+      return html`<div class="${rowClass} ringwords" data-testid="pos-preview-refused" role="alert"><span>Tax and total</span><span class="m">${p.words}</span></div>`;
+    }
     return html`<div class="${rowClass} ringwords" data-testid=${ids.words}><span>Tax and total</span><span class="m">${ringTaxWords(this.reliefRateBps)}</span></div>`;
   }
 
@@ -5966,6 +6036,7 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
               : nothing}
             <div class="totals">
               <div class="trow"><span>Subtotal</span><span class="num">${this.moneyOrMarker(this.subtotal())}</span></div>
+              ${this.ringDone() ? nothing : this.renderDiscountRows('trow', true)}
               ${this.ringDone() ? nothing : this.renderPreviewRows('trow', {
                     tax: 'pos-preview-tax',
                     total: 'pos-preview-total',
@@ -6123,8 +6194,8 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
                         : this.preview.kind === 'ready' && this.hasPricedLine()
                           ? `${this.tillSessionId === '' ? 'Open session · then complete' : 'Complete sale'} · total ${formatMoney(this.preview.totalCents)}`
                           : this.tillSessionId === ''
-                            ? `Open session · then complete · subtotal ${this.moneyOrMarker(this.subtotal())} + tax at the ring`
-                            : `Complete sale · subtotal ${this.moneyOrMarker(this.subtotal())} + tax at the ring`}
+                            ? `Open session · then complete · subtotal ${this.subtotalText()} + tax at the ring`
+                            : `Complete sale · subtotal ${this.subtotalText()} + tax at the ring`}
                     ${!this.ringDone() && this.payKeycap()
                       ? html`<span class="keycap" data-testid="pay-hotkey-chip" aria-hidden="true"
                           >${this.payKeycap()}</span
@@ -6382,6 +6453,7 @@ ${this.receiptMsg ? html`<div class="banner bad" role="alert">${this.receiptMsg}
       <div class="rbrow"><span>${fulfilmentLabel(this.saleType)}</span><span></span></div>
       ${this.requestedDate ? html`<div class="rbrow"><span>Requested</span><span>${this.requestedDate}</span></div>` : nothing}
       <div class="rbrow"><span>Subtotal</span><span class="m">${this.moneyOrMarker(this.subtotal())}</span></div>
+      ${this.renderDiscountRows('rbrow', false)}
       ${this.renderPreviewRows('rbrow', {
         tax: 'readback-preview-tax',
         total: 'readback-preview-total',
@@ -6823,6 +6895,16 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
             }}
           ></hos-pos-customer-picker>`
         : nothing}
+      ${this.discountTarget !== null
+        ? html`<hos-pos-discount
+            .branchId=${this.branchId}
+            .subject=${this.discountSubject()}
+            .existing=${this.discountExisting()}
+            @pos-discount-apply=${(e: CustomEvent<CartDiscount>) => this.onDiscountApply(e.detail)}
+            @pos-discount-remove=${() => this.onDiscountRemove()}
+            @pos-discount-close=${() => (this.discountTarget = null)}
+          ></hos-pos-discount>`
+        : nothing}
       ${this.showRelief
         ? html`<hos-pos-relief
             .orderId=${this.ringDone() ? this.doneSale().order_id : ''}
@@ -6897,6 +6979,141 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
    * _pos-stock.ts (stockStatus); this only paints the answer with the existing status token roles.
  * No glance (yet, or at all) renders NOTHING: absent data is not an error and not a stock claim.
    */
+  // ── row 1047 item 3: the counter discount ─────────────────────────────────────────────────
+  private discountActive(): boolean {
+    return ticketCarriesDiscount(this.cart, this.ticketDiscount);
+  }
+
+  /** The server's cents a line's own discount takes off, once the preview has answered. */
+  private previewLineOff(i: number): number | undefined {
+    const p = this.preview;
+    if (p.kind !== 'ready') return undefined;
+    return p.lines.find((x) => x.lineNo === i + 1)?.discountCents;
+  }
+
+  /**
+   * The subtotal the collapsed echoes and the Complete label speak. With a discount on the ticket
+   * the list subtotal is not what is charged: the figure is the server's net, or the word pending,
+   * never the list sum beside a discount.
+   */
+  private subtotalText(): string {
+    if (!this.discountActive()) return this.moneyOrMarker(this.subtotal());
+    return this.preview.kind === 'ready' ? formatMoney(this.preview.subtotalCents) : '(pending)';
+  }
+
+  private discountLocked(): boolean {
+    return this.ringBusy() || this.ringDone();
+  }
+
+  private openDiscount(target: { kind: 'line'; index: number } | { kind: 'ticket' }): void {
+    if (this.discountLocked()) return;
+    this.discountTarget = target;
+  }
+
+  private discountSubject(): string {
+    const t = this.discountTarget;
+    if (t === null) return '';
+    return t.kind === 'ticket' ? 'The whole ticket' : (this.cart[t.index]?.product.name ?? '');
+  }
+
+  private discountExisting(): CartDiscount | null {
+    const t = this.discountTarget;
+    if (t === null) return null;
+    return t.kind === 'ticket' ? this.ticketDiscount : (this.cart[t.index]?.discount ?? null);
+  }
+
+  private onDiscountApply(d: CartDiscount): void {
+    const t = this.discountTarget;
+    if (t === null) return;
+    if (t.kind === 'ticket') {
+      this.ticketDiscount = d;
+    } else {
+      const next = [...this.cart];
+      if (next[t.index]) next[t.index] = { ...next[t.index], discount: d };
+      this.cart = next;
+    }
+    this.ticketChanged();
+    this.discountTarget = null;
+  }
+
+  private onDiscountRemove(): void {
+    const t = this.discountTarget;
+    if (t === null) return;
+    if (t.kind === 'ticket') {
+      this.ticketDiscount = null;
+    } else {
+      const next = [...this.cart];
+      if (next[t.index]) next[t.index] = { ...next[t.index], discount: undefined };
+      this.cart = next;
+    }
+    this.ticketChanged();
+    this.discountTarget = null;
+  }
+
+  /** One line's Discount action, or its chip (what was entered, the server's cents, who said yes). */
+  private renderLineDiscount(l: CartLine, i: number) {
+    const locked = this.discountLocked() || l.priceMissing === true;
+    if (!l.discount) {
+      return html`<div class="ldisc">
+        <button
+          type="button"
+          class="dbtn"
+          data-testid="pos-line-discount"
+          aria-label="Discount: ${l.product.name}"
+          ?disabled=${locked}
+          @click=${() => this.openDiscount({ kind: 'line', index: i })}
+        >
+          Discount
+        </button>
+      </div>`;
+    }
+    return html`<div class="ldisc">
+      <button
+        type="button"
+        class="dbtn chip"
+        data-testid="pos-line-discount-chip"
+        aria-label="Change the discount: ${l.product.name}"
+        ?disabled=${this.discountLocked()}
+        @click=${() => this.openDiscount({ kind: 'line', index: i })}
+      >
+        ${discountWords(l.discount, this.previewLineOff(i), formatMoney)}
+      </button>
+    </div>`;
+  }
+
+  /**
+   * The totals' Discount row (the server's cents, every discount together) and the ticket's own
+   * action. Subtotal here is the list sum; Subtotal less Discount, plus the tax, is the Total.
+   */
+  private renderDiscountRows(rowClass: string, withAction: boolean): TemplateResult | typeof nothing {
+    if (this.cart.length === 0) return nothing;
+    const p = this.preview;
+    const active = this.discountActive();
+    const row = !active
+      ? nothing
+      : p.kind === 'ready' && p.discountCents > 0
+        ? html`<div class="${rowClass} discrow" data-testid="pos-discount-row"><span>Discount</span><span class="num m">${formatMoney(-p.discountCents)}</span></div>`
+        : p.kind === 'pending'
+          ? html`<div class="${rowClass} discrow" data-testid="pos-discount-row" aria-busy="true"><span>Discount</span><span class="num m">pending</span></div>`
+          : nothing;
+    const action = !withAction
+      ? nothing
+      : html`<div class="discact">
+          <button
+            type="button"
+            class="dbtn ${this.ticketDiscount ? 'chip' : ''}"
+            data-testid="pos-ticket-discount"
+            ?disabled=${this.discountLocked() || !this.hasPricedLine()}
+            @click=${() => this.openDiscount({ kind: 'ticket' })}
+          >
+            ${this.ticketDiscount
+              ? html`Ticket: ${discountWords(this.ticketDiscount, p.kind === 'ready' ? p.saleDiscountCents : undefined, formatMoney)}`
+              : 'Discount the ticket'}
+          </button>
+        </div>`;
+    return html`${row}${action}`;
+  }
+
   private renderStockLine(l: CartLine) {
     const g = this.lineStock[l.product.id];
     if (!g) return nothing;
@@ -6984,6 +7201,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
             <div class="lname">${l.product.name}</div>
             <div class="lsku">${l.product.sku}</div>
             ${this.renderStockLine(l)}
+            ${this.renderLineDiscount(l, i)}
           </div>
           ${this.renderQtyStepper(l, i)}
           ${/* rev 6 (item B): the unit is its own aligned column (mock parity). */ ''}
@@ -7036,6 +7254,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
               <div class="lname">${l.product.name}</div>
               <div class="lsku">${l.product.sku}</div>
               ${this.renderStockLine(l)}
+              ${this.renderLineDiscount(l, i)}
             </div>
             ${this.renderQtyStepper(l, i)}
             <div class="ltot">${l.priceMissing ? 'price pending' : formatMoney(l.lineTotalCents)}</div>
@@ -7123,6 +7342,12 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
         ${(sale.tender === 'CARD' || sale.tenders?.some((leg) => leg.method === 'CARD')) && this.cardRail === 'test'
           ? html`<div class="f" data-testid="sold-simulated-notice"><span class="k">Card</span><span class="v">Simulated card: no card was charged</span></div>`
           : nothing}
+        ${(sale.discounts ?? []).map(
+          (d: SaleDiscount) => html`<div class="f" data-testid="sold-discount">
+            <span class="k">Discount approved by</span>
+            <span class="v">${d.approved_by_label} · ${formatMoney(d.amount_cents)} off${d.scope === 'LINE' ? ` (line ${d.line_no ?? ''})` : ' (ticket)'}</span>
+          </div>`,
+        )}
         ${(sale.deposit_cents ?? 0) > 0
           ? html`<div class="f"><span class="k">Deposit</span><span class="v">${formatMoney(sale.deposit_cents ?? 0)}</span></div>`
           : nothing}
