@@ -182,6 +182,8 @@ import {
   discountsThatStand,
   discountWire,
   discountWords,
+  isStaleDiscountRefusal,
+  STALE_DISCOUNT_WORDS,
   ticketBasis,
   ticketCarriesDiscount,
 } from './_pos-discount.js';
@@ -3981,10 +3983,25 @@ export class HosPosTerminal extends LitElement {
         this.ring = { state: 'error', msg: splitMismatchWords(res.err, formatMoney) };
         return;
       }
+      if (isStaleDiscountRefusal(res.err)) {
+        this.ring = { state: 'error', msg: STALE_DISCOUNT_WORDS };
+        void this.rereadPrices();
+        return;
+      }
       this.ring = { state: 'error', msg: counterRingMessage(res.err) };
     } catch {
       this.ring = { state: 'error', msg: 'Network error: retry; the sale is replay-safe.' };
     }
+  }
+
+  /**
+   * After the server refused a discount as stale: re-read every line's price (the way a customer
+   * switch does) so a discount struck from an old base drops with the price words, rather than being
+   * sent again on the same stale base until the quantity is nudged.
+   */
+  private async rereadPrices(): Promise<void> {
+    for (let i = 0; i < this.cart.length; i++) await this.reprice(i);
+    this.enforceDiscountApproval();
   }
 
   private async ringSale(tender: 'ACCOUNT' | 'CASH' | 'CARD'): Promise<void> {
@@ -4091,6 +4108,11 @@ export class HosPosTerminal extends LitElement {
       }
       // DIB-379/F2: surface the server's real detail for EVERY ring failure (409 no-till-session, 503
  // an unwired guard, 422 policy/validation refusals, …), not just 422: see ringErrorMessage.
+      if (isStaleDiscountRefusal(res.err)) {
+        this.ring = { state: 'error', msg: STALE_DISCOUNT_WORDS };
+        void this.rereadPrices();
+        return;
+      }
       this.ring = { state: 'error', msg: counterRingMessage(res.err) };
     } catch {
       // Network error: the key is safe to retry verbatim (idempotent endpoint).

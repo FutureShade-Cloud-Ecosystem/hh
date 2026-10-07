@@ -336,3 +336,51 @@ test("the Summary shows line discounts on their lines, the ticket discount row, 
   const sum = lineTotals.reduce((a, t) => a + cents(t), 0);
   expect(sum - 200).toBe(3400);
 });
+
+// Round 9 (P3 from PR 249's review): when a price rule changes server side while a discounted line
+// sits on the ticket, the ring refuses the stale yes. The till then re-reads the lines' prices, so
+// the discount drops with the price-changed words and the person is not stuck re-sending the same
+// stale base.
+test("a stale discount refusal re-reads the prices and drops the discount in words", async ({ page }) => {
+  await signIn(page, "stepper");
+  await ensureSession(page);
+  await tenHolland(page);
+  await openStep(page, "items");
+  await page.getByTestId("pos-line-discount").click();
+  await page.getByTestId("discount-value").fill("10");
+  await page.getByTestId("discount-approver").selectOption({ label: "Sales manager · Sales Manager" });
+  await page.getByTestId("discount-apply").click();
+  await expect(page.getByTestId("pos-line-discount-chip")).toContainText("10% off");
+  await openPaymentStep(page, "stepper");
+
+  // From now on the price rule has moved: every resolve answers 10% higher; the ring refuses once.
+  let resolves = 0;
+  await page.route("**/api/v1/pricing/resolve", async (route) => {
+    const real = await route.fetch();
+    const body = (await real.json()) as Record<string, number>;
+    resolves += 1;
+    body["final_cents"] = Math.round((body["final_cents"] as number) * 1.1);
+    body["line_total_cents"] = Math.round((body["line_total_cents"] as number) * 1.1);
+    await route.fulfill({ response: real, json: body });
+  });
+  let refused = false;
+  await page.route("**/api/v1/pos/sales", async (route) => {
+    if (route.request().method() === "POST" && !refused) {
+      refused = true;
+      await route.fulfill({
+        status: 422,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "pos: the discount was approved for a different quantity or price: ask a manager again" }),
+      });
+      return;
+    }
+    await route.continue();
+  });
+  await page.getByTestId("pos-complete-sale").click();
+  await expect.poll(() => resolves, { timeout: 8000 }).toBeGreaterThan(0);
+  // The discount dropped with the price words, and the Discount action is back for a fresh yes.
+  await openStep(page, "items");
+  await expect(page.getByTestId("pos-line-discount-chip")).toHaveCount(0);
+  await expect(page.getByTestId("pos-line-discount")).toBeVisible();
+  await expect(page.getByText(/price changed|price .*changed/i).first()).toBeVisible();
+});
