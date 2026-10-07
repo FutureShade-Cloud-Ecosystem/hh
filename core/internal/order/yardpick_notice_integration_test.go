@@ -113,3 +113,69 @@ func TestIntegration_YardPick_AShortAfterAnEditIsAnnouncedAgain(t *testing.T) {
 		t.Fatalf("two distinct keys: %d %v", keys, err)
 	}
 }
+
+type weighLines struct {
+	svc  *Service
+	repo *Repository
+}
+
+func (w weighLines) LineUOM(ctx context.Context, orderID string, lineNo int) (string, error) {
+	_, uom, _, _, err := w.repo.LineForEdit(ctx, orderID, lineNo)
+	return uom, err
+}
+
+func (w weighLines) SetLineQty(ctx context.Context, orderID string, lineNo int, qty string) error {
+	_, err := w.svc.EditLineQty(ctx, orderID, lineNo, qty)
+	return err
+}
+
+// The yard's weigh door edits the line through the same door a manager does, so weighing a short line
+// is a new order quantity like any edit: it clears the backorder, writes it to the order's history and
+// tells the rep. Nothing about it is silent.
+func TestIntegration_YardPick_TheWeighDoorRecordsAndAnnouncesWhatItClears(t *testing.T) {
+	pool := intPool(t)
+	ord := seedTaxFreeYard(t, pool)
+	ctx := identity.ContextWithStaff(context.Background(), edIntManagerCtx())
+	osvc, _ := editSvc(t, pool)
+	rec := &clearedRecorder{}
+	osvc.WithBackorderNotifier(rec)
+
+	short := yardPick("3", "CONDENSED_SKIDS")
+	short.OrderID = ord
+	if _, err := osvc.ApplyYardPicks(ctx, short); err != nil {
+		t.Fatal(err)
+	}
+	var branch string
+	if err := pool.QueryRow(ctx, `SELECT branch_id::text FROM orders WHERE id = $1`, ord).Scan(&branch); err != nil {
+		t.Fatal(err)
+	}
+	repo := NewRepository(pool)
+	_, uom, _, _, err := repo.LineForEdit(ctx, ord, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := 1
+	trepo := tasks.NewRepository(pool)
+	task, err := trepo.CreateTask(ctx, tasks.NewTaskInput{OrderID: ord, OrderLineNo: &line, BranchID: branch,
+		TaskType: tasks.TypeNeedWeight, Source: "MANUAL", Priority: tasks.PriorityNormal})
+	if err != nil {
+		t.Fatalf("task: %v", err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM tasks WHERE order_id = $1`, ord) })
+	tsvc := tasks.NewService(trepo).WithOrderLineWriter(weighLines{svc: osvc, repo: repo})
+	res, err := tsvc.SubmitWeight(ctx, tasks.WeightInput{TaskID: task.ID, ActorID: edIntManager, Weight: "3.1", UOM: uom})
+	if err != nil || !res.OrderSynced {
+		t.Fatalf("the weight must reach the order line: %+v %v", res, err)
+	}
+	if b := liveBackorder(t, pool, ord); b.entered != "0.0000" {
+		t.Fatalf("weighing the line sets its new order quantity and clears the 2 owed: %+v", b)
+	}
+	var n int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM audit_log WHERE entity_id = $1 AND changes::text LIKE '%backorder_cleared%'`, ord).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("the order's history records what the weigh door cleared: %d %v", n, err)
+	}
+	if len(rec.got) != 1 || rec.got[0].ClearedQty != "2.0000" || rec.got[0].NewQty != "3.1000" {
+		t.Fatalf("and the rep is told: %+v", rec.got)
+	}
+}
