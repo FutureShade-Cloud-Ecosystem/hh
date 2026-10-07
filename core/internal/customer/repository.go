@@ -259,3 +259,31 @@ func orEmptyObject(m map[string]any) map[string]any {
 	}
 	return m
 }
+
+// GetAccountScoped is the pgx read behind GetAccount (account_read.go). It lives here, beside the
+// search, because it reads the same running balance (customer_transactions) the allowlist states
+// for this file.
+func (r *Repository) GetAccountScoped(ctx context.Context, customerID string, reach AccountReach) (Account, bool, error) {
+	if r.pool == nil {
+		return Account{}, false, errNoDB
+	}
+	q := fmt.Sprintf(`SELECT %s,
+	       COALESCE((SELECT t.balance_after FROM customer_transactions t
+	                  WHERE t.customer_id = customers.id ORDER BY t.occurred_at DESC LIMIT 1), 0)
+	  FROM customers
+	 WHERE id = $1
+	   AND ($2::uuid[] IS NULL OR home_branch_id = ANY($2::uuid[]) OR home_branch_id IS NULL)`, accountColumns)
+	var a Account
+	err := r.pool.QueryRow(ctx, q, customerID, reach.branchFilter()).Scan(
+		&a.CustomerID, &a.AccountNo, &a.Name, &a.CustomerType,
+		&a.BranchID, &a.PaymentTermsDays, &a.CreditLimitCents,
+		&a.OnHold, &a.TaxExempt, &a.IsActive, &a.BalanceCents)
+	switch {
+	case err == nil:
+		return a, true, nil
+	case errors.Is(err, pgx.ErrNoRows):
+		return Account{}, false, nil
+	default:
+		return Account{}, false, fmt.Errorf("customer: get account %q: %w", customerID, err)
+	}
+}

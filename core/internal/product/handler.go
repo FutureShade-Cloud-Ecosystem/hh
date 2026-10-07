@@ -47,6 +47,9 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// annotation naming the dealer-admin surface, and the registrar
 	// wraps the registration in the role gate the census carries.
 	r.Handle("GET /api/v1/uoms", g.RequireStaff(h.staff(h.listUnits)))
+	// The staff read of the product categories (productListCategories), Dealer Admin at read, the
+	// grant the pricing reads use, registered beside the unit catalogue read it is modelled on.
+	r.Handle("GET /api/v1/product-categories", g.RequireStaff(h.staff(h.listCategories)))
 }
 
 // RegisterSearchRoute wires the STAFF fuzzy product search (DIB-56).
@@ -389,7 +392,7 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.Error(w, http.StatusRequestEntityTooLarge, err.Error())
 	case errors.Is(err, ErrImageType):
 		httpx.Error(w, http.StatusUnsupportedMediaType, err.Error())
-	case errors.Is(err, errNoImageStore), errors.Is(err, errNoCounterStore):
+	case errors.Is(err, errNoImageStore), errors.Is(err, errNoCounterStore), errors.Is(err, errNoCategoryReader):
 		httpx.Error(w, http.StatusServiceUnavailable, err.Error())
 	case errors.Is(err, errNoDB):
 		httpx.Error(w, http.StatusServiceUnavailable, "database unavailable")
@@ -397,6 +400,23 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		h.log.Error("product: internal error", "method", r.Method, "path", r.URL.Path, "err", err)
 		httpx.Error(w, http.StatusInternalServerError, "internal error")
 	}
+}
+
+// listCategories answers the staff read of the product categories: one cursor page in code order,
+// the org the caller's own. A Service wired without the read answers the unavailable family, never
+// an empty list.
+func (h *Handler) listCategories(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	p, err := httpx.ParseCursorPage(r)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, "cursor is malformed")
+		return
+	}
+	rows, next, err := h.svc.CategoriesPage(r.Context(), caller.OrgID, p.Limit, p.Cursor)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteCursorPage(w, rows, next, p.Limit)
 }
 
 // listUnits answers the staff read of the unit catalogue (HH-LOAD-1
