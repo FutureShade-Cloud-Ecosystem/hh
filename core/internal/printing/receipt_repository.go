@@ -55,7 +55,14 @@ type branchHeader struct {
 	Code       string
 	Address    string
 	HSTRateBps int
+	// QuantityNotice is quote_policy.quantity_notice for this branch (branch row over the dealer
+	// default), or the house wording when no policy row exists.
+	QuantityNotice string
 }
+
+// defaultQuantityNotice is the house wording, the same sentence as quote.DefaultQuantityNotice and the
+// 0366 column default (a test pins the two equal; printing may not import quote outside tests).
+const defaultQuantityNotice = "All quantities are to be confirmed by the customer. Please review them before you accept it."
 
 // ReadReceiptSale reads one COMMITTED sale by pos_sale id, order id, or the VISIBLE "#SO-" number.
 // An uncommitted/void sale is NOT a receipt, the read filters on status so no paper is produced for
@@ -211,7 +218,7 @@ func (r *Repository) ReadBranchHeader(ctx context.Context, branchID string) (bra
 	if r.pool == nil {
 		return branchHeader{}, errNoPool
 	}
-	h := branchHeader{HSTRateBps: 1300}
+	h := branchHeader{HSTRateBps: 1300, QuantityNotice: defaultQuantityNotice}
 	var addr []byte
 	err := r.pool.QueryRow(ctx,
 		`SELECT name, code::text, address FROM locations WHERE id = $1::uuid`, branchID).
@@ -220,6 +227,15 @@ func (r *Repository) ReadBranchHeader(ctx context.Context, branchID string) (bra
 		return branchHeader{}, err
 	}
 	h.Address = formatAddress(addr)
+
+	// The dealer's quantity notice: the branch's own row over the dealer default (the 0043 idiom
+	// quote_policy follows), read only. No row at all keeps the house wording.
+	if err := r.pool.QueryRow(ctx, `
+		SELECT quantity_notice FROM quote_policy
+		 WHERE branch_id = $1::uuid OR branch_id IS NULL
+		 ORDER BY branch_id NULLS LAST LIMIT 1`, branchID).Scan(&h.QuantityNotice); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return branchHeader{}, err
+	}
 
 	rows, err := r.pool.Query(ctx,
 		`SELECT key::text, value FROM system_settings WHERE key IN ('org_name','hst_rate_bps')`)

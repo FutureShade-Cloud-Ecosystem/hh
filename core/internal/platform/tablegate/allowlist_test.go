@@ -763,8 +763,8 @@ var allowlist = []allowlistEntry{
 	{
 		module: "printing",
 		file:   "core/internal/printing/receipt_repository.go",
-		tables: []string{"customers", "invoices", "locations", "order_lines", "orders", "payment_allocations", "payments", "pos_sale", "pos_sale_tenders", "products", "system_settings", "users"},
-		reason: "receipt assembly reads the whole printed truth: org name and HST settings, the branch, the sale, its lines and tenders, the invoice it billed, the payments and allocations, the customer and the staff who took it, read only",
+		tables: []string{"customers", "invoices", "locations", "order_lines", "orders", "payment_allocations", "payments", "pos_sale", "pos_sale_tenders", "products", "quote_policy", "system_settings", "users"},
+		reason: "receipt assembly reads the whole printed truth: org name, HST and quantity notice settings, the branch, the sale, its lines and tenders, the invoice it billed, the payments and allocations, the customer and the staff who took it, read only",
 	},
 	{
 		module: "procurement",
