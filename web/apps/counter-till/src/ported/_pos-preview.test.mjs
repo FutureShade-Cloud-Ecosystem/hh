@@ -40,6 +40,11 @@ test('an answer is three whole cent figures or it is not an answer', () => {
     subtotalCents: 400,
     taxCents: 52,
     totalCents: 452,
+    discountCents: 0,
+    saleDiscountCents: 0,
+    ticketBaseCents: 0,
+    ticketDiscountMaxCents: 0,
+    lines: [],
   });
   for (const bad of [null, 'x', {}, { subtotal_cents: 400, tax_cents: 52 }, { subtotal_cents: 400, tax_cents: 52.5, total_cents: 452 }, { subtotal_cents: '400', tax_cents: 52, total_cents: 452 }]) {
     assert.deepEqual(readPreview(bad), { kind: 'unavailable' });

@@ -29,6 +29,7 @@ type saleMoneyInput struct {
 	branchID     string
 	lines        []LineInput
 	taxReason    string
+	discount     *DiscountInput // the optional whole-ticket discount (discount.go)
 }
 
 // saleMoney is the ring's resolution of a body's money: the priced lines,
@@ -41,6 +42,10 @@ type saleMoney struct {
 	total         int64
 	rateBps       int
 	onCreditCents int64
+	// The manual discounts (discount.go): what the ring stores, logs and reports, and what the
+	// preview answers. Every line total above is already net of them.
+	discounts    []appliedDiscount
+	saleDiscount saleDiscountRow
 }
 
 // priceAndAssess is the ring's own pricing and tax path, steps 3 and 4 of
@@ -86,7 +91,23 @@ func (s *Service) priceAndAssess(ctx context.Context, in saleMoneyInput) (saleMo
 			PriceUOM:       lp.PriceUOM,
 			LineTotalCents: lp.LineTotalCents,
 		}
-		subtotal += lp.LineTotalCents
+	}
+
+	// The counter's manual discounts, a manager's yes on top of the rule and tier price (no
+	// floor, row 481): applied here so the preview and the ring read one answer. After this
+	// every line total is net, and the subtotal is the sum of the nets.
+	reqs := in.lines
+	applied, saleRow, err := s.applyDiscounts(ctx, in.branchID, reqs, lines, in.discount)
+	if err != nil {
+		return saleMoney{}, err
+	}
+	for i := range lines {
+		subtotal += lines[i].LineTotalCents
+	}
+	// A discount may not take the whole ticket: the ring's payment rail refuses a zero amount, so
+	// the preview and the ring say so alike, in words, here where they share one path.
+	if len(applied) > 0 && subtotal <= 0 {
+		return saleMoney{}, errDiscountZeroTotal
 	}
 
 	// Totals, assessed through the TaxAssessor seam (M5 owns the real engine). The default
@@ -105,6 +126,8 @@ func (s *Service) priceAndAssess(ctx context.Context, in saleMoneyInput) (saleMo
 		total:         subtotal + tax,
 		rateBps:       quote.RateBps,
 		onCreditCents: quote.OnCreditCents,
+		discounts:     applied,
+		saleDiscount:  saleRow,
 	}, nil
 }
 
@@ -119,6 +142,8 @@ type SalePreviewInput struct {
 	Fulfilment string          `json:"fulfilment,omitempty"`
 	Relief     *ReliefDecision `json:"relief,omitempty"`
 	Lines      []LineInput     `json:"lines"`
+	// Discount is the optional whole-ticket discount (discount.go), the same body the ring takes.
+	Discount *DiscountInput `json:"discount,omitempty"`
 }
 
 // SalePreviewTaxLine is one tax line the ring would bind for the body: the
@@ -138,6 +163,28 @@ type SalePreview struct {
 	TaxLines      []SalePreviewTaxLine `json:"tax_lines"`
 	TotalCents    int64                `json:"total_cents"`
 	TaxReasonCode string               `json:"tax_reason_code"`
+	// The manual discounts the ring would apply (discount.go): the total, the ticket discount's
+	// own cents, and one row per line with its own and its share of the ticket discount, so the
+	// counter shows the server's cents and never computes one.
+	DiscountCents     int64             `json:"discount_cents,omitempty"`
+	SaleDiscountCents int64             `json:"sale_discount_cents,omitempty"`
+	Lines             []SalePreviewLine `json:"lines,omitempty"`
+	// TicketBaseCents is the subtotal after the line discounts, before any ticket discount: what
+	// a ticket discount is struck from and approved against. TicketDiscountMaxCents is the most a
+	// ticket discount may take off (the base less one cent), so the till never works either out.
+	TicketBaseCents        int64 `json:"ticket_base_cents,omitempty"`
+	TicketDiscountMaxCents int64 `json:"ticket_discount_max_cents,omitempty"`
+}
+
+// SalePreviewLine is one ticket line's priced answer: the net the line charges and what came off.
+type SalePreviewLine struct {
+	LineNo         int   `json:"line_no"`
+	LineTotalCents int64 `json:"line_total_cents"` // net of every discount
+	// BeforeTicketDiscountCents is the line's price less its own discount, before its share of
+	// the ticket discount: the figure the receipt prints for the line.
+	BeforeTicketDiscountCents int64 `json:"before_ticket_discount_cents"`
+	DiscountCents             int64 `json:"discount_cents,omitempty"`
+	SaleDiscountCents         int64 `json:"sale_discount_cents,omitempty"`
 }
 
 // SalePreview prices a would-be ticket through the ring's own resolver and
@@ -180,6 +227,7 @@ func (s *Service) SalePreview(ctx context.Context, in SalePreviewInput) (SalePre
 		branchID:     in.BranchID,
 		lines:        in.Lines,
 		taxReason:    taxReason,
+		discount:     in.Discount,
 	})
 	if err != nil {
 		return SalePreview{}, err
@@ -190,6 +238,22 @@ func (s *Service) SalePreview(ctx context.Context, in SalePreviewInput) (SalePre
 		TaxLines:      []SalePreviewTaxLine{},
 		TotalCents:    priced.total,
 		TaxReasonCode: taxReason,
+	}
+	if priced.subtotal > 0 {
+		out.TicketBaseCents = priced.subtotal + priced.saleDiscount.AmountCents
+		out.TicketDiscountMaxCents = out.TicketBaseCents - 1
+	}
+	if total, _ := reportDiscounts(priced.discounts); total > 0 {
+		out.DiscountCents = total
+		out.SaleDiscountCents = priced.saleDiscount.AmountCents
+		out.Lines = make([]SalePreviewLine, len(priced.lines))
+		for i, l := range priced.lines {
+			out.Lines[i] = SalePreviewLine{
+				LineNo: l.LineNo, LineTotalCents: l.LineTotalCents,
+				BeforeTicketDiscountCents: l.LineTotalCents + l.SaleDiscountCents,
+				DiscountCents:             l.DiscountCents, SaleDiscountCents: l.SaleDiscountCents,
+			}
+		}
 	}
 	if priced.tax != 0 {
 		out.TaxLines = append(out.TaxLines, SalePreviewTaxLine{

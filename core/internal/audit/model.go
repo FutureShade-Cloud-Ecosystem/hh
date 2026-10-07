@@ -55,7 +55,10 @@ const (
 	ActPriceOverride    = "PRICE_OVERRIDE"
 	ActTillOverride     = "TILL_OVERRIDE"
 	ActSaleCompleted    = "SALE_COMPLETED"
-	ActTaxReliefAssess  = "TAX_RELIEF_ASSESS"
+	// ActPosDiscountApproved is one manual counter discount and the manager who approved it
+	// (pos/discount.go): the auditable record of the verbal yes at the counter.
+	ActPosDiscountApproved = "POS_DISCOUNT_APPROVED"
+	ActTaxReliefAssess     = "TAX_RELIEF_ASSESS"
 	// order-change history (Q-044): entity-grain rows beyond the coarse HTTP middleware record
 	ActReturnCompleted    = "RETURN_COMPLETED"     // one committed POS return (method + return_no)
 	ActOrderStatusChanged = "ORDER_STATUS_CHANGED" // any orders.status transition (detail old→new)
