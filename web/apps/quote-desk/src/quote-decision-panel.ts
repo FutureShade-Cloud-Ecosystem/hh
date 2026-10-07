@@ -30,6 +30,9 @@ export class QdQuoteDecision extends PanelBase {
   @state() private reason = "";
   @state() private note = "";
   @state() private confirmed = false;
+  /** The total the person had in front of them when the accept form opened; a different total on the quote needs its own confirmation. */
+  @state() private ackTotal: number | null = null;
+  @state() private totalConfirmed = false;
   @state() private result = "";
   private keyed: { signature: string; key: string } | null = null;
 
@@ -103,7 +106,9 @@ export class QdQuoteDecision extends PanelBase {
     const seq = ctx.startRead();
     const read = await ctx.guardedRead(seq, client.readQuote(ctx.id));
     if (read === undefined || !read.ok) return;
+    const before = this.view?.total_cents;
     this.view = read.value;
+    if (before !== undefined && before !== read.value.total_cents) this.totalConfirmed = false;
     if (!read.value.can_accept && !read.value.can_reject) this.mode = "none";
   }
 
@@ -122,9 +127,16 @@ export class QdQuoteDecision extends PanelBase {
     this.reason = "";
     this.note = "";
     this.confirmed = false;
+    this.ackTotal = mode === "accept" ? (this.view?.total_cents ?? null) : null;
+    this.totalConfirmed = false;
     this.keyed = null;
     this.error = "";
     this.result = "";
+  }
+
+  /** The quote's total is no longer the one the person had in front of them: the retry waits for them to say they read this one. */
+  private totalMoved(): boolean {
+    return this.mode === "accept" && this.ackTotal !== null && this.view !== null && this.view.total_cents !== this.ackTotal;
   }
 
   /** The fields are uncontrolled: after each render they are set to what the state holds, so the screen and the state never differ. */
@@ -134,6 +146,8 @@ export class QdQuoteDecision extends PanelBase {
     this.syncValue('[data-field="decision-note"]', this.note);
     const statement = this.renderRoot.querySelector<HTMLInputElement>('[data-field="decision-statement"]');
     if (statement !== null && statement.checked !== this.confirmed) statement.checked = this.confirmed;
+    const total = this.renderRoot.querySelector<HTMLInputElement>('[data-field="decision-total-confirm"]');
+    if (total !== null && total.checked !== this.totalConfirmed) total.checked = this.totalConfirmed;
   }
 
   protected override onFieldInput(field: string, control: HTMLElement): void {
@@ -145,6 +159,7 @@ export class QdQuoteDecision extends PanelBase {
     if (field === "decision-channel") this.channel = (control as HTMLSelectElement).value;
     if (field === "decision-reason") this.reason = (control as HTMLSelectElement).value;
     if (field === "decision-statement") this.confirmed = (control as HTMLInputElement).checked;
+    if (field === "decision-total-confirm") this.totalConfirmed = (control as HTMLInputElement).checked;
     this.error = "";
   }
 
@@ -155,7 +170,7 @@ export class QdQuoteDecision extends PanelBase {
     const ctx = this.ctx;
     const channel = this.channel as DecisionChannel;
     const note = this.note.trim();
-    if (kind === "accept" && !acceptReady(channel, this.confirmed)) return;
+    if (kind === "accept" && (!acceptReady(channel, this.confirmed) || (this.totalMoved() && !this.totalConfirmed))) return;
     if (kind === "reject" && !rejectReady(channel, this.reason, this.note)) return;
     this.busy = true;
     this.error = "";
@@ -172,6 +187,11 @@ export class QdQuoteDecision extends PanelBase {
     this.busy = false;
     if (!done.ok) {
       this.error = spokenRefusal(quoteErrorMessage(done.status, done.error, "record the decision"));
+      if (done.status === 409) {
+        // The quote moved under the person: read it again, so the panel and the page show what the server holds now.
+        await this.load();
+        if (!ctx.stale) this.announceChanged();
+      }
       return;
     }
     this.keyed = null;
@@ -200,9 +220,16 @@ export class QdQuoteDecision extends PanelBase {
   }
 
   private renderAccept(view: QuoteView) {
-    const ready = acceptReady(this.channel, this.confirmed);
+    const moved = this.totalMoved();
+    const ready = acceptReady(this.channel, this.confirmed) && (!moved || this.totalConfirmed);
     return html`
       <p class="total" data-testid="qb-decision-total">Total to read to the customer: <strong>${moneyWord(view.total_cents)}</strong></p>
+      ${moved
+        ? html`<div class="statement">
+            <input type="checkbox" id="qd-total-confirm" data-field="decision-total-confirm" data-testid="qb-decision-total-confirm" />
+            <label for="qd-total-confirm">The total changed while this was open. I read the new total, ${moneyWord(view.total_cents)}, to the customer.</label>
+          </div>`
+        : nothing}
       <div class="row">${this.renderChannel()}</div>
       <div class="statement">
         <input type="checkbox" id="qd-statement" data-field="decision-statement" data-testid="qb-decision-statement" />

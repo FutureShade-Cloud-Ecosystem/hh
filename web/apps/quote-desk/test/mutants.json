@@ -2097,8 +2097,15 @@
   {
     "id": "qdp-reopen-clean",
     "file": "src/quote-decision-panel.ts",
-    "find": "    this.mode = mode;\n    this.channel = \"\";\n    this.reason = \"\";\n    this.note = \"\";\n    this.confirmed = false;\n    this.keyed = null;\n    this.error = \"\";",
-    "replace": "    this.mode = mode;\n    this.error = \"\";",
+    "find": "    this.channel = \"\";\n    this.reason = \"\";\n    this.note = \"\";\n    this.confirmed = false;\n    this.ackTotal",
+    "replace": "    this.ackTotal",
     "test": "P2-1 cancel then reopen starts clean"
+  },
+  {
+    "id": "qdp-409-reread",
+    "file": "src/quote-decision-panel.ts",
+    "find": "      if (done.status === 409) {\n",
+    "replace": "      if (false as boolean) {\n",
+    "test": "P2-2 after a refusal for a moved total"
   }
 ]

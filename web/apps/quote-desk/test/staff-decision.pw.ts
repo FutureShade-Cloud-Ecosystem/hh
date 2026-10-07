@@ -186,3 +186,28 @@ test("P2-1 cancel then reopen starts clean: nothing stays armed", async ({ page 
   await page.getByTestId("qb-decision-statement").check();
   await expect(page.getByTestId("qb-decision-accept")).toBeEnabled();
 });
+
+test("P2-2 after a refusal for a moved total the panel and the page show the server's total, and the retry waits for the person to confirm it", async ({ page }) => {
+  const id = await seedSent(page);
+  await openById(page, id);
+  await page.getByTestId("qb-decision-accept-open").click();
+  const oldTotal = (await page.getByTestId("qb-decision-total").innerText()).replace(/[^0-9.]/g, "");
+  await page.getByTestId("qb-decision-channel").selectOption("phone");
+  await page.getByTestId("qb-decision-statement").check();
+  await page.request.put("/_stub/decision-moved", { data: { moved: true } });
+  await page.getByTestId("qb-decision-accept").click();
+  await expect(page.getByTestId("qb-decision-error")).toContainText("total");
+  const newTotal = String((Number(oldTotal) + 1).toFixed(2));
+  await expect(page.getByTestId("qb-decision-total")).toContainText(newTotal);
+  await expect(page.getByTestId("qb-total")).toContainText(newTotal);
+  // The retry is held until the person says they read the new total to the customer.
+  await expect(page.getByTestId("qb-decision-accept")).toBeDisabled();
+  await page.getByTestId("qb-decision-total-confirm").check();
+  await expect(page.getByTestId("qb-decision-accept")).toBeEnabled();
+  await page.getByTestId("qb-decision-accept").click();
+  await expect(page.getByTestId("qb-status")).toContainText(/accepted/i);
+  const sent = (await seen(page)).staffDecisions;
+  expect(sent).toHaveLength(2);
+  expect(String(Number(sent[1]!.body.expected_total_cents) / 100)).toBe(String(Number(newTotal)));
+  expect(sent[1]!.key).not.toBe(sent[0]!.key);
+});
