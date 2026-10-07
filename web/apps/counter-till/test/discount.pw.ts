@@ -186,6 +186,8 @@ for (const layout of ["stepper", "panels"] as const) {
     await expect(lines.first()).toContainText("Holland Stone 60 mm");
     await expect(lines.first()).toContainText("$40.00");
     await expect(sold.getByTestId("sold-subtotal")).toContainText("$34.00");
+    // PR 253 review P3-1: the tax the sale carried, so the card adds up to what was paid.
+    await expect(sold.getByTestId("sold-tax")).toContainText("$4.42");
   });
 }
 

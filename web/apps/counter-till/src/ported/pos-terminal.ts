@@ -2767,6 +2767,11 @@ export class HosPosTerminal extends LitElement {
     .sold-discounts .total .amt {
       font-weight: 600;
     }
+    /* The tax row is a plain figure under the subtotal, not a second total. */
+    .sold-discounts .tax .what,
+    .sold-discounts .tax .amt {
+      font-weight: 400;
+    }
     .sold-facts .k {
       font-size: 10px;
       text-transform: uppercase;
@@ -7589,6 +7594,13 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
         <span class="who"></span>
         <span class="amt">${formatMoney(sale.subtotal_cents)}</span>
       </div>
+      ${typeof sale.tax_cents === 'number'
+        ? html`<div class="d total tax" data-testid="sold-tax">
+            <span class="what">Tax</span>
+            <span class="who"></span>
+            <span class="amt">${formatMoney(sale.tax_cents)}</span>
+          </div>`
+        : nothing}
     </div>`;
   }
 
