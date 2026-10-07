@@ -3,7 +3,7 @@
 // STRING, built by Node from the same render functions the custom elements
 // paint, so what the design sync opens is what the kits render, with no build
 // toolchain between them. The committed harness pages are four builds of this
-// function (harness/build.mjs writes them: dark and light, base and hh-pro),
+// function (harness/build.mjs writes them: brand mode and light, base and hh-pro),
 // so every variant opens from a file; serve.mjs serves the same variants from
 // the same source.
 //
@@ -203,7 +203,7 @@ ${tokens}
 designed states (empty, loading, offline, conflict, error), at the two walkthrough widths.
 Rendered by Node from the kit render functions themselves, each cell into its own declarative
 shadow root, so every kit is painted under its own stylesheet. The committed
-pages are exactly this page in its four builds: <code>index.html</code> (dark,
+pages are exactly this page in its four builds: <code>index.html</code> (brand mode,
 base brand, the double-click default) beside <code>index-light.html</code>,
 <code>index-hh-pro.html</code> and <code>index-light-hh-pro.html</code>, each
 opening from the file itself, with the per-kit sheets the build writes under

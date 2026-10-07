@@ -16,7 +16,7 @@
 // the production build's default.
 //
 // The theme slot (the item 5 followup): a host's own theme controls (the
-// till's Auto/Light/Dark cycle) ride the NAMED slot "theme" inside the right
+// till's Auto/Light/Brand cycle) ride the NAMED slot "theme" inside the right
 // cluster, after Switch role and Sign out, behind a thin separator. The
 // element does not define the controls; it accepts them, so every app keeps
 // its own switcher and none changes shape. The slot renders only when light
