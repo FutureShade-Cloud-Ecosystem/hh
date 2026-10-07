@@ -230,6 +230,9 @@ export class QuoteConvert extends HHElement {
         min-width: 0;
         overflow-wrap: anywhere;
       }
+      .lbl {
+        display: none;
+      }
       /* The phone (320 to 480): the lines table and the facts fit the screen, their words wrapping rather than
          pushing the page sideways. */
       @media (max-width: 480px) {
@@ -237,13 +240,48 @@ export class QuoteConvert extends HHElement {
           grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
           gap: var(--hh-s-4) var(--hh-s-8);
         }
-        table {
-          font-size: 0.8rem;
+        /* The review lines stack the way the till's ticket line does: the product on its own row, then the quantity,
+           the unit price and the total side by side, each whole (a figure is never broken). The header row gives its
+           words to the labels in each line, so it is hidden from the eye and stays for a screen reader. */
+        thead {
+          position: absolute;
+          width: 1px;
+          height: 1px;
+          overflow: hidden;
+          clip-path: inset(50%);
+          white-space: nowrap;
         }
-        th,
+        table,
+        tbody {
+          display: block;
+        }
+        tr {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, auto));
+          justify-content: space-between;
+          gap: var(--hh-s-4) var(--hh-s-8);
+          padding: var(--hh-s-8) 0;
+          border-bottom: 1px solid var(--hh-hairline);
+        }
         td {
-          padding: var(--hh-s-8) var(--hh-s-4);
+          display: block;
+          padding: 0;
+          border-bottom: 0;
+          min-width: 0;
+        }
+        td.item {
+          grid-column: 1 / -1;
           overflow-wrap: anywhere;
+        }
+        td.num {
+          text-align: left;
+          white-space: nowrap;
+        }
+        .lbl {
+          display: block;
+          font-size: 0.8rem;
+          color: var(--hh-text-dim);
+          font-weight: 600;
         }
       }
       .notice {
@@ -763,15 +801,15 @@ export class QuoteConvert extends HHElement {
             ${view.lines.map((line) => {
               const words = stockWords(this.#stock.get(line.line_no), this.#branchName());
               return html`<tr data-testid="qc-line">
-                <td>
+                <td class="item" data-testid="qc-line-name">
                   ${line.description}
                   ${words.kind === "short" ? html`<p class="warn" data-testid="qc-line-warning">${words.text}</p>` : nothing}
                   ${words.kind === "unknown" && this.#stock.size > 0 ? html`<p class="sub" data-testid="qc-line-stock">${words.text}</p>` : nothing}
                   ${words.kind === "ok" ? html`<p class="sub" data-testid="qc-line-stock">${words.text}</p>` : nothing}
                 </td>
-                <td class="num">${qtyLabel(line.qty_entered)} ${line.uom_entered}</td>
-                <td class="num">${moneyWord(line.unit_price_cents)}</td>
-                <td class="num">${moneyWord(line.line_total_cents)}</td>
+                <td class="num" data-testid="qc-line-qty"><span class="lbl" aria-hidden="true">Qty</span>${qtyLabel(line.qty_entered)} ${line.uom_entered}</td>
+                <td class="num" data-testid="qc-line-unit"><span class="lbl" aria-hidden="true">Unit price</span>${moneyWord(line.unit_price_cents)}</td>
+                <td class="num" data-testid="qc-line-total"><span class="lbl" aria-hidden="true">Total</span>${moneyWord(line.line_total_cents)}</td>
               </tr>`;
             })}
           </tbody>
