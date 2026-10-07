@@ -111,8 +111,8 @@ func TestCounterPayloads_ClerkReceivesNoCostOrMarginBytes(t *testing.T) {
 	assertNoCostBytes(t, "hotkeys", keys)
 
 	// 5. Account standing.
-	h.svc.WithAgingReader(&fakeAging{out: PastDue{PastDueCents: 14823, OldestBucket: "60"}})
-	standing, err := h.svc.Standing(ctx, AccountStandingInput{BranchID: "branch-trt", CustomerID: "cust-abc"})
+	wireStanding(h, PastDue{PastDueCents: 14823, OldestBucket: "60"}, nil)
+	standing, err := h.svc.Standing(ctx, AccountStandingInput{BranchID: "branch-trt", CustomerID: standingCust})
 	if err != nil {
 		t.Fatalf("standing: %v", err)
 	}

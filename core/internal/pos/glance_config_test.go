@@ -369,8 +369,9 @@ func TestMarginGlance_UnreachableBranch_RefusedNotBlanked(t *testing.T) {
 func TestStanding_UnreachableBranch_RefusedNotBlanked(t *testing.T) {
 	h := newHarness()
 	h.caller = salesCaller()
+	wireStanding(h, PastDue{}, nil)
 
-	_, err := h.svc.Standing(context.Background(), AccountStandingInput{BranchID: "branch-kgt", CustomerID: "cust-abc"})
+	_, err := h.svc.Standing(context.Background(), AccountStandingInput{BranchID: "branch-kgt", CustomerID: standingCust})
 	var ce clientError
 	if !errors.As(err, &ce) || ce.status != 403 {
 		t.Fatalf("want the wall's 403 on the standing read, got %v", err)
@@ -382,14 +383,16 @@ func TestStanding_UnreachableBranch_RefusedNotBlanked(t *testing.T) {
 func TestStanding_ReachableBranch_PolicyStillDecidesTheBytes(t *testing.T) {
 	h := newHarness()
 	h.caller = salesCaller()
+	wireStanding(h, behind(), nil)
 	h.store.policies["branch-trt"] = PosPolicy{BranchID: "branch-trt", BalanceVisibility: BalanceVisibilityHidden}
 
-	out, err := h.svc.Standing(context.Background(), AccountStandingInput{BranchID: "branch-trt", CustomerID: "cust-abc"})
-	if err != nil {
-		t.Fatalf("standing: %v", err)
+	out, err := h.svc.Standing(context.Background(), AccountStandingInput{BranchID: "branch-trt", CustomerID: standingCust})
+	var ce clientError
+	if !errors.As(err, &ce) || ce.status != 403 {
+		t.Fatalf("a hidden balance is refused with a 403, got %v", err)
 	}
-	if out.PastDueCents != 0 || out.OldestBucket != "" {
-		t.Fatalf("a hidden balance must stay byte-absent, got %+v", out)
+	if out != (AccountStanding{}) {
+		t.Fatalf("and no figure rides with the refusal, got %+v", out)
 	}
 }
 

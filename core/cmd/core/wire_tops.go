@@ -131,6 +131,9 @@ type topsSpine struct {
 	cardRail      *payment.Service
 	cardCharger   cardChargerAdapter
 	cardRefunder  posCardRefunderAdapter
+	// posHandler is held so the composition root can register the payment grant read, which needs
+	// the role gate built after the module wiring (pos/grant.go).
+	posHandler *pos.Handler
 }
 
 // feedbackActorNames resolves a linked ERP user id to the display name and
@@ -377,7 +380,9 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	w3bStatementSvc := billing.NewStatementService(billingRepo).WithAudit(auditSvc)
 	billing.NewMonthEndHandler(w3bCreditSvc, w3bStatementSvc, log).
 		WithUserLinker(link).RegisterRoutes(r, g)
-	posSvc.WithAgingReader(posAgingAdapter{svc: w3bCreditSvc})
+	posSvc.WithAgingReader(posAgingAdapter{svc: w3bCreditSvc}).
+		WithHoldReader(ops.tillRepo).
+		WithAccountChecker(posAccountAdapter{svc: customerSvc})
 
 	arLandingRepo := billing.NewARLandingRepository(pool)
 	arLandingSvc := billing.NewARLandingService(arLandingRepo).
@@ -649,6 +654,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		cardRail:      paySvc,
 		cardCharger:   cardCharger,
 		cardRefunder:  cardRefunder,
+		posHandler:    posHandler,
 	}
 }
 

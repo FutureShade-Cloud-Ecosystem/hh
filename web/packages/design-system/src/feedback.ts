@@ -378,6 +378,12 @@ export class HHFeedback extends HHElement {
    * painted again, so what is shown is exactly what Send will post. */
   protected override updated(changed: PropertyValues): void {
     super.updated(changed);
+    // A host that owns its own button (trigger external) learns whether the panel is open from this
+    // event, so it can say so (aria-expanded) and take focus back when the panel closes. The first
+    // render's initial false is not a change.
+    if (changed.has('open') && changed.get('open') !== undefined) {
+      this.dispatchEvent(new CustomEvent('hh-feedback-toggle', { detail: { open: this.open }, bubbles: true, composed: true }));
+    }
     // The hidden picker's change event is not composed, so it never reaches
     // the host: the listener rides the input itself, once per fresh input
     // (each open builds a new one).

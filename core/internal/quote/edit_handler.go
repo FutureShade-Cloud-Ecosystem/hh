@@ -396,6 +396,7 @@ func (h *StaffHandler) takeOrderPayment(w http.ResponseWriter, r *http.Request, 
 		AmountCents    int64  `json:"amount_cents"`
 		Reference      string `json:"reference"`
 		IdempotencyKey string `json:"idempotency_key"`
+		Fulfillment    string `json:"fulfillment"`
 	}
 	if err := decodeBody(w, r, &body); err != nil {
 		h.writeErr(w, err)
@@ -403,7 +404,7 @@ func (h *StaffHandler) takeOrderPayment(w http.ResponseWriter, r *http.Request, 
 	}
 	res, err := h.svc.TakeOrderPayment(r.Context(), r.PathValue("id"), OrderPaymentInput{
 		Method: body.Method, AmountCents: body.AmountCents, Reference: body.Reference,
-		IdempotencyKey: body.IdempotencyKey,
+		IdempotencyKey: body.IdempotencyKey, Fulfillment: body.Fulfillment,
 	})
 	if err != nil {
 		h.writeErr(w, err)

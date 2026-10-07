@@ -179,6 +179,49 @@ const QUOTES = {
     acceptable: true,
     include_images: true,
   },
+  // The tile quote (decision log row 1057): images are ON; the first line carries a photo, the second
+  // carries none and names a product whose category the tiles know, the third carries none and names
+  // nothing the tiles know.
+  "q-tiles-31": {
+    quote_no: "Q-31",
+    customer_name: "Quinte Hardscapes Inc",
+    status: "SENT",
+    valid_until: dayFromNow(28),
+    expired: false,
+    lines: [
+      {
+        line_no: 1,
+        description: "Banas Natural Step",
+        qty_entered: "1.0000",
+        uom_entered: "PC",
+        unit_price_cents: 2057,
+        line_total_cents: 2057,
+        image_ref: "p-banas",
+      },
+      {
+        line_no: 2,
+        description: "Black Mulch",
+        qty_entered: "1.0000",
+        uom_entered: "CYD",
+        unit_price_cents: 5400,
+        line_total_cents: 5400,
+      },
+      {
+        line_no: 3,
+        description: "Gift certificate",
+        qty_entered: "1.0000",
+        uom_entered: "EA",
+        unit_price_cents: 1000,
+        line_total_cents: 1000,
+      },
+    ],
+    subtotal_cents: 8457,
+    tax_cents: 1099,
+    total_cents: 9556,
+    as_of: nowIso(),
+    acceptable: true,
+    include_images: true,
+  },
   "q-terms-28": {
     quote_no: "Q-28",
     customer_name: "Fenwick Builders Ltd",
