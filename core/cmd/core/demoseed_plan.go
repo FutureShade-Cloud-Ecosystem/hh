@@ -116,10 +116,18 @@ type custSpec struct {
 	OnHold          bool
 }
 
-// Nine accounts, chosen so the counter surface has one of every pricing shape to render: two plain
+// Ten accounts, chosen so the counter surface has one of every pricing shape to render: two plain
 // RETAIL walk-ups (list price, no rule), four CONTRACTOR accounts (account price via a customer
-// rule), two BUILDER accounts, one GOVERNMENT account, and one contractor deliberately ON HOLD so
-// the credit gate has something to refuse.
+// rule), two BUILDER accounts, one GOVERNMENT account, one contractor deliberately ON HOLD so
+// the credit gate has something to refuse, and one Cash On Demand account so the pay-before-release
+// path has a face. THAT LAST ONE IS THE PRODUCT'S OWN RULE, not a label the seed invented: an
+// account with zero-day terms is the defining COD account (billing/credit_gate.go CanDispatch,
+// "payment_terms_days = 0 with an unpaid balance"), and it carries a real credit line because the
+// product's COD posture is not "cannot buy", it is "the goods do not leave until the money is in"
+// (the ring gates the uncaptured exposure against the limit, the dispatch gate holds the release).
+// Cash On Demand means pay before release, never cash on delivery. The name is a role label on
+// purpose (the house rule), the tester's way to find and type it, and the home is the branch the
+// demo logins work so the branch-fenced search answers it.
 //
 // RULING, C01 IS HOMED AT THE BRANCH THE DEMO LOGINS WORK. The staff customer search is
 // branch-fenced (customer/search_scope.go, U-park E4): it admits accounts homed to the searched
@@ -142,6 +150,7 @@ var demoCustomers = []custSpec{
 	{"C07", "D. Lachance (demo retail)", "RETAIL", 0, 0, 1, false},
 	{"C08", "County of Hastings (demo)", "GOVERNMENT", 60, 20_000_000, 0, false},
 	{"C09", "Stonebrook Contracting (demo)", "CONTRACTOR", 30, 1_500_000, 0, true},
+	{"C10", "Cash On Demand customer (demo)", "CONTRACTOR", 0, 500_000, 1, false},
 }
 
 type prodSpec struct {
