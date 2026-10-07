@@ -217,12 +217,29 @@ func (s *Service) prepareReturn(ctx context.Context, in ReturnInput) (*returnPla
 	}
 
 	// The original sale: must be a committed POS sale; the return runs at ITS branch.
-	oc, found, err := s.store.ReturnOrderContext(ctx, in.OrderID, in.OrderNo)
+	callerForRef, err := s.caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ref := normalizeSaleRef(in.OrderNo)
+	oc, found, err := s.store.ReturnOrderContextFor(ctx, in.OrderID, ref, reachableBranches(callerForRef))
 	if err != nil {
 		return nil, err
 	}
 	if !found {
 		return nil, errReturnNotFound
+	}
+	// An order_id and an order_no that name different sales are refused outright: the id would win
+	// and the number would be silently ignored, so a clerk's typo could ring a return on a sale they
+	// did not mean.
+	if in.OrderID != "" && ref != "" {
+		named, namedFound, nerr := s.store.ReturnOrderContextFor(ctx, "", ref, reachableBranches(callerForRef))
+		if nerr != nil {
+			return nil, nerr
+		}
+		if !namedFound || named.OrderID != oc.OrderID {
+			return nil, clientErr(http.StatusConflict, "pos: order_id and order_no name different sales")
+		}
 	}
 	plan.oc = oc
 	// The branch wall runs BEFORE any rail, before any write and before the
@@ -234,10 +251,7 @@ func (s *Service) prepareReturn(ctx context.Context, in ReturnInput) (*returnPla
 	// are not a thing a key alone buys. The return runs at the sale's
 	// branch; the caller brings their own grants, resolved per request by
 	// the guards, never claimed.
-	caller, err := s.caller(ctx)
-	if err != nil {
-		return nil, err
-	}
+	caller := callerForRef
 	plan.caller = caller
 	if err := requireBranchReach(caller, plan.oc.BranchID); err != nil {
 		return nil, err
@@ -766,6 +780,28 @@ func (s *Service) applyAccountCredit(ctx context.Context, tx pgx.Tx, oc returnOr
 	return nil
 }
 
+// reachableBranches is the branch ids a bare number may be searched in: nil for a caller who reaches
+// every branch (global scope), otherwise the granted ids, a non-nil slice even when there are none.
+func reachableBranches(caller identity.StaffContext) []string {
+	if caller.Scope == identity.ScopeGlobal {
+		return nil
+	}
+	ids := make([]string, 0, len(caller.Branches))
+	for id, ok := range caller.Branches {
+		if ok {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// normalizeSaleRef is the typed sale reference as the lookup compares it: trimmed, upper cased, and
+// without a leading hash, so "#SO-TRT-21", "so-trt-21", " SO-TRT-21 " and "INV-17" all reach the
+// same comparison (the stored numbers carry the hash; the query adds it back).
+func normalizeSaleRef(raw string) string {
+	return strings.TrimPrefix(strings.ToUpper(strings.TrimSpace(raw)), "#")
+}
+
 // LookupReturn is the pre-return read: the original committed sale + its lines with prior-return
 // sums netted, so the counter can build the per-line qty entry. Read-only, the commit re-guards.
 // The branch wall answers before the lines are read (X2): another branch's sale is refused, its
@@ -774,16 +810,16 @@ func (s *Service) LookupReturn(ctx context.Context, orderID, orderNo string) (Re
 	if orderID == "" && orderNo == "" {
 		return ReturnLookup{}, clientErr(http.StatusBadRequest, "pos: order_id or order_no is required")
 	}
-	oc, found, err := s.store.ReturnOrderContext(ctx, orderID, orderNo)
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return ReturnLookup{}, err
+	}
+	oc, found, err := s.store.ReturnOrderContextFor(ctx, orderID, normalizeSaleRef(orderNo), reachableBranches(caller))
 	if err != nil {
 		return ReturnLookup{}, err
 	}
 	if !found {
 		return ReturnLookup{}, errReturnNotFound
-	}
-	caller, err := s.caller(ctx)
-	if err != nil {
-		return ReturnLookup{}, err
 	}
 	if err := requireBranchReach(caller, oc.BranchID); err != nil {
 		return ReturnLookup{}, err

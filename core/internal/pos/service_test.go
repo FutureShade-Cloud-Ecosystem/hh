@@ -352,12 +352,18 @@ func (f *fakeStore) ReturnOrderContextTx(_ context.Context, _ pgx.Tx, orderID, o
 	return f.ReturnOrderContext(context.Background(), orderID, orderNo)
 }
 
+func (f *fakeStore) ReturnOrderContextFor(ctx context.Context, orderID, orderNo string, _ []string) (returnOrderCtx, bool, error) {
+	return f.ReturnOrderContext(ctx, orderID, orderNo)
+}
+
 func (f *fakeStore) ReturnOrderContext(_ context.Context, orderID, orderNo string) (returnOrderCtx, bool, error) {
 	if oc, ok := f.retCtx[orderID]; ok {
 		return oc, true, nil
 	}
 	for _, oc := range f.retCtx {
-		if orderNo != "" && oc.OrderNo == orderNo {
+		// The real query compares the number without its hash and in upper case (normalizeSaleRef
+		// has already stripped the typed one), so the fake does the same with the stored number.
+		if orderNo != "" && strings.TrimPrefix(strings.ToUpper(oc.OrderNo), "#") == orderNo {
 			return oc, true, nil
 		}
 	}
