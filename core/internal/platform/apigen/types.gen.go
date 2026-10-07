@@ -5625,10 +5625,11 @@ type PricingLowMarginEntry struct {
 }
 
 type PricingLowMarginScanRow struct {
-	OrderLineId         string    `json:"order_line_id"`
-	OrderId             string    `json:"order_id"`
-	OrderNo             string    `json:"order_no"`
-	SoldAt              time.Time `json:"sold_at"`
+	DocType             string    `json:"doc_type"`
+	LineId              string    `json:"line_id"`
+	DocId               string    `json:"doc_id"`
+	DocNo               string    `json:"doc_no"`
+	DocAt               time.Time `json:"doc_at"`
 	BranchId            string    `json:"branch_id"`
 	CustomerId          *string   `json:"customer_id,omitempty"`
 	CustomerType        string    `json:"customer_type"`
@@ -5638,6 +5639,7 @@ type PricingLowMarginScanRow struct {
 	QtyEntered          float64   `json:"qty_entered"`
 	UomEntered          string    `json:"uom_entered"`
 	UnitPriceCents      int64     `json:"unit_price_cents"`
+	DiscPct             *int32    `json:"disc_pct,omitempty"`
 	PriceUom            string    `json:"price_uom"`
 	CostInPriceUomCents int64     `json:"cost_in_price_uom_cents"`
 	MarginBps           int64     `json:"margin_bps"`
@@ -5645,6 +5647,15 @@ type PricingLowMarginScanRow struct {
 	FloorBps            int64     `json:"floor_bps"`
 	Level               string    `json:"level"`
 	Reason              *string   `json:"reason,omitempty"`
+	SalespersonId       *string   `json:"salesperson_id,omitempty"`
+	Salesperson         *string   `json:"salesperson,omitempty"`
+	ClearedBelowFloor   bool      `json:"cleared_below_floor"`
+	ClearedById         *string   `json:"cleared_by_id,omitempty"`
+	ClearedBy           *string   `json:"cleared_by,omitempty"`
+	ClearAuthority      *string   `json:"clear_authority,omitempty"`
+	ClearDiscPct        *int32    `json:"clear_disc_pct,omitempty"`
+	ClearMarginBps      *int64    `json:"clear_margin_bps,omitempty"`
+	DocMarginBps        *int64    `json:"doc_margin_bps,omitempty"`
 }
 
 type PricingQuantityBreakItem struct {
@@ -6080,7 +6091,7 @@ type PricingAuditLogPage struct {
 type PricingLowMarginScanPage struct {
 	Items      []PricingLowMarginScanRow `json:"items"`
 	NextCursor *string                   `json:"next_cursor,omitempty"`
-	Limit      *int32                    `json:"limit,omitempty"`
+	Limit      int32                     `json:"limit"`
 }
 
 type PricingQuantityBreakPage struct {

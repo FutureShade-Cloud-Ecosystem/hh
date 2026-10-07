@@ -4821,10 +4821,11 @@ export type PricingLowMarginEntry = {
   reason?: string;
 };
 export type PricingLowMarginScanRow = {
-  order_line_id: string;
-  order_id: string;
-  order_no: string;
-  sold_at: string;
+  doc_type: "quote" | "order";
+  line_id: string;
+  doc_id: string;
+  doc_no: string;
+  doc_at: string;
   branch_id: string;
   customer_id?: string;
   customer_type: string;
@@ -4834,6 +4835,7 @@ export type PricingLowMarginScanRow = {
   qty_entered: number;
   uom_entered: string;
   unit_price_cents: number;
+  disc_pct?: number;
   price_uom: string;
   cost_in_price_uom_cents: number;
   margin_bps: number;
@@ -4841,6 +4843,15 @@ export type PricingLowMarginScanRow = {
   floor_bps: number;
   level: "warn" | "critical" | "invalid";
   reason?: string;
+  salesperson_id?: string;
+  salesperson?: string;
+  cleared_below_floor: boolean;
+  cleared_by_id?: string;
+  cleared_by?: string;
+  clear_authority?: "MANAGER_SCOPE" | "APPROVAL";
+  clear_disc_pct?: number;
+  clear_margin_bps?: number;
+  doc_margin_bps?: number;
 };
 export type PricingQuantityBreakItem = {
   id?: string;
@@ -5236,7 +5247,7 @@ export type PricingAuditLogPage = {
 export type PricingLowMarginScanPage = {
   items: PricingLowMarginScanRow[];
   next_cursor?: string | null;
-  limit?: number;
+  limit: number;
 };
 export type PricingQuantityBreakPage = {
   items: PricingQuantityBreakHeader[];

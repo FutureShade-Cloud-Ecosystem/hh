@@ -126,6 +126,50 @@ func (c *Config) SeesCostAndMargin(role string) (bool, error) {
 	return false, nil
 }
 
+// LowMarginReportReaders returns who reads the low margin report (the audit the managers scan, sorted
+// by margin): the roles that clear a floor or decide one, and the roles above them, held to the cost
+// and margin list. A role is a reader when it clears the floor on its own price in its own branch
+// (ClearsOwnBranchFloor, the setting folded in), approves a quote floor request dealer wide (the
+// floor exception approvers) or inside its own branch (the quote floor branch approvers), and is on
+// the cost and margin list (X3): a margin beside a price is the cost in another form, so a role that
+// may not see cost does not read the report whatever floor list it is on. Derived from the
+// configuration's lists on every call, never held as a list of its own, so it cannot drift from them.
+// In the role vocabulary's order.
+func (c *Config) LowMarginReportReaders() []string {
+	var out []string
+	for _, role := range roleVocabulary {
+		if ok, err := c.ReadsLowMarginReport(role); err == nil && ok {
+			out = append(out, role)
+		}
+	}
+	return out
+}
+
+// ReadsLowMarginReport reports whether the role reads the low margin report (LowMarginReportReaders
+// states the rule). An unknown role is false with an error.
+func (c *Config) ReadsLowMarginReport(role string) (bool, error) {
+	if !IsRole(role) {
+		return false, fmt.Errorf("roleconfig: unknown role %q", role)
+	}
+	sees, err := c.SeesCostAndMargin(role)
+	if err != nil || !sees {
+		return false, err
+	}
+	if clears, err := c.ClearsOwnBranchFloor(role); err == nil && clears {
+		return true, nil
+	}
+	wide, err := c.ExceptionApprovers(ExceptionFloorQuote)
+	if err != nil {
+		return false, err
+	}
+	for _, r := range append(wide, c.QuoteFloorBranchApprovers()...) {
+		if r == role {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // CreditAtTill reports whether the counter clerk sees the customer's
 // balance, credit limit and headroom at the till (row 353).
 func (c *Config) CreditAtTill() bool {

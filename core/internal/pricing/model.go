@@ -407,17 +407,69 @@ type LowMarginEntry struct {
 
 // - D-PA-3 daily low-margin scan (the auto-populated live-sales report) -
 
-// LowMarginSaleLine is ONE raw committed sold line the D-PA-3 scan reads from the live-sales feed
-// (order_lines JOIN orders JOIN customers JOIN products LEFT JOIN product_branch_costs). It is the
+// The report's document kinds. A row says which one it came from (DocType*); a request names which
+// to read (ScanDocs*): quotes, orders, or both (the default).
+const (
+	DocTypeQuote = "quote"
+	DocTypeOrder = "order"
+
+	ScanDocsQuotes = "quotes"
+	ScanDocsOrders = "orders"
+	ScanDocsBoth   = "both"
+)
+
+// LowMarginFilter is what one report request asks the live-sales feed for. From is inclusive and To
+// exclusive, both on the document's own created time; BranchID "" is every branch; DocType is one of
+// the ScanDocs values, "" meaning both.
+//
+// SalespersonID narrows to one salesperson's documents (a staff user id); ClearedOnly to the lines a
+// manager or an approval cleared below the floor; Sort is SortMarginAsc (the default, worst first) or
+// SortMarginDesc. The feed reads the first four; the service applies ClearedOnly and Sort.
+type LowMarginFilter struct {
+	From, To time.Time
+	BranchID string
+	// BranchIDs is the branch wall: nil is every branch (a global caller), a non-nil list (possibly
+	// empty, which reads nothing) is the only branches the feed may return documents of.
+	BranchIDs     []string
+	DocType       string
+	SalespersonID string
+	ClearedOnly   bool
+	Sort          string
+}
+
+// The report's two sort orders, by the line's margin. A row with no margin (a line with no cost on
+// file, level invalid) sits after every graded row in either order.
+const (
+	SortMarginAsc  = "margin_asc"
+	SortMarginDesc = "margin_desc"
+)
+
+// LowMarginPage is one cursor page of the report. NextCursor is nil on the last page.
+type LowMarginPage struct {
+	Items      []LowMarginScanRow `json:"items"`
+	NextCursor *string            `json:"next_cursor"`
+	Limit      int                `json:"limit"`
+}
+
+// LowMarginSaleLine is ONE raw document line the D-PA-3 scan reads from the live-sales feed: a
+// committed order line (order_lines JOIN orders JOIN customers JOIN products LEFT JOIN
+// product_branch_costs) or a quote line (the same shape over quote_lines and quotes). It is the
 // PRE-classification row: the service converts the per-BASE-uom WAC into the line's price_uom,
-// computes the margin against the ACTUAL charged price, resolves the category target/floor and
-// grades it. AvgUnitCostCents is nil when the product has NO product_branch_costs row at the sale's
-// branch (cost unknown), surfaced as an invalid "no cost on file" row, never omitted (design #5).
+// computes the margin against the price the document ACTUALLY holds, resolves the category
+// target/floor and grades it. AvgUnitCostCents is nil when the product has NO product_branch_costs
+// row at the document's branch (cost unknown), surfaced as an invalid "no cost on file" row, never
+// omitted (design #5).
+//
+// UnitPriceCents is the price as STORED, and DiscPct the line's discount percent: a quote line stores
+// the engine's gross unit price with the discount beside it, and an order converted from a quote
+// keeps that pair (the percent in the line's metadata), so the price the customer pays is the stored
+// price taken net of DiscPct (netUnitCents). Zero DiscPct leaves the stored price as it is.
 type LowMarginSaleLine struct {
-	OrderLineID      string
-	OrderID          string
-	OrderNo          string
-	SoldAt           time.Time
+	DocType          string // DocTypeQuote | DocTypeOrder
+	LineID           string
+	DocID            string
+	DocNo            string
+	DocAt            time.Time
 	BranchID         string
 	CustomerID       string
 	CustomerType     string
@@ -427,9 +479,33 @@ type LowMarginSaleLine struct {
 	ProductName      string
 	QtyEntered       float64
 	UOMEntered       string
-	UnitPriceCents   int64 // the ACTUAL charged price per price_uom (order_lines.unit_price_cents)
+	UnitPriceCents   int64 // as stored, per price_uom
+	DiscPct          int
 	PriceUOM         string
 	AvgUnitCostCents *int64 // per product BASE uom; nil = no product_branch_costs row (cost missing)
+
+	// The document's own figures for this line, for the document's overall margin: the line's total
+	// (net of its discount) and its cost (the base unit cost times the base quantity, rounded once to
+	// cents; nil when the cost is unknown).
+	LineTotalCents int64
+	LineCostCents  *int64
+
+	// Who sold it: the document's salesperson (a quote's salesperson, else its creator; an order's
+	// quote's salesperson, else its creator) as an id and a display label. Empty when none is on file.
+	SalespersonID    string
+	SalespersonLabel string
+	// The clearing stamp the line carries (the floor_clear stamp a manager's or an approval's clearing
+	// leaves on a quote line): who cleared it, on what authority, and at which discount and margin
+	// (ClearStampDiscPct and ClearStampMarginBps, nil when the stamp does not say). For an order line
+	// the stamp is the one on the quote line it was copied from, found only while the order line still
+	// holds that quote line's product and price. A stamp stands for the discount it cleared and anything
+	// shallower; whether it covers the line NOW is the service's verdict, not the feed's.
+	ClearStamped        bool
+	ClearStampDiscPct   *int
+	ClearStampMarginBps *int64
+	ClearedByID         string
+	ClearedByLabel      string
+	ClearAuthority      string // MANAGER_SCOPE | APPROVAL
 }
 
 // LowMarginScanRow is one GRADED row of the principal's daily low-margin report (D-PA-3). A row is either a
@@ -438,10 +514,11 @@ type LowMarginSaleLine struct {
 // is non-positive. Invalid rows are SURFACED, never dropped (mirrors the classifier's invalid
 // discipline). Clean (at/above target) lines are omitted. Money is pre-tax cents (M5 owns tax).
 type LowMarginScanRow struct {
-	OrderLineID         string    `json:"order_line_id"`
-	OrderID             string    `json:"order_id"`
-	OrderNo             string    `json:"order_no"`
-	SoldAt              time.Time `json:"sold_at"`
+	DocType             string    `json:"doc_type"` // quote | order
+	LineID              string    `json:"line_id"`
+	DocID               string    `json:"doc_id"`
+	DocNo               string    `json:"doc_no"`
+	DocAt               time.Time `json:"doc_at"`
 	BranchID            string    `json:"branch_id"`
 	CustomerID          string    `json:"customer_id,omitempty"`
 	CustomerType        string    `json:"customer_type"`
@@ -450,7 +527,8 @@ type LowMarginScanRow struct {
 	ProductName         string    `json:"product_name"`
 	QtyEntered          float64   `json:"qty_entered"`
 	UOMEntered          string    `json:"uom_entered"`
-	UnitPriceCents      int64     `json:"unit_price_cents"` // the ACTUAL sold price per price_uom
+	UnitPriceCents      int64     `json:"unit_price_cents"` // the price the document holds, net of the line's discount, per price_uom
+	DiscPct             int       `json:"disc_pct,omitempty"`
 	PriceUOM            string    `json:"price_uom"`
 	CostInPriceUOMCents int64     `json:"cost_in_price_uom_cents"` // WAC converted BASE→price_uom
 	MarginBps           int64     `json:"margin_bps"`
@@ -458,4 +536,23 @@ type LowMarginScanRow struct {
 	FloorBps            int64     `json:"floor_bps"`
 	Level               string    `json:"level"`            // warn | critical | invalid
 	Reason              string    `json:"reason,omitempty"` // set only when level == "invalid"
+	// Who sold the document, as the staff member's display label.
+	SalespersonID string `json:"salesperson_id,omitempty"`
+	Salesperson   string `json:"salesperson,omitempty"`
+	// ClearedBelowFloor is true only when the line is below its floor NOW and a clearing stamp covers
+	// it: a stamp stands for the discount it cleared and anything shallower, so a line since
+	// discounted deeper than that, or since brought back above the floor, is not cleared. A stamped
+	// line names who cleared it (ClearedBy, a display label; ClearAuthority MANAGER_SCOPE or APPROVAL)
+	// and the stamp's own figures as cleared (ClearDiscPct, ClearMarginBps) whatever the verdict, beside
+	// the line's current DiscPct and MarginBps, so the reader sees both.
+	ClearedBelowFloor bool   `json:"cleared_below_floor"`
+	ClearedByID       string `json:"cleared_by_id,omitempty"`
+	ClearedBy         string `json:"cleared_by,omitempty"`
+	ClearAuthority    string `json:"clear_authority,omitempty"`
+	ClearDiscPct      *int   `json:"clear_disc_pct,omitempty"`
+	ClearMarginBps    *int64 `json:"clear_margin_bps,omitempty"`
+	// DocMarginBps is the document's own overall margin over its product lines, so a below floor line
+	// inside a healthy quote reads as one. Absent (never a partial figure) when any product line of the
+	// document has no cost on file or the document has no revenue to divide by.
+	DocMarginBps *int64 `json:"doc_margin_bps,omitempty"`
 }
