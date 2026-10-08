@@ -134,14 +134,15 @@ func applyYardLine(ctx context.Context, tx pgx.Tx, in YardPickInput, l YardPickL
 	var (
 		id, desc, uom, productID                string
 		qtyE, qtyB, backE, backB, fulfilledText string
+		releasedText                            string
 		lineTotal, unitPrice                    int64
 	)
 	err := tx.QueryRow(ctx, `
 SELECT id::text, description, uom_entered::text, qty_entered::text, qty_base::text,
        backorder_entered::text, backorder_base::text, line_total_cents, fulfilled_base::text,
-       COALESCE(product_id::text, ''), unit_price_cents
+       COALESCE(product_id::text, ''), unit_price_cents, released_base::text
   FROM order_lines WHERE order_id = $1 AND line_no = $2 FOR UPDATE`, in.OrderID, l.LineNo).
-		Scan(&id, &desc, &uom, &qtyE, &qtyB, &backE, &backB, &lineTotal, &fulfilledText, &productID, &unitPrice)
+		Scan(&id, &desc, &uom, &qtyE, &qtyB, &backE, &backB, &lineTotal, &fulfilledText, &productID, &unitPrice, &releasedText)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return YardLineOutcome{}, nil, ErrLineNotFound
@@ -156,6 +157,14 @@ SELECT id::text, description, uom_entered::text, qty_entered::text, qty_base::te
 	orderedE := new(big.Rat).Add(curE, boE)
 	orderedB := new(big.Rat).Add(curB, boB)
 
+	// What a credit only return released from fulfilment (0381) is no longer open to the yard.
+	releasedB, _ := ratOf(releasedText)
+	releasedE := new(big.Rat)
+	if releasedB.Sign() > 0 && orderedB.Sign() > 0 {
+		releasedE = scaleBase(releasedB, orderedE, orderedB)
+	}
+	openE := new(big.Rat).Sub(orderedE, releasedE)
+
 	picked, ok := ratOf(l.QtyPicked)
 	if !ok || picked.Sign() < 0 {
 		return YardLineOutcome{}, nil, httpx.BadRequestf("line %d: the picked quantity must be a number, zero or more", l.LineNo)
@@ -166,6 +175,15 @@ SELECT id::text, description, uom_entered::text, qty_entered::text, qty_base::te
 	if picked.Cmp(orderedE) > 0 {
 		return YardLineOutcome{}, nil, fmt.Errorf("line %d: %w", l.LineNo, ErrAboveOrdered)
 	}
+	if picked.Cmp(openE) > 0 {
+		return YardLineOutcome{}, nil, fmt.Errorf("line %d: %w", l.LineNo, ErrCreditedAway)
+	}
+	// The picked quantity is judged against what is still open; the line's own arithmetic (ordered =
+	// to fulfil + backorder) then runs on the picked quantity plus what was released, so a full pick of
+	// the open quantity is a full pick (no reason, no backorder) and a short one backorders only the
+	// goods the customer still wants.
+	pickedOpen := new(big.Rat).Set(picked)
+	picked = new(big.Rat).Add(picked, releasedE)
 
 	// The ordered money: what the line is worth whole. A line that is whole right now is its own
 	// answer (an edit may have repriced it since); a short line's is frozen on its shortfall row,
@@ -207,7 +225,7 @@ SELECT id::text, description, uom_entered::text, qty_entered::text, qty_base::te
 	}
 	eff := YardLineOutcome{
 		LineNo: l.LineNo, Description: desc, UOM: uom,
-		QtyOrdered: rat4(orderedE), QtyPicked: rat4(picked),
+		QtyOrdered: rat4(orderedE), QtyPicked: rat4(pickedOpen),
 		QtyBackordered: rat4(new(big.Rat).Sub(orderedE, picked)),
 		Reason:         reason, Note: note, Revision: storedRev,
 	}
@@ -225,7 +243,7 @@ RETURNING revision`, id, reason, note, in.ActorID).Scan(&eff.Revision); err != n
 		}
 		return eff, nil, nil
 	}
-	if newB.Cmp(fulfilled) < 0 {
+	if newB.Cmp(new(big.Rat).Add(fulfilled, releasedB)) < 0 {
 		return YardLineOutcome{}, nil, fmt.Errorf("%w: %s already fulfilled on line %d", ErrLineInUse, rat4(fulfilled), l.LineNo)
 	}
 

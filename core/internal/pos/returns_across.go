@@ -94,36 +94,43 @@ func (s *Service) PreviewReturnAcross(ctx context.Context, in ReturnPreviewInput
 // previewNote is PreviewReturnAcross that also answers each order's resolved return context, which
 // the swap judges its source orders and its leftover rail by.
 func (s *Service) previewNote(ctx context.Context, in ReturnPreviewInput) (ReturnPreview, []returnOrderCtx, error) {
+	out, ocs, _, err := s.previewNoteProducts(ctx, in)
+	return out, ocs, err
+}
+
+// previewNoteProducts is previewNote that also answers the products the note's lines return.
+func (s *Service) previewNoteProducts(ctx context.Context, in ReturnPreviewInput) (ReturnPreview, []returnOrderCtx, []string, error) {
 	var ocs []returnOrderCtx
+	var products []string
 	if len(in.Orders) == 0 {
-		return ReturnPreview{}, nil, clientErr(http.StatusBadRequest, "pos: a return note needs at least one order")
+		return ReturnPreview{}, nil, nil, clientErr(http.StatusBadRequest, "pos: a return note needs at least one order")
 	}
 	customerID, err := s.checkNoteShape(ctx, in.CustomerID, in.Orders)
 	if err != nil {
-		return ReturnPreview{}, nil, err
+		return ReturnPreview{}, nil, nil, err
 	}
 	caller, err := s.caller(ctx)
 	if err != nil {
-		return ReturnPreview{}, nil, err
+		return ReturnPreview{}, nil, nil, err
 	}
 	out := ReturnPreview{CustomerID: customerID, Orders: make([]ReturnPreviewOrder, 0, len(in.Orders))}
 	var first *returnOrderCtx
 	for _, o := range in.Orders {
 		oc, found, err := s.store.ReturnOrderContextFor(ctx, o.OrderID, "", reachableBranches(caller))
 		if err != nil {
-			return ReturnPreview{}, nil, err
+			return ReturnPreview{}, nil, nil, err
 		}
 		if !found {
-			return ReturnPreview{}, nil, errReturnNotFound
+			return ReturnPreview{}, nil, nil, errReturnNotFound
 		}
 		if err := requireBranchReach(caller, oc.BranchID); err != nil {
-			return ReturnPreview{}, nil, err
+			return ReturnPreview{}, nil, nil, err
 		}
 		if err := noteWalls(first, oc, customerID); err != nil {
-			return ReturnPreview{}, nil, err
+			return ReturnPreview{}, nil, nil, err
 		}
 		if oc, err = s.resolveConverted(ctx, oc); err != nil {
-			return ReturnPreview{}, nil, err
+			return ReturnPreview{}, nil, nil, err
 		}
 		if first == nil {
 			ocCopy := oc
@@ -132,9 +139,12 @@ func (s *Service) previewNote(ctx context.Context, in ReturnPreviewInput) (Retur
 		}
 		g, err := s.previewReturnLines(ctx, oc, o.Lines)
 		if err != nil {
-			return ReturnPreview{}, nil, err
+			return ReturnPreview{}, nil, nil, err
 		}
 		ocs = append(ocs, oc)
+		for _, ln := range g.lines {
+			products = append(products, ln.ProductID)
+		}
 		po := ReturnPreviewOrder{
 			OrderID: oc.OrderID, OrderNo: oc.OrderNo, SubtotalCents: g.subtotal, TaxCents: g.taxTotal,
 			TotalCents: g.subtotal + g.taxTotal, Lines: make([]ReturnPreviewLine, 0, len(g.lines)),
@@ -150,7 +160,7 @@ func (s *Service) previewNote(ctx context.Context, in ReturnPreviewInput) (Retur
 		out.Orders = append(out.Orders, po)
 	}
 	out.TotalCents = out.SubtotalCents + out.TaxCents
-	return out, ocs, nil
+	return out, ocs, products, nil
 }
 
 // returnAcrossPlan is everything the note resolves BEFORE its transaction opens, one child plan
@@ -177,6 +187,11 @@ func (s *Service) prepareReturnAcross(ctx context.Context, in ReturnAcrossInput)
 		return nil, errMissingKey
 	}
 	if strings.HasPrefix(in.IdempotencyKey, reservedRequestKeyPrefix) {
+		return nil, errReservedKey
+	}
+	// "swap:" is the swap's namespace for its credit note's key: a public note keyed into it would
+	// squat a swap's note slot, or answer its replay to a caller who reaches its branch.
+	if !in.swap && strings.HasPrefix(in.IdempotencyKey, reservedSwapKeyPrefix) {
 		return nil, errReservedKey
 	}
 	if len(in.Orders) == 0 {
@@ -334,7 +349,7 @@ func (s *Service) recordNoteCompleted(ctx context.Context, plan *returnAcrossPla
 	completed := audit.SensitiveAccess{
 		Action: audit.ActReturnCompleted, EntityType: "pos.return_note", EntityID: out.NoteID,
 		ActorID: plan.actor, BranchID: out.BranchID, Purpose: "POS_RETURN", Reason: in.RefundMethod,
-		Extra: map[string]any{"note_no": out.NoteNo, "total_cents": out.TotalCents},
+		Extra: map[string]any{"total_cents": out.TotalCents},
 	}
 	if approvedHere {
 		if plan.children[0].approverStaff != "" {
@@ -363,6 +378,18 @@ func (s *Service) returnAcrossInTx(ctx context.Context, tx pgx.Tx, plan *returnA
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].oc.OrderID < ordered[j].oc.OrderID })
 	for _, child := range ordered {
 		if err := s.store.LockSaleForReturn(ctx, tx, child.oc.OrderID); err != nil {
+			return ReturnNote{}, false, false, err
+		}
+	}
+
+	// Every invoice the note may touch, sorted, before any credit offset takes one and then the shared
+	// invoice sequence row (P2-1).
+	ocs := make([]returnOrderCtx, len(ordered))
+	for i, child := range ordered {
+		ocs[i] = child.oc
+	}
+	if in.RefundMethod == RefundAccountCredit && !in.railOptional {
+		if err := s.lockReturnInvoicesTx(ctx, tx, ocs); err != nil {
 			return ReturnNote{}, false, false, err
 		}
 	}
@@ -415,8 +442,22 @@ func (s *Service) returnAcrossInTx(ctx context.Context, tx pgx.Tx, plan *returnA
 	// rail, the single path's own refusal body and credential discipline.
 	var approvedHere bool
 	first := plan.children[0]
-	refusal, refused := s.refundApprovalRefusal(noteTotal, noteTotal, caller)
-	if first.credentialJudged && s.roles.RefundRequiresApproval(noteTotal) {
+	// The gate judges the note total AND, per order, the sale's earlier committed returns plus this
+	// note's share of it (read after the ascending locks, so exact): the single return's own
+	// cumulative rule, so notes cannot walk one sale past the amount a slice at a time. Since the
+	// rule is a threshold, the largest of these amounts decides.
+	gateAmount := noteTotal
+	for i, child := range plan.children {
+		prior, perr := s.store.SumCommittedReturnTotalsTx(ctx, tx, child.oc.OrderID)
+		if perr != nil {
+			return ReturnNote{}, false, false, perr
+		}
+		if c := prior + guards[i].subtotal + guards[i].taxTotal; c > gateAmount {
+			gateAmount = c
+		}
+	}
+	refusal, refused := s.refundApprovalRefusal(gateAmount, noteTotal, caller)
+	if first.credentialJudged && s.roles.RefundRequiresApproval(gateAmount) {
 		if first.judgeErr != nil {
 			return ReturnNote{}, false, false, first.judgeErr
 		}
@@ -437,7 +478,7 @@ func (s *Service) returnAcrossInTx(ctx context.Context, tx pgx.Tx, plan *returnA
 	// heard of the others.
 	if in.RefundMethod == RefundCard {
 		for i, child := range plan.children {
-			if cerr := s.checkCardCapTx(ctx, tx, child.oc, "", guards[i].subtotal+guards[i].taxTotal-child.applied); cerr != nil {
+			if cerr := s.checkCardCapTx(ctx, tx, child.oc, "", "refund:"+child.in.IdempotencyKey, guards[i].subtotal+guards[i].taxTotal-child.applied); cerr != nil {
 				return ReturnNote{}, false, false, cerr
 			}
 		}

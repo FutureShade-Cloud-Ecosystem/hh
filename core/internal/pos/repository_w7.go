@@ -327,6 +327,7 @@ SELECT ol.id::text, COALESCE(ol.product_id::text,''), COALESCE(NULLIF(ol.descrip
 const (
 	priorReturnQtyExpr   = `COALESCE((SELECT SUM(rl.qty_base) FROM pos_return_lines rl WHERE rl.order_line_id = ol.id), 0)`
 	priorReturnMoneyExpr = `COALESCE((SELECT SUM(rl.line_total_cents) FROM pos_return_lines rl WHERE rl.order_line_id = ol.id), 0)`
+	priorCreditOnlyExpr  = `COALESCE((SELECT SUM(rl.credit_only_base) FROM pos_return_lines rl WHERE rl.order_line_id = ol.id), 0)`
 	priorReturnTaxExpr   = `COALESCE((SELECT SUM(rl.tax_cents) FROM pos_return_lines rl WHERE rl.order_line_id = ol.id), 0)`
 )
 
@@ -419,7 +420,7 @@ const returnableLineQuery = `
 SELECT ol.id::text, COALESCE(ol.product_id::text,''), ol.qty_base::float8, ol.unit_price_cents,
        ol.line_total_cents, ol.tax_cents,
        ` + priorReturnQtyExpr + `::float8, ` + priorReturnMoneyExpr + `, ` + priorReturnTaxExpr + `,
-       ` + leftShelfExpr + `::float8
+       ` + leftShelfExpr + `::float8, ` + priorCreditOnlyExpr + `::float8
   FROM order_lines ol
  WHERE ol.id = $2 AND ol.order_id = $1`
 
@@ -427,7 +428,7 @@ func scanReturnableLine(row pgx.Row) (returnableLine, bool, error) {
 	var rl returnableLine
 	err := row.Scan(&rl.OrderLineID, &rl.ProductID, &rl.QtySold,
 		&rl.UnitPriceCents, &rl.LineTotalCents, &rl.TaxCents, &rl.PriorQty, &rl.PriorMoney, &rl.PriorTax,
-		&rl.LeftShelfBase)
+		&rl.LeftShelfBase, &rl.PriorCreditOnly)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return returnableLine{}, false, nil
 	}
@@ -459,6 +460,32 @@ func (r *Repository) SumCardRefundedTx(ctx context.Context, tx pgx.Tx, orderID, 
 	var sum int64
 	err := tx.QueryRow(ctx, `SELECT COALESCE(SUM(total_cents - fee_cents - applied_cents), 0) FROM pos_returns
  WHERE order_id = $1 AND refund_method = 'CARD' AND ($2 = '' OR id::text <> $2)`, orderID, exceptReturnID).Scan(&sum)
+	return sum, err
+}
+
+// LockInvoicesTx takes the named invoices FOR NO KEY UPDATE in the order given (callers sort), the
+// way the till's reversal does: a return's credit offset locks an invoice and then bumps the shared
+// invoice sequence row, a payment locks its invoices first and bumps the row after, so a return that
+// reached the row holding one invoice and then asked for another closed a cycle with a payment on the
+// second. Taking every invoice first, sorted, removes the cycle. NO KEY UPDATE, not UPDATE, so a
+// return's foreign key share lock on the invoice does not conflict with it.
+func (r *Repository) LockInvoicesTx(ctx context.Context, tx pgx.Tx, invoiceIDs []string) error {
+	for _, id := range invoiceIDs {
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM invoices WHERE id = $1::uuid FOR NO KEY UPDATE`, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SumUnbookedCardRefundsTx is the money the processor already refunded for the order inside a
+// transaction that then rolled back (pos_card_refund_attempts in UNBOOKED): it left the card all the
+// same, so it counts against the capture. exceptRefundKey leaves out the refund whose own key is being
+// retried (booking it is what the retry does).
+func (r *Repository) SumUnbookedCardRefundsTx(ctx context.Context, tx pgx.Tx, orderID, exceptRefundKey string) (int64, error) {
+	var sum int64
+	err := tx.QueryRow(ctx, `SELECT COALESCE(SUM(amount_cents), 0) FROM pos_card_refund_attempts
+ WHERE order_id = $1 AND status = 'UNBOOKED' AND refund_key <> $2`, orderID, exceptRefundKey).Scan(&sum)
 	return sum, err
 }
 
@@ -645,10 +672,10 @@ func (r *Repository) InsertReturnLines(ctx context.Context, tx pgx.Tx, returnID 
 	for _, l := range lines {
 		const q = `
 INSERT INTO pos_return_lines (return_id, order_line_id, product_id, qty_base, unit_price_cents,
-                              line_total_cents, tax_cents, reason_code, disposition, restocked_base, written_off_base)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+                              line_total_cents, tax_cents, reason_code, disposition, restocked_base, written_off_base, credit_only_base)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
 		if _, err := tx.Exec(ctx, q, returnID, l.OrderLineID, l.ProductID, l.QtyBase, l.UnitPriceCents,
-			l.LineTotalCents, l.TaxCents, l.ReasonCode, l.Disposition, l.RestockedBase, l.WrittenOffBase); err != nil {
+			l.LineTotalCents, l.TaxCents, l.ReasonCode, l.Disposition, l.RestockedBase, l.WrittenOffBase, l.CreditOnlyBase); err != nil {
 			return err
 		}
 	}

@@ -1060,6 +1060,8 @@ type returnableLine struct {
 	PriorQty       float64
 	PriorMoney     int64
 	PriorTax       int64
+	// PriorCreditOnly is the part of the earlier returns that was credit only (no goods came back).
+	PriorCreditOnly float64
 	// LeftShelfBase is the quantity of the line that has left the shelf: all of it on a collect now
 	// ring (stock is decremented at the ring), else what fulfilment has taken out (fulfilled_base).
 	LeftShelfBase float64
@@ -1121,6 +1123,9 @@ type returnLineRow struct {
 	Disposition    string
 	RestockedBase  float64
 	WrittenOffBase float64
+	// CreditOnlyBase is the part of the returned quantity that was credit only: the goods never left
+	// the shelf, so none came back (0381).
+	CreditOnlyBase float64
 }
 
 // -- DIB-488 rev 8 (item 10): the role-gated margin glance ---------------------------------------

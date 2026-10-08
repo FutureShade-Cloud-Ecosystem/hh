@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
@@ -27,7 +28,10 @@ import (
 )
 
 // swapNoteKey and swapSaleKey derive the two documents' own idempotency keys from the swap's.
-func swapNoteKey(key string) string { return "swap:" + key }
+// reservedSwapKeyPrefix is the idempotency-key namespace the swap derives its credit note's key in.
+const reservedSwapKeyPrefix = "swap:"
+
+func swapNoteKey(key string) string { return reservedSwapKeyPrefix + key }
 func swapSaleKey(key string) string {
 	// The sale's key is a uuid column everywhere it travels (the ring, the card legs): derive one,
 	// deterministically, so a retry of the swap names the same sale.
@@ -118,6 +122,7 @@ type swapRow struct {
 // swapFig is the swap's priced shape, one computation for the preview and the commit.
 type swapFig struct {
 	credit    ReturnPreview
+	products  []string // the products the swap's two halves move, sorted and unique
 	ocs       []returnOrderCtx
 	subtotal  int64
 	tax       int64
@@ -141,6 +146,14 @@ func originalTenderRail(oc returnOrderCtx) (string, bool) {
 		return RefundAccountCredit, true // "" is an order a quote became: its money sits on the account
 	}
 	return "", false
+}
+
+func productIDsOf(lines []LineInput) []string {
+	out := make([]string, 0, len(lines))
+	for _, l := range lines {
+		out = append(out, l.ProductID)
+	}
+	return out
 }
 
 // swapFigures prices a swap: the credit (the commit's own guard, no locks), the new order (the ring's
@@ -168,11 +181,19 @@ func (s *Service) swapFigures(ctx context.Context, in SwapInput) (swapFig, error
 	default:
 		return fig, errBadTender
 	}
-	credit, ocs, err := s.previewNote(ctx, ReturnPreviewInput{CustomerID: in.CustomerID, Orders: in.Orders})
+	credit, ocs, retProducts, err := s.previewNoteProducts(ctx, ReturnPreviewInput{CustomerID: in.CustomerID, Orders: in.Orders})
 	if err != nil {
 		return fig, err
 	}
 	fig.credit, fig.ocs = credit, ocs
+	seenProduct := map[string]bool{}
+	for _, id := range append(retProducts, productIDsOf(in.Lines)...) {
+		if id != "" && !seenProduct[id] {
+			seenProduct[id] = true
+			fig.products = append(fig.products, id)
+		}
+	}
+	sort.Strings(fig.products)
 	for _, oc := range ocs {
 		// A swap spends credit that is already in hand: a source order whose invoice is still open
 		// would have the credit offset what the customer still owes first, not buy anything.
@@ -322,6 +343,13 @@ func (s *Service) Swap(ctx context.Context, in SwapInput) (SwapResult, error) {
 	var swapID string
 	actor := identity.StaffUserIDFromContext(ctx)
 	txErr := s.store.RunInTx(ctx, func(tx pgx.Tx) error {
+		// Both halves move stock: take the balance rows of every product either touches, sorted,
+		// before the first move, so two crossed swaps queue instead of deadlocking.
+		if s.stockLocks != nil {
+			if lerr := s.stockLocks.LockStockTx(ctx, tx, branchID, fig.products); lerr != nil {
+				return lerr
+			}
+		}
 		var nerr error
 		note, replayedHere, approvedHere, nerr = s.returnAcrossInTx(ctx, tx, notePlan)
 		if nerr != nil {

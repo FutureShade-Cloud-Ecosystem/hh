@@ -64,6 +64,7 @@ type fakeStore struct {
 	returnLineRows   []returnLineRow
 	unbookedRefunds  []cardRefundFact
 	swaps            []swapRow
+	invoiceLocks     []string
 	bookedRefundKeys []string
 	priorSums        map[string]int64      // order_id → the sale's earlier committed return total (the per-sale sum the refund gate reads)
 	noteKeys         map[string]ReturnNote // the note idempotency key → its committed note (the across-orders replay)
@@ -481,6 +482,21 @@ func (f *fakeStore) SumCardRefundedTx(_ context.Context, _ pgx.Tx, orderID, _ st
 	for _, r := range f.returnRows {
 		if r.OrderID == orderID && r.RefundMethod == RefundCard {
 			sum += r.TotalCents - r.FeeCents
+		}
+	}
+	return sum, nil
+}
+
+func (f *fakeStore) LockInvoicesTx(_ context.Context, _ pgx.Tx, ids []string) error {
+	f.invoiceLocks = append(f.invoiceLocks, ids...)
+	return nil
+}
+
+func (f *fakeStore) SumUnbookedCardRefundsTx(_ context.Context, _ pgx.Tx, orderID, except string) (int64, error) {
+	var sum int64
+	for _, u := range f.unbookedRefunds {
+		if u.OrderID == orderID && u.RefundKey != except {
+			sum += u.AmountCents
 		}
 	}
 	return sum, nil

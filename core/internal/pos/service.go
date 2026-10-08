@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -208,6 +209,10 @@ type posStore interface {
 	FindSwapByKey(ctx context.Context, key string) (swapRow, bool, error)
 	// SumCardRefundedTx is what earlier CARD returns of the order refunded to the card (D5).
 	SumCardRefundedTx(ctx context.Context, tx pgx.Tx, orderID, exceptReturnID string) (int64, error)
+	// LockInvoicesTx takes the invoices a return may touch, sorted, before any credit offset (P2-1).
+	LockInvoicesTx(ctx context.Context, tx pgx.Tx, invoiceIDs []string) error
+	// SumUnbookedCardRefundsTx counts the processor refunds a rolled back transaction left unbooked (D5).
+	SumUnbookedCardRefundsTx(ctx context.Context, tx pgx.Tx, orderID, exceptRefundKey string) (int64, error)
 	// RecordUnbookedCardRefunds and MarkCardRefundsBooked keep the record of processor refunds a
 	// rolled back transaction left behind, on the pool and after that transaction ended (D4).
 	RecordUnbookedCardRefunds(ctx context.Context, facts []cardRefundFact, reason string) error
@@ -356,6 +361,11 @@ type Service struct {
 	// branchNames turns a branch id into the branch's name for the customer lines read (the branches
 	// module owns the table). Nil leaves the names empty.
 	branchNames BranchNamer
+	// stockLocks pre-locks the stock rows a swap's two halves touch, sorted (nil: nothing is locked
+	// ahead, each half locks as it goes).
+	stockLocks StockLocker
+	// openQty releases credited, never shipped goods from the order's open lines (Q5).
+	openQty OpenQuantityReleaser
 	// orderInvoices resolves a converted order's live invoice (billing owns the documents).
 	orderInvoices OrderInvoiceReader
 	now           func() time.Time
@@ -468,6 +478,24 @@ type OrderInvoiceReader interface {
 
 // WithOrderInvoices injects the converted order invoice read.
 func (s *Service) WithOrderInvoices(r OrderInvoiceReader) *Service { s.orderInvoices = r; return s }
+
+// StockLocker is the narrow stock seam a swap needs to take, sorted and ahead of both its halves, the
+// stock rows its restock and its decrement touch. Satisfied in cmd/core over the inventory service.
+type StockLocker interface {
+	LockStockTx(ctx context.Context, tx pgx.Tx, branchID string, productIDs []string) error
+}
+
+// WithStockLocks injects the swap's stock pre-lock.
+func (s *Service) WithStockLocks(l StockLocker) *Service { s.stockLocks = l; return s }
+
+// OpenQuantityReleaser is the narrow order seam a credit only return uses: release a line's quantity
+// from fulfilment, on the return's transaction. Satisfied in cmd/core over the order repository.
+type OpenQuantityReleaser interface {
+	ReleaseOpenQuantityTx(ctx context.Context, tx pgx.Tx, orderLineID string, qtyBase float64) error
+}
+
+// WithOpenQuantityReleaser injects the order's open quantity seam.
+func (s *Service) WithOpenQuantityReleaser(r OpenQuantityReleaser) *Service { s.openQty = r; return s }
 
 // WithBranchNames injects the branch name read.
 func (s *Service) WithBranchNames(b BranchNamer) *Service { s.branchNames = b; return s }
@@ -1022,6 +1050,8 @@ func (s *Service) saleInTx(ctx context.Context, tx pgx.Tx, p *salePlan, outp *Sa
 			stockLines[i] = StockLine{ProductID: l.ProductID, QtyBase: l.QtyBase}
 			fulfilledLines[i] = map[string]any{"product_id": l.ProductID, "qty_base": l.QtyBase}
 		}
+		// Sorted by product, so two sales over crossed products take their balance rows in one order.
+		sort.SliceStable(stockLines, func(i, j int) bool { return stockLines[i].ProductID < stockLines[j].ProductID })
 		if err := s.stockDec().DecrementForSaleTx(ctx, tx, StockDecrementInput{
 			OrderID: orderID, BranchID: in.BranchID, SaleType: saleType, Lines: stockLines,
 		}); err != nil {
@@ -1186,7 +1216,14 @@ func (s *Service) saleInTx(ctx context.Context, tx pgx.Tx, p *salePlan, outp *Sa
 	// unchanged and only PAYMENT rows are written (identical to the single-tender behavior this
 	// generalizes). An uncaptured remainder books the INVOICE first, then each capture nets it
 	// down, landing at open + (total − captured), which is exactly the invoice's own balance.
-	running := cust.OpenBalanceCents
+	// The running balance is read ON the transaction, after whatever it already wrote for this
+	// customer (a swap's credit note children post account credit rows first), never from the
+	// pre-transaction read, which would hand the rows below a stale base.
+	openRec, openErr := s.store.ReadCustomerTx(ctx, tx, customerID)
+	if openErr != nil {
+		return openErr
+	}
+	running := openRec.OpenBalanceCents
 	// A swap's applied credit settles the invoice without a tender: the invoice is booked to the
 	// account and the credit comes off it, so the account nets to the shortfall alone.
 	invoiceBooked := !fullyPaid || applied > 0
