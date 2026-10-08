@@ -51,6 +51,10 @@ import { ReturnsFlow } from "./returns/flow.js";
 import { OneTimeCredential } from "./returns/approval.js";
 import { RefundApprovalCapture } from "./returns/capture.js";
 import { returnsStyles, renderReturns } from "./views/returns.js";
+import { formatMoney } from "./money.js";
+import { PayBalanceCapture } from "./pay-balance/capture.js";
+import { PayBalanceFlow } from "./pay-balance/flow.js";
+import { payBalanceStyles, renderPayBalance } from "./views/pay-balance.js";
 // The ported terminal: its import registers the surface's elements, and the
 // host wiring (ports.ts) answers its seams.
 import "./ported/pos-terminal.js";
@@ -64,6 +68,7 @@ export class CounterTillApp extends HHElement {
     demoBannerStyles,
     entryStyles,
     returnsStyles,
+    payBalanceStyles,
     css`
       :host {
         display: block;
@@ -379,6 +384,7 @@ export class CounterTillApp extends HHElement {
    */
   #clerkIdentity: AuthUser | null = null;
   readonly #returns: ReturnsFlow;
+  readonly #payBalance: PayBalanceFlow;
   #branch: BranchRef | null = null;
   /**
    * The mounted surface. The entry page (the cards) is the way in; once a
@@ -392,14 +398,25 @@ export class CounterTillApp extends HHElement {
    * `#/returns`, reached by the Returns link in the bar (a plain anchor: no script writes the
    * address). The sale stays mounted while Returns is up, so a ticket in progress is never lost.
    */
-  #route: "sale" | "returns" = "sale";
+  #route: "sale" | "returns" | "pay-balance" = "sale";
   readonly #onHashChange = (): void => {
     this.#route = this.#readRoute();
+    this.#openPayBalanceOnOrder();
     this.requestUpdate();
   };
 
-  #readRoute(): "sale" | "returns" {
-    return new URL(window.location.href).hash.startsWith("#/returns") ? "returns" : "sale";
+  /** `#/pay-balance?order=<number>` opens the surface on that order (the held card's action). */
+  #openPayBalanceOnOrder(): void {
+    if (this.#route !== "pay-balance") return;
+    const query = new URL(window.location.href).hash.split("?")[1] ?? "";
+    const orderNo = new URLSearchParams(query).get("order");
+    if (orderNo !== null && orderNo !== "" && orderNo !== this.#payBalance.term) void this.#payBalance.openOn(orderNo);
+  }
+
+  #readRoute(): "sale" | "returns" | "pay-balance" {
+    const hash = new URL(window.location.href).hash;
+    if (hash.startsWith("#/returns")) return "returns";
+    return hash.startsWith("#/pay-balance") ? "pay-balance" : "sale";
   }
   /** A refusal in words for the chrome while the terminal is mounted (the pop-out's, say). */
   #chromeMessage: string | null = null;
@@ -415,7 +432,9 @@ export class CounterTillApp extends HHElement {
       sessions: this.#sessions,
       activeOrg: () => DEMO_ORG,
     });
-    const client = new ApiClient({ baseUrl: "", fetch: capture.fetch, headers: staffHeaders });
+    // The pay balance refusal's money fields ride the same transport: one more wrapper, same rule.
+    const payBalanceCapture = new PayBalanceCapture(capture.fetch);
+    const client = new ApiClient({ baseUrl: "", fetch: payBalanceCapture.fetch, headers: staffHeaders });
     // The feedback widget's sender rides the staff client: the feedback
     // route is staff guarded and the till's own custody holds the bearer.
     this.#feedbackSender = async (request) => {
@@ -482,6 +501,12 @@ export class CounterTillApp extends HHElement {
       capture,
       onChange: () => this.requestUpdate(),
     });
+    this.#payBalance = new PayBalanceFlow({
+      client,
+      capture: payBalanceCapture,
+      branchId: () => this.#branch?.id ?? null,
+      onChange: () => this.requestUpdate(),
+    });
     this.#tillClient = new TillClient(client);
     // The ported surface's host wiring: one door, wired once, reading custody
     // through this element's own closures so the bearer never rests in a
@@ -519,6 +544,7 @@ export class CounterTillApp extends HHElement {
     // uncontrolled: the DOM holds what was typed, the flow hears every edit
     // here, and a draft's fresh mount shows the flow's own defaults.
     this.addEventListener("input", this.#onHostInput);
+    this.addEventListener("keydown", this.#onHostKey);
     // The system's light setting is honoured from the first paint; the Theme
     // control in the account area cycles Auto, Light and Brand.
     this.#theme.start();
@@ -617,10 +643,22 @@ export class CounterTillApp extends HHElement {
     this.removeEventListener("click", this.#onHostClick);
     this.removeEventListener("pos-counter-layout", this.#onCounterLayout as EventListener);
     this.removeEventListener("input", this.#onHostInput);
+    this.removeEventListener("keydown", this.#onHostKey);
     window.removeEventListener("hashchange", this.#onHashChange);
     this.#theme.stop();
     super.disconnectedCallback();
   }
+
+  /** Enter in the Pay balance find field finds, the way the Find button does. */
+  readonly #onHostKey = (event: KeyboardEvent): void => {
+    if (event.key !== "Enter") return;
+    const control = event
+      .composedPath()
+      .find((node): node is Element => node instanceof Element && node.getAttribute("data-field") === "pay-balance-term");
+    if (control === undefined) return;
+    event.preventDefault();
+    void this.#payBalance.find();
+  };
 
   readonly #onHostInput = (event: Event): void => {
     const control = event
@@ -628,6 +666,7 @@ export class CounterTillApp extends HHElement {
       .find((node): node is Element => node instanceof Element && node.hasAttribute("data-field"));
     if (!(control instanceof HTMLInputElement) && !(control instanceof HTMLTextAreaElement)) return;
     const field = control.getAttribute("data-field");
+    if (field === "pay-balance-term" && control instanceof HTMLInputElement) this.#payBalance.setTerm(control.value);
     if (field === "order-no") this.#returns.setOrderNo(control.value);
     if (field === "qty" && control instanceof HTMLInputElement) {
       const line = control.getAttribute("data-line") ?? "";
@@ -680,6 +719,21 @@ export class CounterTillApp extends HHElement {
     }
     if (control.getAttribute("data-action") === "pop-out" && typeof flow === "string" && flow !== "") {
       this.#popOut(flow);
+    }
+    if (control.getAttribute("data-action") === "pay-balance-find") {
+      void this.#payBalance.find();
+    }
+    if (control.getAttribute("data-action") === "pay-balance-pick") {
+      void this.#payBalance.pick(control.getAttribute("data-order") ?? "");
+    }
+    if (control.getAttribute("data-action") === "pay-balance-method") {
+      this.#payBalance.chooseMethod(control.getAttribute("data-method") ?? "");
+    }
+    if (control.getAttribute("data-action") === "pay-balance-take") {
+      void this.#payBalance.take(formatMoney);
+    }
+    if (control.getAttribute("data-action") === "pay-balance-another") {
+      this.#payBalance.another();
     }
     if (control.getAttribute("data-action") === "returns-find") {
       void this.#returns.findSale();
@@ -824,6 +878,7 @@ export class CounterTillApp extends HHElement {
     this.#clerkRoleCode = null;
     this.#clerkIdentity = null;
     this.#returns.reset();
+    this.#payBalance.reset();
     this.#branch = null;
     this.#surface = "entry";
     // The ported surface's session-owned module state goes with the session:
@@ -869,6 +924,7 @@ export class CounterTillApp extends HHElement {
     // anything mounts.
     setBranches([{ id: branch.value.id, name: branch.value.name }]);
     this.#surface = "terminal";
+    this.#openPayBalanceOnOrder();
     this.requestUpdate();
   }
 
@@ -987,9 +1043,10 @@ export class CounterTillApp extends HHElement {
                 ${demoPresent ? demoBanner() : nothing}
                 <p class="signed-in">
                   <span class="role-name" data-testid="signed-in-role">${this.#signedInRoleLabel()}</span>
-                  ${this.#route === "returns"
+                  ${this.#route !== "sale"
                     ? html`<a class="btn-secondary nav-link" href="#/" data-testid="till-sale-entry">Back to the sale</a>`
-                    : html`<a class="btn-secondary nav-link" href="#/returns" data-testid="till-returns-entry">Returns</a>`}
+                    : html`<a class="btn-secondary nav-link" href="#/returns" data-testid="till-returns-entry">Returns</a>
+                        <a class="btn-secondary nav-link" href="#/pay-balance" data-testid="till-pay-balance-entry">Pay balance</a>`}
                   ${this.#route === "sale" ? this.#swapControl() : nothing}
                   ${this.#themeControl()}
                   ${this.#feedbackControl()}
@@ -1009,14 +1066,15 @@ export class CounterTillApp extends HHElement {
                   </button>
                 </p>
               </div>
-              <div class="surface" data-hidden="${this.#route === "returns" ? "true" : "false"}">
+              <div class="surface" data-hidden="${this.#route !== "sale" ? "true" : "false"}">
                 <hos-pos-terminal
-                  data-paused="${this.#route === "returns" ? "true" : "false"}"
+                  data-paused="${this.#route !== "sale" ? "true" : "false"}"
                   data-panes-swapped="${this.#panesSwapped ? "true" : "false"}"
                   data-layout-hint="${this.#isPopout ? this.#layoutHint : ""}"
                 ></hos-pos-terminal>
               </div>
               ${this.#route === "returns" ? renderReturns(this.#returns) : nothing}
+              ${this.#route === "pay-balance" ? renderPayBalance(this.#payBalance) : nothing}
               </div>
               ${this.#chromeMessage === null ? nothing : html`<p class="notice" role="status">${this.#chromeMessage}</p>`}
             `

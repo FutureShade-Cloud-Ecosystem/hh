@@ -323,6 +323,53 @@ const drawers = new Map(); // branch_id -> session row
 // Committed sales, by order id, in ring order.
 const sales = new Map();
 const salesByKey = new Map(); // idempotency_key -> order_id
+// Item 9.4 to 9.8: the orders that still owe, by order id (the core's pay balance world). Two are
+// planted so a tester can walk them: a credit customer's deposit sale (the rest rides the account,
+// not held) and the Cash On Demand account's (the rest due later, held from picking until paid).
+// A deposit sale rung through the till joins them. Each carries what the core answers: the money
+// trail oldest first, the hold words when held, and the lines for the held order card.
+const owing = new Map();
+const PAY_HOLD_WORDS = "This order cannot reach picking until the balance is paid.";
+const IN_PROCESS_WORDS = "In process: deposit taken";
+const PAY_BALANCE_KEYS = new Map(); // idempotency_key -> the take's answer body
+function addOwing(order) {
+  owing.set(order.order_id, order);
+}
+function owingStill(order) {
+  return order.order_total_cents - order.payments.reduce((sum, p) => sum + p.amount_cents, 0);
+}
+function seedOwingOrders() {
+  addOwing({
+    order_id: uuidFromCounter(4901),
+    order_no: "SO-TRT-17",
+    branch_id: TRENTON_ID,
+    customer_id: "c-fenwick",
+    customer_name: "Fenwick Builders Ltd",
+    account_line: "C02 · Builder · on account",
+    job: "Marina Road patio",
+    fulfilment: "WILL_CALL",
+    sale_type: "COLLECT_LATER",
+    order_total_cents: 191359,
+    held: false,
+    payments: [{ payment_id: uuidFromCounter(4911), method: "CARD", amount_cents: 50000 }],
+    lines: [{ description: "Holland Stone 60 mm", qty: "200 sf", line_total_cents: 169359 }],
+  });
+  addOwing({
+    order_id: uuidFromCounter(4902),
+    order_no: "SO-TRT-18",
+    branch_id: TRENTON_ID,
+    customer_id: "c-cod",
+    customer_name: "Cash On Demand Landscaping",
+    account_line: "C10 · Contractor · Cash On Demand",
+    fulfilment: "WILL_CALL",
+    sale_type: "COD",
+    order_total_cents: 6102,
+    held: true,
+    payments: [{ payment_id: uuidFromCounter(4912), method: "CASH", amount_cents: 2000 }],
+    lines: [{ description: "Clear Stone", qty: "1 yd", line_total_cents: 5400 }],
+  });
+}
+
 // Parked tickets, by id. Kingston's pre-seeded ticket proves the fence: a
 // Trenton login lists parked tickets for its own branch and never this one.
 const parked = new Map();
@@ -342,6 +389,7 @@ function seedParkedKingstonTicket() {
   });
 }
 seedParkedKingstonTicket();
+seedOwingOrders();
 
 // ---------------------------------------------------------------------------
 // The returns world: the demo branch's sales, the drawer, and the returns
@@ -1180,6 +1228,16 @@ const server = createServer(async (request, response) => {
     respondJson(response, 200, { ok: true });
     return;
   }
+  if (request.method === "POST" && path === "/_stub/reseed-owing") {
+    // Harness-only: put the two planted owing orders back as they were (a leg that takes a balance
+    // leaves the world changed; the next leg starts from the planted one).
+    owing.clear();
+    PAY_BALANCE_KEYS.clear();
+    seedOwingOrders();
+    respondJson(response, 200, { ok: true });
+    return;
+  }
+
   if (request.method === "GET" && path === "/_stub/state") {
     // Harness-only: the tests' read back of this stub's ledgers. No contract
     // path shares the namespace, and the app never calls it.
@@ -2006,8 +2064,126 @@ const server = createServer(async (request, response) => {
         discounts: discounted.discounts.length > 0 ? discounted.discounts : undefined,
       };
       sales.set(orderId, sale);
+      if (depositCents > 0 && sale.balance_cents > 0) {
+        // A deposit sale owes: it joins the pay balance world, held when it is a pay before release sale.
+        addOwing({
+          order_id: orderId,
+          order_no: sale.order_no,
+          branch_id: branchId,
+          customer_id: customer.id,
+          customer_name: customer.name,
+          account_line: `${customer.account_no} · ${customer.customer_type === "RETAIL" ? "Walk-in" : "Account"}`,
+          fulfilment: parsed.fulfilment ?? (parsed.sale_type === "DELIVERED" ? "DELIVERY" : "WILL_CALL"),
+          sale_type: sale.sale_type,
+          order_total_cents: total,
+          held: parsed.sale_type === "COD",
+          payments: tenders.map((t) => ({ payment_id: t.payment_id, method: t.method, amount_cents: t.amount_cents })),
+          lines: outLines.map((l) => ({
+            description: l.description,
+            qty: `${l.qty_entered} ${l.uom_entered}`,
+            line_total_cents: l.line_total_cents,
+          })),
+        });
+      }
       if (idempotencyKey !== "") salesByKey.set(idempotencyKey, orderId);
       respondJson(response, 201, saleResponseBody(sale, false));
+    });
+    return;
+  }
+
+  // Item 9.4: find the orders that owe, by order number or customer name (the core also matches a phone).
+  if (request.method === "GET" && path === "/api/v1/pos/pay-balance") {
+    const term = (url.searchParams.get("q") ?? "").trim().toLowerCase();
+    if (term === "") {
+      respondJson(response, 400, { error: "q is required: an order number, a customer name or a phone" });
+      return;
+    }
+    const items = [...owing.values()]
+      .filter((o) => o.branch_id === callerBranch && owingStill(o) > 0)
+      .filter((o) => o.order_no.toLowerCase().includes(term) || o.customer_name.toLowerCase().includes(term))
+      .map((o) => owingBody(o));
+    respondJson(response, 200, { items });
+    return;
+  }
+
+  // Item 9.4: take the whole balance, CASH or CARD, idempotent by key.
+  if (request.method === "POST" && path === "/api/v1/pos/pay-balance") {
+    readBody(request, (parsed) => {
+      const key = typeof parsed.idempotency_key === "string" ? parsed.idempotency_key : "";
+      const replay = key === "" ? undefined : PAY_BALANCE_KEYS.get(key);
+      if (replay !== undefined) {
+        respondJson(response, 200, { ...replay, replayed: true });
+        return;
+      }
+      const order = owing.get(typeof parsed.order_id === "string" ? parsed.order_id : "");
+      if (order === undefined || order.branch_id !== callerBranch) {
+        respondJson(response, 404, { error: "no such order at this branch" });
+        return;
+      }
+      const balance = owingStill(order);
+      if (balance <= 0) {
+        respondJson(response, 409, { error: "The order is paid in full." });
+        return;
+      }
+      if (parsed.method !== "CASH" && parsed.method !== "CARD") {
+        respondJson(response, 400, { error: "the method is CASH or CARD" });
+        return;
+      }
+      if (parsed.amount_cents !== balance) {
+        respondJson(response, 422, {
+          error: "pay_balance_whole_only",
+          sent_cents: parsed.amount_cents,
+          balance_cents: balance,
+          message: `This door takes the whole balance of ${dollarsWord(balance)}, not a part payment.`,
+        });
+        return;
+      }
+      const session = drawers.get(callerBranch);
+      if (session === undefined || session === null || parsed.till_session_id !== session.id) {
+        respondJson(response, 409, { error: "the payment's drawer is not this branch's open till session" });
+        return;
+      }
+      if (parsed.method === "CARD" && (typeof parsed.payment_token !== "string" || parsed.payment_token === "")) {
+        respondJson(response, 400, { error: "a card payment carries the terminal's token, never a card number" });
+        return;
+      }
+      const paymentId = nextDocNo("pay");
+      order.payments.push({ payment_id: paymentId, method: parsed.method, amount_cents: balance });
+      const wasHeld = order.held;
+      order.held = false;
+      const answer = {
+        order_id: order.order_id,
+        order_no: order.order_no,
+        customer_id: order.customer_id,
+        payment_id: paymentId,
+        method: parsed.method,
+        amount_cents: balance,
+        paid_words: "Paid in full",
+        released_to_picking: wasHeld,
+        still_owed_cents: 0,
+        held_from_picking_now: false,
+        payments: order.payments.map((pay) => ({ ...pay })),
+      };
+      PAY_BALANCE_KEYS.set(key, answer);
+      respondJson(response, 201, answer);
+    });
+    return;
+  }
+
+  // Item 9.3: the staff order read, only the pay hold and the lines the till's held card needs.
+  const orderMatch = path.match(/^\/api\/v1\/orders\/([^/]+)$/);
+  if (request.method === "GET" && orderMatch !== null) {
+    const order = owing.get(orderMatch[1]);
+    if (order === undefined || order.branch_id !== callerBranch) {
+      respondJson(response, 404, { error: "no such order" });
+      return;
+    }
+    respondJson(response, 200, {
+      id: order.order_id,
+      order_no: order.order_no,
+      customer_id: order.customer_id,
+      status: "CONFIRMED",
+      pay_hold: payHoldBody(order),
     });
     return;
   }
@@ -2767,6 +2943,37 @@ function pageReceiptDocument(v, priorPrints) {
   </div>
 </body>
 </html>`;
+}
+
+function payHoldBody(order) {
+  const paid = order.payments.reduce((sum, p) => sum + p.amount_cents, 0);
+  const owed = order.order_total_cents - paid;
+  return {
+    held_from_picking: order.held && owed > 0,
+    ...(order.held && owed > 0 ? { words: PAY_HOLD_WORDS } : {}),
+    ...(paid > 0 && owed > 0 ? { in_process_words: IN_PROCESS_WORDS } : {}),
+    order_total_cents: order.order_total_cents,
+    paid_cents: paid,
+    owed_cents: owed,
+  };
+}
+
+function owingBody(order) {
+  const hold = payHoldBody(order);
+  return {
+    order_id: order.order_id,
+    order_no: order.order_no,
+    customer_id: order.customer_id,
+    customer_name: order.customer_name,
+    ...(order.job ? { job: order.job } : {}),
+    fulfilment: order.fulfilment,
+    order_total_cents: order.order_total_cents,
+    paid_cents: hold.paid_cents,
+    still_owed_cents: hold.owed_cents,
+    held_from_picking: hold.held_from_picking,
+    ...(hold.words ? { hold_words: hold.words } : {}),
+    payments: order.payments.map((pay) => ({ ...pay })),
+  };
 }
 
 function saleResponseBody(sale, replayed) {
