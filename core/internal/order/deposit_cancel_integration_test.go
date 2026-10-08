@@ -54,7 +54,20 @@ func newDepositCancelWorld(t *testing.T) *depositCancelWorld {
 	glSvc.RegisterPostingHandlers(dispatcher)
 	return &depositCancelWorld{
 		pool: pool, svc: svc, h: NewHandler(svc), glSvc: glSvc,
-		drain: func() int { return dispatcher.DrainOnce(context.Background()) },
+		// The suite shares one outbox, so earlier packages' rows can fill a
+		// batch ahead of this test's event: drain until a batch comes back
+		// empty (bounded), answering the total handled.
+		drain: func() int {
+			total := 0
+			for i := 0; i < 200; i++ {
+				n := dispatcher.DrainOnce(context.Background())
+				if n == 0 {
+					break
+				}
+				total += n
+			}
+			return total
+		},
 	}
 }
 
