@@ -317,13 +317,14 @@ test('the walk finds this package and names the workspace packages it must also 
   // (web/apps/counter-till); the demo box's front door (web/apps/front-door)
   // and the Public Desk app (web/apps/public-desk, the customer's quote page
   // on a share link token) follow: all three apps' sources are scanned by
-  // the gates below. The comparison is over the sorted names because the
+  // the gates below. The role app template (web/apps/_role-template) is the
+  // fourth, and each role app copied from it joins this list deliberately. The comparison is over the sorted names because the
   // enumeration is a readdir over the workspace's directories, whose order
   // is the filesystem's and not a contract: the fact this lock holds is
   // which packages the gate scans, not the order it met them in.
   assert.deepEqual(
     dependentPackages().map((d) => d.name).sort(),
-    ['@hardscapehouse/counter-till', '@hardscapehouse/front-door', '@hardscapehouse/public-desk'],
+    ['@hardscapehouse/counter-till', '@hardscapehouse/front-door', '@hardscapehouse/public-desk', '@hardscapehouse/role-template'],
     'a package now depends on @hardscapehouse/design-system; its sources are scanned below, and this lock must name it deliberately',
   );
 });
