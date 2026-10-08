@@ -203,6 +203,7 @@ import {
   depositRefusalWords,
   depositRingFacts,
   depositSentence,
+  cashOnDemandPosture,
   supplierDepositLine,
   supplierDepositRefusalWords,
   supplierDepositShown,
@@ -7601,10 +7602,18 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
           <div class="cfacts">
             <span>Terms <span class="num">${c.payment_terms_days}d</span></span>
             ${payStep
-              ? c.credit_limit_cents > 0
-                ? html`<span>Outstanding <span class="num out">${formatMoney(c.open_balance_cents)}</span></span>
+              ? cashOnDemandPosture(this.paymentOptions(), c.payment_terms_days, c.credit_limit_cents) !== null
+                ? /* Round 16 (FROM-PRINCIPAL 37 ii): the Cash On Demand account has no credit to be
+                     available; the line the core's 500000 seed line used to buy it ("Credit
+                     available $5,000.00") was a figure with no meaning for an account that pays
+                     before release. The posture words replace it, read against the server's
+                     payment options (one source of truth); a credit account keeps its figure. */
+                  html`<span>Outstanding <span class="num out">${formatMoney(c.open_balance_cents)}</span></span>
+                    <span data-testid="cust-cod-posture">Cash On Demand: pay before release</span>`
+                : c.credit_limit_cents > 0
+                  ? html`<span>Outstanding <span class="num out">${formatMoney(c.open_balance_cents)}</span></span>
                     <span>Credit available <span class="num avail">${formatMoney(available)}</span></span>`
-                : html`<span>No credit line</span>`
+                  : html`<span>No credit line</span>`
               : html`<span>Available (derived) <span class="num avail">${formatMoney(available)}</span></span>
                 ${c.open_balance_cents > 0
                   ? html`<span>Outstanding <span class="num out">${formatMoney(c.open_balance_cents)}</span></span>`
