@@ -407,9 +407,17 @@ func decode(r *http.Request, v any) error {
 
 func (h *RegisterHandler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	var bad httpx.BadRequestError
+	var sd *SupplierDepositNotCreditable
 	switch {
 	case errors.Is(err, ErrNotFound):
 		httpx.Error(w, http.StatusNotFound, "no such invoice")
+	case errors.As(err, &sd):
+		// Item 9 delta review P2-C: a credit memo against a deposit document is
+		// refused in words, with the stable code a client can switch on beside
+		// them. The register carries no memo issuing route today; the arm is the
+		// door's answer for the day one lands.
+		httpx.ErrorWith(w, http.StatusConflict, SupplierDepositNotCreditableWords,
+			map[string]any{"code": SupplierDepositNotCreditableCode})
 	case errors.As(err, &bad):
 		httpx.Error(w, http.StatusUnprocessableEntity, bad.Msg)
 	default:
