@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -57,7 +56,7 @@ func TestIntegration_PickHold_OutboxDrainLeavesTheOwingOrderInProcess(t *testing
 	})
 
 	svc := realPosSvc(t, pool, stubCharger{})
-	billingRepo := billing.NewRepository(pool)
+	billingRepo := testBillingRepo(pool)
 	orderSvc := order.NewService(order.NewRepository(pool)).WithPickHoldReader(holdBridge{repo: billingRepo})
 
 	// The dispatcher exactly as the worker wires it: a no-op primary owner

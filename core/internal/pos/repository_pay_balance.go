@@ -1,11 +1,12 @@
 package pos
 
 // repository_pay_balance.go, the pgx side of item 9.4 (Pay balance at the
-// counter, pay_balance.go). Reads and writes are the pos M2-debt family's
-// own posture: the module already owns the orders, invoices and allocations
-// columns it wrote at ring time, and the settle here follows the one money
-// lock order (payments/LOCK-ORDER.md), mirrored from the register settle with
-// the order row in front.
+// counter, pay_balance.go). The module owns none of the tables the door
+// reads or writes, so nothing here is SQL: each read and write goes through
+// the owning module's seam (pay_balance_sources.go), on a read only
+// transaction for the advisory reads and on the take's own for the locked
+// read and the settle, which follow the one money lock order
+// (payments/LOCK-ORDER.md) with the order row in front.
 
 import (
 	"context"
@@ -28,41 +29,53 @@ type settleInvoice struct {
 	AllocatedBy          string
 }
 
-// lockPaymentsSequence takes the payments feed counter row WITHOUT advancing
-// it, the payments module's own serialising lock (payments/LOCK-ORDER.md,
-// lockPaymentsSequenceSQL): every writer that takes both the payments side and
-// an invoice takes this row first, so a settle beside this take queues here
-// instead of deadlocking on the rows.
-const lockPayBalancePaymentsSequence = `INSERT INTO scope_sequences (scope, next_value) VALUES ('payments', 0)
-	ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value`
+var errPayBalanceSourcesUnwired = errors.New("pos: the pay balance sources are not wired")
 
-// owingOpenBalances and owingInvoiced are the ONE owed predicate this door and
-// the hold share (billing/pick_hold.go): the open balances of live INVOICE
-// documents, and what those documents bill. Void documents bill nothing, and
-// a credit memo is its own document, never a skew on either sum.
-const owingOpenBalances = `
-	       (SELECT COALESCE(SUM(i.balance_cents), 0) FROM invoices i
-	          WHERE i.order_id = o.id AND i.doc_type = 'INVOICE'
-	            AND i.status IN ('FINALIZED','PARTIALLY_PAID') AND i.balance_cents > 0)`
+// WithPayBalanceSources binds the owning modules' seams the Pay balance door
+// reads and writes through. Unwired, the door answers an error, never an empty
+// or clear answer.
+func (r *Repository) WithPayBalanceSources(s PayBalanceSources) *Repository {
+	r.payBalance = s
+	return r
+}
 
-const owingInvoiced = `
-	       (SELECT COALESCE(SUM(i.total_cents), 0) FROM invoices i
-	          WHERE i.order_id = o.id AND i.doc_type = 'INVOICE'
-	            AND i.status NOT IN ('DRAFT','VOID'))`
+// payBalanceRead runs fn on one read only repeatable read transaction, so the
+// several owning modules' answers to one advisory read share a snapshot.
+func (r *Repository) payBalanceRead(ctx context.Context, fn func(tx pgx.Tx, src PayBalanceSources) error) error {
+	if r.pool == nil {
+		return errNoPool
+	}
+	if r.payBalance == nil {
+		return errPayBalanceSourcesUnwired
+	}
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return fmt.Errorf("pos: pay balance read begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	return fn(tx, r.payBalance)
+}
 
-// owingOrderSelect is the order's own facts plus the ONE number this door and
-// the hold share: the open invoice balances plus the uninvoiced remainder (the
-// order's total less what its live INVOICE documents bill). It is the read
-// behind the advisory pre read; the find builds the same number, and the take
-// settles exactly it. A cancelled order is not this door's, so the read does
-// not answer it at all (the delta review's P2-A: no card is captured on a take
-// that cannot complete).
-const owingOrderSelect = `
-	SELECT o.id::text, o.order_no::text, o.customer_id::text, COALESCE(c.name,''), o.branch_id::text,
-	       o.fulfillment, o.status, c.payment_terms_days, o.total_cents,` + owingOpenBalances + `,` + owingInvoiced + `
-	  FROM orders o
-	  JOIN customers c ON c.id = o.customer_id
-	 WHERE o.status <> 'CANCELLED'`
+// owedOf is the ONE number the door and the hold share: the open balances of
+// the order's live invoices plus the uninvoiced remainder of its total.
+func owedOf(m PayBalanceInvoiceMoney, totalCents int64) int64 {
+	owed := m.OpenCents
+	if rest := totalCents - m.InvoicedCents; rest > 0 {
+		owed += rest
+	}
+	return owed
+}
+
+// payBalanceCandidatePage is the page the find walks the order module's
+// candidates in, and payBalanceCandidatePages how many pages it walks before it
+// answers what it has: an order owes by the money modules' arithmetic, which
+// the order module cannot filter on, so the find pages until it has enough
+// owing orders or runs out of candidates.
+const (
+	payBalanceCandidatePage  = 50
+	payBalanceCandidatePages = 10
+	payBalanceCustomerReach  = 500
+)
 
 // FindOwingOrders answers the orders that owe money and match the term: an
 // order number (the visible #SO form and bare), a customer name, or a phone.
@@ -71,86 +84,117 @@ const owingOrderSelect = `
 // order is simply not in the answer, and neither is a cancelled order (not
 // this door's, the delta review's P2-A).
 func (r *Repository) FindOwingOrders(ctx context.Context, term string, branchIDs []string, limit int) ([]OwingOrder, error) {
-	if r.pool == nil {
-		return nil, errNoPool
-	}
 	if limit <= 0 {
 		limit = 20
 	}
 	like := "%" + escapeLikeWildcards(term) + "%"
-	rows, err := r.pool.Query(ctx, `
-		SELECT o.id::text, o.order_no::text, o.customer_id::text, COALESCE(c.name,''),
-		       o.fulfillment, o.total_cents, c.payment_terms_days,`+owingOpenBalances+` + GREATEST(o.total_cents -`+owingInvoiced+`, 0) AS owed,
-		       (SELECT COALESCE(SUM(i.total_cents - i.balance_cents), 0) FROM invoices i
-		          WHERE i.order_id = o.id AND i.doc_type = 'INVOICE' AND i.status NOT IN ('DRAFT','VOID')) AS paid,
-		       COALESCE(NULLIF(o.job_reference,''), NULLIF(o.po_job_ref,''), '') AS job
-		  FROM orders o
-		  JOIN customers c ON c.id = o.customer_id
-	 WHERE (`+owingOpenBalances+` + GREATEST(o.total_cents -`+owingInvoiced+`, 0)) > 0
-	   AND o.status <> 'CANCELLED'
-	   AND (o.order_no ILIKE $1 OR c.name ILIKE $1
-		        OR EXISTS (SELECT 1 FROM customer_contacts cc
-		                    WHERE cc.customer_id = o.customer_id AND cc.is_active AND cc.phone LIKE $1))
-		   AND ($2::uuid[] IS NULL OR o.branch_id = ANY($2::uuid[]))
-		 ORDER BY o.created_at DESC
-		 LIMIT $3`, like, branchIDs, limit)
-	if err != nil {
-		return nil, fmt.Errorf("pos: find owing orders: %w", err)
-	}
-	defer rows.Close()
 	var out []OwingOrder
-	ids := make([]string, 0, limit)
-	for rows.Next() {
-		var o OwingOrder
-		var termsDays int
-		if err := rows.Scan(&o.OrderID, &o.OrderNo, &o.CustomerID, &o.CustomerName, &o.Fulfilment,
-			&o.OrderTotalCents, &termsDays, &o.StillOwedCents, &o.PaidCents, &o.Job); err != nil {
-			return nil, fmt.Errorf("pos: scan owing order: %w", err)
+	err := r.payBalanceRead(ctx, func(tx pgx.Tx, src PayBalanceSources) error {
+		customerIDs, err := src.MatchPayBalanceCustomers(ctx, tx, like, payBalanceCustomerReach)
+		if err != nil {
+			return err
 		}
-		o.HeldFromPicking = termsDays <= 0 && o.StillOwedCents > 0
-		out = append(out, o)
-		ids = append(ids, o.OrderID)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if len(out) == 0 {
-		return out, nil
-	}
-	// The money trail, one query for the page: each payment applied to the
-	// order's invoices, with its method and amount. Collected per order id and
-	// attached AFTER the rows loop, because appending to `out` above can
-	// reallocate it and a pointer taken mid-loop would point at the old array.
-	trail := map[string][]OwingPayment{}
-	trows, err := r.pool.Query(ctx, `
-		SELECT i.order_id::text, p.id::text, p.method, p.amount_cents
-		  FROM invoices i
-		  JOIN payment_allocations a ON a.invoice_id = i.id
-		  JOIN payments p ON p.id = a.payment_id AND p.status = 'RECEIVED'
-		 WHERE i.order_id = ANY($1::uuid[])
-		 ORDER BY p.received_at, p.id`, ids)
+		for page := 0; page < payBalanceCandidatePages && len(out) < limit; page++ {
+			cands, err := src.PayBalanceOrderCandidates(ctx, tx, like, customerIDs, branchIDs, payBalanceCandidatePage, page*payBalanceCandidatePage)
+			if err != nil {
+				return err
+			}
+			if len(cands) == 0 {
+				break
+			}
+			orderIDs := make([]string, 0, len(cands))
+			custSeen := map[string]bool{}
+			custIDs := make([]string, 0, len(cands))
+			for _, c := range cands {
+				orderIDs = append(orderIDs, c.OrderID)
+				if !custSeen[c.CustomerID] {
+					custSeen[c.CustomerID] = true
+					custIDs = append(custIDs, c.CustomerID)
+				}
+			}
+			money, err := src.PayBalanceInvoiceMoney(ctx, tx, orderIDs)
+			if err != nil {
+				return err
+			}
+			custs, err := src.PayBalanceCustomers(ctx, tx, custIDs)
+			if err != nil {
+				return err
+			}
+			for _, c := range cands {
+				m := money[c.OrderID]
+				owed := owedOf(m, c.TotalCents)
+				if owed <= 0 || len(out) >= limit {
+					continue
+				}
+				cust := custs[c.CustomerID]
+				out = append(out, OwingOrder{
+					OrderID: c.OrderID, OrderNo: c.OrderNo, CustomerID: c.CustomerID, CustomerName: cust.Name,
+					Job: c.Job, Fulfilment: c.Fulfilment, OrderTotalCents: c.TotalCents,
+					PaidCents: m.PaidCents, StillOwedCents: owed,
+					HeldFromPicking: cust.TermsDays <= 0, pastPicking: c.PastPicking,
+				})
+			}
+			if len(cands) < payBalanceCandidatePage {
+				break
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		// The money trail, for the page: each payment applied to the order's
+		// invoices, with its method and amount, attached AFTER the rows are
+		// collected.
+		orderIDs := make([]string, 0, len(out))
+		for _, o := range out {
+			orderIDs = append(orderIDs, o.OrderID)
+		}
+		trail, err := payBalanceTrail(ctx, tx, src, orderIDs)
+		if err != nil {
+			return err
+		}
+		for i := range out {
+			out[i].Payments = trail[out[i].OrderID]
+			if out[i].Payments == nil {
+				out[i].Payments = []OwingPayment{}
+			}
+		}
+		return nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("pos: owing orders' payments: %w", err)
-	}
-	defer trows.Close()
-	for trows.Next() {
-		var orderID string
-		var pay OwingPayment
-		if err := trows.Scan(&orderID, &pay.PaymentID, &pay.Method, &pay.AmountCents); err != nil {
-			return nil, fmt.Errorf("pos: scan owing payment: %w", err)
-		}
-		trail[orderID] = append(trail[orderID], pay)
-	}
-	if err := trows.Err(); err != nil {
 		return nil, err
-	}
-	for i := range out {
-		out[i].Payments = trail[out[i].OrderID]
-		if out[i].Payments == nil {
-			out[i].Payments = []OwingPayment{}
-		}
 	}
 	return out, nil
+}
+
+// payBalanceTrail reads the money trail of each order on the transaction: the
+// billing module names the orders' invoices, the payments module the RECEIVED
+// payments allocated to them, oldest first.
+func payBalanceTrail(ctx context.Context, tx pgx.Tx, src PayBalanceSources, orderIDs []string) (map[string][]OwingPayment, error) {
+	byOrder, err := src.PayBalanceInvoiceIDs(ctx, tx, orderIDs)
+	if err != nil {
+		return nil, err
+	}
+	var invoiceIDs []string
+	orderOf := map[string]string{}
+	for orderID, ids := range byOrder {
+		for _, id := range ids {
+			invoiceIDs = append(invoiceIDs, id)
+			orderOf[id] = orderID
+		}
+	}
+	trail := map[string][]OwingPayment{}
+	if len(invoiceIDs) == 0 {
+		return trail, nil
+	}
+	pays, err := src.PayBalanceReceivedPayments(ctx, tx, invoiceIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range pays {
+		orderID := orderOf[p.InvoiceID]
+		trail[orderID] = append(trail[orderID], OwingPayment{PaymentID: p.PaymentID, Method: p.Method, AmountCents: p.AmountCents})
+	}
+	return trail, nil
 }
 
 // escapeLikeWildcards makes the term's own LIKE wildcards literal (the
@@ -161,54 +205,69 @@ var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
 func escapeLikeWildcards(term string) string { return likeEscaper.Replace(term) }
 
-// ReadOwingOrder is the advisory pool read of one order: its facts and the
-// one number it owes (the open balances plus the uninvoiced remainder). found
+// ReadOwingOrder is the advisory read of one order: its facts and the one
+// number it owes (the open balances plus the uninvoiced remainder). found
 // false is the door's 404 (a cancelled order among them, never owing); an
 // order that owes nothing is a different answer, the caller refuses it in
 // words.
 func (r *Repository) ReadOwingOrder(ctx context.Context, orderID string) (payBalanceOrderFacts, bool, error) {
-	if r.pool == nil {
-		return payBalanceOrderFacts{}, false, errNoPool
-	}
 	var f payBalanceOrderFacts
-	var open int64
-	err := r.pool.QueryRow(ctx, owingOrderSelect+` AND o.id = $1::uuid`, orderID).
-		Scan(&f.OrderID, &f.OrderNo, &f.CustomerID, &f.CustomerName, &f.BranchID, &f.Fulfilment, &f.Status,
-			&f.TermsDays, &f.TotalCents, &open, &f.InvoicedCents)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return payBalanceOrderFacts{}, false, nil
+	found := false
+	err := r.payBalanceRead(ctx, func(tx pgx.Tx, src PayBalanceSources) error {
+		o, ok, err := src.PayBalanceOrderFacts(ctx, tx, orderID)
+		if err != nil || !ok || o.Status == payBalanceOrderCancelled {
+			return err
 		}
-		return payBalanceOrderFacts{}, false, fmt.Errorf("pos: read owing order: %w", err)
+		custs, err := src.PayBalanceCustomers(ctx, tx, []string{o.CustomerID})
+		if err != nil {
+			return err
+		}
+		money, err := src.PayBalanceInvoiceMoney(ctx, tx, []string{o.OrderID})
+		if err != nil {
+			return err
+		}
+		m := money[o.OrderID]
+		f = payBalanceOrderFacts{
+			OrderID: o.OrderID, OrderNo: o.OrderNo, CustomerID: o.CustomerID, CustomerName: custs[o.CustomerID].Name,
+			BranchID: o.BranchID, Fulfilment: o.Fulfilment, Status: o.Status,
+			TermsDays: custs[o.CustomerID].TermsDays, TotalCents: o.TotalCents, InvoicedCents: m.InvoicedCents,
+			// The pool read carries no invoice list: balanceCents() over these
+			// facts is the same one number (open balances plus remainder) the
+			// locked read re-derives under the locks.
+			Invoices: []payBalanceInvoice{{BalanceCents: m.OpenCents}},
+		}
+		found = true
+		return nil
+	})
+	if err != nil {
+		return payBalanceOrderFacts{}, false, err
 	}
-	// The pool read carries no invoice list: balanceCents() over these facts
-	// is the same one number (open balances plus remainder) the locked read
-	// re-derives under the locks.
-	f.Invoices = []payBalanceInvoice{{BalanceCents: open}}
-	return f, true, nil
+	return f, found, nil
 }
 
 // FindPayBalancePaymentByKey answers the payments row a take's key already
 // wrote, with the order its allocation paid (the replay answer's facts).
 func (r *Repository) FindPayBalancePaymentByKey(ctx context.Context, key string) (payBalanceReplayRow, bool, error) {
-	if r.pool == nil {
-		return payBalanceReplayRow{}, false, errNoPool
-	}
 	var row payBalanceReplayRow
-	err := r.pool.QueryRow(ctx, `
-		SELECT COALESCE((SELECT i.order_id::text FROM payment_allocations a
-		                  JOIN invoices i ON i.id = a.invoice_id
-		                 WHERE a.payment_id = p.id LIMIT 1), ''),
-		       p.id::text, p.method, p.amount_cents
-		  FROM payments p WHERE p.idempotency_key = $1`, key).
-		Scan(&row.OrderID, &row.PaymentID, &row.Method, &row.AmountCents)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return payBalanceReplayRow{}, false, nil
+	found := false
+	err := r.payBalanceRead(ctx, func(tx pgx.Tx, src PayBalanceSources) error {
+		p, ok, err := src.PayBalancePaymentByKey(ctx, tx, key)
+		if err != nil || !ok {
+			return err
 		}
-		return payBalanceReplayRow{}, false, fmt.Errorf("pos: pay balance payment by key: %w", err)
+		row = payBalanceReplayRow{PaymentID: p.PaymentID, Method: p.Method, AmountCents: p.AmountCents}
+		if p.FirstInvoiceID != "" {
+			if row.OrderID, err = src.PayBalanceOrderForInvoice(ctx, tx, p.FirstInvoiceID); err != nil {
+				return err
+			}
+		}
+		found = true
+		return nil
+	})
+	if err != nil {
+		return payBalanceReplayRow{}, false, err
 	}
-	return row, true, nil
+	return row, found, nil
 }
 
 // LockPayBalanceOrderTx is the one-order writer's locked read, in the money
@@ -218,172 +277,109 @@ func (r *Repository) FindPayBalancePaymentByKey(ctx context.Context, key string)
 // INVOICE documents with a positive open balance), so the balance the locks
 // re-derive is the balance the pre read refused or captured against.
 func (r *Repository) LockPayBalanceOrderTx(ctx context.Context, tx pgx.Tx, orderID string) (payBalanceOrderFacts, error) {
-	var f payBalanceOrderFacts
-	if err := tx.QueryRow(ctx,
-		`SELECT id::text, order_no::text, customer_id::text, branch_id::text, fulfillment, status, total_cents
-		   FROM orders WHERE id = $1::uuid FOR NO KEY UPDATE`, orderID).
-		Scan(&f.OrderID, &f.OrderNo, &f.CustomerID, &f.BranchID, &f.Fulfilment, &f.Status, &f.TotalCents); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return payBalanceOrderFacts{}, ErrPayBalanceOrderNotFound
-		}
-		return payBalanceOrderFacts{}, fmt.Errorf("pos: lock pay balance order: %w", err)
+	if r.payBalance == nil {
+		return payBalanceOrderFacts{}, errPayBalanceSourcesUnwired
 	}
-	if f.Status == payBalanceOrderCancelled {
+	src := r.payBalance
+	o, ok, err := src.LockPayBalanceOrder(ctx, tx, orderID)
+	if err != nil {
+		return payBalanceOrderFacts{}, err
+	}
+	if !ok || o.Status == payBalanceOrderCancelled {
 		return payBalanceOrderFacts{}, ErrPayBalanceOrderNotFound
 	}
-	if err := tx.QueryRow(ctx,
-		`SELECT name, payment_terms_days FROM customers WHERE id = $1::uuid`, f.CustomerID).
-		Scan(&f.CustomerName, &f.TermsDays); err != nil {
-		return payBalanceOrderFacts{}, fmt.Errorf("pos: pay balance customer: %w", err)
+	f := payBalanceOrderFacts{
+		OrderID: o.OrderID, OrderNo: o.OrderNo, CustomerID: o.CustomerID, BranchID: o.BranchID,
+		Fulfilment: o.Fulfilment, Status: o.Status, TotalCents: o.TotalCents,
 	}
-	if err := tx.QueryRow(ctx,
-		`SELECT COALESCE(SUM(i.total_cents), 0) FROM invoices i
-		  WHERE i.order_id = $1::uuid AND i.doc_type = 'INVOICE' AND i.status NOT IN ('DRAFT','VOID')`,
-		orderID).Scan(&f.InvoicedCents); err != nil {
-		return payBalanceOrderFacts{}, fmt.Errorf("pos: pay balance invoiced: %w", err)
-	}
-	if _, err := tx.Exec(ctx, lockPayBalancePaymentsSequence); err != nil {
-		return payBalanceOrderFacts{}, fmt.Errorf("pos: lock payments sequence: %w", err)
-	}
-	irows, err := tx.Query(ctx, `
-		SELECT id::text, invoice_no::text, balance_cents
-		  FROM invoices
-		 WHERE order_id = $1::uuid AND doc_type = 'INVOICE' AND status IN ('FINALIZED','PARTIALLY_PAID') AND balance_cents > 0
-		 ORDER BY id ASC
-		 FOR NO KEY UPDATE`, orderID)
+	custs, err := src.PayBalanceCustomers(ctx, tx, []string{o.CustomerID})
 	if err != nil {
-		return payBalanceOrderFacts{}, fmt.Errorf("pos: lock pay balance invoices: %w", err)
+		return payBalanceOrderFacts{}, err
 	}
-	defer irows.Close()
-	for irows.Next() {
-		var inv payBalanceInvoice
-		if err := irows.Scan(&inv.InvoiceID, &inv.InvoiceNo, &inv.BalanceCents); err != nil {
-			return payBalanceOrderFacts{}, fmt.Errorf("pos: scan pay balance invoice: %w", err)
-		}
-		f.Invoices = append(f.Invoices, inv)
+	cust, ok := custs[o.CustomerID]
+	if !ok {
+		return payBalanceOrderFacts{}, fmt.Errorf("pos: pay balance customer %s not found", o.CustomerID)
 	}
-	return f, irows.Err()
+	f.CustomerName, f.TermsDays = cust.Name, cust.TermsDays
+	money, err := src.PayBalanceInvoiceMoney(ctx, tx, []string{orderID})
+	if err != nil {
+		return payBalanceOrderFacts{}, err
+	}
+	f.InvoicedCents = money[orderID].InvoicedCents
+	if err := src.LockPayBalancePaymentsSequence(ctx, tx); err != nil {
+		return payBalanceOrderFacts{}, err
+	}
+	open, err := src.LockPayBalanceInvoices(ctx, tx, orderID)
+	if err != nil {
+		return payBalanceOrderFacts{}, err
+	}
+	for _, inv := range open {
+		f.Invoices = append(f.Invoices, payBalanceInvoice{InvoiceID: inv.InvoiceID, InvoiceNo: inv.InvoiceNo, BalanceCents: inv.BalanceCents})
+	}
+	return f, nil
 }
 
 // PayBalanceHoldTx is the hold's own reading on the caller's transaction, the
-// same sums billing's PickHoldForOrder reads: owed is the open balances plus
-// the uninvoiced remainder, held is zero day terms with money outstanding. The
-// take's answer carries these figures, read after its money moved.
+// very read billing's pick hold makes (the one SQL number): owed is the open
+// balances plus the uninvoiced remainder, held is zero day terms with money
+// outstanding. The take's answer carries these figures, read after its money
+// moved.
 func (r *Repository) PayBalanceHoldTx(ctx context.Context, tx pgx.Tx, orderID string) (payBalanceHoldView, error) {
-	var terms int
-	var total, open, invoiced int64
-	if err := tx.QueryRow(ctx, `
-		SELECT c.payment_terms_days, o.total_cents,`+owingOpenBalances+`,`+owingInvoiced+`
-		  FROM orders o
-		  JOIN customers c ON c.id = o.customer_id
-		 WHERE o.id = $1::uuid`, orderID).
-		Scan(&terms, &total, &open, &invoiced); err != nil {
+	if r.payBalance == nil {
+		return payBalanceHoldView{}, errPayBalanceSourcesUnwired
+	}
+	held, owed, _, _, err := r.payBalance.PayBalanceHold(ctx, tx, orderID)
+	if err != nil {
 		return payBalanceHoldView{}, fmt.Errorf("pos: pay balance hold read: %w", err)
 	}
-	owed := open
-	if rest := total - invoiced; rest > 0 {
-		owed += rest
-	}
-	return payBalanceHoldView{OwedCents: owed, Held: terms <= 0 && owed > 0}, nil
+	return payBalanceHoldView{OwedCents: owed, Held: held}, nil
 }
 
-// SettleInvoiceTx applies one payment slice to one invoice: the allocation
-// row, the balance move with its invoices feed stamp and status flip, and the
-// subledger PAYMENT row with the running account balance under the locks. The
-// shape mirrors the payments module's applyAllocations (one spelling of
-// applying money to an invoice; a second would be how the ledger acquires two
-// answers to one question).
+// SettleInvoiceTx applies one payment slice to one invoice through the
+// payments module's settle (one spelling of applying money to an invoice; a
+// second would be how the ledger acquires two answers to one question).
 func (r *Repository) SettleInvoiceTx(ctx context.Context, tx pgx.Tx, s settleInvoice) error {
-	var by any
-	if s.AllocatedBy != "" {
-		by = s.AllocatedBy
+	if r.payBalance == nil {
+		return errPayBalanceSourcesUnwired
 	}
-	if _, err := tx.Exec(ctx,
-		`INSERT INTO payment_allocations (payment_id, invoice_id, amount_cents, allocated_by)
-		 VALUES ($1::uuid, $2::uuid, $3, $4)`,
-		s.PaymentID, s.InvoiceID, s.AmountCents, by); err != nil {
-		return fmt.Errorf("pos: pay balance allocation: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `
-		WITH iseq AS (
-			INSERT INTO scope_sequences (scope) VALUES ('invoices')
-			ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value + 1
-			RETURNING next_value
-		)
-		UPDATE invoices
-		   SET balance_cents = balance_cents - $3,
-		       status = CASE WHEN balance_cents - $3 <= 0 THEN 'PAID' ELSE 'PARTIALLY_PAID' END,
-		       updated_at = now(),
-		       seq = (SELECT next_value FROM iseq)
-		 WHERE id = $2::uuid AND customer_id = $1::uuid`,
-		s.CustomerID, s.InvoiceID, s.AmountCents); err != nil {
-		return fmt.Errorf("pos: pay balance invoice move: %w", err)
-	}
-	// The running account balance AFTER this slice: the balance move above
-	// already ran, so the open balances' sum is the after figure.
-	var runningAR int64
-	if err := tx.QueryRow(ctx,
-		`SELECT COALESCE(SUM(balance_cents), 0) FROM invoices
-		  WHERE customer_id = $1::uuid AND status IN ('FINALIZED','PARTIALLY_PAID')`,
-		s.CustomerID).Scan(&runningAR); err != nil {
-		return fmt.Errorf("pos: pay balance AR read: %w", err)
-	}
-	if _, err := tx.Exec(ctx,
-		`INSERT INTO customer_transactions
-		   (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id)
-		 VALUES ($1::uuid, 'PAYMENT', $2, $3, 'payment', $4::uuid, $5::uuid)`,
-		s.CustomerID, -s.AmountCents, runningAR, s.PaymentID, s.BranchID); err != nil {
-		return fmt.Errorf("pos: pay balance subledger row: %w", err)
-	}
-	return nil
+	return r.payBalance.AllocatePayBalance(ctx, tx, PayBalanceAllocation{
+		PaymentID: s.PaymentID, InvoiceID: s.InvoiceID, CustomerID: s.CustomerID, BranchID: s.BranchID,
+		AllocatedBy: s.AllocatedBy, AmountCents: s.AmountCents,
+	})
 }
 
 // OrderPaymentsTrailTx reads the money trail on the caller's transaction.
 func (r *Repository) OrderPaymentsTrailTx(ctx context.Context, tx pgx.Tx, orderID string) ([]OwingPayment, error) {
-	rows, err := tx.Query(ctx, `
-		SELECT p.id::text, p.method, p.amount_cents
-		  FROM invoices i
-		  JOIN payment_allocations a ON a.invoice_id = i.id
-		  JOIN payments p ON p.id = a.payment_id AND p.status = 'RECEIVED'
-		 WHERE i.order_id = $1::uuid
-		 ORDER BY p.received_at, p.id`, orderID)
-	if err != nil {
-		return nil, fmt.Errorf("pos: order payments trail: %w", err)
+	if r.payBalance == nil {
+		return nil, errPayBalanceSourcesUnwired
 	}
-	defer rows.Close()
-	return scanOwingPayments(rows)
+	trail, err := payBalanceTrail(ctx, tx, r.payBalance, []string{orderID})
+	if err != nil {
+		return nil, err
+	}
+	out := trail[orderID]
+	if out == nil {
+		out = []OwingPayment{}
+	}
+	return out, nil
 }
 
 // OrderPaymentsTrail is the pool twin.
 func (r *Repository) OrderPaymentsTrail(ctx context.Context, orderID string) ([]OwingPayment, error) {
-	if r.pool == nil {
-		return nil, errNoPool
-	}
-	rows, err := r.pool.Query(ctx, `
-		SELECT p.id::text, p.method, p.amount_cents
-		  FROM invoices i
-		  JOIN payment_allocations a ON a.invoice_id = i.id
-		  JOIN payments p ON p.id = a.payment_id AND p.status = 'RECEIVED'
-		 WHERE i.order_id = $1::uuid
-		 ORDER BY p.received_at, p.id`, orderID)
-	if err != nil {
-		return nil, fmt.Errorf("pos: order payments trail: %w", err)
-	}
-	defer rows.Close()
-	return scanOwingPayments(rows)
-}
-
-func scanOwingPayments(rows pgx.Rows) ([]OwingPayment, error) {
 	var out []OwingPayment
-	for rows.Next() {
-		var p OwingPayment
-		if err := rows.Scan(&p.PaymentID, &p.Method, &p.AmountCents); err != nil {
-			return nil, fmt.Errorf("pos: scan owing payment: %w", err)
+	err := r.payBalanceRead(ctx, func(tx pgx.Tx, src PayBalanceSources) error {
+		trail, err := payBalanceTrail(ctx, tx, src, []string{orderID})
+		if err != nil {
+			return err
 		}
-		out = append(out, p)
+		out = trail[orderID]
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	if out == nil {
 		out = []OwingPayment{}
 	}
-	return out, rows.Err()
+	return out, nil
 }

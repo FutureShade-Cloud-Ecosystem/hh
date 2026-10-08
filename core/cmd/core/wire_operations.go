@@ -336,7 +336,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// Item 9 Opus P1-2: the sync will call mint carries the pick hold gate
 	// the Service door carries (the same billing read, the same adapter), and
 	// the boot fail-fast keeps a deploy from serving with the sync door dark.
-	willCallSync := dispatch.NewWillCallSyncStore(pool, dispatchOrderAdapter{repo: orderRepo}, dispatchPickStateAdapter{repo: tasks.NewRepository(pool)}, dispatchPickHoldAdapter{repo: billing.NewRepository(pool)}, link)
+	willCallSync := dispatch.NewWillCallSyncStore(pool, dispatchOrderAdapter{repo: orderRepo}, dispatchPickStateAdapter{repo: tasks.NewRepository(pool)}, dispatchPickHoldAdapter{repo: holdBillingRepo(pool)}, link)
 	if !willCallSync.PickHoldGateWired() {
 		panic("dispatch: will call sync store pick hold gate not wired - a pay before release order's rack tag could be minted over sync unpaid")
 	}
@@ -527,7 +527,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// Item 9 Opus P2-1: the yard's doors (Claim, Stage) carry the pick hold
 	// the will call doors carry, over the same billing read, with the boot
 	// fail-fast keeping a deploy from serving with the yard door dark.
-	yardTasksSvc.WithPickHoldCheck(tasksPickHoldAdapter{repo: billing.NewRepository(pool)})
+	yardTasksSvc.WithPickHoldCheck(tasksPickHoldAdapter{repo: holdBillingRepo(pool)})
 	if !yardTasksSvc.PickHoldCheckWired() {
 		panic("tasks: yard pick hold check not wired - a pay before release order's task could be claimed and staged unpaid")
 	}

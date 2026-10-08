@@ -94,7 +94,7 @@ func realPosSvc(t *testing.T, pool *pgxpool.Pool, charger till.CardCharger) *Ser
 		WithUOMConverter(cat).
 		WithMarginGate(pricing.NewIdentityMarginGate())
 	tillSvc := till.NewService(till.NewRepository(pool)).WithCardCharger(charger)
-	return NewService(NewRepository(pool)).
+	return NewService(testPosRepo(pool)).
 		WithLineResolver(priceSvc).
 		WithTenderTaker(tillSvc).
 		WithCreditGate(NewIdentityCreditGate()).

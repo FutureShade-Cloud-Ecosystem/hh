@@ -11,8 +11,10 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
 )
 
@@ -74,4 +76,12 @@ type tasksPickHoldAdapter struct{ repo *billing.Repository }
 func (a tasksPickHoldAdapter) OrderHeldFromPicking(ctx context.Context, orderID string) (bool, int64, error) {
 	held, owed, _, _, err := a.repo.PickHoldForOrder(ctx, orderID)
 	return held, owed, err
+}
+
+// holdBillingRepo is a billing repository bound to the order and customer
+// repositories the pay before release hold reads the order's total and the
+// customer's terms through (billing declares the two seams and never imports
+// either module).
+func holdBillingRepo(pool *pgxpool.Pool) *billing.Repository {
+	return billing.NewRepository(pool).WithPickHoldSources(order.NewRepository(pool), customer.NewRepository(pool))
 }

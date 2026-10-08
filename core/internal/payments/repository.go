@@ -737,3 +737,121 @@ UPDATE invoices
 	}
 	return nil
 }
+
+// OrderPayment is the settle of one payment slice against one invoice that the
+// POS Pay balance door (item 9.4) applies on its own transaction, after the
+// till has written the payments row. AllocatedBy is the staff id ("" for none).
+type OrderPayment struct {
+	PaymentID   string
+	InvoiceID   string
+	CustomerID  string
+	BranchID    string
+	AmountCents int64
+	AllocatedBy string
+}
+
+// AllocateToInvoiceTx applies one payment slice to one invoice on the caller's
+// transaction: the allocation row, the balance move with its invoices feed
+// stamp and status flip, and the subledger PAYMENT row with the running
+// account balance under the locks the caller already holds (the money lock
+// order above). It is applyAllocations' per-slice body without the outbox
+// emit, which the till's tender owns for a payment it wrote: one spelling of
+// applying money to an invoice, so the ledger keeps one answer to the question.
+func (r *Repository) AllocateToInvoiceTx(ctx context.Context, tx pgx.Tx, s OrderPayment) error {
+	var by any
+	if s.AllocatedBy != "" {
+		by = s.AllocatedBy
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO payment_allocations (payment_id, invoice_id, amount_cents, allocated_by)
+		 VALUES ($1::uuid, $2::uuid, $3, $4)`,
+		s.PaymentID, s.InvoiceID, s.AmountCents, by); err != nil {
+		return fmt.Errorf("payments: allocation: %w", err)
+	}
+	if _, err := tx.Exec(ctx, invoicesFeedSeqCTE+`
+UPDATE invoices
+		   SET balance_cents = balance_cents - $3,
+		       status = CASE WHEN balance_cents - $3 <= 0 THEN 'PAID' ELSE 'PARTIALLY_PAID' END,
+		       updated_at = now(),
+		       seq = (SELECT next_value FROM iseq)
+		 WHERE id = $2::uuid AND customer_id = $1::uuid`,
+		s.CustomerID, s.InvoiceID, s.AmountCents); err != nil {
+		return fmt.Errorf("payments: invoice balance move: %w", err)
+	}
+	// The running account balance AFTER this slice: the balance move above
+	// already ran, so the open balances' sum is the after figure.
+	var runningAR int64
+	if err := tx.QueryRow(ctx,
+		`SELECT COALESCE(SUM(balance_cents), 0) FROM invoices
+		  WHERE customer_id = $1::uuid AND status IN ('FINALIZED','PARTIALLY_PAID')`,
+		s.CustomerID).Scan(&runningAR); err != nil {
+		return fmt.Errorf("payments: AR balance read: %w", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO customer_transactions
+		   (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id)
+		 VALUES ($1::uuid, 'PAYMENT', $2, $3, 'payment', $4::uuid, $5::uuid)`,
+		s.CustomerID, -s.AmountCents, runningAR, s.PaymentID, s.BranchID); err != nil {
+		return fmt.Errorf("payments: subledger row: %w", err)
+	}
+	return nil
+}
+
+// KeyedPayment is the payments row an idempotency key already wrote, with the
+// first invoice its allocation paid ("" when none).
+type KeyedPayment struct {
+	PaymentID      string
+	Method         string
+	AmountCents    int64
+	FirstInvoiceID string
+}
+
+// PaymentByKeyTx answers the payments row an idempotency key wrote (a replay's
+// facts), on the caller's transaction.
+func (r *Repository) PaymentByKeyTx(ctx context.Context, tx pgx.Tx, key string) (KeyedPayment, bool, error) {
+	var k KeyedPayment
+	err := tx.QueryRow(ctx, `
+		SELECT p.id::text, p.method, p.amount_cents,
+		       COALESCE((SELECT a.invoice_id::text FROM payment_allocations a WHERE a.payment_id = p.id LIMIT 1), '')
+		  FROM payments p WHERE p.idempotency_key = $1`, key).
+		Scan(&k.PaymentID, &k.Method, &k.AmountCents, &k.FirstInvoiceID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return KeyedPayment{}, false, nil
+		}
+		return KeyedPayment{}, false, fmt.Errorf("payments: payment by key: %w", err)
+	}
+	return k, true, nil
+}
+
+// InvoicePayment is one RECEIVED payment allocated to one invoice.
+type InvoicePayment struct {
+	InvoiceID   string
+	PaymentID   string
+	Method      string
+	AmountCents int64
+}
+
+// ReceivedPaymentsForInvoices lists the RECEIVED payments allocated to the
+// given invoices, oldest first (the money trail), on the caller's transaction.
+func (r *Repository) ReceivedPaymentsForInvoices(ctx context.Context, tx pgx.Tx, invoiceIDs []string) ([]InvoicePayment, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT a.invoice_id::text, p.id::text, p.method, p.amount_cents
+		  FROM payment_allocations a
+		  JOIN payments p ON p.id = a.payment_id AND p.status = 'RECEIVED'
+		 WHERE a.invoice_id = ANY($1::uuid[])
+		 ORDER BY p.received_at, p.id`, invoiceIDs)
+	if err != nil {
+		return nil, fmt.Errorf("payments: received payments for invoices: %w", err)
+	}
+	defer rows.Close()
+	var out []InvoicePayment
+	for rows.Next() {
+		var p InvoicePayment
+		if err := rows.Scan(&p.InvoiceID, &p.PaymentID, &p.Method, &p.AmountCents); err != nil {
+			return nil, fmt.Errorf("payments: scan received payment: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}

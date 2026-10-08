@@ -16,6 +16,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
 )
 
 // pickHoldRig plants one zero day terms customer, one order worth totalCents,
@@ -76,7 +79,7 @@ VALUES ('#INV-PHO-'||nextval('invoice_no_seq'), $1::uuid, $2::uuid,
 func TestIntegration_PickHold_AVoidedInvoiceKeepsTheOrderHeld(t *testing.T) {
 	rig := newPickHoldRig(t, 10000)
 	rig.plantInvoice(t, "INVOICE", "VOID", 10000, 10000)
-	held, owed, paid, total, err := NewRepository(rig.pool).PickHoldForOrder(context.Background(), rig.orderID)
+	held, owed, paid, total, err := pickHoldRepo(rig.pool).PickHoldForOrder(context.Background(), rig.orderID)
 	if err != nil {
 		t.Fatalf("hold read: %v", err)
 	}
@@ -93,7 +96,7 @@ func TestIntegration_PickHold_ACreditMemoDoesNotSkewOwedOrPaid(t *testing.T) {
 	rig := newPickHoldRig(t, 10000)
 	rig.plantInvoice(t, "INVOICE", "PARTIALLY_PAID", 10000, 7000)
 	rig.plantInvoice(t, "CREDIT_MEMO", "FINALIZED", -2000, 0)
-	held, owed, paid, total, err := NewRepository(rig.pool).PickHoldForOrder(context.Background(), rig.orderID)
+	held, owed, paid, total, err := pickHoldRepo(rig.pool).PickHoldForOrder(context.Background(), rig.orderID)
 	if err != nil {
 		t.Fatalf("hold read: %v", err)
 	}
@@ -101,4 +104,10 @@ func TestIntegration_PickHold_ACreditMemoDoesNotSkewOwedOrPaid(t *testing.T) {
 		t.Fatalf("with a credit memo beside a live invoice the facts read (held %v, owed %d, paid %d, total %d), want held, 7000, 3000, 10000: the memo is not the invoice",
 			held, owed, paid, total)
 	}
+}
+
+// pickHoldRepo is a billing repository with the hold's order and customer
+// seams bound, as the composition root binds them.
+func pickHoldRepo(pool *pgxpool.Pool) *Repository {
+	return NewRepository(pool).WithPickHoldSources(order.NewRepository(pool), customer.NewRepository(pool))
 }
