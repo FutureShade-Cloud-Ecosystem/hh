@@ -219,3 +219,23 @@ func TestOrderRead_CarriesThePayHold(t *testing.T) {
 		t.Fatalf("an unwired seam answered a pay hold block: %+v", view2.PayHold)
 	}
 }
+
+// The event driver's move into PICKING carries the guard too (AdvanceFromEvent
+// routes through setStatusGuarded; this leg is the direct proof the review
+// asked for, beside the manual one).
+func TestAdvanceFromEvent_PickingRefusedWhileHeld(t *testing.T) {
+	store := pickHoldStore()
+	svc := NewService(store).withCaller(testCallerFrom).WithPickHoldReader(fakePickHold{facts: heldFacts(1)})
+	if err := svc.AdvanceFromEvent(pickHoldCtx(), "ord-1", "PICKING", "evt-1"); !errors.Is(err, ErrHeldFromPicking) {
+		t.Fatalf("want ErrHeldFromPicking, got %v", err)
+	}
+	status, _, _ := store.OrderHeader(pickHoldCtx(), "ord-1")
+	if status != "CONFIRMED" {
+		t.Fatalf("a held order moved to %s by event", status)
+	}
+	clear := NewService(store).withCaller(testCallerFrom).
+		WithPickHoldReader(fakePickHold{facts: PickHoldFacts{Held: false}})
+	if err := clear.AdvanceFromEvent(pickHoldCtx(), "ord-1", "PICKING", "evt-2"); err != nil {
+		t.Fatalf("a clear account's event driven pick: %v", err)
+	}
+}

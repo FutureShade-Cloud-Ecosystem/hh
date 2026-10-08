@@ -337,6 +337,12 @@ func (s *Service) ConfirmWillCall(ctx context.Context, rawToken, typedName strin
 	if err != nil {
 		return PublicWillCall{}, err
 	}
+	return s.confirmWillCall(ctx, w, typedName, affirmed)
+}
+
+// confirmWillCall is the confirm on a RESOLVED live pickup (the split is the
+// guard's own test seam: the unit legs hold a canned row and drive the body).
+func (s *Service) confirmWillCall(ctx context.Context, w WillCall, typedName string, affirmed bool) (PublicWillCall, error) {
 	name := strings.TrimSpace(typedName)
 	if name == "" {
 		return PublicWillCall{}, httpx.BadRequestf("type your full name to confirm this pickup")
