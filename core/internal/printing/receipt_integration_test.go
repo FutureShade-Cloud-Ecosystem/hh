@@ -560,7 +560,9 @@ func TestIntegration_Receipt_DepositAndChangeDueFromTheCommittedRows(t *testing.
 		sale, err := svc.Sale(ctx, pos.SaleInput{
 			IdempotencyKey: key(), BranchID: branchID, CustomerID: custID,
 			TillSessionID: openTill(t, pool, branchID),
-			Tender:        pos.TenderAccount, SaleType: pos.SaleCollectNow,
+			// An account sale that waits (will call): item 9 refuses a deposit on a
+			// collect now sale, since the goods do not leave on a part payment.
+			Tender: pos.TenderAccount, SaleType: pos.SaleCollectLater,
 			DepositCents: 4000, DepositMethod: pos.TenderCash,
 			Lines: []pos.LineInput{{ProductID: productID, QtyEntered: 10, UOMEntered: "SF"}},
 		})
