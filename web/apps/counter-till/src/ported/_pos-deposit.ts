@@ -27,6 +27,29 @@ export function depositSentence(option: PaymentOption | null): string {
   return option?.lineTwoSentence ?? '';
 }
 
+/**
+ * Round 16 (FROM-PRINCIPAL 37 ii): the account's posture line for the pay step's customer card,
+ * in place of the credit figure the card used to draw for any account with a line. The demo
+ * world's Cash On Demand account (zero day terms with a credit line, the facts the core's own
+ * sentence choice keys on) has no credit to be available: its sales pay before release, so the
+ * figure was a confident number with no meaning. The posture is read against the server's
+ * payment options (one source of truth): an on account shape offered means the account transacts
+ * as credit and keeps its figure, held or not (the hold tag carries the hold); a zero day account
+ * with a line is the Cash On Demand account whatever the branch's deposit switch answers, and
+ * before the preview answers too (the posture is the account's, not the sale's). No line is not
+ * this posture: the card's own "No credit line" line stands. The till decides no money rule; the
+ * words name what the server's sentence names.
+ */
+export function cashOnDemandPosture(
+  options: readonly PaymentOption[],
+  termsDays: number,
+  creditLimitCents: number,
+): string | null {
+  if (termsDays > 0 || creditLimitCents <= 0) return null;
+  if (options.some((o) => o.shape === 'ALL_ON_ACCOUNT')) return null;
+  return 'Cash On Demand: pay before release';
+}
+
 /** The one commit button's words: the deposit in dollars, or what is missing. */
 export function depositButtonWords(depositCents: number, money: (cents: number) => string): string {
   return depositCents > 0 ? `Ring sale with ${money(depositCents)} deposit` : 'Enter the deposit';

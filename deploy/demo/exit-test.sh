@@ -254,6 +254,18 @@ page_gated /till/ "the counter till at /till/"
 page_gated /drive/ "HH Drive at /drive/"
 page_gated /q/ "the public desk at /q/"
 page_gated /quote/ "the /quote/ prefix"
+# Never indexed, gate open or shut (decision log row 981): the header rides the
+# refusal, a served page, an asset-less prefix and the unauthenticated health leg.
+for hp in / /healthz /till/; do
+	for auth in "" "demo:$PHRASE"; do
+		if [ -n "$auth" ]; then who="with"; else who="without"; fi
+		if [ -n "$auth" ]; then hdrs="$(curl -sI -u "$auth" "$BASE$hp")"; else hdrs="$(curl -sI "$BASE$hp")"; fi
+		case "$(printf '%s' "$hdrs" | tr 'A-Z' 'a-z')" in
+			*"x-robots-tag: noindex, nofollow"*) pass "$hp carries X-Robots-Tag noindex, nofollow ($who the phrase)" ;;
+			*) fail "$hp lacks X-Robots-Tag noindex, nofollow ($who the phrase)" ;;
+		esac
+	done
+done
 if [ -d web/apps/quote-desk ]; then
 	code="$(curl -s -o /dev/null -w '%{http_code}' -u "demo:$PHRASE" "$BASE/quote/")"
 	[ "$code" = "200" ] && pass "the Quote Desk serves at /quote/ (the desk is in this tree)" \
