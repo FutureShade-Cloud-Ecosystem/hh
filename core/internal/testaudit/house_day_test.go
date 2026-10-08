@@ -255,10 +255,6 @@ var dayAllowlisted = map[string]dayExemption{
 		"DEFERRED · NudgeEventKey is a once-a-day idempotency key on the UTC day; its own comment says " +
 			"'tomorrow it can be raised again, which is exactly right', and at 8pm tomorrow arrives " +
 			"early and the nudge repeats."},
-	"internal/billing/ar_landing.go": {[]string{kindTruncate},
-		"DEFERRED · DaysPastDue truncates asOf and due at Greenwich. Both sides share a basis so most " +
-			"answers are stable, but asOf is a real clock: an account read after 8pm ages ONE DAY EARLY " +
-			"and can cross an escalation bucket boundary an evening before it is actually late."},
 	"internal/billing/register_service.go": {[]string{kindCalendar},
 		"DEFERRED · daysBetween rebuilds due and asOf as UTC midnights from their own components, which " +
 			"is ar_landing.go's defect in a second spelling. Two aging calculations that can disagree is " +
