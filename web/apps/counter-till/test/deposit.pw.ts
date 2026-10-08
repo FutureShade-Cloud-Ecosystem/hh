@@ -217,6 +217,26 @@ test("at 390 the deposit step does not scroll sideways and no label clips", asyn
   expect(read.clipped).toEqual([]);
 });
 
+// Item 9 visual review P3-3: the till holds no deposit bound of its own. The commit stays enabled
+// for any positive amount and the server's refusal speaks in words (the stub mirrors the core's
+// own bound, checked once the lines are priced: the plain envelope, one sentence, no fields).
+test("a deposit at or over the total rings, and the server's refusal speaks in words", async ({ page }) => {
+  await signIn(page);
+  await pickAccount(page, "C10", "Cash On Demand Landscaping");
+  await addHolland(page);
+  await chooseWillCall(page);
+  await openStep(page, "payment");
+  await page.getByTestId("pay-shape-DEPOSIT_NOW_REST_DUE_LATER").click();
+  await page.getByTestId("deposit-amount").fill("5.00");
+  const commit = page.getByTestId("deposit-commit");
+  await expect(commit).toBeEnabled();
+  await expect(commit).toHaveText("Ring sale with $5.00 deposit");
+  await expect(page.getByTestId("deposit-too-large")).toHaveCount(0);
+  await commit.click();
+  await expect(page.getByRole("alert")).toContainText("deposit must be greater than zero and less than the sale total");
+  await expect(page.getByTestId("deposit-too-large")).toHaveCount(0);
+});
+
 // Item 9.5: a supplier's demanded deposit on a special order, for a credit customer: one quiet
 // control on the payment step (shown only while the tender tiles stand and the server allows),
 // the amount billed to the account as its own invoice, and the Summary's line for it.

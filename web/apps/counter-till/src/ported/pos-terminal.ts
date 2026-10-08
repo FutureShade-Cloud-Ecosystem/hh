@@ -6520,10 +6520,13 @@ ${/* Fulfilment: the EXISTING sale types (counter / will-call / delivered / COD 
     const option = this.paymentOptions().find((o) => o.shape === shape);
     const total = this.preview.kind === 'ready' ? this.preview.totalCents : null;
     const deposit = this.depositCents();
-    const fits = total !== null && deposit > 0 && deposit < total;
-    const restCents = total === null ? null : deposit <= 0 ? total : fits ? balanceAfterDepositCents(total, deposit) : null;
+    // Item 9 visual review P3-3: the till holds no bound of its own. The server refuses a deposit
+    // at or over the total once it has priced the lines, and its refusal speaks; the commit stands
+    // for any positive amount. Line two's rest stays blank when the typed deposit covers the whole
+    // total, because no honest rest exists to show (never a confident wrong number).
+    const restCents = total === null ? null : deposit <= 0 ? total : deposit < total ? balanceAfterDepositCents(total, deposit) : null;
     const method = this.depositMethod === 'CARD' ? 'Card' : 'Cash';
-    const disabled = this.cart.length === 0 || this.ringBusy() || this.ringDone() || !fits;
+    const disabled = this.cart.length === 0 || this.ringBusy() || this.ringDone() || deposit <= 0;
     return html`<section class="depositpanel" data-testid="deposit-panel" aria-label="Deposit and balance">
       <div class="dplabel" id="dep-method-label">THE DEPOSIT, CASH OR CARD</div>
       <div class="dpmethods" role="group" aria-labelledby="dep-method-label">
@@ -6561,11 +6564,6 @@ ${/* Fulfilment: the EXISTING sale types (counter / will-call / delivered / COD 
         <span class="dptag">later</span>
       </div>
       <p class="dpsentence" data-testid="deposit-sentence">${depositSentence(shape)}</p>
-      ${deposit > 0 && total !== null && deposit >= total
-        ? html`<p class="dpsentence bad" role="alert" data-testid="deposit-too-large">
-            The deposit is less than the sale total. To take it all, pay in full now.
-          </p>`
-        : nothing}
       ${this.renderCardType()}
       <button
         class="complete-cta"
@@ -6573,7 +6571,7 @@ ${/* Fulfilment: the EXISTING sale types (counter / will-call / delivered / COD 
         ?disabled=${disabled}
         @click=${() => this.completeSale()}
       >
-        ${this.ringBusy() ? 'Ringing…' : depositButtonWords(fits ? deposit : 0, formatMoney)}
+        ${this.ringBusy() ? 'Ringing…' : depositButtonWords(deposit, formatMoney)}
       </button>
     </section>`;
   }

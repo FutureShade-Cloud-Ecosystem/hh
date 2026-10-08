@@ -1915,6 +1915,14 @@ const server = createServer(async (request, response) => {
         return;
       }
       const total = subtotal + tax;
+      // Item 9 visual review P3-3: the core's own deposit bound (0 < deposit < total, judged
+      // once the lines are priced) answers as the plain envelope, one sentence with no fields
+      // (the module prefix comes off at the wire's one door). The till holds no bound of its
+      // own; this is the refusal the person reads.
+      if (requestedDeposit >= total) {
+        respondJson(response, 422, { error: "deposit must be greater than zero and less than the sale total" });
+        return;
+      }
       const tenders = [];
       let cashTendered;
       let changeDue;
