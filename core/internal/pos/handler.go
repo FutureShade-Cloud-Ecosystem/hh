@@ -90,6 +90,9 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("PUT /api/v1/pos/workspace", g.RequireStaff(h.staff(h.putWorkspace)))
 	r.Handle("DELETE /api/v1/pos/workspace", g.RequireStaff(h.staff(h.resetWorkspace)))
 	r.Handle("POST /api/v1/pos/returns", g.RequireStaff(h.staff(h.createReturn)))
+	// Sub item 10.2: the credit note across orders, several orders of one customer in one
+	// transaction, the approval threshold judging the note total (Q3).
+	r.Handle("POST /api/v1/pos/returns-across", g.RequireStaff(h.staff(h.createReturnAcross)))
 	h.registerReturnRequestRoutes(r, g) // A-06 portal-return approval queue
 	r.Handle("GET /api/v1/pos/returns/lookup", g.RequireStaff(h.staff(h.lookupReturn)))
 	// Sub item 10.1: the customer lines read behind the returns-across flow, every sales order the
@@ -242,6 +245,27 @@ func (h *Handler) createReturn(w http.ResponseWriter, r *http.Request, caller gu
 		status = http.StatusOK
 	}
 	httpx.WriteJSON(w, status, ret)
+}
+
+// createReturnAcross commits one credit note across several orders of one customer. 201 on the
+// first commit, 200 with the same body on a replay. The approver's credential rides the same
+// header the single return reads.
+func (h *Handler) createReturnAcross(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in ReturnAcrossInput
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	in.ApproverCredential = r.Header.Get(approverAuthorizationHeader)
+	note, err := h.svc.ReturnAcross(r.Context(), in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	status := http.StatusCreated
+	if note.Replayed {
+		status = http.StatusOK
+	}
+	httpx.WriteJSON(w, status, note)
 }
 
 func (h *Handler) lookupReturn(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {

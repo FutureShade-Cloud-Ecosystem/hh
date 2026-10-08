@@ -4471,6 +4471,31 @@ export type PosReturnLookup = {
   card_refundable: boolean;
   lines: PosReturnableLine[];
 };
+export type PosReturnAcrossInput = {
+  idempotency_key: string;
+  customer_id: string;
+  orders: PosReturnAcrossOrder[];
+  refund_method: "CASH" | "CARD" | "ACCOUNT_CREDIT";
+  reason: string;
+  restock: boolean;
+  till_session_id: string;
+};
+export type PosReturnAcrossOrder = {
+  order_id: string;
+  lines: PosReturnLineInput[];
+};
+export type PosReturnNote = {
+  note_id: string;
+  note_no: string;
+  customer_id: string;
+  branch_id: string;
+  refund_method: "CASH" | "CARD" | "ACCOUNT_CREDIT";
+  subtotal_cents: number;
+  tax_cents: number;
+  total_cents: number;
+  returns: PosReturn[];
+  replayed: boolean;
+};
 export type PosCustomerLine = {
   order_line_id: string;
   product_id: string;

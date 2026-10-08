@@ -104,3 +104,5 @@ additions:
     reason: "Staff marking a quote lost on the customer's behalf after a phone, text, email or in person no: a reason code and note, the same selling-role rule as convert, the soft holds released and the follow-ups stopped; the ERP's only reject is the contractor portal's own; no ERP source route."
   - route: "GET /api/v1/pos/returns/customer-lines"
     reason: "Row 1047 returns across orders: the customer lines read, every sales order one customer holds (till rings and quote conversions alike) with each line's returnable quantity netted by the guard's own sums, branch fenced; the ERP's return reads one sale by its number and no route lists what a customer bought; no ERP source route."
+  - route: "POST /api/v1/pos/returns-across"
+    reason: "Row 1047 returns across orders: the credit note across several orders of one customer at one branch in one transaction, each order keeping its own return number and journal and the approval threshold judging the note total; the ERP's return is one sale at a time; no ERP source route."

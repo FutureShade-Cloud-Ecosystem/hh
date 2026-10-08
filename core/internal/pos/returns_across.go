@@ -1,0 +1,382 @@
+package pos
+
+// returns_across.go, sub item 10.2: the credit note across orders. One note, N orders of one
+// customer, one branch, ONE transaction over the SINGLE return's own halves: every child's lines
+// are guarded by guardReturnLines (the single return's own locks and words) and committed by
+// commitReturnTx (the single return's own header, rail, restock and journals, one
+// pos.return.committed per child, the GL builder and its key untouched). The note holds the
+// children together: its own number, its own idempotency key (the children's keys derive from it),
+// the note total the approval threshold judges (the Q3 ruling), and the per-sale locks taken for
+// every order in ASCENDING order id before any line lock, so two overlapping notes serialize
+// instead of deadlocking.
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"sort"
+	"strings"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/jackc/pgx/v5"
+)
+
+// reservedNoteKeyPrefix is the idempotency-key namespace ReturnAcross derives its children's keys
+// from ("note:" + note key + ":" + order id). Like the return-request rail's "rreq:" it is
+// RESERVED: a public single-order return may never use it (a colliding key would squat a note
+// child's replay slot), and a note may never use "rreq:" either.
+const reservedNoteKeyPrefix = "note:"
+
+// noteChildKey derives one child's pos_returns idempotency key from the note's own key: one key
+// per note, the children's keys derived, each child still unique under ux_pos_returns_idem.
+func noteChildKey(noteKey, orderID string) string {
+	return reservedNoteKeyPrefix + noteKey + ":" + orderID
+}
+
+// returnAcrossPlan is everything the note resolves BEFORE its transaction opens, one child plan
+// per order (each built by the single return's own prepareReturn, so the branch wall, the rail
+// checks and the replay discipline are the single path's) plus the note-level facts.
+type returnAcrossPlan struct {
+	in       ReturnAcrossInput
+	caller   identity.StaffContext
+	actor    string
+	children []*returnPlan
+	// preReplay carries the committed note the pre-transaction replay check answered: set means
+	// no transaction and no child body at all.
+	preReplay   ReturnNote
+	preReplayed bool
+}
+
+// prepareReturnAcross is the note's pre-transaction section, run while no connection is held: the
+// note-level validation, one child plan per order through the SINGLE return's own prepareReturn
+// (the branch wall before any rail, per child), the one-branch rule, the note replay pre-check and
+// the approver resolution against the note's prospect.
+func (s *Service) prepareReturnAcross(ctx context.Context, in ReturnAcrossInput) (*returnAcrossPlan, error) {
+	plan := &returnAcrossPlan{in: in}
+	if in.IdempotencyKey == "" {
+		return nil, errMissingKey
+	}
+	if strings.HasPrefix(in.IdempotencyKey, reservedRequestKeyPrefix) {
+		return nil, errReservedKey
+	}
+	if len(in.Orders) == 0 {
+		return nil, clientErr(http.StatusBadRequest, "pos: a return note needs at least one order")
+	}
+	switch in.RefundMethod {
+	case RefundCash, RefundCard, RefundAccountCredit:
+	default:
+		return nil, errBadRefundMethod
+	}
+	in.CustomerID = strings.TrimSpace(in.CustomerID)
+	if in.CustomerID == "" {
+		return nil, clientErr(http.StatusBadRequest, "pos: customer_id is required")
+	}
+	// The house WALK-IN row is refused in words, the customer lines read's own refusal: the note
+	// is one account customer's credit note, never the shared row's.
+	if walkIn, werr := s.store.ResolveWalkIn(ctx); werr == nil && walkIn == in.CustomerID {
+		return nil, errWalkInNotReturnable
+	}
+	seenOrder := make(map[string]bool, len(in.Orders))
+	for _, o := range in.Orders {
+		if o.OrderID == "" {
+			return nil, clientErr(http.StatusBadRequest, "pos: every order on a return note needs an order_id")
+		}
+		if seenOrder[o.OrderID] {
+			return nil, clientErr(http.StatusUnprocessableEntity, "pos: order %s appears twice on one note", o.OrderID)
+		}
+		seenOrder[o.OrderID] = true
+		if len(o.Lines) == 0 {
+			return nil, clientErr(http.StatusUnprocessableEntity, "pos: order %s carries no return lines", o.OrderID)
+		}
+	}
+
+	// The note's own replay pre-check, judged against the replayed note's own branch by the wall.
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	plan.caller = caller
+	if cached, found, nerr := s.replayNoteIfAllowed(ctx, in.IdempotencyKey, caller); nerr != nil {
+		return nil, nerr
+	} else if found {
+		plan.preReplay = cached
+		plan.preReplayed = true
+		return plan, nil
+	}
+
+	// One child plan per order through the single return's own prepareReturn: validation, the
+	// order context, the branch wall BEFORE any rail, the CASH drawer and CARD capture checks, the
+	// fail-closed role gate. The child key is derived from the note's own key.
+	for _, o := range in.Orders {
+		childIn := ReturnInput{
+			IdempotencyKey: noteChildKey(in.IdempotencyKey, o.OrderID),
+			OrderID:        o.OrderID,
+			Lines:          o.Lines,
+			RefundMethod:   in.RefundMethod,
+			Reason:         in.Reason,
+			Restock:        in.Restock,
+			TillSessionID:  in.TillSessionID,
+			noteChild:      true,
+		}
+		child, perr := s.prepareReturn(ctx, childIn)
+		if perr != nil {
+			return nil, perr
+		}
+		// The note's walls around its children: one customer (an order that is not the note
+		// customer's cannot ride the note) and one branch (the money rail is per branch).
+		if child.oc.CustomerID != in.CustomerID {
+			return nil, clientErr(http.StatusUnprocessableEntity,
+				"pos: order %s belongs to another customer, not the note's customer", child.oc.OrderNo)
+		}
+		if plan.children != nil && plan.children[0].oc.BranchID != child.oc.BranchID {
+			return nil, clientErr(http.StatusUnprocessableEntity,
+				"pos: a return note covers one branch, order %s sits in another", child.oc.OrderNo)
+		}
+		plan.children = append(plan.children, child)
+	}
+
+	// The approver resolution, against the note's own prospect: the note total the gate judges is
+	// unknown until the children are guarded, so the credential resolves when the prospect of the
+	// requested lines' own totals could cross the configured amount (the refundMayNeedApproval
+	// discipline, summed over the note's orders).
+	if s.roles == nil {
+		return nil, errRoleConfigUnwired()
+	}
+	if in.ApproverCredential != "" && s.noteMayNeedApproval(ctx, plan) {
+		first := plan.children[0]
+		resolved, pending, rerr := s.resolveRefundApprover(ctx, in.ApproverCredential, caller, first.oc)
+		for _, child := range plan.children {
+			child.decision = resolved
+			child.decision.pending = pending
+			child.judgeErr = rerr
+			child.credentialJudged = true
+			// The decision's names, read before the transaction opens (the P3-D discipline). The
+			// note's refusal row is its own (the note refusal audit row names the customer), so a
+			// child cites no refusal id.
+			child.refusalRowID = ""
+		}
+		if pending {
+			if staff := s.approverStaffID(ctx, resolved.approver.PlatformUserID); staff != "" {
+				for _, child := range plan.children {
+					child.approverStaff = staff
+				}
+			}
+		}
+	}
+	plan.actor = identity.StaffUserIDFromContext(ctx)
+	return plan, nil
+}
+
+// ReturnAcross commits one credit note across several orders of one customer in ONE transaction:
+// every order's per-sale lock taken in ascending order id before any line lock (two overlapping
+// notes serialize on the shared lowest order), every child guarded and committed by the single
+// return's own halves, the approval gate judging the NOTE total (Q3), the note header written ahead
+// of its children so each child carries its note. Idempotent on the note's own key; a replay
+// answers the committed note and writes nothing.
+func (s *Service) ReturnAcross(ctx context.Context, in ReturnAcrossInput) (ReturnNote, error) {
+	plan, err := s.prepareReturnAcross(ctx, in)
+	if err != nil {
+		return ReturnNote{}, err
+	}
+	if plan.preReplayed {
+		return plan.preReplay, nil
+	}
+	var out ReturnNote
+	var replayedHere, approvedHere bool
+	err = s.store.RunInTx(ctx, func(tx pgx.Tx) error {
+		var txErr error
+		out, replayedHere, approvedHere, txErr = s.returnAcrossInTx(ctx, tx, plan)
+		return txErr
+	})
+	if err != nil {
+		// The approval refusal writes its own audit row naming the clerk, the customer and the
+		// note's money asked for (the single path's own discipline, the note's own row).
+		var refusal ErrRefundApprovalRequired
+		if errors.As(err, &refusal) {
+			// The note's refusal row names the clerk, the CUSTOMER (the note has no id before it
+			// commits) and the money asked for, the single path's own audit discipline.
+			s.record(ctx, audit.SensitiveAccess{
+				Action: auditActionRefundApprovalRefused, EntityType: "pos.return_note", EntityID: in.CustomerID,
+				ActorID: plan.actor, BranchID: plan.children[0].oc.BranchID, Purpose: "POS_RETURN",
+				Reason: refundApprovalRequiredError,
+				Extra:  map[string]any{"amount_cents": refusal.RefundCents},
+			})
+			return ReturnNote{}, refusal
+		}
+		// A concurrent duplicate hit ux_return_notes_idem and rolled back: surface the winner.
+		if isUniqueViolationErr(err) {
+			if cached, found, ferr := s.replayNoteIfAllowed(ctx, in.IdempotencyKey, plan.caller); ferr == nil && found {
+				return cached, nil
+			}
+		}
+		return ReturnNote{}, err
+	}
+	if replayedHere {
+		return out, nil
+	}
+	// The completion row names the note, one row for the one decision (the children's own trails
+	// are the rail's rows and journals themselves).
+	completed := audit.SensitiveAccess{
+		Action: audit.ActReturnCompleted, EntityType: "pos.return_note", EntityID: out.NoteID,
+		ActorID: plan.actor, BranchID: out.BranchID, Purpose: "POS_RETURN", Reason: in.RefundMethod,
+		Extra: map[string]any{"note_no": out.NoteNo, "total_cents": out.TotalCents},
+	}
+	if approvedHere {
+		if plan.children[0].approverStaff != "" {
+			completed.Extra["approver_id"] = plan.children[0].approverStaff
+		}
+		completed.Extra["subject_ref"] = plan.children[0].decision.approver.PlatformUserID
+		completed.Extra["amount_cents"] = out.TotalCents
+		completed.Reason = refundApprovalRequiredError
+	}
+	s.record(ctx, completed)
+	return out, nil
+}
+
+// returnAcrossInTx is the note's transactional body: the ascending per-sale locks, the in-tx
+// replay re-check on the note's key, every child's guard, the note-total gate, the note header,
+// then every child's commit half.
+func (s *Service) returnAcrossInTx(ctx context.Context, tx pgx.Tx, plan *returnAcrossPlan) (ReturnNote, bool, bool, error) {
+	in := plan.in
+	caller := plan.caller
+
+	// Ascending per-sale locks BEFORE any line lock: two overlapping notes (orders A,B and B,A)
+	// both start at the alphabetically first order id, so they serialize and both finish instead
+	// of deadlocking. pg_advisory_xact_lock is reentrant inside one transaction, the children's
+	// own lock calls below are no-ops.
+	ordered := make([]*returnPlan, len(plan.children))
+	copy(ordered, plan.children)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].oc.OrderID < ordered[j].oc.OrderID })
+	for _, child := range ordered {
+		if err := s.store.LockSaleForReturn(ctx, tx, child.oc.OrderID); err != nil {
+			return ReturnNote{}, false, false, err
+		}
+	}
+
+	// The in-transaction same-key re-check on the NOTE's key, after the locks (a twin that waited
+	// answers its sibling's committed note as the replay, no gate, no rail, no audit row).
+	cached, found, rerr := s.replayNoteIfAllowedTx(ctx, tx, in.IdempotencyKey, caller)
+	if rerr != nil {
+		return ReturnNote{}, false, false, rerr
+	}
+	if found {
+		return cached, true, false, nil
+	}
+
+	// Guard every child (its own lines under its own FOR UPDATE), summing the note.
+	guards := make([]guardedReturn, len(plan.children))
+	var subtotal, taxTotal int64
+	for i, child := range plan.children {
+		g, gerr := s.guardReturnLines(ctx, tx, child.oc, child.in.Lines)
+		if gerr != nil {
+			return ReturnNote{}, false, false, gerr
+		}
+		guards[i] = g
+		subtotal += g.subtotal
+		taxTotal += g.taxTotal
+	}
+	noteTotal := subtotal + taxTotal
+
+	// The approval gate judges the NOTE total (the Q3 ruling), ahead of every write and every
+	// rail, the single path's own refusal body and credential discipline.
+	var approvedHere bool
+	first := plan.children[0]
+	refusal, refused := s.refundApprovalRefusal(noteTotal, noteTotal, caller)
+	if first.credentialJudged && s.roles.RefundRequiresApproval(noteTotal) {
+		if first.judgeErr != nil {
+			return ReturnNote{}, false, false, first.judgeErr
+		}
+		if !first.decision.pending {
+			refusal = s.standingRefusalFor(noteTotal)
+			refused = true
+		}
+	}
+	if refused {
+		if !first.decision.pending {
+			return ReturnNote{}, false, false, refusal
+		}
+		approvedHere = true
+	}
+
+	// The note header ahead of its children: every child's row carries the note's id.
+	noteID, noteNo, ierr := s.store.InsertReturnNote(ctx, tx, returnNoteRow{
+		CustomerID: in.CustomerID, BranchID: first.oc.BranchID, RefundMethod: in.RefundMethod,
+		SubtotalCents: subtotal, TaxCents: taxTotal, TotalCents: noteTotal,
+		Reason: in.Reason, IdempotencyKey: in.IdempotencyKey, CreatedBy: plan.actor,
+	})
+	if ierr != nil {
+		return ReturnNote{}, false, false, ierr
+	}
+
+	out := ReturnNote{
+		NoteID: noteID, NoteNo: noteNo, CustomerID: in.CustomerID, BranchID: first.oc.BranchID,
+		RefundMethod: in.RefundMethod, SubtotalCents: subtotal, TaxCents: taxTotal, TotalCents: noteTotal,
+		Returns: []Return{},
+	}
+	for i, child := range plan.children {
+		ret, cerr := s.commitReturnTx(ctx, tx, child, guards[i], noteID, approvedHere)
+		if cerr != nil {
+			return ReturnNote{}, false, false, cerr
+		}
+		out.Returns = append(out.Returns, ret)
+	}
+	return out, false, approvedHere, nil
+}
+
+// replayNoteIfAllowed answers a note replay only to a caller the wall admits to the replayed
+// note's own branch (the replayIfAllowed discipline: the key is not a bearer of the answer).
+func (s *Service) replayNoteIfAllowed(ctx context.Context, key string, caller identity.StaffContext) (ReturnNote, bool, error) {
+	cached, found, err := s.store.FindReturnNoteByKey(ctx, key)
+	if err != nil || !found {
+		return ReturnNote{}, false, err
+	}
+	if err := requireBranchReach(caller, cached.BranchID); err != nil {
+		return ReturnNote{}, false, err
+	}
+	cached.Replayed = true
+	return cached, true, nil
+}
+
+// replayNoteIfAllowedTx is replayNoteIfAllowed on the open ReturnAcross transaction (the
+// FindReturnByKeyTx discipline: no pool read while the transaction holds a connection).
+func (s *Service) replayNoteIfAllowedTx(ctx context.Context, tx pgx.Tx, key string, caller identity.StaffContext) (ReturnNote, bool, error) {
+	cached, found, err := s.store.FindReturnNoteByKeyTx(ctx, tx, key)
+	if err != nil || !found {
+		return ReturnNote{}, false, err
+	}
+	if err := requireBranchReach(caller, cached.BranchID); err != nil {
+		return ReturnNote{}, false, err
+	}
+	cached.Replayed = true
+	return cached, true, nil
+}
+
+// noteMayNeedApproval answers, from the note's requested lines without locks, whether the note
+// COULD land where the dealer's configuration asks for an approver: the sum over the note's orders
+// of the requested lines' original totals and tax, plus each order's earlier committed returns,
+// against RefundRequiresApproval (the refundMayNeedApproval discipline, summed over the note).
+func (s *Service) noteMayNeedApproval(ctx context.Context, plan *returnAcrossPlan) bool {
+	var prospective int64
+	for _, child := range plan.children {
+		lines, err := s.store.ListReturnableLines(ctx, child.oc.OrderID)
+		if err != nil {
+			return true
+		}
+		prior, err := s.store.SumCommittedReturnTotals(ctx, child.oc.OrderID)
+		if err != nil {
+			return true
+		}
+		requested := make(map[string]bool, len(child.in.Lines))
+		for _, ln := range child.in.Lines {
+			requested[ln.OrderLineID] = true
+		}
+		for _, v := range lines {
+			if requested[v.OrderLineID] {
+				prospective += v.LineTotalCents + v.TaxCents
+			}
+		}
+		prospective += prior
+	}
+	return s.roles.RefundRequiresApproval(prospective)
+}

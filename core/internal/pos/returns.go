@@ -255,8 +255,13 @@ func (s *Service) prepareReturn(ctx context.Context, in ReturnInput) (*returnPla
 	if in.IdempotencyKey == "" {
 		return nil, errMissingKey
 	}
-	// The "rreq:" namespace belongs to the return-request approval rail alone (see the const above).
+	// The "rreq:" namespace belongs to the return-request approval rail alone (see the const above)
+	// and the "note:" namespace to the across-orders note's derived child keys: a public key in
+	// either would squat a reserved replay slot. A note's own children carry theirs derived.
 	if !in.internalRail && strings.HasPrefix(in.IdempotencyKey, reservedRequestKeyPrefix) {
+		return nil, errReservedKey
+	}
+	if !in.noteChild && strings.HasPrefix(in.IdempotencyKey, reservedNoteKeyPrefix) {
 		return nil, errReservedKey
 	}
 	if len(in.Lines) == 0 {
@@ -401,13 +406,9 @@ func (s *Service) returnInTx(ctx context.Context, tx pgx.Tx, plan *returnPlan) (
 	in := plan.in
 	oc := plan.oc
 	caller := plan.caller
-	actor := plan.actor
-	pickupRequired, pickupStatus, pickupSite, pickupDate := plan.pickupRequired, plan.pickupStatus, plan.pickupSite, plan.pickupDate
 	decision := plan.decision
 	judgeErr := plan.judgeErr
 	credentialJudged := plan.credentialJudged
-	approverStaff := plan.approverStaff
-	refusalRowID := plan.refusalRowID
 
 	// Serialize every return of the sale before any line lock: the line
 	// locks below serialize only returns of the SAME line, two concurrent
@@ -442,66 +443,12 @@ func (s *Service) returnInTx(ctx context.Context, tx pgx.Tx, plan *returnPlan) (
 		return out, replayedHere, approvedHere, nil
 	}
 
-	// 1. Lock + guard every requested line, derive its refund money/tax.
-	lines := make([]returnLineRow, 0, len(in.Lines))
-	var subtotal, taxTotal int64
-	stockLines := make([]StockLine, 0, len(in.Lines))
-	eventLines := make([]map[string]any, 0, len(in.Lines))
-	for _, req := range in.Lines {
-		rl, ok, lerr := s.store.LockReturnableLine(ctx, tx, oc.OrderID, req.OrderLineID)
-		if lerr != nil {
-			return Return{}, false, false, lerr
-		}
-		if !ok {
-			return Return{}, false, false, clientErr(http.StatusUnprocessableEntity, "pos: line %s does not belong to order %s", req.OrderLineID, oc.OrderNo)
-		}
-		remainingQty := returnableQtyOpen(rl.QtySold, rl.PriorQty)
-		if req.QtyBase > remainingQty+qtyEpsilon {
-			return Return{}, false, false, clientErr(http.StatusUnprocessableEntity,
-				"pos: over-return on line %s, %.4f requested but only %.4f returnable", req.OrderLineID, req.QtyBase, remainingQty)
-		}
-		var money, tax int64
-		if math.Abs(req.QtyBase-remainingQty) <= qtyEpsilon {
-			// Returning everything still out: pay out exactly what remains so the line zeroes.
-			money = rl.LineTotalCents - rl.PriorMoney
-			tax = rl.TaxCents - rl.PriorTax
-		} else {
-			// Partial return: PROPORTIONAL by base qty, mirroring the tax proration below.
-			// qty_base is base-UOM while unit_price_cents is per PRICE-UOM, so qty × unit price
-			// mixes units whenever they differ (e.g. 1000 SF entered / 4100 PC base / 300¢ per SF)
-			// and over-refunds up to the cap. line_total / qty_sold is unit-consistent by
-			// construction; round half-up like the tax line, capped at the remaining un-refunded
-			// line money so cumulative partials can never exceed line_total.
-			if rl.QtySold > 0 {
-				money = int64(math.Round(float64(rl.LineTotalCents) * req.QtyBase / rl.QtySold))
-			}
-			if rem := rl.LineTotalCents - rl.PriorMoney; money > rem {
-				money = rem
-			}
-			if rl.QtySold > 0 {
-				tax = int64(math.Round(float64(rl.TaxCents) * req.QtyBase / rl.QtySold))
-			}
-			if rem := rl.TaxCents - rl.PriorTax; tax > rem {
-				tax = rem
-			}
-		}
-		if money < 0 || tax < 0 {
-			return Return{}, false, false, clientErr(http.StatusUnprocessableEntity, "pos: line %s has nothing left to refund", req.OrderLineID)
-		}
-		// Money invariant (never weakened): Σ refunded tax per order line ≤ the original line tax.
-		if rl.PriorTax+tax > rl.TaxCents {
-			return Return{}, false, false, clientErr(http.StatusUnprocessableEntity, "pos: tax refund would exceed the original line tax on %s", req.OrderLineID)
-		}
-		lines = append(lines, returnLineRow{
-			OrderLineID: req.OrderLineID, ProductID: rl.ProductID, QtyBase: req.QtyBase,
-			UnitPriceCents: rl.UnitPriceCents, LineTotalCents: money, TaxCents: tax, ReasonCode: req.ReasonCode,
-		})
-		subtotal += money
-		taxTotal += tax
-		stockLines = append(stockLines, StockLine{ProductID: rl.ProductID, QtyBase: req.QtyBase})
-		eventLines = append(eventLines, map[string]any{"product_id": rl.ProductID, "qty_base": req.QtyBase})
+	// 1. Lock + guard every requested line, derive its refund money/tax (the shared guard half).
+	g, gerr := s.guardReturnLines(ctx, tx, oc, in.Lines)
+	if gerr != nil {
+		return Return{}, false, false, gerr
 	}
-	total := subtotal + taxTotal
+	total := g.subtotal + g.taxTotal
 
 	// The refund rule reads the dealer's configuration (X7) and counts
 	// every return against the same sale together: the sale's earlier
@@ -554,6 +501,113 @@ func (s *Service) returnInTx(ctx context.Context, tx pgx.Tx, plan *returnPlan) (
 		}
 	}
 
+	// 2 through 5: the header, the rail, the restock and the events (the shared commit half).
+	out, cerr := s.commitReturnTx(ctx, tx, plan, g, "", approvedHere)
+	if cerr != nil {
+		return Return{}, false, false, cerr
+	}
+	return out, replayedHere, approvedHere, nil
+}
+
+// guardedReturn is the per-line guard result every return body consumes: the derived refund lines
+// with their money and tax, the stock and event projections of the same lines, and the sums. One
+// code path for the single-order return and for every child of an across-orders note, so a note
+// child's line guard is exactly the single return's own.
+type guardedReturn struct {
+	lines      []returnLineRow
+	stockLines []StockLine
+	eventLines []map[string]any
+	subtotal   int64
+	taxTotal   int64
+}
+
+// guardReturnLines locks and guards every requested line of ONE order under FOR UPDATE and derives
+// its refund money and tax: the shared step 1 of the single return's transactional body
+// (returnInTx) and of every child of a note (ReturnAcross). The over-return refusal and the money
+// invariants are the single return's own words, unchanged.
+func (s *Service) guardReturnLines(ctx context.Context, tx pgx.Tx, oc returnOrderCtx, reqs []ReturnLineInput) (guardedReturn, error) {
+	lines := make([]returnLineRow, 0, len(reqs))
+	var subtotal, taxTotal int64
+	stockLines := make([]StockLine, 0, len(reqs))
+	eventLines := make([]map[string]any, 0, len(reqs))
+	for _, req := range reqs {
+		rl, ok, lerr := s.store.LockReturnableLine(ctx, tx, oc.OrderID, req.OrderLineID)
+		if lerr != nil {
+			return guardedReturn{}, lerr
+		}
+		if !ok {
+			return guardedReturn{}, clientErr(http.StatusUnprocessableEntity, "pos: line %s does not belong to order %s", req.OrderLineID, oc.OrderNo)
+		}
+		remainingQty := returnableQtyOpen(rl.QtySold, rl.PriorQty)
+		if req.QtyBase > remainingQty+qtyEpsilon {
+			return guardedReturn{}, clientErr(http.StatusUnprocessableEntity,
+				"pos: over-return on line %s, %.4f requested but only %.4f returnable", req.OrderLineID, req.QtyBase, remainingQty)
+		}
+		var money, tax int64
+		if math.Abs(req.QtyBase-remainingQty) <= qtyEpsilon {
+			// Returning everything still out: pay out exactly what remains so the line zeroes.
+			money = rl.LineTotalCents - rl.PriorMoney
+			tax = rl.TaxCents - rl.PriorTax
+		} else {
+			// Partial return: PROPORTIONAL by base qty, mirroring the tax proration below.
+			// qty_base is base-UOM while unit_price_cents is per PRICE-UOM, so qty × unit price
+			// mixes units whenever they differ (e.g. 1000 SF entered / 4100 PC base / 300¢ per SF)
+			// and over-refunds up to the cap. line_total / qty_sold is unit-consistent by
+			// construction; round half-up like the tax line, capped at the remaining un-refunded
+			// line money so cumulative partials can never exceed line_total.
+			if rl.QtySold > 0 {
+				money = int64(math.Round(float64(rl.LineTotalCents) * req.QtyBase / rl.QtySold))
+			}
+			if rem := rl.LineTotalCents - rl.PriorMoney; money > rem {
+				money = rem
+			}
+			if rl.QtySold > 0 {
+				tax = int64(math.Round(float64(rl.TaxCents) * req.QtyBase / rl.QtySold))
+			}
+			if rem := rl.TaxCents - rl.PriorTax; tax > rem {
+				tax = rem
+			}
+		}
+		if money < 0 || tax < 0 {
+			return guardedReturn{}, clientErr(http.StatusUnprocessableEntity, "pos: line %s has nothing left to refund", req.OrderLineID)
+		}
+		// Money invariant (never weakened): Σ refunded tax per order line ≤ the original line tax.
+		if rl.PriorTax+tax > rl.TaxCents {
+			return guardedReturn{}, clientErr(http.StatusUnprocessableEntity, "pos: tax refund would exceed the original line tax on %s", req.OrderLineID)
+		}
+		lines = append(lines, returnLineRow{
+			OrderLineID: req.OrderLineID, ProductID: rl.ProductID, QtyBase: req.QtyBase,
+			UnitPriceCents: rl.UnitPriceCents, LineTotalCents: money, TaxCents: tax, ReasonCode: req.ReasonCode,
+		})
+		subtotal += money
+		taxTotal += tax
+		stockLines = append(stockLines, StockLine{ProductID: rl.ProductID, QtyBase: req.QtyBase})
+		eventLines = append(eventLines, map[string]any{"product_id": rl.ProductID, "qty_base": req.QtyBase})
+	}
+
+	g := guardedReturn{lines: lines, stockLines: stockLines, eventLines: eventLines, subtotal: subtotal, taxTotal: taxTotal}
+	return g, nil
+}
+
+// commitReturnTx is the write half of one return's transactional body: the shared steps 2 through
+// 5 of the single return (returnInTx) and of every child of an across-orders note, the header and
+// lines, the deposit release read, the refund rail, the restock and the GL events. noteID is empty
+// on the single-order return; a note child carries its note's id. approvedHere rides in from
+// whichever gate judged the return (the single path's per-sale cumulative, the note path's note
+// total): the committed event names the decision it was given.
+func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPlan, g guardedReturn, noteID string, approvedHere bool) (Return, error) {
+	// The plan's facts the write half reads.
+	in := plan.in
+	oc := plan.oc
+	actor := plan.actor
+	pickupRequired, pickupStatus, pickupSite, pickupDate := plan.pickupRequired, plan.pickupStatus, plan.pickupSite, plan.pickupDate
+	decision := plan.decision
+	approverStaff := plan.approverStaff
+	refusalRowID := plan.refusalRowID
+	lines, stockLines, eventLines := g.lines, g.stockLines, g.eventLines
+	subtotal, taxTotal := g.subtotal, g.taxTotal
+	total := subtotal + taxTotal
+
 	// A-06 restocking fee, derived from the ACTUAL committed subtotal (round half-up) so the fee is
 	// exact under partial/capped refunds. fee ≤ subtotal ≤ total by construction (bps ≤ 10000), so the
 	// credited amount (total − fee) can never go negative.
@@ -569,13 +623,13 @@ func (s *Service) returnInTx(ctx context.Context, tx pgx.Tx, plan *returnPlan) (
 		RefundMethod: in.RefundMethod, SubtotalCents: subtotal, TaxCents: taxTotal, TotalCents: total,
 		FeeCents: feeCents, Reason: in.Reason, Restock: in.Restock, TillSessionID: in.TillSessionID,
 		PickupRequired: pickupRequired, PickupSite: pickupSite, PickupDate: pickupDate, PickupStatus: pickupStatus,
-		IdempotencyKey: in.IdempotencyKey, CreatedBy: actor,
+		IdempotencyKey: in.IdempotencyKey, CreatedBy: actor, NoteID: noteID,
 	})
 	if ierr != nil {
-		return Return{}, false, false, ierr
+		return Return{}, ierr
 	}
 	if err := s.store.InsertReturnLines(ctx, tx, returnID, lines); err != nil {
-		return Return{}, false, false, err
+		return Return{}, err
 	}
 
 	// 2b. A supplier deposit order releases its deposit on ANY return, partial or whole (the
@@ -588,7 +642,7 @@ func (s *Service) returnInTx(ctx context.Context, tx pgx.Tx, plan *returnPlan) (
 	if s.deposits != nil {
 		var derr error
 		if depositDocs, derr = s.deposits.DepositDocumentIDsTx(ctx, tx, oc.OrderID); derr != nil {
-			return Return{}, false, false, derr
+			return Return{}, derr
 		}
 	}
 
@@ -602,7 +656,7 @@ func (s *Service) returnInTx(ctx context.Context, tx pgx.Tx, plan *returnPlan) (
 			IdempotencyKey: "refund:" + in.IdempotencyKey,
 		})
 		if err != nil {
-			return Return{}, false, false, clientErr(http.StatusConflict, "%s", err.Error())
+			return Return{}, clientErr(http.StatusConflict, "%s", err.Error())
 		}
 		refundPaymentID = res.PaymentID
 	case RefundCard:
@@ -613,26 +667,26 @@ func (s *Service) returnInTx(ctx context.Context, tx pgx.Tx, plan *returnPlan) (
 		// the holder's lock, deadlocking a full pool.
 		refundRef, err := s.cardRefund.RefundCard(ctx, tx, oc.GatewayRef, total, returnNo, "refund:"+in.IdempotencyKey)
 		if err != nil {
-			return Return{}, false, false, clientErr(http.StatusBadGateway, "pos: card refund failed, %s", err.Error())
+			return Return{}, clientErr(http.StatusBadGateway, "pos: card refund failed, %s", err.Error())
 		}
 		res, err := s.tender.RefundTender(ctx, tx, till.RefundInput{
 			Method: till.MethodCard, AmountCents: total, BranchID: oc.BranchID, CustomerID: oc.CustomerID,
 			GatewayRef: refundRef, Reference: returnNo, IdempotencyKey: "refund:" + in.IdempotencyKey,
 		})
 		if err != nil {
-			return Return{}, false, false, clientErr(http.StatusConflict, "%s", err.Error())
+			return Return{}, clientErr(http.StatusConflict, "%s", err.Error())
 		}
 		refundPaymentID = res.PaymentID
 	case RefundAccountCredit:
 		// The restocking fee reduces what the customer's account is credited (total − fee); the fee
 		// itself books through the GL event's fee_cents, never a subledger row.
 		if err := s.applyAccountCredit(ctx, tx, oc, total-feeCents, depositDocs); err != nil {
-			return Return{}, false, false, err
+			return Return{}, err
 		}
 	}
 	if refundPaymentID != "" {
 		if err := s.store.SetReturnRefundPayment(ctx, tx, returnID, refundPaymentID); err != nil {
-			return Return{}, false, false, err
+			return Return{}, err
 		}
 	}
 
@@ -642,12 +696,12 @@ func (s *Service) returnInTx(ctx context.Context, tx pgx.Tx, plan *returnPlan) (
 		if err := s.restocker().RestockForReturnTx(ctx, tx, RestockInput{
 			ReturnID: returnID, OrderID: oc.OrderID, BranchID: oc.BranchID, ReturnNo: returnNo, Lines: stockLines,
 		}); err != nil {
-			return Return{}, false, false, err
+			return Return{}, err
 		}
 		if err := s.store.EmitEvent(ctx, tx, "order.returned", map[string]any{
 			"order_id": oc.OrderID, "return_id": returnID, "branch_id": oc.BranchID, "lines": eventLines,
 		}); err != nil {
-			return Return{}, false, false, err
+			return Return{}, err
 		}
 	}
 
@@ -663,7 +717,7 @@ func (s *Service) returnInTx(ctx context.Context, tx pgx.Tx, plan *returnPlan) (
 		if err := s.store.EmitEvent(ctx, tx, "deposit.released", map[string]any{
 			"invoice_id": depID, "order_id": oc.OrderID,
 		}); err != nil {
-			return Return{}, false, false, err
+			return Return{}, err
 		}
 	}
 	committed := map[string]any{
@@ -685,15 +739,15 @@ func (s *Service) returnInTx(ctx context.Context, tx pgx.Tx, plan *returnPlan) (
 		}
 	}
 	if err := s.store.EmitEvent(ctx, tx, "pos.return.committed", committed); err != nil {
-		return Return{}, false, false, err
+		return Return{}, err
 	}
 
-	out = Return{
+	out := Return{
 		ReturnID: returnID, ReturnNo: returnNo, OrderID: oc.OrderID, InvoiceID: oc.InvoiceID,
 		RefundMethod: in.RefundMethod, SubtotalCents: subtotal, TaxCents: taxTotal, TotalCents: total,
 		FeeCents: feeCents, RefundPaymentID: refundPaymentID, PickupStatus: pickupStatus, Status: "COMMITTED",
 	}
-	return out, replayedHere, approvedHere, nil
+	return out, nil
 }
 
 // replayIfAllowed answers an idempotent replay only to a caller the wall

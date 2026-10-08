@@ -701,6 +701,11 @@ type ReturnInput struct {
 	// POST /api/v1/pos/returns with an "rreq:" key is refused (422) before it can hijack a request's
 	// replay slot.
 	internalRail bool
+
+	// noteChild marks a child of a returns-across note (returns_across.go), whose idempotency key
+	// is DERIVED under the reserved "note:" namespace. Unexported for the same reason: a public
+	// body can never claim it, only ReturnAcross's own children carry it.
+	noteChild bool
 }
 
 // Return is the committed result (returned verbatim on an idempotent replay).
@@ -760,19 +765,19 @@ type CustomerLinesInput struct {
 // money and tax already back, the product facts for the tile, and the shelf state the disposition
 // work reads later.
 type CustomerReturnableLineView struct {
-	OrderLineID         string  `json:"order_line_id"`
-	ProductID           string  `json:"product_id"`
-	SKU                 string  `json:"sku"`
-	Description         string  `json:"description"`
-	QtySold             float64 `json:"qty_sold"`
-	QtyReturned         float64 `json:"qty_returned"`
-	QtyOpen             float64 `json:"qty_open"`
-	UnitPriceCents      int64   `json:"unit_price_cents"`
-	LineTotalCents      int64   `json:"line_total_cents"`
-	TaxCents            int64   `json:"tax_cents"`
-	MoneyReturnedCents  int64   `json:"money_returned_cents"`
-	TaxReturnedCents    int64   `json:"tax_returned_cents"`
-	ShelfState          string  `json:"shelf_state"`
+	OrderLineID        string  `json:"order_line_id"`
+	ProductID          string  `json:"product_id"`
+	SKU                string  `json:"sku"`
+	Description        string  `json:"description"`
+	QtySold            float64 `json:"qty_sold"`
+	QtyReturned        float64 `json:"qty_returned"`
+	QtyOpen            float64 `json:"qty_open"`
+	UnitPriceCents     int64   `json:"unit_price_cents"`
+	LineTotalCents     int64   `json:"line_total_cents"`
+	TaxCents           int64   `json:"tax_cents"`
+	MoneyReturnedCents int64   `json:"money_returned_cents"`
+	TaxReturnedCents   int64   `json:"tax_returned_cents"`
+	ShelfState         string  `json:"shelf_state"`
 }
 
 // CustomerOrderView is one order of the customer lines read. Source names where the order came from:
@@ -797,8 +802,50 @@ type CustomerOrderView struct {
 // CustomerLinesView is the customer lines read's answer: the customer echoed, the orders newest
 // first, bounded by the limit.
 type CustomerLinesView struct {
-	CustomerID string               `json:"customer_id"`
-	Items      []CustomerOrderView  `json:"items"`
+	CustomerID string              `json:"customer_id"`
+	Items      []CustomerOrderView `json:"items"`
+}
+
+// ReturnAcrossOrderInput is one order's share of a returns-across note: the order id and the lines
+// of that one order being returned (each a fraction or all of one original order line).
+type ReturnAcrossOrderInput struct {
+	OrderID string            `json:"order_id"`
+	Lines   []ReturnLineInput `json:"lines"`
+}
+
+// ReturnAcrossInput is the idempotent POST /api/v1/pos/returns-across body (sub item 10.2): one
+// credit note across several orders of ONE customer at ONE branch, on ONE refund rail, in ONE
+// transaction. There is no fee field: the flow carries no restocking fee (the Q10 ruling). The
+// per-line dispositions are sub item 10.3's; the restock boolean here is the whole note's, the
+// single-order path's own flag carried across its children until 10.3 makes it per line.
+type ReturnAcrossInput struct {
+	IdempotencyKey string                   `json:"idempotency_key"`
+	CustomerID     string                   `json:"customer_id"`
+	Orders         []ReturnAcrossOrderInput `json:"orders"`
+	RefundMethod   string                   `json:"refund_method"` // CASH | CARD | ACCOUNT_CREDIT
+	Reason         string                   `json:"reason"`
+	Restock        bool                     `json:"restock"`
+	TillSessionID  string                   `json:"till_session_id"` // CASH refunds, the OPEN drawer
+
+	// ApproverCredential rides X-Approver-Authorization beside the clerk's bearer, the single
+	// return's own second-credential machinery (row 482); the handler reads it from the header.
+	ApproverCredential string `json:"-"`
+}
+
+// ReturnNote is the committed credit note across orders (answered verbatim on an idempotent
+// replay): its own number, its customer, its one branch, its totals summed over the children, and
+// every child return with its own return number kept.
+type ReturnNote struct {
+	NoteID        string   `json:"note_id"`
+	NoteNo        string   `json:"note_no"`
+	CustomerID    string   `json:"customer_id"`
+	BranchID      string   `json:"branch_id"`
+	RefundMethod  string   `json:"refund_method"`
+	SubtotalCents int64    `json:"subtotal_cents"`
+	TaxCents      int64    `json:"tax_cents"`
+	TotalCents    int64    `json:"total_cents"`
+	Returns       []Return `json:"returns"`
+	Replayed      bool     `json:"replayed"`
 }
 
 // ReturnPickup is one row on the logistics pickup queue (REQUESTED/SCHEDULED returns).
@@ -940,6 +987,21 @@ type returnRow struct {
 	PickupStatus    string
 	IdempotencyKey  string
 	CreatedBy       string
+	// NoteID links the return to its across-orders note (0377); empty on every single-order return.
+	NoteID string
+}
+
+// returnNoteRow is the return_notes header insert (sub item 10.2).
+type returnNoteRow struct {
+	CustomerID     string
+	BranchID       string
+	RefundMethod   string
+	SubtotalCents  int64
+	TaxCents       int64
+	TotalCents     int64
+	Reason         string
+	IdempotencyKey string
+	CreatedBy      string
 }
 
 // returnLineRow is one pos_return_lines insert.

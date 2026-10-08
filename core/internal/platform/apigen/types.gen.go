@@ -5226,6 +5226,34 @@ type PosReturnLookup struct {
 	Lines          []PosReturnableLine `json:"lines"`
 }
 
+type PosReturnAcrossInput struct {
+	IdempotencyKey string                 `json:"idempotency_key"`
+	CustomerId     string                 `json:"customer_id"`
+	Orders         []PosReturnAcrossOrder `json:"orders"`
+	RefundMethod   string                 `json:"refund_method"`
+	Reason         string                 `json:"reason"`
+	Restock        bool                   `json:"restock"`
+	TillSessionId  string                 `json:"till_session_id"`
+}
+
+type PosReturnAcrossOrder struct {
+	OrderId string               `json:"order_id"`
+	Lines   []PosReturnLineInput `json:"lines"`
+}
+
+type PosReturnNote struct {
+	NoteId        string      `json:"note_id"`
+	NoteNo        string      `json:"note_no"`
+	CustomerId    string      `json:"customer_id"`
+	BranchId      string      `json:"branch_id"`
+	RefundMethod  string      `json:"refund_method"`
+	SubtotalCents int64       `json:"subtotal_cents"`
+	TaxCents      int64       `json:"tax_cents"`
+	TotalCents    int64       `json:"total_cents"`
+	Returns       []PosReturn `json:"returns"`
+	Replayed      bool        `json:"replayed"`
+}
+
 type PosCustomerLine struct {
 	OrderLineId        string  `json:"order_line_id"`
 	ProductId          string  `json:"product_id"`
