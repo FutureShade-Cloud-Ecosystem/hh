@@ -319,7 +319,7 @@ func (d *Door) tryItem(ctx context.Context, tx pgx.Tx, in Batch, item Item, hash
 	// in line, and the registry insert is the lock both contend on.
 	var createNote *Refusal
 	boundExisting := false
-	rowID, refused, err := writerApply(ctx, tx, d.writer, Write{
+	rowID, attached, refused, err := writerApplyAttached(ctx, tx, d.writer, Write{
 		OrgID: in.OrgID, LegacyID: item.LegacyID, DerivedKey: item.DerivedKey,
 		Record: item.Record, Refs: refs, Note: noteSink(&createNote),
 		Attached: func() { boundExisting = true },
@@ -389,7 +389,7 @@ func (d *Door) tryItem(ctx context.Context, tx pgx.Tx, in Batch, item Item, hash
 	// (the units door's seeded and staff made rows); every other create
 	// arm answers created.
 	status := OutcomeCreated
-	if d.attach || boundExisting {
+	if d.attach || attached || boundExisting {
 		status = OutcomeAttached
 	}
 	return notedOutcome(Outcome{LegacyID: item.LegacyID, Status: status, HHID: rowID}, createNote), false, nil
