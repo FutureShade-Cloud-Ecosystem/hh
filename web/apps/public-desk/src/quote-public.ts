@@ -592,13 +592,13 @@ export class QuotePublicPage extends HHElement {
     if (!hinted && button.hasAttribute("aria-describedby")) button.removeAttribute("aria-describedby");
   }
 
-  /** Fire the one-shot print once the loaded quote has painted. */
   /** The document's family follows the quote's state: a CONVERTED quote reads as the order. */
   willUpdate(): void {
     if (this.quote?.status === "CONVERTED") this.setAttribute("data-doc", "order");
     else this.removeAttribute("data-doc");
   }
 
+  /** Fire the one-shot print once the loaded quote has painted. */
   updated(): void {
     this.syncNameLock();
     this.syncAcceptHint();
