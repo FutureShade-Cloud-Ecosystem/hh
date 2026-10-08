@@ -142,6 +142,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PosSalePreview"
+        "422": { $ref: "#/components/responses/PosSaleUnprocessable" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -1766,6 +1767,9 @@ components:
       description: >-
         A well-formed sale body the money does not fit, answered as the
         Error envelope carrying the refusal's own cents fields beside it.
+        The sale preview answers the same body for the one refusal it
+        shares with the ring (cod_not_for_terms_account), so the till can
+        say it at the read the payment step opens, before the ring.
         The refusal names itself in the error string and a client
         discriminates on the error string, never on the keys' absence:
         split_total_mismatch (tendered_cents and total_cents, the legs do
@@ -1774,7 +1778,11 @@ components:
         zero day terms or no credit line, pay in full or take a deposit
         with the balance due later); deposit_not_collect_now (total_cents
         and deposit_cents, a collect now sale is paid in full, the goods
-        do not leave on a part payment); cod_not_for_terms_account
+        do not leave on a part payment); deposit_out_of_range
+        (deposit_cents and total_cents, the deposit is outside its money
+        bound, more than zero and less than the sale total; a deposit equal
+        to the total is a paid sale, ring it paid, and a negative one is no
+        deposit at all); cod_not_for_terms_account
         (message only, the pay before release sale type refused for an
         account that pays on terms: Cash On Demand is the account's own
         posture, ring the sale on account or paid in full);
@@ -1812,7 +1820,9 @@ components:
                   deposit_cents:
                     type: integer
                     format: int64
-                    description: Present on deposit_not_collect_now, the deposit the body carried
+                    description: >-
+                      Present on deposit_not_collect_now and
+                      deposit_out_of_range, the deposit the body carried
                   message:
                     type: string
                     description: The dollar sentence for the refusal a person reads at the counter
