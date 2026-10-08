@@ -384,13 +384,14 @@ test("parked sales: the branch's list, a park and a pickup, never the other bran
   await expect(again).not.toContainText(SEEDED.kingstonTicket);
 });
 
-test("a two order return: the customer's lines from both orders into one credit draft", async ({
+test("a two order return: lines from both orders, one credit note in cash, and the drawer drops by its total", async ({
   page,
 }, testInfo) => {
   // Item 10: a return is built like a credit, the customer first. Two sales are rung to the same
   // account (one per ticket), then Returns lists both orders under the customer and one draft takes
-  // a line from each, each with its own disposition. The credit's money is the server's figure and
-  // is read in the refund step (stage 2 extends this leg through the refund and the done step).
+  // a line from each, each with its own disposition, then the Refund step in cash and the Done step:
+  // one credit note, each order's return with its number, and the drawer's expected cash drops by the
+  // note's total, the server's figure read off the Done step.
   await signIn(page, "Sales");
   await pickCustomer(page, "Bay Ridge", "Bay Ridge Landscaping (demo)");
   await searchAndAdd(page, "DEMO-PAV-HOLLAND", "Holland Paver, Charcoal (demo)");
@@ -410,12 +411,32 @@ test("a two order return: the customer's lines from both orders into one credit 
   await expect(orderOne).toHaveCount(1);
   await expect(orderTwo).toHaveCount(1);
   await orderOne.getByRole("button", { name: "Return to stock" }).first().click();
-  await orderTwo.getByRole("button", { name: "Refund, do not restock (damaged)" }).first().click();
+  await orderTwo.getByRole("button", { name: "Return to stock" }).first().click();
   await expect(orderOne.getByTestId("returns-line").first()).toHaveAttribute("data-picked", "true");
   await expect(orderTwo.getByTestId("returns-line").first()).toHaveAttribute("data-picked", "true");
   await expect(page.getByTestId("returns-credit-count")).toHaveText("2 lines from 2 orders");
   await expect(page.getByRole("button", { name: "Continue to the refund" })).toBeEnabled();
   await shot(page, "sales-08-return-two-orders", testInfo);
+
+  const bearer = await mint(page, "sales");
+  const drawerId = await openDrawer(page, bearer);
+  const before = await expectedCash(page, bearer, drawerId);
+  await page.getByRole("button", { name: "Continue to the refund" }).click();
+  await page.getByRole("button", { name: "Cash", exact: true }).click();
+  await page.getByRole("button", { name: "Record the credit note" }).click();
+  const done = page.getByTestId("returns-done");
+  await expect(done).toContainText("Credit note recorded");
+  await expect(done.getByTestId("returns-done-return")).toHaveCount(2);
+  await expect(done).toContainText(first.order_no);
+  await expect(done).toContainText(second.order_no);
+  await expect(done).toContainText("Rung by Sales (demo).");
+  const totalText = (await done.getByTestId("returns-note-total").textContent()) as string;
+  const totalMatch = totalText.match(/\$([0-9,]+)\.([0-9]{2})/);
+  expect(totalMatch).toBeTruthy();
+  // The string goes to cents through its parts, never through a float multiply.
+  const creditedCents = Number(totalMatch?.[1].replaceAll(",", "") as string) * 100 + Number(totalMatch?.[2]);
+  expect(await expectedCash(page, bearer, drawerId)).toBe(before - creditedCents);
+  await shot(page, "sales-09-credit-note-done", testInfo);
 });
 
 test("beyond the till: sign out, a reload, and a fresh page each leave the till nobody's", async ({

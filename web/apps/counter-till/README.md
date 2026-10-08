@@ -25,8 +25,15 @@ and the server says so in words), then every order the customer holds from
 with the quantity still open, a quantity stepper capped at it, and three
 dispositions (return to stock, damaged, nothing returned). Lines from several
 orders go into one draft (one branch per credit note); the sales order number
-only filters the list. There is no search by one sale's number. The refund,
-swap and done steps follow the write contract.
+only filters the list. There is no search by one sale's number. The Refund step
+chooses the rail (card where every order was paid by card, on the account,
+cash from the open drawer) and commits ONE credit note through
+`POST /api/v1/pos/returns-across` under one idempotency key; a note over the
+dealer's approval amount (judged on the note total) is refused with the amount
+and roles named and completes through a manager's own credential entered at the
+clerk's till, the token held in memory for the one call and dropped. The Done
+step names the note, each order's return with its number and the server's
+figures, and a receipt line per return. The swap waits on its own contract.
 
 Money on the counter is integer cents throughout. The figures the core states
 (line prices from the pricing resolve, the committed sale's and return's own
@@ -45,7 +52,8 @@ The app calls the core's routes on its own origin. Without a core, a local
 stub serves the same shapes: the contract's `DemoFlowList` and
 `DemoSessionResponse`; the counter routes the sale screen speaks, from
 `Branch` and `TillSessionDetail` to `PosSaleView`; and the returns desk's
-read, `PosCustomerLines` (its 422 for the house walk-in),
+read, `PosCustomerLines` (its 422 for the house walk-in), the credit note write
+`PosReturnNote` (its approval 409),
 `TillOpenLookup`, `TillZReport`, and `PaymentConfigStatus`:
 
 ```

@@ -10,6 +10,9 @@ import { formatMoney } from "../money.js";
 import { DISPOSITIONS, DISPOSITION_WORDS, type Disposition } from "../returns/draft.js";
 import { STEP_ORDER, type ReturnStep, type ReturnsFlow } from "../returns/flow.js";
 import type { CustomerLine, CustomerOrder } from "../returns/lines.js";
+import { approverLabels } from "../returns/approval.js";
+import type { RefundMethod } from "../returns/note.js";
+import type { PosRefundApproval } from "@hardscapehouse/api-client";
 
 export const returnsStyles = css`
   .returns {
@@ -318,6 +321,101 @@ export const returnsStyles = css`
     opacity: 1;
     cursor: not-allowed;
   }
+  .returns .methods {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--hh-s-12);
+    margin: var(--hh-s-16) 0 var(--hh-s-8);
+  }
+  .returns .methods button {
+    min-height: 44px;
+  }
+  .returns .methods button[aria-pressed="true"] {
+    border-color: var(--hh-accent);
+    background: color-mix(in srgb, var(--hh-accent) 22%, transparent);
+    font-weight: 600;
+  }
+  .returns .refund-step {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: var(--hh-s-16);
+    align-items: start;
+  }
+  @media (max-width: 760px) {
+    .returns .refund-step {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+  .returns .rt-card h3 {
+    font-size: 15px;
+    margin: 0 0 var(--hh-s-12);
+  }
+  .returns .refund-actions,
+  .returns .rt-card > button.btn-secondary {
+    margin-top: var(--hh-s-16);
+  }
+  .returns .refund-orders {
+    list-style: none;
+    margin: var(--hh-s-12) 0;
+    padding: 0;
+    display: grid;
+    gap: var(--hh-s-8);
+  }
+  .returns .refund-orders li,
+  .returns .done-return {
+    border: 1px solid var(--hos-line);
+    border-radius: var(--hos-radius-control);
+    padding: var(--hh-s-8) var(--hh-s-12);
+    background: var(--hos-field);
+    overflow-wrap: anywhere;
+  }
+  .returns .figures {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+  }
+  .returns .done-return p {
+    margin: 0 0 var(--hh-s-4);
+  }
+  .returns .receipt-line {
+    font-family: ui-monospace, monospace;
+    font-size: 12px;
+    color: var(--hos-text-dim);
+  }
+  .returns .refusal {
+    border: 1px solid var(--hh-state-stop);
+    border-radius: var(--hos-radius-control);
+    padding: var(--hh-s-16);
+    margin: var(--hh-s-16) 0 0;
+  }
+  .returns .refusal h3,
+  .returns .dialog h3 {
+    font-size: 15px;
+    margin: 0 0 var(--hh-s-8);
+  }
+  .returns .refusal p,
+  .returns .dialog p {
+    margin: 0 0 var(--hh-s-8);
+  }
+  .returns .dialog {
+    border: 1px solid var(--hh-control-line);
+    border-radius: var(--hos-radius-control);
+    background: var(--hh-card);
+    padding: var(--hh-s-16);
+    margin: var(--hh-s-16) 0 0;
+  }
+  .returns .dialog .cards {
+    display: flex;
+    flex-direction: column;
+    gap: var(--hh-s-12);
+    margin: 0 0 var(--hh-s-16);
+  }
+  .returns .dialog .approver-card {
+    min-height: 64px;
+    font-size: var(--hh-s-16);
+    font-weight: 600;
+    text-align: start;
+    padding: var(--hh-s-16) var(--hh-s-20);
+  }
 `;
 
 const STEP_WORDS: Record<ReturnStep, string> = {
@@ -342,6 +440,7 @@ export function renderReturns(flow: ReturnsFlow): TemplateResult {
         ${flow.step === "customer" ? renderCustomerStep(flow) : nothing}
         ${flow.step === "lines" ? renderLinesStep(flow) : nothing}
         ${flow.step === "refund" ? renderRefundStep(flow) : nothing}
+        ${flow.step === "done" ? renderDoneStep(flow) : nothing}
       </div>
     </section>
   `;
@@ -353,7 +452,8 @@ function subtitle(flow: ReturnsFlow): string {
   }
   const name = flow.customer?.name ?? "The customer";
   if (flow.step === "lines") return `${name}: pick the lines coming back, from any of their orders.`;
-  return `${name}: the refund.`;
+  if (flow.step === "refund") return `${name}: choose how the credit goes back.`;
+  return `${name}: the credit note is recorded.`;
 }
 
 function renderStepper(current: ReturnStep): TemplateResult {
@@ -634,22 +734,177 @@ function renderCredit(flow: ReturnsFlow): TemplateResult {
   `;
 }
 
+const RAIL_LABELS: Record<RefundMethod, string> = {
+  CARD: "Card",
+  CASH: "Cash",
+  ACCOUNT_CREDIT: "On the account",
+};
+
+function railWords(method: RefundMethod): string {
+  if (method === "CASH") return "cash, from the drawer";
+  if (method === "CARD") return "card";
+  return "on the customer's account";
+}
+
+function drawerWords(flow: ReturnsFlow): string {
+  if (flow.drawer.kind === "closed") return "no drawer is open at this branch.";
+  return "the drawer could not be asked just now.";
+}
+
 function renderRefundStep(flow: ReturnsFlow): TemplateResult {
   const picked = flow.draft.pickedLines();
+  const frozen = flow.submitting || flow.dialogOpen || flow.approving;
+  const orders = flow.draft.pickedOrders();
+  return html`
+    <div class="refund-step" data-testid="returns-refund">
+      <div class="rt-card">
+        <h3>The credit</h3>
+        <p>
+          ${flow.customer?.name ?? "This customer"}: ${picked.length} ${picked.length === 1 ? "line" : "lines"} from
+          ${flow.draft.orderCount} ${flow.draft.orderCount === 1 ? "order" : "orders"} on one credit note.
+        </p>
+        <ul class="refund-orders" aria-label="Orders on the credit note">
+          ${orders.map(
+            (order) => html`
+              <li data-testid="returns-refund-order">
+                ${order.orderNo}${order.jobLabel === "" ? "" : html` · job ${order.jobLabel}`}:
+                ${picked
+                  .filter((pick) => pick.orderId === order.orderId)
+                  .map((pick) => html`<span>${shownQty(pick.qty)} ${pick.description} · ${pick.disposition === null ? "" : DISPOSITION_WORDS[pick.disposition]}; </span>`)}
+              </li>
+            `,
+          )}
+        </ul>
+        <p class="hint">
+          The credit's own total, with tax, is the server's figure and appears on the Done step. Damaged lines never touch the
+          shelf; nothing returned is money back against the paper alone.
+        </p>
+        <button type="button" class="btn-secondary" data-action="returns-back-to-lines" ?disabled=${frozen}>Back to the lines</button>
+      </div>
+      <div class="rt-card focus">
+        <h3>Refund it</h3>
+        <div class="methods" role="group" aria-label="Refund rail">
+          ${(["CARD", "CASH", "ACCOUNT_CREDIT"] as const).map(
+            (method) => html`
+              <button
+                type="button"
+                class="btn-secondary"
+                data-action="returns-method"
+                data-method=${method}
+                aria-pressed=${flow.method === method ? "true" : "false"}
+                ?disabled=${!flow.railAvailable(method) || frozen}
+              >
+                ${RAIL_LABELS[method]}
+              </button>
+            `,
+          )}
+        </div>
+        ${flow.railAvailable("CARD")
+          ? nothing
+          : html`<p class="notice">No card refund: an order on this credit note was not paid by card, so there is no capture to reverse.</p>`}
+        ${flow.railAvailable("CASH") ? nothing : html`<p class="notice">Cash waits on the drawer: ${drawerWords(flow)}</p>`}
+        ${flow.method === "CARD" && flow.cardSimulated === true
+          ? html`<p class="notice" role="status" data-testid="simulated-notice">Simulated refund: nothing reached a card.</p>`
+          : flow.method !== null
+            ? html`<p class="notice" role="status">${railWords(flow.method)}</p>`
+            : nothing}
+        <p class="hint">The account rail is refused in the server's words where the account cannot spend credit. No restocking fee rides this credit note.</p>
+        ${flow.notice === null ? nothing : html`<p class="note-stop" role="alert" data-testid="returns-notice">${flow.notice}</p>`}
+        ${flow.refusal === null ? nothing : renderRefusal(flow.refusal)}
+        ${flow.dialogOpen ? renderApprovalDialog(flow) : nothing}
+        <div class="refund-actions">
+          <button type="button" class="btn-primary" data-action="returns-submit" ?disabled=${!flow.canSubmit}>
+            Record the credit note
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderRefusal(approval: PosRefundApproval): TemplateResult {
+  // The roles named the way the refusal speaks them: the Sales manager, or the Branch manager.
+  const named = approverLabels(approval.approvers).map((role) => `the ${role}`);
+  const roles = named.length === 1 ? named[0] : `${named.slice(0, -1).join(", ")}, or ${named[named.length - 1]}`;
+  return html`
+    <section class="refusal" data-testid="refund-refusal" role="alert">
+      <h3>Refused</h3>
+      <p>This credit note is over the dealer's approval amount of ${formatMoney(approval.amount_cents)}, so this till cannot commit it as rung.</p>
+      <p>It can be committed by ${roles}: a manager whose role holds the approval.</p>
+      <button type="button" class="btn-primary" data-action="returns-approve">Manager approval</button>
+    </section>
+  `;
+}
+
+function renderApprovalDialog(flow: ReturnsFlow): TemplateResult {
+  return html`
+    <section class="dialog" role="dialog" aria-modal="true" aria-label="Manager approval" data-testid="approval-dialog">
+      <h3>Manager approval</h3>
+      <p>The manager taps their own card here: the till stays the clerk's, and the credit note is recorded as the manager's decision with the clerk named beside.</p>
+      ${flow.approverFlows === null
+        ? html`<p class="notice" role="status">Asking for the approver cards.</p>`
+        : flow.approverFlows.length === 0
+          ? html`<p class="notice">No approver card is available in this demo.</p>`
+          : html`
+              <div class="cards" role="group" aria-label="Approver roles">
+                ${flow.approverFlows.map(
+                  (row) => html`
+                    <button
+                      type="button"
+                      class="btn-secondary approver-card"
+                      data-action="returns-approver-flow"
+                      data-flow=${row.flow}
+                      ?disabled=${flow.approving}
+                    >
+                      ${row.label ?? row.flow}
+                    </button>
+                  `,
+                )}
+              </div>
+            `}
+      <button type="button" class="btn-secondary" data-action="returns-approve-cancel" ?disabled=${flow.approving}>Cancel</button>
+    </section>
+  `;
+}
+
+function renderDoneStep(flow: ReturnsFlow): TemplateResult {
+  const done = flow.done;
+  if (done === null) return html``;
+  const note = done.note;
   return html`
     <div class="customer-step">
-      <div class="rt-card focus" data-testid="returns-refund-wait">
-        <span class="eyebrow">Refund</span>
-        <p>
-          ${picked.length} ${picked.length === 1 ? "line" : "lines"} from ${flow.draft.orderCount}
-          ${flow.draft.orderCount === 1 ? "order" : "orders"} are drafted for ${flow.customer?.name ?? "this customer"}.
+      <section class="rt-card focus" data-testid="returns-done" role="status">
+        <span class="eyebrow">Done</span>
+        <h3>Credit note recorded</h3>
+        <p data-testid="returns-note-no">${note.noteNo}</p>
+        ${note.replayed ? html`<p class="notice">The same credit note, answered again: nothing was posted twice.</p>` : nothing}
+        <p class="figures" data-testid="returns-note-total">
+          Total credited ${formatMoney(note.totalCents)} ${railWords(note.method)}
         </p>
-        <p class="hint">
-          The refund rails (card, on the account where it can spend credit, cash) and the swap arrive with the next step of
-          this build. Nothing has been returned.
-        </p>
-        <button type="button" class="btn-secondary" data-action="returns-back-to-lines">Back to the lines</button>
-      </div>
+        <p class="notice">${formatMoney(note.subtotalCents)} before tax, ${formatMoney(note.taxCents)} tax.</p>
+        ${note.method === "CARD" && done.cardSimulated === true
+          ? html`<p data-testid="simulated-notice">Simulated refund: nothing reached a card.</p>`
+          : nothing}
+        <ul class="refund-orders" aria-label="Returns on the credit note">
+          ${note.returns.map((child) => {
+            const orderNo = done.orderNos[child.orderId] ?? "";
+            return html`
+              <li class="done-return" data-testid="returns-done-return">
+                <p><strong>${orderNo}</strong> · return ${child.returnNo}</p>
+                <p class="figures">
+                  ${formatMoney(child.totalCents)} (${formatMoney(child.subtotalCents)} before tax, ${formatMoney(child.taxCents)} tax)
+                </p>
+                <p class="receipt-line" data-testid="returns-receipt-line">
+                  ${child.returnNo} · ${orderNo} · ${formatMoney(child.totalCents)} · ${railWords(child.method)}
+                </p>
+              </li>
+            `;
+          })}
+        </ul>
+        ${done.approverName === null ? nothing : html`<p>Approved by ${done.approverName}.</p>`}
+        ${done.clerkName === null ? nothing : html`<p>Rung by ${done.clerkName}.</p>`}
+        <button type="button" class="btn-secondary" data-action="returns-another">Start another return</button>
+      </section>
     </div>
   `;
 }

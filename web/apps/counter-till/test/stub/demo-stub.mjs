@@ -25,6 +25,7 @@
 //   POST /api/v1/pos/parked/{id}/resume     -> PosParkedTicket
 //   DELETE /api/v1/pos/parked/{id}          -> PosParkedDiscard
 //   GET  /api/v1/pos/returns/customer-lines -> PosCustomerLines (422 for the house WALK-IN)
+//   POST /api/v1/pos/returns-across         -> PosReturnNote (409 PosRefundApprovalRequired on the note total)
 //   GET  /api/v1/pos/policy                 -> PosPolicy
 //   GET  /api/v1/pos/workspace              -> PosWorkspacePrefs (PUT writes, DELETE resets)
 //   GET  /api/v1/pos/hotkeys                -> PosHotkeys (the shipped default: no keys)
@@ -564,15 +565,15 @@ const CUSTOMER_ORDER_FACTS = {
   "CT-2002": { created_at: "2026-10-02T13:10:00Z", job_label: "Garden wall", source: "TILL", sale_type: "COLLECT_NOW" },
 };
 
-function customerOrderOf(orderNo, over = {}) {
-  return { ...SALES[orderNo], ...CUSTOMER_ORDER_FACTS[orderNo], fulfilment_state: "FULFILLED", ...over };
+function customerOrderOf(customerId, orderNo, over = {}) {
+  return { ...SALES[orderNo], ...CUSTOMER_ORDER_FACTS[orderNo], customer_id: customerId, fulfilment_state: "FULFILLED", ...over };
 }
 
 const CUSTOMER_ORDERS = {
-  "c-maple-ridge": [customerOrderOf("CT-1001"), customerOrderOf("CT-1002")],
+  "c-maple-ridge": [customerOrderOf("c-maple-ridge", "CT-1001"), customerOrderOf("c-maple-ridge", "CT-1002")],
   "c-fenwick": [
-    customerOrderOf("CT-2001"),
-    customerOrderOf("CT-2002", { branch_id: BRANCH_ID_2, source: "QUOTE", sale_tender: "", sale_type: "" }),
+    customerOrderOf("c-fenwick", "CT-2001"),
+    customerOrderOf("c-fenwick", "CT-2002", { branch_id: BRANCH_ID_2, source: "QUOTE", sale_tender: "", sale_type: "" }),
   ],
   "c-harbour": [],
 };
@@ -629,6 +630,35 @@ const DRAWER = {
 // qty_open. The write path that grows it is rebuilt with the refund step; one line is seeded
 // partly returned so the screens show an open quantity below the quantity sold.
 const RETURNED_QTY = new Map([[uuid(11012), 2]]);
+function reseedReturns() {
+  RETURNED_QTY.clear();
+  RETURNED_QTY.set(uuid(11012), 2);
+  NOTES_BY_KEY.clear();
+  NOTE_META.clear();
+  NOTE_KEYS_SEEN.length = 0;
+  LAST_NOTE_BODY = null;
+  SIGHTINGS.length = 0;
+  DRAWER.cash_out_cents = 0;
+  approvalLimitEnabled = false;
+}
+
+// What the harness's peek route reads back: every note body the write route saw (keys in send order,
+// the last body verbatim), who each committed note names as clerk and approver, and whether the
+// approver's header rode each api call.
+const SIGHTINGS = [];
+const NOTE_KEYS_SEEN = [];
+let LAST_NOTE_BODY = null;
+const NOTE_META = new Map();
+const NOTES_BY_KEY = new Map();
+let NOTE_SEQ = 0;
+let RETURN_SEQ = 0;
+
+// The approval above which a refund needs a manager, judged on the NOTE total (ruling Q3), and the
+// roles that hold it. The demo dealer's configuration turns the rule off, so the stub starts that
+// way; POST /_stub/refund-approval-limit flips it for the legs that exercise the approval path.
+const APPROVAL_AMOUNT_CENTS = 25000;
+const APPROVER_ROLES = ["sales_manager", "branch_manager"];
+let approvalLimitEnabled = process.env.CT_REFUND_APPROVAL_LIMIT === "on";
 
 // ---------------------------------------------------------------------------
 // The pricing stand-in: the same waterfall-shaped table the ring and the two
@@ -859,6 +889,36 @@ function mintToken(flow) {
   return `${base64UrlJson(header)}.${base64UrlJson(payload)}.c3R1Yi1zaWduYXR1cmUtYnl0ZXM`;
 }
 
+// The approver credential, read the way the caller's is: a bearer this stub
+// minted, carried in its own header. `present` says whether the header rode
+// the request at all; `account` is the verified approver or null. Verified
+// means unexpired too: the real rule takes a credential issued within the
+// short window the configuration sets, and an expired mint is not one.
+function approverFromRequest(request) {
+  const header = request.headers["x-approver-authorization"] ?? "";
+  if (header === "") return { present: false, account: null };
+  const match = /^Bearer (.+)$/.exec(header);
+  if (match === null) return { present: true, account: null };
+  const parts = match[1].split(".");
+  if (parts.length !== 3) return { present: true, account: null };
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+    if (payload === null || typeof payload !== "object") return { present: true, account: null };
+    const sub = payload.sub;
+    const exp = payload.exp;
+    if (typeof sub !== "string") return { present: true, account: null };
+    if (typeof exp !== "number" || !Number.isFinite(exp) || exp * 1000 <= Date.now()) {
+      return { present: true, account: null };
+    }
+    for (const flow of Object.keys(USERS)) {
+      if (USERS[flow].user_id === sub) return { present: true, account: USERS[flow] };
+    }
+    return { present: true, account: null };
+  } catch {
+    return { present: true, account: null };
+  }
+}
+
 // The staff caller for the returns desk's routes and the Z report, read back
 // out of a bearer this stub itself minted: the payload's sub names the
 // account. Null when there is no usable bearer, and those routes answer 401
@@ -945,6 +1005,134 @@ function readBody(request, respond) {
       respondJson(response, 400, { error: "the request body is not JSON" });
     }
   });
+}
+
+// ---------------------------------------------------------------------------
+// The credit note across orders: the core's returns_across.go, in the same order of refusals
+// (note level 400s, the house WALK-IN, the replay, then each order through the single return's own
+// guards, one customer, one branch, the approval on the note total), then one commit.
+// ---------------------------------------------------------------------------
+
+function orderById(orderId) {
+  for (const held of Object.values(CUSTOMER_ORDERS)) {
+    const found = held.find((row) => row.order_id === orderId);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+function refuse(status, error, extra = {}) {
+  return { status, body: { error, ...extra } };
+}
+
+function noteRefusal(caller, body, approver) {
+  if (body === null || typeof body !== "object") return refuse(400, "the request body is not JSON");
+  if (typeof body.idempotency_key !== "string" || body.idempotency_key === "") {
+    return refuse(400, "idempotency_key (client UUID) is required");
+  }
+  if (body.idempotency_key.startsWith("rreq:")) return refuse(400, "idempotency_key: the rreq: prefix is reserved");
+  if (!Array.isArray(body.orders) || body.orders.length === 0) return refuse(400, "pos: a return note needs at least one order");
+  if (!["CASH", "CARD", "ACCOUNT_CREDIT"].includes(body.refund_method)) return refuse(400, "pos: refund_method must be CASH, CARD or ACCOUNT_CREDIT");
+  const customerId = typeof body.customer_id === "string" ? body.customer_id.trim() : "";
+  if (customerId === "") return refuse(400, "pos: customer_id is required");
+  if (customerId === WALK_IN_ID) {
+    return refuse(422, "pos: the WALK-IN house account holds no customer history; return a walk-in sale by its own order number");
+  }
+  const seen = new Set();
+  for (const entry of body.orders) {
+    if (typeof entry.order_id !== "string" || entry.order_id === "") return refuse(400, "pos: every order on a return note needs an order_id");
+    if (seen.has(entry.order_id)) return refuse(422, `pos: order ${entry.order_id} appears twice on one note`);
+    seen.add(entry.order_id);
+    if (!Array.isArray(entry.lines) || entry.lines.length === 0) return refuse(422, `pos: order ${entry.order_id} carries no return lines`);
+  }
+  if (NOTES_BY_KEY.has(body.idempotency_key)) return null;
+  let branchId = null;
+  let totalCents = 0;
+  for (const entry of body.orders) {
+    const order = orderById(entry.order_id);
+    if (order === undefined) return refuse(404, `pos: no sale ${entry.order_id}`);
+    if (body.refund_method === "CASH" && body.till_session_id !== DRAWER.session_id) {
+      return refuse(422, "pos: a cash refund needs the open drawer at the sale's branch");
+    }
+    if (body.refund_method === "CARD" && !order.card_refundable) {
+      return refuse(422, `pos: order ${order.order_no} has no card capture to reverse`);
+    }
+    if (order.customer_id !== customerId) {
+      return refuse(422, `pos: order ${order.order_no} belongs to another customer, not the note's customer`);
+    }
+    if (branchId !== null && branchId !== order.branch_id) {
+      return refuse(422, `pos: a return note covers one branch, order ${order.order_no} sits in another`);
+    }
+    branchId = order.branch_id;
+    for (const asked of entry.lines) {
+      const line = order.lines.find((row) => row.order_line_id === asked.order_line_id);
+      if (line === undefined || !(asked.qty_base > 0)) {
+        return refuse(422, "pos: every return line needs an order_line_id and a positive qty_base");
+      }
+      const open = line.qty_sold - (RETURNED_QTY.get(line.order_line_id) ?? 0);
+      if (asked.qty_base > open + 1e-6) {
+        return refuse(422, `pos: over-return on line ${asked.order_line_id}, ${asked.qty_base.toFixed(4)} requested but only ${open.toFixed(4)} returnable`);
+      }
+      totalCents += line.unit_price_cents * asked.qty_base;
+    }
+  }
+  if (approvalLimitEnabled && totalCents > APPROVAL_AMOUNT_CENTS && !APPROVER_ROLES.includes(caller.account.role_code) && !approver.present) {
+    return refuse(409, "refund_approval_required", { approval: { amount_cents: APPROVAL_AMOUNT_CENTS, approvers: APPROVER_ROLES } });
+  }
+  return null;
+}
+
+function commitNote(caller, body, approver) {
+  const replay = NOTES_BY_KEY.get(body.idempotency_key);
+  if (replay !== undefined) return { status: 200, body: { ...replay, replayed: true } };
+  NOTE_SEQ += 1;
+  const returns = [];
+  let subtotal = 0;
+  let branchId = "";
+  for (const entry of body.orders) {
+    const order = orderById(entry.order_id);
+    branchId = order.branch_id;
+    RETURN_SEQ += 1;
+    let childTotal = 0;
+    for (const asked of entry.lines) {
+      const line = order.lines.find((row) => row.order_line_id === asked.order_line_id);
+      RETURNED_QTY.set(line.order_line_id, (RETURNED_QTY.get(line.order_line_id) ?? 0) + asked.qty_base);
+      childTotal += line.unit_price_cents * asked.qty_base;
+    }
+    subtotal += childTotal;
+    returns.push({
+      return_id: uuid(40000 + RETURN_SEQ),
+      return_no: `CT-R-${100 + RETURN_SEQ}`,
+      order_id: order.order_id,
+      invoice_id: order.invoice_id,
+      refund_method: body.refund_method,
+      subtotal_cents: childTotal,
+      tax_cents: 0,
+      total_cents: childTotal,
+      pickup_status: "NONE",
+      status: "COMMITTED",
+      replayed: false,
+    });
+  }
+  const answer = {
+    note_id: uuid(60000 + NOTE_SEQ),
+    note_no: `CT-CN-${100 + NOTE_SEQ}`,
+    customer_id: body.customer_id,
+    branch_id: branchId,
+    refund_method: body.refund_method,
+    subtotal_cents: subtotal,
+    tax_cents: 0,
+    total_cents: subtotal,
+    returns,
+    replayed: false,
+  };
+  NOTES_BY_KEY.set(body.idempotency_key, answer);
+  NOTE_META.set(body.idempotency_key, {
+    clerk: caller.account.user_id,
+    approver: approver.present && approver.account !== null ? approver.account.user_id : null,
+  });
+  if (body.refund_method === "CASH" && body.till_session_id === DRAWER.session_id) DRAWER.cash_out_cents += subtotal;
+  return { status: 201, body: answer };
 }
 
 // ---------------------------------------------------------------------------
@@ -1097,6 +1285,11 @@ function sawOrg(request) {
 const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://127.0.0.1:${port}`);
   const path = url.pathname;
+  // Every api request is sighted for the harness's peek route: the path, and whether the approver's
+  // header rode it (the credential's whole claim, one send and the approver's client alone).
+  if (path.startsWith("/api/")) {
+    SIGHTINGS.push({ path, approverHeader: (request.headers["x-approver-authorization"] ?? "") !== "" });
+  }
   if (request.method === "GET" && path === "/healthz") {
     respondJson(response, 200, { ok: true });
     return;
@@ -1108,6 +1301,32 @@ const server = createServer(async (request, response) => {
     PAY_BALANCE_KEYS.clear();
     seedOwingOrders();
     respondJson(response, 200, { ok: true });
+    return;
+  }
+
+  if (request.method === "POST" && path === "/_stub/reseed-returns") {
+    // Harness-only: put the returns world back as it started (a leg that commits a note leaves it changed).
+    reseedReturns();
+    respondJson(response, 200, { ok: true });
+    return;
+  }
+  if (request.method === "GET" && path === "/_stub/state") {
+    // Harness-only: the tests' read back of this stub's ledgers. No contract path shares the
+    // namespace, and the app never calls it.
+    respondJson(response, 200, {
+      keys: NOTE_KEYS_SEEN,
+      lastNoteBody: LAST_NOTE_BODY,
+      sightings: SIGHTINGS,
+      approvalLimitEnabled,
+      notes: [...NOTE_META.entries()].map(([key, meta]) => ({ key, ...meta })),
+    });
+    return;
+  }
+  if (request.method === "POST" && path === "/_stub/refund-approval-limit") {
+    readBody(request, (parsed) => {
+      approvalLimitEnabled = parsed !== null && typeof parsed === "object" && parsed.enabled === true;
+      respondJson(response, 200, { approvalLimitEnabled });
+    });
     return;
   }
 
@@ -1205,6 +1424,43 @@ const server = createServer(async (request, response) => {
     });
     return;
   }
+  if (request.method === "POST" && path === "/api/v1/pos/returns-across") {
+    const caller = callerFromRequest(request);
+    if (caller === null) {
+      respondJson(response, 401, { error: "no usable staff credential" });
+      return;
+    }
+    const approver = approverFromRequest(request);
+    if (
+      approver.present &&
+      (approver.account === null ||
+        !APPROVER_ROLES.includes(approver.account.role_code) ||
+        approver.account.user_id === caller.account.user_id)
+    ) {
+      respondJson(response, 403, { error: "the approver credential does not name an approver other than the clerk" });
+      return;
+    }
+    let body;
+    try {
+      body = JSON.parse(await readRawBody(request));
+    } catch {
+      respondJson(response, 400, { error: "the request body is not JSON" });
+      return;
+    }
+    if (body !== null && typeof body === "object" && typeof body.idempotency_key === "string") {
+      NOTE_KEYS_SEEN.push(body.idempotency_key);
+      LAST_NOTE_BODY = body;
+    }
+    const refusal = noteRefusal(caller, body, approver);
+    if (refusal !== null) {
+      respondJson(response, refusal.status, refusal.body);
+      return;
+    }
+    const committed = commitNote(caller, body, approver);
+    respondJson(response, committed.status, committed.body);
+    return;
+  }
+
   // The catalogue thumbnail route is ungated by design (the contract's own
   // words: an <img src> cannot carry an Authorization header), and a missing
   // image is a plain 404 the UI turns into its placeholder glyph. The demo

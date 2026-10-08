@@ -138,6 +138,11 @@ export class ReturnDraft {
     return picked;
   }
 
+  /** The orders that hold at least one picked line, in the order the screen lists them. */
+  pickedOrders(): CustomerOrder[] {
+    return this.#orders.filter((order) => order.lines.some((line) => this.#qty.has(line.orderLineId)));
+  }
+
   get orderCount(): number {
     return new Set(this.pickedLines().map((line) => line.orderId)).size;
   }

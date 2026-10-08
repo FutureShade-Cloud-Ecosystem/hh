@@ -18,7 +18,8 @@ async function signIn(page: Page): Promise<void> {
 }
 
 async function openReturns(page: Page): Promise<void> {
-  await page.getByTestId("till-returns-entry").click();
+  // The route survives a sign out and a fresh sign in, so Returns may already be up.
+  if (!(await page.getByTestId("returns").isVisible())) await page.getByTestId("till-returns-entry").click();
   await expect(page.getByTestId("returns")).toBeVisible();
 }
 
@@ -37,6 +38,7 @@ function lineOf(page: Page, orderNo: string, description: string) {
 }
 
 test.beforeEach(async ({ page }) => {
+  expect((await page.request.post("/_stub/reseed-returns")).ok()).toBe(true);
   await signIn(page);
   await openReturns(page);
 });
@@ -120,7 +122,7 @@ test("lines from two orders go into one draft, each with its own disposition, an
 
   await page.getByRole("button", { name: "Continue to the refund" }).click();
   await expect(page.getByTestId("returns")).toHaveAttribute("data-step", "refund");
-  await expect(page.getByTestId("returns-refund-wait")).toContainText("3 lines from 2 orders");
+  await expect(page.getByTestId("returns-refund")).toContainText("3 lines from 2 orders");
   await page.getByRole("button", { name: "Back to the lines" }).click();
   await expect(page.getByTestId("returns")).toHaveAttribute("data-step", "lines");
   // The draft survived the round trip.
@@ -194,4 +196,242 @@ test("the walk-in is refused in words: it is not a returns customer", async ({ p
   await expect(page.getByTestId("returns-notice")).toContainText("A walk-in sale is not returned from here");
   await expect(page.getByTestId("returns-notice")).toContainText("return a walk-in sale by its own order number");
   await expect(page.getByTestId("returns")).toHaveAttribute("data-step", "customer");
+});
+
+// ---- Item 10.7: the Refund and Done steps, against the stub's credit note write ----------------
+
+const DRAWER_SESSION_ID = "00000000-0000-4000-8000-000000090001";
+
+async function drawerExpectedCash(page: Page): Promise<number> {
+  const mint = await page.request.post("/api/v1/demo/session", { data: { flow: "sales" } });
+  const minted = (await mint.json()) as { token?: string };
+  const answer = await page.request.get(`/api/v1/till/sessions/${DRAWER_SESSION_ID}/zreport`, {
+    headers: { Authorization: `Bearer ${minted.token ?? ""}` },
+  });
+  const report = (await answer.json()) as { cash?: { expected_cents?: number } };
+  return report.cash?.expected_cents ?? -1;
+}
+
+async function stubState(page: Page): Promise<{
+  keys: string[];
+  lastNoteBody: { orders: { order_id: string; lines: unknown[] }[]; restock: boolean; refund_method: string; till_session_id: string };
+  sightings: { path: string; approverHeader: boolean }[];
+}> {
+  return (await (await page.request.get("/_stub/state")).json()) as never;
+}
+
+/** Two lines, one from each of Maple Ridge's orders, both back to stock, then on to the Refund step. */
+async function draftTwoOrders(page: Page, wallQty = "1"): Promise<void> {
+  await pickCustomer(page, "maple", "Maple Ridge Contracting");
+  await lineOf(page, "CT-1001", HOLLAND).getByRole("button", { name: "Return to stock" }).click();
+  const wall = lineOf(page, "CT-1002", WALL);
+  await wall.getByLabel(/Return quantity/).fill(wallQty);
+  await wall.getByRole("button", { name: "Return to stock" }).click();
+  await page.getByRole("button", { name: "Continue to the refund" }).click();
+  await expect(page.getByTestId("returns")).toHaveAttribute("data-step", "refund");
+}
+
+test("the Refund step lists the drafted lines by order and offers the rails, with the reason beside a rail that cannot be used", async ({ page }) => {
+  await draftTwoOrders(page);
+  const wait = page.getByTestId("returns-refund");
+  await expect(wait).toContainText("Maple Ridge Contracting");
+  await expect(wait.getByTestId("returns-refund-order")).toHaveCount(2);
+  await expect(wait).toContainText("CT-1001");
+  await expect(wait).toContainText("CT-1002");
+  // Cash sales: nothing to reverse on a card; the drawer is open; the account rail is always offered.
+  await expect(page.getByRole("button", { name: "Card", exact: true })).toBeDisabled();
+  await expect(wait).toContainText("No card refund: an order on this credit note was not paid by card");
+  await expect(page.getByRole("button", { name: "Cash", exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "On the account", exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Record the credit note" })).toBeDisabled();
+  await page.getByRole("button", { name: "Back to the lines" }).click();
+  await expect(page.getByTestId("returns-credit-count")).toHaveText("2 lines from 2 orders");
+});
+
+test("a two order note in cash commits once: one body with both orders, the Done step names the note, each return and its receipt line, and the drawer drops by the server's total", async ({ page }) => {
+  const before = await drawerExpectedCash(page);
+  await draftTwoOrders(page);
+  await page.getByRole("button", { name: "Cash", exact: true }).click();
+  await page.getByRole("button", { name: "Record the credit note" }).click();
+  await expect(page.getByTestId("returns")).toHaveAttribute("data-step", "done");
+  const done = page.getByTestId("returns-done");
+  await expect(done).toContainText("Credit note recorded");
+  await expect(done.getByTestId("returns-note-no")).toHaveText(/CT-CN-\d+/);
+  await expect(done.getByTestId("returns-note-total")).toContainText("$120.00");
+  await expect(done).toContainText("cash, from the drawer");
+  const children = done.getByTestId("returns-done-return");
+  await expect(children).toHaveCount(2);
+  await expect(children.nth(0)).toContainText("CT-1001");
+  await expect(children.nth(0)).toContainText("$60.00");
+  await expect(children.nth(1)).toContainText("CT-1002");
+  await expect(children.nth(0).getByTestId("returns-receipt-line")).toContainText(/CT-R-\d+/);
+  await expect(children.nth(1).getByTestId("returns-receipt-line")).toContainText(/CT-R-\d+/);
+  await expect(done).toContainText("Rung by Sales (demo).");
+  await expect(page.getByTestId("returns-stepper").locator("li[aria-current='step']")).toContainText("Done");
+
+  expect(await drawerExpectedCash(page)).toBe(before - 12000);
+  const state = await stubState(page);
+  expect(state.keys).toHaveLength(1);
+  expect(state.lastNoteBody.orders).toHaveLength(2);
+  expect(state.lastNoteBody.restock).toBe(true);
+  expect(state.lastNoteBody.refund_method).toBe("CASH");
+  expect(state.lastNoteBody.till_session_id).toBe(DRAWER_SESSION_ID);
+
+  await done.getByRole("button", { name: "Start another return" }).click();
+  await expect(page.getByTestId("returns")).toHaveAttribute("data-step", "customer");
+  await page.getByLabel("Search name or account number").fill("maple");
+  await page.getByRole("button", { name: /Maple Ridge/ }).click();
+  // What went back is no longer open: the Holland line has one unit left.
+  await expect(lineOf(page, "CT-1001", HOLLAND)).toContainText("1 open");
+});
+
+test("on the account: the same note commits with no drawer, and the words say the account is credited", async ({ page }) => {
+  const before = await drawerExpectedCash(page);
+  await draftTwoOrders(page);
+  await page.getByRole("button", { name: "On the account", exact: true }).click();
+  await page.getByRole("button", { name: "Record the credit note" }).click();
+  await expect(page.getByTestId("returns-done")).toContainText("on the customer's account");
+  expect(await drawerExpectedCash(page)).toBe(before);
+  expect((await stubState(page)).lastNoteBody.till_session_id).toBe("");
+});
+
+test("a card note on a card paid order commits, and says nothing reached a card where the rail is simulated", async ({ page }) => {
+  await pickCustomer(page, "fenwick", "Fenwick Builders Ltd");
+  await page.getByTestId("returns-order").filter({ hasText: "CT-2001" }).getByRole("button", { name: "Return to stock" }).click();
+  await page.getByRole("button", { name: "Continue to the refund" }).click();
+  await page.getByRole("button", { name: "Card", exact: true }).click();
+  await expect(page.getByTestId("returns-refund")).toContainText("Simulated refund: nothing reached a card.");
+  await page.getByRole("button", { name: "Record the credit note" }).click();
+  await expect(page.getByTestId("returns-done")).toContainText("Simulated refund: nothing reached a card.");
+  await expect(page.getByTestId("returns-done-return")).toHaveCount(1);
+});
+
+test("a mix of back to stock and damaged is refused before anything is sent, in words, and nothing is posted", async ({ page }) => {
+  await pickCustomer(page, "maple", "Maple Ridge Contracting");
+  await lineOf(page, "CT-1001", HOLLAND).getByRole("button", { name: "Return to stock" }).click();
+  await lineOf(page, "CT-1002", WALL).getByRole("button", { name: "Refund, do not restock (damaged)" }).click();
+  await page.getByRole("button", { name: "Continue to the refund" }).click();
+  await page.getByRole("button", { name: "On the account", exact: true }).click();
+  await page.getByRole("button", { name: "Record the credit note" }).click();
+  await expect(page.getByTestId("returns-notice")).toContainText("one choice for the whole note");
+  expect((await stubState(page)).keys).toHaveLength(0);
+});
+
+test("a refusal from the server shows in its own words, the note stays drafted, and a retry sends the same key", async ({ page }) => {
+  await draftTwoOrders(page);
+  await page.getByRole("button", { name: "On the account", exact: true }).click();
+  // Another till returns the same Holland units first: the server's guard refuses the whole note.
+  const mint = await page.request.post("/api/v1/demo/session", { data: { flow: "sales" } });
+  const token = ((await mint.json()) as { token: string }).token;
+  const taken = await page.request.post("/api/v1/pos/returns-across", {
+    headers: { Authorization: `Bearer ${token}` },
+    data: {
+      idempotency_key: "00000000-0000-4000-8000-0000000000aa",
+      customer_id: "c-maple-ridge",
+      refund_method: "ACCOUNT_CREDIT",
+      reason: "",
+      restock: true,
+      till_session_id: "",
+      orders: [{ order_id: "00000000-0000-4000-8000-000000001001", lines: [{ order_line_id: "00000000-0000-4000-8000-000000011011", qty_base: 2, reason_code: "OTHER" }] }],
+    },
+  });
+  expect(taken.status()).toBe(201);
+  await page.getByRole("button", { name: "Record the credit note" }).click();
+  await expect(page.getByTestId("returns-notice")).toContainText("The credit note was refused: pos: over-return on line");
+  await expect(page.getByTestId("returns")).toHaveAttribute("data-step", "refund");
+  await page.getByRole("button", { name: "Record the credit note" }).click();
+  const keys = (await stubState(page)).keys.filter((key) => key !== "00000000-0000-4000-8000-0000000000aa");
+  expect(keys).toHaveLength(2);
+  expect(keys[0]).toBe(keys[1]);
+});
+
+async function setApprovalLimit(page: Page, enabled: boolean): Promise<void> {
+  const answer = await page.request.post("/_stub/refund-approval-limit", { data: { enabled } });
+  expect(((await answer.json()) as { approvalLimitEnabled: boolean }).approvalLimitEnabled).toBe(enabled);
+}
+
+test("a note over the approval amount is refused with the amount and approvers named, and completes through the Sales manager's card while the till stays the clerk's", async ({ page }) => {
+  await setApprovalLimit(page, true);
+  // Wall blocks from both orders: the note total, not either order alone, crosses 250.00.
+  await pickCustomer(page, "maple", "Maple Ridge Contracting");
+  await lineOf(page, "CT-1001", WALL).getByLabel(/Return quantity/).fill("3");
+  await lineOf(page, "CT-1001", WALL).getByRole("button", { name: "Return to stock" }).click();
+  await lineOf(page, "CT-1002", WALL).getByLabel(/Return quantity/).fill("3");
+  await lineOf(page, "CT-1002", WALL).getByRole("button", { name: "Return to stock" }).click();
+  await page.getByRole("button", { name: "Continue to the refund" }).click();
+  await page.getByRole("button", { name: "On the account", exact: true }).click();
+  await page.getByRole("button", { name: "Record the credit note" }).click();
+
+  const refusal = page.getByTestId("refund-refusal");
+  await expect(refusal).toContainText("$250.00");
+  await expect(refusal).toContainText("Sales manager");
+  await expect(refusal).toContainText("Branch manager");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await refusal.getByRole("button", { name: "Manager approval" }).click();
+  const dialog = page.getByRole("dialog", { name: "Manager approval" });
+  await expect(dialog).toContainText("the till stays the clerk's");
+  await dialog.getByRole("button", { name: "Sales manager" }).click();
+
+  const done = page.getByTestId("returns-done");
+  await expect(done).toContainText("$360.00");
+  await expect(done).toContainText("Approved by Sales manager (demo).");
+  await expect(done).toContainText("Rung by Sales (demo).");
+  await expect(page.getByTestId("signed-in-role")).toHaveText("Sales");
+  const state = await stubState(page);
+  const posts = state.sightings.filter((sighting) => sighting.path === "/api/v1/pos/returns-across");
+  expect(posts).toHaveLength(2);
+  expect(posts[0].approverHeader).toBe(false);
+  expect(posts[1].approverHeader).toBe(true);
+  for (const sighting of state.sightings) {
+    if (sighting.path !== "/api/v1/pos/returns-across") expect(sighting.approverHeader).toBe(false);
+  }
+});
+
+test("signed in as the Sales manager the same note completes with no refusal, and Done names the manager as approver", async ({ page }) => {
+  await setApprovalLimit(page, true);
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.getByRole("button", { name: "Sales manager", exact: true }).click();
+  await expect(page.getByTestId("signed-in-role")).toHaveText("Sales manager");
+  await openReturns(page);
+  await pickCustomer(page, "maple", "Maple Ridge Contracting");
+  await lineOf(page, "CT-1002", WALL).getByLabel(/Return quantity/).fill("6");
+  await lineOf(page, "CT-1002", WALL).getByRole("button", { name: "Return to stock" }).click();
+  await page.getByRole("button", { name: "Continue to the refund" }).click();
+  await page.getByRole("button", { name: "On the account", exact: true }).click();
+  await page.getByRole("button", { name: "Record the credit note" }).click();
+  await expect(page.getByTestId("refund-refusal")).toHaveCount(0);
+  await expect(page.getByTestId("returns-done")).toContainText("Approved by the Sales manager on this till: Sales manager (demo).");
+});
+
+test("a sign out under an in flight approval leaves the surface blank for the next person", async ({ page }) => {
+  await setApprovalLimit(page, true);
+  let release: (() => void) | undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/v1/pos/returns-across", async (route) => {
+    const response = await route.fetch();
+    if (await route.request().headerValue("x-approver-authorization")) await held;
+    await route.fulfill({ response });
+  });
+  await pickCustomer(page, "maple", "Maple Ridge Contracting");
+  await lineOf(page, "CT-1002", WALL).getByLabel(/Return quantity/).fill("6");
+  await lineOf(page, "CT-1002", WALL).getByRole("button", { name: "Return to stock" }).click();
+  await page.getByRole("button", { name: "Continue to the refund" }).click();
+  await page.getByRole("button", { name: "On the account", exact: true }).click();
+  await page.getByRole("button", { name: "Record the credit note" }).click();
+  await page.getByTestId("refund-refusal").getByRole("button", { name: "Manager approval" }).click();
+  await page.getByRole("dialog", { name: "Manager approval" }).getByRole("button", { name: "Sales manager" }).click();
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
+  release?.();
+  await page.getByRole("button", { name: "Sales", exact: true }).click();
+  await expect(page.getByTestId("signed-in-role")).toHaveText("Sales");
+  await expect(page.getByTestId("returns-done")).toHaveCount(0);
+  await openReturns(page);
+  await expect(page.getByTestId("returns")).toHaveAttribute("data-step", "customer");
+});
+
+test.afterEach(async ({ page }) => {
+  await setApprovalLimit(page, false);
 });

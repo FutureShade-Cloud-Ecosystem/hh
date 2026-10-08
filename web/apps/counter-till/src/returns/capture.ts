@@ -11,7 +11,8 @@
 import type { FetchLike, PosRefundApproval, ResponseLike } from "@hardscapehouse/api-client";
 import { validateRefundApproval } from "./approval.js";
 
-const RETURNS_PATH = "/api/v1/pos/returns";
+// The two write routes whose 409 carries the approval: the single return, and the credit note across orders.
+const RETURNS_PATHS = ["/api/v1/pos/returns", "/api/v1/pos/returns-across"];
 const APPROVAL_ERROR = "refund_approval_required";
 
 export class RefundApprovalCapture {
@@ -37,7 +38,7 @@ export class RefundApprovalCapture {
       } catch {
         return response;
       }
-      if (pathname !== RETURNS_PATH) return response;
+      if (!RETURNS_PATHS.includes(pathname)) return response;
       let text = "";
       try {
         text = await response.text();

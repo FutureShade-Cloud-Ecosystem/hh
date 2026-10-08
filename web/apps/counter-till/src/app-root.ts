@@ -48,6 +48,7 @@ import { readPanesSwapped, writePanesSwapped } from "./pane-memory.js";
 import { THEME_LABEL, ThemeController, themeControlLabel, themeStatusText } from "./theme.js";
 import { entryStyles, renderEntry, type FlowsState } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { ReturnsFlow } from "./returns/flow.js";
+import { OneTimeCredential } from "./returns/approval.js";
 import { RefundApprovalCapture } from "./returns/capture.js";
 import { returnsStyles, renderReturns } from "./views/returns.js";
 import { formatMoney } from "./money.js";
@@ -466,8 +467,37 @@ export class CounterTillApp extends HHElement {
     });
     this.#account = new DemoAccount({ client: demoClient });
     this.#controller = new AuthController({ account: this.#account, sessions: this.#sessions });
+    // The approver's client exists for the one credit note call that may carry the approver's credential:
+    // its provider takes the token out of the one time slot during that send, and taking is dropping, so
+    // the token rests nowhere before and survives nothing after. The clerk's client is a different
+    // instance and never carries it. Nothing here touches storage or logs.
+    const approverCredential = new OneTimeCredential();
+    const approverClient = new ApiClient({
+      baseUrl: "",
+      headers: async () => {
+        const headers = await staffHeaders();
+        const token = approverCredential.take();
+        if (token !== null) {
+          headers["X-Approver-Authorization"] = `Bearer ${token}`;
+        }
+        return headers;
+      },
+    });
     this.#returns = new ReturnsFlow({
       client,
+      approverClient,
+      account: this.#account,
+      credential: approverCredential,
+      clerk: () => {
+        const session = this.#sessions.current;
+        if (session === null) return null;
+        return {
+          name: session.user.name,
+          roleCode: this.#clerkRoleCode,
+          roleLabel: this.#till?.label ?? null,
+        };
+      },
+      capture,
       branchId: () => this.#branch?.id ?? null,
       onChange: () => this.requestUpdate(),
     });
@@ -729,7 +759,15 @@ export class CounterTillApp extends HHElement {
     if (returnsAction === "returns-disposition") {
       this.#returns.setDisposition(returnsLine, control.getAttribute("data-disposition") ?? "");
     }
-    if (returnsAction === "returns-continue") this.#returns.toRefund();
+    if (returnsAction === "returns-continue") void this.#returns.toRefund();
+    if (returnsAction === "returns-method") this.#returns.chooseMethod(control.getAttribute("data-method") ?? "");
+    if (returnsAction === "returns-submit") void this.#returns.submit();
+    if (returnsAction === "returns-approve") void this.#returns.openApprovalDialog();
+    if (returnsAction === "returns-approve-cancel") this.#returns.closeApprovalDialog();
+    if (returnsAction === "returns-approver-flow") {
+      const approverFlow = control.getAttribute("data-flow");
+      if (approverFlow !== null && approverFlow !== "") void this.#returns.approveWithFlow(approverFlow);
+    }
     if (returnsAction === "returns-back-to-lines") this.#returns.toLines();
     if (returnsAction === "returns-another") this.#returns.startAnother();
   };

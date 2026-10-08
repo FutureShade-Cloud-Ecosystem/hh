@@ -71,7 +71,7 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
     { file: "30-manager.pw.ts", test: "parked sales: a ticket parks and either role picks it up, at the same counter" },
   ],
   "return-customer-first": [
-    { file: "20-sales.pw.ts", test: "a two order return: the customer's lines from both orders into one credit draft" },
+    { file: "20-sales.pw.ts", test: "a two order return: lines from both orders, one credit note in cash, and the drawer drops by its total" },
   ],
   "other-branch": [
     { file: "10-world.pw.ts", test: "a Kingston sale is refused at this counter: the lookup, its ticket, and all three refund rails" },
