@@ -82,7 +82,8 @@ image and boots it on a fresh database.
 
 ## 6. The common acceptance legs
 
-Each role's first increment carries these four (the roadmap's section 2), each red first:
+Each role's first increment carries these four (`principal/planning/HH-ROLES-ROADMAP-r1-draft.md`,
+section 2, decision log row 1199), each red first:
 
 - **L-card:** the role signs in from its card on the front door.
 - **L-wall:** a surface at None for the role is refused by the server.

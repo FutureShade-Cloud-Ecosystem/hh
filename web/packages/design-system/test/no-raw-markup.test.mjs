@@ -318,8 +318,9 @@ test('the walk finds this package and names the workspace packages it must also 
   // and the Public Desk app (web/apps/public-desk, the customer's quote page
   // on a share link token) follow: all three apps' sources are scanned by
   // the gates below. The role app template (web/apps/_role-template) is the
-  // fourth, and each role app copied from it joins this list deliberately. The comparison is over the sorted names because the
-  // enumeration is a readdir over the workspace's directories, whose order
+  // fourth, and each role app copied from it joins this list deliberately.
+  // The comparison is over the sorted names because the enumeration is a
+  // readdir over the workspace's directories, whose order
   // is the filesystem's and not a contract: the fact this lock holds is
   // which packages the gate scans, not the order it met them in.
   assert.deepEqual(

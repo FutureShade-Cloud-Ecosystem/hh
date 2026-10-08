@@ -12,7 +12,7 @@
 // refuses every "." and "@" binding and every bound value outside the data-
 // and aria- attributes in a dependent package. Its two buttons ride data-action names
 // and the host's click listener below acts on them.
-import { html, css, nothing, type TemplateResult } from "lit";
+import { html, css, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
 // hos-app-header: the shared chrome element (decision log row 938).

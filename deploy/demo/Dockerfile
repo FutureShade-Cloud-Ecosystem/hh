@@ -30,7 +30,7 @@
 # mode whose build keeps the front door handoff's adopt reader compiled in; a
 # default build ships the empty stub in its place (rows 893 and 899). A new
 # role app joins by one build line below, one COPY line and one handle block
-# in the Caddyfile template (web/apps/_template/ROLE-GOES-LIVE.md).
+# in the Caddyfile template (web/apps/_role-template/ROLE-GOES-LIVE.md).
 
 FROM golang:1.27-alpine AS core-build
 WORKDIR /src/core
