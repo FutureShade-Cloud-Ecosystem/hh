@@ -132,7 +132,10 @@ func (s *Service) WithInvoiceStanding(r InvoiceStandingReader) *Service { s.stan
 
 // yardPickStore is the store capability this needs, asserted like the other capabilities.
 type yardPickStore interface {
-	ApplyYardPicksTx(ctx context.Context, in YardPickInput, audit yardPickAudit) (YardPickOutcome, error)
+	// The precheck runs inside the write's transaction, after the order row
+	// lock and the status window check, on the context's precheck tx (item 9
+	// Opus P3-2): the hold read rides the write, not a pool read before it.
+	ApplyYardPicksTx(ctx context.Context, in YardPickInput, precheck func(context.Context) error, audit yardPickAudit) (YardPickOutcome, error)
 }
 
 // ApplyYardPicks applies a recorded pick to the order. See the file header.
@@ -143,16 +146,16 @@ func (s *Service) ApplyYardPicks(ctx context.Context, in YardPickInput) (YardPic
 	if len(in.Lines) == 0 {
 		return YardPickOutcome{}, httpx.BadRequestf("say which lines were picked")
 	}
-	// Item 9.3: a pick releases goods, so the pay before release hold guards
-	// it before any line is touched (pick_hold.go).
-	if err := s.refuseHeldFromPicking(ctx, in.OrderID); err != nil {
-		return YardPickOutcome{}, err
-	}
 	st, ok := s.store.(yardPickStore)
 	if !ok {
 		return YardPickOutcome{}, ErrEditNotConfigured
 	}
-	out, err := st.ApplyYardPicksTx(ctx, in, s.yardPickAudit(in.ActorID, in.OrderID))
+	// Item 9.3: a pick releases goods, so the pay before release hold guards
+	// it before any line is touched (pick_hold.go). Item 9 Opus P3-2: the read
+	// rides the write's own transaction, under the order row lock its writer
+	// takes, as the writer's precheck.
+	hold := func(ctx context.Context) error { return s.refuseHeldFromPicking(ctx, in.OrderID) }
+	out, err := st.ApplyYardPicksTx(ctx, in, hold, s.yardPickAudit(in.ActorID, in.OrderID))
 	if err != nil {
 		return YardPickOutcome{}, err
 	}

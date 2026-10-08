@@ -34,6 +34,24 @@ func (a pickHoldAdapter) PickHoldFacts(ctx context.Context, orderID string) (ord
 	return out, nil
 }
 
+// PickHoldFactsTx is the same read on a caller's transaction (order's
+// PickHoldTxReader, item 9 Opus P3-2): the guarded status writers read the
+// hold inside their own transaction under the order row lock.
+func (a pickHoldAdapter) PickHoldFactsTx(ctx context.Context, tx pgx.Tx, orderID string) (order.PickHoldFacts, error) {
+	held, owed, paid, total, err := a.repo.PickHoldForOrderTx(ctx, tx, orderID)
+	if err != nil {
+		return order.PickHoldFacts{}, err
+	}
+	out := order.PickHoldFacts{Held: held, OrderTotalCents: total, PaidCents: paid, OwedCents: owed}
+	if held {
+		out.Words = order.PickHoldWords
+	}
+	if paid > 0 && owed > 0 {
+		out.InProcessWords = order.PickInProcessWords
+	}
+	return out, nil
+}
+
 // dispatchPickHoldAdapter satisfies dispatch.PickHoldGate over the same read.
 type dispatchPickHoldAdapter struct{ repo *billing.Repository }
 

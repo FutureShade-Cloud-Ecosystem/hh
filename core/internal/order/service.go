@@ -297,8 +297,21 @@ func (s *Service) SetStatus(ctx context.Context, tenant, actor, orderID, newStat
 	// Item 9.3: the pay before release hold guards the statuses that release
 	// or advance goods, at the choke point itself, whatever caller reached it.
 	// Item 9 Opus P2-2 widened the target from the picking rung alone to every
-	// forward move whose target ranks at or above it (holdGuardedTarget below).
+	// forward move whose target ranks at or above it (holdGuardedTarget).
+	// Item 9 Opus P3-2: a caller with no tenant fence rides the checked write
+	// (the row lock plus the hold precheck, the cancel predicate's own path);
+	// a tenant scoped caller keeps its fenced plain write, the checked write
+	// carries no tenant predicate and must not silently widen the fence.
 	if holdGuardedTarget(newStatus) {
+		if tenant == "" {
+			oldStatus, err := s.store.UpdateStatusFromChecked(ctx, orderID, newStatus, everyStatusSlice,
+				func(ctx context.Context) error { return s.refuseHeldFromPicking(ctx, orderID) })
+			if err != nil {
+				return err
+			}
+			s.recordStatusChange(ctx, actor, orderID, oldStatus, newStatus, reason)
+			return nil
+		}
 		if err := s.refuseHeldFromPicking(ctx, orderID); err != nil {
 			return err
 		}
@@ -385,6 +398,15 @@ func eventAllowedFrom(target string) []string {
 func holdGuardedTarget(status string) bool {
 	r, ok := statusRank[status]
 	return ok && r >= statusRank["PICKING"] && r < statusRank["CLOSED"]
+}
+
+// everyStatusSlice is the full CHECK set, the allowedFrom that preserves the
+// choke point's TRANSITION-UNGUARDED contract while it routes through the
+// checked write for the hold's precheck (item 9 Opus P3-2): every status
+// remains a legal source, exactly as the plain UpdateStatus allowed.
+var everyStatusSlice = []string{
+	"DRAFT", "CONFIRMED", "PICKING", "READY", "PARTIALLY_FULFILLED",
+	"FULFILLED", "INVOICED", "CLOSED", "CANCELLED",
 }
 
 // AdvanceFromEvent is the ONLY sanctioned status writer for the event-driven drivers (consumer.go). It
@@ -696,10 +718,25 @@ func (s *Service) setStatusGuarded(ctx context.Context, actor, orderID, newStatu
 	// point). Item 9 Opus P2-2 widened the target from the picking rung alone
 	// to every forward move whose target ranks at or above it, so the event
 	// drivers cannot step a held order straight to READY, FULFILLED or
-	// INVOICED past the guard.
+	// INVOICED past the guard. Item 9 Opus P3-2: the read rides the guarded
+	// write's own transaction as its precheck (under the order row lock, the
+	// cancel money predicate's own path), not a pool read taken before the
+	// write, so a payment landing between the read and the move cannot slip
+	// one through. An existing precheck (the cancel predicate) stays in front.
+	pre := precheck
 	if holdGuardedTarget(newStatus) {
-		if err := s.refuseHeldFromPicking(ctx, orderID); err != nil {
-			return err
+		hold := func(ctx context.Context) error { return s.refuseHeldFromPicking(ctx, orderID) }
+		if pre == nil {
+			pre = hold
+		} else {
+			inner := pre
+			composed := func(ctx context.Context) error {
+				if err := inner(ctx); err != nil {
+					return err
+				}
+				return hold(ctx)
+			}
+			pre = composed
 		}
 	}
 	var oldStatus string
@@ -710,10 +747,10 @@ func (s *Service) setStatusGuarded(ctx context.Context, actor, orderID, newStatu
 	// unchanged, the reservation lane is strictly additive and cannot alter a transition's legality.
 	effect := reservationEffectFor(newStatus)
 	if rs, ok := s.reservationLane(); ok && (effect == effectReserve || effect == effectConsume || effect == effectRelease) {
-		oldStatus, err = rs.UpdateStatusFromTx(ctx, orderID, newStatus, allowedFrom, precheck,
+		oldStatus, err = rs.UpdateStatusFromTx(ctx, orderID, newStatus, allowedFrom, pre,
 			s.applyReservationsTx(effect, orderID, actor))
-	} else if precheck != nil {
-		oldStatus, err = s.store.UpdateStatusFromChecked(ctx, orderID, newStatus, allowedFrom, precheck)
+	} else if pre != nil {
+		oldStatus, err = s.store.UpdateStatusFromChecked(ctx, orderID, newStatus, allowedFrom, pre)
 	} else {
 		oldStatus, err = s.store.UpdateStatusFrom(ctx, orderID, newStatus, allowedFrom)
 	}

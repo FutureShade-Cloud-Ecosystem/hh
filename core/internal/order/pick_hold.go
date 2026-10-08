@@ -31,6 +31,8 @@ package order
 import (
 	"context"
 	"errors"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // PickHoldWords is the refusal's sentence, the item's mandated words, the same
@@ -77,6 +79,17 @@ type PickHoldReader interface {
 	PickHoldFacts(ctx context.Context, orderID string) (PickHoldFacts, error)
 }
 
+// PickHoldTxReader is the transaction-joining variant of PickHoldReader (the
+// cancel guards' FinalizedInvoiceTxReader shape, item 9 Opus P3-2): the
+// guarded status writers run the hold read inside their own transaction under
+// the order row lock, and a reader that asked the shared pool there would hold
+// two connections per caller (the starvation the tree's store seams rule out).
+// A reader that implements this reads through the caller's tx instead; a
+// reader with only the pool half keeps working and keeps the pool read.
+type PickHoldTxReader interface {
+	PickHoldFactsTx(ctx context.Context, tx pgx.Tx, orderID string) (PickHoldFacts, error)
+}
+
 // WithPickHoldReader wires (or overrides) the pick hold read.
 func (s *Service) WithPickHoldReader(r PickHoldReader) *Service { s.pickHold = r; return s }
 
@@ -87,11 +100,24 @@ func (s *Service) PickHoldWired() bool { return s.pickHold != nil }
 // refuseHeldFromPicking is the guard every goods releasing move consults:
 // nil seam allows (the additive lane), a read that fails refuses with
 // ErrPickHoldUnverifiable, a held order refuses with ErrHeldFromPicking.
+// Inside a guarded write the read joins the write's transaction when the
+// reader can (PickHoldTxReader, the context's precheck tx), so the read and
+// the move are one act under the order row lock.
 func (s *Service) refuseHeldFromPicking(ctx context.Context, orderID string) error {
 	if s.pickHold == nil {
 		return nil
 	}
-	f, err := s.pickHold.PickHoldFacts(ctx, orderID)
+	var f PickHoldFacts
+	var err error
+	if r, ok := s.pickHold.(PickHoldTxReader); ok {
+		if tx := precheckTx(ctx); tx != nil {
+			f, err = r.PickHoldFactsTx(ctx, tx, orderID)
+		} else {
+			f, err = s.pickHold.PickHoldFacts(ctx, orderID)
+		}
+	} else {
+		f, err = s.pickHold.PickHoldFacts(ctx, orderID)
+	}
 	if err != nil {
 		return ErrPickHoldUnverifiable
 	}
