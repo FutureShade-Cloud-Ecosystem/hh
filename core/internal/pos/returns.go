@@ -510,6 +510,20 @@ func (s *Service) returnInTx(ctx context.Context, tx pgx.Tx, plan *returnPlan) (
 		return Return{}, false, false, err
 	}
 
+	// 2b. A supplier deposit order releases its deposit on ANY return, partial or whole (the
+	//     supervisor's default, pending the principal's ruling): the goods were dealt with, so the
+	//     deposit is recognised once. The documents are read here, inside the transaction, and the
+	//     release events are emitted below ahead of the revenue reversal (step 5). The documents
+	//     are billing's: they are read through its seam (DepositDocumentLister), never from the
+	//     invoices table here.
+	var depositDocs []string
+	if s.deposits != nil {
+		var derr error
+		if depositDocs, derr = s.deposits.DepositDocumentIDsTx(ctx, tx, oc.OrderID); derr != nil {
+			return Return{}, false, false, derr
+		}
+	}
+
 	// 3. The refund rail (all writes behind the till/payment seams; nothing here touches their tables).
 	var refundPaymentID string
 	switch in.RefundMethod {
@@ -544,7 +558,7 @@ func (s *Service) returnInTx(ctx context.Context, tx pgx.Tx, plan *returnPlan) (
 	case RefundAccountCredit:
 		// The restocking fee reduces what the customer's account is credited (total − fee); the fee
 		// itself books through the GL event's fee_cents, never a subledger row.
-		if err := s.applyAccountCredit(ctx, tx, oc, total-feeCents); err != nil {
+		if err := s.applyAccountCredit(ctx, tx, oc, total-feeCents, depositDocs); err != nil {
 			return Return{}, false, false, err
 		}
 	}
@@ -575,6 +589,15 @@ func (s *Service) returnInTx(ctx context.Context, tx pgx.Tx, plan *returnPlan) (
 	//    P3-3 ruling), the platform subject beside them as the directory reference, and the
 	//    refusal the decision answers, cited by its own audit row id where the trail can
 	//    name one (row 482, D49).
+	// The deposit release rides ahead of the reversal: same topic and journal key the fulfilment
+	// road uses (deposit.released:<invoice id>), so whichever comes second dedupes in the ledger.
+	for _, depID := range depositDocs {
+		if err := s.store.EmitEvent(ctx, tx, "deposit.released", map[string]any{
+			"invoice_id": depID, "order_id": oc.OrderID,
+		}); err != nil {
+			return Return{}, false, false, err
+		}
+	}
 	committed := map[string]any{
 		"return_id": returnID, "order_id": oc.OrderID, "invoice_id": oc.InvoiceID,
 		"refund_method": in.RefundMethod, "subtotal_cents": subtotal, "tax_cents": taxTotal,
@@ -743,7 +766,11 @@ func (s *Service) refundApprovalRefusal(cumulativeCents, newTotalCents int64, ca
 // rides the invoice balance (its memo row is source_type 'invoice', excluded from the non-invoice
 // union), the remainder is a counted non-invoice CREDIT_MEMO. txn_type CREDIT_MEMO is the 0009 CHECK's
 // vocabulary for the design's "CREDIT" row.
-func (s *Service) applyAccountCredit(ctx context.Context, tx pgx.Tx, oc returnOrderCtx, total int64) error {
+//
+// A supplier deposit order carries a third place for the remainder: the live deposit documents
+// (depositDocs). What the sale's own invoice cannot absorb is applied to them in turn, so the
+// deposit invoice does not stay open and owed beside a store credit for the same money.
+func (s *Service) applyAccountCredit(ctx context.Context, tx pgx.Tx, oc returnOrderCtx, total int64, depositDocs []string) error {
 	// The customer read rides THIS transaction (ReadCustomerTx, the
 	// FindReturnByKeyTx discipline): a pool read while the Return
 	// transaction holds its connection has the per-sale lock's holder wait
@@ -769,7 +796,27 @@ func (s *Service) applyAccountCredit(ctx context.Context, tx pgx.Tx, oc returnOr
 			return err
 		}
 	}
-	if remainder := total - applied; remainder > 0 {
+	remainder := total - applied
+	for _, depID := range depositDocs {
+		if remainder <= 0 {
+			break
+		}
+		depApplied, err := s.store.ApplyCreditToInvoice(ctx, tx, depID, remainder)
+		if err != nil {
+			return err
+		}
+		if depApplied > 0 {
+			if err := s.store.InsertCustomerTxn(ctx, tx, customerTxnRow{
+				CustomerID: oc.CustomerID, TxnType: "CREDIT_MEMO", AmountCents: -depApplied,
+				BalanceAfter: open - applied - depApplied, SourceType: "invoice", SourceRefID: depID, BranchID: oc.BranchID,
+			}); err != nil {
+				return err
+			}
+			applied += depApplied
+			remainder -= depApplied
+		}
+	}
+	if remainder > 0 {
 		if err := s.store.InsertCustomerTxn(ctx, tx, customerTxnRow{
 			CustomerID: oc.CustomerID, TxnType: "CREDIT_MEMO", AmountCents: -remainder,
 			BalanceAfter: open - total, SourceType: "pos_return", SourceRefID: oc.OrderID, BranchID: oc.BranchID,
@@ -779,6 +826,16 @@ func (s *Service) applyAccountCredit(ctx context.Context, tx pgx.Tx, oc returnOr
 	}
 	return nil
 }
+
+// DepositDocumentLister is the seam the return reads the order's live supplier deposit documents
+// through, on the return's own transaction. Billing owns those documents and satisfies it at the
+// composition root; unwired, a return releases nothing.
+type DepositDocumentLister interface {
+	DepositDocumentIDsTx(ctx context.Context, tx pgx.Tx, orderID string) ([]string, error)
+}
+
+// WithDepositDocuments binds the deposit document read the return releases deposits from.
+func (s *Service) WithDepositDocuments(l DepositDocumentLister) *Service { s.deposits = l; return s }
 
 // reachableBranches is the branch ids a bare number may be searched in: nil for a caller who reaches
 // every branch (global scope), otherwise the granted ids, a non-nil slice even when there are none.

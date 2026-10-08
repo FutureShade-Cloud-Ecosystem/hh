@@ -154,7 +154,9 @@ func worker(getenv func(string) string) error {
 	unionCreditSweep := billing.CreditHoldSweepJob(graph.tops.creditSvc, "")
 	creditMemoRepost := billing.CreditMemoRepostJob(
 		billing.NewInvoiceWriter(pool).
-			WithCreditMemoPoster(w6cCreditMemoPoster{svc: graph.money.glSvc, rules: gl.NewRepository(pool)}),
+			WithCreditMemoPoster(w6cCreditMemoPoster{svc: graph.money.glSvc, rules: gl.NewRepository(pool)}).
+			WithDeliveredOrders(graph.money.orderSvc). // the deposit release sweep rides this job
+			WithJournalKeyReader(graph.money.glSvc),   // and asks the ledger, not gl_journals, which releases posted
 		0) // 0 = the package's batch ceiling
 	jobRunner := jobs.NewRunner(jobs.NewRepository(pool), log).
 		Register("ar.credit_hold_sweep", unionCreditSweep).

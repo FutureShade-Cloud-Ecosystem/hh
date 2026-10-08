@@ -21,6 +21,7 @@ func defaultRules() map[string]map[string]string {
 		"payment.bounced":        {"ar": "1100", "bank": "1000", "undeposited": "1020", "card_clearing": "1010", "fee_income": "4200", "hst": "2200"},
 		"till.session.completed": {"over_short": "6350", "undeposited": "1020"},
 		"order.fulfilled":        {"cogs": "5000", "inventory": "1200"},
+		"deposit.released":       {"customer_deposit": "2300", "revenue": "4000"},
 	}
 }
 
