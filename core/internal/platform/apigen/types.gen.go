@@ -5109,18 +5109,19 @@ type PosTaxRate struct {
 }
 
 type PosPolicy struct {
-	BranchId             string    `json:"branch_id"`
-	CodEnabled           bool      `json:"cod_enabled"`
-	RestockingFeeBps     int32     `json:"restocking_fee_bps"`
-	Notes                string    `json:"notes"`
-	LinePresentation     string    `json:"line_presentation"`
-	QuickChipsEnabled    bool      `json:"quick_chips_enabled"`
-	WorkspaceSplitPct    int32     `json:"workspace_split_pct"`
-	WorkspaceArrangement string    `json:"workspace_arrangement"`
-	LookupPresentation   string    `json:"lookup_presentation"`
-	MarginVisibility     string    `json:"margin_visibility"`
-	BalanceVisibility    string    `json:"balance_visibility"`
-	QuickChipSet         *[]string `json:"quick_chip_set,omitempty"`
+	BranchId              string    `json:"branch_id"`
+	CodEnabled            bool      `json:"cod_enabled"`
+	RestockingFeeBps      int32     `json:"restocking_fee_bps"`
+	Notes                 string    `json:"notes"`
+	LinePresentation      string    `json:"line_presentation"`
+	QuickChipsEnabled     bool      `json:"quick_chips_enabled"`
+	WorkspaceSplitPct     int32     `json:"workspace_split_pct"`
+	WorkspaceArrangement  string    `json:"workspace_arrangement"`
+	LookupPresentation    string    `json:"lookup_presentation"`
+	MarginVisibility      string    `json:"margin_visibility"`
+	BalanceVisibility     string    `json:"balance_visibility"`
+	SupplierDepositCancel string    `json:"supplier_deposit_cancel"`
+	QuickChipSet          *[]string `json:"quick_chip_set,omitempty"`
 }
 
 type PosPolicyChange struct {

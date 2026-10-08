@@ -84,6 +84,18 @@ func (s *Service) UpdatePolicy(ctx context.Context, p PosPolicy) (PosPolicy, err
 		return PosPolicy{}, err
 	}
 	p.QuickChipSet = chips
+	// Row 1193: the cancelled special order's deposit disposition rides the same
+	// admin write, same posture (omitted normalizes to the column default, a bad
+	// value is a 422 in words before the CHECK constraint could make it a 500).
+	switch p.SupplierDepositCancel {
+	case "":
+		p.SupplierDepositCancel = SupplierDepositCancelCreditBack
+	case SupplierDepositCancelCreditBack, SupplierDepositCancelKept:
+		// authored explicitly, fine
+	default:
+		return PosPolicy{}, clientErr(http.StatusUnprocessableEntity,
+			"pos: supplier_deposit_cancel must be CREDIT_BACK or KEPT")
+	}
 	// THE PRE-IMAGE IS READ BEFORE THE WRITE, which is the whole reason before→after can be truthful.
 	//
 	// IT IS s.store.ReadPosPolicy AND NOT s.Policy. Policy() DERIVES an un-curated quick_chip_set from
@@ -116,6 +128,22 @@ func (s *Service) UpdatePolicy(ctx context.Context, p PosPolicy) (PosPolicy, err
 		s.recordPolicyChanges(ctx, p.BranchID, caller.UserID, caller.RoleCode, posPolicyChanges(before, saved))
 	}
 	return saved, nil
+}
+
+// SupplierDepositCancelDefault answers the dealer's default disposition for a
+// cancelled special order's supplier deposit (row 1193), branch-resolved the
+// way Policy resolves every counter rule. It is the read the order module's
+// cancel path takes through its own seam at the composition root; an unset
+// column answers the ruling's default, CREDIT_BACK, never an empty word.
+func (s *Service) SupplierDepositCancelDefault(ctx context.Context, branchID string) (string, error) {
+	p, err := s.store.ReadPosPolicy(ctx, branchID)
+	if err != nil {
+		return "", err
+	}
+	if p.SupplierDepositCancel == SupplierDepositCancelKept {
+		return SupplierDepositCancelKept, nil
+	}
+	return SupplierDepositCancelCreditBack, nil
 }
 
 // Park saves a ticket for later (no order, no stock effect, no AR, prices re-derive on resume).

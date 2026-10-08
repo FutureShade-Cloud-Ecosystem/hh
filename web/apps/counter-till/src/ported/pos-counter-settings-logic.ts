@@ -42,6 +42,18 @@ export const POS_RULE_WORDS: Readonly<Record<string, string>> = Object.freeze({
   balance_visibility: "Who sees a customer's past-due balance",
   quick_chip_set: 'The curated quick categories',
   counter_layout: 'Which counter a till opens on',
+  supplier_deposit_cancel: "A cancelled special order's supplier deposit",
+});
+
+/**
+ * supplier_deposit_cancel: CREDIT_BACK | KEPT (the cancelled deposit ruling).
+ *
+ * The words are what the select on the counter settings screen shows and what
+ * the history renders, one idea in both places.
+ */
+export const SUPPLIER_DEPOSIT_CANCEL_WORDS: Readonly<Record<string, string>> = Object.freeze({
+  CREDIT_BACK: "Credited back to the customer's account",
+  KEPT: 'Kept by the dealer',
 });
 
 /**
@@ -93,6 +105,7 @@ export const POS_HISTORY_WORDS: SettingsVocabulary = Object.freeze({
     workspace_arrangement: ARRANGEMENT_WORDS,
     margin_visibility: VISIBILITY_WORDS,
     balance_visibility: VISIBILITY_WORDS,
+    supplier_deposit_cancel: SUPPLIER_DEPOSIT_CANCEL_WORDS,
     // restocking_fee_bps and workspace_split_pct are integers, and a number is already the word for
  // itself. quick_chip_set is a dealer's OWN category names joined by the server: translating a
     // dealer's word would be this app deciding it knows what they meant.

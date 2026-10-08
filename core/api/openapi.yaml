@@ -41280,6 +41280,7 @@ components:
         - lookup_presentation
         - margin_visibility
         - balance_visibility
+        - supplier_deposit_cancel
       properties:
         branch_id:
           type: string
@@ -41329,6 +41330,12 @@ components:
             - MANAGER_UP
             - HIDDEN
           description: Who may receive a customer's past-due balance on the customer step
+        supplier_deposit_cancel:
+          type: string
+          enum:
+            - CREDIT_BACK
+            - KEPT
+          description: The dealer default a cancelled special order's supplier deposit takes; a manager may keep it on a given order at the cancel itself
         quick_chip_set:
           type: array
           items:
