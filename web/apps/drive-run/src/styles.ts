@@ -127,6 +127,11 @@ export const driveStyles = css`
   /* The moves. Big, full width, one hand. */
   .actions { display: flex; flex-direction: column; gap: var(--hh-s-12); margin-bottom: var(--hh-s-16); }
   button.big { display: block; width: 100%; min-height: 64px; font-size: 18px; font-weight: 700; }
+  /* A control that cannot be used yet keeps a visible edge, the sheet's control line (3:1), so it can be found. */
+  button.big:disabled { border: 2px solid var(--hh-control-line); }
+  /* The board's second door: an outlined red, lighter than the yellow beside it. */
+  .btn-door-fail { background: transparent; color: var(--hh-danger); border: 2px solid var(--hh-danger); }
+  .btn-door-fail:hover:not(:disabled) { background: var(--hh-row-alt); }
   button.big + button.big { margin-top: var(--hh-s-12); }
 
   /* Messages. */
@@ -152,19 +157,60 @@ export const driveStyles = css`
   }
   .text-field:focus-visible { outline: 3px solid var(--hh-focus-ring); outline-offset: 2px; }
   .confirm { display: grid; grid-template-columns: 32px 1fr; gap: var(--hh-s-12); align-items: start; margin-bottom: var(--hh-s-16); }
-  .confirm-box { width: 32px; height: 32px; margin: 0; accent-color: var(--hh-accent-text); }
+  /* The box is drawn, not the platform's: its edge is the sheet's control line
+     (3:1 against the card in both themes) and its tick is the gold fill's ink. */
+  .confirm-box {
+    appearance: none;
+    width: 32px;
+    height: 32px;
+    margin: 0;
+    border-radius: var(--hh-s-8);
+    border: 2px solid var(--hh-control-line);
+    background: var(--hh-field);
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+  }
+  .confirm-box:checked { background: var(--brand-fill); border-color: var(--brand-fill-on); }
+  .confirm-box:checked::after { content: "\\2713"; color: var(--brand-fill-on); font-size: 22px; font-weight: 800; line-height: 1; }
+  .confirm-box:focus-visible { outline: 3px solid var(--hh-focus-ring); outline-offset: 2px; }
   .hint { color: var(--hh-text-dim); margin: var(--hh-s-8) 0 var(--hh-s-12); }
   .small { font-size: 14px; }
   .section-label { text-transform: uppercase; letter-spacing: 0.06em; color: var(--hh-text-dim); font-size: 14px; }
-  .photo-list { list-style: none; margin: 0 0 var(--hh-s-8); padding: 0; }
-  .photo-sent { color: var(--hh-success); font-weight: 700; padding: var(--hh-s-4) 0; }
+  .photo-tiles { list-style: none; margin: 0 0 var(--hh-s-8); padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--hh-s-8); }
+  .photo-tile, .photo-tile-add { margin: 0; }
+  .photo-tile {
+    position: relative;
+    aspect-ratio: 1;
+    overflow: hidden;
+    border-radius: var(--hh-radius-control);
+    border: 2px solid var(--hh-control-line);
+    background: var(--hh-card);
+    display: grid;
+    place-items: end stretch;
+  }
+  .thumb { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .photo-tile-word {
+    position: relative;
+    padding: var(--hh-s-4) var(--hh-s-8);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--hh-success);
+    background: var(--hh-card);
+    text-align: center;
+  }
   .photo-add {
     display: flex;
     align-items: center;
     justify-content: center;
     gap: var(--hh-s-12);
-    min-height: 72px;
-    margin-bottom: var(--hh-s-12);
+    flex-direction: column;
+    gap: var(--hh-s-4);
+    height: 100%;
+    aspect-ratio: 1;
+    min-height: 96px;
+    text-align: center;
+    font-size: 14px;
     border-radius: var(--hh-radius-control);
     border: 2px dashed var(--hh-control-line);
     background: var(--hh-card);

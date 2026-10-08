@@ -44,7 +44,7 @@ test("a driver is offered only the moves a driver makes: loaded, en route, proof
 
 test("could not deliver is the one destructive move and the labels are the drivers' words", () => {
   const en = driverActions("EN_ROUTE");
-  assert.equal(en[0].label, "Proof of delivery");
+  assert.equal(en[0].label, "Delivered");
   assert.equal(en[1].label, "Could not deliver");
   assert.equal(en[1].destructive, true);
   assert.equal(driverActions("READY")[0].label, "Mark loaded");

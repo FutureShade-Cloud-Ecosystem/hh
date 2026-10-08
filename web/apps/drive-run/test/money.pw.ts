@@ -43,7 +43,7 @@ test("with money laid on every read, no screen shows a figure or a money word", 
   await page.getByRole("button", { name: "Mark loaded" }).click();
   await page.getByRole("button", { name: "Mark en route" }).click();
 
-  await page.getByRole("button", { name: "Proof of delivery" }).click();
+  await page.getByRole("button", { name: "Delivered", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Proof of delivery" })).toBeVisible();
   screens.push(await everyWordOnScreen(page));
   await page.getByRole("button", { name: "Not yet" }).click();

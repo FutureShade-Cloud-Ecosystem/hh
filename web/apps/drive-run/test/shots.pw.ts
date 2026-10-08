@@ -55,11 +55,11 @@ for (const size of SIZES) {
       await page.getByRole("button", { name: "Mark loaded" }).click();
       await expect(page.locator("[data-stop-status]")).toHaveText("Loaded");
       await page.getByRole("button", { name: "Mark en route" }).click();
-      await expect(page.getByRole("button", { name: "Proof of delivery" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Delivered", exact: true })).toBeVisible();
       await take("04", "stop-en-route");
 
       // Proof of delivery: empty, then ready with a photo, then signed.
-      await page.getByRole("button", { name: "Proof of delivery" }).click();
+      await page.getByRole("button", { name: "Delivered", exact: true }).click();
       await take("05", "proof-of-delivery");
       await page.locator("input[type=file]").setInputFiles({ name: "drop.png", mimeType: "image/png", buffer: TINY_PNG });
       await expect(page.locator("[data-photo-sent]")).toHaveCount(1);
@@ -90,7 +90,7 @@ for (const size of SIZES) {
       await page.locator("[data-stop]").nth(2).click();
       await page.getByRole("button", { name: "Mark loaded" }).click();
       await page.getByRole("button", { name: "Mark en route" }).click();
-      await page.getByRole("button", { name: "Proof of delivery" }).click();
+      await page.getByRole("button", { name: "Delivered", exact: true }).click();
       await page.getByLabel("Full name of the person receiving").fill("Receiving clerk");
       await page.getByRole("checkbox").check();
       await page.getByRole("button", { name: "Sign for this delivery" }).click();

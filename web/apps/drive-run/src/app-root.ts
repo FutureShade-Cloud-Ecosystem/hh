@@ -75,6 +75,10 @@ export class DriveRunApp extends HHElement {
   #podBusy = false;
   #podPrefill: string | null = null;
   #photoBusy = false;
+  // The pictures taken in this visit, by stop, kept in memory for the
+  // thumbnails: the core's photo route needs the bearer, so a picture cannot
+  // load as an image address, and one taken before this visit shows as a tile.
+  readonly #thumbs = new Map<string, string[]>();
 
   // Could not deliver's draft: the reason in the driver's words.
   #failReason = "";
@@ -254,6 +258,19 @@ export class DriveRunApp extends HHElement {
         this.#podPrefill = null;
       }
     }
+    // The thumbnails: an object address cannot ride a template binding (the
+    // gate admits http, https and relative only), so each picture takes its
+    // address here; a tile with none shows its words alone.
+    for (const img of Array.from(this.renderRoot.querySelectorAll<HTMLImageElement>("img[data-thumb]"))) {
+      const [stopId = "", index = "0"] = (img.getAttribute("data-thumb") ?? "").split(":");
+      const url = this.#thumbs.get(stopId)?.[Number(index)];
+      if (url !== undefined) {
+        if (img.getAttribute("src") !== url) img.setAttribute("src", url);
+        img.hidden = false;
+      } else {
+        img.hidden = true;
+      }
+    }
     // A telephone address cannot ride a template binding (the position gate
     // admits only http, https and relative addresses), so the call links take
     // their href here, from a value that is digits and phone punctuation only.
@@ -420,6 +437,10 @@ export class DriveRunApp extends HHElement {
       this.#error = ready.error;
     } else {
       const sent = await this.#drive.uploadPhoto(stopId, ready.bytes, ready.type);
+      if (sent.ok) {
+        const made = URL.createObjectURL(new Blob([ready.bytes as BlobPart], { type: ready.type }));
+        this.#thumbs.set(stopId, [...(this.#thumbs.get(stopId) ?? []), made]);
+      }
       if (!sent.ok) {
         this.#error = roadsideError(sent.error, sent.status, "The photo did not send. Check your signal and add it again.");
       } else {
@@ -515,7 +536,7 @@ export class DriveRunApp extends HHElement {
 
   private renderSignedIn(): TemplateResult {
     return html`
-      <hos-app-header signed-in demo>${this.renderThemeControl()}</hos-app-header>
+      <hos-app-header signed-in demo compact product-name="Drive" product-sub="HH Drive · HH Field shell">${this.renderThemeControl()}</hos-app-header>
       <main>${this.renderWork()}</main>
     `;
   }
@@ -524,7 +545,7 @@ export class DriveRunApp extends HHElement {
     const session = this.#sessions.current;
     if (session !== null) return this.renderSignedIn();
     return html`
-      <hos-app-header demo>${this.renderThemeControl()}</hos-app-header>
+      <hos-app-header demo compact product-name="Drive" product-sub="HH Drive · HH Field shell">${this.renderThemeControl()}</hos-app-header>
       <main>
         ${renderEntry(this.#entryView)}
       </main>

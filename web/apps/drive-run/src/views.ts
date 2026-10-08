@@ -183,13 +183,13 @@ export function renderStopDetail(model: StopDetailModel): TemplateResult {
         : nothing}
     </section>
     ${linesBlock(stop, run.lines[stop.id])}
-    ${stop.status === "DELIVERED" ? renderLatePhoto(model.photoBusy) : nothing}
+    ${stop.status === "DELIVERED" ? renderLatePhoto(stop, model.photoBusy) : nothing}
     ${actions.length > 0
       ? html`<div class="actions">
           ${actions.map(
             (a) => html`<button
               type="button"
-              class="btn ${a.destructive === true ? "btn-danger" : "btn-primary"} big"
+              class="btn ${a.destructive === true ? "btn-door-fail" : "btn-primary"} big"
               data-action=${a.action === "POD" ? "open-pod" : a.action === "FAILED" ? "open-fail" : "advance"}
               data-status=${a.action}
               ?disabled=${model.busy}
@@ -201,8 +201,23 @@ export function renderStopDetail(model: StopDetailModel): TemplateResult {
   `;
 }
 
+function photoTiles(stop: DriverStop, addLabel: string, busy: boolean): TemplateResult {
+  // The board's tiles: each photo taken, then the add tile. A picture taken
+  // in this visit shows itself; an earlier one shows its words on a tile.
+  return html`<ul class="photo-tiles">
+    ${Array.from(
+      { length: stop.photo_count },
+      (_, i) => html`<li class="photo-tile" data-photo-sent>
+        <img class="thumb" data-thumb=${`${stop.id}:${i}`} alt="A photo of the drop" aria-label=${`Photo ${i + 1}`} hidden />
+        <span class="photo-tile-word">Photo ${i + 1} sent</span>
+      </li>`,
+    )}
+    <li class="photo-tile-add">${photoAdd(addLabel, busy)}</li>
+  </ul>`;
+}
+
 function photoAdd(label: string, busy: boolean): TemplateResult {
-  // The picker is a real file input behind a large label: the camera or the
+  // The picker is a real file input behind a large tile: the camera or the
   // library, as the phone offers. It stays focusable for a keyboard.
   return html`<label class="photo-add" data-tap>
     <input type="file" accept="image/jpeg,image/png,image/webp" class="visually-hidden" data-field="photo" ?disabled=${busy} />
@@ -242,18 +257,15 @@ export function renderPod(model: PodModel): TemplateResult {
     </section>
     <section data-photos>
       <h3 class="section-label">Photo of the drop · optional</h3>
-      <ul class="photo-list">
-        ${Array.from({ length: stop.photo_count }, (_, i) => html`<li class="photo-sent" data-photo-sent>Photo ${i + 1} sent</li>`)}
-      </ul>
-      ${photoAdd(stop.photo_count > 0 ? "Add another photo" : "Add a photo", model.photoBusy)}
+      ${photoTiles(stop, stop.photo_count > 0 ? "Add another" : "Add a photo", model.photoBusy)}
       <p class="dim small">Photos back the attestation. A photo that does not send never blocks the signature.</p>
     </section>
   `;
 }
 
 /** The late photo control on a delivered stop: the phone found signal after the drop. */
-export function renderLatePhoto(busy: boolean): TemplateResult {
-  return html`<section data-photos>${photoAdd("Add a photo to the proof", busy)}</section>`;
+export function renderLatePhoto(stop: DriverStop, busy: boolean): TemplateResult {
+  return html`<section data-photos>${photoTiles(stop, "Add a photo to the proof", busy)}</section>`;
 }
 
 export interface FailModel {

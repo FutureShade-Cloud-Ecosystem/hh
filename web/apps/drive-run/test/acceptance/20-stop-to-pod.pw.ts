@@ -20,7 +20,7 @@ test("a stop goes loaded, en route, and to proof of delivery with a name and a p
   await page.getByRole("button", { name: "Mark en route" }).click();
   await expect(page.locator("[data-stop-status]")).toHaveText("En route");
   await shot(page, "20-en-route", testInfo);
-  await page.getByRole("button", { name: "Proof of delivery" }).click();
+  await page.getByRole("button", { name: "Delivered", exact: true }).click();
   await page.getByLabel("Full name of the person receiving").fill("Receiving clerk");
   await page.locator("input[type=file]").setInputFiles({ name: "drop.png", mimeType: "image/png", buffer: TINY_PNG });
   await expect(page.locator("[data-photo-sent]")).toHaveCount(1);

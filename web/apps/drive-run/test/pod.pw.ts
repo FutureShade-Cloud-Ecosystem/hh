@@ -13,7 +13,7 @@ test.beforeEach(async ({ request, page }) => {
 
 test("proof of delivery opens with the name to type and the confirmation unticked, and sign is grey", async ({ page }) => {
   await takeFirstStopEnRoute(page);
-  await page.getByRole("button", { name: "Proof of delivery" }).click();
+  await page.getByRole("button", { name: "Delivered", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Proof of delivery" })).toBeVisible();
   await expect(page.locator("[data-pod]")).toContainText("Stop 1 · Northline Hardscapes Ltd (demo) · SO-1001");
   await expect(page.getByLabel("Full name of the person receiving")).toHaveValue("Site contact (demo)");
@@ -31,7 +31,7 @@ test("proof of delivery opens with the name to type and the confirmation unticke
 
 test("signing sends the core's POD shape and the stop reads delivered", async ({ page, request }) => {
   await takeFirstStopEnRoute(page);
-  await page.getByRole("button", { name: "Proof of delivery" }).click();
+  await page.getByRole("button", { name: "Delivered", exact: true }).click();
   await page.getByLabel("Full name of the person receiving").fill("  Receiving clerk  ");
   await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "Sign for this delivery" }).click();
@@ -49,17 +49,17 @@ test("signing sends the core's POD shape and the stop reads delivered", async ({
 
 test("a delivered stop offers no further move", async ({ page }) => {
   await takeFirstStopEnRoute(page);
-  await page.getByRole("button", { name: "Proof of delivery" }).click();
+  await page.getByRole("button", { name: "Delivered", exact: true }).click();
   await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "Sign for this delivery" }).click();
   await expect(page.locator("[data-stop-status]")).toHaveText("Delivered");
-  await expect(page.getByRole("button", { name: "Proof of delivery" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Delivered", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Could not deliver" })).toHaveCount(0);
 });
 
 test("Not yet goes back to the stop and sends nothing", async ({ page, request }) => {
   await takeFirstStopEnRoute(page);
-  await page.getByRole("button", { name: "Proof of delivery" }).click();
+  await page.getByRole("button", { name: "Delivered", exact: true }).click();
   await page.getByRole("button", { name: "Not yet" }).click();
   await expect(page.getByRole("heading", { name: "Stop 1" })).toBeVisible();
   expect((await stubLog(request)).filter((c) => c.path.endsWith("/pod"))).toHaveLength(0);
@@ -67,7 +67,7 @@ test("Not yet goes back to the stop and sends nothing", async ({ page, request }
 
 test("a photo goes up as the raw picture and is counted on the proof", async ({ page, request }) => {
   await takeFirstStopEnRoute(page);
-  await page.getByRole("button", { name: "Proof of delivery" }).click();
+  await page.getByRole("button", { name: "Delivered", exact: true }).click();
   await page.locator("input[type=file]").setInputFiles({ name: "drop.png", mimeType: "image/png", buffer: TINY_PNG });
   await expect(page.locator("[data-photo-sent]")).toHaveCount(1);
   await expect(page.locator("[data-photos]")).toContainText("Photo 1 sent");
@@ -83,7 +83,7 @@ test("a photo goes up as the raw picture and is counted on the proof", async ({ 
 test("a photo that fails to send never blocks the signature", async ({ page, request }) => {
   await useScenario(request, "photo-fails");
   await takeFirstStopEnRoute(page);
-  await page.getByRole("button", { name: "Proof of delivery" }).click();
+  await page.getByRole("button", { name: "Delivered", exact: true }).click();
   await page.locator("input[type=file]").setInputFiles({ name: "drop.png", mimeType: "image/png", buffer: TINY_PNG });
   await expect(page.getByRole("alert")).toContainText("The photo did not send");
   await page.getByRole("checkbox").check();
@@ -95,7 +95,7 @@ test("a photo that fails to send never blocks the signature", async ({ page, req
 
 test("a file that is not a picture the core takes is refused on the phone, with nothing sent", async ({ page, request }) => {
   await takeFirstStopEnRoute(page);
-  await page.getByRole("button", { name: "Proof of delivery" }).click();
+  await page.getByRole("button", { name: "Delivered", exact: true }).click();
   await page.locator("input[type=file]").setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("hello") });
   await expect(page.getByRole("alert")).toContainText("A proof photo must be a JPEG, PNG or WebP picture.");
   expect((await stubLog(request)).filter((c) => c.path.endsWith("/photos"))).toHaveLength(0);
@@ -103,7 +103,7 @@ test("a file that is not a picture the core takes is refused on the phone, with 
 
 test("a camera sized photo is shrunk under the core's 4 MB limit before it is sent", async ({ page, request }) => {
   await takeFirstStopEnRoute(page);
-  await page.getByRole("button", { name: "Proof of delivery" }).click();
+  await page.getByRole("button", { name: "Delivered", exact: true }).click();
   // A noisy 1800 px picture saved as PNG is several megabytes: the shape of a camera file.
   await page.evaluate(async () => {
     const canvas = document.createElement("canvas");
@@ -131,7 +131,7 @@ test("a camera sized photo is shrunk under the core's 4 MB limit before it is se
 
 test("a photo added after delivery is folded into the proof", async ({ page, request }) => {
   await takeFirstStopEnRoute(page);
-  await page.getByRole("button", { name: "Proof of delivery" }).click();
+  await page.getByRole("button", { name: "Delivered", exact: true }).click();
   await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "Sign for this delivery" }).click();
   await expect(page.locator("[data-stop-status]")).toHaveText("Delivered");

@@ -66,7 +66,7 @@ export function driverActions(status: string): StopAction[] {
   for (const next of stopNextStates(status)) {
     if (next === "LOADED") out.push({ action: "LOADED", label: "Mark loaded" });
     else if (next === "EN_ROUTE") out.push({ action: "EN_ROUTE", label: "Mark en route" });
-    else if (next === "DELIVERED") out.push({ action: "POD", label: "Proof of delivery" });
+    else if (next === "DELIVERED") out.push({ action: "POD", label: "Delivered" });
     else if (next === "FAILED") out.push({ action: "FAILED", label: "Could not deliver", destructive: true });
   }
   return out;

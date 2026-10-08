@@ -36,7 +36,7 @@ test("recording it sends the status and the reason, and closes the stop with the
   const moves = (await stubLog(request)).filter((c) => c.path.endsWith("/status") && c.body?.status === "FAILED");
   expect(moves).toHaveLength(1);
   expect(moves[0].body).toEqual({ status: "FAILED", reason: "Nobody on site" });
-  await expect(page.getByRole("button", { name: "Proof of delivery" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Delivered", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Could not deliver" })).toHaveCount(0);
   await page.getByRole("button", { name: "Back to my run" }).click();
   await expect(page.locator("[data-progress]")).toHaveText("2 stops left · 0 delivered · 1 could not be delivered");
