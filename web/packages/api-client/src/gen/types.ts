@@ -4156,6 +4156,7 @@ export type PosOwingOrder = {
 };
 export type PosOwingOrderList = {
   items: PosOwingOrder[];
+  truncated: boolean;
 };
 export type PosPayBalanceTakeInput = {
   order_id: string;

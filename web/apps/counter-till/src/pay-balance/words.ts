@@ -121,6 +121,14 @@ function readPayments(raw: unknown): OwingPayment[] | null {
 }
 
 /** The find answer, row by row: a row that is not a readable order is dropped, never half shown. */
+/** The line under a find a bound stopped: more orders match than the answer holds. */
+export const MORE_ORDERS_WORDS = "More orders match: search by order number.";
+
+/** Whether the server says the find was cut short (strictly true, never guessed from the count). */
+export function readFindTruncated(raw: unknown): boolean {
+  return isRecord(raw) && raw["truncated"] === true;
+}
+
 export function readOwingOrders(raw: unknown): OwingOrder[] {
   if (!isRecord(raw) || !Array.isArray(raw["items"])) return [];
   const out: OwingOrder[] = [];

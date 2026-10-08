@@ -18,11 +18,11 @@ import (
 
 // -- the fake store's Pay balance state --------------------------------------
 
-func (f *fakeStore) FindOwingOrders(_ context.Context, term string, branchIDs []string, limit int) ([]OwingOrder, error) {
+func (f *fakeStore) FindOwingOrders(_ context.Context, term string, branchIDs []string, limit int) ([]OwingOrder, bool, error) {
 	f.payFindTerm = term
 	f.payFindBranches = branchIDs
 	f.payFindLimit = limit
-	return f.owingOrders, nil
+	return f.owingOrders, f.owingTruncated, nil
 }
 
 func (f *fakeStore) ReadOwingOrder(_ context.Context, orderID string) (payBalanceOrderFacts, bool, error) {
@@ -233,7 +233,7 @@ func TestPayBalanceFind_AnswersRowsWithTheHoldWords(t *testing.T) {
 		Fulfilment: "WILL_CALL", OrderTotalCents: 11300, PaidCents: 2000, StillOwedCents: 9300,
 		HeldFromPicking: true, Payments: []OwingPayment{{PaymentID: "pay-1", Method: TenderCash, AmountCents: 2000}},
 	}}
-	out, err := h.svc.PayBalanceFind(context.Background(), " A customer ")
+	out, _, err := h.svc.PayBalanceFind(context.Background(), " A customer ")
 	if err != nil {
 		t.Fatalf("find: %v", err)
 	}
@@ -247,7 +247,7 @@ func TestPayBalanceFind_AnswersRowsWithTheHoldWords(t *testing.T) {
 		t.Fatalf("a global caller must not filter branches: %v", h.store.payFindBranches)
 	}
 	// An empty term is a bad request, not a whole ledger.
-	if _, err := h.svc.PayBalanceFind(context.Background(), "  "); err == nil {
+	if _, _, err := h.svc.PayBalanceFind(context.Background(), "  "); err == nil {
 		t.Fatalf("an empty term must be refused")
 	}
 }
@@ -525,7 +525,7 @@ func TestPayBalanceFind_PastPickingOwedReadsBalanceDue(t *testing.T) {
 			Fulfilment: "WILL_CALL", OrderTotalCents: 11300, PaidCents: 2000, StillOwedCents: 9300,
 			HeldFromPicking: true, pastPicking: false},
 	}
-	out, err := h.svc.PayBalanceFind(context.Background(), "A customer")
+	out, _, err := h.svc.PayBalanceFind(context.Background(), "A customer")
 	if err != nil {
 		t.Fatalf("find: %v", err)
 	}
@@ -541,5 +541,20 @@ func TestPayBalanceFind_PastPickingOwedReadsBalanceDue(t *testing.T) {
 	}
 	if byOrder["ord-waiting"] != pickHoldSentence {
 		t.Fatalf("the waiting order's words: %q", byOrder["ord-waiting"])
+	}
+}
+
+// The store's truncated flag reaches the caller (item 9 F review N5): a find a
+// bound stopped says so, and a whole one does not.
+func TestPayBalanceFind_CarriesTheTruncatedFlag(t *testing.T) {
+	h := newHarness()
+	h.store.owingTruncated = true
+	_, truncated, err := h.svc.PayBalanceFind(context.Background(), "A customer")
+	if err != nil || !truncated {
+		t.Fatalf("a stopped find must say more match: truncated=%v err=%v", truncated, err)
+	}
+	h.store.owingTruncated = false
+	if _, truncated, err = h.svc.PayBalanceFind(context.Background(), "A customer"); err != nil || truncated {
+		t.Fatalf("a whole find must not: truncated=%v err=%v", truncated, err)
 	}
 }

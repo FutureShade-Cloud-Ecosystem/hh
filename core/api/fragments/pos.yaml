@@ -2277,11 +2277,18 @@ components:
     PosOwingOrderList:
       type: object
       description: The Pay balance find answer, newest first
-      required: [items]
+      required: [items, truncated]
       properties:
         items:
           type: array
           items: { $ref: "#/components/schemas/PosOwingOrder" }
+        truncated:
+          type: boolean
+          description: >-
+            True when a bound stopped the find with more orders possibly
+            matching (more owing orders than the answer holds, or a term that
+            reaches too many customers); the till then says "More orders
+            match: search by order number." False when the answer is whole.
     PosPayBalanceTakeInput:
       type: object
       description: >-

@@ -47,8 +47,21 @@ func testOrderRow(o order.PayBalanceOrder) PayBalanceOrderRow {
 	}
 }
 
-func (a testPayBalanceSources) PayBalanceOrderCandidates(ctx context.Context, tx pgx.Tx, like string, customerIDs, branchIDs []string, limit, offset int) ([]PayBalanceOrderRow, error) {
-	rows, err := a.orders.PayBalanceOrderCandidates(ctx, tx, like, customerIDs, branchIDs, limit, offset)
+func (a testPayBalanceSources) PayBalanceCustomerInvoiced(ctx context.Context, tx pgx.Tx, customerIDs []string, limit int) ([]PayBalanceInvoicedOrder, bool, error) {
+	rows, truncated, err := a.billing.CustomerOrderInvoiceFigures(ctx, tx, customerIDs, limit)
+	out := make([]PayBalanceInvoicedOrder, 0, len(rows))
+	for _, f := range rows {
+		out = append(out, PayBalanceInvoicedOrder{OrderID: f.OrderID, OpenCents: f.OpenCents, InvoicedCents: f.InvoicedCents})
+	}
+	return out, truncated, err
+}
+
+func (a testPayBalanceSources) PayBalanceOrderCandidates(ctx context.Context, tx pgx.Tx, like string, customerIDs, branchIDs []string, invoiced []PayBalanceInvoicedOrder, limit, offset int) ([]PayBalanceOrderRow, error) {
+	figures := make([]order.PayBalanceInvoiced, 0, len(invoiced))
+	for _, f := range invoiced {
+		figures = append(figures, order.PayBalanceInvoiced{OrderID: f.OrderID, OpenCents: f.OpenCents, InvoicedCents: f.InvoicedCents})
+	}
+	rows, err := a.orders.PayBalanceOrderCandidates(ctx, tx, like, customerIDs, branchIDs, figures, limit, offset)
 	out := make([]PayBalanceOrderRow, 0, len(rows))
 	for _, o := range rows {
 		out = append(out, testOrderRow(o))

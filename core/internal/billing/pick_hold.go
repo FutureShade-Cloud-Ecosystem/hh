@@ -76,9 +76,10 @@ func (r *Repository) PickHoldForOrder(ctx context.Context, orderID string) (held
 // PickHoldForOrderTx is the same read on the caller's transaction: the
 // guarded writers that already hold one (the pickups sync confirm inside the
 // transaction that seals the pickup, the order module's status writers under
-// their row locks) read the hold there, so a payment landing beside them
-// cannot slip between the read and the move, and no second pool connection
-// is taken while the transaction holds its own.
+// their row locks) read the hold there, so a payment route that locks the
+// order row is ordered against the move (an NSF does not take the order row,
+// so against it the window is narrowed, not closed), and no second pool
+// connection is taken while the transaction holds its own.
 func (r *Repository) PickHoldForOrderTx(ctx context.Context, tx pgx.Tx, orderID string) (held bool, owedCents, paidCents, totalCents int64, err error) {
 	return r.pickHoldForOrder(ctx, tx, orderID)
 }

@@ -31,7 +31,7 @@ type shipStore interface {
 	ShipmentPlan(ctx context.Context, orderID string) (ShipmentPlan, error)
 	ShipmentGroup(ctx context.Context, groupID string) (ShipmentGroup, string, error)
 	ReplaceShipmentPlan(ctx context.Context, orderID, actorID string, groups []ShipmentGroupInput) error
-	TransitionShipmentGroup(ctx context.Context, groupID, target string, allowedFrom []string) (ShipmentGroup, error)
+	TransitionShipmentGroup(ctx context.Context, groupID, target string, allowedFrom []string, precheck func(ctx context.Context) error) (ShipmentGroup, error)
 	SetInvoicePolicy(ctx context.Context, orderID, policy string) error
 	OrderHasInvoice(ctx context.Context, orderID string) (bool, error)
 }
@@ -305,11 +305,34 @@ func (r *Repository) ReplaceShipmentPlan(ctx context.Context, orderID, actorID s
 // service has ALREADY fenced the caller's branch reach on the ShipmentGroup load (HH-182); the
 // status predicate stays in the UPDATE as the backstop against a concurrent move between that load
 // and this write, which is the one window a service-side ladder check can never close.
-func (r *Repository) TransitionShipmentGroup(ctx context.Context, groupID, target string, allowedFrom []string) (ShipmentGroup, error) {
+//
+// A non-nil precheck (the pay before release hold, item 9 F review N4) runs INSIDE the write's own
+// transaction, behind the legality check and under the order's row lock, the order ladder's own
+// shape (UpdateStatusFromChecked): a refusal rolls the move back. Every money route that locks the
+// order row (the Pay balance take does) is then ordered against the move; a reversal that does not
+// take the order row (an NSF) narrows the window to the statement gap and does not close it.
+func (r *Repository) TransitionShipmentGroup(ctx context.Context, groupID, target string, allowedFrom []string, precheck func(ctx context.Context) error) (ShipmentGroup, error) {
 	if r.pool == nil {
 		return ShipmentGroup{}, errNoDB
 	}
-	tag, err := r.pool.Exec(ctx, `
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return ShipmentGroup{}, fmt.Errorf("transition shipment group: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if precheck != nil {
+		// The order row first, as every other guarded status write takes it.
+		var locked bool
+		if err := tx.QueryRow(ctx, `
+			SELECT true FROM orders o
+			 WHERE o.id = (SELECT order_id FROM shipment_groups WHERE id = $1) FOR UPDATE`, groupID).Scan(&locked); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ShipmentGroup{}, ErrGroupNotFound
+			}
+			return ShipmentGroup{}, fmt.Errorf("transition shipment group: lock order: %w", err)
+		}
+	}
+	tag, err := tx.Exec(ctx, `
 		UPDATE shipment_groups
 		   SET status = $2,
 		       dispatched_at = CASE WHEN $2 = 'DISPATCHED' THEN now() ELSE dispatched_at END,
@@ -321,7 +344,7 @@ func (r *Repository) TransitionShipmentGroup(ctx context.Context, groupID, targe
 	}
 	if tag.RowsAffected() == 0 {
 		var exists bool
-		if err := r.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM shipment_groups WHERE id=$1)`, groupID).
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM shipment_groups WHERE id=$1)`, groupID).
 			Scan(&exists); err != nil {
 			return ShipmentGroup{}, err
 		}
@@ -329,6 +352,14 @@ func (r *Repository) TransitionShipmentGroup(ctx context.Context, groupID, targe
 			return ShipmentGroup{}, ErrGroupNotFound
 		}
 		return ShipmentGroup{}, ErrGroupIllegalTransition
+	}
+	if precheck != nil {
+		if err := precheck(withPrecheckTx(ctx, tx)); err != nil {
+			return ShipmentGroup{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ShipmentGroup{}, fmt.Errorf("transition shipment group: commit: %w", err)
 	}
 	g, _, err := r.ShipmentGroup(ctx, groupID)
 	if err != nil {

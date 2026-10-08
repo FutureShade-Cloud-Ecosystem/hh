@@ -219,6 +219,14 @@ var groupTransitions = map[string]map[string]bool{
 	GroupCancelled:  {},
 }
 
+// holdGuardedGroupTarget names the group moves the pay before release hold
+// guards: the rungs that start, finish and send out a pick (PICKING, READY,
+// DISPATCHED). COMPLETE records a delivery that already happened and CANCELLED
+// takes goods off the ladder; neither releases anything.
+func holdGuardedGroupTarget(target string) bool {
+	return target == GroupPicking || target == GroupReady || target == GroupDispatched
+}
+
 // groupLegalActions renders the ladder for the surface, deterministically ordered.
 func groupLegalActions(status string) []string {
 	order := []string{GroupPicking, GroupReady, GroupDispatched, GroupComplete, GroupCancelled}
@@ -423,14 +431,18 @@ func (s *Service) TransitionGroup(ctx context.Context, groupID, target string) (
 	}
 	// Item 9.3: a group has its own ladder into PICKING and so READY, and an
 	// order held from picking under a pay before release shape cannot start
-	// down it (the same guard the order's own statuses and the yard picks
-	// carry; the group's order id comes from the load above).
-	if target == GroupPicking {
-		if err := s.refuseHeldFromPicking(ctx, g.OrderID); err != nil {
-			return ShipmentGroup{}, err
-		}
+	// down it. Item 9 F review N4: the guard now covers every goods releasing
+	// rung (PICKING, READY, DISPATCHED, the order ladder's own reach) and the
+	// hold is read INSIDE the group write's transaction, under the order row
+	// lock, so a payment route that locks the order row is ordered against the
+	// move; a pool read taken before the write left the window open. The
+	// group's order id comes from the load above.
+	var pre func(context.Context) error
+	if holdGuardedGroupTarget(target) {
+		orderID := g.OrderID
+		pre = func(ctx context.Context) error { return s.refuseHeldFromPicking(ctx, orderID) }
 	}
-	g, err = ss.TransitionShipmentGroup(ctx, groupID, target, allowed)
+	g, err = ss.TransitionShipmentGroup(ctx, groupID, target, allowed, pre)
 	if err != nil {
 		return ShipmentGroup{}, err
 	}

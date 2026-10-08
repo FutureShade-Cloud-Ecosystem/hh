@@ -42,6 +42,26 @@ test("Pay balance is its own surface beside Returns, at #/pay-balance", async ({
   await expect(page.getByTestId("pay-balance")).toHaveCount(0);
 });
 
+test("a find the server cut short says more orders match and to search by order number", async ({ page }) => {
+  await signIn(page);
+  await openDrawer(page);
+  await page.getByTestId("till-pay-balance-entry").click();
+  await page.route("**/api/v1/pos/pay-balance?*", async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const real = await route.fetch();
+    const body = await real.json();
+    return route.fulfill({ response: real, json: { ...body, truncated: true } });
+  });
+  await page.getByTestId("pay-balance-term").fill("DEMO-TRT");
+  await page.getByTestId("pay-balance-find").click();
+  await expect(page.getByTestId("pay-balance-more")).toHaveText("More orders match: search by order number.");
+  // A whole find carries no such line.
+  await page.unroute("**/api/v1/pos/pay-balance?*");
+  await page.getByTestId("pay-balance-term").fill("DEMO-TRT");
+  await page.getByTestId("pay-balance-find").click();
+  await expect(page.getByTestId("pay-balance-more")).toHaveCount(0);
+});
+
 test("find the order, see the money, take the whole rest by cash, and read Paid in full", async ({ page }) => {
   await signIn(page);
   await openDrawer(page);

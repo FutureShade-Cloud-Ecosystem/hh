@@ -87,6 +87,7 @@ type fakeStore struct {
 	returnRequests map[string]ReturnRequest
 	// -- item 9.4, Pay balance state (pay_balance_test.go's methods) --
 	owingOrders     []OwingOrder                    // canned find answer
+	owingTruncated  bool                            // canned find truncated flag
 	payFindTerm     string                          // the term the find passed
 	payFindBranches []string                        // the branch reach the find passed
 	payFindLimit    int                             // the limit the find passed

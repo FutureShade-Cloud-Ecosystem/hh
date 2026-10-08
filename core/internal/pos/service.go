@@ -240,7 +240,7 @@ type posStore interface {
 	// FindOwingOrders answers the orders that owe money and match the term
 	// (order number, customer name, phone), fenced to the branch reach (nil
 	// ids reach every branch). Read-only.
-	FindOwingOrders(ctx context.Context, term string, branchIDs []string, limit int) ([]OwingOrder, error)
+	FindOwingOrders(ctx context.Context, term string, branchIDs []string, limit int) ([]OwingOrder, bool, error)
 	// ReadOwingOrder is the advisory pool read of one order this door might
 	// pay: its facts and its whole balance. found false is the 404.
 	ReadOwingOrder(ctx context.Context, orderID string) (payBalanceOrderFacts, bool, error)

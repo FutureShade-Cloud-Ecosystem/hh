@@ -147,9 +147,19 @@ func (f *fakeShipStore) ReplaceShipmentPlan(context.Context, string, string, []S
 	return nil
 }
 
-func (f *fakeShipStore) TransitionShipmentGroup(_ context.Context, _, target string, _ []string) (ShipmentGroup, error) {
-	f.movedTo = target
+// TransitionShipmentGroup records the move the way the real write does: the
+// precheck runs inside the write's transaction (fakeTx), behind the move, and a
+// refusal rolls the move back.
+func (f *fakeShipStore) TransitionShipmentGroup(ctx context.Context, _, target string, _ []string, precheck func(context.Context) error) (ShipmentGroup, error) {
+	before := f.group.Status
 	f.group.Status = target
+	if precheck != nil {
+		if err := precheck(withPrecheckTx(ctx, fakeTx{})); err != nil {
+			f.group.Status = before
+			return ShipmentGroup{}, err
+		}
+	}
+	f.movedTo = target
 	return f.group, nil
 }
 
@@ -330,5 +340,29 @@ func TestTransitionManual_HeldOrderOffTheLadderStillAnswersTheHold(t *testing.T)
 		WithPickHoldReader(fakePickHold{facts: PickHoldFacts{}})
 	if _, err := clear.TransitionManual(pickHoldCtx(), "ord-1", ActionPicking, ""); !errors.Is(err, ErrIllegalTransition) {
 		t.Fatalf("a clear order off the ladder: want ErrIllegalTransition, got %v", err)
+	}
+}
+
+// Item 9 F review N6: the hold sentence speaks of picking, so it answers an
+// off the ladder move only for an order not yet past picking. A delivered
+// order that owes again keeps the ladder's answer.
+func TestTransitionManual_PastPickingOrderKeepsTheLaddersAnswer(t *testing.T) {
+	for _, status := range []string{"PICKING", "READY", "PARTIALLY_FULFILLED", "FULFILLED", "INVOICED"} {
+		store := newFakeStore(mkDetail("ord-1", "cust-1", status))
+		svc := NewService(store).withCaller(testCallerFrom).WithPickHoldReader(fakePickHold{facts: heldFacts(11300)})
+		_, err := svc.TransitionManual(pickHoldCtx(), "ord-1", ActionPicking, "")
+		if errors.Is(err, ErrHeldFromPicking) {
+			t.Fatalf("a %s order that owes again was answered the picking sentence", status)
+		}
+		if err == nil {
+			t.Fatalf("a %s order moved to PICKING", status)
+		}
+	}
+	// The same through the event door, whose write is where the fallback sits:
+	// a delivered order asked to go back to READY answers the ladder.
+	store := newFakeStore(mkDetail("ord-1", "cust-1", "FULFILLED"))
+	svc := NewService(store).withCaller(testCallerFrom).WithPickHoldReader(fakePickHold{facts: heldFacts(11300)})
+	if err := svc.AdvanceFromEvent(pickHoldCtx(), "ord-1", "READY", "evt-n6"); errors.Is(err, ErrHeldFromPicking) || !errors.Is(err, ErrIllegalTransition) {
+		t.Fatalf("a delivered order that owes again, asked to go back to READY: want the ladder's answer, got %v", err)
 	}
 }
