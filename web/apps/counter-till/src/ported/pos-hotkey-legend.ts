@@ -87,8 +87,13 @@ export class HosPosHotkeyLegend extends LitElement {
       white-space: nowrap;
     }
  /* An unavailable key is dimmed, never removed: the legend's contents must not move. */
+    /* Round 15: dimmed is the design system's disabled pair (fill, ink, line), a token swap and never
+       a fade of the live colours: the faded chips read 2.37:1 in brand and 1.88:1 in light. */
     .k.off {
-      opacity: 0.42;
+      padding: 1px 6px 1px 1px;
+      border-radius: var(--hos-radius-control);
+      background: var(--hh-disabled-fill);
+      color: var(--hh-disabled-ink);
     }
     .cap {
       display: inline-grid;
@@ -106,7 +111,8 @@ export class HosPosHotkeyLegend extends LitElement {
       color: var(--hos-text);
     }
     .k.off .cap {
-      color: var(--hos-text-dim);
+      color: var(--hh-disabled-ink);
+      border-color: var(--hh-disabled-line);
     }
     /* A key the browser also owns wears a dotted cap: the dealer chose it, the escape rule (any
        extra modifier falls through) still applies, and the mark is how a counter person knows. */
