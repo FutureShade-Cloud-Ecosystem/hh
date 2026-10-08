@@ -22,8 +22,8 @@ test("the driver's reads carry no money field and no money figure", async ({ pag
 test("the bundle the image serves under /drive/ carries no money word", async ({ page }) => {
   const index = await page.request.get("/drive/");
   expect(index.ok()).toBe(true);
-  const html = await index.text();
-  const assets = Array.from(html.matchAll(/(?:src|href)="(\/drive\/assets\/[^"]+\.(?:js|css))"/g)).map((m) => m[1] as string);
+  const pageText = await index.text();
+  const assets = Array.from(pageText.matchAll(/(?:src|href)="(\/drive\/assets\/[^"]+\.(?:js|css))"/g)).map((m) => m[1] as string);
   expect(assets.length, "the page names its script").toBeGreaterThan(0);
   const hits = [];
   for (const asset of assets) {
