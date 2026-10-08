@@ -30,3 +30,36 @@ export async function resetStub(request: APIRequestContext): Promise<void> {
   const response = await request.post("/_stub/reset");
   if (!response.ok()) throw new Error(`stub reset failed: ${response.status()}`);
 }
+
+/** Switches the stub to a named scenario (empty, not-driver, run-planned, photo-fails). */
+export async function useScenario(request: APIRequestContext, name: string): Promise<void> {
+  const response = await request.post("/_stub/scenario", { data: { name } });
+  if (!response.ok()) throw new Error(`stub scenario failed: ${response.status()}`);
+}
+
+export interface LoggedCall {
+  method: string;
+  path: string;
+  query: Record<string, string>;
+  bearer: boolean;
+  org: string;
+  contentType: string;
+  bytes?: number;
+  body: Record<string, unknown> | null;
+}
+
+/** The calls the stub saw on the dispatch routes, in order. */
+export async function stubLog(request: APIRequestContext): Promise<LoggedCall[]> {
+  const response = await request.get("/_stub/log");
+  return (await response.json()) as LoggedCall[];
+}
+
+/** The dealer's day the way the core names it for the demo dealer: the house zone. */
+export function houseDay(at: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Toronto",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(at);
+}

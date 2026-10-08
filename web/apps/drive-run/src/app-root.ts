@@ -12,7 +12,7 @@
 // refuses every "." and "@" binding and every bound value outside the data-
 // and aria- attributes in a dependent package. Its two buttons ride data-action names
 // and the host's click listener below acts on them.
-import { html, type TemplateResult } from "lit";
+import { html, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
 // hos-app-header: the shared chrome element (decision log row 938).
@@ -23,7 +23,11 @@ import { AuthController, authHeaderProvider, SessionStore, type AccountSurface }
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { entryStyles, renderEntry, type EntryView } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
+import { HOUSE_ZONE, houseDayInZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
+import { DriveApi, type DriverRun, type DriverStop } from "./drive-api.js";
+import { roadsideError } from "./drive-logic.js";
 import { driveStyles } from "./styles.js";
+import { renderRunSheet, renderStopDetail } from "./views.js";
 
 const DEMO_ORG = "hh-demo";
 
@@ -52,6 +56,9 @@ export class DriveRunApp extends HHElement {
     headers: authHeaderProvider({ callerClass: "staff", sessions: this.#sessions, activeOrg: () => DEMO_ORG }),
   });
 
+  // The driver's calls, over the staff client.
+  readonly #drive = new DriveApi(this.#staffClient);
+
   readonly #feedback = new HHFeedback();
 
   readonly #feedbackSender: FeedbackSender = async (request) => {
@@ -68,6 +75,15 @@ export class DriveRunApp extends HHElement {
     }
     return { ok: false, error: answer.error };
   };
+
+  // The run sheet's state. The runs are the server's answer for the dealer's
+  // day; the view is which screen shows (the run sheet or one stop).
+  #phase: "loading" | "ready" | "error" = "loading";
+  #runs: DriverRun[] = [];
+  #error = "";
+  #notice = "";
+  #busy = false;
+  #view: { kind: "run" } | { kind: "stop"; id: string } = { kind: "run" };
 
   // The entry view state, compatible with renderEntry's EntryView.
   #entryView: EntryView = { flows: { kind: "loading" }, busy: false, message: null };
@@ -102,6 +118,26 @@ export class DriveRunApp extends HHElement {
       this.requestUpdate();
       return;
     }
+    if (action === "open-stop") {
+      this.#openStop(control?.getAttribute("data-stop-id") ?? "");
+      return;
+    }
+    if (action === "back") {
+      this.#view = { kind: "run" };
+      this.#error = "";
+      this.#notice = "";
+      this.requestUpdate();
+      return;
+    }
+    if (action === "reload") {
+      void this.#loadRuns();
+      return;
+    }
+    if (action === "advance") {
+      const to = control?.getAttribute("data-status");
+      if (to === "LOADED" || to === "EN_ROUTE") void this.#advance(to);
+      return;
+    }
     const flow = control?.getAttribute("data-flow");
     if (action === "choose" && typeof flow === "string" && flow !== "") {
       void this.#chooseFlow(flow);
@@ -125,6 +161,7 @@ export class DriveRunApp extends HHElement {
       if (adopted) {
         this.#roleLabel = handoff.session.roleName;
         clearFrontDoorHandoff();
+        void this.#loadRuns();
       }
       this.requestUpdate();
     } else {
@@ -147,6 +184,13 @@ export class DriveRunApp extends HHElement {
       header.roleLabel = this.#roleLabel;
       header.theme = this.#theme;
     }
+    // A telephone address cannot ride a template binding (the position gate
+    // admits only http, https and relative addresses), so the call links take
+    // their href here, from a value that is digits and phone punctuation only.
+    for (const link of Array.from(this.renderRoot.querySelectorAll("a[data-tel]"))) {
+      const number = link.getAttribute("data-tel") ?? "";
+      if (/^[0-9+().\-\sx]+$/.test(number)) link.setAttribute("href", `tel:${number.replace(/\s+/g, "")}`);
+    }
   }
 
   private async loadFlows(): Promise<void> {
@@ -161,6 +205,68 @@ export class DriveRunApp extends HHElement {
     this.requestUpdate();
   }
 
+  // The dealer's own day names the run to ask for, never the browser's UTC day.
+  async #loadRuns(): Promise<void> {
+    this.#phase = "loading";
+    this.requestUpdate();
+    const result = await this.#drive.myRuns(houseDayInZone(HOUSE_ZONE));
+    if (result.ok) {
+      this.#runs = result.value;
+      this.#phase = "ready";
+      this.#error = "";
+    } else {
+      this.#runs = [];
+      this.#phase = "error";
+      this.#error = roadsideError(result.error, result.status, "Your run did not load. Check your signal and try again.", {
+        notFound: "You are not set up as a driver. Ask your branch manager to link your login.",
+      });
+    }
+    this.requestUpdate();
+  }
+
+  #openStop(id: string): void {
+    if (id === "") return;
+    this.#view = { kind: "stop", id };
+    this.#error = "";
+    this.#notice = "";
+    this.requestUpdate();
+  }
+
+  #findStop(id: string): { run: DriverRun; stop: DriverStop } | null {
+    for (const run of this.#runs) {
+      const stop = run.stops.find((candidate) => candidate.id === id);
+      if (stop !== undefined) return { run, stop };
+    }
+    return null;
+  }
+
+  // A plain move. The server decides what is legal; a refusal is shown in its
+  // own words and the stop stays where it was.
+  async #advance(to: "LOADED" | "EN_ROUTE"): Promise<void> {
+    if (this.#view.kind !== "stop" || this.#busy) return;
+    const stopId = this.#view.id;
+    this.#busy = true;
+    this.#error = "";
+    this.#notice = "";
+    this.requestUpdate();
+    const result = await this.#drive.advance(stopId, to);
+    if (result.ok) {
+      await this.#refreshRuns();
+    } else {
+      this.#error = roadsideError(result.error, result.status, "That did not go through. Check your signal and try again.");
+      await this.#refreshRuns();
+    }
+    this.#busy = false;
+    this.requestUpdate();
+  }
+
+  // Re-read the day without blanking the screen: the server's order and
+  // statuses win, and a failed re-read keeps what is on the glass.
+  async #refreshRuns(): Promise<void> {
+    const result = await this.#drive.myRuns(houseDayInZone(HOUSE_ZONE));
+    if (result.ok) this.#runs = result.value;
+  }
+
   async #chooseFlow(flow: string): Promise<void> {
     this.#entryView = { ...this.#entryView, busy: true };
     this.requestUpdate();
@@ -170,6 +276,7 @@ export class DriveRunApp extends HHElement {
       if (adopted) {
         this.#roleLabel = result.value.identity.roleName;
         this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
+        void this.#loadRuns();
       } else {
         this.#entryView = { ...this.#entryView, busy: false, message: "Demo sign-in refused: the mint's session was not usable." };
       }
@@ -181,6 +288,11 @@ export class DriveRunApp extends HHElement {
 
   #onSignOut(): void {
     this.#sessions.clear();
+    this.#phase = "loading";
+    this.#runs = [];
+    this.#error = "";
+    this.#notice = "";
+    this.#view = { kind: "run" };
     clearFrontDoorHandoff();
     void this.loadFlows();
   }
@@ -192,12 +304,23 @@ export class DriveRunApp extends HHElement {
     return html`<button slot="theme" type="button" class="btn btn-secondary" data-action="theme">${label}</button>`;
   }
 
+  private renderWork(): TemplateResult {
+    if (this.#view.kind === "stop") {
+      const found = this.#findStop(this.#view.id);
+      if (found !== null) {
+        return renderStopDetail({ ...found, busy: this.#busy, error: this.#error, notice: this.#notice });
+      }
+    }
+    return html`
+      ${renderRunSheet({ phase: this.#phase, runs: this.#runs, error: this.#error, notice: this.#notice })}
+      ${this.#phase === "error" ? html`<button type="button" class="btn btn-secondary big" data-action="reload" data-tap>Try again</button>` : nothing}
+    `;
+  }
+
   private renderSignedIn(): TemplateResult {
     return html`
       <hos-app-header signed-in demo>${this.renderThemeControl()}</hos-app-header>
-      <main>
-        <h1>My run</h1>
-      </main>
+      <main>${this.renderWork()}</main>
     `;
   }
 
