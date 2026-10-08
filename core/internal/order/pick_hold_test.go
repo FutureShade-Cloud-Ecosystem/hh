@@ -147,9 +147,19 @@ func (f *fakeShipStore) ReplaceShipmentPlan(context.Context, string, string, []S
 	return nil
 }
 
-func (f *fakeShipStore) TransitionShipmentGroup(_ context.Context, _, target string, _ []string) (ShipmentGroup, error) {
-	f.movedTo = target
+// TransitionShipmentGroup records the move the way the real write does: the
+// precheck runs inside the write's transaction (fakeTx), behind the move, and a
+// refusal rolls the move back.
+func (f *fakeShipStore) TransitionShipmentGroup(ctx context.Context, _, target string, _ []string, precheck func(context.Context) error) (ShipmentGroup, error) {
+	before := f.group.Status
 	f.group.Status = target
+	if precheck != nil {
+		if err := precheck(withPrecheckTx(ctx, fakeTx{})); err != nil {
+			f.group.Status = before
+			return ShipmentGroup{}, err
+		}
+	}
+	f.movedTo = target
 	return f.group, nil
 }
 

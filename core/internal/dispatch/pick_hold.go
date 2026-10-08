@@ -83,8 +83,9 @@ func refuseHeldFromPickingSync(ctx context.Context, gate PickHoldGate, orderID s
 }
 
 // refuseHeldFromPickingSyncTx is the confirm's guard: the same read on the
-// transaction the confirm runs in, so a payment landing beside it cannot slip
-// between the read and the seal.
+// transaction the confirm runs in, which narrows the window between the read
+// and the seal (it does not close it against a reversal that takes no lock the
+// confirm waits on).
 func refuseHeldFromPickingSyncTx(ctx context.Context, gate PickHoldGate, tx pgx.Tx, orderID string) error {
 	if gate == nil {
 		return nil

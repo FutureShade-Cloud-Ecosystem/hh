@@ -721,8 +721,11 @@ func (s *Service) setStatusGuarded(ctx context.Context, actor, orderID, newStatu
 	// INVOICED past the guard. Item 9 Opus P3-2: the read rides the guarded
 	// write's own transaction as its precheck (under the order row lock, the
 	// cancel money predicate's own path), not a pool read taken before the
-	// write, so a payment landing between the read and the move cannot slip
-	// one through. An existing precheck (the cancel predicate) stays in front.
+	// write. That narrows the window rather than closing it: a payment route
+	// that locks the order row (the Pay balance take does) is ordered against
+	// the move, but a reversal that does not take the order row (an NSF) can
+	// still land in the statement gap. An existing precheck (the cancel
+	// predicate) stays in front.
 	pre := precheck
 	if holdGuardedTarget(newStatus) {
 		hold := func(ctx context.Context) error { return s.refuseHeldFromPicking(ctx, orderID) }
