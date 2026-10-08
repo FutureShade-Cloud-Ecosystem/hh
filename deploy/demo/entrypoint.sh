@@ -8,7 +8,10 @@
 #   2. classify the database's shape (empty, building, built, foreign)
 #   3. core demo-check (the G0 guard) before anything writes
 #   4. the image's build marker on a fresh database, then core migrate,
-#      core demoseed -apply, core demo-populate
+#      core demoseed -apply, core demo-populate, and core demoseed -apply
+#      again: the quote world's owners are the two demo role logins the
+#      populate plants, so the first pass through the seed can carry no
+#      quote, and the seed is idempotent
 #   5. core serve on a loopback port, Caddy in front on the public port
 #
 # Both database variables are set here from the one variable the operator
@@ -226,6 +229,14 @@ esac
 # and nothing but this script ever writes it. migrate applies only what it
 # has not, the seed writes only its missing rows in one transaction, the
 # populate completes the world and writes its own marker row.
+#
+# The seed applies once more after the populate. The quote world is
+# conditional on the two demo role logins (its owners must read as Inside
+# Sales and Sales manager through the platform link and the staff role
+# grant, which only the populate's accounts carry), and the populate plants
+# those logins after the seed's first pass, so one boot seeds the quotes
+# only if the boot applies the seed again once they exist. Both passes are
+# idempotent: on a built database each writes nothing.
 # --------------------------------------------------------------------------
 if [ "$STATE" = empty ]; then
 	psql "$DATABASE_URL" -qc "CREATE TABLE IF NOT EXISTS demo_build_marker (started timestamptz NOT NULL DEFAULT now())"
@@ -235,6 +246,7 @@ fi
 core migrate
 core demoseed -apply
 core demo-populate
+core demoseed -apply
 
 if [ "$STATE" = building ]; then
 	# The resume path's fail-closed gate: now that the world is whole, the
