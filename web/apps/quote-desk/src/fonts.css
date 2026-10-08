@@ -1,0 +1,39 @@
+/* Self-hosted webfont for the desk, the ERP's own convention
+   (erp app/src/styles/fonts.css) carried over: vendored woff2 under public/
+   fonts/, served at the site root, so the desk renders the same
+   face for every user and never touches a third-party font host at
+   runtime. Without these declarations --hh-font-ui names Outfit but nothing
+   supplies it, and the desk silently falls back to whatever the user's
+   machine keeps. Token values are unchanged; this only makes the already-named
+   face available. Outfit is SIL OFL 1.1 (the licence text is public/fonts/OFL.txt). JetBrains Mono is not carried: the mono
+   role keeps the sheet's own fallback stack here. */
+
+/* Outfit (UI), the weights the desk renders: 400 / 500 / 600 / 700 */
+@font-face {
+  font-family: "Outfit";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/outfit-latin-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Outfit";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/outfit-latin-500-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Outfit";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/outfit-latin-600-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Outfit";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/outfit-latin-700-normal.woff2") format("woff2");
+}

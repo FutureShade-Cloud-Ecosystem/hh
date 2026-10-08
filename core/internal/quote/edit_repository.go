@@ -681,6 +681,25 @@ func (r *Repository) StaffDetail(ctx context.Context, quoteID string) (StaffQuot
 	if err := arows.Err(); err != nil {
 		return v, fmt.Errorf("iterate quote acceptances: %w", err)
 	}
+	arows.Close()
+
+	// The staff decline, when one is on record: the decision's audit row is its only home (a quote
+	// closed as lost has no acceptance and no row of its own for why). The newest one wins.
+	if v.Status == "LOST" {
+		var d QuoteDeclineRecord
+		err := tx.QueryRow(ctx, `
+			SELECT COALESCE(changes->>'decline_reason', ''), COALESCE(changes->>'channel', ''),
+			       COALESCE(changes->>'note', ''), created_at
+			  FROM audit_log
+			 WHERE entity_type = 'quote' AND entity_id = $1 AND action = 'QUOTE_REJECTED'
+			   AND changes->>'purpose' = 'STAFF_QUOTE_DECISION'
+			 ORDER BY created_at DESC LIMIT 1`, quoteID).Scan(&d.ReasonCode, &d.Channel, &d.Note, &d.DeclinedAt)
+		if err == nil {
+			v.Declined = &d
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return v, fmt.Errorf("read quote decline: %w", err)
+		}
+	}
 	return v, nil
 }
 

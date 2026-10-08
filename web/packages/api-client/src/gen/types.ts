@@ -4943,6 +4943,57 @@ export type PricingAuditLogRow = {
   ref_entity_id?: string;
   bypass_reason?: "PRODUCT_POLICY_DISABLED" | "CATEGORY_POLICY_DISABLED" | "APPROVED_OVERRIDE" | "MANAGER_SCOPE_OVERRIDE";
 };
+export type PricingFloorPreviewRequest = {
+  kind: "rule" | "override" | "category_policy" | "quantity_break";
+  id?: string;
+  branch_id?: string;
+  rule?: PricingRuleWrite;
+  customer_id?: string;
+  override?: PricingOverrideWrite;
+  category_id?: string;
+  policy?: PricingCategoryPolicyWrite;
+  quantity_break?: PricingQuantityBreakWrite;
+};
+export type PricingFloorPreviewItem = {
+  product_id: string;
+  sku: string;
+  name: string;
+  category_id?: string;
+  customer_type?: string;
+  branch_id?: string;
+  branch_code?: string;
+  branch_name?: string;
+  final_cents: number;
+  margin_bps: number;
+  floor_bps: number;
+  price_uom: string;
+  source: "CUSTOMER_PRODUCT_RULE" | "QUANTITY_BREAK" | "CUSTOMER_CATEGORY_RULE" | "CUSTOMER_OVERRIDE" | "TIER_CATEGORY" | "TIER_DEFAULT" | "LIST" | "PROMOTION";
+  previous_final_cents: number;
+  previous_margin_bps: number;
+  already_under_floor: boolean;
+};
+export type PricingFloorPreview = {
+  items: PricingFloorPreviewItem[];
+  evaluated: number;
+  not_graded: number;
+  no_cost: number;
+  truncated: boolean;
+  no_cost_branches?: PricingFloorNoCostBranch[];
+  not_graded_branches?: number;
+};
+export type PricingFloorNoCostBranch = {
+  branch_id: string;
+  branch_code?: string;
+  branch_name?: string;
+  products: number;
+};
+export type PricingFloorConfirmation = {
+  entity_type: "pricing_rule" | "customer_override" | "category_policy" | "quantity_break";
+  entity_id: string;
+  product_ids: string[];
+  ref_entity_type?: "product" | "customer" | "category" | "quote" | "order";
+  ref_entity_id?: string;
+};
 export type PricingLowMarginRequest = {
   lines: PricingResolveRequest[];
 };
@@ -5890,6 +5941,13 @@ export type QuoteView = {
   updated_at: string;
   quantity_notice: string;
   acceptances: QuoteAcceptanceRecord[];
+  declined?: QuoteDeclineRecord;
+};
+export type QuoteDeclineRecord = {
+  reason_code: "price" | "competitor" | "project_cancelled" | "timing" | "no_response" | "other";
+  channel: string;
+  note?: string;
+  declined_at: string;
 };
 export type QuoteAcceptanceRecord = {
   source: "CUSTOMER" | "STAFF_ON_BEHALF";
@@ -6071,6 +6129,11 @@ export type QuoteRelatedDocumentList = {
 export type QuoteAcceptanceSettings = {
   allow_multi_accept: boolean;
   switch_wired: boolean;
+};
+export type QuoteSettingsGrant = {
+  can_read_acceptance: boolean;
+  can_read_scope_rules: boolean;
+  can_edit_policy: boolean;
 };
 export type QuoteAcceptanceSettingsWrite = {
   allow_multi_accept: boolean;

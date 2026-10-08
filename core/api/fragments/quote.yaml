@@ -742,6 +742,31 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/quotes/settings-grant:
+    get:
+      operationId: quoteSettingsGrant
+      tags: [staff-quote]
+      summary: Read whether the signed-in caller holds the settings panel grants
+      description: >-
+        One question the Quote Desk asks before it mounts its settings panels.
+        Each boolean uses the very predicate the refusing route uses, so the
+        answer cannot drift from the refusal. requireStaff is the coarse first
+        line only; the predicates that answer the grant live in the service.
+      x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The three grant booleans
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteSettingsGrant"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   # --- quote work area: policy, terms, margin glance (internal/quote/builder_handler.go) ---
   /api/v1/quotes/policy:
@@ -1697,6 +1722,27 @@ components:
           type: array
           description: The acceptance history, oldest first; empty on a quote nobody has accepted
           items: { $ref: "#/components/schemas/QuoteAcceptanceRecord" }
+        declined:
+          $ref: "#/components/schemas/QuoteDeclineRecord"
+    QuoteDeclineRecord:
+      type: object
+      description: >-
+        Why and how a staff member closed the quote as lost on the customer's
+        behalf, from the decision's audit row. Absent unless a staff decline is
+        on record. The staff quote resource is the canonical dealer_quote
+        (DECISIONS.md D8).
+      required: [reason_code, channel, declined_at]
+      properties:
+        reason_code:
+          type: string
+          enum: [price, competitor, project_cancelled, timing, no_response, other]
+        channel:
+          type: string
+          description: How the customer said no (phone, text, email or in_person)
+        note:
+          type: string
+          description: What the staff member wrote; absent when nothing was written
+        declined_at: { type: string, format: date-time }
     QuoteAcceptanceRecord:
       type: object
       description: >-
@@ -2195,6 +2241,24 @@ components:
         switch_wired:
           type: boolean
           description: Whether the write seam is wired, so the client can render read-only
+    QuoteSettingsGrant:
+      type: object
+      description: >-
+        The answer to one question the Quote Desk asks before it mounts its
+        settings panels: does the signed-in caller hold the grants the three
+        panels need? Each boolean uses the very predicate the refusing route
+        uses, so the answer cannot drift from the refusal.
+      required: [can_read_acceptance, can_read_scope_rules, can_edit_policy]
+      properties:
+        can_read_acceptance:
+          type: boolean
+          description: True when the caller may read the acceptance settings (the Sales manager or the General Manager)
+        can_read_scope_rules:
+          type: boolean
+          description: True when the caller may read the scope rules (a Tier-1 global user)
+        can_edit_policy:
+          type: boolean
+          description: True when the caller may write the quote policy (the Sales manager or the General Manager)
     QuoteAcceptanceSettingsWrite:
       type: object
       description: >-
