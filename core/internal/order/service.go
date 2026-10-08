@@ -762,7 +762,10 @@ func (s *Service) setStatusGuarded(ctx context.Context, actor, orderID, newStatu
 		// behind the legality check, so a held order whose move is also off
 		// the ladder (a converted order not yet confirmed) reads the hold
 		// here, not "illegal status transition" (item 9 Opus P3-2 follow up).
-		if errors.Is(err, ErrIllegalTransition) && holdGuardedTarget(newStatus) {
+		// Item 9 F review N6: only for an order not yet past picking (a
+		// converted order not yet confirmed). A delivered order that owes
+		// again keeps the ladder's answer: the sentence speaks of picking.
+		if errors.Is(err, ErrIllegalTransition) && holdGuardedTarget(newStatus) && s.notYetPastPicking(ctx, orderID, oldStatus) {
 			if herr := s.refuseHeldFromPicking(ctx, orderID); errors.Is(herr, ErrHeldFromPicking) {
 				return herr
 			}
@@ -771,6 +774,22 @@ func (s *Service) setStatusGuarded(ctx context.Context, actor, orderID, newStatu
 	}
 	s.recordStatusChange(ctx, actor, orderID, oldStatus, newStatus, reason)
 	return nil
+}
+
+// notYetPastPicking reports whether the order has not reached the picking rung.
+// current is the status the failed write saw when it reported one; otherwise
+// the header is read. An order whose status cannot be read is treated as past
+// picking, so the ladder's own answer stands.
+func (s *Service) notYetPastPicking(ctx context.Context, orderID, current string) bool {
+	if current == "" {
+		status, _, err := s.store.OrderHeader(ctx, orderID)
+		if err != nil {
+			return false
+		}
+		current = status
+	}
+	_, known := statusRank[current]
+	return known && !pastPicking(current)
 }
 
 // validStatus reports whether status is one of the orders CHECK values (0008).
