@@ -3,10 +3,12 @@
 // qd1f_floor_approvers_integration_test.go, the approvers a below floor
 // refusal names (P2-B, round 4). The refusal named the branch's Sales manager
 // beside the dealer wide approvers for every caller, but row 743 sends a
-// request filed by a Branch manager, a Sales manager or the Yard manager to
-// leadership alone, so for those filers the Sales manager was named and
-// refused. The named set must be exactly who the decide rule would let decide
-// that caller's request, so the test asks the decide rule itself
+// request filed by a Branch manager or a Sales manager (the Yard manager
+// once, too, while it held the desk; decision log row 1156 removed its Quote
+// Desk, so it files nothing now and is refused outright) to leadership
+// alone, so for those filers the Sales manager was named and refused. The
+// named set must be exactly who the decide rule would let decide that
+// caller's request, so the test asks the decide rule itself
 // (identity.CanApproveFloor over the configured set) for every role and
 // compares, under the setting on and off.
 package quote
@@ -63,7 +65,7 @@ func TestQD1F_RefusalNamesExactlyWhoCouldDecideTheFilersRequest(t *testing.T) {
 		cfg  *roleconfig.Config
 	}{{"on", qd1Cfg}, {"off", qd1CfgNoManagerClearing(t)}}
 	for _, c := range configs {
-		for _, role := range []string{"INSIDE_SALES", "OUTSIDE_SALES", "BRANCH_MANAGER", "SALES_MANAGER", "YARD_MANAGER"} {
+		for _, role := range []string{"INSIDE_SALES", "OUTSIDE_SALES", "BRANCH_MANAGER", "SALES_MANAGER"} {
 			filer := qd1User(t, pool, "f743-"+c.name+"-"+role)
 			_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", filer, true)
 			svc := qd1SvcFloor(t, pool, now, qd1Arbiter{marginBps: 500, floorBps: 1200}, c.cfg)
@@ -101,5 +103,19 @@ func TestQD1F_RefusalNamesExactlyWhoCouldDecideTheFilersRequest(t *testing.T) {
 				}
 			}
 		}
+	}
+
+	// The Yard manager held the desk once and filed from it; row 1156 removed
+	// its Quote Desk, so it is refused outright, before the floor logic can
+	// name any decider, and its line is untouched.
+	ym := qd1User(t, pool, "ym")
+	_, ymQuote, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", ym, true)
+	ymSvc := qd1SvcFloor(t, pool, now, qd1Arbiter{marginBps: 500, floorBps: 1200}, qd1Cfg)
+	ymCtx := qd1WithRole(qCtxAs(intStaff(intTrenton)), "YARD_MANAGER", intTrenton, ym)
+	if _, yerr := ymSvc.SetLineDiscount(ymCtx, ymQuote, 1, 25); !errors.Is(yerr, ErrForbidden) {
+		t.Errorf("the Yard manager must be refused outright at the desk, got %T: %v", yerr, yerr)
+	}
+	if got := liveLine(t, pool, ymQuote, 1); got.LineTotalCents != 2000 {
+		t.Errorf("the Yard manager's refused write changed the line, total now %d", got.LineTotalCents)
 	}
 }

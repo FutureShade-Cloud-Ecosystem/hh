@@ -523,7 +523,7 @@ micro_apps:
   - id: counter-till
     name: Counter Till
     audience: internal
-    roles: [inside_sales, sales_manager, branch_manager, yard_manager, general_manager] # reconciled to the decided matrix (DECISIONS.md D48): outside_sales leaves, the matrix holds it at none (the till's own rules stand at D49); yard_manager joins at work, general_manager at read
+    roles: [inside_sales, sales_manager, branch_manager, general_manager] # reconciled to the decided matrix (DECISIONS.md D48): outside_sales leaves, the matrix holds it at none (the till's own rules stand at D49); general_manager at read. yard_manager sat here at work once; decision log row 1156 removed its sale access (reversing row 370), so the matrix holds it at none
     devices: [desktop, tablet, kiosk]
     kit: scan-and-confirm
     brand: fb-tokens
@@ -561,7 +561,7 @@ micro_apps:
   - id: quote-desk
     name: Quote Desk
     audience: internal
-    roles: [inside_sales, outside_sales, sales_manager, yard_manager, branch_manager, general_manager] # reconciled to the decided matrix (DECISIONS.md D48): yard_manager and branch_manager join at work, general_manager at read
+    roles: [inside_sales, outside_sales, sales_manager, branch_manager, general_manager] # reconciled to the decided matrix (DECISIONS.md D48): branch_manager joins at work, general_manager at read. yard_manager sat here at work once; decision log row 1156 removed its quote access (reversing row 370), so the matrix holds it at none
     devices: [tablet, desktop, phone]
     kit: guided-flow
     brand: fb-tokens

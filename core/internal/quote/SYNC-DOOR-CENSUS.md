@@ -60,7 +60,7 @@ they are granted.
 | sales_manager | branch | manage | manage | work |
 | outside_sales | branch | work | none | none |
 | yard_team | branch | none | none | none |
-| yard_manager | branch | work | work | work |
+| yard_manager | branch | none | none | work |
 | logistics_manager | branch | none | none | work |
 | driver | branch | none | none | none |
 | branch_manager | branch | work | manage | work |
@@ -69,6 +69,10 @@ they are granted.
 | financial_controller | global | none | none | manage |
 | general_manager | global | read | read | manage |
 | hr | global | none | none | none |
+
+The yard manager's two none cells are decision log row 1156 (reversing row 370):
+its sale and quote access is removed, so every quotes door refuses it here,
+while the approvals doors keep admitting it through Manager Home.
 
 ## 3. The answers
 
@@ -85,7 +89,7 @@ branch cases use branch A (the roles' granted branch) and branch B (not granted)
 | sales_manager | A | R |
 | outside_sales | A | R |
 | yard_team | R | R |
-| yard_manager | A | R |
+| yard_manager | R | R |
 | logistics_manager | R | R |
 | driver | R | R |
 | branch_manager | A | R |
@@ -106,7 +110,7 @@ branch cases use branch A (the roles' granted branch) and branch B (not granted)
 | sales_manager | A | A | R | R |
 | outside_sales | A | R | R | R |
 | yard_team | R | R | R | R |
-| yard_manager | A | R | R | R |
+| yard_manager | R | R | R | R |
 | logistics_manager | R | R | R | R |
 | driver | R | R | R | R |
 | branch_manager | A | R | R | R |
@@ -129,7 +133,7 @@ branch cases use branch A (the roles' granted branch) and branch B (not granted)
 | sales_manager | A | A | R | R | R |
 | outside_sales | A | R | R | R | R |
 | yard_team | R | R | R | R | R |
-| yard_manager | A | R | R | R | R |
+| yard_manager | R | R | R | R | R |
 | logistics_manager | R | R | R | R | R |
 | driver | R | R | R | R | R |
 | branch_manager | A | R | R | R | R |
@@ -153,7 +157,7 @@ branch cases use branch A (the roles' granted branch) and branch B (not granted)
 | sales_manager | A | A | R | R |
 | outside_sales | A | R | R | R |
 | yard_team | R | R | R | R |
-| yard_manager | A | R | R | R |
+| yard_manager | R | R | R | R |
 | logistics_manager | R | R | R | R |
 | driver | R | R | R | R |
 | branch_manager | A | R | R | R |
@@ -176,7 +180,7 @@ branch cases use branch A (the roles' granted branch) and branch B (not granted)
 | sales_manager | A | A | R | R |
 | outside_sales | A | R | R | R |
 | yard_team | R | R | R | R |
-| yard_manager | A | R | R | R |
+| yard_manager | R | R | R | R |
 | logistics_manager | R | R | R | R |
 | driver | R | R | R | R |
 | branch_manager | A | R | R | R |

@@ -175,17 +175,28 @@ test("the catalog holds the eleven coming roles, each with its matrix modules", 
   ];
   assert.deepEqual(COMING_ROLES.map((role) => role.label), labels);
   // Every coming role shows at least the modules the matrix gives it at work
-  // level or above; HR's two and Driver's two are the smallest rows, the yard
-  // manager's seven the widest.
+  // level or above; HR's two and Driver's two are the smallest rows, the
+  // Branch manager's and the Yard manager's five the widest.
   for (const role of COMING_ROLES) {
     assert.ok(role.modules.length >= 2, `${role.label} shows its modules`);
-    assert.ok(role.modules.length <= 7, `${role.label} carries no invented module`);
+    assert.ok(role.modules.length <= 5, `${role.label} carries no invented module`);
   }
-  // Spot checks against ROLE-ACCESS-r3's cells: Outside Sales has no till;
-  // the general manager's admin cells include Dealer Admin; HR's are House
-  // Messages and Dealer Admin.
+  // Spot checks against the matrix's cells (ROLE-ACCESS-r3 as row 1156
+  // amended it): Outside Sales has no till, the Yard manager's till and desk
+  // are removed; the general manager's admin cells include Dealer Admin; HR's
+  // are House Messages and Dealer Admin.
   const outside = COMING_ROLES.find((role) => role.id === "outside_sales");
   assert.equal(outside.modules.includes("Counter Till"), false);
+  const yardManager = COMING_ROLES.find((role) => role.id === "yard_manager");
+  assert.equal(yardManager.modules.includes("Counter Till"), false, "the yard manager's till cell is removed");
+  assert.equal(yardManager.modules.includes("Quote Desk"), false, "the yard manager's desk cell is removed");
+  assert.deepEqual(yardManager.modules, [
+    "Yard Pick and Receive",
+    "Dispatch and Load Building",
+    "Buying and Stock",
+    "Manager Home",
+    "House Messages",
+  ]);
   const general = COMING_ROLES.find((role) => role.id === "general_manager");
   assert.deepEqual(general.modules, ["Money Desk", "Manager Home", "House Messages", "Dealer Admin"]);
   const hr = COMING_ROLES.find((role) => role.id === "hr");

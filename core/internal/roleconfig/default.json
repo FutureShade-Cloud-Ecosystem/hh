@@ -209,12 +209,12 @@
     {
       "role": "yard_manager",
       "surface": "counter-till",
-      "level": "work"
+      "level": "none"
     },
     {
       "role": "yard_manager",
       "surface": "quote-desk",
-      "level": "work"
+      "level": "none"
     },
     {
       "role": "yard_manager",

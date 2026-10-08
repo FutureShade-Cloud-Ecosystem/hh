@@ -108,6 +108,7 @@ func TestQDSRPaymentGrantIsTheGatesOwnAnswer(t *testing.T) {
 	pool := fx.env.fixturePool()
 	t.Cleanup(pool.Close)
 	qdsrPlantOutsideSales(t, fx.env, pool)
+	qdsrPlantRole(t, fx.env, pool, "fxstaff-yard-manager-qdsr", "3ef10000-0000-4000-8000-000000001412", "3ef10000-0000-4000-8000-000000001422", "yard_manager", true)
 
 	// Holds Counter Till at Work or more: yes.
 	qdsrAssertGrantMatchesTheGate(t, fx, testkit.SubInsideSales, true)
@@ -119,8 +120,9 @@ func TestQDSRPaymentGrantIsTheGatesOwnAnswer(t *testing.T) {
 	// A Quote Desk seat with no Counter Till cell: the case the read exists for. Answered, not refused.
 	qdsrAssertGrantMatchesTheGate(t, fx, qdsrSubOutsideSales, false)
 
-	// Neither surface at read: the gate's own 403 on the read itself.
-	for _, sub := range []string{xrSubYardTeam, testkit.SubDriver, xrSubHR} {
+	// Neither surface at read: the gate's own 403 on the read itself. The yard manager joins
+	// this group with decision log row 1156, which removed its Counter Till and Quote Desk cells.
+	for _, sub := range []string{xrSubYardTeam, testkit.SubDriver, xrSubHR, "fxstaff-yard-manager-qdsr"} {
 		code, body := qdsrGet(t, fx, sub, "/api/v1/pos/payment-grant")
 		rgRefused(t, sub+" is held off the grant read", code, body)
 	}
@@ -144,21 +146,36 @@ func TestQDSRPaymentGrantEqualsWhatTheDoorDoes(t *testing.T) {
 	pool := fx.env.fixturePool()
 	t.Cleanup(pool.Close)
 	type fixtureRole struct{ sub, role string }
-	roles := []fixtureRole{
+	// answered: the roles whose Counter Till or Quote Desk cell at read admits the grant read
+	// itself, so the flag is the question they came to ask. refused: the yard manager, whose
+	// two cells decision log row 1156 removed, meets the gate's 403 on the read before the
+	// question is reached, exactly as the roles with neither surface always have.
+	answered := []fixtureRole{
 		{testkit.SubInsideSales, "inside_sales"},
 		{testkit.SubSalesManager, "sales_manager"},
 		{testkit.SubGeneralMgr, "general_manager"},
 		{xrSubBranchManager, "branch_manager"},
 		{qdsrSubOutsideSales, "outside_sales"},
-		{"fxstaff-yard-manager-qdsr", "yard_manager"},
 		{"fxstaff-dealer-admin-qdsr", "dealer_admin"},
 		{"fxstaff-fb-operator-qdsr", "fb_operator"},
 	}
+	refused := []fixtureRole{{"fxstaff-yard-manager-qdsr", "yard_manager"}}
 	qdsrPlantOutsideSales(t, fx.env, pool)
 	qdsrPlantRole(t, fx.env, pool, "fxstaff-yard-manager-qdsr", "3ef10000-0000-4000-8000-000000001412", "3ef10000-0000-4000-8000-000000001422", "yard_manager", true)
 	qdsrPlantRole(t, fx.env, pool, "fxstaff-dealer-admin-qdsr", "3ef10000-0000-4000-8000-000000001413", "3ef10000-0000-4000-8000-000000001423", "dealer_admin", false)
 	qdsrPlantRole(t, fx.env, pool, "fxstaff-fb-operator-qdsr", "3ef10000-0000-4000-8000-000000001414", "3ef10000-0000-4000-8000-000000001424", "fb_operator", false)
-	for _, r := range roles {
+	for _, r := range refused {
+		for _, route := range []struct{ method, path string }{
+			{http.MethodPost, "/api/v1/pos/sales"},
+			{http.MethodPost, "/api/v1/quotes/{id}/order-payment"},
+		} {
+			c, b := rgProbe(t, fx, route.method, route.path, rgHeaders(t, fx, r.sub))
+			rgRefused(t, r.role+" on "+route.path, c, b)
+		}
+		code, body := qdsrGet(t, fx, r.sub, "/api/v1/pos/payment-grant")
+		rgRefused(t, r.role+" on the grant read", code, body)
+	}
+	for _, r := range answered {
 		code, _ := identity.ERPCodeFor(r.role)
 		door := identity.CanConvertAndPay(identity.StaffContext{RoleCode: code, Status: identity.StatusActive})
 		admitted := true
@@ -180,7 +197,7 @@ func TestQDSRPaymentGrantEqualsWhatTheDoorDoes(t *testing.T) {
 		}
 	}
 	for _, role := range []string{"dealer_admin", "fb_operator"} {
-		for _, r := range roles {
+		for _, r := range answered {
 			if r.role == role {
 				if _, _, got := qdsrGrantAnswer(t, fx, r.sub); got {
 					t.Fatalf("%s passes every gate level but the door refuses its convert, the flag must be false", role)
