@@ -1031,8 +1031,20 @@ function profileOf(caller) {
 function isGeneralManager(caller) {
   return switches.callerIsGeneralManager && caller.account.role_code === "sales_manager";
 }
+// isSettingsAdmin: whether the caller holds the quote-desk Manage level (LevelManage on quote-desk
+// surface) -- the Sales manager. Used for acceptance read and policy write gates.
 function isSettingsAdmin(caller) {
   return caller.account.role_code === "sales_manager";
+}
+// isAdmin: whether the caller is a Tier-1 GLOBAL user -- the General Manager or the platform
+// SUPER_ADMIN. Used for the scope rules gate (IsAdmin predicate). The switch covers the
+// sign-in-without-a-real-role-code that the GM test uses.
+function isAdmin(caller) {
+  return (
+    switches.callerIsGeneralManager ||
+    caller.account.role_code === "general_manager" ||
+    caller.account.role_code === "super_admin"
+  );
 }
 
 function workspaceRow(userId, defaults) {
@@ -1629,6 +1641,21 @@ const server = createServer(async (request, response) => {
       });
       if (typeof body.valid_until === "string" && body.valid_until !== "") quote.valid_until = body.valid_until;
       respondJson(response, 200, viewOf(caller, quote));
+    });
+    return;
+  }
+
+  // round 14 (a): settings grant -- mirrors the three predicates the real server uses.
+  if (path === "/api/v1/quotes/settings-grant" && request.method === "GET") {
+    // can_read_acceptance + can_edit_policy: holdsQuoteSettingsAuthority (LevelManage on quote-desk).
+    const canReadAcceptance = isSettingsAdmin(caller);
+    const canEditPolicy = isSettingsAdmin(caller);
+    // can_read_scope_rules: IsAdmin (TierLeadership + ScopeGlobal).
+    const canReadScopeRules = isAdmin(caller);
+    respondJson(response, 200, {
+      can_read_acceptance: canReadAcceptance,
+      can_read_scope_rules: canReadScopeRules,
+      can_edit_policy: canEditPolicy,
     });
     return;
   }
@@ -2485,7 +2512,7 @@ const server = createServer(async (request, response) => {
   }
 
   if (path === "/api/v1/quote-assist/scope-rules" && request.method === "GET") {
-    if (!isSettingsAdmin(caller)) {
+    if (!isAdmin(caller)) {
       respondJson(response, 403, { error: "quoteassist: only an administrator reads the scope rules" });
       return;
     }
@@ -2495,7 +2522,7 @@ const server = createServer(async (request, response) => {
   match = /^\/api\/v1\/quote-assist\/scope-rules\/([^/]+)$/.exec(path);
   if (match !== null && request.method === "PATCH") {
     readBody(request, response, (body) => {
-      if (!isSettingsAdmin(caller)) {
+      if (!isAdmin(caller)) {
         respondJson(response, 403, { error: "quoteassist: only an administrator changes the scope rules" });
         return;
       }

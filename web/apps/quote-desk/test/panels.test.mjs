@@ -47,6 +47,7 @@ import {
   readHistory,
   readPolicy,
   readScopeRules,
+  readSettingsGrant,
   readShareLinks,
 } from "../src/_panel-wire.js";
 import { QB_ACTIONS, QB_COLUMNS, QB_PANELS } from "../src/quote-surface.js";
@@ -328,10 +329,47 @@ test("readPolicy proves every knob; readAcceptance proves both booleans; readSco
   assert.equal(readPolicy({ ...POLICY, cost_visibility: "SOME" }), null);
   assert.equal(readPolicy({ ...POLICY, quick_chip_set: [1] }), null);
   assert.equal(readPolicy({ ...POLICY, workspace_arrangement: "x" }), null);
+  // quick_chip_set === null is treated as [] (an old server, not broken data).
+  assert.deepEqual(readPolicy({ ...POLICY, quick_chip_set: null }).quick_chip_set, []);
+  // effective_chips === null is treated as absent (omit the field).
+  assert.equal("effective_chips" in readPolicy({ ...POLICY, effective_chips: null }), false);
   assert.deepEqual(readAcceptance({ allow_multi_accept: false, switch_wired: true }), { allowMultiAccept: false, switchWired: true });
   assert.equal(readAcceptance({ allow_multi_accept: "no", switch_wired: true }), null);
   const rule = { code: "R", title: "T", advice: "A", when_apps: ["PAVER"], expect_apps: ["BASE"], suggest_query: "q", enabled: true, sort_order: 1 };
   assert.equal(readScopeRules({ rules: [rule] }).length, 1);
   assert.equal(readScopeRules({ rules: [{ ...rule, enabled: "on" }] }), null);
   assert.equal(readScopeRules({ rules: [{ ...rule, when_apps: [1] }] }), null);
+});
+
+test("readSettingsGrant proves all three booleans; a missing or non-boolean field refuses the grant", () => {
+  // All true: General Manager or Sales manager.
+  const gmGrant = { can_read_acceptance: true, can_read_scope_rules: true, can_edit_policy: true };
+  assert.deepEqual(readSettingsGrant(gmGrant), {
+    canReadAcceptance: true,
+    canReadScopeRules: true,
+    canEditPolicy: true,
+  });
+  // Sales manager: can read acceptance, can edit policy, but cannot read scope rules.
+  const smGrant = { can_read_acceptance: true, can_read_scope_rules: false, can_edit_policy: true };
+  assert.deepEqual(readSettingsGrant(smGrant), {
+    canReadAcceptance: true,
+    canReadScopeRules: false,
+    canEditPolicy: true,
+  });
+  // Inside Sales: no acceptance read, no scope rules read, no policy edit.
+  const salesGrant = { can_read_acceptance: false, can_read_scope_rules: false, can_edit_policy: false };
+  assert.deepEqual(readSettingsGrant(salesGrant), {
+    canReadAcceptance: false,
+    canReadScopeRules: false,
+    canEditPolicy: false,
+  });
+  // A missing field refuses the whole grant.
+  assert.equal(readSettingsGrant({ can_read_acceptance: true }), null);
+  assert.equal(readSettingsGrant({ can_read_acceptance: true, can_read_scope_rules: false }), null);
+  // A non-boolean field refuses the whole grant.
+  assert.equal(readSettingsGrant({ can_read_acceptance: "yes", can_read_scope_rules: false, can_edit_policy: false }), null);
+  assert.equal(readSettingsGrant({ can_read_acceptance: true, can_read_scope_rules: 1, can_edit_policy: false }), null);
+  // Not a record.
+  assert.equal(readSettingsGrant(null), null);
+  assert.equal(readSettingsGrant([]), null);
 });

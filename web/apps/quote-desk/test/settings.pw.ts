@@ -26,6 +26,8 @@ async function openScreenSettings(page: Page): Promise<void> {
   await row(page, "Q-1001").click();
   await expect(page.getByTestId("qb-context")).toBeVisible();
   await page.getByText("Quote detail & admin").click();
+  // round 14 (a): wait for the grant to load before interacting with the disclosure.
+  await expect(settings(page).getByTestId("qs-screen")).toBeVisible();
   await settings(page).getByTestId("qs-screen").locator("summary").click();
   await expect(page.getByTestId("qs-policy")).toBeVisible();
 }
@@ -55,6 +57,8 @@ test("the work area's Screen settings button opens the settings region", async (
   await page.getByTestId("qb-list-row").filter({ hasText: "Draft" }).first().click();
   await page.getByTestId("qb-settings-btn").click();
   await expect(page.getByTestId("qb-detail")).toHaveAttribute("open", "");
+  // round 14 (a): the grant gates the disclosures; wait for it to load before asserting on qs-policy.
+  await expect(settings(page).getByTestId("qs-screen")).toBeVisible();
   await expect(page.getByTestId("qs-policy")).toBeVisible();
   await expect(page.getByTestId("qs-validity-days")).toHaveValue("30");
 });
@@ -207,6 +211,8 @@ test("the acceptance switch reads for this role, and the server refuses the deal
   await row(page, "Q-1001").click();
   await expect(page.getByTestId("qb-context")).toBeVisible();
   await page.getByText("Quote detail & admin").click();
+  // round 14 (a): wait for the grant to load before interacting with the disclosure.
+  await expect(settings(page).getByTestId("qa-details")).toBeVisible();
   await settings(page).getByTestId("qa-details").locator("summary").click();
   await expect(page.getByTestId("qa-switch")).toBeVisible();
   await expect(page.getByTestId("qa-switch")).not.toBeChecked();
@@ -224,6 +230,8 @@ test("where the server allows it, the one switch flips and says what it now mean
   await row(page, "Q-1001").click();
   await expect(page.getByTestId("qb-context")).toBeVisible();
   await page.getByText("Quote detail & admin").click();
+  // round 14 (a): wait for the grant to load before interacting with the disclosure.
+  await expect(settings(page).getByTestId("qa-details")).toBeVisible();
   await settings(page).getByTestId("qa-details").locator("summary").click();
   await page.getByTestId("qa-switch").check();
   await expect(page.getByTestId("qa-notice")).toContainText("Multiple acceptance is on");
@@ -233,11 +241,14 @@ test("where the server allows it, the one switch flips and says what it now mean
 });
 
 test("the scope rule table lists every rule, switches one off and keeps it listed", async ({ page }) => {
+  await page.request.put("/_stub/general-manager", { data: { member: true } });
   await signIn(page);
   await showList(page);
   await row(page, "Q-1001").click();
   await expect(page.getByTestId("qb-context")).toBeVisible();
   await page.getByText("Quote detail & admin").click();
+  // round 14 (a): General Manager has canReadScopeRules=true, so qr-details mounts.
+  await expect(settings(page).getByTestId("qr-details")).toBeVisible();
   await settings(page).getByTestId("qr-details").locator("summary").click();
   await expect(page.getByTestId("qr-row")).toHaveCount(7);
   await expect(page.getByTestId("qr-summary")).toContainText("7 of 7 rules are on.");
@@ -254,9 +265,19 @@ test("the scope rule table lists every rule, switches one off and keeps it liste
   await expect(page.getByTestId("qr-table").locator("input")).toHaveCount(0);
   await ruleRow.getByRole("button").click();
   await expect(page.getByTestId("qr-summary")).toContainText("7 of 7 rules are on.");
+  await page.request.put("/_stub/general-manager", { data: { member: false } });
 });
 
-test("a caller outside the settings roles sees the server's sentences in place of the controls", async ({ page }) => {
+// round 14 (a): the grant gates the three disclosures. Sales (INSIDE_SALES) has no grant
+// for any of them: the disclosures are never mounted, so no admin reads fire, no refused
+// sentences appear, and no role code or tech admin words are in the DOM.
+test("a caller outside the settings roles sees no disclosures and fires no admin reads", async ({ page }) => {
+  const requests: string[] = [];
+  await page.route("**/api/v1/**", async (route) => {
+    requests.push(`${route.request().method()} ${route.request().url()}`);
+    await route.continue();
+  });
+
   await signIn(page, "Sales");
   // The work area offers no Screen settings entry to this caller.
   await expect(page.getByTestId("qb-settings-btn")).toHaveCount(0);
@@ -264,25 +285,80 @@ test("a caller outside the settings roles sees the server's sentences in place o
   await row(page, "Q-1001").click();
   await expect(page.getByTestId("qb-context")).toBeVisible();
   await page.getByText("Quote detail & admin").click();
-  await settings(page).getByTestId("qs-screen").locator("summary").click();
-  await settings(page).getByTestId("qa-details").locator("summary").click();
-  await settings(page).getByTestId("qr-details").locator("summary").click();
-  // The acceptance switch and the scope rules: the server refused the read, so its sentence stands.
-  await expect(page.getByTestId("qa-refused")).toContainText("may not read them");
-  await expect(page.getByTestId("qa-switch")).toHaveCount(0);
-  await expect(page.getByTestId("qr-refused")).toContainText("Only an administrator reads the scope rules");
-  await expect(page.getByTestId("qr-row")).toHaveCount(0);
-  // The policy reads; its write is refused, and the screen locks with the server's sentence.
-  await expect(page.getByTestId("qs-policy")).toBeVisible();
-  const before = (await ledger(page)).policyWrites.length;
-  await page.getByTestId("qs-policy-save").click();
-  await expect(page.getByTestId("qs-policy-lock")).toContainText("The Inside Sales role may not change the quote policy");
-  await expect(page.getByTestId("qs-policy-save")).toBeDisabled();
-  expect((await ledger(page)).policyWrites).toHaveLength(before);
-  // The curation write is refused the same way.
-  await page.getByTestId("qs-items-save").click();
-  await expect(page.getByTestId("qs-items-lock")).toContainText("Only an administrator saves the dealer's screen layout");
-  await expect(page.getByTestId("qs-items-save")).toBeDisabled();
+
+  // No admin disclosures are mounted for this caller: the grant gates them all.
+  // Each disclosure is gated by its grant boolean; none mount until the grant resolves.
+  await expect(settings(page).locator('[data-testid="qs-screen"]')).toHaveCount(0);
+  await expect(settings(page).locator('[data-testid="qa-details"]')).toHaveCount(0);
+  await expect(settings(page).locator('[data-testid="qr-details"]')).toHaveCount(0);
+
+  // No request to either admin route.
+  const adminUrls = requests.filter((r) => r.includes("/quotes/settings/acceptance") || r.includes("/quote-assist/scope-rules"));
+  expect(adminUrls).toHaveLength(0);
+
+  // No refused sentences, role codes or Forbidden anywhere in the page.
+  await expect(page.getByTestId("qa-refused")).toHaveCount(0);
+  await expect(page.getByTestId("qr-refused")).toHaveCount(0);
+  const pageText = await page.textContent("body");
+  expect(pageText?.toLowerCase()).not.toMatch(/inside_sales|tech admin|forbidden/);
+});
+
+// round 14 (a): the grant allows the Sales manager to see acceptance and screen settings
+// but not scope rules; the reads fire and succeed.
+test("a Sales manager sees acceptance and screen settings but not scope rules, and the reads fire", async ({ page }) => {
+  const requests: string[] = [];
+  await page.route("**/api/v1/**", async (route) => {
+    requests.push(`${route.request().method()} ${route.request().url()}`);
+    await route.continue();
+  });
+
+  await signIn(page, "Sales manager");
+  await showList(page);
+  await row(page, "Q-1001").click();
+  await expect(page.getByTestId("qb-context")).toBeVisible();
+  await page.getByText("Quote detail & admin").click();
+
+  // Acceptance and screen settings disclosures mount; scope rules does not.
+  await expect(settings(page).getByTestId("qa-details")).toBeVisible();
+  await expect(settings(page).getByTestId("qs-screen")).toBeVisible();
+  await expect(settings(page).getByTestId("qr-details")).toHaveCount(0);
+
+  // Both allowed reads fire.
+  const acceptanceReads = requests.filter((r) => r.includes("/quotes/settings/acceptance"));
+  const scopeRuleReads = requests.filter((r) => r.includes("/quote-assist/scope-rules"));
+  expect(acceptanceReads.length).toBeGreaterThan(0);
+  expect(scopeRuleReads).toHaveLength(0);
+});
+
+// round 14 (a): the General Manager sees all three disclosures and all three reads fire.
+test("the General Manager sees all three disclosures and all three reads fire", async ({ page }) => {
+  const requests: string[] = [];
+  await page.route("**/api/v1/**", async (route) => {
+    requests.push(`${route.request().method()} ${route.request().url()}`);
+    await route.continue();
+  });
+
+  await page.request.put("/_stub/general-manager", { data: { member: true } });
+  await signIn(page);
+  await showList(page);
+  await row(page, "Q-1001").click();
+  await expect(page.getByTestId("qb-context")).toBeVisible();
+  await page.getByText("Quote detail & admin").click();
+
+  // All three disclosures mount.
+  await expect(settings(page).getByTestId("qa-details")).toBeVisible();
+  await expect(settings(page).getByTestId("qs-screen")).toBeVisible();
+  await expect(settings(page).getByTestId("qr-details")).toBeVisible();
+
+  // All three reads fire.
+  const acceptanceReads = requests.filter((r) => r.includes("/quotes/settings/acceptance"));
+  const scopeRuleReads = requests.filter((r) => r.includes("/quote-assist/scope-rules"));
+  const policyReads = requests.filter((r) => r.includes("/quotes/policy"));
+  expect(acceptanceReads.length).toBeGreaterThan(0);
+  expect(scopeRuleReads.length).toBeGreaterThan(0);
+  expect(policyReads.length).toBeGreaterThan(0);
+
+  await page.request.put("/_stub/general-manager", { data: { member: false } });
 });
 
 // ── PR 121 round 1: a switch never wipes or misdirects what the person typed ──

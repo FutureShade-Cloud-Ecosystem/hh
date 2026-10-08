@@ -285,3 +285,113 @@ func TestDIB491_SettingsWrite_RefusesAnAbsentBoolean(t *testing.T) {
 		t.Fatalf("a refused body must write nothing; wrote %v", store.writes)
 	}
 }
+
+// - round 14 (a): the settings grant -
+
+// TestDIB491_SettingsGrant_AnswersPerRole: the three booleans use the same predicates the
+// refusing routes use, so the answer cannot drift from the refusal. INSIDE_SALES gets nothing
+// (frontline, not LevelManage on the quote-desk surface). SALES_MANAGER gets acceptance read
+// and policy edit (LevelManage on quote-desk) but not scope rules (not Tier-1 GLOBAL).
+// GENERAL_MANAGER and the platform SUPER_ADMIN get all three (Tier-1 GLOBAL).
+func TestDIB491_SettingsGrant_AnswersPerRole(t *testing.T) {
+	for _, tc := range []struct {
+		name                  string
+		caller                identity.StaffContext
+		wantAcceptance        bool
+		wantScopeRules        bool
+		wantPolicyEdit        bool
+	}{
+		{
+			name: "Inside Sales: no grant",
+			caller: identity.StaffContext{
+				UserID: "u-sales", RoleCode: "INSIDE_SALES",
+				Tier: identity.TierFrontline, Scope: identity.ScopeBranch,
+				Status: identity.StatusActive, Branches: map[string]bool{"b-1": true},
+			},
+			wantAcceptance: false, wantScopeRules: false, wantPolicyEdit: false,
+		},
+		{
+			name: "Sales Manager: acceptance + policy edit, no scope rules",
+			caller: identity.StaffContext{
+				UserID: "u-sm", RoleCode: "SALES_MANAGER",
+				Tier: identity.TierManager, Scope: identity.ScopeBranch,
+				Status: identity.StatusActive, Branches: map[string]bool{"b-1": true},
+			},
+			wantAcceptance: true, wantScopeRules: false, wantPolicyEdit: true,
+		},
+		{
+			name: "General Manager: all three",
+			caller: identity.StaffContext{
+				UserID: "u-gm", RoleCode: "GENERAL_MANAGER",
+				Tier: identity.TierLeadership, Scope: identity.ScopeGlobal,
+				Status: identity.StatusActive,
+			},
+			wantAcceptance: true, wantScopeRules: true, wantPolicyEdit: true,
+		},
+		{
+			// Financial Controller is Tier-1 GLOBAL (IsAdmin: scope rules) but the
+			// acceptance and policy grants come from holdsQuoteSettingsAuthority which
+			// requires LevelManage on Quote Desk or canonical General Manager -- FC is neither.
+			name: "Financial Controller: scope rules only (IsAdmin, not QuoteSettingsAuthority)",
+			caller: identity.StaffContext{
+				UserID: "u-fc", RoleCode: "FINANCIAL_CONTROLLER",
+				Tier: identity.TierLeadership, Scope: identity.ScopeGlobal,
+				Status: identity.StatusActive,
+			},
+			wantAcceptance: false, wantScopeRules: true, wantPolicyEdit: false,
+		},
+		{
+			// SUPER_ADMIN is Tier-1 GLOBAL so it passes IsAdmin (scope rules read) but
+			// holdsQuoteSettingsAuthority checks for LevelManage on Quote Desk or
+			// canonicalRole General Manager -- neither applies to the platform role --
+			// so acceptance read and policy edit are false.
+			name: "platform SUPER_ADMIN: scope rules only (IsAdmin, not QuoteSettingsAuthority)",
+			caller: identity.StaffContext{
+				UserID: "u-super", RoleCode: "SUPER_ADMIN",
+				Tier: identity.TierLeadership, Scope: identity.ScopeGlobal,
+				Status: identity.StatusActive,
+			},
+			wantAcceptance: false, wantScopeRules: true, wantPolicyEdit: false,
+		},
+		{
+			name: "Branch Manager: no grant (TierManager but not LevelManage on quote-desk surface)",
+			caller: identity.StaffContext{
+				UserID: "u-bm", RoleCode: "BRANCH_MANAGER",
+				Tier: identity.TierManager, Scope: identity.ScopeBranch,
+				Status: identity.StatusActive, Branches: map[string]bool{"b-1": true},
+			},
+			wantAcceptance: false, wantScopeRules: false, wantPolicyEdit: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, _ := dib491Svc(&dib491Store{fakeStaffStore: newFakeStaffStore("SENT")}, tc.caller)
+			got, err := svc.SettingsGrant(context.Background())
+			if err != nil {
+				t.Fatalf("SettingsGrant: %v", err)
+			}
+			if got.CanReadAcceptance != tc.wantAcceptance {
+				t.Errorf("CanReadAcceptance = %v, want %v", got.CanReadAcceptance, tc.wantAcceptance)
+			}
+			if got.CanReadScopeRules != tc.wantScopeRules {
+				t.Errorf("CanReadScopeRules = %v, want %v", got.CanReadScopeRules, tc.wantScopeRules)
+			}
+			if got.CanEditPolicy != tc.wantPolicyEdit {
+				t.Errorf("CanEditPolicy = %v, want %v", got.CanEditPolicy, tc.wantPolicyEdit)
+			}
+		})
+	}
+}
+
+// TestDIB491_SettingsGrant_RefusesInactiveCaller: the grant returns ErrForbidden for an inactive caller.
+func TestDIB491_SettingsGrant_RefusesInactiveCaller(t *testing.T) {
+	inactive := identity.StaffContext{
+		UserID: "u-inactive", RoleCode: "GENERAL_MANAGER",
+		Tier: identity.TierLeadership, Scope: identity.ScopeGlobal,
+		Status: "DISABLED", // not StatusActive
+	}
+	svc, _ := dib491Svc(&dib491Store{fakeStaffStore: newFakeStaffStore("SENT")}, inactive)
+	_, err := svc.SettingsGrant(context.Background())
+	if !errors.Is(err, ErrForbidden) {
+		t.Errorf("SettingsGrant for inactive: want ErrForbidden, got %v", err)
+	}
+}
