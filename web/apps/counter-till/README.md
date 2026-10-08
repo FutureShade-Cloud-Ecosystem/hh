@@ -17,15 +17,16 @@ names. The terminal works in both its modes: the
 linear flow (the Customer, Items, Payment and Summary accordion) and the
 detached multi-card layout (the counter view menu's layout pick, persisted on
 the workspace row, with the pop-out opening the same till on a second window
-against the same branch drawer). The returns desk stays beside it: the
-original sale found by its number through the branch fenced lookup route, its
-lines with what is still returnable, the three refund rails (cash from the
-drawer, card to the simulator, account credit), and the refund above the
-dealer's approval amount: refused to the clerk with the amount and the
-approver roles named, completed by a manager's own credential entered at the
-clerk's till through the Manager approval dialog, the token held in memory
-for the one call and dropped, the receipt naming the approver and the clerk,
-and the till still the clerk's.
+against the same branch drawer). The Returns surface is built like a credit, the
+customer first (item 10): a stepper (Customer, Lines, Refund, Done), the customer
+search over the customers search route (the walk-in is not a returns customer,
+and the server says so in words), then every order the customer holds from
+`GET /api/v1/pos/returns/customer-lines`, grouped by order and job, each line
+with the quantity still open, a quantity stepper capped at it, and three
+dispositions (return to stock, damaged, nothing returned). Lines from several
+orders go into one draft (one branch per credit note); the sales order number
+only filters the list. There is no search by one sale's number. The refund,
+swap and done steps follow the write contract.
 
 Money on the counter is integer cents throughout. The figures the core states
 (line prices from the pricing resolve, the committed sale's and return's own
@@ -44,7 +45,7 @@ The app calls the core's routes on its own origin. Without a core, a local
 stub serves the same shapes: the contract's `DemoFlowList` and
 `DemoSessionResponse`; the counter routes the sale screen speaks, from
 `Branch` and `TillSessionDetail` to `PosSaleView`; and the returns desk's
-routes, `PosReturnLookup`, `PosReturn`, the approval refusal's 409,
+read, `PosCustomerLines` (its 422 for the house walk-in),
 `TillOpenLookup`, `TillZReport`, and `PaymentConfigStatus`:
 
 ```
@@ -86,26 +87,21 @@ stock glance and the empty add-ons strip; the pricing resolve in the
 contract's breakdown shape; the signatures, the relief assessment and the
 rendered receipt document.
 
-The stub also serves `GET /_stub/state`, a harness-only peek at its own
-ledgers (the api requests it has sighted and whether any carried the approver
-header, the returns posts' idempotency keys in send order, the last return
-body verbatim, and who each committed return named as clerk and approver): no
-contract path shares the namespace, and the app never calls it.
-
 The suite runs one worker, in order: the stub holds the demo world in memory
 (an open drawer, committed sales, parked tickets), so each test reads only
 what it itself caused. `test/entry.pw.ts` holds the way in (W6's screens);
 `test/sale.pw.ts` holds the sale at the counter (W7's screens, including the
 committed sale read back through `GET /api/v1/pos/sales/{id}` and compared
-against every figure on screen); `test/returns.pw.ts` holds the returns desk
-(W8's screens, the approval dialog and the one time credential included);
+against every figure on screen); `test/returns.pw.ts` holds the returns surface
+(item 10's customer and lines steps); `src/returns/*.test.mjs` hold the draft's
+rules as unit tests;
 `test/scans.pw.ts` holds the two source scans (no money arithmetic outside
 the one named money helper, and no card path) as tests, so the CI keeps them
 green and not just a report.
 
 The stub is a development and test double only: the real routes are the core's
 (the mint is the demo build's, the pricing is the engine's, the returns rules
-are RT-B's), and nothing in the app knows the stub exists.
+are the core's), and nothing in the app knows the stub exists.
 
 ## The acceptance run and the testers' page (W9)
 

@@ -24,8 +24,7 @@
 //   GET  /api/v1/pos/parked                 -> PosParkedTicketPage
 //   POST /api/v1/pos/parked/{id}/resume     -> PosParkedTicket
 //   DELETE /api/v1/pos/parked/{id}          -> PosParkedDiscard
-//   GET  /api/v1/pos/returns/lookup         -> PosReturnLookup
-//   POST /api/v1/pos/returns                -> PosReturn (409 PosRefundApprovalRequired)
+//   GET  /api/v1/pos/returns/customer-lines -> PosCustomerLines (422 for the house WALK-IN)
 //   GET  /api/v1/pos/policy                 -> PosPolicy
 //   GET  /api/v1/pos/workspace              -> PosWorkspacePrefs (PUT writes, DELETE resets)
 //   GET  /api/v1/pos/hotkeys                -> PosHotkeys (the shipped default: no keys)
@@ -49,11 +48,10 @@
 // minted bearer the way the core's middleware does (the token's own sub
 // claim), hold the demo org header beside it, and refuse a call without
 // either, so the app's header plumbing is exercised exactly as it would be
-// against the real server. The returns desk's routes and the Z report answer
-// the bearer alone and read the account back out of the token this stub
-// minted itself, because the refusal rules they stand in for (the approval
-// above the amount) are answered per role: what the real core resolves from
-// the verified token, this stub reads from its own mint.
+// against the real server. The returns desk's customer lines read and the Z
+// report answer the bearer alone and read the account back out of the token
+// this stub minted itself: what the real core resolves from the verified
+// token, this stub reads from its own mint.
 //
 // The mint answers a JWT-shaped token so the app's expiry read (the token's
 // exp claim) sees the same shape the real mint issues: three segments, a
@@ -292,7 +290,6 @@ const WALK_IN = {
   on_hold: false,
 };
 
-let previewCalls = 0; // how many previews the stub has answered (the legs read it through /_stub/state)
 /** 26600 reads $266.00, the way the contract's refusal sentence speaks. */
 function dollarsWord(cents) {
   return `$${(cents / 100).toLocaleString("en-CA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -553,6 +550,67 @@ const SALES = {
   },
 };
 
+// The customer lines read's world (item 10.1's contract, field for field): every order a customer
+// holds, newest first, each line with its open quantity read off the same returned counts the old
+// return path kept. Tax is zero in this world, so the money returned is the unit price times the
+// quantity returned. The second branch exists to show the one branch per credit note rule.
+const BRANCH_ID_2 = "5d1b3f6e-0000-4000-9000-000000000002";
+const WALK_IN_ID = "00000000-0000-4000-8000-0000000000ff";
+
+const CUSTOMER_ORDER_FACTS = {
+  "CT-1001": { created_at: "2026-10-03T15:20:00Z", job_label: "Marina Road patio", source: "TILL", sale_type: "COLLECT_NOW" },
+  "CT-1002": { created_at: "2026-10-01T09:05:00Z", job_label: "Front walk", source: "TILL", sale_type: "COLLECT_NOW" },
+  "CT-2001": { created_at: "2026-10-04T11:40:00Z", job_label: "", source: "TILL", sale_type: "COLLECT_NOW" },
+  "CT-2002": { created_at: "2026-10-02T13:10:00Z", job_label: "Garden wall", source: "TILL", sale_type: "COLLECT_NOW" },
+};
+
+function customerOrderOf(orderNo, over = {}) {
+  return { ...SALES[orderNo], ...CUSTOMER_ORDER_FACTS[orderNo], fulfilment_state: "FULFILLED", ...over };
+}
+
+const CUSTOMER_ORDERS = {
+  "c-maple-ridge": [customerOrderOf("CT-1001"), customerOrderOf("CT-1002")],
+  "c-fenwick": [
+    customerOrderOf("CT-2001"),
+    customerOrderOf("CT-2002", { branch_id: BRANCH_ID_2, source: "QUOTE", sale_tender: "", sale_type: "" }),
+  ],
+  "c-harbour": [],
+};
+
+function customerOrderView(order) {
+  return {
+    order_id: order.order_id,
+    order_no: order.order_no,
+    branch_id: order.branch_id,
+    created_at: order.created_at,
+    job_label: order.job_label,
+    source: order.source,
+    sale_type: order.sale_type,
+    tender: order.sale_tender,
+    fulfilment_state: order.fulfilment_state,
+    invoice_id: order.invoice_id,
+    card_refundable: order.card_refundable,
+    lines: order.lines.map((line) => {
+      const returned = RETURNED_QTY.get(line.order_line_id) ?? 0;
+      return {
+        order_line_id: line.order_line_id,
+        product_id: line.product_id,
+        sku: `SKU-${line.product_id.slice(-5)}`,
+        description: line.description,
+        qty_sold: line.qty_sold,
+        qty_returned: returned,
+        qty_open: line.qty_sold - returned,
+        unit_price_cents: line.unit_price_cents,
+        line_total_cents: line.line_total_cents,
+        tax_cents: line.tax_cents,
+        money_returned_cents: returned * line.unit_price_cents,
+        tax_returned_cents: 0,
+        shelf_state: "FULFILLED",
+      };
+    }),
+  };
+}
+
 // The drawer's world: one open session at the returns branch, with its opening
 // float and the cash that has moved through it. The Z report's expected cash
 // is read off these counters, so a cash return moving the cash out counter is
@@ -567,36 +625,10 @@ const DRAWER = {
   cash_out_cents: 0,
 };
 
-// The returns committed in this stub's life, keyed by the request's
-// idempotency key (a replay answers the stored return again and moves the
-// drawer nothing), plus the returned quantity netted per line for the
-// lookup's still-returnable counts.
-const RETURNS_BY_KEY = new Map();
-const RETURNED_QTY = new Map();
-
-// What the harness's tests read back (the peek route below): every api
-// request's path and whether it carried the approver's header, the returns
-// posts' idempotency keys in send order, the last return body verbatim, and
-// who each committed return names as its clerk and its approver. Test
-// scaffolding only, on a route no contract path shares.
-const SIGHTINGS = [];
-const KEYS_SEEN = [];
-let LAST_RETURN_BODY = null;
-const RETURN_META = new Map();
-
-// The approval above which a refund needs a manager, and the roles that hold
-// the approval, as a dealer that keeps the rule sets them (D49's 250.00 and
-// its two approver roles). The demo dealer's configuration turns the rule off
-// (refund_approval_limit_enabled false, decision log rows 1047 and 1073), so
-// the stub starts in the demo's mode: no refund asks for an approval. Setting
-// CT_REFUND_APPROVAL_LIMIT=on starts it the other way, and the harness-only
-// POST /_stub/refund-approval-limit flips it mid run, which is how the suite
-// keeps the approval path under test for a dealer where the rule applies.
-const APPROVAL_AMOUNT_CENTS = 25000;
-const APPROVER_ROLES = ["sales_manager", "branch_manager"];
-let approvalLimitEnabled = process.env.CT_REFUND_APPROVAL_LIMIT === "on";
-
-let RETURN_SEQ = 0;
+// The returned quantity netted per line, which the customer lines read answers as qty_returned and
+// qty_open. The write path that grows it is rebuilt with the refund step; one line is seeded
+// partly returned so the screens show an open quantity below the quantity sold.
+const RETURNED_QTY = new Map([[uuid(11012), 2]]);
 
 // ---------------------------------------------------------------------------
 // The pricing stand-in: the same waterfall-shaped table the ring and the two
@@ -827,36 +859,6 @@ function mintToken(flow) {
   return `${base64UrlJson(header)}.${base64UrlJson(payload)}.c3R1Yi1zaWduYXR1cmUtYnl0ZXM`;
 }
 
-// The approver credential, read the way the caller's is: a bearer this stub
-// minted, carried in its own header. `present` says whether the header rode
-// the request at all; `account` is the verified approver or null. Verified
-// means unexpired too: the real rule takes a credential issued within the
-// short window the configuration sets, and an expired mint is not one.
-function approverFromRequest(request) {
-  const header = request.headers["x-approver-authorization"] ?? "";
-  if (header === "") return { present: false, account: null };
-  const match = /^Bearer (.+)$/.exec(header);
-  if (match === null) return { present: true, account: null };
-  const parts = match[1].split(".");
-  if (parts.length !== 3) return { present: true, account: null };
-  try {
-    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
-    if (payload === null || typeof payload !== "object") return { present: true, account: null };
-    const sub = payload.sub;
-    const exp = payload.exp;
-    if (typeof sub !== "string") return { present: true, account: null };
-    if (typeof exp !== "number" || !Number.isFinite(exp) || exp * 1000 <= Date.now()) {
-      return { present: true, account: null };
-    }
-    for (const flow of Object.keys(USERS)) {
-      if (USERS[flow].user_id === sub) return { present: true, account: USERS[flow] };
-    }
-    return { present: true, account: null };
-  } catch {
-    return { present: true, account: null };
-  }
-}
-
 // The staff caller for the returns desk's routes and the Z report, read back
 // out of a bearer this stub itself minted: the payload's sub names the
 // account. Null when there is no usable bearer, and those routes answer 401
@@ -943,161 +945,6 @@ function readBody(request, respond) {
       respondJson(response, 400, { error: "the request body is not JSON" });
     }
   });
-}
-
-// ---------------------------------------------------------------------------
-// The returns world's own rules: what a return refuses, and how it commits.
-// ---------------------------------------------------------------------------
-
-// What the return's own rails refuse before any money moves, in the
-// contract's envelope. The approval refusal names itself in the error string
-// and carries the requirement under the approval key: the amount and the
-// approver roles, present exactly on that refusal (the contract's own words),
-// so the desk can name both. A verified approver's credential turns the same
-// return into the approver's decision, committed as one.
-function returnsRefusal(caller, body, approver) {
-  if (body === null || typeof body !== "object") {
-    return { status: 400, body: { error: "the return's body is not readable" } };
-  }
-  const key = body.idempotency_key;
-  if (typeof key !== "string" || key === "") {
-    return { status: 400, body: { error: "the return carries no idempotency key" } };
-  }
-  const sale = saleFromInput(body);
-  if (sale === undefined) {
-    return { status: 404, body: { error: "no sale with that number answers at this counter" } };
-  }
-  if (!Array.isArray(body.lines) || body.lines.length === 0) {
-    return { status: 400, body: { error: "the return carries no lines" } };
-  }
-  if (!["CASH", "CARD", "ACCOUNT_CREDIT"].includes(body.refund_method)) {
-    return { status: 400, body: { error: "the refund method is not one of the rails" } };
-  }
-  for (const line of body.lines) {
-    const saleLine = sale.lines.find((row) => row.order_line_id === line.order_line_id);
-    if (saleLine === undefined) {
-      return { status: 400, body: { error: "the return names a line the sale does not carry" } };
-    }
-    const returnable = saleLine.qty_sold - (RETURNED_QTY.get(saleLine.order_line_id) ?? 0);
-    if (!Number.isInteger(line.qty_base) || line.qty_base <= 0 || line.qty_base > returnable) {
-      return { status: 409, body: { error: "the return asks for more than the line still has to return" } };
-    }
-  }
-  if (body.refund_method === "CARD" && !sale.card_refundable) {
-    return { status: 409, body: { error: "the sale was not paid by card, so there is no capture to reverse" } };
-  }
-  if (body.refund_method === "CASH" && body.till_session_id !== DRAWER.session_id) {
-    // The returns desk names the returns world's own drawer; the ported
-    // surface's return modal names the counter world's open drawer at the
-    // caller's branch. Either way the rule is the same: a cash refund comes
-    // out of an open drawer, named.
-    const counterDrawer = drawers.get(callerBranch);
-    if (body.till_session_id !== counterDrawer?.id) {
-      return { status: 409, body: { error: "the drawer named is not the open one" } };
-    }
-  }
-  const totalCents = returnTotal(sale, body.lines);
-  if (approvalLimitEnabled && totalCents > APPROVAL_AMOUNT_CENTS && !APPROVER_ROLES.includes(caller.account.role_code) && !approver.present) {
-    return {
-      status: 409,
-      body: {
-        error: "refund_approval_required",
-        approval: { amount_cents: APPROVAL_AMOUNT_CENTS, approvers: APPROVER_ROLES },
-      },
-    };
-  }
-  return null;
-}
-
-// The refund's total: the returned lines' own totals by their quantities, in
-// a world whose tax is zero. Stub-side arithmetic, standing in the core's
-// shoes; the app computes nothing.
-function returnTotal(sale, lines) {
-  let total = 0;
-  for (const line of lines) {
-    const saleLine = sale.lines.find((row) => row.order_line_id === line.order_line_id);
-    total += saleLine.unit_price_cents * line.qty_base;
-  }
-  return total;
-}
-
-// A sale committed at the counter world, shaped for the returns desk's reads
-// (the desk's lookup lines carry the returnable quantities and the per-line
-// figures; the committed sale's own lines carry the same fields).
-function committedSaleAsReturnable(sale) {
-  return {
-    order_id: sale.order_id,
-    order_no: sale.order_no,
-    branch_id: sale.branch_id,
-    customer_id: sale.customer_id,
-    invoice_id: sale.invoice_id,
-    sale_tender: sale.tender,
-    card_refundable: sale.tender === "CARD",
-    // The desk reads the quantity as `qty_sold`; the counter's own line
-    // carries it as the quantity entered.
-    lines: sale.lines.map((line) => ({ ...line, qty_sold: line.qty_entered })),
-  };
-}
-
-function saleFromInput(body) {
-  if (typeof body.order_no === "string" && SALES[body.order_no] !== undefined) return SALES[body.order_no];
-  if (typeof body.order_id === "string") {
-    return Object.values(SALES).find((row) => row.order_id === body.order_id);
-  }
-  // A sale the counter world just rung answers the desk too: the demo world's
-  // two halves are one shop floor for the people standing at it.
-  if (typeof body.order_no === "string") {
-    const committed = sales.get(body.order_no) ?? [...sales.values()].find((row) => row.order_no === body.order_no);
-    if (committed !== undefined) return committedSaleAsReturnable(committed);
-  }
-  if (typeof body.order_id === "string") {
-    const committed = [...sales.values()].find((row) => row.order_id === body.order_id);
-    if (committed !== undefined) return committedSaleAsReturnable(committed);
-  }
-  return undefined;
-}
-
-// The commit, as the core's would be: the refund's total is the returned
-// lines' own totals (this world carries no tax), the cash rail moves the
-// drawer's cash out counter, and the idempotency key makes a replay answer
-// the stored return without a second movement. The approver, verified by the
-// caller of this function, is recorded beside the clerk for the harness's
-// peek route: the response body's shape carries neither, by the contract.
-function commitReturn(caller, body, approver) {
-  const key = body.idempotency_key;
-  const replay = RETURNS_BY_KEY.get(key);
-  if (replay !== undefined) return { ...replay, replayed: true };
-  const sale = saleFromInput(body);
-  RETURN_SEQ += 1;
-  const subtotalCents = returnTotal(sale, body.lines);
-  for (const line of body.lines) {
-    const saleLine = sale.lines.find((row) => row.order_line_id === line.order_line_id);
-    RETURNED_QTY.set(saleLine.order_line_id, (RETURNED_QTY.get(saleLine.order_line_id) ?? 0) + line.qty_base);
-  }
-  const answer = {
-    return_id: uuid(40000 + RETURN_SEQ),
-    return_no: `CT-R-${100 + RETURN_SEQ}`,
-    order_id: sale.order_id,
-    invoice_id: sale.invoice_id,
-    refund_method: body.refund_method,
-    subtotal_cents: subtotalCents,
-    tax_cents: 0,
-    total_cents: subtotalCents,
-    pickup_status: "NONE",
-    status: "COMMITTED",
-    replayed: false,
-  };
-  RETURNS_BY_KEY.set(key, answer);
-  RETURN_META.set(key, {
-    clerk: caller.account.user_id,
-    approver: approver.present && approver.account !== null ? approver.account.user_id : null,
-  });
-  // Only the returns world's own drawer counts its cash here: a refund out of
-  // the counter world's drawer moves that world, which keeps its own counters.
-  if (body.refund_method === "CASH" && body.till_session_id === DRAWER.session_id) {
-    DRAWER.cash_out_cents += answer.total_cents;
-  }
-  return answer;
 }
 
 // ---------------------------------------------------------------------------
@@ -1250,15 +1097,6 @@ function sawOrg(request) {
 const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://127.0.0.1:${port}`);
   const path = url.pathname;
-  // Every api request is sighted for the harness's peek route: the path, and
-  // whether the approver's header rode it. The credential's whole claim
-  // (one send, the approver's client alone) is asserted against this ledger.
-  if (path.startsWith("/api/")) {
-    SIGHTINGS.push({
-      path,
-      approverHeader: (request.headers["x-approver-authorization"] ?? "") !== "",
-    });
-  }
   if (request.method === "GET" && path === "/healthz") {
     respondJson(response, 200, { ok: true });
     return;
@@ -1270,30 +1108,6 @@ const server = createServer(async (request, response) => {
     PAY_BALANCE_KEYS.clear();
     seedOwingOrders();
     respondJson(response, 200, { ok: true });
-    return;
-  }
-
-  if (request.method === "GET" && path === "/_stub/state") {
-    // Harness-only: the tests' read back of this stub's ledgers. No contract
-    // path shares the namespace, and the app never calls it.
-    respondJson(response, 200, {
-      keys: KEYS_SEEN,
-      lastReturnBody: LAST_RETURN_BODY,
-      sightings: SIGHTINGS,
-      previewCalls,
-      approvalLimitEnabled,
-      returns: [...RETURN_META.entries()].map(([key, meta]) => ({ key, ...meta })),
-    });
-    return;
-  }
-
-  if (request.method === "POST" && path === "/_stub/refund-approval-limit") {
-    // Harness-only: switches the stub between the demo dealer's configuration
-    // (no approval threshold) and a dealer that keeps the 250.00 rule.
-    readBody(request, (parsed) => {
-      approvalLimitEnabled = parsed !== null && typeof parsed === "object" && parsed.enabled === true;
-      respondJson(response, 200, { approvalLimitEnabled });
-    });
     return;
   }
 
@@ -1330,38 +1144,37 @@ const server = createServer(async (request, response) => {
   // The returns desk's routes and the Z report: staff routes that answer the
   // bearer alone (the reader above), ahead of the counter's own gate, because
   // their suite's own reads carry no org header.
-  if (request.method === "GET" && path === "/api/v1/pos/returns/lookup") {
+  if (request.method === "GET" && path === "/api/v1/pos/returns/customer-lines") {
     const caller = callerFromRequest(request);
     if (caller === null) {
       respondJson(response, 401, { error: "no usable staff credential" });
       return;
     }
-    const orderNo = url.searchParams.get("order_no");
-    const orderId = url.searchParams.get("order_id");
-    const sale =
-      (typeof orderNo === "string" && orderNo !== "" && saleFromInput({ order_no: orderNo })) ||
-      (typeof orderId === "string" && orderId !== "" && saleFromInput({ order_id: orderId })) ||
-      undefined;
-    if (sale === undefined) {
-      // The real lookup is branch fenced; this stub does NOT check the
-      // caller's branch (known gap, no test relies on it). Only a sale it
-      // does not know answers 404.
-      respondJson(response, 404, { error: "no sale with that number answers at this counter" });
+    // The core's own order of refusals: customer_id first (400), then the house WALK-IN (422 in
+    // words), then the branch wall (403 naming the branch). Orders answer newest first, bounded.
+    const customerId = (url.searchParams.get("customer_id") ?? "").trim();
+    if (customerId === "") {
+      respondJson(response, 400, { error: "pos: customer_id is required" });
       return;
     }
-    respondJson(response, 200, {
-      order_id: sale.order_id,
-      order_no: sale.order_no,
-      branch_id: sale.branch_id,
-      customer_id: sale.customer_id,
-      invoice_id: sale.invoice_id,
-      sale_tender: sale.sale_tender,
-      card_refundable: sale.card_refundable,
-      lines: sale.lines.map((line) => ({
-        ...line,
-        qty_returned: RETURNED_QTY.get(line.order_line_id) ?? 0,
-      })),
-    });
+    if (customerId === WALK_IN_ID) {
+      respondJson(response, 422, {
+        error: "pos: the WALK-IN house account holds no customer history; return a walk-in sale by its own order number",
+      });
+      return;
+    }
+    const branchId = (url.searchParams.get("branch_id") ?? "").trim();
+    if (branchId !== "" && branchId !== BRANCH_ID && branchId !== BRANCH_ID_2) {
+      respondJson(response, 403, { error: `pos: branch ${branchId} is not one your grant reaches` });
+      return;
+    }
+    const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 25, 1), 100);
+    const held = CUSTOMER_ORDERS[customerId] ?? [];
+    const items = held
+      .filter((order) => branchId === "" || order.branch_id === branchId)
+      .slice(0, limit)
+      .map(customerOrderView);
+    respondJson(response, 200, { customer_id: customerId, items });
     return;
   }
   if (
@@ -1392,46 +1205,6 @@ const server = createServer(async (request, response) => {
     });
     return;
   }
-  if (request.method === "POST" && path === "/api/v1/pos/returns") {
-    const caller = callerFromRequest(request);
-    if (caller === null) {
-      respondJson(response, 401, { error: "no usable staff credential" });
-      return;
-    }
-    // The approver's credential beside the clerk's bearer, verified the way
-    // the real rule verifies it: the same mint, an account whose role holds
-    // the approval, a person other than the clerk. A header that is present
-    // and not valid is refused before anything else is judged.
-    const approver = approverFromRequest(request);
-    if (
-      approver.present &&
-      (approver.account === null ||
-        !APPROVER_ROLES.includes(approver.account.role_code) ||
-        approver.account.user_id === caller.account.user_id)
-    ) {
-      respondJson(response, 403, { error: "the approver credential does not name an approver other than the clerk" });
-      return;
-    }
-    let body;
-    try {
-      body = JSON.parse(await readRawBody(request));
-    } catch {
-      respondJson(response, 400, { error: "the request body is not JSON" });
-      return;
-    }
-    if (body !== null && typeof body === "object" && typeof body.idempotency_key === "string") {
-      KEYS_SEEN.push(body.idempotency_key);
-      LAST_RETURN_BODY = body;
-    }
-    const refusal = returnsRefusal(caller, body, approver);
-    if (refusal !== null) {
-      respondJson(response, refusal.status, refusal.body);
-      return;
-    }
-    respondJson(response, 201, commitReturn(caller, body, approver));
-    return;
-  }
-
   // The catalogue thumbnail route is ungated by design (the contract's own
   // words: an <img src> cannot carry an Authorization header), and a missing
   // image is a plain 404 the UI turns into its placeholder glyph. The demo
@@ -1747,7 +1520,6 @@ const server = createServer(async (request, response) => {
         return;
       }
       const tax = taxCents(subtotal);
-      previewCalls += 1;
       respondJson(response, 200, {
         subtotal_cents: subtotal,
         tax_cents: tax,

@@ -48,7 +48,6 @@ import { readPanesSwapped, writePanesSwapped } from "./pane-memory.js";
 import { THEME_LABEL, ThemeController, themeControlLabel, themeStatusText } from "./theme.js";
 import { entryStyles, renderEntry, type FlowsState } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { ReturnsFlow } from "./returns/flow.js";
-import { OneTimeCredential } from "./returns/approval.js";
 import { RefundApprovalCapture } from "./returns/capture.js";
 import { returnsStyles, renderReturns } from "./views/returns.js";
 import { formatMoney } from "./money.js";
@@ -351,7 +350,6 @@ export class CounterTillApp extends HHElement {
   readonly #sessions = new SessionStore();
   readonly #account: DemoAccount;
   readonly #controller: AuthController;
-  readonly #approverCredential: OneTimeCredential;
   readonly #tillClient: TillClient;
   /** The theme choice: Auto follows the system, Light and Brand pin it; tab memory only (see theme.ts). */
   readonly #theme = new ThemeController(() => this.requestUpdate());
@@ -468,40 +466,9 @@ export class CounterTillApp extends HHElement {
     });
     this.#account = new DemoAccount({ client: demoClient });
     this.#controller = new AuthController({ account: this.#account, sessions: this.#sessions });
-    // The approver's client exists for the one return call that may carry the
-    // approver's credential (D49): its provider takes the token out of the
-    // one time slot during that send, and taking is dropping, so the token
-    // rests nowhere before and survives nothing after. The clerk's client is
-    // a different instance and never carries the credential, so no other call
-    // this app makes can leak it. Nothing here touches storage or logs.
-    const approverCredential = new OneTimeCredential();
-    this.#approverCredential = approverCredential;
-    const approverClient = new ApiClient({
-      baseUrl: "",
-      headers: async () => {
-        const headers = await staffHeaders();
-        const token = approverCredential.take();
-        if (token !== null) {
-          headers["X-Approver-Authorization"] = `Bearer ${token}`;
-        }
-        return headers;
-      },
-    });
     this.#returns = new ReturnsFlow({
       client,
-      approverClient,
-      account: this.#account,
-      credential: approverCredential,
-      clerk: () => {
-        const session = this.#sessions.current;
-        if (session === null) return null;
-        return {
-          name: session.user.name,
-          roleCode: this.#clerkRoleCode,
-          roleLabel: this.#till?.label ?? null,
-        };
-      },
-      capture,
+      branchId: () => this.#branch?.id ?? null,
       onChange: () => this.requestUpdate(),
     });
     this.#payBalance = new PayBalanceFlow({
@@ -686,21 +653,18 @@ export class CounterTillApp extends HHElement {
     if (!(control instanceof HTMLInputElement) && !(control instanceof HTMLTextAreaElement)) return;
     const field = control.getAttribute("data-field");
     if (field === "pay-balance-term" && control instanceof HTMLInputElement) this.#payBalance.setTerm(control.value);
-    if (field === "order-no") this.#returns.setOrderNo(control.value);
-    if (field === "qty" && control instanceof HTMLInputElement) {
+    if (field === "returns-customer" && control instanceof HTMLInputElement) this.#returns.setTerm(control.value);
+    if (field === "returns-filter" && control instanceof HTMLInputElement) this.#returns.setFilter(control.value);
+    if (field === "returns-qty" && control instanceof HTMLInputElement) {
       const line = control.getAttribute("data-line") ?? "";
-      this.#returns.setQty(line, control.value);
-      // The flow keeps whole units; the field is brought to the same answer,
-      // so a typed 1.5 never sits on the screen while a 1 rides the draft.
-      const stored = this.#returns.qtyOf(line);
-      const canonical = stored === 0 ? "" : String(stored);
-      if (control.value !== canonical) control.value = canonical;
+      // A refused quantity (above what is open) leaves the draft as it was; the field is brought back
+      // to the draft's own answer so a refused number never sits on the screen as if it rode.
+      const answer = this.#returns.setQty(line, control.value);
+      if (!answer.ok) {
+        const stored = this.#returns.draft.qtyOf(line);
+        control.value = stored === 0 ? "" : String(stored);
+      }
     }
-    if (field === "note") this.#returns.setNote(control.value);
-    if (field === "restock" && control instanceof HTMLInputElement) {
-      this.#returns.setRestock(control.checked);
-    }
-    if (field === "reason-code") this.#returns.setReasonCode(control.value);
   };
 
   readonly #onCounterLayout = (event: CustomEvent<{ layout: string }>): void => {
@@ -757,31 +721,17 @@ export class CounterTillApp extends HHElement {
     if (control.getAttribute("data-action") === "pay-balance-another") {
       this.#payBalance.another();
     }
-    if (control.getAttribute("data-action") === "returns-find") {
-      void this.#returns.findSale();
+    const returnsAction = control.getAttribute("data-action") ?? "";
+    const returnsLine = control.getAttribute("data-line") ?? "";
+    if (returnsAction === "returns-customer") void this.#returns.chooseCustomer(control.getAttribute("data-customer") ?? "");
+    if (returnsAction === "returns-qty-up") this.#returns.stepQty(returnsLine, 1);
+    if (returnsAction === "returns-qty-down") this.#returns.stepQty(returnsLine, -1);
+    if (returnsAction === "returns-disposition") {
+      this.#returns.setDisposition(returnsLine, control.getAttribute("data-disposition") ?? "");
     }
-    if (control.getAttribute("data-action") === "returns-method") {
-      const method = control.getAttribute("data-method");
-      if (method !== null) this.#returns.chooseMethod(method);
-    }
-    if (control.getAttribute("data-action") === "returns-submit") {
-      void this.#returns.submit();
-    }
-    if (control.getAttribute("data-action") === "returns-another") {
-      this.#returns.startAnotherReturn();
-    }
-    if (control.getAttribute("data-action") === "returns-approve") {
-      void this.#returns.openApprovalDialog();
-    }
-    if (control.getAttribute("data-action") === "returns-approve-cancel") {
-      this.#returns.closeApprovalDialog();
-    }
-    if (control.getAttribute("data-action") === "returns-approver-flow") {
-      const approverFlow = control.getAttribute("data-flow");
-      if (approverFlow !== null && approverFlow !== "") {
-        void this.#returns.approveWithFlow(approverFlow);
-      }
-    }
+    if (returnsAction === "returns-continue") this.#returns.toRefund();
+    if (returnsAction === "returns-back-to-lines") this.#returns.toLines();
+    if (returnsAction === "returns-another") this.#returns.startAnother();
   };
 
   /**

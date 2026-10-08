@@ -1,23 +1,17 @@
-// The returns desk: the till's returns story, rendered from the returns
-// flow's state. This view holds no domain logic and no money of its own: it
-// spells the flow's facts through the one money helper and asks the host's
-// actions through data attributes, read off composedPath() by the app root
-// (the design system's host delegation rule: never @click, never a content
-// listener that a re-render would strand).
+// The Returns surface: a return built like a credit, the customer first. This view holds no domain
+// logic and no money of its own: it spells the flow's facts through the one money helper and asks
+// the host's actions through data attributes, read off composedPath() by the app root (the design
+// system's host delegation rule: never @click, never a content listener that a re-render would
+// strand). Layout follows the proposed boards (customer step, lines step); every figure is a number
+// the server answered.
 import { css, html, nothing, type TemplateResult } from "lit";
 import { keyed } from "lit/directives/keyed.js";
 import { formatMoney } from "../money.js";
-import { approverLabels } from "../returns/approval.js";
-import type { RefundMethod, RefundReceipt, ReturnsFlow } from "../returns/flow.js";
-import type { PosRefundApproval } from "@hardscapehouse/api-client";
+import { DISPOSITIONS, DISPOSITION_WORDS, type Disposition } from "../returns/draft.js";
+import { STEP_ORDER, type ReturnStep, type ReturnsFlow } from "../returns/flow.js";
+import type { CustomerLine, CustomerOrder } from "../returns/lines.js";
 
 export const returnsStyles = css`
-  /* UI-3 (visual GAP 2): the desk wears the till's own card: the same column
-     (the terminal's 1180px cap, 20px gutter, full bleed like the surface above
-     it), the same card face, hairline, radius and shadow as an accordion card,
-     a 15px semibold head like the step heads, 13px body copy, 11px caption
-     labels and the till's input face. The roles read the --hos-* tokens the
-     till reads, so both themes follow. */
   .returns {
     /* The bottom lane keeps the last control clear of the pinned hotkey legend. */
     margin: var(--hh-s-24) calc(-1 * var(--hh-s-20)) 0;
@@ -28,35 +22,294 @@ export const returnsStyles = css`
     width: min(100%, 1180px);
     margin: 0 auto;
     padding: 0 var(--hh-s-20);
+    font-size: 13px;
   }
-  .returns-card {
+  .returns .head-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--hh-s-16);
+    flex-wrap: wrap;
+    margin: 0 0 var(--hh-s-16);
+  }
+  .returns .eyebrow {
+    display: block;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--hos-text-dim);
+    margin: 0 0 var(--hh-s-4);
+  }
+  .returns h2 {
+    font-size: 20px;
+    font-weight: 600;
+    margin: 0 0 var(--hh-s-4);
+  }
+  .returns .subtitle {
+    color: var(--hos-text-dim);
+    margin: 0;
+  }
+  .returns .stepper {
+    display: flex;
+    gap: var(--hh-s-8);
+    flex-wrap: wrap;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .returns .stepper li {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    padding: var(--hh-s-4) var(--hh-s-16);
+    border: 1px solid var(--hh-control-line);
+    border-radius: 999px;
+    color: var(--hos-text-dim);
+    background: transparent;
+  }
+  .returns .stepper li[aria-current="step"] {
+    border-color: var(--hh-accent);
+    color: var(--hos-text);
+    font-weight: 600;
+  }
+  .returns .stepper li[data-state="done"] {
+    border-color: var(--hos-line);
+    color: var(--hos-text);
+  }
+  .returns .rt-card {
     border: 1px solid var(--hos-line);
     border-radius: var(--hos-radius-card);
     background: var(--hos-slate-warm);
     box-shadow: var(--hos-elev-1);
-    overflow: hidden;
-  }
-  .returns h2 {
-    font-size: 15px;
-    font-weight: 600;
-    margin: 0;
-    padding: var(--hh-s-12) var(--hh-s-16);
-    border-bottom: 1px solid var(--hos-line);
-  }
-  .returns-body {
     padding: var(--hh-s-16);
+    min-width: 0;
+  }
+  .returns .rt-card.focus {
+    border-color: var(--hh-accent);
+  }
+  .returns .customer-step {
+    width: min(100%, 520px);
+    margin: var(--hh-s-24) auto 0;
+    display: grid;
+    gap: var(--hh-s-16);
+  }
+  .returns input[type="text"],
+  .returns input[type="search"],
+  .returns input[type="number"] {
+    font-family: inherit;
     font-size: 13px;
+    color: var(--hos-text);
+    background: var(--hos-field);
+    border: 1px solid var(--hh-control-line);
+    border-radius: var(--hos-radius-control);
+    padding: var(--hh-s-8) var(--hh-s-12);
+    min-height: 44px;
+    box-sizing: border-box;
+  }
+  .returns input:focus-visible,
+  .returns button:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  .returns .search-input {
+    width: 100%;
   }
   .returns .hint {
     color: var(--hos-text-dim);
-    margin: 0 0 var(--hh-s-16);
+    margin: var(--hh-s-8) 0 0;
   }
-  .returns .btn-primary,
-  .returns .btn-secondary {
+  .returns .notice {
+    color: var(--hos-text-dim);
+    margin: var(--hh-s-8) 0 0;
+  }
+  .returns .note-stop {
+    color: var(--hh-state-stop);
+    margin: 0 0 var(--hh-s-12);
+  }
+  .returns .matches {
+    list-style: none;
+    margin: var(--hh-s-12) 0 0;
+    padding: 0;
+    display: grid;
+    gap: var(--hh-s-8);
+  }
+  .returns .matches button {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    gap: var(--hh-s-12);
+    text-align: start;
+    min-height: 44px;
+    min-width: 0;
+  }
+  .returns .why {
+    border-radius: var(--hos-radius-card);
+    background: color-mix(in srgb, var(--hh-accent) 22%, transparent);
+    padding: var(--hh-s-12) var(--hh-s-16);
+  }
+  .returns .why h3 {
     font-size: 13px;
+    margin: 0 0 var(--hh-s-4);
   }
-  /* UI-3 (visual NOTE 4): the one disabled rule the till uses (Complete sale): no fill, grey ink
-     and line, no fade, in both themes; not the design system's pale fill. */
+  .returns .why p {
+    margin: 0;
+    color: var(--hos-text-dim);
+  }
+  .returns .lines-step {
+    display: grid;
+    grid-template-columns: minmax(0, 3fr) minmax(0, 1fr);
+    gap: var(--hh-s-16);
+    align-items: start;
+  }
+  @media (max-width: 760px) {
+    .returns .lines-step {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+  .returns .stack {
+    display: grid;
+    gap: var(--hh-s-12);
+    min-width: 0;
+  }
+  .returns .customer-card {
+    display: flex;
+    align-items: center;
+    gap: var(--hh-s-12);
+    flex-wrap: wrap;
+    justify-content: space-between;
+  }
+  .returns .customer-name {
+    font-size: 15px;
+    font-weight: 600;
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+  .returns .customer-meta {
+    color: var(--hos-text-dim);
+    margin: var(--hh-s-4) 0 0;
+  }
+  .returns .filter-row {
+    display: flex;
+    gap: var(--hh-s-12);
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .returns .filter-row input {
+    flex: 1 1 220px;
+    min-width: 0;
+  }
+  .returns .order-head {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--hh-s-12);
+    flex-wrap: wrap;
+    font-weight: 600;
+    margin: 0 0 var(--hh-s-12);
+  }
+  .returns .order-head .open-count {
+    font-weight: 400;
+    color: var(--hos-text-dim);
+  }
+  .returns .line-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: var(--hh-s-12);
+  }
+  .returns .line {
+    border: 1px solid var(--hos-line);
+    border-radius: var(--hos-radius-card);
+    padding: var(--hh-s-12);
+    display: grid;
+    gap: var(--hh-s-12);
+  }
+  .returns .line[data-picked="true"] {
+    border-color: var(--hh-accent);
+  }
+  .returns .line-top {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--hh-s-16);
+    flex-wrap: wrap;
+  }
+  .returns .line-desc {
+    font-weight: 600;
+    overflow-wrap: anywhere;
+    margin: 0;
+  }
+  .returns .line-sku {
+    color: var(--hos-text-dim);
+    font-size: 11px;
+    margin: var(--hh-s-4) 0 0;
+  }
+  .returns .line-bought {
+    color: var(--hos-text-dim);
+    margin: 0;
+    font-variant-numeric: tabular-nums;
+  }
+  .returns .qty {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    margin-top: var(--hh-s-8);
+  }
+  .returns .qty input {
+    width: 5em;
+    text-align: center;
+  }
+  .returns .qty button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .returns .dispositions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--hh-s-8);
+  }
+  .returns .dispositions button {
+    min-height: 44px;
+    font-size: 12px;
+  }
+  .returns .dispositions button[aria-pressed="true"] {
+    border-color: var(--hh-accent);
+    background: color-mix(in srgb, var(--hh-accent) 22%, transparent);
+    font-weight: 600;
+  }
+  .returns .rt-credit h3 {
+    font-size: 15px;
+    margin: 0 0 var(--hh-s-12);
+  }
+  .returns .credit-lines {
+    list-style: none;
+    margin: 0 0 var(--hh-s-12);
+    padding: 0;
+    display: grid;
+    gap: var(--hh-s-8);
+  }
+  .returns .credit-lines li {
+    border: 1px solid var(--hos-line);
+    border-radius: var(--hos-radius-control);
+    padding: var(--hh-s-8) var(--hh-s-12);
+    background: var(--hos-field);
+    overflow-wrap: anywhere;
+  }
+  .returns .credit-lines .server-figure {
+    display: block;
+    color: var(--hos-text-dim);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
+  .returns .credit-count {
+    font-weight: 600;
+    margin: 0 0 var(--hh-s-12);
+  }
+  .returns .btn-wide {
+    margin-top: var(--hh-s-12);
+    width: 100%;
+    min-height: 48px;
+  }
+  /* The one disabled rule the till uses (Complete sale): no fill, grey ink and line, no fade. */
   .returns button:disabled,
   .returns button:disabled:hover {
     background: transparent;
@@ -65,470 +318,338 @@ export const returnsStyles = css`
     opacity: 1;
     cursor: not-allowed;
   }
-  .find-row {
-    display: flex;
-    align-items: end;
-    gap: var(--hh-s-12);
-    flex-wrap: wrap;
-    margin: 0 0 var(--hh-s-16);
-  }
-  .find-row label {
-    display: block;
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--hos-text-dim);
-    margin: 0 0 var(--hh-s-4);
-  }
-  .find-row input {
-    font-family: inherit;
-    font-size: 13px;
-    color: var(--hos-text);
-    background: var(--hos-field);
-    border: 1px solid var(--hh-control-line);
-    border-radius: var(--hos-radius-control);
-    padding: var(--hh-s-8) var(--hh-s-12);
-    min-height: 44px;
-  }
-  .find-row input:focus-visible {
-    outline: 2px solid var(--hh-focus-ring);
-    outline-offset: 2px;
-  }
-  .sale-heading {
-    font-size: 15px;
-    margin: 0 0 var(--hh-s-8);
-  }
-  .sale-meta {
-    color: var(--hh-text-dim);
-    margin: 0 0 var(--hh-s-8);
-  }
-  .line-desc {
-    font-weight: 600;
-    min-width: 0;
-  }
-  .line-figures {
-    color: var(--hh-text-dim);
-    font-size: var(--hh-s-12);
-    white-space: nowrap;
-  }
-  .line-returnable {
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-  }
-  .notice {
-    color: var(--hh-text-dim);
-  }
-  .line-qty {
-    display: flex;
-    align-items: center;
-    gap: var(--hh-s-8);
-    white-space: nowrap;
-  }
-  .line-qty label {
-    font-size: var(--hh-s-12);
-    color: var(--hh-text-dim);
-  }
-  .line-qty input {
-    font-family: inherit;
-    font-size: 13px;
-    color: var(--hos-text);
-    background: var(--hos-field);
-    border: 1px solid var(--hh-control-line);
-    border-radius: var(--hos-radius-control);
-    padding: var(--hh-s-8) var(--hh-s-12);
-    width: 5em;
-    min-height: 44px;
-  }
-  .line-qty input:focus-visible {
-    outline: 2px solid var(--hh-focus-ring);
-    outline-offset: 2px;
-  }
-  .methods {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--hh-s-12);
-    margin: var(--hh-s-16) 0 var(--hh-s-8);
-  }
-  .methods button[aria-pressed="true"] {
-    border-color: var(--hh-accent);
-    font-weight: 600;
-  }
-  .draft-row {
-    display: flex;
-    align-items: center;
-    gap: var(--hh-s-12);
-    flex-wrap: wrap;
-    margin: 0 0 var(--hh-s-12);
-  }
-  .draft-row label {
-    font-size: var(--hh-s-12);
-    color: var(--hh-text-dim);
-  }
-  .draft-row select,
-  .draft-row input[type="text"] {
-    font-family: inherit;
-    font-size: 13px;
-    color: var(--hos-text);
-    background: var(--hos-field);
-    border: 1px solid var(--hh-control-line);
-    border-radius: var(--hos-radius-control);
-    padding: var(--hh-s-8) var(--hh-s-12);
-    min-height: 44px;
-  }
-  .draft-row select:focus-visible,
-  .draft-row input:focus-visible {
-    outline: 2px solid var(--hh-focus-ring);
-    outline-offset: 2px;
-  }
-  .restock {
-    display: flex;
-    align-items: center;
-    gap: var(--hh-s-8);
-    font-size: 13px;
-    color: var(--hh-text);
-  }
-  .submit-row {
-    margin: var(--hh-s-16) 0 0;
-  }
-  .receipt {
-    border: 1px solid var(--hos-line);
-    border-radius: var(--hh-radius-control);
-    padding: var(--hh-s-16);
-    margin: var(--hh-s-16) 0 0;
-    max-width: 480px;
-  }
-  .refusal {
-    border: 1px solid var(--hh-state-stop);
-    border-radius: var(--hh-radius-control);
-    padding: var(--hh-s-16);
-    margin: var(--hh-s-16) 0 0;
-    max-width: 480px;
-  }
-  .refusal h3 {
-    font-size: 15px;
-    margin: 0 0 var(--hh-s-8);
-  }
-  .refusal p {
-    margin: 0 0 var(--hh-s-8);
-  }
-  .refusal button {
-    margin-top: var(--hh-s-8);
-  }
-  .dialog {
-    border: 1px solid var(--hh-control-line);
-    border-radius: var(--hh-radius-control);
-    background: var(--hh-card);
-    padding: var(--hh-s-16);
-    margin: var(--hh-s-16) 0 0;
-    max-width: 480px;
-  }
-  .dialog h3 {
-    font-size: 15px;
-    margin: 0 0 var(--hh-s-8);
-  }
-  .dialog p {
-    margin: 0 0 var(--hh-s-12);
-  }
-  .dialog .cards {
-    display: flex;
-    flex-direction: column;
-    gap: var(--hh-s-12);
-    margin: 0 0 var(--hh-s-16);
-  }
-  .dialog .card {
-    min-height: 64px;
-    font-size: var(--hh-s-16);
-    font-weight: 600;
-    background: var(--hh-card);
-    color: var(--hh-text);
-    border: 1px solid var(--hh-control-line);
-    text-align: start;
-    padding: var(--hh-s-16) var(--hh-s-20);
-  }
-  .dialog .card:hover:not(:disabled) {
-    border-color: var(--hh-accent);
-  }
-  .receipt h3 {
-    font-size: 15px;
-    margin: 0 0 var(--hh-s-8);
-  }
-  .receipt p {
-    margin: 0 0 var(--hh-s-8);
-  }
-  .receipt .figures {
-    font-variant-numeric: tabular-nums;
-    font-weight: 600;
-  }
 `;
+
+const STEP_WORDS: Record<ReturnStep, string> = {
+  customer: "Customer",
+  lines: "Lines",
+  refund: "Refund",
+  done: "Done",
+};
 
 export function renderReturns(flow: ReturnsFlow): TemplateResult {
   return html`
-    <section class="returns" data-testid="returns">
+    <section class="returns" data-testid="returns" data-step=${flow.step}>
       <div class="returns-col">
-      <div class="returns-card">
-      <h2>Returns</h2>
-      <div class="returns-body">
-      <p class="hint">Find the original sale by its number, then choose the lines to take back.</p>
-      <div class="find-row">
-        <div>
-          <label for="ct-returns-order-no">Sale number</label>
-          <input
-            id="ct-returns-order-no"
-            type="text"
-            data-field="order-no"
-            ?disabled=${flow.busy || flow.dialogOpen}
-          />
+        <div class="head-row">
+          <div>
+            <span class="eyebrow">Point of sale</span>
+            <h2>New Return</h2>
+            <p class="subtitle">${subtitle(flow)}</p>
+          </div>
+          ${renderStepper(flow.step)}
         </div>
-        <button
-          type="button"
-          class="btn-secondary"
-          data-action="returns-find"
-          ?disabled=${!flow.canFind || flow.dialogOpen}
-        >
-          Find sale
-        </button>
-      </div>
-      ${flow.notice === null ? nothing : html`<p class="notice" role="status" data-testid="returns-notice">${flow.notice}</p>`}
-      ${flow.lookup === null ? nothing : renderSale(flow)}
-      ${flow.refusal === null || flow.receipt !== null ? nothing : renderRefusal(flow.refusal)}
-      ${flow.dialogOpen ? renderApprovalDialog(flow) : nothing}
-      ${flow.receipt === null ? nothing : renderReceipt(flow.receipt)}
-      </div>
-      </div>
+        ${flow.step === "customer" ? renderCustomerStep(flow) : nothing}
+        ${flow.step === "lines" ? renderLinesStep(flow) : nothing}
+        ${flow.step === "refund" ? renderRefundStep(flow) : nothing}
       </div>
     </section>
   `;
 }
 
-function renderRefusal(approval: PosRefundApproval): TemplateResult {
-  // The roles named the way the refusal speaks them: the Sales manager, or
-  // the Branch manager. A role key with no label shows as the key itself.
-  const named = approverLabels(approval.approvers).map((role) => `the ${role}`);
-  const roles =
-    named.length === 1 ? named[0] : `${named.slice(0, -1).join(", ")}, or ${named[named.length - 1]}`;
-  return html`
-    <section class="refusal" data-testid="refund-refusal" role="alert">
-      <h3>Refused</h3>
-      <p>
-        This refund is over the dealer's approval amount of ${formatMoney(approval.amount_cents)}, so
-        this desk cannot commit it as rung.
-      </p>
-      <p>It can be committed by ${roles}: a manager whose role holds the approval.</p>
-      <button type="button" class="btn-primary" data-action="returns-approve">Manager approval</button>
-    </section>
-  `;
-}
-
-function renderApprovalDialog(flow: ReturnsFlow): TemplateResult {
-  return html`
-    <section class="dialog" role="dialog" aria-modal="true" aria-label="Manager approval" data-testid="approval-dialog">
-      <h3>Manager approval</h3>
-      <p>The manager taps their own card here: the till stays the clerk's, and the refund is recorded as the manager's decision with the clerk named beside.</p>
-      ${flow.approverFlows === null
-        ? html`<p class="notice" role="status">Asking for the approver cards.</p>`
-        : flow.approverFlows.length === 0
-          ? html`<p class="notice">No approver card is available in this demo.</p>`
-          : html`
-              <div class="cards" role="group" aria-label="Approver roles">
-                ${flow.approverFlows.map(
-                  (row) => html`
-                    <button
-                      type="button"
-                      class="card"
-                      data-action="returns-approver-flow"
-                      data-flow=${row.flow}
-                      ?disabled=${flow.approving}
-                    >
-                      ${row.label ?? row.flow}
-                    </button>
-                  `,
-                )}
-              </div>
-            `}
-      <button type="button" class="btn-secondary" data-action="returns-approve-cancel" ?disabled=${flow.approving}>
-        Cancel
-      </button>
-    </section>
-  `;
-}
-
-// The keyed block below is a directive result rather than a bare
-// TemplateResult; a child part takes either, so this helper's return type is
-// the union Lit's templates accept from it.
-function renderSale(flow: ReturnsFlow): unknown {
-  const lookup = flow.lookup;
-  if (lookup === null) return html``;
-  if (flow.receipt !== null) {
-    // The receipt tells this return's story now; the sale's lines wait until
-    // the desk starts another one.
-    return html``;
+function subtitle(flow: ReturnsFlow): string {
+  if (flow.step === "customer") {
+    return "A credit note built like a new sales order: the customer first, then their lines across every order.";
   }
-  const nothingReturnable = lookup.lines.every((line) => line.qtySold <= line.qtyReturned);
-  // The whole sale's block is keyed on the draft's epoch: the desk's fields
-  // are uncontrolled by design, so a reset the model performs must rebuild
-  // the nodes too, or a new find would inherit the last draft's typed words
-  // (the review round's P1).
+  const name = flow.customer?.name ?? "The customer";
+  if (flow.step === "lines") return `${name}: pick the lines coming back, from any of their orders.`;
+  return `${name}: the refund.`;
+}
+
+function renderStepper(current: ReturnStep): TemplateResult {
+  const at = STEP_ORDER.indexOf(current);
+  return html`
+    <ol class="stepper" aria-label="Return steps" data-testid="returns-stepper">
+      ${STEP_ORDER.map((step, index) => html`
+        <li
+          data-step=${step}
+          data-state=${index < at ? "done" : index === at ? "current" : "next"}
+          aria-current=${index === at ? "step" : nothing}
+        >
+          <span>${index + 1}</span> ${STEP_WORDS[step]}
+        </li>
+      `)}
+    </ol>
+  `;
+}
+
+function renderCustomerStep(flow: ReturnsFlow): TemplateResult {
+  return html`
+    <div class="customer-step">
+      <div class="rt-card focus">
+        <span class="eyebrow">Customer</span>
+        ${keyed(
+          flow.epoch,
+          html`<input
+            type="search"
+            class="search-input"
+            id="ct-returns-customer"
+            data-field="returns-customer"
+            aria-label="Search name or account number"
+            placeholder="Search name or account #..."
+            autocomplete="off"
+            ?disabled=${flow.loading}
+          />`,
+        )}
+        <p class="hint">
+          Only this customer's orders come up on the next step: every sales order they ever bought, grouped by order or job.
+          A walk-in sale is not returned from here.
+        </p>
+        ${flow.notice === null ? nothing : html`<p class="notice" role="status" data-testid="returns-notice">${flow.notice}</p>`}
+        ${flow.searching ? html`<p class="notice" role="status">Searching.</p>` : nothing}
+        ${flow.matches.length > 0
+          ? html`<ul class="matches" aria-label="Customers" data-testid="returns-customers">
+              ${flow.matches.map((row) => html`
+                <li>
+                  <button
+                    type="button"
+                    class="btn-secondary"
+                    data-action="returns-customer"
+                    data-customer=${row.id}
+                    ?disabled=${flow.loading}
+                  >
+                    <span>${row.name}</span>
+                    <span>${row.account_no}</span>
+                  </button>
+                </li>
+              `)}
+            </ul>`
+          : flow.searched && !flow.searching && flow.notice === null
+            ? html`<p class="notice" role="status" data-testid="returns-no-customer">No customer answers to that: check the name or account number.</p>`
+            : nothing}
+        ${flow.loading ? html`<p class="notice" role="status">Reading this customer's orders.</p>` : nothing}
+      </div>
+      <div class="why">
+        <h3>Why customer first</h3>
+        <p>
+          A return answers what did they buy here, never what is on the shelf. Stock and the general ledger follow the
+          customer's paper.
+        </p>
+      </div>
+    </div>
+  `;
+}
+
+function renderLinesStep(flow: ReturnsFlow): unknown {
+  const customer = flow.customer;
+  const shown = flow.visibleOrders;
   return keyed(
-    flow.draftEpoch,
+    flow.epoch,
     html`
-      <h3 class="sale-heading" data-testid="returns-sale">Sale ${lookup.orderNo}</h3>
-      <p class="sale-meta">Paid by ${tenderWords(lookup.saleTender)}.</p>
-      ${nothingReturnable
-        ? html`<p class="notice" role="status">Nothing on this sale is still returnable: every line has gone back already.</p>`
-        : html`
-            <ul class="rows" aria-label="Sale lines">
-              ${lookup.lines.map((line) => renderLine(flow, line))}
-            </ul>
-            ${renderDraft(flow)}
-          `}
+      <div class="lines-step" data-testid="returns-lines">
+        <div class="stack">
+          <div class="rt-card customer-card">
+            <div>
+              <p class="customer-name" data-testid="returns-customer-name">${customer?.name ?? ""}</p>
+              <p class="customer-meta">
+                ${customer?.account_no ?? ""} · ${customer === null ? "" : typeWords(customer.customer_type)} · Outstanding
+                ${customer === null ? "" : formatMoney(customer.open_balance_cents)}
+              </p>
+            </div>
+            <button type="button" class="btn-secondary" data-action="returns-another">Change customer</button>
+          </div>
+          ${flow.draftNotice === null
+            ? nothing
+            : html`<p class="note-stop" role="alert" data-testid="returns-draft-notice">${flow.draftNotice}</p>`}
+          ${flow.orders.length === 0
+            ? html`<p class="notice" role="status" data-testid="returns-no-orders">
+                This customer holds no sales order here: there is nothing to return.
+              </p>`
+            : html`
+                <div class="filter-row">
+                  <input
+                    type="search"
+                    data-field="returns-filter"
+                    aria-label="Filter by sales order number"
+                    placeholder="Filter by sales order number"
+                    .value=${flow.filter}
+                  />
+                </div>
+                ${flow.nothingOpen
+                  ? html`<p class="notice" role="status" data-testid="returns-nothing-open">
+                      Nothing is still returnable for this customer: every line has gone back already.
+                    </p>`
+                  : nothing}
+                ${shown.length === 0
+                  ? html`<p class="notice" role="status">No order matches that number.</p>`
+                  : shown.map((order) => renderOrder(flow, order))}
+              `}
+        </div>
+        ${renderCredit(flow)}
+      </div>
     `,
   );
 }
 
-function renderLine(
-  flow: ReturnsFlow,
-  line: { orderLineId: string; description: string; qtySold: number; qtyReturned: number; unitPriceCents: number; lineTotalCents: number },
-): TemplateResult {
-  // The desk's controls stand down while anything is in flight or the
-  // approval dialog holds the till: nothing drafts under a send.
-  const frozen = flow.submitting || flow.dialogOpen || flow.approving;
-  // What is still returnable is the line's two returned-and-sold counts read
-  // side by side; the commit re-guards the quantity on the server, so this
-  // read-off is for the clerk's eye, never an authority.
+function typeWords(type: string): string {
+  return type.charAt(0) + type.slice(1).toLowerCase();
+}
+
+function renderOrder(flow: ReturnsFlow, order: CustomerOrder): TemplateResult {
+  const open = order.lines.filter((line) => line.qtyOpen > 0).length;
   return html`
-    <li class="row">
-      <span class="line-desc">${line.description}</span>
-      <span class="line-figures">each ${formatMoney(line.unitPriceCents)}, line ${formatMoney(line.lineTotalCents)}</span>
-      <span class="line-returnable">sold ${line.qtySold}, returned ${line.qtyReturned}</span>
-      <span class="line-qty">
-        <span class="line-qty-label">Return</span>
-        <input
-          type="number"
-          min="0"
-          step="1"
-          inputmode="numeric"
-          data-field="qty"
-          data-line=${line.orderLineId}
-          aria-label="Quantity to return: ${line.description}"
-          ?disabled=${frozen}
-        />
-      </span>
-    </li>
-  `;
-}
-
-const METHOD_LABELS: Record<RefundMethod, string> = {
-  CASH: "Cash",
-  CARD: "Card",
-  ACCOUNT_CREDIT: "Account credit",
-};
-
-function submitLabel(method: RefundMethod): string {
-  if (method === "CASH") return "Refund cash";
-  if (method === "CARD") return "Refund card";
-  return "Refund to account";
-}
-
-export function methodWords(method: RefundMethod): string {
-  if (method === "CASH") return "cash, from the drawer";
-  if (method === "CARD") return "card";
-  return "account credit";
-}
-
-function renderDraft(flow: ReturnsFlow): TemplateResult {
-  const lookup = flow.lookup;
-  if (lookup === null) return html``;
-  // The chosen rail's words: the card rail's only when the status route's own
-  // flag says simulated, so the screen never claims it on its own.
-  let chosenNote: TemplateResult | typeof nothing = nothing;
-  if (flow.method === "CARD" && flow.cardSimulated === true) {
-    chosenNote = html`<p class="notice" role="status" data-testid="simulated-notice">
-      Simulated refund: nothing reached a card.
-    </p>`;
-  } else if (flow.method !== null) {
-    chosenNote = html`<p class="notice" role="status">${methodWords(flow.method)}: ${methodNote(flow)}</p>`;
-  }
-  const frozen = flow.submitting || flow.dialogOpen || flow.approving;
-  return html`
-    <div class="methods" role="group" aria-label="Refund method">
-      ${(["CASH", "CARD", "ACCOUNT_CREDIT"] as const).map((method) => html`
-        <button
-          type="button"
-          class="btn-secondary"
-          data-action="returns-method"
-          data-method=${method}
-          aria-pressed=${flow.method === method ? "true" : "false"}
-          ?disabled=${!flow.methodAvailable(method) || frozen}
-        >
-          ${METHOD_LABELS[method]}
-        </button>
-      `)}
-    </div>
-    ${flow.methodAvailable("CASH")
-      ? nothing
-      : html`<p class="notice">Cash waits on the drawer: ${drawerWords(flow.drawer)}</p>`}
-    ${flow.methodAvailable("CARD")
-      ? nothing
-      : html`<p class="notice">No card refund: this sale was not paid by card, so there is no capture to reverse.</p>`}
-    ${chosenNote}
-    <div class="draft-row">
-      <label for="ct-returns-reason">Reason</label>
-      <!-- The five codes the contract spells, written static because the union
-           is closed and Other leads because a fresh select shows its first
-           option: the flow's default reason (REASON_CODES in returns/flow.ts)
-           is the same Other, so the screen and the draft never disagree. -->
-      <select id="ct-returns-reason" data-field="reason-code" ?disabled=${frozen}>
-        <option value="OTHER">Other</option>
-        <option value="DAMAGED">Damaged</option>
-        <option value="DEFECT">Defect</option>
-        <option value="WRONG_ITEM">Wrong item</option>
-        <option value="NO_LONGER_NEEDED">No longer needed</option>
-      </select>
-      <label for="ct-returns-note">Note</label>
-      <input id="ct-returns-note" type="text" data-field="note" ?disabled=${frozen} />
-      <label class="restock">
-        <input type="checkbox" data-field="restock" checked ?disabled=${frozen} />
-        Restock the goods
-      </label>
-    </div>
-    <div class="submit-row">
-      <button type="button" class="btn-primary" data-action="returns-submit" ?disabled=${!flow.canSubmit || frozen}>
-        ${flow.method === null ? "Record refund" : submitLabel(flow.method)}
-      </button>
-    </div>
-  `;
-}
-
-function drawerWords(drawer: ReturnsFlow["drawer"]): string {
-  if (drawer.kind === "closed") return "no drawer is open at the sale's branch.";
-  return "the drawer could not be asked just now.";
-}
-
-function methodNote(flow: ReturnsFlow): string {
-  if (flow.method === "CASH") return "paid out of the open drawer.";
-  if (flow.method === "CARD") return "the original card capture is reversed.";
-  return "the customer's account is credited.";
-}
-
-function renderReceipt(receipt: RefundReceipt): TemplateResult {
-  return html`
-    <section class="receipt" data-testid="refund-receipt" role="status">
-      <h3>Refund recorded</h3>
-      <p>${receipt.returnNo}${receipt.replayed ? " (the same return, answered again)" : ""}</p>
-      <p class="figures">Total refunded ${formatMoney(receipt.totalCents)} by ${methodWords(receipt.method)}</p>
-      ${receipt.method === "CARD" && receipt.cardSimulated === true
-        ? html`<p data-testid="simulated-notice">Simulated refund: nothing reached a card.</p>`
-        : nothing}
-      ${receipt.approverName === null ? nothing : html`<p>Approved by ${receipt.approverName}.</p>`}
-      ${receipt.clerkName === null ? nothing : html`<p>Rung by ${receipt.clerkName}.</p>`}
-      <button type="button" class="btn-secondary" data-action="returns-another">Start another return</button>
+    <section class="rt-card" data-testid="returns-order" data-order=${order.orderNo}>
+      <div class="order-head">
+        <span>${order.orderNo}${order.jobLabel === "" ? "" : html` · job ${order.jobLabel}`}</span>
+        <span class="open-count">${open} of ${order.lines.length} ${order.lines.length === 1 ? "line" : "lines"} open to return</span>
+      </div>
+      <ul class="line-list" aria-label="Lines of ${order.orderNo}">
+        ${order.lines.map((line) => renderLine(flow, order, line))}
+      </ul>
     </section>
   `;
 }
 
-function tenderWords(tender: string): string {
-  if (tender === "ACCOUNT") return "account";
-  if (tender === "CASH") return "cash";
-  if (tender === "CARD") return "card";
-  return "cheque";
+function renderLine(flow: ReturnsFlow, order: CustomerOrder, line: CustomerLine): TemplateResult {
+  const qty = flow.draft.qtyOf(line.orderLineId);
+  const chosen = flow.draft.dispositionOf(line.orderLineId);
+  const exhausted = line.qtyOpen <= 0;
+  return html`
+    <li class="line" data-testid="returns-line" data-line=${line.orderLineId} data-picked=${qty > 0 ? "true" : "false"}>
+      <div class="line-top">
+        <div>
+          <p class="line-desc">${line.description}</p>
+          <p class="line-sku">${line.sku}</p>
+        </div>
+        <div>
+          <p class="line-bought">
+            bought ${shownQty(line.qtySold)} at ${formatMoney(line.unitPriceCents)} · ${shownQty(line.qtyOpen)} open
+          </p>
+          ${exhausted
+            ? html`<p class="notice">Every unit has gone back already.</p>`
+            : html`
+                <span class="qty" role="group" aria-label="Quantity to return: ${line.description} on ${order.orderNo}">
+                  <button
+                    type="button"
+                    class="btn-secondary"
+                    data-action="returns-qty-down"
+                    data-line=${line.orderLineId}
+                    aria-label="One fewer: ${line.description} on ${order.orderNo}"
+                    ?disabled=${qty === 0}
+                  >
+                    -
+                  </button>
+                  <input
+                    type="number"
+                    min="0"
+                    max=${line.qtyOpen}
+                    step="any"
+                    inputmode="decimal"
+                    data-field="returns-qty"
+                    data-line=${line.orderLineId}
+                    aria-label="Return quantity: ${line.description} on ${order.orderNo}"
+                    .value=${qty === 0 ? "" : String(qty)}
+                  />
+                  <button
+                    type="button"
+                    class="btn-secondary"
+                    data-action="returns-qty-up"
+                    data-line=${line.orderLineId}
+                    aria-label="One more: ${line.description} on ${order.orderNo}"
+                    ?disabled=${qty >= line.qtyOpen}
+                  >
+                    +
+                  </button>
+                </span>
+              `}
+        </div>
+      </div>
+      ${exhausted
+        ? nothing
+        : html`
+            <div class="dispositions" role="group" aria-label="What happens to ${line.description} on ${order.orderNo}">
+              ${DISPOSITIONS.map((disposition: Disposition) => html`
+                <button
+                  type="button"
+                  class="btn-secondary"
+                  data-action="returns-disposition"
+                  data-line=${line.orderLineId}
+                  data-disposition=${disposition}
+                  aria-pressed=${chosen === disposition ? "true" : "false"}
+                >
+                  ${DISPOSITION_WORDS[disposition]}
+                </button>
+              `)}
+            </div>
+            ${qty > 0 && chosen === null
+              ? html`<p class="notice" data-testid="returns-line-choose">Choose what happens below.</p>`
+              : nothing}
+          `}
+    </li>
+  `;
+}
+
+function shownQty(value: number): string {
+  return String(Number(value.toFixed(4)));
+}
+
+function renderCredit(flow: ReturnsFlow): TemplateResult {
+  const picked = flow.draft.pickedLines();
+  const missing = flow.draft.missingDispositions;
+  const lineById = new Map<string, CustomerLine>();
+  for (const order of flow.orders) for (const line of order.lines) lineById.set(line.orderLineId, line);
+  return html`
+    <aside class="rt-card rt-credit" data-testid="returns-credit" aria-label="The credit so far">
+      <h3>The credit so far</h3>
+      ${picked.length === 0
+        ? html`<p class="notice" data-testid="returns-credit-empty">Pick a line to start the credit note.</p>`
+        : html`
+            <p class="credit-count" data-testid="returns-credit-count">
+              ${picked.length} ${picked.length === 1 ? "line" : "lines"} from ${flow.draft.orderCount}
+              ${flow.draft.orderCount === 1 ? "order" : "orders"}
+            </p>
+            <ul class="credit-lines" aria-label="Lines on the credit note">
+              ${picked.map((pick) => {
+                const line = lineById.get(pick.orderLineId);
+                return html`
+                  <li data-testid="returns-credit-line">
+                    ${shownQty(pick.qty)} ${pick.description} on ${pick.orderNo} ·
+                    ${pick.disposition === null ? "choose what happens" : DISPOSITION_WORDS[pick.disposition]}
+                    ${line === undefined
+                      ? nothing
+                      : html`<span class="server-figure">${formatMoney(line.unitPriceCents)} each on the order, line ${formatMoney(line.lineTotalCents)} plus ${formatMoney(line.taxCents)} tax</span>`}
+                  </li>
+                `;
+              })}
+            </ul>
+            <p class="notice" data-testid="returns-credit-pending">
+              The credit's own total is the server's figure, with tax: it is priced when the refund is drafted. The figures
+              above are what the order says, not the credit.
+            </p>
+          `}
+      ${missing > 0
+        ? html`<p class="notice" data-testid="returns-missing">
+            ${missing === 1 ? "One line still needs" : `${missing} lines still need`} a choice: return to stock, damaged, or nothing returned.
+          </p>`
+        : nothing}
+      <button
+        type="button"
+        class="btn-primary btn-wide"
+        data-action="returns-continue"
+        ?disabled=${!flow.canContinue}
+      >
+        Continue to the refund
+      </button>
+    </aside>
+  `;
+}
+
+function renderRefundStep(flow: ReturnsFlow): TemplateResult {
+  const picked = flow.draft.pickedLines();
+  return html`
+    <div class="customer-step">
+      <div class="rt-card focus" data-testid="returns-refund-wait">
+        <span class="eyebrow">Refund</span>
+        <p>
+          ${picked.length} ${picked.length === 1 ? "line" : "lines"} from ${flow.draft.orderCount}
+          ${flow.draft.orderCount === 1 ? "order" : "orders"} are drafted for ${flow.customer?.name ?? "this customer"}.
+        </p>
+        <p class="hint">
+          The refund rails (card, on the account where it can spend credit, cash) and the swap arrive with the next step of
+          this build. Nothing has been returned.
+        </p>
+        <button type="button" class="btn-secondary" data-action="returns-back-to-lines">Back to the lines</button>
+      </div>
+    </div>
+  `;
 }
