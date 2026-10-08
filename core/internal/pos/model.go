@@ -745,6 +745,62 @@ type ReturnableLineView struct {
 	TaxCents       int64   `json:"tax_cents"`
 }
 
+// CustomerLinesInput is the customer lines read's parameters (sub item 10.1): one account customer,
+// optionally narrowed to one branch. The read is the pre-return read of the returns-across flow:
+// every sales order the customer holds in HH, till rings and quote conversions alike, newest first,
+// each line with the quantity the commit guard would accept.
+type CustomerLinesInput struct {
+	CustomerID string
+	BranchID   string
+	Limit      int
+}
+
+// CustomerReturnableLineView is one line of one order in the customer lines read: the guard's own
+// netting (qty open is qty sold less every returned qty, the same SQL the commit reads) plus the
+// money and tax already back, the product facts for the tile, and the shelf state the disposition
+// work reads later.
+type CustomerReturnableLineView struct {
+	OrderLineID         string  `json:"order_line_id"`
+	ProductID           string  `json:"product_id"`
+	SKU                 string  `json:"sku"`
+	Description         string  `json:"description"`
+	QtySold             float64 `json:"qty_sold"`
+	QtyReturned         float64 `json:"qty_returned"`
+	QtyOpen             float64 `json:"qty_open"`
+	UnitPriceCents      int64   `json:"unit_price_cents"`
+	LineTotalCents      int64   `json:"line_total_cents"`
+	TaxCents            int64   `json:"tax_cents"`
+	MoneyReturnedCents  int64   `json:"money_returned_cents"`
+	TaxReturnedCents    int64   `json:"tax_returned_cents"`
+	ShelfState          string  `json:"shelf_state"`
+}
+
+// CustomerOrderView is one order of the customer lines read. Source names where the order came from:
+// TILL (a committed ring, the facts of which ride beside it) or QUOTE (an order a quote became,
+// an order like any other that carries no till facts). FulfilmentState is the order's own ladder word
+// (CONFIRMED through FULFILLED); ShelfState on each line says whether the goods ever left the shelf.
+type CustomerOrderView struct {
+	OrderID         string                       `json:"order_id"`
+	OrderNo         string                       `json:"order_no"`
+	BranchID        string                       `json:"branch_id"`
+	CreatedAt       string                       `json:"created_at"`
+	JobLabel        string                       `json:"job_label"`
+	Source          string                       `json:"source"`
+	SaleType        string                       `json:"sale_type"`
+	Tender          string                       `json:"tender"`
+	FulfilmentState string                       `json:"fulfilment_state"`
+	InvoiceID       string                       `json:"invoice_id"`
+	CardRefundable  bool                         `json:"card_refundable"`
+	Lines           []CustomerReturnableLineView `json:"lines"`
+}
+
+// CustomerLinesView is the customer lines read's answer: the customer echoed, the orders newest
+// first, bounded by the limit.
+type CustomerLinesView struct {
+	CustomerID string               `json:"customer_id"`
+	Items      []CustomerOrderView  `json:"items"`
+}
+
 // ReturnPickup is one row on the logistics pickup queue (REQUESTED/SCHEDULED returns).
 type ReturnPickup struct {
 	ReturnID      string `json:"return_id"`

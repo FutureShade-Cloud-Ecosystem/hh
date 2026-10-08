@@ -899,6 +899,45 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/pos/returns/customer-lines:
+    get:
+      operationId: posCustomerReturnLines
+      tags: [staff-pos]
+      summary: Read one customer's every sales order with its returnable lines
+      description: >-
+        The pre-return read of the returns-across flow: every sales order the
+        customer holds, till rings and quote conversions alike, newest first,
+        bounded by limit. Each line's open quantity is the same netting the
+        commit guard reads, so the screen and the guard cannot disagree. A
+        scoped caller sees only the branches their resolved authority reaches,
+        the other branches' orders simply absent; naming an unreachable branch
+        is the wall's 403. The house WALK-IN account is refused in words: it
+        holds no one customer's history.
+      x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - { name: customer_id, in: query, required: true, schema: { type: string, format: uuid } }
+        - { name: branch_id, in: query, required: false, schema: { type: string, format: uuid } }
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The customer's orders with their returnable lines
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosCustomerLines"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: The house WALK-IN account, which holds no one customer's history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/pos/returns/pickups:
     get:
       operationId: posListReturnPickups
@@ -2841,6 +2880,63 @@ components:
         lines:
           type: array
           items: { $ref: "#/components/schemas/PosReturnableLine" }
+    PosCustomerLine:
+      type: object
+      description: >-
+        One line of one order in the customer lines read: the open quantity is
+        the commit guard's own netting (qty sold less every returned qty), the
+        money and tax already returned ride the same sums, and the shelf state
+        says whether the goods ever left the shelf (NOT_FULFILLED,
+        PARTIALLY_FULFILLED, FULFILLED).
+      required: [order_line_id, product_id, sku, description, qty_sold, qty_returned, qty_open, unit_price_cents, line_total_cents, tax_cents, money_returned_cents, tax_returned_cents, shelf_state]
+      properties:
+        order_line_id: { type: string, format: uuid }
+        product_id: { type: string, format: uuid }
+        sku: { type: string }
+        description: { type: string }
+        qty_sold: { type: number }
+        qty_returned: { type: number }
+        qty_open: { type: number }
+        unit_price_cents: { type: integer, format: int64 }
+        line_total_cents: { type: integer, format: int64 }
+        tax_cents: { type: integer, format: int64 }
+        money_returned_cents: { type: integer, format: int64 }
+        tax_returned_cents: { type: integer, format: int64 }
+        shelf_state: { type: string, enum: [NOT_FULFILLED, PARTIALLY_FULFILLED, FULFILLED] }
+    PosCustomerOrder:
+      type: object
+      description: >-
+        One order of the customer lines read. Source names where it came from:
+        TILL, a committed ring whose facts ride beside it, or QUOTE, an order a
+        quote became (an order like any other, carrying no till facts).
+      required: [order_id, order_no, branch_id, created_at, job_label, source, sale_type, tender, fulfilment_state, invoice_id, card_refundable, lines]
+      properties:
+        order_id: { type: string, format: uuid }
+        order_no: { type: string }
+        branch_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        job_label: { type: string, description: The job address, else the job reference, else the customer's PO or job reference }
+        source: { type: string, enum: [TILL, QUOTE] }
+        sale_type: { type: string, enum: ["", COLLECT_NOW, COLLECT_LATER, DELIVERED, COD] }
+        tender: { type: string, enum: ["", ACCOUNT, CASH, CARD, CHEQUE], description: The original ring's tender; empty on a quote conversion }
+        fulfilment_state: { type: string, description: The order's own ladder word, CONFIRMED through FULFILLED }
+        invoice_id: { type: string, format: uuid }
+        card_refundable: { type: boolean, description: The original CARD capture carried a gateway reference }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/PosCustomerLine" }
+    PosCustomerLines:
+      type: object
+      description: >-
+        The customer lines read's answer. The orders are newest first and
+        bounded by the limit; no cursor rides the envelope (a narrower branch
+        query is the reader's own drill down).
+      required: [customer_id, items]
+      properties:
+        customer_id: { type: string, format: uuid }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PosCustomerOrder" }
     PosReturnPickup:
       type: object
       description: One row on the logistics pickup queue

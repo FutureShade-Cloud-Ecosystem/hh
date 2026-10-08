@@ -266,7 +266,7 @@ func (r *Repository) ListReturnableLines(ctx context.Context, orderID string) ([
 	const q = `
 SELECT ol.id::text, COALESCE(ol.product_id::text,''), COALESCE(NULLIF(ol.description, ''), p.name, ''), ol.qty_base::float8,
        ol.unit_price_cents, ol.line_total_cents, ol.tax_cents,
-       COALESCE((SELECT SUM(rl.qty_base) FROM pos_return_lines rl WHERE rl.order_line_id = ol.id), 0)::float8
+       ` + priorReturnQtyExpr + `::float8
   FROM order_lines ol
   LEFT JOIN products p ON p.id = ol.product_id
  WHERE ol.order_id::text = $1
@@ -288,15 +288,97 @@ SELECT ol.id::text, COALESCE(ol.product_id::text,''), COALESCE(NULLIF(ol.descrip
 	return out, rows.Err()
 }
 
+// The prior-return sums are ONE SQL fact shared by the commit guard (LockReturnableLine, read under
+// FOR UPDATE inside the return transaction) and the customer lines read (ListCustomerReturnableOrders,
+// the pool read the screen builds its quantity steppers from): the same correlated sums, so the
+// screen's qty open and the guard's remaining qty cannot disagree. A line's returned money and tax
+// ride the same sums.
+const (
+	priorReturnQtyExpr   = `COALESCE((SELECT SUM(rl.qty_base) FROM pos_return_lines rl WHERE rl.order_line_id = ol.id), 0)`
+	priorReturnMoneyExpr = `COALESCE((SELECT SUM(rl.line_total_cents) FROM pos_return_lines rl WHERE rl.order_line_id = ol.id), 0)`
+	priorReturnTaxExpr   = `COALESCE((SELECT SUM(rl.tax_cents) FROM pos_return_lines rl WHERE rl.order_line_id = ol.id), 0)`
+)
+
+// ListCustomerReturnableOrders is the customer lines read (sub item 10.1): every sales order the
+// customer holds in HH, the widened Q1 ruling's source. A committed till ring (its newest COMMITTED
+// pos_sale facet) and an order a quote became (orders.quote_id, set by the conversion) are orders
+// like any other; nothing else is listed (portal and yard originated sales that HH holds as quotes
+// or nothing at all are later work, named in the item's report). branchIDs nil reaches every branch;
+// a non-nil slice (possibly empty) limits to those branch ids. Orders arrive newest first, bounded
+// by limit; each line's open quantity is the guard's own netting (returnableQtyOpen over the shared
+// prior-return sums).
+func (r *Repository) ListCustomerReturnableOrders(ctx context.Context, customerID string, branchIDs []string, limit int) ([]CustomerOrderView, error) {
+	if r.pool == nil {
+		return nil, errNoPool
+	}
+	const q = `
+WITH cust_orders AS (
+  SELECT o.id, o.order_no, o.branch_id::text, o.status,
+         COALESCE(NULLIF(o.job_address,''), NULLIF(o.job_reference,''), NULLIF(o.po_job_ref,''), '') AS job_label,
+         to_char(o.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at,
+         CASE WHEN o.quote_id IS NOT NULL THEN 'QUOTE' ELSE 'TILL' END AS source,
+         ps.sale_type, ps.tender, COALESCE(ps.invoice_id::text,'') AS invoice_id,
+         (ps.tender = 'CARD' AND COALESCE(pay.gateway_ref,'') <> '') AS card_refundable
+    FROM orders o
+    LEFT JOIN LATERAL (
+      SELECT sale_type, tender, invoice_id, payment_id FROM pos_sale
+       WHERE order_id = o.id AND status = 'COMMITTED'
+       ORDER BY created_at DESC LIMIT 1) ps ON TRUE
+    LEFT JOIN payments pay ON pay.id = ps.payment_id
+   WHERE o.customer_id = $1::uuid
+     AND (ps.sale_type IS NOT NULL OR o.quote_id IS NOT NULL)
+     AND ($2::text[] IS NULL OR o.branch_id::text = ANY($2::text[]))
+   ORDER BY o.created_at DESC
+   LIMIT $3
+)
+SELECT co.id::text, co.order_no, co.branch_id, co.status, co.job_label, co.created_at, co.source,
+       COALESCE(co.sale_type,''), COALESCE(co.tender,''), COALESCE(co.invoice_id,''), co.card_refundable,
+       ol.id::text, COALESCE(ol.product_id::text,''), COALESCE(p.sku::text,''),
+       COALESCE(NULLIF(ol.description, ''), p.name, ''), ol.qty_base::float8,
+       ol.unit_price_cents, ol.line_total_cents, ol.tax_cents,
+       ` + priorReturnQtyExpr + `::float8, ` + priorReturnMoneyExpr + `, ` + priorReturnTaxExpr + `,
+       CASE WHEN co.sale_type = 'COLLECT_NOW' THEN 'FULFILLED'
+            WHEN ol.fulfilled_base >= ol.qty_base THEN 'FULFILLED'
+            WHEN ol.fulfilled_base > 0 THEN 'PARTIALLY_FULFILLED'
+            ELSE 'NOT_FULFILLED' END AS shelf_state
+  FROM cust_orders co
+  JOIN order_lines ol ON ol.order_id = co.id
+  LEFT JOIN products p ON p.id = ol.product_id
+ ORDER BY co.created_at DESC, ol.line_no`
+	rows, err := r.pool.Query(ctx, q, customerID, branchIDs, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []CustomerOrderView{}
+	for rows.Next() {
+		var o CustomerOrderView
+		var l CustomerReturnableLineView
+		if err := rows.Scan(&o.OrderID, &o.OrderNo, &o.BranchID, &o.FulfilmentState, &o.JobLabel, &o.CreatedAt, &o.Source,
+			&o.SaleType, &o.Tender, &o.InvoiceID, &o.CardRefundable,
+			&l.OrderLineID, &l.ProductID, &l.SKU, &l.Description, &l.QtySold,
+			&l.UnitPriceCents, &l.LineTotalCents, &l.TaxCents, &l.QtyReturned, &l.MoneyReturnedCents, &l.TaxReturnedCents,
+			&l.ShelfState); err != nil {
+			return nil, err
+		}
+		l.QtyOpen = returnableQtyOpen(l.QtySold, l.QtyReturned)
+		if n := len(out); n > 0 && out[n-1].OrderID == o.OrderID {
+			out[n-1].Lines = append(out[n-1].Lines, l)
+			continue
+		}
+		o.Lines = []CustomerReturnableLineView{l}
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
 func (r *Repository) LockReturnableLine(ctx context.Context, tx pgx.Tx, orderID, orderLineID string) (returnableLine, bool, error) {
 	// FOR UPDATE on the original order line serializes concurrent returns of the SAME line, the
 	// prior-return sums read after the lock are therefore exact.
 	const q = `
 SELECT ol.id::text, COALESCE(ol.product_id::text,''), ol.qty_base::float8, ol.unit_price_cents,
        ol.line_total_cents, ol.tax_cents,
-       COALESCE((SELECT SUM(rl.qty_base) FROM pos_return_lines rl WHERE rl.order_line_id = ol.id), 0)::float8,
-       COALESCE((SELECT SUM(rl.line_total_cents) FROM pos_return_lines rl WHERE rl.order_line_id = ol.id), 0),
-       COALESCE((SELECT SUM(rl.tax_cents) FROM pos_return_lines rl WHERE rl.order_line_id = ol.id), 0)
+       ` + priorReturnQtyExpr + `::float8, ` + priorReturnMoneyExpr + `, ` + priorReturnTaxExpr + `
   FROM order_lines ol
  WHERE ol.id = $2 AND ol.order_id = $1
    FOR UPDATE OF ol`

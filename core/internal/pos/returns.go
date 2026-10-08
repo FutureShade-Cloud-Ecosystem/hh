@@ -21,6 +21,74 @@ import (
 // qtyEpsilon absorbs DECIMAL(19,4) float round-trip noise when comparing quantities.
 const qtyEpsilon = 1e-6
 
+// returnableQtyOpen is the ONE quantity-open derivation, called by the commit guard (returnInTx's
+// over-return comparison) and by the customer lines read (ListCustomerReturnableOrders' scan): the
+// line's sold quantity less every quantity already returned on it, both sides of the subtraction
+// read from the same shared prior-return sums. One function, so the screen's open quantity and the
+// guard's remaining quantity are the same number.
+func returnableQtyOpen(qtySold, qtyReturned float64) float64 {
+	return qtySold - qtyReturned
+}
+
+// The customer lines read's bounds: the orders answered are newest first and bounded, the counter's
+// own list discipline (the sale lookup's numbers).
+const (
+	defaultCustomerLinesLimit = 25
+	maxCustomerLinesLimit     = 100
+)
+
+// errWalkInNotReturnable refuses the customer lines read for the house WALK-IN row (sub item 10.1):
+// its sales are everybody's walk-in sales, not one customer's history, and a walk-in sale is
+// returned by its own number on the single-order path.
+var errWalkInNotReturnable = clientErr(http.StatusUnprocessableEntity,
+	"pos: the WALK-IN house account holds no customer history; return a walk-in sale by its own order number")
+
+// CustomerLines is the customer lines read (sub item 10.1): every sales order the customer holds in
+// HH, till rings and quote conversions alike (the widened Q1 ruling), newest first, each line with
+// the quantity the commit guard would accept and the money and tax already back. The branch wall is
+// the counter's own: a scoped caller sees only the orders their resolved authority reaches (the
+// others are simply absent), and naming a branch the caller does not reach is the wall's 403 naming
+// the branch.
+func (s *Service) CustomerLines(ctx context.Context, in CustomerLinesInput) (CustomerLinesView, error) {
+	in.CustomerID = strings.TrimSpace(in.CustomerID)
+	if in.CustomerID == "" {
+		return CustomerLinesView{}, clientErr(http.StatusBadRequest, "pos: customer_id is required")
+	}
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return CustomerLinesView{}, err
+	}
+	// The house WALK-IN row is refused in words (D2's read-side half): the shared row's sales are not
+	// one customer's history, and crediting across them is exactly the shared-wallet defect.
+	if walkIn, werr := s.store.ResolveWalkIn(ctx); werr == nil && walkIn == in.CustomerID {
+		return CustomerLinesView{}, errWalkInNotReturnable
+	}
+	// The branch wall: naming a branch the caller's resolved authority does not reach is the same 403
+	// the return itself answers; naming none answers every branch the caller reaches (a global caller
+	// every branch), the absent orders simply left out.
+	branchIDs := reachableBranches(caller)
+	if in.BranchID = strings.TrimSpace(in.BranchID); in.BranchID != "" {
+		if err := requireBranchReach(caller, in.BranchID); err != nil {
+			return CustomerLinesView{}, err
+		}
+		branchIDs = []string{in.BranchID}
+	}
+	if in.Limit <= 0 {
+		in.Limit = defaultCustomerLinesLimit
+	}
+	if in.Limit > maxCustomerLinesLimit {
+		in.Limit = maxCustomerLinesLimit
+	}
+	items, err := s.store.ListCustomerReturnableOrders(ctx, in.CustomerID, branchIDs, in.Limit)
+	if err != nil {
+		return CustomerLinesView{}, err
+	}
+	if items == nil {
+		items = []CustomerOrderView{}
+	}
+	return CustomerLinesView{CustomerID: in.CustomerID, Items: items}, nil
+}
+
 // reservedRequestKeyPrefix is the idempotency-key namespace ApproveReturnRequest derives its rail key
 // from ("rreq:" + request id). It is RESERVED: a public return may never use it (a colliding key would
 // hijack a PENDING request's replay slot and stamp the wrong money onto its decision).
@@ -387,7 +455,7 @@ func (s *Service) returnInTx(ctx context.Context, tx pgx.Tx, plan *returnPlan) (
 		if !ok {
 			return Return{}, false, false, clientErr(http.StatusUnprocessableEntity, "pos: line %s does not belong to order %s", req.OrderLineID, oc.OrderNo)
 		}
-		remainingQty := rl.QtySold - rl.PriorQty
+		remainingQty := returnableQtyOpen(rl.QtySold, rl.PriorQty)
 		if req.QtyBase > remainingQty+qtyEpsilon {
 			return Return{}, false, false, clientErr(http.StatusUnprocessableEntity,
 				"pos: over-return on line %s, %.4f requested but only %.4f returnable", req.OrderLineID, req.QtyBase, remainingQty)

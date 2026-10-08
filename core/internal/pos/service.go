@@ -194,6 +194,10 @@ type posStore interface {
 	ReturnOrderContextFor(ctx context.Context, orderID, orderNo string, reach []string) (returnOrderCtx, bool, error)
 	ReturnOrderContextTx(ctx context.Context, tx pgx.Tx, orderID, orderNo string) (returnOrderCtx, bool, error)
 	ListReturnableLines(ctx context.Context, orderID string) ([]ReturnableLineView, error)
+	// ListCustomerReturnableOrders is the customer lines read (sub item 10.1): every sales order the
+	// customer holds (till rings and quote conversions), newest first, bounded, each line's open
+	// quantity netted by the same shared prior-return sums the commit guard reads.
+	ListCustomerReturnableOrders(ctx context.Context, customerID string, branchIDs []string, limit int) ([]CustomerOrderView, error)
 	LockReturnableLine(ctx context.Context, tx pgx.Tx, orderID, orderLineID string) (returnableLine, bool, error)
 	// the per-sale return sums and lock: the refund approval amount counts
 	// every return against the same sale together, so the gate reads the

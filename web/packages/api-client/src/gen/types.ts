@@ -4471,6 +4471,39 @@ export type PosReturnLookup = {
   card_refundable: boolean;
   lines: PosReturnableLine[];
 };
+export type PosCustomerLine = {
+  order_line_id: string;
+  product_id: string;
+  sku: string;
+  description: string;
+  qty_sold: number;
+  qty_returned: number;
+  qty_open: number;
+  unit_price_cents: number;
+  line_total_cents: number;
+  tax_cents: number;
+  money_returned_cents: number;
+  tax_returned_cents: number;
+  shelf_state: "NOT_FULFILLED" | "PARTIALLY_FULFILLED" | "FULFILLED";
+};
+export type PosCustomerOrder = {
+  order_id: string;
+  order_no: string;
+  branch_id: string;
+  created_at: string;
+  job_label: string;
+  source: "TILL" | "QUOTE";
+  sale_type: "" | "COLLECT_NOW" | "COLLECT_LATER" | "DELIVERED" | "COD";
+  tender: "" | "ACCOUNT" | "CASH" | "CARD" | "CHEQUE";
+  fulfilment_state: string;
+  invoice_id: string;
+  card_refundable: boolean;
+  lines: PosCustomerLine[];
+};
+export type PosCustomerLines = {
+  customer_id: string;
+  items: PosCustomerOrder[];
+};
 export type PosReturnPickup = {
   return_id: string;
   return_no: string;

@@ -5226,6 +5226,42 @@ type PosReturnLookup struct {
 	Lines          []PosReturnableLine `json:"lines"`
 }
 
+type PosCustomerLine struct {
+	OrderLineId        string  `json:"order_line_id"`
+	ProductId          string  `json:"product_id"`
+	Sku                string  `json:"sku"`
+	Description        string  `json:"description"`
+	QtySold            float64 `json:"qty_sold"`
+	QtyReturned        float64 `json:"qty_returned"`
+	QtyOpen            float64 `json:"qty_open"`
+	UnitPriceCents     int64   `json:"unit_price_cents"`
+	LineTotalCents     int64   `json:"line_total_cents"`
+	TaxCents           int64   `json:"tax_cents"`
+	MoneyReturnedCents int64   `json:"money_returned_cents"`
+	TaxReturnedCents   int64   `json:"tax_returned_cents"`
+	ShelfState         string  `json:"shelf_state"`
+}
+
+type PosCustomerOrder struct {
+	OrderId         string            `json:"order_id"`
+	OrderNo         string            `json:"order_no"`
+	BranchId        string            `json:"branch_id"`
+	CreatedAt       time.Time         `json:"created_at"`
+	JobLabel        string            `json:"job_label"`
+	Source          string            `json:"source"`
+	SaleType        string            `json:"sale_type"`
+	Tender          string            `json:"tender"`
+	FulfilmentState string            `json:"fulfilment_state"`
+	InvoiceId       string            `json:"invoice_id"`
+	CardRefundable  bool              `json:"card_refundable"`
+	Lines           []PosCustomerLine `json:"lines"`
+}
+
+type PosCustomerLines struct {
+	CustomerId string             `json:"customer_id"`
+	Items      []PosCustomerOrder `json:"items"`
+}
+
 type PosReturnPickup struct {
 	ReturnId      string    `json:"return_id"`
 	ReturnNo      string    `json:"return_no"`

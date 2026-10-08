@@ -58,6 +58,7 @@ type fakeStore struct {
 	cachedReturns   map[string]Return           // idempotency key → committed return
 	retCtx          map[string]returnOrderCtx   // order_id → the original-sale context
 	retLines        map[string]returnableLine   // order_line_id → the sold line (prior sums derive from returnLineRows)
+	retLineOrders   map[string]string           // order_line_id → order_id (the customer lines fake's grouping)
 	returnRows      []returnRow
 	returnLineRows  []returnLineRow
 	priorSums       map[string]int64  // order_id → the sale's earlier committed return total (the per-sale sum the refund gate reads)
@@ -135,6 +136,7 @@ func newFakeStore(tr *[]string) *fakeStore {
 		cachedReturns:  map[string]Return{},
 		retCtx:         map[string]returnOrderCtx{},
 		retLines:       map[string]returnableLine{},
+		retLineOrders:  map[string]string{},
 		priorSums:      map[string]int64{},
 		refundPayments: map[string]string{},
 		invoiceBalance: map[string]int64{},
@@ -404,8 +406,69 @@ func (f *fakeStore) ListReturnableLines(_ context.Context, orderID string) ([]Re
 	return out, nil
 }
 
-func (f *fakeStore) LockReturnableLine(_ context.Context, _ pgx.Tx, orderID, orderLineID string) (returnableLine, bool, error) {
-	rl, ok := f.retLines[orderLineID]
+// ListCustomerReturnableOrders answers the customer lines read from the same world the other
+// return fakes hold: the return contexts carry the customer and branch, the lines the quantities,
+// and the committed return lines the shared prior sums. The fake needs no separate canned state.
+func (f *fakeStore) ListCustomerReturnableOrders(_ context.Context, customerID string, branchIDs []string, limit int) ([]CustomerOrderView, error) {
+	reach := func(branch string) bool {
+		if branchIDs == nil {
+			return true
+		}
+		for _, b := range branchIDs {
+			if b == branch {
+				return true
+			}
+		}
+		return false
+	}
+	var out []CustomerOrderView
+	byOrder := map[string]int{}
+	for _, oc := range f.retCtx {
+		if oc.CustomerID != customerID || !reach(oc.BranchID) {
+			continue
+		}
+		if len(out) >= limit {
+			break
+		}
+		o := CustomerOrderView{OrderID: oc.OrderID, OrderNo: oc.OrderNo, BranchID: oc.BranchID,
+			FulfilmentState: "CONFIRMED", Source: "TILL", SaleType: "COLLECT_NOW", Tender: oc.SaleTender,
+			InvoiceID: oc.InvoiceID, CardRefundable: oc.SaleTender == TenderCard && oc.GatewayRef != ""}
+		byOrder[oc.OrderID] = len(out)
+		out = append(out, o)
+	}
+	lineOrder := make(map[string]string, len(f.retLineOrders))
+	for id, ord := range f.retLineOrders {
+		lineOrder[id] = ord
+	}
+	for id, rl := range f.retLines {
+		oc, ok := f.retCtx[lineOrder[id]]
+		if !ok {
+			continue
+		}
+		idx, ok := byOrder[oc.OrderID]
+		if !ok {
+			continue
+		}
+		l := CustomerReturnableLineView{OrderLineID: id, ProductID: rl.ProductID, QtySold: rl.QtySold,
+			UnitPriceCents: rl.UnitPriceCents, LineTotalCents: rl.LineTotalCents, TaxCents: rl.TaxCents,
+			ShelfState: "FULFILLED"}
+		for _, prev := range f.returnLineRows {
+			if prev.OrderLineID == id {
+				l.QtyReturned += prev.QtyBase
+				l.MoneyReturnedCents += prev.LineTotalCents
+				l.TaxReturnedCents += prev.TaxCents
+			}
+		}
+		l.QtyOpen = returnableQtyOpen(l.QtySold, l.QtyReturned)
+		out[idx].Lines = append(out[idx].Lines, l)
+	}
+	if out == nil {
+		out = []CustomerOrderView{}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) LockReturnableLine(_ context.Context, _ pgx.Tx, orderID, orderLineID string) (returnableLine, bool, error) {	rl, ok := f.retLines[orderLineID]
 	if !ok || f.retCtx[orderID].OrderID != orderID {
 		return returnableLine{}, false, nil
 	}

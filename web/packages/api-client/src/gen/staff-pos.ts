@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { PosAccountStanding, PosAddonSuggestions, PosCounterPriceInput, PosCounterPrices, PosDiscountApproverList, PosHotkeys, PosMarginGlance, PosMarginGlanceInput, PosOwingOrderList, PosParkInput, PosParkedDiscard, PosParkedTicket, PosParkedTicketPage, PosPayBalanceTakeInput, PosPayBalanceTaken, PosPaymentGrant, PosPickupAdvance, PosPolicy, PosPolicyChangePage, PosPricingOrder, PosPricingOrderInput, PosPricingOrderPage, PosQuickPicks, PosReliefAssessInput, PosReliefOutcome, PosReturn, PosReturnInput, PosReturnLookup, PosReturnPickup, PosReturnPickupPage, PosReturnRequest, PosReturnRequestPage, PosReturnRequestReject, PosSale, PosSaleInput, PosSalePreview, PosSalePreviewInput, PosSaleSummaryPage, PosSaleView, PosSalespersonPage, PosSignatureCapture, PosSignatureRef, PosStockGlance, PosTaxRate, PosTypedAttestation, PosTypedSignatureRef, PosWorkspacePrefs, PosWorkspaceSaveInput } from "./types.js";
+import type { PosAccountStanding, PosAddonSuggestions, PosCounterPriceInput, PosCounterPrices, PosCustomerLines, PosDiscountApproverList, PosHotkeys, PosMarginGlance, PosMarginGlanceInput, PosOwingOrderList, PosParkInput, PosParkedDiscard, PosParkedTicket, PosParkedTicketPage, PosPayBalanceTakeInput, PosPayBalanceTaken, PosPaymentGrant, PosPickupAdvance, PosPolicy, PosPolicyChangePage, PosPricingOrder, PosPricingOrderInput, PosPricingOrderPage, PosQuickPicks, PosReliefAssessInput, PosReliefOutcome, PosReturn, PosReturnInput, PosReturnLookup, PosReturnPickup, PosReturnPickupPage, PosReturnRequest, PosReturnRequestPage, PosReturnRequestReject, PosSale, PosSaleInput, PosSalePreview, PosSalePreviewInput, PosSaleSummaryPage, PosSaleView, PosSalespersonPage, PosSignatureCapture, PosSignatureRef, PosStockGlance, PosTaxRate, PosTypedAttestation, PosTypedSignatureRef, PosWorkspacePrefs, PosWorkspaceSaveInput } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -384,6 +384,21 @@ export async function posCreateReturn(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "posCreateReturn",
+  });
+}
+
+export async function posCustomerReturnLines(
+  client: ApiClient,
+  opts: { customer_id: string; branch_id?: string; limit?: number },
+  call?: ApiCallOptions
+): Promise<Result<PosCustomerLines>> {
+  return client.request<PosCustomerLines>({
+    method: "GET",
+    path: "/api/v1/pos/returns/customer-lines",
+    query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "posCustomerReturnLines",
   });
 }
 
