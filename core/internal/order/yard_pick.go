@@ -143,6 +143,11 @@ func (s *Service) ApplyYardPicks(ctx context.Context, in YardPickInput) (YardPic
 	if len(in.Lines) == 0 {
 		return YardPickOutcome{}, httpx.BadRequestf("say which lines were picked")
 	}
+	// Item 9.3: a pick releases goods, so the pay before release hold guards
+	// it before any line is touched (pick_hold.go).
+	if err := s.refuseHeldFromPicking(ctx, in.OrderID); err != nil {
+		return YardPickOutcome{}, err
+	}
 	st, ok := s.store.(yardPickStore)
 	if !ok {
 		return YardPickOutcome{}, ErrEditNotConfigured

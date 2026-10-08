@@ -299,6 +299,18 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		panic("order: cancel guards not wired - a manual CANCELLED could not verify attached money state")
 	}
 
+	// Item 9.3 (the row 1047 deposits work): the pay before release hold on
+	// every path that releases goods (picking, yard picks, the will call
+	// doors), read from the money through billing. The lane is additive in the
+	// service (a scaffold composition without it behaves as before), so the
+	// boot fail-fast here is what keeps a deploy from serving with it dark,
+	// the cancel guards' own posture.
+	orderSvc.WithPickHoldReader(pickHoldAdapter{repo: billingRepo})
+	if !orderSvc.PickHoldWired() {
+		panic("order: pick hold reader not wired - a pay before release order could reach picking unpaid")
+	}
+	ops.dispatchSvc.WithPickHoldGate(dispatchPickHoldAdapter{repo: billingRepo})
+
 	// A-21 audit viewer routes (the module carried since the foundations;
 	// its registration lands with the fold).
 	audit.NewHandler(auditSvc, log).RegisterRoutes(r, g)

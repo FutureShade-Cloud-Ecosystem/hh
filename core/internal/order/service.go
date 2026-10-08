@@ -149,6 +149,9 @@ type Service struct {
 	standing InvoiceStandingReader
 	// backorderNotifier tells the rep when an order edit clears a short line's backorder (yard_pick_edit.go).
 	backorderNotifier BackorderNotifier
+	// pickHold is the billing read behind the pay before release hold (pick_hold.go,
+	// item 9.3): nil leaves the lane off (the composition root asserts the wiring at boot).
+	pickHold PickHoldReader
 }
 
 // txRecorder is the transactional half of the audit seam: write one row on the caller's transaction so
@@ -290,6 +293,13 @@ func (s *Service) SetStatus(ctx context.Context, tenant, actor, orderID, newStat
 	}
 	if !validStatus(newStatus) {
 		return httpx.BadRequestf("unknown order status %q", newStatus)
+	}
+	// Item 9.3: the pay before release hold guards the one status that starts
+	// releasing goods, at the choke point itself, whatever caller reached it.
+	if newStatus == "PICKING" {
+		if err := s.refuseHeldFromPicking(ctx, orderID); err != nil {
+			return err
+		}
 	}
 	oldStatus, err := s.store.UpdateStatus(ctx, tenant, orderID, newStatus)
 	if err != nil {
@@ -554,6 +564,10 @@ type OrderView struct {
 	TotalCents    int64           `json:"total_cents"`
 	// HasBackorder is true while any line is short and still owed (migration 0369).
 	HasBackorder bool `json:"has_backorder"`
+	// PayHold is the pay before release block (item 9.3): held or not, the
+	// words, order total, paid so far, still owed. Absent when the read's seam
+	// is unwired or unreadable, never a block that reads as clear.
+	PayHold *OrderPayHold `json:"pay_hold,omitempty"`
 }
 
 // OrderRead returns one order's current status + this caller's legal actions. Authority mirrors the
@@ -592,6 +606,7 @@ func (s *Service) OrderRead(ctx context.Context, orderID string) (OrderView, err
 		LegalActions:   s.legalActions(ctx, caller, orderID, status),
 		EditableFields: s.offeredEditableFields(ctx, caller, orderID, status),
 		Lines:          []OrderViewLine{},
+		PayHold:        s.payHoldView(ctx, orderID),
 	}
 	// Lines + money are best-effort: a read that cannot load them still answers status and the
 	// available actions, exactly as it did before DIB-175 (an older fake/deploy without the edit seam
@@ -659,6 +674,14 @@ func (s *Service) legalActions(ctx context.Context, caller identity.StaffContext
 // A non-nil precheck (the cancel money predicate, B2-2) routes the write through the locked-predicate
 // variant so the predicate runs under the order-row lock; nil uses the single-statement guarded write.
 func (s *Service) setStatusGuarded(ctx context.Context, actor, orderID, newStatus, reason string, allowedFrom []string, precheck func(context.Context) error) error {
+	// Item 9.3: the pay before release hold guards the manual and event driven
+	// moves into PICKING (this is the path TransitionManual and AdvanceFromEvent
+	// take; SetStatus carries its own copy of the guard at the choke point).
+	if newStatus == "PICKING" {
+		if err := s.refuseHeldFromPicking(ctx, orderID); err != nil {
+			return err
+		}
+	}
 	var oldStatus string
 	var err error
 	// W5 seam 3: when this target has a hold effect AND the reservation lane is available, the

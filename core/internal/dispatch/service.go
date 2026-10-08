@@ -56,6 +56,11 @@ type Service struct {
 	// picks is the rack-tag seam (module.go). Nil is ALLOW, un-wired, MintWillCall behaves exactly as
 	// 0092 shipped it, and every call goes through s.pickStateFor, which is nil-safe by construction.
 	picks PickCompletionReader
+	// pickHold is the pay before release hold (item 9.3): an order that owes
+	// money under it gets no rack tag and no self confirmation. Nil is ALLOW
+	// (the additive lane, asserted at boot in the composition root); a wired
+	// seam that errors REFUSES (money, the closed direction).
+	pickHold PickHoldGate
 	// trail is the audit READ seam (session A item 3d). Nil is an empty history, never an error.
 	trail PolicyTrailReader
 	names ActorNameResolver
