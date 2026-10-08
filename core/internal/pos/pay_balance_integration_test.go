@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -89,7 +90,7 @@ func TestIntegration_PayBalance_FindByEveryKey(t *testing.T) {
 		{"by phone", phone},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			rows, err := svc.PayBalanceFind(ctx, tc.term)
+			rows, _, err := svc.PayBalanceFind(ctx, tc.term)
 			if err != nil {
 				t.Fatalf("find: %v", err)
 			}
@@ -124,7 +125,7 @@ func TestIntegration_PayBalance_FindAndTakeFencedToTheCallersBranch(t *testing.T
 	// A caller scoped to a branch that is not the order's finds nothing...
 	other := otherBranchID(t, pool, branchID)
 	scoped := staffCtx(t, pool, identity.ScopeBranch, other)
-	rows, err := svc.PayBalanceFind(scoped, "Pay balance proof")
+	rows, _, err := svc.PayBalanceFind(scoped, "Pay balance proof")
 	if err != nil {
 		t.Fatalf("find: %v", err)
 	}
@@ -142,7 +143,7 @@ func TestIntegration_PayBalance_FindAndTakeFencedToTheCallersBranch(t *testing.T
 	}
 	// The same caller scoped TO the order's branch finds it.
 	own := staffCtx(t, pool, identity.ScopeBranch, branchID)
-	rows, err = svc.PayBalanceFind(own, "Pay balance proof")
+	rows, _, err = svc.PayBalanceFind(own, "Pay balance proof")
 	if err != nil {
 		t.Fatalf("find: %v", err)
 	}
@@ -319,7 +320,7 @@ VALUES ('#INV-PBV-'||nextval('invoice_no_seq'), $1::uuid, $2::uuid, $3::uuid, 'I
 		t.Fatalf("plant the voided invoice: %v", err)
 	}
 	svc := realPosSvc(t, pool, stubCharger{})
-	rows, err := svc.PayBalanceFind(ctx, "#SO-PBV-"+suffix)
+	rows, _, err := svc.PayBalanceFind(ctx, "#SO-PBV-"+suffix)
 	if err != nil {
 		t.Fatalf("find: %v", err)
 	}
@@ -429,7 +430,7 @@ func TestIntegration_PayBalance_UninvoicedOrder_FoundTakenReleased(t *testing.T)
 		t.Fatalf("the uninvoiced order's hold reads (held %v, owed %d, err %v), want held, 10000", held, owed, err)
 	}
 	// The find answers the same number (the review's one number).
-	rows, err := svc.PayBalanceFind(ctx, "#SO-PBR-"+suffix)
+	rows, _, err := svc.PayBalanceFind(ctx, "#SO-PBR-"+suffix)
 	if err != nil {
 		t.Fatalf("find: %v", err)
 	}
@@ -654,14 +655,14 @@ VALUES ('#INV-PBE-'||nextval('invoice_no_seq'), $1::uuid, $2::uuid,
 	// The bare wildcards are the sharpest terms: unescaped, each would match
 	// every owing order in reach (both planted ones at least); escaped, each
 	// matches exactly the one order whose own text carries the character.
-	rows, err := svc.PayBalanceFind(ctx, "%")
+	rows, _, err := svc.PayBalanceFind(ctx, "%")
 	if err != nil {
 		t.Fatalf("find the percent term: %v", err)
 	}
 	if len(rows) != 1 || rows[0].OrderNo != percentNo {
 		t.Fatalf("the term %% answered %d rows (%v), want exactly the one order whose name carries a literal percent", len(rows), orderNos(rows))
 	}
-	rows, err = svc.PayBalanceFind(ctx, "_US")
+	rows, _, err = svc.PayBalanceFind(ctx, "_US")
 	if err != nil {
 		t.Fatalf("find the underscore term: %v", err)
 	}
@@ -917,7 +918,7 @@ func TestIntegration_PayBalance_CancelledOrder_NotFound(t *testing.T) {
 	}
 	charger := &countingCharger{}
 	svc := realPosSvc(t, pool, charger)
-	rows, err := svc.PayBalanceFind(ctx, orderNo)
+	rows, _, err := svc.PayBalanceFind(ctx, orderNo)
 	if err != nil {
 		t.Fatalf("find: %v", err)
 	}
@@ -990,5 +991,138 @@ func TestIntegration_PayBalance_BrokenOrderRaiseRefusal_IsAFixedSentence(t *test
 	}
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM invoices WHERE order_id = $1`, orderID).Scan(&invoices); err != nil || invoices != 0 {
 		t.Fatalf("the refused take wrote an invoice: %d (%v)", invoices, err)
+	}
+}
+
+// -- item 9 F review N5: the find never silently drops an owing order --
+
+// plantFindCustomer plants one zero day terms customer and returns its name
+// (the find term), id and branch, unwinding every order and invoice planted
+// under it.
+func plantFindCustomer(t *testing.T, pool *pgxpool.Pool, tag string) (name, custID, branchID string) {
+	t.Helper()
+	ctx := context.Background()
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano()%1_000_000_000)
+	name = "Findbound " + tag + " " + suffix
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO customers (account_no, name, customer_type, payment_terms_days, credit_limit_cents)
+		VALUES ('FB-'||$1, $2, 'CONTRACTOR', 0, 5000000) RETURNING id::text,
+		       (SELECT id::text FROM locations WHERE loc_type='BRANCH' ORDER BY id LIMIT 1)`, suffix, name).Scan(&custID, &branchID); err != nil {
+		t.Fatalf("plant the customer: %v", err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, custID)
+		_, _ = pool.Exec(c, `DELETE FROM orders WHERE customer_id = $1::uuid`, custID)
+		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, custID)
+	})
+	return name, custID, branchID
+}
+
+// findSuffix is the unique tail plantFindCustomer put on the name.
+func findSuffix(name string) string { return name[strings.LastIndex(name, " ")+1:] }
+
+// plantPaidOrders plants n orders billed in full and paid, a day old.
+func plantPaidOrders(t *testing.T, pool *pgxpool.Pool, custID, branchID, suffix string, n int) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO orders (order_no, customer_id, branch_id, status, fulfillment, subtotal_cents, total_cents, created_at)
+		SELECT '#SO-FBP-'||$1||'-'||g, $2::uuid, $3::uuid, 'CONFIRMED', 'WILL_CALL', 10000, 10000, now() - interval '1 day'
+		  FROM generate_series(1, $4::int) g`, suffix, custID, branchID, n); err != nil {
+		t.Fatalf("plant the paid orders: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO invoices (invoice_no, customer_id, order_id, branch_id, doc_type, status,
+		                      subtotal_cents, tax_cents, total_cents, balance_cents, due_date, finalized_at)
+		SELECT '#INV-FBP-'||nextval('invoice_no_seq'), $1::uuid, o.id, $2::uuid, 'INVOICE', 'PAID',
+		       10000, 0, 10000, 0, current_date, now()
+		  FROM orders o WHERE o.customer_id = $1::uuid AND o.order_no LIKE '#SO-FBP-'||$3||'-%'`, custID, branchID, suffix); err != nil {
+		t.Fatalf("plant the paid invoices: %v", err)
+	}
+}
+
+// plantFindOrder plants one order at the given age (days back) with one
+// invoice of the given total, status and balance; invoiceTotal 0 plants no
+// invoice. It answers the order number.
+func plantFindOrder(t *testing.T, pool *pgxpool.Pool, custID, branchID, no string, daysBack int, orderTotal, invoiceTotal, balance int64, status string) string {
+	t.Helper()
+	ctx := context.Background()
+	var orderID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO orders (order_no, customer_id, branch_id, status, fulfillment, subtotal_cents, total_cents, created_at)
+		VALUES ($1, $2::uuid, $3::uuid, 'CONFIRMED', 'WILL_CALL', $4, $4, now() - ($5 || ' days')::interval)
+		RETURNING id::text`, no, custID, branchID, orderTotal, fmt.Sprint(daysBack)).Scan(&orderID); err != nil {
+		t.Fatalf("plant order %s: %v", no, err)
+	}
+	if invoiceTotal > 0 {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO invoices (invoice_no, customer_id, order_id, branch_id, doc_type, status,
+			                      subtotal_cents, tax_cents, total_cents, balance_cents, due_date, finalized_at)
+			VALUES ('#INV-FB-'||nextval('invoice_no_seq'), $1::uuid, $2::uuid, $3::uuid, 'INVOICE', $4,
+			        $5, 0, $5, $6, current_date, now())`, custID, orderID, branchID, status, invoiceTotal, balance); err != nil {
+			t.Fatalf("plant the invoice of %s: %v", no, err)
+		}
+	}
+	return no
+}
+
+// Five hundred and twenty paid orders (past the old find's ten pages of fifty),
+// all newer, and older orders that still owe, for the same customer: the find answers the owing one (and the order billed short,
+// and the order nothing was billed on), and says nothing was cut off.
+func TestIntegration_PayBalance_FindReachesAnOwingOrderBehindManyPaidOnes(t *testing.T) {
+	pool := intPool(t)
+	ctx := globalCtx(t, pool)
+	name, custID, branchID := plantFindCustomer(t, pool, "paid60")
+	suffix := findSuffix(name)
+	// More paid orders than the old find's whole walk (ten pages of fifty), all
+	// newer than the owing ones.
+	plantPaidOrders(t, pool, custID, branchID, suffix, 520)
+	owing := plantFindOrder(t, pool, custID, branchID, "#SO-FBO-"+suffix, 30, 10000, 10000, 10000, "FINALIZED")
+	billedShort := plantFindOrder(t, pool, custID, branchID, "#SO-FBS-"+suffix, 31, 15000, 10000, 0, "PAID")
+	uninvoiced := plantFindOrder(t, pool, custID, branchID, "#SO-FBU-"+suffix, 32, 7000, 0, 0, "")
+
+	svc := realPosSvc(t, pool, stubCharger{})
+	rows, truncated, err := svc.PayBalanceFind(ctx, name)
+	if err != nil {
+		t.Fatalf("find: %v", err)
+	}
+	got := map[string]int64{}
+	for _, r := range rows {
+		got[r.OrderNo] = r.StillOwedCents
+	}
+	want := map[string]int64{owing: 10000, billedShort: 5000, uninvoiced: 7000}
+	if len(got) != len(want) {
+		t.Fatalf("the find answered %v, want exactly the three owing orders %v (not the paid ones)", orderNos(rows), want)
+	}
+	for no, cents := range want {
+		if got[no] != cents {
+			t.Fatalf("order %s owes %d in the find, want %d (answered %v)", no, got[no], cents, got)
+		}
+	}
+	if truncated {
+		t.Fatal("nothing was cut off, yet the find says it was")
+	}
+}
+
+// More owing orders than the answer holds: the answer is full and says so.
+func TestIntegration_PayBalance_FindSaysWhenMoreOrdersMatch(t *testing.T) {
+	pool := intPool(t)
+	ctx := globalCtx(t, pool)
+	name, custID, branchID := plantFindCustomer(t, pool, "many")
+	suffix := findSuffix(name)
+	for i := 0; i < 23; i++ {
+		plantFindOrder(t, pool, custID, branchID, fmt.Sprintf("#SO-FBM-%s-%02d", suffix, i), i+1, 10000, 10000, 10000, "FINALIZED")
+	}
+	svc := realPosSvc(t, pool, stubCharger{})
+	rows, truncated, err := svc.PayBalanceFind(ctx, name)
+	if err != nil {
+		t.Fatalf("find: %v", err)
+	}
+	if len(rows) != 20 {
+		t.Fatalf("the find answered %d rows, want the full 20", len(rows))
+	}
+	if !truncated {
+		t.Fatal("twenty three orders owe and twenty were answered, yet the find did not say more match")
 	}
 }

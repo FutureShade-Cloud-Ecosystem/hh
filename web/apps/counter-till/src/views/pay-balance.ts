@@ -16,6 +16,7 @@ import {
   takeButtonWords,
   methodWord,
   type OwingOrder,
+  MORE_ORDERS_WORDS,
 } from "../pay-balance/words.js";
 
 export const payBalanceStyles = [heldOrderStyles, css`
@@ -226,6 +227,9 @@ export function renderPayBalance(flow: PayBalanceFlow): TemplateResult {
             ${flow.notice === null
               ? nothing
               : html`<p class="notice" role="status" data-testid="pay-balance-notice">${flow.notice}</p>`}
+            ${flow.more
+              ? html`<p class="notice" role="status" data-testid="pay-balance-more">${MORE_ORDERS_WORDS}</p>`
+              : nothing}
             ${flow.order === null && flow.matches.length > 1 ? renderMatches(flow) : nothing}
             ${flow.order === null ? nothing : renderOrder(flow, flow.order)}
           </div>

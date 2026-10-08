@@ -68,13 +68,17 @@ func owedOf(m PayBalanceInvoiceMoney, totalCents int64) int64 {
 
 // payBalanceCandidatePage is the page the find walks the order module's
 // candidates in, and payBalanceCandidatePages how many pages it walks before it
-// answers what it has: an order owes by the money modules' arithmetic, which
-// the order module cannot filter on, so the find pages until it has enough
-// owing orders or runs out of candidates.
+// answers what it has. The candidates are already the orders that can owe
+// (billing is asked first which of the matched customers' orders have an open
+// balance or are billed short, and the order module picks at the source), so
+// paging is a bound on a pathological term, not the way owing is found. Where
+// any bound bites the answer says so (truncated), so an owing order is never
+// dropped without a signal.
 const (
 	payBalanceCandidatePage  = 50
 	payBalanceCandidatePages = 10
 	payBalanceCustomerReach  = 500
+	payBalanceInvoicedReach  = 5000
 )
 
 // FindOwingOrders answers the orders that owe money and match the term: an
@@ -82,20 +86,37 @@ const (
 // branchIDs nil reaches every branch (a global caller); otherwise the order's
 // branch must be one of them, which is the whole fence: another branch's
 // order is simply not in the answer, and neither is a cancelled order (not
-// this door's, the delta review's P2-A).
-func (r *Repository) FindOwingOrders(ctx context.Context, term string, branchIDs []string, limit int) ([]OwingOrder, error) {
+// this door's, the delta review's P2-A). truncated is true when a bound
+// stopped the find with more orders possibly matching (item 9 F review N5).
+func (r *Repository) FindOwingOrders(ctx context.Context, term string, branchIDs []string, limit int) ([]OwingOrder, bool, error) {
 	if limit <= 0 {
 		limit = 20
 	}
 	like := "%" + escapeLikeWildcards(term) + "%"
 	var out []OwingOrder
+	truncated := false
 	err := r.payBalanceRead(ctx, func(tx pgx.Tx, src PayBalanceSources) error {
 		customerIDs, err := src.MatchPayBalanceCustomers(ctx, tx, like, payBalanceCustomerReach)
 		if err != nil {
 			return err
 		}
-		for page := 0; page < payBalanceCandidatePages && len(out) < limit; page++ {
-			cands, err := src.PayBalanceOrderCandidates(ctx, tx, like, customerIDs, branchIDs, payBalanceCandidatePage, page*payBalanceCandidatePage)
+		if len(customerIDs) >= payBalanceCustomerReach {
+			truncated = true
+		}
+		// Billing first: which of the matched customers' orders have an open
+		// invoice balance (and what the live invoices bill), so the order
+		// module returns the orders that can owe instead of every live order.
+		invoiced, invTruncated, err := src.PayBalanceCustomerInvoiced(ctx, tx, customerIDs, payBalanceInvoicedReach)
+		if err != nil {
+			return err
+		}
+		if invTruncated {
+			truncated = true
+		}
+		exhausted := true
+		overLimit := false
+		for page := 0; page < payBalanceCandidatePages && !overLimit; page++ {
+			cands, err := src.PayBalanceOrderCandidates(ctx, tx, like, customerIDs, branchIDs, invoiced, payBalanceCandidatePage, page*payBalanceCandidatePage)
 			if err != nil {
 				return err
 			}
@@ -123,8 +144,14 @@ func (r *Repository) FindOwingOrders(ctx context.Context, term string, branchIDs
 			for _, c := range cands {
 				m := money[c.OrderID]
 				owed := owedOf(m, c.TotalCents)
-				if owed <= 0 || len(out) >= limit {
+				if owed <= 0 {
 					continue
+				}
+				if len(out) >= limit {
+					// One more owing order than the answer holds.
+					truncated = true
+					overLimit = true
+					break
 				}
 				cust := custs[c.CustomerID]
 				out = append(out, OwingOrder{
@@ -137,6 +164,12 @@ func (r *Repository) FindOwingOrders(ctx context.Context, term string, branchIDs
 			if len(cands) < payBalanceCandidatePage {
 				break
 			}
+			if page == payBalanceCandidatePages-1 {
+				exhausted = false
+			}
+		}
+		if !exhausted {
+			truncated = true
 		}
 		if len(out) == 0 {
 			return nil
@@ -161,9 +194,9 @@ func (r *Repository) FindOwingOrders(ctx context.Context, term string, branchIDs
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return out, nil
+	return out, truncated, nil
 }
 
 // payBalanceTrail reads the money trail of each order on the transaction: the

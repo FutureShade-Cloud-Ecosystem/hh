@@ -8,7 +8,9 @@ import {
   takeButtonWords,
   payBalanceRefusalWords,
   payBalanceFindRefusalWords,
+  readFindTruncated,
   readOwingOrders,
+  MORE_ORDERS_WORDS,
   readTaken,
 } from './words.ts';
 
@@ -86,4 +88,12 @@ test('the take answer is read whole or not at all', () => {
   assert.equal(readTaken(answer).replayed, true);
   assert.equal(readTaken({ ...answer, still_owed_cents: '0' }), null);
   assert.equal(readTaken(null), null);
+});
+
+test('a find the server cut short reads as truncated, only on a true', () => {
+  assert.equal(readFindTruncated({ items: [], truncated: true }), true);
+  assert.equal(readFindTruncated({ items: [], truncated: false }), false);
+  assert.equal(readFindTruncated({ items: [], truncated: 'true' }), false);
+  assert.equal(readFindTruncated(null), false);
+  assert.equal(MORE_ORDERS_WORDS, 'More orders match: search by order number.');
 });

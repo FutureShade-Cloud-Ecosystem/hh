@@ -111,12 +111,12 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 // findPayBalance answers the orders that owe money and match the term: order
 // number, customer name or phone. Another branch's order is simply not found.
 func (h *Handler) findPayBalance(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
-	out, err := h.svc.PayBalanceFind(r.Context(), r.URL.Query().Get("q"))
+	out, truncated, err := h.svc.PayBalanceFind(r.Context(), r.URL.Query().Get("q"))
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out, "truncated": truncated})
 }
 
 // takePayBalance takes the whole balance of one order by CASH or CARD. 201 on

@@ -57,6 +57,54 @@ func (r *Repository) OrderInvoiceMoney(ctx context.Context, tx pgx.Tx, orderIDs 
 	return out, rows.Err()
 }
 
+// CustomerOrderInvoiced is what billing knows of one order of the matched
+// customers: the open live invoice balance and what its live INVOICE
+// documents bill.
+type CustomerOrderInvoiced struct {
+	OrderID       string
+	OpenCents     int64
+	InvoicedCents int64
+}
+
+// CustomerOrderInvoiceFigures answers, for the orders the named customers'
+// live INVOICE documents are on, the open balance and the billed total, the
+// orders with an open balance first (item 9 F review N5: the Pay balance find
+// asks billing which orders owe before the order module pages, so an owing
+// order is never lost behind paid ones). At most limit orders; truncated is
+// true when more exist, in which case every order with an open balance is
+// still in the answer unless the open orders alone exceed limit.
+func (r *Repository) CustomerOrderInvoiceFigures(ctx context.Context, tx pgx.Tx, customerIDs []string, limit int) ([]CustomerOrderInvoiced, bool, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT order_id::text,
+		       COALESCE(SUM(balance_cents) FILTER (WHERE status IN ('FINALIZED','PARTIALLY_PAID') AND balance_cents > 0), 0) AS open_cents,
+		       COALESCE(SUM(total_cents), 0) AS invoiced_cents
+		  FROM invoices
+		 WHERE customer_id = ANY($1::uuid[]) AND order_id IS NOT NULL
+		   AND doc_type = 'INVOICE' AND status NOT IN ('DRAFT','VOID')
+		 GROUP BY order_id
+		 ORDER BY (COALESCE(SUM(balance_cents) FILTER (WHERE status IN ('FINALIZED','PARTIALLY_PAID') AND balance_cents > 0), 0) > 0) DESC, order_id
+		 LIMIT $2`, customerIDs, limit+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("billing: customer order invoice figures: %w", err)
+	}
+	defer rows.Close()
+	var out []CustomerOrderInvoiced
+	for rows.Next() {
+		var f CustomerOrderInvoiced
+		if err := rows.Scan(&f.OrderID, &f.OpenCents, &f.InvoicedCents); err != nil {
+			return nil, false, fmt.Errorf("billing: scan customer order invoice figures: %w", err)
+		}
+		out = append(out, f)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	if len(out) > limit {
+		return out[:limit], true, nil
+	}
+	return out, false, nil
+}
+
 // orderInvoiceMoney is the one order's figures, zero when it has no invoice.
 func orderInvoiceMoney(ctx context.Context, tx pgx.Tx, orderID string) (OrderInvoiceMoneyRow, error) {
 	var m OrderInvoiceMoneyRow

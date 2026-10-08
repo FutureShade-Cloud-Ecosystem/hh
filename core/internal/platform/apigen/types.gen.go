@@ -4868,7 +4868,8 @@ type PosOwingOrder struct {
 }
 
 type PosOwingOrderList struct {
-	Items []PosOwingOrder `json:"items"`
+	Items     []PosOwingOrder `json:"items"`
+	Truncated bool            `json:"truncated"`
 }
 
 type PosPayBalanceTakeInput struct {

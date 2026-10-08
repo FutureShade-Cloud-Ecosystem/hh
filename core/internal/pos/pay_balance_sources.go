@@ -38,6 +38,13 @@ type PayBalanceInvoiceMoney struct {
 	OpenCents, InvoicedCents, PaidCents int64
 }
 
+// PayBalanceInvoicedOrder is the billing module's answer for one order of the
+// matched customers: its open invoice balance and what its live invoices bill.
+type PayBalanceInvoicedOrder struct {
+	OrderID                  string
+	OpenCents, InvoicedCents int64
+}
+
 // PayBalanceOpenInvoice is one open invoice of an order, locked by billing.
 type PayBalanceOpenInvoice struct {
 	InvoiceID, InvoiceNo string
@@ -67,13 +74,20 @@ type PayBalanceAllocation struct {
 // write the door makes.
 type PayBalanceSources interface {
 	// The order module.
-	PayBalanceOrderCandidates(ctx context.Context, tx pgx.Tx, like string, customerIDs, branchIDs []string, limit, offset int) ([]PayBalanceOrderRow, error)
+	// PayBalanceOrderCandidates lists the live orders matching the term whose
+	// customer is one of customerIDs and that can owe by billing's answer
+	// (invoiced), plus those whose number matches; owing is settled at the
+	// source, not after paging.
+	PayBalanceOrderCandidates(ctx context.Context, tx pgx.Tx, like string, customerIDs, branchIDs []string, invoiced []PayBalanceInvoicedOrder, limit, offset int) ([]PayBalanceOrderRow, error)
 	PayBalanceOrderFacts(ctx context.Context, tx pgx.Tx, orderID string) (PayBalanceOrderRow, bool, error)
 	LockPayBalanceOrder(ctx context.Context, tx pgx.Tx, orderID string) (PayBalanceOrderRow, bool, error)
 	// The customer module.
 	MatchPayBalanceCustomers(ctx context.Context, tx pgx.Tx, like string, limit int) ([]string, error)
 	PayBalanceCustomers(ctx context.Context, tx pgx.Tx, ids []string) (map[string]PayBalanceCustomerRow, error)
-	// The billing module.
+	// The billing module. PayBalanceCustomerInvoiced is asked first by the
+	// find: the invoiced orders of the matched customers, open ones first,
+	// at most limit, truncated when more exist.
+	PayBalanceCustomerInvoiced(ctx context.Context, tx pgx.Tx, customerIDs []string, limit int) ([]PayBalanceInvoicedOrder, bool, error)
 	PayBalanceInvoiceMoney(ctx context.Context, tx pgx.Tx, orderIDs []string) (map[string]PayBalanceInvoiceMoney, error)
 	PayBalanceInvoiceIDs(ctx context.Context, tx pgx.Tx, orderIDs []string) (map[string][]string, error)
 	PayBalanceOrderForInvoice(ctx context.Context, tx pgx.Tx, invoiceID string) (string, error)

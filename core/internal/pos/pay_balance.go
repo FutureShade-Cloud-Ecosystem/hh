@@ -265,19 +265,20 @@ type payBalancePre struct {
 // PayBalanceFind answers the orders that owe money and match the term (an
 // order number, a customer name, a phone), fenced to the caller's reach: a
 // branch scoped caller finds only their branches' orders, another branch's
-// order is simply not found.
-func (s *Service) PayBalanceFind(ctx context.Context, term string) ([]OwingOrder, error) {
+// order is simply not found. truncated is true when a bound stopped the find
+// with more orders possibly matching (the till says to search by order number).
+func (s *Service) PayBalanceFind(ctx context.Context, term string) ([]OwingOrder, bool, error) {
 	caller, err := s.caller(ctx)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	term = strings.TrimSpace(term)
 	if term == "" {
-		return nil, clientErr(http.StatusBadRequest, "pos: say which order, or whose name or phone")
+		return nil, false, clientErr(http.StatusBadRequest, "pos: say which order, or whose name or phone")
 	}
-	out, err := s.store.FindOwingOrders(ctx, term, callerReachBranches(caller), 20)
+	out, truncated, err := s.store.FindOwingOrders(ctx, term, callerReachBranches(caller), 20)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if out == nil {
 		out = []OwingOrder{}
@@ -290,7 +291,7 @@ func (s *Service) PayBalanceFind(ctx context.Context, term string) ([]OwingOrder
 			}
 		}
 	}
-	return out, nil
+	return out, truncated, nil
 }
 
 // callerReachBranches lists the branches a scoped caller reaches; nil for a

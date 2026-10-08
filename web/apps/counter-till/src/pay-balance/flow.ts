@@ -10,6 +10,7 @@ import type { PayBalanceCapture } from "./capture.js";
 import {
   payBalanceFindRefusalWords,
   payBalanceRefusalWords,
+  readFindTruncated,
   readOwingOrders,
   readTaken,
   type OwingOrder,
@@ -42,6 +43,8 @@ export class PayBalanceFlow {
   notice: string | null = null;
   /** The matches of the last find (several list as rows to pick). */
   matches: OwingOrder[] = [];
+  /** True when the server cut the last find short: more orders match than it answered. */
+  more = false;
   /** The order on the card, or null. */
   order: OwingOrder | null = null;
   method: PayMethod = "CARD";
@@ -103,6 +106,7 @@ export class PayBalanceFlow {
     this.#pendingKey = null;
     if (!result.ok) {
       this.matches = [];
+      this.more = false;
       this.order = null;
       // Item 9 visual review P2-1: the refusal speaks in words (the server's message when the
       // capture has one), never the envelope's raw error string.
@@ -111,6 +115,7 @@ export class PayBalanceFlow {
       return;
     }
     this.matches = readOwingOrders(result.value);
+    this.more = readFindTruncated(result.value);
     this.order = null;
     if (this.matches.length === 0) {
       this.notice = `No order that still owes matches ${term}: check the number, the name or the phone and try again.`;
@@ -238,6 +243,7 @@ export class PayBalanceFlow {
     this.taken = null;
     this.hold = null;
     this.matches = [];
+    this.more = false;
     this.notice = null;
     this.#pendingKey = null;
     this.#asked = false;

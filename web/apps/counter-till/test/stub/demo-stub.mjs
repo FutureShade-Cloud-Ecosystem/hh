@@ -2188,7 +2188,8 @@ const server = createServer(async (request, response) => {
       .filter((o) => o.branch_id === callerBranch && owingStill(o) > 0)
       .filter((o) => o.order_no.toLowerCase().includes(term) || o.customer_name.toLowerCase().includes(term))
       .map((o) => owingBody(o));
-    respondJson(response, 200, { items });
+    // The core answers at most twenty and says so when more match (item 9 F review N5).
+    respondJson(response, 200, { items: items.slice(0, 20), truncated: items.length > 20 });
     return;
   }
 
