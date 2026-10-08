@@ -42,6 +42,17 @@ func Today(now func() time.Time) string {
 	return dayText(now())
 }
 
+// AddDays is the house zone's day a whole calendar days from the day of the given clock (time.Now
+// when nil), the shape a payment terms or a due-on-issue rule needs. The shift is applied inside
+// the house zone, so it is a calendar day and not a 24 hour multiple: a term counted across a
+// daylight saving change lands on the same calendar day the wall clock would name.
+func AddDays(now func() time.Time, days int) string {
+	if now == nil {
+		now = time.Now
+	}
+	return now().In(Location()).AddDate(0, 0, days).Format("2006-01-02")
+}
+
 // dayText is one instant's date in the house zone.
 func dayText(at time.Time) string {
 	return at.In(Location()).Format("2006-01-02")

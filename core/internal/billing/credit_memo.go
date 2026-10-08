@@ -62,6 +62,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/moneyutil"
 )
@@ -412,28 +413,28 @@ func (w *InvoiceWriter) insertCreditMemo(ctx context.Context, in CreditMemoInput
 	if sourceKind == "" {
 		sourceKind = SourceOrder
 	}
-	terms := in.TermsDays
-	if terms <= 0 {
-		terms = defaultTermsDays
-	}
 	// A memo is due the day it is issued: there is nothing to wait for, the money is already the
 	// customer's. Dating it 30 days out would park a credit in the "current" aging bucket and make
-	// the account look worse than it is for a month.
-	dueDate := w.now().Format("2006-01-02")
+	// the account look worse than it is for a month. The day it is issued is the dealer's, decided
+	// here on the writer's clock and bound: between the UTC day change and the house zone's own the
+	// database session's CURRENT_DATE is a day the yard has not reached, so an evening memo would
+	// otherwise be issued tomorrow and due tomorrow, one day late for its whole life.
+	issueDate := houseday.Today(w.now)
+	dueDate := issueDate
 
 	var doc InvoiceDoc
 	err := w.inTx(ctx, func(tx pgx.Tx) error {
 		var id, no string
 		// Sign flipped HERE, once, for the whole file.
 		err := tx.QueryRow(ctx, `
-INSERT INTO invoices (invoice_no, customer_id, order_id, branch_id, status, due_date,
+INSERT INTO invoices (invoice_no, customer_id, order_id, branch_id, status, issue_date, due_date,
                       subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at,
                       doc_type, source_kind, idempotency_key, closes_order, reverses_invoice_id)
-VALUES ('#CM-' || nextval('invoice_no_seq'), $1, $2, $3, 'FINALIZED', $4,
-        $5, $6, $7, $8, now(), 'CREDIT_MEMO', $9, $10, FALSE, $11)
+VALUES ('#CM-' || nextval('invoice_no_seq'), $1, $2, $3, 'FINALIZED', $4, $4,
+        $5, $6, $7, $7, now(), 'CREDIT_MEMO', $8, $9, FALSE, $10)
 RETURNING id::text, invoice_no`,
-			customerID, nullUUID(in.OrderID), branchID, dueDate,
-			-plan.subtotal, -plan.tax, -total, -total,
+			customerID, nullUUID(in.OrderID), branchID, issueDate,
+			-plan.subtotal, -plan.tax, -total,
 			sourceKind, in.IdempotencyKey, nullUUID(in.ReversesInvoiceID),
 		).Scan(&id, &no)
 		if err != nil {
