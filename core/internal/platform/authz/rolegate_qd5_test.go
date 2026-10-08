@@ -2,12 +2,13 @@ package authz
 
 // rolegate_qd5_test.go, the counter payment's role set at the gate, on the REAL route: the annotation
 // read is the generated census entry of quoteTakeOrderPayment, so the contract is what is proven, not
-// a literal copied beside it. Row 13 (refused): Outside Sales and the General Manager are refused, and
-// HR, the Yard team, the Financial controller and every role with no Counter Till level. The admitted
-// set (the payment's own rule, CP0-7 A and the ruling that admits the Yard manager at the cash
-// customer's one action): Inside Sales, the Sales manager, the Yard manager and the Branch manager
-// reach the handler. Row 14 is the Yard manager's refusal at the SEPARATE conversion of a quote, which
-// is the service's rule and is proven by request in cmd/core, as is branch reach.
+// a literal copied beside it. Refused: Outside Sales and the General Manager, HR, the Yard team, the
+// Financial controller, and the Yard manager, whose Counter Till cell decision log row 1156 removed
+// (reversing the row 370 ruling that had admitted it at the cash customer's one action), with every
+// other role that holds no Counter Till level. The admitted set (the payment's own rule, CP0-7 A as
+// amended): Inside Sales, the Sales manager and the Branch manager reach the handler. Row 14, the
+// Yard manager's refusal at the SEPARATE conversion of a quote, is the service's rule and is proven
+// by request in cmd/core, as is branch reach.
 
 import (
 	"testing"
@@ -34,14 +35,14 @@ func TestQD5_Rows13And14_OrderPaymentGateOnTheRealRoute(t *testing.T) {
 		t.Fatalf("the route must name the counter till at work, got %+v", access)
 	}
 	for _, role := range []string{
-		"outside_sales", "general_manager", "hr", "yard_team", "driver", "logistics_manager",
+		"outside_sales", "general_manager", "hr", "yard_team", "yard_manager", "driver", "logistics_manager",
 		"procurement_manager", "payables_receivables", "financial_controller",
 	} {
 		if code, reached := runGatedAs(t, f, access, role); code != 403 || reached {
 			t.Errorf("%s must be refused at the gate, got %d reached=%v", role, code, reached)
 		}
 	}
-	for _, role := range []string{"inside_sales", "sales_manager", "yard_manager", "branch_manager"} {
+	for _, role := range []string{"inside_sales", "sales_manager", "branch_manager"} {
 		if code, reached := runGatedAs(t, f, access, role); code != 200 || !reached {
 			t.Errorf("%s must reach the payment door, got %d reached=%v", role, code, reached)
 		}

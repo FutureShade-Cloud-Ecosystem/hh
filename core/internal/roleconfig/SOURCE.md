@@ -17,9 +17,12 @@ both in the principal's Session 2 planning record, as D48 names them.
 ## The derivation, field by field
 
 - `cells`: the record's matrix, all 130 cells (13 roles on 10 surfaces),
-  each cell's level exactly as decided. No cell's ruling rows, scope prose
-  or server-today marks travel: those live in the planning record, named by
-  the hashes above.
+  each cell's level exactly as decided, as the decision log amended it: row
+  1156 reverses row 370's yard manager cells, so the yard manager's Counter
+  Till and Quote Desk are none (its sale and quote access removed; yard
+  picking, short picks and skid changes stay). No cell's ruling rows, scope
+  prose or server-today marks travel: those live in the planning record,
+  named by the hashes above.
 - `lists.exception_approvers`: rule X4's four kinds, each approved by the
   Financial Controller and the General Manager, never HR: a quote price
   below the margin floor (the quote flow only, row 481), a journal over the
