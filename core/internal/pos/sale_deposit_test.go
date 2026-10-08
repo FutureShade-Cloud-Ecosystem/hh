@@ -186,6 +186,30 @@ func TestSale_AccountShape_ZeroDayTerms_RefusedInWords(t *testing.T) {
 	}
 }
 
+// The on account refusal's amount is THE REST that would go on account (the
+// total less the deposit already taken as line one, the review's P3-4), not
+// the whole total: the message offers to carry the rest, and the rest is what
+// the account cannot carry.
+func TestSale_AccountShape_RefusalAmountIsTheRestNotTheTotal(t *testing.T) {
+	h := depositHarness(0, 500_000)
+	in := depositSaleInput()
+	in.SaleType = SaleCollectLater
+	in.Tender = TenderAccount
+	in.DepositCents = 4000
+	in.DepositMethod = TenderCash
+	_, err := h.svc.Sale(context.Background(), in)
+	var e ErrAccountShapeNotAvailable
+	if !errors.As(err, &e) {
+		t.Fatalf("want ErrAccountShapeNotAvailable, got %v", err)
+	}
+	if e.AmountCents != 7300 {
+		t.Fatalf("the refusal's amount is %d, want the rest 7300 (total less the deposit)", e.AmountCents)
+	}
+	if msg := accountShapeMessage(e); !strings.Contains(msg, "$73.00") || strings.Contains(msg, "$113.00") {
+		t.Fatalf("the refusal's message must name the rest in dollars: %q", msg)
+	}
+}
+
 // A no credit account (terms, no line) is refused the same way, and so is the
 // account leg of a split.
 func TestSale_AccountShape_NoLine_AndSplitLeg_Refused(t *testing.T) {

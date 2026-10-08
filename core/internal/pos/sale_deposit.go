@@ -73,10 +73,13 @@ func depositNotCollectNowMessage(depositCents, totalCents int64) string {
 		splitMismatchDollars(totalCents))
 }
 
-// onAccountCents is what this sale would book on account: the whole total for
-// a single ACCOUNT tender, the one ACCOUNT leg a split may carry, nothing for
-// any other shape. The caller holds it against the account's own facts.
-func onAccountCents(tender string, legs []TenderLeg, isSplit bool, totalCents int64) int64 {
+// onAccountCents is what this sale would book on account: for a single
+// ACCOUNT tender THE REST, the total less the deposit already taken as line
+// one (a deposit sale's line two is the rest, and the rest is what the
+// refusal offers to carry); the one ACCOUNT leg a split may carry, stated in
+// its own amount; nothing for any other shape. The caller holds it against
+// the account's own facts.
+func onAccountCents(tender string, legs []TenderLeg, isSplit bool, totalCents, depositCents int64) int64 {
 	if isSplit {
 		for _, l := range legs {
 			if l.Method == TenderAccount {
@@ -86,7 +89,7 @@ func onAccountCents(tender string, legs []TenderLeg, isSplit bool, totalCents in
 		return 0
 	}
 	if tender == TenderAccount {
-		return totalCents
+		return totalCents - depositCents
 	}
 	return 0
 }

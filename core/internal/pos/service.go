@@ -648,7 +648,7 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 	// sale (COD) never books on account at all, its line two is due later by
 	// definition. This runs BEFORE the credit gate: the gate answers how much
 	// credit fits, this answers whether on account is a shape the account has.
-	if onAccount := onAccountCents(tender, splitLegs, isSplit, total); onAccount > 0 {
+	if onAccount := onAccountCents(tender, splitLegs, isSplit, total, deposit); onAccount > 0 {
 		if codSale || cust.PaymentTermsDays <= 0 || cust.CreditLimitCents <= 0 {
 			return Sale{}, ErrAccountShapeNotAvailable{
 				AmountCents:      onAccount,
