@@ -175,6 +175,25 @@ test("split tender stays reachable, quiet and secondary, with its behaviour unch
   await expect(page.getByTestId("cta-split-state")).toContainText("Split: compose the legs below");
 });
 
+// Item 9 visual review P3-1: the quiet split link stands in BOTH branches of the payment step, so
+// a clerk on a deposit shape need not first press Pay in full now. Choosing it falls back to pay
+// in full, as the shape menu itself does for a live split.
+test("the split link shows under a deposit shape too, and choosing it falls back to pay in full", async ({ page }) => {
+  await signIn(page);
+  await pickAccount(page, "C10", "Cash On Demand Landscaping");
+  await addHolland(page);
+  await chooseWillCall(page);
+  await openStep(page, "payment");
+  await page.getByTestId("pay-shape-DEPOSIT_NOW_REST_DUE_LATER").click();
+  await expect(page.getByTestId("deposit-panel")).toBeVisible();
+  const split = page.getByTestId("tender-split");
+  await expect(split).toBeVisible();
+  await expect(split).toHaveText("Split between two tenders");
+  await split.click();
+  await expect(page.getByTestId("cta-split-state")).toContainText("Split: compose the legs below");
+  await expect(page.getByTestId("deposit-panel")).toHaveCount(0);
+});
+
 test("at 390 the deposit step does not scroll sideways and no label clips", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await signIn(page);

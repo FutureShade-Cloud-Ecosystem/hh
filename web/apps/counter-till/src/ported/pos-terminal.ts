@@ -6676,7 +6676,13 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
 
             ${this.renderShapeMenu()}
             ${this.activeDepositShape() !== ''
-              ? this.renderDepositPanel()
+              ? html`
+            ${this.renderDepositPanel()}
+            ${/* Item 9 visual review P3-1: the quiet split link stands in BOTH branches of the
+               payment step, so a clerk on a deposit shape need not first press Pay in full now;
+               choosing it falls back to pay in full (choosePay resets the shape), exactly as the
+               shape menu already does for a live split. */ ''}
+            ${this.renderSplitEntry()}`
               : html`
             ${/* DIB-488: tender is CHOSEN here (a state of the sale the flow can track), and the
                sale rings on the one Complete-sale CTA below. Same ring, same idempotency key
