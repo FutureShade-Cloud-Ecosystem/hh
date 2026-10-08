@@ -163,6 +163,39 @@ func (a driverArm) sees(links []Link) bool {
 	return !a.bound || linksReachAStop(links, a.allowed)
 }
 
+// holdsTarget answers whether a DECLARED link set may be written by the
+// caller: the target half of the write fence (sees is the source half).
+// A held driver's attachments hang off stops on their own runs alone, so
+// every declared stop link must be one of theirs and the set must reach
+// at least one (a set that reaches none would hide the row from the
+// driver and, for a colleague's stop, write it onto their day).
+func (a driverArm) holdsTarget(links []Link) bool {
+	if !a.bound {
+		return true
+	}
+	for _, l := range links {
+		if l.OwnerKind == OwnerStop && !a.allowed[l.OwnerID] {
+			return false
+		}
+	}
+	return linksReachAStop(links, a.allowed)
+}
+
+// declaredLinks reads the link set a pushed write declares, nil when it
+// declares none or the set is malformed (applyWrite refuses a malformed
+// set itself, before any write).
+func declaredLinks(fields map[string]any) []Link {
+	raw, ok := fields["links"]
+	if !ok {
+		return nil
+	}
+	links, err := linksOf(raw)
+	if err != nil {
+		return nil
+	}
+	return links
+}
+
 // resolveArm resolves the driver arm for the stop candidates a write is
 // about to touch. Call it on the pool, never with a transaction open.
 func (s *SyncStore) resolveArm(ctx context.Context, f sync.ScopeFilter, candidates []string) (driverArm, error) {
@@ -597,7 +630,7 @@ func (s *SyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, 
 	if err != nil {
 		return sync.RowState{}, err
 	}
-	if arm.bound && !linksReachAStop(links, arm.allowed) {
+	if !arm.holdsTarget(links) {
 		return sync.RowState{}, fmt.Errorf("attachments: a driver registers attachments against their own stops: %w", sync.ErrOpRefused)
 	}
 
@@ -753,6 +786,10 @@ func (s *SyncStore) applyWrite(ctx context.Context, tx pgx.Tx, f sync.ScopeFilte
 	if !arm.sees(currentLinks) {
 		return attachmentRow{}, sync.ErrRowNotFound
 	}
+	// The target half: a held driver's relink stays on their own stops.
+	if _, declares := fields["links"]; declares && !arm.holdsTarget(links) {
+		return attachmentRow{}, fmt.Errorf("attachments: a driver keeps attachments on their own stops: %w", sync.ErrOpRefused)
+	}
 	if declaredIsNoOp(fields, mime, checksum, sizeBytes, links, current, currentLinks) {
 		return current, nil
 	}
@@ -903,7 +940,7 @@ func (s *SyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key strin
 	if !looksLikeUUID(id) {
 		return sync.RowState{}, sync.ErrRowNotFound
 	}
-	arm, err := s.armForRow(ctx, f, id, nil)
+	arm, err := s.armForRow(ctx, f, id, declaredLinks(fields))
 	if err != nil {
 		return sync.RowState{}, err
 	}
@@ -1007,7 +1044,7 @@ func (s *SyncStore) UpdateMetadata(ctx context.Context, f sync.ScopeFilter, id s
 	if !looksLikeUUID(id) {
 		return sync.RowState{}, sync.ErrRowNotFound
 	}
-	arm, err := s.armForRow(ctx, f, id, nil)
+	arm, err := s.armForRow(ctx, f, id, declaredLinks(fields))
 	if err != nil {
 		return sync.RowState{}, err
 	}

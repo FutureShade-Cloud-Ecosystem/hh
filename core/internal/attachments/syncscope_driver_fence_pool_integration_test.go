@@ -307,3 +307,71 @@ func TestIntegration_AttachmentsDriverFence_AColleaguesPageDoesNotStallThePull(t
 		t.Errorf("the driver's first pull must reach past the colleagues' page to their own photo %s, got %d items", own, len(items))
 	}
 }
+
+// TestIntegration_AttachmentsDriverFence_AWriteCannotRelinkOntoAColleaguesStop:
+// the target half of the write fence. A held driver's own attachment may
+// be relinked only to stops on their own runs: a link set naming a
+// colleague's stop (alone or beside their own), or none that reaches
+// their stops, would write the photo onto a colleague's stop and hide it
+// from the driver. Create holds the same target rule. The desk keeps
+// every relink.
+func TestIntegration_AttachmentsDriverFence_AWriteCannotRelinkOntoAColleaguesStop(t *testing.T) {
+	w := newFenceWorld(t)
+	ctx := context.Background()
+	own := "a0e10000-0000-4000-8000-0000000000f2"
+	away := "a0e10000-0000-4000-8000-0000000000f3"
+	links := func(stops ...string) []any {
+		out := []any{}
+		for _, s := range stops {
+			out = append(out, map[string]any{"owner_kind": "stop", "owner_id": s, "role": "proof"})
+		}
+		return out
+	}
+	relink := func(f hhsync.ScopeFilter, key string, ls []any) error {
+		// every case starts from the attachment on the driver's own stop
+		if _, err := w.store.Write(ctx, w.desk, w.own, fenceKey("reset"+key), map[string]any{"id": w.own, "links": links(own)}); err != nil {
+			t.Fatalf("reset links: %v", err)
+		}
+		_, err := w.store.Write(ctx, f, w.own, fenceKey(key), map[string]any{"id": w.own, "links": ls})
+		return err
+	}
+	if err := relink(w.driver, "r1", links(away)); err == nil {
+		t.Errorf("the driver relinked their attachment onto a colleague's stop")
+	}
+	if err := relink(w.driver, "r2", links(own, away)); err == nil {
+		t.Errorf("the driver added a colleague's stop beside their own")
+	}
+	if err := relink(w.driver, "r3", []any{map[string]any{"owner_kind": "order", "owner_id": "a0e10000-0000-4000-8000-0000000000f9", "role": "proof"}}); err == nil {
+		t.Errorf("the driver relinked their attachment off their stops")
+	}
+	if err := relink(w.driver, "r4", links()); err == nil {
+		t.Errorf("the driver emptied their attachment's link set")
+	}
+	if _, err := w.store.Write(ctx, w.desk, w.own, fenceKey("resetu"), map[string]any{"id": w.own, "links": links(own)}); err != nil {
+		t.Fatalf("reset links: %v", err)
+	}
+	if _, err := w.store.UpdateMetadata(ctx, w.driver, w.own, map[string]any{"id": w.own, "links": links(away)}); err == nil {
+		t.Errorf("the driver's desk-path update relinked onto a colleague's stop")
+	}
+	if _, err := w.store.Create(ctx, w.driver, "a1e10000-0000-4000-8000-0000000000c2", map[string]any{
+		"kind": "photo", "appwrite_file_id": "fx-both", "bucket": "fx-bucket", "links": links(own, away),
+	}); err == nil {
+		t.Errorf("the driver registered an attachment onto a colleague's stop beside their own")
+	}
+	// the colleague's stop never gained a link
+	if rs, found, _ := w.store.Load(ctx, w.desk, w.own); found {
+		ls, _ := rs.Data["links"].([]any)
+		for _, l := range ls {
+			if m, _ := l.(map[string]any); m["owner_id"] == away {
+				t.Errorf("the colleague's stop gained the driver's photo")
+			}
+		}
+	}
+	// controls
+	if err := relink(w.driver, "r5", links(own)); err != nil {
+		t.Errorf("the driver could not keep their attachment on their own stop: %v", err)
+	}
+	if err := relink(w.desk, "r6", links(away)); err != nil {
+		t.Errorf("the desk could not relink: %v", err)
+	}
+}
