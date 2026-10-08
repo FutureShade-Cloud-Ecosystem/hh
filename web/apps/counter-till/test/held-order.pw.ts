@@ -112,16 +112,16 @@ test("the Pay balance order card reads the held chips for a held order, and none
 }) => {
   await signIn(page);
   await page.getByTestId("till-pay-balance-entry").click();
-  await page.getByTestId("pay-balance-term").fill("SO-TRT-18");
+  await page.getByTestId("pay-balance-term").fill("DEMO-TRT-D02");
   await page.getByTestId("pay-balance-find").click();
   const held = page.getByTestId("held-order");
   await expect(held.getByTestId("held-chip-process")).toHaveText("In process: deposit taken");
   await expect(held.getByTestId("held-chip-hold")).toHaveText("Held from picking");
   await expect(held.getByTestId("held-title")).toHaveText(HOLD_TITLE);
   await expect(held.getByTestId("held-print-slip")).toBeVisible();
-  await page.getByTestId("pay-balance-term").fill("SO-TRT-17");
+  await page.getByTestId("pay-balance-term").fill("DEMO-TRT-D01");
   await page.getByTestId("pay-balance-find").click();
-  await expect(page.getByTestId("pay-balance-order")).toContainText(/SO-TRT-17/);
+  await expect(page.getByTestId("pay-balance-order")).toContainText(/DEMO-TRT-D01/);
   await expect(page.getByTestId("held-order")).toHaveCount(0);
 });
 
@@ -129,7 +129,7 @@ test("at 390 the held card does not scroll sideways", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await signIn(page);
   await page.getByTestId("till-pay-balance-entry").click();
-  await page.getByTestId("pay-balance-term").fill("SO-TRT-18");
+  await page.getByTestId("pay-balance-term").fill("DEMO-TRT-D02");
   await page.getByTestId("pay-balance-find").click();
   await expect(page.getByTestId("held-order")).toBeVisible();
   const read = await page.evaluate(() => ({ doc: document.documentElement.scrollWidth, view: window.innerWidth }));

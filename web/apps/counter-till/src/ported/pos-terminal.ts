@@ -719,7 +719,7 @@ export class HosPosTerminal extends LitElement {
    */
   private async loadHeldCard(sale: SaleResult): Promise<void> {
     this.heldCard = null;
-    if (sale.sale_type !== 'COD' || sale.total_cents - (sale.deposit_cents ?? 0) <= 0) return;
+    if (sale.sale_type !== 'COD' || balanceAfterDepositCents(sale.total_cents, sale.deposit_cents ?? 0) <= 0) return;
     try {
       const res = await api(`/api/v1/orders/${encodeURIComponent(sale.order_id)}`);
       if (!res.ok) return;

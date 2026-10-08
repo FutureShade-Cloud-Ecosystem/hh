@@ -235,6 +235,11 @@ func TestDemoWorld_CashOnDemand(t *testing.T) {
 	drawer := sales.call("POST", "/api/v1/till/sessions", map[string]any{
 		"branch_id": trentonBranchID, "station": "MAIN", "float_cents": demoDrawerFloatCents})
 	drawer.ok(t, http.StatusCreated)
+	var drawerBody struct {
+		ID string `json:"id"`
+	}
+	drawer.decode(t, &drawerBody)
+	drawerSessionID := drawerBody.ID
 	codRing := sales.call("POST", "/api/v1/pos/sales", demoSaleBody{
 		IdempotencyKey: uuid.NewString(),
 		BranchID:       trentonBranchID,
@@ -294,6 +299,75 @@ func TestDemoWorld_CashOnDemand(t *testing.T) {
 	// The picking hold lifted itself with the same dollar (item 9.3): the door that refused now moves.
 	pickAgain := sales.call("POST", "/api/v1/orders/"+ring.OrderID+"/picking", nil)
 	pickAgain.ok(t, http.StatusOK)
+	// 8. THE DEPOSIT WORLD (item 9.9): the two orders the seed plants for a tester to walk, found
+	// through the real Pay balance route at Trenton, with what each reads: the credit customer's
+	// deposit order owes on its terms and is NOT held; the Cash On Demand account's is held from
+	// picking, in process because its deposit landed. Then the held one is paid in full at the Pay
+	// balance door and the hold lifts with the last dollar.
+	find := sales.call("GET", "/api/v1/pos/pay-balance?q="+url.QueryEscape("DEMO-TRT-D0"), nil)
+	find.ok(t, http.StatusOK)
+	var found struct {
+		Items []struct {
+			OrderID         string `json:"order_id"`
+			OrderNo         string `json:"order_no"`
+			CustomerName    string `json:"customer_name"`
+			Job             string `json:"job"`
+			OrderTotalCents int64  `json:"order_total_cents"`
+			PaidCents       int64  `json:"paid_cents"`
+			StillOwedCents  int64  `json:"still_owed_cents"`
+			Held            bool   `json:"held_from_picking"`
+			HoldWords       string `json:"hold_words"`
+			Payments        []struct {
+				Method      string `json:"method"`
+				AmountCents int64  `json:"amount_cents"`
+			} `json:"payments"`
+		} `json:"items"`
+	}
+	find.decode(t, &found)
+	if len(found.Items) != 2 {
+		t.Fatalf("Pay balance found %d deposit orders for DEMO-TRT-D0, want the two the seed plants", len(found.Items))
+	}
+	var heldOrderID string
+	var heldOwed int64
+	for _, it := range found.Items {
+		if it.StillOwedCents <= 0 || it.PaidCents <= 0 || it.OrderTotalCents != it.PaidCents+it.StillOwedCents || len(it.Payments) != 1 {
+			t.Errorf("%s reads total %d paid %d owed %d over %d payments, want a deposit taken and the rest owing",
+				it.OrderNo, it.OrderTotalCents, it.PaidCents, it.StillOwedCents, len(it.Payments))
+		}
+		switch it.OrderNo {
+		case "DEMO-TRT-D01":
+			if it.Held || it.Payments[0].Method != "CARD" || it.Job == "" {
+				t.Errorf("DEMO-TRT-D01 (credit) reads held %v by %s job %q, want not held, a card deposit, a job", it.Held, it.Payments[0].Method, it.Job)
+			}
+		case "DEMO-TRT-D02":
+			if !it.Held || it.HoldWords != "This order cannot reach picking until the balance is paid." || it.Payments[0].Method != "CASH" {
+				t.Errorf("DEMO-TRT-D02 (Cash On Demand) reads held %v %q by %s, want held with the hold words, a cash deposit", it.Held, it.HoldWords, it.Payments[0].Method)
+			}
+			heldOrderID, heldOwed = it.OrderID, it.StillOwedCents
+		default:
+			t.Errorf("Pay balance answered %s, want only the two deposit orders", it.OrderNo)
+		}
+	}
+	read := sales.call("GET", "/api/v1/orders/"+heldOrderID, nil)
+	read.ok(t, http.StatusOK)
+	var readBody struct {
+		PayHold struct {
+			Held           bool   `json:"held_from_picking"`
+			InProcessWords string `json:"in_process_words"`
+			OwedCents      int64  `json:"owed_cents"`
+		} `json:"pay_hold"`
+	}
+	read.decode(t, &readBody)
+	if !readBody.PayHold.Held || readBody.PayHold.InProcessWords != "In process: deposit taken" || readBody.PayHold.OwedCents != heldOwed {
+		t.Errorf("the held deposit order's read carries %+v, want held, in process, owing %d", readBody.PayHold, heldOwed)
+	}
+	take := sales.call("POST", "/api/v1/pos/pay-balance", map[string]any{
+		"order_id": heldOrderID, "method": "CASH", "amount_cents": heldOwed,
+		"till_session_id": drawerSessionID, "idempotency_key": uuid.NewString()})
+	take.ok(t, http.StatusCreated)
+	lifted := sales.call("POST", "/api/v1/orders/"+heldOrderID+"/picking", nil)
+	lifted.ok(t, http.StatusOK)
+
 	t.Logf("the Cash On Demand path as the product ships it: picker found %s, quote %s converted to order %s (held from picking, uninvoiced), the COD sale %s unpaid at %d cents and held at both gates, released when the payment landed",
 		codAccountNo, q.QuoteNo, converted.OrderNo, ring.OrderNo, ring.TotalCents)
 }

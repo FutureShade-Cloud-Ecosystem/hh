@@ -341,7 +341,7 @@ function owingStill(order) {
 function seedOwingOrders() {
   addOwing({
     order_id: uuidFromCounter(4901),
-    order_no: "SO-TRT-17",
+    order_no: "DEMO-TRT-D01",
     branch_id: TRENTON_ID,
     customer_id: "c-fenwick",
     customer_name: "Fenwick Builders Ltd",
@@ -356,7 +356,7 @@ function seedOwingOrders() {
   });
   addOwing({
     order_id: uuidFromCounter(4902),
-    order_no: "SO-TRT-18",
+    order_no: "DEMO-TRT-D02",
     branch_id: TRENTON_ID,
     customer_id: "c-cod",
     customer_name: "Cash On Demand Landscaping",
