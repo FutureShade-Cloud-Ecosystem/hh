@@ -95,6 +95,7 @@ type fakeStore struct {
 	payLocks        []string                        // order ids the take locked, in order
 	settled         []settleInvoice                 // the settles the take applied
 	payTrail        []OwingPayment                  // the money trail the reads answer
+	holdView        map[string]payBalanceHoldView   // the hold's in-transaction reading the answer carries
 
 	seq int
 }

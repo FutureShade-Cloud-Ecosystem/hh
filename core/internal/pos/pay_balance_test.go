@@ -58,6 +58,13 @@ func (f *fakeStore) OrderPaymentsTrail(_ context.Context, _ string) ([]OwingPaym
 	return f.payTrail, nil
 }
 
+func (f *fakeStore) PayBalanceHoldTx(_ context.Context, _ pgx.Tx, orderID string) (payBalanceHoldView, error) {
+	if f.holdView == nil {
+		return payBalanceHoldView{}, nil
+	}
+	return f.holdView[orderID], nil
+}
+
 // -- the tests ----------------------------------------------------------------
 
 // owingFacts builds one order's facts: one open invoice carrying the balance.
@@ -65,7 +72,10 @@ func owingFacts(orderID, customerID, branchID string, terms int, balance int64) 
 	return payBalanceOrderFacts{
 		OrderID: orderID, OrderNo: "#SO-1", CustomerID: customerID, CustomerName: "A customer",
 		BranchID: branchID, Fulfilment: "WILL_CALL", TermsDays: terms, TotalCents: 11300,
-		Invoices: []payBalanceInvoice{{InvoiceID: "inv-1", InvoiceNo: "INV-1", BalanceCents: balance}},
+		// Fully invoiced: the whole total is billed, so the balance is the
+		// open invoice alone and no remainder rides beside it.
+		InvoicedCents: 11300,
+		Invoices:      []payBalanceInvoice{{InvoiceID: "inv-1", InvoiceNo: "INV-1", BalanceCents: balance}},
 	}
 }
 
@@ -243,3 +253,93 @@ func TestPayBalanceFind_AnswersRowsWithTheHoldWords(t *testing.T) {
 }
 
 func containsCentsWord(msg string) bool { return strings.Contains(msg, "cents") }
+
+// -- the uninvoiced remainder (the review's P2-2 legs, unit) -----------------
+
+// fakePayInvoicer records the raise the take asks for and answers it.
+type fakePayInvoicer struct {
+	err   error
+	calls []string
+}
+
+func (f *fakePayInvoicer) RaiseOrderInvoiceTx(_ context.Context, _ pgx.Tx, orderID string) (RaisedOrderInvoice, error) {
+	f.calls = append(f.calls, orderID)
+	if f.err != nil {
+		return RaisedOrderInvoice{}, f.err
+	}
+	return RaisedOrderInvoice{InvoiceID: "inv-raised", InvoiceNo: "INV-RAISED", TotalCents: 11300, BalanceCents: 11300}, nil
+}
+
+// owingFacts with no invoices and nothing invoiced: the order owes its whole
+// total as the uninvoiced remainder, the number the hold reads.
+func remainderFacts(orderID string) payBalanceOrderFacts {
+	f := owingFacts(orderID, "cust-abc", "branch-trt", 0, 0)
+	f.Invoices = nil
+	f.InvoicedCents = 0
+	return f
+}
+
+// The take on an order that owes only its uninvoiced remainder raises the
+// invoice inside its own transaction (the desk's writer) and settles it: one
+// tender for the whole total, one settle on the raised document.
+func TestPayBalanceTake_UninvoicedRemainder_IsRaisedAndSettled(t *testing.T) {
+	h := payBalanceHarness()
+	h.store.owing["ord-owing"] = remainderFacts("ord-owing")
+	h.store.holdView = map[string]payBalanceHoldView{"ord-owing": {OwedCents: 0, Held: false}}
+	inv := &fakePayInvoicer{}
+	h.svc = h.svc.WithPayBalanceInvoicer(inv)
+	in := takeInput()
+	in.AmountCents = 11300
+	out, err := h.svc.PayBalanceTake(context.Background(), in)
+	if err != nil {
+		t.Fatalf("take: %v", err)
+	}
+	if len(inv.calls) != 1 || inv.calls[0] != "ord-owing" {
+		t.Fatalf("the raise: %v", inv.calls)
+	}
+	if len(h.tender.takes) != 1 || h.tender.takes[0].AmountCents != 11300 {
+		t.Fatalf("the drawer's tender: %+v", h.tender.takes)
+	}
+	if len(h.store.settled) != 1 || h.store.settled[0].InvoiceID != "inv-raised" || h.store.settled[0].AmountCents != 11300 {
+		t.Fatalf("the settle: %+v", h.store.settled)
+	}
+	// The answer's hold figures are the hold's own read inside the transaction,
+	// never hard coded: a clear read releases, an owed read does not.
+	if !out.ReleasedToPicking || out.StillOwedCents != 0 || out.HeldFromPickingNow {
+		t.Fatalf("the answer's hold figures: %+v", out)
+	}
+	h.store.holdView["ord-owing"] = payBalanceHoldView{OwedCents: 1, Held: true}
+	again, err := h.svc.PayBalanceTake(context.Background(), in)
+	if err != nil {
+		t.Fatalf("take with a held read: %v", err)
+	}
+	if again.ReleasedToPicking || again.StillOwedCents != 1 || !again.HeldFromPickingNow {
+		t.Fatalf("the answer follows the hold's read, not a constant: %+v", again)
+	}
+}
+
+// A remainder the door cannot bill (an order partly invoiced from its
+// shipments) refuses in words with nothing taken; an unwired invoicer seam
+// refuses too, never a take that stranding the remainder.
+func TestPayBalanceTake_UninvoicedRemainder_RefusedWhenItCannotBeBilled(t *testing.T) {
+	h := payBalanceHarness()
+	h.store.owing["ord-owing"] = remainderFacts("ord-owing")
+	inv := &fakePayInvoicer{err: ErrPayBalanceRestUnbillable}
+	h.svc = h.svc.WithPayBalanceInvoicer(inv)
+	in := takeInput()
+	in.AmountCents = 11300
+	if _, err := h.svc.PayBalanceTake(context.Background(), in); !errors.Is(err, ErrPayBalanceRestUnbillable) {
+		t.Fatalf("want ErrPayBalanceRestUnbillable, got %v", err)
+	}
+	if len(h.tender.takes) != 0 || len(h.store.settled) != 0 {
+		t.Fatalf("a refused raise took money anyway: %+v %+v", h.tender.takes, h.store.settled)
+	}
+	bare := payBalanceHarness()
+	bare.store.owing["ord-owing"] = remainderFacts("ord-owing")
+	if _, err := bare.svc.PayBalanceTake(context.Background(), in); !errors.Is(err, ErrPayBalanceInvoicerUnwired) {
+		t.Fatalf("want ErrPayBalanceInvoicerUnwired, got %v", err)
+	}
+	if len(bare.tender.takes) != 0 {
+		t.Fatalf("an unwired raise took money anyway: %+v", bare.tender.takes)
+	}
+}

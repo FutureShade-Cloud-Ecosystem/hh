@@ -311,6 +311,14 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	}
 	ops.dispatchSvc.WithPickHoldGate(dispatchPickHoldAdapter{repo: billingRepo})
 
+	// Item 9 review P2-2: the Pay balance take raises an uninvoiced order's
+	// invoice through the SAME billing writer the desk's order payment raises
+	// with (the quoteMoneyDoor writer), on the take's own transaction, so the
+	// whole balance is one number at every door and there is no second writer
+	// to drift from the first.
+	posSvc.WithPayBalanceInvoicer(posPayBalanceInvoicer{w: billing.NewInvoiceWriter(pool).
+		WithOrderSource(quoteAgreedOrderSource{w6cOrderInvoiceSource: w6cOrderInvoiceSource{svc: orderSvc}, svc: orderSvc})})
+
 	// A-21 audit viewer routes (the module carried since the foundations;
 	// its registration lands with the fold).
 	audit.NewHandler(auditSvc, log).RegisterRoutes(r, g)

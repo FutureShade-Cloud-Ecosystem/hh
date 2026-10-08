@@ -260,6 +260,10 @@ type posStore interface {
 	// and on the pool.
 	OrderPaymentsTrailTx(ctx context.Context, tx pgx.Tx, orderID string) ([]OwingPayment, error)
 	OrderPaymentsTrail(ctx context.Context, orderID string) ([]OwingPayment, error)
+	// PayBalanceHoldTx is the hold's own reading on the caller's transaction
+	// (open balances plus the uninvoiced remainder, held by the zero day terms
+	// rule), the figures the take's answer carries.
+	PayBalanceHoldTx(ctx context.Context, tx pgx.Tx, orderID string) (payBalanceHoldView, error)
 }
 
 // Service composes pricing + till + identity into one atomic Sale (and, at W7, the Return).
@@ -285,6 +289,11 @@ type Service struct {
 	credit   CreditGate
 	sig      SignatureProvider
 	tax      TaxAssessor
+	// payInvoicer is the billing writer the Pay balance take raises an
+	// uninvoiced order's invoice through (pay_balance.go), the desk's own
+	// writer. Nil until wired; a take that needs a raise refuses (503) rather
+	// than stranding the remainder.
+	payInvoicer PayBalanceInvoicer
 	// taxRules is the optional round-rule read behind the counter tax-rate
 	// read's round_mode word (taxrate.go). Nil answers INVOICE_TOTAL, the
 	// flat engine's actual behavior.

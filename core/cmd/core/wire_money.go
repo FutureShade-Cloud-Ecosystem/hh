@@ -26,6 +26,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/product"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/quote"
@@ -524,6 +525,28 @@ func quoteMoneyDoor(pool *pgxpool.Pool, orderSvc *order.Service) (quote.OrderInv
 		w6cOrderInvoiceSource: w6cOrderInvoiceSource{svc: orderSvc}, svc: orderSvc,
 	})
 	return quoteOrderInvoicer{w: w}, quoteCounterPayer{repo: payments.NewRepository(pool)}
+}
+
+// posPayBalanceInvoicer binds the Pay balance take's invoicer seam to the same billing writer the
+// desk's order payment raises with (item 9 review P2-2): an order that owes an uninvoiced remainder
+// gets its agreed invoice raised inside the take's transaction, one writer, never a copy. The one
+// refusal that can come back for money already billed another way (shipment groups) crosses as the
+// take door's own fixed words.
+type posPayBalanceInvoicer struct{ w *billing.InvoiceWriter }
+
+func (a posPayBalanceInvoicer) RaiseOrderInvoiceTx(ctx context.Context, tx pgx.Tx, orderID string) (pos.RaisedOrderInvoice, error) {
+	doc, err := a.w.InvoiceOrderAtAgreedTx(ctx, tx, orderID)
+	if err != nil {
+		var already *billing.OrderAlreadyInvoicedError
+		if errors.As(err, &already) {
+			return pos.RaisedOrderInvoice{}, pos.ErrPayBalanceRestUnbillable
+		}
+		return pos.RaisedOrderInvoice{}, err
+	}
+	return pos.RaisedOrderInvoice{
+		InvoiceID: doc.InvoiceID, InvoiceNo: doc.InvoiceNo,
+		TotalCents: doc.TotalCents, BalanceCents: doc.BalanceCents,
+	}, nil
 }
 
 // quoteAgreedOrderSource is the money tail's order source plus the one answer the counter's agreed

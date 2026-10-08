@@ -126,8 +126,9 @@ type PayBalanceTaken struct {
 }
 
 // payBalanceOrderFacts is the locked read of the order this door pays: its
-// own facts, its customer's terms, and its open invoices with their balances,
-// taken in the lock order the file header names.
+// own facts, its customer's terms, its open invoices with their balances and
+// what its live INVOICE documents have billed, taken in the lock order the
+// file header names.
 type payBalanceOrderFacts struct {
 	OrderID      string
 	OrderNo      string
@@ -137,7 +138,10 @@ type payBalanceOrderFacts struct {
 	Fulfilment   string
 	TermsDays    int
 	TotalCents   int64
-	Invoices     []payBalanceInvoice
+	// InvoicedCents is what the order's live INVOICE documents (neither DRAFT
+	// nor VOID) bill, the figure the hold's uninvoiced remainder turns on.
+	InvoicedCents int64
+	Invoices      []payBalanceInvoice
 }
 
 // payBalanceInvoice is one open invoice of the order, locked FOR NO KEY UPDATE.
@@ -147,14 +151,69 @@ type payBalanceInvoice struct {
 	BalanceCents int64
 }
 
-// balanceCents is the whole balance: the sum of the open invoice balances.
+// remainderCents is the part of the order's total nothing has invoiced yet:
+// under pay before release it is owed too, exactly the hold's own arithmetic.
+func (f payBalanceOrderFacts) remainderCents() int64 {
+	if rest := f.TotalCents - f.InvoicedCents; rest > 0 {
+		return rest
+	}
+	return 0
+}
+
+// balanceCents is ONE NUMBER, the hold's own owed: the open invoice balances
+// plus the uninvoiced remainder. The find's still_owed_cents, the pre read's
+// early refusals and the take's whole balance all read it, so the hold and
+// this door can never disagree about what an order owes.
 func (f payBalanceOrderFacts) balanceCents() int64 {
 	var n int64
 	for _, inv := range f.Invoices {
 		n += inv.BalanceCents
 	}
-	return n
+	return n + f.remainderCents()
 }
+
+// payBalanceHoldView is the hold's own reading, taken inside the take's
+// transaction after the money moved: owed from the same sums the hold reads,
+// held the same zero day terms rule. The take's answer carries these figures
+// rather than hard coding them.
+type payBalanceHoldView struct {
+	OwedCents int64
+	Held      bool
+}
+
+// ErrPayBalanceRestUnbillable refuses a take whose whole balance includes a
+// part no invoice covers and this door cannot bill: an order partly invoiced
+// from its shipment groups is billed to completion by the fulfilment path, and
+// its open invoices are paid at the register. Fixed words, never an internal
+// error text.
+var ErrPayBalanceRestUnbillable = clientError{status: http.StatusConflict,
+	msg: "Part of this order is not invoiced yet and cannot be billed at this door; its open invoices are paid at the register, the rest when its invoice exists."}
+
+// ErrPayBalanceInvoicerUnwired answers a take that would have to raise an
+// invoice with no invoicer behind the door: the move is refused, never a take
+// that strands the remainder.
+var ErrPayBalanceInvoicerUnwired = clientError{status: http.StatusServiceUnavailable,
+	msg: "This order's invoice could not be raised at this door, try again in a moment."}
+
+// RaisedOrderInvoice is the document the invoicer seam raised on the caller's
+// transaction.
+type RaisedOrderInvoice struct {
+	InvoiceID    string
+	InvoiceNo    string
+	TotalCents   int64
+	BalanceCents int64
+}
+
+// PayBalanceInvoicer is the billing writer the take raises an uninvoiced
+// order's invoice through, on the take's own transaction: the same writer the
+// desk's order payment raises with (quote/order_payment.go), never a copy of
+// it. Consumer declared; the composition root binds billing's InvoiceWriter.
+type PayBalanceInvoicer interface {
+	RaiseOrderInvoiceTx(ctx context.Context, tx pgx.Tx, orderID string) (RaisedOrderInvoice, error)
+}
+
+// WithPayBalanceInvoicer wires (or overrides) the invoicer seam.
+func (s *Service) WithPayBalanceInvoicer(i PayBalanceInvoicer) *Service { s.payInvoicer = i; return s }
 
 // payBalancePre is the advisory pool read before any charge: the same facts
 // the locks re-derive, for the early refusals a person can act on first.
@@ -317,6 +376,30 @@ func (s *Service) PayBalanceTake(ctx context.Context, in PayBalanceTakeInput) (P
 		if !caller.CanAccessBranch(facts.BranchID) {
 			return ErrPayBalanceOrderNotFound
 		}
+		// An uninvoiced remainder is owed too (the hold's own number), so the
+		// whole balance includes it: the take raises the invoice for it inside
+		// this transaction, through the same writer the desk's order payment
+		// raises with, and then settles the whole. A remainder this door
+		// cannot bill (an order partly invoiced from its shipments) refuses
+		// in words with nothing taken.
+		if rest := facts.remainderCents(); rest > 0 {
+			if s.payInvoicer == nil {
+				return ErrPayBalanceInvoicerUnwired
+			}
+			raised, rerr := s.payInvoicer.RaiseOrderInvoiceTx(ctx, tx, facts.OrderID)
+			if rerr != nil {
+				return rerr
+			}
+			facts.Invoices = append(facts.Invoices, payBalanceInvoice{
+				InvoiceID: raised.InvoiceID, InvoiceNo: raised.InvoiceNo, BalanceCents: raised.BalanceCents,
+			})
+			// The writer bills the order WHOLE (it refuses an order that
+			// already carries a live invoice another way), so from here the
+			// order is fully invoiced and the balance is exactly the open
+			// balances, the raised document's included: leaving the remainder
+			// counted would bill it twice.
+			facts.InvoicedCents = facts.TotalCents
+		}
 		balance := facts.balanceCents()
 		if balance == 0 {
 			return ErrPayBalanceAlreadyPaid
@@ -364,9 +447,13 @@ func (s *Service) PayBalanceTake(ctx context.Context, in PayBalanceTakeInput) (P
 				return serr
 			}
 		}
-		// The hold's own reading, from the facts this transaction just moved:
-		// the whole balance settled, nothing is owed, the hold (if the shape
-		// ever carried one) lifts with this commit.
+		// The hold's own reading, on this transaction, after the money moved:
+		// the answer's release, still owed and held figures are these, never
+		// hard coded.
+		holdNow, herr := s.store.PayBalanceHoldTx(ctx, tx, facts.OrderID)
+		if herr != nil {
+			return herr
+		}
 		trail, terr2 := s.store.OrderPaymentsTrailTx(ctx, tx, facts.OrderID)
 		if terr2 != nil {
 			return terr2
@@ -375,9 +462,9 @@ func (s *Service) PayBalanceTake(ctx context.Context, in PayBalanceTakeInput) (P
 			OrderID: facts.OrderID, OrderNo: facts.OrderNo, CustomerID: facts.CustomerID,
 			PaymentID: res.PaymentID, Method: in.Method, AmountCents: balance,
 			PaidWords:          PaidInFullWords,
-			ReleasedToPicking:  true,
-			StillOwedCents:     0,
-			HeldFromPickingNow: false,
+			ReleasedToPicking:  !holdNow.Held,
+			StillOwedCents:     holdNow.OwedCents,
+			HeldFromPickingNow: holdNow.Held,
 			Payments:           trail,
 		}
 		return nil

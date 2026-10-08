@@ -35,15 +35,28 @@ type settleInvoice struct {
 const lockPayBalancePaymentsSequence = `INSERT INTO scope_sequences (scope, next_value) VALUES ('payments', 0)
 	ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value`
 
-// owingOrderSelect is the order's own facts plus its whole balance and its
-// customer's terms: the read behind the find's rows and the advisory pre-read.
-// The balance counts the OPEN invoice balances only (FINALIZED or
-// PARTIALLY_PAID), the money this door may take.
+// owingOpenBalances and owingInvoiced are the ONE owed predicate this door and
+// the hold share (billing/pick_hold.go): the open balances of live INVOICE
+// documents, and what those documents bill. Void documents bill nothing, and
+// a credit memo is its own document, never a skew on either sum.
+const owingOpenBalances = `
+	       (SELECT COALESCE(SUM(i.balance_cents), 0) FROM invoices i
+	          WHERE i.order_id = o.id AND i.doc_type = 'INVOICE'
+	            AND i.status IN ('FINALIZED','PARTIALLY_PAID') AND i.balance_cents > 0)`
+
+const owingInvoiced = `
+	       (SELECT COALESCE(SUM(i.total_cents), 0) FROM invoices i
+	          WHERE i.order_id = o.id AND i.doc_type = 'INVOICE'
+	            AND i.status NOT IN ('DRAFT','VOID'))`
+
+// owingOrderSelect is the order's own facts plus the ONE number this door and
+// the hold share: the open invoice balances plus the uninvoiced remainder (the
+// order's total less what its live INVOICE documents bill). It is the read
+// behind the advisory pre read; the find builds the same number, and the take
+// settles exactly it.
 const owingOrderSelect = `
 	SELECT o.id::text, o.order_no::text, o.customer_id::text, COALESCE(c.name,''), o.branch_id::text,
-	       o.fulfillment, c.payment_terms_days, o.total_cents,
-	       COALESCE((SELECT SUM(i.balance_cents) FROM invoices i
-	                  WHERE i.order_id = o.id AND i.status IN ('FINALIZED','PARTIALLY_PAID')), 0)
+	       o.fulfillment, c.payment_terms_days, o.total_cents,` + owingOpenBalances + `,` + owingInvoiced + `
 	  FROM orders o
 	  JOIN customers c ON c.id = o.customer_id`
 
@@ -62,20 +75,13 @@ func (r *Repository) FindOwingOrders(ctx context.Context, term string, branchIDs
 	like := "%" + term + "%"
 	rows, err := r.pool.Query(ctx, `
 		SELECT o.id::text, o.order_no::text, o.customer_id::text, COALESCE(c.name,''),
-		       o.fulfillment, o.total_cents, c.payment_terms_days,
-		       COALESCE((SELECT SUM(i.balance_cents) FROM invoices i
-		                  WHERE i.order_id = o.id AND i.doc_type = 'INVOICE'
-		                    AND i.status IN ('FINALIZED','PARTIALLY_PAID')), 0) AS owed,
-		       COALESCE((SELECT SUM(i.total_cents - i.balance_cents) FROM invoices i
-		                  WHERE i.order_id = o.id AND i.doc_type = 'INVOICE' AND i.status NOT IN ('DRAFT','VOID')), 0) AS paid,
+		       o.fulfillment, o.total_cents, c.payment_terms_days,`+owingOpenBalances+` + GREATEST(o.total_cents -`+owingInvoiced+`, 0) AS owed,
+		       (SELECT COALESCE(SUM(i.total_cents - i.balance_cents), 0) FROM invoices i
+		          WHERE i.order_id = o.id AND i.doc_type = 'INVOICE' AND i.status NOT IN ('DRAFT','VOID')) AS paid,
 		       COALESCE(NULLIF(o.job_reference,''), NULLIF(o.po_job_ref,''), '') AS job
 		  FROM orders o
 		  JOIN customers c ON c.id = o.customer_id
-		 WHERE (o.total_cents - COALESCE((SELECT SUM(i.total_cents) FROM invoices i
-		                  WHERE i.order_id = o.id AND i.doc_type = 'INVOICE' AND i.status NOT IN ('DRAFT','VOID')), 0)
-		        + COALESCE((SELECT SUM(i.balance_cents) FROM invoices i
-		                  WHERE i.order_id = o.id AND i.doc_type = 'INVOICE'
-		                    AND i.status IN ('FINALIZED','PARTIALLY_PAID')), 0)) > 0
+		 WHERE (`+owingOpenBalances+` + GREATEST(o.total_cents -`+owingInvoiced+`, 0)) > 0
 		   AND (o.order_no ILIKE $1 OR c.name ILIKE $1
 		        OR EXISTS (SELECT 1 FROM customer_contacts cc
 		                    WHERE cc.customer_id = o.customer_id AND cc.is_active AND cc.phone LIKE $1))
@@ -141,28 +147,29 @@ func (r *Repository) FindOwingOrders(ctx context.Context, term string, branchIDs
 	return out, nil
 }
 
-// ReadOwingOrder is the advisory pool read of one order: its facts and its
-// whole balance. found false is the door's 404 (a missing order and an order
-// that owes nothing are different answers, the caller refuses the latter in
-// words).
+// ReadOwingOrder is the advisory pool read of one order: its facts and the
+// one number it owes (the open balances plus the uninvoiced remainder). found
+// false is the door's 404; an order that owes nothing is a different answer,
+// the caller refuses it in words.
 func (r *Repository) ReadOwingOrder(ctx context.Context, orderID string) (payBalanceOrderFacts, bool, error) {
 	if r.pool == nil {
 		return payBalanceOrderFacts{}, false, errNoPool
 	}
 	var f payBalanceOrderFacts
-	var owed int64
+	var open int64
 	err := r.pool.QueryRow(ctx, owingOrderSelect+` WHERE o.id = $1::uuid`, orderID).
 		Scan(&f.OrderID, &f.OrderNo, &f.CustomerID, &f.CustomerName, &f.BranchID, &f.Fulfilment,
-			&f.TermsDays, &f.TotalCents, &owed)
+			&f.TermsDays, &f.TotalCents, &open, &f.InvoicedCents)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return payBalanceOrderFacts{}, false, nil
 		}
 		return payBalanceOrderFacts{}, false, fmt.Errorf("pos: read owing order: %w", err)
 	}
-	if owed > 0 {
-		f.Invoices = []payBalanceInvoice{{InvoiceID: "", InvoiceNo: "", BalanceCents: owed}}
-	}
+	// The pool read carries no invoice list: balanceCents() over these facts
+	// is the same one number (open balances plus remainder) the locked read
+	// re-derives under the locks.
+	f.Invoices = []payBalanceInvoice{{BalanceCents: open}}
 	return f, true, nil
 }
 
@@ -191,7 +198,10 @@ func (r *Repository) FindPayBalancePaymentByKey(ctx context.Context, key string)
 
 // LockPayBalanceOrderTx is the one-order writer's locked read, in the money
 // lock order: the order row, the payments sequence row without advancing it,
-// then the order's open invoice rows FOR NO KEY UPDATE ascending.
+// then the order's open invoice rows FOR NO KEY UPDATE ascending. The invoice
+// lock predicate is the same one the advisory pre read's sums use (live
+// INVOICE documents with a positive open balance), so the balance the locks
+// re-derive is the balance the pre read refused or captured against.
 func (r *Repository) LockPayBalanceOrderTx(ctx context.Context, tx pgx.Tx, orderID string) (payBalanceOrderFacts, error) {
 	var f payBalanceOrderFacts
 	if err := tx.QueryRow(ctx,
@@ -208,13 +218,19 @@ func (r *Repository) LockPayBalanceOrderTx(ctx context.Context, tx pgx.Tx, order
 		Scan(&f.CustomerName, &f.TermsDays); err != nil {
 		return payBalanceOrderFacts{}, fmt.Errorf("pos: pay balance customer: %w", err)
 	}
+	if err := tx.QueryRow(ctx,
+		`SELECT COALESCE(SUM(i.total_cents), 0) FROM invoices i
+		  WHERE i.order_id = $1::uuid AND i.doc_type = 'INVOICE' AND i.status NOT IN ('DRAFT','VOID')`,
+		orderID).Scan(&f.InvoicedCents); err != nil {
+		return payBalanceOrderFacts{}, fmt.Errorf("pos: pay balance invoiced: %w", err)
+	}
 	if _, err := tx.Exec(ctx, lockPayBalancePaymentsSequence); err != nil {
 		return payBalanceOrderFacts{}, fmt.Errorf("pos: lock payments sequence: %w", err)
 	}
 	irows, err := tx.Query(ctx, `
 		SELECT id::text, invoice_no::text, balance_cents
 		  FROM invoices
-		 WHERE order_id = $1::uuid AND status IN ('FINALIZED','PARTIALLY_PAID') AND balance_cents > 0
+		 WHERE order_id = $1::uuid AND doc_type = 'INVOICE' AND status IN ('FINALIZED','PARTIALLY_PAID') AND balance_cents > 0
 		 ORDER BY id ASC
 		 FOR NO KEY UPDATE`, orderID)
 	if err != nil {
@@ -229,6 +245,28 @@ func (r *Repository) LockPayBalanceOrderTx(ctx context.Context, tx pgx.Tx, order
 		f.Invoices = append(f.Invoices, inv)
 	}
 	return f, irows.Err()
+}
+
+// PayBalanceHoldTx is the hold's own reading on the caller's transaction, the
+// same sums billing's PickHoldForOrder reads: owed is the open balances plus
+// the uninvoiced remainder, held is zero day terms with money outstanding. The
+// take's answer carries these figures, read after its money moved.
+func (r *Repository) PayBalanceHoldTx(ctx context.Context, tx pgx.Tx, orderID string) (payBalanceHoldView, error) {
+	var terms int
+	var total, open, invoiced int64
+	if err := tx.QueryRow(ctx, `
+		SELECT c.payment_terms_days, o.total_cents,`+owingOpenBalances+`,`+owingInvoiced+`
+		  FROM orders o
+		  JOIN customers c ON c.id = o.customer_id
+		 WHERE o.id = $1::uuid`, orderID).
+		Scan(&terms, &total, &open, &invoiced); err != nil {
+		return payBalanceHoldView{}, fmt.Errorf("pos: pay balance hold read: %w", err)
+	}
+	owed := open
+	if rest := total - invoiced; rest > 0 {
+		owed += rest
+	}
+	return payBalanceHoldView{OwedCents: owed, Held: terms <= 0 && owed > 0}, nil
 }
 
 // SettleInvoiceTx applies one payment slice to one invoice: the allocation

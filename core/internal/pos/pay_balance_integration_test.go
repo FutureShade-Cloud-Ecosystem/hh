@@ -18,6 +18,7 @@ import (
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -286,8 +287,8 @@ func TestIntegration_PayBalance_TakeByCard_ItsDeclineAndTheRefusals(t *testing.T
 
 // The find counts a voided invoice as unbilled (the review's void leg): the
 // order's only document is VOID, so nothing has billed its total and the find
-// must not drop the order as paid. (The owed figure it answers for such an
-// order, the whole uninvoiced total, is P2-2's one number, asserted beside it.)
+// must not drop the order as paid, and answers the whole uninvoiced total as
+// what it owes, held (one number with the hold).
 func TestIntegration_PayBalance_FindCountsAVoidedInvoiceAsUnbilled(t *testing.T) {
 	pool := intPool(t)
 	ctx := globalCtx(t, pool)
@@ -329,8 +330,199 @@ VALUES ('#INV-PBV-'||nextval('invoice_no_seq'), $1::uuid, $2::uuid, $3::uuid, 'I
 	if found == nil {
 		t.Fatalf("the find dropped an order whose only invoice is VOID, want it owing its whole total")
 	}
-	if found.PaidCents != 0 {
-		t.Fatalf("the void invoice's order reads paid %d, want 0: the void billed and collected nothing",
-			found.PaidCents)
+	if found.StillOwedCents != 10000 || found.PaidCents != 0 || !found.HeldFromPicking {
+		t.Fatalf("the void invoice's order reads owed %d paid %d held %v, want 10000, 0, held: the void billed nothing",
+			found.StillOwedCents, found.PaidCents, found.HeldFromPicking)
 	}
+}
+
+// -- the uninvoiced remainder: one number, raised and settled (the review's P2-2) --
+
+// payDoorOrderSource binds billing's invoice writer to the order module's
+// facts, the test-side twin of the composition root's quoteAgreedOrderSource.
+type payDoorOrderSource struct{ svc *order.Service }
+
+func payDoorFacts(f order.InvoiceFacts, err error) (billing.OrderInvoiceFacts, error) {
+	if err != nil {
+		return billing.OrderInvoiceFacts{}, err
+	}
+	out := billing.OrderInvoiceFacts{
+		OrderID: f.OrderID, OrderNo: f.OrderNo, CustomerID: f.CustomerID, BranchID: f.BranchID,
+		TermsDays: f.TermsDays, TaxReasonCode: f.TaxReasonCode, ClosesOrder: true,
+		FreightCents: f.FreightCents, AgreedTaxCents: f.AgreedTaxCents,
+	}
+	for _, l := range f.Lines {
+		out.Lines = append(out.Lines, billing.OrderInvoiceLine{
+			LineNo: l.LineNo, OrderLineID: l.OrderLineID, ProductID: l.ProductID,
+			Description: l.Description, QtyEntered: l.QtyEntered, UOMEntered: l.UOMEntered,
+			QtyBase: l.QtyBase, UnitPriceCents: l.UnitPriceCents, PriceUOM: l.PriceUOM,
+			LineTotalCents: l.LineTotalCents,
+		})
+	}
+	return out, nil
+}
+
+func (a payDoorOrderSource) InvoiceableOrder(ctx context.Context, orderID string, groupIDs []string) (billing.OrderInvoiceFacts, error) {
+	f, err := a.svc.InvoiceableOrder(ctx, orderID, groupIDs)
+	return payDoorFacts(f, err)
+}
+
+func (a payDoorOrderSource) MarkGroupsInvoiced(ctx context.Context, groupIDs []string, invoiceID string, at time.Time) error {
+	return a.svc.MarkGroupsInvoiced(ctx, groupIDs, invoiceID, at)
+}
+
+func (a payDoorOrderSource) AgreedInvoiceableOrder(ctx context.Context, orderID string) (billing.OrderInvoiceFacts, error) {
+	f, err := a.svc.AgreedInvoiceableOrder(ctx, orderID)
+	return payDoorFacts(f, err)
+}
+
+func (a payDoorOrderSource) AgreedInvoiceableOrderTx(ctx context.Context, tx pgx.Tx, orderID string) (billing.OrderInvoiceFacts, error) {
+	f, err := a.svc.AgreedInvoiceableOrderTx(ctx, tx, orderID)
+	return payDoorFacts(f, err)
+}
+
+// A zero terms order with no invoice is found owing its whole total, taken in
+// full (the invoice raised inside the take's transaction, then settled), and
+// released: the counter door the hold could strand no longer can.
+func TestIntegration_PayBalance_UninvoicedOrder_FoundTakenReleased(t *testing.T) {
+	pool := intPool(t)
+	ctx := globalCtx(t, pool)
+	productID, branchID := aPaver(t, pool)
+	suffix := fmt.Sprintf("rest-%d", time.Now().UnixNano()%1_000_000_000)
+	var custID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO customers (account_no, name, customer_type, payment_terms_days, credit_limit_cents)
+		VALUES ('PBR-'||$1, 'Uninvoiced remainder proof', 'CONTRACTOR', 0, 5000000) RETURNING id::text`,
+		suffix).Scan(&custID); err != nil {
+		t.Fatalf("plant the customer: %v", err)
+	}
+	var orderID, orderNo string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO orders (order_no, customer_id, branch_id, status, fulfillment, subtotal_cents, total_cents)
+		VALUES ('#SO-PBR-'||$1, $2::uuid, $3::uuid, 'CONFIRMED', 'WILL_CALL', 10000, 10000) RETURNING id::text, order_no`,
+		suffix, custID, branchID).Scan(&orderID, &orderNo); err != nil {
+		t.Fatalf("plant the order: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO order_lines (order_id, line_no, product_id, description, qty_entered, uom_entered,
+		                         qty_base, unit_price_cents, price_uom, line_total_cents)
+		VALUES ($1::uuid, 1, $2::uuid, 'PBR line', 5, 'SF', 5, 2000, 'SF', 10000)`, orderID, productID); err != nil {
+		t.Fatalf("plant the order line: %v", err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE order_id = $1`, orderID)
+		_, _ = pool.Exec(c, `DELETE FROM order_lines WHERE order_id = $1`, orderID)
+		_, _ = pool.Exec(c, `DELETE FROM orders WHERE id = $1`, orderID)
+		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1`, custID)
+	})
+
+	billingRepo := billing.NewRepository(pool)
+	orderSvc := order.NewService(order.NewRepository(pool)).WithPickHoldReader(holdBridge{repo: billingRepo})
+	svc := realPosSvc(t, pool, stubCharger{}).WithPayBalanceInvoicer(
+		raiseAdapter{w: billing.NewInvoiceWriter(pool).WithOrderSource(payDoorOrderSource{svc: orderSvc})})
+
+	// HELD BEFORE ITS FIRST INVOICE: the hold counts the uninvoiced remainder.
+	if held, owed, _, _, err := billingRepo.PickHoldForOrder(ctx, orderID); err != nil || !held || owed != 10000 {
+		t.Fatalf("the uninvoiced order's hold reads (held %v, owed %d, err %v), want held, 10000", held, owed, err)
+	}
+	// The find answers the same number (the review's one number).
+	rows, err := svc.PayBalanceFind(ctx, "#SO-PBR-"+suffix)
+	if err != nil {
+		t.Fatalf("find: %v", err)
+	}
+	var row *OwingOrder
+	for i := range rows {
+		if rows[i].OrderID == orderID {
+			row = &rows[i]
+		}
+	}
+	if row == nil {
+		t.Fatalf("the find did not answer the uninvoiced order")
+	}
+	if row.StillOwedCents != 10000 || !row.HeldFromPicking || row.HoldWords == "" {
+		t.Fatalf("the find's row: owed %d held %v words %q, want 10000 held with words",
+			row.StillOwedCents, row.HeldFromPicking, row.HoldWords)
+	}
+
+	// THE TAKE: the whole total, cash; the invoice is raised inside the take's
+	// transaction and settled with it.
+	session := openTill(t, pool, branchID)
+	out, err := svc.PayBalanceTake(ctx, PayBalanceTakeInput{
+		OrderID: orderID, Method: TenderCash, AmountCents: 10000,
+		TillSessionID: session, IdempotencyKey: key(),
+	})
+	if err != nil {
+		t.Fatalf("take: %v", err)
+	}
+	if out.AmountCents != 10000 || !out.ReleasedToPicking || out.StillOwedCents != 0 || out.HeldFromPickingNow {
+		t.Fatalf("the take's answer: %+v", out)
+	}
+	var invStatus, invDoc string
+	var invBalance int64
+	if err := pool.QueryRow(ctx,
+		`SELECT status::text, doc_type, balance_cents FROM invoices WHERE order_id=$1`, orderID).
+		Scan(&invStatus, &invDoc, &invBalance); err != nil || invStatus != "PAID" || invDoc != "INVOICE" || invBalance != 0 {
+		t.Fatalf("the raised invoice reads %s %s %d (%v), want a PAID INVOICE at 0", invStatus, invDoc, invBalance, err)
+	}
+	var allocated int64
+	if err := pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(a.amount_cents), 0) FROM payment_allocations a
+		  JOIN invoices i ON i.id = a.invoice_id WHERE i.order_id = $1`, orderID).Scan(&allocated); err != nil || allocated != 10000 {
+		t.Fatalf("the allocations sum to %d (%v), want 10000 counted once", allocated, err)
+	}
+	// The subledger: the raised document's INVOICE row and the take's PAYMENT
+	// row, both written in the take's one transaction (their occurred_at is
+	// the same transaction time, so the assertion is order insensitive).
+	var ledger []struct {
+		T string
+		A int64
+	}
+	lrows, err := pool.Query(ctx, `
+		SELECT txn_type, amount_cents FROM customer_transactions
+		 WHERE source_ref_id IN (SELECT id FROM invoices WHERE order_id=$1) OR source_ref_id IN
+		       (SELECT a.payment_id FROM payment_allocations a JOIN invoices i ON i.id=a.invoice_id WHERE i.order_id=$1)`, orderID)
+	if err != nil {
+		t.Fatalf("the subledger read: %v", err)
+	}
+	for lrows.Next() {
+		var r struct {
+			T string
+			A int64
+		}
+		if err := lrows.Scan(&r.T, &r.A); err != nil {
+			t.Fatalf("scan ledger: %v", err)
+		}
+		ledger = append(ledger, r)
+	}
+	lrows.Close()
+	var invoiceRow, paymentRow bool
+	for _, r := range ledger {
+		if r.T == "INVOICE" && r.A == 10000 {
+			invoiceRow = true
+		}
+		if r.T == "PAYMENT" && r.A == -10000 {
+			paymentRow = true
+		}
+	}
+	if len(ledger) != 2 || !invoiceRow || !paymentRow {
+		t.Fatalf("the subledger rows: %+v, want the raised INVOICE at 10000 and the PAYMENT at -10000", ledger)
+	}
+	// RELEASED: the picking door that the hold guarded now moves.
+	if _, err := orderSvc.TransitionManual(ctx, orderID, order.ActionPicking, ""); err != nil {
+		t.Fatalf("the picking transition after the take: %v", err)
+	}
+}
+
+// raiseAdapter shapes the writer's answer into the take's seam (the
+// composition root's posPayBalanceInvoicer, test-side).
+type raiseAdapter struct{ w *billing.InvoiceWriter }
+
+func (a raiseAdapter) RaiseOrderInvoiceTx(ctx context.Context, tx pgx.Tx, orderID string) (RaisedOrderInvoice, error) {
+	doc, err := a.w.InvoiceOrderAtAgreedTx(ctx, tx, orderID)
+	if err != nil {
+		return RaisedOrderInvoice{}, err
+	}
+	return RaisedOrderInvoice{InvoiceID: doc.InvoiceID, InvoiceNo: doc.InvoiceNo,
+		TotalCents: doc.TotalCents, BalanceCents: doc.BalanceCents}, nil
 }
