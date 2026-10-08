@@ -1486,11 +1486,15 @@ paths:
       summary: Resolve one shortage with a stated resolution
       description: >-
         The resolution text is required. Resolving an already-resolved
-        shortage answers 409.
+        shortage answers 409. Beside the yard-pick level, the caller's
+        role must sit on the shortage_resolvers list (the decided default
+        names the yard team and the yard manager, exactly the roles the
+        default gives the surface at work).
       x-role: requireStaff
       x-access:
         surfaces: [yard-pick]
         level: work
+        list: shortage_resolvers
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
