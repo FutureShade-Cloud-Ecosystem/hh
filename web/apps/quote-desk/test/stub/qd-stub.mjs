@@ -349,7 +349,7 @@ const HST_RATE_BPS = 1300;
 // the suite flips, and the submissions seen, for the sender's assertions.
 const feedbackFiled = [];
 const feedbackMode = { value: "ok" };
-const switches = { convertWall: false, callerOnCostList: true, callerIsGeneralManager: false, floorRaiseBps: 0, approvalsShape: "page", quotePageSize: 0, paymentRoleRefused: false, paymentGhost: false, paymentKeyCrossed: false, paymentGrantRefused: false };
+const switches = { convertWall: false, callerOnCostList: true, callerIsGeneralManager: false, chipSetNull: false, floorRaiseBps: 0, approvalsShape: "page", quotePageSize: 0, paymentRoleRefused: false, paymentGhost: false, paymentKeyCrossed: false, paymentGrantRefused: false };
 
 // Every write the stub sees, for the suite's layout save assertions. The
 // ledger is test scaffolding: no contract path reads it.
@@ -990,7 +990,10 @@ function resetPolicy() {
 function effectivePolicy(branchId) {
   const row = policyRows.get(branchId) ?? policyRows.get("");
   const { branch_id: _drop, ...rest } = row;
-  return { ...rest, effective_chips: rest.quick_chip_set.length > 0 ? [...rest.quick_chip_set] : ["Pavers"] };
+  const effective = rest.quick_chip_set.length > 0 ? [...rest.quick_chip_set] : ["Pavers"];
+  // The core before round 14 (a) answered null for a scope whose chip set was never authored (a nil slice):
+  // the switch reproduces that body so the policy read of that core stays readable.
+  return { ...rest, quick_chip_set: switches.chipSetNull ? null : rest.quick_chip_set, effective_chips: effective };
 }
 
 // The dealer's one acceptance switch, and the scope rule table (seven rules,
@@ -1239,6 +1242,13 @@ const server = createServer(async (request, response) => {
     });
     return;
   }
+  if (path === "/_stub/chip-set-null" && request.method === "PUT") {
+    readBody(request, response, (body) => {
+      switches.chipSetNull = body.on === true;
+      respondJson(response, 200, { on: switches.chipSetNull });
+    });
+    return;
+  }
   if (path === "/_stub/general-manager" && request.method === "PUT") {
     readBody(request, response, (body) => {
       switches.callerIsGeneralManager = body.member === true;
@@ -1412,6 +1422,7 @@ const server = createServer(async (request, response) => {
     resetScopeRules();
     switches.callerOnCostList = true;
     switches.callerIsGeneralManager = false;
+    switches.chipSetNull = false;
     switches.floorRaiseBps = 0;
     switches.approvalsShape = "page";
     switches.quotePageSize = 0;
@@ -1552,15 +1563,15 @@ const server = createServer(async (request, response) => {
     readBody(request, response, (body) => {
       const dealerRow = body.branch_id === undefined || body.branch_id === "";
       if (!isSettingsAdmin(caller)) {
-        respondJson(response, 403, { error: "quote: the Inside Sales role may not change the quote policy" });
+        respondJson(response, 403, { error: "quote: only a sales manager or the general manager changes the quote settings" });
         return;
       }
       if (dealerRow && !isGeneralManager(caller)) {
-        respondJson(response, 403, { error: "quote: the dealer wide default is set by the General Manager; the Sales Manager sets a branch row" });
+        respondJson(response, 403, { error: "quote: only the general manager changes the dealer default quote settings" });
         return;
       }
       if (!dealerRow && body.branch_id !== caller.branchId) {
-        respondJson(response, 403, { error: "quote: that branch is not one your role reaches" });
+        respondJson(response, 403, { error: "quote: only a sales manager of that branch changes its quote settings" });
         return;
       }
       const days = body.default_validity_days;
@@ -2489,7 +2500,7 @@ const server = createServer(async (request, response) => {
 
   if (path === "/api/v1/quotes/settings/acceptance" && request.method === "GET") {
     if (!isSettingsAdmin(caller)) {
-      respondJson(response, 403, { error: "quote: the acceptance settings are for administrators; the Inside Sales role may not read them" });
+      respondJson(response, 403, { error: "quote: only a sales manager or the general manager changes the quote settings" });
       return;
     }
     respondJson(response, 200, acceptance);
@@ -2497,8 +2508,14 @@ const server = createServer(async (request, response) => {
   }
   if (path === "/api/v1/quotes/settings/acceptance" && request.method === "PUT") {
     readBody(request, response, (body) => {
+      // The core's order: the settings authority first (a sales manager or the general manager), then the
+      // dealer default row, which the general manager alone writes.
+      if (!isSettingsAdmin(caller)) {
+        respondJson(response, 403, { error: "quote: only a sales manager or the general manager changes the quote settings" });
+        return;
+      }
       if (!isGeneralManager(caller)) {
-        respondJson(response, 403, { error: "quote: the acceptance switch is dealer wide and only the General Manager changes it" });
+        respondJson(response, 403, { error: "quote: only the general manager changes the dealer default quote settings" });
         return;
       }
       if (typeof body.allow_multi_accept !== "boolean") {

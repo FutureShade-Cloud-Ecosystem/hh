@@ -970,15 +970,30 @@ export class QdClient {
   }
 
   /**
-   * The settings grant: one question the Quote Desk asks before it mounts its settings panels.
-   * Each boolean uses the very predicate the refusing route uses, so the answer cannot drift
-   * from the refusal. Cached per QdClient instance (one caller per session).
+   * The settings grant: one question the Quote Desk asks before it mounts the settings panels that
+   * only some roles may read. Each boolean uses the very predicate the refusing route uses, so the
+   * answer cannot drift from the refusal. Asked once per signed in person: a second ask, including one
+   * that arrives while the first is out, shares its answer; another person's sign in starts clean; an
+   * answer that is not a grant (a refusal, a failed read, an unreadable body) is not kept, so the next
+   * ask reads again.
    */
-  async settingsGrant(): Promise<Result<SettingsGrant>> {
+  #grant: { caller: string; read: Promise<Result<SettingsGrant>> | null } = { caller: "", read: null };
+
+  settingsGrant(): Promise<Result<SettingsGrant>> {
+    const caller = this.#callerId();
+    if (this.#grant.caller !== caller) this.#grant = { caller, read: null };
+    const entry = this.#grant;
+    if (entry.read === null) entry.read = this.#askGrant(entry);
+    return entry.read;
+  }
+
+  async #askGrant(entry: { read: Promise<Result<SettingsGrant>> | null }): Promise<Result<SettingsGrant>> {
     const result = await staffQuote.quoteSettingsGrant(this.#client);
-    if (!result.ok) return result;
-    const grant = readSettingsGrant(result.value);
-    return grant === null ? err("the settings grant answer is not readable") : ok(grant);
+    const grant = result.ok ? readSettingsGrant(result.value) : null;
+    const answer: Result<SettingsGrant> = !result.ok ? result : grant === null ? err("the settings grant answer is not readable") : ok(grant);
+    // Only a grant is kept; the next ask after a refusal or an unreadable answer reads again.
+    if (!answer.ok) entry.read = null;
+    return answer;
   }
 
   /**

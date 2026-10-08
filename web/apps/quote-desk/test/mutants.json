@@ -2135,5 +2135,62 @@
     "find": "    if (this.quoteId === \"\" && this.composeCustomer !== null) this.renderRoot.querySelector<HTMLElement & { say?: (message: string) => void }>(\"quote-search-add\")?.say?.(p.name !== undefined ? `Adding ${p.name} to the new quote.` : \"Adding the line to the new quote.\");\n",
     "replace": "",
     "test": "R13 a slow first create says Adding"
+  },
+  {
+    "id": "qd-grant-memo",
+    "file": "src/qd-client.ts",
+    "find": "if (entry.read === null) entry.read = this.#askGrant(entry);",
+    "replace": "entry.read = this.#askGrant(entry);",
+    "test": "settingsGrant asks the server once",
+    "runner": "node",
+    "testFile": "test/settings-grant.test.mjs"
+  },
+  {
+    "id": "qd-grant-caller",
+    "file": "src/qd-client.ts",
+    "find": "if (this.#grant.caller !== caller) this.#grant = { caller, read: null };",
+    "replace": "",
+    "test": "settingsGrant starts clean when another person signs in",
+    "runner": "node",
+    "testFile": "test/settings-grant.test.mjs"
+  },
+  {
+    "id": "qd-grant-failure",
+    "file": "src/qd-client.ts",
+    "find": "if (!answer.ok) entry.read = null;",
+    "replace": "",
+    "test": "settingsGrant keeps no failure",
+    "runner": "node",
+    "testFile": "test/settings-grant.test.mjs"
+  },
+  {
+    "id": "sp-gate-acceptance",
+    "file": "src/settings-panel.ts",
+    "find": "${g?.canReadAcceptance ? html`",
+    "replace": "${true ? html`",
+    "test": "a caller outside the settings roles reads the policy"
+  },
+  {
+    "id": "sp-gate-scope",
+    "file": "src/settings-panel.ts",
+    "find": "${g?.canReadScopeRules ? html`",
+    "replace": "${true ? html`",
+    "test": "a caller outside the settings roles reads the policy"
+  },
+  {
+    "id": "sp-screen-ungated",
+    "file": "src/settings-panel.ts",
+    "find": "      <details class=\"box\" data-testid=\"qs-screen\">\n        <summary>Screen settings</summary>\n        <qd-surface-settings></qd-surface-settings>\n      </details>",
+    "replace": "      ${g?.canEditPolicy ? html`<details class=\"box\" data-testid=\"qs-screen\">\n        <summary>Screen settings</summary>\n        <qd-surface-settings></qd-surface-settings>\n      </details>` : nothing}",
+    "test": "a caller outside the settings roles reads the policy"
+  },
+  {
+    "id": "rp-chips-null",
+    "file": "src/_panel-wire.ts",
+    "find": "value[\"quick_chip_set\"] === null ? [] : strings(value, \"quick_chip_set\")",
+    "replace": "strings(value, \"quick_chip_set\")",
+    "test": "readPolicy reads the very body the core answered",
+    "runner": "node",
+    "testFile": "test/panels.test.mjs"
   }
 ]

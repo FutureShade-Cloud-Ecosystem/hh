@@ -189,7 +189,8 @@ export function readPolicy(value: unknown): QuotePolicyWire | null {
   const sms = bool(value, "send_sms_enabled");
   const images = bool(value, "include_product_images");
   const notice = value["quantity_notice"];
-  // quick_chip_set may be null on old servers; treat it as [] rather than refusing the whole policy.
+  // The core answers null for a scope whose chip set was never authored (a nil slice); that is the empty set,
+  // not broken data, and the policy must still read.
   const chips: string[] | null = value["quick_chip_set"] === null ? [] : strings(value, "quick_chip_set");
   if (
     !(COST_VISIBILITIES as readonly unknown[]).includes(visibility) ||
@@ -216,8 +217,7 @@ export function readPolicy(value: unknown): QuotePolicyWire | null {
   };
   const branch = str(value, "branch_id");
   if (branch !== null) out.branch_id = branch;
-  // effective_chips is optional; absent or null means omit it (the server fills it in from chips).
-  const effective = value["effective_chips"] === null ? null : strings(value, "effective_chips");
+  const effective = strings(value, "effective_chips");
   if (effective !== null) out.effective_chips = effective;
   return out;
 }

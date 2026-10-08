@@ -106,7 +106,7 @@ test("a refusal locks the one branch row it was for, not the caller's own branch
   await setBranch(page, "another-branch");
   await expect(page.getByTestId("qs-policy-save")).toBeEnabled();
   await page.getByTestId("qs-policy-save").click();
-  await expect(page.getByTestId("qs-policy-lock")).toContainText("not one your role reaches");
+  await expect(page.getByTestId("qs-policy-lock")).toContainText("Only a sales manager of that branch changes its quote settings");
   await expect(page.getByTestId("qs-policy-save")).toBeDisabled();
   await setBranch(page, own);
   await expect(page.getByTestId("qs-policy-lock")).toHaveCount(0);

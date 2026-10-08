@@ -1,5 +1,5 @@
 // Round 10 item 4 (row 1034): the Sales manager's own settings read. Margin policy is reachable, Screen settings
-// does not say the quote policy is unreadable, and the scope rules do not say Forbidden. Where the server refuses a
+// does not say the quote policy is unreadable, and the scope rules, which this role does not hold, are not offered at all. Where the server refuses a
 // manager, that is a core item for the principal, said in the report and not hidden here.
 import { expect, test } from "@playwright/test";
 import { open, signIn } from "./switch-helpers.js";
@@ -12,7 +12,7 @@ test.afterAll(async ({ request }) => {
   await request.post("/_stub/reset");
 });
 
-test("the Sales manager reaches the margin policy and reads every settings box", async ({ page }) => {
+test("the Sales manager reaches the margin policy and reads every settings box the role holds", async ({ page }) => {
   await signIn(page, "Sales manager");
   await page.getByTestId("desk-tab-pricing").click();
   await expect(page.getByTestId("pricing-panel")).toBeVisible();
@@ -22,7 +22,8 @@ test("the Sales manager reaches the margin policy and reads every settings box",
   await page.getByText("Quote detail & admin").click();
   await page.locator("qd-quote-settings").getByText("Screen settings", { exact: true }).click();
   await page.getByText("Acceptance settings", { exact: true }).click();
-  await page.getByText("Scope suggestion rules", { exact: true }).click();
+  // The scope rules are the General Manager's (the grant says so): the box is not offered to this role.
+  await expect(page.locator("qd-quote-settings").getByText("Scope suggestion rules", { exact: true })).toHaveCount(0);
   const text = await page.locator("qd-quote-settings").evaluate((el) => (el.shadowRoot?.textContent ?? "") + [...(el.shadowRoot?.querySelectorAll("*") ?? [])].map((c) => c.shadowRoot?.textContent ?? "").join(" "));
   expect(text).not.toMatch(/not readable|Forbidden|could not be read/i);
 });

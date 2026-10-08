@@ -329,10 +329,9 @@ test("readPolicy proves every knob; readAcceptance proves both booleans; readSco
   assert.equal(readPolicy({ ...POLICY, cost_visibility: "SOME" }), null);
   assert.equal(readPolicy({ ...POLICY, quick_chip_set: [1] }), null);
   assert.equal(readPolicy({ ...POLICY, workspace_arrangement: "x" }), null);
-  // quick_chip_set === null is treated as [] (an old server, not broken data).
+  // quick_chip_set null is the core's answer for a scope whose chip set was never authored (a nil slice).
   assert.deepEqual(readPolicy({ ...POLICY, quick_chip_set: null }).quick_chip_set, []);
-  // effective_chips === null is treated as absent (omit the field).
-  assert.equal("effective_chips" in readPolicy({ ...POLICY, effective_chips: null }), false);
+  assert.equal(readPolicy({ ...POLICY, quick_chip_set: "Mulch" }), null);
   assert.deepEqual(readAcceptance({ allow_multi_accept: false, switch_wired: true }), { allowMultiAccept: false, switchWired: true });
   assert.equal(readAcceptance({ allow_multi_accept: "no", switch_wired: true }), null);
   const rule = { code: "R", title: "T", advice: "A", when_apps: ["PAVER"], expect_apps: ["BASE"], suggest_query: "q", enabled: true, sort_order: 1 };
@@ -372,4 +371,19 @@ test("readSettingsGrant proves all three booleans; a missing or non-boolean fiel
   // Not a record.
   assert.equal(readSettingsGrant(null), null);
   assert.equal(readSettingsGrant([]), null);
+});
+
+test("readPolicy reads the very body the core answered the demo Sales flow (round 14 (a): qs-policy-unread)", () => {
+  // Captured from GET /api/v1/quotes/policy on the testers' copy as the Sales flow: a 200 whose
+  // quick_chip_set is null because no chip set was ever authored for that scope.
+  const captured = JSON.parse(
+    '{"cost_visibility":"MANAGER_UP","default_validity_days":30,"default_deposit_pct":0,"line_discounts_enabled":true,' +
+      '"send_email_enabled":true,"send_sms_enabled":true,"include_product_images":true,"quick_chip_set":null,' +
+      '"effective_chips":["Mulch","Paver","Aggregate","Base","Soil","Edging"],"workspace_split_pct":58,' +
+      '"workspace_arrangement":"PRIMARY_LEFT","quantity_notice":"All quantities are to be confirmed by the customer. Please review them before you accept it."}',
+  );
+  const read = readPolicy(captured);
+  assert.notEqual(read, null, "the captured body must read");
+  assert.deepEqual(read.quick_chip_set, []);
+  assert.deepEqual(read.effective_chips, ["Mulch", "Paver", "Aggregate", "Base", "Soil", "Edging"]);
 });
