@@ -795,3 +795,44 @@ func TestIntegration_PublicQuote_OrderNoOnlyAfterConversion(t *testing.T) {
 		t.Errorf("only a CONVERTED quote carries an order number; got %q on %s", lost.OrderNo, lost.Status)
 	}
 }
+
+// TestIntegration_PublicQuote_ConvertedWithoutProvenanceServesNoOrderNo pins the swallowed no-row
+// branch of the order number read (review P3-3): a CONVERTED quote whose provenance row is gone
+// still reads 200 by token, with no order number, rather than failing the whole public view.
+func TestIntegration_PublicQuote_ConvertedWithoutProvenanceServesNoOrderNo(t *testing.T) {
+	pool := intPool(t)
+	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	svc, quoteID, token := mintedFor(t, pool, now, nil)
+	cust := ""
+	if err := pool.QueryRow(context.Background(), `SELECT customer_id::text FROM quotes WHERE id=$1`, quoteID).Scan(&cust); err != nil {
+		t.Fatalf("read customer: %v", err)
+	}
+	cleanupConvertedOrders(t, pool, quoteID)
+	setCreditLimit(t, pool, cust, 5_000_00)
+	if _, err := pool.Exec(context.Background(), `UPDATE quotes SET status='ACCEPTED' WHERE id=$1`, quoteID); err != nil {
+		t.Fatalf("force ACCEPTED: %v", err)
+	}
+
+	if _, err := gatedRepo(pool).Convert(context.Background(), cust, quoteID, ConvertOptions{}); err != nil {
+		t.Fatalf("convert: %v", err)
+	}
+	before, err := svc.PublicQuoteByToken(context.Background(), token)
+	if err != nil {
+		t.Fatalf("view the converted quote: %v", err)
+	}
+	if before.Status != "CONVERTED" || before.OrderNo == "" {
+		t.Fatalf("the converted quote must first read with its order number; got status %q order_no %q", before.Status, before.OrderNo)
+	}
+
+	// The provenance row gone is not the customer's problem: the view still serves, minus the number.
+	if _, err := pool.Exec(context.Background(), `DELETE FROM quote_accept_provenance WHERE quote_id=$1`, quoteID); err != nil {
+		t.Fatalf("delete provenance: %v", err)
+	}
+	after, err := svc.PublicQuoteByToken(context.Background(), token)
+	if err != nil {
+		t.Fatalf("a converted quote with no provenance row must still read 200; got %v", err)
+	}
+	if after.Status != "CONVERTED" || after.OrderNo != "" {
+		t.Errorf("the view with no provenance row = status %q order_no %q, want CONVERTED and empty", after.Status, after.OrderNo)
+	}
+}
