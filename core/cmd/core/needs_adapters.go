@@ -208,6 +208,11 @@ func w6bOpenShortages(svc *tasks.Service) dashboard.NeedsFunc {
 
 // -- purchasing · orders that landed short and are still partial --------------------------------
 // The purchasing module's own count (ReceivingDifferences), with the caller's grants as the reach.
+// A receiving difference is a purchase order received in part with a short line, aged by its
+// latest receipt; it leaves the queue on full receipt or close. HH refuses an over-receipt
+// (inventory/handler.go, 409) and records no damaged or rejected quantity, so a short partial is
+// the only difference HH holds today; price and bill variances belong to the money desk's three way
+// match. If receiving later records damaged quantities, they join this queue.
 func w6bReceivingDifferences(svc *purchasing.Service) dashboard.NeedsFunc {
 	return func(ctx context.Context, sc dashboard.Scope) (dashboard.NeedsMeasure, error) {
 		sum, err := svc.ReceivingDifferences(ctx, purchasing.BranchReach{Global: sc.AllBranches, BranchIDs: sc.BranchIDs})

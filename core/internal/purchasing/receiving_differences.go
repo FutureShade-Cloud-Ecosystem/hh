@@ -25,6 +25,12 @@ type receivingDifferenceStore interface {
 }
 
 // ReceivingDifferences counts the short-received orders inside the reach.
+//
+// A receiving difference is a purchase order received in part with a short line, aged by its
+// latest receipt; it leaves the queue on full receipt or close. HH refuses an over-receipt
+// (inventory/handler.go, 409) and records no damaged or rejected quantity, so a short partial is
+// the only difference HH holds today; price and bill variances belong to the money desk's three way
+// match. If receiving later records damaged quantities, they join this queue.
 func (s *Service) ReceivingDifferences(ctx context.Context, reach BranchReach) (ReceivingDifferenceSummary, error) {
 	if s.repo == nil {
 		return ReceivingDifferenceSummary{}, errNoDB
