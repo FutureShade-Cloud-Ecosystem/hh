@@ -79,6 +79,15 @@ handle /till/* {
 	file_server
 }
 
+handle /drive/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /drive/index.html
+	file_server
+}
+
 handle /q/* {
 	basic_auth {
 		demo __GATE_HASH__
