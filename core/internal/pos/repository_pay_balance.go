@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -72,7 +73,7 @@ func (r *Repository) FindOwingOrders(ctx context.Context, term string, branchIDs
 	if limit <= 0 {
 		limit = 20
 	}
-	like := "%" + term + "%"
+	like := "%" + escapeLikeWildcards(term) + "%"
 	rows, err := r.pool.Query(ctx, `
 		SELECT o.id::text, o.order_no::text, o.customer_id::text, COALESCE(c.name,''),
 		       o.fulfillment, o.total_cents, c.payment_terms_days,`+owingOpenBalances+` + GREATEST(o.total_cents -`+owingInvoiced+`, 0) AS owed,
@@ -146,6 +147,14 @@ func (r *Repository) FindOwingOrders(ctx context.Context, term string, branchIDs
 	}
 	return out, nil
 }
+
+// escapeLikeWildcards makes the term's own LIKE wildcards literal (the
+// backslash is Postgres' default LIKE escape): a customer typed "%", or an
+// underscore inside a reference, and the find matched every owing order in
+// reach instead of the one whose text carries the character.
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+func escapeLikeWildcards(term string) string { return likeEscaper.Replace(term) }
 
 // ReadOwingOrder is the advisory pool read of one order: its facts and the
 // one number it owes (the open balances plus the uninvoiced remainder). found

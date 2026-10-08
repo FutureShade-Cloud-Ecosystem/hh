@@ -597,3 +597,70 @@ VALUES ('#INV-PBA-'||nextval('invoice_no_seq'), $1::uuid, $2::uuid, $3::uuid, $4
 			pre.balanceCents(), locked.balanceCents(), owedHold)
 	}
 }
+
+// The find's term is user text matched with LIKE: the wildcards in it are
+// LITERAL (the review's P3-3), so a term of "%" or "_" matches the orders
+// whose own text carries that character, never every owing order in reach.
+func TestIntegration_PayBalance_FindEscapesTheWildcards(t *testing.T) {
+	pool := intPool(t)
+	ctx := globalCtx(t, pool)
+	suffix := fmt.Sprintf("esc-%d", time.Now().UnixNano()%1_000_000_000)
+	plant := func(name string) string {
+		var custID, orderID, orderNo string
+		if err := pool.QueryRow(ctx, `
+			WITH c AS (INSERT INTO customers (account_no, name, customer_type, payment_terms_days, credit_limit_cents)
+			           VALUES ('PBE-'||$1, $2, 'CONTRACTOR', 0, 5000000) RETURNING id)
+			INSERT INTO orders (order_no, customer_id, branch_id, status, fulfillment, subtotal_cents, total_cents)
+			SELECT '#SO-PBE-'||$1, c.id, (SELECT id FROM locations WHERE loc_type='BRANCH' LIMIT 1),
+			       'CONFIRMED', 'WILL_CALL', 10000, 10000
+			  FROM c RETURNING id::text, order_no`, suffix+name, name).Scan(&orderID, &orderNo); err != nil {
+			t.Fatalf("plant %s: %v", name, err)
+		}
+		if err := pool.QueryRow(ctx, `SELECT customer_id::text FROM orders WHERE id=$1`, orderID).Scan(&custID); err != nil {
+			t.Fatalf("read the customer: %v", err)
+		}
+		t.Cleanup(func() {
+			c := context.Background()
+			_, _ = pool.Exec(c, `DELETE FROM orders WHERE id = $1`, orderID)
+			_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1`, custID)
+		})
+		// One open invoice, so both orders owe and both sit in the find's reach.
+		if _, err := pool.Exec(ctx, `
+INSERT INTO invoices (invoice_no, customer_id, order_id, branch_id, doc_type, status,
+                      subtotal_cents, tax_cents, total_cents, balance_cents, due_date, finalized_at)
+VALUES ('#INV-PBE-'||nextval('invoice_no_seq'), $1::uuid, $2::uuid,
+        (SELECT branch_id FROM orders WHERE id = $2::uuid), 'INVOICE', 'FINALIZED',
+        10000, 0, 10000, 10000, current_date, now())`, custID, orderID); err != nil {
+			t.Fatalf("plant %s's invoice: %v", name, err)
+		}
+		return orderNo
+	}
+	percentNo := plant("EscPE 50% Co" + suffix)
+	underscoreNo := plant("Esc_US " + suffix)
+	svc := realPosSvc(t, pool, stubCharger{})
+	// The bare wildcards are the sharpest terms: unescaped, each would match
+	// every owing order in reach (both planted ones at least); escaped, each
+	// matches exactly the one order whose own text carries the character.
+	rows, err := svc.PayBalanceFind(ctx, "%")
+	if err != nil {
+		t.Fatalf("find the percent term: %v", err)
+	}
+	if len(rows) != 1 || rows[0].OrderNo != percentNo {
+		t.Fatalf("the term %% answered %d rows (%v), want exactly the one order whose name carries a literal percent", len(rows), orderNos(rows))
+	}
+	rows, err = svc.PayBalanceFind(ctx, "_US")
+	if err != nil {
+		t.Fatalf("find the underscore term: %v", err)
+	}
+	if len(rows) != 1 || rows[0].OrderNo != underscoreNo {
+		t.Fatalf("the term _US answered %d rows (%v), want exactly the one order whose name carries a literal underscore", len(rows), orderNos(rows))
+	}
+}
+
+func orderNos(rows []OwingOrder) []string {
+	out := make([]string, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, r.OrderNo)
+	}
+	return out
+}
