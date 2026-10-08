@@ -95,3 +95,37 @@ test('the centred word defaults to Pick a role and takes the role label only whe
     'Sales manager',
   );
 });
+
+// ---- the product name input (HH Drive's review fix) ----
+
+test('a header given no product words says what it always said: HH Yard, a Hardscape House product', () => {
+  const markup = visible(renderKit(HosAppHeader, { signedIn: true, roleLabel: 'Sales', demo: true }));
+  assert.ok(markup.includes('aria-label="HH Yard, a Hardscape House product"'));
+  assert.ok(markup.includes('<span class="brand-product">HH <span class="accent">Yard</span></span>'.replace(/\s+/g, ' ')) || markup.includes('HH <span class="accent">Yard</span>'));
+  assert.ok(markup.includes('<span class="brand-sub">a Hardscape House product</span>'));
+  assert.equal(new HosAppHeader().compact, false, 'compact is off unless an app asks');
+});
+
+test('a header given a product name and a sub line wears them, accent word and all', () => {
+  const markup = visible(renderKit(HosAppHeader, { productName: 'Drive', productSub: 'HH Drive · HH Field shell' }));
+  assert.ok(markup.includes('aria-label="HH Drive, HH Drive · HH Field shell"'));
+  assert.ok(markup.includes('HH <span class="accent">Drive</span>'));
+  assert.ok(markup.includes('<span class="brand-sub">HH Drive · HH Field shell</span>'));
+  assert.ok(!markup.includes('Yard'), 'no trace of the default words');
+});
+
+test('an empty product input falls back to the default words rather than draw a blank lockup', () => {
+  const markup = visible(renderKit(HosAppHeader, { productName: '', productSub: '' }));
+  assert.ok(markup.includes('aria-label="HH Yard, a Hardscape House product"'));
+});
+
+test('the compact layout is opt in, narrow only, and its controls are at least 44 px tall', () => {
+  const css = HosAppHeader.styles.map((s) => s.cssText ?? String(s)).join('\n');
+  const at = css.indexOf(':host([compact])');
+  assert.ok(at !== -1, 'a compact rule exists');
+  const compactRules = css.slice(at);
+  assert.ok(/max-width:\s*480px/.test(css), 'it rides the narrow breakpoint');
+  assert.ok(/min-height:\s*44px/.test(compactRules), 'compact controls are 44 px tall');
+  // Nothing outside the opt in changed: the plain control rule keeps its small face.
+  assert.ok(/\.controls button \{\s*min-height: 0;/.test(css));
+});
