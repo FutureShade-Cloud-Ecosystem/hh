@@ -187,6 +187,14 @@ func resolveDriverFence(ctx context.Context, pool *pgxpool.Pool, link syncLinker
 	if recordID != "" {
 		return driverFence{driver: true, driverID: recordID}, nil
 	}
+	// FAILS OPEN BY DESIGN on one input: the role seam is wired but names
+	// no staff authority for the actor (has == false) and no driver
+	// record links. The sync door's guards turn a caller with no staff
+	// authority away before any store is reached, so this arm is the
+	// desk's org scope for a caller the fence has no basis to hold, not
+	// a driver's. The fixtures that exercise the stores directly rely on
+	// it. If a scope is ever served to a caller the guards do not vet,
+	// this is the line that must fail closed instead.
 	return driverFence{}, nil
 }
 
