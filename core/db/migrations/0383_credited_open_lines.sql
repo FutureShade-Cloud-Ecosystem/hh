@@ -1,4 +1,4 @@
--- 0381_credited_open_lines.sql
+-- 0383_credited_open_lines.sql
 --
 -- Item 10, Q5: "a return of unfulfilled goods is credit only, the open lines reduced". When goods that
 -- never left the shelf are credited, the order must stop asking the yard for them, or the yard picks

@@ -50,7 +50,7 @@ const yardReasonOther = "OTHER"
 var ErrAboveOrdered = errors.New("order: that is more than was ordered, the yard cannot raise a quantity")
 
 // ErrCreditedAway is a picked quantity above what is still open because a credit only return released
-// the rest from fulfilment (0381): the customer was credited for those goods, the yard cannot pick them.
+// the rest from fulfilment (0383): the customer was credited for those goods, the yard cannot pick them.
 var ErrCreditedAway = errors.New("order: that is more than is still open, the rest was credited back to the customer")
 
 // yardPickStatuses are the order statuses a short pick may land on: after confirmation and before

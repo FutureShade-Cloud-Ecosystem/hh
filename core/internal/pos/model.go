@@ -1124,7 +1124,7 @@ type returnLineRow struct {
 	RestockedBase  float64
 	WrittenOffBase float64
 	// CreditOnlyBase is the part of the returned quantity that was credit only: the goods never left
-	// the shelf, so none came back (0381).
+	// the shelf, so none came back (0383).
 	CreditOnlyBase float64
 }
 

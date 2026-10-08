@@ -157,7 +157,7 @@ SELECT id::text, description, uom_entered::text, qty_entered::text, qty_base::te
 	orderedE := new(big.Rat).Add(curE, boE)
 	orderedB := new(big.Rat).Add(curB, boB)
 
-	// What a credit only return released from fulfilment (0381) is no longer open to the yard.
+	// What a credit only return released from fulfilment (0383) is no longer open to the yard.
 	releasedB, _ := ratOf(releasedText)
 	releasedE := new(big.Rat)
 	if releasedB.Sign() > 0 && orderedB.Sign() > 0 {

@@ -1,7 +1,7 @@
 package order
 
 // release_open.go, item 10 Q5: a credit only return of goods that never left the shelf reduces the
-// order's open lines. The order module owns the column (order_lines.released_base, 0381) and every
+// order's open lines. The order module owns the column (order_lines.released_base, 0383) and every
 // reader of the open quantity; pos reaches it only through this seam, on the return's transaction.
 
 import (
