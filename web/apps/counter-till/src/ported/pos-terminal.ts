@@ -5133,7 +5133,12 @@ export class HosPosTerminal extends LitElement {
     // clerk who taps Cash on a sale that was already defaulted to Cash has still answered the
     // question, and the step must read done even though nothing about the tender changed.
     this.tenderConfirmed = true;
-    this.payShape = 'PAY_IN_FULL_NOW'; // item 9.6: a tender tile is the pay in full now shape
+    // item 9.6: a tender tile is the pay in full now shape. Row 1214: except that Cash and Card,
+    // pressed while Pay Before Release is in force, set the settlement method only; Charge
+    // Account and split step out of it as they always did.
+    if (!((method === 'CASH' || method === 'CARD') && this.activePayBeforeRelease())) {
+      this.payShape = 'PAY_IN_FULL_NOW';
+    }
     if (this.payMethod === method) {
  // Tapping the chosen tile again UNDOES the choice: which now means falling back to cash, not
       // to nothing. "Un-choose" used to leave the ticket untenderable, and a gesture that can
@@ -6654,7 +6659,7 @@ ${this.renderFulfilTiles()}
       ? html`<p class="shapehint" data-testid="deposit-hint">A deposit needs Will-call or Delivery.</p>`
       : nothing}
     ${payBeforeReleaseActive
-      ? html`<p class="shapehint" data-testid="pay-before-release-hint">Unpaid at ring: the invoice number issues now, and the goods release once it is paid.</p>`
+      ? html`<p class="shapehint" data-testid="pay-before-release-hint">Unpaid at ring: the invoice number issues now, and the goods release once it is paid. Cash or Card below settles how it is paid.</p>`
       : nothing}`;
   }
 

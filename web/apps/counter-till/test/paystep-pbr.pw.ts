@@ -172,3 +172,52 @@ test("the pay before release option rides Collect now too, and only the Cash On 
   await expect(page.getByTestId("pay-shape-PAY_BEFORE_RELEASE")).toHaveCount(0);
   await expect(page.getByTestId("pay-shape-DEPOSIT_NOW_REST_DUE_LATER")).toBeVisible();
 });
+
+for (const [tile, tender] of [
+  ["Cash", "CASH"],
+  ["Card", "CARD"],
+] as const) {
+  test(`Pay Before Release stands through a ${tile} press: the tile sets the settlement method only`, async ({
+    page,
+  }) => {
+    await signIn(page);
+    await pickAccount(page, "C10", "Cash On Demand Landscaping");
+    await addHolland(page);
+    await chooseWillCall(page);
+    await openStep(page, "payment");
+
+    const option = page.getByTestId("pay-shape-PAY_BEFORE_RELEASE");
+    await option.click();
+    // The tender tile pressed AFTER the option must not turn the ring into a paid in full sale.
+    await page.getByRole("button", { name: tile, exact: true }).click();
+    await expect(option).toHaveAttribute("aria-pressed", "true");
+    const hint = page.getByTestId("pay-before-release-hint");
+    await expect(hint).toBeVisible();
+    await expect(hint).toContainText("settles how it is paid");
+
+    const ringPost = page.waitForRequest(
+      (request) => request.url().endsWith("/api/v1/pos/sales") && request.method() === "POST",
+    );
+    await page.getByTestId("pos-complete-sale").click();
+    const body = (await (await ringPost).postDataJSON()) as Record<string, unknown>;
+    expect(body.sale_type).toBe("COD");
+    expect(body.tender).toBe(tender);
+    expect(body.deposit_cents).toBeUndefined();
+    await expect(page.getByTestId("sold-panel")).toBeVisible();
+  });
+}
+
+test("Charge Account still steps out of Pay Before Release", async ({ page }) => {
+  await signIn(page);
+  await pickAccount(page, "C10", "Cash On Demand Landscaping");
+  await addHolland(page);
+  await chooseWillCall(page);
+  await openStep(page, "payment");
+
+  const option = page.getByTestId("pay-shape-PAY_BEFORE_RELEASE");
+  await option.click();
+  await expect(option).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: /^Charge/ }).click();
+  await expect(option).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByTestId("pay-before-release-hint")).toHaveCount(0);
+});
