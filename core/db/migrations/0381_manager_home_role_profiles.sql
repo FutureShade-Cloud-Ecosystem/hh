@@ -22,7 +22,7 @@
 --   person sees is DATA, not a switch statement").
 --
 --   THE YARD MANAGER IS THE EXCEPTION, because the roadmap gives them the first per-role landing:
---   their widgets are the picks board and the deliveries board (0201's catalog) and their Needs-you
+--   their widgets are the picks board and the deliveries by branch bars (0201's catalog) and their Needs-you
 --   holds open shortages raised by the yard team, stale picks, and receiving differences. The
 --   seeded source keys tasks.open_shortages and purchasing.receiving_differences name sources whose
 --   adapters land with the sources themselves; until then the rows render nothing, silently, the
@@ -232,18 +232,22 @@ SELECT 'manager.general', widget_key, shape, measure, split, time_range, size, t
   FROM dashboard_profile_widgets WHERE profile = 'admin'
 ON CONFLICT (profile, widget_key) DO NOTHING;
 
--- The yard manager's own: the day going out is the hero, Needs-you second, and the two boards the
--- roadmap names as this Home's widgets (0201's catalog: picks.queue and deliveries.today both
--- declare the board body and the status split). picks.queue's one window is `open` (0205's truth:
--- the queue is a status set, not a period), deliveries.today's is `today`.
+-- The yard manager's own, the list its board draws (design-refs role-boards, yard manager): the day
+-- going out is the hero, Needs-you beside it, the pick queue as 0201's board, the deliveries split BY
+-- BRANCH as bars (the board draws the branch split, and the hero already says the day's count, so a
+-- second status board of deliveries would repeat it), the queue depth gauge, open orders and open
+-- claims. The board's "Unread messages" tile has no measure in 0201's catalog; it waits for the UI
+-- item. picks.queue's one window is `open` (0205's truth: the queue is a status set, not a period),
+-- deliveries.today's is `today`.
 INSERT INTO dashboard_profile_widgets
     (profile, widget_key, shape, measure, split, time_range, size, title, position, visible) VALUES
-    ('manager.yard', 'hero.deliveries',  'stat',  'deliveries.today', 'none',   'today', 'L', 'Deliveries today', 0, true),
-    ('manager.yard', 'needs.you',        'list',  'needs.you',        'none',   'open',  'L', 'Needs you',        1, true),
-    ('manager.yard', 'picks.board',      'board', 'picks.queue',      'status', 'open',  'L', 'Pick queue',       2, true),
-    ('manager.yard', 'deliveries.board', 'board', 'deliveries.today', 'status', 'today', 'M', 'Deliveries today', 3, true),
-    ('manager.yard', 'picks.gauge',      'gauge', 'picks.queue',      'none',   'open',  'S', 'Queue depth',      4, true),
-    ('manager.yard', 'orders.open',      'stat',  'orders.open',      'none',   'open',  'S', 'Open orders',      5, true)
+    ('manager.yard', 'hero.deliveries',   'stat',  'deliveries.today',     'none',   'today', 'L', 'Deliveries today', 0, true),
+    ('manager.yard', 'needs.you',         'list',  'needs.you',            'none',   'open',  'L', 'Needs you',        1, true),
+    ('manager.yard', 'picks.board',       'board', 'picks.queue',          'status', 'open',  'L', 'Pick queue',       2, true),
+    ('manager.yard', 'deliveries.branch', 'bars',  'deliveries.today',     'branch', 'today', 'M', 'By branch',        3, true),
+    ('manager.yard', 'picks.gauge',       'gauge', 'picks.queue',          'none',   'open',  'S', 'Queue depth',      4, true),
+    ('manager.yard', 'orders.open',       'stat',  'orders.open',          'none',   'open',  'S', 'Open orders',      5, true),
+    ('manager.yard', 'warranty.open',     'stat',  'warranty.open_claims', 'none',   'open',  'S', 'Open claims',      6, true)
 ON CONFLICT (profile, widget_key) DO NOTHING;
 
 -- ── §5 · the Needs-you policy ────────────────────────────────────────────────────────────────────

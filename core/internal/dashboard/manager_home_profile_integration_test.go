@@ -73,8 +73,8 @@ func TestIntegration_0381_EveryManagerRoleAnswersItsOwnProfile(t *testing.T) {
 }
 
 // TestIntegration_0381_TheYardManagersHomeIsItsOwn is the red test the brief names: the yard
-// manager's home answers its own profile, whose widgets are the picks board and the deliveries
-// board (0201's catalog), NOT the shared "manager" shape's book-first set.
+// manager's home answers its own profile, whose widgets are the picks board and the deliveries by branch
+// bars (0201's catalog), NOT the shared "manager" shape's book-first set.
 func TestIntegration_0381_TheYardManagersHomeIsItsOwn(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -134,12 +134,13 @@ func TestIntegration_0381_TheYardManagersHomeIsItsOwn(t *testing.T) {
 		t.Fatalf("the yard manager's hero is %q; their first fact is the day going out, the deliveries",
 			heroMeasure)
 	}
-	// The brief's own words: its widgets are the picks board and the deliveries board.
+	// The picks board is the yard manager's board widget; the deliveries widget is the branch split.
 	if !boards[MetricPickQueue] {
 		t.Error("the yard manager's Home carries no picks board (measure picks.queue, shape board)")
 	}
-	if !boards[MetricDeliveriesToday] {
-		t.Error("the yard manager's Home carries no deliveries board (measure deliveries.today, shape board)")
+	// The deliveries widget is the branch split the board draws (see the whole-set test below).
+	if boards[MetricDeliveriesToday] {
+		t.Error("the yard manager's Home carries a status board of deliveries; the board draws the branch split")
 	}
 }
 
@@ -284,6 +285,47 @@ func TestIntegration_0381_EveryProfileKeyedTableCarriesEveryManagerProfile(t *te
 			if n == 0 {
 				t.Errorf("%s holds no rows for %s", table, p)
 			}
+		}
+	}
+}
+
+// TestIntegration_0381_TheYardManagersWidgetsAreTheBoardsList pins the whole set, in order, to what
+// the yard manager's board draws (design-refs role-boards, manager-home__yard-manager-light): the
+// deliveries hero, the pick queue, the deliveries split BY BRANCH as bars, the queue depth gauge,
+// open orders and open claims, with Needs you beside the hero. The board's "Unread messages" has no
+// measure in 0201's catalog, so it is left to the UI item.
+func TestIntegration_0381_TheYardManagersWidgetsAreTheBoardsList(t *testing.T) {
+	pool := testPool(t)
+	rows, err := pool.Query(context.Background(), `
+		SELECT shape, measure, split FROM dashboard_profile_widgets
+		 WHERE profile = 'manager.yard' ORDER BY position`)
+	if err != nil {
+		t.Fatalf("read the yard manager's widgets: %v", err)
+	}
+	defer rows.Close()
+	var got []string
+	for rows.Next() {
+		var shape, measure, split string
+		if err := rows.Scan(&shape, &measure, &split); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		got = append(got, shape+" "+measure+" "+split)
+	}
+	want := []string{
+		"stat deliveries.today none",
+		"list needs.you none",
+		"board picks.queue status",
+		"bars deliveries.today branch",
+		"gauge picks.queue none",
+		"stat orders.open none",
+		"stat warranty.open_claims none",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("the yard manager's Home holds %d widgets %v, the board draws %d %v", len(got), got, len(want), want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("widget %d is %q, the board draws %q", i, got[i], want[i])
 		}
 	}
 }
