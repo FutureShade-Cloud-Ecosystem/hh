@@ -126,7 +126,8 @@ export const driveStyles = css`
 
   /* The moves. Big, full width, one hand. */
   .actions { display: flex; flex-direction: column; gap: var(--hh-s-12); margin-bottom: var(--hh-s-16); }
-  button.big { width: 100%; min-height: 64px; font-size: 18px; font-weight: 700; }
+  button.big { display: block; width: 100%; min-height: 64px; font-size: 18px; font-weight: 700; }
+  button.big + button.big { margin-top: var(--hh-s-12); }
 
   /* Messages. */
   .alert { padding: var(--hh-s-12) var(--hh-s-16); border-radius: var(--hh-radius-control); border: 2px solid; font-weight: 600; }

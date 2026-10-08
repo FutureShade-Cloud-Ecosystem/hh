@@ -31,8 +31,8 @@ test("recording it sends the status and the reason, and closes the stop with the
   await page.getByRole("button", { name: "Could not deliver" }).click();
   await expect(page.locator("[data-stop-status]")).toHaveText("Not delivered");
   await expect(page.getByRole("status")).toContainText("Recorded. This stop is closed.");
-  await expect(page.getByRole("status")).toContainText("Bring the load back to the yard");
   await expect(page.locator("[data-handback]")).toContainText("Nobody on site");
+  await expect(page.locator("[data-handback]")).toContainText("Bring the load back to the yard");
   const moves = (await stubLog(request)).filter((c) => c.path.endsWith("/status") && c.body?.status === "FAILED");
   expect(moves).toHaveLength(1);
   expect(moves[0].body).toEqual({ status: "FAILED", reason: "Nobody on site" });

@@ -15,7 +15,7 @@ test("a stop is marked not delivered with a reason, and the handback sentence re
   await page.getByRole("button", { name: "Could not deliver" }).click();
   await expect(page.locator("[data-stop-status]")).toHaveText("Not delivered");
   await expect(page.getByRole("status")).toContainText("Recorded. This stop is closed.");
-  await expect(page.getByRole("status")).toContainText("Bring the load back to the yard");
+  await expect(page.locator("[data-handback]")).toContainText("Bring the load back to the yard");
   await shot(page, "31-handback", testInfo);
 
   const record = await staff(page, "GET", `/api/v1/dispatch/stops/${target.id}`);

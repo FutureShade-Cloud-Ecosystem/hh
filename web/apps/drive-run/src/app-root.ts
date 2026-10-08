@@ -23,7 +23,7 @@ import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js"
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { HOUSE_ZONE, houseDayInZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import { DriveApi, type DriverRun, type DriverStop } from "./drive-api.js";
-import { HANDBACK_BODY, HANDBACK_TITLE, canRecordFailure, canSign, normalizeName, roadsideError } from "./drive-logic.js";
+import { HANDBACK_TITLE, canRecordFailure, canSign, normalizeName, roadsideError } from "./drive-logic.js";
 import { driveStyles } from "./styles.js";
 import { readyPhoto } from "./photo.js";
 import { renderClose, renderEntry, renderFail, renderPod, renderRunSheet, renderStopDetail, type EntryView } from "./views.js";
@@ -357,7 +357,7 @@ export class DriveRunApp extends HHElement {
     if (result.ok) {
       await this.#refreshRuns();
       this.#view = { kind: "stop", id: stopId };
-      this.#notice = `${HANDBACK_TITLE} ${HANDBACK_BODY}`;
+      this.#notice = HANDBACK_TITLE;
     } else {
       this.#error = roadsideError(result.error, result.status, "That did not go through. Check your signal and try again.");
     }

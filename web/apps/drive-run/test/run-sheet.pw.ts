@@ -56,6 +56,9 @@ test("a login with no driver record is told so, never shown a day off", async ({
   await page.goto("/");
   await expect(page.getByRole("alert")).toContainText("You are not set up as a driver");
   await expect(page.locator("[data-empty]")).toHaveCount(0);
+  // No run, so no end of run: the one control is to try again.
+  await expect(page.getByRole("button", { name: "End of run" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
 });
 
 test("a stop opens to its detail: where, who to call, how to get in, what is on the truck", async ({ page }) => {

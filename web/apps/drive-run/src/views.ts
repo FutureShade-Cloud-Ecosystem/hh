@@ -102,11 +102,13 @@ export function renderRunSheet(model: RunSheetModel): TemplateResult {
         <p class="dim">A dispatcher puts stops on your truck from the day board, and the run shows here as soon as it is crewed.</p>
       </div>
     `;
-  } else {
+  } else if (model.phase === "ready") {
     body = html`
       ${model.runs.map(runCard)}
       <button type="button" class="btn btn-secondary big" data-action="open-close" data-tap>End of run</button>
     `;
+  } else {
+    body = html``;
   }
   return html`
     <h1>My run</h1>
