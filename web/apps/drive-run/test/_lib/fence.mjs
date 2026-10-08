@@ -76,3 +76,36 @@ export function textFiles(root, extensions) {
 }
 
 export const describeHits = (hits) => hits.map((h) => `${h.file}: ${h.kind} "${h.word}" x${h.count} ... ${h.window}`);
+
+/**
+ * The same fence over a JSON payload the server sent: the KEYS are scanned
+ * for the money words (a word inside a customer's name or a sentence is data,
+ * not a field), and the string values for a figure that reads as money. Text
+ * that is not JSON falls back to the plain scan.
+ */
+export function scanPayload(name, text) {
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return scanText(name, text);
+  }
+  const hits = [];
+  const walk = (value, path) => {
+    if (Array.isArray(value)) {
+      value.forEach((item, i) => walk(item, `${path}[${i}]`));
+    } else if (value !== null && typeof value === "object") {
+      for (const [key, child] of Object.entries(value)) {
+        const lower = withoutSpacing(`${key}:`).toLowerCase();
+        for (const word of MONEY_WORDS) {
+          if (lower.includes(word)) hits.push({ file: name, kind: "word", word, count: 1, window: `${path}.${key}` });
+        }
+        walk(child, `${path}.${key}`);
+      }
+    } else if (typeof value === "string" && MONEY_FIGURE.test(value)) {
+      hits.push({ file: name, kind: "figure", word: value, count: 1, window: path });
+    }
+  };
+  walk(parsed, "$");
+  return hits;
+}

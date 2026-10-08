@@ -17,6 +17,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SCHEMA_DESCRIPTORS } from "../../../packages/api-client/src/testing.ts";
 import { validateValue } from "../../../packages/api-client/test/_validate.mjs";
+import { describeHits, scanPayload } from "./_lib/fence.mjs";
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const dispatchDir = join(appDir, "..", "..", "..", "core", "internal", "dispatch");
@@ -126,6 +127,7 @@ function holds(schemaName, value) {
   assert.ok(descriptor !== undefined, `no descriptor named ${schemaName}`);
   assert.deepEqual(validateValue(value, descriptor), [], `${schemaName} does not fit the contract`);
   assert.deepEqual(undeclared(value, descriptor), [], `${schemaName} carries fields the contract does not declare`);
+  assert.deepEqual(describeHits(scanPayload(schemaName, JSON.stringify(value))), [], `${schemaName} carries money`);
 }
 
 function refused(res, status, fragment) {

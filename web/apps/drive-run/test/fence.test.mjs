@@ -11,7 +11,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { MONEY_WORDS, describeHits, scanText, textFiles } from "./_lib/fence.mjs";
+import { MONEY_WORDS, describeHits, scanPayload, scanText, textFiles } from "./_lib/fence.mjs";
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -50,4 +50,12 @@ test("the built bundle carries no money field and no money figure", () => {
   } finally {
     rmSync(out, { recursive: true, force: true });
   }
+});
+
+test("the payload scan reads keys and money figures, and leaves a word inside a name alone", () => {
+  assert.ok(scanPayload("p", JSON.stringify({ items: [{ stop: { value_cents: 5 } }] })).length > 0);
+  assert.ok(scanPayload("p", JSON.stringify({ gauge: { freight_cents: 5 } })).length > 0);
+  assert.ok(scanPayload("p", JSON.stringify({ note: "Collect $12.50 on delivery" })).some((h) => h.kind === "figure"));
+  assert.deepEqual(scanPayload("p", JSON.stringify({ customer_name: "Crescents Pricewise (demo)", stop_no: 2 })), []);
+  assert.deepEqual(scanPayload("p", JSON.stringify({ stop_lines: { a: [{ description: "Retaining wall block", qty: "84.000" }] } })), []);
 });
