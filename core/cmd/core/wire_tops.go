@@ -544,6 +544,8 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 			{dashboard.NeedsDueToCommit, w6bLoadBoard(pool, ops.dispatchSvc, true)},
 			{dashboard.NeedsParkedTickets, w6bParkedTickets(pool, posSvc)},
 			{dashboard.NeedsStalePicks, w6bStalePicks(pool)},
+			{dashboard.NeedsOpenShortages, w6bOpenShortages(ops.yardTasksSvc)},
+			{dashboard.NeedsReceivingDifferences, w6bReceivingDifferences(ops.purchasingSvc)},
 		} {
 			if err := dashboardSvc.RegisterNeedsSource(reg.key, reg.source); err != nil {
 				log.Error("dashboard: needs source NOT registered - that queue row will never appear", "source", reg.key, "err", err)
