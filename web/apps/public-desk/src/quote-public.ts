@@ -85,10 +85,25 @@ export class QuotePublicPage extends HHElement {
         padding: var(--hh-s-24) var(--hh-s-16) var(--hh-s-64);
         font-family: var(--hh-font-ui);
         color: var(--hh-text);
+        /* The document's accent, one family at a time (decision log rows 1047 item 7 and 1063): a
+           quote reads in the quote blue, so every accent below goes through these aliases and the
+           focus ring is the quote twin. The press fill is ONE value (no hover step), and the paper
+           copy keeps its colours through the print dialog's default of dropping backgrounds. */
+        --doc-ink: var(--hh-quote);
+        --doc-fill: var(--hh-quote-fill);
+        --doc-fill-on: var(--hh-quote-fill-on);
+        --doc-link: var(--hh-quote-link);
+        --hh-focus-ring: var(--doc-ink);
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
       }
       h1 {
         font-size: 1.3rem;
         margin: 0 0 var(--hh-s-4);
+        color: var(--doc-ink);
+      }
+      a {
+        color: var(--doc-link);
       }
       /* The dealer's header band, the page's first element in every state: the
          one mark of WHO is speaking, the name carried from the app's own data
@@ -97,7 +112,7 @@ export class QuotePublicPage extends HHElement {
       header.dealer {
         display: flex;
         align-items: baseline;
-        border-bottom: 1px solid var(--hh-line);
+        border-bottom: 2px solid var(--doc-ink);
         padding: 0 0 var(--hh-s-12);
         margin-bottom: var(--hh-s-20);
       }
@@ -192,6 +207,7 @@ export class QuotePublicPage extends HHElement {
       .totals .grand {
         font-size: 1.05rem;
         font-weight: 700;
+        color: var(--doc-ink);
       }
       .totals .taxnote {
         color: var(--hh-text-dim);
@@ -285,9 +301,17 @@ export class QuotePublicPage extends HHElement {
         outline-offset: 2px;
       }
       /* The button itself is the design system's primitive (.btn-primary, and its
-         disabled swap) from baseStyles; only the label's weight is this page's. */
+         disabled swap) from baseStyles; this page re-points its fill to the document's family
+         (the quote fill, with its own ink, one value with no hover step) and sets the label's
+         weight. Equal specificity with the primitive, so the disabled swap still wins. */
       .btn {
         font-weight: 600;
+      }
+      .btn-primary,
+      .btn-primary:hover {
+        background: var(--doc-fill);
+        color: var(--doc-fill-on);
+        border-color: var(--doc-fill-on);
       }
       .err {
         color: var(--hh-danger);

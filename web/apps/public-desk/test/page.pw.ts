@@ -579,50 +579,100 @@ test("every line shows the same image cell: the photo or the no-photo mark, neve
   expect(cells, "every line's image cell is the same visible box, photo or mark").toEqual(["boxed", "boxed"]);
 });
 
-test("the accept button takes the design system's accent token, not a brand override blue", async ({ page }) => {
-  // A quote that is still open: the demo quote is accepted by an earlier test.
-  await page.goto("/?t=q-terms-28");
+// The quote accent (decision log rows 1047 item 7 and 1063): a quote and its documents read in
+// the quote blue, so every surface below is measured LIVE against the token the sheet declares.
+// Colours go through a canvas pixel into plain sRGB channels (computed styles may come back in a
+// wide-gamut syntax), with a small tolerance for the conversion.
+type Measure = { want: string; wantPixel: number[]; have: string; havePixel: number[] };
+
+async function measureAgainstToken(
+  page: Page,
+  token: string,
+  selector: string,
+  property: "color" | "backgroundColor" | "borderBottomColor" | "outlineColor",
+  state?: "focus",
+): Promise<Measure> {
+  return page.evaluate(
+    ({ token, selector, property, state }) => {
+      const pixelOf = (colour: string): number[] => {
+        const ctx = document.createElement("canvas").getContext("2d") as CanvasRenderingContext2D;
+        ctx.fillStyle = colour;
+        ctx.fillRect(0, 0, 1, 1);
+        return Array.from(ctx.getImageData(0, 0, 1, 1).data).slice(0, 3);
+      };
+      const want = getComputedStyle(document.documentElement).getPropertyValue(token).trim();
+      const el = document.querySelector("pd-quote-public")?.shadowRoot?.querySelector<HTMLElement>(selector);
+      if (!el) throw new Error(`no element for ${selector}`);
+      if (state === "focus") el.focus();
+      const have = getComputedStyle(el)[property];
+      return { want, wantPixel: pixelOf(want), have, havePixel: pixelOf(have) };
+    },
+    { token, selector, property, state },
+  );
+}
+
+function expectToken(m: Measure, token: string, what: string): void {
+  expect(m.want, `${token} must resolve on the page`).not.toBe("");
+  for (let channel = 0; channel < 3; channel += 1) {
+    expect(
+      Math.abs(m.havePixel[channel] - m.wantPixel[channel]),
+      `channel ${channel}: ${what} must be ${token} ${m.want} (it sampled ${m.have})`,
+    ).toBeLessThanOrEqual(2);
+  }
+}
+
+async function readyOpenQuote(page: Page, query = ""): Promise<void> {
+  await page.goto(`/?t=q-terms-28${query}`);
   await expect(page.getByRole("button", { name: "Accept quote" })).toBeVisible();
-  // The accent is the ENABLED fill: a disabled button is grey by design, so ready the form first.
+}
+
+test("the accept button is the quote fill, one value, with its quote ink: not the gold accent", async ({ page }) => {
+  // A quote that is still open: the demo quote is accepted by an earlier test.
+  await readyOpenQuote(page);
+  // The fill is the ENABLED look: a disabled button is grey by design, so ready the form first.
   await page.locator("#qty-confirm").check();
   await page.locator("#name").fill("Sample Customer");
   await page.locator("#affirm").check();
   await expect(page.getByRole("button", { name: "Accept quote" })).toBeEnabled();
-  // The page pins no brand override, so the base brand layer stands and the
-  // pressable fill is the design system's own accent, the same accent the
-  // Quote Desk staff app presses.
   await expect(page.locator("html")).not.toHaveAttribute("data-brand", "hh-pro");
-  // The accent token's value is resolved LIVE from the token sheet the page
-  // loads (it is theme-invariant, so the light half this page pins declares
-  // the same value), never a literal here; the button's computed fill may
-  // come back in a wide-gamut syntax, so both go through a canvas pixel into
-  // plain sRGB channels before they are compared, with a small tolerance for
-  // the colour conversion.
-  const sampled = await page.evaluate(() => {
-    const pixelOf = (colour: string): Array<number> => {
-      const ctx = document.createElement("canvas").getContext("2d") as CanvasRenderingContext2D;
-      ctx.fillStyle = colour;
-      ctx.fillRect(0, 0, 1, 1);
-      return Array.from(ctx.getImageData(0, 0, 1, 1).data).slice(0, 3);
-    };
-    const accent = getComputedStyle(document.documentElement).getPropertyValue("--hh-accent").trim();
-    const button = document.querySelector("pd-quote-public")?.shadowRoot?.querySelector<HTMLButtonElement>(
-      "button[data-action=accept]",
-    );
-    return {
-      accent,
-      accentPixel: pixelOf(accent),
-      fill: button ? getComputedStyle(button).backgroundColor : null,
-      fillPixel: button ? pixelOf(getComputedStyle(button).backgroundColor) : null,
-    };
+  const sel = "button[data-action=accept]";
+  expectToken(await measureAgainstToken(page, "--hh-quote-fill", sel, "backgroundColor"), "--hh-quote-fill", "the accept fill");
+  expectToken(await measureAgainstToken(page, "--hh-quote-fill-on", sel, "color"), "--hh-quote-fill-on", "the accept ink");
+  // And it is NOT gold: the gold accent is the order's.
+  const gold = await measureAgainstToken(page, "--hh-accent", sel, "backgroundColor");
+  const apart = gold.havePixel.some((c, i) => Math.abs(c - gold.wantPixel[i]) > 40);
+  expect(apart, "the accept fill must not read as the gold accent").toBe(true);
+  // Hover keeps the one fill value (the quote fill has no second step).
+  await page.locator(sel).hover();
+  expectToken(await measureAgainstToken(page, "--hh-quote-fill", sel, "backgroundColor"), "--hh-quote-fill", "the hovered accept fill");
+});
+
+test("a quote's title, total and header rule read in the quote blue, and the focus ring is its quote twin", async ({ page }) => {
+  await readyOpenQuote(page);
+  expectToken(await measureAgainstToken(page, "--hh-quote", "h1", "color"), "--hh-quote", "the Quote title");
+  expectToken(await measureAgainstToken(page, "--hh-quote", ".totals .grand", "color"), "--hh-quote", "the total");
+  expectToken(await measureAgainstToken(page, "--hh-quote", "header.dealer", "borderBottomColor"), "--hh-quote", "the dealer rule");
+  const rule = await page.evaluate(() => {
+    const el = document.querySelector("pd-quote-public")?.shadowRoot?.querySelector("header.dealer") as HTMLElement;
+    return getComputedStyle(el).borderBottomWidth;
   });
-  expect(sampled.fill, "the accept button must have a computed background").not.toBeNull();
-  for (let channel = 0; channel < 3; channel += 1) {
-    expect(
-      Math.abs((sampled.fillPixel as Array<number>)[channel] - sampled.accentPixel[channel]),
-      `channel ${channel}: the accept button's fill must be the accent token ${sampled.accent} (it sampled ${sampled.fill})`,
-    ).toBeLessThanOrEqual(2);
-  }
+  expect(rule, "the rule under the header is the board's 2px quote line").toBe("2px");
+  expectToken(await measureAgainstToken(page, "--hh-quote", "#name", "outlineColor", "focus"), "--hh-quote", "the focus ring");
+});
+
+test("the paper copy carries the same quote colours, and prints them", async ({ page }) => {
+  await page.emulateMedia({ media: "print" });
+  await page.goto("/?t=q-terms-28&print=1");
+  await expect(page.locator("pd-quote-public").getByRole("heading", { level: 1 })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Accept quote" })).toHaveCount(0);
+  expectToken(await measureAgainstToken(page, "--hh-quote", "h1", "color"), "--hh-quote", "the printed title");
+  expectToken(await measureAgainstToken(page, "--hh-quote", ".totals .grand", "color"), "--hh-quote", "the printed total");
+  expectToken(await measureAgainstToken(page, "--hh-quote", "header.dealer", "borderBottomColor"), "--hh-quote", "the printed rule");
+  const adjust = await page.evaluate(() => {
+    const host = document.querySelector("pd-quote-public") as HTMLElement;
+    return getComputedStyle(host).getPropertyValue("print-color-adjust");
+  });
+  expect(adjust, "colours must survive the print dialog's default of dropping backgrounds").toBe("exact");
 });
 
 // The core keeps an ACCEPTED quote acceptable when multi-accept is on
