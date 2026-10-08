@@ -106,6 +106,48 @@ func TestPublicQuoteView_LeaksNoStaffField(t *testing.T) {
 	}
 }
 
+// TestPublicQuoteView_OrderNoRidesOnlyAConvertedQuote pins the one field the quote accent adds
+// (decision log row 1063): the number of the order a converted quote became, so the customer's page
+// can read "Sales order <number>, converted from <quote number>". The key is absent for every other
+// quote (omitempty, so a SENT quote's payload is byte for byte what it was), and present exactly when
+// the repository filled it. It is a number the customer was already shown on their own documents,
+// never an id.
+func TestPublicQuoteView_OrderNoRidesOnlyAConvertedQuote(t *testing.T) {
+	base := PublicQuoteView{
+		QuoteNo: "#Q-7", CustomerName: "Acme Hardscapes", Status: "SENT",
+		AsOf: time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC), Lines: []PublicQuoteLine{},
+	}
+	keys := func(v PublicQuoteView) map[string]any {
+		blob, err := json.Marshal(v)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(blob, &m); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		return m
+	}
+	if _, present := keys(base)["order_no"]; present {
+		t.Error("a quote that is not converted must not carry order_no at all")
+	}
+	converted := base
+	converted.Status, converted.OrderNo = "CONVERTED", "SO-TRT-17"
+	if got := keys(converted)["order_no"]; got != "SO-TRT-17" {
+		t.Errorf("a converted quote's payload carries order_no %v, want SO-TRT-17", got)
+	}
+	// The key set of a converted view is the ruling plus exactly this one key.
+	want := map[string]bool{"order_no": true}
+	for _, k := range publicQuoteViewKeys {
+		want[k] = true
+	}
+	for k := range keys(converted) {
+		if !want[k] && k != "valid_until" {
+			t.Errorf("a converted view exposes unexpected field %q", k)
+		}
+	}
+}
+
 // TestPublicQuoteLine_ExposesOnlyWhatTheCustomerBuys pins the line shape independently, since a line is
 // where an internal identifier is most likely to be added by reflex.
 func TestPublicQuoteLine_ExposesOnlyWhatTheCustomerBuys(t *testing.T) {

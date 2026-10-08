@@ -157,6 +157,14 @@ type PublicQuoteView struct {
 	// QuantityNotice is the dealer's notice that the quantities are the customer's to confirm. Always
 	// present: the page shows it near the lines and on the printed page whatever the quote's state.
 	QuantityNotice string `json:"quantity_notice"`
+
+	// OrderNo is the number of the order a CONVERTED quote became, so the customer's page can read
+	// "Sales order <number>, converted from <quote number>" in the order's colour (decision log row
+	// 1063). Filled only while Status is CONVERTED and omitted otherwise, so every other quote serves
+	// the exact payload it did before. It is the earliest order minted from the quote, the one the
+	// repeat-accept refusal names. A number the customer was already shown on their own documents,
+	// never an id.
+	OrderNo string `json:"order_no,omitempty"`
 }
 
 // PublicQuoteLine is the customer-visible shape of a line. Note what is absent: no product_id (an

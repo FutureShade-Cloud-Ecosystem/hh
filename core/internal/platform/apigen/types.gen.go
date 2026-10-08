@@ -7183,6 +7183,7 @@ type QuotePublicView struct {
 	DeliveryAddress  *string           `json:"delivery_address,omitempty"`
 	RequestedDate    *string           `json:"requested_date,omitempty"`
 	DeliveryFeeCents *int64            `json:"delivery_fee_cents,omitempty"`
+	OrderNo          *string           `json:"order_no,omitempty"`
 }
 
 type QuotePublicLine struct {

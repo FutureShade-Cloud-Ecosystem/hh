@@ -92,6 +92,8 @@ const INKS = [
   '--hh-info',
   '--hh-success',
   '--hh-accent-text',
+  '--hh-quote',
+  '--hh-quote-link',
   '--hh-state-good',
   '--hh-state-watch',
   '--hh-state-stop',
@@ -140,6 +142,7 @@ test('every ink resolves in every palette (guards the matrix above)', () => {
 const FILL_PAIRS = [
   { fill: '--hh-danger-fill', surfaces: ['--hh-page', '--hh-ground'] },
   { fill: '--hh-success-fill', surfaces: ['--hh-page', '--hh-card'] },
+  { fill: '--hh-quote-fill', surfaces: ['--hh-page', '--hh-card'], lightOnly: true },
 ];
 
 // The danger fill against every surface a danger button can land on: under white ink the fill
@@ -178,7 +181,9 @@ test(`solid fills stay visible against the surfaces they sit on (non-text 3:1): 
   for (const name of PALETTE_NAMES) {
       const v = palette(name);
       const failures = [];
-      for (const { fill, surfaces } of FILL_PAIRS) {
+      for (const { fill, surfaces, lightOnly } of FILL_PAIRS) {
+        // the quote fill on navy is seen by its 1px fill-on border (quote-accent.test.mjs), not by itself
+        if (lightOnly && name.endsWith('dark')) continue;
         const fg = resolveColor(v[fill], v);
         for (const surface of surfaces) {
           const bg = resolveColor(v[surface], v);
@@ -248,6 +253,8 @@ test(`brand identity and action pairs clear their bars: every palette`, () => {
       // the pair there.
       const rows = [
         ['--brand-fill-on on --brand-fill (the action fill)', '--brand-fill-on', '--brand-fill', AA],
+        ['--hh-quote-fill-on on --hh-quote-fill (the quote control)', '--hh-quote-fill-on', '--hh-quote-fill', AA],
+        ['--hh-quote on --hh-quote-tint (the quote band)', '--hh-quote', '--hh-quote-tint', AA],
         ['--cbrand-on on --cbrand (the contractor identity)', '--cbrand-on', '--cbrand', AA],
         ['--brand-chrome-on on --brand-chrome (the frame)', '--brand-chrome-on', '--brand-chrome', AA],
         ['--brand-chrome-muted on --brand-chrome-2', '--brand-chrome-muted', '--brand-chrome-2', AA],

@@ -321,6 +321,18 @@ QUOTES["q-notice-29"].quantity_notice = "Check every quantity against your plan 
 QUOTES["q-long-32"] = structuredClone(QUOTES["q-terms-28"]);
 QUOTES["q-long-32"].quote_no = "Q-32";
 QUOTES["q-long-32"].quantity_notice = "x".repeat(500);
+// The quote accent's conversion legs. q-flip-8 is an open quote the test converts in flight (the page
+// reads it blue, then the same answer with CONVERTED and the order's number reads gold); q-conv-8 is a
+// quote the core already converted, with the order's number as the contract serves it; q-conv-bare-8
+// is one converted by a core that sent no number (the page never invents one).
+QUOTES["q-flip-8"] = structuredClone(QUOTES["q-terms-28"]);
+QUOTES["q-flip-8"].quote_no = "#Q-7";
+QUOTES["q-conv-8"] = structuredClone(QUOTES["q-flip-8"]);
+QUOTES["q-conv-8"].status = "CONVERTED";
+QUOTES["q-conv-8"].acceptable = false;
+QUOTES["q-conv-8"].order_no = "SO-TRT-17";
+QUOTES["q-conv-bare-8"] = structuredClone(QUOTES["q-conv-8"]);
+delete QUOTES["q-conv-bare-8"].order_no;
 for (const quote of Object.values(QUOTES)) {
   if (quote.quantity_notice === undefined) quote.quantity_notice = DEFAULT_QUANTITY_NOTICE;
 }

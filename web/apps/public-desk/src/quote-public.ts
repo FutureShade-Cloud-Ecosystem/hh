@@ -85,10 +85,57 @@ export class QuotePublicPage extends HHElement {
         padding: var(--hh-s-24) var(--hh-s-16) var(--hh-s-64);
         font-family: var(--hh-font-ui);
         color: var(--hh-text);
+        /* The document's accent, one family at a time (decision log rows 1047 item 7 and 1063): a
+           quote reads in the quote blue, so every accent below goes through these aliases and the
+           focus ring is the quote twin. The press fill is ONE value (no hover step), and the paper
+           copy keeps its colours through the print dialog's default of dropping backgrounds. */
+        --doc-ink: var(--hh-quote);
+        --doc-fill: var(--hh-quote-fill);
+        --doc-fill-on: var(--hh-quote-fill-on);
+        --doc-link: var(--hh-quote-link);
+        --hh-focus-ring: var(--doc-ink);
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+      /* A converted quote is the ORDER's document: the same page, re-pointed to the gold family
+         (gold as ink, the gold fill with its near-black ink), and nothing on it reads quote blue. */
+      :host([data-doc="order"]) {
+        --doc-ink: var(--hh-accent-text);
+        --doc-fill: var(--hh-accent);
+        --doc-fill-on: var(--hh-accent-ink);
+        --doc-link: var(--hh-accent-text);
       }
       h1 {
         font-size: 1.3rem;
         margin: 0 0 var(--hh-s-4);
+        color: var(--doc-ink);
+      }
+      /* The order's band: the gold fill under the near-black accent ink, the one pair the gold rule
+         allows (11.23:1). The title rides it; the quote has no band on this page. */
+      .orderband {
+        background: var(--hh-accent);
+        color: var(--hh-accent-ink);
+        border-radius: var(--hh-radius-card);
+        padding: var(--hh-s-12) var(--hh-s-16);
+        margin-bottom: var(--hh-s-12);
+      }
+      .orderband h1 {
+        color: var(--hh-accent-ink);
+        margin: 0;
+      }
+      .orderband .from {
+        font-weight: 600;
+      }
+      /* The confirmation line a converted quote carries beside its order title (FROM-PRINCIPAL 29):
+         the same words the accepted page's card uses, riding the gold band so the one statement says
+         both what this document became and that the customer's decision is made. */
+      .orderband .orderconfirmed {
+        margin: var(--hh-s-4) 0 0;
+        font-size: 0.88rem;
+        font-weight: 600;
+      }
+      a {
+        color: var(--doc-link);
       }
       /* The dealer's header band, the page's first element in every state: the
          one mark of WHO is speaking, the name carried from the app's own data
@@ -97,7 +144,7 @@ export class QuotePublicPage extends HHElement {
       header.dealer {
         display: flex;
         align-items: baseline;
-        border-bottom: 1px solid var(--hh-line);
+        border-bottom: 2px solid var(--doc-ink);
         padding: 0 0 var(--hh-s-12);
         margin-bottom: var(--hh-s-20);
       }
@@ -192,6 +239,7 @@ export class QuotePublicPage extends HHElement {
       .totals .grand {
         font-size: 1.05rem;
         font-weight: 700;
+        color: var(--doc-ink);
       }
       .totals .taxnote {
         color: var(--hh-text-dim);
@@ -285,9 +333,17 @@ export class QuotePublicPage extends HHElement {
         outline-offset: 2px;
       }
       /* The button itself is the design system's primitive (.btn-primary, and its
-         disabled swap) from baseStyles; only the label's weight is this page's. */
+         disabled swap) from baseStyles; this page re-points its fill to the document's family
+         (the quote fill, with its own ink, one value with no hover step) and sets the label's
+         weight. Equal specificity with the primitive, so the disabled swap still wins. */
       .btn {
         font-weight: 600;
+      }
+      .btn-primary,
+      .btn-primary:hover {
+        background: var(--doc-fill);
+        color: var(--doc-fill-on);
+        border-color: var(--doc-fill-on);
       }
       .err {
         color: var(--hh-danger);
@@ -534,6 +590,12 @@ export class QuotePublicPage extends HHElement {
     const hinted = this.renderRoot.querySelector("#accept-hint") !== null;
     if (hinted && button.getAttribute("aria-describedby") !== "accept-hint") button.setAttribute("aria-describedby", "accept-hint");
     if (!hinted && button.hasAttribute("aria-describedby")) button.removeAttribute("aria-describedby");
+  }
+
+  /** The document's family follows the quote's state: a CONVERTED quote reads as the order. */
+  willUpdate(): void {
+    if (this.quote?.status === "CONVERTED") this.setAttribute("data-doc", "order");
+    else this.removeAttribute("data-doc");
   }
 
   /** Fire the one-shot print once the loaded quote has painted. */
@@ -898,6 +960,11 @@ export class QuotePublicPage extends HHElement {
     // and no "closed" card either, because the band above already says what this page is.
     if (q.preview || this.hosted || this.printCopy) return nothing;
     if (!q.acceptable || this.landed) {
+      // A CONVERTED quote shows no closed card either (the review's observation B): its document is
+      // titled as the sales order and the confirmation line on that band says what happened, so a door
+      // marked "not awaiting acceptance" would speak to a decision already made. (A CONVERTED quote
+      // the dealer left acceptable under multi accept falls past here to the form and its repeat note.)
+      if (q.status === "CONVERTED") return nothing;
       // The customer reads this alone, with no staff beside them to translate,
       // so the state is SAID, in the same six states said mid-sentence: under
       // a heading, so the closed door reads deliberate rather than broken. An
@@ -952,6 +1019,25 @@ export class QuotePublicPage extends HHElement {
     return html`<header class="dealer"><span class="dealer-name">${DEALER_NAME}</span></header>${this.renderBody()}`;
   }
 
+  /**
+   * The title: a quote reads "Quote #<number>"; once converted it reads as the order, "Sales order
+   * <number>, converted from #<quote number>", on the gold band. A core that sent no order number is
+   * never given one: the page keeps the quote's number and says only that it became an order.
+   * Beside that line the band carries the confirmation the accepted page already uses
+   * (FROM-PRINCIPAL 29): the decision is made, so the page confirms it rather than asking again.
+   */
+  private renderTitle(q: QuoteViewRef): TemplateResult {
+    if (q.status !== "CONVERTED") return html`<h1>Quote ${quoteNumberLabel(q.quoteNo)}</h1>`;
+    const confirmed = html`<p class="orderconfirmed">You confirmed the quantities on this quote.</p>`;
+    if (q.orderNo === null) {
+      return html`<div class="orderband"><h1>Quote ${quoteNumberLabel(q.quoteNo)}<span class="from">, now an order</span></h1>${confirmed}</div>`;
+    }
+    return html`<div class="orderband">
+      <h1>Sales order ${q.orderNo}<span class="from">, converted from ${quoteNumberLabel(q.quoteNo)}</span></h1>
+      ${confirmed}
+    </div>`;
+  }
+
   private renderBody(): TemplateResult {
     if (this.previewRefused) {
       return html`<div class="card refusal">
@@ -970,10 +1056,14 @@ export class QuotePublicPage extends HHElement {
     const withImages = showsImages(q);
     return html`
       ${q.preview ? html`<div class="previewband" role="status">${PREVIEW_BAND}</div>` : nothing}
-      <h1>Quote ${quoteNumberLabel(q.quoteNo)}</h1>
+      ${this.renderTitle(q)}
+      <!-- A converted quote carries no "valid until" (FROM-PRINCIPAL 29): validity speaks to a
+           decision still open, and this document's decision is made. -->
       <div class="sub">
         Prepared for ${q.customerName} · last updated ${this.when(q.asOf)}
-        ${q.validUntil ? html` · ${q.expired ? "expired" : "valid until"} ${plainDay(q.validUntil)}` : nothing}
+        ${q.validUntil && q.status !== "CONVERTED"
+          ? html` · ${q.expired ? "expired" : "valid until"} ${plainDay(q.validUntil)}`
+          : nothing}
       </div>
       <div class="card">
         <div class="tablewrap">
@@ -1014,7 +1104,9 @@ export class QuotePublicPage extends HHElement {
             </tbody>
           </table>
         </div>
-        ${q.quantityNotice
+        <!-- The pre-acceptance notice asks the customer to review before accepting (FROM-PRINCIPAL
+             29); on a converted quote the acceptance is done, so the notice and its box go. -->
+        ${q.quantityNotice && q.status !== "CONVERTED"
           ? html`<div class="qtynotice" role="note">${this.renderNoticeIcon()}<span class="noticetext">${q.quantityNotice}</span></div>`
           : nothing}
         ${this.renderTermsFacts(q)}

@@ -2450,6 +2450,11 @@ components:
         delivery_address: { type: string }
         requested_date: { type: string, format: date }
         delivery_fee_cents: { type: integer, format: int64 }
+        order_no:
+          type: string
+          description: >-
+            The number of the order a CONVERTED quote became, so the page can
+            read as the order; present only while status is CONVERTED
     QuotePublicLine:
       type: object
       description: >-

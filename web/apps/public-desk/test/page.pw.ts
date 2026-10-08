@@ -579,50 +579,241 @@ test("every line shows the same image cell: the photo or the no-photo mark, neve
   expect(cells, "every line's image cell is the same visible box, photo or mark").toEqual(["boxed", "boxed"]);
 });
 
-test("the accept button takes the design system's accent token, not a brand override blue", async ({ page }) => {
-  // A quote that is still open: the demo quote is accepted by an earlier test.
-  await page.goto("/?t=q-terms-28");
+// The quote accent (decision log rows 1047 item 7 and 1063): a quote and its documents read in
+// the quote blue, so every surface below is measured LIVE against the token the sheet declares.
+// Colours go through a canvas pixel into plain sRGB channels (computed styles may come back in a
+// wide-gamut syntax), with a small tolerance for the conversion.
+type Measure = { want: string; wantPixel: number[]; have: string; havePixel: number[] };
+
+async function measureAgainstToken(
+  page: Page,
+  token: string,
+  selector: string,
+  property: "color" | "backgroundColor" | "borderBottomColor" | "outlineColor",
+  state?: "focus",
+): Promise<Measure> {
+  return page.evaluate(
+    ({ token, selector, property, state }) => {
+      const pixelOf = (colour: string): number[] => {
+        const ctx = document.createElement("canvas").getContext("2d") as CanvasRenderingContext2D;
+        ctx.fillStyle = colour;
+        ctx.fillRect(0, 0, 1, 1);
+        return Array.from(ctx.getImageData(0, 0, 1, 1).data).slice(0, 3);
+      };
+      const want = getComputedStyle(document.documentElement).getPropertyValue(token).trim();
+      const el = document.querySelector("pd-quote-public")?.shadowRoot?.querySelector<HTMLElement>(selector);
+      if (!el) throw new Error(`no element for ${selector}`);
+      if (state === "focus") el.focus();
+      const have = getComputedStyle(el)[property];
+      return { want, wantPixel: pixelOf(want), have, havePixel: pixelOf(have) };
+    },
+    { token, selector, property, state },
+  );
+}
+
+function expectToken(m: Measure, token: string, what: string): void {
+  expect(m.want, `${token} must resolve on the page`).not.toBe("");
+  for (let channel = 0; channel < 3; channel += 1) {
+    expect(
+      Math.abs(m.havePixel[channel] - m.wantPixel[channel]),
+      `channel ${channel}: ${what} must be ${token} ${m.want} (it sampled ${m.have})`,
+    ).toBeLessThanOrEqual(2);
+  }
+}
+
+async function readyOpenQuote(page: Page, query = ""): Promise<void> {
+  await page.goto(`/?t=q-terms-28${query}`);
   await expect(page.getByRole("button", { name: "Accept quote" })).toBeVisible();
-  // The accent is the ENABLED fill: a disabled button is grey by design, so ready the form first.
+}
+
+test("the accept button is the quote fill, one value, with its quote ink: not the gold accent", async ({ page }) => {
+  // A quote that is still open: the demo quote is accepted by an earlier test.
+  await readyOpenQuote(page);
+  // The fill is the ENABLED look: a disabled button is grey by design, so ready the form first.
   await page.locator("#qty-confirm").check();
   await page.locator("#name").fill("Sample Customer");
   await page.locator("#affirm").check();
   await expect(page.getByRole("button", { name: "Accept quote" })).toBeEnabled();
-  // The page pins no brand override, so the base brand layer stands and the
-  // pressable fill is the design system's own accent, the same accent the
-  // Quote Desk staff app presses.
   await expect(page.locator("html")).not.toHaveAttribute("data-brand", "hh-pro");
-  // The accent token's value is resolved LIVE from the token sheet the page
-  // loads (it is theme-invariant, so the light half this page pins declares
-  // the same value), never a literal here; the button's computed fill may
-  // come back in a wide-gamut syntax, so both go through a canvas pixel into
-  // plain sRGB channels before they are compared, with a small tolerance for
-  // the colour conversion.
-  const sampled = await page.evaluate(() => {
-    const pixelOf = (colour: string): Array<number> => {
+  const sel = "button[data-action=accept]";
+  expectToken(await measureAgainstToken(page, "--hh-quote-fill", sel, "backgroundColor"), "--hh-quote-fill", "the accept fill");
+  expectToken(await measureAgainstToken(page, "--hh-quote-fill-on", sel, "color"), "--hh-quote-fill-on", "the accept ink");
+  // And it is NOT gold: the gold accent is the order's.
+  const gold = await measureAgainstToken(page, "--hh-accent", sel, "backgroundColor");
+  const apart = gold.havePixel.some((c, i) => Math.abs(c - gold.wantPixel[i]) > 40);
+  expect(apart, "the accept fill must not read as the gold accent").toBe(true);
+  // Hover keeps the one fill value (the quote fill has no second step).
+  await page.locator(sel).hover();
+  expectToken(await measureAgainstToken(page, "--hh-quote-fill", sel, "backgroundColor"), "--hh-quote-fill", "the hovered accept fill");
+});
+
+test("a quote's title, total and header rule read in the quote blue, and the focus ring is its quote twin", async ({ page }) => {
+  await readyOpenQuote(page);
+  expectToken(await measureAgainstToken(page, "--hh-quote", "h1", "color"), "--hh-quote", "the Quote title");
+  expectToken(await measureAgainstToken(page, "--hh-quote", ".totals .grand", "color"), "--hh-quote", "the total");
+  expectToken(await measureAgainstToken(page, "--hh-quote", "header.dealer", "borderBottomColor"), "--hh-quote", "the dealer rule");
+  const rule = await page.evaluate(() => {
+    const el = document.querySelector("pd-quote-public")?.shadowRoot?.querySelector("header.dealer") as HTMLElement;
+    return getComputedStyle(el).borderBottomWidth;
+  });
+  expect(rule, "the rule under the header is the board's 2px quote line").toBe("2px");
+  expectToken(await measureAgainstToken(page, "--hh-quote", "#name", "outlineColor", "focus"), "--hh-quote", "the focus ring");
+});
+
+test("the paper copy carries the same quote colours, and prints them", async ({ page }) => {
+  await page.emulateMedia({ media: "print" });
+  await page.goto("/?t=q-terms-28&print=1");
+  await expect(page.locator("pd-quote-public").getByRole("heading", { level: 1 })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Accept quote" })).toHaveCount(0);
+  expectToken(await measureAgainstToken(page, "--hh-quote", "h1", "color"), "--hh-quote", "the printed title");
+  expectToken(await measureAgainstToken(page, "--hh-quote", ".totals .grand", "color"), "--hh-quote", "the printed total");
+  expectToken(await measureAgainstToken(page, "--hh-quote", "header.dealer", "borderBottomColor"), "--hh-quote", "the printed rule");
+  const adjust = await page.evaluate(() => {
+    const host = document.querySelector("pd-quote-public") as HTMLElement;
+    return getComputedStyle(host).getPropertyValue("print-color-adjust");
+  });
+  expect(adjust, "colours must survive the print dialog's default of dropping backgrounds").toBe("exact");
+});
+
+// A conversion visibly changes colour (decision log row 1063): the same quote reads blue before and
+// gold after, the page reads as the order, and nothing on it is quote blue.
+async function convertInFlight(page: Page, token: string): Promise<void> {
+  await page.route(`**/api/public/v1/quotes/${token}`, async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as { status: string; acceptable: boolean; order_no?: string };
+    body.status = "CONVERTED";
+    body.acceptable = false;
+    body.order_no = "SO-TRT-17";
+    await route.fulfill({ response, json: body });
+  });
+}
+
+test("the same quote reads blue before conversion and gold after, light and on paper", async ({ page, context }) => {
+  for (const print of [false, true]) {
+    const query = print ? "&print=1" : "";
+    if (print) await page.emulateMedia({ media: "print" });
+    await page.goto(`/?t=q-flip-8${query}`);
+    await expect(page.locator("pd-quote-public").getByRole("heading", { level: 1 })).toHaveText(/Quote #Q-7/);
+    expectToken(await measureAgainstToken(page, "--hh-quote", "h1", "color"), "--hh-quote", `the quote title (print ${print})`);
+    expectToken(await measureAgainstToken(page, "--hh-quote", ".totals .grand", "color"), "--hh-quote", `the quote total (print ${print})`);
+    const after = await context.newPage();
+    if (print) await after.emulateMedia({ media: "print" });
+    await convertInFlight(after, "q-flip-8");
+    await after.goto(`/?t=q-flip-8${query}`);
+    await expect(after.locator("pd-quote-public").getByRole("heading", { level: 1 })).toHaveText(
+      "Sales order SO-TRT-17, converted from #Q-7",
+    );
+    expectToken(await measureAgainstToken(after, "--hh-accent-text", ".totals .grand", "color"), "--hh-accent-text", `the order total (print ${print})`);
+    expectToken(await measureAgainstToken(after, "--hh-accent", ".orderband", "backgroundColor"), "--hh-accent", `the order band (print ${print})`);
+    expectToken(await measureAgainstToken(after, "--hh-accent-ink", "h1", "color"), "--hh-accent-ink", `the order title ink on its gold band (print ${print})`);
+    expectToken(await measureAgainstToken(after, "--hh-accent-text", "header.dealer", "borderBottomColor"), "--hh-accent-text", `the order's dealer rule (print ${print})`);
+    await after.close();
+  }
+});
+
+test("a converted quote's page is the order's, in the gold family only: no quote blue, no Accept form", async ({ page }) => {
+  await page.goto("/?t=q-conv-8");
+  const heading = page.locator("pd-quote-public").getByRole("heading", { level: 1 });
+  await expect(heading).toHaveText("Sales order SO-TRT-17, converted from #Q-7");
+  await expect(page.getByRole("button", { name: "Accept quote" })).toHaveCount(0);
+  await expect(page.locator("#name")).toHaveCount(0);
+  // No element on the page paints the quote family: walk every computed colour and refuse the blue.
+  const blue = await page.evaluate(() => {
+    const px = (c: string): number[] => {
       const ctx = document.createElement("canvas").getContext("2d") as CanvasRenderingContext2D;
-      ctx.fillStyle = colour;
+      ctx.fillStyle = c;
       ctx.fillRect(0, 0, 1, 1);
       return Array.from(ctx.getImageData(0, 0, 1, 1).data).slice(0, 3);
     };
-    const accent = getComputedStyle(document.documentElement).getPropertyValue("--hh-accent").trim();
-    const button = document.querySelector("pd-quote-public")?.shadowRoot?.querySelector<HTMLButtonElement>(
-      "button[data-action=accept]",
+    const tokens = ["--hh-quote", "--hh-quote-fill", "--hh-quote-link", "--hh-quote-tint"].map((t) =>
+      px(getComputedStyle(document.documentElement).getPropertyValue(t).trim()),
     );
-    return {
-      accent,
-      accentPixel: pixelOf(accent),
-      fill: button ? getComputedStyle(button).backgroundColor : null,
-      fillPixel: button ? pixelOf(getComputedStyle(button).backgroundColor) : null,
-    };
+    const root = document.querySelector("pd-quote-public")?.shadowRoot;
+    const hits: string[] = [];
+    for (const el of Array.from(root?.querySelectorAll("*") ?? [])) {
+      const cs = getComputedStyle(el);
+      for (const prop of ["color", "backgroundColor", "borderBottomColor", "borderTopColor", "outlineColor"] as const) {
+        const p = px(cs[prop]);
+        if (tokens.some((t) => t.every((c, i) => Math.abs(c - p[i]) <= 2))) hits.push(`${el.tagName}.${el.className} ${prop}`);
+      }
+    }
+    return hits;
   });
-  expect(sampled.fill, "the accept button must have a computed background").not.toBeNull();
-  for (let channel = 0; channel < 3; channel += 1) {
-    expect(
-      Math.abs((sampled.fillPixel as Array<number>)[channel] - sampled.accentPixel[channel]),
-      `channel ${channel}: the accept button's fill must be the accent token ${sampled.accent} (it sampled ${sampled.fill})`,
-    ).toBeLessThanOrEqual(2);
-  }
+  expect(blue, "nothing on a converted page may read in the quote blue").toEqual([]);
+  expectToken(await measureAgainstToken(page, "--hh-accent-text", ".totals .grand", "color"), "--hh-accent-text", "the order total");
+  expectToken(await measureAgainstToken(page, "--hh-accent", ".orderband", "backgroundColor"), "--hh-accent", "the order band");
+});
+
+test("a converted quote with no order number from the core says it became an order and invents no number", async ({ page }) => {
+  await page.goto("/?t=q-conv-bare-8");
+  const heading = page.locator("pd-quote-public").getByRole("heading", { level: 1 });
+  await expect(heading).toHaveText(/Quote #Q-7/);
+  await expect(page.locator("pd-quote-public")).toContainText("now an order");
+  await expect(page.locator("pd-quote-public")).not.toContainText("Sales order");
+  expectToken(await measureAgainstToken(page, "--hh-accent-text", ".totals .grand", "color"), "--hh-accent-text", "the order total");
+});
+
+// The converted page's words (FROM-PRINCIPAL 29): both the "valid until" line and the pre-acceptance
+// notice speak to a decision still open, and a converted quote's decision is made, so the page drops
+// them and says instead what the accepted page says, the quantities confirmation line, beside the gold
+// order line. The closed acceptance card goes with them (the review's observation B): a door marked
+// closed reads against a document titled as the sales order, and the gold line plus the confirmation
+// say what happened.
+test("a converted quote's page drops the valid until line and the notice, and says the quantities were confirmed", async ({ page }) => {
+  await page.goto("/?t=q-conv-8");
+  await expect(page.getByRole("heading", { name: "Sales order SO-TRT-17, converted from #Q-7" })).toBeVisible();
+  const confirmed = page.locator(".orderband").getByText("You confirmed the quantities on this quote.");
+  await expect(confirmed).toBeVisible();
+  const body = page.locator("pd-quote-public");
+  await expect(body).not.toContainText("valid until");
+  await expect(page.locator(".qtynotice")).toHaveCount(0);
+  await expect(body).not.toContainText("All quantities are to be confirmed by the customer");
+  await expect(page.getByRole("heading", { name: "Acceptance closed" })).toHaveCount(0);
+  await expect(body).not.toContainText("not awaiting acceptance");
+  // The same words when the core sent no order number: the decision is made either way.
+  await page.goto("/?t=q-conv-bare-8");
+  await expect(page.locator(".orderband").getByText("You confirmed the quantities on this quote.")).toBeVisible();
+  await expect(page.locator("pd-quote-public")).not.toContainText("valid until");
+  await expect(page.locator(".qtynotice")).toHaveCount(0);
+});
+
+test("a converted quote's paper copy drops the same two and carries the confirmation line", async ({ page }) => {
+  await page.emulateMedia({ media: "print" });
+  await page.goto("/?t=q-conv-8&print=1");
+  await expect(page.getByRole("heading", { name: "Sales order SO-TRT-17, converted from #Q-7" })).toBeVisible();
+  await expect(page.locator(".orderband").getByText("You confirmed the quantities on this quote.")).toBeVisible();
+  const body = page.locator("pd-quote-public");
+  await expect(body).not.toContainText("valid until");
+  await expect(page.locator(".qtynotice")).toHaveCount(0);
+  await expect(body).not.toContainText("All quantities are to be confirmed by the customer");
+});
+
+test("an accepted quote that has not converted keeps its accepted wording: the line, the notice, the card", async ({ page }) => {
+  await page.goto("/?t=q-accepted-26");
+  await expect(page.getByRole("heading", { name: "Already accepted" })).toBeVisible();
+  await expect(page.getByText("This quote is accepted and is not awaiting acceptance.")).toBeVisible();
+  await expect(page.getByText(/valid until /)).toBeVisible();
+  await expect(page.locator(".qtynotice")).toBeVisible();
+  await expect(page.getByText("All quantities are to be confirmed by the customer.")).toBeVisible();
+  // The confirmation line belongs to the converted page and the thank you page, not to the accepted
+  // closed card: this page has not converted, so it says none of it.
+  await expect(page.getByText("You confirmed the quantities on this quote.")).toHaveCount(0);
+});
+
+test("multi-accept on: a converted quote the dealer left acceptable keeps the form, minus the pre-acceptance words", async ({ page }) => {
+  await page.route("**/api/public/v1/quotes/q-conv-8", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as { acceptable: boolean };
+    body.acceptable = true;
+    await route.fulfill({ response, json: body });
+  });
+  await page.goto("/?t=q-conv-8");
+  await expect(page.getByRole("heading", { name: "Sales order SO-TRT-17, converted from #Q-7" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Accept this quote" })).toBeVisible();
+  await expect(page.getByText(REPEAT_NOTE)).toBeVisible();
+  await expect(page.locator(".orderband").getByText("You confirmed the quantities on this quote.")).toBeVisible();
+  await expect(page.locator("pd-quote-public")).not.toContainText("valid until");
+  await expect(page.locator(".qtynotice")).toHaveCount(0);
 });
 
 // The core keeps an ACCEPTED quote acceptable when multi-accept is on
@@ -1135,7 +1326,7 @@ test("a 409 whose re-read shows ACCEPTED ends on the closed accepted card, with 
   await expect(page.getByText("not recorded", { exact: false })).toHaveCount(0);
 });
 
-test("a 409 whose re-read shows CONVERTED also ends on the closed accepted card", async ({ page }) => {
+test("a 409 whose re-read shows CONVERTED ends on the converted document: no closed card, the confirmation line", async ({ page }) => {
   await readyToAccept(page, "q-terms-28");
   await page.route("**/accept", (route) =>
     route.fulfill({
@@ -1156,7 +1347,10 @@ test("a 409 whose re-read shows CONVERTED also ends on the closed accepted card"
     await route.fulfill({ response, json: body });
   });
   await page.getByRole("button", { name: "Accept quote" }).click();
-  await expect(page.getByRole("heading", { name: "Already accepted" })).toBeVisible();
+  await expect(page.locator("pd-quote-public")).toContainText("now an order");
+  await expect(page.locator(".orderband").getByText("You confirmed the quantities on this quote.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Already accepted" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Acceptance closed" })).toHaveCount(0);
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(page.locator("pd-quote-public")).not.toContainText(STAFF_WORDS);
 });
@@ -1183,7 +1377,7 @@ test("a 409 whose re-read shows ACCEPTED yet still acceptable ends on the closed
   await expect(page.getByRole("alert")).toHaveCount(0);
 });
 
-test("an unknown outcome whose re-read shows CONVERTED ends on the closed accepted card", async ({ page }) => {
+test("an unknown outcome whose re-read shows CONVERTED ends on the converted document, no closed card", async ({ page }) => {
   await readyToAccept(page, "q-terms-28");
   await page.route("**/accept", (route) =>
     route.fulfill({ status: 504, contentType: "text/html", body: "<html><body>504</body></html>" }),
@@ -1196,7 +1390,9 @@ test("an unknown outcome whose re-read shows CONVERTED ends on the closed accept
     await route.fulfill({ response, json: body });
   });
   await page.getByRole("button", { name: "Accept quote" }).click();
-  await expect(page.getByRole("heading", { name: "Already accepted" })).toBeVisible();
+  await expect(page.locator("pd-quote-public")).toContainText("now an order");
+  await expect(page.locator(".orderband").getByText("You confirmed the quantities on this quote.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Already accepted" })).toHaveCount(0);
   await expect(page.getByRole("alert")).toHaveCount(0);
 });
 
