@@ -333,10 +333,9 @@ func TestIntegration_CustomerLines_TheWalkInIsRefused(t *testing.T) {
 	if msg == "" {
 		t.Fatalf("the refusal must say why in words: %v", body)
 	}
-	// The counter opens Returns with the customer, so the words name what it can do now: find the
-	// customer on the sale, or refund the walk-in sale on its own; never "its own order number".
-	if !strings.Contains(msg, "find the customer on the sale") || !strings.Contains(msg, "cash") || strings.Contains(msg, "order number") {
-		t.Fatalf("the refusal must say what the counter can do now: %q", msg)
+	// Ruling A: the walk-in's lines are found only by a receipt or order number, never listed.
+	if !strings.Contains(msg, "receipt or order number") || !strings.Contains(msg, "never listed") {
+		t.Fatalf("the refusal must say how walk-in sales are found: %q", msg)
 	}
 	// No customer named is the client's own 400.
 	rec := s.do(http.MethodGet, "/api/v1/pos/returns/customer-lines", s.bearer(trentonClerkSub), "", nil)

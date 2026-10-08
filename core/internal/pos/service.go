@@ -199,7 +199,7 @@ type posStore interface {
 	// ListCustomerReturnableOrders is the customer lines read (sub item 10.1): every sales order the
 	// customer holds (till rings and quote conversions), newest first, bounded, each line's open
 	// quantity netted by the same shared prior-return sums the commit guard reads.
-	ListCustomerReturnableOrders(ctx context.Context, customerID string, branchIDs []string, limit int) ([]CustomerOrderView, error)
+	ListCustomerReturnableOrders(ctx context.Context, customerID string, branchIDs []string, limit int, number string) ([]CustomerOrderView, error)
 	LockReturnableLine(ctx context.Context, tx pgx.Tx, orderID, orderLineID string) (returnableLine, bool, error)
 	// ReadReturnableLine is LockReturnableLine without the lock or the transaction: the credit
 	// preview's read of the same line and the same prior-return sums.
@@ -209,6 +209,11 @@ type posStore interface {
 	FindSwapByKey(ctx context.Context, key string) (swapRow, bool, error)
 	// SumCardRefundedTx is what earlier CARD returns of the order refunded to the card (D5).
 	SumCardRefundedTx(ctx context.Context, tx pgx.Tx, orderID, exceptReturnID string) (int64, error)
+	// InvoiceMoney, SumReturnRails and SetReturnOffset serve the ruling's split of an order that is not
+	// fully paid (tx nil reads the pool, for the preview).
+	InvoiceMoney(ctx context.Context, tx pgx.Tx, invoiceID string) (total, balance int64, err error)
+	SumReturnRails(ctx context.Context, tx pgx.Tx, orderID string) (offsets, payouts int64, err error)
+	SetReturnOffset(ctx context.Context, tx pgx.Tx, returnID string, offsetCents int64) error
 	// LockInvoicesTx takes the invoices a return may touch, sorted, before any credit offset (P2-1).
 	LockInvoicesTx(ctx context.Context, tx pgx.Tx, invoiceIDs []string) error
 	// SumUnbookedCardRefundsTx counts the processor refunds a rolled back transaction left unbooked (D5).

@@ -15530,7 +15530,7 @@ paths:
       tags:
         - staff-pos
       summary: Read one customer's every sales order with its returnable lines
-      description: "The pre-return read of the returns-across flow: every sales order the customer holds, till rings and quote conversions alike, newest first, bounded by limit. Each line's open quantity is the same netting the commit guard reads, so the screen and the guard cannot disagree. A scoped caller sees only the branches their resolved authority reaches, the other branches' orders simply absent; naming an unreachable branch is the wall's 403. The house WALK-IN account is refused in words: it holds no one customer's history."
+      description: "The pre-return read of the returns-across flow: every sales order the customer holds, till rings and quote conversions alike, newest first, bounded by limit. Each line's open quantity is the same netting the commit guard reads, so the screen and the guard cannot disagree. A scoped caller sees only the branches their resolved authority reaches, the other branches' orders simply absent; naming an unreachable branch is the wall's 403. The house WALK-IN account is answered only through the number filter, never as a list of every walk in sale, and the filter never leaves that account's own orders."
       x-role: requireStaff
       x-access:
         surfaces:
@@ -15550,6 +15550,12 @@ paths:
           schema:
             type: string
             format: uuid
+        - name: number
+          in: query
+          required: false
+          schema:
+            type: string
+          description: A receipt or order number (an order number or an invoice number, with or without the hash, or the bare digits a branch's numbers end in) narrowing the answer to that order; required for the WALK-IN account
         - $ref: "#/components/parameters/Limit"
       responses:
         "200":
@@ -15565,7 +15571,7 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
         "422":
-          description: The house WALK-IN account, which holds no one customer's history
+          description: The house WALK-IN account asked without a receipt or order number (its sales are never listed)
           content:
             application/json:
               schema:
@@ -15609,7 +15615,7 @@ paths:
         "409":
           $ref: "#/components/responses/PosRefundApprovalRequired"
         "422":
-          description: "A well-formed note the shape refuses: the house WALK-IN account, another customer's order, an order of another branch, one order twice, or an over-return on any order (the whole note refuses)."
+          description: "A well-formed note the shape refuses: account credit for the house WALK-IN account (it goes back to cash or card), another customer's order, an order of another branch, one order twice, or an over-return on any order (the whole note refuses)."
           content:
             application/json:
               schema:
@@ -42088,6 +42094,13 @@ components:
         - status
         - replayed
       properties:
+        invoice_offset_cents:
+          type: integer
+          format: int64
+          description: The part of an order that is not fully paid that came off its open invoice; the rail moved the rest
+        payment_note:
+          type: string
+          description: The split in words, when there was one
         applied_cents:
           type: integer
           format: int64
@@ -42242,15 +42255,13 @@ components:
             $ref: "#/components/schemas/PosReturnableLine"
     PosReturnAcrossInput:
       type: object
-      description: The idempotent credit-note-across-orders body. One customer, one branch, one refund rail, one whole-note restock flag (the per-line dispositions are later work); no fee field, the flow carries no restocking fee.
+      description: The idempotent credit-note-across-orders body. One customer, one branch, one refund rail; each line may carry its own disposition, and the whole-note restock flag stands for lines that name none; the drawer (till_session_id) is needed only by a CASH refund. No fee field, the flow carries no restocking fee.
       required:
         - idempotency_key
         - customer_id
         - orders
         - refund_method
         - reason
-        - restock
-        - till_session_id
       properties:
         idempotency_key:
           type: string
@@ -42294,7 +42305,7 @@ components:
             $ref: "#/components/schemas/PosReturnLineInput"
     PosReturnPreviewInput:
       type: object
-      description: The draft of a returns-across note, without a key, a rail or a drawer.
+      description: The draft of a returns-across note, without a key or a drawer. With a refund_method of CASH or CARD the answer carries, per order, the split the commit will make on an order that is not fully paid.
       required:
         - customer_id
         - orders
@@ -42302,6 +42313,12 @@ components:
         customer_id:
           type: string
           format: uuid
+        refund_method:
+          type: string
+          enum:
+            - CASH
+            - CARD
+            - ACCOUNT_CREDIT
         orders:
           type: array
           minItems: 1
@@ -42340,6 +42357,17 @@ components:
         - total_cents
         - lines
       properties:
+        rail_cents:
+          type: integer
+          format: int64
+          description: "With a refund_method: what goes back in cash or card"
+        invoice_offset_cents:
+          type: integer
+          format: int64
+          description: "With a refund_method: what comes off the order's open invoice"
+        rail_note:
+          type: string
+          description: The split in words, empty when nothing is split
         order_id:
           type: string
           format: uuid
@@ -42369,6 +42397,14 @@ components:
         - total_cents
         - orders
       properties:
+        rail_cents:
+          type: integer
+          format: int64
+          description: "With a refund_method: the sum of what goes back in cash or card"
+        invoice_offset_cents:
+          type: integer
+          format: int64
+          description: "With a refund_method: the sum of what comes off the open invoices"
         customer_id:
           type: string
           format: uuid
@@ -42737,7 +42773,7 @@ components:
           CONFIRMED through FULFILLED: null
         invoice_id:
           type: string
-          format: uuid
+          description: The order's live invoice id; empty when it has none
         card_refundable:
           type: boolean
           description: The original CARD capture carried a gateway reference

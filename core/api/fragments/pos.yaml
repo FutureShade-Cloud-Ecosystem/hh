@@ -911,8 +911,9 @@ paths:
         commit guard reads, so the screen and the guard cannot disagree. A
         scoped caller sees only the branches their resolved authority reaches,
         the other branches' orders simply absent; naming an unreachable branch
-        is the wall's 403. The house WALK-IN account is refused in words: it
-        holds no one customer's history.
+        is the wall's 403. The house WALK-IN account is answered only through
+        the number filter, never as a list of every walk in sale, and the
+        filter never leaves that account's own orders.
       x-role: requireStaff
       x-access:
         surfaces: [counter-till]
@@ -921,6 +922,7 @@ paths:
         - $ref: "#/components/parameters/XOrg"
         - { name: customer_id, in: query, required: true, schema: { type: string, format: uuid } }
         - { name: branch_id, in: query, required: false, schema: { type: string, format: uuid } }
+        - { name: number, in: query, required: false, schema: { type: string }, description: "A receipt or order number (an order number or an invoice number, with or without the hash, or the bare digits a branch's numbers end in) narrowing the answer to that order; required for the WALK-IN account" }
         - $ref: "#/components/parameters/Limit"
       responses:
         "200":
@@ -933,7 +935,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "422":
-          description: The house WALK-IN account, which holds no one customer's history
+          description: The house WALK-IN account asked without a receipt or order number (its sales are never listed)
           content:
             application/json:
               schema:
@@ -977,8 +979,8 @@ paths:
         "409": { $ref: "#/components/responses/PosRefundApprovalRequired" }
         "422":
           description: >-
-            A well-formed note the shape refuses: the house WALK-IN account,
-            another customer's order, an order of another branch, one order
+            A well-formed note the shape refuses: account credit for the house
+            WALK-IN account (it goes back to cash or card), another customer's order, an order of another branch, one order
             twice, or an over-return on any order (the whole note refuses).
           content:
             application/json:
@@ -3027,6 +3029,8 @@ components:
       description: The committed return, returned verbatim on an idempotent replay
       required: [return_id, return_no, order_id, invoice_id, refund_method, subtotal_cents, tax_cents, total_cents, pickup_status, status, replayed]
       properties:
+        invoice_offset_cents: { type: integer, format: int64, description: "The part of an order that is not fully paid that came off its open invoice; the rail moved the rest" }
+        payment_note: { type: string, description: "The split in words, when there was one" }
         applied_cents: { type: integer, format: int64, description: A swap child; the part of the total spent on the new order, the rail moved the rest }
         return_id: { type: string, format: uuid }
         return_no: { type: string }
@@ -3095,10 +3099,11 @@ components:
       type: object
       description: >-
         The idempotent credit-note-across-orders body. One customer, one
-        branch, one refund rail, one whole-note restock flag (the per-line
-        dispositions are later work); no fee field, the flow carries no
-        restocking fee.
-      required: [idempotency_key, customer_id, orders, refund_method, reason, restock, till_session_id]
+        branch, one refund rail; each line may carry its own disposition, and
+        the whole-note restock flag stands for lines that name none; the drawer
+        (till_session_id) is needed only by a CASH refund. No fee field, the
+        flow carries no restocking fee.
+      required: [idempotency_key, customer_id, orders, refund_method, reason]
       properties:
         idempotency_key: { type: string, format: uuid }
         customer_id: { type: string, format: uuid }
@@ -3122,10 +3127,14 @@ components:
           items: { $ref: "#/components/schemas/PosReturnLineInput" }
     PosReturnPreviewInput:
       type: object
-      description: The draft of a returns-across note, without a key, a rail or a drawer.
+      description: >-
+        The draft of a returns-across note, without a key or a drawer. With a
+        refund_method of CASH or CARD the answer carries, per order, the split the
+        commit will make on an order that is not fully paid.
       required: [customer_id, orders]
       properties:
         customer_id: { type: string, format: uuid }
+        refund_method: { type: string, enum: [CASH, CARD, ACCOUNT_CREDIT] }
         orders:
           type: array
           minItems: 1
@@ -3143,6 +3152,9 @@ components:
       type: object
       required: [order_id, order_no, subtotal_cents, tax_cents, total_cents, lines]
       properties:
+        rail_cents: { type: integer, format: int64, description: "With a refund_method: what goes back in cash or card" }
+        invoice_offset_cents: { type: integer, format: int64, description: "With a refund_method: what comes off the order's open invoice" }
+        rail_note: { type: string, description: "The split in words, empty when nothing is split" }
         order_id: { type: string, format: uuid }
         order_no: { type: string }
         subtotal_cents: { type: integer, format: int64 }
@@ -3158,6 +3170,8 @@ components:
         priced by the commit's own function.
       required: [customer_id, branch_id, subtotal_cents, tax_cents, total_cents, orders]
       properties:
+        rail_cents: { type: integer, format: int64, description: "With a refund_method: the sum of what goes back in cash or card" }
+        invoice_offset_cents: { type: integer, format: int64, description: "With a refund_method: the sum of what comes off the open invoices" }
         customer_id: { type: string, format: uuid }
         branch_id: { type: string, format: uuid }
         subtotal_cents: { type: integer, format: int64 }
@@ -3295,7 +3309,7 @@ components:
         sale_type: { type: string, enum: ["", COLLECT_NOW, COLLECT_LATER, DELIVERED, COD] }
         tender: { type: string, enum: ["", ACCOUNT, CASH, CARD, CHEQUE], description: The original ring's tender; empty on a quote conversion }
         fulfilment_state: { type: string, description: The order's own ladder word, CONFIRMED through FULFILLED }
-        invoice_id: { type: string, format: uuid }
+        invoice_id: { type: string, description: The order's live invoice id; empty when it has none }
         card_refundable: { type: boolean, description: The original CARD capture carried a gateway reference }
         lines:
           type: array

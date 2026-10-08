@@ -409,7 +409,7 @@ export async function posCreateReturnAcross(
 
 export async function posCustomerReturnLines(
   client: ApiClient,
-  opts: { customer_id: string; branch_id?: string; limit?: number },
+  opts: { customer_id: string; branch_id?: string; number?: string; limit?: number },
   call?: ApiCallOptions
 ): Promise<Result<PosCustomerLines>> {
   return client.request<PosCustomerLines>({

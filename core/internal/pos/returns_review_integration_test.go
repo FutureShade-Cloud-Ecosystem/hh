@@ -148,8 +148,9 @@ func TestIntegration_Review_AnUnbookedCardRefundCountsAgainstTheCapture(t *testi
 	}
 }
 
-// P2-2 (interim): cash and card are refused on an order whose invoice is not paid, in words; the
-// account rail stays open there.
+// P2-2: cash is refused on an order whose invoice has taken nothing (the principal's ruling: no cash
+// or card at all on an unpaid order); the account rail stays open there. The partly paid split is in
+// returns_rulings_integration_test.go.
 func TestIntegration_Review_CashAndCardNeedAPaidInvoice(t *testing.T) {
 	s := newTrentonStackOnPoolWithRail(t, intPool(t), newKeyedRail())
 	cust := s.plantCustomer("Review open invoice", 30, 5000000)
@@ -162,21 +163,19 @@ func TestIntegration_Review_CashAndCardNeedAPaidInvoice(t *testing.T) {
 			"orders":          []any{map[string]any{"order_id": conv, "lines": []any{map[string]any{"order_line_id": line, "qty_base": 1}}}}}
 		return s.postNote(trentonClerkSub, "", b)
 	}
-	for _, m := range []string{RefundCash, RefundCard} {
-		rec := note(m)
-		if rec.Code != http.StatusUnprocessableEntity {
-			t.Fatalf("%s on an open invoice must be refused, got %d: %s", m, rec.Code, rec.Body.String())
-		}
-		if msg, _ := s.decodeBody(rec)["error"].(string); !containsStr(msg, "open invoice") {
-			t.Fatalf("%s: the refusal names the open invoice: %q", m, msg)
-		}
+	rec := note(RefundCash)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("cash on an unpaid invoice must be refused, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if msg, _ := s.decodeBody(rec)["error"].(string); !containsStr(msg, "not paid yet") {
+		t.Fatalf("the refusal is the principal's words: %q", msg)
 	}
 	if rec := note(RefundAccountCredit); rec.Code != http.StatusCreated {
 		t.Fatalf("the account rail stays open there, got %d: %s", rec.Code, rec.Body.String())
 	}
 	// The single return of a ring on account meets the same words.
 	ring := s.ringForCustomer(t, key(), trentonBranchID, s.trentonTill, "trenton", cust, "", 4, TenderAccount)
-	rec := s.do(http.MethodPost, "/api/v1/pos/returns", s.bearer(trentonClerkSub), "", s.returnBody(key(), ring, 0, RefundCash, 1))
+	rec = s.do(http.MethodPost, "/api/v1/pos/returns", s.bearer(trentonClerkSub), "", s.returnBody(key(), ring, 0, RefundCash, 1))
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("a cash return of an unpaid account ring must be refused, got %d: %s", rec.Code, rec.Body.String())
 	}

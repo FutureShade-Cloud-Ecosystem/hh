@@ -65,6 +65,7 @@ type fakeStore struct {
 	unbookedRefunds  []cardRefundFact
 	swaps            []swapRow
 	invoiceLocks     []string
+	invoiceMoney     map[string][2]int64 // invoice id to total, balance (the ruling's split)
 	bookedRefundKeys []string
 	priorSums        map[string]int64      // order_id → the sale's earlier committed return total (the per-sale sum the refund gate reads)
 	noteKeys         map[string]ReturnNote // the note idempotency key → its committed note (the across-orders replay)
@@ -418,7 +419,7 @@ func (f *fakeStore) ListReturnableLines(_ context.Context, orderID string) ([]Re
 // ListCustomerReturnableOrders answers the customer lines read from the same world the other
 // return fakes hold: the return contexts carry the customer and branch, the lines the quantities,
 // and the committed return lines the shared prior sums. The fake needs no separate canned state.
-func (f *fakeStore) ListCustomerReturnableOrders(_ context.Context, customerID string, branchIDs []string, limit int) ([]CustomerOrderView, error) {
+func (f *fakeStore) ListCustomerReturnableOrders(_ context.Context, customerID string, branchIDs []string, limit int, _ string) ([]CustomerOrderView, error) {
 	reach := func(branch string) bool {
 		if branchIDs == nil {
 			return true
@@ -486,6 +487,28 @@ func (f *fakeStore) SumCardRefundedTx(_ context.Context, _ pgx.Tx, orderID, _ st
 	}
 	return sum, nil
 }
+
+func (f *fakeStore) InvoiceMoney(_ context.Context, _ pgx.Tx, invoiceID string) (int64, int64, error) {
+	if m, ok := f.invoiceMoney[invoiceID]; ok {
+		return m[0], m[1], nil
+	}
+	return 0, 0, nil
+}
+
+func (f *fakeStore) SumReturnRails(_ context.Context, _ pgx.Tx, orderID string) (int64, int64, error) {
+	var off, pay int64
+	for _, r := range f.returnRows {
+		if r.OrderID == orderID {
+			off += r.OffsetCents
+			if r.RefundMethod == RefundCash || r.RefundMethod == RefundCard {
+				pay += r.TotalCents - r.FeeCents - r.AppliedCents - r.OffsetCents
+			}
+		}
+	}
+	return off, pay, nil
+}
+
+func (f *fakeStore) SetReturnOffset(_ context.Context, _ pgx.Tx, _ string, _ int64) error { return nil }
 
 func (f *fakeStore) LockInvoicesTx(_ context.Context, _ pgx.Tx, ids []string) error {
 	f.invoiceLocks = append(f.invoiceLocks, ids...)

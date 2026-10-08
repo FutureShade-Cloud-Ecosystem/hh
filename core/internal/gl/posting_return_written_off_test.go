@@ -115,3 +115,27 @@ func TestPosReturnCommitted_AppliedCreditCreditsTheReceivableNotTheRail(t *testi
 		t.Fatal("applied credit above the total must be refused")
 	}
 }
+
+// The principal's split for an order not fully paid: the part that came off the open invoice credits
+// the receivable, the rail moves only what was paid.
+func TestPosReturnCommitted_InvoiceOffsetCreditsTheReceivable(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeStore()
+	svc := newTestService(f)
+	if err := svc.consume(ctx, ev("pos.return.committed", map[string]any{
+		"return_id": "ret-o1", "order_id": "o1", "invoice_id": "i1", "refund_method": "CASH",
+		"subtotal_cents": 6000, "tax_cents": 780, "total_cents": 6780, "fee_cents": 0, "invoice_offset_cents": 3000, "branch_id": "b1",
+	})); err != nil {
+		t.Fatalf("consume: %v", err)
+	}
+	d := &f.inserted[0]
+	wantLeg(t, d, "1020", 0, 3780)
+	wantLeg(t, d, "1100", 0, 3000)
+	wantLeg(t, d, "4000", 6000, 0)
+	if err := svc.consume(ctx, ev("pos.return.committed", map[string]any{
+		"return_id": "ret-o2", "order_id": "o1", "invoice_id": "i1", "refund_method": "CASH",
+		"subtotal_cents": 100, "tax_cents": 13, "total_cents": 113, "invoice_offset_cents": 200, "branch_id": "b1",
+	})); err == nil {
+		t.Fatal("an offset above the total must be refused")
+	}
+}

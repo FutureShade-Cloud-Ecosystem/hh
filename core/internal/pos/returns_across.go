@@ -39,12 +39,12 @@ func noteChildKey(noteKey, orderID string) string {
 // read's own refusal: the note is one account customer's credit note, never the shared row's),
 // every order named once, carrying lines, each with a line and a positive quantity. It answers the
 // trimmed customer id.
-func (s *Service) checkNoteShape(ctx context.Context, customerID string, orders []ReturnAcrossOrderInput) (string, error) {
+func (s *Service) checkNoteShape(ctx context.Context, customerID string, orders []ReturnAcrossOrderInput, allowWalkIn bool) (string, error) {
 	customerID = strings.TrimSpace(customerID)
 	if customerID == "" {
 		return "", clientErr(http.StatusBadRequest, "pos: customer_id is required")
 	}
-	if walkIn, werr := s.store.ResolveWalkIn(ctx); werr == nil && walkIn == customerID {
+	if walkIn, werr := s.store.ResolveWalkIn(ctx); !allowWalkIn && werr == nil && walkIn != "" && walkIn == customerID {
 		return "", errWalkInNotReturnable
 	}
 	seenOrder := make(map[string]bool, len(orders))
@@ -94,21 +94,33 @@ func (s *Service) PreviewReturnAcross(ctx context.Context, in ReturnPreviewInput
 // previewNote is PreviewReturnAcross that also answers each order's resolved return context, which
 // the swap judges its source orders and its leftover rail by.
 func (s *Service) previewNote(ctx context.Context, in ReturnPreviewInput) (ReturnPreview, []returnOrderCtx, error) {
-	out, ocs, _, err := s.previewNoteProducts(ctx, in)
+	out, ocs, _, err := s.previewNoteProducts(ctx, in, true)
 	return out, ocs, err
 }
 
 // previewNoteProducts is previewNote that also answers the products the note's lines return.
-func (s *Service) previewNoteProducts(ctx context.Context, in ReturnPreviewInput) (ReturnPreview, []returnOrderCtx, []string, error) {
+func (s *Service) previewNoteProducts(ctx context.Context, in ReturnPreviewInput, allowWalkIn bool) (ReturnPreview, []returnOrderCtx, []string, error) {
 	var ocs []returnOrderCtx
 	var products []string
 	if len(in.Orders) == 0 {
 		return ReturnPreview{}, nil, nil, clientErr(http.StatusBadRequest, "pos: a return note needs at least one order")
 	}
-	customerID, err := s.checkNoteShape(ctx, in.CustomerID, in.Orders)
+	customerID, err := s.checkNoteShape(ctx, in.CustomerID, in.Orders, allowWalkIn)
 	if err != nil {
 		return ReturnPreview{}, nil, nil, err
 	}
+	method := in.RefundMethod
+	switch method {
+	case "", RefundCash, RefundCard:
+	case RefundAccountCredit:
+		if werr := s.accountCreditAllowed(ctx, customerID, false); werr != nil {
+			return ReturnPreview{}, nil, nil, werr
+		}
+	default:
+		return ReturnPreview{}, nil, nil, errBadRefundMethod
+	}
+	withSplit := method == RefundCash || method == RefundCard
+	var sumRail, sumOffset int64
 	caller, err := s.caller(ctx)
 	if err != nil {
 		return ReturnPreview{}, nil, nil, err
@@ -155,11 +167,24 @@ func (s *Service) previewNoteProducts(ctx context.Context, in ReturnPreviewInput
 				TaxCents: ln.TaxCents, TotalCents: ln.LineTotalCents + ln.TaxCents,
 			})
 		}
+		if withSplit {
+			sp, serr := s.railSplitFor(ctx, nil, oc, method, po.TotalCents)
+			if serr != nil {
+				return ReturnPreview{}, nil, nil, serr
+			}
+			rail, off := sp.rail, sp.offset
+			po.RailCents, po.OffsetCents, po.RailNote = &rail, &off, sp.note
+			sumRail += rail
+			sumOffset += off
+		}
 		out.SubtotalCents += po.SubtotalCents
 		out.TaxCents += po.TaxCents
 		out.Orders = append(out.Orders, po)
 	}
 	out.TotalCents = out.SubtotalCents + out.TaxCents
+	if withSplit {
+		out.RailCents, out.OffsetCents = &sumRail, &sumOffset
+	}
 	return out, ocs, products, nil
 }
 
@@ -202,7 +227,7 @@ func (s *Service) prepareReturnAcross(ctx context.Context, in ReturnAcrossInput)
 	default:
 		return nil, errBadRefundMethod
 	}
-	customerID, shapeErr := s.checkNoteShape(ctx, in.CustomerID, in.Orders)
+	customerID, shapeErr := s.checkNoteShape(ctx, in.CustomerID, in.Orders, !in.swap)
 	if shapeErr != nil {
 		return nil, shapeErr
 	}
@@ -440,37 +465,23 @@ func (s *Service) returnAcrossInTx(ctx context.Context, tx pgx.Tx, plan *returnA
 
 	// The approval gate judges the NOTE total (the Q3 ruling), ahead of every write and every
 	// rail, the single path's own refusal body and credential discipline.
-	var approvedHere bool
 	first := plan.children[0]
 	// The gate judges the note total AND, per order, the sale's earlier committed returns plus this
 	// note's share of it (read after the ascending locks, so exact): the single return's own
 	// cumulative rule, so notes cannot walk one sale past the amount a slice at a time. Since the
 	// rule is a threshold, the largest of these amounts decides.
-	gateAmount := noteTotal
+	priors := make([]int64, len(plan.children))
+	shares := make([]int64, len(plan.children))
 	for i, child := range plan.children {
 		prior, perr := s.store.SumCommittedReturnTotalsTx(ctx, tx, child.oc.OrderID)
 		if perr != nil {
 			return ReturnNote{}, false, false, perr
 		}
-		if c := prior + guards[i].subtotal + guards[i].taxTotal; c > gateAmount {
-			gateAmount = c
-		}
+		priors[i], shares[i] = prior, guards[i].subtotal+guards[i].taxTotal
 	}
-	refusal, refused := s.refundApprovalRefusal(gateAmount, noteTotal, caller)
-	if first.credentialJudged && s.roles.RefundRequiresApproval(gateAmount) {
-		if first.judgeErr != nil {
-			return ReturnNote{}, false, false, first.judgeErr
-		}
-		if !first.decision.pending {
-			refusal = s.standingRefusalFor(noteTotal)
-			refused = true
-		}
-	}
-	if refused {
-		if !first.decision.pending {
-			return ReturnNote{}, false, false, refusal
-		}
-		approvedHere = true
+	approvedHere, gerr := s.judgeNoteGate(noteTotal, priors, shares, caller, first)
+	if gerr != nil {
+		return ReturnNote{}, false, false, gerr
 	}
 
 	// D5 across the note: every card child is judged against its own capture BEFORE any child's
@@ -478,7 +489,18 @@ func (s *Service) returnAcrossInTx(ctx context.Context, tx pgx.Tx, plan *returnA
 	// heard of the others.
 	if in.RefundMethod == RefundCard {
 		for i, child := range plan.children {
-			if cerr := s.checkCardCapTx(ctx, tx, child.oc, "", "refund:"+child.in.IdempotencyKey, guards[i].subtotal+guards[i].taxTotal-child.applied); cerr != nil {
+			cardCents := guards[i].subtotal + guards[i].taxTotal - child.applied
+			if child.applied == 0 {
+				sp, serr := s.railSplitFor(ctx, tx, child.oc, RefundCard, cardCents)
+				if serr != nil {
+					return ReturnNote{}, false, false, serr
+				}
+				if sp.rail == 0 && sp.offset > 0 {
+					return ReturnNote{}, false, false, clientErr(http.StatusUnprocessableEntity, "%s", sp.note)
+				}
+				cardCents = sp.rail
+			}
+			if cerr := s.checkCardCapTx(ctx, tx, child.oc, "", "refund:"+child.in.IdempotencyKey, cardCents); cerr != nil {
 				return ReturnNote{}, false, false, cerr
 			}
 		}
@@ -507,6 +529,37 @@ func (s *Service) returnAcrossInTx(ctx context.Context, tx pgx.Tx, plan *returnA
 		out.Returns = append(out.Returns, ret)
 	}
 	return out, false, approvedHere, nil
+}
+
+// judgeNoteGate is the note's refund approval gate, ONE judgment for the transaction (exact, after the
+// locks) and for the swap's pre-transaction look (before any card is charged): it judges the largest
+// of the note total and, per order, the sale's earlier committed returns plus that order's share (a
+// threshold rule, so the largest decides), with the single path's credential discipline. It answers
+// whether a manager's decision stands behind the note, or the refusal.
+func (s *Service) judgeNoteGate(noteTotal int64, priors, shares []int64, caller identity.StaffContext, first *returnPlan) (bool, error) {
+	gateAmount := noteTotal
+	for i := range priors {
+		if c := priors[i] + shares[i]; c > gateAmount {
+			gateAmount = c
+		}
+	}
+	refusal, refused := s.refundApprovalRefusal(gateAmount, noteTotal, caller)
+	if first.credentialJudged && s.roles.RefundRequiresApproval(gateAmount) {
+		if first.judgeErr != nil {
+			return false, first.judgeErr
+		}
+		if !first.decision.pending {
+			refusal = s.standingRefusalFor(noteTotal)
+			refused = true
+		}
+	}
+	if refused {
+		if !first.decision.pending {
+			return false, refusal
+		}
+		return true, nil
+	}
+	return false, nil
 }
 
 // replayNoteIfAllowed answers a note replay only to a caller the wall admits to the replayed

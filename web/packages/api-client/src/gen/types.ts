@@ -4435,6 +4435,8 @@ export type PosReturnInput = {
   fee_bps?: number;
 };
 export type PosReturn = {
+  invoice_offset_cents?: number;
+  payment_note?: string;
   applied_cents?: number;
   return_id: string;
   return_no: string;
@@ -4482,8 +4484,8 @@ export type PosReturnAcrossInput = {
   orders: PosReturnAcrossOrder[];
   refund_method: "CASH" | "CARD" | "ACCOUNT_CREDIT";
   reason: string;
-  restock: boolean;
-  till_session_id: string;
+  restock?: boolean;
+  till_session_id?: string;
 };
 export type PosReturnAcrossOrder = {
   order_id: string;
@@ -4491,6 +4493,7 @@ export type PosReturnAcrossOrder = {
 };
 export type PosReturnPreviewInput = {
   customer_id: string;
+  refund_method?: "CASH" | "CARD" | "ACCOUNT_CREDIT";
   orders: PosReturnAcrossOrder[];
 };
 export type PosReturnPreviewLine = {
@@ -4501,6 +4504,9 @@ export type PosReturnPreviewLine = {
   total_cents: number;
 };
 export type PosReturnPreviewOrder = {
+  rail_cents?: number;
+  invoice_offset_cents?: number;
+  rail_note?: string;
   order_id: string;
   order_no: string;
   subtotal_cents: number;
@@ -4509,6 +4515,8 @@ export type PosReturnPreviewOrder = {
   lines: PosReturnPreviewLine[];
 };
 export type PosReturnPreview = {
+  rail_cents?: number;
+  invoice_offset_cents?: number;
   customer_id: string;
   branch_id: string;
   subtotal_cents: number;

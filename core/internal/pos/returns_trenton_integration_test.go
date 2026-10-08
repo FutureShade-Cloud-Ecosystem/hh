@@ -359,7 +359,7 @@ func newTrentonStackOnPoolWithRail(t *testing.T, pool *pgxpool.Pool, rail CardRe
 		WithCategoryResolver(cat).
 		WithUOMConverter(cat).
 		WithMarginGate(pricing.NewIdentityMarginGate())
-	tillSvc := till.NewService(till.NewRepository(pool)).WithCardCharger(stubCharger{})
+	tillSvc := till.NewService(till.NewRepository(pool)).WithCardCharger(trentonCharger())
 	auditSvc := audit.NewService(audit.NewRepository(pool), slog.Default())
 	svc := NewService(NewRepository(pool)).
 		WithLineResolver(priceSvc).
@@ -397,6 +397,17 @@ func (a trentonBranchNames) BranchNames(ctx context.Context) (map[string]string,
 		out[b.ID] = b.Name
 	}
 	return out, nil
+}
+
+// trentonChargerOverride swaps the rig's card charger for one leg (a counting charger); nil keeps the
+// deterministic stub.
+var trentonChargerOverride till.CardCharger
+
+func trentonCharger() till.CardCharger {
+	if trentonChargerOverride != nil {
+		return trentonChargerOverride
+	}
+	return stubCharger{}
 }
 
 // linkerFor resolves the ERP users.id a platform user id links to, the B4

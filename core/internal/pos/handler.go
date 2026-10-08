@@ -344,6 +344,7 @@ func (h *Handler) customerLines(w http.ResponseWriter, r *http.Request, caller g
 		CustomerID: q.Get("customer_id"),
 		BranchID:   q.Get("branch_id"),
 		Limit:      limit,
+		Number:     q.Get("number"),
 	})
 	if err != nil {
 		h.writeErr(w, r, err)

@@ -347,7 +347,7 @@ const leftShelfExpr = `CASE WHEN EXISTS (SELECT 1 FROM pos_sale ps WHERE ps.orde
 // a non-nil slice (possibly empty) limits to those branch ids. Orders arrive newest first, bounded
 // by limit; each line's open quantity is the guard's own netting (returnableQtyOpen over the shared
 // prior-return sums).
-func (r *Repository) ListCustomerReturnableOrders(ctx context.Context, customerID string, branchIDs []string, limit int) ([]CustomerOrderView, error) {
+func (r *Repository) ListCustomerReturnableOrders(ctx context.Context, customerID string, branchIDs []string, limit int, number string) ([]CustomerOrderView, error) {
 	if r.pool == nil {
 		return nil, errNoPool
 	}
@@ -366,9 +366,12 @@ WITH cust_orders AS (
        WHERE order_id = o.id AND status = 'COMMITTED'
        ORDER BY created_at DESC LIMIT 1) ps ON TRUE
     LEFT JOIN payments pay ON pay.id = ps.payment_id
+    LEFT JOIN invoices numinv ON numinv.id = ps.invoice_id
    WHERE o.customer_id = $1::uuid
      AND (ps.sale_type IS NOT NULL OR o.quote_id IS NOT NULL)
      AND ($2::text[] IS NULL OR o.branch_id::text = ANY($2::text[]))
+     AND ($4::text = '' OR upper(o.order_no) IN ($4::text, '#' || $4::text) OR upper(numinv.invoice_no) IN ($4::text, '#' || $4::text)
+          OR ($4::text ~ '^[0-9]+$' AND o.order_no LIKE '%-' || $4::text))
    ORDER BY o.created_at DESC, o.order_no DESC
    LIMIT $3
 )
@@ -386,7 +389,7 @@ SELECT co.id::text, co.order_no, co.branch_id, co.status, co.job_label, co.creat
   JOIN order_lines ol ON ol.order_id = co.id
   LEFT JOIN products p ON p.id = ol.product_id
  ORDER BY co.created_ts DESC, co.order_no DESC, ol.line_no`
-	rows, err := r.pool.Query(ctx, q, customerID, branchIDs, limit)
+	rows, err := r.pool.Query(ctx, q, customerID, branchIDs, limit, number)
 	if err != nil {
 		return nil, err
 	}
@@ -458,9 +461,51 @@ func (r *Repository) ReadReturnableLine(ctx context.Context, orderID, orderLineI
 // exceptReturnID leaves out the return whose header is already written ahead of its rail.
 func (r *Repository) SumCardRefundedTx(ctx context.Context, tx pgx.Tx, orderID, exceptReturnID string) (int64, error) {
 	var sum int64
-	err := tx.QueryRow(ctx, `SELECT COALESCE(SUM(total_cents - fee_cents - applied_cents), 0) FROM pos_returns
+	err := tx.QueryRow(ctx, `SELECT COALESCE(SUM(total_cents - fee_cents - applied_cents - offset_cents), 0) FROM pos_returns
  WHERE order_id = $1 AND refund_method = 'CARD' AND ($2 = '' OR id::text <> $2)`, orderID, exceptReturnID).Scan(&sum)
 	return sum, err
+}
+
+// querier is the one read the pool and a transaction both answer.
+type querier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+func (r *Repository) qr(tx pgx.Tx) querier {
+	if tx != nil {
+		return tx
+	}
+	return r.pool
+}
+
+// InvoiceMoney reads an invoice's total and balance, on the transaction when given, else the pool.
+func (r *Repository) InvoiceMoney(ctx context.Context, tx pgx.Tx, invoiceID string) (int64, int64, error) {
+	if tx == nil && r.pool == nil {
+		return 0, 0, errNoPool
+	}
+	var total, balance int64
+	err := r.qr(tx).QueryRow(ctx, `SELECT total_cents, balance_cents FROM invoices WHERE id = $1::uuid`, invoiceID).Scan(&total, &balance)
+	return total, balance, err
+}
+
+// SumReturnRails is what the order's earlier returns took off its invoice (offsets) and paid out in
+// cash or card (payouts), the two figures the ruling's split reads next to the invoice's own money.
+func (r *Repository) SumReturnRails(ctx context.Context, tx pgx.Tx, orderID string) (int64, int64, error) {
+	if tx == nil && r.pool == nil {
+		return 0, 0, errNoPool
+	}
+	var offsets, payouts int64
+	err := r.qr(tx).QueryRow(ctx, `
+SELECT COALESCE(SUM(offset_cents), 0),
+       COALESCE(SUM(CASE WHEN refund_method IN ('CASH','CARD') THEN total_cents - fee_cents - applied_cents - offset_cents ELSE 0 END), 0)
+  FROM pos_returns WHERE order_id = $1::uuid`, orderID).Scan(&offsets, &payouts)
+	return offsets, payouts, err
+}
+
+// SetReturnOffset records the invoice offset the account rail made for a return.
+func (r *Repository) SetReturnOffset(ctx context.Context, tx pgx.Tx, returnID string, offsetCents int64) error {
+	_, err := tx.Exec(ctx, `UPDATE pos_returns SET offset_cents = $2 WHERE id = $1::uuid`, returnID, offsetCents)
+	return err
 }
 
 // LockInvoicesTx takes the named invoices FOR NO KEY UPDATE in the order given (callers sort), the
@@ -567,14 +612,14 @@ func (r *Repository) InsertReturn(ctx context.Context, tx pgx.Tx, ret returnRow)
 INSERT INTO pos_returns (return_no, order_id, invoice_id, customer_id, branch_id, refund_method,
                          subtotal_cents, tax_cents, total_cents, fee_cents, reason, restock, till_session_id,
                          pickup_required, pickup_site, pickup_requested_date, pickup_status,
-                         idempotency_key, created_by, note_id, applied_cents)
-VALUES ('#RET-' || nextval('return_no_seq'), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+                         idempotency_key, created_by, note_id, applied_cents, offset_cents)
+VALUES ('#RET-' || nextval('return_no_seq'), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
 RETURNING id::text, return_no`
 	var id, no string
 	err := tx.QueryRow(ctx, q, ret.OrderID, ret.InvoiceID, ret.CustomerID, ret.BranchID, ret.RefundMethod,
 		ret.SubtotalCents, ret.TaxCents, ret.TotalCents, ret.FeeCents, ret.Reason, ret.Restock, nullStr(ret.TillSessionID),
 		ret.PickupRequired, ret.PickupSite, nullStr(ret.PickupDate), ret.PickupStatus,
-		ret.IdempotencyKey, nullStr(ret.CreatedBy), nullStr(ret.NoteID), ret.AppliedCents).Scan(&id, &no)
+		ret.IdempotencyKey, nullStr(ret.CreatedBy), nullStr(ret.NoteID), ret.AppliedCents, ret.OffsetCents).Scan(&id, &no)
 	return id, no, err
 }
 

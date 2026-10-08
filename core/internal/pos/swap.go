@@ -181,7 +181,7 @@ func (s *Service) swapFigures(ctx context.Context, in SwapInput) (swapFig, error
 	default:
 		return fig, errBadTender
 	}
-	credit, ocs, retProducts, err := s.previewNoteProducts(ctx, ReturnPreviewInput{CustomerID: in.CustomerID, Orders: in.Orders})
+	credit, ocs, retProducts, err := s.previewNoteProducts(ctx, ReturnPreviewInput{CustomerID: in.CustomerID, Orders: in.Orders}, false)
 	if err != nil {
 		return fig, err
 	}
@@ -206,9 +206,14 @@ func (s *Service) swapFigures(ctx context.Context, in SwapInput) (swapFig, error
 	if err != nil {
 		return fig, err
 	}
+	// The new order is priced with the relief the swap carries, exactly as the ring prices it.
+	taxReason := TaxStdON13
+	if in.Relief != nil && in.Relief.ReasonCode != "" {
+		taxReason = in.Relief.ReasonCode
+	}
 	priced, err := s.priceAndAssess(ctx, saleMoneyInput{
 		customerID: in.CustomerID, customerType: cust.CustomerType, branchID: credit.BranchID,
-		lines: in.Lines, taxReason: TaxStdON13, discount: in.Discount,
+		lines: in.Lines, taxReason: taxReason, discount: in.Discount,
 	})
 	if err != nil {
 		return fig, err
@@ -309,6 +314,32 @@ func (s *Service) Swap(ctx context.Context, in SwapInput) (SwapResult, error) {
 		return SwapResult{}, clientErr(http.StatusConflict, "pos: this swap's credit note exists without its swap; ask a manager")
 	}
 
+	// The credit side's refusals that can be known now are answered BEFORE any card is charged: the
+	// approval gate, judged on the figures the swap was priced with (the transaction judges it again,
+	// exact). A swap with a card shortfall must never charge a card and then void it for a refusal
+	// the clerk could have been told first.
+	priors := make([]int64, len(notePlan.children))
+	shares := make([]int64, len(notePlan.children))
+	for i, child := range notePlan.children {
+		prior, perr := s.store.SumCommittedReturnTotals(ctx, child.oc.OrderID)
+		if perr != nil {
+			return SwapResult{}, perr
+		}
+		priors[i], shares[i] = prior, fig.credit.Orders[i].TotalCents
+	}
+	if _, gerr := s.judgeNoteGate(fig.credit.TotalCents, priors, shares, caller, notePlan.children[0]); gerr != nil {
+		var refusal ErrRefundApprovalRequired
+		if errors.As(gerr, &refusal) {
+			s.record(ctx, audit.SensitiveAccess{
+				Action: auditActionRefundApprovalRefused, EntityType: "pos.return_note", EntityID: in.CustomerID,
+				ActorID: notePlan.actor, BranchID: branchID, Purpose: "POS_RETURN",
+				Reason: refundApprovalRequiredError,
+				Extra:  map[string]any{"amount_cents": refusal.RefundCents},
+			})
+		}
+		return SwapResult{}, gerr
+	}
+
 	saleIn := SaleInput{
 		IdempotencyKey: swapSaleKey(in.IdempotencyKey), BranchID: branchID, TillSessionID: in.TillSessionID,
 		CustomerID: in.CustomerID, SaleType: fig.saleType, Tender: fig.tender, PaymentToken: in.PaymentToken,
@@ -382,8 +413,17 @@ func (s *Service) Swap(ctx context.Context, in SwapInput) (SwapResult, error) {
 		}
 		if len(salePlan.ring.captured) > 0 {
 			salePlan.ring.rank = cardRankReversed
-			if _, cerr := s.settleFailedCardRing(ctx, salePlan.ring); cerr != nil {
+			if _, cerr := s.settleFailedCardRing(ctx, salePlan.ring); cerr != nil && !errors.Is(cerr, ErrSaleFailedCardReversed) {
+				// The compensation itself did not end clean (a manager item, an unknown): that answer.
 				return SwapResult{}, cerr
+			}
+			// The card was reversed cleanly: the clerk is told the credit side's own reason, not the
+			// reversal (a refusal in words, not a 503).
+			if isClientRefusal(txErr) {
+				return SwapResult{}, txErr
+			}
+			if !isUniqueViolationErr(txErr) && !errors.Is(txErr, errSwapTwinWon) {
+				return SwapResult{}, ErrSaleFailedCardReversed
 			}
 		}
 		// A twin of the same key won the race: answer its swap.
@@ -433,4 +473,12 @@ func (s *Service) replaySwap(ctx context.Context, key string, caller identity.St
 		SwapID: row.ID, Note: note, Sale: sale, CreditCents: row.CreditCents, AppliedCents: row.AppliedCents,
 		LeftoverCents: row.LeftoverCents, ShortfallCents: row.ShortfallCents, LeftoverMethod: row.LeftoverMethod, Replayed: true,
 	}, true, nil
+}
+
+// isClientRefusal is an error the clerk can act on, in its own words (a refusal or a 4xx), as opposed
+// to a fault: after a card was reversed cleanly, the clerk is told this, not the reversal.
+func isClientRefusal(err error) bool {
+	var ce clientError
+	var ap ErrRefundApprovalRequired
+	return errors.As(err, &ce) || errors.As(err, &ap)
 }
