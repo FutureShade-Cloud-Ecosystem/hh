@@ -64,16 +64,18 @@ func (r *Repository) FindOwingOrders(ctx context.Context, term string, branchIDs
 		SELECT o.id::text, o.order_no::text, o.customer_id::text, COALESCE(c.name,''),
 		       o.fulfillment, o.total_cents, c.payment_terms_days,
 		       COALESCE((SELECT SUM(i.balance_cents) FROM invoices i
-		                  WHERE i.order_id = o.id AND i.status IN ('FINALIZED','PARTIALLY_PAID')), 0) AS owed,
+		                  WHERE i.order_id = o.id AND i.doc_type = 'INVOICE'
+		                    AND i.status IN ('FINALIZED','PARTIALLY_PAID')), 0) AS owed,
 		       COALESCE((SELECT SUM(i.total_cents - i.balance_cents) FROM invoices i
-		                  WHERE i.order_id = o.id AND i.status <> 'DRAFT'), 0) AS paid,
+		                  WHERE i.order_id = o.id AND i.doc_type = 'INVOICE' AND i.status NOT IN ('DRAFT','VOID')), 0) AS paid,
 		       COALESCE(NULLIF(o.job_reference,''), NULLIF(o.po_job_ref,''), '') AS job
 		  FROM orders o
 		  JOIN customers c ON c.id = o.customer_id
 		 WHERE (o.total_cents - COALESCE((SELECT SUM(i.total_cents) FROM invoices i
-		                  WHERE i.order_id = o.id AND i.status <> 'DRAFT'), 0)
+		                  WHERE i.order_id = o.id AND i.doc_type = 'INVOICE' AND i.status NOT IN ('DRAFT','VOID')), 0)
 		        + COALESCE((SELECT SUM(i.balance_cents) FROM invoices i
-		                  WHERE i.order_id = o.id AND i.status IN ('FINALIZED','PARTIALLY_PAID')), 0)) > 0
+		                  WHERE i.order_id = o.id AND i.doc_type = 'INVOICE'
+		                    AND i.status IN ('FINALIZED','PARTIALLY_PAID')), 0)) > 0
 		   AND (o.order_no ILIKE $1 OR c.name ILIKE $1
 		        OR EXISTS (SELECT 1 FROM customer_contacts cc
 		                    WHERE cc.customer_id = o.customer_id AND cc.is_active AND cc.phone LIKE $1))

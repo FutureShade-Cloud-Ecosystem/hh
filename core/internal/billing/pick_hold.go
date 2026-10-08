@@ -43,8 +43,12 @@ func (r *Repository) PickHoldForOrder(ctx context.Context, orderID string) (held
 	var invoiced int64
 	// invOwed: the open balances (FINALIZED or PARTIALLY_PAID, the same
 	// statuses the dispatch gate and the aging read count). invoiced: what the
-	// order's non draft documents bill. paid: what those documents have taken,
-	// their totals less their balances.
+	// order's live INVOICE documents bill. paid: what those documents have
+	// taken, their totals less their balances. All three count only INVOICE
+	// rows that are neither DRAFT nor VOID, the predicate order_seam.go and
+	// invoice_writer.go hold: a voided invoice billed nothing (the order still
+	// owes its whole total), and a credit memo is its own document, never a
+	// skew on the order's invoiced or paid figures.
 	err = r.pool.QueryRow(ctx, `
 		SELECT o.total_cents, c.payment_terms_days,
 		       COALESCE(inv.owed, 0), COALESCE(inv.invoiced, 0), COALESCE(inv.paid, 0)
@@ -52,9 +56,9 @@ func (r *Repository) PickHoldForOrder(ctx context.Context, orderID string) (held
 		  JOIN customers c ON c.id = o.customer_id
 		  LEFT JOIN (
 		    SELECT order_id,
-		           COALESCE(SUM(balance_cents) FILTER (WHERE status IN ('FINALIZED','PARTIALLY_PAID')), 0) AS owed,
-		           COALESCE(SUM(total_cents) FILTER (WHERE status <> 'DRAFT'), 0) AS invoiced,
-		           COALESCE(SUM(total_cents - balance_cents) FILTER (WHERE status <> 'DRAFT'), 0) AS paid
+		           COALESCE(SUM(balance_cents) FILTER (WHERE doc_type = 'INVOICE' AND status IN ('FINALIZED','PARTIALLY_PAID')), 0) AS owed,
+		           COALESCE(SUM(total_cents) FILTER (WHERE doc_type = 'INVOICE' AND status NOT IN ('DRAFT','VOID')), 0) AS invoiced,
+		           COALESCE(SUM(total_cents - balance_cents) FILTER (WHERE doc_type = 'INVOICE' AND status NOT IN ('DRAFT','VOID')), 0) AS paid
 		      FROM invoices WHERE order_id = $1::uuid GROUP BY order_id
 		  ) inv ON inv.order_id = o.id
 		 WHERE o.id = $1::uuid`, orderID).

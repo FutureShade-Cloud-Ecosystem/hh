@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
@@ -280,5 +281,56 @@ func TestIntegration_PayBalance_TakeByCard_ItsDeclineAndTheRefusals(t *testing.T
 		TillSessionID: session3, IdempotencyKey: key(),
 	}); !errors.Is(err, ErrPayBalanceAlreadyPaid) {
 		t.Fatalf("the paid order refusal: %v", err)
+	}
+}
+
+// The find counts a voided invoice as unbilled (the review's void leg): the
+// order's only document is VOID, so nothing has billed its total and the find
+// must not drop the order as paid. (The owed figure it answers for such an
+// order, the whole uninvoiced total, is P2-2's one number, asserted beside it.)
+func TestIntegration_PayBalance_FindCountsAVoidedInvoiceAsUnbilled(t *testing.T) {
+	pool := intPool(t)
+	ctx := globalCtx(t, pool)
+	suffix := fmt.Sprintf("void-%d", time.Now().UnixNano()%1_000_000_000)
+	var custID, branchID, orderID, orderNo string
+	if err := pool.QueryRow(ctx, `
+		WITH c AS (INSERT INTO customers (account_no, name, customer_type, payment_terms_days, credit_limit_cents)
+		           VALUES ('PBV-'||$1, 'Void invoice proof', 'CONTRACTOR', 0, 5000000) RETURNING id)
+		INSERT INTO orders (order_no, customer_id, branch_id, status, fulfillment, subtotal_cents, total_cents)
+		SELECT '#SO-PBV-'||$1, c.id, (SELECT id FROM locations WHERE loc_type='BRANCH' LIMIT 1),
+		       'CONFIRMED', 'WILL_CALL', 10000, 10000
+		  FROM c RETURNING id::text, order_no`, suffix).Scan(&orderID, &orderNo); err != nil {
+		t.Fatalf("plant the order: %v", err)
+	}
+	defer pool.Exec(context.Background(), `DELETE FROM orders WHERE id=$1`, orderID)
+	if err := pool.QueryRow(ctx, `SELECT customer_id::text, branch_id::text FROM orders WHERE order_no=$1`, orderNo).
+		Scan(&custID, &branchID); err != nil {
+		t.Fatalf("read the planted order: %v", err)
+	}
+	defer pool.Exec(context.Background(), `DELETE FROM customers WHERE id=$1`, custID)
+	if _, err := pool.Exec(ctx, `
+INSERT INTO invoices (invoice_no, customer_id, order_id, branch_id, doc_type, status,
+                      subtotal_cents, tax_cents, total_cents, balance_cents, due_date, finalized_at)
+VALUES ('#INV-PBV-'||nextval('invoice_no_seq'), $1::uuid, $2::uuid, $3::uuid, 'INVOICE', 'VOID',
+        10000, 0, 10000, 10000, current_date, now())`, custID, orderID, branchID); err != nil {
+		t.Fatalf("plant the voided invoice: %v", err)
+	}
+	svc := realPosSvc(t, pool, stubCharger{})
+	rows, err := svc.PayBalanceFind(ctx, "#SO-PBV-"+suffix)
+	if err != nil {
+		t.Fatalf("find: %v", err)
+	}
+	var found *OwingOrder
+	for i := range rows {
+		if rows[i].OrderNo == orderNo {
+			found = &rows[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("the find dropped an order whose only invoice is VOID, want it owing its whole total")
+	}
+	if found.PaidCents != 0 {
+		t.Fatalf("the void invoice's order reads paid %d, want 0: the void billed and collected nothing",
+			found.PaidCents)
 	}
 }
