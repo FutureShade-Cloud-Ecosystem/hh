@@ -45,6 +45,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
 )
 
@@ -176,11 +177,21 @@ func ValidateARLandingPolicy(p ARLandingPolicy) (ARLandingPolicy, error) {
 
 // -- the pure bucket arithmetic -----------------------------------------------------------------
 
-// DaysPastDue counts whole days from the due date to asOf. Zero or negative is CURRENT, an invoice
-// due today is not late today, which is the answer a customer will insist on.
+// DaysPastDue counts whole days from the due date to asOf. The two arguments carry different
+// semantics and the difference is load bearing: due is a CALENDAR DATE (a DATE column's value,
+// which the scan delivers as midnight in the zone it was read, or an instant in the zone it
+// belongs to), so its day is read in the location the value itself carries and never shifted,
+// while asOf is THE CLOCK, an instant whose day is the house zone's. Reading due in the house
+// zone would age every invoice one day early (a due date scanned at midnight UTC is still the
+// previous evening in Toronto), and reading asOf at Greenwich ages an evening read one day early
+// the other way. Zero or negative is CURRENT, an invoice due today is not late today, which is
+// the answer a customer will insist on.
 func DaysPastDue(due, asOf time.Time) int {
-	d := asOf.UTC().Truncate(24 * time.Hour).Sub(due.UTC().Truncate(24 * time.Hour))
-	return int(d / (24 * time.Hour))
+	dueDay, _ := time.Parse("2006-01-02", due.Format("2006-01-02"))
+	asOfDay, _ := time.Parse("2006-01-02", houseday.Today(func() time.Time { return asOf }))
+	// Both parses take a text this function or the platform helper just formatted, so neither can
+	// fail; the dates subtract as calendar days, DST-proof because each is a midnight in one frame.
+	return int(asOfDay.Sub(dueDay) / (24 * time.Hour))
 }
 
 // BucketFor places a days-past-due count in the policy's buckets. Boundaries are INCLUSIVE at the
