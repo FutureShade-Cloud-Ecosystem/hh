@@ -477,9 +477,10 @@ paths:
         with a credit account the order already exists when the payment is
         taken; the invoice and the payment are then written together, so a
         payment that fails leaves no invoice and no balance behind. The
-        Yard manager is admitted at the cash customer's one action, on an
-        accepted quote only; the separate conversion of a quote keeps its
-        selling role rule. An order that already has an invoice raised another
+        cash customer's one action is limited to sales roles, as the
+        separate conversion of a quote is; the Yard manager holds no
+        sale, quote or payment access and is refused at both. An order
+        that already has an invoice raised another
         way (by shipment group, say) is refused with a 409 and nothing is
         raised, so the order is never billed twice. The counter's invoice does
         not move the order out of the yard: it is confirmed, picked and handed
