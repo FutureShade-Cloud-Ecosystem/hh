@@ -255,7 +255,7 @@ export class ReturnsFlow {
     if (!result.ok) {
       this.notice =
         result.status === 422
-          ? `A walk-in sale is not returned from here: ${result.error}`
+          ? result.error
           : `This customer's orders could not be read: ${result.error}`;
       this.#onChange();
       return;

@@ -698,12 +698,9 @@ export class CounterTillApp extends HHElement {
     if (field === "returns-qty" && control instanceof HTMLInputElement) {
       const line = control.getAttribute("data-line") ?? "";
       // A refused quantity (above what is open) leaves the draft as it was; the field is brought back
-      // to the draft's own answer so a refused number never sits on the screen as if it rode.
-      const answer = this.#returns.setQty(line, control.value);
-      if (!answer.ok) {
-        const stored = this.#returns.draft.qtyOf(line);
-        control.value = stored === 0 ? "" : String(stored);
-      }
+      // to the draft's own answer after the render (#syncReturnsFields), so a refused number never
+      // sits on the screen as if it rode.
+      this.#returns.setQty(line, control.value);
     }
   };
 
@@ -1113,6 +1110,27 @@ export class CounterTillApp extends HHElement {
     `;
   }
 
+  /**
+   * The Returns surface's fields are uncontrolled (the design system's position gate allows no
+   * value binding in a template), so the flow's own answer is carried to them here: each field
+   * names it in `data-value`. A text field is left alone while it has focus (the person is
+   * typing it); a number field is brought back whenever the typed number differs from the flow's,
+   * which is how a refused quantity returns to the one the draft kept, and "1." stays as typed.
+   */
+  #syncReturnsFields(): void {
+    const fields = this.renderRoot.querySelectorAll<HTMLInputElement>("input[data-value]");
+    for (const field of fields) {
+      const wanted = field.getAttribute("data-value") ?? "";
+      if (field.value === wanted) continue;
+      if (field.type === "number") {
+        if (field.value !== "" && wanted !== "" && Number(field.value) === Number(wanted)) continue;
+      } else if (this.shadowRoot?.activeElement === field) {
+        continue;
+      }
+      field.value = wanted;
+    }
+  }
+
   /** The widget's sender rides the property, never a template binding (the
    * design system's position gate refuses . bindings in dependents too). */
   protected override updated(): void {
@@ -1122,6 +1140,7 @@ export class CounterTillApp extends HHElement {
     if (termField instanceof HTMLInputElement && termField.value !== this.#payBalance.term && this.#payBalance.term !== "") {
       termField.value = this.#payBalance.term;
     }
+    this.#syncReturnsFields();
     const widget = this.renderRoot.querySelector("hh-feedback");
     if (widget instanceof HHFeedback && widget.send !== this.#feedbackSender) {
       widget.send = this.#feedbackSender;

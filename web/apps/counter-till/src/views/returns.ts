@@ -137,6 +137,8 @@ export const returnsStyles = css`
     gap: var(--hh-s-8);
   }
   .returns .matches button {
+    padding: var(--hh-s-8) var(--hh-s-12);
+    align-items: center;
     width: 100%;
     display: flex;
     justify-content: space-between;
@@ -553,7 +555,7 @@ function renderCustomerStep(flow: ReturnsFlow): TemplateResult {
         )}
         <p class="hint">
           Only this customer's orders come up on the next step: every sales order they ever bought, grouped by order or job.
-          A walk-in sale is not returned from here.
+          The house walk-in account is not a returns customer.
         </p>
         ${flow.notice === null ? nothing : html`<p class="notice" role="status" data-testid="returns-notice">${flow.notice}</p>`}
         ${flow.searching ? html`<p class="notice" role="status">Searching.</p>` : nothing}
@@ -622,7 +624,7 @@ function renderLinesStep(flow: ReturnsFlow): unknown {
                     data-field="returns-filter"
                     aria-label="Filter by sales order number"
                     placeholder="Filter by sales order number"
-                    .value=${flow.filter}
+                    data-value=${flow.filter}
                   />
                 </div>
                 ${flow.nothingOpen
@@ -697,13 +699,12 @@ function renderLine(flow: ReturnsFlow, order: CustomerOrder, line: CustomerLine)
                   <input
                     type="number"
                     min="0"
-                    max=${line.qtyOpen}
                     step="any"
                     inputmode="decimal"
                     data-field="returns-qty"
                     data-line=${line.orderLineId}
                     aria-label="Return quantity: ${line.description} on ${order.orderNo}"
-                    .value=${qty === 0 ? "" : String(qty)}
+                    data-value=${qty === 0 ? "" : String(qty)}
                   />
                   <button
                     type="button"
@@ -845,7 +846,7 @@ function renderRefundStep(flow: ReturnsFlow): TemplateResult {
                 ${order.orderNo}${order.jobLabel === "" ? "" : html` · job ${order.jobLabel}`}:
                 ${picked
                   .filter((pick) => pick.orderId === order.orderId)
-                  .map((pick) => html`<span>${shownQty(pick.qty)} ${pick.description} · ${pick.disposition === null ? "" : DISPOSITION_WORDS[pick.disposition]}; </span>`)}
+                  .map((pick, index) => html`${index > 0 ? "; " : ""}<span>${shownQty(pick.qty)} ${pick.description} · ${pick.disposition === null ? "" : DISPOSITION_WORDS[pick.disposition]}</span>`)}
               </li>
             `,
           )}
@@ -881,9 +882,9 @@ function renderRefundStep(flow: ReturnsFlow): TemplateResult {
         ${flow.method === "CARD" && flow.cardSimulated === true
           ? html`<p class="notice" role="status" data-testid="simulated-notice">Simulated refund: nothing reached a card.</p>`
           : flow.method !== null
-            ? html`<p class="notice" role="status">${railWords(flow.method)}</p>`
+            ? html`<p class="notice" role="status">This credit goes back ${railWords(flow.method)}.</p>`
             : nothing}
-        <p class="hint">The account rail is refused in the server's words where the account cannot spend credit. No restocking fee rides this credit note.</p>
+        <p class="hint">No restocking fee is taken on a credit note.</p>
         ${flow.notice === null ? nothing : html`<p class="note-stop" role="alert" data-testid="returns-notice">${flow.notice}</p>`}
         <div class="refund-actions">
           <button type="button" class="btn-primary" data-action="returns-submit" ?disabled=${!flow.canSubmit}>
@@ -916,7 +917,7 @@ function renderSwapPanel(flow: ReturnsFlow): TemplateResult {
         placeholder="Search replacement goods..."
         autocomplete="off"
         ?disabled=${frozen}
-        .value=${flow.productTerm}
+        data-value=${flow.productTerm}
       />
       ${flow.productMatches.length > 0
         ? html`<ul class="matches" aria-label="Products" data-testid="returns-products">
@@ -942,7 +943,7 @@ function renderSwapPanel(flow: ReturnsFlow): TemplateResult {
                   <span>${line.name} (${line.soldBy})</span>
                   <span class="qty" role="group" aria-label="Replacement quantity: ${line.name}">
                     <button type="button" class="btn-secondary" data-action="returns-replacement-down" data-product=${line.productId} aria-label="One fewer: ${line.name}" ?disabled=${frozen}>-</button>
-                    <input type="number" min="0" step="any" inputmode="decimal" data-field="returns-replacement-qty" data-product=${line.productId} aria-label="Replacement quantity: ${line.name}" .value=${String(line.qty)} ?disabled=${frozen} />
+                    <input type="number" min="0" step="any" inputmode="decimal" data-field="returns-replacement-qty" data-product=${line.productId} aria-label="Replacement quantity: ${line.name}" data-value=${String(line.qty)} ?disabled=${frozen} />
                     <button type="button" class="btn-secondary" data-action="returns-replacement-up" data-product=${line.productId} aria-label="One more: ${line.name}" ?disabled=${frozen}>+</button>
                   </span>
                 </li>
