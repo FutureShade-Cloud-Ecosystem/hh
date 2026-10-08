@@ -834,7 +834,7 @@ export class CounterTillApp extends HHElement {
     if (this.#flowsState.kind !== "ready") return this.#flowsState;
     return {
       kind: "ready",
-      flows: this.#flowsState.flows.filter((flow) => TILL_ENTRY_FLOWS.has(flow.flow)),
+      flows: this.#flowsState.flows.filter((flow) => flow.flow !== undefined && TILL_ENTRY_FLOWS.has(flow.flow)),
     };
   }
 

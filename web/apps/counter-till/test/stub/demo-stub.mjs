@@ -113,7 +113,7 @@ const USERS = {
   },
   "yard-team": {
     user_id: "demo-account-yard-team",
-    email: "yard.demo@dibbits.example",
+    email: "yard-team@demo.invalid",
     display_name: "Yard persona (demo)",
     role_code: "yard_team",
     role_name: "Yard Team",
@@ -122,7 +122,7 @@ const USERS = {
   },
   driver: {
     user_id: "demo-account-driver",
-    email: "driver.demo@dibbits.example",
+    email: "driver@demo.invalid",
     display_name: "Driver persona (demo)",
     role_code: "driver",
     role_name: "Driver",
