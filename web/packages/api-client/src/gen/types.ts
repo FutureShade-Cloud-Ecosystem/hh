@@ -4114,6 +4114,52 @@ export type PosSaleViewLine = {
   discount_cents?: number;
   sale_discount_cents?: number;
 };
+export type PosOwingPayment = {
+  payment_id: string;
+  method: "CASH" | "CARD" | "CHEQUE" | "EFT" | "OTHER";
+  amount_cents: number;
+};
+export type PosOwingOrder = {
+  order_id: string;
+  order_no: string;
+  customer_id: string;
+  customer_name: string;
+  job?: string;
+  fulfilment: "PICKUP" | "WILL_CALL" | "DELIVERY";
+  order_total_cents: number;
+  paid_cents: number;
+  still_owed_cents: number;
+  held_from_picking: boolean;
+  hold_words?: string;
+  payments: PosOwingPayment[];
+};
+export type PosOwingOrderList = {
+  items: PosOwingOrder[];
+};
+export type PosPayBalanceTakeInput = {
+  order_id: string;
+  method: "CASH" | "CARD";
+  amount_cents: number;
+  till_session_id: string;
+  idempotency_key: string;
+  payment_token?: string;
+  card_type?: "DEBIT" | "CREDIT" | "PREPAID" | "UNKNOWN";
+  offline?: boolean;
+};
+export type PosPayBalanceTaken = {
+  order_id: string;
+  order_no: string;
+  customer_id: string;
+  payment_id: string;
+  method: "CASH" | "CARD";
+  amount_cents: number;
+  paid_words: string;
+  released_to_picking: boolean;
+  still_owed_cents: number;
+  held_from_picking_now: boolean;
+  payments: PosOwingPayment[];
+  replayed?: boolean;
+};
 export type PosSaleSummary = {
   sale_id: string;
   order_id: string;

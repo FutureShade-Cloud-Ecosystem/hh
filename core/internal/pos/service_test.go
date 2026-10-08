@@ -85,6 +85,16 @@ type fakeStore struct {
 	pickups       map[string]ReturnPickup
 	// A-06 portal return requests (methods live in return_requests_test.go)
 	returnRequests map[string]ReturnRequest
+	// -- item 9.4, Pay balance state (pay_balance_test.go's methods) --
+	owingOrders     []OwingOrder                    // canned find answer
+	payFindTerm     string                          // the term the find passed
+	payFindBranches []string                        // the branch reach the find passed
+	payFindLimit    int                             // the limit the find passed
+	owing           map[string]payBalanceOrderFacts // order id -> its facts (the pre-read and the lock)
+	payByKey        map[string]payBalanceReplayRow  // take key -> the payments row it wrote
+	payLocks        []string                        // order ids the take locked, in order
+	settled         []settleInvoice                 // the settles the take applied
+	payTrail        []OwingPayment                  // the money trail the reads answer
 
 	seq int
 }
@@ -133,6 +143,8 @@ func newFakeStore(tr *[]string) *fakeStore {
 		staff:          map[string]string{},
 		pickups:        map[string]ReturnPickup{},
 		returnRequests: map[string]ReturnRequest{},
+		owing:          map[string]payBalanceOrderFacts{},
+		payByKey:       map[string]payBalanceReplayRow{},
 	}
 }
 

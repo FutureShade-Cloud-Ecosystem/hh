@@ -235,6 +235,31 @@ type posStore interface {
 	ListPricingOrders(ctx context.Context, branchID string, limit int) ([]PricingOrder, error)
 	// product snapshot for the pricing-doc lines (read-only sibling read, M2-debt family)
 	ReadProductSnapshot(ctx context.Context, productID string) (sku, name string, err error)
+
+	// -- item 9.4, Pay balance at the counter (pay_balance.go) --
+	// FindOwingOrders answers the orders that owe money and match the term
+	// (order number, customer name, phone), fenced to the branch reach (nil
+	// ids reach every branch). Read-only.
+	FindOwingOrders(ctx context.Context, term string, branchIDs []string, limit int) ([]OwingOrder, error)
+	// ReadOwingOrder is the advisory pool read of one order this door might
+	// pay: its facts and its whole balance. found false is the 404.
+	ReadOwingOrder(ctx context.Context, orderID string) (payBalanceOrderFacts, bool, error)
+	// FindPayBalancePaymentByKey answers the payments row a take's
+	// idempotency key already wrote (the replay fast path).
+	FindPayBalancePaymentByKey(ctx context.Context, key string) (payBalanceReplayRow, bool, error)
+	// LockPayBalanceOrderTx is the one-order writer's locked read, in the
+	// money lock order: the order row, the payments sequence row (not
+	// advancing), then the open invoice rows FOR NO KEY UPDATE ascending.
+	LockPayBalanceOrderTx(ctx context.Context, tx pgx.Tx, orderID string) (payBalanceOrderFacts, error)
+	// SettleInvoiceTx applies one payment slice to one invoice: the
+	// allocation row, the balance move with its feed stamp and status flip,
+	// and the subledger PAYMENT row.
+	SettleInvoiceTx(ctx context.Context, tx pgx.Tx, s settleInvoice) error
+	// OrderPaymentsTrailTx / OrderPaymentsTrail read the money trail (each
+	// payment so far with its method and amount) on the caller's transaction
+	// and on the pool.
+	OrderPaymentsTrailTx(ctx context.Context, tx pgx.Tx, orderID string) ([]OwingPayment, error)
+	OrderPaymentsTrail(ctx context.Context, orderID string) ([]OwingPayment, error)
 }
 
 // Service composes pricing + till + identity into one atomic Sale (and, at W7, the Return).

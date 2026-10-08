@@ -4823,6 +4823,57 @@ type PosSaleViewLine struct {
 	SaleDiscountCents *int64  `json:"sale_discount_cents,omitempty"`
 }
 
+type PosOwingPayment struct {
+	PaymentId   string `json:"payment_id"`
+	Method      string `json:"method"`
+	AmountCents int64  `json:"amount_cents"`
+}
+
+type PosOwingOrder struct {
+	OrderId         string            `json:"order_id"`
+	OrderNo         string            `json:"order_no"`
+	CustomerId      string            `json:"customer_id"`
+	CustomerName    string            `json:"customer_name"`
+	Job             *string           `json:"job,omitempty"`
+	Fulfilment      string            `json:"fulfilment"`
+	OrderTotalCents int64             `json:"order_total_cents"`
+	PaidCents       int64             `json:"paid_cents"`
+	StillOwedCents  int64             `json:"still_owed_cents"`
+	HeldFromPicking bool              `json:"held_from_picking"`
+	HoldWords       *string           `json:"hold_words,omitempty"`
+	Payments        []PosOwingPayment `json:"payments"`
+}
+
+type PosOwingOrderList struct {
+	Items []PosOwingOrder `json:"items"`
+}
+
+type PosPayBalanceTakeInput struct {
+	OrderId        string  `json:"order_id"`
+	Method         string  `json:"method"`
+	AmountCents    int64   `json:"amount_cents"`
+	TillSessionId  string  `json:"till_session_id"`
+	IdempotencyKey string  `json:"idempotency_key"`
+	PaymentToken   *string `json:"payment_token,omitempty"`
+	CardType       *string `json:"card_type,omitempty"`
+	Offline        *bool   `json:"offline,omitempty"`
+}
+
+type PosPayBalanceTaken struct {
+	OrderId            string            `json:"order_id"`
+	OrderNo            string            `json:"order_no"`
+	CustomerId         string            `json:"customer_id"`
+	PaymentId          string            `json:"payment_id"`
+	Method             string            `json:"method"`
+	AmountCents        int64             `json:"amount_cents"`
+	PaidWords          string            `json:"paid_words"`
+	ReleasedToPicking  bool              `json:"released_to_picking"`
+	StillOwedCents     int64             `json:"still_owed_cents"`
+	HeldFromPickingNow bool              `json:"held_from_picking_now"`
+	Payments           []PosOwingPayment `json:"payments"`
+	Replayed           *bool             `json:"replayed,omitempty"`
+}
+
 type PosSaleSummary struct {
 	SaleId        string    `json:"sale_id"`
 	OrderId       string    `json:"order_id"`
