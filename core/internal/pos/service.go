@@ -302,6 +302,9 @@ type Service struct {
 	restock    StockRestocker
 	cardRefund CardRefunder
 	audit      audit.Recorder
+	// deposits is billing's read of an order's live supplier deposit documents, taken on the
+	// return's transaction (returns.go). Nil releases nothing.
+	deposits DepositDocumentLister
 	// trail is the audit READ seam behind the counter settings change history (policy_history.go).
 	// Nil is an empty history, never an error.
 	trail PolicyTrailReader

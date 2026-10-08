@@ -96,7 +96,8 @@ func (c *LifecycleConsumer) onFulfilled(ctx context.Context, e notify.Event) err
 	if p.OrderID == "" {
 		return nil
 	}
-	return c.advance(ctx, e, p.OrderID, "FULFILLED")
+	// The ring's fulfilment is a fact of delivery: the explicit road, which releases the deposits.
+	return c.settle(e, p.OrderID, "FULFILLED", c.svc.AdvanceFromDelivery(ctx, p.OrderID, e.EventID))
 }
 
 // onInvoiceFinalized advances the order to INVOICED when its invoice finalizes (ar.invoice.finalized).

@@ -147,6 +147,8 @@ type Service struct {
 	invoicer MultiShipInvoicer
 	// standing is the billing read behind the yard pick notice facts (yard_pick.go); nil = none.
 	standing InvoiceStandingReader
+	// depositReleaser is billing's seam the delivery road calls (deposit_release.go); nil = none.
+	depositReleaser DepositReleaser
 	// backorderNotifier tells the rep when an order edit clears a short line's backorder (yard_pick_edit.go).
 	backorderNotifier BackorderNotifier
 	// pickHold is the billing read behind the pay before release hold (pick_hold.go,
