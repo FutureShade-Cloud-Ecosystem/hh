@@ -25585,7 +25585,7 @@ components:
                     type: string
                     description: The dollar sentence, for example "The tenders add up to $266.00, but the sale total is $300.58."
     PosSaleUnprocessable:
-      description: "A well-formed sale body the money does not fit, answered as the Error envelope carrying the refusal's own cents fields beside it. The refusal names itself in the error string and a client discriminates on the error string, never on the keys' absence: split_total_mismatch (tendered_cents and total_cents, the legs do not sum to the total); on_account_not_available (amount_cents and credit_limit_cents, the account cannot book the rest on account, zero day terms or no credit line, pay in full or take a deposit with the balance due later); deposit_not_collect_now (total_cents and deposit_cents, a collect now sale is paid in full, the goods do not leave on a part payment); cod_not_for_terms_account (message only, the pay before release sale type refused for an account that pays on terms: Cash On Demand is the account's own posture, ring the sale on account or paid in full). Every message speaks dollars and plain words; no message ever prints cents."
+      description: "A well-formed sale body the money does not fit, answered as the Error envelope carrying the refusal's own cents fields beside it. The refusal names itself in the error string and a client discriminates on the error string, never on the keys' absence: split_total_mismatch (tendered_cents and total_cents, the legs do not sum to the total); on_account_not_available (amount_cents and credit_limit_cents, the account cannot book the rest on account, zero day terms or no credit line, pay in full or take a deposit with the balance due later); deposit_not_collect_now (total_cents and deposit_cents, a collect now sale is paid in full, the goods do not leave on a part payment); cod_not_for_terms_account (message only, the pay before release sale type refused for an account that pays on terms: Cash On Demand is the account's own posture, ring the sale on account or paid in full); supplier_deposit_not_credit (message only, a supplier deposit on a shape that is not a credit account's on-account sale, it is billed to the account or taken at the counter); supplier_deposit_over_pretax (deposit_cents and subtotal_cents, the demanded deposit is more than the sale's pre-tax amount). Every message speaks dollars and plain words; no message ever prints cents."
       content:
         application/json:
           schema:
@@ -39950,6 +39950,10 @@ components:
             - CASH
             - CARD
             - CHEQUE
+        supplier_deposit_cents:
+          type: integer
+          format: int64
+          description: "What the supplier demanded on a special order, billed to a credit account at once as its own invoice (posted to Customer Deposits), never taken at the counter. Allowed only on a credit shape: an ACCOUNT tender on an account with terms and a credit line, with no counter deposit and no split; never more than the sale's pre-tax amount."
         lines:
           type: array
           items:
@@ -40051,6 +40055,17 @@ components:
           type: integer
           format: int64
           description: Taken at ring on an unpaid sale; the balance is total minus deposit
+        supplier_deposit_cents:
+          type: integer
+          format: int64
+          description: The supplier's demanded deposit billed to the account; the sale's own invoice carries the rest (total less this). Absent when none.
+        supplier_deposit_invoice_id:
+          type: string
+          format: uuid
+          description: The deposit document
+          for the receipt: null
+        supplier_deposit_invoice_no:
+          type: string
         tax_reason_code:
           type: string
           enum:
@@ -40143,6 +40158,7 @@ components:
         - total_cents
         - tax_reason_code
         - payment_options
+        - supplier_deposit
       properties:
         subtotal_cents:
           type: integer
@@ -40164,6 +40180,8 @@ components:
           description: "The payment shapes that fit the account (one per shape, always present): the menu the payment step renders from, so no screen decides a money rule. The ring still refuses per sale on the amount (the credit gate); this is what may be offered."
           items:
             $ref: "#/components/schemas/PosPaymentOption"
+        supplier_deposit:
+          $ref: "#/components/schemas/PosSupplierDepositOption"
         tax_reason_code:
           type: string
           enum:
@@ -40238,6 +40256,17 @@ components:
         tax_cents:
           type: integer
           format: int64
+    PosSupplierDepositOption:
+      type: object
+      description: "Whether the counter may mark a supplier's demanded deposit on a special order (always present): allowed exactly on the credit shape's ring, the deposit billed to the account as its own invoice. The payment step shows its control only when allowed says so."
+      required:
+        - allowed
+      properties:
+        allowed:
+          type: boolean
+        words:
+          type: string
+          description: The line the Summary and the receipt print for the billed deposit, present when allowed
     PosPaymentOption:
       type: object
       description: One payment shape the counter may offer this account. A credit customer (terms above zero and a credit line) is offered pay in full, all on account, and a deposit with the rest on account; a cash on demand account, a walk in and any no credit account are offered pay in full and a deposit with the rest due later, never on account. A credit customer on hold loses on account (the hold rule's own posture, cash or card only).

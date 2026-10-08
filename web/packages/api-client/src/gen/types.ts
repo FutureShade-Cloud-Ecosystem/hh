@@ -4013,6 +4013,7 @@ export type PosSaleInput = {
   offline: boolean;
   deposit_cents?: number;
   deposit_method?: "CASH" | "CARD" | "CHEQUE";
+  supplier_deposit_cents?: number;
   lines: PosLineInput[];
   discount?: PosDiscountInput;
   tenders?: PosTenderLegInput[];
@@ -4037,6 +4038,9 @@ export type PosSale = {
   tax_cents: number;
   total_cents: number;
   deposit_cents?: number;
+  supplier_deposit_cents?: number;
+  supplier_deposit_invoice_id?: string;
+  supplier_deposit_invoice_no?: string;
   tax_reason_code: "STD_ON_HST_13" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "MANUAL_TAX_REVIEW" | "RELIEF_DECLINED_EVIDENCE";
   status: "COMMITTED" | "VOIDED";
   replayed: boolean;
@@ -4067,6 +4071,7 @@ export type PosSalePreview = {
   tax_lines: PosSalePreviewTaxLine[];
   total_cents: number;
   payment_options: PosPaymentOption[];
+  supplier_deposit: PosSupplierDepositOption;
   tax_reason_code: "STD_ON_HST_13" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "MANUAL_TAX_REVIEW" | "RELIEF_DECLINED_EVIDENCE";
   discount_cents?: number;
   sale_discount_cents?: number;
@@ -4085,6 +4090,10 @@ export type PosSalePreviewTaxLine = {
   reason_code: string;
   rate_bps: number;
   tax_cents: number;
+};
+export type PosSupplierDepositOption = {
+  allowed: boolean;
+  words?: string;
 };
 export type PosPaymentOption = {
   shape: "PAY_IN_FULL_NOW" | "ALL_ON_ACCOUNT" | "DEPOSIT_NOW_REST_ON_ACCOUNT" | "DEPOSIT_NOW_REST_DUE_LATER";

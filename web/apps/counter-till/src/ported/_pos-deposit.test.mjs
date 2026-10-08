@@ -9,6 +9,9 @@ import {
   depositSentence,
   depositRefusalWords,
   depositButtonWords,
+  supplierDepositLine,
+  supplierDepositRefusalWords,
+  supplierDepositShown,
 } from './_pos-deposit.ts';
 import { readPreview } from './_pos-preview.ts';
 
@@ -113,4 +116,53 @@ test('depositRefusalWords passes the sale type refusal through', () => {
     'This account pays on terms, so its sale is not pay before release. Ring it on account or paid in full.',
   );
   assert.equal(depositRefusalWords({ status: 422, error: 'other' }, money), null);
+});
+
+// -- item 9.5: the supplier's demanded deposit, billed to the account --
+
+test('the supplier deposit control shows only where the server allows and the ring may carry it', () => {
+  const allowed = { allowed: true, words: 'Supplier deposit, billed to the account' };
+  const refused = { allowed: false, words: null };
+  assert.equal(supplierDepositShown(allowed, 'ACCOUNT', false), true);
+  assert.equal(supplierDepositShown(allowed, 'CASH', false), false);
+  assert.equal(supplierDepositShown(allowed, 'ACCOUNT', true), false);
+  assert.equal(supplierDepositShown(refused, 'ACCOUNT', false), false);
+});
+
+test('the supplier deposit line says what the Summary and receipt print', () => {
+  assert.equal(supplierDepositLine(25000, money), 'Supplier deposit, billed to the account: $250.00');
+});
+
+test('the supplier deposit refusals read the message first, the fixed fallback second', () => {
+  assert.equal(
+    supplierDepositRefusalWords({ status: 422, error: 'supplier_deposit_not_credit', message: 'The server words.' }),
+    'The server words.',
+  );
+  assert.notEqual(
+    supplierDepositRefusalWords({ status: 422, error: 'supplier_deposit_not_credit' }),
+    null,
+  );
+  assert.notEqual(
+    supplierDepositRefusalWords({ status: 422, error: 'supplier_deposit_over_pretax', message: '' }),
+    null,
+  );
+  assert.equal(supplierDepositRefusalWords({ status: 422, error: 'other' }), null);
+});
+
+test('the preview carries the supplier deposit allowance, whole or not at all', () => {
+  const answer = {
+    subtotal_cents: 400,
+    tax_cents: 52,
+    total_cents: 452,
+    payment_options: [],
+    supplier_deposit: { allowed: true, words: 'Supplier deposit, billed to the account' },
+  };
+  assert.deepEqual(readPreview(answer).supplierDeposit, {
+    allowed: true,
+    words: 'Supplier deposit, billed to the account',
+  });
+  const none = { ...answer, supplier_deposit: { allowed: false } };
+  assert.deepEqual(readPreview(none).supplierDeposit, { allowed: false, words: null });
+  const absent = { ...answer, supplier_deposit: undefined };
+  assert.deepEqual(readPreview(absent).supplierDeposit, { allowed: false, words: null });
 });

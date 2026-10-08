@@ -630,6 +630,9 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 
 	// Deposit bound: 0 < deposit < total (a deposit equal to the total is just a paid sale, ring it paid).
 	deposit := in.DepositCents
+	// supplierDeposit is the supplier's demanded deposit (sub item 9.5),
+	// validated against the sale's shape above.
+	supplierDeposit := in.SupplierDepositCents
 	if deposit != 0 && deposit >= total {
 		return Sale{}, errDepositTooLarge
 	}
@@ -651,6 +654,22 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 	// refusal, and its words name the two honest shapes for a terms account.
 	if codSale && cust.PaymentTermsDays > 0 {
 		return Sale{}, ErrCODNotForTermsAccount{}
+	}
+
+	// Sub item 9.5: a supplier's demanded deposit on a special order rides
+	// only a credit account's plain on-account ring (it is BILLED to the
+	// account, so the account must be one that books on account, with no
+	// counter deposit and no split beside it), and never more than the sale's
+	// pre-tax amount (the rest's invoice keeps an honest subtotal).
+	if in.SupplierDepositCents != 0 {
+		if !supplierDepositAllowedOn(tender, isSplit, deposit, cust.PaymentTermsDays, cust.CreditLimitCents) {
+			return Sale{}, ErrSupplierDepositNotCredit{
+				TermsDays: cust.PaymentTermsDays, CreditLimitCents: cust.CreditLimitCents,
+			}
+		}
+		if in.SupplierDepositCents < 0 || in.SupplierDepositCents > subtotal {
+			return Sale{}, ErrSupplierDepositOverPretax{DepositCents: in.SupplierDepositCents, SubtotalCents: subtotal}
+		}
 	}
 
 	// Item 9.2: the shape refusal. Whatever this sale would book ON ACCOUNT (a
@@ -806,6 +825,11 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 				meta["deposit_cents"] = deposit
 				meta["deposit_method"] = in.DepositMethod
 			}
+			if supplierDeposit > 0 {
+				// Sub item 9.5: the supplier's demanded deposit, billed to the
+				// account as its own invoice, the order's own display fact.
+				meta["supplier_deposit_cents"] = supplierDeposit
+			}
 			orderID, orderNo, err := s.store.InsertOrder(ctx, tx, orderRow{
 				CustomerID:    customerID,
 				BranchID:      in.BranchID,
@@ -932,22 +956,63 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 					dueDate = s.now().AddDate(0, 0, cust.PaymentTermsDays).Format("2006-01-02")
 				}
 			}
+			// Sub item 9.5: a supplier's demanded deposit rides the sale as its
+			// OWN document (FINALIZED, due from the terms, the deposit amount,
+			// the SUPPLIER_DEPOSIT source kind whose GL posting is the
+			// Customer Deposits liability), written FIRST because the sale's
+			// own invoice names it. Its own subledger INVOICE row and its own
+			// ar.invoice.finalized event ride the same transaction.
+			var supplierDepositInvoiceID, supplierDepositInvoiceNo string
+			if supplierDeposit > 0 {
+				var err error
+				supplierDepositInvoiceID, supplierDepositInvoiceNo, err = s.store.InsertInvoice(ctx, tx, invoiceRow{
+					CustomerID: customerID, OrderID: orderID, BranchID: in.BranchID, Status: "FINALIZED",
+					DueDate: dueDate, SubtotalCents: supplierDeposit, TotalCents: supplierDeposit,
+					BalanceCents: supplierDeposit, CreatedBy: actor, SourceKind: SourceSupplierDeposit,
+				})
+				if err != nil {
+					return err
+				}
+				if err := s.store.InsertInvoiceLines(ctx, tx, supplierDepositInvoiceID, nil,
+					[]orderLineRow{supplierDepositDocumentLine(lines, supplierDeposit)}); err != nil {
+					return err
+				}
+				if err := s.store.EmitEvent(ctx, tx, "ar.invoice.finalized", map[string]any{
+					"invoice_id": supplierDepositInvoiceID, "customer_id": customerID,
+					"total_cents": supplierDeposit, "due_date": dueDate,
+				}); err != nil {
+					return err
+				}
+			}
+			// The sale's own invoice carries THE REST: subtotal and total less
+			// the deposit (the account's two documents bill the sale's whole
+			// total once), the goods lines unchanged at their real prices plus
+			// the zero line naming the deposit document (the schema forbids a
+			// negative line; sale_supplier_deposit.go states the choice).
+			invLines := lines
+			invSubtotal, invTotal := subtotal, total
+			if supplierDeposit > 0 {
+				invSubtotal, invTotal = subtotal-supplierDeposit, total-supplierDeposit
+				balance -= supplierDeposit
+				invLines = append(append([]orderLineRow{}, lines...),
+					supplierDepositPointerLine(lines, supplierDepositInvoiceNo))
+			}
 			invoiceID, invoiceNo, err := s.store.InsertInvoice(ctx, tx, invoiceRow{
 				CustomerID:    customerID,
 				OrderID:       orderID,
 				BranchID:      in.BranchID,
 				Status:        invStatus,
 				DueDate:       dueDate,
-				SubtotalCents: subtotal,
+				SubtotalCents: invSubtotal,
 				TaxCents:      tax,
-				TotalCents:    total,
+				TotalCents:    invTotal,
 				BalanceCents:  balance,
 				CreatedBy:     actor,
 			})
 			if err != nil {
 				return err
 			}
-			if err := s.store.InsertInvoiceLines(ctx, tx, invoiceID, lineIDs, lines); err != nil {
+			if err := s.store.InsertInvoiceLines(ctx, tx, invoiceID, lineIDs, invLines); err != nil {
 				return err
 			}
 
@@ -961,10 +1026,20 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 			// down, landing at open + (total − captured), which is exactly the invoice's own balance.
 			running := cust.OpenBalanceCents
 			if !fullyPaid {
-				running += total
+				running += invTotal
 				if err := s.store.InsertCustomerTxn(ctx, tx, customerTxnRow{
-					CustomerID: customerID, TxnType: "INVOICE", AmountCents: total,
+					CustomerID: customerID, TxnType: "INVOICE", AmountCents: invTotal,
 					BalanceAfter: running, SourceType: "invoice", SourceRefID: invoiceID, BranchID: in.BranchID,
+				}); err != nil {
+					return err
+				}
+			}
+			if supplierDeposit > 0 {
+				running += supplierDeposit
+				if err := s.store.InsertCustomerTxn(ctx, tx, customerTxnRow{
+					CustomerID: customerID, TxnType: "INVOICE", AmountCents: supplierDeposit,
+					BalanceAfter: running, SourceType: "invoice", SourceRefID: supplierDepositInvoiceID,
+					BranchID: in.BranchID,
 				}); err != nil {
 					return err
 				}
@@ -1050,7 +1125,7 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 			// the receivable that genuinely exists. Same rules, same builders, no new posting_rules and no
 			// new topic, a split is N ordinary payment.received events, not a new kind of money.
 			if err := s.store.EmitEvent(ctx, tx, "ar.invoice.finalized", map[string]any{
-				"invoice_id": invoiceID, "customer_id": customerID, "total_cents": total, "due_date": dueDate,
+				"invoice_id": invoiceID, "customer_id": customerID, "total_cents": invTotal, "due_date": dueDate,
 			}); err != nil {
 				return err
 			}
@@ -1074,6 +1149,8 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 				OrderID: orderID, OrderNo: orderNo, InvoiceID: invoiceID, InvoiceNo: invoiceNo,
 				PaymentID: paymentID, GatewayRef: gatewayRef, Tender: tender, SaleType: saleType,
 				SubtotalCents: subtotal, TaxCents: tax, TotalCents: total, DepositCents: deposit,
+				SupplierDepositCents:     supplierDeposit,
+				SupplierDepositInvoiceID: supplierDepositInvoiceID, SupplierDepositInvoiceNo: supplierDepositInvoiceNo,
 				TaxReasonCode: taxReason, Status: "COMMITTED", SplitTender: isSplit,
 				// DIB-488 rev 6: the item-D facts echoed back; item-F change due for the sold panel.
 				POJobRef: poJobRef, SalespersonID: in.SalespersonID, SalespersonName: salespersonName,

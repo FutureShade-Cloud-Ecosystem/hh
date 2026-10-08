@@ -4691,31 +4691,32 @@ type PosReliefDecision struct {
 }
 
 type PosSaleInput struct {
-	IdempotencyKey    string               `json:"idempotency_key"`
-	BranchId          string               `json:"branch_id"`
-	TillSessionId     string               `json:"till_session_id"`
-	CustomerId        string               `json:"customer_id"`
-	SaleType          string               `json:"sale_type"`
-	Fulfilment        *string              `json:"fulfilment,omitempty"`
-	CashSale          bool                 `json:"cash_sale"`
-	Tender            string               `json:"tender"`
-	PaymentToken      string               `json:"payment_token"`
-	CardType          *string              `json:"card_type,omitempty"`
-	SignatureRef      string               `json:"signature_ref"`
-	Relief            *PosReliefDecision   `json:"relief,omitempty"`
-	RequestedDate     string               `json:"requested_date"`
-	Notes             string               `json:"notes"`
-	PoJobRef          *string              `json:"po_job_ref,omitempty"`
-	SalespersonId     *string              `json:"salesperson_id,omitempty"`
-	JobAddress        *string              `json:"job_address,omitempty"`
-	JobReference      *string              `json:"job_reference,omitempty"`
-	CashTenderedCents *int64               `json:"cash_tendered_cents,omitempty"`
-	Offline           bool                 `json:"offline"`
-	DepositCents      *int64               `json:"deposit_cents,omitempty"`
-	DepositMethod     *string              `json:"deposit_method,omitempty"`
-	Lines             []PosLineInput       `json:"lines"`
-	Discount          *PosDiscountInput    `json:"discount,omitempty"`
-	Tenders           *[]PosTenderLegInput `json:"tenders,omitempty"`
+	IdempotencyKey       string               `json:"idempotency_key"`
+	BranchId             string               `json:"branch_id"`
+	TillSessionId        string               `json:"till_session_id"`
+	CustomerId           string               `json:"customer_id"`
+	SaleType             string               `json:"sale_type"`
+	Fulfilment           *string              `json:"fulfilment,omitempty"`
+	CashSale             bool                 `json:"cash_sale"`
+	Tender               string               `json:"tender"`
+	PaymentToken         string               `json:"payment_token"`
+	CardType             *string              `json:"card_type,omitempty"`
+	SignatureRef         string               `json:"signature_ref"`
+	Relief               *PosReliefDecision   `json:"relief,omitempty"`
+	RequestedDate        string               `json:"requested_date"`
+	Notes                string               `json:"notes"`
+	PoJobRef             *string              `json:"po_job_ref,omitempty"`
+	SalespersonId        *string              `json:"salesperson_id,omitempty"`
+	JobAddress           *string              `json:"job_address,omitempty"`
+	JobReference         *string              `json:"job_reference,omitempty"`
+	CashTenderedCents    *int64               `json:"cash_tendered_cents,omitempty"`
+	Offline              bool                 `json:"offline"`
+	DepositCents         *int64               `json:"deposit_cents,omitempty"`
+	DepositMethod        *string              `json:"deposit_method,omitempty"`
+	SupplierDepositCents *int64               `json:"supplier_deposit_cents,omitempty"`
+	Lines                []PosLineInput       `json:"lines"`
+	Discount             *PosDiscountInput    `json:"discount,omitempty"`
+	Tenders              *[]PosTenderLegInput `json:"tenders,omitempty"`
 }
 
 type PosTenderLegResult struct {
@@ -4727,32 +4728,35 @@ type PosTenderLegResult struct {
 }
 
 type PosSale struct {
-	OrderId           string                `json:"order_id"`
-	OrderNo           string                `json:"order_no"`
-	InvoiceId         string                `json:"invoice_id"`
-	InvoiceNo         string                `json:"invoice_no"`
-	PaymentId         *string               `json:"payment_id,omitempty"`
-	GatewayRef        *string               `json:"gateway_ref,omitempty"`
-	Tender            string                `json:"tender"`
-	SaleType          string                `json:"sale_type"`
-	SubtotalCents     int64                 `json:"subtotal_cents"`
-	TaxCents          int64                 `json:"tax_cents"`
-	TotalCents        int64                 `json:"total_cents"`
-	DepositCents      *int64                `json:"deposit_cents,omitempty"`
-	TaxReasonCode     string                `json:"tax_reason_code"`
-	Status            string                `json:"status"`
-	Replayed          bool                  `json:"replayed"`
-	PoJobRef          *string               `json:"po_job_ref,omitempty"`
-	SalespersonId     *string               `json:"salesperson_id,omitempty"`
-	SalespersonName   *string               `json:"salesperson_name,omitempty"`
-	CashTenderedCents *int64                `json:"cash_tendered_cents,omitempty"`
-	ChangeDueCents    *int64                `json:"change_due_cents,omitempty"`
-	JobAddress        *string               `json:"job_address,omitempty"`
-	JobReference      *string               `json:"job_reference,omitempty"`
-	SplitTender       *bool                 `json:"split_tender,omitempty"`
-	Tenders           *[]PosTenderLegResult `json:"tenders,omitempty"`
-	DiscountCents     *int64                `json:"discount_cents,omitempty"`
-	Discounts         *[]PosSaleDiscount    `json:"discounts,omitempty"`
+	OrderId                  string                `json:"order_id"`
+	OrderNo                  string                `json:"order_no"`
+	InvoiceId                string                `json:"invoice_id"`
+	InvoiceNo                string                `json:"invoice_no"`
+	PaymentId                *string               `json:"payment_id,omitempty"`
+	GatewayRef               *string               `json:"gateway_ref,omitempty"`
+	Tender                   string                `json:"tender"`
+	SaleType                 string                `json:"sale_type"`
+	SubtotalCents            int64                 `json:"subtotal_cents"`
+	TaxCents                 int64                 `json:"tax_cents"`
+	TotalCents               int64                 `json:"total_cents"`
+	DepositCents             *int64                `json:"deposit_cents,omitempty"`
+	SupplierDepositCents     *int64                `json:"supplier_deposit_cents,omitempty"`
+	SupplierDepositInvoiceId *string               `json:"supplier_deposit_invoice_id,omitempty"`
+	SupplierDepositInvoiceNo *string               `json:"supplier_deposit_invoice_no,omitempty"`
+	TaxReasonCode            string                `json:"tax_reason_code"`
+	Status                   string                `json:"status"`
+	Replayed                 bool                  `json:"replayed"`
+	PoJobRef                 *string               `json:"po_job_ref,omitempty"`
+	SalespersonId            *string               `json:"salesperson_id,omitempty"`
+	SalespersonName          *string               `json:"salesperson_name,omitempty"`
+	CashTenderedCents        *int64                `json:"cash_tendered_cents,omitempty"`
+	ChangeDueCents           *int64                `json:"change_due_cents,omitempty"`
+	JobAddress               *string               `json:"job_address,omitempty"`
+	JobReference             *string               `json:"job_reference,omitempty"`
+	SplitTender              *bool                 `json:"split_tender,omitempty"`
+	Tenders                  *[]PosTenderLegResult `json:"tenders,omitempty"`
+	DiscountCents            *int64                `json:"discount_cents,omitempty"`
+	Discounts                *[]PosSaleDiscount    `json:"discounts,omitempty"`
 }
 
 type PosSalePreviewInput struct {
@@ -4766,17 +4770,18 @@ type PosSalePreviewInput struct {
 }
 
 type PosSalePreview struct {
-	SubtotalCents          int64                   `json:"subtotal_cents"`
-	TaxCents               int64                   `json:"tax_cents"`
-	TaxLines               []PosSalePreviewTaxLine `json:"tax_lines"`
-	TotalCents             int64                   `json:"total_cents"`
-	PaymentOptions         []PosPaymentOption      `json:"payment_options"`
-	TaxReasonCode          string                  `json:"tax_reason_code"`
-	DiscountCents          *int64                  `json:"discount_cents,omitempty"`
-	SaleDiscountCents      *int64                  `json:"sale_discount_cents,omitempty"`
-	TicketBaseCents        *int64                  `json:"ticket_base_cents,omitempty"`
-	TicketDiscountMaxCents *int64                  `json:"ticket_discount_max_cents,omitempty"`
-	Lines                  *[]PosSalePreviewLine   `json:"lines,omitempty"`
+	SubtotalCents          int64                    `json:"subtotal_cents"`
+	TaxCents               int64                    `json:"tax_cents"`
+	TaxLines               []PosSalePreviewTaxLine  `json:"tax_lines"`
+	TotalCents             int64                    `json:"total_cents"`
+	PaymentOptions         []PosPaymentOption       `json:"payment_options"`
+	SupplierDeposit        PosSupplierDepositOption `json:"supplier_deposit"`
+	TaxReasonCode          string                   `json:"tax_reason_code"`
+	DiscountCents          *int64                   `json:"discount_cents,omitempty"`
+	SaleDiscountCents      *int64                   `json:"sale_discount_cents,omitempty"`
+	TicketBaseCents        *int64                   `json:"ticket_base_cents,omitempty"`
+	TicketDiscountMaxCents *int64                   `json:"ticket_discount_max_cents,omitempty"`
+	Lines                  *[]PosSalePreviewLine    `json:"lines,omitempty"`
 }
 
 type PosSalePreviewLine struct {
@@ -4791,6 +4796,11 @@ type PosSalePreviewTaxLine struct {
 	ReasonCode string `json:"reason_code"`
 	RateBps    int32  `json:"rate_bps"`
 	TaxCents   int64  `json:"tax_cents"`
+}
+
+type PosSupplierDepositOption struct {
+	Allowed bool    `json:"allowed"`
+	Words   *string `json:"words,omitempty"`
 }
 
 type PosPaymentOption struct {

@@ -197,3 +197,46 @@ test("at 390 the deposit step does not scroll sideways and no label clips", asyn
   expect(read.doc).toBeLessThanOrEqual(read.view);
   expect(read.clipped).toEqual([]);
 });
+
+// Item 9.5: a supplier's demanded deposit on a special order, for a credit customer: one quiet
+// control on the payment step (shown only while the tender tiles stand and the server allows),
+// the amount billed to the account as its own invoice, and the Summary's line for it.
+test("a credit customer's supplier deposit is billed to the account", async ({ page }) => {
+  await signIn(page);
+  await pickAccount(page, "C02", "Fenwick Builders Ltd");
+  await addHolland(page);
+  await chooseWillCall(page);
+  await openStep(page, "payment");
+
+  // The control stands beside the tender tiles (pay in full now, no deposit shape chosen), only
+  // for the account tender: on Cash it is gone.
+  await expect(page.getByTestId("supplier-deposit")).toHaveCount(0);
+  await page.getByRole("button", { name: "Charge Account" }).click();
+  await expect(page.getByTestId("supplier-deposit")).toBeVisible();
+  await expect(page.getByTestId("supplier-deposit")).toContainText("Supplier asked for a deposit");
+  await page.getByTestId("supplier-deposit-amount").fill("1.00");
+  await expect(page.getByTestId("supplier-deposit")).toContainText("billed to the account");
+
+  const ringPost = page.waitForRequest(
+    (request) => request.url().endsWith("/api/v1/pos/sales") && request.method() === "POST",
+  );
+  await page.getByTestId("pos-complete-sale").click();
+  const body = (await (await ringPost).postDataJSON()) as Record<string, unknown>;
+  expect(body.tender).toBe("ACCOUNT");
+  expect(body.supplier_deposit_cents).toBe(100);
+  expect(body.deposit_cents).toBeUndefined();
+  const sold = page.getByTestId("sold-panel");
+  await expect(sold).toBeVisible();
+  await expect(sold).toContainText("Supplier deposit, billed to the account: $1.00");
+});
+
+// The Cash On Demand account never sees the control: its deposit is line one at the counter.
+test("the Cash On Demand customer sees no supplier deposit control", async ({ page }) => {
+  await signIn(page);
+  await pickAccount(page, "C10", "Cash On Demand Landscaping");
+  await addHolland(page);
+  await chooseWillCall(page);
+  await openStep(page, "payment");
+  await page.getByRole("button", { name: "Charge Account" }).click().catch(() => undefined);
+  await expect(page.getByTestId("supplier-deposit")).toHaveCount(0);
+});

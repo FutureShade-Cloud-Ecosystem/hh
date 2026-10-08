@@ -584,6 +584,8 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	var dcn ErrDepositNotCollectNow
 	var pba ErrPayBalancePartAmount
 	var cnt ErrCODNotForTermsAccount
+	var sdn ErrSupplierDepositNotCredit
+	var sdo ErrSupplierDepositOverPretax
 	switch {
 	case errors.As(err, &pba):
 		// Item 9.4, the part amount refusal, the problem body style again.
@@ -607,6 +609,18 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 			"total_cents":   dcn.TotalCents,
 			"deposit_cents": dcn.DepositCents,
 			"message":       depositNotCollectNowMessage(dcn.DepositCents, dcn.TotalCents),
+		})
+	case errors.As(err, &sdn):
+		// Sub item 9.5, the supplier deposit's shape refusal, same problem body style.
+		httpx.ErrorWith(w, http.StatusUnprocessableEntity, "supplier_deposit_not_credit", map[string]any{
+			"message": supplierDepositNotCreditMessage(sdn),
+		})
+	case errors.As(err, &sdo):
+		// Sub item 9.5, the deposit above the sale's pre-tax amount.
+		httpx.ErrorWith(w, http.StatusUnprocessableEntity, "supplier_deposit_over_pretax", map[string]any{
+			"deposit_cents":  sdo.DepositCents,
+			"subtotal_cents": sdo.SubtotalCents,
+			"message":        supplierDepositOverPretaxMessage(sdo),
 		})
 	case errors.As(err, &cnt):
 		// Item 9 review P3-7: the pay before release sale type refused for an

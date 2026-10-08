@@ -615,6 +615,18 @@ function paymentOptionsFor(customer) {
   ];
 }
 
+// Item 9.5's allowance, the core's own rule (sale_supplier_deposit.go): the supplier's demanded
+// deposit is billed to a credit account's own on-account ring, so the same facts that offer
+// ALL_ON_ACCOUNT allow it, and nobody else does.
+function supplierDepositFor(customer) {
+  const terms = customer.payment_terms_days ?? 0;
+  const limit = customer.credit_limit_cents ?? 0;
+  if (terms > 0 && limit > 0 && customer.on_hold !== true) {
+    return { allowed: true, words: "Supplier deposit, billed to the account" };
+  }
+  return { allowed: false };
+}
+
 // One resolved line: the price the engine would answer for this customer, this
 // branch, this product at this quantity. The bulk table is flat in the demo
 // world: every quantity rings at the same rule price.
@@ -1709,6 +1721,7 @@ const server = createServer(async (request, response) => {
         total_cents: subtotal + tax,
         tax_reason_code: "STD_ON_HST_13",
         payment_options: paymentOptionsFor(customer),
+        supplier_deposit: supplierDepositFor(customer),
         ticket_base_cents: subtotal + discounted.saleCents,
         ticket_discount_max_cents: subtotal + discounted.saleCents - 1,
         ...(discounted.discountCents > 0
@@ -1781,6 +1794,31 @@ const server = createServer(async (request, response) => {
             "This account cannot carry this sale on account. Pay in full now, or take a deposit with the balance due later.",
         });
         return;
+      }
+      // Item 9.5's refusals, the core's own rule: the supplier's demanded deposit rides only a
+      // credit account's plain on-account ring (it is BILLED to the account), never above the
+      // sale's pre-tax amount.
+      const requestedSupplierDeposit =
+        typeof parsed.supplier_deposit_cents === "number" &&
+        Number.isInteger(parsed.supplier_deposit_cents) &&
+        parsed.supplier_deposit_cents !== 0
+          ? parsed.supplier_deposit_cents
+          : 0;
+      if (requestedSupplierDeposit !== 0) {
+        const shapeFits =
+          tender === "ACCOUNT" &&
+          !Array.isArray(parsed.tenders) &&
+          requestedDeposit === 0 &&
+          (customer.payment_terms_days ?? 0) > 0 &&
+          (customer.credit_limit_cents ?? 0) > 0;
+        if (!shapeFits) {
+          respondJson(response, 422, {
+            error: "supplier_deposit_not_credit",
+            message:
+              "A supplier deposit is billed to a credit account, on account. This sale is not that shape: ring it as the account fits, or take the deposit at the counter.",
+          });
+          return;
+        }
       }
       // Item 9 review P3-7, the core's own ruling: the COD sale type is the
       // guard of a Cash On Demand ACCOUNT (zero day terms, the walk in). An
@@ -1867,6 +1905,15 @@ const server = createServer(async (request, response) => {
         });
       }
       const tax = taxCents(subtotal);
+      if (requestedSupplierDeposit > subtotal) {
+        respondJson(response, 422, {
+          error: "supplier_deposit_over_pretax",
+          deposit_cents: requestedSupplierDeposit,
+          subtotal_cents: subtotal,
+          message: `The supplier deposit of $${(requestedSupplierDeposit / 100).toFixed(2)} is more than the sale's pre-tax amount.`,
+        });
+        return;
+      }
       const total = subtotal + tax;
       const tenders = [];
       let cashTendered;
@@ -2064,6 +2111,10 @@ const server = createServer(async (request, response) => {
         cash_tendered_cents: cashTendered,
         change_due_cents: changeDue,
         deposit_cents: depositCents,
+        supplier_deposit_cents: requestedSupplierDeposit > 0 ? requestedSupplierDeposit : undefined,
+        supplier_deposit_invoice_id:
+          requestedSupplierDeposit > 0 ? uuidFromCounter(7000 + sales.size + 1) : undefined,
+        supplier_deposit_invoice_no: requestedSupplierDeposit > 0 ? nextDocNo("INV") : undefined,
         balance_cents: total - tenders.reduce((sum, leg) => sum + leg.amount_cents, 0),
         created_at: new Date().toISOString(),
         created_by: caller.userId,
@@ -3007,6 +3058,9 @@ function saleResponseBody(sale, replayed) {
     cash_tendered_cents: sale.cash_tendered_cents,
     change_due_cents: sale.change_due_cents,
     deposit_cents: sale.deposit_cents,
+    supplier_deposit_cents: sale.supplier_deposit_cents,
+    supplier_deposit_invoice_id: sale.supplier_deposit_invoice_id,
+    supplier_deposit_invoice_no: sale.supplier_deposit_invoice_no,
     tenders: sale.tenders,
     discount_cents: sale.discount_cents,
     discounts: sale.discounts,

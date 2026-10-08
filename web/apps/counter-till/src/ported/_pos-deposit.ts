@@ -75,3 +75,49 @@ export function depositRefusalWords(
     ? `This account cannot carry ${money(err.amount_cents as number)} on account. Pay in full now, or take a deposit with the balance due later.`
     : 'This account cannot carry that on account. Pay in full now, or take a deposit with the balance due later.';
 }
+
+// -- item 9.5: the supplier's demanded deposit, billed to the account ----------
+
+/** The control's label, board wording: the rep marks what the supplier asked for. */
+export const SUPPLIER_DEPOSIT_LABEL = 'Supplier asked for a deposit';
+
+/** The Summary and receipt line for the billed deposit: the server's words, the amount in dollars. */
+export function supplierDepositLine(cents: number, money: (c: number) => string): string {
+  return `Supplier deposit, billed to the account: ${money(cents)}`;
+}
+
+/**
+ * Whether the payment step shows the supplier deposit control: the server's own allowance, and a
+ * ring the deposit may ride (the credit ACCOUNT tender, no counter deposit shape in force). The
+ * till decides no money rule; this reads the two facts the server already answered.
+ */
+export function supplierDepositShown(
+  allowance: { allowed: boolean },
+  tender: string,
+  depositShapeActive: boolean,
+): boolean {
+  return allowance.allowed && tender === 'ACCOUNT' && !depositShapeActive;
+}
+
+/**
+ * The words for the supplier deposit refusals (422 problem bodies), or null when the error is not
+ * one of them. The server's message wins; the fixed fallbacks word the codes.
+ */
+export function supplierDepositRefusalWords(err: {
+  status: number;
+  error: string;
+  message?: string;
+  deposit_cents?: number;
+  subtotal_cents?: number;
+}): string | null {
+  if (err.error === 'supplier_deposit_not_credit') {
+    return err.message && err.message !== ''
+      ? err.message
+      : 'A supplier deposit is billed to a credit account, on account. This sale is not that shape.';
+  }
+  if (err.error === 'supplier_deposit_over_pretax') {
+    if (err.message && err.message !== '') return err.message;
+    return 'The supplier deposit is more than the sale pre-tax amount.';
+  }
+  return null;
+}

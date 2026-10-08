@@ -49,6 +49,8 @@ export type PreviewState =
       lines: PreviewDiscountLine[];
       /** The shapes the account may be offered (item 9.1), the server's list: empty when it sent none. */
       paymentOptions: PaymentOption[];
+      /** Whether the counter may mark a supplier's demanded deposit (item 9.5), the server's say. */
+      supplierDeposit: SupplierDepositAllowance;
     }
   /** The ring refused the ticket in words (a discount past what it comes off, an approver it will not take). */
   | { kind: 'refused'; words: string }
@@ -149,7 +151,21 @@ export function readPreview(answer: unknown, status = 200): PreviewState {
     ticketDiscountMaxCents: max,
     lines,
     paymentOptions: readPaymentOptions(a.payment_options),
+    supplierDeposit: readSupplierDeposit(a.supplier_deposit),
   };
+}
+
+/** The server's supplier_deposit block: absent or malformed is not allowed, never guessed. */
+export interface SupplierDepositAllowance {
+  allowed: boolean;
+  words: string | null;
+}
+
+function readSupplierDeposit(raw: unknown): SupplierDepositAllowance {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return { allowed: false, words: null };
+  const r = raw as Record<string, unknown>;
+  if (r.allowed !== true) return { allowed: false, words: null };
+  return { allowed: true, words: typeof r.words === 'string' && r.words !== '' ? r.words : null };
 }
 
 /** The server's payment_options: entries that are not a shape word are dropped, never guessed. */

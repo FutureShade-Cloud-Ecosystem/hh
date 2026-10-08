@@ -196,12 +196,16 @@ import { previewBody, previewKey, readPreview, splitMismatchWords, type PaymentO
 import {
   SHAPE_DEPOSIT_DUE_LATER,
   SHAPE_DEPOSIT_ON_ACCOUNT,
+  SUPPLIER_DEPOSIT_LABEL,
   depositButtonWords,
   depositOffered,
   depositOption,
   depositRefusalWords,
   depositRingFacts,
   depositSentence,
+  supplierDepositLine,
+  supplierDepositRefusalWords,
+  supplierDepositShown,
 } from './_pos-deposit.js';
 import { focusRing } from '@hardscapehouse/pos-kit/src/ported/styles/focus-ring.js';
 import { ModalFocus } from '@hardscapehouse/pos-kit/src/ported/modal-focus.js';
@@ -624,6 +628,8 @@ export class HosPosTerminal extends LitElement {
   @state() private codEnabled: boolean | null = null;
   @state() private fulfilment = 'PICKUP'; // COD only: the payment posture rides any fulfilment
   @state() private depositDollars = '';
+  /** Item 9.5: the supplier's demanded deposit, typed in dollars, billed to the account at once. */
+  @state() private supplierDepositDollars = '';
   @state() private depositMethod = 'CASH';
   /** Item 9.6: PAY_IN_FULL_NOW (the tender tiles), or a deposit shape the preview offered. */
   @state() private payShape = 'PAY_IN_FULL_NOW';
@@ -4079,6 +4085,28 @@ export class HosPosTerminal extends LitElement {
     return this.activeDepositShape() === '' ? 0 : this.depositCents();
   }
 
+  /** Item 9.5: the server's say on the supplier deposit (never allowed before the preview answers). */
+  private supplierDepositAllowance(): { allowed: boolean; words: string | null } {
+    return this.preview.kind === 'ready'
+      ? this.preview.supplierDeposit
+      : { allowed: false, words: null };
+  }
+
+  /** The supplier deposit the rep typed, in cents (0 when nothing readable was typed). */
+  private supplierDepositCents(): number {
+    return depositCentsFromTyped(this.supplierDepositDollars || '');
+  }
+
+  /** Whether the payment step shows the supplier deposit control (the server's allowance, the credit tender). */
+  private supplierDepositControlShown(): boolean {
+    return supplierDepositShown(this.supplierDepositAllowance(), this.payMethod, this.activeDepositShape() !== '');
+  }
+
+  /** The supplier deposit the ring sends: only while the control stands and something was typed. */
+  private supplierDepositCentsSend(): number {
+    return this.supplierDepositControlShown() ? this.supplierDepositCents() : 0;
+  }
+
   // ── customer picker (account-tender UX fix) ───────────────────────────────
   private openPicker(hint = ''): void {
     this.pickerHint = hint;
@@ -4355,6 +4383,8 @@ export class HosPosTerminal extends LitElement {
       cash_tendered_cents: sendCashTendered ? cashTendered : undefined,
       deposit_cents: deposit > 0 ? deposit : undefined,
       deposit_method: deposit > 0 ? this.depositMethod : undefined,
+      // Item 9.5: the supplier's demanded deposit, billed to the account as its own invoice.
+      supplier_deposit_cents: this.supplierDepositCentsSend() > 0 ? this.supplierDepositCentsSend() : undefined,
       lines: this.cart.map((l) => ({
         product_id: l.product.id,
         qty_entered: l.qty,
@@ -4421,6 +4451,12 @@ export class HosPosTerminal extends LitElement {
       const depositWords = depositRefusalWords(res.err, formatMoney);
       if (depositWords !== null) {
         this.ring = { state: 'error', msg: depositWords };
+        return;
+      }
+      // Item 9.5: the supplier deposit refusals, the server's message first.
+      const supplierWords = supplierDepositRefusalWords(res.err);
+      if (supplierWords !== null) {
+        this.ring = { state: 'error', msg: supplierWords };
         return;
       }
       this.ring = { state: 'error', msg: counterRingMessage(res.err) };
@@ -6542,6 +6578,30 @@ ${/* Fulfilment: the EXISTING sale types (counter / will-call / delivered / COD 
     </section>`;
   }
 
+  /**
+   * Item 9.5: one quiet control on the payment step for a credit customer, "Supplier asked for a
+   * deposit" with the amount field, shown only when the server says it is allowed (the preview's
+   * supplier_deposit). The amount is billed to the account as its own invoice; nothing is taken at
+   * the counter, so the control takes no method and moves no money on screen.
+   */
+  private renderSupplierDeposit(): TemplateResult | typeof nothing {
+    if (this.ringDone() || !this.supplierDepositControlShown()) return nothing;
+    return html`<div class="supplierdep" data-testid="supplier-deposit">
+      <label for="supplier-deposit-amount">${SUPPLIER_DEPOSIT_LABEL}</label>
+      <input
+        id="supplier-deposit-amount"
+        data-testid="supplier-deposit-amount"
+        inputmode="decimal"
+        autocomplete="off"
+        placeholder="0.00"
+        .value=${this.supplierDepositDollars}
+        ?disabled=${this.ringBusy()}
+        @input=${(e: Event) => (this.supplierDepositDollars = (e.target as HTMLInputElement).value)}
+      />
+      <span class="sdwords">billed to the account</span>
+    </div>`;
+  }
+
   /** Item 9.6: split tender, kept as a quiet secondary choice under the methods (behaviour unchanged). */
   private renderSplitEntry(): TemplateResult {
     return html`<button
@@ -6683,6 +6743,7 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
               </button>
             </div>
             ${this.renderCashTendered()}
+            ${this.renderSupplierDeposit()}
             ${this.renderCardType()}
             ${this.renderSplitEntry()}`}
 
@@ -7915,6 +7976,9 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
            TEST MODE badge). A rail that answers false, or answers nothing, claims nothing. */ ''}
         ${(sale.tender === 'CARD' || sale.tenders?.some((leg) => leg.method === 'CARD')) && this.cardRail === 'test'
           ? html`<div class="f" data-testid="sold-simulated-notice"><span class="k">Card</span><span class="v">Simulated card: no card was charged</span></div>`
+          : nothing}
+        ${(sale.supplier_deposit_cents ?? 0) > 0
+          ? html`<div class="f"><span class="k">Supplier deposit</span><span class="v">${supplierDepositLine(sale.supplier_deposit_cents ?? 0, formatMoney)}</span></div>`
           : nothing}
         ${(sale.deposit_cents ?? 0) > 0
           ? html`<div class="f"><span class="k">Deposit</span><span class="v">${formatMoney(sale.deposit_cents ?? 0)}</span></div>`

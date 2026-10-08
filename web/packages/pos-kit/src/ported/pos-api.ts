@@ -110,6 +110,11 @@ export interface SaleResult {
   tax_cents: number;
   total_cents: number;
   deposit_cents?: number; // taken at ring on an unpaid sale; balance = total − deposit
+  // ── item 9.5 ── the supplier's demanded deposit billed to the account: its own invoice, the
+  // sale's own invoice carries the rest.
+  supplier_deposit_cents?: number;
+  supplier_deposit_invoice_id?: string;
+  supplier_deposit_invoice_no?: string;
   tax_reason_code: string;
   status: string;
   replayed: boolean;
@@ -230,6 +235,8 @@ export interface SalePost {
   offline?: boolean;
   deposit_cents?: number; // unpaid-at-ring only (Charge Account / COD)
   deposit_method?: string;
+  // ── item 9.5 ── the supplier's demanded deposit, billed to a credit account as its own invoice.
+  supplier_deposit_cents?: number;
   // ── DIB-488 rev 6 ── item D (optional More-options facts) + item F (cash tendered, only sent
   // when it covers the total). All three ride the ring BODY, so stableRingKey's fingerprint
   // (JSON.stringify of the payload) re-mints the idempotency key naturally when any of them change.

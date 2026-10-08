@@ -172,6 +172,12 @@ type SalePreview struct {
 	// with the words for line two on the deposit shapes). Always present: the
 	// preview is the payment step's own read.
 	PaymentOptions []PaymentOption `json:"payment_options"`
+	// SupplierDeposit says whether the counter may mark a supplier's demanded
+	// deposit on this sale (sub item 9.5): allowed exactly on the credit
+	// shape's ring, with the words the Summary and the receipt print. Always
+	// present, so the payment step shows its control only when the server
+	// says so.
+	SupplierDeposit *SupplierDepositOption `json:"supplier_deposit"`
 	// The manual discounts the ring would apply (discount.go): the total, the ticket discount's
 	// own cents, and one row per line with its own and its share of the ticket discount, so the
 	// counter shows the server's cents and never computes one.
@@ -250,6 +256,10 @@ func (s *Service) SalePreview(ctx context.Context, in SalePreviewInput) (SalePre
 		// Item 9.1: the account's own shapes, read off the same customer the
 		// pricing already resolved (the walk in resolution included).
 		PaymentOptions: s.previewPaymentOptions(ctx, cust),
+		// Sub item 9.5: the supplier deposit's allowance rides the same read
+		// (the control the payment step shows and the guard the ring holds
+		// are one answer).
+		SupplierDeposit: s.previewSupplierDeposit(ctx, cust),
 	}
 	if priced.subtotal > 0 {
 		out.TicketBaseCents = priced.subtotal + priced.saleDiscount.AmountCents
