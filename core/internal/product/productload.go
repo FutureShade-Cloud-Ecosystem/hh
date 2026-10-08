@@ -337,7 +337,10 @@ func landedUnitSetRefusal(ctx context.Context, tx pgx.Tx, productID, orgID, base
 	// load the same names. Taking the scope row here, before the product
 	// row, gives every statement of every batch the one order. A scope
 	// row not yet drawn from answers no row and locks nothing, as before.
-	if _, err := tx.Exec(ctx, `SELECT 1 FROM scope_sequences WHERE scope = 'products' FOR UPDATE`); err != nil {
+	// The statement is a no-op write (the value is kept, no seq is drawn):
+	// it takes the same row lock the draw takes, as a write the allowlist
+	// already states for this file.
+	if _, err := tx.Exec(ctx, `UPDATE scope_sequences SET next_value = next_value WHERE scope = 'products'`); err != nil {
 		return nil, fmt.Errorf("product: load set scope lock: %w", err)
 	}
 	var locked string
