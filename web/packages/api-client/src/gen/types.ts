@@ -6130,6 +6130,11 @@ export type QuoteAcceptanceSettings = {
   allow_multi_accept: boolean;
   switch_wired: boolean;
 };
+export type QuoteSettingsGrant = {
+  can_read_acceptance: boolean;
+  can_read_scope_rules: boolean;
+  can_edit_policy: boolean;
+};
 export type QuoteAcceptanceSettingsWrite = {
   allow_multi_accept: boolean;
   reason?: string;
