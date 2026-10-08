@@ -284,7 +284,8 @@ func (r *Repository) UpsertNotificationPrefs(ctx context.Context, p Notification
 		      escalation_override = EXCLUDED.escalation_override,
 		      muted = EXCLUDED.muted,
 		      mode = EXCLUDED.mode,
-		      updated_at = now()
+		      updated_at = now(),
+		      seq = nextval(pg_get_serial_sequence('msg_notification_prefs', 'seq'))
 		RETURNING desktop_enabled, escalation_override, muted, mode, updated_at`,
 		p.ChannelID, p.UserID, p.DesktopEnabled, p.EscalationOverride, p.Muted, p.Mode).
 		Scan(&out.DesktopEnabled, &out.EscalationOverride, &out.Muted, &out.Mode, &out.UpdatedAt)
@@ -645,7 +646,8 @@ func (r *Repository) StampApprovalStatus(ctx context.Context, approvalID, status
 	}
 	ct, err := r.pool.Exec(ctx, `
 		UPDATE msg_messages
-		SET ref = jsonb_set(ref, '{status}', to_jsonb($2::text), true)
+		SET ref = jsonb_set(ref, '{status}', to_jsonb($2::text), true),
+		    seq = nextval(pg_get_serial_sequence('msg_messages', 'seq'))
 		WHERE kind = 'APPROVAL' AND event_key = $1`, approvalCardKey(approvalID), status)
 	if err != nil {
 		return 0, fmt.Errorf("stamp approval status: %w", err)
@@ -721,7 +723,8 @@ func (r *Repository) AckMessage(ctx context.Context, channelID, messageID, userI
 		INSERT INTO msg_acks (message_id, user_id, method)
 		SELECT m.id, $2, $4 FROM msg_messages m WHERE m.id = $1 AND m.channel_id = $3
 		ON CONFLICT (message_id, user_id) DO UPDATE
-		  SET method = EXCLUDED.method, acked_at = now()
+		  SET method = EXCLUDED.method, acked_at = now(),
+		      seq = nextval(pg_get_serial_sequence('msg_acks', 'seq'))
 		RETURNING message_id::text, user_id::text, method, acked_at`,
 		messageID, userID, channelID, method).
 		Scan(&a.MessageID, &a.UserID, &a.Method, &a.AckedAt)
@@ -1091,6 +1094,457 @@ func (r *Repository) RemoveChannelMember(ctx context.Context, channelID, userID 
 		`DELETE FROM msg_members WHERE channel_id = $1 AND user_id = $2 AND source = 'EXPLICIT'`,
 		channelID, userID); err != nil {
 		return fmt.Errorf("remove channel member: %w", err)
+	}
+	if err := r.bumpChannelSeq(ctx, channelID); err != nil {
+		return err
+	}
+	return nil
+}
+
+// - The sync feeds (0381): per-caller reads and the stamped writes -
+//
+// Every feed query here is fenced to ONE user's own world: the channels and
+// messages feeds join the caller's membership, the acks and prefs feeds bind
+// user_id to the caller. That fence is stronger than an org predicate on
+// these tables (which carry no org column; the GLOBAL channels cross orgs by
+// design), and it is the fence the stores in syncscope.go serve.
+
+// channelFeedRow is the channels feed's projection (the channel's intrinsic
+// facts; the per-caller unread legs are read-projections, not feed facts).
+type channelFeedRow struct {
+	ID         string    `json:"id"`
+	Kind       string    `json:"kind"`
+	BranchID   string    `json:"branch_id,omitempty"`
+	Slug       string    `json:"slug,omitempty"`
+	Name       string    `json:"name"`
+	Topic      string    `json:"topic"`
+	Tier       string    `json:"tier"`
+	IsArchived bool      `json:"is_archived"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// messageFeedRow is the messages feed's projection, the REST Message shape
+// minus the reply-count read projection.
+type messageFeedRow struct {
+	ID           string          `json:"id"`
+	ChannelID    string          `json:"channel_id"`
+	AuthorID     string          `json:"author_id,omitempty"`
+	AuthorName   string          `json:"author_name,omitempty"`
+	Kind         string          `json:"kind"`
+	Body         string          `json:"body"`
+	Ref          json.RawMessage `json:"ref,omitempty"`
+	ThreadRootID string          `json:"thread_root_id,omitempty"`
+	RequiresAck  bool            `json:"requires_ack,omitempty"`
+	Priority     string          `json:"priority,omitempty"`
+	StateKey     string          `json:"state_key,omitempty"`
+	SupersededBy string          `json:"superseded_by,omitempty"`
+	SupersededAt *time.Time      `json:"superseded_at,omitempty"`
+	CreatedAt    time.Time       `json:"created_at"`
+}
+
+// ackFeedRow is the acks feed's projection (the caller's own rows only).
+type ackFeedRow struct {
+	ID        string    `json:"id"`
+	MessageID string    `json:"message_id"`
+	UserID    string    `json:"user_id"`
+	Method    string    `json:"method"`
+	AckedAt   time.Time `json:"acked_at"`
+}
+
+// prefsFeedRow is the notify_prefs feed's projection (the caller's own rows).
+type prefsFeedRow struct {
+	ID                 string    `json:"id"`
+	ChannelID          string    `json:"channel_id"`
+	UserID             string    `json:"user_id"`
+	DesktopEnabled     bool      `json:"desktop_enabled"`
+	EscalationOverride bool      `json:"escalation_override"`
+	Muted              bool      `json:"muted"`
+	Mode               string    `json:"mode"`
+	UpdatedAt          time.Time `json:"updated_at"`
+}
+
+// syncChannelsPage returns the caller's channels past since, in seq order.
+func (r *Repository) syncChannelsPage(ctx context.Context, userID string, since int64, limit int) ([]channelFeedRow, []int64, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT ch.id::text, ch.kind, COALESCE(ch.branch_id::text,''), COALESCE(ch.slug::text,''),
+		       ch.name, ch.topic, ch.tier, ch.is_archived, ch.created_at, ch.seq
+		FROM msg_members mem
+		JOIN msg_channels ch ON ch.id = mem.channel_id
+		WHERE mem.user_id = $1 AND ch.seq > $2
+		  AND ch.deleted_at IS NULL AND ch.is_archived = FALSE
+		ORDER BY ch.seq ASC
+		LIMIT $3`, userID, since, limit)
+	if err != nil {
+		return nil, nil, fmt.Errorf("sync channels page: %w", err)
+	}
+	defer rows.Close()
+	var out []channelFeedRow
+	var seqs []int64
+	for rows.Next() {
+		var c channelFeedRow
+		var seq int64
+		if err := rows.Scan(&c.ID, &c.Kind, &c.BranchID, &c.Slug, &c.Name, &c.Topic,
+			&c.Tier, &c.IsArchived, &c.CreatedAt, &seq); err != nil {
+			return nil, nil, fmt.Errorf("sync channels scan: %w", err)
+		}
+		out = append(out, c)
+		seqs = append(seqs, seq)
+	}
+	return out, seqs, rows.Err()
+}
+
+// syncChannelLoad reads one channel under the caller's membership fence.
+func (r *Repository) syncChannelLoad(ctx context.Context, userID, channelID string) (channelFeedRow, int64, bool, error) {
+	var c channelFeedRow
+	var seq int64
+	err := r.pool.QueryRow(ctx, `
+		SELECT ch.id::text, ch.kind, COALESCE(ch.branch_id::text,''), COALESCE(ch.slug::text,''),
+		       ch.name, ch.topic, ch.tier, ch.is_archived, ch.created_at, ch.seq
+		FROM msg_members mem
+		JOIN msg_channels ch ON ch.id = mem.channel_id
+		WHERE mem.user_id = $1 AND ch.id = $2::uuid
+		  AND ch.deleted_at IS NULL AND ch.is_archived = FALSE`,
+		userID, channelID).
+		Scan(&c.ID, &c.Kind, &c.BranchID, &c.Slug, &c.Name, &c.Topic, &c.Tier, &c.IsArchived, &c.CreatedAt, &seq)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return channelFeedRow{}, 0, false, nil
+	}
+	if err != nil {
+		return channelFeedRow{}, 0, false, fmt.Errorf("sync channel load: %w", err)
+	}
+	return c, seq, true, nil
+}
+
+// syncMessagesPage returns the messages of the caller's channels past since.
+func (r *Repository) syncMessagesPage(ctx context.Context, userID string, since int64, limit int) ([]messageFeedRow, []int64, []bool, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT m.id::text, m.channel_id::text, COALESCE(m.author_id::text,''), COALESCE(u.display_name,''),
+		       m.kind, m.body, m.ref, COALESCE(m.thread_root_id::text,''),
+		       m.requires_ack, COALESCE(m.priority,''), COALESCE(m.state_key,''),
+		       COALESCE(m.superseded_by::text,''), m.superseded_at, m.created_at, m.seq,
+		       (m.deleted_at IS NOT NULL)
+		FROM msg_messages m
+		JOIN msg_members mem ON mem.channel_id = m.channel_id AND mem.user_id = $1
+		LEFT JOIN users u ON u.id = m.author_id
+		WHERE m.seq > $2
+		ORDER BY m.seq ASC
+		LIMIT $3`, userID, since, limit)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("sync messages page: %w", err)
+	}
+	defer rows.Close()
+	var out []messageFeedRow
+	var seqs []int64
+	var deleted []bool
+	for rows.Next() {
+		var m messageFeedRow
+		var ref []byte
+		var seq int64
+		var del bool
+		if err := rows.Scan(&m.ID, &m.ChannelID, &m.AuthorID, &m.AuthorName, &m.Kind, &m.Body,
+			&ref, &m.ThreadRootID, &m.RequiresAck, &m.Priority, &m.StateKey,
+			&m.SupersededBy, &m.SupersededAt, &m.CreatedAt, &seq, &del); err != nil {
+			return nil, nil, nil, fmt.Errorf("sync messages scan: %w", err)
+		}
+		if len(ref) > 0 && string(ref) != "{}" {
+			m.Ref = json.RawMessage(ref)
+		}
+		if del {
+			m.Body = "" // a tombstone never carries content
+		}
+		out = append(out, m)
+		seqs = append(seqs, seq)
+		deleted = append(deleted, del)
+	}
+	return out, seqs, deleted, rows.Err()
+}
+
+// syncMessageLoad reads one message under the caller's membership fence.
+func (r *Repository) syncMessageLoad(ctx context.Context, userID, messageID string) (messageFeedRow, int64, bool, error) {
+	var m messageFeedRow
+	var ref []byte
+	var seq int64
+	var del bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT m.id::text, m.channel_id::text, COALESCE(m.author_id::text,''), COALESCE(u.display_name,''),
+		       m.kind, m.body, m.ref, COALESCE(m.thread_root_id::text,''),
+		       m.requires_ack, COALESCE(m.priority,''), COALESCE(m.state_key,''),
+		       COALESCE(m.superseded_by::text,''), m.superseded_at, m.created_at, m.seq,
+		       (m.deleted_at IS NOT NULL)
+		FROM msg_messages m
+		JOIN msg_members mem ON mem.channel_id = m.channel_id AND mem.user_id = $1
+		LEFT JOIN users u ON u.id = m.author_id
+		WHERE m.id = $2::uuid`,
+		userID, messageID).
+		Scan(&m.ID, &m.ChannelID, &m.AuthorID, &m.AuthorName, &m.Kind, &m.Body,
+			&ref, &m.ThreadRootID, &m.RequiresAck, &m.Priority, &m.StateKey,
+			&m.SupersededBy, &m.SupersededAt, &m.CreatedAt, &seq, &del)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return messageFeedRow{}, 0, false, nil
+	}
+	if err != nil {
+		return messageFeedRow{}, 0, false, fmt.Errorf("sync message load: %w", err)
+	}
+	if len(ref) > 0 && string(ref) != "{}" {
+		m.Ref = json.RawMessage(ref)
+	}
+	if del {
+		m.Body = ""
+	}
+	return m, seq, true, nil
+}
+
+// syncMessageFindApplied resolves one idempotency key to the caller's own
+// message (the fence holds even for a row the caller has since left).
+func (r *Repository) syncMessageFindApplied(ctx context.Context, userID, key string) (string, int64, bool, error) {
+	var id string
+	var seq int64
+	err := r.pool.QueryRow(ctx, `
+		SELECT m.id::text, m.seq FROM msg_messages m
+		JOIN msg_members mem ON mem.channel_id = m.channel_id AND mem.user_id = $1
+		WHERE m.idempotency_key = $2::uuid`, userID, key).Scan(&id, &seq)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", 0, false, nil
+	}
+	if err != nil {
+		return "", 0, false, fmt.Errorf("sync message find-applied: %w", err)
+	}
+	return id, seq, true, nil
+}
+
+// syncMessageCreate writes one offline post through the module's own rules
+// (membership, the same-channel thread root) stamping the client key; the
+// identity column stamps the seq. A refused precondition answers
+// errNotFound, exactly like the REST thread-root guard.
+func (r *Repository) syncMessageCreate(ctx context.Context, authorID, channelID, body, threadRootID, key string) (string, int64, error) {
+	member, err := r.IsMember(ctx, channelID, authorID)
+	if err != nil {
+		return "", 0, err
+	}
+	if !member {
+		return "", 0, fmt.Errorf("%w: not a channel member", errNotFound)
+	}
+	var id string
+	var seq int64
+	err = r.pool.QueryRow(ctx, `
+		INSERT INTO msg_messages (channel_id, author_id, kind, body, thread_root_id, idempotency_key)
+		SELECT $1, $2, 'TEXT', $3, NULLIF($4,'')::uuid, $5::uuid
+		WHERE $4 = '' OR EXISTS (
+		        SELECT 1 FROM msg_messages root
+		        WHERE root.id = $4::uuid AND root.channel_id = $1 AND root.thread_root_id IS NULL)
+		RETURNING id::text, seq`,
+		channelID, authorID, body, threadRootID, key).Scan(&id, &seq)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", 0, fmt.Errorf("%w: thread root not in channel", errNotFound)
+	}
+	if err != nil {
+		return "", 0, fmt.Errorf("sync message create: %w", err)
+	}
+	return id, seq, nil
+}
+
+// syncAcksPage returns the caller's own ack rows past since.
+func (r *Repository) syncAcksPage(ctx context.Context, userID string, since int64, limit int) ([]ackFeedRow, []int64, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT a.id::text, a.message_id::text, a.user_id::text, a.method, a.acked_at, a.seq,
+		       (a.deleted_at IS NOT NULL) AS deleted
+		FROM msg_acks a
+		WHERE a.user_id = $1 AND a.seq > $2 AND a.deleted_at IS NULL
+		ORDER BY a.seq ASC
+		LIMIT $3`, userID, since, limit)
+	if err != nil {
+		return nil, nil, fmt.Errorf("sync acks page: %w", err)
+	}
+	defer rows.Close()
+	var out []ackFeedRow
+	var seqs []int64
+	for rows.Next() {
+		var a ackFeedRow
+		var seq int64
+		var deleted bool
+		if err := rows.Scan(&a.ID, &a.MessageID, &a.UserID, &a.Method, &a.AckedAt, &seq, &deleted); err != nil {
+			return nil, nil, fmt.Errorf("sync acks scan: %w", err)
+		}
+		if deleted {
+			continue // a tombstone never carries a projection
+		}
+		out = append(out, a)
+		seqs = append(seqs, seq)
+	}
+	return out, seqs, rows.Err()
+}
+
+// syncAckLoad reads one ack under the caller's own-row fence.
+func (r *Repository) syncAckLoad(ctx context.Context, userID, ackID string) (ackFeedRow, int64, bool, error) {
+	var a ackFeedRow
+	var seq int64
+	err := r.pool.QueryRow(ctx, `
+		SELECT a.id::text, a.message_id::text, a.user_id::text, a.method, a.acked_at, a.seq
+		FROM msg_acks a
+		WHERE a.user_id = $1 AND a.id = $2::uuid AND a.deleted_at IS NULL`,
+		userID, ackID).Scan(&a.ID, &a.MessageID, &a.UserID, &a.Method, &a.AckedAt, &seq)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ackFeedRow{}, 0, false, nil
+	}
+	if err != nil {
+		return ackFeedRow{}, 0, false, fmt.Errorf("sync ack load: %w", err)
+	}
+	return a, seq, true, nil
+}
+
+// syncAckFindApplied resolves one idempotency key to the caller's own ack.
+func (r *Repository) syncAckFindApplied(ctx context.Context, userID, key string) (string, int64, bool, error) {
+	var id string
+	var seq int64
+	err := r.pool.QueryRow(ctx, `
+		SELECT id::text, seq FROM msg_acks
+		WHERE user_id = $1 AND idempotency_key = $2::uuid`, userID, key).Scan(&id, &seq)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", 0, false, nil
+	}
+	if err != nil {
+		return "", 0, false, fmt.Errorf("sync ack find-applied: %w", err)
+	}
+	return id, seq, true, nil
+}
+
+// syncAckCreate records the caller's acknowledgement of one message through
+// the module's own rules: the write binds to (message, its channel, the
+// caller's membership), idempotent on the upsert, method validated at the
+// adapter. The key column records the latest applied key; a fresh seq is
+// drawn on both arms so the feed refreshes the row.
+func (r *Repository) syncAckCreate(ctx context.Context, userID, messageID, method, key string) (string, int64, error) {
+	var id string
+	var seq int64
+	err := r.pool.QueryRow(ctx, `
+		INSERT INTO msg_acks (message_id, user_id, method, idempotency_key, seq)
+		SELECT m.id, $2, $3, $4::uuid, nextval(pg_get_serial_sequence('msg_acks', 'seq'))
+		FROM msg_messages m
+		WHERE m.id = $1 AND EXISTS (
+		        SELECT 1 FROM msg_members mem
+		        WHERE mem.channel_id = m.channel_id AND mem.user_id = $2)
+		ON CONFLICT (message_id, user_id) DO UPDATE
+		  SET method = EXCLUDED.method, acked_at = now(),
+		      idempotency_key = EXCLUDED.idempotency_key,
+		      seq = nextval(pg_get_serial_sequence('msg_acks', 'seq'))
+		RETURNING id::text, seq`,
+		messageID, userID, method, key).Scan(&id, &seq)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", 0, fmt.Errorf("%w: message absent or not in a channel the caller belongs to", errNotFound)
+	}
+	if err != nil {
+		return "", 0, fmt.Errorf("sync ack create: %w", err)
+	}
+	return id, seq, nil
+}
+
+// syncPrefsPage returns the caller's own pref rows past since.
+func (r *Repository) syncPrefsPage(ctx context.Context, userID string, since int64, limit int) ([]prefsFeedRow, []int64, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT p.id::text, p.channel_id::text, p.user_id::text,
+		       p.desktop_enabled, p.escalation_override, p.muted, p.mode,
+		       p.updated_at, p.seq, (p.deleted_at IS NOT NULL) AS deleted
+		FROM msg_notification_prefs p
+		WHERE p.user_id = $1 AND p.seq > $2 AND p.deleted_at IS NULL
+		ORDER BY p.seq ASC
+		LIMIT $3`, userID, since, limit)
+	if err != nil {
+		return nil, nil, fmt.Errorf("sync prefs page: %w", err)
+	}
+	defer rows.Close()
+	var out []prefsFeedRow
+	var seqs []int64
+	for rows.Next() {
+		var p prefsFeedRow
+		var seq int64
+		var deleted bool
+		if err := rows.Scan(&p.ID, &p.ChannelID, &p.UserID, &p.DesktopEnabled, &p.EscalationOverride,
+			&p.Muted, &p.Mode, &p.UpdatedAt, &seq, &deleted); err != nil {
+			return nil, nil, fmt.Errorf("sync prefs scan: %w", err)
+		}
+		if deleted {
+			continue // a tombstone never carries a projection
+		}
+		out = append(out, p)
+		seqs = append(seqs, seq)
+	}
+	return out, seqs, rows.Err()
+}
+
+// syncPrefsLoad reads one pref row under the caller's own-row fence.
+func (r *Repository) syncPrefsLoad(ctx context.Context, userID, prefID string) (prefsFeedRow, int64, bool, error) {
+	var p prefsFeedRow
+	var seq int64
+	err := r.pool.QueryRow(ctx, `
+		SELECT p.id::text, p.channel_id::text, p.user_id::text,
+		       p.desktop_enabled, p.escalation_override, p.muted, p.mode, p.updated_at, p.seq
+		FROM msg_notification_prefs p
+		WHERE p.user_id = $1 AND p.id = $2::uuid AND p.deleted_at IS NULL`,
+		userID, prefID).
+		Scan(&p.ID, &p.ChannelID, &p.UserID, &p.DesktopEnabled, &p.EscalationOverride, &p.Muted, &p.Mode, &p.UpdatedAt, &seq)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return prefsFeedRow{}, 0, false, nil
+	}
+	if err != nil {
+		return prefsFeedRow{}, 0, false, fmt.Errorf("sync prefs load: %w", err)
+	}
+	return p, seq, true, nil
+}
+
+// syncPrefsFindApplied resolves one idempotency key to the caller's own row.
+func (r *Repository) syncPrefsFindApplied(ctx context.Context, userID, key string) (string, int64, bool, error) {
+	var id string
+	var seq int64
+	err := r.pool.QueryRow(ctx, `
+		SELECT id::text, seq FROM msg_notification_prefs
+		WHERE user_id = $1 AND idempotency_key = $2::uuid`, userID, key).Scan(&id, &seq)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", 0, false, nil
+	}
+	if err != nil {
+		return "", 0, false, fmt.Errorf("sync prefs find-applied: %w", err)
+	}
+	return id, seq, true, nil
+}
+
+// syncPrefsWrite upserts the caller's prefs for one channel with the client
+// key stamped and a fresh seq on both arms (a pref row has no create act
+// distinct from its write; the adapter runs the module's own merge and
+// escalation rules first).
+func (r *Repository) syncPrefsWrite(ctx context.Context, p NotificationPrefs, key string) (string, int64, error) {
+	p = applyMode(p, ModeOf(p))
+	var id string
+	var seq int64
+	err := r.pool.QueryRow(ctx, `
+		INSERT INTO msg_notification_prefs
+		  (channel_id, user_id, desktop_enabled, escalation_override, muted, mode,
+		   updated_at, idempotency_key, seq)
+		VALUES ($1, $2, $3, $4, $5, $6, now(), $7::uuid,
+		        nextval(pg_get_serial_sequence('msg_notification_prefs', 'seq')))
+		ON CONFLICT (channel_id, user_id) DO UPDATE
+		  SET desktop_enabled = EXCLUDED.desktop_enabled,
+		      escalation_override = EXCLUDED.escalation_override,
+		      muted = EXCLUDED.muted,
+		      mode = EXCLUDED.mode,
+		      updated_at = now(),
+		      idempotency_key = EXCLUDED.idempotency_key,
+		      seq = nextval(pg_get_serial_sequence('msg_notification_prefs', 'seq'))
+		RETURNING id::text, seq`,
+		p.ChannelID, p.UserID, p.DesktopEnabled, p.EscalationOverride, p.Muted, p.Mode, key).
+		Scan(&id, &seq)
+	if err != nil {
+		return "", 0, fmt.Errorf("sync prefs write: %w", err)
+	}
+	return id, seq, nil
+}
+
+// bumpChannelSeq draws a fresh channels-feed seq for one room, the tell a
+// membership change owes every device that caches the room.
+func (r *Repository) bumpChannelSeq(ctx context.Context, channelID string) error {
+	if _, err := r.pool.Exec(ctx,
+		`UPDATE msg_channels SET seq = nextval(pg_get_serial_sequence('msg_channels', 'seq'))
+		 WHERE id = $1`, channelID); err != nil {
+		return fmt.Errorf("bump channel seq: %w", err)
 	}
 	return nil
 }
