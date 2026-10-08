@@ -32,6 +32,14 @@ const PickHoldWords = "This order cannot reach picking until the balance is paid
 // and the hold stays until the balance is paid.
 const PickInProcessWords = "In process: deposit taken"
 
+// pickHoldQuerier is the read surface the pool and a caller's transaction
+// share, so the one hold read serves the pool readers (the order read, the
+// will call doors) and the guarded writers that ask inside their own
+// transaction (a sync confirm sealing its pickup, an order status move).
+type pickHoldQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 // PickHoldForOrder answers the pay before release facts in one round trip:
 // held, the money still owed, the money paid so far, and the order total. A
 // missing order answers a plain error (the caller surfaces it).
@@ -39,6 +47,20 @@ func (r *Repository) PickHoldForOrder(ctx context.Context, orderID string) (held
 	if r.pool == nil {
 		return false, 0, 0, 0, errNoDB
 	}
+	return pickHoldForOrder(ctx, r.pool, orderID)
+}
+
+// PickHoldForOrderTx is the same read on the caller's transaction: the
+// guarded writers that already hold one (the pickups sync confirm inside the
+// transaction that seals the pickup, the order module's status writers under
+// their row locks) read the hold there, so a payment landing beside them
+// cannot slip between the read and the move, and no second pool connection
+// is taken while the transaction holds its own.
+func (r *Repository) PickHoldForOrderTx(ctx context.Context, tx pgx.Tx, orderID string) (held bool, owedCents, paidCents, totalCents int64, err error) {
+	return pickHoldForOrder(ctx, tx, orderID)
+}
+
+func pickHoldForOrder(ctx context.Context, db pickHoldQuerier, orderID string) (held bool, owedCents, paidCents, totalCents int64, err error) {
 	var terms int
 	var invoiced int64
 	// invOwed: the open balances (FINALIZED or PARTIALLY_PAID, the same
@@ -49,7 +71,7 @@ func (r *Repository) PickHoldForOrder(ctx context.Context, orderID string) (held
 	// invoice_writer.go hold: a voided invoice billed nothing (the order still
 	// owes its whole total), and a credit memo is its own document, never a
 	// skew on the order's invoiced or paid figures.
-	err = r.pool.QueryRow(ctx, `
+	err = db.QueryRow(ctx, `
 		SELECT o.total_cents, c.payment_terms_days,
 		       COALESCE(inv.owed, 0), COALESCE(inv.invoiced, 0), COALESCE(inv.paid, 0)
 		  FROM orders o

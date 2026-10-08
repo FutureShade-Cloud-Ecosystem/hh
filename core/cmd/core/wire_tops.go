@@ -445,9 +445,16 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// confirm path takes, and the tenant order seam the order module's
 	// tenant-scoped reads serve. Unwired provider would refuse confirms
 	// exactly as the public path's ErrNoSignatureProvider does; wired
-	// here, both paths seal through one provider.
-	if err := ops.syncEngine.RegisterScope("pickups", dispatch.NewPickupsSyncStore(
-		pool, dispatchTenantOrders{repo: orderRepo}, dispatchSignatureAdapter{svc: posSvc}, linkedUserID(pool))); err != nil {
+	// here, both paths seal through one provider. Item 9 Opus P1-2: the
+	// confirm also takes the pick hold gate (the same billing read the
+	// public confirm consults), read inside the confirm's own
+	// transaction, with the boot fail-fast beside it.
+	pickupsSync := dispatch.NewPickupsSyncStore(
+		pool, dispatchTenantOrders{repo: orderRepo}, dispatchSignatureAdapter{svc: posSvc}, dispatchPickHoldAdapter{repo: billingRepo}, linkedUserID(pool))
+	if !pickupsSync.PickHoldGateWired() {
+		panic("dispatch: pickups sync store pick hold gate not wired - a pay before release order's pickup could be confirmed offline unpaid")
+	}
+	if err := ops.syncEngine.RegisterScope("pickups", pickupsSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 

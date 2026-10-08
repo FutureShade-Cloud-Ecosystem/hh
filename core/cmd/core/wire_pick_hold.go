@@ -10,6 +10,8 @@ package main
 import (
 	"context"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
 )
@@ -37,5 +39,12 @@ type dispatchPickHoldAdapter struct{ repo *billing.Repository }
 
 func (a dispatchPickHoldAdapter) HeldFromPicking(ctx context.Context, orderID string) (bool, int64, error) {
 	held, owed, _, _, err := a.repo.PickHoldForOrder(ctx, orderID)
+	return held, owed, err
+}
+
+// HeldFromPickingTx is the same read on a caller's transaction, the sync
+// confirm's guard inside the transaction that seals the pickup.
+func (a dispatchPickHoldAdapter) HeldFromPickingTx(ctx context.Context, tx pgx.Tx, orderID string) (bool, int64, error) {
+	held, owed, _, _, err := a.repo.PickHoldForOrderTx(ctx, tx, orderID)
 	return held, owed, err
 }
