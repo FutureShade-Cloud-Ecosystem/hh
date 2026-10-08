@@ -70,10 +70,11 @@ var qwOtherWorldTables = []string{
 	"system_settings", "demo_box",
 }
 
-// qwFreshDB creates the test's own database from zero and applies the migration set, the same
-// files and order the migrate role applies. The name is the caller's, so each world proof holds a
-// database of its own and two proofs cannot collide on one name.
-func qwFreshDB(t *testing.T, ctx context.Context, dsn, name string) (*pgxpool.Pool, string) {
+// qwCreateDB creates the test's own database from zero. The name is the caller's, so each world
+// proof holds a database of its own and two proofs cannot collide on one name. Nothing is applied
+// here: the first boot proof runs the entrypoint's steps between the empty database and migrate,
+// so the migration set has its own helper below.
+func qwCreateDB(t *testing.T, ctx context.Context, dsn, name string) (*pgxpool.Pool, string) {
 	t.Helper()
 	admin, err := pgxpool.New(ctx, swapDSNDatabase(dsn, "postgres"))
 	if err != nil {
@@ -92,20 +93,63 @@ func qwFreshDB(t *testing.T, ctx context.Context, dsn, name string) (*pgxpool.Po
 		t.Fatalf("connecting to %s: %v", name, err)
 	}
 	t.Cleanup(pool.Close)
+	return pool, testDSN
+}
+
+// qwMigrateFrozenSet runs what the migrate role runs (roles_oneshot.go migrateRole): the numbered
+// files of the frozen set, in sort order, each in one transaction, recorded in schema_migrations,
+// and an already recorded version is skipped, so a second call is the role's own no-op.
+func qwMigrateFrozenSet(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	if _, err := pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
+		version TEXT PRIMARY KEY,
+		applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`); err != nil {
+		t.Fatalf("migrate: bookkeeping table: %v", err)
+	}
 	files, err := filepath.Glob(filepath.Join("..", "..", "db", "migrations", "*.sql"))
 	if err != nil || len(files) == 0 {
 		t.Fatalf("no migrations found (err=%v)", err)
 	}
 	sort.Strings(files)
 	for _, f := range files {
+		version := strings.TrimSuffix(filepath.Base(f), ".sql")
+		var exists bool
+		if err := pool.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=$1)`, version).Scan(&exists); err != nil {
+			t.Fatalf("migrate: check %s: %v", version, err)
+		}
+		if exists {
+			continue
+		}
 		body, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatalf("reading %s: %v", filepath.Base(f), err)
 		}
-		if _, err := pool.Exec(ctx, string(body)); err != nil {
-			t.Fatalf("applying %s: %v", filepath.Base(f), err)
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("migrate: begin %s: %v", version, err)
+		}
+		if _, err := tx.Exec(ctx, string(body)); err != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatalf("migrate: applying %s: %v", filepath.Base(f), err)
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations(version) VALUES($1)`, version); err != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatalf("migrate: recording %s: %v", version, err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatalf("migrate: committing %s: %v", version, err)
 		}
 	}
+}
+
+// qwFreshDB creates the test's own database from zero and applies the migration set, the same
+// files and order the migrate role applies.
+func qwFreshDB(t *testing.T, ctx context.Context, dsn, name string) (*pgxpool.Pool, string) {
+	t.Helper()
+	pool, testDSN := qwCreateDB(t, ctx, dsn, name)
+	qwMigrateFrozenSet(t, ctx, pool)
 	return pool, testDSN
 }
 
