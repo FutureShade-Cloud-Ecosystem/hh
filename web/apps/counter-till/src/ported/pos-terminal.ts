@@ -37,6 +37,9 @@ import './pos-parked.js';
 import '@hardscapehouse/pos-kit/src/ported/pos-scan-box.js';
 import './pos-split-tender.js';
 import './pos-lookup.js';
+// The one Change order action: its import registers the surface's elements, and the surface's own
+// import registers the line edit and the edits trail it embeds.
+import './order-change.js';
 import '@hardscapehouse/pos-kit/src/ported/product-thumb.js';
 import type { RelatedDoc } from '@hardscapehouse/pos-kit/src/ported/ports.js';
 import type { PosCustomer } from '@hardscapehouse/pos-kit/src/ported/pos-customer-strip.js';
@@ -841,7 +844,7 @@ export class HosPosTerminal extends LitElement {
    */
   private refreshOrderPanels(): void {
     this.renderRoot
-      ?.querySelectorAll('hos-order-history, hos-order-edits, hos-order-edit')
+      ?.querySelectorAll('hos-order-history, hos-order-edits, hos-order-edit, hos-order-change')
       .forEach((el) => (el as HTMLElement & { reload?: () => void }).reload?.());
   }
 
@@ -7126,16 +7129,14 @@ ${this.ring.state === 'done'
                 ${/* DIB-159: the committed order's status timeline, next to where the sale + its payment
                    facts show: how the order moved from→to, by whom, when (staff-gated read). */ ''}
                 <hos-order-history order-id=${this.ring.sale.order_id}></hos-order-history>
-                ${/* DIB-175: the staff edit controls the SERVER offers for this order + the who/what/when
-                   change trail. A just-rung sale carries a finalized invoice, so the money predicate
-                   omits every line edit here and the panel renders nothing: which is the ruling made
-                   visible, not a missing feature. */ ''}
-                <hos-order-edit
+                ${/* DIB-175 and SCOPE:F10 as ONE action: "Change order" opens the line edit while
+                   the pick has not started (the server's editable_fields decide what renders, and a
+                   just-rung sale's finalized invoice omits every line edit: the ruling made
+                   visible), and the change-request flow once it has. */ ''}
+                <hos-order-change
                   order-id=${this.ring.sale.order_id}
                   @order-changed=${this.onOrderChanged}
-                ></hos-order-edit>
-                <hos-order-edits order-id=${this.ring.sale.order_id}></hos-order-edits>
-                <hos-order-change order-id=${this.ring.sale.order_id}></hos-order-change>
+                ></hos-order-change>
                 <hos-order-shipments order-id=${this.ring.sale.order_id}></hos-order-shipments>
                 ${/* DIB-489: same order again (multi-truck, or with a tweak) without re-keying it. */ ''}
                 <hos-order-duplicate
@@ -7169,12 +7170,10 @@ ${this.receiptMsg ? html`<div class="banner bad" role="alert">${this.receiptMsg}
                 ${this.lookupFound
                   ? html`<hos-order-activity order-id=${this.lookupOpenId}></hos-order-activity>
                       <hos-order-history order-id=${this.lookupOpenId}></hos-order-history>
-                      <hos-order-edit
+                      <hos-order-change
                         order-id=${this.lookupOpenId}
                         @order-changed=${this.onOrderChanged}
-                      ></hos-order-edit>
-                      <hos-order-edits order-id=${this.lookupOpenId}></hos-order-edits>
-                      <hos-order-change order-id=${this.lookupOpenId}></hos-order-change>
+                      ></hos-order-change>
                       <hos-order-shipments order-id=${this.lookupOpenId}></hos-order-shipments>
                       ${/* DIB-489: duplicate the looked-up order (a past order or a draft) as a
                          fresh DRAFT with a line picker + quantity tweaks. */ ''}
