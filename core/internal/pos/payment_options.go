@@ -117,8 +117,12 @@ func paymentOptionsFor(termsDays int, creditLimitCents int64, held bool) []Payme
 	// ring outright (ruling 11), a no credit account and the walk in have no
 	// line to draw the unpaid exposure against (the credit gate's own COD
 	// constraint), and a held credit account is back on cash or card only: none
-	// of them may be offered a shape the ring would refuse. The option carries
-	// no line two (there is no deposit) and no sentence of its own.
+	// of them may be offered a shape the ring would refuse, with ONE known
+	// exception: a Cash On Demand account on a hold is still offered the option
+	// (the preview skips the hold read for it), and the ring's credit gate then
+	// refuses it with COD_CONSTRAINT, as it did for the removed tile and the due
+	// later deposit. The option carries no line two (there is no deposit) and no
+	// sentence of its own.
 	if termsDays <= 0 && creditLimitCents > 0 {
 		sentence = SentenceCashOnDemand
 		options = append(options, PaymentOption{Shape: PaymentShapePayBeforeRelease})
@@ -140,7 +144,9 @@ func paymentOptionsFor(termsDays int, creditLimitCents int64, held bool) []Payme
 // option rides the same sale type and the same switch. With Cash On Demand off
 // (or a policy read that cannot be made), the pay before release accounts are
 // offered pay in full now only, the same fact the ring's own errCODDisabled
-// refuses on: the menu never promises a shape the ring will not take. A credit
+// refuses on: the menu does not promise a shape the ring will not take, save
+// that a held Cash On Demand account is still offered Pay Before Release and
+// the ring's credit gate refuses it (the hold read is skipped for it). A credit
 // customer's shapes ride on account, not the COD sale type, and are untouched.
 func (s *Service) previewPaymentOptions(ctx context.Context, branchID string, cust customerRec) []PaymentOption {
 	if cust.PaymentTermsDays <= 0 || cust.CreditLimitCents <= 0 {

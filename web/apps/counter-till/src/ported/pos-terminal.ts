@@ -6463,7 +6463,7 @@ ${/* Fulfilment: the EXISTING sale types (counter / will-call / delivered: the M
                 title="Delivered"
                 @click=${() => (this.saleType = 'DELIVERED')}
               >
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <path d="M2.5 6.5h12v10h-12zM14.5 10h4l2.5 3v3.5h-6.5"></path>
                   <circle cx="6.5" cy="18" r="1.8"></circle>
                   <circle cx="17" cy="18" r="1.8"></circle>
