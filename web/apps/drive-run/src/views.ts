@@ -11,6 +11,7 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { hhAddress } from "@hardscapehouse/design-system/src/address.js";
 import { HOUSE_ZONE } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
+import type { DemoFlow } from "@hardscapehouse/api-client";
 import type { DriverLine, DriverRun, DriverStop } from "./drive-api.js";
 import {
   ATTESTATION,
@@ -312,5 +313,50 @@ export function renderClose(model: CloseModel): TemplateResult {
     ${model.runs.length === 0
       ? html`<div class="card empty" data-empty><p class="empty-head">No run assigned to you today.</p></div>`
       : cards}
+  `;
+}
+
+// ---- the way in ----
+
+export type EntryFlows =
+  | { kind: "loading" }
+  | { kind: "unavailable" }
+  | { kind: "ready"; flows: readonly DemoFlow[] };
+
+export interface EntryView {
+  readonly flows: EntryFlows;
+  /** True while a mint is in flight: the card goes grey. */
+  readonly busy: boolean;
+  /** A refusal in words, shown above the card. */
+  readonly message: string | null;
+}
+
+/** The one flow this app signs in: the Driver's. The demo routes list every live role; HH Drive offers its own. */
+export const DRIVER_FLOW = "driver";
+
+/**
+ * The demo way in. It is this app's own card, not the shared entry view: the
+ * shared one draws every role's card and a list of the roles still to come,
+ * which means nothing to a driver, and carries every other role's one liner
+ * into the driver's bytes.
+ */
+export function renderEntry(view: EntryView): TemplateResult {
+  let body: TemplateResult;
+  if (view.flows.kind === "loading") {
+    body = html`<p class="dim" role="status">Loading the demo.</p>`;
+  } else if (view.flows.kind === "unavailable") {
+    body = html`<p class="alert alert-error" role="alert">The demo way in is not available on this box.</p>`;
+  } else {
+    const flow = view.flows.flows.find((f) => f.flow === DRIVER_FLOW);
+    body =
+      flow === undefined
+        ? html`<p class="alert alert-error" role="alert">The Driver card is not on this box yet.</p>`
+        : html`<button type="button" class="btn btn-primary big" data-action="choose" data-flow=${flow.flow} ?disabled=${view.busy} data-tap>${flow.label}</button>`;
+  }
+  return html`
+    <h1>HH Drive</h1>
+    <p class="dim">Your run, your stops and proof of delivery, on your phone. Demo data only.</p>
+    ${view.message !== null ? html`<p class="alert alert-error" role="alert">${view.message}</p>` : nothing}
+    ${body}
   `;
 }

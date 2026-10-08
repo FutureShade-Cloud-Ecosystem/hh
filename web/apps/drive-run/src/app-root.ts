@@ -17,23 +17,21 @@ import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
 // hos-app-header: the shared chrome element (decision log row 938).
 import "@hardscapehouse/design-system/src/header.js";
-import { ApiClient, staffFeedback } from "@hardscapehouse/api-client";
-import { HHFeedback, type FeedbackSender } from "@hardscapehouse/design-system/src/feedback.js";
+import { ApiClient } from "@hardscapehouse/api-client";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
-import { entryStyles, renderEntry, type EntryView } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { HOUSE_ZONE, houseDayInZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import { DriveApi, type DriverRun, type DriverStop } from "./drive-api.js";
 import { HANDBACK_BODY, HANDBACK_TITLE, canRecordFailure, canSign, normalizeName, roadsideError } from "./drive-logic.js";
 import { driveStyles } from "./styles.js";
 import { readyPhoto } from "./photo.js";
-import { renderClose, renderFail, renderPod, renderRunSheet, renderStopDetail } from "./views.js";
+import { renderClose, renderEntry, renderFail, renderPod, renderRunSheet, renderStopDetail, type EntryView } from "./views.js";
 
 const DEMO_ORG = "hh-demo";
 
 export class DriveRunApp extends HHElement {
-  static styles = [baseStyles, entryStyles, driveStyles];
+  static styles = [baseStyles, driveStyles];
 
   // The demo account surface: listFlows() and chooseFlow() over the core's
   // two demo routes. It is the injected AccountSurface for the auth package.
@@ -60,25 +58,8 @@ export class DriveRunApp extends HHElement {
   // The driver's calls, over the staff client.
   readonly #drive = new DriveApi(this.#staffClient);
 
-  readonly #feedback = new HHFeedback();
-
-  readonly #feedbackSender: FeedbackSender = async (request) => {
-    const answer = await staffFeedback.feedbackCreateMultipart(this.#staffClient, {
-      type: request.type,
-      message: request.message,
-      screen: request.screen,
-      url: request.url,
-      user_agent: request.userAgent,
-      images: request.images.map((image) => image.blob),
-    });
-    if (answer.ok) {
-      return { ok: true, issueNumber: answer.value.issue_number ?? "" };
-    }
-    return { ok: false, error: answer.error };
-  };
-
   // The run sheet's state. The runs are the server's answer for the dealer's
-  // day; the view is which screen shows (the run sheet or one stop).
+  // day; the view is which screen shows.
   #phase: "loading" | "ready" | "error" = "loading";
   #runs: DriverRun[] = [];
   #error = "";
@@ -86,10 +67,6 @@ export class DriveRunApp extends HHElement {
   #busy = false;
   #view: { kind: "run" } | { kind: "stop"; id: string } | { kind: "pod"; id: string } | { kind: "fail"; id: string } | { kind: "close" } =
     { kind: "run" };
-
-  // Could not deliver's draft: the reason in the driver's words.
-  #failReason = "";
-  #closing = false;
 
   // Proof of delivery's draft. The name field is not bound (the position
   // rules allow no value binding), so these mirror it from the input events.
@@ -99,14 +76,17 @@ export class DriveRunApp extends HHElement {
   #podPrefill: string | null = null;
   #photoBusy = false;
 
-  // The entry view state, compatible with renderEntry's EntryView.
+  // Could not deliver's draft: the reason in the driver's words.
+  #failReason = "";
+  #closing = false;
+
+  // The way in: this app's own card, drawn by views.ts.
   #entryView: EntryView = { flows: { kind: "loading" }, busy: false, message: null };
 
   constructor() {
     super();
     this.#demoAccount = new DemoAccount({ client: this.#demoClient });
     this.#auth = new AuthController({ account: this.#demoAccount, sessions: this.#sessions });
-    this.#feedback.send = this.#feedbackSender;
   }
 
   // The role label the header shows; set from the handoff or the mint.
@@ -290,7 +270,7 @@ export class DriveRunApp extends HHElement {
     if (result.ok) {
       this.#entryView = { flows: { kind: "ready", flows: result.value }, busy: false, message: null };
     } else {
-      this.#entryView = { flows: { kind: "unavailable", status: null }, busy: false, message: null };
+      this.#entryView = { flows: { kind: "unavailable" }, busy: false, message: null };
     }
     this.requestUpdate();
   }

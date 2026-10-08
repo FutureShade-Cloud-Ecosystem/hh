@@ -6,7 +6,11 @@ import { createServer } from "node:http";
 
 const port = Number(process.env.DRIVE_STUB_PORT ?? 4949);
 
-const FLOWS = [{ flow: "driver", role_code: "driver", label: "Driver" }];
+// The real flows route lists every live role; the app offers only its own card.
+const FLOWS = [
+  { flow: "sales", role_code: "inside_sales", label: "Sales" },
+  { flow: "driver", role_code: "driver", label: "Driver" },
+];
 
 const USERS = {
   driver: {
@@ -162,11 +166,29 @@ function findStop(id) {
   return world.stops.find((s) => s.id === id);
 }
 
+// The "poisoned" scenario is NOT the core's shape: it lays money fields on
+// every read the driver makes, to prove the app neither reads nor shows them
+// even if a server one day sent them. The clean shapes below are the core's.
+export const POISON = 987654;
+
 function runDetail() {
   const stops = stopsInOrder();
   const stopLines = {};
   for (const stop of stops) stopLines[stop.id] = LINES[stop.stop_no] ?? [];
   const run = { ...world.run, stop_count: stops.length };
+  if (scenario === "poisoned") {
+    run.gauge = { value_cents: POISON, freight_cents: POISON, band: "GREEN" };
+    for (const id of Object.keys(stopLines)) {
+      stopLines[id] = stopLines[id].map((l) => ({ ...l, unit_price: POISON, extended_cents: POISON }));
+    }
+    return {
+      ...run,
+      stops: stops.map((s) => ({ ...s, value_cents: POISON, freight_cents: POISON, total_cents: POISON, payment_hold: { held: true, amount_due_cents: POISON } })),
+      geocoded_stops: 0,
+      ungeocoded_stops: stops.length,
+      stop_lines: stopLines,
+    };
+  }
   return { ...run, stops, geocoded_stops: 0, ungeocoded_stops: stops.length, stop_lines: stopLines };
 }
 
