@@ -20,7 +20,11 @@ type yardLineChange struct{ before, after LineSnapshot }
 
 // ApplyYardPicksTx applies one recorded pick in ONE transaction under the order row lock: the lines,
 // their shortfall records, the order header money and the audit rows commit together or not at all.
-func (r *Repository) ApplyYardPicksTx(ctx context.Context, in YardPickInput, audit yardPickAudit) (YardPickOutcome, error) {
+// The precheck runs after the row lock and the status window check, joining
+// the transaction through the context (the cancel predicate's own shape), so
+// the pay before release hold reads under the lock the write holds (item 9
+// Opus P3-2).
+func (r *Repository) ApplyYardPicksTx(ctx context.Context, in YardPickInput, precheck func(context.Context) error, audit yardPickAudit) (YardPickOutcome, error) {
 	if r.pool == nil {
 		return YardPickOutcome{}, errNoDB
 	}
@@ -49,6 +53,11 @@ SELECT status, subtotal_cents, tax_cents, total_cents, COALESCE(quoted_freight_c
 	}
 	if !slices.Contains(yardPickStatuses, status) {
 		return YardPickOutcome{}, &NotEditableError{Field: FieldLineQty, Status: status}
+	}
+	if precheck != nil {
+		if err := precheck(withPrecheckTx(ctx, tx)); err != nil {
+			return YardPickOutcome{}, err
+		}
 	}
 	f.TotalBeforeCents, f.TotalAfterCents = total, total
 

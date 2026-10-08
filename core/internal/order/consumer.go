@@ -96,7 +96,8 @@ func (c *LifecycleConsumer) onFulfilled(ctx context.Context, e notify.Event) err
 	if p.OrderID == "" {
 		return nil
 	}
-	return c.advance(ctx, e, p.OrderID, "FULFILLED")
+	// The ring's fulfilment is a fact of delivery: the explicit road, which releases the deposits.
+	return c.settle(e, p.OrderID, "FULFILLED", c.svc.AdvanceFromDelivery(ctx, p.OrderID, e.EventID))
 }
 
 // onInvoiceFinalized advances the order to INVOICED when its invoice finalizes (ar.invoice.finalized).
@@ -122,6 +123,18 @@ func (c *LifecycleConsumer) onInvoiceFinalized(ctx context.Context, e notify.Eve
 	}
 	if orderID == "" {
 		return nil // invoice missing or not bound to an order, nothing to advance
+	}
+	// Item 9 Opus P2-2, the INVOICED driver's own ruling (the supervisor's
+	// default, pending the principal's answer): an order that owes under a
+	// pay before release shape stays where it is when its invoice finalizes
+	// (CONFIRMED, in process) instead of jumping to INVOICED past the whole
+	// ladder; once paid in full the order moves on as any order does, through
+	// the normal doors, which all carry the hold. The status writer's own
+	// guard (holdGuardedTarget) refuses the move anyway; this skip is the
+	// decision itself, kept here so it can be reverted alone.
+	if h := c.svc.payHoldView(ctx, orderID, ""); h != nil && h.HeldFromPicking {
+		c.info("invoice finalized on an order that owes, it stays where it is until the balance is paid", e, orderID)
+		return nil
 	}
 	if p.Source == counterInvoiceSource {
 		// QD-5: an invoice raised at the counter bills goods that may still be in the yard. It moves
@@ -154,6 +167,14 @@ func (c *LifecycleConsumer) advance(ctx context.Context, e notify.Event, orderID
 func (c *LifecycleConsumer) settle(e notify.Event, orderID, target string, err error) error {
 	switch {
 	case err == nil, errors.Is(err, ErrNoTransition):
+		return nil
+	case errors.Is(err, ErrHeldFromPicking):
+		// Item 9 Opus P2-2: the order owes money under a pay before release
+		// shape, so it stays where it is until the balance is paid. Not an
+		// error: a non-owning observer must never fail or retry a financial
+		// row on the hold, and once paid the order moves on as any order
+		// does, through the normal doors (which all carry the hold).
+		c.info("held, stayed put on the "+target+" advance until the balance is paid", e, orderID)
 		return nil
 	case errors.Is(err, ErrIllegalTransition):
 		// Not a failure: the ladder refused a non-forward move. Logged so an unexpected pattern is

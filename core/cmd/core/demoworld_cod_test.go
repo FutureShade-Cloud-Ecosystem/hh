@@ -19,15 +19,15 @@ package main
 // cannot order. It sits at the branch the demo logins work, under a role label name a tester can
 // find and type.
 //
-// THE PATH, walked end to end through the real routes, asserting only what the product does
-// TODAY: the picker finds the account by name at Trenton and answers its zero-day terms; the
-// accepted quote CONVERTS against the credit line, and the converted order is NOT held, the
-// dispatch rule reading the invoiced balance and conversion invoicing nothing, a hold before the
-// invoice exists being planned work (the principal's decision log, row 1047 item 6); the COD ring
-// at the till creates the sale unpaid with its whole balance outstanding, and the product's own
-// dispatch rule (the real billing service over the seeded rows) holds THAT order with PAYMENT DUE
-// naming the COD account; once the payment is recorded through the AR route, the same rule lets
-// the goods go. The last half is the definition as a test: the account is never barred from
+// THE PATH, walked end to end through the real routes, asserting what the product does: the
+// picker finds the account by name at Trenton and answers its zero-day terms; the accepted quote
+// CONVERTS against the credit line, and the converted order is HELD FROM PICKING (the row 1047
+// item 6 work, order/pick_hold.go reading the money wider than the dispatch gate: an uninvoiced
+// remainder counts as owed) while the DISPATCH rule, reading invoiced balances only, still lets it
+// schedule; the COD ring at the till creates the sale unpaid with its whole balance outstanding,
+// and both rules hold THAT order (the dispatch one with PAYMENT DUE naming the COD account, the
+// picking one with its own words); once the payment is recorded through the AR route, both rules
+// let the goods go. The last half is the definition as a test: the account is never barred from
 // buying or from paying, only from having goods leave before the money arrives.
 //
 // The database gate is the demo world proofs' own variable, and the harness refuses an address
@@ -192,10 +192,9 @@ func TestDemoWorld_CashOnDemand(t *testing.T) {
 	}
 
 	// 4. CONVERT TO ORDER: the account's credit line carries the conversion and the quote becomes an
-	// order. THAT ORDER IS NOT HELD TODAY, and the next step asserts it honestly: the dispatch rule
-	// reads the invoiced balance, conversion invoices nothing, and holding a Cash On Demand order
-	// before its invoice exists is planned work (the principal's decision log, row 1047 item 6), not
-	// built. The held path today is the till's, the step after.
+	// order. THE ORDER IS HELD FROM PICKING, the row 1047 item 6 work made real: the picking hold
+	// reads the money wider than the dispatch rule, an uninvoiced remainder counts as owed, so the
+	// converted order waits for its balance. The step after asserts both rules' own answers.
 	conv := sales.call("POST", "/api/v1/quotes/"+quoteID+"/convert", nil)
 	conv.ok(t, http.StatusCreated)
 	var converted struct {
@@ -207,14 +206,24 @@ func TestDemoWorld_CashOnDemand(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT status FROM quotes WHERE id = $1`, quoteID).Scan(&quoteStatus); err != nil || quoteStatus != "CONVERTED" {
 		t.Errorf("the quote is %s after conversion (%v), want CONVERTED", quoteStatus, err)
 	}
+	// The picking door refuses the converted, uninvoiced, unpaid order (item 9.3): the mandated
+	// words, the stable word held_from_picking.
+	pick := sales.call("POST", "/api/v1/orders/"+converted.OrderID+"/picking", nil)
+	pick.ok(t, http.StatusConflict)
+	var pickRefusal struct {
+		Error   string `json:"error"`
+		Message string `json:"message"`
+	}
+	pick.decode(t, &pickRefusal)
+	if pickRefusal.Error != "held_from_picking" {
+		t.Errorf("the picking refusal on the converted order carries %q, want held_from_picking", pickRefusal.Error)
+	}
 
-	// 5. THE PRODUCT'S OWN RULE, the defining one (billing/credit_gate.go CanDispatch, "the defining
-	// rule of a COD account"), over the real service and the seeded rows. Its unpaid figure is the
-	// INVOICED balance (billing/credit_repository.go OrderDispatchFacts), so the freshly converted
-	// order, invoiced by nobody yet, owes nothing and is free to prepare: TODAY the rule holds money
-	// owed, not orders in the abstract, and the account's money goes on the line at the till, which
-	// is the next step. (The stronger reading, holding the converted order before picking, is the
-	// planned work named above, row 1047 item 6; this proof asserts the product as it ships.)
+	// 5. THE PRODUCT'S OWN DISPATCH RULE, the defining one (billing/credit_gate.go CanDispatch, "the
+	// defining rule of a COD account"), over the real service and the seeded rows. Its unpaid figure
+	// is the INVOICED balance (billing/credit_repository.go OrderDispatchFacts), so the freshly
+	// converted order, invoiced by nobody yet, is free to SCHEDULE: the dispatch gate keeps its own
+	// reading beside the picking hold, and this proof asserts both, each its own rule.
 	gate := billing.NewCreditService(billing.NewRepository(pool))
 	allowed, reason := gate.CanDispatch(ctx, converted.OrderID)
 	if !allowed || reason != "" {
@@ -226,6 +235,11 @@ func TestDemoWorld_CashOnDemand(t *testing.T) {
 	drawer := sales.call("POST", "/api/v1/till/sessions", map[string]any{
 		"branch_id": trentonBranchID, "station": "MAIN", "float_cents": demoDrawerFloatCents})
 	drawer.ok(t, http.StatusCreated)
+	var drawerBody struct {
+		ID string `json:"id"`
+	}
+	drawer.decode(t, &drawerBody)
+	drawerSessionID := drawerBody.ID
 	codRing := sales.call("POST", "/api/v1/pos/sales", demoSaleBody{
 		IdempotencyKey: uuid.NewString(),
 		BranchID:       trentonBranchID,
@@ -258,9 +272,19 @@ func TestDemoWorld_CashOnDemand(t *testing.T) {
 	if allowed, reason := gate.CanDispatch(ctx, ring.OrderID); allowed || !strings.Contains(reason, "COD") {
 		t.Errorf("the product's dispatch rule read the COD sale's order as (%v, %q), want the same PAYMENT DUE refusal", allowed, reason)
 	}
+	// And the picking hold holds the till's unpaid order the same way (item 9.3).
+	ringPick := sales.call("POST", "/api/v1/orders/"+ring.OrderID+"/picking", nil)
+	ringPick.ok(t, http.StatusConflict)
+	var ringRefusal struct {
+		Error string `json:"error"`
+	}
+	ringPick.decode(t, &ringRefusal)
+	if ringRefusal.Error != "held_from_picking" {
+		t.Errorf("the picking refusal on the COD sale carries %q, want held_from_picking", ringRefusal.Error)
+	}
 
 	// 7. PAY BEFORE RELEASE, the definition as a test: the payment lands through the AR route the
-	// money desk uses, and the same rule that held the goods lets them go. Never cash on delivery:
+	// money desk uses, and the same rules that held the goods let them go. Never cash on delivery:
 	// the money arrives first, the release follows it. (The recorder is the Financial controller
 	// login planted beside the world, the money-desk write being a controller's and no demo login's;
 	// the proof drives it exactly as a demo box would, through the real route.)
@@ -272,6 +296,78 @@ func TestDemoWorld_CashOnDemand(t *testing.T) {
 	if !allowed || reason != "" {
 		t.Errorf("after the payment the dispatch rule still answers (%v, %q), the paid order must be free to leave", allowed, reason)
 	}
-	t.Logf("the Cash On Demand path as the product ships it: picker found %s, quote %s converted to order %s (not held, uninvoiced), the COD sale %s unpaid at %d cents and held at the gate, released when the payment landed",
+	// The picking hold lifted itself with the same dollar (item 9.3): the door that refused now moves.
+	pickAgain := sales.call("POST", "/api/v1/orders/"+ring.OrderID+"/picking", nil)
+	pickAgain.ok(t, http.StatusOK)
+	// 8. THE DEPOSIT WORLD (item 9.9): the two orders the seed plants for a tester to walk, found
+	// through the real Pay balance route at Trenton, with what each reads: the credit customer's
+	// deposit order owes on its terms and is NOT held; the Cash On Demand account's is held from
+	// picking, in process because its deposit landed. Then the held one is paid in full at the Pay
+	// balance door and the hold lifts with the last dollar.
+	find := sales.call("GET", "/api/v1/pos/pay-balance?q="+url.QueryEscape("DEMO-TRT-D0"), nil)
+	find.ok(t, http.StatusOK)
+	var found struct {
+		Items []struct {
+			OrderID         string `json:"order_id"`
+			OrderNo         string `json:"order_no"`
+			CustomerName    string `json:"customer_name"`
+			Job             string `json:"job"`
+			OrderTotalCents int64  `json:"order_total_cents"`
+			PaidCents       int64  `json:"paid_cents"`
+			StillOwedCents  int64  `json:"still_owed_cents"`
+			Held            bool   `json:"held_from_picking"`
+			HoldWords       string `json:"hold_words"`
+			Payments        []struct {
+				Method      string `json:"method"`
+				AmountCents int64  `json:"amount_cents"`
+			} `json:"payments"`
+		} `json:"items"`
+	}
+	find.decode(t, &found)
+	if len(found.Items) != 2 {
+		t.Fatalf("Pay balance found %d deposit orders for DEMO-TRT-D0, want the two the seed plants", len(found.Items))
+	}
+	var heldOrderID string
+	var heldOwed int64
+	for _, it := range found.Items {
+		if it.StillOwedCents <= 0 || it.PaidCents <= 0 || it.OrderTotalCents != it.PaidCents+it.StillOwedCents || len(it.Payments) != 1 {
+			t.Errorf("%s reads total %d paid %d owed %d over %d payments, want a deposit taken and the rest owing",
+				it.OrderNo, it.OrderTotalCents, it.PaidCents, it.StillOwedCents, len(it.Payments))
+		}
+		switch it.OrderNo {
+		case "DEMO-TRT-D01":
+			if it.Held || it.Payments[0].Method != "CARD" || it.Job == "" {
+				t.Errorf("DEMO-TRT-D01 (credit) reads held %v by %s job %q, want not held, a card deposit, a job", it.Held, it.Payments[0].Method, it.Job)
+			}
+		case "DEMO-TRT-D02":
+			if !it.Held || it.HoldWords != "This order cannot reach picking until the balance is paid." || it.Payments[0].Method != "CASH" {
+				t.Errorf("DEMO-TRT-D02 (Cash On Demand) reads held %v %q by %s, want held with the hold words, a cash deposit", it.Held, it.HoldWords, it.Payments[0].Method)
+			}
+			heldOrderID, heldOwed = it.OrderID, it.StillOwedCents
+		default:
+			t.Errorf("Pay balance answered %s, want only the two deposit orders", it.OrderNo)
+		}
+	}
+	read := sales.call("GET", "/api/v1/orders/"+heldOrderID, nil)
+	read.ok(t, http.StatusOK)
+	var readBody struct {
+		PayHold struct {
+			Held           bool   `json:"held_from_picking"`
+			InProcessWords string `json:"in_process_words"`
+			OwedCents      int64  `json:"owed_cents"`
+		} `json:"pay_hold"`
+	}
+	read.decode(t, &readBody)
+	if !readBody.PayHold.Held || readBody.PayHold.InProcessWords != "In process: deposit taken" || readBody.PayHold.OwedCents != heldOwed {
+		t.Errorf("the held deposit order's read carries %+v, want held, in process, owing %d", readBody.PayHold, heldOwed)
+	}
+	take := sales.call("POST", "/api/v1/pos/pay-balance", map[string]any{
+		"order_id": heldOrderID, "method": "CASH", "amount_cents": heldOwed,
+		"till_session_id": drawerSessionID, "idempotency_key": uuid.NewString()})
+	take.ok(t, http.StatusCreated)
+	lifted := sales.call("POST", "/api/v1/orders/"+heldOrderID+"/picking", nil)
+	lifted.ok(t, http.StatusOK)
+
+	t.Logf("the Cash On Demand path as the product ships it: picker found %s, quote %s converted to order %s (held from picking, uninvoiced), the COD sale %s unpaid at %d cents and held at both gates, released when the payment landed",
 		codAccountNo, q.QuoteNo, converted.OrderNo, ring.OrderNo, ring.TotalCents)
 }

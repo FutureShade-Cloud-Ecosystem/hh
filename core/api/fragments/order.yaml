@@ -1717,6 +1717,29 @@ components:
         subtotal_cents: { type: integer, format: int64 }
         tax_cents: { type: integer, format: int64 }
         total_cents: { type: integer, format: int64 }
+        pay_hold:
+          $ref: "#/components/schemas/OrderPayHold"
+
+    OrderPayHold:
+      type: object
+      description: >-
+        The pay before release hold (item 9.3): present when wired, and then
+        always whole. Held is true exactly when the order owes money under a
+        pay before release shape (zero day terms with money outstanding);
+        words carries the mandated refusal sentence when held; in_process_words
+        carries the deposit chip when a payment has landed and money remains.
+      required:
+        - held_from_picking
+        - order_total_cents
+        - paid_cents
+        - owed_cents
+      properties:
+        held_from_picking: { type: boolean }
+        words: { type: string }
+        in_process_words: { type: string }
+        order_total_cents: { type: integer, format: int64 }
+        paid_cents: { type: integer, format: int64 }
+        owed_cents: { type: integer, format: int64 }
 
     OrderTransitionResult:
       type: object
@@ -2631,6 +2654,19 @@ components:
           type: array
           items: { $ref: "#/components/schemas/TaskPickLine" }
         source: { type: string }
+        held_from_picking:
+          type: boolean
+          description: >-
+            The order owes money under a pay before release shape. The ticket
+            stays in the feed, marked, so the yard knows why its task refuses
+            to claim or stage; the mark is words, the doors are what refuse.
+        hold_words:
+          type: string
+          description: The mark's words, "Balance due"; absent when not held
+        still_owed_cents:
+          type: integer
+          format: int64
+          description: The money the order still owes under the hold; absent when nothing
 
     TaskShortage:
       type: object

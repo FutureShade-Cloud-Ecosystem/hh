@@ -6,6 +6,7 @@ import { ifDefined } from 'lit/directives/if-defined.js';
 import { api, BRANCHES, branchName, getCurrentUser, isAdmin } from '@hardscapehouse/pos-kit/src/ported/ports.js';
 import {
   availableCreditCents,
+  balanceAfterDepositCents,
   cartSubtotalCents,
   depositCentsFromTyped,
   parseAmountCents,
@@ -140,7 +141,10 @@ import {
 // P3-10 (the comprehensive train review): the margin surface follows the policy
 // word /pos/policy answers, not the glance's own serving rule.
 import { marginVisibleToCaller } from './_pos-margin-visibility.js';
-import { printReceipt, openBlankWindow, type ReceiptFormat } from './receipt-print.js'; // DIB-410 counter receipt
+import { printReceipt, printReceiptInto, openBlankWindow, type ReceiptFormat } from './receipt-print.js'; // DIB-410 counter receipt
+import { renderHeldOrder, heldOrderStyles } from '../views/held-order.js'; // item 9.8: the held order card
+import { holdSlipHtml, readPayHold, type HeldOrderCard } from '../pay-balance/hold.js';
+import { methodWord } from '../pay-balance/words.js';
 import {
   createSale,
   createPricingOrder,
@@ -175,6 +179,7 @@ import {
   type ReliefOutcome,
   type StockGlance,
 } from '@hardscapehouse/pos-kit/src/ported/pos-api.js';
+import type { OrderView } from '@hardscapehouse/api-client';
 import './pos-panels.js';
 import './pos-discount.js';
 import {
@@ -187,7 +192,21 @@ import {
   ticketBasis,
   ticketCarriesDiscount,
 } from './_pos-discount.js';
-import { previewBody, previewKey, readPreview, splitMismatchWords, type PreviewState } from './_pos-preview.js';
+import { previewBody, previewKey, readPreview, splitMismatchWords, type PaymentOption, type PreviewState } from './_pos-preview.js';
+import {
+  SHAPE_DEPOSIT_DUE_LATER,
+  SHAPE_DEPOSIT_ON_ACCOUNT,
+  SUPPLIER_DEPOSIT_LABEL,
+  depositButtonWords,
+  depositOffered,
+  depositOption,
+  depositRefusalWords,
+  depositRingFacts,
+  depositSentence,
+  supplierDepositLine,
+  supplierDepositRefusalWords,
+  supplierDepositShown,
+} from './_pos-deposit.js';
 import { focusRing } from '@hardscapehouse/pos-kit/src/ported/styles/focus-ring.js';
 import { ModalFocus } from '@hardscapehouse/pos-kit/src/ported/modal-focus.js';
 // ── DIB-434 ── the global "+ Sale" quick action arrives here as an INTENT, and the in-progress
@@ -221,6 +240,8 @@ export interface PosOrderSnapshot {
   signatureRef: string;
   depositDollars: string;
   depositMethod: string;
+  /** Item 9.6: the chosen payment shape (an older snapshot restores to pay in full now). */
+  payShape?: string;
   fulfilment: string;
   tillSessionId: string;
   sessionStartMs: number;
@@ -607,7 +628,15 @@ export class HosPosTerminal extends LitElement {
   @state() private codEnabled: boolean | null = null;
   @state() private fulfilment = 'PICKUP'; // COD only: the payment posture rides any fulfilment
   @state() private depositDollars = '';
+  /** Item 9.5: the supplier's demanded deposit, typed in dollars, billed to the account at once. */
+  @state() private supplierDepositDollars = '';
+  /** The quiet "Supplier asked for a deposit" link has been opened (a typed amount keeps the field open on its own). */
+  @state() private supplierDepositOpen = false;
   @state() private depositMethod = 'CASH';
+  /** Item 9.6: PAY_IN_FULL_NOW (the tender tiles), or a deposit shape the preview offered. */
+  @state() private payShape = 'PAY_IN_FULL_NOW';
+  /** Item 9.8: the held card for the sale just rung, when the server says it is held from picking. */
+  @state() private heldCard: HeldOrderCard | null = null;
   @state() private showReturn = false;
   @state() private showParked = false;
   @state() private parkedCount = 0;
@@ -692,6 +721,61 @@ export class HosPosTerminal extends LitElement {
  * render a 401 at the customer). `saleRef` is the order id or its visible "#SO-" number: the
    * server resolves both.
    */
+  /**
+   * Item 9.8: after a pay before release ring that left a balance, ask the staff order read whether
+   * the order is held from picking (the server's pay_hold) and keep what the card shows. A read that
+   * fails shows no card: the sold panel still states the balance, and the hold holds regardless.
+   */
+  private async loadHeldCard(sale: SaleResult): Promise<void> {
+    this.heldCard = null;
+    if (sale.sale_type !== 'COD' || balanceAfterDepositCents(sale.total_cents, sale.deposit_cents ?? 0) <= 0) return;
+    try {
+      const res = await api(`/api/v1/orders/${encodeURIComponent(sale.order_id)}`);
+      if (!res.ok) return;
+      // The contract's own OrderView carries pay_hold (item 9 review, run B's
+      // gap): the field is typed, and readPayHold still validates it whole.
+      const body = (await res.json().catch(() => null)) as Pick<OrderView, "pay_hold"> | null;
+      const hold = readPayHold(body?.pay_hold);
+      if (hold === null || !hold.held) return;
+      const ring = this.ring;
+      if (ring.state !== 'done' || ring.sale.order_id !== sale.order_id) return; // a newer sale owns the screen
+      const leg = sale.tenders?.[0];
+      this.heldCard = {
+        orderNo: sale.order_no,
+        customerName: this.customer?.name ?? 'Walk-in',
+        // Item 9 visual review P3-4: the account words come from the customer's own standing, never
+        // asserted for every ring. A held pay before release order belongs to a zero terms account
+        // (the Cash On Demand posture); the walk-in has no account to name.
+        accountWords:
+          this.customer !== null && this.customer.payment_terms_days <= 0 ? 'Cash On Demand account' : null,
+        inProcessWords: hold.inProcessWords,
+        holdWords: hold.words ?? '',
+        orderTotalCents: hold.orderTotalCents,
+        deposit: hold.paidCents > 0 ? { methodWord: methodWord(leg?.method ?? this.depositMethod), cents: hold.paidCents } : null,
+        balanceDueCents: hold.owedCents,
+        lines: this.cart.map((l) => ({
+          description: l.product.name,
+          qty: `${l.qty} ${l.uom}`,
+          lineTotalCents: l.priceMissing ? null : l.lineTotalCents,
+        })),
+      };
+    } catch {
+      /* no card: see above */
+    }
+  }
+
+  /** Item 9.8: the hold slip prints through the same seam the receipt prints through. */
+  private printHoldSlip(card: HeldOrderCard): void {
+    const out = printReceiptInto(
+      openBlankWindow(),
+      holdSlipHtml(
+        { orderNo: card.orderNo, customerName: card.customerName, balanceDueCents: card.balanceDueCents, holdWords: card.holdWords },
+        formatMoney,
+      ),
+    );
+    this.receiptMsg = out.ok ? '' : out.message;
+  }
+
   private async printSaleReceipt(saleRef: string, format: ReceiptFormat = 'roll'): Promise<void> {
     if (!saleRef || this.receiptBusy) return;
     this.receiptBusy = true;
@@ -801,6 +885,7 @@ export class HosPosTerminal extends LitElement {
   private parkedInfo = new Map<string, ParkedInfo>();
 
   static styles = [
+    heldOrderStyles,
     focusRing,
     css`
     :host {
@@ -2007,6 +2092,11 @@ export class HosPosTerminal extends LitElement {
       border-top: 1px solid var(--hos-line);
       padding-top: 4px;
     }
+    /* Round 15: a closed More holds no boxes at all. Its lookup row laid out unseen at 506 to 622 px
+       from the left at phone width (an input and two buttons, found in the round's live check). */
+    details.more:not([open]) > .util {
+      display: none;
+    }
     details.more > summary {
       cursor: pointer;
       list-style: none;
@@ -2099,6 +2189,202 @@ export class HosPosTerminal extends LitElement {
       border-color: var(--hos-line);
       color: var(--hos-text-dim);
       opacity: 1;
+      cursor: not-allowed;
+    }
+    /* ── Round 15: the payment step in the boards' two columns (00 and 01). The stepper draws the sale
+       (lines and fulfilment tiles) on one side and the customer, totals, tender and deposit lines on the
+       other; the panels layout already holds the sale in its own pane, so one column there. Below the
+       phone breakpoint the columns stack, the sale first. */
+    .paygrid {
+      display: block;
+      min-width: 0;
+    }
+    .paycol {
+      min-width: 0;
+    }
+    .paycol > .custcard {
+      margin-bottom: 10px;
+    }
+    .paygrid.withsale {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: var(--hos-space-4);
+      align-items: start;
+    }
+    @media (max-width: 900px) {
+      .paygrid.withsale {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+    .paysale {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .paylines-h {
+      margin: 0 0 8px;
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .paylist {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+    .paylist li {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: 6px 12px;
+      align-items: baseline;
+      padding: 8px 0;
+      border-top: 1px solid var(--hos-line);
+      font-size: 13px;
+    }
+    .paylist .n {
+      min-width: 0;
+      font-weight: 600;
+      overflow-wrap: anywhere;
+    }
+    .paylist .sku {
+      display: block;
+      font-size: 11px;
+      font-weight: 400;
+      font-family: var(--hos-font-mono);
+      color: var(--hos-text-dim);
+    }
+    .paylist .q,
+    .paylist .m {
+      font-family: var(--hos-font-mono);
+      text-align: right;
+    }
+    .supplierlink {
+      display: block;
+      margin: 10px 0 0;
+      background: transparent;
+      border: 0;
+      color: var(--hos-text-dim);
+      font-family: inherit;
+      font-size: 12px;
+      text-decoration: underline;
+      cursor: pointer;
+      padding: 4px 2px;
+    }
+    .supplierlink:disabled {
+      cursor: not-allowed;
+    }
+    /* ── Item 9.6: the payment shape menu, the deposit panel and the quiet split entry ── */
+    .shapemenu {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .shapemenu button,
+    .dpmethods button {
+      flex: 1 1 auto;
+      min-width: 0;
+      background: var(--hos-deep-earth);
+      border: 1px solid var(--hos-line);
+      border-radius: var(--hos-radius-control);
+      color: var(--hos-text);
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 10px 8px;
+      cursor: pointer;
+    }
+    .shapemenu button.active,
+    .dpmethods button.active {
+      border-color: var(--hos-stone-amber);
+      color: var(--hos-stone-amber-text);
+      background: color-mix(in srgb, var(--hos-stone-amber) 10%, var(--hos-deep-earth));
+    }
+    .shapemenu button:disabled,
+    .dpmethods button:disabled {
+      background: transparent;
+      color: var(--hos-text-dim);
+      cursor: not-allowed;
+    }
+    .shapehint {
+      margin: 10px 0 0;
+      font-size: 12px;
+      color: var(--hos-text-dim);
+    }
+    .depositpanel {
+      margin-top: 10px;
+      min-width: 0;
+    }
+    .dplabel {
+      margin: 12px 0 6px;
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      color: var(--hos-text-dim);
+    }
+    .dpmethods {
+      display: flex;
+      gap: 8px;
+    }
+    .dpline {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      padding: 8px 12px;
+      margin-bottom: 8px;
+      border: 1px solid var(--hos-line);
+      border-radius: var(--hos-radius-control);
+      background: var(--hos-deep-earth);
+    }
+    .dpline.one {
+      border-color: var(--hos-stone-amber);
+    }
+    .dpline .dpname {
+      flex: 1 1 auto;
+      min-width: 0;
+      font-weight: 600;
+    }
+    .dpline .dpamount {
+      flex: 0 1 130px;
+      min-width: 0;
+      width: 130px;
+      text-align: right;
+      font-family: var(--hos-font-mono);
+    }
+    .dpline .num {
+      font-family: var(--hos-font-mono);
+      font-weight: 600;
+    }
+    .dpline .dptag {
+      flex: none;
+      font-size: 11px;
+      color: var(--hos-text-dim);
+    }
+    .dpsentence {
+      margin: 6px 0 0;
+      font-size: 12px;
+      line-height: 1.4;
+      color: var(--hos-text-dim);
+    }
+    .dpsentence.bad {
+      color: var(--hos-safety-red);
+    }
+    .splitquiet {
+      display: block;
+      margin: 10px 0 0 auto;
+      background: transparent;
+      border: 0;
+      color: var(--hos-text-dim);
+      font-family: inherit;
+      font-size: 12px;
+      text-decoration: underline;
+      cursor: pointer;
+      padding: 4px 2px;
+    }
+    .splitquiet.active {
+      color: var(--hos-stone-amber-text);
+      font-weight: 600;
+    }
+    .splitquiet:disabled {
       cursor: not-allowed;
     }
     .complete-cta {
@@ -2603,14 +2889,6 @@ export class HosPosTerminal extends LitElement {
       display: flex;
       gap: 8px;
       margin-top: 10px;
-    }
-    .deposit {
-      display: grid;
-      grid-template-columns: 1fr 110px;
-      gap: 8px;
-    }
-    .deposit input {
-      font-family: var(--hos-font-mono);
     }
     .util button {
       flex: 1;
@@ -3198,6 +3476,7 @@ export class HosPosTerminal extends LitElement {
       signatureRef: this.signatureRef,
       depositDollars: this.depositDollars,
       depositMethod: this.depositMethod,
+      payShape: this.payShape,
       fulfilment: this.fulfilment,
       tillSessionId: this.tillSessionId,
       sessionStartMs: this.sessionStartMs,
@@ -3234,6 +3513,7 @@ export class HosPosTerminal extends LitElement {
     this.signatureRef = s.signatureRef ?? '';
     this.depositDollars = s.depositDollars ?? '';
     this.depositMethod = s.depositMethod || 'CASH';
+    this.payShape = s.payShape || 'PAY_IN_FULL_NOW';
     this.fulfilment = s.fulfilment || 'PICKUP';
     // DIB-488: flow facts follow the sale into the popped window; an older snapshot without them
  // restores to the defaults (unresolved customer, no tender picked): never undefined.
@@ -3875,13 +4155,48 @@ export class HosPosTerminal extends LitElement {
     return this.saleType === 'DELIVERED' || (this.saleType === 'COD' && this.fulfilment === 'DELIVERY');
   }
 
+  /** Item 9.6: the shapes the server says this account may be offered (empty until the preview answers). */
+  private paymentOptions(): readonly PaymentOption[] {
+    return this.preview.kind === 'ready' ? this.preview.paymentOptions : [];
+  }
+
   /**
-   * DIB-512 · a deposit rides only Charge Account or COD (the ring path has always enforced it);
-   * the label used to carry that policy as a nine-word clause. The constraint is now the
- * control's STATE: disabled, with the why on its flyout, while a paid-now tender is chosen.
+   * Item 9.6: the deposit shape in force, or '' for pay in full. A chosen shape stands only while
+   * the server still offers it on a fulfilment that waits: switching the account or the fulfilment
+   * under it quietly returns the screen to pay in full now.
    */
-  private depositAllowed(): boolean {
-    return this.saleType === 'COD' || this.payMethod === 'ACCOUNT' || this.payMethod === '';
+  private activeDepositShape(): string {
+    if (this.payShape !== SHAPE_DEPOSIT_ON_ACCOUNT && this.payShape !== SHAPE_DEPOSIT_DUE_LATER) return '';
+    const options = this.paymentOptions();
+    if (!depositOffered(this.saleType, options)) return '';
+    return options.some((o) => o.shape === this.payShape) ? this.payShape : '';
+  }
+
+  /** The deposit the clerk typed, only while a deposit shape is in force. */
+  private depositCentsActive(): number {
+    return this.activeDepositShape() === '' ? 0 : this.depositCents();
+  }
+
+  /** Item 9.5: the server's say on the supplier deposit (never allowed before the preview answers). */
+  private supplierDepositAllowance(): { allowed: boolean; words: string | null } {
+    return this.preview.kind === 'ready'
+      ? this.preview.supplierDeposit
+      : { allowed: false, words: null };
+  }
+
+  /** The supplier deposit the rep typed, in cents (0 when nothing readable was typed). */
+  private supplierDepositCents(): number {
+    return depositCentsFromTyped(this.supplierDepositDollars || '');
+  }
+
+  /** Whether the payment step shows the supplier deposit control (the server's allowance, the credit tender). */
+  private supplierDepositControlShown(): boolean {
+    return supplierDepositShown(this.supplierDepositAllowance(), this.payMethod, this.activeDepositShape() !== '');
+  }
+
+  /** The supplier deposit the ring sends: only while the control stands and something was typed. */
+  private supplierDepositCentsSend(): number {
+    return this.supplierDepositControlShown() ? this.supplierDepositCents() : 0;
   }
 
   // ── customer picker (account-tender UX fix) ───────────────────────────────
@@ -4104,7 +4419,8 @@ export class HosPosTerminal extends LitElement {
     this.enforceDiscountApproval();
   }
 
-  private async ringSale(tender: 'ACCOUNT' | 'CASH' | 'CARD'): Promise<void> {
+  private async ringSale(requested: 'ACCOUNT' | 'CASH' | 'CARD'): Promise<void> {
+    let tender = requested;
     if (this.cart.length === 0) return;
     // DIB-259 (ship review): refuse to ring while the requested-date box holds an unparseable entry.
     // Otherwise a stale/blank requestedDate would silently go on the order under a visible error.
@@ -4120,9 +4436,15 @@ export class HosPosTerminal extends LitElement {
     }
     this.soldPanelDismissed = false; // DIB-444: a new ring always gets its own confirmation
     this.ring = { state: 'busy' };
-    const isCOD = this.saleType === 'COD';
+    // Item 9.6: a deposit shape rides its own facts (the credit shape the ACCOUNT tender, the pay
+    // before release shape the COD sale on the fulfilment that waits); anything else rings as before.
+    const shape = this.activeDepositShape();
+    const facts = shape === '' ? null : depositRingFacts(shape, this.saleType, this.fulfilment);
+    if (facts !== null) tender = facts.tender;
+    const ringSaleType = facts?.saleType ?? this.saleType;
+    const isCOD = ringSaleType === 'COD';
     const unpaidAtRing = tender === 'ACCOUNT' || isCOD;
-    const deposit = unpaidAtRing ? this.depositCents() : 0;
+    const deposit = unpaidAtRing ? this.depositCentsActive() : 0;
     const cardAtRing = (tender === 'CARD' && !unpaidAtRing) || (deposit > 0 && this.depositMethod === 'CARD');
     // rev 6 (item F), reworded by row 661: the optional cash quick entry rides the body whenever a
     // positive amount is typed on a paid CASH ring. Coverage is the server's judgement against its
@@ -4136,8 +4458,8 @@ export class HosPosTerminal extends LitElement {
       branch_id: this.branchId,
       till_session_id: this.tillSessionId,
       customer_id: this.customer?.id ?? '',
-      sale_type: this.saleType,
-      fulfilment: isCOD ? this.fulfilment : undefined,
+      sale_type: ringSaleType,
+      fulfilment: isCOD ? (facts?.fulfilment ?? this.fulfilment) : undefined,
       tender,
       payment_token: cardAtRing ? 'tok_simulated_runner' : undefined,
       card_type: cardAtRing ? this.cardType : undefined,
@@ -4153,6 +4475,8 @@ export class HosPosTerminal extends LitElement {
       cash_tendered_cents: sendCashTendered ? cashTendered : undefined,
       deposit_cents: deposit > 0 ? deposit : undefined,
       deposit_method: deposit > 0 ? this.depositMethod : undefined,
+      // Item 9.5: the supplier's demanded deposit, billed to the account as its own invoice.
+      supplier_deposit_cents: this.supplierDepositCentsSend() > 0 ? this.supplierDepositCentsSend() : undefined,
       lines: this.cart.map((l) => ({
         product_id: l.product.id,
         qty_entered: l.qty,
@@ -4171,6 +4495,7 @@ export class HosPosTerminal extends LitElement {
       if (res.ok) {
         this.ringKeyMemo = null; // committed: the next sale mints fresh
         this.ring = { state: 'done', sale: res.sale };
+        void this.loadHeldCard(res.sale);
         if (this.utilWhere === 'foot') this.clearUtil(); // an earlier edit's banner is not news on a good sale
         this.revealSaleOutcome();
         void this.refreshCustomerAfterRing();
@@ -4214,6 +4539,18 @@ export class HosPosTerminal extends LitElement {
         void this.rereadPrices();
         return;
       }
+      // Item 9.6: the two deposit refusals read from their message and fields, never a code or cents.
+      const depositWords = depositRefusalWords(res.err, formatMoney);
+      if (depositWords !== null) {
+        this.ring = { state: 'error', msg: depositWords };
+        return;
+      }
+      // Item 9.5: the supplier deposit refusals, the server's message first.
+      const supplierWords = supplierDepositRefusalWords(res.err);
+      if (supplierWords !== null) {
+        this.ring = { state: 'error', msg: supplierWords };
+        return;
+      }
       this.ring = { state: 'error', msg: counterRingMessage(res.err) };
     } catch {
       // Network error: the key is safe to retry verbatim (idempotent endpoint).
@@ -4253,6 +4590,8 @@ export class HosPosTerminal extends LitElement {
     this.reliefRateBps = null;
     this.signatureRef = '';
     this.depositDollars = '';
+    this.payShape = 'PAY_IN_FULL_NOW';
+    this.heldCard = null;
     this.fulfilment = 'PICKUP';
     this.clearUtil();
     this.soldPanelDismissed = false;
@@ -4270,6 +4609,7 @@ export class HosPosTerminal extends LitElement {
     this.jobAddress = ''; // rev 8: the job facts reset with the sale they describe
     this.jobReference = '';
     this.payTileIdx = 1; // DIB-512: the tender group's resting stop returns to Cash with the sale
+    this.supplierDepositOpen = false;
     this.scheduleTicketFacts(); // rev 8: an empty ticket clears the margin footer + the add-ons strip
     this.ringKeyMemo = null; // rev 5: a fresh sale never inherits a prior attempt's key
     // DIB-254/256: whenever the order resets (New sale / Clear sale / after Park), return to the
@@ -4765,6 +5105,7 @@ export class HosPosTerminal extends LitElement {
     // clerk who taps Cash on a sale that was already defaulted to Cash has still answered the
     // question, and the step must read done even though nothing about the tender changed.
     this.tenderConfirmed = true;
+    this.payShape = 'PAY_IN_FULL_NOW'; // item 9.6: a tender tile is the pay in full now shape
     if (this.payMethod === method) {
  // Tapping the chosen tile again UNDOES the choice: which now means falling back to cash, not
       // to nothing. "Un-choose" used to leave the ticket untenderable, and a gesture that can
@@ -4790,8 +5131,10 @@ export class HosPosTerminal extends LitElement {
 
   /** Arrow/Home/End navigation inside the tender-tile group (payTileStep is pure, unit-tested). */
   private onPayTilesKey(e: KeyboardEvent): void {
-    const next = payTileStep(this.payTileIdx, e.key, 4);
-    if (next === null) return;
+    const lo = this.accountTileHidden() ? 1 : 0; // the first tile is absent: the roving stop walks Cash and Card
+    const stepped = payTileStep(Math.max(this.payTileIdx, lo) - lo, e.key, 3 - lo);
+    if (stepped === null) return;
+    const next = stepped + lo;
     e.preventDefault();
     this.payTileIdx = next;
     this.focusPayTile(next);
@@ -4800,7 +5143,7 @@ export class HosPosTerminal extends LitElement {
   /** Focus the tile at index i once the roving tabindex has re-rendered. */
   private focusPayTile(i: number): void {
     void this.updateComplete.then(() =>
-      this.renderRoot.querySelectorAll<HTMLElement>('.paytiles button')[i]?.focus(),
+      this.renderRoot.querySelectorAll<HTMLElement>('.paytiles button')[i - (this.accountTileHidden() ? 1 : 0)]?.focus(),
     );
   }
 
@@ -4821,6 +5164,7 @@ export class HosPosTerminal extends LitElement {
     // order on a second "did it take?" tap. The forward path is the sold panel's Next sale.
     if (this.cart.length === 0 || this.ringBusy() || this.ringDone()) return;
     if (this.payMethod === '' || this.payMethod === 'SPLIT') return;
+    if (this.activeDepositShape() !== '' && this.depositCents() <= 0) return; // a deposit shape needs its deposit
     if (this.tillSessionId === '') {
       void this.openThenRing();
       return;
@@ -5893,33 +6237,6 @@ ${/* DIB-488: the quieter order facts fold away (native details: no state to des
                 @change=${(e: Event) => (this.jobReference = (e.target as HTMLInputElement).value)}
               />
 
-              <label>Deposit ($)</label>
-              <div
-                class="deposit"
-                title=${this.depositAllowed()
-                  ? 'Deposit held against the order: Charge Account and COD sales.'
-                  : 'Deposits ride Charge Account or COD sales: this sale is being paid in full now.'}
-              >
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="0.00"
-                  ?disabled=${!this.depositAllowed()}
-                  .value=${this.depositDollars}
-                  @change=${(e: Event) => (this.depositDollars = (e.target as HTMLInputElement).value)}
-                />
-                <select
-                  ?disabled=${!this.depositAllowed()}
-                  .value=${this.depositMethod}
-                  @change=${(e: Event) => (this.depositMethod = (e.target as HTMLSelectElement).value)}
-                >
-                  <option value="CASH">Cash</option>
-                  <option value="CARD">Card</option>
-                  <option value="CHEQUE">Cheque</option>
-                </select>
-              </div>
-
               <label>Notes</label>
               <textarea
                 rows="2"
@@ -6071,15 +6388,10 @@ ${/* DIB-488: the quieter order facts fold away (native details: no state to des
   }
 
   /**
-   * STEP 2's pinned foot: the fulfilment area, the one part of a step that
-   * must never scroll away. The panels view renders it below the Items
-   * panel's scroll zone (the Quote Desk's foot pattern), and the stepper's
-   * open card renders it after the body in the same order it always stood,
-   * so the two layouts carry one markup and one switch (the rule the panels
-   * host states: a step rendered by two paths is a step that drifts).
+   * The fulfilment tiles, one markup for the two places they stand: STEP 2's pinned foot and the
+   * payment step's sale column (stepper layout), where the deposit shapes depend on the choice.
    */
-  private renderStepFoot(step: FlowStepId): TemplateResult | typeof nothing {
-    if (step !== 'items') return nothing;
+  private renderFulfilTiles(): TemplateResult {
     return html`
 ${/* Fulfilment: the EXISTING sale types (counter / will-call / delivered / COD with its
    policy gate: the M3 will-call machinery), worn as tiles instead of a select. */ ''}
@@ -6141,6 +6453,21 @@ ${/* Fulfilment: the EXISTING sale types (counter / will-call / delivered / COD 
                 COD${this.codEnabled === false ? ': off' : ''}
               </button>
             </div>
+    `;
+  }
+
+  /**
+   * STEP 2's pinned foot: the fulfilment area, the one part of a step that
+   * must never scroll away. The panels view renders it below the Items
+   * panel's scroll zone (the Quote Desk's foot pattern), and the stepper's
+   * open card renders it after the body in the same order it always stood,
+   * so the two layouts carry one markup and one switch (the rule the panels
+   * host states: a step rendered by two paths is a step that drifts).
+   */
+  private renderStepFoot(step: FlowStepId): TemplateResult | typeof nothing {
+    if (step !== 'items') return nothing;
+    return html`
+${this.renderFulfilTiles()}
 
             ${this.saleType === 'COD'
             ? html`<label>Fulfilment (released once paid)</label>
@@ -6242,6 +6569,212 @@ ${/* Fulfilment: the EXISTING sale types (counter / will-call / delivered / COD 
   }
 
   /**
+   * Item 9.6: the payment shape menu, from the preview's payment_options (the server decides what
+   * the account may be offered; the till only draws it). Shown only where a deposit is on offer: a
+   * collect now sale is paid in full, so it gets no menu, and says in one quiet line why not.
+   */
+  /** The shape menu stands (a deposit is on offer for this fulfilment): the one place the choice is made. */
+  private shapeMenuOn(): boolean {
+    return !this.ringDone() && depositOffered(this.saleType, this.paymentOptions());
+  }
+
+  /** With the menu up, "All on account" is the one way to put the sale on the account: the Charge Account tile steps aside. */
+  private accountTileHidden(): boolean {
+    return this.shapeMenuOn() && this.paymentOptions().some((o) => o.shape === 'ALL_ON_ACCOUNT');
+  }
+
+  private renderShapeMenu(): TemplateResult | typeof nothing {
+    const options = this.paymentOptions();
+    if (this.ringDone() || depositOption(options) === null) return nothing;
+    if (this.saleType === 'COLLECT_NOW') {
+      return html`<p class="shapehint" data-testid="deposit-hint">A deposit needs Will-call or Delivery.</p>`;
+    }
+    if (!depositOffered(this.saleType, options)) return nothing;
+    const active = this.activeDepositShape();
+    const words = (o: PaymentOption): string => {
+      if (o.shape === 'PAY_IN_FULL_NOW') return 'Pay in full now';
+      if (o.shape === 'ALL_ON_ACCOUNT') return 'All on account';
+      return `Deposit now, ${(o.lineTwoWords ?? 'rest later').toLowerCase()}`;
+    };
+    const pressed = (o: PaymentOption): boolean =>
+      o.shape === active || (active === '' && o.shape === (this.payMethod === 'ACCOUNT' ? 'ALL_ON_ACCOUNT' : 'PAY_IN_FULL_NOW'));
+    const pick = (o: PaymentOption): void => {
+      this.tenderConfirmed = true;
+      if (o.shape === SHAPE_DEPOSIT_ON_ACCOUNT || o.shape === SHAPE_DEPOSIT_DUE_LATER) {
+        this.payShape = o.shape;
+        if (this.payMethod === 'SPLIT') this.payMethod = 'CASH';
+        this.showSplit = false;
+        return;
+      }
+      this.payShape = 'PAY_IN_FULL_NOW';
+      this.choosePay(o.shape === 'ALL_ON_ACCOUNT' ? 'ACCOUNT' : 'CASH');
+    };
+    return html`<div class="shapemenu" role="group" aria-label="How this sale is paid" data-testid="pay-shapes">
+      ${options.map(
+        (o) => html`<button
+          type="button"
+          class="${pressed(o) ? 'active' : ''}"
+          aria-pressed=${pressed(o) ? 'true' : 'false'}
+          data-testid=${`pay-shape-${o.shape}`}
+          ?disabled=${this.ringBusy()}
+          @click=${() => pick(o)}
+        >
+          ${words(o)}
+        </button>`,
+      )}
+    </div>`;
+  }
+
+  /**
+   * Item 9.6, boards 00 and 01: line one is the deposit (Card or Cash, the amount typed), line two
+   * is the rest worded by the server ("On account" or "Balance due later") with the server's total
+   * less the deposit. The one commit button names the deposit in dollars.
+   */
+  private renderDepositPanel(): TemplateResult {
+    const shape = this.activeDepositShape();
+    const option = this.paymentOptions().find((o) => o.shape === shape);
+    const total = this.preview.kind === 'ready' ? this.preview.totalCents : null;
+    const deposit = this.depositCents();
+    // Item 9 visual review P3-3: the till holds no bound of its own. The server refuses a deposit
+    // at or over the total once it has priced the lines, and its refusal speaks; the commit stands
+    // for any positive amount.
+    // Item 9 Opus review P3-1: when the typed deposit covers the whole sale, line two says one
+    // plain sentence instead of a figure. The missing price marker would be false (the total sits
+    // directly above line two), and no honest rest exists to show; the sentence names the way
+    // forward, and the commit stays enabled so the server's refusal still speaks.
+    const coversWholeSale = total !== null && deposit > 0 && deposit >= total;
+    const restCents = total === null ? null : deposit <= 0 ? total : deposit < total ? balanceAfterDepositCents(total, deposit) : null;
+    const method = this.depositMethod === 'CARD' ? 'Card' : 'Cash';
+    const disabled = this.cart.length === 0 || this.ringBusy() || this.ringDone() || deposit <= 0;
+    return html`<section class="depositpanel" data-testid="deposit-panel" aria-label="Deposit and balance">
+      <div class="dplabel" id="dep-method-label">THE DEPOSIT, CASH OR CARD</div>
+      <div class="dpmethods" role="group" aria-labelledby="dep-method-label">
+        ${(['CARD', 'CASH'] as const).map(
+          (m) => html`<button
+            type="button"
+            class="${this.depositMethod === m ? 'active' : ''}"
+            aria-pressed=${this.depositMethod === m ? 'true' : 'false'}
+            ?disabled=${this.ringBusy() || this.ringDone()}
+            @click=${() => (this.depositMethod = m)}
+          >
+            ${m === 'CARD' ? 'Card' : 'Cash'}
+          </button>`,
+        )}
+      </div>
+      <div class="dplabel">DEPOSIT AND BALANCE</div>
+      <div class="dpline one" data-testid="deposit-line-one">
+        <span class="dpname">Deposit · ${method}</span>
+        <input
+          class="dpamount"
+          data-testid="deposit-amount"
+          inputmode="decimal"
+          autocomplete="off"
+          placeholder="0.00"
+          aria-label=${`Deposit amount, ${method}`}
+          .value=${this.depositDollars}
+          ?disabled=${this.ringBusy() || this.ringDone()}
+          @input=${(e: Event) => (this.depositDollars = (e.target as HTMLInputElement).value)}
+        />
+        <span class="dptag">now</span>
+      </div>
+      <div class="dpline two" data-testid="deposit-line-two">
+        ${coversWholeSale
+          ? html`<span class="dpname" data-testid="deposit-covers">The deposit covers the whole sale: choose Pay in full now.</span>`
+          : html`<span class="dpname">${option?.lineTwoWords ?? 'Balance due later'}</span>
+              <span class="num">${formatMoney(restCents)}</span>
+              <span class="dptag">later</span>`}
+      </div>
+      ${depositSentence(option ?? null) !== ''
+        ? html`<p class="dpsentence" data-testid="deposit-sentence">${depositSentence(option ?? null)}</p>`
+        : nothing}
+      ${this.renderCardType()}
+      <button
+        class="complete-cta"
+        data-testid="deposit-commit"
+        ?disabled=${disabled}
+        @click=${() => this.completeSale()}
+      >
+        ${this.ringBusy() ? 'Ringing…' : depositButtonWords(deposit, formatMoney)}
+      </button>
+    </section>`;
+  }
+
+  /**
+   * Item 9.5: one quiet control on the payment step for a credit customer, "Supplier asked for a
+   * deposit" with the amount field, shown only when the server says it is allowed (the preview's
+   * supplier_deposit). The amount is billed to the account as its own invoice; nothing is taken at
+   * the counter, so the control takes no method and moves no money on screen.
+   */
+  private renderSupplierDeposit(): TemplateResult | typeof nothing {
+    if (this.ringDone() || !this.supplierDepositControlShown()) return nothing;
+    // Only special orders carry a supplier's deposit, so the control stays behind a small link until
+    // someone reaches for it (or has typed an amount, which must stay visible).
+    if (!this.supplierDepositOpen && this.supplierDepositDollars.trim() === '') {
+      return html`<button
+        type="button"
+        class="supplierlink"
+        data-testid="supplier-deposit-link"
+        ?disabled=${this.ringBusy()}
+        @click=${() => (this.supplierDepositOpen = true)}
+      >
+        ${SUPPLIER_DEPOSIT_LABEL}
+      </button>`;
+    }
+    return html`<div class="supplierdep" data-testid="supplier-deposit">
+      <label for="supplier-deposit-amount">${SUPPLIER_DEPOSIT_LABEL}</label>
+      <input
+        id="supplier-deposit-amount"
+        data-testid="supplier-deposit-amount"
+        inputmode="decimal"
+        autocomplete="off"
+        placeholder="0.00"
+        .value=${this.supplierDepositDollars}
+        ?disabled=${this.ringBusy()}
+        @input=${(e: Event) => (this.supplierDepositDollars = (e.target as HTMLInputElement).value)}
+      />
+      <span class="sdwords">billed to the account</span>
+    </div>`;
+  }
+
+  /** Item 9.6: split tender, kept as a quiet secondary choice under the methods (behaviour unchanged). */
+  private renderSplitEntry(): TemplateResult {
+    return html`<button
+      type="button"
+      data-testid="tender-split"
+      class="splitquiet ${this.payMethod === 'SPLIT' ? 'active' : ''}"
+      aria-pressed=${this.payMethod === 'SPLIT' ? 'true' : 'false'}
+      ?disabled=${this.ringBusy() || this.ringDone()}
+      title="Settle this sale across two tenders (cash + card + account)."
+      @click=${() => this.choosePay('SPLIT')}
+    >
+      Split between two tenders
+    </button>`;
+  }
+
+  /** The card type select, with the rail badge: shown for a Card tender and for a Card deposit. */
+  private renderCardType(): TemplateResult | typeof nothing {
+    return this.payMethod === 'CARD' || (this.depositCentsActive() > 0 && this.depositMethod === 'CARD')
+              ? html`<label class="cardlabel">
+                    Card type
+                    ${this.cardRail === 'test'
+                      ? html`<span class="railbadge test" title="Deterministic simulated gateway: no card reader or live Run Payments call. Flip to the live client at cutover; the sale flow is identical.">TEST MODE: simulated terminal</span>`
+                      : nothing}
+                    ${this.cardRail === 'live'
+                      ? html`<span class="railbadge live">LIVE: Run Payments</span>`
+                      : nothing}
+                    ${this.cardRail === 'unconfigured'
+                      ? html`<span class="railbadge off" title="An admin must configure the card processor (PUT /api/v1/payments/config) before Card tender works.">card processor not configured</span>`
+                      : nothing}
+                  </label>
+                  <select .value=${this.cardType} @change=${(e: Event) => (this.cardType = (e.target as HTMLSelectElement).value)}>
+                    <option value="CREDIT">Credit</option>
+                    <option value="DEBIT">Debit</option>
+                    <option value="PREPAID">Prepaid</option>
+                  </select>`
+              : nothing;
+  }
+
+  /**
  * STEP 3 · PAYMENT: the totals card, the tender tiles and the one gold commit.
    *
    * The totals card stays adjacent to the tender it justifies (it is the figure the clerk reads out
@@ -6250,6 +6783,41 @@ ${/* Fulfilment: the EXISTING sale types (counter / will-call / delivered / COD 
    * ring for them (row 661), so the number the clerk reads out loud at the ring is the server's.
    */
   private renderPaymentBody() {
+    // Boards 00 and 01: the sale (its lines and the fulfilment tiles) on one side, the customer, the
+    // totals, the tender and the deposit lines on the other. The panels layout already carries the
+    // sale in its own pane, so only the stepper draws the sale column; at phone width it stacks.
+    const saleColumn = this.counterLayout === 'STEPPER';
+    return html`<div class="paygrid ${saleColumn ? 'withsale' : ''}" data-testid="pay-grid">
+      ${saleColumn ? this.renderPaySale() : nothing}
+      <div class="paycol payright" data-testid="pay-right">
+        ${this.renderCustomerIdentity(true)}
+        ${this.renderPaymentTender()}
+      </div>
+    </div>`;
+  }
+
+  /** The payment step's sale column: this sale's lines as the clerk reads them out, and the fulfilment tiles. */
+  private renderPaySale(): TemplateResult {
+    return html`<div class="paycol paysale" data-testid="pay-sale">
+      <section class="panel paylines" aria-label="This sale">
+        <h3 class="paylines-h">This sale</h3>
+        ${this.cart.length === 0
+          ? html`<div class="empty">Nothing on this ticket yet.</div>`
+          : html`<ul class="paylist" data-testid="pay-lines">
+              ${this.cart.map(
+                (l, i) => html`<li>
+                  <span class="n">${l.product.name}<span class="sku">${l.product.sku}</span></span>
+                  <span class="q">${l.qty} ${l.uom}</span>
+                  <span class="m">${l.priceMissing ? 'price pending' : this.lineShownTotal(l, i)}</span>
+                </li>`,
+              )}
+            </ul>`}
+      </section>
+      <section class="panel payfulfil" data-testid="pay-fulfil">${this.renderFulfilTiles()}</section>
+    </div>`;
+  }
+
+  private renderPaymentTender() {
     return html`
 ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, ABOVE a
    clearly separate Payment section (concept parity). One server-priced figure
@@ -6275,6 +6843,16 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
           
 
 
+            ${this.renderShapeMenu()}
+            ${this.activeDepositShape() !== ''
+              ? html`
+            ${this.renderDepositPanel()}
+            ${/* Item 9 visual review P3-1: the quiet split link stands in BOTH branches of the
+               payment step, so a clerk on a deposit shape need not first press Pay in full now;
+               choosing it falls back to pay in full (choosePay resets the shape), exactly as the
+               shape menu already does for a live split. */ ''}
+            ${this.renderSplitEntry()}`
+              : html`
             ${/* DIB-488: tender is CHOSEN here (a state of the sale the flow can track), and the
                sale rings on the one Complete-sale CTA below. Same ring, same idempotency key
                minting, same server path as the old ring-on-click tenders. */ ''}
@@ -6284,7 +6862,9 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
             ${/* DIB-512: ONE roving Tab stop for the whole group: arrows move inside (the house
                grid/rail rule); Tab passes straight through to the CTA. */ ''}
             <div class="paytiles" role="group" aria-label="Payment method" @keydown=${(e: KeyboardEvent) => this.onPayTilesKey(e)} data-testid="pos-paytiles">
-              <button
+              ${this.accountTileHidden()
+                ? nothing
+                : html`              <button
                 class="${this.payMethod === 'ACCOUNT' ? 'active' : ''}"
                 aria-pressed=${this.payMethod === 'ACCOUNT' ? 'true' : 'false'}
                 tabindex=${this.payTileIdx === 0 ? '0' : '-1'}
@@ -6304,7 +6884,7 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
                   <path d="M4 20h16M9 20v-5h6v5"></path>
                 </svg>
                 Charge Account
-              </button>
+              </button>`}
               <button
                 class="${this.payMethod === 'CASH' ? 'active' : ''}"
                 aria-pressed=${this.payMethod === 'CASH' ? 'true' : 'false'}
@@ -6338,47 +6918,11 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
                 </svg>
                 Card
               </button>
-              ${/* DIB-165: split opens a PANEL rather than ringing, because a split is composed
-                 before it is committed: there is nothing to ring until the legs add up. */ ''}
-              <button
-                data-testid="tender-split"
-                class="${this.payMethod === 'SPLIT' ? 'active' : ''}"
-                aria-pressed=${this.payMethod === 'SPLIT' ? 'true' : 'false'}
-                tabindex=${this.payTileIdx === 3 ? '0' : '-1'}
-                ?disabled=${this.ringBusy() || this.ringDone()}
-                title="Settle this sale across several tenders (cash + card + account)."
-                @click=${() => {
-                  this.payTileIdx = 3;
-                  this.choosePay('SPLIT');
-                }}
-              >
-                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M4 12h6M14 6l6-0M14 18l6 0M10 12c3 0 4-6 7-6M10 12c3 0 4 6 7 6"></path>
-                </svg>
-                Split…
-              </button>
             </div>
             ${this.renderCashTendered()}
-
-            ${this.payMethod === 'CARD' || (this.depositCents() > 0 && this.depositMethod === 'CARD')
-              ? html`<label class="cardlabel">
-                    Card type
-                    ${this.cardRail === 'test'
-                      ? html`<span class="railbadge test" title="Deterministic simulated gateway: no card reader or live Run Payments call. Flip to the live client at cutover; the sale flow is identical.">TEST MODE: simulated terminal</span>`
-                      : nothing}
-                    ${this.cardRail === 'live'
-                      ? html`<span class="railbadge live">LIVE: Run Payments</span>`
-                      : nothing}
-                    ${this.cardRail === 'unconfigured'
-                      ? html`<span class="railbadge off" title="An admin must configure the card processor (PUT /api/v1/payments/config) before Card tender works.">card processor not configured</span>`
-                      : nothing}
-                  </label>
-                  <select .value=${this.cardType} @change=${(e: Event) => (this.cardType = (e.target as HTMLSelectElement).value)}>
-                    <option value="CREDIT">Credit</option>
-                    <option value="DEBIT">Debit</option>
-                    <option value="PREPAID">Prepaid</option>
-                  </select>`
-              : nothing}
+            ${this.renderSupplierDeposit()}
+            ${this.renderCardType()}
+            ${this.renderSplitEntry()}`}
 
             ${/* rev 5: after a DONE ring the CTA disarms and SAYS the sale is complete: one more
                "did it take?" tap used to mint a fresh key and ring the same basket again as a
@@ -6401,7 +6945,9 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
                the press. Disabling it would be worse (it strands a clerk with no way forward and
                no reason given), so the button keeps its arm and changes its promise: it will open
                the drawer, then ring. completeSale() does exactly that, in that order. */ ''}
-            ${this.payMethod !== 'SPLIT'
+            ${this.activeDepositShape() !== ''
+              ? nothing
+              : this.payMethod !== 'SPLIT'
               ? html`<button
                     class="complete-cta"
                     data-testid="pos-complete-sale"
@@ -6479,7 +7025,7 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
                   // has to agree with it. The TENDER still falls back to CASH (the ticket must
                   // stay tenderable, the composed legs are gone); only the group's keyboard seat
                   // follows the focus.
-                  this.payTileIdx = 3;
+                  this.payTileIdx = 1;
  // rev 5: the panel unmounts under the keyboard: hand focus back to the Split
                   // tile (the control that opened it) instead of dropping it on <body>.
                   void this.updateComplete.then(() =>
@@ -6516,6 +7062,18 @@ ${this.ring.state === 'error'
       ${this.ringDone() ? nothing : this.renderReadBack()}
 ${this.ring.state === 'done'
             ? html`${this.renderSoldPanel(this.ring.sale)}
+                ${this.heldCard === null
+                  ? nothing
+                  : renderHeldOrder(this.heldCard, {
+                      payBalanceHref: `#/pay-balance?order=${encodeURIComponent(this.heldCard.orderNo)}`,
+                      printButton: html`<button
+                        type="button"
+                        data-testid="held-print-slip"
+                        @click=${() => this.heldCard !== null && this.printHoldSlip(this.heldCard)}
+                      >
+                        Print hold slip
+                      </button>`,
+                    })}
                 ${/* WAVE 2 · finding 13: ORDER ADMINISTRATION IS DISCLOSED, NOT DELETED.
                    Measured on a real carry-out (#SO-TRT-3 / #INV-2, $7,661.40, cash): 58 visible
                    strings in this card, of which the sold panel above is the first twelve and is
@@ -7004,13 +7562,13 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
     return roster.map((s) => html`<option value=${s.id} ?selected=${s.id === this.salespersonId}>${s.name}</option>`);
   }
 
-  private renderCustomerIdentity() {
+  private renderCustomerIdentity(payStep = false) {
     const c = this.customer;
     if (c) {
        // HH note: the reference subtracted the balance from the limit here; the core computes
        // credit in HH, so the port asks the host seam (CLOSURE.md names it), already clamped.
       const available = availableCreditCents(c);
-      return html`<div class="custcard" data-testid="customer-card">
+      return html`<div class="custcard" data-testid=${payStep ? 'pay-customer-card' : 'customer-card'}>
         <span class="avatar" aria-hidden="true">${customerInitials(c.name)}</span>
         <div class="cmain">
           <div class="cname">${c.name}</div>
@@ -7034,10 +7592,15 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
           </div>
           <div class="cfacts">
             <span>Terms <span class="num">${c.payment_terms_days}d</span></span>
-            <span>Available (derived) <span class="num avail">${formatMoney(available)}</span></span>
-            ${c.open_balance_cents > 0
-              ? html`<span>Outstanding <span class="num out">${formatMoney(c.open_balance_cents)}</span></span>`
-              : nothing}
+            ${payStep
+              ? c.credit_limit_cents > 0
+                ? html`<span>Outstanding <span class="num out">${formatMoney(c.open_balance_cents)}</span></span>
+                    <span>Credit available <span class="num avail">${formatMoney(available)}</span></span>`
+                : html`<span>No credit line</span>`
+              : html`<span>Available (derived) <span class="num avail">${formatMoney(available)}</span></span>
+                ${c.open_balance_cents > 0
+                  ? html`<span>Outstanding <span class="num out">${formatMoney(c.open_balance_cents)}</span></span>`
+                  : nothing}`}
             ${/* THE PAST-DUE FACT (N4). The back-office lead starts a counter sale partly because "it
                also gives me an opportunity to ask them to pay their bill": this is the thing that was
                missing when they did. It is one more entry in the same quiet fact row, in the same
@@ -7057,18 +7620,20 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
               : nothing}
           </div>
         </div>
-        <button
-          class="cchange"
-          data-testid="customer-change"
-          title="Choose a different customer for this sale"
-          @click=${() => this.openPicker()}
-        >
-          Change
-        </button>
+        ${payStep
+          ? nothing
+          : html`<button
+              class="cchange"
+              data-testid="customer-change"
+              title="Choose a different customer for this sale"
+              @click=${() => this.openPicker()}
+            >
+              Change
+            </button>`}
       </div>`;
     }
     if (this.walkInConfirmed) {
-      return html`<div class="custcard walkin" data-testid="customer-card">
+      return html`<div class="custcard walkin" data-testid=${payStep ? 'pay-customer-card' : 'customer-card'}>
         <span class="avatar" aria-hidden="true">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
             <circle cx="12" cy="8" r="3.5"></circle>
@@ -7082,16 +7647,19 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
             <span class="ctag">Cash</span>
           </div>
         </div>
-        <button
-          class="cchange"
-          data-testid="customer-change"
-          title="Pick an account customer instead"
-          @click=${() => this.openPicker()}
-        >
-          Change
-        </button>
+        ${payStep
+          ? nothing
+          : html`<button
+              class="cchange"
+              data-testid="customer-change"
+              title="Pick an account customer instead"
+              @click=${() => this.openPicker()}
+            >
+              Change
+            </button>`}
       </div>`;
     }
+    if (payStep) return nothing;
     return html`<div
       class="customerpick"
       role="button"
@@ -7595,6 +8163,9 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
            TEST MODE badge). A rail that answers false, or answers nothing, claims nothing. */ ''}
         ${(sale.tender === 'CARD' || sale.tenders?.some((leg) => leg.method === 'CARD')) && this.cardRail === 'test'
           ? html`<div class="f" data-testid="sold-simulated-notice"><span class="k">Card</span><span class="v">Simulated card: no card was charged</span></div>`
+          : nothing}
+        ${(sale.supplier_deposit_cents ?? 0) > 0
+          ? html`<div class="f"><span class="k">Supplier deposit</span><span class="v">${supplierDepositLine(sale.supplier_deposit_cents ?? 0, formatMoney)}</span></div>`
           : nothing}
         ${(sale.deposit_cents ?? 0) > 0
           ? html`<div class="f"><span class="k">Deposit</span><span class="v">${formatMoney(sale.deposit_cents ?? 0)}</span></div>`

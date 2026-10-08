@@ -92,5 +92,10 @@ test("the page's styling comes from the design system's tokens and its button pr
   assert.match(source, /import \{[^}]*\bbutton\b[^}]*\} from "@hardscapehouse\/design-system\/src\/primitives\.js"/);
   assert.match(source, /\bbutton\(\{/);
   assert.doesNotMatch(source, /<button\b/, "no hand-rolled button element");
-  assert.doesNotMatch(source, /var\(--hh-accent\)/, "the fill is the primitive's --brand-fill, not a raw accent");
+  // The press fill is the document's family (the quote fill, or the order's gold once converted),
+  // never the primitive's raw --brand-fill. The gold fill is named in exactly two places: the
+  // order family's alias and the order's band.
+  assert.match(source, /--doc-fill:\s*var\(--hh-quote-fill\)/, "a quote's press fill is the quote fill");
+  assert.match(source, /\.btn-primary,\s*\.btn-primary:hover\s*\{[^}]*background:\s*var\(--doc-fill\)/, "the primary button takes the document's fill");
+  assert.equal((source.match(/var\(--hh-accent\)/g) ?? []).length, 2, "the gold fill is named only by the order family and its band");
 });

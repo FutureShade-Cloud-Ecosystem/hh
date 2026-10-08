@@ -52,7 +52,7 @@ frontends:
   - id: counter-till
     name: Counter Till
     audience: internal
-    roles: [inside_sales, sales_manager, branch_manager, yard_manager, general_manager]
+    roles: [inside_sales, sales_manager, branch_manager, general_manager]
     gate: role
     devices: [desktop, tablet, kiosk]
     kit: scan-and-confirm
@@ -67,7 +67,7 @@ frontends:
   - id: quote-desk
     name: Quote Desk
     audience: internal
-    roles: [inside_sales, outside_sales, sales_manager, yard_manager, branch_manager, general_manager]
+    roles: [inside_sales, outside_sales, sales_manager, branch_manager, general_manager]
     gate: role
     devices: [tablet, desktop, phone]
     kit: guided-flow

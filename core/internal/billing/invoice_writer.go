@@ -83,6 +83,13 @@ const (
 	SourceWarrantyCredit = "WARRANTY_CREDIT"
 )
 
+// SourceSupplierDeposit marks the deposit document a POS special order ring
+// writes (sub item 9.5): an ordinary INVOICE whose posting is DR AR / CR
+// Customer Deposits rather than revenue. The value is the pos module's own,
+// spelled here rather than imported because a DB value is not a module
+// dependency worth buying.
+const SourceSupplierDeposit = "SUPPLIER_DEPOSIT"
+
 // EventSourceCounter marks an invoice raised at the counter for an order that has not left the yard
 // (QD-5, InvoiceOrderAtAgreed). It rides on the invoice header's metadata and on the
 // ar.invoice.finalized payload as "source". AR and the ledger take the event whole and ignore it; the
@@ -262,11 +269,13 @@ type InvoiceDoc struct {
 // invoices + invoice_lines + customer_transactions + events_outbox, and those four rows are one
 // atomic fact: an invoice that exists without its subledger row is a balance nobody can explain.
 type InvoiceWriter struct {
-	pool     *pgxpool.Pool
-	tax      TaxAssessor
-	source   OrderInvoiceSource
-	glPoster CreditMemoPoster
-	now      func() time.Time
+	pool      *pgxpool.Pool
+	tax       TaxAssessor
+	source    OrderInvoiceSource
+	glPoster  CreditMemoPoster
+	delivered DeliveredOrderReader // deposit_release.go; nil = the deposit sweep skips
+	journals  JournalKeyReader     // deposit_release.go; nil = the deposit sweep skips
+	now       func() time.Time
 }
 
 // NewInvoiceWriter builds the writer. The tax assessor defaults to FlatHSTAssessor (the W4/W5

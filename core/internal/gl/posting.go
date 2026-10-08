@@ -45,6 +45,8 @@ func (s *Service) consume(ctx context.Context, e notify.Event) error {
 		draft, post, err = s.buildPaymentBounced(ctx, e.Payload)
 	case "order.fulfilled":
 		draft, post, err = s.buildOrderFulfilled(ctx, e.Payload)
+	case "deposit.released":
+		draft, post, err = s.buildDepositReleased(ctx, e.Payload)
 	case "till.session.completed":
 		draft, post, err = s.buildTillSessionCompleted(ctx, e.Payload)
 	case "pos.return.committed":
@@ -123,6 +125,29 @@ func (s *Service) buildInvoiceFinalized(ctx context.Context, payload []byte) (jo
 	arCode, err := pick(rules, et, "ar")
 	if err != nil {
 		return journalDraft{}, false, err
+	}
+	// Sub item 9.5: a supplier deposit document is the liability, not revenue.
+	// DR the receivable, CR Customer Deposits (posting rule
+	// invoice.finalized/customer_deposit, the 0007 account nothing used until
+	// now), the whole total, and no revenue or tax legs: the goods the deposit
+	// secures have not booked yet, and their invoice posts its own revenue.
+	if a.SourceKind == "SUPPLIER_DEPOSIT" {
+		depCode, err := pick(rules, et, "customer_deposit")
+		if err != nil {
+			return journalDraft{}, false, err
+		}
+		return journalDraft{
+			Source:         SourceInvoice,
+			SourceRefID:    p.InvoiceID,
+			IdempotencyKey: "ar.invoice.finalized:" + p.InvoiceID,
+			Memo:           "Supplier deposit " + a.InvoiceNo,
+			BranchID:       a.BranchID,
+			OccurredAt:     a.FinalizedAt,
+			Lines: []draftLine{
+				dr(arCode, a.TotalCents, "AR"),
+				cr(depCode, a.TotalCents, "customer deposit"),
+			},
+		}, true, nil
 	}
 	revCode, err := pick(rules, et, "revenue")
 	if err != nil {
@@ -435,6 +460,75 @@ func (s *Service) buildOrderFulfilled(ctx context.Context, payload []byte) (jour
 	}, true, nil
 }
 
+// depositReleasedPayload is the release event's payload: the deposit document
+// whose liability releases (the order id rides along for queryability, the
+// builder reads every fact from the document itself).
+type depositReleasedPayload struct {
+	InvoiceID string `json:"invoice_id"`
+	OrderID   string `json:"order_id"`
+}
+
+// buildDepositReleased posts the release of a supplier deposit when its special
+// order is fulfilled: DR 2300 Customer Deposits / CR revenue for the deposit's
+// whole total, no AR and no tax legs. The deposit document billed AR in full
+// at its own finalization (the 0373 rule: DR 1100 / CR 2300) and the sale's
+// own invoice booked the sale's whole tax on the rest, so the release is
+// exactly the deposit amount moving from the liability to revenue: after it,
+// 2300 for the order nets to zero and the revenue recognised for the sale
+// equals its pre-tax total. Idempotent per deposit document, so a redelivered
+// release posts nothing.
+func (s *Service) buildDepositReleased(ctx context.Context, payload []byte) (journalDraft, bool, error) {
+	var p depositReleasedPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return journalDraft{}, false, fmt.Errorf("gl: deposit.released payload: %w", err)
+	}
+	if p.InvoiceID == "" {
+		return journalDraft{}, false, fmt.Errorf("gl: deposit.released missing invoice_id")
+	}
+	if s.invoices == nil {
+		return journalDraft{}, false, fmt.Errorf("gl: invoice reader not configured")
+	}
+	a, err := s.invoices.InvoiceForGL(ctx, p.InvoiceID)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	// Only a deposit document may release: the event names the liability
+	// clearing, and an ordinary invoice here is malformed money, refused
+	// loudly (the row retries into visibility) never silently posted.
+	if a.SourceKind != "SUPPLIER_DEPOSIT" {
+		return journalDraft{}, false, fmt.Errorf("gl: deposit.released names invoice %s whose source_kind %q is not SUPPLIER_DEPOSIT",
+			p.InvoiceID, a.SourceKind)
+	}
+	if a.TotalCents == 0 {
+		return journalDraft{}, false, nil // a nothing deposit is no liability, the zero-leg no-op posture
+	}
+	et := "deposit.released"
+	rules, err := s.store.PostingAccounts(ctx, et, a.BranchID)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	depCode, err := pick(rules, et, "customer_deposit")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	revCode, err := pick(rules, et, "revenue")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	return journalDraft{
+		Source:         SourceInvoice,
+		SourceRefID:    p.InvoiceID,
+		IdempotencyKey: "deposit.released:" + p.InvoiceID,
+		Memo:           "Deposit released " + a.InvoiceNo,
+		BranchID:       a.BranchID,
+		OccurredAt:     s.clock(),
+		Lines: []draftLine{
+			dr(depCode, a.TotalCents, "customer deposit released"),
+			cr(revCode, a.TotalCents, "revenue"),
+		},
+	}, true, nil
+}
+
 type posReturnCommittedPayload struct {
 	ReturnID      string `json:"return_id"`
 	OrderID       string `json:"order_id"`
@@ -740,6 +834,7 @@ func (s *Service) ValidatePostingRules(ctx context.Context) error {
 		"order.fulfilled":        {"cogs", "inventory"},
 		"pos.return.committed":   {"revenue", "hst", "undeposited", "card_clearing", "ar", "fee_revenue"},
 		"order.returned":         {"inventory", "cogs"},
+		"deposit.released":       {"customer_deposit", "revenue"},
 	}
 	for et, roles := range required {
 		for _, role := range roles {

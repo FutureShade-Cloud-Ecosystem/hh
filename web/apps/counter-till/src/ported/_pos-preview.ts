@@ -24,6 +24,14 @@ export interface PreviewBody {
   discount?: ReturnType<typeof discountWire>;
 }
 
+/** One payment shape the server says the counter may offer, with line two's words on the deposit shapes. */
+export interface PaymentOption {
+  shape: string;
+  lineTwoWords?: string;
+  /** The server's sentence under the two lines of a deposit sale; it follows the reason the account has this shape. */
+  lineTwoSentence?: string;
+}
+
 /** What the till knows about the ticket's totals: nothing asked, asked and waiting, answered, or unreachable. */
 export type PreviewState =
   | { kind: 'idle' }
@@ -41,6 +49,10 @@ export type PreviewState =
       ticketDiscountMaxCents: number;
       /** Per line, only when a discount applies: the net the line charges and what came off. */
       lines: PreviewDiscountLine[];
+      /** The shapes the account may be offered (item 9.1), the server's list: empty when it sent none. */
+      paymentOptions: PaymentOption[];
+      /** Whether the counter may mark a supplier's demanded deposit (item 9.5), the server's say. */
+      supplierDeposit: SupplierDepositAllowance;
     }
   /** The ring refused the ticket in words (a discount past what it comes off, an approver it will not take). */
   | { kind: 'refused'; words: string }
@@ -88,14 +100,21 @@ export function previewKey(body: PreviewBody | null): string {
 
 /**
  * Read an answer; anything that is not three whole-cent figures is not an answer. A 422 carrying
- * the ring's words (status given) is a refusal the total row can say in those words; any other
- * non answer is just unavailable.
+ * the ring's words (status given) is a refusal the total row can say in those words; a problem
+ * body (a stable code in error, the sentence in message, the pay before release refusal the
+ * first of them) speaks its MESSAGE, never its code; any other non answer is just unavailable.
  */
 export function readPreview(answer: unknown, status = 200): PreviewState {
   if (answer === null || typeof answer !== 'object') return { kind: 'unavailable' };
   const a = answer as Record<string, unknown>;
   if (status === 422) {
-    return typeof a.error === 'string' && a.error !== '' ? { kind: 'refused', words: a.error } : { kind: 'unavailable' };
+    const words =
+      typeof a.message === 'string' && a.message !== ''
+        ? a.message
+        : typeof a.error === 'string' && a.error !== ''
+          ? a.error
+          : '';
+    return words !== '' ? { kind: 'refused', words } : { kind: 'unavailable' };
   }
   if (status !== 200) return { kind: 'unavailable' };
   const { subtotal_cents: s, tax_cents: t, total_cents: n } = a;
@@ -140,7 +159,37 @@ export function readPreview(answer: unknown, status = 200): PreviewState {
     ticketBaseCents: base,
     ticketDiscountMaxCents: max,
     lines,
+    paymentOptions: readPaymentOptions(a.payment_options),
+    supplierDeposit: readSupplierDeposit(a.supplier_deposit),
   };
+}
+
+/** The server's supplier_deposit block: absent or malformed is not allowed, never guessed. */
+export interface SupplierDepositAllowance {
+  allowed: boolean;
+  words: string | null;
+}
+
+function readSupplierDeposit(raw: unknown): SupplierDepositAllowance {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return { allowed: false, words: null };
+  const r = raw as Record<string, unknown>;
+  if (r.allowed !== true) return { allowed: false, words: null };
+  return { allowed: true, words: typeof r.words === 'string' && r.words !== '' ? r.words : null };
+}
+
+/** The server's payment_options: entries that are not a shape word are dropped, never guessed. */
+export function readPaymentOptions(raw: unknown): PaymentOption[] {
+  if (!Array.isArray(raw)) return [];
+  const out: PaymentOption[] = [];
+  for (const entry of raw) {
+    const o = (entry ?? {}) as Record<string, unknown>;
+    if (typeof o.shape !== 'string' || o.shape === '') continue;
+    const option: PaymentOption = { shape: o.shape };
+    if (typeof o.line_two_words === 'string' && o.line_two_words !== '') option.lineTwoWords = o.line_two_words;
+    if (typeof o.line_two_sentence === 'string' && o.line_two_sentence !== '') option.lineTwoSentence = o.line_two_sentence;
+    out.push(option);
+  }
+  return out;
 }
 
 /** The words for the split refusal, from its fields (the server's `split_total_mismatch`). */

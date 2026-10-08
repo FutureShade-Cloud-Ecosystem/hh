@@ -3,6 +3,7 @@ package order
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -125,7 +126,9 @@ func (f *fakeStore) ResolveOrderID(_ context.Context, idOrNo string, _ bool, _ [
 
 // UpdateStatusFromChecked mirrors UpdateStatusFrom but runs the precheck (the cancel money predicate)
 // BEFORE the move once the transition is otherwise legal, the same order the real locked write uses
-// (B2-2). The predicate's error propagates so a fixture with money attached is refused.
+// (B2-2). The predicate's error propagates so a fixture with money attached is refused. The precheck
+// receives the write's transaction on the context (withPrecheckTx, the real locked write's shape), so
+// the hold read's transaction joining (item 9 Opus P3-2) is exercised without a database.
 func (f *fakeStore) UpdateStatusFromChecked(ctx context.Context, orderID, newStatus string, allowedFrom []string, precheck func(context.Context) error) (string, error) {
 	d, ok := f.details[orderID]
 	if !ok {
@@ -146,7 +149,7 @@ func (f *fakeStore) UpdateStatusFromChecked(ctx context.Context, orderID, newSta
 		return old, ErrIllegalTransition
 	}
 	if precheck != nil {
-		if err := precheck(ctx); err != nil {
+		if err := precheck(withPrecheckTx(ctx, fakeTx{})); err != nil {
 			return old, err
 		}
 	}
@@ -154,6 +157,27 @@ func (f *fakeStore) UpdateStatusFromChecked(ctx context.Context, orderID, newSta
 	d.Status = newStatus
 	f.details[orderID] = d
 	return old, nil
+}
+
+// ApplyYardPicksTx mirrors the real writer's guard order for the unit legs:
+// the row lock's status window first, then the precheck under the write's
+// transaction (the hold read's home, item 9 Opus P3-2), then the pick. The
+// unit legs drive refusals; the real money and line arithmetic is the
+// integration suite's.
+func (f *fakeStore) ApplyYardPicksTx(ctx context.Context, in YardPickInput, precheck func(context.Context) error, _ yardPickAudit) (YardPickOutcome, error) {
+	d, ok := f.details[in.OrderID]
+	if !ok {
+		return YardPickOutcome{}, ErrNotFound
+	}
+	if !slices.Contains(yardPickStatuses, d.Status) {
+		return YardPickOutcome{}, &NotEditableError{Field: FieldLineQty, Status: d.Status}
+	}
+	if precheck != nil {
+		if err := precheck(withPrecheckTx(ctx, fakeTx{})); err != nil {
+			return YardPickOutcome{}, err
+		}
+	}
+	return YardPickOutcome{Order: YardOrderFacts{OrderNo: d.OrderNo, CustomerID: d.CustomerID}}, nil
 }
 
 // UpdateStatus mirrors the pgx UpdateStatus semantics for the DIB-159 choke-point tests: it returns

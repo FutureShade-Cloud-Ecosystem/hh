@@ -430,11 +430,11 @@ func TestQD5_EightParallelCallsWithOneKeyLeaveOnePayment(t *testing.T) {
 	}
 }
 
-// - 4: the role rule at the service: branch reach, and the conversion half's own rule (row 14) -
+// - 4: the role rule at the service: branch reach, and the selling role rule (rows 14 and 1156) -
 
 func TestQD5_CounterRolesAdmittedAtTheirOwnBranchAndRefusedAtAnothers(t *testing.T) {
 	e := qd5Setup(t)
-	for _, role := range []string{"INSIDE_SALES", "SALES_MANAGER", "YARD_MANAGER", "BRANCH_MANAGER"} {
+	for _, role := range []string{"INSIDE_SALES", "SALES_MANAGER", "BRANCH_MANAGER"} {
 		t.Run(role, func(t *testing.T) {
 			q := e.seedQuote(1_000_000, 0, qd5Trenton)
 			e.convert(q)
@@ -454,11 +454,12 @@ func TestQD5_CounterRolesAdmittedAtTheirOwnBranchAndRefusedAtAnothers(t *testing
 	}
 }
 
-// TestQD5_YardManagerCannotConvertOnItsOwnButIsAdmittedAtTheCashCustomersOneAction: the separate
-// conversion of a quote (no payment) keeps the selling role rule, so the Yard manager still cannot
-// convert on its own (row 14); the one action that converts an ACCEPTED quote at its agreed totals as
-// part of taking its payment admits the Yard manager (ruling on decision 3), nothing in it editable.
-func TestQD5_YardManagerCannotConvertOnItsOwnButIsAdmittedAtTheCashCustomersOneAction(t *testing.T) {
+// TestQD5_YardManagerIsRefusedAtTheConversionAndTheCashCustomersOneAction: the Yard manager holds no
+// sale, quote or payment access (decision log row 1156), so it is refused at the separate conversion
+// (row 14's selling role rule) and at the cash customer's one action alike: NotSellingRoleError naming
+// the role, nothing written, the quote left ACCEPTED. It sat inside the one action's rule once; row
+// 1156 removed its till and desk, reversing that admission.
+func TestQD5_YardManagerIsRefusedAtTheConversionAndTheCashCustomersOneAction(t *testing.T) {
 	e := qd5Setup(t)
 	yard := e.as("YARD_MANAGER", qd5Trenton)
 	q := e.seedQuote(1_000_000, 0, qd5Trenton)
@@ -470,12 +471,12 @@ func TestQD5_YardManagerCannotConvertOnItsOwnButIsAdmittedAtTheCashCustomersOneA
 		t.Fatalf("a refused conversion wrote rows: %+v status %s", c, e.quoteStatus(q))
 	}
 	cash := e.seedQuote(0, 0, qd5Trenton)
-	out, err := e.svc.TakeOrderPayment(yard, cash.QuoteID, pay("CASH", cash.Total, "k-yard-cash"))
-	if err != nil || !out.Converted || out.BalanceCents != 0 {
-		t.Fatalf("the Yard manager is admitted at the cash customer's one action: %+v %v", out, err)
+	ns = nil
+	if _, err := e.svc.TakeOrderPayment(yard, cash.QuoteID, pay("CASH", cash.Total, "k-yard-cash")); !errors.As(err, &ns) {
+		t.Fatalf("the Yard manager at the cash customer's one action must be refused naming the role, got %v", err)
 	}
-	if c := e.counts(cash); c != (qd5Counts{Orders: 1, Invoices: 1, Payments: 1}) || e.quoteStatus(cash) != "CONVERTED" {
-		t.Fatalf("after: %+v status %s", c, e.quoteStatus(cash))
+	if c := e.counts(cash); c != (qd5Counts{}) || e.quoteStatus(cash) != "ACCEPTED" {
+		t.Fatalf("a refused payment wrote rows: %+v status %s", c, e.quoteStatus(cash))
 	}
 	// Only an ACCEPTED quote: a quote in any other state takes nothing from the Yard manager either.
 	sent := e.seedQuote(0, 0, qd5Trenton)
@@ -489,12 +490,12 @@ func TestQD5_YardManagerCannotConvertOnItsOwnButIsAdmittedAtTheCashCustomersOneA
 }
 
 // TestQD5_TheCashCustomersOneActionAtTheServiceByRole pins the service half of the role rule at one
-// branch: the four counter roles are admitted at their own branch and refused (not found or forbidden)
-// at another's, for the one action. The gate's half (Outside Sales, the General Manager, HR and the
-// rest refused) is proven on the real route in authz.
+// branch: the three counter roles are admitted at their own branch and refused (not found or forbidden)
+// at another's, for the one action. The gate's half (Outside Sales, the General Manager, HR, the Yard
+// manager and the rest refused) is proven on the real route in authz.
 func TestQD5_TheCashCustomersOneActionAtTheServiceByRole(t *testing.T) {
 	e := qd5Setup(t)
-	for _, role := range []string{"INSIDE_SALES", "SALES_MANAGER", "BRANCH_MANAGER", "YARD_MANAGER"} {
+	for _, role := range []string{"INSIDE_SALES", "SALES_MANAGER", "BRANCH_MANAGER"} {
 		t.Run(role, func(t *testing.T) {
 			q := e.seedQuote(0, 0, qd5Trenton)
 			_, err := e.svc.TakeOrderPayment(e.as(role, qd5Kingston), q.QuoteID, pay("CASH", q.Total, "k-"+role+"-away"))

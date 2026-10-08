@@ -286,7 +286,9 @@ test('legend: every action it advertises still has a visible control on the coun
 });
 
 test('legend: an unavailable key DIMS rather than disappearing, and a browser-owned key is marked', () => {
-  assert.match(legendSrc, /\.k\.off \{\s*\n\s*opacity: 0\.42;/);
+  // Round 15: dimmed is the design system's disabled pair, never a fade of the live colours.
+  assert.match(legendSrc, /\.k\.off \{[^}]*background: var\(--hh-disabled-fill\);[^}]*color: var\(--hh-disabled-ink\);/);
+  assert.doesNotMatch(legendSrc, /\.k\.off \{[^}]*opacity/);
   assert.match(legendSrc, /k\.live \? '' : 'off'/);
   assert.match(legendSrc, /\.k\.host \.cap \{\s*\n\s*border-style: dashed;/);
   const owned = legendKeys([{ action: HK_PAY, key: 'f12', browser_owned: true }], state());

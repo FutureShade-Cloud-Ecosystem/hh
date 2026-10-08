@@ -61,6 +61,11 @@ type InvoiceAmounts struct {
 	CustomerID    string
 	InvoiceNo     string
 	FinalizedAt   time.Time
+	// SourceKind is the document's provenance (invoices.source_kind): the
+	// builder posts SUPPLIER_DEPOSIT documents to Customer Deposits instead of
+	// revenue and tax (sub item 9.5), the deposit being the liability it is
+	// until the special order's fulfilment applies it.
+	SourceKind string
 }
 
 // TaxSplitReader resolves the FN relief split (full HST / on-credit / net collected) recorded on the sale's
@@ -284,6 +289,12 @@ func (s *Service) PostExternalTx(ctx context.Context, tx pgx.Tx, in ExternalJour
 	return s.postExternalTx(ctx, tx, in)
 }
 
+// JournalKeysExist answers which of the given idempotency keys already name a journal (a keyed
+// existence read; the nightly sweeps in billing ask it rather than reading gl_journals).
+func (s *Service) JournalKeysExist(ctx context.Context, keys []string) ([]string, error) {
+	return s.repo.JournalKeysExist(ctx, keys)
+}
+
 // GLBalanceCents returns the balance of an account for a period/branch, read from v_gl_account_balances.
 // FROZEN signature; A-01 fills the body (must go real early, bankrec's variance check depends on it).
 func (s *Service) GLBalanceCents(ctx context.Context, accountCode string, year, month int, branchID string) (int64, error) {
@@ -315,7 +326,7 @@ func (s *Service) RegisterPostingHandlers(d *notify.Dispatcher) {
 }
 
 // PostedTopics is the frozen set of outbox topics the GL posting consumer owns (the W5 eight + the two
-// W7 POS-return topics).
+// W7 POS-return topics + the deposit release, 0374).
 var PostedTopics = []string{
 	"ar.invoice.finalized",
 	"payment.received",
@@ -327,6 +338,7 @@ var PostedTopics = []string{
 	"till.session.completed",
 	"pos.return.committed",
 	"order.returned",
+	"deposit.released",
 }
 
 // postEvent is the single outbox handler for all eight posted topics. It resolves the mapped posting rules,

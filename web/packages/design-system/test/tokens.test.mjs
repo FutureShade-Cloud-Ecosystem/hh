@@ -28,6 +28,7 @@ test('every theme-capable role is DECLARED in the light half, not inherited', ()
     '--hh-page', '--hh-card', '--hh-line', '--hh-control-line', '--hh-text', '--hh-text-dim',
     '--hh-row', '--hh-row-alt', '--hh-field',
     '--hh-accent-text', '--hh-focus-ring',
+    '--hh-quote', '--hh-quote-link', '--hh-quote-tint',
     '--hh-danger', '--hh-danger-fill', '--hh-danger-fill-ink',
     '--hh-info', '--hh-success', '--hh-success-fill',
     '--hh-state-good', '--hh-state-watch', '--hh-state-stop',
@@ -53,6 +54,7 @@ test('the gold family and the layout invariants are theme-invariant on purpose',
   const light = parseDeclarations(blocks.light);
   const invariants = [
     '--hh-accent', '--hh-accent-hover', '--hh-accent-ink',
+    '--hh-quote-fill', '--hh-quote-fill-on',
     '--brand', '--brand-hover', '--brand-fill', '--brand-fill-hover', '--brand-fill-on',
     '--cbrand', '--cbrand-on',
     '--hh-font-ui', '--hh-font-mono',

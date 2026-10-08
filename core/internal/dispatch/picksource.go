@@ -115,6 +115,16 @@ type PickFeedTicket struct {
 	MTOClass      string // DIB-63: STANDARD | MTO | MIXED, the picker needs it before the driver does
 	TimeWindow    string
 	Lines         []PickFeedLine
+	// HeldFromPicking, HoldWords and StillOwedCents are the pay before
+	// release hold (item 9 Opus P2-1): a held order STAYS in the feed,
+	// marked, so the yard knows why it waits. This module never computes the
+	// mark (it holds no billing facts): the composition root fills it from
+	// billing's one hold read. The doors (tasks' Claim and Stage) refuse. The
+	// omitempty keeps a clear ticket byte identical to what this code
+	// produced before the mark existed (the delivery ticket's own pin).
+	HeldFromPicking bool   `json:",omitempty"`
+	HoldWords       string `json:",omitempty"`
+	StillOwedCents  int64  `json:",omitempty"`
 }
 
 // pickFeedPickup is the raw row the PICKUP read returns: everything a pull instruction needs when

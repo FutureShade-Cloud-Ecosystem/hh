@@ -1,10 +1,13 @@
 package roleconfig
 
-// expectedMatrix is the decided default matrix (ROLE-ACCESS-r3, its data
-// role-access-r3.json), carried as literals: all 130 cells, in the record's
-// role order and surface order. The default build test holds the embedded
-// default.json to this table cell by cell, so a drift in the carried seed
-// from the decided record fails here and not at a guard.
+// expectedMatrix is the decided default matrix, carried as literals: all 130
+// cells, in the record's role order and surface order. The record is
+// ROLE-ACCESS-r3 (its data role-access-r3.json) as amended by decision log
+// row 1156, which reverses row 370's yard manager cells: the yard manager's
+// Counter Till and Quote Desk are none, its sale and quote access removed.
+// The default build test holds the embedded default.json to this table cell
+// by cell, so a drift in the carried seed from the decided matrix fails here
+// and not at a guard.
 var expectedMatrix = []struct {
 	role    string
 	surface string
@@ -50,8 +53,8 @@ var expectedMatrix = []struct {
 	{"yard_team", "manager-home", LevelNone},
 	{"yard_team", "house-messages", LevelWork},
 	{"yard_team", "dealer-admin", LevelNone},
-	{"yard_manager", "counter-till", LevelWork},
-	{"yard_manager", "quote-desk", LevelWork},
+	{"yard_manager", "counter-till", LevelNone},
+	{"yard_manager", "quote-desk", LevelNone},
 	{"yard_manager", "yard-pick", LevelManage},
 	{"yard_manager", "drive-run", LevelRead},
 	{"yard_manager", "dispatch-board", LevelWork},

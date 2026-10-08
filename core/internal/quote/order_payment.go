@@ -268,9 +268,10 @@ func (s *StaffService) takeOrderPaymentTx(ctx context.Context, tx pgx.Tx, ps ord
 		}
 		// The customer with no credit: this one action converts, bills and pays. Converting an
 		// ACCEPTED quote at its agreed totals as part of taking its payment asks no more authority
-		// than ringing a sale, so the Yard manager, who rings sales on the till, is admitted here
-		// (the principal's ruling on decision 3); nothing in the action is editable. The separate
-		// conversion of a quote, with no payment, keeps the selling role rule and still refuses it.
+		// than ringing a sale, so the rule is the selling roles alone (the yard manager sat inside
+		// it once; decision log row 1156 removed its till and desk, reversing that admission);
+		// nothing in the action is editable. The separate conversion of a quote, with no payment,
+		// keeps the same selling role rule.
 		if !identity.CanConvertAndPay(caller) {
 			return OrderPaymentResult{}, &NotSellingRoleError{RoleCode: caller.RoleCode}
 		}

@@ -49,7 +49,7 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
-        "422": { $ref: "#/components/responses/PosSplitTotalMismatch" }
+        "422": { $ref: "#/components/responses/PosSaleUnprocessable" }
     get:
       operationId: posLookupSales
       tags: [staff-pos]
@@ -142,9 +142,97 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PosSalePreview"
+        "422": { $ref: "#/components/responses/PosSaleUnprocessable" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/pos/pay-balance:
+    get:
+      operationId: posFindPayBalance
+      tags: [staff-pos]
+      summary: Find the orders that owe money, by order number, customer name or phone
+      description: >-
+        The Pay balance find: the matching orders that owe money (an open
+        invoice balance, or an order total nothing has invoiced yet under a
+        pay before release shape), each row carrying the order number, the
+        customer, the job, the fulfilment, the order total, every payment so
+        far with its method and amount, still owed, and held or not (the pay
+        before release hold, with its words). Branch fenced: a branch scoped
+        caller finds only their branches' orders, another branch's order is
+        simply not found.
+      x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: q
+          in: query
+          required: true
+          schema: { type: string }
+          description: The order number, customer name or phone to match
+      responses:
+        "200":
+          description: The matching orders that owe money, newest first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosOwingOrderList"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: posTakePayBalance
+      tags: [staff-pos]
+      summary: Take the whole balance of one order by CASH or CARD (idempotent on idempotency_key; 200 on a replay)
+      description: >-
+        The Pay balance take. No part payments at this door: an amount that
+        is not the whole balance is refused in words, and an already paid
+        order is refused in words. The card goes through the card charge
+        rail with its attempt store, idempotent by key; a replay answers the
+        first result and charges nothing. The payment allocates to the
+        order's invoice or invoices, and the pay before release hold lifts
+        with the payment in the same transaction. The answer carries what
+        the receipt and the after card need: paid in full, released to
+        picking or not, and the money trail.
+      x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosPayBalanceTakeInput"
+      responses:
+        "201":
+          description: The taken balance (200 with the same shape on an idempotent replay)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosPayBalanceTaken"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "402":
+          description: >-
+            The card was declined: no money moved and nothing was written.
+            The error word card_charge_card_declined names the case.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: >-
+            The order is paid in full (the desk's own words), or one of the
+            card charge answers the sale route also carries.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422": { $ref: "#/components/responses/PosPayBalanceWholeOnly" }
   /api/v1/pos/assess-relief:
     post:
       operationId: posAssessRelief
@@ -1675,6 +1763,97 @@ components:
                     description: >-
                       The dollar sentence, for example "The tenders add up
                       to $266.00, but the sale total is $300.58."
+    PosSaleUnprocessable:
+      description: >-
+        A well-formed sale body the money does not fit, answered as the
+        Error envelope carrying the refusal's own cents fields beside it.
+        The sale preview answers the same body for the one refusal it
+        shares with the ring (cod_not_for_terms_account), so the till can
+        say it at the read the payment step opens, before the ring.
+        The refusal names itself in the error string and a client
+        discriminates on the error string, never on the keys' absence:
+        split_total_mismatch (tendered_cents and total_cents, the legs do
+        not sum to the total); on_account_not_available (amount_cents and
+        credit_limit_cents, the account cannot book the rest on account,
+        zero day terms or no credit line, pay in full or take a deposit
+        with the balance due later); deposit_not_collect_now (total_cents
+        and deposit_cents, a collect now sale is paid in full, the goods
+        do not leave on a part payment); deposit_out_of_range
+        (deposit_cents and total_cents, the deposit is outside its money
+        bound, more than zero and less than the sale total; a deposit equal
+        to the total is a paid sale, ring it paid, and a negative one is no
+        deposit at all); cod_not_for_terms_account
+        (message only, the pay before release sale type refused for an
+        account that pays on terms: Cash On Demand is the account's own
+        posture, ring the sale on account or paid in full);
+        supplier_deposit_not_credit (message only, a supplier deposit on a
+        shape that is not a credit account's on-account sale, it is billed to
+        the account or taken at the counter); supplier_deposit_over_pretax
+        (deposit_cents and subtotal_cents, the demanded deposit is more than
+        the sale's pre-tax amount). Every message speaks dollars and plain
+        words; no message ever prints cents.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Error"
+              - type: object
+                properties:
+                  tendered_cents:
+                    type: integer
+                    format: int64
+                    description: Present on split_total_mismatch, what the submitted legs sum to
+                  total_cents:
+                    type: integer
+                    format: int64
+                    description: >-
+                      The sale total, present on split_total_mismatch and
+                      deposit_not_collect_now
+                  amount_cents:
+                    type: integer
+                    format: int64
+                    description: Present on on_account_not_available, what would have gone on account
+                  credit_limit_cents:
+                    type: integer
+                    format: int64
+                    description: Present on on_account_not_available, the account's credit line
+                  deposit_cents:
+                    type: integer
+                    format: int64
+                    description: >-
+                      Present on deposit_not_collect_now and
+                      deposit_out_of_range, the deposit the body carried
+                  message:
+                    type: string
+                    description: The dollar sentence for the refusal a person reads at the counter
+    PosPayBalanceWholeOnly:
+      description: >-
+        The Pay balance part amount refusal: this door takes the whole
+        balance of one order. The refusal names itself in the error string
+        "pay_balance_whole_only" and carries the two cents fields and the
+        message key beside it, the problem body style split_total_mismatch
+        uses; a client discriminates on the error string. The message speaks
+        dollars and plain words; no message ever prints cents.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Error"
+              - type: object
+                properties:
+                  sent_cents:
+                    type: integer
+                    format: int64
+                    description: The amount the request carried
+                  balance_cents:
+                    type: integer
+                    format: int64
+                    description: The whole balance the door takes
+                  message:
+                    type: string
+                    description: >-
+                      The dollar sentence, for example "This door takes the
+                      whole balance: $93.00 is owed, $50.00 was entered."
 
   schemas:
     # ── POS: sale ring ───────────────────────────────────────────────────────
@@ -1824,6 +2003,16 @@ components:
         deposit_method:
           type: string
           enum: [CASH, CARD, CHEQUE]
+        supplier_deposit_cents:
+          type: integer
+          format: int64
+          description: >-
+            What the supplier demanded on a special order, billed to a credit
+            account at once as its own invoice (posted to Customer Deposits),
+            never taken at the counter. Allowed only on a credit shape: an
+            ACCOUNT tender on an account with terms and a credit line, with no
+            counter deposit and no split; never more than the sale's pre-tax
+            amount.
         lines:
           type: array
           items: { $ref: "#/components/schemas/PosLineInput" }
@@ -1862,6 +2051,14 @@ components:
         tax_cents: { type: integer, format: int64, description: The provisional flat rate; the tax engine owns the real value }
         total_cents: { type: integer, format: int64 }
         deposit_cents: { type: integer, format: int64, description: Taken at ring on an unpaid sale; the balance is total minus deposit }
+        supplier_deposit_cents:
+          type: integer
+          format: int64
+          description: >-
+            The supplier's demanded deposit billed to the account; the sale's
+            own invoice carries the rest (total less this). Absent when none.
+        supplier_deposit_invoice_id: { type: string, format: uuid, description: The deposit document, for the receipt }
+        supplier_deposit_invoice_no: { type: string }
         tax_reason_code:
           type: string
           enum: [STD_ON_HST_13, ON_FN_POS_8, FED_S87_VENDOR_DELIVERY, MANUAL_TAX_REVIEW, RELIEF_DECLINED_EVIDENCE]
@@ -1908,9 +2105,10 @@ components:
       type: object
       description: >-
         The preview answer: the ticket's own totals in integer cents,
-        exactly as the ring computes them for the same body. A ticket that
+        exactly as the ring computes them for the same body, plus the
+        payment shapes the counter may offer this customer. A ticket that
         collects no tax shows no tax line and its total is its subtotal.
-      required: [subtotal_cents, tax_cents, tax_lines, total_cents, tax_reason_code]
+      required: [subtotal_cents, tax_cents, tax_lines, total_cents, tax_reason_code, payment_options, supplier_deposit]
       properties:
         subtotal_cents: { type: integer, format: int64 }
         tax_cents: { type: integer, format: int64, description: The sum of the tax lines }
@@ -1919,6 +2117,16 @@ components:
           description: Empty when the ticket collects no tax
           items: { $ref: "#/components/schemas/PosSalePreviewTaxLine" }
         total_cents: { type: integer, format: int64 }
+        payment_options:
+          type: array
+          description: >-
+            The payment shapes that fit the account (one per shape, always
+            present): the menu the payment step renders from, so no screen
+            decides a money rule. The ring still refuses per sale on the
+            amount (the credit gate); this is what may be offered.
+          items: { $ref: "#/components/schemas/PosPaymentOption" }
+        supplier_deposit:
+          $ref: "#/components/schemas/PosSupplierDepositOption"
         tax_reason_code:
           type: string
           enum: [STD_ON_HST_13, ON_FN_POS_8, FED_S87_VENDOR_DELIVERY, MANUAL_TAX_REVIEW, RELIEF_DECLINED_EVIDENCE]
@@ -1948,6 +2156,51 @@ components:
         reason_code: { type: string }
         rate_bps: { type: integer, format: int32 }
         tax_cents: { type: integer, format: int64 }
+    PosSupplierDepositOption:
+      type: object
+      description: >-
+        Whether the counter may mark a supplier's demanded deposit on a
+        special order (always present): allowed exactly on the credit shape's
+        ring, the deposit billed to the account as its own invoice. The
+        payment step shows its control only when allowed says so.
+      required: [allowed]
+      properties:
+        allowed: { type: boolean }
+        words:
+          type: string
+          description: The line the Summary and the receipt print for the billed deposit, present when allowed
+
+    PosPaymentOption:
+      type: object
+      description: >-
+        One payment shape the counter may offer this account. A credit
+        customer (terms above zero and a credit line) is offered pay in
+        full, all on account, and a deposit with the rest on account; a
+        cash on demand account, a walk in and any no credit account are
+        offered pay in full and a deposit with the rest due later, never on
+        account. A credit customer on hold loses on account (the hold
+        rule's own posture, cash or card only).
+      required: [shape]
+      properties:
+        shape:
+          type: string
+          enum: [PAY_IN_FULL_NOW, ALL_ON_ACCOUNT, DEPOSIT_NOW_REST_ON_ACCOUNT, DEPOSIT_NOW_REST_DUE_LATER]
+        line_two_words:
+          type: string
+          enum: [On account, Balance due later]
+          description: >-
+            The server's words for line two of a deposit sale, present only
+            on the deposit shapes.
+        line_two_sentence:
+          type: string
+          description: >-
+            The one sentence the counter shows under the two lines of a
+            deposit sale, present only on the deposit shapes. It follows the
+            reason the account is offered the shape: a credit customer's
+            rest rides the account, a Cash On Demand account hears the pay
+            before release words, and any other pay before release account
+            (no credit, walk in, on hold) is told it cannot carry the sale on
+            account.
     PosSaleView:
       type: object
       description: The operator-reopen read; no evidence identifiers, no granular flow log
@@ -1995,6 +2248,97 @@ components:
         line_total_cents: { type: integer, format: int64, description: What was charged, net of every discount }
         discount_cents: { type: integer, format: int64 }
         sale_discount_cents: { type: integer, format: int64 }
+    PosOwingPayment:
+      type: object
+      description: One payment an order has taken so far, the money trail the find and the receipt print
+      required: [payment_id, method, amount_cents]
+      properties:
+        payment_id: { type: string, format: uuid }
+        method: { type: string, enum: [CASH, CARD, CHEQUE, EFT, OTHER] }
+        amount_cents: { type: integer, format: int64 }
+    PosOwingOrder:
+      type: object
+      description: >-
+        One order that owes money, a row of the Pay balance find: order
+        number, customer, job, fulfilment, order total, each payment so far
+        with its method and amount, still owed, and held or not (the pay
+        before release hold, whose words ride beside it).
+      required: [order_id, order_no, customer_id, customer_name, fulfilment, order_total_cents, paid_cents, still_owed_cents, held_from_picking, payments]
+      properties:
+        order_id: { type: string, format: uuid }
+        order_no: { type: string }
+        customer_id: { type: string, format: uuid }
+        customer_name: { type: string }
+        job: { type: string, description: "The order's job reference or PO reference when it carries one" }
+        fulfilment: { type: string, enum: [PICKUP, WILL_CALL, DELIVERY] }
+        order_total_cents: { type: integer, format: int64 }
+        paid_cents: { type: integer, format: int64 }
+        still_owed_cents: { type: integer, format: int64 }
+        held_from_picking: { type: boolean }
+        hold_words:
+          type: string
+          description: >-
+            Present exactly when held_from_picking is true: "This order
+            cannot reach picking until the balance is paid."
+        payments:
+          type: array
+          description: Every payment so far, oldest first
+          items: { $ref: "#/components/schemas/PosOwingPayment" }
+    PosOwingOrderList:
+      type: object
+      description: The Pay balance find answer, newest first
+      required: [items, truncated]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PosOwingOrder" }
+        truncated:
+          type: boolean
+          description: >-
+            True when a bound stopped the find with more orders possibly
+            matching (more owing orders than the answer holds, or a term that
+            reaches too many customers); the till then says "More orders
+            match: search by order number." False when the answer is whole.
+    PosPayBalanceTakeInput:
+      type: object
+      description: >-
+        The Pay balance take: the WHOLE balance of one order. The amount is
+        the client's echo of the balance it read; the server refuses an
+        amount that is not the whole current balance in words.
+      required: [order_id, method, amount_cents, till_session_id, idempotency_key]
+      properties:
+        order_id: { type: string, format: uuid }
+        method: { type: string, enum: [CASH, CARD] }
+        amount_cents: { type: integer, format: int64 }
+        till_session_id: { type: string, format: uuid }
+        idempotency_key: { type: string, description: "The client's UUID; the replay key" }
+        payment_token: { type: string, description: "CARD only; client tokenized; a PAN is never sent" }
+        card_type: { type: string, enum: [DEBIT, CREDIT, PREPAID, UNKNOWN] }
+        offline: { type: boolean, description: CARD cannot be taken offline; the take refuses }
+    PosPayBalanceTaken:
+      type: object
+      description: >-
+        The take's answer, what the receipt and the after card need: paid in
+        full, released to picking or not, and the money trail. Replayed is
+        true when this key had already taken the payment; nothing was
+        charged and nothing was written.
+      required: [order_id, order_no, customer_id, payment_id, method, amount_cents, paid_words, released_to_picking, still_owed_cents, held_from_picking_now, payments]
+      properties:
+        order_id: { type: string, format: uuid }
+        order_no: { type: string }
+        customer_id: { type: string, format: uuid }
+        payment_id: { type: string, format: uuid }
+        method: { type: string, enum: [CASH, CARD] }
+        amount_cents: { type: integer, format: int64 }
+        paid_words: { type: string, description: "\"Paid in full\"" }
+        released_to_picking: { type: boolean, description: The pay hold (if the shape carried one) lifted with this payment }
+        still_owed_cents: { type: integer, format: int64 }
+        held_from_picking_now: { type: boolean }
+        payments:
+          type: array
+          description: The money trail, every payment with its method and amount
+          items: { $ref: "#/components/schemas/PosOwingPayment" }
+        replayed: { type: boolean }
     PosSaleSummary:
       type: object
       description: One row of the past-sale list; enough to recognise a sale, not enough to be a receipt

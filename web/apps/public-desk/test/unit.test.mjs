@@ -194,6 +194,19 @@ test("the dealer's quantity notice is read as sent, and absent is honest, never 
   assert.equal(validateQuoteView({ ...FULL_VIEW, quantity_notice: 7 }).quantityNotice, null);
 });
 
+test("the order number is read only on a CONVERTED quote, as sent, and absent is honest", () => {
+  const converted = { ...FULL_VIEW, status: "CONVERTED", acceptable: false, order_no: "SO-TRT-17" };
+  assert.equal(validateQuoteView(converted).orderNo, "SO-TRT-17");
+  // The fence is the view's own: a number on any other status is not honoured, whatever sent it.
+  for (const status of ["DRAFT", "SENT", "ACCEPTED", "EXPIRED", "LOST"]) {
+    assert.equal(validateQuoteView({ ...converted, status }).orderNo, null, `${status} carries no order number`);
+  }
+  assert.equal(validateQuoteView({ ...converted, order_no: undefined }).orderNo, null);
+  assert.equal(validateQuoteView({ ...converted, order_no: "" }).orderNo, null);
+  assert.equal(validateQuoteView({ ...converted, order_no: 7 }).orderNo, null);
+  assert.equal(validateQuoteView(FULL_VIEW).orderNo, null);
+});
+
 test("an answer missing a field, or carrying a wrong one, is refused whole", () => {
   assert.equal(validateQuoteView(null), null);
   assert.equal(validateQuoteView("nope"), null);

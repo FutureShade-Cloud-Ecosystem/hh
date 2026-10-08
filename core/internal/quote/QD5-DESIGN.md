@@ -76,16 +76,18 @@ counter. The contract says that and no more.
 ## The role rule
 
 The route's `x-access` is surface `counter-till`, level `work`. The gate admits every role the
-configuration gives Work or above on the Counter Till: Inside Sales, Sales manager, Yard manager,
-Branch manager. Outside Sales (none), the General Manager (read), HR, the Yard team, the Financial
+configuration gives Work or above on the Counter Till: Inside Sales, Sales manager, Branch manager.
+Outside Sales (none), the General Manager (read), HR, the Yard team, the Yard manager, the Financial
 controller and the rest are refused at the gate. `default.json` already holds exactly that. The service
 holds what the gate cannot: an active caller, reach to the quote's branch, and that the quote is
 converted or is a cash customer's accepted quote.
 
-The Yard manager is admitted at the cash customer's one action, on an ACCEPTED quote only, with nothing
-in it editable: converting at the agreed totals as part of taking the payment asks no more authority
-than ringing a sale, which the Yard manager does on the till. The separate conversion of a quote (no
-payment) keeps the selling role rule, so the Yard manager still cannot convert on its own.
+The cash customer's one action keeps the selling role rule of the plain conversion: converting an
+ACCEPTED quote at its agreed totals as part of taking its payment is limited to sales roles
+(`identity.CanConvertAndPay`), nothing in it editable. The Yard manager sat inside that rule once (the
+admission this note recorded before the reversal); decision log row 1156 reversed it: the Yard manager
+holds no sale, quote or payment access, is refused at the gate, and the service's selling role rule
+refuses it at the one action exactly as at the separate conversion of a quote.
 
 ## The agreed price, and the invoice that equals it
 

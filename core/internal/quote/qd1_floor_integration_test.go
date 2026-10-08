@@ -83,18 +83,24 @@ func TestQD1_Row5_BelowFloorRefusedTypedForSales(t *testing.T) {
 	}
 }
 
-// - ledger row 6: the same, as the Yard manager: no own branch clearing -
+// - ledger row 6: the same, as a desk Work role that is no clearer; the Yard manager is off the desk -
 
-func TestQD1_Row6_YardManagerRefusedNoOwnBranchClearing(t *testing.T) {
+// TestQD1_Row6_WorkRoleThatIsNoClearerRefusedTypedAndYardManagerRefusedOutright: row 6 wants a
+// quote-desk Work role that is not a clearer, on its own quote: the typed floor refusal, no own
+// branch clearing. The ledger wrote the row against the Yard manager, which held the desk once;
+// decision log row 1156 removed its Quote Desk, so the typed half is carried by Outside Sales (a
+// Work role that never clears) and the Yard manager itself is refused outright, before the floor
+// logic can type anything, with nothing written.
+func TestQD1_Row6_WorkRoleThatIsNoClearerRefusedTypedAndYardManagerRefusedOutright(t *testing.T) {
 	pool := intPool(t)
 	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	ym := qd1User(t, pool, "ym")
-	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", ym, true)
+	outside := qd1User(t, pool, "outside")
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", outside, true)
 
 	arb := qd1Arbiter{marginBps: 500, floorBps: 1200}
 	svc := qd1SvcFloor(t, pool, now, arb, qd1Cfg)
 	ctx := qCtxAs(intStaff(intTrenton))
-	ctx = qd1WithRole(ctx, "YARD_MANAGER", intTrenton, ym)
+	ctx = qd1WithRole(ctx, "OUTSIDE_SALES", intTrenton, outside)
 
 	_, err := svc.SetLineDiscount(ctx, quoteID, 1, 25)
 	var ref *FloorRefusalError
@@ -103,6 +109,17 @@ func TestQD1_Row6_YardManagerRefusedNoOwnBranchClearing(t *testing.T) {
 	}
 	if got := liveLine(t, pool, quoteID, 1); got.LineTotalCents != 2000 {
 		t.Errorf("row 6: a refused discount changed the line, total now %d", got.LineTotalCents)
+	}
+
+	// The Yard manager holds no Quote Desk cell (row 1156): refused outright, its own quote or not.
+	ym := qd1User(t, pool, "ym")
+	_, ymQuote, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", ym, true)
+	ymCtx := qd1WithRole(qCtxAs(intStaff(intTrenton)), "YARD_MANAGER", intTrenton, ym)
+	if _, yerr := svc.SetLineDiscount(ymCtx, ymQuote, 1, 25); !errors.Is(yerr, ErrForbidden) {
+		t.Fatalf("row 6: the Yard manager must be refused outright at the desk, got %T: %v", yerr, yerr)
+	}
+	if got := liveLine(t, pool, ymQuote, 1); got.LineTotalCents != 2000 {
+		t.Errorf("row 6: the Yard manager's refused write changed the line, total now %d", got.LineTotalCents)
 	}
 }
 
@@ -515,19 +532,21 @@ func TestQD1_RefusalFiguresForCostListOnly(t *testing.T) {
 		t.Fatalf("a caller off the cost list must not receive the refusal's margin figures, got %+v", ref)
 	}
 
-	// The same refusal as a caller on the list carries them. The yard
-	// manager is on the list and never clears the floor itself, and the
-	// second quote is its own, so the ownership rung does not answer first.
-	ym := qd1User(t, pool, "ym")
-	_, ymQuote, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", ym, true)
-	ymCtx := qCtxAs(intStaff(intTrenton))
-	ymCtx = qd1WithRole(ymCtx, "YARD_MANAGER", intTrenton, ym)
-	_, yerr := svc.SetLineDiscount(ymCtx, ymQuote, 1, 25)
-	yref, ok := yerr.(*FloorRefusalError)
+	// The same refusal as a caller on the list carries them. Outside Sales is
+	// on the list and never clears the floor itself, and the second quote is
+	// its own, so the ownership rung does not answer first. (The Yard manager,
+	// the on-list non-clearer this leg once used, holds no Quote Desk cell
+	// since decision log row 1156 and is refused outright, proven at row 6.)
+	outside := qd1User(t, pool, "outside")
+	_, osQuote, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", outside, true)
+	osCtx := qCtxAs(intStaff(intTrenton))
+	osCtx = qd1WithRole(osCtx, "OUTSIDE_SALES", intTrenton, outside)
+	_, oerr := svc.SetLineDiscount(osCtx, osQuote, 1, 25)
+	oref, ok := oerr.(*FloorRefusalError)
 	if !ok {
-		t.Fatalf("want the typed refusal for the yard manager, got %T: %v", yerr, yerr)
+		t.Fatalf("want the typed refusal for the on-list caller, got %T: %v", oerr, oerr)
 	}
-	if !yref.ShowFigures || yref.MarginBps != 500 || yref.FloorBps != 1200 {
-		t.Fatalf("a caller on the cost list must receive the refusal's margin figures, got %+v", yref)
+	if !oref.ShowFigures || oref.MarginBps != 500 || oref.FloorBps != 1200 {
+		t.Fatalf("a caller on the cost list must receive the refusal's margin figures, got %+v", oref)
 	}
 }

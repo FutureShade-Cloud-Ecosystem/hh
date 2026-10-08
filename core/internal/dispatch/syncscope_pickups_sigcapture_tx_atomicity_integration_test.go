@@ -110,7 +110,7 @@ func TestPickupsSyncWrite_FailedConfirmLeavesNoSignatureOrAuditRows(t *testing.T
 	posSvc := pos.NewService(pos.NewRepository(scenario)).
 		WithSignatureProvider(pos.NewTypedNameSignatureProvider(nil)).
 		WithAudit(auditSvc)
-	store := NewPickupsSyncStore(scenario, sigTxLegOrders{repo: order.NewRepository(scenario)}, sigTxLegCapturer{svc: posSvc}, nil)
+	store := NewPickupsSyncStore(scenario, sigTxLegOrders{repo: order.NewRepository(scenario)}, sigTxLegCapturer{svc: posSvc}, nil, nil)
 	filter := hhsync.ScopeFilter{OrgID: testkit.OrgNorthID, Tenant: true, TenantID: testkit.TenantAlphaID, Actor: "sigtx-atomicity-leg"}
 
 	sigRows := func(pickupID string) int {

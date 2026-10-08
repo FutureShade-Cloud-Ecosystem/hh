@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/product"
@@ -94,10 +95,11 @@ func realPosSvc(t *testing.T, pool *pgxpool.Pool, charger till.CardCharger) *Ser
 		WithUOMConverter(cat).
 		WithMarginGate(pricing.NewIdentityMarginGate())
 	tillSvc := till.NewService(till.NewRepository(pool)).WithCardCharger(charger)
-	return NewService(NewRepository(pool)).
+	return NewService(testPosRepo(pool)).
 		WithLineResolver(priceSvc).
 		WithTenderTaker(tillSvc).
 		WithCreditGate(NewIdentityCreditGate()).
+		WithDepositDocuments(billing.NewInvoiceWriter(pool)).
 		WithClock(time.Now)
 }
 
