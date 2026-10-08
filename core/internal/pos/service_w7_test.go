@@ -364,7 +364,7 @@ func TestReturn_AccountCredit_OffsetsInvoiceThenStoreCredit(t *testing.T) {
 	oc.InvoiceStatus = "PARTIALLY_PAID"
 	h.store.retCtx["order-1"] = oc
 	h.store.invoiceBalance["inv-1"] = 3000 // only 3000 still open on the invoice
-	h.store.customers["cust-abc"] = customerRec{ID: "cust-abc", CustomerType: "CONTRACTOR", OpenBalanceCents: 5000}
+	h.store.customers["cust-abc"] = customerRec{ID: "cust-abc", CustomerType: "CONTRACTOR", PaymentTermsDays: 30, CreditLimitCents: 5000000, OpenBalanceCents: 5000}
 
 	in := returnInput()
 	in.RefundMethod = RefundAccountCredit
@@ -540,7 +540,7 @@ func TestReturn_Partial_MixedUOM_RefundsProportionally(t *testing.T) {
 func TestReturn_Partial_MixedUOM_FeeComputesOnCorrectedSubtotal(t *testing.T) {
 	h := newHarness()
 	seedMixedUOMReturnable(h)
-	h.store.customers["cust-abc"] = customerRec{ID: "cust-abc", CustomerType: "CONTRACTOR"}
+	h.store.customers["cust-abc"] = customerRec{ID: "cust-abc", CustomerType: "CONTRACTOR", PaymentTermsDays: 30, CreditLimitCents: 5000000}
 	in := returnInput()
 	in.Lines[0].QtyBase = 20
 	in.RefundMethod = RefundAccountCredit

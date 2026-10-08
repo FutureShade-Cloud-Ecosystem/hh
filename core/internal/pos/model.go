@@ -1000,6 +1000,21 @@ type returnOrderCtx struct {
 	InvoiceStatus string
 	SaleTender    string // pos_sale.tender of the original ring
 	GatewayRef    string // the original CARD capture's processor ref ("" for non-card)
+	// CapturedCents is what the original capture holds (payments.amount_cents of the sale's payment,
+	// 0 when it has none): the ceiling every card refund of the order is judged against (D5).
+	CapturedCents int64
+}
+
+// cardRefundFact is one processor refund made inside a return transaction: what the processor
+// holds, kept so a rolled back transaction leaves a record of it (D4) and a committed one closes it.
+type cardRefundFact struct {
+	RefundKey   string
+	OrderID     string
+	BranchID    string
+	CustomerID  string
+	GatewayRef  string
+	RefundRef   string
+	AmountCents int64
 }
 
 // returnableLine is the FOR UPDATE-locked read of one original order line plus its prior-return sums.

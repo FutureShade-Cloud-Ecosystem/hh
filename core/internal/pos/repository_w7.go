@@ -152,7 +152,8 @@ SELECT id::text, return_no, order_id::text, invoice_id::text, refund_method,
 // first, then the newest sale).
 const returnOrderContextQuery = `
 SELECT o.id::text, o.order_no, o.branch_id::text, o.customer_id::text,
-       COALESCE(ps.invoice_id::text,''), COALESCE(i.status,''), ps.tender, COALESCE(pay.gateway_ref,'')
+       COALESCE(ps.invoice_id::text,''), COALESCE(i.status,''), ps.tender, COALESCE(pay.gateway_ref,''),
+       COALESCE(pay.amount_cents,0)
   FROM pos_sale ps
   JOIN orders o ON o.id = ps.order_id
   LEFT JOIN invoices i ON i.id = ps.invoice_id
@@ -219,7 +220,7 @@ func (r *Repository) ReturnOrderContextFor(ctx context.Context, orderID, orderNo
 	// the ORIGINAL capture's payments row, the CARD refund rail reverses against it.
 	var oc returnOrderCtx
 	err := r.pool.QueryRow(ctx, returnOrderContextQuery, orderID, orderNo, reach).Scan(&oc.OrderID, &oc.OrderNo, &oc.BranchID,
-		&oc.CustomerID, &oc.InvoiceID, &oc.InvoiceStatus, &oc.SaleTender, &oc.GatewayRef)
+		&oc.CustomerID, &oc.InvoiceID, &oc.InvoiceStatus, &oc.SaleTender, &oc.GatewayRef, &oc.CapturedCents)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return returnOrderCtx{}, false, nil
 	}
@@ -234,7 +235,7 @@ func (r *Repository) ReturnOrderContextFor(ctx context.Context, orderID, orderNo
 func (r *Repository) ReturnOrderContextTx(ctx context.Context, tx pgx.Tx, orderID, orderNo string) (returnOrderCtx, bool, error) {
 	var oc returnOrderCtx
 	err := tx.QueryRow(ctx, returnOrderContextQuery, orderID, orderNo, nil).Scan(&oc.OrderID, &oc.OrderNo, &oc.BranchID,
-		&oc.CustomerID, &oc.InvoiceID, &oc.InvoiceStatus, &oc.SaleTender, &oc.GatewayRef)
+		&oc.CustomerID, &oc.InvoiceID, &oc.InvoiceStatus, &oc.SaleTender, &oc.GatewayRef, &oc.CapturedCents)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return returnOrderCtx{}, false, nil
 	}
@@ -419,6 +420,46 @@ func (r *Repository) ReadReturnableLine(ctx context.Context, orderID, orderLineI
 		return returnableLine{}, false, errNoPool
 	}
 	return scanReturnableLine(r.pool.QueryRow(ctx, returnableLineQuery, orderID, orderLineID))
+}
+
+// SumCardRefundedTx is what earlier CARD returns of the order have already refunded to the card,
+// read on the open return transaction after the per-sale lock (the D5 ceiling's other half);
+// exceptReturnID leaves out the return whose header is already written ahead of its rail.
+func (r *Repository) SumCardRefundedTx(ctx context.Context, tx pgx.Tx, orderID, exceptReturnID string) (int64, error) {
+	var sum int64
+	err := tx.QueryRow(ctx, `SELECT COALESCE(SUM(total_cents - fee_cents), 0) FROM pos_returns
+ WHERE order_id = $1 AND refund_method = 'CARD' AND ($2 = '' OR id::text <> $2)`, orderID, exceptReturnID).Scan(&sum)
+	return sum, err
+}
+
+// RecordUnbookedCardRefunds files, on the pool and AFTER the failed transaction ended, every
+// processor refund that transaction made and then rolled back (D4). One row per refund key; a retry
+// that fails again refreshes the row.
+func (r *Repository) RecordUnbookedCardRefunds(ctx context.Context, facts []cardRefundFact, reason string) error {
+	if r.pool == nil {
+		return errNoPool
+	}
+	const q = `
+INSERT INTO pos_card_refund_attempts (refund_key, order_id, branch_id, customer_id, gateway_ref, refund_ref, amount_cents, status, last_error)
+VALUES ($1, $2, $3, $4, $5, $6, $7, 'UNBOOKED', $8)
+ON CONFLICT (refund_key) DO UPDATE SET status = 'UNBOOKED', last_error = EXCLUDED.last_error,
+       refund_ref = EXCLUDED.refund_ref, amount_cents = EXCLUDED.amount_cents, updated_at = now()`
+	for _, f := range facts {
+		if _, err := r.pool.Exec(ctx, q, f.RefundKey, f.OrderID, f.BranchID, f.CustomerID, f.GatewayRef, f.RefundRef, f.AmountCents, reason); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// MarkCardRefundsBooked closes the records of refunds a committed transaction has now booked.
+func (r *Repository) MarkCardRefundsBooked(ctx context.Context, refundKeys []string) error {
+	if r.pool == nil {
+		return errNoPool
+	}
+	_, err := r.pool.Exec(ctx, `UPDATE pos_card_refund_attempts SET status = 'BOOKED', updated_at = now()
+ WHERE refund_key = ANY($1::text[]) AND status = 'UNBOOKED'`, refundKeys)
+	return err
 }
 
 // sumCommittedReturnTotalsQuery is the sale's committed return total. Every

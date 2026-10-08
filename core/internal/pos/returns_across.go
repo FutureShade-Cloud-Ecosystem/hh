@@ -279,6 +279,9 @@ func (s *Service) ReturnAcross(ctx context.Context, in ReturnAcrossInput) (Retur
 		out, replayedHere, approvedHere, txErr = s.returnAcrossInTx(ctx, tx, plan)
 		return txErr
 	})
+	if err == nil {
+		s.settleCardRefunds(ctx, plan.children, nil)
+	}
 	if err != nil {
 		// The approval refusal writes its own audit row naming the clerk, the customer and the
 		// note's money asked for (the single path's own discipline, the note's own row).
@@ -297,9 +300,11 @@ func (s *Service) ReturnAcross(ctx context.Context, in ReturnAcrossInput) (Retur
 		// A concurrent duplicate hit ux_return_notes_idem and rolled back: surface the winner.
 		if isUniqueViolationErr(err) {
 			if cached, found, ferr := s.replayNoteIfAllowed(ctx, in.IdempotencyKey, plan.caller); ferr == nil && found {
+				s.settleCardRefunds(ctx, plan.children, nil)
 				return cached, nil
 			}
 		}
+		s.settleCardRefunds(ctx, plan.children, err)
 		return ReturnNote{}, err
 	}
 	if replayedHere {
@@ -387,6 +392,17 @@ func (s *Service) returnAcrossInTx(ctx context.Context, tx pgx.Tx, plan *returnA
 			return ReturnNote{}, false, false, refusal
 		}
 		approvedHere = true
+	}
+
+	// D5 across the note: every card child is judged against its own capture BEFORE any child's
+	// rail runs, so a note that would cross one capture refuses whole without the processor having
+	// heard of the others.
+	if in.RefundMethod == RefundCard {
+		for i, child := range plan.children {
+			if cerr := s.checkCardCapTx(ctx, tx, child.oc, "", guards[i].subtotal+guards[i].taxTotal); cerr != nil {
+				return ReturnNote{}, false, false, cerr
+			}
+		}
 	}
 
 	// The note header ahead of its children: every child's row carries the note's id.

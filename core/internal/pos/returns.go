@@ -8,6 +8,8 @@ package pos
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"math"
 	"net/http"
 	"strings"
@@ -186,11 +188,14 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 		// judged against the winner's own sale by the same wall.
 		if isUniqueViolationErr(err) {
 			if cached, found, ferr := s.replayIfAllowed(ctx, in.IdempotencyKey, plan.caller); ferr == nil && found {
+				s.settleCardRefunds(ctx, []*returnPlan{plan}, nil)
 				return cached, nil
 			}
 		}
+		s.settleCardRefunds(ctx, []*returnPlan{plan}, err)
 		return Return{}, err
 	}
+	s.settleCardRefunds(ctx, []*returnPlan{plan}, nil)
 	// The in-transaction duplicate answered its twin's replay: the twin's
 	// own completion row already exists, this answer writes none.
 	if replayedHere {
@@ -233,6 +238,9 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 // starvation a pool of pool-size concurrent rails dies of, every holder
 // waiting for a connection the pool can never give.
 type returnPlan struct {
+	// cardRefunds are the processor refunds this return made inside its transaction (D4): read by
+	// the caller after the transaction ended to record the ones a rollback left unbooked.
+	cardRefunds    []cardRefundFact
 	in             ReturnInput
 	oc             returnOrderCtx
 	caller         identity.StaffContext
@@ -349,6 +357,11 @@ func (s *Service) prepareReturn(ctx context.Context, in ReturnInput) (*returnPla
 	}
 	if in.RefundMethod == RefundCash && in.TillSessionID == "" {
 		return nil, ErrNoOpenTill{}
+	}
+	if in.RefundMethod == RefundAccountCredit {
+		if err := s.accountCreditAllowed(ctx, plan.oc.CustomerID, in.internalRail); err != nil {
+			return nil, err
+		}
 	}
 	if in.RefundMethod == RefundCard {
 		if plan.oc.SaleTender != TenderCard || plan.oc.GatewayRef == "" {
@@ -759,10 +772,19 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 		// connection has the per-sale lock's holder wait for a second
 		// connection every other connection is a Return waiter that needs
 		// the holder's lock, deadlocking a full pool.
+		if err := s.checkCardCapTx(ctx, tx, oc, returnID, total); err != nil {
+			return Return{}, err
+		}
 		refundRef, err := s.cardRefund.RefundCard(ctx, tx, oc.GatewayRef, total, returnNo, "refund:"+in.IdempotencyKey)
 		if err != nil {
 			return Return{}, clientErr(http.StatusBadGateway, "pos: card refund failed, %s", err.Error())
 		}
+		// The processor now holds this refund whatever becomes of the transaction: keep the fact so a
+		// rollback leaves a record of it (D4).
+		plan.cardRefunds = append(plan.cardRefunds, cardRefundFact{
+			RefundKey: "refund:" + in.IdempotencyKey, OrderID: oc.OrderID, BranchID: oc.BranchID, CustomerID: oc.CustomerID,
+			GatewayRef: oc.GatewayRef, RefundRef: refundRef, AmountCents: total,
+		})
 		res, err := s.tender.RefundTender(ctx, tx, till.RefundInput{
 			Method: till.MethodCard, AmountCents: total, BranchID: oc.BranchID, CustomerID: oc.CustomerID,
 			GatewayRef: refundRef, Reference: returnNo, IdempotencyKey: "refund:" + in.IdempotencyKey,
@@ -853,6 +875,98 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 		FeeCents: feeCents, RefundPaymentID: refundPaymentID, PickupStatus: pickupStatus, Status: "COMMITTED",
 	}
 	return out, nil
+}
+
+// errWalkInNoAccountCredit refuses an account credit on the house WALK-IN row (D2): the one shared
+// row's credit is nobody's to spend and any walk-in could in principle draw it.
+var errWalkInNoAccountCredit = clientErr(http.StatusUnprocessableEntity,
+	"pos: the WALK-IN house account holds no credit; refund this walk-in sale to the card it was paid on or in cash")
+
+// errAccountCannotSpendCredit is the Q6 ruling in words: there is no store credit wallet, so a
+// credit on an account that cannot spend it (D3) would be a dead end.
+var errAccountCannotSpendCredit = clientErr(http.StatusUnprocessableEntity,
+	"pos: this account cannot spend a credit (it has no credit terms or no credit line); refund to the card it was paid on or in cash, or set the account up with terms and a credit line first")
+
+// accountCreditAllowed judges the ACCOUNT_CREDIT rail for a customer before any transaction opens:
+// never the house WALK-IN row (D2, every caller), and, outside the portal request rail whose
+// customers the queue's own decision already vouched for, only an account that can spend a credit,
+// the same shape the ring offers on account (terms above zero and a credit line, D3 by Q6).
+func (s *Service) accountCreditAllowed(ctx context.Context, customerID string, internalRail bool) error {
+	if walkIn, werr := s.store.ResolveWalkIn(ctx); werr == nil && walkIn != "" && walkIn == customerID {
+		return errWalkInNoAccountCredit
+	}
+	if internalRail {
+		return nil
+	}
+	cust, err := s.store.ReadCustomer(ctx, customerID)
+	if err != nil {
+		return err
+	}
+	if cust.PaymentTermsDays <= 0 || cust.CreditLimitCents <= 0 {
+		return errAccountCannotSpendCredit
+	}
+	return nil
+}
+
+// checkCardCapTx is D5: a card refund never takes the card past what the original capture holds
+// less what earlier card refunds of the order already took. Read on the open transaction after the
+// per-sale lock, so the earlier refunds are exact. A capture of unknown size (0) sets no ceiling.
+func (s *Service) checkCardCapTx(ctx context.Context, tx pgx.Tx, oc returnOrderCtx, exceptReturnID string, refundCents int64) error {
+	if oc.CapturedCents <= 0 {
+		return nil
+	}
+	refunded, err := s.store.SumCardRefundedTx(ctx, tx, oc.OrderID, exceptReturnID)
+	if err != nil {
+		return err
+	}
+	if refunded+refundCents > oc.CapturedCents {
+		return clientErr(http.StatusUnprocessableEntity,
+			"pos: a card refund of %s would take the card past what the original capture holds (%s captured, %s already refunded); refund the rest in cash or to the account",
+			centsWords(refundCents), centsWords(oc.CapturedCents), centsWords(refunded))
+	}
+	return nil
+}
+
+// centsWords writes integer cents as dollars and cents for a refusal's words.
+func centsWords(cents int64) string {
+	sign := ""
+	if cents < 0 {
+		sign, cents = "-", -cents
+	}
+	return fmt.Sprintf("%s$%d.%02d", sign, cents/100, cents%100)
+}
+
+// settleCardRefunds records, on the pool after the transaction ended, what the processor refunded
+// inside it: a rolled back transaction leaves each refund on record as UNBOOKED for a manager to
+// see, a committed one closes any earlier such record as BOOKED (D4). Best effort by design: the
+// return's own answer must not change because the record could not be written, so a failure is
+// logged, never returned.
+func (s *Service) settleCardRefunds(ctx context.Context, plans []*returnPlan, txErr error) {
+	var facts []cardRefundFact
+	for _, p := range plans {
+		facts = append(facts, p.cardRefunds...)
+		p.cardRefunds = nil
+	}
+	if len(facts) == 0 {
+		return
+	}
+	var err error
+	if txErr != nil {
+		reason := txErr.Error()
+		if r := []rune(reason); len(r) > 300 {
+			reason = string(r[:300])
+		}
+		err = s.store.RecordUnbookedCardRefunds(context.WithoutCancel(ctx), facts, reason)
+	} else {
+		keys := make([]string, len(facts))
+		for i, f := range facts {
+			keys[i] = f.RefundKey
+		}
+		err = s.store.MarkCardRefundsBooked(context.WithoutCancel(ctx), keys)
+	}
+	if err != nil {
+		slog.Default().Warn("pos: the card refund record could not be written", "err", err, "refunds", len(facts))
+	}
 }
 
 // anyRestock answers whether any line of the return asked for its goods to go back on the shelf:

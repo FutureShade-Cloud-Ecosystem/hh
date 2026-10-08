@@ -202,6 +202,12 @@ type posStore interface {
 	// ReadReturnableLine is LockReturnableLine without the lock or the transaction: the credit
 	// preview's read of the same line and the same prior-return sums.
 	ReadReturnableLine(ctx context.Context, orderID, orderLineID string) (returnableLine, bool, error)
+	// SumCardRefundedTx is what earlier CARD returns of the order refunded to the card (D5).
+	SumCardRefundedTx(ctx context.Context, tx pgx.Tx, orderID, exceptReturnID string) (int64, error)
+	// RecordUnbookedCardRefunds and MarkCardRefundsBooked keep the record of processor refunds a
+	// rolled back transaction left behind, on the pool and after that transaction ended (D4).
+	RecordUnbookedCardRefunds(ctx context.Context, facts []cardRefundFact, reason string) error
+	MarkCardRefundsBooked(ctx context.Context, refundKeys []string) error
 	// the per-sale return sums and lock: the refund approval amount counts
 	// every return against the same sale together, so the gate reads the
 	// sale's earlier committed returns inside its transaction (the Tx read)
