@@ -186,6 +186,9 @@ jobs:
           for dir in packages/*/ apps/*/; do
             [ -f "$dir/package.json" ] || continue
             name="$(basename "$dir")"
+            # Skip template and other underscore-prefixed dirs: they are not
+            # shipped apps and are validated by a throwaway copy instead.
+            case "$name" in _*) continue;; esac
             if grep -q '"typecheck"[[:space:]]*:' "$dir/package.json"; then
               npm --prefix "$dir" run typecheck
             elif find "$dir" -path '*/node_modules' -prune -o -name '*.ts' -print | grep -q .; then
