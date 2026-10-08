@@ -53,8 +53,8 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
     { file: "30-manager.pw.ts", test: "a contractor's pavers: the account price the clerk sees, and the margin column the policy allows the manager" },
   ],
   "credit-refused": [
-    { file: "20-sales.pw.ts", test: "an account the credit gate refuses: refused in words, cash and card intact" },
-    { file: "30-manager.pw.ts", test: "an account the credit gate refuses: the same words to the manager" },
+    { file: "20-sales.pw.ts", test: "an account that cannot carry the sale on account: refused in words, nothing rung" },
+    { file: "30-manager.pw.ts", test: "an account that cannot carry the sale on account: the same words to the manager" },
   ],
   "cash-change": [
     { file: "20-sales.pw.ts", test: "tender and receipt: cash with change due, held against the core's own read" },
