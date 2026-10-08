@@ -615,6 +615,8 @@ test("P3 a read of the acceptance switch begun before a flip does not override t
 });
 
 test("P3 a read of the scope rules begun before a switch does not override the switch", async ({ page }) => {
+  // The scope rules are the General Manager's (the grant says so), so the walk is the General Manager's.
+  await page.request.put("/_stub/general-manager", { data: { member: true } });
   await signIn(page, "Sales manager");
   await showList(page);
   await row(page, "Q-1001").click();
@@ -631,6 +633,7 @@ test("P3 a read of the scope rules begun before a switch does not override the s
   await read.release();
   await settle(page);
   await expect(ruleRow).toHaveAttribute("data-enabled", "false");
+  await page.request.put("/_stub/general-manager", { data: { member: false } });
 });
 
 test("P3 no empty lock box shows while a policy save is out", async ({ page }) => {
