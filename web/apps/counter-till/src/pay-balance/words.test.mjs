@@ -7,6 +7,7 @@ import {
   paidInFullWords,
   takeButtonWords,
   payBalanceRefusalWords,
+  payBalanceFindRefusalWords,
   readOwingOrders,
   readTaken,
 } from './words.ts';
@@ -46,6 +47,20 @@ test('refusals read in words from the fields, never a code or cents', () => {
   assert.match(payBalanceRefusalWords({ status: 0, error: 'Failed to fetch' }, money), /cannot be charged twice/);
   assert.match(payBalanceRefusalWords({ status: 404, error: 'no such order' }, money), /no longer answers/);
   assert.doesNotMatch(payBalanceRefusalWords({ status: 402, error: 'card_charge_card_declined' }, money), /card_charge/);
+});
+
+// Item 9 visual review P2-1: a refused find speaks in words. No answer is one retry line; any
+// other refusal is the server's message when the capture has one, else one plain sentence; never
+// the envelope's raw error string or code.
+test('a refused find speaks in words, never the raw error string', () => {
+  assert.equal(payBalanceFindRefusalWords({ status: 0, error: 'Failed to fetch' }), 'No answer from the server. Try again.');
+  assert.equal(
+    payBalanceFindRefusalWords({ status: 422, error: 'staff_auth_required', message: 'Sign in again to search.' }),
+    'Sign in again to search.',
+  );
+  const plain = payBalanceFindRefusalWords({ status: 403, error: 'branch_mismatch' });
+  assert.equal(plain, 'The search was refused: try again, or ask a manager.');
+  assert.doesNotMatch(plain, /branch_mismatch/);
 });
 
 test('the find answer is read whole, an unreadable row is dropped', () => {

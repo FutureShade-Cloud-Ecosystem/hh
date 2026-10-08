@@ -7,6 +7,7 @@ import { staffOrder, staffPos, staffTill, type ApiClient } from "@hardscapehouse
 import { readPayHold, type PayHold } from "./hold.js";
 import type { PayBalanceCapture } from "./capture.js";
 import {
+  payBalanceFindRefusalWords,
   payBalanceRefusalWords,
   readOwingOrders,
   readTaken,
@@ -105,7 +106,9 @@ export class PayBalanceFlow {
     if (!result.ok) {
       this.matches = [];
       this.order = null;
-      this.notice = `The search was refused: ${result.error}`;
+      // Item 9 visual review P2-1: the refusal speaks in words (the server's message when the
+      // capture has one), never the envelope's raw error string.
+      this.notice = payBalanceFindRefusalWords({ status: result.status ?? 0, error: result.error, ...this.#capture.take() });
       this.#onChange();
       return;
     }

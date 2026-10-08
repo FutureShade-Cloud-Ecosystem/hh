@@ -89,6 +89,17 @@ export function payBalanceRefusalWords(
   return err.error;
 }
 
+/**
+ * A refused find in words (item 9 visual review P2-1): no answer is one retry line; any other
+ * refusal is the server's message when the capture has one, else one plain sentence. The
+ * envelope's raw error string or code never reaches the person.
+ */
+export function payBalanceFindRefusalWords(err: { status: number; error: string; message?: string }): string {
+  if (err.status === 0) return "No answer from the server. Try again.";
+  if (err.message && err.message !== "") return err.message;
+  return "The search was refused: try again, or ask a manager.";
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }

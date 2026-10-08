@@ -110,6 +110,35 @@ test("several matches list as rows to pick, and a miss says so in words", async 
   await expect(page.getByTestId("pay-balance-notice")).toContainText("No order that still owes matches");
 });
 
+test("a refused find speaks in words, never the envelope's raw string", async ({ page }) => {
+  await signIn(page);
+  await page.getByTestId("till-pay-balance-entry").click();
+  // Item 9 visual review P2-1: the find's refusal (a signed out or fenced login, the server down)
+  // reaches the person as words: the server's message when the body has one, else one plain
+  // sentence; the raw error string or code never shows.
+  let mode: "message" | "bare" | "dead" = "message";
+  await page.route("**/api/v1/pos/pay-balance*", async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    if (mode === "dead") return route.abort("failed");
+    const body =
+      mode === "message"
+        ? { error: "staff_auth_required", message: "Sign in again to search." }
+        : { error: "staff_auth_required" };
+    return route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify(body) });
+  });
+  const notice = page.getByTestId("pay-balance-notice");
+  await page.getByTestId("pay-balance-term").fill("DEMO-TRT-D02");
+  await page.getByTestId("pay-balance-find").click();
+  await expect(notice).toHaveText("Sign in again to search.");
+  mode = "bare";
+  await page.getByTestId("pay-balance-find").click();
+  await expect(notice).toHaveText("The search was refused: try again, or ask a manager.");
+  await expect(notice).not.toContainText("staff_auth_required");
+  mode = "dead";
+  await page.getByTestId("pay-balance-find").click();
+  await expect(notice).toHaveText("No answer from the server. Try again.");
+});
+
 test("a replay shows the same result and the server charges nothing twice", async ({ page }) => {
   await signIn(page);
   await openDrawer(page);
