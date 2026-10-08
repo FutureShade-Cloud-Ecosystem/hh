@@ -48,6 +48,22 @@ func accountShapeMessage(e ErrAccountShapeNotAvailable) string {
 		splitMismatchDollars(e.AmountCents))
 }
 
+// ErrCODNotForTermsAccount refuses a pay before release (COD) sale type for
+// an account that pays on terms (the principal's ruling: Cash On Demand is
+// the ACCOUNT's posture; the COD sale type is its guard, and a terms account
+// is not in it, whatever the tender). The hold stays keyed on the account's
+// own terms, which this refusal leaves no sale to disagree with.
+type ErrCODNotForTermsAccount struct{}
+
+func (e ErrCODNotForTermsAccount) Error() string {
+	return "pos: a pay before release sale is not for an account that pays on terms"
+}
+
+// codNotForTermsMessage is the refusal's sentence, plain words with no figures.
+func codNotForTermsMessage() string {
+	return "This account pays on terms, so its sale is not pay before release. Ring it on account or paid in full."
+}
+
 // ErrDepositNotCollectNow refuses a deposit on a collect now sale: the goods
 // do not leave on a part payment. The item allowed refusing in words or
 // moving the sale to the matching held shape; the ring REFUSES, keeping the

@@ -642,6 +642,17 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 		return Sale{}, ErrDepositNotCollectNow{TotalCents: total, DepositCents: deposit}
 	}
 
+	// Item 9 review P3-7 (the principal's ruling): the pay before release
+	// sale type is the guard of a Cash On Demand ACCOUNT (zero day terms, the
+	// walk in). An account that pays on terms is not in it, whatever the
+	// tender; its sale books on account or paid in full, and the hold stays
+	// keyed on the account's own terms. It runs before the on account shape
+	// refusal: the sale type not fitting the account is the more fundamental
+	// refusal, and its words name the two honest shapes for a terms account.
+	if codSale && cust.PaymentTermsDays > 0 {
+		return Sale{}, ErrCODNotForTermsAccount{}
+	}
+
 	// Item 9.2: the shape refusal. Whatever this sale would book ON ACCOUNT (a
 	// single ACCOUNT tender, a split's account leg) needs an account the shape
 	// was offered to: terms above zero AND a credit line. A pay before release

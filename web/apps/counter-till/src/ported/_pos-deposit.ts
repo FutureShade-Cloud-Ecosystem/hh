@@ -58,6 +58,12 @@ export function depositRefusalWords(
   err: { status: number; error: string; message?: string; total_cents?: number; amount_cents?: number },
   money: (cents: number) => string,
 ): string | null {
+  if (err.error === 'cod_not_for_terms_account') {
+    // The ruling's refusal carries no figures: its message is the whole answer.
+    return err.message && err.message !== ''
+      ? err.message
+      : 'This account pays on terms, so its sale is not pay before release. Ring it on account or paid in full.';
+  }
   if (err.error !== 'deposit_not_collect_now' && err.error !== 'on_account_not_available') return null;
   if (err.message && err.message !== '') return err.message;
   if (err.error === 'deposit_not_collect_now') {

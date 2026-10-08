@@ -1774,8 +1774,11 @@ components:
         zero day terms or no credit line, pay in full or take a deposit
         with the balance due later); deposit_not_collect_now (total_cents
         and deposit_cents, a collect now sale is paid in full, the goods
-        do not leave on a part payment). Every message speaks dollars and
-        plain words; no message ever prints cents.
+        do not leave on a part payment); cod_not_for_terms_account
+        (message only, the pay before release sale type refused for an
+        account that pays on terms: Cash On Demand is the account's own
+        posture, ring the sale on account or paid in full). Every message
+        speaks dollars and plain words; no message ever prints cents.
       content:
         application/json:
           schema:

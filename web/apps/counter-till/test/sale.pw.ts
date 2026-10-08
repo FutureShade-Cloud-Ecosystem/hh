@@ -558,7 +558,7 @@ test("the read-back states the server's tax and total, and the confirmation read
   );
 });
 
-test("a walk-in COD sale is refused in words that are true, and the same sale with an account rings", async ({
+test("a walk-in COD sale and a terms account COD sale are both refused in words that are true", async ({
   page,
 }) => {
   await signIn(page, "Sales");
@@ -596,9 +596,37 @@ test("a walk-in COD sale is refused in words that are true, and the same sale wi
   await expect(page.getByTestId("sold-panel")).toHaveCount(0);
 
   // The other edge, pinned so the rule cuts both ways: the same COD sale with
-  // an account on it rings.
+  // an account that pays on terms is refused in the ruling's own words (Cash
+  // On Demand is the account's posture, and this account is not in it), and
+  // with the Cash On Demand account it rings.
   await openStep(page, "customer");
   await pickAccount(page, "C02", "Fenwick Builders Ltd");
+  const ringTerms = page.waitForResponse(
+    (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
+  );
+  await openStep(page, "payment");
+  await page.getByTestId("pos-complete-sale").click();
+  const refusedTerms = await ringTerms;
+  expect(refusedTerms.status()).toBe(422);
+  const termsBody = (await refusedTerms.json()) as Record<string, unknown>;
+  expect(termsBody.error).toBe("cod_not_for_terms_account");
+  await expect(page.getByRole("alert")).toContainText("This account pays on terms");
+  await expect(page.getByTestId("sold-panel")).toHaveCount(0);
+
+});
+
+// The same COD sale with the Cash On Demand account on it rings: the sale
+// type is that account's own posture (its own ticket, because the ticket above
+// keeps its refused customer).
+test("the same COD sale with the Cash On Demand account rings", async ({ page }) => {
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await page.getByRole("button", { name: /^COD/ }).click();
+  await page.getByLabel("Requested date: type eight digits YYYYMMDD, or use the calendar button").fill(
+    houseDay().replace(/-/g, ""),
+  );
+  await openStep(page, "customer");
+  await pickAccount(page, "C10", "Cash On Demand Landscaping");
   const ringWithAccount = page.waitForResponse(
     (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
   );

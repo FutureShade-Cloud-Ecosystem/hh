@@ -234,11 +234,14 @@ func TestSale_AccountShape_NoLine_AndSplitLeg_Refused(t *testing.T) {
 }
 
 // A COD sale never takes an ACCOUNT tender: pay before release and on account
-// are different line twos.
+// are different line twos. (Pinned on a zero day terms account: for an account
+// that pays on terms, the sale type itself is refused first, the P3-7 leg
+// above.)
 func TestSale_AccountShape_CODSale_Refused(t *testing.T) {
-	h := depositHarness(30, 500_000)
+	h := depositHarness(0, 500_000)
 	in := depositSaleInput()
 	in.SaleType = SaleCOD
+	in.Fulfilment = "WILL_CALL"
 	in.Tender = TenderAccount
 	if _, err := h.svc.Sale(context.Background(), in); !errors.As(err, &ErrAccountShapeNotAvailable{}) {
 		t.Fatalf("a COD sale took an ACCOUNT tender: %v", err)
@@ -298,5 +301,43 @@ func TestSale_Deposit_PreviewTotalsMatchTheRing(t *testing.T) {
 		t.Fatalf("preview (%d/%d/%d) is not the ring (%d/%d/%d)",
 			preview.SubtotalCents, preview.TaxCents, preview.TotalCents,
 			ring.SubtotalCents, ring.TaxCents, ring.TotalCents)
+	}
+}
+
+// A pay before release (COD) sale type does not fit an account that pays on
+// terms (the principal's ruling: Cash On Demand is the account's posture, COD
+// and credit are guards, not order states). The ring refuses it in plain words
+// with a stable code, whatever the tender, and the hold stays keyed on the
+// account's own terms.
+func TestSale_CODSaleType_RefusedForATermsAccount(t *testing.T) {
+	for _, tender := range []string{TenderCash, TenderCard, TenderAccount} {
+		t.Run("tender_"+tender, func(t *testing.T) {
+			h := depositHarness(30, 500_000)
+			in := depositSaleInput()
+			in.SaleType = SaleCOD
+			in.Fulfilment = "WILL_CALL"
+			in.Tender = tender
+			_, err := h.svc.Sale(context.Background(), in)
+			var e ErrCODNotForTermsAccount
+			if !errors.As(err, &e) {
+				t.Fatalf("tender %s: want ErrCODNotForTermsAccount, got %v", tender, err)
+			}
+			if msg := codNotForTermsMessage(); msg == "" || strings.Contains(msg, "cents") {
+				t.Fatalf("the refusal's message must be plain words: %q", msg)
+			}
+			if len(h.store.orders) != 0 || h.tender.called {
+				t.Fatalf("a refused sale wrote rows: orders %d tender %v", len(h.store.orders), h.tender.called)
+			}
+		})
+	}
+	// A zero day terms account rings the sale type it exists for, and so does
+	// the walk in.
+	h := depositHarness(0, 500_000)
+	in := depositSaleInput()
+	in.SaleType = SaleCOD
+	in.Fulfilment = "WILL_CALL"
+	in.Tender = TenderCash
+	if _, err := h.svc.Sale(context.Background(), in); err != nil {
+		t.Fatalf("a zero day terms account's COD sale: %v", err)
 	}
 }

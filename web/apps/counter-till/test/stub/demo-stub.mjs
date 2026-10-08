@@ -1782,6 +1782,17 @@ const server = createServer(async (request, response) => {
         });
         return;
       }
+      // Item 9 review P3-7, the core's own ruling: the COD sale type is the
+      // guard of a Cash On Demand ACCOUNT (zero day terms, the walk in). An
+      // account that pays on terms is not in it, whatever the tender.
+      if (parsed.sale_type === "COD" && (customer.payment_terms_days ?? 0) > 0) {
+        respondJson(response, 422, {
+          error: "cod_not_for_terms_account",
+          message:
+            "This account pays on terms, so its sale is not pay before release. Ring it on account or paid in full.",
+        });
+        return;
+      }
       // The COD constraint, the core's own gate for an unpaid-at-ring sale: a
       // COD sale draws on an account, and the walk-in has none (its limit is
       // no credit at all), so the ring answers the credit gate's refusal

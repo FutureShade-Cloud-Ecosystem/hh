@@ -583,6 +583,7 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	var asn ErrAccountShapeNotAvailable
 	var dcn ErrDepositNotCollectNow
 	var pba ErrPayBalancePartAmount
+	var cnt ErrCODNotForTermsAccount
 	switch {
 	case errors.As(err, &pba):
 		// Item 9.4, the part amount refusal, the problem body style again.
@@ -606,6 +607,12 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 			"total_cents":   dcn.TotalCents,
 			"deposit_cents": dcn.DepositCents,
 			"message":       depositNotCollectNowMessage(dcn.DepositCents, dcn.TotalCents),
+		})
+	case errors.As(err, &cnt):
+		// Item 9 review P3-7: the pay before release sale type refused for an
+		// account that pays on terms, a stable word and one plain sentence.
+		httpx.ErrorWith(w, http.StatusUnprocessableEntity, "cod_not_for_terms_account", map[string]any{
+			"message": codNotForTermsMessage(),
 		})
 	case errors.As(err, &sm):
 		// The split-tender sum refusal (DIB-165) is a problem body a person

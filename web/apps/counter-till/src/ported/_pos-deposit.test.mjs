@@ -100,3 +100,17 @@ test('refusals read from the server message, else from the fields, never cents o
   assert.doesNotMatch(words, /on_account|5000/);
   assert.equal(depositRefusalWords({ status: 409, error: 'nope' }, money), null);
 });
+
+// Item 9 review P3-7: the sale type refusal's words come from the server's
+// message (the ruling carries no figures), with the fixed fallback.
+test('depositRefusalWords passes the sale type refusal through', () => {
+  assert.equal(
+    depositRefusalWords({ status: 422, error: 'cod_not_for_terms_account', message: 'The server sentence.' }, money),
+    'The server sentence.',
+  );
+  assert.equal(
+    depositRefusalWords({ status: 422, error: 'cod_not_for_terms_account' }, money),
+    'This account pays on terms, so its sale is not pay before release. Ring it on account or paid in full.',
+  );
+  assert.equal(depositRefusalWords({ status: 422, error: 'other' }, money), null);
+});
