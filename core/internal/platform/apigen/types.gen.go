@@ -5162,6 +5162,7 @@ type PosReturnLineInput struct {
 	OrderLineId string  `json:"order_line_id"`
 	QtyBase     float64 `json:"qty_base"`
 	ReasonCode  string  `json:"reason_code"`
+	Disposition *string `json:"disposition,omitempty"`
 }
 
 type PosPickupInput struct {

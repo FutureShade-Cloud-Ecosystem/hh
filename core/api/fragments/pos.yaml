@@ -2875,6 +2875,15 @@ components:
         order_line_id: { type: string, format: uuid }
         qty_base: { type: number }
         reason_code: { type: string, enum: [DAMAGED, DEFECT, WRONG_ITEM, NO_LONGER_NEEDED, OTHER] }
+        disposition:
+          type: string
+          enum: [RESTOCK, DAMAGED, NO_RETURN]
+          description: >-
+            What became of the goods. RESTOCK puts them back on the shelf,
+            DAMAGED writes them off, NO_RETURN leaves them with the customer
+            (the money reversal only). Goods that never left the shelf are credit
+            only whatever is asked. Absent, the return's restock flag decides
+            (true RESTOCK, false NO_RETURN).
     PosPickupInput:
       type: object
       description: The optional logistics pickup block on a return

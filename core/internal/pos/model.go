@@ -662,7 +662,18 @@ type ReturnLineInput struct {
 	OrderLineID string  `json:"order_line_id"`
 	QtyBase     float64 `json:"qty_base"`
 	ReasonCode  string  `json:"reason_code"`
+	// Disposition says what became of the goods (sub item 10.3): RESTOCK, DAMAGED or NO_RETURN.
+	// Empty falls back to the whole return's restock flag (true is RESTOCK, false NO_RETURN), the
+	// single order path's meaning from before dispositions existed.
+	Disposition string `json:"disposition,omitempty"`
 }
+
+// The three dispositions of a returned line (pos_return_lines.disposition, 0378).
+const (
+	DispositionRestock  = "RESTOCK"
+	DispositionDamaged  = "DAMAGED"
+	DispositionNoReturn = "NO_RETURN"
+)
 
 // PickupInput is the optional logistics pickup block on a return.
 type PickupInput struct {
@@ -1002,6 +1013,9 @@ type returnableLine struct {
 	PriorQty       float64
 	PriorMoney     int64
 	PriorTax       int64
+	// LeftShelfBase is the quantity of the line that has left the shelf: all of it on a collect now
+	// ring (stock is decremented at the ring), else what fulfilment has taken out (fulfilled_base).
+	LeftShelfBase float64
 }
 
 // returnRow is the pos_returns header insert.
@@ -1051,6 +1065,12 @@ type returnLineRow struct {
 	LineTotalCents int64
 	TaxCents       int64
 	ReasonCode     string
+	// Disposition and the two quantities it produced (0378): what became of the goods, how much
+	// went back on the shelf, how much was written off. The last two are zero for goods that never
+	// left the shelf, whatever the disposition asked for.
+	Disposition    string
+	RestockedBase  float64
+	WrittenOffBase float64
 }
 
 // -- DIB-488 rev 8 (item 10): the role-gated margin glance ---------------------------------------

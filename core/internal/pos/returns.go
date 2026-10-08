@@ -455,7 +455,7 @@ func (s *Service) returnInTx(ctx context.Context, tx pgx.Tx, plan *returnPlan) (
 	}
 
 	// 1. Lock + guard every requested line, derive its refund money/tax (the shared guard half).
-	g, gerr := s.guardReturnLines(ctx, tx, oc, in.Lines)
+	g, gerr := s.guardReturnLines(ctx, tx, oc, in.Lines, in.Restock)
 	if gerr != nil {
 		return Return{}, false, false, gerr
 	}
@@ -528,16 +528,18 @@ type guardedReturn struct {
 	lines      []returnLineRow
 	stockLines []StockLine
 	eventLines []map[string]any
-	subtotal   int64
-	taxTotal   int64
+	// writeOffLines are the damaged goods written off (pos.return.written_off), product and quantity.
+	writeOffLines []map[string]any
+	subtotal      int64
+	taxTotal      int64
 }
 
 // guardReturnLines locks and guards every requested line of ONE order under FOR UPDATE and derives
 // its refund money and tax: the shared step 1 of the single return's transactional body
 // (returnInTx) and of every child of a note (ReturnAcross). The over-return refusal and the money
 // invariants are the single return's own words, unchanged.
-func (s *Service) guardReturnLines(ctx context.Context, tx pgx.Tx, oc returnOrderCtx, reqs []ReturnLineInput) (guardedReturn, error) {
-	return guardLines(oc, reqs, func(orderLineID string) (returnableLine, bool, error) {
+func (s *Service) guardReturnLines(ctx context.Context, tx pgx.Tx, oc returnOrderCtx, reqs []ReturnLineInput, defaultRestock bool) (guardedReturn, error) {
+	return guardLines(oc, reqs, defaultRestock, func(orderLineID string) (returnableLine, bool, error) {
 		return s.store.LockReturnableLine(ctx, tx, oc.OrderID, orderLineID)
 	})
 }
@@ -545,7 +547,7 @@ func (s *Service) guardReturnLines(ctx context.Context, tx pgx.Tx, oc returnOrde
 // previewReturnLines is the credit preview's guard: the SAME guardLines over the same prior-return
 // sums, read without the lock (a preview takes none and writes nothing).
 func (s *Service) previewReturnLines(ctx context.Context, oc returnOrderCtx, reqs []ReturnLineInput) (guardedReturn, error) {
-	return guardLines(oc, reqs, func(orderLineID string) (returnableLine, bool, error) {
+	return guardLines(oc, reqs, false, func(orderLineID string) (returnableLine, bool, error) {
 		return s.store.ReadReturnableLine(ctx, oc.OrderID, orderLineID)
 	})
 }
@@ -555,11 +557,12 @@ func (s *Service) previewReturnLines(ctx context.Context, oc returnOrderCtx, req
 // transaction, or a plain read for the preview). A line named twice in one request is refused in
 // words: each entry is guarded against what was committed BEFORE the request, so two entries
 // could together return more than is open.
-func guardLines(oc returnOrderCtx, reqs []ReturnLineInput, read func(orderLineID string) (returnableLine, bool, error)) (guardedReturn, error) {
+func guardLines(oc returnOrderCtx, reqs []ReturnLineInput, defaultRestock bool, read func(orderLineID string) (returnableLine, bool, error)) (guardedReturn, error) {
 	lines := make([]returnLineRow, 0, len(reqs))
 	var subtotal, taxTotal int64
 	stockLines := make([]StockLine, 0, len(reqs))
 	eventLines := make([]map[string]any, 0, len(reqs))
+	writeOffLines := make([]map[string]any, 0, len(reqs))
 	seen := make(map[string]bool, len(reqs))
 	for _, req := range reqs {
 		if seen[req.OrderLineID] {
@@ -578,13 +581,58 @@ func guardLines(oc returnOrderCtx, reqs []ReturnLineInput, read func(orderLineID
 		if perr != nil {
 			return guardedReturn{}, perr
 		}
+		if derr := applyDisposition(&row, rl, req, defaultRestock); derr != nil {
+			return guardedReturn{}, derr
+		}
 		lines = append(lines, row)
 		subtotal += row.LineTotalCents
 		taxTotal += row.TaxCents
-		stockLines = append(stockLines, StockLine{ProductID: rl.ProductID, QtyBase: req.QtyBase})
-		eventLines = append(eventLines, map[string]any{"product_id": rl.ProductID, "qty_base": req.QtyBase})
+		// Only goods that physically went back on the shelf move stock and reverse COGS, and only
+		// goods that physically came back damaged are written off: the rest is credit only.
+		if row.RestockedBase > 0 {
+			stockLines = append(stockLines, StockLine{ProductID: rl.ProductID, QtyBase: row.RestockedBase})
+			eventLines = append(eventLines, map[string]any{"product_id": rl.ProductID, "qty_base": row.RestockedBase})
+		}
+		if row.WrittenOffBase > 0 {
+			writeOffLines = append(writeOffLines, map[string]any{"product_id": rl.ProductID, "qty_base": row.WrittenOffBase})
+		}
 	}
-	return guardedReturn{lines: lines, stockLines: stockLines, eventLines: eventLines, subtotal: subtotal, taxTotal: taxTotal}, nil
+	return guardedReturn{lines: lines, stockLines: stockLines, eventLines: eventLines, writeOffLines: writeOffLines,
+		subtotal: subtotal, taxTotal: taxTotal}, nil
+}
+
+// applyDisposition resolves what became of one returned line's goods and how much of it physically
+// went where (sub item 10.3, the D1 fix and the Q4 and Q5 rulings). A line without a disposition
+// takes the whole return's restock flag (true RESTOCK, false NO_RETURN). The physical part of the
+// return is what had left the shelf and not yet come back: min(returned qty, left the shelf less
+// every earlier return of the line). A RESTOCK puts the physical part back on the shelf, a DAMAGED
+// writes the physical part off; the rest of the quantity (goods that never left the shelf) is credit
+// only, the money reversal whole and no stock or cost entry at all.
+func applyDisposition(row *returnLineRow, rl returnableLine, req ReturnLineInput, defaultRestock bool) error {
+	disp := req.Disposition
+	switch disp {
+	case "":
+		disp = DispositionNoReturn
+		if defaultRestock {
+			disp = DispositionRestock
+		}
+	case DispositionRestock, DispositionDamaged, DispositionNoReturn:
+	default:
+		return clientErr(http.StatusUnprocessableEntity,
+			"pos: disposition on line %s must be RESTOCK, DAMAGED or NO_RETURN", req.OrderLineID)
+	}
+	physical := math.Min(req.QtyBase, math.Max(0, rl.LeftShelfBase-rl.PriorQty))
+	if physical < qtyEpsilon {
+		physical = 0
+	}
+	row.Disposition = disp
+	switch disp {
+	case DispositionRestock:
+		row.RestockedBase = physical
+	case DispositionDamaged:
+		row.WrittenOffBase = physical
+	}
+	return nil
 }
 
 // priceReturnLine is the ONE pricing function of a return line: the over-return guard and the
@@ -667,7 +715,7 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 	returnID, returnNo, ierr := s.store.InsertReturn(ctx, tx, returnRow{
 		OrderID: oc.OrderID, InvoiceID: oc.InvoiceID, CustomerID: oc.CustomerID, BranchID: oc.BranchID,
 		RefundMethod: in.RefundMethod, SubtotalCents: subtotal, TaxCents: taxTotal, TotalCents: total,
-		FeeCents: feeCents, Reason: in.Reason, Restock: in.Restock, TillSessionID: in.TillSessionID,
+		FeeCents: feeCents, Reason: in.Reason, Restock: anyRestock(lines), TillSessionID: in.TillSessionID,
 		PickupRequired: pickupRequired, PickupSite: pickupSite, PickupDate: pickupDate, PickupStatus: pickupStatus,
 		IdempotencyKey: in.IdempotencyKey, CreatedBy: actor, NoteID: noteID,
 	})
@@ -738,7 +786,9 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 
 	// 4. Restock, RETURN moves at the current weighted average through the seam, then the stock-side
 	//    GL event (mirrors the Sale's decrement + order.fulfilled pairing; skips quietly when no cost).
-	if in.Restock {
+	//    Only the lines whose goods physically went back on the shelf are in stockLines (the D1 fix:
+	//    goods that never left the shelf move no stock and have no COGS to reverse).
+	if len(stockLines) > 0 {
 		if err := s.restocker().RestockForReturnTx(ctx, tx, RestockInput{
 			ReturnID: returnID, OrderID: oc.OrderID, BranchID: oc.BranchID, ReturnNo: returnNo, Lines: stockLines,
 		}); err != nil {
@@ -746,6 +796,15 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 		}
 		if err := s.store.EmitEvent(ctx, tx, "order.returned", map[string]any{
 			"order_id": oc.OrderID, "return_id": returnID, "branch_id": oc.BranchID, "lines": eventLines,
+		}); err != nil {
+			return Return{}, err
+		}
+	}
+	//    Damaged goods that came back are written off (Q4): the cost leaves COGS for 5200 at the
+	//    average at posting time.
+	if len(g.writeOffLines) > 0 {
+		if err := s.store.EmitEvent(ctx, tx, "pos.return.written_off", map[string]any{
+			"order_id": oc.OrderID, "return_id": returnID, "branch_id": oc.BranchID, "lines": g.writeOffLines,
 		}); err != nil {
 			return Return{}, err
 		}
@@ -794,6 +853,17 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 		FeeCents: feeCents, RefundPaymentID: refundPaymentID, PickupStatus: pickupStatus, Status: "COMMITTED",
 	}
 	return out, nil
+}
+
+// anyRestock answers whether any line of the return asked for its goods to go back on the shelf:
+// the pos_returns.restock header column, kept for the readers that predate dispositions.
+func anyRestock(lines []returnLineRow) bool {
+	for _, l := range lines {
+		if l.Disposition == DispositionRestock {
+			return true
+		}
+	}
+	return false
 }
 
 // replayIfAllowed answers an idempotent replay only to a caller the wall

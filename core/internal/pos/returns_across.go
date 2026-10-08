@@ -358,7 +358,7 @@ func (s *Service) returnAcrossInTx(ctx context.Context, tx pgx.Tx, plan *returnA
 	guards := make([]guardedReturn, len(plan.children))
 	var subtotal, taxTotal int64
 	for i, child := range plan.children {
-		g, gerr := s.guardReturnLines(ctx, tx, child.oc, child.in.Lines)
+		g, gerr := s.guardReturnLines(ctx, tx, child.oc, child.in.Lines, child.in.Restock)
 		if gerr != nil {
 			return ReturnNote{}, false, false, gerr
 		}

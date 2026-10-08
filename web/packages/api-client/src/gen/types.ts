@@ -4414,6 +4414,7 @@ export type PosReturnLineInput = {
   order_line_id: string;
   qty_base: number;
   reason_code: "DAMAGED" | "DEFECT" | "WRONG_ITEM" | "NO_LONGER_NEEDED" | "OTHER";
+  disposition?: "RESTOCK" | "DAMAGED" | "NO_RETURN";
 };
 export type PosPickupInput = {
   required: boolean;

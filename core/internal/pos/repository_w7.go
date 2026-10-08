@@ -299,6 +299,14 @@ const (
 	priorReturnTaxExpr   = `COALESCE((SELECT SUM(rl.tax_cents) FROM pos_return_lines rl WHERE rl.order_line_id = ol.id), 0)`
 )
 
+// leftShelfExpr is the quantity of an order line that has physically left the shelf: the whole line
+// on a collect now ring (the ring decrements stock), else what fulfilment has taken out. The
+// commit's restock and write off rules read it, so goods that never left the shelf move no stock
+// (the D1 defect). The customer lines read's shelf_state speaks the same rule in words.
+const leftShelfExpr = `CASE WHEN EXISTS (SELECT 1 FROM pos_sale ps WHERE ps.order_id = ol.order_id
+                                              AND ps.status = 'COMMITTED' AND ps.sale_type = 'COLLECT_NOW')
+                         THEN ol.qty_base ELSE ol.fulfilled_base END`
+
 // ListCustomerReturnableOrders is the customer lines read (sub item 10.1): every sales order the
 // customer holds in HH, the widened Q1 ruling's source. A committed till ring (its newest COMMITTED
 // pos_sale facet) and an order a quote became (orders.quote_id, set by the conversion) are orders
@@ -379,14 +387,16 @@ SELECT co.id::text, co.order_no, co.branch_id, co.status, co.job_label, co.creat
 const returnableLineQuery = `
 SELECT ol.id::text, COALESCE(ol.product_id::text,''), ol.qty_base::float8, ol.unit_price_cents,
        ol.line_total_cents, ol.tax_cents,
-       ` + priorReturnQtyExpr + `::float8, ` + priorReturnMoneyExpr + `, ` + priorReturnTaxExpr + `
+       ` + priorReturnQtyExpr + `::float8, ` + priorReturnMoneyExpr + `, ` + priorReturnTaxExpr + `,
+       ` + leftShelfExpr + `::float8
   FROM order_lines ol
  WHERE ol.id = $2 AND ol.order_id = $1`
 
 func scanReturnableLine(row pgx.Row) (returnableLine, bool, error) {
 	var rl returnableLine
 	err := row.Scan(&rl.OrderLineID, &rl.ProductID, &rl.QtySold,
-		&rl.UnitPriceCents, &rl.LineTotalCents, &rl.TaxCents, &rl.PriorQty, &rl.PriorMoney, &rl.PriorTax)
+		&rl.UnitPriceCents, &rl.LineTotalCents, &rl.TaxCents, &rl.PriorQty, &rl.PriorMoney, &rl.PriorTax,
+		&rl.LeftShelfBase)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return returnableLine{}, false, nil
 	}
@@ -564,10 +574,10 @@ func (r *Repository) InsertReturnLines(ctx context.Context, tx pgx.Tx, returnID 
 	for _, l := range lines {
 		const q = `
 INSERT INTO pos_return_lines (return_id, order_line_id, product_id, qty_base, unit_price_cents,
-                              line_total_cents, tax_cents, reason_code)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+                              line_total_cents, tax_cents, reason_code, disposition, restocked_base, written_off_base)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 		if _, err := tx.Exec(ctx, q, returnID, l.OrderLineID, l.ProductID, l.QtyBase, l.UnitPriceCents,
-			l.LineTotalCents, l.TaxCents, l.ReasonCode); err != nil {
+			l.LineTotalCents, l.TaxCents, l.ReasonCode, l.Disposition, l.RestockedBase, l.WrittenOffBase); err != nil {
 			return err
 		}
 	}

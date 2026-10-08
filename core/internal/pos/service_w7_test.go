@@ -427,6 +427,52 @@ func TestReturn_Restock_DispatchesSeamAndEmitsOrderReturned(t *testing.T) {
 	}
 }
 
+// D1: goods that never left the shelf move no stock and reverse no COGS whatever the restock flag
+// says, and the money reversal is whole; a damaged line writes goods off only when they left the shelf.
+func TestReturn_Restock_NeverLeftTheShelfIsCreditOnly(t *testing.T) {
+	h := newHarness()
+	seedReturnable(h)
+	h.store.neverLeftShelf = map[string]bool{"line-1": true}
+	out, err := h.svc.Return(context.Background(), returnInput())
+	if err != nil {
+		t.Fatalf("return: %v", err)
+	}
+	if len(h.restock.calls) != 0 {
+		t.Fatalf("goods that never left the shelf must not be restocked: %+v", h.restock.calls)
+	}
+	if _, ok := h.store.lastEvent("order.returned"); ok {
+		t.Fatal("no COGS was booked for them, so no COGS reversal")
+	}
+	if out.TotalCents <= 0 {
+		t.Fatalf("the credit is the money in full, got %d", out.TotalCents)
+	}
+	// DAMAGED on the same unfulfilled goods writes nothing off; on shelved goods it writes them off.
+	h2 := newHarness()
+	seedReturnable(h2)
+	h2.store.neverLeftShelf = map[string]bool{"line-1": true}
+	in := returnInput()
+	in.Lines[0].Disposition = DispositionDamaged
+	if _, err := h2.svc.Return(context.Background(), in); err != nil {
+		t.Fatalf("damaged return: %v", err)
+	}
+	if _, ok := h2.store.lastEvent("pos.return.written_off"); ok {
+		t.Fatal("goods that never left the shelf cannot be written off")
+	}
+	h3 := newHarness()
+	seedReturnable(h3)
+	in = returnInput()
+	in.Lines[0].Disposition = DispositionDamaged
+	if _, err := h3.svc.Return(context.Background(), in); err != nil {
+		t.Fatalf("damaged return: %v", err)
+	}
+	if _, ok := h3.store.lastEvent("pos.return.written_off"); !ok {
+		t.Fatal("damaged goods that left the shelf are written off")
+	}
+	if len(h3.restock.calls) != 0 {
+		t.Fatal("damaged goods never go back on the shelf")
+	}
+}
+
 func TestReturn_TaxProportional_SumNeverExceedsOriginal(t *testing.T) {
 	h := newHarness()
 	seedReturnable(h)

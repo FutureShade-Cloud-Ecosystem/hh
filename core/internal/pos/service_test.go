@@ -58,6 +58,7 @@ type fakeStore struct {
 	cachedReturns   map[string]Return           // idempotency key → committed return
 	retCtx          map[string]returnOrderCtx   // order_id → the original-sale context
 	retLines        map[string]returnableLine   // order_line_id → the sold line (prior sums derive from returnLineRows)
+	neverLeftShelf  map[string]bool             // order_line_id → goods that never left the shelf (the D1 case)
 	retLineOrders   map[string]string           // order_line_id → order_id (the customer lines fake's grouping)
 	returnRows      []returnRow
 	returnLineRows  []returnLineRow
@@ -480,6 +481,11 @@ func (f *fakeStore) LockReturnableLine(_ context.Context, _ pgx.Tx, orderID, ord
 	rl, ok := f.retLines[orderLineID]
 	if !ok || f.retCtx[orderID].OrderID != orderID {
 		return returnableLine{}, false, nil
+	}
+	// The fixtures are collect now rings unless a test names a line as one that never left the
+	// shelf (the real repo reads leftShelfExpr).
+	if !f.neverLeftShelf[orderLineID] {
+		rl.LeftShelfBase = rl.QtySold
 	}
 	// Prior sums derive from the COMMITTED return lines (the real repo sums pos_return_lines).
 	for _, prev := range f.returnLineRows {
