@@ -85,13 +85,14 @@ func TestIntegration_DepositCancel_BothDispositionsClear2300AndBalance(t *testin
 		t.Fatalf("the credit-back cancel consume: %v", err)
 	}
 
-	// KEPT. Same life, the dealer keeps the deposit.
+	// KEPT. Same life, the dealer keeps what was paid: 2500 of the 4000 was
+	// paid, the unpaid 1500 is closed against the receivable (row 1228).
 	_, _, depK := seedOneDeposit(t, pool, fmt.Sprintf("K-%d", suffix), at)
 	if err := svc.consume(ctx, ev("ar.invoice.finalized", map[string]any{"invoice_id": depK})); err != nil {
 		t.Fatalf("the kept deposit's finalization: %v", err)
 	}
 	if err := svc.consume(ctx, ev("deposit.cancelled", map[string]any{
-		"invoice_id": depK, "disposition": "KEPT",
+		"invoice_id": depK, "disposition": "KEPT", "paid_cents": 2500, "closed_cents": 1500,
 	})); err != nil {
 		t.Fatalf("the kept cancel consume: %v", err)
 	}
@@ -102,14 +103,16 @@ func TestIntegration_DepositCancel_BothDispositionsClear2300AndBalance(t *testin
 		t.Errorf("2300 Customer Deposits nets %d, want 0 (both deposits left the books)", got)
 	}
 	// Credit back returned the deposit to the account: 1100 nets ZERO (the
-	// finalize's DR and the cancel's CR). Kept stands the customer's debt:
-	// +4000 from its finalize alone.
-	if got := accountNet(t, pool, depositCancelYear, "1100"); got != 4000 {
-		t.Errorf("1100 AR nets %d, want 4000 (the kept deposit's standing debt)", got)
+	// finalize's DR and the cancel's CR). Kept closes only the unpaid 1500, so
+	// 4000 less 1500 stands: the 2500 the customer paid is cleared by the
+	// payment's own journal, which this proof does not post.
+	if got := accountNet(t, pool, depositCancelYear, "1100"); got != 2500 {
+		t.Errorf("1100 AR nets %d, want 2500 (the finalize less the closed unpaid rest)", got)
 	}
-	// Other income carries the kept deposit, and only it.
-	if got := accountNet(t, pool, depositCancelYear, "4950"); got != -4000 {
-		t.Errorf("4950 Other Income nets %d, want -4000 (the kept deposit)", got)
+	// Other income carries what the customer paid of the kept deposit, and
+	// only that.
+	if got := accountNet(t, pool, depositCancelYear, "4950"); got != -2500 {
+		t.Errorf("4950 Other Income nets %d, want -2500 (the paid part kept)", got)
 	}
 	// Revenue carries nothing of either: a cancelled special order's deposit
 	// is never revenue.
@@ -137,7 +140,7 @@ func TestIntegration_DepositCancel_BothDispositionsClear2300AndBalance(t *testin
 		want map[string][2]int64
 	}{
 		{"deposit.cancelled:" + depCB, map[string][2]int64{"2300": {4000, 0}, "1100": {0, 4000}}},
-		{"deposit.cancelled:" + depK, map[string][2]int64{"2300": {4000, 0}, "4950": {0, 4000}}},
+		{"deposit.cancelled:" + depK, map[string][2]int64{"2300": {4000, 0}, "4950": {0, 2500}, "1100": {0, 1500}}},
 	} {
 		rows, err := pool.Query(ctx, `
 			SELECT a.code, COALESCE(l.debit_cents,0), COALESCE(l.credit_cents,0)
@@ -158,7 +161,7 @@ func TestIntegration_DepositCancel_BothDispositionsClear2300AndBalance(t *testin
 			got[code] = [2]int64{d, c}
 		}
 		rows.Close()
-		if len(got) != 2 || got["2300"] != tc.want["2300"] {
+		if len(got) != len(tc.want) || got["2300"] != tc.want["2300"] {
 			t.Fatalf("the journal %s legs = %v, want %v", tc.key, got, tc.want)
 		}
 		for code, want := range tc.want {
@@ -178,7 +181,7 @@ func TestIntegration_DepositCancel_BothDispositionsClear2300AndBalance(t *testin
 		{depK, "CREDIT_BACK"}, {depK, "KEPT"},
 	} {
 		if err := svc.consume(ctx, ev("deposit.cancelled", map[string]any{
-			"invoice_id": e.invoice, "disposition": e.disposition,
+			"invoice_id": e.invoice, "disposition": e.disposition, "paid_cents": 0, "closed_cents": 4000,
 		})); err != nil {
 			t.Fatalf("the redelivered cancel consume: %v", err)
 		}

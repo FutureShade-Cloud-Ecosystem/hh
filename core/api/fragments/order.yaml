@@ -173,7 +173,9 @@ paths:
         supplier deposit document cancels: the deposit settles on the same
         transaction, credited back to the customer's account by the dealer's
         default or kept when keep_deposit is true (a manager's override, the
-        mandatory reason is its audited reason).
+        mandatory reason is its audited reason). Kept means the dealer keeps
+        only what the customer paid of the deposit; the unpaid rest is closed
+        so nothing more is owed on the cancelled order.
       x-role: requireManager
       x-access:
         surfaces: [quote-desk]
@@ -1765,8 +1767,9 @@ components:
         keep_deposit:
           type: boolean
           description: >-
-            A manager's override to keep the order's supplier deposit rather
-            than credit it back; false applies the dealer's default
+            A manager's override to keep what the customer paid of the order's
+            supplier deposit rather than credit it back (the unpaid rest is
+            closed); false applies the dealer's default
 
     # --- order: header and line edits ----------------------------------------
     OrderHeaderEditRequest:

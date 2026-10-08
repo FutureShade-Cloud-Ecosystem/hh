@@ -466,6 +466,12 @@ var allowedExtraKeys = map[string]bool{
 	// payment_no already carries. The reason rides the top-level Reason field.
 	"disposition": true,
 	"invoice_no":  true,
+	// The settlement's money split (row 1228): what the customer paid and the
+	// dealer kept or credited back, and the unpaid rest the cancel closed. Ints
+	// like amount_cents, so the digits never reach the string redactor.
+	"paid_kept_cents":     true,
+	"paid_credited_cents": true,
+	"closed_cents":        true,
 	// DIB-159 order-status history: from→to status codes on an ORDER_STATUS_CHANGED row.
 	// These are CHECK-constrained status codes (DRAFT..CANCELLED), codes, never identifiers,
 	// and free of any 7-digit run so they pass redactCleartext cleanly. The transition's optional

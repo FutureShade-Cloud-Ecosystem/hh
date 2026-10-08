@@ -22,7 +22,8 @@
 --      live deposit document a cancel settles:
 --
 --   deposit.cancelled / customer_deposit -> 2300 (DR, the liability cleared)
---   deposit.cancelled / ar               -> 1100 (CR, credit back on the account)
+--   deposit.cancelled / ar               -> 1100 (CR, credit back on the account,
+--                                           or the unpaid rest of a kept deposit)
 --   deposit.cancelled / other_income     -> 4950 (CR, the kept deposit)
 --
 -- The journal key is deposit.cancelled:<invoice id>, the release's own

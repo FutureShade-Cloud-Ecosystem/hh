@@ -6,14 +6,16 @@ package billing
 // deposit against the real schema: the settlement a manual cancel carries
 // through billing. Credit back clears the open deposit document (or leaves a
 // credit on the account when it was paid); kept settles the document's
-// liability into other income and touches neither the document nor the
-// subledger.
+// keeps only what was paid (the unpaid rest is closed) and touches no account
+// row.
 
 import (
 	"context"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 )
 
 // seedDepositOrderAt plants a CONFIRMED order with one live deposit document
@@ -164,10 +166,69 @@ func TestIntegration_CancelDeposits_CreditBackPartial(t *testing.T) {
 	}
 }
 
-// Kept: the document stands exactly as it was (open if unpaid, PAID if paid)
-// and nothing lands on the account; the liability's move is the booking's
-// business, not the subledger's.
-func TestIntegration_CancelDeposits_KeptLeavesTheDocumentAndSubledgerAlone(t *testing.T) {
+// depositCancelEvent reads back the one deposit.cancelled event a settlement
+// emitted for the document: the amounts the booking will post.
+func depositCancelEvent(t *testing.T, pool *pgxpool.Pool, dep string) (disposition string, paid, closed int64) {
+	t.Helper()
+	if err := pool.QueryRow(context.Background(), `
+		SELECT payload->>'disposition', COALESCE((payload->>'paid_cents')::bigint, -1), COALESCE((payload->>'closed_cents')::bigint, -1)
+		  FROM events_outbox
+		 WHERE topic = 'deposit.cancelled' AND payload->>'invoice_id' = $1`, dep).Scan(&disposition, &paid, &closed); err != nil {
+		t.Fatalf("the settlement's event: %v", err)
+	}
+	return disposition, paid, closed
+}
+
+// Kept on a PART PAID deposit (4000 total, 2500 paid, 1500 owed), the keep
+// ruling (row 1228, Colton's A): only what the customer PAID is the dealer's.
+// The unpaid rest is closed so nothing more is owed on the cancelled order, the
+// document reads PAID with a zero balance (what was paid is all there is), no
+// account row lands, and the event carries both amounts for the booking.
+func TestIntegration_CancelDeposits_KeptPartPaidKeepsThePaidAndClosesTheRest(t *testing.T) {
+	pool := intPool(t)
+	ctx := context.Background()
+	tag := ns(t)
+	cust, orderID, dep := seedDepositOrderAt(t, pool, tag, 1_500)
+
+	if _, err := NewInvoiceWriter(pool).WithAudit(audit.NewService(audit.NewRepository(pool), nil)).CancelOrderDeposits(ctx, nil, orderID, "KEPT", "the supplier already ordered it"); err != nil {
+		t.Fatalf("settle: %v", err)
+	}
+	var status string
+	var balance int64
+	if err := pool.QueryRow(ctx,
+		`SELECT status, balance_cents FROM invoices WHERE id = $1::uuid`, dep).Scan(&status, &balance); err != nil {
+		t.Fatal(err)
+	}
+	if status != "PAID" || balance != 0 {
+		t.Fatalf("a kept part paid deposit must close with nothing owed, got %s/%d", status, balance)
+	}
+	var rows int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM customer_transactions WHERE customer_id = $1::uuid AND source_type = 'deposit_cancel'`, cust).
+		Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Fatalf("a kept deposit wrote %d account rows, want none", rows)
+	}
+	if d, paid, closed := depositCancelEvent(t, pool, dep); d != "KEPT" || paid != 2_500 || closed != 1_500 {
+		t.Fatalf("the event = %s paid %d closed %d, want KEPT 2500 1500", d, paid, closed)
+	}
+	var keptAmt, closedAmt int64
+	if err := pool.QueryRow(ctx, `
+		SELECT COALESCE((changes->>'paid_kept_cents')::bigint, -1), COALESCE((changes->>'closed_cents')::bigint, -1)
+		  FROM audit_log WHERE action = 'DEPOSIT_CANCELLED' AND entity_id::text = $1`, dep).Scan(&keptAmt, &closedAmt); err != nil {
+		t.Fatalf("the audit row: %v", err)
+	}
+	if keptAmt != 2_500 || closedAmt != 1_500 {
+		t.Fatalf("the audit row records kept %d closed %d, want 2500 and 1500", keptAmt, closedAmt)
+	}
+}
+
+// Kept on an entirely UNPAID deposit: nothing was paid, so nothing is the
+// dealer's; the whole document is closed (VOID, zero balance) and the event
+// carries paid 0 and closed 4000, so nothing books to other income.
+func TestIntegration_CancelDeposits_KeptUnpaidClosesTheWholeDocument(t *testing.T) {
 	pool := intPool(t)
 	ctx := context.Background()
 	tag := ns(t)
@@ -182,8 +243,8 @@ func TestIntegration_CancelDeposits_KeptLeavesTheDocumentAndSubledgerAlone(t *te
 		`SELECT status, balance_cents FROM invoices WHERE id = $1::uuid`, dep).Scan(&status, &balance); err != nil {
 		t.Fatal(err)
 	}
-	if status != "FINALIZED" || balance != 4_000 {
-		t.Fatalf("a kept unpaid deposit must stand open, got %s/%d", status, balance)
+	if status != "VOID" || balance != 0 {
+		t.Fatalf("a kept unpaid deposit must be closed, got %s/%d", status, balance)
 	}
 	var rows int
 	if err := pool.QueryRow(ctx,
@@ -193,6 +254,34 @@ func TestIntegration_CancelDeposits_KeptLeavesTheDocumentAndSubledgerAlone(t *te
 	}
 	if rows != 0 {
 		t.Fatalf("a kept deposit wrote %d account rows, want none", rows)
+	}
+	if d, paid, closed := depositCancelEvent(t, pool, dep); d != "KEPT" || paid != 0 || closed != 4_000 {
+		t.Fatalf("the event = %s paid %d closed %d, want KEPT 0 4000", d, paid, closed)
+	}
+}
+
+// Kept on a fully PAID deposit: the whole deposit is the dealer's, the
+// document stands PAID, nothing is closed.
+func TestIntegration_CancelDeposits_KeptPaidKeepsTheWholeDeposit(t *testing.T) {
+	pool := intPool(t)
+	ctx := context.Background()
+	tag := ns(t)
+	_, orderID, dep := seedDepositOrderAt(t, pool, tag, 0)
+
+	if _, err := NewInvoiceWriter(pool).CancelOrderDeposits(ctx, nil, orderID, "KEPT", "the supplier already ordered it"); err != nil {
+		t.Fatalf("settle: %v", err)
+	}
+	var status string
+	var balance int64
+	if err := pool.QueryRow(ctx,
+		`SELECT status, balance_cents FROM invoices WHERE id = $1::uuid`, dep).Scan(&status, &balance); err != nil {
+		t.Fatal(err)
+	}
+	if status != "PAID" || balance != 0 {
+		t.Fatalf("a kept paid deposit must stand PAID, got %s/%d", status, balance)
+	}
+	if d, paid, closed := depositCancelEvent(t, pool, dep); d != "KEPT" || paid != 4_000 || closed != 0 {
+		t.Fatalf("the event = %s paid %d closed %d, want KEPT 4000 0", d, paid, closed)
 	}
 }
 

@@ -277,12 +277,40 @@ func TestIntegration_DepositCancel_PaidCreditBackEndToEnd(t *testing.T) {
 	}
 }
 
-// THE MANAGER'S OVERRIDE, KEPT: the deposit stands open and owed, the
-// liability books into other income, and the audited row carries the
-// override's reason and KEPT.
-func TestIntegration_DepositCancel_ManagerKeepsTheDepositEndToEnd(t *testing.T) {
+// seedPartPaidDeposit plants the 4000 deposit with 2500 paid and 1500 owed.
+func (w *depositCancelWorld) seedPartPaidDeposit(t *testing.T, tag string) (cust, ord, dep string) {
+	t.Helper()
+	cust, ord, dep = w.seedDepositOrder(t, tag, false)
+	if _, err := w.pool.Exec(context.Background(),
+		`UPDATE invoices SET status = 'PARTIALLY_PAID', balance_cents = 1500 WHERE id::uuid = $1`, dep); err != nil {
+		t.Fatalf("part pay the deposit: %v", err)
+	}
+	return cust, ord, dep
+}
+
+// cancelJournalBalanced proves the deposit's own cancel journal balances.
+func (w *depositCancelWorld) cancelJournalBalanced(t *testing.T, dep string) {
+	t.Helper()
+	var dr, cr int64
+	if err := w.pool.QueryRow(context.Background(), `
+		SELECT COALESCE(SUM(l.debit_cents),0), COALESCE(SUM(l.credit_cents),0)
+		  FROM gl_journal_lines l JOIN gl_journals j ON j.id = l.journal_id
+		 WHERE j.idempotency_key = 'deposit.cancelled:'||$1`, dep).Scan(&dr, &cr); err != nil {
+		t.Fatal(err)
+	}
+	if dr != cr || dr != 4000 {
+		t.Errorf("the cancel journal dr=%d cr=%d, want 4000 both", dr, cr)
+	}
+}
+
+// THE MANAGER'S OVERRIDE, KEPT, ON A PART PAID DEPOSIT (row 1228, Colton's
+// A): 4000 with 2500 paid. The dealer keeps what was paid (4950 takes 2500),
+// the unpaid 1500 is closed so nothing more is owed on the cancelled order,
+// 2300 clears in full, and the audited row carries the override's reason and
+// both amounts.
+func TestIntegration_DepositCancel_ManagerKeepsOnlyWhatWasPaidEndToEnd(t *testing.T) {
 	w := newDepositCancelWorld(t)
-	_, ord, dep := w.seedDepositOrder(t, "K", false)
+	_, ord, dep := w.seedPartPaidDeposit(t, "K")
 	w.bookTheLiability(t, dep)
 
 	rr := invoke(t, w.h.cancel, managerAt(intManager, trentonBranch), ord, `{"reason":"the supplier already ordered it","keep_deposit":true}`)
@@ -296,35 +324,83 @@ func TestIntegration_DepositCancel_ManagerKeepsTheDepositEndToEnd(t *testing.T) 
 		t.Fatal("the cancel's event did not drain")
 	}
 
-	// The document stands open: the customer still owes the kept deposit.
 	var status string
 	var balance int64
 	if err := w.pool.QueryRow(context.Background(),
 		`SELECT status, balance_cents FROM invoices WHERE id::uuid = $1`, dep).Scan(&status, &balance); err != nil {
 		t.Fatal(err)
 	}
-	if status != "FINALIZED" || balance != 4000 {
-		t.Fatalf("the kept deposit = %s/%d, want FINALIZED/4000", status, balance)
+	if status != "PAID" || balance != 0 {
+		t.Fatalf("the kept deposit = %s/%d, want PAID/0 (nothing owed)", status, balance)
 	}
-	// The books: 2300 zero, the deposit in other income, AR standing.
 	if got := w.journalAccountNet(t, "2300", dep); got != 0 {
 		t.Errorf("2300 nets %d, want 0", got)
 	}
-	if got := w.journalAccountNet(t, "4950", dep); got != -4000 {
-		t.Errorf("4950 Other Income nets %d, want -4000", got)
+	if got := w.journalAccountNet(t, "4950", dep); got != -2500 {
+		t.Errorf("4950 Other Income nets %d, want -2500 (the paid part)", got)
 	}
-	if got := w.journalAccountNet(t, "1100", dep); got != 4000 {
-		t.Errorf("1100 nets %d, want 4000 (the kept deposit's standing debt)", got)
+	// The finalize debited AR 4000 and the cancel closed the unpaid 1500; the
+	// paid 2500 is cleared by the payment's own journal (not posted here).
+	if got := w.journalAccountNet(t, "1100", dep); got != 2500 {
+		t.Errorf("1100 nets %d, want 2500", got)
 	}
+	w.cancelJournalBalanced(t, dep)
 
 	var reason, disposition string
+	var kept, closed int64
 	if err := w.pool.QueryRow(context.Background(), `
-		SELECT changes->>'reason', changes->>'disposition' FROM audit_log
-		 WHERE action = 'DEPOSIT_CANCELLED' AND entity_id::text = $1`, dep).Scan(&reason, &disposition); err != nil {
+		SELECT changes->>'reason', changes->>'disposition',
+		       COALESCE((changes->>'paid_kept_cents')::bigint, -1), COALESCE((changes->>'closed_cents')::bigint, -1)
+		  FROM audit_log
+		 WHERE action = 'DEPOSIT_CANCELLED' AND entity_id::text = $1`, dep).Scan(&reason, &disposition, &kept, &closed); err != nil {
 		t.Fatalf("the kept settlement wrote no audited row: %v", err)
 	}
-	if reason != "the supplier already ordered it" || disposition != "KEPT" {
-		t.Fatalf("the audited row = %q/%q, want the override's reason and KEPT", reason, disposition)
+	if reason != "the supplier already ordered it" || disposition != "KEPT" || kept != 2500 || closed != 1500 {
+		t.Fatalf("the audited row = %q/%q kept %d closed %d, want the override's reason, KEPT, 2500, 1500", reason, disposition, kept, closed)
+	}
+}
+
+// THE MANAGER'S OVERRIDE, KEPT, ON AN UNPAID DEPOSIT: nothing was paid, so
+// nothing books to 4950 and the whole deposit invoice is closed; 2300 is zero.
+func TestIntegration_DepositCancel_ManagerKeepsAnUnpaidDepositBooksNothing(t *testing.T) {
+	w := newDepositCancelWorld(t)
+	_, ord, dep := w.seedDepositOrder(t, "KU", false)
+	w.bookTheLiability(t, dep)
+
+	rr := invoke(t, w.h.cancel, managerAt(intManager, trentonBranch), ord, `{"reason":"the supplier already ordered it","keep_deposit":true}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("the cancel with the keep override: code=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if w.drain() == 0 {
+		t.Fatal("the cancel's event did not drain")
+	}
+	var status string
+	var balance int64
+	if err := w.pool.QueryRow(context.Background(),
+		`SELECT status, balance_cents FROM invoices WHERE id::uuid = $1`, dep).Scan(&status, &balance); err != nil {
+		t.Fatal(err)
+	}
+	if status != "VOID" || balance != 0 {
+		t.Fatalf("the kept unpaid deposit = %s/%d, want VOID/0", status, balance)
+	}
+	if got := w.journalAccountNet(t, "2300", dep); got != 0 {
+		t.Errorf("2300 nets %d, want 0", got)
+	}
+	if got := w.journalAccountNet(t, "4950", dep); got != 0 {
+		t.Errorf("4950 nets %d, want 0 (nothing was paid)", got)
+	}
+	if got := w.journalAccountNet(t, "1100", dep); got != 0 {
+		t.Errorf("1100 nets %d, want 0 (the whole deposit closed)", got)
+	}
+	w.cancelJournalBalanced(t, dep)
+	var kept, closed int64
+	if err := w.pool.QueryRow(context.Background(), `
+		SELECT COALESCE((changes->>'paid_kept_cents')::bigint, -1), COALESCE((changes->>'closed_cents')::bigint, -1)
+		  FROM audit_log WHERE action = 'DEPOSIT_CANCELLED' AND entity_id::text = $1`, dep).Scan(&kept, &closed); err != nil {
+		t.Fatalf("no audited row: %v", err)
+	}
+	if kept != 0 || closed != 4000 {
+		t.Fatalf("the audited amounts = kept %d closed %d, want 0 and 4000", kept, closed)
 	}
 }
 

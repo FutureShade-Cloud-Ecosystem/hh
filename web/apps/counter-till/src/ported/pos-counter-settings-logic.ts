@@ -53,7 +53,7 @@ export const POS_RULE_WORDS: Readonly<Record<string, string>> = Object.freeze({
  */
 export const SUPPLIER_DEPOSIT_CANCEL_WORDS: Readonly<Record<string, string>> = Object.freeze({
   CREDIT_BACK: "Credited back to the customer's account",
-  KEPT: 'Kept by the dealer',
+  KEPT: 'Kept by the dealer: only what was paid',
 });
 
 /**

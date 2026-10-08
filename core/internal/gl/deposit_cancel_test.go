@@ -54,9 +54,10 @@ func TestDepositCancelledCreditBackPostsTheLiabilityIntoAR(t *testing.T) {
 	}
 }
 
-// Kept posts the liability into other income: the deposit becomes the
-// dealer's, one entry, no AR leg (the document stands as it is).
-func TestDepositCancelledKeptPostsTheLiabilityIntoOtherIncome(t *testing.T) {
+// Kept books only what was PAID into other income (row 1228): the 4000 / 2500
+// case, 4950 takes 2500 and the unpaid 1500 is closed against the receivable,
+// one entry, balanced, 2300 cleared in full.
+func TestDepositCancelledKeptBooksThePaidPartAndClosesTheRest(t *testing.T) {
 	ctx := context.Background()
 	f := newFakeStore()
 	f.rules = cancelRules()
@@ -66,22 +67,75 @@ func TestDepositCancelledKeptPostsTheLiabilityIntoOtherIncome(t *testing.T) {
 	}})
 	if err := svc.consume(ctx, ev("deposit.cancelled", map[string]any{
 		"invoice_id": "isd1", "order_id": "o1", "disposition": "KEPT",
+		"paid_cents": 2500, "closed_cents": 1500,
 	})); err != nil {
 		t.Fatalf("deposit cancel consume: %v", err)
 	}
 	d := f.lastInserted()
 	wantLeg(t, d, "2300", 4000, 0)
-	wantLeg(t, d, "4950", 0, 4000)
-	for _, code := range []string{"1100", "4000"} {
-		if _, has := leg(d, code); has {
-			t.Fatalf("the kept booking must post no %s leg: %v", code, d.Lines)
-		}
+	wantLeg(t, d, "4950", 0, 2500)
+	wantLeg(t, d, "1100", 0, 1500)
+	if _, has := leg(d, "4000"); has {
+		t.Fatalf("the kept booking must post no revenue leg: %v", d.Lines)
 	}
 	if !d.balanced() {
 		t.Fatalf("kept journal unbalanced: dr=%d cr=%d", d.debitTotal(), d.creditTotal())
 	}
 	if d.IdempotencyKey != "deposit.cancelled:isd1" {
 		t.Fatalf("idempotency key = %q, want deposit.cancelled:isd1", d.IdempotencyKey)
+	}
+}
+
+// Kept on an entirely unpaid deposit books nothing to other income: the whole
+// deposit is closed against the receivable (4000 / 0).
+func TestDepositCancelledKeptUnpaidBooksNothingToOtherIncome(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeStore()
+	f.rules = cancelRules()
+	svc := newTestService(f).WithInvoiceReader(fakeInvoiceReader{amt: InvoiceAmounts{
+		TotalCents: 4000, BranchID: "b1", InvoiceNo: "INV-SD", SourceKind: "SUPPLIER_DEPOSIT",
+	}})
+	if err := svc.consume(ctx, ev("deposit.cancelled", map[string]any{
+		"invoice_id": "isd1", "order_id": "o1", "disposition": "KEPT",
+		"paid_cents": 0, "closed_cents": 4000,
+	})); err != nil {
+		t.Fatalf("deposit cancel consume: %v", err)
+	}
+	d := f.lastInserted()
+	wantLeg(t, d, "2300", 4000, 0)
+	wantLeg(t, d, "1100", 0, 4000)
+	if _, has := leg(d, "4950"); has {
+		t.Fatalf("an unpaid kept deposit must book nothing to 4950: %v", d.Lines)
+	}
+	if !d.balanced() {
+		t.Fatalf("kept journal unbalanced: dr=%d cr=%d", d.debitTotal(), d.creditTotal())
+	}
+}
+
+// A kept event whose amounts do not add up to the document is malformed money
+// and refused loudly, never posted.
+func TestDepositCancelledKeptRefusesAmountsThatDoNotAddUp(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeStore()
+	f.rules = cancelRules()
+	svc := newTestService(f).WithInvoiceReader(fakeInvoiceReader{amt: InvoiceAmounts{
+		TotalCents: 4000, BranchID: "b1", SourceKind: "SUPPLIER_DEPOSIT",
+	}})
+	for _, amts := range []map[string]any{
+		{"paid_cents": 2500, "closed_cents": 1000},
+		{"paid_cents": -1, "closed_cents": 4001},
+		{},
+	} {
+		p := map[string]any{"invoice_id": "isd1", "order_id": "o1", "disposition": "KEPT"}
+		for k, v := range amts {
+			p[k] = v
+		}
+		if err := svc.consume(ctx, ev("deposit.cancelled", p)); err == nil {
+			t.Fatalf("amounts %v were accepted", amts)
+		}
+	}
+	if len(f.journals) != 0 {
+		t.Fatalf("a refused event posted %d journals", len(f.journals))
 	}
 }
 
@@ -108,6 +162,7 @@ func TestDepositCancelledRedeliveryPostsNothing(t *testing.T) {
 	// cancels exactly once, whichever disposition the first event carried.
 	other := ev("deposit.cancelled", map[string]any{
 		"invoice_id": "isd1", "order_id": "o1", "disposition": "KEPT",
+		"paid_cents": 0, "closed_cents": 4000,
 	})
 	if err := svc.consume(ctx, other); err != nil {
 		t.Fatalf("replay under the other disposition: %v", err)

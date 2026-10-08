@@ -15,12 +15,15 @@ package billing
 //     account row: the credit exactly clears the open document, so the
 //     subledger and the ledger both read zero with no second row to carry it.
 //
-//   KEPT (a manager's override, or the dealer's own default): the dealer
-//     keeps the deposit. The document stands exactly as it is (open and owed
-//     when unpaid, PAID when paid) and nothing lands on the account: the
-//     liability's move into other income is the BOOKING's business (the GL
-//     pair this file emits, posted by the gl consumer), never the
-//     subledger's.
+//   KEPT (a manager's override, or the dealer's own default; row 1228,
+//   Colton's A: keep only what was paid): the dealer keeps what the customer
+//   PAID of the deposit, and nothing more is owed. The unpaid rest is closed
+//   by the same clearing the credit back uses (the balance goes to zero in
+//   this transaction, with the one deposit.cancelled:<invoice id> journal key
+//   booking it): a part paid document reads PAID, an entirely unpaid one VOID,
+//   and a fully paid one stands PAID. No account row lands. The booking splits
+//   the one entry: DR 2300 for the whole deposit, CR other income for the paid
+//   part, CR the receivable for the closed rest.
 //
 // WHY NO CREDIT MEMO. The deposit document never routes through the credit
 // memo path (SupplierDepositNotCreditable stands): a memo would reverse
@@ -132,23 +135,36 @@ func (w *InvoiceWriter) settleDepositDocument(ctx context.Context, tx pgx.Tx, or
 		return fmt.Errorf("read the deposit document: %w", err)
 	}
 
-	if disposition == DepositCancelCreditBack {
-		// The open balance clears and the document leaves the live set. A paid
-		// document (balance 0) keeps its PAID shape: it was paid, voiding it
-		// would erase a real payment's document.
-		if d.balance > 0 {
-			if _, err := tx.Exec(ctx,
-				`UPDATE invoices SET balance_cents = 0, status = 'VOID', updated_at = now() WHERE id = $1::uuid`,
-				d.id); err != nil {
-				return fmt.Errorf("clear the deposit document: %w", err)
-			}
+	paid, closed := d.total-d.balance, d.balance
+
+	// The open balance clears for both dispositions (credit back: the credit
+	// exactly clears the open document; kept: the unpaid rest is closed so
+	// nothing more is owed on the cancelled order). This is the settlement's
+	// own close, never a credit memo (SupplierDepositNotCreditable stands) and
+	// never a hand edit outside this transaction. The status follows what is
+	// left of the document: an unpaid one leaves the live set (VOID, exactly
+	// what every live-deposit read already means by the word); a part paid
+	// one under KEPT reads PAID, the paid part being all there is; a paid
+	// document (balance 0) is untouched and keeps its PAID shape.
+	if d.balance > 0 {
+		status := "VOID"
+		if disposition == DepositCancelKept && paid > 0 {
+			status = "PAID"
 		}
+		if _, err := tx.Exec(ctx,
+			`UPDATE invoices SET balance_cents = 0, status = $2, updated_at = now() WHERE id = $1::uuid`,
+			d.id, status); err != nil {
+			return fmt.Errorf("clear the deposit document: %w", err)
+		}
+	}
+
+	if disposition == DepositCancelCreditBack {
 		// The paid part (total less what is still owed) becomes the account's
 		// credit. An unpaid deposit paid nothing, so no row: the cleared
 		// document is itself the credit (the subledger and the ledger both
 		// read zero). source_type 'deposit_cancel' keeps the row out of the
 		// credit memo document family and inside the AR tie-out's second arm.
-		if paid := d.total - d.balance; paid > 0 {
+		if paid > 0 {
 			var open int64
 			if err := tx.QueryRow(ctx,
 				`SELECT COALESCE(SUM(balance_cents),0) FROM invoices
@@ -166,15 +182,16 @@ func (w *InvoiceWriter) settleDepositDocument(ctx context.Context, tx pgx.Tx, or
 			}
 		}
 	}
-	// KEPT settles neither the document nor the subledger: the liability's
-	// move into other income is the booking's, emitted beside this settlement
-	// and posted by the gl consumer.
+	// KEPT writes no account row: the paid part's move into other income and
+	// the closed rest's clearing are the booking's, emitted beside this
+	// settlement and posted by the gl consumer.
 
 	// sub item 3's booking: the GL event, one per settled document, on the
 	// same transaction, so the journal can never lag the settlement it
 	// belongs to.
 	if err := emitOutbox(ctx, tx, DepositCancelledTopic, map[string]any{
 		"invoice_id": d.id, "order_id": orderID, "disposition": disposition,
+		"paid_cents": paid, "closed_cents": closed,
 	}); err != nil {
 		return err
 	}
@@ -182,16 +199,23 @@ func (w *InvoiceWriter) settleDepositDocument(ctx context.Context, tx pgx.Tx, or
 	// The audited record of the settlement: who cancelled, which disposition,
 	// the reason. Best-effort beside the money, exactly like every other
 	// Recorder call on this writer's module.
-	w.recordDepositCancel(ctx, tx, d, disposition, reason)
+	w.recordDepositCancel(ctx, tx, d, disposition, reason, paid, closed)
 	return nil
 }
 
 // recordDepositCancel writes the settlement's audit row on the caller's
 // transaction when the recorder is transactional (the real *audit.Service
 // is), so the who/what/why commits or rolls back with the money it names.
-func (w *InvoiceWriter) recordDepositCancel(ctx context.Context, tx pgx.Tx, d depositCancelDoc, disposition, reason string) {
+func (w *InvoiceWriter) recordDepositCancel(ctx context.Context, tx pgx.Tx, d depositCancelDoc, disposition, reason string, paid, closed int64) {
 	if w.audit == nil {
 		return
+	}
+	// What the customer paid is kept by the dealer under KEPT and credited to
+	// the account under CREDIT_BACK; the closed amount is the unpaid rest the
+	// settlement cleared. Both ride the audited row beside the reason.
+	paidKey := "paid_kept_cents"
+	if disposition == DepositCancelCreditBack {
+		paidKey = "paid_credited_cents"
 	}
 	row := audit.SensitiveAccess{
 		Action:     ActDepositCancelled,
@@ -203,6 +227,8 @@ func (w *InvoiceWriter) recordDepositCancel(ctx context.Context, tx pgx.Tx, d de
 			"disposition":  disposition,
 			"invoice_no":   d.no,
 			"amount_cents": d.total,
+			paidKey:        paid,
+			"closed_cents": closed,
 		},
 	}
 	if rx, ok := w.audit.(interface {

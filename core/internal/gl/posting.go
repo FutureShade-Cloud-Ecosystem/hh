@@ -539,6 +539,12 @@ type depositCancelledPayload struct {
 	InvoiceID   string `json:"invoice_id"`
 	OrderID     string `json:"order_id"`
 	Disposition string `json:"disposition"`
+	// The split the settlement made of the document (row 1228): what the
+	// customer had PAID and the unpaid rest it CLOSED; they add up to the
+	// document's total. KEPT books the paid part to other income and the
+	// closed rest against the receivable.
+	PaidCents   int64 `json:"paid_cents"`
+	ClosedCents int64 `json:"closed_cents"`
 }
 
 // buildDepositCancelled posts the exit of a supplier deposit whose special
@@ -550,9 +556,9 @@ type depositCancelledPayload struct {
 //	CREDIT_BACK: DR 2300 / CR the customer's receivable. The settlement
 //	  cleared the open document (or credited the account for the paid part),
 //	  so the AR leg is the credit on the account the ruling names.
-//	KEPT: DR 2300 / CR other income. The dealer keeps the deposit; the
-//	  document stands as it is (owed when unpaid, settled when paid), so
-//	  no AR leg and no tax leg: the deposit document booked neither.
+//	KEPT: DR 2300 / CR other income for what was PAID, CR the receivable for
+//	  the unpaid rest the settlement closed (row 1228, keep only what was
+//	  paid). One entry; no tax leg: the deposit document booked none.
 func (s *Service) buildDepositCancelled(ctx context.Context, payload []byte) (journalDraft, bool, error) {
 	var p depositCancelledPayload
 	if err := json.Unmarshal(payload, &p); err != nil {
@@ -606,13 +612,28 @@ func (s *Service) buildDepositCancelled(ctx context.Context, payload []byte) (jo
 		}
 		memo = "Deposit credited back " + a.InvoiceNo
 	case kept:
-		oiCode, err := pick(rules, et, "other_income")
-		if err != nil {
-			return journalDraft{}, false, err
+		// Colton's A (row 1228): only what was paid is the dealer's. The
+		// unpaid rest was closed by the settlement, so it clears the
+		// receivable exactly as the credit back does. The amounts must add up
+		// to the document: anything else is malformed money, refused loudly.
+		if p.PaidCents < 0 || p.ClosedCents < 0 || p.PaidCents+p.ClosedCents != a.TotalCents {
+			return journalDraft{}, false, fmt.Errorf("gl: deposit.cancelled KEPT amounts %d paid + %d closed do not add up to the document total %d",
+				p.PaidCents, p.ClosedCents, a.TotalCents)
 		}
-		lines = []draftLine{
-			dr(depCode, a.TotalCents, "customer deposit kept"),
-			cr(oiCode, a.TotalCents, "other income"),
+		lines = []draftLine{dr(depCode, a.TotalCents, "customer deposit kept")}
+		if p.PaidCents > 0 {
+			oiCode, err := pick(rules, et, "other_income")
+			if err != nil {
+				return journalDraft{}, false, err
+			}
+			lines = append(lines, cr(oiCode, p.PaidCents, "other income, the paid part kept"))
+		}
+		if p.ClosedCents > 0 {
+			arCode, err := pick(rules, et, "ar")
+			if err != nil {
+				return journalDraft{}, false, err
+			}
+			lines = append(lines, cr(arCode, p.ClosedCents, "AR closed, the unpaid rest"))
 		}
 		memo = "Deposit kept " + a.InvoiceNo
 	}
