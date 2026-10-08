@@ -4,6 +4,7 @@
 // on the screen is computed here; this holds the person's choices (the order, the tender) and the
 // server's answers, field by field validated before they become state.
 import { staffOrder, staffPos, staffTill, type ApiClient } from "@hardscapehouse/api-client";
+import { DEMO_CARD_TOKEN } from "../till-client.js";
 import { readPayHold, type PayHold } from "./hold.js";
 import type { PayBalanceCapture } from "./capture.js";
 import {
@@ -18,9 +19,6 @@ import {
 
 /** The drawer the take lands in: the branch's open till session. */
 export type PayDrawer = { kind: "unknown" } | { kind: "open"; sessionId: string } | { kind: "closed" };
-
-/** The card token the sale step sends today (the simulated terminal); one path, never a second. */
-const CARD_TOKEN = "tok_simulated_runner";
 
 export interface PayBalanceFlowOptions {
   client: ApiClient;
@@ -134,9 +132,29 @@ export class PayBalanceFlow {
   }
 
   async #select(order: OwingOrder): Promise<void> {
+    this.notice = null;
+    await this.#install(order);
+  }
+
+  /**
+   * Item 9 visual review P3-4: read one order again after a refusal that says the card is stale
+   * (a 409, 422 or 404 on the take). The refusal's words stay on the screen; behind them the card
+   * takes the find's fresh figures. When the find no longer answers the order (it was paid
+   * elsewhere), the card stays as it was and the notice keeps speaking.
+   */
+  async #rereadOrder(previous: OwingOrder): Promise<void> {
+    const result = await staffPos.posFindPayBalance(this.#client, { q: previous.orderNo });
+    if (!result.ok) return;
+    if (this.order?.orderId !== previous.orderId) return; // a newer selection owns the card
+    const fresh = readOwingOrders(result.value).find((o) => o.orderId === previous.orderId);
+    if (fresh === undefined) return;
+    await this.#install(fresh);
+  }
+
+  /** Put one order on the card and read its drawer and hold; the notice is the caller's to keep. */
+  async #install(order: OwingOrder): Promise<void> {
     this.order = order;
     this.taken = null;
-    this.notice = null;
     this.#pendingKey = null;
     this.drawer = { kind: "unknown" };
     this.hold = null;
@@ -185,7 +203,7 @@ export class PayBalanceFlow {
       amount_cents: order.stillOwedCents,
       till_session_id: this.drawer.sessionId,
       idempotency_key: this.#pendingKey,
-      ...(this.method === "CARD" ? { payment_token: CARD_TOKEN, card_type: "CREDIT" as const } : {}),
+      ...(this.method === "CARD" ? { payment_token: DEMO_CARD_TOKEN, card_type: "CREDIT" as const } : {}),
     });
     this.taking = false;
     if (!result.ok) {
@@ -193,8 +211,12 @@ export class PayBalanceFlow {
         { status: result.status ?? 0, error: result.error, ...this.#capture.take() },
         money,
       );
-      // A refusal that names a changed balance, or a paid order, is a stale card: read it again.
-      if (result.status === 409 || result.status === 422 || result.status === 404) this.#pendingKey = null;
+      // A refusal that names a changed balance, or a paid order, is a stale card: drop the key and
+      // read the order again, so the card shows the current amount behind the refusal's words.
+      if (result.status === 409 || result.status === 422 || result.status === 404) {
+        this.#pendingKey = null;
+        await this.#rereadOrder(order);
+      }
       this.#onChange();
       return;
     }

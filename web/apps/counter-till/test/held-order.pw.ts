@@ -56,6 +56,9 @@ test("the Summary after a pay before release ring reads the held card, board 03"
   await expect(held.getByTestId("held-chip-hold")).toHaveText("Held from picking");
   await expect(held.getByTestId("held-title")).toHaveText(HOLD_TITLE);
   await expect(held.getByTestId("held-line")).toHaveText(HOLD_LINE);
+  // Item 9 visual review P3-4: the account words are the customer's own standing (a zero terms
+  // account is the Cash On Demand posture), never asserted for every ring.
+  await expect(held).toContainText("Cash On Demand Landscaping · Cash On Demand account");
   await expect(held).toContainText("Order total");
   await expect(held).toContainText("$4.52");
   await expect(held).toContainText("Deposit paid, Cash");
@@ -140,6 +143,26 @@ test("the held card leaves a gap above the order's rows on the Pay balance card"
   expect(totalBox).not.toBeNull();
   const gap = totalBox!.y - (heldBox!.y + heldBox!.height);
   expect(gap).toBeGreaterThanOrEqual(12);
+});
+
+// Item 9 visual review P3-4: the Summary's held card takes its account words from the customer's
+// own standing. The walk-in has no account, so the card names none.
+test("a walk-in pay before release ring holds, and its card claims no account", async ({ page }) => {
+  await signIn(page);
+  await openStep(page, "items");
+  await page.getByTestId("pos-scan-input").fill("holland");
+  await page.getByTestId("drop-row").filter({ hasText: "Holland Stone 60 mm" }).first().click();
+  await expect(page.getByTestId("pos-line-row")).toHaveCount(1);
+  await page.getByRole("button", { name: "Will-call" }).click();
+  await openStep(page, "payment");
+  await page.getByTestId("pay-shape-DEPOSIT_NOW_REST_DUE_LATER").click();
+  await page.getByTestId("deposit-amount").fill("1.00");
+  await page.getByTestId("deposit-commit").click();
+  await expect(page.getByTestId("sold-panel")).toBeVisible();
+  const held = page.getByTestId("held-order");
+  await expect(held).toBeVisible();
+  await expect(held).toContainText("Walk-in");
+  await expect(held).not.toContainText("Cash On Demand account");
 });
 
 test("at 390 the held card does not scroll sideways", async ({ page }) => {

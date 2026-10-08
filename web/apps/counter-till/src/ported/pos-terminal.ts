@@ -741,7 +741,11 @@ export class HosPosTerminal extends LitElement {
       this.heldCard = {
         orderNo: sale.order_no,
         customerName: this.customer?.name ?? 'Walk-in',
-        accountWords: 'Cash On Demand account',
+        // Item 9 visual review P3-4: the account words come from the customer's own standing, never
+        // asserted for every ring. A held pay before release order belongs to a zero terms account
+        // (the Cash On Demand posture); the walk-in has no account to name.
+        accountWords:
+          this.customer !== null && this.customer.payment_terms_days <= 0 ? 'Cash On Demand account' : null,
         inProcessWords: hold.inProcessWords,
         holdWords: hold.words ?? '',
         orderTotalCents: hold.orderTotalCents,

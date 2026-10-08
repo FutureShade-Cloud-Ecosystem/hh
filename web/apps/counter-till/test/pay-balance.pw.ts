@@ -90,7 +90,9 @@ test("a card take rides a card token, and a credit order that was not held has n
   await page.getByTestId("pay-balance-take").click();
   const body = (await (await post).postDataJSON()) as Record<string, unknown>;
   expect(body.method).toBe("CARD");
-  expect(typeof body.payment_token).toBe("string");
+  // Item 9 visual review P3-4: the card token is the one demo constant the sale step's wire
+  // carries (pos-kit's host-facts), never a second literal.
+  expect(body.payment_token).toBe("demo-card-token");
   const done = page.getByTestId("pay-balance-done");
   await expect(done).toContainText("DEMO-TRT-D01 reads Paid in full.");
   await expect(done).not.toContainText("released to picking");
@@ -137,6 +139,55 @@ test("a refused find speaks in words, never the envelope's raw string", async ({
   mode = "dead";
   await page.getByTestId("pay-balance-find").click();
   await expect(notice).toHaveText("No answer from the server. Try again.");
+});
+
+// Item 9 visual review P3-4: after a 409, 422 or 404 on the take the order is read again, so the
+// card shows the current amount behind the refusal's words (a stale card kept its old figure).
+test("after a refusal that names a changed balance the card is read again", async ({ page }) => {
+  await signIn(page);
+  await openDrawer(page);
+  await page.getByTestId("till-pay-balance-entry").click();
+  await page.getByTestId("pay-balance-term").fill("DEMO-TRT-D02");
+  await page.getByTestId("pay-balance-find").click();
+  await expect(page.getByTestId("pay-balance-take")).toHaveText("Take $41.02");
+  let finds = 0;
+  let refused = false;
+  const keys: string[] = [];
+  await page.route("**/api/v1/pos/pay-balance*", async (route) => {
+    const request = route.request();
+    if (request.method() === "GET") {
+      finds += 1;
+      return route.continue();
+    }
+    keys.push((request.postDataJSON() as { idempotency_key: string }).idempotency_key);
+    if (!refused) {
+      refused = true;
+      return route.fulfill({
+        status: 422,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: "pay_balance_whole_only",
+          sent_cents: 4102,
+          balance_cents: 2102,
+          message: "This door takes the whole balance of $21.02, not a part payment.",
+        }),
+      });
+    }
+    return route.continue();
+  });
+  await page.getByTestId("pay-balance-take").click();
+  await expect(page.getByTestId("pay-balance-notice")).toContainText("whole balance of $21.02");
+  // The find ran again behind the words (the route was installed after the first find, so this
+  // counts only the re-read the refusal must cause).
+  await expect.poll(() => finds, { message: "the order is read again after the refusal" }).toBeGreaterThanOrEqual(1);
+  // The card reflects the fresh read (the stub's own current figure), and the refusal's words stay.
+  await expect(page.getByTestId("pay-balance-take")).toHaveText("Take $41.02");
+  await expect(page.getByTestId("pay-balance-notice")).toContainText("not a part payment");
+  // The refused take's key was dropped: the next take is a new key, never the refused one's replay.
+  await page.getByTestId("pay-balance-take").click();
+  await expect(page.getByTestId("pay-balance-done")).toContainText("DEMO-TRT-D02 reads Paid in full");
+  expect(keys).toHaveLength(2);
+  expect(keys[1]).not.toBe(keys[0]);
 });
 
 test("a replay shows the same result and the server charges nothing twice", async ({ page }) => {
