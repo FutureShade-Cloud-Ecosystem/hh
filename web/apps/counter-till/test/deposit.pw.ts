@@ -217,9 +217,11 @@ test("at 390 the deposit step does not scroll sideways and no label clips", asyn
   expect(read.clipped).toEqual([]);
 });
 
-// Item 9 visual review P3-3: the till holds no deposit bound of its own. The commit stays enabled
-// for any positive amount and the server's refusal speaks in words (the stub mirrors the core's
-// own bound, checked once the lines are priced: the plain envelope, one sentence, no fields).
+// Item 9 visual review P3-3, widened by run D's finding: the till holds no deposit bound of its
+// own. The commit stays enabled for any positive amount and the server's refusal is the problem
+// body (deposit_out_of_range, integer cents fields, a message in dollars), which the ring's words
+// path renders message first (the stub mirrors the core's own bound, checked once the lines are
+// priced).
 test("a deposit at or over the total rings, and the server's refusal speaks in words", async ({ page }) => {
   await signIn(page);
   await pickAccount(page, "C10", "Cash On Demand Landscaping");
@@ -233,7 +235,10 @@ test("a deposit at or over the total rings, and the server's refusal speaks in w
   await expect(commit).toHaveText("Ring sale with $5.00 deposit");
   await expect(page.getByTestId("deposit-too-large")).toHaveCount(0);
   await commit.click();
-  await expect(page.getByRole("alert")).toContainText("deposit must be greater than zero and less than the sale total");
+  await expect(page.getByRole("alert")).toContainText(
+    "The deposit must be more than $0.00 and less than the sale total of $4.52.",
+  );
+  await expect(page.getByRole("alert")).not.toContainText("deposit_out_of_range");
   await expect(page.getByTestId("deposit-too-large")).toHaveCount(0);
 });
 

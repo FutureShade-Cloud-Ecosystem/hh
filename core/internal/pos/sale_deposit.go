@@ -64,6 +64,29 @@ func codNotForTermsMessage() string {
 	return "This account pays on terms, so its sale is not pay before release. Ring it on account or paid in full."
 }
 
+// ErrDepositOutOfRange refuses a deposit outside its money bound (0 < deposit
+// < the sale total): the problem body style the other deposit refusals use,
+// with the deposit and the total as integer cents fields and a message in
+// dollars. The bound is judged once the engine has priced the lines, so the
+// body names the real total; a deposit equal to the total is just a paid sale
+// (ring it paid) and a negative one is no deposit at all.
+type ErrDepositOutOfRange struct {
+	DepositCents int64
+	TotalCents   int64
+}
+
+func (e ErrDepositOutOfRange) Error() string {
+	return fmt.Sprintf(
+		"pos: the deposit %d is outside the bound 0 < deposit < the sale total %d cents",
+		e.DepositCents, e.TotalCents)
+}
+
+// depositOutOfRangeMessage is the refusal's sentence in dollars.
+func depositOutOfRangeMessage(e ErrDepositOutOfRange) string {
+	return fmt.Sprintf("The deposit must be more than %s and less than the sale total of %s.",
+		splitMismatchDollars(0), splitMismatchDollars(e.TotalCents))
+}
+
 // ErrDepositNotCollectNow refuses a deposit on a collect now sale: the goods
 // do not leave on a part payment. The item allowed refusing in words or
 // moving the sale to the matching held shape; the ring REFUSES, keeping the

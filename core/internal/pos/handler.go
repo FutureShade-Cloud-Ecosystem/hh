@@ -582,6 +582,7 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	var sm ErrSplitTotalMismatch
 	var asn ErrAccountShapeNotAvailable
 	var dcn ErrDepositNotCollectNow
+	var dor ErrDepositOutOfRange
 	var pba ErrPayBalancePartAmount
 	var cnt ErrCODNotForTermsAccount
 	var sdn ErrSupplierDepositNotCredit
@@ -609,6 +610,15 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 			"total_cents":   dcn.TotalCents,
 			"deposit_cents": dcn.DepositCents,
 			"message":       depositNotCollectNowMessage(dcn.DepositCents, dcn.TotalCents),
+		})
+	case errors.As(err, &dor):
+		// The deposit's money bound (run D's finding), the problem body style
+		// again: the stable word, the two amounts as integer cents fields, and
+		// the dollar sentence.
+		httpx.ErrorWith(w, http.StatusUnprocessableEntity, "deposit_out_of_range", map[string]any{
+			"deposit_cents": dor.DepositCents,
+			"total_cents":   dor.TotalCents,
+			"message":       depositOutOfRangeMessage(dor),
 		})
 	case errors.As(err, &sdn):
 		// Sub item 9.5, the supplier deposit's shape refusal, same problem body style.

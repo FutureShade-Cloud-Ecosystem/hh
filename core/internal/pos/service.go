@@ -539,9 +539,6 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 		if !unpaidAtRing {
 			return Sale{}, errDepositOnPaid
 		}
-		if in.DepositCents < 0 {
-			return Sale{}, errDepositTooLarge
-		}
 		switch in.DepositMethod {
 		case TenderCash, TenderCard, TenderCheque:
 		default:
@@ -628,13 +625,17 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 		lines[i].TaxCents = perLineTax[i]
 	}
 
-	// Deposit bound: 0 < deposit < total (a deposit equal to the total is just a paid sale, ring it paid).
+	// Deposit bound: 0 < deposit < total (a deposit equal to the total is just
+	// a paid sale, ring it paid; a negative one is no deposit at all). Judged
+	// here, once the engine has priced the lines, so the refusal's body can
+	// name the real total (the delta review's run D finding: the problem body
+	// style the other deposit refusals use, one spelling of the bound).
 	deposit := in.DepositCents
 	// supplierDeposit is the supplier's demanded deposit (sub item 9.5),
 	// validated against the sale's shape above.
 	supplierDeposit := in.SupplierDepositCents
-	if deposit != 0 && deposit >= total {
-		return Sale{}, errDepositTooLarge
+	if deposit != 0 && (deposit < 0 || deposit >= total) {
+		return Sale{}, ErrDepositOutOfRange{DepositCents: deposit, TotalCents: total}
 	}
 
 	// Item 9.2: a deposit sale cannot be collect now. The goods do not leave on

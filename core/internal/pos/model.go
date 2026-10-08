@@ -483,7 +483,6 @@ var (
 	errCODDisabled      = clientError{status: http.StatusUnprocessableEntity, msg: "cash-on-demand sales are disabled by policy for this branch"}
 	errBadFulfilment    = clientError{status: http.StatusUnprocessableEntity, msg: "pos: fulfilment must be PICKUP, WILL_CALL or DELIVERY"}
 	errDepositOnPaid    = clientError{status: http.StatusUnprocessableEntity, msg: "pos: a deposit is only valid on an unpaid-at-ring sale (ACCOUNT tender or COD)"}
-	errDepositTooLarge  = clientError{status: http.StatusUnprocessableEntity, msg: "pos: deposit must be greater than zero and less than the sale total"}
 	errBadDepositMethod = clientError{status: http.StatusUnprocessableEntity, msg: "pos: deposit_method must be CASH, CARD or CHEQUE"}
 	errBadRefundMethod  = clientError{status: http.StatusUnprocessableEntity, msg: "pos: refund_method must be CASH, CARD or ACCOUNT_CREDIT"}
 	errReturnNotFound   = clientError{status: http.StatusNotFound, msg: "pos: no committed POS sale found for that order"}

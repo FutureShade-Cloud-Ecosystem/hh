@@ -50,12 +50,19 @@ export function depositRingFacts(
 }
 
 /**
- * The words for the two deposit refusals (422 problem bodies with integer cents fields and a
- * message in dollars), or null when the error is not one of them. The server's message wins; the
- * fields word it only when the message is missing.
+ * The words for the deposit refusals (422 problem bodies with integer cents fields and a message in
+ * dollars), or null when the error is not one of them. The server's message wins; the fields word
+ * it only when the message is missing.
  */
 export function depositRefusalWords(
-  err: { status: number; error: string; message?: string; total_cents?: number; amount_cents?: number },
+  err: {
+    status: number;
+    error: string;
+    message?: string;
+    deposit_cents?: number;
+    total_cents?: number;
+    amount_cents?: number;
+  },
   money: (cents: number) => string,
 ): string | null {
   if (err.error === 'cod_not_for_terms_account') {
@@ -63,6 +70,13 @@ export function depositRefusalWords(
     return err.message && err.message !== ''
       ? err.message
       : 'This account pays on terms, so its sale is not pay before release. Ring it on account or paid in full.';
+  }
+  if (err.error === 'deposit_out_of_range') {
+    // The money bound (0 < deposit < the sale total): the message names the total in dollars.
+    if (err.message && err.message !== '') return err.message;
+    return Number.isInteger(err.total_cents)
+      ? `The deposit must be more than ${money(0)} and less than the sale total of ${money(err.total_cents as number)}.`
+      : 'The deposit must be more than zero and less than the sale total.';
   }
   if (err.error !== 'deposit_not_collect_now' && err.error !== 'on_account_not_available') return null;
   if (err.message && err.message !== '') return err.message;

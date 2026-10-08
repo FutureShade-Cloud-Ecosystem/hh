@@ -166,3 +166,32 @@ test('the preview carries the supplier deposit allowance, whole or not at all', 
   const absent = { ...answer, supplier_deposit: undefined };
   assert.deepEqual(readPreview(absent).supplierDeposit, { allowed: false, words: null });
 });
+
+// Run D's finding: the deposit's money bound is a problem body now (deposit_out_of_range, integer
+// cents fields, a message in dollars). The server's message wins; the fields word it only when the
+// message is missing; nothing else changes.
+test('depositRefusalWords words the money bound: message first, then the fields in dollars', () => {
+  const money = (c) => `$${(c / 100).toFixed(2)}`;
+  assert.equal(
+    depositRefusalWords(
+      {
+        status: 422,
+        error: 'deposit_out_of_range',
+        deposit_cents: 500,
+        total_cents: 452,
+        message: 'The deposit must be more than $0.00 and less than the sale total of $4.52.',
+      },
+      money,
+    ),
+    'The deposit must be more than $0.00 and less than the sale total of $4.52.',
+  );
+  assert.equal(
+    depositRefusalWords({ status: 422, error: 'deposit_out_of_range', deposit_cents: 500, total_cents: 452 }, money),
+    'The deposit must be more than $0.00 and less than the sale total of $4.52.',
+  );
+  assert.equal(
+    depositRefusalWords({ status: 422, error: 'deposit_out_of_range' }, money),
+    'The deposit must be more than zero and less than the sale total.',
+  );
+  assert.equal(depositRefusalWords({ status: 422, error: 'other' }, money), null);
+});

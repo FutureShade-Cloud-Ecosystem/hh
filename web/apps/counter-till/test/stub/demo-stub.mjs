@@ -1926,12 +1926,17 @@ const server = createServer(async (request, response) => {
         return;
       }
       const total = subtotal + tax;
-      // Item 9 visual review P3-3: the core's own deposit bound (0 < deposit < total, judged
-      // once the lines are priced) answers as the plain envelope, one sentence with no fields
-      // (the module prefix comes off at the wire's one door). The till holds no bound of its
-      // own; this is the refusal the person reads.
+      // Item 9 visual review P3-3, widened by run D's finding: the core's own deposit bound
+      // (0 < deposit < total, judged once the lines are priced) answers as the problem body the
+      // other deposit refusals use (a stable code, integer cents fields, a message in dollars).
+      // The till holds no bound of its own; this is the refusal the person reads.
       if (requestedDeposit >= total) {
-        respondJson(response, 422, { error: "deposit must be greater than zero and less than the sale total" });
+        respondJson(response, 422, {
+          error: "deposit_out_of_range",
+          deposit_cents: requestedDeposit,
+          total_cents: total,
+          message: `The deposit must be more than $0.00 and less than the sale total of $${(total / 100).toFixed(2)}.`,
+        });
         return;
       }
       const tenders = [];
