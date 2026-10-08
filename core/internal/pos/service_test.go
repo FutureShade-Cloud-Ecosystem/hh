@@ -61,10 +61,10 @@ type fakeStore struct {
 	retLineOrders   map[string]string           // order_line_id → order_id (the customer lines fake's grouping)
 	returnRows      []returnRow
 	returnLineRows  []returnLineRow
-	priorSums       map[string]int64  // order_id → the sale's earlier committed return total (the per-sale sum the refund gate reads)
+	priorSums       map[string]int64      // order_id → the sale's earlier committed return total (the per-sale sum the refund gate reads)
 	noteKeys        map[string]ReturnNote // the note idempotency key → its committed note (the across-orders replay)
 	noteSeq         int
-	lastNoteID      string // the most recent InsertReturnNote's id, the across path binds children with
+	lastNoteID      string            // the most recent InsertReturnNote's id, the across path binds children with
 	returnLocks     []string          // order ids the per-sale return advisory lock was taken for, in order
 	refundPayments  map[string]string // return id → refund payment id
 	creditApplies   []creditApply
@@ -472,7 +472,8 @@ func (f *fakeStore) ListCustomerReturnableOrders(_ context.Context, customerID s
 	return out, nil
 }
 
-func (f *fakeStore) LockReturnableLine(_ context.Context, _ pgx.Tx, orderID, orderLineID string) (returnableLine, bool, error) {	rl, ok := f.retLines[orderLineID]
+func (f *fakeStore) LockReturnableLine(_ context.Context, _ pgx.Tx, orderID, orderLineID string) (returnableLine, bool, error) {
+	rl, ok := f.retLines[orderLineID]
 	if !ok || f.retCtx[orderID].OrderID != orderID {
 		return returnableLine{}, false, nil
 	}
