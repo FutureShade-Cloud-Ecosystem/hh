@@ -302,6 +302,17 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		panic("order: cancel guards not wired - a manual CANCELLED could not verify attached money state")
 	}
 
+	// Row 1193: the deposit exit beside the predicate. A cancelled order's
+	// supplier deposit documents settle on the cancel's own transaction
+	// (billing owns them), under the dealer's default disposition read from
+	// the pos policy the counter administers. The boot fail-fast keeps a
+	// deploy from serving with the exit dark, the cancel guards' own posture.
+	orderSvc.WithDepositCanceller(billing.NewInvoiceWriter(pool).WithAudit(auditSvc))
+	orderSvc.WithDepositCancelDefault(posSvc)
+	if !orderSvc.DepositCancelWired() {
+		panic("order: deposit cancel seams not wired - a cancelled special order's deposit could not settle")
+	}
+
 	// Item 9.3 (the row 1047 deposits work): the pay before release hold on
 	// every path that releases goods (picking, yard picks, the will call
 	// doors), read from the money through billing. The lane is additive in the

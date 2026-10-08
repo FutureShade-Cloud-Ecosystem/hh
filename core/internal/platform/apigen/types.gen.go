@@ -4086,7 +4086,8 @@ type OrderTransitionResult struct {
 }
 
 type OrderCancelRequest struct {
-	Reason string `json:"reason"`
+	Reason      string `json:"reason"`
+	KeepDeposit *bool  `json:"keep_deposit,omitempty"`
 }
 
 type OrderHeaderEditRequest struct {

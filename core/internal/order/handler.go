@@ -52,12 +52,18 @@ func (h *Handler) markReady(w http.ResponseWriter, r *http.Request, _ guards.Sta
 	h.transition(w, r, ActionReady, "")
 }
 
-// cancel reads the required cancellation reason from the JSON body then applies the manager-gated
-// CANCELLED transition. An absent/undecodable body leaves reason "", the service then rejects a blank
-// reason with a 400, so a malformed body and a missing reason converge on the same clear error.
+// cancel reads the required cancellation reason, and the manager's optional
+// keep-the-deposit override, from the JSON body, then applies the manager-gated
+// CANCELLED transition. An absent/undecodable body leaves reason "", the service
+// then rejects a blank reason with a 400, so a malformed body and a missing
+// reason converge on the same clear error. keep_deposit true is the row 1193
+// override: the order's supplier deposit is kept by the dealer rather than
+// credited back, and the reason already mandatory for every cancel is the
+// override's audited reason.
 func (h *Handler) cancel(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
 	var body struct {
-		Reason string `json:"reason"`
+		Reason      string `json:"reason"`
+		KeepDeposit bool   `json:"keep_deposit"`
 	}
 	if r.Body != nil {
 		// R3: cap the body with http.MaxBytesReader, the house convention (finstmt/handler.go:226,
@@ -65,7 +71,12 @@ func (h *Handler) cancel(w http.ResponseWriter, r *http.Request, _ guards.StaffC
 		// boundary rather than buffered. The service independently bounds the trimmed reason.
 		_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes)).Decode(&body)
 	}
-	h.transition(w, r, ActionCancel, body.Reason)
+	newStatus, err := h.svc.CancelOrderManual(r.Context(), r.PathValue("id"), body.Reason, body.KeepDeposit)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"order_id": r.PathValue("id"), "status": newStatus})
 }
 
 // transition applies one manual action and maps the service's typed errors to HTTP:
@@ -133,10 +144,15 @@ func (h *Handler) writeErr(w http.ResponseWriter, err error) {
 			"this order has a finalized invoice or a committed counter sale, use the POS returns flow to reverse it")
 	case errors.Is(err, ErrCancelUnverifiable):
 		// A server wiring fault, deliberately NOT a generic 500: name the unwired seam so the
-		// operator knows exactly what to fix. Unreachable in a correct deploy (main.go asserts
-		// the wiring at boot).
+		// operator knows exactly what to fix. Unreachable in a correct deploy (main.go asserts the
+		// wiring at boot).
 		httpx.Error(w, http.StatusServiceUnavailable,
 			"cannot verify the order has no attached invoice or sale (cancel guards not wired), cancel refused")
+	case errors.As(err, new(errDepositDefaultUnreadable)):
+		// Row 1193: the dealer's deposit rule could not be read, so the
+		// disposition a cancel would apply is unknown. Money, never guessed.
+		httpx.Error(w, http.StatusServiceUnavailable,
+			"the dealer's deposit rule could not be read, cancel refused")
 	default:
 		httpx.Error(w, http.StatusInternalServerError, "internal error")
 	}

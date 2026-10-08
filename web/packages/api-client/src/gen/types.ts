@@ -3461,6 +3461,7 @@ export type OrderTransitionResult = {
 };
 export type OrderCancelRequest = {
   reason: string;
+  keep_deposit?: boolean;
 };
 export type OrderHeaderEditRequest = {
   requested_date: string;

@@ -65,6 +65,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/moneyutil"
 )
@@ -275,7 +276,17 @@ type InvoiceWriter struct {
 	glPoster  CreditMemoPoster
 	delivered DeliveredOrderReader // deposit_release.go; nil = the deposit sweep skips
 	journals  JournalKeyReader     // deposit_release.go; nil = the deposit sweep skips
+	audit     audit.Recorder       // deposit_cancel.go; nil = the settlement audits nothing
 	now       func() time.Time
+}
+
+// WithAudit binds the recorder the deposit cancel settlement stamps its rows
+// with. Passing nil is a no-op so a composition without audit keeps settling.
+func (w *InvoiceWriter) WithAudit(r audit.Recorder) *InvoiceWriter {
+	if r != nil {
+		w.audit = r
+	}
+	return w
 }
 
 // NewInvoiceWriter builds the writer. The tax assessor defaults to FlatHSTAssessor (the W4/W5
