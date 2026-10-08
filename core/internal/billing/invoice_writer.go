@@ -579,9 +579,9 @@ VALUES (COALESCE(NULLIF($1,'')::uuid, gen_random_uuid()), '#INV-' || nextval('in
         (SELECT org_id FROM locations WHERE id = $4::uuid),
         (SELECT next_value FROM iseq), $13::jsonb)
 RETURNING id::text, invoice_no`,
-		docID, f.CustomerID, nullUUID(f.OrderID), f.BranchID, issueDate, dueDate,
-		subtotal, quote.TaxCents, total, sourceKind, idemKey, f.ClosesOrder, headerMetadata(f),
-	).Scan(&invoiceID, &invoiceNo)
+			docID, f.CustomerID, nullUUID(f.OrderID), f.BranchID, issueDate, dueDate,
+			subtotal, quote.TaxCents, total, sourceKind, idemKey, f.ClosesOrder, headerMetadata(f),
+		).Scan(&invoiceID, &invoiceNo)
 		if err != nil {
 			return fmt.Errorf("insert invoice: %w", err)
 		}
