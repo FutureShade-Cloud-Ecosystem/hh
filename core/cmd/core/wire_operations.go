@@ -1056,12 +1056,21 @@ func (a dispatchStockAdapter) OnHandBase(ctx context.Context, productID, branchI
 
 // dispatchPickSource satisfies tasks.PickSource over dispatch.PickFeed.
 // This type is the entire coupling between the two modules.
-type dispatchPickSource struct{ feed *dispatch.PickFeed }
+type dispatchPickSource struct {
+	feed *dispatch.PickFeed
+	hold tasks.PickHoldCheck
+}
 
 func newDispatchPickSource(pool *pgxpool.Pool, orderRepo *order.Repository, log *slog.Logger) dispatchPickSource {
-	return dispatchPickSource{feed: dispatch.NewPickFeed(dispatch.NewRepository(pool)).
-		WithOrderLines(orderPickLineAdapter{repo: orderRepo}).
-		WithLogger(log)}
+	return dispatchPickSource{
+		feed: dispatch.NewPickFeed(dispatch.NewRepository(pool)).
+			WithOrderLines(orderPickLineAdapter{repo: orderRepo}).
+			WithLogger(log),
+		// The pay before release mark rides billing's one hold read (item 9
+		// F review N1): dispatch holds no invoice SQL, so the feed's mark
+		// cannot be a second copy of the owed arithmetic.
+		hold: tasksPickHoldAdapter{repo: holdBillingRepo(pool)},
+	}
 }
 
 // PickTicket maps dispatch.ErrNotFound onto tasks.ErrUnknownOrder, the
@@ -1074,7 +1083,27 @@ func (a dispatchPickSource) PickTicket(ctx context.Context, orderID string) (tas
 		}
 		return tasks.PickTicket{}, err
 	}
-	return pickTicketFromFeed(t), nil
+	return a.markHeld(ctx, pickTicketFromFeed(t))
+}
+
+// markHeld stamps the pay before release hold's mark on a pickup ticket from
+// billing's one hold read. Only a pickup or will call order can be held (a
+// delivery keeps dispatch's own gate), so a delivery ticket costs no read.
+// An unreadable hold fails the read rather than listing a held order clear.
+func (a dispatchPickSource) markHeld(ctx context.Context, t tasks.PickTicket) (tasks.PickTicket, error) {
+	if a.hold == nil || (t.Fulfillment != "PICKUP" && t.Fulfillment != "WILL_CALL") {
+		return t, nil
+	}
+	held, owed, err := a.hold.OrderHeldFromPicking(ctx, t.OrderID)
+	if err != nil {
+		return tasks.PickTicket{}, err
+	}
+	if held {
+		t.HeldFromPicking = true
+		t.HoldWords = "Balance due"
+		t.StillOwedCents = owed
+	}
+	return t, nil
 }
 
 func (a dispatchPickSource) PendingTickets(ctx context.Context, branchID string, limit, offset int) ([]tasks.PickTicket, int, error) {
@@ -1084,7 +1113,11 @@ func (a dispatchPickSource) PendingTickets(ctx context.Context, branchID string,
 	}
 	out := make([]tasks.PickTicket, 0, len(feed))
 	for _, t := range feed {
-		out = append(out, pickTicketFromFeed(t))
+		marked, err := a.markHeld(ctx, pickTicketFromFeed(t))
+		if err != nil {
+			return nil, 0, err
+		}
+		out = append(out, marked)
 	}
 	return out, total, nil
 }
@@ -1118,11 +1151,6 @@ func pickTicketFromFeed(t dispatch.PickFeedTicket) tasks.PickTicket {
 		RequestedAt:  t.RequestedAt,
 		Lines:        lines,
 		Source:       "DISPATCH",
-		// The pay before release hold's mark (item 9 Opus P2-1): the row
-		// stays in the feed, marked, so the yard knows why it waits.
-		HeldFromPicking: t.HeldFromPicking,
-		HoldWords:       t.HoldWords,
-		StillOwedCents:  t.StillOwedCents,
 	}
 }
 
