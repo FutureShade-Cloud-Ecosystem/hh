@@ -18,10 +18,11 @@
 # still answers, and /healthz answers unauthenticated for the platform.
 #
 # The handle blocks are ordered most specific first: the demo mint routes,
-# then every other api route, then the health leg, then everything else,
-# which is the app. The core answers /api/v1/* itself (staff routes 401
-# without a bearer, the public legs answer as on any box), and Caddy adds
-# nothing to those; the app is the only thing Caddy serves from disk.
+# then every other api route, then the health leg, then the app prefixes,
+# then everything else, which is the front door. The core answers /api/v1/*
+# itself (staff routes 401 without a bearer, the public legs answer as on any
+# box), and Caddy adds nothing to those; the apps are the only things Caddy
+# serves from disk.
 #
 # The forwarded address discipline (W2's review, routed here): the demo
 # mint's per-address limit must see the address the client really came
@@ -38,6 +39,9 @@
 }
 
 :__GATE_PORT__
+
+# Never indexed, gate open or shut (decision log row 981).
+header X-Robots-Tag "noindex, nofollow"
 
 handle /api/v1/demo/* {
 	basic_auth {
@@ -58,6 +62,50 @@ handle /healthz {
 	reverse_proxy __UPSTREAM__ {
 		header_up X-Forwarded-For "{remote_host}"
 	}
+}
+
+# The app prefixes. Each is its own handle before the catch-all, with one
+# shared root and each prefix's own try_files fallback, so every SPA's history
+# mode rewrite returns that app's index.html and no other's. The gate carries
+# onto every page handle unchanged: one phrase opens the front door, the till,
+# the public desk and the Quote Desk. A prefix whose app is absent from the
+# image (the Quote Desk, until it lands) has an empty directory and answers 404.
+handle /till/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /till/index.html
+	file_server
+}
+
+handle /q/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /q/index.html
+	file_server
+}
+
+handle /quote/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	file_server
+}
+
+# The server's emailed share link addresses the customer's page as
+# /quote.html?t=<token>: a rewrite, not a redirect, so the token stays in the
+# one request the browser made.
+handle /quote.html {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	rewrite * /q/index.html?{query}
+	file_server
 }
 
 handle {

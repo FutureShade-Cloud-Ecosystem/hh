@@ -675,6 +675,44 @@ test("the paper copy carries the same quote colours, and prints them", async ({ 
   expect(adjust, "colours must survive the print dialog's default of dropping backgrounds").toBe("exact");
 });
 
+// Round 2 (FROM-PRINCIPAL 9): the black rule the live check saw on paper. The screen rule rides the
+// --doc-ink alias, and a print path that re-resolves the alias chain and loses it drops the border to
+// currentColor, the near-black text ink. The print media block states the family itself, so the rule
+// keeps the quote blue with the alias severed; on the screen cascade alone this probe reads near
+// black, which is why the leg cannot pass against the inherited colour.
+test("the printed dealer rule keeps the quote blue when the alias chain fails", async ({ page }) => {
+  await page.emulateMedia({ media: "print" });
+  await readyOpenQuote(page);
+  const severed = await page.evaluate(() => {
+    const host = document.querySelector("pd-quote-public") as HTMLElement;
+    // The alias the screen rule rides, made empty: the failure mode the print path hit.
+    host.style.setProperty("--doc-ink", " ");
+    const header = host.shadowRoot?.querySelector("header.dealer") as HTMLElement;
+    const pixelOf = (colour: string): number[] => {
+      const ctx = document.createElement("canvas").getContext("2d") as CanvasRenderingContext2D;
+      ctx.fillStyle = colour;
+      ctx.fillRect(0, 0, 1, 1);
+      return Array.from(ctx.getImageData(0, 0, 1, 1).data).slice(0, 3);
+    };
+    const quote = getComputedStyle(document.documentElement).getPropertyValue("--hh-quote").trim();
+    const textInk = getComputedStyle(document.documentElement).getPropertyValue("--hh-text").trim();
+    const have = getComputedStyle(header).borderBottomColor;
+    return { have, quotePixel: pixelOf(quote), textInkPixel: pixelOf(textInk), havePixel: pixelOf(have) };
+  });
+  // The probe is honest: the text ink the fallback would paint is a different colour from the quote
+  // blue, so a currentColor fallback cannot slip through the comparison below.
+  expect(
+    severed.textInkPixel.some((c, i) => Math.abs(c - severed.quotePixel[i]) > 40),
+    "the text ink and the quote blue must be far apart for this probe to mean anything",
+  ).toBe(true);
+  for (let channel = 0; channel < 3; channel += 1) {
+    expect(
+      Math.abs(severed.havePixel[channel] - severed.quotePixel[channel]),
+      `the printed rule must stay the quote blue with the alias severed (it sampled ${severed.have})`,
+    ).toBeLessThanOrEqual(2);
+  }
+});
+
 // A conversion visibly changes colour (decision log row 1063): the same quote reads blue before and
 // gold after, the page reads as the order, and nothing on it is quote blue.
 async function convertInFlight(page: Page, token: string): Promise<void> {

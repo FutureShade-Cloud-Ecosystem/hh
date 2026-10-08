@@ -31,8 +31,8 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/inventory"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/load"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/portal"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/product"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/purchasing"
 	"github.com/jackc/pgx/v5"
@@ -85,8 +85,20 @@ func wireLoad(r httpx.Registrar, pool *pgxpool.Pool, log *slog.Logger, doors boo
 			customer.ContactLoadWriter{}, auditSvc),
 		"PUT /api/v1/load/jobs": newLoadDoor(store, load.KindJob,
 			portal.JobLoadWriter{Customers: customer.OrgReader{}}, auditSvc),
+		// LD-5's three doors: the product master upsert, the supplier
+		// SKU upsert through the purchasing module's writer, and the
+		// product image put (its own handler: one put per image, not a
+		// batch) over the product module's own image rules and store.
+		"PUT /api/v1/load/products": newLoadDoor(store, load.KindProduct,
+			product.ProductLoadWriter{}, auditSvc),
+		"PUT /api/v1/load/supplier-skus": newLoadDoor(store, load.KindSupplierSku,
+			purchasing.SupplierSKULoadWriter{Units: product.UnitCatalogueReader{}}, auditSvc),
 	})
 	submits.RegisterRoutes(r)
+	images := load.NewImageHandler(
+		load.NewImageDoor(store, product.ProductImageLoadRules{}, product.ProductImageLoadWriter{},
+			loadAuditSeam{svc: auditSvc}), log)
+	images.RegisterRoutes(r)
 	log.Info("load: the load doors serve behind the machine gate")
 }
 
