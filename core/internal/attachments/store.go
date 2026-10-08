@@ -134,12 +134,61 @@ func (s *SyncStore) DriverStopFenceWired() bool { return s.fence != nil }
 // driverScope resolves the driver fence for one caller: the stop ids a
 // driver caller may reach, or ok false for every caller the fence does
 // not bind (no seam wired, a tenant filter, an empty actor, or a desk
-// login), whose scope stays the org's.
+// login), whose scope stays the org's. An empty candidate set still
+// asks: whether the caller is a driver does not depend on which stops a
+// page happens to reach, and a driver whose page reaches no stop at all
+// (an order photo, a bare row) is held to nothing, never to the org.
 func (s *SyncStore) driverScope(ctx context.Context, f sync.ScopeFilter, candidates []string) (map[string]bool, bool, error) {
 	if s.fence == nil || f.Tenant || f.Actor == "" || len(candidates) == 0 {
 		return nil, false, nil
 	}
 	return s.fence.StopsOnDriverRuns(ctx, f.OrgID, f.Actor, candidates)
+}
+
+// driverArm is the fence's answer for one caller, resolved BEFORE a
+// transaction opens and carried into it. The seam reads over a pool, so
+// asking it from inside a transaction is a second pool acquisition
+// while the first connection is held (connection starvation when
+// pool-size writers do it together). bound false is every caller the
+// fence does not bind. A stop the arm was not resolved for is not in
+// allowed, so a link set that changed between the pre-read and the row
+// lock fails closed.
+type driverArm struct {
+	bound   bool
+	allowed map[string]bool
+}
+
+// sees answers whether one row's link set is visible to the caller.
+func (a driverArm) sees(links []Link) bool {
+	return !a.bound || linksReachAStop(links, a.allowed)
+}
+
+// resolveArm resolves the driver arm for the stop candidates a write is
+// about to touch. Call it on the pool, never with a transaction open.
+func (s *SyncStore) resolveArm(ctx context.Context, f sync.ScopeFilter, candidates []string) (driverArm, error) {
+	allowed, isDriver, err := s.driverScope(ctx, f, candidates)
+	if err != nil {
+		return driverArm{}, err
+	}
+	return driverArm{bound: isDriver, allowed: allowed}, nil
+}
+
+// armForRow resolves the arm for a write addressed at one row: the
+// candidates are the stops the row's standing links reach (read on the
+// pool, before the transaction), plus any the caller declares.
+func (s *SyncStore) armForRow(ctx context.Context, f sync.ScopeFilter, id string, declared []Link) (driverArm, error) {
+	if s.fence == nil || f.Tenant || f.Actor == "" {
+		return driverArm{}, nil
+	}
+	var standing []Link
+	if looksLikeUUID(id) {
+		links, err := s.loadLinks(ctx, []string{id})
+		if err != nil {
+			return driverArm{}, err
+		}
+		standing = links[id]
+	}
+	return s.resolveArm(ctx, f, stopCandidates(standing, declared))
 }
 
 // linksReachAStop answers whether one link set carries a link to one of
@@ -367,7 +416,7 @@ func (s *SyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key str
 // caller's org is the same as an absent one (existence never leaks).
 // Live rows carry their links.
 func (s *SyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
-	return s.load(ctx, s.pool, f, id)
+	return s.load(ctx, s.pool, f, id, nil)
 }
 
 // rowQuerier is the read surface a pool and a transaction share, so one
@@ -381,8 +430,11 @@ type rowQuerier interface {
 // load is Load over a querier. A caller inside a transaction passes the
 // transaction, so the read rides the connection it already holds instead
 // of asking the shared pool for a second one (connection starvation by
-// second acquisition when pool-size callers do this together).
-func (s *SyncStore) load(ctx context.Context, q rowQuerier, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
+// second acquisition when pool-size callers do this together). The
+// driver fence follows the same rule: a caller holding a transaction
+// passes the arm it resolved before the transaction opened, and nil
+// (the public Load, no transaction held) resolves it here on the pool.
+func (s *SyncStore) load(ctx context.Context, q rowQuerier, f sync.ScopeFilter, id string, arm *driverArm) (sync.RowState, bool, error) {
 	where, args, ok := scopePredicate(f)
 	if !ok || !looksLikeUUID(id) {
 		return sync.RowState{}, false, nil
@@ -401,7 +453,11 @@ func (s *SyncStore) load(ctx context.Context, q rowQuerier, f sync.ScopeFilter, 
 	if err != nil {
 		return sync.RowState{}, false, err
 	}
-	if visible, err := s.holdToDriver(ctx, f, links[r.attachment.ID]); err != nil {
+	if arm != nil {
+		if !arm.sees(links[r.attachment.ID]) {
+			return sync.RowState{}, false, nil
+		}
+	} else if visible, err := s.holdToDriver(ctx, f, links[r.attachment.ID]); err != nil {
 		return sync.RowState{}, false, err
 	} else if !visible {
 		return sync.RowState{}, false, nil
@@ -507,16 +563,20 @@ func (s *SyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, 
 	// alone: the drive-run app's photos. A declared stop link off their
 	// own runs, or a create that reaches no stop of theirs at all, is
 	// refused whole.
-	allowed, isDriver, err := s.driverScope(ctx, f, stopCandidates(links))
-	if err != nil {
-		return sync.RowState{}, err
-	}
-	if isDriver && !linksReachAStop(links, allowed) {
-		return sync.RowState{}, fmt.Errorf("attachments: a driver registers attachments against their own stops: %w", sync.ErrOpRefused)
-	}
 	id, hasID := fields["id"].(string)
 	if hasID && !looksLikeUUID(id) {
 		return sync.RowState{}, fmt.Errorf("attachments: payload id must be a uuid: %w", sync.ErrOpRefused)
+	}
+	// The arm is resolved here, on the pool, before the transaction
+	// opens: the declared stops, plus the stops a taken payload id's
+	// standing row reaches (the conflict arm below reads that row under
+	// the same fence and must not ask the pool again).
+	arm, err := s.armForRow(ctx, f, id, links)
+	if err != nil {
+		return sync.RowState{}, err
+	}
+	if arm.bound && !linksReachAStop(links, arm.allowed) {
+		return sync.RowState{}, fmt.Errorf("attachments: a driver registers attachments against their own stops: %w", sync.ErrOpRefused)
 	}
 
 	tx, err := s.pool.Begin(ctx)
@@ -540,7 +600,7 @@ func (s *SyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, 
 	if errors.Is(err, pgx.ErrNoRows) {
 		// The client-chosen id is taken; WHERE decides the refusal so
 		// existence never leaks across the scope boundary.
-		if _, own, _ := s.load(ctx, tx, f, id); own {
+		if _, own, _ := s.load(ctx, tx, f, id, &arm); own {
 			return sync.RowState{}, sync.ErrRowExists
 		}
 		return sync.RowState{}, sync.ErrRowNotFound
@@ -606,8 +666,10 @@ func sizeLeg(fields map[string]any, name string) (any, error) {
 // UpdateMetadata so the two paths cannot drift: the desk IS a writer
 // with the same bounds, exactly as the contract's registered routes will
 // drive it. stampKey is the sync Write's idempotency key, or "" for the
-// desk path (the row's existing key stands).
-func (s *SyncStore) applyWrite(ctx context.Context, tx pgx.Tx, f sync.ScopeFilter, id string, fields map[string]any, stampKey string) (attachmentRow, error) {
+// desk path (the row's existing key stands). arm is the driver fence
+// resolved before the transaction opened (armForRow): this body runs
+// inside the transaction and never asks the pool for another connection.
+func (s *SyncStore) applyWrite(ctx context.Context, tx pgx.Tx, f sync.ScopeFilter, id string, fields map[string]any, stampKey string, arm driverArm) (attachmentRow, error) {
 	mime, hasMime := fields["mime"].(string)
 	if raw, ok := fields["mime"]; ok && raw != nil && !hasMime {
 		return attachmentRow{}, fmt.Errorf("attachments: mime must be a string: %w", sync.ErrOpRefused)
@@ -666,9 +728,7 @@ func (s *SyncStore) applyWrite(ctx context.Context, tx pgx.Tx, f sync.ScopeFilte
 	// The driver fence holds the row-addressed paths to the calling
 	// driver's own stops: a colleague's attachment is the same as
 	// absent, before any field is compared or written.
-	if visible, err := s.holdToDriver(ctx, f, currentLinks); err != nil {
-		return attachmentRow{}, err
-	} else if !visible {
+	if !arm.sees(currentLinks) {
 		return attachmentRow{}, sync.ErrRowNotFound
 	}
 	if declaredIsNoOp(fields, mime, checksum, sizeBytes, links, current, currentLinks) {
@@ -821,12 +881,16 @@ func (s *SyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key strin
 	if !looksLikeUUID(id) {
 		return sync.RowState{}, sync.ErrRowNotFound
 	}
+	arm, err := s.armForRow(ctx, f, id, nil)
+	if err != nil {
+		return sync.RowState{}, err
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return sync.RowState{}, fmt.Errorf("attachments: begin sync write: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	r, err := s.applyWrite(ctx, tx, f, id, fields, key)
+	r, err := s.applyWrite(ctx, tx, f, id, fields, key, arm)
 	if err != nil {
 		return sync.RowState{}, err
 	}
@@ -855,6 +919,11 @@ func (s *SyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, _ string
 	if _, _, ok := scopePredicate(f); !ok {
 		return sync.RowState{}, sync.ErrOpRefused
 	}
+	// The arm resolves on the pool before the transaction opens.
+	arm, err := s.armForRow(ctx, f, id, nil)
+	if err != nil {
+		return sync.RowState{}, err
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return sync.RowState{}, fmt.Errorf("attachments: begin sync delete: %w", err)
@@ -867,9 +936,7 @@ func (s *SyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, _ string
 	if err != nil {
 		return sync.RowState{}, err
 	}
-	if visible, err := s.holdToDriver(ctx, f, delLinks); err != nil {
-		return sync.RowState{}, err
-	} else if !visible {
+	if !arm.sees(delLinks) {
 		return sync.RowState{}, sync.ErrRowNotFound
 	}
 	seq, err := allocateSeqTx(ctx, tx)
@@ -918,12 +985,16 @@ func (s *SyncStore) UpdateMetadata(ctx context.Context, f sync.ScopeFilter, id s
 	if !looksLikeUUID(id) {
 		return sync.RowState{}, sync.ErrRowNotFound
 	}
+	arm, err := s.armForRow(ctx, f, id, nil)
+	if err != nil {
+		return sync.RowState{}, err
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return sync.RowState{}, fmt.Errorf("attachments: begin desk update: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	r, err := s.applyWrite(ctx, tx, f, id, fields, "")
+	r, err := s.applyWrite(ctx, tx, f, id, fields, "", arm)
 	if err != nil {
 		return sync.RowState{}, err
 	}
