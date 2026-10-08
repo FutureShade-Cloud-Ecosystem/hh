@@ -518,6 +518,7 @@ export const SCHEMA_NAMES: readonly string[] = [
   "FeedbackResult",
   "OrderViewLine",
   "OrderView",
+  "OrderPayHold",
   "OrderTransitionResult",
   "OrderCancelRequest",
   "OrderHeaderEditRequest",

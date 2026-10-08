@@ -3445,6 +3445,15 @@ export type OrderView = {
   subtotal_cents: number;
   tax_cents: number;
   total_cents: number;
+  pay_hold?: OrderPayHold;
+};
+export type OrderPayHold = {
+  held_from_picking: boolean;
+  words?: string;
+  in_process_words?: string;
+  order_total_cents: number;
+  paid_cents: number;
+  owed_cents: number;
 };
 export type OrderTransitionResult = {
   order_id: string;

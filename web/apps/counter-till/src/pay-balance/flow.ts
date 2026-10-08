@@ -147,7 +147,7 @@ export class PayBalanceFlow {
     if (!order.held) return;
     const result = await staffOrder.orderRead(this.#client, order.orderId);
     if (!result.ok || this.order?.orderId !== order.orderId) return;
-    this.hold = readPayHold((result.value as unknown as Record<string, unknown>)["pay_hold"]);
+    this.hold = readPayHold(result.value.pay_hold);
   }
 
   async #readDrawer(): Promise<void> {

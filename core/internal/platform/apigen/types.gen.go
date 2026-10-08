@@ -4068,6 +4068,16 @@ type OrderView struct {
 	SubtotalCents  int64           `json:"subtotal_cents"`
 	TaxCents       int64           `json:"tax_cents"`
 	TotalCents     int64           `json:"total_cents"`
+	PayHold        *OrderPayHold   `json:"pay_hold,omitempty"`
+}
+
+type OrderPayHold struct {
+	HeldFromPicking bool    `json:"held_from_picking"`
+	Words           *string `json:"words,omitempty"`
+	InProcessWords  *string `json:"in_process_words,omitempty"`
+	OrderTotalCents int64   `json:"order_total_cents"`
+	PaidCents       int64   `json:"paid_cents"`
+	OwedCents       int64   `json:"owed_cents"`
 }
 
 type OrderTransitionResult struct {

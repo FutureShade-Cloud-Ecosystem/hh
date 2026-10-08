@@ -179,6 +179,7 @@ import {
   type ReliefOutcome,
   type StockGlance,
 } from '@hardscapehouse/pos-kit/src/ported/pos-api.js';
+import type { OrderView } from '@hardscapehouse/api-client';
 import './pos-panels.js';
 import './pos-discount.js';
 import {
@@ -723,7 +724,9 @@ export class HosPosTerminal extends LitElement {
     try {
       const res = await api(`/api/v1/orders/${encodeURIComponent(sale.order_id)}`);
       if (!res.ok) return;
-      const body = (await res.json().catch(() => null)) as { pay_hold?: unknown } | null;
+      // The contract's own OrderView carries pay_hold (item 9 review, run B's
+      // gap): the field is typed, and readPayHold still validates it whole.
+      const body = (await res.json().catch(() => null)) as Pick<OrderView, "pay_hold"> | null;
       const hold = readPayHold(body?.pay_hold);
       if (hold === null || !hold.held) return;
       const ring = this.ring;
