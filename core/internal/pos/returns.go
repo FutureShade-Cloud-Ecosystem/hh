@@ -86,6 +86,17 @@ func (s *Service) CustomerLines(ctx context.Context, in CustomerLinesInput) (Cus
 	if items == nil {
 		items = []CustomerOrderView{}
 	}
+	// Each order names its branch, so the one branch refusal can name the branches. The names come
+	// through the branches module's seam; an unwired seam leaves them empty, never invented.
+	if s.branchNames != nil && len(items) > 0 {
+		names, nerr := s.branchNames.BranchNames(ctx)
+		if nerr != nil {
+			return CustomerLinesView{}, nerr
+		}
+		for i := range items {
+			items[i].BranchName = names[items[i].BranchID]
+		}
+	}
 	return CustomerLinesView{CustomerID: in.CustomerID, Items: items}, nil
 }
 
@@ -526,67 +537,102 @@ type guardedReturn struct {
 // (returnInTx) and of every child of a note (ReturnAcross). The over-return refusal and the money
 // invariants are the single return's own words, unchanged.
 func (s *Service) guardReturnLines(ctx context.Context, tx pgx.Tx, oc returnOrderCtx, reqs []ReturnLineInput) (guardedReturn, error) {
+	return guardLines(oc, reqs, func(orderLineID string) (returnableLine, bool, error) {
+		return s.store.LockReturnableLine(ctx, tx, oc.OrderID, orderLineID)
+	})
+}
+
+// previewReturnLines is the credit preview's guard: the SAME guardLines over the same prior-return
+// sums, read without the lock (a preview takes none and writes nothing).
+func (s *Service) previewReturnLines(ctx context.Context, oc returnOrderCtx, reqs []ReturnLineInput) (guardedReturn, error) {
+	return guardLines(oc, reqs, func(orderLineID string) (returnableLine, bool, error) {
+		return s.store.ReadReturnableLine(ctx, oc.OrderID, orderLineID)
+	})
+}
+
+// guardLines is the ONE guard and pricing walk over a return's requested lines, the single order
+// return's, every child of a note's and the credit preview's: read is the line source (locked in a
+// transaction, or a plain read for the preview). A line named twice in one request is refused in
+// words: each entry is guarded against what was committed BEFORE the request, so two entries
+// could together return more than is open.
+func guardLines(oc returnOrderCtx, reqs []ReturnLineInput, read func(orderLineID string) (returnableLine, bool, error)) (guardedReturn, error) {
 	lines := make([]returnLineRow, 0, len(reqs))
 	var subtotal, taxTotal int64
 	stockLines := make([]StockLine, 0, len(reqs))
 	eventLines := make([]map[string]any, 0, len(reqs))
+	seen := make(map[string]bool, len(reqs))
 	for _, req := range reqs {
-		rl, ok, lerr := s.store.LockReturnableLine(ctx, tx, oc.OrderID, req.OrderLineID)
+		if seen[req.OrderLineID] {
+			return guardedReturn{}, clientErr(http.StatusUnprocessableEntity,
+				"pos: line %s appears twice on order %s, send it once with the whole quantity", req.OrderLineID, oc.OrderNo)
+		}
+		seen[req.OrderLineID] = true
+		rl, ok, lerr := read(req.OrderLineID)
 		if lerr != nil {
 			return guardedReturn{}, lerr
 		}
 		if !ok {
 			return guardedReturn{}, clientErr(http.StatusUnprocessableEntity, "pos: line %s does not belong to order %s", req.OrderLineID, oc.OrderNo)
 		}
-		remainingQty := returnableQtyOpen(rl.QtySold, rl.PriorQty)
-		if req.QtyBase > remainingQty+qtyEpsilon {
-			return guardedReturn{}, clientErr(http.StatusUnprocessableEntity,
-				"pos: over-return on line %s, %.4f requested but only %.4f returnable", req.OrderLineID, req.QtyBase, remainingQty)
+		row, perr := priceReturnLine(rl, req)
+		if perr != nil {
+			return guardedReturn{}, perr
 		}
-		var money, tax int64
-		if math.Abs(req.QtyBase-remainingQty) <= qtyEpsilon {
-			// Returning everything still out: pay out exactly what remains so the line zeroes.
-			money = rl.LineTotalCents - rl.PriorMoney
-			tax = rl.TaxCents - rl.PriorTax
-		} else {
-			// Partial return: PROPORTIONAL by base qty, mirroring the tax proration below.
-			// qty_base is base-UOM while unit_price_cents is per PRICE-UOM, so qty × unit price
-			// mixes units whenever they differ (e.g. 1000 SF entered / 4100 PC base / 300¢ per SF)
-			// and over-refunds up to the cap. line_total / qty_sold is unit-consistent by
-			// construction; round half-up like the tax line, capped at the remaining un-refunded
-			// line money so cumulative partials can never exceed line_total.
-			if rl.QtySold > 0 {
-				money = int64(math.Round(float64(rl.LineTotalCents) * req.QtyBase / rl.QtySold))
-			}
-			if rem := rl.LineTotalCents - rl.PriorMoney; money > rem {
-				money = rem
-			}
-			if rl.QtySold > 0 {
-				tax = int64(math.Round(float64(rl.TaxCents) * req.QtyBase / rl.QtySold))
-			}
-			if rem := rl.TaxCents - rl.PriorTax; tax > rem {
-				tax = rem
-			}
-		}
-		if money < 0 || tax < 0 {
-			return guardedReturn{}, clientErr(http.StatusUnprocessableEntity, "pos: line %s has nothing left to refund", req.OrderLineID)
-		}
-		// Money invariant (never weakened): Σ refunded tax per order line ≤ the original line tax.
-		if rl.PriorTax+tax > rl.TaxCents {
-			return guardedReturn{}, clientErr(http.StatusUnprocessableEntity, "pos: tax refund would exceed the original line tax on %s", req.OrderLineID)
-		}
-		lines = append(lines, returnLineRow{
-			OrderLineID: req.OrderLineID, ProductID: rl.ProductID, QtyBase: req.QtyBase,
-			UnitPriceCents: rl.UnitPriceCents, LineTotalCents: money, TaxCents: tax, ReasonCode: req.ReasonCode,
-		})
-		subtotal += money
-		taxTotal += tax
+		lines = append(lines, row)
+		subtotal += row.LineTotalCents
+		taxTotal += row.TaxCents
 		stockLines = append(stockLines, StockLine{ProductID: rl.ProductID, QtyBase: req.QtyBase})
 		eventLines = append(eventLines, map[string]any{"product_id": rl.ProductID, "qty_base": req.QtyBase})
 	}
+	return guardedReturn{lines: lines, stockLines: stockLines, eventLines: eventLines, subtotal: subtotal, taxTotal: taxTotal}, nil
+}
 
-	g := guardedReturn{lines: lines, stockLines: stockLines, eventLines: eventLines, subtotal: subtotal, taxTotal: taxTotal}
-	return g, nil
+// priceReturnLine is the ONE pricing function of a return line: the over-return guard and the
+// refund money and tax of the requested quantity against the line's sold quantity and its prior
+// returns. The commit (single order and note children) and the credit preview both call it, so the
+// preview and the commit can never differ.
+func priceReturnLine(rl returnableLine, req ReturnLineInput) (returnLineRow, error) {
+	remainingQty := returnableQtyOpen(rl.QtySold, rl.PriorQty)
+	if req.QtyBase > remainingQty+qtyEpsilon {
+		return returnLineRow{}, clientErr(http.StatusUnprocessableEntity,
+			"pos: over-return on line %s, %.4f requested but only %.4f returnable", req.OrderLineID, req.QtyBase, remainingQty)
+	}
+	var money, tax int64
+	if math.Abs(req.QtyBase-remainingQty) <= qtyEpsilon {
+		// Returning everything still out: pay out exactly what remains so the line zeroes.
+		money = rl.LineTotalCents - rl.PriorMoney
+		tax = rl.TaxCents - rl.PriorTax
+	} else {
+		// Partial return: PROPORTIONAL by base qty, mirroring the tax proration below.
+		// qty_base is base-UOM while unit_price_cents is per PRICE-UOM, so qty × unit price
+		// mixes units whenever they differ (e.g. 1000 SF entered / 4100 PC base / 300¢ per SF)
+		// and over-refunds up to the cap. line_total / qty_sold is unit-consistent by
+		// construction; round half-up like the tax line, capped at the remaining un-refunded
+		// line money so cumulative partials can never exceed line_total.
+		if rl.QtySold > 0 {
+			money = int64(math.Round(float64(rl.LineTotalCents) * req.QtyBase / rl.QtySold))
+		}
+		if rem := rl.LineTotalCents - rl.PriorMoney; money > rem {
+			money = rem
+		}
+		if rl.QtySold > 0 {
+			tax = int64(math.Round(float64(rl.TaxCents) * req.QtyBase / rl.QtySold))
+		}
+		if rem := rl.TaxCents - rl.PriorTax; tax > rem {
+			tax = rem
+		}
+	}
+	if money < 0 || tax < 0 {
+		return returnLineRow{}, clientErr(http.StatusUnprocessableEntity, "pos: line %s has nothing left to refund", req.OrderLineID)
+	}
+	// Money invariant (never weakened): Σ refunded tax per order line ≤ the original line tax.
+	if rl.PriorTax+tax > rl.TaxCents {
+		return returnLineRow{}, clientErr(http.StatusUnprocessableEntity, "pos: tax refund would exceed the original line tax on %s", req.OrderLineID)
+	}
+	return returnLineRow{
+		OrderLineID: req.OrderLineID, ProductID: rl.ProductID, QtyBase: req.QtyBase,
+		UnitPriceCents: rl.UnitPriceCents, LineTotalCents: money, TaxCents: tax, ReasonCode: req.ReasonCode,
+	}, nil
 }
 
 // commitReturnTx is the write half of one return's transactional body: the shared steps 2 through

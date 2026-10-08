@@ -373,18 +373,19 @@ SELECT co.id::text, co.order_no, co.branch_id, co.status, co.job_label, co.creat
 	return out, rows.Err()
 }
 
-func (r *Repository) LockReturnableLine(ctx context.Context, tx pgx.Tx, orderID, orderLineID string) (returnableLine, bool, error) {
-	// FOR UPDATE on the original order line serializes concurrent returns of the SAME line, the
-	// prior-return sums read after the lock are therefore exact.
-	const q = `
+// returnableLineQuery is the one read of an original order line with its prior-return sums: the
+// commit appends FOR UPDATE OF ol (LockReturnableLine), the credit preview reads it as is
+// (ReadReturnableLine), so the preview prices off the very same numbers.
+const returnableLineQuery = `
 SELECT ol.id::text, COALESCE(ol.product_id::text,''), ol.qty_base::float8, ol.unit_price_cents,
        ol.line_total_cents, ol.tax_cents,
        ` + priorReturnQtyExpr + `::float8, ` + priorReturnMoneyExpr + `, ` + priorReturnTaxExpr + `
   FROM order_lines ol
- WHERE ol.id = $2 AND ol.order_id = $1
-   FOR UPDATE OF ol`
+ WHERE ol.id = $2 AND ol.order_id = $1`
+
+func scanReturnableLine(row pgx.Row) (returnableLine, bool, error) {
 	var rl returnableLine
-	err := tx.QueryRow(ctx, q, orderID, orderLineID).Scan(&rl.OrderLineID, &rl.ProductID, &rl.QtySold,
+	err := row.Scan(&rl.OrderLineID, &rl.ProductID, &rl.QtySold,
 		&rl.UnitPriceCents, &rl.LineTotalCents, &rl.TaxCents, &rl.PriorQty, &rl.PriorMoney, &rl.PriorTax)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return returnableLine{}, false, nil
@@ -393,6 +394,21 @@ SELECT ol.id::text, COALESCE(ol.product_id::text,''), ol.qty_base::float8, ol.un
 		return returnableLine{}, false, err
 	}
 	return rl, true, nil
+}
+
+func (r *Repository) LockReturnableLine(ctx context.Context, tx pgx.Tx, orderID, orderLineID string) (returnableLine, bool, error) {
+	// FOR UPDATE on the original order line serializes concurrent returns of the SAME line, the
+	// prior-return sums read after the lock are therefore exact.
+	return scanReturnableLine(tx.QueryRow(ctx, returnableLineQuery+`
+   FOR UPDATE OF ol`, orderID, orderLineID))
+}
+
+// ReadReturnableLine is the credit preview's unlocked read of the same line and sums.
+func (r *Repository) ReadReturnableLine(ctx context.Context, orderID, orderLineID string) (returnableLine, bool, error) {
+	if r.pool == nil {
+		return returnableLine{}, false, errNoPool
+	}
+	return scanReturnableLine(r.pool.QueryRow(ctx, returnableLineQuery, orderID, orderLineID))
 }
 
 // sumCommittedReturnTotalsQuery is the sale's committed return total. Every

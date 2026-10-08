@@ -5241,6 +5241,37 @@ type PosReturnAcrossOrder struct {
 	Lines   []PosReturnLineInput `json:"lines"`
 }
 
+type PosReturnPreviewInput struct {
+	CustomerId string                 `json:"customer_id"`
+	Orders     []PosReturnAcrossOrder `json:"orders"`
+}
+
+type PosReturnPreviewLine struct {
+	OrderLineId   string  `json:"order_line_id"`
+	QtyBase       float64 `json:"qty_base"`
+	SubtotalCents int64   `json:"subtotal_cents"`
+	TaxCents      int64   `json:"tax_cents"`
+	TotalCents    int64   `json:"total_cents"`
+}
+
+type PosReturnPreviewOrder struct {
+	OrderId       string                 `json:"order_id"`
+	OrderNo       string                 `json:"order_no"`
+	SubtotalCents int64                  `json:"subtotal_cents"`
+	TaxCents      int64                  `json:"tax_cents"`
+	TotalCents    int64                  `json:"total_cents"`
+	Lines         []PosReturnPreviewLine `json:"lines"`
+}
+
+type PosReturnPreview struct {
+	CustomerId    string                  `json:"customer_id"`
+	BranchId      string                  `json:"branch_id"`
+	SubtotalCents int64                   `json:"subtotal_cents"`
+	TaxCents      int64                   `json:"tax_cents"`
+	TotalCents    int64                   `json:"total_cents"`
+	Orders        []PosReturnPreviewOrder `json:"orders"`
+}
+
 type PosReturnNote struct {
 	NoteId        string      `json:"note_id"`
 	NoteNo        string      `json:"note_no"`
@@ -5274,6 +5305,7 @@ type PosCustomerOrder struct {
 	OrderId         string            `json:"order_id"`
 	OrderNo         string            `json:"order_no"`
 	BranchId        string            `json:"branch_id"`
+	BranchName      string            `json:"branch_name"`
 	CreatedAt       time.Time         `json:"created_at"`
 	JobLabel        string            `json:"job_label"`
 	Source          string            `json:"source"`

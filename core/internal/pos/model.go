@@ -788,6 +788,7 @@ type CustomerOrderView struct {
 	OrderID         string                       `json:"order_id"`
 	OrderNo         string                       `json:"order_no"`
 	BranchID        string                       `json:"branch_id"`
+	BranchName      string                       `json:"branch_name"`
 	CreatedAt       string                       `json:"created_at"`
 	JobLabel        string                       `json:"job_label"`
 	Source          string                       `json:"source"`
@@ -830,6 +831,43 @@ type ReturnAcrossInput struct {
 	// ApproverCredential rides X-Approver-Authorization beside the clerk's bearer, the single
 	// return's own second-credential machinery (row 482); the handler reads it from the header.
 	ApproverCredential string `json:"-"`
+}
+
+// ReturnPreviewInput is the POST /api/v1/pos/returns/preview body: the draft of a returns-across
+// note (the customer and the orders' lines), without a key, a rail or a drawer.
+type ReturnPreviewInput struct {
+	CustomerID string                   `json:"customer_id"`
+	Orders     []ReturnAcrossOrderInput `json:"orders"`
+}
+
+// ReturnPreviewLine is one draft line's credit, priced by the commit's own function.
+type ReturnPreviewLine struct {
+	OrderLineID   string  `json:"order_line_id"`
+	QtyBase       float64 `json:"qty_base"`
+	SubtotalCents int64   `json:"subtotal_cents"`
+	TaxCents      int64   `json:"tax_cents"`
+	TotalCents    int64   `json:"total_cents"`
+}
+
+// ReturnPreviewOrder is one order's share of the draft credit.
+type ReturnPreviewOrder struct {
+	OrderID       string              `json:"order_id"`
+	OrderNo       string              `json:"order_no"`
+	SubtotalCents int64               `json:"subtotal_cents"`
+	TaxCents      int64               `json:"tax_cents"`
+	TotalCents    int64               `json:"total_cents"`
+	Lines         []ReturnPreviewLine `json:"lines"`
+}
+
+// ReturnPreview is the credit so far: what the note would credit, money and tax, were it
+// committed now. The figures are the commit's own (priceReturnLine); nothing is written.
+type ReturnPreview struct {
+	CustomerID    string               `json:"customer_id"`
+	BranchID      string               `json:"branch_id"`
+	SubtotalCents int64                `json:"subtotal_cents"`
+	TaxCents      int64                `json:"tax_cents"`
+	TotalCents    int64                `json:"total_cents"`
+	Orders        []ReturnPreviewOrder `json:"orders"`
 }
 
 // ReturnNote is the committed credit note across orders (answered verbatim on an idempotent

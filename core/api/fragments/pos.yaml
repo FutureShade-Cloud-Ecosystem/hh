@@ -990,6 +990,49 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /api/v1/pos/returns/preview:
+    post:
+      operationId: posPreviewReturnAcross
+      tags: [staff-pos]
+      summary: Preview the credit of a draft note across orders, priced exactly as the commit prices it
+      description: >-
+        The credit so far: the draft note's lines (order, order line, quantity)
+        priced by the commit's own pricing function, per line, per order and
+        for the note, money and tax. Nothing is written and no lock is taken.
+        The same shape rules and walls as the commit answer in the commit's own
+        words (the branch wall, one branch, one customer, the house WALK-IN
+        account, an over-return, a line sent twice).
+      x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
+        reason: prices a draft credit note through the commit's own pricing function and writes nothing
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosReturnPreviewInput"
+      responses:
+        "200":
+          description: The credit the note would book
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosReturnPreview"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: >-
+            A well-formed draft the shape refuses, in the commit's words.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/pos/returns/pickups:
     get:
       operationId: posListReturnPickups
@@ -2961,6 +3004,52 @@ components:
           type: array
           minItems: 1
           items: { $ref: "#/components/schemas/PosReturnLineInput" }
+    PosReturnPreviewInput:
+      type: object
+      description: The draft of a returns-across note, without a key, a rail or a drawer.
+      required: [customer_id, orders]
+      properties:
+        customer_id: { type: string, format: uuid }
+        orders:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/PosReturnAcrossOrder" }
+    PosReturnPreviewLine:
+      type: object
+      required: [order_line_id, qty_base, subtotal_cents, tax_cents, total_cents]
+      properties:
+        order_line_id: { type: string, format: uuid }
+        qty_base: { type: number }
+        subtotal_cents: { type: integer, format: int64 }
+        tax_cents: { type: integer, format: int64 }
+        total_cents: { type: integer, format: int64 }
+    PosReturnPreviewOrder:
+      type: object
+      required: [order_id, order_no, subtotal_cents, tax_cents, total_cents, lines]
+      properties:
+        order_id: { type: string, format: uuid }
+        order_no: { type: string }
+        subtotal_cents: { type: integer, format: int64 }
+        tax_cents: { type: integer, format: int64 }
+        total_cents: { type: integer, format: int64 }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/PosReturnPreviewLine" }
+    PosReturnPreview:
+      type: object
+      description: >-
+        The credit so far of a draft note: the figures the commit would book,
+        priced by the commit's own function.
+      required: [customer_id, branch_id, subtotal_cents, tax_cents, total_cents, orders]
+      properties:
+        customer_id: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid }
+        subtotal_cents: { type: integer, format: int64 }
+        tax_cents: { type: integer, format: int64 }
+        total_cents: { type: integer, format: int64, description: The note total with tax }
+        orders:
+          type: array
+          items: { $ref: "#/components/schemas/PosReturnPreviewOrder" }
     PosReturnNote:
       type: object
       description: >-
@@ -3011,11 +3100,12 @@ components:
         One order of the customer lines read. Source names where it came from:
         TILL, a committed ring whose facts ride beside it, or QUOTE, an order a
         quote became (an order like any other, carrying no till facts).
-      required: [order_id, order_no, branch_id, created_at, job_label, source, sale_type, tender, fulfilment_state, invoice_id, card_refundable, lines]
+      required: [order_id, order_no, branch_id, branch_name, created_at, job_label, source, sale_type, tender, fulfilment_state, invoice_id, card_refundable, lines]
       properties:
         order_id: { type: string, format: uuid }
         order_no: { type: string }
         branch_id: { type: string, format: uuid }
+        branch_name: { type: string, description: The branch's name, so the one branch refusal can name the branches }
         created_at: { type: string, format: date-time }
         job_label: { type: string, description: The job address, else the job reference, else the customer's PO or job reference }
         source: { type: string, enum: [TILL, QUOTE] }

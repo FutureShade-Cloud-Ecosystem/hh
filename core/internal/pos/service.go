@@ -199,6 +199,9 @@ type posStore interface {
 	// quantity netted by the same shared prior-return sums the commit guard reads.
 	ListCustomerReturnableOrders(ctx context.Context, customerID string, branchIDs []string, limit int) ([]CustomerOrderView, error)
 	LockReturnableLine(ctx context.Context, tx pgx.Tx, orderID, orderLineID string) (returnableLine, bool, error)
+	// ReadReturnableLine is LockReturnableLine without the lock or the transaction: the credit
+	// preview's read of the same line and the same prior-return sums.
+	ReadReturnableLine(ctx context.Context, orderID, orderLineID string) (returnableLine, bool, error)
 	// the per-sale return sums and lock: the refund approval amount counts
 	// every return against the same sale together, so the gate reads the
 	// sale's earlier committed returns inside its transaction (the Tx read)
@@ -340,8 +343,11 @@ type Service struct {
 	// actorNames turns an audit actor id into the person's name for that same history. Nil degrades
 	// every row to its role word, which is what the history said before names existed.
 	actorNames ActorNameResolver
-	now        func() time.Time
-	callerFrom func(context.Context) (identity.StaffContext, bool)
+	// branchNames turns a branch id into the branch's name for the customer lines read (the branches
+	// module owns the table). Nil leaves the names empty.
+	branchNames BranchNamer
+	now         func() time.Time
+	callerFrom  func(context.Context) (identity.StaffContext, bool)
 }
 
 // NewService wires the store. Sibling seams are injected via the With* methods. tax + stock default to the
@@ -434,6 +440,16 @@ func (s *Service) WithUserLinker(l identity.UserIDLinker) *Service { s.userLink 
 func errRoleConfigUnwired() error {
 	return clientErr(http.StatusServiceUnavailable, "pos: the dealer's role configuration is not wired")
 }
+
+// BranchNamer is the narrow read the customer lines answer needs: every branch's id with its name.
+// Satisfied in cmd/core by a thin adapter over the branches module's service, so pos never reads the
+// locations table.
+type BranchNamer interface {
+	BranchNames(ctx context.Context) (map[string]string, error)
+}
+
+// WithBranchNames injects the branch name read.
+func (s *Service) WithBranchNames(b BranchNamer) *Service { s.branchNames = b; return s }
 
 // WithClock injects a deterministic clock (tests).
 func (s *Service) WithClock(now func() time.Time) *Service { s.now = now; return s }

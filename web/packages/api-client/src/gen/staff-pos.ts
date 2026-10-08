@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { PosAccountStanding, PosAddonSuggestions, PosCounterPriceInput, PosCounterPrices, PosCustomerLines, PosDiscountApproverList, PosHotkeys, PosMarginGlance, PosMarginGlanceInput, PosOwingOrderList, PosParkInput, PosParkedDiscard, PosParkedTicket, PosParkedTicketPage, PosPayBalanceTakeInput, PosPayBalanceTaken, PosPaymentGrant, PosPickupAdvance, PosPolicy, PosPolicyChangePage, PosPricingOrder, PosPricingOrderInput, PosPricingOrderPage, PosQuickPicks, PosReliefAssessInput, PosReliefOutcome, PosReturn, PosReturnAcrossInput, PosReturnInput, PosReturnLookup, PosReturnNote, PosReturnPickup, PosReturnPickupPage, PosReturnRequest, PosReturnRequestPage, PosReturnRequestReject, PosSale, PosSaleInput, PosSalePreview, PosSalePreviewInput, PosSaleSummaryPage, PosSaleView, PosSalespersonPage, PosSignatureCapture, PosSignatureRef, PosStockGlance, PosTaxRate, PosTypedAttestation, PosTypedSignatureRef, PosWorkspacePrefs, PosWorkspaceSaveInput } from "./types.js";
+import type { PosAccountStanding, PosAddonSuggestions, PosCounterPriceInput, PosCounterPrices, PosCustomerLines, PosDiscountApproverList, PosHotkeys, PosMarginGlance, PosMarginGlanceInput, PosOwingOrderList, PosParkInput, PosParkedDiscard, PosParkedTicket, PosParkedTicketPage, PosPayBalanceTakeInput, PosPayBalanceTaken, PosPaymentGrant, PosPickupAdvance, PosPolicy, PosPolicyChangePage, PosPricingOrder, PosPricingOrderInput, PosPricingOrderPage, PosQuickPicks, PosReliefAssessInput, PosReliefOutcome, PosReturn, PosReturnAcrossInput, PosReturnInput, PosReturnLookup, PosReturnNote, PosReturnPickup, PosReturnPickupPage, PosReturnPreview, PosReturnPreviewInput, PosReturnRequest, PosReturnRequestPage, PosReturnRequestReject, PosSale, PosSaleInput, PosSalePreview, PosSalePreviewInput, PosSaleSummaryPage, PosSaleView, PosSalespersonPage, PosSignatureCapture, PosSignatureRef, PosStockGlance, PosTaxRate, PosTypedAttestation, PosTypedSignatureRef, PosWorkspacePrefs, PosWorkspaceSaveInput } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -449,6 +449,21 @@ export async function posListReturnPickups(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "posListReturnPickups",
+  });
+}
+
+export async function posPreviewReturnAcross(
+  client: ApiClient,
+  body: PosReturnPreviewInput,
+  call?: ApiCallOptions
+): Promise<Result<PosReturnPreview>> {
+  return client.request<PosReturnPreview>({
+    method: "POST",
+    path: "/api/v1/pos/returns/preview",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "posPreviewReturnAcross",
   });
 }
 

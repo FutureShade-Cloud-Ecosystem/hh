@@ -93,6 +93,8 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// Sub item 10.2: the credit note across orders, several orders of one customer in one
 	// transaction, the approval threshold judging the note total (Q3).
 	r.Handle("POST /api/v1/pos/returns-across", g.RequireStaff(h.staff(h.createReturnAcross)))
+	// The credit preview of a draft note: the commit's own pricing, nothing written.
+	r.Handle("POST /api/v1/pos/returns/preview", g.RequireStaff(h.staff(h.previewReturnAcross)))
 	h.registerReturnRequestRoutes(r, g) // A-06 portal-return approval queue
 	r.Handle("GET /api/v1/pos/returns/lookup", g.RequireStaff(h.staff(h.lookupReturn)))
 	// Sub item 10.1: the customer lines read behind the returns-across flow, every sales order the
@@ -271,6 +273,21 @@ func (h *Handler) createReturnAcross(w http.ResponseWriter, r *http.Request, cal
 func (h *Handler) lookupReturn(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	q := r.URL.Query()
 	out, err := h.svc.LookupReturn(r.Context(), q.Get("order_id"), q.Get("order_no"))
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// previewReturnAcross serves the credit preview: the draft note's credit so far, priced by the
+// commit's own function. Branch-fenced in the service.
+func (h *Handler) previewReturnAcross(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in ReturnPreviewInput
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	out, err := h.svc.PreviewReturnAcross(r.Context(), in)
 	if err != nil {
 		h.writeErr(w, r, err)
 		return

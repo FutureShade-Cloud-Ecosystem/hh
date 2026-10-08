@@ -106,3 +106,5 @@ additions:
     reason: "Row 1047 returns across orders: the customer lines read, every sales order one customer holds (till rings and quote conversions alike) with each line's returnable quantity netted by the guard's own sums, branch fenced; the ERP's return reads one sale by its number and no route lists what a customer bought; no ERP source route."
   - route: "POST /api/v1/pos/returns-across"
     reason: "Row 1047 returns across orders: the credit note across several orders of one customer at one branch in one transaction, each order keeping its own return number and journal and the approval threshold judging the note total; the ERP's return is one sale at a time; no ERP source route."
+  - route: "POST /api/v1/pos/returns/preview"
+    reason: "Row 1047 returns across orders: the credit so far of a draft note across orders, priced by the commit's own pricing function and writing nothing, so the screen shows server money; the ERP's return has no preview; no ERP source route."

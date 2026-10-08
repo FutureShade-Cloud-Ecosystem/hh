@@ -34,6 +34,113 @@ func noteChildKey(noteKey, orderID string) string {
 	return reservedNoteKeyPrefix + noteKey + ":" + orderID
 }
 
+// checkNoteShape is the note's own shape rules, shared by the commit and the credit preview so they
+// refuse in the same words: a customer named, the house WALK-IN row refused (the customer lines
+// read's own refusal: the note is one account customer's credit note, never the shared row's),
+// every order named once, carrying lines, each with a line and a positive quantity. It answers the
+// trimmed customer id.
+func (s *Service) checkNoteShape(ctx context.Context, customerID string, orders []ReturnAcrossOrderInput) (string, error) {
+	customerID = strings.TrimSpace(customerID)
+	if customerID == "" {
+		return "", clientErr(http.StatusBadRequest, "pos: customer_id is required")
+	}
+	if walkIn, werr := s.store.ResolveWalkIn(ctx); werr == nil && walkIn == customerID {
+		return "", errWalkInNotReturnable
+	}
+	seenOrder := make(map[string]bool, len(orders))
+	for _, o := range orders {
+		if o.OrderID == "" {
+			return "", clientErr(http.StatusBadRequest, "pos: every order on a return note needs an order_id")
+		}
+		if seenOrder[o.OrderID] {
+			return "", clientErr(http.StatusUnprocessableEntity, "pos: order %s appears twice on one note", o.OrderID)
+		}
+		seenOrder[o.OrderID] = true
+		if len(o.Lines) == 0 {
+			return "", clientErr(http.StatusUnprocessableEntity, "pos: order %s carries no return lines", o.OrderID)
+		}
+		for _, ln := range o.Lines {
+			if ln.OrderLineID == "" || ln.QtyBase <= 0 {
+				return "", clientErr(http.StatusUnprocessableEntity, "pos: every return line needs an order_line_id and a positive qty_base")
+			}
+		}
+	}
+	return customerID, nil
+}
+
+// noteWalls is the note's two walls around an order: it must be the note customer's, and sit in the
+// same branch as the note's first order (nil for the first). Shared by the commit and the preview.
+func noteWalls(first *returnOrderCtx, oc returnOrderCtx, customerID string) error {
+	if oc.CustomerID != customerID {
+		return clientErr(http.StatusUnprocessableEntity,
+			"pos: order %s belongs to another customer, not the note's customer", oc.OrderNo)
+	}
+	if first != nil && first.BranchID != oc.BranchID {
+		return clientErr(http.StatusUnprocessableEntity,
+			"pos: a return note covers one branch, order %s sits in another", oc.OrderNo)
+	}
+	return nil
+}
+
+// PreviewReturnAcross answers the credit so far of a draft note: the same shape rules, branch wall
+// and customer and branch walls as the commit, every line guarded and priced by the commit's own
+// guardLines, read without locks, and nothing written. The note total is the sum of the same
+// per-line figures the commit would book.
+func (s *Service) PreviewReturnAcross(ctx context.Context, in ReturnPreviewInput) (ReturnPreview, error) {
+	if len(in.Orders) == 0 {
+		return ReturnPreview{}, clientErr(http.StatusBadRequest, "pos: a return note needs at least one order")
+	}
+	customerID, err := s.checkNoteShape(ctx, in.CustomerID, in.Orders)
+	if err != nil {
+		return ReturnPreview{}, err
+	}
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return ReturnPreview{}, err
+	}
+	out := ReturnPreview{CustomerID: customerID, Orders: make([]ReturnPreviewOrder, 0, len(in.Orders))}
+	var first *returnOrderCtx
+	for _, o := range in.Orders {
+		oc, found, err := s.store.ReturnOrderContextFor(ctx, o.OrderID, "", reachableBranches(caller))
+		if err != nil {
+			return ReturnPreview{}, err
+		}
+		if !found {
+			return ReturnPreview{}, errReturnNotFound
+		}
+		if err := requireBranchReach(caller, oc.BranchID); err != nil {
+			return ReturnPreview{}, err
+		}
+		if err := noteWalls(first, oc, customerID); err != nil {
+			return ReturnPreview{}, err
+		}
+		if first == nil {
+			ocCopy := oc
+			first = &ocCopy
+			out.BranchID = oc.BranchID
+		}
+		g, err := s.previewReturnLines(ctx, oc, o.Lines)
+		if err != nil {
+			return ReturnPreview{}, err
+		}
+		po := ReturnPreviewOrder{
+			OrderID: oc.OrderID, OrderNo: oc.OrderNo, SubtotalCents: g.subtotal, TaxCents: g.taxTotal,
+			TotalCents: g.subtotal + g.taxTotal, Lines: make([]ReturnPreviewLine, 0, len(g.lines)),
+		}
+		for _, ln := range g.lines {
+			po.Lines = append(po.Lines, ReturnPreviewLine{
+				OrderLineID: ln.OrderLineID, QtyBase: ln.QtyBase, SubtotalCents: ln.LineTotalCents,
+				TaxCents: ln.TaxCents, TotalCents: ln.LineTotalCents + ln.TaxCents,
+			})
+		}
+		out.SubtotalCents += po.SubtotalCents
+		out.TaxCents += po.TaxCents
+		out.Orders = append(out.Orders, po)
+	}
+	out.TotalCents = out.SubtotalCents + out.TaxCents
+	return out, nil
+}
+
 // returnAcrossPlan is everything the note resolves BEFORE its transaction opens, one child plan
 // per order (each built by the single return's own prepareReturn, so the branch wall, the rail
 // checks and the replay discipline are the single path's) plus the note-level facts.
@@ -68,28 +175,12 @@ func (s *Service) prepareReturnAcross(ctx context.Context, in ReturnAcrossInput)
 	default:
 		return nil, errBadRefundMethod
 	}
-	in.CustomerID = strings.TrimSpace(in.CustomerID)
-	if in.CustomerID == "" {
-		return nil, clientErr(http.StatusBadRequest, "pos: customer_id is required")
+	customerID, shapeErr := s.checkNoteShape(ctx, in.CustomerID, in.Orders)
+	if shapeErr != nil {
+		return nil, shapeErr
 	}
-	// The house WALK-IN row is refused in words, the customer lines read's own refusal: the note
-	// is one account customer's credit note, never the shared row's.
-	if walkIn, werr := s.store.ResolveWalkIn(ctx); werr == nil && walkIn == in.CustomerID {
-		return nil, errWalkInNotReturnable
-	}
-	seenOrder := make(map[string]bool, len(in.Orders))
-	for _, o := range in.Orders {
-		if o.OrderID == "" {
-			return nil, clientErr(http.StatusBadRequest, "pos: every order on a return note needs an order_id")
-		}
-		if seenOrder[o.OrderID] {
-			return nil, clientErr(http.StatusUnprocessableEntity, "pos: order %s appears twice on one note", o.OrderID)
-		}
-		seenOrder[o.OrderID] = true
-		if len(o.Lines) == 0 {
-			return nil, clientErr(http.StatusUnprocessableEntity, "pos: order %s carries no return lines", o.OrderID)
-		}
-	}
+	in.CustomerID = customerID
+	plan.in = in
 
 	// The note's own replay pre-check, judged against the replayed note's own branch by the wall.
 	caller, err := s.caller(ctx)
@@ -125,13 +216,12 @@ func (s *Service) prepareReturnAcross(ctx context.Context, in ReturnAcrossInput)
 		}
 		// The note's walls around its children: one customer (an order that is not the note
 		// customer's cannot ride the note) and one branch (the money rail is per branch).
-		if child.oc.CustomerID != in.CustomerID {
-			return nil, clientErr(http.StatusUnprocessableEntity,
-				"pos: order %s belongs to another customer, not the note's customer", child.oc.OrderNo)
+		var firstOC *returnOrderCtx
+		if len(plan.children) > 0 {
+			firstOC = &plan.children[0].oc
 		}
-		if plan.children != nil && plan.children[0].oc.BranchID != child.oc.BranchID {
-			return nil, clientErr(http.StatusUnprocessableEntity,
-				"pos: a return note covers one branch, order %s sits in another", child.oc.OrderNo)
+		if werr := noteWalls(firstOC, child.oc, in.CustomerID); werr != nil {
+			return nil, werr
 		}
 		plan.children = append(plan.children, child)
 	}

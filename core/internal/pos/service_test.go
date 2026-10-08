@@ -472,6 +472,10 @@ func (f *fakeStore) ListCustomerReturnableOrders(_ context.Context, customerID s
 	return out, nil
 }
 
+func (f *fakeStore) ReadReturnableLine(ctx context.Context, orderID, orderLineID string) (returnableLine, bool, error) {
+	return f.LockReturnableLine(ctx, nil, orderID, orderLineID)
+}
+
 func (f *fakeStore) LockReturnableLine(_ context.Context, _ pgx.Tx, orderID, orderLineID string) (returnableLine, bool, error) {
 	rl, ok := f.retLines[orderLineID]
 	if !ok || f.retCtx[orderID].OrderID != orderID {
