@@ -149,6 +149,9 @@ type Service struct {
 	standing InvoiceStandingReader
 	// backorderNotifier tells the rep when an order edit clears a short line's backorder (yard_pick_edit.go).
 	backorderNotifier BackorderNotifier
+	// pickHold is the billing read behind the pay before release hold (pick_hold.go,
+	// item 9.3): nil leaves the lane off (the composition root asserts the wiring at boot).
+	pickHold PickHoldReader
 }
 
 // txRecorder is the transactional half of the audit seam: write one row on the caller's transaction so
@@ -291,6 +294,28 @@ func (s *Service) SetStatus(ctx context.Context, tenant, actor, orderID, newStat
 	if !validStatus(newStatus) {
 		return httpx.BadRequestf("unknown order status %q", newStatus)
 	}
+	// Item 9.3: the pay before release hold guards the statuses that release
+	// or advance goods, at the choke point itself, whatever caller reached it.
+	// Item 9 Opus P2-2 widened the target from the picking rung alone to every
+	// forward move whose target ranks at or above it (holdGuardedTarget).
+	// Item 9 Opus P3-2: a caller with no tenant fence rides the checked write
+	// (the row lock plus the hold precheck, the cancel predicate's own path);
+	// a tenant scoped caller keeps its fenced plain write, the checked write
+	// carries no tenant predicate and must not silently widen the fence.
+	if holdGuardedTarget(newStatus) {
+		if tenant == "" {
+			oldStatus, err := s.store.UpdateStatusFromChecked(ctx, orderID, newStatus, everyStatusSlice,
+				func(ctx context.Context) error { return s.refuseHeldFromPicking(ctx, orderID) })
+			if err != nil {
+				return err
+			}
+			s.recordStatusChange(ctx, actor, orderID, oldStatus, newStatus, reason)
+			return nil
+		}
+		if err := s.refuseHeldFromPicking(ctx, orderID); err != nil {
+			return err
+		}
+	}
 	oldStatus, err := s.store.UpdateStatus(ctx, tenant, orderID, newStatus)
 	if err != nil {
 		// ErrNoTransition (target == current) is benign, surface it so a caller can ignore
@@ -360,6 +385,28 @@ func eventAllowedFrom(target string) []string {
 	}
 	sort.Strings(out) // deterministic order, the set is a query parameter and rides into test assertions
 	return out
+}
+
+// holdGuardedTarget names the status targets the pay before release hold
+// guards (item 9 Opus P2-2): every target that ranks at or above PICKING and
+// below CLOSED. PICKING starts releasing goods; READY, PARTIALLY_FULFILLED
+// and FULFILLED are the goods leaving or gone; INVOICED is the event driver
+// that jumps an order past the whole ladder the moment its invoice
+// finalizes. CLOSED is the terminal bookkeeping state, not a goods release,
+// and stays outside the hold; a held order's money question stays open
+// whatever the column says.
+func holdGuardedTarget(status string) bool {
+	r, ok := statusRank[status]
+	return ok && r >= statusRank["PICKING"] && r < statusRank["CLOSED"]
+}
+
+// everyStatusSlice is the full CHECK set, the allowedFrom that preserves the
+// choke point's TRANSITION-UNGUARDED contract while it routes through the
+// checked write for the hold's precheck (item 9 Opus P3-2): every status
+// remains a legal source, exactly as the plain UpdateStatus allowed.
+var everyStatusSlice = []string{
+	"DRAFT", "CONFIRMED", "PICKING", "READY", "PARTIALLY_FULFILLED",
+	"FULFILLED", "INVOICED", "CLOSED", "CANCELLED",
 }
 
 // AdvanceFromEvent is the ONLY sanctioned status writer for the event-driven drivers (consumer.go). It
@@ -554,6 +601,10 @@ type OrderView struct {
 	TotalCents    int64           `json:"total_cents"`
 	// HasBackorder is true while any line is short and still owed (migration 0369).
 	HasBackorder bool `json:"has_backorder"`
+	// PayHold is the pay before release block (item 9.3): held or not, the
+	// words, order total, paid so far, still owed. Absent when the read's seam
+	// is unwired or unreadable, never a block that reads as clear.
+	PayHold *OrderPayHold `json:"pay_hold,omitempty"`
 }
 
 // OrderRead returns one order's current status + this caller's legal actions. Authority mirrors the
@@ -592,6 +643,7 @@ func (s *Service) OrderRead(ctx context.Context, orderID string) (OrderView, err
 		LegalActions:   s.legalActions(ctx, caller, orderID, status),
 		EditableFields: s.offeredEditableFields(ctx, caller, orderID, status),
 		Lines:          []OrderViewLine{},
+		PayHold:        s.payHoldView(ctx, orderID, status),
 	}
 	// Lines + money are best-effort: a read that cannot load them still answers status and the
 	// available actions, exactly as it did before DIB-175 (an older fake/deploy without the edit seam
@@ -659,6 +711,37 @@ func (s *Service) legalActions(ctx context.Context, caller identity.StaffContext
 // A non-nil precheck (the cancel money predicate, B2-2) routes the write through the locked-predicate
 // variant so the predicate runs under the order-row lock; nil uses the single-statement guarded write.
 func (s *Service) setStatusGuarded(ctx context.Context, actor, orderID, newStatus, reason string, allowedFrom []string, precheck func(context.Context) error) error {
+	// Item 9.3: the pay before release hold guards the manual and event driven
+	// moves into the statuses that release or advance goods (this is the path
+	// TransitionManual and AdvanceFromEvent take, and so the tasks advance
+	// rule's adapter; SetStatus carries its own copy of the guard at the choke
+	// point). Item 9 Opus P2-2 widened the target from the picking rung alone
+	// to every forward move whose target ranks at or above it, so the event
+	// drivers cannot step a held order straight to READY, FULFILLED or
+	// INVOICED past the guard. Item 9 Opus P3-2: the read rides the guarded
+	// write's own transaction as its precheck (under the order row lock, the
+	// cancel money predicate's own path), not a pool read taken before the
+	// write. That narrows the window rather than closing it: a payment route
+	// that locks the order row (the Pay balance take does) is ordered against
+	// the move, but a reversal that does not take the order row (an NSF) can
+	// still land in the statement gap. An existing precheck (the cancel
+	// predicate) stays in front.
+	pre := precheck
+	if holdGuardedTarget(newStatus) {
+		hold := func(ctx context.Context) error { return s.refuseHeldFromPicking(ctx, orderID) }
+		if pre == nil {
+			pre = hold
+		} else {
+			inner := pre
+			composed := func(ctx context.Context) error {
+				if err := inner(ctx); err != nil {
+					return err
+				}
+				return hold(ctx)
+			}
+			pre = composed
+		}
+	}
 	var oldStatus string
 	var err error
 	// W5 seam 3: when this target has a hold effect AND the reservation lane is available, the
@@ -667,18 +750,46 @@ func (s *Service) setStatusGuarded(ctx context.Context, actor, orderID, newStatu
 	// unchanged, the reservation lane is strictly additive and cannot alter a transition's legality.
 	effect := reservationEffectFor(newStatus)
 	if rs, ok := s.reservationLane(); ok && (effect == effectReserve || effect == effectConsume || effect == effectRelease) {
-		oldStatus, err = rs.UpdateStatusFromTx(ctx, orderID, newStatus, allowedFrom, precheck,
+		oldStatus, err = rs.UpdateStatusFromTx(ctx, orderID, newStatus, allowedFrom, pre,
 			s.applyReservationsTx(effect, orderID, actor))
-	} else if precheck != nil {
-		oldStatus, err = s.store.UpdateStatusFromChecked(ctx, orderID, newStatus, allowedFrom, precheck)
+	} else if pre != nil {
+		oldStatus, err = s.store.UpdateStatusFromChecked(ctx, orderID, newStatus, allowedFrom, pre)
 	} else {
 		oldStatus, err = s.store.UpdateStatusFrom(ctx, orderID, newStatus, allowedFrom)
 	}
 	if err != nil {
+		// The hold's sentence outranks the ladder's: the in-write read sits
+		// behind the legality check, so a held order whose move is also off
+		// the ladder (a converted order not yet confirmed) reads the hold
+		// here, not "illegal status transition" (item 9 Opus P3-2 follow up).
+		// Item 9 F review N6: only for an order not yet past picking (a
+		// converted order not yet confirmed). A delivered order that owes
+		// again keeps the ladder's answer: the sentence speaks of picking.
+		if errors.Is(err, ErrIllegalTransition) && holdGuardedTarget(newStatus) && s.notYetPastPicking(ctx, orderID, oldStatus) {
+			if herr := s.refuseHeldFromPicking(ctx, orderID); errors.Is(herr, ErrHeldFromPicking) {
+				return herr
+			}
+		}
 		return err // ErrNotFound / ErrIllegalTransition / ErrNoTransition / ErrCancelBlocked / ErrCancelUnverifiable
 	}
 	s.recordStatusChange(ctx, actor, orderID, oldStatus, newStatus, reason)
 	return nil
+}
+
+// notYetPastPicking reports whether the order has not reached the picking rung.
+// current is the status the failed write saw when it reported one; otherwise
+// the header is read. An order whose status cannot be read is treated as past
+// picking, so the ladder's own answer stands.
+func (s *Service) notYetPastPicking(ctx context.Context, orderID, current string) bool {
+	if current == "" {
+		status, _, err := s.store.OrderHeader(ctx, orderID)
+		if err != nil {
+			return false
+		}
+		current = status
+	}
+	_, known := statusRank[current]
+	return known && !pastPicking(current)
 }
 
 // validStatus reports whether status is one of the orders CHECK values (0008).

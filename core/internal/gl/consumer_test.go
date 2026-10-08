@@ -100,6 +100,48 @@ func TestAC3_PostingMatrix(t *testing.T) {
 	}
 }
 
+// Sub item 9.5: a supplier deposit document (source_kind SUPPLIER_DEPOSIT,
+// the invoice a supplier's demanded deposit bills to a credit account) posts
+// the LIABILITY, not revenue: DR 1100 AR / CR 2300 Customer Deposits for its
+// whole total, and no revenue or tax legs (the goods it secures have not
+// booked; their own invoice posts its own revenue).
+func TestSupplierDepositInvoicePostsToCustomerDeposits(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeStore()
+	svc := newTestService(f).WithInvoiceReader(fakeInvoiceReader{amt: InvoiceAmounts{
+		SubtotalCents: 4000, TaxCents: 0, TotalCents: 4000, BranchID: "b1", InvoiceNo: "INV-SD",
+		SourceKind: "SUPPLIER_DEPOSIT",
+	}})
+	if err := svc.consume(ctx, ev("ar.invoice.finalized", map[string]any{"invoice_id": "isd1"})); err != nil {
+		t.Fatalf("deposit invoice consume: %v", err)
+	}
+	d := f.lastInserted()
+	wantLeg(t, d, "1100", 4000, 0)
+	wantLeg(t, d, "2300", 0, 4000)
+	if _, has := leg(d, "4000"); has {
+		t.Fatalf("the deposit document must post no revenue leg: %v", d.Lines)
+	}
+	if _, has := leg(d, "2200"); has {
+		t.Fatalf("the deposit document must post no tax leg: %v", d.Lines)
+	}
+	if !d.balanced() {
+		t.Fatalf("deposit journal unbalanced: dr=%d cr=%d", d.debitTotal(), d.creditTotal())
+	}
+
+	// The ordinary invoice beside it still posts revenue and tax: the marker,
+	// not the event, decides.
+	f2 := newFakeStore()
+	plain := newTestService(f2).WithInvoiceReader(fakeInvoiceReader{amt: InvoiceAmounts{
+		SubtotalCents: 7300, TaxCents: 949, TotalCents: 8249, BranchID: "b1", InvoiceNo: "INV-REST",
+	}})
+	if err := plain.consume(ctx, ev("ar.invoice.finalized", map[string]any{"invoice_id": "i2"})); err != nil {
+		t.Fatalf("rest invoice consume: %v", err)
+	}
+	d2 := f2.lastInserted()
+	wantLeg(t, d2, "4000", 0, 7300)
+	wantLeg(t, d2, "2200", 0, 949)
+}
+
 // AC7, the FN 13/8/5 split: invoice.finalized CREDITED 2200 the full 13%; the relief REDUCES that liability
 // to the 5% net federal by DEBITING 2200 for the 8% ON portion, offsetting the FN relief recoverable (1165):
 // DR 2200 8% / CR 1165 8%. A standard-rate sale (found=false) books nothing.

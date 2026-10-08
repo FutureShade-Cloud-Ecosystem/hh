@@ -167,6 +167,8 @@ func buildPlan(in planInput) ([]row, planSummary, error) {
 	b.orderBook()
 	b.invoices()
 	b.counterSales()
+	// Item 9.9: two deposit sales a tester can walk, after the counter sales whose trio they follow.
+	b.depositSales()
 	b.fleet()
 	b.runs()
 	if err := b.stops(); err != nil {

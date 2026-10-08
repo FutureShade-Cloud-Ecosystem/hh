@@ -605,9 +605,11 @@ export async function settle(page: Page): Promise<void> {
   // loaded chrome is the returns desk itself, and the sale's stepper must be
   // hidden; otherwise a mounted till shows its stepper and the session bar.
   const returnsUp = await page.getByTestId("returns").isVisible();
+  // Item 9.7: Pay balance is a surface of its own beside Returns; the same rule holds for it.
+  const payBalanceUp = await page.getByTestId("pay-balance").isVisible();
   const till = page.locator("hos-pos-flow-steps");
-  if (returnsUp) {
-    await expect(page.getByTestId("returns")).toBeVisible();
+  if (returnsUp || payBalanceUp) {
+    await expect(page.getByTestId(returnsUp ? "returns" : "pay-balance")).toBeVisible();
     if ((await till.count()) > 0) await expect(till.first()).toBeHidden();
   } else if ((await till.count()) > 0) {
     await expect(till).toBeVisible();
@@ -696,4 +698,10 @@ export async function shotParts(
 export async function openReturns(page: Page): Promise<void> {
   if (!(await page.getByTestId("returns").isVisible())) await page.getByTestId("till-returns-entry").click();
   await expect(page.getByTestId("returns")).toBeVisible();
+}
+
+/** Item 9.7: Pay balance is its own surface; open it from the bar (a no-op when it is already up). */
+export async function openPayBalance(page: Page): Promise<void> {
+  if (!(await page.getByTestId("pay-balance").isVisible())) await page.getByTestId("till-pay-balance-entry").click();
+  await expect(page.getByTestId("pay-balance")).toBeVisible();
 }

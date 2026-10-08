@@ -19,6 +19,11 @@ const invoiceColumns = `id::text, invoice_no::text, customer_id::text, order_id:
 // Repository owns reads of invoices + invoice_lines + customer_transactions (pgx).
 type Repository struct {
 	pool *pgxpool.Pool // nil in scaffold/tests
+	// holdOrders and holdCustomers are the pay before release hold's seams to
+	// the order and customer modules (pick_hold.go), bound at the composition
+	// root.
+	holdOrders    PickHoldOrders
+	holdCustomers PickHoldCustomers
 }
 
 func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: pool} }

@@ -484,6 +484,37 @@ func TestDemoWorld_Quotes(t *testing.T) {
 		t.Error("Q3 line 1 (cleared by the Sales manager) shows no clearer")
 	}
 
+	// The Cash On Demand account prices its pavers by its own rule (the seed's R06, ten percent off
+	// list), not by the shared CONTRACTOR tier the account read before the rule existed (round 14's
+	// finding (b): the tier's fifteen percent put the Holland Paver at 506, under the floor). The
+	// engine's answer is R06's net at the resolver's own rounding, 536 (535.5 half up; the plan's
+	// pricer rounds the discount instead and carries 535, the one cent on which the two roundings
+	// part, and both sit above the floor), and that answer clears the floor over the seeded Trenton
+	// cost.
+	codRsp := manager.call("POST", "/api/v1/pos/counter-prices", map[string]any{
+		"branch_id": trentonBranchID, "customer_id": custID("C10"),
+		"items": []map[string]any{{"product_id": demoID("product:P01"), "qty_entered": 1.0, "uom_entered": "PC"}}})
+	codRsp.ok(t, http.StatusOK)
+	var codPrices counterPrices
+	codRsp.decode(t, &codPrices)
+	if len(codPrices.Prices) != 1 {
+		t.Fatalf("the C10 x P01 price answer carries %d rows, want 1", len(codPrices.Prices))
+	}
+	if codPrices.Prices[0].CustomerCents != 536 {
+		t.Errorf("the engine prices C10 x P01 at %d, want the account rule's 536 (the shared tier would answer 506)",
+			codPrices.Prices[0].CustomerCents)
+	}
+	var codCost int64
+	if err := pool.QueryRow(ctx,
+		`SELECT avg_unit_cost_cents FROM product_branch_costs WHERE product_id = $1 AND branch_id = $2`,
+		demoID("product:P01"), trentonBranchID).Scan(&codCost); err != nil {
+		t.Fatalf("the seeded Trenton cost of P01: %v", err)
+	}
+	if margin := qMarginBps(codPrices.Prices[0].CustomerCents, codCost); margin < demoFloorBps {
+		t.Errorf("C10 x P01 prices %d over a Trenton cost of %d, margin %d bps under the %d bps floor",
+			codPrices.Prices[0].CustomerCents, codCost, margin, demoFloorBps)
+	}
+
 	// 9. the totals equal what the builder computes: the terms write, unchanged terms, restamps the
 	// header from the lines and the flat rate, and the figures must not move.
 	for _, key := range []string{"Q1", "Q2"} {

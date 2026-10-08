@@ -85,6 +85,18 @@ type fakeStore struct {
 	pickups       map[string]ReturnPickup
 	// A-06 portal return requests (methods live in return_requests_test.go)
 	returnRequests map[string]ReturnRequest
+	// -- item 9.4, Pay balance state (pay_balance_test.go's methods) --
+	owingOrders     []OwingOrder                    // canned find answer
+	owingTruncated  bool                            // canned find truncated flag
+	payFindTerm     string                          // the term the find passed
+	payFindBranches []string                        // the branch reach the find passed
+	payFindLimit    int                             // the limit the find passed
+	owing           map[string]payBalanceOrderFacts // order id -> its facts (the pre-read and the lock)
+	payByKey        map[string]payBalanceReplayRow  // take key -> the payments row it wrote
+	payLocks        []string                        // order ids the take locked, in order
+	settled         []settleInvoice                 // the settles the take applied
+	payTrail        []OwingPayment                  // the money trail the reads answer
+	holdView        map[string]payBalanceHoldView   // the hold's in-transaction reading the answer carries
 
 	seq int
 }
@@ -133,6 +145,8 @@ func newFakeStore(tr *[]string) *fakeStore {
 		staff:          map[string]string{},
 		pickups:        map[string]ReturnPickup{},
 		returnRequests: map[string]ReturnRequest{},
+		owing:          map[string]payBalanceOrderFacts{},
+		payByKey:       map[string]payBalanceReplayRow{},
 	}
 }
 
@@ -720,6 +734,7 @@ type fakeTender struct {
 	// sessionBranch is the branch GetSession reports for the drawer (DIB-389). Defaults to
 	// baseInput()'s branch so the equality guard is satisfied unless a test deliberately diverges.
 	sessionBranch string
+	sessionStatus string
 	sessionErr    error
 }
 
@@ -727,7 +742,11 @@ func (t *fakeTender) GetSession(_ context.Context, id string) (till.SessionDetai
 	if t.sessionErr != nil {
 		return till.SessionDetail{}, t.sessionErr
 	}
-	return till.SessionDetail{TillSession: till.TillSession{ID: id, BranchID: t.sessionBranch, Status: "OPEN"}}, nil
+	status := t.sessionStatus
+	if status == "" {
+		status = "OPEN"
+	}
+	return till.SessionDetail{TillSession: till.TillSession{ID: id, BranchID: t.sessionBranch, Status: status}}, nil
 }
 
 // CaptureCard is the pre-transaction capture double: one canned capture per leg, keyed by the leg
@@ -1075,9 +1094,10 @@ func TestSale_RecordsPaymentReceived_PostCommit_OncePerCommittedTender(t *testin
 		t.Fatal("a rolled-back sale must not invoke the receipt hook")
 	}
 
-	// An ACCOUNT sale (no tender) records nothing.
+	// An ACCOUNT sale (no tender) records nothing. Item 9.2: an ACCOUNT ring
+	// needs a credit shaped account (terms and a line).
 	h4 := newHarness()
-	h4.store.customers["cust-abc"] = customerRec{ID: "cust-abc", CustomerType: "CONTRACTOR", CreditLimitCents: 5000000}
+	h4.store.customers["cust-abc"] = customerRec{ID: "cust-abc", CustomerType: "CONTRACTOR", PaymentTermsDays: 30, CreditLimitCents: 5000000}
 	acct := baseInput()
 	acct.Tender = TenderAccount
 	if _, err := h4.svc.Sale(context.Background(), acct); err != nil {
@@ -1123,6 +1143,10 @@ func TestSale_Account_FinalizedNoPayment(t *testing.T) {
 
 func TestSale_Account_OverLimit_BlockedNoCommit(t *testing.T) {
 	h := newHarness()
+	// Item 9.2: an ACCOUNT ring needs a credit shaped account to reach the
+	// gate at all (the shape refusal, sale_deposit.go), so this leg plants one
+	// and lets the GATE be the thing that blocks, which is its subject.
+	h.store.customers["cust-abc"] = customerRec{ID: "cust-abc", CustomerType: "CONTRACTOR", PaymentTermsDays: 30, CreditLimitCents: 5000000}
 	h.credit.block = &identity.ActionBlocked{Policy: identity.PolicyCredit}
 	in := baseInput()
 	in.Tender = TenderAccount
@@ -1137,6 +1161,12 @@ func TestSale_Account_OverLimit_BlockedNoCommit(t *testing.T) {
 }
 
 // -- U4, no credit → COD constraint ----------------------------------------
+//
+// Item 9.2 narrowed this leg's subject: the ring now refuses an ACCOUNT shape
+// on a no credit account BEFORE the gate runs (ErrAccountShapeNotAvailable,
+// sale_deposit.go), so a 0/0 account never reaches the identity decision any
+// more. The leg asserts the new refusal; the identity gate's own COD answer
+// still stands behind its other callers (the quote conversion's gate).
 
 func TestSale_Account_NoCredit_CODConstraint(t *testing.T) {
 	h := newHarness()
@@ -1144,9 +1174,9 @@ func TestSale_Account_NoCredit_CODConstraint(t *testing.T) {
 	in := baseInput()
 	in.Tender = TenderAccount
 	_, err := h.svc.Sale(context.Background(), in)
-	var cb ErrCreditBlocked
-	if !errors.As(err, &cb) || cb.Policy != string(identity.PolicyCOD) {
-		t.Fatalf("want ErrCreditBlocked(COD_CONSTRAINT), got %v", err)
+	var asn ErrAccountShapeNotAvailable
+	if !errors.As(err, &asn) || asn.CreditLimitCents != 0 {
+		t.Fatalf("want ErrAccountShapeNotAvailable on a no credit account, got %v", err)
 	}
 }
 

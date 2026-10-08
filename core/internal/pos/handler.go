@@ -101,6 +101,41 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("POST /api/v1/pos/pricing-orders", g.RequireStaff(h.staff(h.createPricingOrder)))
 	r.Handle("GET /api/v1/pos/pricing-orders/{id}", g.RequireStaff(h.staff(h.getPricingOrder)))
 	r.Handle("GET /api/v1/pos/pricing-orders", g.RequireStaff(h.staff(h.listPricingOrders)))
+	// -- item 9.4: Pay balance at the counter till, staff only, branch fenced
+	// (pay_balance.go). The find is a read of money owed; the take moves money
+	// through the drawer and the card rail, both work level.
+	r.Handle("GET /api/v1/pos/pay-balance", g.RequireStaff(h.staff(h.findPayBalance)))
+	r.Handle("POST /api/v1/pos/pay-balance", g.RequireStaff(h.staff(h.takePayBalance)))
+}
+
+// findPayBalance answers the orders that owe money and match the term: order
+// number, customer name or phone. Another branch's order is simply not found.
+func (h *Handler) findPayBalance(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	out, truncated, err := h.svc.PayBalanceFind(r.Context(), r.URL.Query().Get("q"))
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out, "truncated": truncated})
+}
+
+// takePayBalance takes the whole balance of one order by CASH or CARD. 201 on
+// the first take, 200 with the same shape on a replay.
+func (h *Handler) takePayBalance(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in PayBalanceTakeInput
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	out, err := h.svc.PayBalanceTake(r.Context(), in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	status := http.StatusCreated
+	if out.Replayed {
+		status = http.StatusOK
+	}
+	httpx.WriteJSON(w, status, out)
 }
 
 // -- W7 handlers -------------------------------------------------------------
@@ -545,7 +580,64 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	var ra ErrRefundApprovalRequired
 	var mgr ErrCardChargeNeedsManager
 	var sm ErrSplitTotalMismatch
+	var asn ErrAccountShapeNotAvailable
+	var dcn ErrDepositNotCollectNow
+	var dor ErrDepositOutOfRange
+	var pba ErrPayBalancePartAmount
+	var cnt ErrCODNotForTermsAccount
+	var sdn ErrSupplierDepositNotCredit
+	var sdo ErrSupplierDepositOverPretax
 	switch {
+	case errors.As(err, &pba):
+		// Item 9.4, the part amount refusal, the problem body style again.
+		httpx.ErrorWith(w, http.StatusUnprocessableEntity, "pay_balance_whole_only", map[string]any{
+			"sent_cents":    pba.SentCents,
+			"balance_cents": pba.BalanceCents,
+			"message":       payBalancePartMessage(pba),
+		})
+	case errors.As(err, &asn):
+		// Item 9.2, the on account shape refusal: the problem body style
+		// split_total_mismatch uses, a stable word the till switches on, the
+		// money as integer cents fields, and a message in dollars.
+		httpx.ErrorWith(w, http.StatusUnprocessableEntity, "on_account_not_available", map[string]any{
+			"amount_cents":       asn.AmountCents,
+			"credit_limit_cents": asn.CreditLimitCents,
+			"message":            accountShapeMessage(asn),
+		})
+	case errors.As(err, &dcn):
+		// Item 9.2, the deposit on a collect now sale, same problem body style.
+		httpx.ErrorWith(w, http.StatusUnprocessableEntity, "deposit_not_collect_now", map[string]any{
+			"total_cents":   dcn.TotalCents,
+			"deposit_cents": dcn.DepositCents,
+			"message":       depositNotCollectNowMessage(dcn.DepositCents, dcn.TotalCents),
+		})
+	case errors.As(err, &dor):
+		// The deposit's money bound (run D's finding), the problem body style
+		// again: the stable word, the two amounts as integer cents fields, and
+		// the dollar sentence.
+		httpx.ErrorWith(w, http.StatusUnprocessableEntity, "deposit_out_of_range", map[string]any{
+			"deposit_cents": dor.DepositCents,
+			"total_cents":   dor.TotalCents,
+			"message":       depositOutOfRangeMessage(dor),
+		})
+	case errors.As(err, &sdn):
+		// Sub item 9.5, the supplier deposit's shape refusal, same problem body style.
+		httpx.ErrorWith(w, http.StatusUnprocessableEntity, "supplier_deposit_not_credit", map[string]any{
+			"message": supplierDepositNotCreditMessage(sdn),
+		})
+	case errors.As(err, &sdo):
+		// Sub item 9.5, the deposit above the sale's pre-tax amount.
+		httpx.ErrorWith(w, http.StatusUnprocessableEntity, "supplier_deposit_over_pretax", map[string]any{
+			"deposit_cents":  sdo.DepositCents,
+			"subtotal_cents": sdo.SubtotalCents,
+			"message":        supplierDepositOverPretaxMessage(sdo),
+		})
+	case errors.As(err, &cnt):
+		// Item 9 review P3-7: the pay before release sale type refused for an
+		// account that pays on terms, a stable word and one plain sentence.
+		httpx.ErrorWith(w, http.StatusUnprocessableEntity, "cod_not_for_terms_account", map[string]any{
+			"message": codNotForTermsMessage(),
+		})
 	case errors.As(err, &sm):
 		// The split-tender sum refusal (DIB-165) is a problem body a person
 		// can read: the stable word, the two amounts as integer cents

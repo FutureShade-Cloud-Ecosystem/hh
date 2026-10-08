@@ -124,6 +124,29 @@ func (s *Service) buildInvoiceFinalized(ctx context.Context, payload []byte) (jo
 	if err != nil {
 		return journalDraft{}, false, err
 	}
+	// Sub item 9.5: a supplier deposit document is the liability, not revenue.
+	// DR the receivable, CR Customer Deposits (posting rule
+	// invoice.finalized/customer_deposit, the 0007 account nothing used until
+	// now), the whole total, and no revenue or tax legs: the goods the deposit
+	// secures have not booked yet, and their invoice posts its own revenue.
+	if a.SourceKind == "SUPPLIER_DEPOSIT" {
+		depCode, err := pick(rules, et, "customer_deposit")
+		if err != nil {
+			return journalDraft{}, false, err
+		}
+		return journalDraft{
+			Source:         SourceInvoice,
+			SourceRefID:    p.InvoiceID,
+			IdempotencyKey: "ar.invoice.finalized:" + p.InvoiceID,
+			Memo:           "Supplier deposit " + a.InvoiceNo,
+			BranchID:       a.BranchID,
+			OccurredAt:     a.FinalizedAt,
+			Lines: []draftLine{
+				dr(arCode, a.TotalCents, "AR"),
+				cr(depCode, a.TotalCents, "customer deposit"),
+			},
+		}, true, nil
+	}
 	revCode, err := pick(rules, et, "revenue")
 	if err != nil {
 		return journalDraft{}, false, err

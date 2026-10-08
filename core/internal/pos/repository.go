@@ -17,6 +17,9 @@ import (
 // Repository implements posStore over pgx. The constructor is the stable surface.
 type Repository struct {
 	pool *pgxpool.Pool
+	// payBalance is the Pay balance door's seam to the owning modules
+	// (pay_balance_sources.go), bound at the composition root.
+	payBalance PayBalanceSources
 }
 
 // NewRepository wraps a pool (may be nil in scaffold/offline mode). The Sale opens a tx from this pool.
@@ -54,13 +57,26 @@ func (r *Repository) FindSaleByKey(ctx context.Context, key string) (Sale, bool,
 	// DIB-488 rev 6: the replay also reads back the 0168 order facts (po_job_ref / salesperson, with
 	// the display name joined for the sold panel) and the cash-tendered amount parked in the order
 	// metadata, so a replayed ring answers VERBATIM, change due included.
+	// Item 9 delta review P3-a: the deposits replay verbatim too, the counter deposit from the
+	// order metadata and the supplier's demanded deposit with its deposit document's number read
+	// back off the SUPPLIER_DEPOSIT invoice, so the Summary keeps its lines after a lost answer.
 	const q = `
 SELECT ps.order_id::text, o.order_no, COALESCE(ps.invoice_id::text,''), COALESCE(i.invoice_no,''),
        COALESCE(ps.payment_id::text,''), COALESCE(pay.gateway_ref,''), ps.tender, ps.sale_type, ps.tax_reason_code,
        o.subtotal_cents, o.tax_cents, o.total_cents,
        COALESCE(o.po_job_ref,''), COALESCE(o.salesperson_id::text,''), COALESCE(u.display_name,''),
        COALESCE((o.metadata->>'cash_tendered_cents')::bigint, 0),
-       COALESCE(o.job_address,''), COALESCE(o.job_reference,'')
+       COALESCE(o.job_address,''), COALESCE(o.job_reference,''),
+       COALESCE((o.metadata->>'deposit_cents')::bigint, 0),
+       COALESCE((o.metadata->>'supplier_deposit_cents')::bigint, 0),
+       COALESCE((SELECT d.id::text FROM invoices d
+                  WHERE d.order_id = o.id AND d.doc_type = 'INVOICE'
+                    AND d.source_kind = 'SUPPLIER_DEPOSIT' AND d.status NOT IN ('DRAFT','VOID')
+                  ORDER BY d.id LIMIT 1), ''),
+       COALESCE((SELECT d.invoice_no FROM invoices d
+                  WHERE d.order_id = o.id AND d.doc_type = 'INVOICE'
+                    AND d.source_kind = 'SUPPLIER_DEPOSIT' AND d.status NOT IN ('DRAFT','VOID')
+                  ORDER BY d.id LIMIT 1), '')
   FROM pos_sale ps
   JOIN orders o ON o.id = ps.order_id
   LEFT JOIN invoices i ON i.id = ps.invoice_id
@@ -73,6 +89,8 @@ SELECT ps.order_id::text, o.order_no, COALESCE(ps.invoice_id::text,''), COALESCE
 		&s.Tender, &s.SaleType, &s.TaxReasonCode, &s.SubtotalCents, &s.TaxCents, &s.TotalCents,
 		&s.POJobRef, &s.SalespersonID, &s.SalespersonName, &s.CashTenderedCents,
 		&s.JobAddress, &s.JobReference, // DIB-488 rev 8 (0170): job facts replay verbatim too
+		&s.DepositCents, &s.SupplierDepositCents,
+		&s.SupplierDepositInvoiceID, &s.SupplierDepositInvoiceNo, // item 9 delta review P3-a
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Sale{}, false, nil
@@ -346,14 +364,15 @@ WITH iseq AS (INSERT INTO scope_sequences (scope) VALUES ('invoices')
               RETURNING next_value)
 INSERT INTO invoices (invoice_no, customer_id, order_id, branch_id, status, due_date,
                       subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, created_by,
-                      org_id, seq)
-VALUES ('#INV-' || nextval('invoice_no_seq'), $1, $2, $3, $4, $5, $6, $7, $8, $9, now(), $10,
+                      source_kind, org_id, seq)
+VALUES ('#INV-' || nextval('invoice_no_seq'), $1, $2, $3, $4, $5, $6, $7, $8, $9, now(), $10, $11,
         (SELECT org_id FROM locations WHERE id = $3::uuid),
         (SELECT next_value FROM iseq))
 RETURNING id::text, invoice_no`
 	var id, no string
 	err := tx.QueryRow(ctx, q, inv.CustomerID, nullStr(inv.OrderID), inv.BranchID, inv.Status, inv.DueDate,
-		inv.SubtotalCents, inv.TaxCents, inv.TotalCents, inv.BalanceCents, nullStr(inv.CreatedBy)).Scan(&id, &no)
+		inv.SubtotalCents, inv.TaxCents, inv.TotalCents, inv.BalanceCents, nullStr(inv.CreatedBy),
+		inv.SourceKind).Scan(&id, &no)
 	return id, no, err
 }
 

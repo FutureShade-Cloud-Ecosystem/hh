@@ -207,7 +207,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 
 	// billingRepo is reused as gl.InvoiceReader + gl.ARSubledger
 	// (billing/gl_seam.go) and lien's holdback facts.
-	billingRepo := billing.NewRepository(pool)
+	billingRepo := holdBillingRepo(pool)
 	billingSvc := billing.NewService(billingRepo)
 
 	// The SMS belt (the fold's shared half) was constructed BEFORE the
@@ -276,7 +276,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// till's role-configuration rules ride the same wiring (RT-B): the
 	// dealer's configuration loaded at boot, the approver credential
 	// through the same guards the routes register behind.
-	posRepo := pos.NewRepository(pool)
+	posRepo := pos.NewRepository(pool).WithPayBalanceSources(newPayBalanceSources(pool))
 	posSvc := wireTillRules(pos.NewService(posRepo).
 		WithLineResolver(pricingSvc).
 		WithTenderTaker(tillSvc).
@@ -298,6 +298,29 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	if !orderSvc.CancelGuardsWired() {
 		panic("order: cancel guards not wired - a manual CANCELLED could not verify attached money state")
 	}
+
+	// Item 9.3 (the row 1047 deposits work): the pay before release hold on
+	// every path that releases goods (picking, yard picks, the will call
+	// doors), read from the money through billing. The lane is additive in the
+	// service (a scaffold composition without it behaves as before), so the
+	// boot fail-fast here is what keeps a deploy from serving with it dark,
+	// the cancel guards' own posture.
+	orderSvc.WithPickHoldReader(pickHoldAdapter{repo: billingRepo})
+	if !orderSvc.PickHoldWired() {
+		panic("order: pick hold reader not wired - a pay before release order could reach picking unpaid")
+	}
+	ops.dispatchSvc.WithPickHoldGate(dispatchPickHoldAdapter{repo: billingRepo})
+	if !ops.dispatchSvc.PickHoldGateWired() {
+		panic("dispatch: pick hold gate not wired - a pay before release order's will call doors could release goods unpaid")
+	}
+
+	// Item 9 review P2-2: the Pay balance take raises an uninvoiced order's
+	// invoice through the SAME billing writer the desk's order payment raises
+	// with (the quoteMoneyDoor writer), on the take's own transaction, so the
+	// whole balance is one number at every door and there is no second writer
+	// to drift from the first.
+	posSvc.WithPayBalanceInvoicer(posPayBalanceInvoicer{w: billing.NewInvoiceWriter(pool).
+		WithOrderSource(quoteAgreedOrderSource{w6cOrderInvoiceSource: w6cOrderInvoiceSource{svc: orderSvc}, svc: orderSvc})})
 
 	// A-21 audit viewer routes (the module carried since the foundations;
 	// its registration lands with the fold).
@@ -422,9 +445,16 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// confirm path takes, and the tenant order seam the order module's
 	// tenant-scoped reads serve. Unwired provider would refuse confirms
 	// exactly as the public path's ErrNoSignatureProvider does; wired
-	// here, both paths seal through one provider.
-	if err := ops.syncEngine.RegisterScope("pickups", dispatch.NewPickupsSyncStore(
-		pool, dispatchTenantOrders{repo: orderRepo}, dispatchSignatureAdapter{svc: posSvc}, linkedUserID(pool))); err != nil {
+	// here, both paths seal through one provider. Item 9 Opus P1-2: the
+	// confirm also takes the pick hold gate (the same billing read the
+	// public confirm consults), read inside the confirm's own
+	// transaction, with the boot fail-fast beside it.
+	pickupsSync := dispatch.NewPickupsSyncStore(
+		pool, dispatchTenantOrders{repo: orderRepo}, dispatchSignatureAdapter{svc: posSvc}, dispatchPickHoldAdapter{repo: billingRepo}, linkedUserID(pool))
+	if !pickupsSync.PickHoldGateWired() {
+		panic("dispatch: pickups sync store pick hold gate not wired - a pay before release order's pickup could be confirmed offline unpaid")
+	}
+	if err := ops.syncEngine.RegisterScope("pickups", pickupsSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 

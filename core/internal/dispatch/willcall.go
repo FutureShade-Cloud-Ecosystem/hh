@@ -107,6 +107,11 @@ func (s *Service) MintWillCall(ctx context.Context, orderID string, ttl time.Dur
 	if err := s.requirePicked(ctx, brief.ID); err != nil {
 		return MintedPickup{}, err
 	}
+	// Item 9.3: no rack tag for an order held from picking under a pay before
+	// release shape, the goods wait for the money (pick_hold.go).
+	if err := s.refuseHeldFromPicking(ctx, brief.ID); err != nil {
+		return MintedPickup{}, err
+	}
 	if ttl <= 0 {
 		ttl = defaultPickupTTL
 	}
@@ -332,6 +337,12 @@ func (s *Service) ConfirmWillCall(ctx context.Context, rawToken, typedName strin
 	if err != nil {
 		return PublicWillCall{}, err
 	}
+	return s.confirmWillCall(ctx, w, typedName, affirmed)
+}
+
+// confirmWillCall is the confirm on a RESOLVED live pickup (the split is the
+// guard's own test seam: the unit legs hold a canned row and drive the body).
+func (s *Service) confirmWillCall(ctx context.Context, w WillCall, typedName string, affirmed bool) (PublicWillCall, error) {
 	name := strings.TrimSpace(typedName)
 	if name == "" {
 		return PublicWillCall{}, httpx.BadRequestf("type your full name to confirm this pickup")
@@ -344,6 +355,12 @@ func (s *Service) ConfirmWillCall(ctx context.Context, rawToken, typedName strin
 	}
 	if s.sig == nil {
 		return PublicWillCall{}, ErrNoSignatureProvider
+	}
+	// Item 9.3: a held order's goods do not leave through the self
+	// confirmation either, whatever live token predates the reopened balance
+	// (an NSF bounce can re-owe an order after its tag was minted).
+	if err := s.refuseHeldFromPicking(ctx, w.OrderID); err != nil {
+		return PublicWillCall{}, err
 	}
 	ref, err := s.sig.CaptureTyped(ctx, TypedAttestation{
 		Purpose: SignaturePurposePOD, RefType: RefTypeWillCall, RefID: w.ID,
