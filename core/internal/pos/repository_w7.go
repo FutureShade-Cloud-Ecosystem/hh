@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/jackc/pgx/v5"
@@ -724,3 +725,28 @@ func (r *Repository) ReadProductSnapshot(ctx context.Context, productID string) 
 	}
 	return sku, name, err
 }
+
+// DepositDocumentIDsTx lists the order's live SUPPLIER_DEPOSIT documents on the open Return
+// transaction (the same predicate the owing read carries: not DRAFT, not VOID), oldest first.
+func (r *Repository) DepositDocumentIDsTx(ctx context.Context, tx pgx.Tx, orderID string) ([]string, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT id::text FROM invoices
+		 WHERE order_id = $1::uuid AND doc_type = 'INVOICE'
+		   AND source_kind = 'SUPPLIER_DEPOSIT' AND status NOT IN ('DRAFT','VOID')
+		 ORDER BY created_at, id`, orderID)
+	if err != nil {
+		return nil, fmt.Errorf("pos: deposit documents for %s: %w", orderID, err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("pos: scan deposit document: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+var _ returnDepositStore = (*Repository)(nil)
