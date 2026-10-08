@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { PosAccountStanding, PosAddonSuggestions, PosCounterPriceInput, PosCounterPrices, PosCustomerLines, PosDiscountApproverList, PosHotkeys, PosMarginGlance, PosMarginGlanceInput, PosOwingOrderList, PosParkInput, PosParkedDiscard, PosParkedTicket, PosParkedTicketPage, PosPayBalanceTakeInput, PosPayBalanceTaken, PosPaymentGrant, PosPickupAdvance, PosPolicy, PosPolicyChangePage, PosPricingOrder, PosPricingOrderInput, PosPricingOrderPage, PosQuickPicks, PosReliefAssessInput, PosReliefOutcome, PosReturn, PosReturnInput, PosReturnLookup, PosReturnPickup, PosReturnPickupPage, PosReturnRequest, PosReturnRequestPage, PosReturnRequestReject, PosSale, PosSaleInput, PosSalePreview, PosSalePreviewInput, PosSaleSummaryPage, PosSaleView, PosSalespersonPage, PosSignatureCapture, PosSignatureRef, PosStockGlance, PosTaxRate, PosTypedAttestation, PosTypedSignatureRef, PosWorkspacePrefs, PosWorkspaceSaveInput } from "./types.js";
+import type { PosAccountStanding, PosAddonSuggestions, PosCounterPriceInput, PosCounterPrices, PosCustomerLines, PosDiscountApproverList, PosHotkeys, PosMarginGlance, PosMarginGlanceInput, PosOwingOrderList, PosParkInput, PosParkedDiscard, PosParkedTicket, PosParkedTicketPage, PosPayBalanceTakeInput, PosPayBalanceTaken, PosPaymentGrant, PosPickupAdvance, PosPolicy, PosPolicyChangePage, PosPricingOrder, PosPricingOrderInput, PosPricingOrderPage, PosQuickPicks, PosReliefAssessInput, PosReliefOutcome, PosReturn, PosReturnAcrossInput, PosReturnInput, PosReturnLookup, PosReturnNote, PosReturnPickup, PosReturnPickupPage, PosReturnRequest, PosReturnRequestPage, PosReturnRequestReject, PosSale, PosSaleInput, PosSalePreview, PosSalePreviewInput, PosSaleSummaryPage, PosSaleView, PosSalespersonPage, PosSignatureCapture, PosSignatureRef, PosStockGlance, PosTaxRate, PosTypedAttestation, PosTypedSignatureRef, PosWorkspacePrefs, PosWorkspaceSaveInput } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -384,6 +384,26 @@ export async function posCreateReturn(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "posCreateReturn",
+  });
+}
+
+// The document lets this call carry X-Approver-Authorization beside the caller's
+// bearer: the approver's own credential for a return above the approval amount,
+// held in memory for this one call and dropped. It rides the caller-set headers
+// (the credential is the caller's business, never a generated argument) and the
+// server never logs it.
+export async function posCreateReturnAcross(
+  client: ApiClient,
+  body: PosReturnAcrossInput,
+  call?: ApiCallOptions
+): Promise<Result<PosReturnNote>> {
+  return client.request<PosReturnNote>({
+    method: "POST",
+    path: "/api/v1/pos/returns-across",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "posCreateReturnAcross",
   });
 }
 

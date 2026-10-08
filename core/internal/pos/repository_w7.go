@@ -315,6 +315,7 @@ func (r *Repository) ListCustomerReturnableOrders(ctx context.Context, customerI
 WITH cust_orders AS (
   SELECT o.id, o.order_no, o.branch_id::text, o.status,
          COALESCE(NULLIF(o.job_address,''), NULLIF(o.job_reference,''), NULLIF(o.po_job_ref,''), '') AS job_label,
+         o.created_at AS created_ts,
          to_char(o.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at,
          CASE WHEN o.quote_id IS NOT NULL THEN 'QUOTE' ELSE 'TILL' END AS source,
          ps.sale_type, ps.tender, COALESCE(ps.invoice_id::text,'') AS invoice_id,
@@ -328,7 +329,7 @@ WITH cust_orders AS (
    WHERE o.customer_id = $1::uuid
      AND (ps.sale_type IS NOT NULL OR o.quote_id IS NOT NULL)
      AND ($2::text[] IS NULL OR o.branch_id::text = ANY($2::text[]))
-   ORDER BY o.created_at DESC
+   ORDER BY o.created_at DESC, o.order_no DESC
    LIMIT $3
 )
 SELECT co.id::text, co.order_no, co.branch_id, co.status, co.job_label, co.created_at, co.source,
@@ -344,7 +345,7 @@ SELECT co.id::text, co.order_no, co.branch_id, co.status, co.job_label, co.creat
   FROM cust_orders co
   JOIN order_lines ol ON ol.order_id = co.id
   LEFT JOIN products p ON p.id = ol.product_id
- ORDER BY co.created_at DESC, ol.line_no`
+ ORDER BY co.created_ts DESC, co.order_no DESC, ol.line_no`
 	rows, err := r.pool.Query(ctx, q, customerID, branchIDs, limit)
 	if err != nil {
 		return nil, err
@@ -442,14 +443,104 @@ func (r *Repository) InsertReturn(ctx context.Context, tx pgx.Tx, ret returnRow)
 INSERT INTO pos_returns (return_no, order_id, invoice_id, customer_id, branch_id, refund_method,
                          subtotal_cents, tax_cents, total_cents, fee_cents, reason, restock, till_session_id,
                          pickup_required, pickup_site, pickup_requested_date, pickup_status,
-                         idempotency_key, created_by)
-VALUES ('#RET-' || nextval('return_no_seq'), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+                         idempotency_key, created_by, note_id)
+VALUES ('#RET-' || nextval('return_no_seq'), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
 RETURNING id::text, return_no`
 	var id, no string
 	err := tx.QueryRow(ctx, q, ret.OrderID, ret.InvoiceID, ret.CustomerID, ret.BranchID, ret.RefundMethod,
 		ret.SubtotalCents, ret.TaxCents, ret.TotalCents, ret.FeeCents, ret.Reason, ret.Restock, nullStr(ret.TillSessionID),
 		ret.PickupRequired, ret.PickupSite, nullStr(ret.PickupDate), ret.PickupStatus,
-		ret.IdempotencyKey, nullStr(ret.CreatedBy)).Scan(&id, &no)
+		ret.IdempotencyKey, nullStr(ret.CreatedBy), nullStr(ret.NoteID)).Scan(&id, &no)
+	return id, no, err
+}
+
+// findReturnNoteByKeyQuery is the committed note behind one idempotency key, its children read
+// beside it (each child keeping its own return number and its own facts).
+const findReturnNoteByKeyQuery = `
+SELECT n.id::text, n.note_no, n.customer_id::text, n.branch_id::text, n.refund_method,
+       n.subtotal_cents, n.tax_cents, n.total_cents
+  FROM return_notes n WHERE n.idempotency_key = $1`
+
+const findReturnNoteChildrenQuery = `
+SELECT r.id::text, r.return_no, r.order_id::text, r.invoice_id::text, r.refund_method,
+       r.subtotal_cents, r.tax_cents, r.total_cents, r.fee_cents,
+       COALESCE(r.refund_payment_id::text,''), r.pickup_status, r.status
+  FROM pos_returns r WHERE r.note_id = $1 ORDER BY r.return_no`
+
+func scanReturnNote(row pgx.Row) (ReturnNote, bool, error) {
+	var n ReturnNote
+	err := row.Scan(&n.NoteID, &n.NoteNo, &n.CustomerID, &n.BranchID, &n.RefundMethod,
+		&n.SubtotalCents, &n.TaxCents, &n.TotalCents)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ReturnNote{}, false, nil
+	}
+	if err != nil {
+		return ReturnNote{}, false, err
+	}
+	return n, true, nil
+}
+
+// FindReturnNoteByKey answers the committed note behind an idempotency key, children included: the
+// note replay's pool read.
+func (r *Repository) FindReturnNoteByKey(ctx context.Context, key string) (ReturnNote, bool, error) {
+	if r.pool == nil {
+		return ReturnNote{}, false, errNoPool
+	}
+	n, found, err := scanReturnNote(r.pool.QueryRow(ctx, findReturnNoteByKeyQuery, key))
+	if err != nil || !found {
+		return ReturnNote{}, found, err
+	}
+	if err := r.readNoteChildren(ctx, r.pool.Query, &n); err != nil {
+		return ReturnNote{}, false, err
+	}
+	return n, true, nil
+}
+
+// FindReturnNoteByKeyTx is the same read on the open ReturnAcross transaction, the FindReturnByKeyTx
+// discipline: the in-transaction same-key re-check never asks the pool for a second connection while
+// the transaction holds one.
+func (r *Repository) FindReturnNoteByKeyTx(ctx context.Context, tx pgx.Tx, key string) (ReturnNote, bool, error) {
+	n, found, err := scanReturnNote(tx.QueryRow(ctx, findReturnNoteByKeyQuery, key))
+	if err != nil || !found {
+		return ReturnNote{}, found, err
+	}
+	if err := r.readNoteChildren(ctx, tx.Query, &n); err != nil {
+		return ReturnNote{}, false, err
+	}
+	return n, true, nil
+}
+
+// readNoteChildren loads the note's pos_returns children onto the note.
+func (r *Repository) readNoteChildren(ctx context.Context, query func(context.Context, string, ...any) (pgx.Rows, error), n *ReturnNote) error {
+	rows, err := query(ctx, findReturnNoteChildrenQuery, n.NoteID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	n.Returns = []Return{}
+	for rows.Next() {
+		var ret Return
+		if err := rows.Scan(&ret.ReturnID, &ret.ReturnNo, &ret.OrderID, &ret.InvoiceID, &ret.RefundMethod,
+			&ret.SubtotalCents, &ret.TaxCents, &ret.TotalCents, &ret.FeeCents, &ret.RefundPaymentID,
+			&ret.PickupStatus, &ret.Status); err != nil {
+			return err
+		}
+		n.Returns = append(n.Returns, ret)
+	}
+	return rows.Err()
+}
+
+// InsertReturnNote writes the note header inside the ReturnAcross transaction, before its children:
+// every child carries the note's id. The note number is its own sequence ('#NOTE-n').
+func (r *Repository) InsertReturnNote(ctx context.Context, tx pgx.Tx, n returnNoteRow) (string, string, error) {
+	const q = `
+INSERT INTO return_notes (note_no, customer_id, branch_id, refund_method, subtotal_cents, tax_cents,
+                          total_cents, reason, idempotency_key, created_by)
+VALUES ('#NOTE-' || nextval('return_note_no_seq'), $1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id::text, note_no`
+	var id, no string
+	err := tx.QueryRow(ctx, q, n.CustomerID, n.BranchID, n.RefundMethod, n.SubtotalCents, n.TaxCents,
+		n.TotalCents, n.Reason, n.IdempotencyKey, nullStr(n.CreatedBy)).Scan(&id, &no)
 	return id, no, err
 }
 

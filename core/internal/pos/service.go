@@ -211,6 +211,12 @@ type posStore interface {
 	LockSaleForReturn(ctx context.Context, tx pgx.Tx, orderID string) error
 	InsertReturn(ctx context.Context, tx pgx.Tx, r returnRow) (id, no string, err error)
 	InsertReturnLines(ctx context.Context, tx pgx.Tx, returnID string, lines []returnLineRow) error
+	// Sub item 10.2, the credit note across orders: the note's own idempotency key answers its
+	// replay (the pool read before the transaction, the Tx read after the per-sale locks) and the
+	// note header is written inside the ReturnAcross transaction ahead of its children.
+	FindReturnNoteByKey(ctx context.Context, key string) (ReturnNote, bool, error)
+	FindReturnNoteByKeyTx(ctx context.Context, tx pgx.Tx, key string) (ReturnNote, bool, error)
+	InsertReturnNote(ctx context.Context, tx pgx.Tx, n returnNoteRow) (id, no string, err error)
 	SetReturnRefundPayment(ctx context.Context, tx pgx.Tx, returnID, paymentID string) error
 	ApplyCreditToInvoice(ctx context.Context, tx pgx.Tx, invoiceID string, amountCents int64) (applied int64, err error)
 	ListReturnPickups(ctx context.Context, branchID string) ([]ReturnPickup, error)

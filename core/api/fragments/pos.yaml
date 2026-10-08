@@ -938,6 +938,58 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /api/v1/pos/returns-across:
+    post:
+      operationId: posCreateReturnAcross
+      tags: [staff-pos]
+      summary: Commit one credit note across several orders of one customer (idempotent; 200 on a replay)
+      description: >-
+        The credit note across orders: several orders of ONE customer at ONE
+        branch returned in ONE transaction, each order keeping its own return
+        number and its own journal, the note holding the totals summed over
+        its children. The approval threshold judges the note total. Idempotent
+        on the note's own key; keys in the reserved rreq: namespace are
+        refused. No restocking fee rides this flow.
+      x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/XApproverAuthorization"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosReturnAcrossInput"
+      responses:
+        "201":
+          description: The committed note (200 with the same body on an idempotent replay)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosReturnNote"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/PosRefundApprovalRequired" }
+        "422":
+          description: >-
+            A well-formed note the shape refuses: the house WALK-IN account,
+            another customer's order, an order of another branch, one order
+            twice, or an over-return on any order (the whole note refuses).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: The approver credential could not be checked, or the dealer's role configuration is not wired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/pos/returns/pickups:
     get:
       operationId: posListReturnPickups
@@ -2880,6 +2932,56 @@ components:
         lines:
           type: array
           items: { $ref: "#/components/schemas/PosReturnableLine" }
+    PosReturnAcrossInput:
+      type: object
+      description: >-
+        The idempotent credit-note-across-orders body. One customer, one
+        branch, one refund rail, one whole-note restock flag (the per-line
+        dispositions are later work); no fee field, the flow carries no
+        restocking fee.
+      required: [idempotency_key, customer_id, orders, refund_method, reason, restock, till_session_id]
+      properties:
+        idempotency_key: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        orders:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/PosReturnAcrossOrder" }
+        refund_method: { type: string, enum: [CASH, CARD, ACCOUNT_CREDIT] }
+        reason: { type: string }
+        restock: { type: boolean }
+        till_session_id: { type: string, format: uuid, description: "CASH refunds: the open drawer" }
+    PosReturnAcrossOrder:
+      type: object
+      description: "One order's share of a returns-across note, the order id and its returned lines."
+      required: [order_id, lines]
+      properties:
+        order_id: { type: string, format: uuid }
+        lines:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/PosReturnLineInput" }
+    PosReturnNote:
+      type: object
+      description: >-
+        The committed credit note across orders, returned verbatim on an
+        idempotent replay. The totals are summed over the children; each child
+        keeps its own return number.
+      required: [note_id, note_no, customer_id, branch_id, refund_method, subtotal_cents, tax_cents, total_cents, returns, replayed]
+      properties:
+        note_id: { type: string, format: uuid }
+        note_no: { type: string }
+        customer_id: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid }
+        refund_method: { type: string, enum: [CASH, CARD, ACCOUNT_CREDIT] }
+        subtotal_cents: { type: integer, format: int64 }
+        tax_cents: { type: integer, format: int64 }
+        total_cents: { type: integer, format: int64 }
+        returns:
+          type: array
+          description: The note's children, one per order, each its own committed return
+          items: { $ref: "#/components/schemas/PosReturn" }
+        replayed: { type: boolean }
     PosCustomerLine:
       type: object
       description: >-

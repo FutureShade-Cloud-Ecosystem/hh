@@ -62,6 +62,9 @@ type fakeStore struct {
 	returnRows      []returnRow
 	returnLineRows  []returnLineRow
 	priorSums       map[string]int64  // order_id → the sale's earlier committed return total (the per-sale sum the refund gate reads)
+	noteKeys        map[string]ReturnNote // the note idempotency key → its committed note (the across-orders replay)
+	noteSeq         int
+	lastNoteID      string // the most recent InsertReturnNote's id, the across path binds children with
 	returnLocks     []string          // order ids the per-sale return advisory lock was taken for, in order
 	refundPayments  map[string]string // return id → refund payment id
 	creditApplies   []creditApply
@@ -137,6 +140,7 @@ func newFakeStore(tr *[]string) *fakeStore {
 		retCtx:         map[string]returnOrderCtx{},
 		retLines:       map[string]returnableLine{},
 		retLineOrders:  map[string]string{},
+		noteKeys:       map[string]ReturnNote{},
 		priorSums:      map[string]int64{},
 		refundPayments: map[string]string{},
 		invoiceBalance: map[string]int64{},
@@ -483,6 +487,31 @@ func (f *fakeStore) LockReturnableLine(_ context.Context, _ pgx.Tx, orderID, ord
 	return rl, true, nil
 }
 
+// The note twins answer the same maps the return twins answer (the real store reads return_notes;
+// the fake replays by the note's idempotency key the way ux_return_notes_idem makes the real one).
+func (f *fakeStore) FindReturnNoteByKey(_ context.Context, key string) (ReturnNote, bool, error) {
+	n, ok := f.noteKeys[key]
+	return n, ok, nil
+}
+
+func (f *fakeStore) FindReturnNoteByKeyTx(_ context.Context, _ pgx.Tx, key string) (ReturnNote, bool, error) {
+	return f.FindReturnNoteByKey(context.Background(), key)
+}
+
+func (f *fakeStore) InsertReturnNote(_ context.Context, _ pgx.Tx, n returnNoteRow) (string, string, error) {
+	f.noteSeq++
+	id := "note-" + itoa(f.noteSeq)
+	no := "#NOTE-" + itoa(f.noteSeq)
+	out := ReturnNote{NoteID: id, NoteNo: no, CustomerID: n.CustomerID, BranchID: n.BranchID,
+		RefundMethod: n.RefundMethod, SubtotalCents: n.SubtotalCents, TaxCents: n.TaxCents,
+		TotalCents: n.TotalCents, Returns: []Return{}}
+	if n.IdempotencyKey != "" {
+		f.noteKeys[n.IdempotencyKey] = out
+	}
+	f.lastNoteID = id
+	return id, no, nil
+}
+
 func (f *fakeStore) InsertReturn(_ context.Context, _ pgx.Tx, r returnRow) (string, string, error) {
 	f.log("return")
 	f.returnRows = append(f.returnRows, r)
@@ -491,12 +520,22 @@ func (f *fakeStore) InsertReturn(_ context.Context, _ pgx.Tx, r returnRow) (stri
 	no := "#RET-" + itoa(f.seq)
 	// The real store replays by the idempotency key (ux_pos_returns_idem
 	// then FindReturnByKey); the fake mirrors that, so the replay paths are
-	// exercisable against the harness.
+	// exercisable against the harness. A note child also lands on its note's
+	// children list (the real store reads them by pos_returns.note_id).
 	if r.IdempotencyKey != "" {
-		f.cachedReturns[r.IdempotencyKey] = Return{
+		ret := Return{
 			ReturnID: id, ReturnNo: no, OrderID: r.OrderID, InvoiceID: r.InvoiceID,
 			RefundMethod: r.RefundMethod, SubtotalCents: r.SubtotalCents, TaxCents: r.TaxCents,
 			TotalCents: r.TotalCents, FeeCents: r.FeeCents, Status: "COMMITTED",
+		}
+		f.cachedReturns[r.IdempotencyKey] = ret
+		if r.NoteID != "" {
+			for k, n := range f.noteKeys {
+				if n.NoteID == r.NoteID {
+					n.Returns = append(n.Returns, ret)
+					f.noteKeys[k] = n
+				}
+			}
 		}
 	}
 	return id, no, nil
