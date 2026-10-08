@@ -52,6 +52,9 @@ import { OneTimeCredential } from "./returns/approval.js";
 import { RefundApprovalCapture } from "./returns/capture.js";
 import { returnsStyles, renderReturns } from "./views/returns.js";
 import { formatMoney } from "./money.js";
+import { openBlankWindow, printReceiptInto } from "./ported/receipt-print.js";
+import { heldCardFromOwing, holdSlipHtml } from "./pay-balance/hold.js";
+import { methodWord } from "./pay-balance/words.js";
 import { PayBalanceCapture } from "./pay-balance/capture.js";
 import { PayBalanceFlow } from "./pay-balance/flow.js";
 import { payBalanceStyles, renderPayBalance } from "./views/pay-balance.js";
@@ -649,6 +652,22 @@ export class CounterTillApp extends HHElement {
     super.disconnectedCallback();
   }
 
+  /** Item 9.8: the hold slip prints through the same seam the receipt prints through. */
+  #printHoldSlip(): void {
+    const order = this.#payBalance.order;
+    if (order === null) return;
+    const card = heldCardFromOwing(order, this.#payBalance.hold, methodWord);
+    const out = printReceiptInto(
+      openBlankWindow(),
+      holdSlipHtml(
+        { orderNo: card.orderNo, customerName: card.customerName, balanceDueCents: card.balanceDueCents, holdWords: card.holdWords },
+        formatMoney,
+      ),
+    );
+    this.#payBalance.notice = out.ok ? null : out.message;
+    this.requestUpdate();
+  }
+
   /** Enter in the Pay balance find field finds, the way the Find button does. */
   readonly #onHostKey = (event: KeyboardEvent): void => {
     if (event.key !== "Enter") return;
@@ -731,6 +750,9 @@ export class CounterTillApp extends HHElement {
     }
     if (control.getAttribute("data-action") === "pay-balance-take") {
       void this.#payBalance.take(formatMoney);
+    }
+    if (control.getAttribute("data-action") === "held-print-slip") {
+      this.#printHoldSlip();
     }
     if (control.getAttribute("data-action") === "pay-balance-another") {
       this.#payBalance.another();
@@ -1091,6 +1113,12 @@ export class CounterTillApp extends HHElement {
   /** The widget's sender rides the property, never a template binding (the
    * design system's position gate refuses . bindings in dependents too). */
   protected override updated(): void {
+    // The Pay balance find field is uncontrolled (no value binding is allowed in a template): a
+    // term the flow set itself (the held card's Pay balance action) is carried to the field here.
+    const termField = this.renderRoot.querySelector('[data-field="pay-balance-term"]');
+    if (termField instanceof HTMLInputElement && termField.value !== this.#payBalance.term && this.#payBalance.term !== "") {
+      termField.value = this.#payBalance.term;
+    }
     const widget = this.renderRoot.querySelector("hh-feedback");
     if (widget instanceof HHFeedback && widget.send !== this.#feedbackSender) {
       widget.send = this.#feedbackSender;

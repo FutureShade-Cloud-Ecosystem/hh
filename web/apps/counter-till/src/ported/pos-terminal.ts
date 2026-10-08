@@ -141,7 +141,10 @@ import {
 // P3-10 (the comprehensive train review): the margin surface follows the policy
 // word /pos/policy answers, not the glance's own serving rule.
 import { marginVisibleToCaller } from './_pos-margin-visibility.js';
-import { printReceipt, openBlankWindow, type ReceiptFormat } from './receipt-print.js'; // DIB-410 counter receipt
+import { printReceipt, printReceiptInto, openBlankWindow, type ReceiptFormat } from './receipt-print.js'; // DIB-410 counter receipt
+import { renderHeldOrder, heldOrderStyles } from '../views/held-order.js'; // item 9.8: the held order card
+import { holdSlipHtml, readPayHold, type HeldOrderCard } from '../pay-balance/hold.js';
+import { methodWord } from '../pay-balance/words.js';
 import {
   createSale,
   createPricingOrder,
@@ -623,6 +626,8 @@ export class HosPosTerminal extends LitElement {
   @state() private depositMethod = 'CASH';
   /** Item 9.6: PAY_IN_FULL_NOW (the tender tiles), or a deposit shape the preview offered. */
   @state() private payShape = 'PAY_IN_FULL_NOW';
+  /** Item 9.8: the held card for the sale just rung, when the server says it is held from picking. */
+  @state() private heldCard: HeldOrderCard | null = null;
   @state() private showReturn = false;
   @state() private showParked = false;
   @state() private parkedCount = 0;
@@ -707,6 +712,55 @@ export class HosPosTerminal extends LitElement {
  * render a 401 at the customer). `saleRef` is the order id or its visible "#SO-" number: the
    * server resolves both.
    */
+  /**
+   * Item 9.8: after a pay before release ring that left a balance, ask the staff order read whether
+   * the order is held from picking (the server's pay_hold) and keep what the card shows. A read that
+   * fails shows no card: the sold panel still states the balance, and the hold holds regardless.
+   */
+  private async loadHeldCard(sale: SaleResult): Promise<void> {
+    this.heldCard = null;
+    if (sale.sale_type !== 'COD' || sale.total_cents - (sale.deposit_cents ?? 0) <= 0) return;
+    try {
+      const res = await api(`/api/v1/orders/${encodeURIComponent(sale.order_id)}`);
+      if (!res.ok) return;
+      const body = (await res.json().catch(() => null)) as { pay_hold?: unknown } | null;
+      const hold = readPayHold(body?.pay_hold);
+      if (hold === null || !hold.held) return;
+      const ring = this.ring;
+      if (ring.state !== 'done' || ring.sale.order_id !== sale.order_id) return; // a newer sale owns the screen
+      const leg = sale.tenders?.[0];
+      this.heldCard = {
+        orderNo: sale.order_no,
+        customerName: this.customer?.name ?? 'Walk-in',
+        accountWords: 'Cash On Demand account',
+        inProcessWords: hold.inProcessWords,
+        holdWords: hold.words ?? '',
+        orderTotalCents: hold.orderTotalCents,
+        deposit: hold.paidCents > 0 ? { methodWord: methodWord(leg?.method ?? this.depositMethod), cents: hold.paidCents } : null,
+        balanceDueCents: hold.owedCents,
+        lines: this.cart.map((l) => ({
+          description: l.product.name,
+          qty: `${l.qty} ${l.uom}`,
+          lineTotalCents: l.priceMissing ? null : l.lineTotalCents,
+        })),
+      };
+    } catch {
+      /* no card: see above */
+    }
+  }
+
+  /** Item 9.8: the hold slip prints through the same seam the receipt prints through. */
+  private printHoldSlip(card: HeldOrderCard): void {
+    const out = printReceiptInto(
+      openBlankWindow(),
+      holdSlipHtml(
+        { orderNo: card.orderNo, customerName: card.customerName, balanceDueCents: card.balanceDueCents, holdWords: card.holdWords },
+        formatMoney,
+      ),
+    );
+    this.receiptMsg = out.ok ? '' : out.message;
+  }
+
   private async printSaleReceipt(saleRef: string, format: ReceiptFormat = 'roll'): Promise<void> {
     if (!saleRef || this.receiptBusy) return;
     this.receiptBusy = true;
@@ -816,6 +870,7 @@ export class HosPosTerminal extends LitElement {
   private parkedInfo = new Map<string, ParkedInfo>();
 
   static styles = [
+    heldOrderStyles,
     focusRing,
     css`
     :host {
@@ -4315,6 +4370,7 @@ export class HosPosTerminal extends LitElement {
       if (res.ok) {
         this.ringKeyMemo = null; // committed: the next sale mints fresh
         this.ring = { state: 'done', sale: res.sale };
+        void this.loadHeldCard(res.sale);
         if (this.utilWhere === 'foot') this.clearUtil(); // an earlier edit's banner is not news on a good sale
         this.revealSaleOutcome();
         void this.refreshCustomerAfterRing();
@@ -4404,6 +4460,7 @@ export class HosPosTerminal extends LitElement {
     this.signatureRef = '';
     this.depositDollars = '';
     this.payShape = 'PAY_IN_FULL_NOW';
+    this.heldCard = null;
     this.fulfilment = 'PICKUP';
     this.clearUtil();
     this.soldPanelDismissed = false;
@@ -6402,7 +6459,7 @@ ${/* Fulfilment: the EXISTING sale types (counter / will-call / delivered / COD 
       ${options.map(
         (o) => html`<button
           type="button"
-          class=${pressed(o) ? 'active' : ''}
+          class="${pressed(o) ? 'active' : ''}"
           aria-pressed=${pressed(o) ? 'true' : 'false'}
           data-testid=${`pay-shape-${o.shape}`}
           ?disabled=${this.ringBusy()}
@@ -6434,7 +6491,7 @@ ${/* Fulfilment: the EXISTING sale types (counter / will-call / delivered / COD 
         ${(['CARD', 'CASH'] as const).map(
           (m) => html`<button
             type="button"
-            class=${this.depositMethod === m ? 'active' : ''}
+            class="${this.depositMethod === m ? 'active' : ''}"
             aria-pressed=${this.depositMethod === m ? 'true' : 'false'}
             ?disabled=${this.ringBusy() || this.ringDone()}
             @click=${() => (this.depositMethod = m)}
@@ -6764,6 +6821,18 @@ ${this.ring.state === 'error'
       ${this.ringDone() ? nothing : this.renderReadBack()}
 ${this.ring.state === 'done'
             ? html`${this.renderSoldPanel(this.ring.sale)}
+                ${this.heldCard === null
+                  ? nothing
+                  : renderHeldOrder(this.heldCard, {
+                      payBalanceHref: `#/pay-balance?order=${encodeURIComponent(this.heldCard.orderNo)}`,
+                      printButton: html`<button
+                        type="button"
+                        data-testid="held-print-slip"
+                        @click=${() => this.heldCard !== null && this.printHoldSlip(this.heldCard)}
+                      >
+                        Print hold slip
+                      </button>`,
+                    })}
                 ${/* WAVE 2 · finding 13: ORDER ADMINISTRATION IS DISCLOSED, NOT DELETED.
                    Measured on a real carry-out (#SO-TRT-3 / #INV-2, $7,661.40, cash): 58 visible
                    strings in this card, of which the sold panel above is the first twelve and is

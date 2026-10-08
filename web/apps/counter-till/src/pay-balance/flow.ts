@@ -3,7 +3,8 @@
 // how much, the take re-guards everything (the whole balance only, one capture per key). No figure
 // on the screen is computed here; this holds the person's choices (the order, the tender) and the
 // server's answers, field by field validated before they become state.
-import { staffPos, staffTill, type ApiClient } from "@hardscapehouse/api-client";
+import { staffOrder, staffPos, staffTill, type ApiClient } from "@hardscapehouse/api-client";
+import { readPayHold, type PayHold } from "./hold.js";
 import type { PayBalanceCapture } from "./capture.js";
 import {
   payBalanceRefusalWords,
@@ -48,6 +49,8 @@ export class PayBalanceFlow {
   drawer: PayDrawer = { kind: "unknown" };
   taking = false;
   taken: TakenBalance | null = null;
+  /** The staff order read's pay_hold for a held order (the chips' words), or null. */
+  hold: PayHold | null = null;
   /** Whether the last find has been asked at all (an empty result then reads as a miss). */
   #asked = false;
   /** One key per drafted take: a retry of the same take replays, a different take is a new key. */
@@ -133,9 +136,18 @@ export class PayBalanceFlow {
     this.notice = null;
     this.#pendingKey = null;
     this.drawer = { kind: "unknown" };
+    this.hold = null;
     this.#onChange();
-    await this.#readDrawer();
+    await Promise.all([this.#readDrawer(), this.#readHold(order)]);
     this.#onChange();
+  }
+
+  /** A held order's chips and title come from the staff order read, the server's own words. */
+  async #readHold(order: OwingOrder): Promise<void> {
+    if (!order.held) return;
+    const result = await staffOrder.orderRead(this.#client, order.orderId);
+    if (!result.ok || this.order?.orderId !== order.orderId) return;
+    this.hold = readPayHold((result.value as unknown as Record<string, unknown>)["pay_hold"]);
   }
 
   async #readDrawer(): Promise<void> {
@@ -194,10 +206,12 @@ export class PayBalanceFlow {
     this.#onChange();
   }
 
-  /** Back to the blank find, the typed term kept for the next look. */
+  /** Back to the blank find: the field is rebuilt with the epoch, so the term goes with it. */
   another(): void {
+    this.term = "";
     this.order = null;
     this.taken = null;
+    this.hold = null;
     this.matches = [];
     this.notice = null;
     this.#pendingKey = null;

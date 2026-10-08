@@ -7,6 +7,8 @@ import { css, html, nothing, type TemplateResult } from "lit";
 import { keyed } from "lit/directives/keyed.js";
 import { formatMoney } from "../money.js";
 import type { PayBalanceFlow } from "../pay-balance/flow.js";
+import { heldCardFromOwing } from "../pay-balance/hold.js";
+import { renderHeldOrder, heldOrderStyles } from "./held-order.js";
 import {
   fulfilmentWord,
   moneyTrailWords,
@@ -16,7 +18,7 @@ import {
   type OwingOrder,
 } from "../pay-balance/words.js";
 
-export const payBalanceStyles = css`
+export const payBalanceStyles = [heldOrderStyles, css`
   .pay-balance .subtitle {
     color: var(--hos-text-dim);
     margin: 0 0 var(--hh-s-16);
@@ -180,7 +182,7 @@ export const payBalanceStyles = css`
     margin: 0 0 var(--hh-s-8);
     overflow-wrap: anywhere;
   }
-`;
+`];
 
 export function renderPayBalance(flow: PayBalanceFlow): TemplateResult {
   const frozen = flow.finding || flow.taking;
@@ -202,7 +204,6 @@ export function renderPayBalance(flow: PayBalanceFlow): TemplateResult {
                     aria-labelledby="ct-pay-balance-eyebrow"
                     aria-describedby="ct-pay-balance-hint"
                     autocomplete="off"
-                    .value=${flow.term}
                     ?disabled=${frozen}
                   />
                   <button
@@ -272,6 +273,14 @@ function renderOrder(flow: PayBalanceFlow, order: OwingOrder): TemplateResult {
         <p class="customer">${order.customerName}</p>
         <span class="chip">Order · ${order.orderNo}</span>
         ${jobLine === "" ? nothing : html`<p class="jobline">${jobLine}</p>`}
+        ${order.held
+          ? renderHeldOrder(heldCardFromOwing(order, flow.hold, methodWord), {
+              payBalanceHref: null,
+              heading: false,
+              figures: false,
+              printButton: html`<button type="button" data-action="held-print-slip" data-testid="held-print-slip">Print hold slip</button>`,
+            })
+          : nothing}
         <div class="figure"><span>Order total</span><span class="amount">${formatMoney(order.orderTotalCents)}</span></div>
         ${order.payments.length === 0
           ? html`<div class="figure"><span>Paid so far: nothing yet</span></div>`
