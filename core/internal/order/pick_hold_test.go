@@ -312,3 +312,23 @@ func TestAdvanceFromEvent_PickingRefusedWhileHeld(t *testing.T) {
 		t.Fatalf("a clear account's event driven pick: %v", err)
 	}
 }
+
+// Item 9 Opus P3-2 follow up: the hold's sentence outranks the ladder's. The
+// hold read moved inside the guarded write, behind the legality check, so a
+// held order whose move was also off the ladder (a converted order not yet
+// confirmed) answered "illegal status transition" and never the sentence the
+// counter acts on. A held order answers the hold, whatever its status.
+func TestTransitionManual_HeldOrderOffTheLadderStillAnswersTheHold(t *testing.T) {
+	store := newFakeStore(mkDetail("ord-1", "cust-1", "DRAFT"))
+	svc := NewService(store).withCaller(testCallerFrom).WithPickHoldReader(fakePickHold{facts: heldFacts(11300)})
+	_, err := svc.TransitionManual(pickHoldCtx(), "ord-1", ActionPicking, "")
+	if !errors.Is(err, ErrHeldFromPicking) {
+		t.Fatalf("want ErrHeldFromPicking, got %v", err)
+	}
+	// A clear order off the ladder still answers the ladder.
+	clear := NewService(newFakeStore(mkDetail("ord-1", "cust-1", "DRAFT"))).withCaller(testCallerFrom).
+		WithPickHoldReader(fakePickHold{facts: PickHoldFacts{}})
+	if _, err := clear.TransitionManual(pickHoldCtx(), "ord-1", ActionPicking, ""); !errors.Is(err, ErrIllegalTransition) {
+		t.Fatalf("a clear order off the ladder: want ErrIllegalTransition, got %v", err)
+	}
+}

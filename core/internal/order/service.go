@@ -755,6 +755,15 @@ func (s *Service) setStatusGuarded(ctx context.Context, actor, orderID, newStatu
 		oldStatus, err = s.store.UpdateStatusFrom(ctx, orderID, newStatus, allowedFrom)
 	}
 	if err != nil {
+		// The hold's sentence outranks the ladder's: the in-write read sits
+		// behind the legality check, so a held order whose move is also off
+		// the ladder (a converted order not yet confirmed) reads the hold
+		// here, not "illegal status transition" (item 9 Opus P3-2 follow up).
+		if errors.Is(err, ErrIllegalTransition) && holdGuardedTarget(newStatus) {
+			if herr := s.refuseHeldFromPicking(ctx, orderID); errors.Is(herr, ErrHeldFromPicking) {
+				return herr
+			}
+		}
 		return err // ErrNotFound / ErrIllegalTransition / ErrNoTransition / ErrCancelBlocked / ErrCancelUnverifiable
 	}
 	s.recordStatusChange(ctx, actor, orderID, oldStatus, newStatus, reason)
