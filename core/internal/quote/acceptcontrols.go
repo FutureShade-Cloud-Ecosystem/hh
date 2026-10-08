@@ -99,15 +99,24 @@ func (e *AlreadyAcceptedError) Is(target error) bool {
 // NotSettingsAdminError is the refusal a non-admin gets at the acceptance-settings surface. Typed so
 // the message can name WHY (the NotSellingRoleError convention): a manager told only "403" assumes
 // the screen is broken and tries again.
-type NotSettingsAdminError struct{ RoleCode string }
+//
+// The words name who may act and never the caller's role code: the person reading them is the one
+// refused. RoleCode stays on the type for the audit and the callers that branch on it. Branch and
+// DealerDefault say which write was refused, so the words name the people that write really needs.
+type NotSettingsAdminError struct {
+	RoleCode      string
+	Branch        bool // a branch row: a sales manager reaching that branch
+	DealerDefault bool // the dealer default row: the general manager alone
+}
 
 func (e *NotSettingsAdminError) Error() string {
-	if e.RoleCode == "" {
-		return "quote: changing the quote-desk settings is limited to administrators"
+	switch {
+	case e.DealerDefault:
+		return "quote: only the general manager changes the dealer default quote settings"
+	case e.Branch:
+		return "quote: only a sales manager of that branch changes its quote settings"
 	}
-	return fmt.Sprintf(
-		"quote: the quote-desk settings decide what customers see and how quotes behave, and changing them "+
-			"is limited to administrators, %s cannot do it; ask a manager", e.RoleCode)
+	return "quote: only a sales manager or the general manager changes the quote settings"
 }
 
 // ErrAcceptSettingsNotConfigured, the settings write seam is not wired (a store that predates it).
@@ -228,14 +237,14 @@ func (s *StaffService) settingsWriter(ctx context.Context, branchID string) (ide
 		// the decided default), in a branch the caller reaches. The General
 		// Manager holds Read and writes the dealer default alone.
 		if s.quoteDeskLevel(caller) != roleconfig.LevelManage || !caller.CanAccessBranch(branchID) {
-			return identity.StaffContext{}, &NotSettingsAdminError{RoleCode: caller.RoleCode}
+			return identity.StaffContext{}, &NotSettingsAdminError{RoleCode: caller.RoleCode, Branch: true}
 		}
 		return caller, nil
 	}
 	// The dealer default row: the General Manager alone under the decided
 	// default (a Manage caller keeps its branch rows).
 	if canonicalRole(caller.RoleCode) != roleconfig.RoleGeneralManager {
-		return identity.StaffContext{}, &NotSettingsAdminError{RoleCode: caller.RoleCode}
+		return identity.StaffContext{}, &NotSettingsAdminError{RoleCode: caller.RoleCode, DealerDefault: true}
 	}
 	return caller, nil
 }

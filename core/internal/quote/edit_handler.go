@@ -29,8 +29,8 @@ const maxBodyBytes = 8 << 10
 
 // StaffHandler serves the staff quote builder.
 type StaffHandler struct {
-	svc                *StaffService
-	userLink           identity.UserIDLinker
+	svc                 *StaffService
+	userLink            identity.UserIDLinker
 	settingsGrantReader func(ctx context.Context) (SettingsGrant, error)
 }
 

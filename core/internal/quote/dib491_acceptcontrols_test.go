@@ -135,11 +135,19 @@ func TestDIB491_Settings_AdminGate(t *testing.T) {
 			if _, err := svc.AcceptanceSettings(context.Background()); !errors.As(err, &notAdmin) {
 				t.Fatalf("read: want NotSettingsAdminError, got %v", err)
 			}
-			if !strings.Contains(notAdmin.Error(), tc.caller.RoleCode) {
-				t.Errorf("the refusal must name WHY (the caller's role): %q", notAdmin.Error())
+			// The refusal names who may act, in plain words, and never the refused caller's own role code.
+			const want = "quote: only a sales manager or the general manager changes the quote settings"
+			if notAdmin.Error() != want {
+				t.Errorf("the read refusal = %q, want %q", notAdmin.Error(), want)
+			}
+			if strings.Contains(notAdmin.Error(), tc.caller.RoleCode) || strings.Contains(strings.ToLower(notAdmin.Error()), "tech admin") {
+				t.Errorf("the refusal must not carry the role code or tech admin words: %q", notAdmin.Error())
 			}
 			if _, err := svc.SetAllowMultiAccept(context.Background(), true, ""); !errors.As(err, &notAdmin) {
 				t.Fatalf("write: want NotSettingsAdminError, got %v", err)
+			}
+			if notAdmin.Error() != want {
+				t.Errorf("the write refusal = %q, want %q", notAdmin.Error(), want)
 			}
 		})
 	}
@@ -295,11 +303,11 @@ func TestDIB491_SettingsWrite_RefusesAnAbsentBoolean(t *testing.T) {
 // GENERAL_MANAGER and the platform SUPER_ADMIN get all three (Tier-1 GLOBAL).
 func TestDIB491_SettingsGrant_AnswersPerRole(t *testing.T) {
 	for _, tc := range []struct {
-		name                  string
-		caller                identity.StaffContext
-		wantAcceptance        bool
-		wantScopeRules        bool
-		wantPolicyEdit        bool
+		name           string
+		caller         identity.StaffContext
+		wantAcceptance bool
+		wantScopeRules bool
+		wantPolicyEdit bool
 	}{
 		{
 			name: "Inside Sales: no grant",
@@ -377,6 +385,22 @@ func TestDIB491_SettingsGrant_AnswersPerRole(t *testing.T) {
 			}
 			if got.CanEditPolicy != tc.wantPolicyEdit {
 				t.Errorf("CanEditPolicy = %v, want %v", got.CanEditPolicy, tc.wantPolicyEdit)
+			}
+			// Each answer is also asserted against the refusing service route's own answer for the same caller.
+			_, readErr := svc.AcceptanceSettings(context.Background())
+			var notAdmin *NotSettingsAdminError
+			if refused := errors.As(readErr, &notAdmin); refused == got.CanReadAcceptance {
+				t.Errorf("CanReadAcceptance = %v but the acceptance read answered %v", got.CanReadAcceptance, readErr)
+			}
+			if !got.CanReadAcceptance && readErr != nil && !errors.As(readErr, &notAdmin) {
+				t.Errorf("a refused acceptance read must be the typed refusal, got %v", readErr)
+			}
+			_, writeErr := svc.settingsWriter(context.Background(), "")
+			if allowed := writeErr == nil; allowed && !got.CanEditPolicy {
+				t.Errorf("the policy write gate admitted a caller the grant refuses: %v", tc.name)
+			}
+			if got.CanEditPolicy && errors.As(writeErr, &notAdmin) && !notAdmin.DealerDefault {
+				t.Errorf("a caller the grant admits to the policy write was refused wrongly: %v", writeErr)
 			}
 		})
 	}

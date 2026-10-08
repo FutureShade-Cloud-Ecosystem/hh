@@ -441,10 +441,96 @@ func TestQD1B_SalesManagerRefusedTheDealerWideMultiAcceptSwitch(t *testing.T) {
 	if code != http.StatusForbidden || body == string(authz.BodyForbidden) {
 		t.Fatalf("the Sales manager flips the dealer wide switch: %d %s, want the service's refusal, not the gate's", code, body)
 	}
-	if !strings.Contains(body, "administrators") {
-		t.Fatalf("the refusal must be the service's words naming the rule, got %s", body)
+	if !strings.Contains(body, "only the general manager changes the dealer default quote settings") {
+		t.Fatalf("the refusal must be the service's words naming who may act, got %s", body)
+	}
+	if strings.Contains(body, "SALES_MANAGER") || strings.Contains(strings.ToLower(body), "tech admin") {
+		t.Fatalf("the refusal must carry no role code and no tech admin words, got %s", body)
 	}
 	if after := read(testkit.SubGeneralMgr); after != before {
 		t.Fatalf("a refused flip changed the switch: %s then %s", before, after)
+	}
+}
+
+// TestQD1B_SettingsGrantMatchesTheRefusingRoutesPerRole is round 14 (a)'s
+// per role table over the served surface: for each role the grant read's three
+// answers equal what the refusing route itself answers for the same caller.
+// The acceptance read and the scope rules read are real GETs (admitted is a
+// 200, refused a 403); the policy write is probed with a body the validator
+// rejects (a 400 means the role gate admitted the caller, a 403 means it
+// refused), so nothing is written. The policy write has two rows, the dealer
+// default (the General Manager alone) and a branch row (a Manage caller in a
+// branch it reaches), so can_edit_policy must equal "either row admits".
+func TestQD1B_SettingsGrantMatchesTheRefusingRoutesPerRole(t *testing.T) {
+	q := newQD1BFixture(t)
+	tooLong := strings.Repeat("x", 4096)
+	for _, tc := range []struct {
+		name                            string
+		sub                             string
+		acceptance, scopeRules, editing bool
+	}{
+		{"inside sales", testkit.SubInsideSales, false, false, false},
+		{"sales manager", testkit.SubSalesManager, true, false, true},
+		{"general manager", testkit.SubGeneralMgr, true, true, true},
+		{"branch manager", xrSubBranchManager, false, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, body := qd1bCall(t, q, http.MethodGet, "/api/v1/quotes/settings-grant", tc.sub, nil)
+			if code != http.StatusOK {
+				t.Fatalf("the grant read: %d %s", code, body)
+			}
+			var grant struct {
+				CanReadAcceptance bool `json:"can_read_acceptance"`
+				CanReadScopeRules bool `json:"can_read_scope_rules"`
+				CanEditPolicy     bool `json:"can_edit_policy"`
+			}
+			if err := json.Unmarshal([]byte(body), &grant); err != nil {
+				t.Fatalf("grant body %q: %v", body, err)
+			}
+			if grant.CanReadAcceptance != tc.acceptance || grant.CanReadScopeRules != tc.scopeRules || grant.CanEditPolicy != tc.editing {
+				t.Fatalf("the grant for %s = %+v, want acceptance %v scope rules %v policy edit %v",
+					tc.name, grant, tc.acceptance, tc.scopeRules, tc.editing)
+			}
+
+			admits := func(method, path string, payload any, admitted int) bool {
+				t.Helper()
+				c, b := qd1bCall(t, q, method, path, tc.sub, payload)
+				switch c {
+				case admitted:
+					return true
+				case http.StatusForbidden:
+					return false
+				}
+				t.Fatalf("%s %s as %s answered %d %s, neither %d nor the 403 refusal", method, path, tc.name, c, b, admitted)
+				return false
+			}
+			if got := admits(http.MethodGet, "/api/v1/quotes/settings/acceptance", nil, http.StatusOK); got != grant.CanReadAcceptance {
+				t.Errorf("can_read_acceptance %v but the acceptance route admits %v", grant.CanReadAcceptance, got)
+			}
+			if got := admits(http.MethodGet, "/api/v1/quote-assist/scope-rules", nil, http.StatusOK); got != grant.CanReadScopeRules {
+				t.Errorf("can_read_scope_rules %v but the scope rules route admits %v", grant.CanReadScopeRules, got)
+			}
+			dealer := admits(http.MethodPut, "/api/v1/quotes/policy", map[string]any{"quantity_notice": tooLong}, http.StatusBadRequest)
+			branch := admits(http.MethodPut, "/api/v1/quotes/policy",
+				map[string]any{"branch_id": testkit.BranchNorthAID, "quantity_notice": tooLong}, http.StatusBadRequest)
+			if got := dealer || branch; got != grant.CanEditPolicy {
+				t.Errorf("can_edit_policy %v but the policy write admits dealer %v branch %v", grant.CanEditPolicy, dealer, branch)
+			}
+		})
+	}
+}
+
+// TestQD1B_SettingsGrantRoleWithoutTheDeskIsRefusedAtTheGate: the Financial
+// Controller holds no cell on the Quote Desk, so the grant read is refused at
+// the gate with the other desk reads, before the service answers. The unit
+// table's Financial Controller row (scope rules true) is the service's answer
+// to a caller the gate never lets through, and the desk never asks it.
+func TestQD1B_SettingsGrantRoleWithoutTheDeskIsRefusedAtTheGate(t *testing.T) {
+	q := newQD1BFixture(t)
+	for _, path := range []string{"/api/v1/quotes/settings-grant", "/api/v1/quotes/settings/acceptance"} {
+		code, body := qd1bCall(t, q, http.MethodGet, path, xrSubFinancialController, nil)
+		if code != http.StatusForbidden || body != string(authz.BodyForbidden) {
+			t.Fatalf("%s as the financial controller: %d %s, want the gate's 403", path, code, body)
+		}
 	}
 }
