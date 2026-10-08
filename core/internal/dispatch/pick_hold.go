@@ -37,6 +37,10 @@ type PickHoldGate interface {
 // WithPickHoldGate wires (or overrides) the hold read behind the will call doors.
 func (s *Service) WithPickHoldGate(g PickHoldGate) *Service { s.pickHold = g; return s }
 
+// PickHoldGateWired reports whether the will call doors carry the hold (the
+// composition root's boot assertion's fact).
+func (s *Service) PickHoldGateWired() bool { return s.pickHold != nil }
+
 // refuseHeldFromPicking guards one will call door: nil seam allows, a read
 // that cannot be made refuses (the money direction), a held order refuses
 // with the mandated sentence.

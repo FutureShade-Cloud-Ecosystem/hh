@@ -310,6 +310,9 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		panic("order: pick hold reader not wired - a pay before release order could reach picking unpaid")
 	}
 	ops.dispatchSvc.WithPickHoldGate(dispatchPickHoldAdapter{repo: billingRepo})
+	if !ops.dispatchSvc.PickHoldGateWired() {
+		panic("dispatch: pick hold gate not wired - a pay before release order's will call doors could release goods unpaid")
+	}
 
 	// Item 9 review P2-2: the Pay balance take raises an uninvoiced order's
 	// invoice through the SAME billing writer the desk's order payment raises
