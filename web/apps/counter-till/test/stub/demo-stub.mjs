@@ -552,6 +552,58 @@ const SALES = {
       },
     ],
   },
+  // Walk in sales (ruling A): found only by a receipt or order number. One cash, one card.
+  "CT-3001": {
+    order_id: uuid(3001),
+    order_no: "CT-3001",
+    branch_id: BRANCH_ID,
+    customer_id: uuid(100009),
+    invoice_id: uuid(4001),
+    sale_tender: "CASH",
+    card_refundable: false,
+    lines: [
+      { order_line_id: uuid(13011), product_id: uuid(50002), description: "Wall block, charcoal, each", qty_sold: 4, unit_price_cents: 6000, line_total_cents: 24000, tax_cents: 0 },
+    ],
+  },
+  "CT-3002": {
+    order_id: uuid(3002),
+    order_no: "CT-3002",
+    branch_id: BRANCH_ID,
+    customer_id: uuid(100009),
+    invoice_id: uuid(4002),
+    sale_tender: "CARD",
+    card_refundable: true,
+    lines: [
+      { order_line_id: uuid(13021), product_id: uuid(50003), description: "Garden edger, grey, each", qty_sold: 3, unit_price_cents: 8900, line_total_cents: 26700, tax_cents: 0 },
+    ],
+  },
+  // Orders not fully paid (the cash or card split): half paid, and not paid at all.
+  "CT-3003": {
+    order_id: uuid(3003),
+    order_no: "CT-3003",
+    branch_id: BRANCH_ID,
+    customer_id: uuid(100007),
+    invoice_id: uuid(4003),
+    sale_tender: "CASH",
+    card_refundable: false,
+    paid_cents: 5000,
+    lines: [
+      { order_line_id: uuid(13031), product_id: uuid(50002), description: "Wall block, charcoal, each", qty_sold: 2, unit_price_cents: 6000, line_total_cents: 12000, tax_cents: 0 },
+    ],
+  },
+  "CT-3004": {
+    order_id: uuid(3004),
+    order_no: "CT-3004",
+    branch_id: BRANCH_ID,
+    customer_id: uuid(100007),
+    invoice_id: uuid(4004),
+    sale_tender: "CASH",
+    card_refundable: false,
+    paid_cents: 0,
+    lines: [
+      { order_line_id: uuid(13041), product_id: uuid(50002), description: "Wall block, charcoal, each", qty_sold: 1, unit_price_cents: 6000, line_total_cents: 6000, tax_cents: 0 },
+    ],
+  },
 };
 
 // The customer lines read's world (item 10.1's contract, field for field): every order a customer
@@ -560,7 +612,8 @@ const SALES = {
 // quantity returned. The second branch exists to show the one branch per credit note rule.
 const BRANCH_ID_2 = "5d1b3f6e-0000-4000-9000-000000000002";
 const BRANCH_NAMES = { [BRANCH_ID]: "Trenton", [BRANCH_ID_2]: "Kingston" };
-const WALK_IN_ID = "00000000-0000-4000-8000-0000000000ff";
+// The canonical house WALK-IN row (migration 0029), the id the till names in its Walk in sale entry.
+const WALK_IN_ID = "a1900000-0000-4000-9000-000000000001";
 
 const CUSTOMER_ORDER_FACTS = {
   "CT-1001": { created_at: "2026-10-03T15:20:00Z", job_label: "Marina Road patio", source: "TILL", sale_type: "COLLECT_NOW" },
@@ -569,6 +622,10 @@ const CUSTOMER_ORDER_FACTS = {
   "CT-1004": { created_at: "2026-10-06T10:00:00Z", job_label: "Garden steps", source: "QUOTE", sale_type: "" },
   "CT-2001": { created_at: "2026-10-04T11:40:00Z", job_label: "", source: "TILL", sale_type: "COLLECT_NOW" },
   "CT-2002": { created_at: "2026-10-02T13:10:00Z", job_label: "Garden wall", source: "TILL", sale_type: "COLLECT_NOW" },
+  "CT-3001": { created_at: "2026-10-07T09:00:00Z", job_label: "", source: "TILL", sale_type: "COLLECT_NOW" },
+  "CT-3002": { created_at: "2026-10-07T09:30:00Z", job_label: "", source: "TILL", sale_type: "COLLECT_NOW" },
+  "CT-3003": { created_at: "2026-10-07T10:00:00Z", job_label: "Back steps", source: "TILL", sale_type: "COLLECT_LATER" },
+  "CT-3004": { created_at: "2026-10-07T10:30:00Z", job_label: "Side path", source: "TILL", sale_type: "COLLECT_LATER" },
 };
 
 function customerOrderOf(customerId, orderNo, over = {}) {
@@ -591,7 +648,10 @@ const CUSTOMER_ORDERS = {
       not_returnable_reason: "no invoice has been raised for this order yet, so there is nothing to refund against",
     }),
     customerOrderOf("c-retail", "CT-1003"),
+    customerOrderOf("c-retail", "CT-3003"),
+    customerOrderOf("c-retail", "CT-3004"),
   ],
+  [WALK_IN_ID]: [customerOrderOf(WALK_IN_ID, "CT-3001"), customerOrderOf(WALK_IN_ID, "CT-3002")],
 };
 
 function customerOrderView(order) {
@@ -655,6 +715,8 @@ function reseedReturns() {
   NOTES_BY_KEY.clear();
   NOTE_META.clear();
   CARD_REFUNDED.clear();
+  PAYOUTS.clear();
+  OFFSETS.clear();
   PREVIEW_BODIES.length = 0;
   SWAPS_BY_KEY.clear();
   SWAP_KEYS_SEEN.length = 0;
@@ -1053,6 +1115,48 @@ function refuse(status, error, extra = {}) {
   return { status, body: { error, ...extra } };
 }
 
+// A receipt or order number as the core reads it: an order number or an invoice number, with or without
+// the hash, or the bare digits a branch's numbers end in.
+function normalizeSaleRef(raw) {
+  return String(raw).trim().replace(/^#/, "").toLowerCase();
+}
+
+function saleRefMatches(order, number) {
+  const orderNo = order.order_no.toLowerCase();
+  const invoiceNo = `inv-${orderNo}`;
+  if (number === orderNo || number === invoiceNo) return true;
+  return /^[0-9]+$/.test(number) && orderNo.endsWith(number);
+}
+
+// Cash or card only up to what was actually paid on the order's invoice, less earlier cash or card
+// payouts; the rest comes off the open invoice (the principal's ruling), in the core's words.
+const PAYOUTS = new Map();
+const OFFSETS = new Map();
+
+function railSplit(order, method, total) {
+  if ((method !== "CASH" && method !== "CARD") || order.paid_cents === undefined) return { rail: total, offset: 0, note: "" };
+  const invoiceTotal = order.lines.reduce((sum, row) => sum + row.line_total_cents, 0);
+  const balance = invoiceTotal - order.paid_cents - (OFFSETS.get(order.order_id) ?? 0);
+  const avail = Math.max(order.paid_cents - (PAYOUTS.get(order.order_id) ?? 0), 0);
+  let rail = total;
+  let offset = 0;
+  if (avail < total) {
+    rail = avail;
+    offset = total - avail;
+    if (offset > balance) {
+      rail += offset - balance;
+      offset = balance;
+    }
+  }
+  let note = "";
+  if (offset > 0 && rail === 0) {
+    note = `This order is not paid yet: nothing can go back in cash or card; the whole ${centsWords(offset)} comes off the open invoice`;
+  } else if (offset > 0) {
+    note = `This order is not fully paid: up to ${centsWords(rail)} can go back in cash or card; the rest, ${centsWords(offset)}, comes off the open invoice`;
+  }
+  return { rail, offset, note };
+}
+
 function centsWords(cents) {
   return `$${(cents / 100).toFixed(2)}`;
 }
@@ -1060,7 +1164,7 @@ function centsWords(cents) {
 // The shape, wall and guard rules shared by the commit and the preview, in the core's words and order
 // (checkNoteShape, then each order through the walls and the line guard). `commit` adds the rail,
 // the replay, the 10.4 account and card refusals and the approval, which the preview never judges.
-function noteRefusal(caller, body, approver, commit = true) {
+function noteRefusal(caller, body, approver, commit = true, allowWalkIn = true) {
   if (body === null || typeof body !== "object") return refuse(400, "the request body is not JSON");
   if (commit) {
     if (typeof body.idempotency_key !== "string" || body.idempotency_key === "") {
@@ -1072,8 +1176,8 @@ function noteRefusal(caller, body, approver, commit = true) {
   if (commit && !["CASH", "CARD", "ACCOUNT_CREDIT"].includes(body.refund_method)) return refuse(400, "pos: refund_method must be CASH, CARD or ACCOUNT_CREDIT");
   const customerId = typeof body.customer_id === "string" ? body.customer_id.trim() : "";
   if (customerId === "") return refuse(400, "pos: customer_id is required");
-  if (customerId === WALK_IN_ID) {
-    return refuse(422, "pos: the WALK-IN house account holds no customer history; find the customer on the sale and return it from their account, or refund the walk-in sale on its own to the card it was paid on or in cash");
+  if (customerId === WALK_IN_ID && !allowWalkIn) {
+    return refuse(422, "pos: a swap is rung for a customer's own account, not the WALK-IN house account; return the walk-in sale to the card it was paid on or in cash, and ring the new order apart");
   }
   const seen = new Set();
   for (const entry of body.orders) {
@@ -1088,6 +1192,9 @@ function noteRefusal(caller, body, approver, commit = true) {
     }
   }
   if (commit && NOTES_BY_KEY.has(body.idempotency_key)) return null;
+  if (commit && body.refund_method === "ACCOUNT_CREDIT" && customerId === WALK_IN_ID) {
+    return refuse(422, "pos: the WALK-IN house account holds no credit; refund this walk-in sale to the card it was paid on or in cash");
+  }
   if (commit && body.refund_method === "ACCOUNT_CREDIT") {
     const account = CUSTOMERS.find((row) => row.id === customerId);
     if (account === undefined || account.payment_terms_days <= 0 || account.credit_limit_cents <= 0) {
@@ -1134,6 +1241,10 @@ function noteRefusal(caller, body, approver, commit = true) {
       }
       orderCents += line.unit_price_cents * asked.qty_base;
     }
+    if (commit && (body.refund_method === "CASH" || body.refund_method === "CARD")) {
+      const split = railSplit(order, body.refund_method, orderCents);
+      if (split.rail === 0 && split.offset > 0) return refuse(422, `pos: ${split.note}`);
+    }
     if (commit && body.refund_method === "CARD") {
       const captured = order.lines.reduce((sum, row) => sum + row.line_total_cents, 0);
       const refunded = CARD_REFUNDED.get(order.order_id) ?? 0;
@@ -1154,8 +1265,10 @@ function noteRefusal(caller, body, approver, commit = true) {
 
 // The preview: the commit's own figures per line, per order and for the note (this world carries no
 // tax), nothing written.
-function previewNote(body) {
+function previewNote(body, method = null) {
   const orders = [];
+  let railSum = 0;
+  let offsetSum = 0;
   let subtotal = 0;
   let branchId = "";
   for (const entry of body.orders) {
@@ -1168,9 +1281,23 @@ function previewNote(body) {
     });
     const orderTotal = lines.reduce((sum, row) => sum + row.total_cents, 0);
     subtotal += orderTotal;
-    orders.push({ order_id: order.order_id, order_no: order.order_no, subtotal_cents: orderTotal, tax_cents: 0, total_cents: orderTotal, lines });
+    const entryOut = { order_id: order.order_id, order_no: order.order_no, subtotal_cents: orderTotal, tax_cents: 0, total_cents: orderTotal, lines };
+    if (method === "CASH" || method === "CARD") {
+      const split = railSplit(order, method, orderTotal);
+      entryOut.rail_cents = split.rail;
+      entryOut.invoice_offset_cents = split.offset;
+      entryOut.rail_note = split.note;
+      railSum += split.rail;
+      offsetSum += split.offset;
+    }
+    orders.push(entryOut);
   }
-  return { customer_id: body.customer_id.trim(), branch_id: branchId, subtotal_cents: subtotal, tax_cents: 0, total_cents: subtotal, orders };
+  const out = { customer_id: body.customer_id.trim(), branch_id: branchId, subtotal_cents: subtotal, tax_cents: 0, total_cents: subtotal, orders };
+  if (method === "CASH" || method === "CARD") {
+    out.rail_cents = railSum;
+    out.invoice_offset_cents = offsetSum;
+  }
+  return out;
 }
 
 function commitNote(caller, body, approver, swap = null) {
@@ -1179,6 +1306,7 @@ function commitNote(caller, body, approver, swap = null) {
   NOTE_SEQ += 1;
   const returns = [];
   let subtotal = 0;
+  let railTotal = 0;
   let branchId = "";
   for (const entry of body.orders) {
     const order = orderById(entry.order_id);
@@ -1192,6 +1320,10 @@ function commitNote(caller, body, approver, swap = null) {
       if (body.refund_method === "CARD") CARD_REFUNDED.set(order.order_id, (CARD_REFUNDED.get(order.order_id) ?? 0) + line.unit_price_cents * asked.qty_base);
     }
     subtotal += childTotal;
+    const split = railSplit(order, body.refund_method, childTotal);
+    PAYOUTS.set(order.order_id, (PAYOUTS.get(order.order_id) ?? 0) + split.rail);
+    OFFSETS.set(order.order_id, (OFFSETS.get(order.order_id) ?? 0) + split.offset);
+    railTotal += split.rail;
     let applied;
     if (swap !== null) {
       applied = Math.min(childTotal, swap.remaining);
@@ -1207,6 +1339,7 @@ function commitNote(caller, body, approver, swap = null) {
       tax_cents: 0,
       total_cents: childTotal,
       ...(applied === undefined ? {} : { applied_cents: applied }),
+      ...(split.offset > 0 ? { invoice_offset_cents: split.offset, payment_note: split.note } : {}),
       pickup_status: "NONE",
       status: "COMMITTED",
       replayed: false,
@@ -1231,7 +1364,7 @@ function commitNote(caller, body, approver, swap = null) {
     approver: approver.present && approver.account !== null ? approver.account.user_id : null,
   });
   if (body.refund_method === "CASH" && body.till_session_id === DRAWER.session_id) {
-    DRAWER.cash_out_cents += swap === null ? subtotal : subtotal - swap.applied;
+    DRAWER.cash_out_cents += swap === null ? railTotal : subtotal - swap.applied;
   }
   return { status: 201, body: answer };
 }
@@ -1260,7 +1393,7 @@ function swapFigures(caller, body, approver, commit) {
   const tender = body.tender ?? "CASH";
   if (!["CASH", "CARD", "CHEQUE", "ACCOUNT"].includes(tender)) return refuse(400, "pos: tender must be CASH, CARD, CHEQUE or ACCOUNT");
   // The credit through the note's own shape, walls and guard (preview mode: no rail yet).
-  const shape = noteRefusal(caller, { ...body, refund_method: "CASH", idempotency_key: "swap-preview" }, approver, false);
+  const shape = noteRefusal(caller, { ...body, refund_method: "CASH", idempotency_key: "swap-preview" }, approver, false, false);
   if (shape !== null) return shape;
   const credit = previewNote(body);
   const customer = customerFor(body.customer_id);
@@ -1297,7 +1430,7 @@ function swapFigures(caller, body, approver, commit) {
   }
   if (commit) {
     // The note's own rail checks and the approval, judged on the note total, the way the note's commit does.
-    const railed = noteRefusal(caller, { ...body, refund_method: leftover > 0 ? method : "ACCOUNT_CREDIT", idempotency_key: body.idempotency_key }, approver, true);
+    const railed = noteRefusal(caller, { ...body, refund_method: leftover > 0 ? method : "ACCOUNT_CREDIT", idempotency_key: body.idempotency_key }, approver, true, false);
     if (railed !== null && !(leftover === 0 && railed.status === 422)) return railed;
   }
   return {
@@ -1611,9 +1744,11 @@ const server = createServer(async (request, response) => {
       respondJson(response, 400, { error: "pos: customer_id is required" });
       return;
     }
-    if (customerId === WALK_IN_ID) {
+    // Ruling A: the house WALK-IN row is answered only through a receipt or order number, never listed.
+    const number = normalizeSaleRef(url.searchParams.get("number") ?? "");
+    if (customerId === WALK_IN_ID && number === "") {
       respondJson(response, 422, {
-        error: "pos: the WALK-IN house account holds no customer history; find the customer on the sale and return it from their account, or refund the walk-in sale on its own to the card it was paid on or in cash",
+        error: "pos: walk-in sales are never listed; find the sale by the receipt or order number, and it goes back to the card it was paid on or in cash",
       });
       return;
     }
@@ -1623,7 +1758,8 @@ const server = createServer(async (request, response) => {
       return;
     }
     const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 25, 1), 100);
-    const held = CUSTOMER_ORDERS[customerId] ?? [];
+    // The number filter sits inside the customer's own orders, so it can never reach another's.
+    const held = (CUSTOMER_ORDERS[customerId] ?? []).filter((order) => number === "" || saleRefMatches(order, number));
     const items = held
       .filter((order) => branchId === "" || order.branch_id === branchId)
       .slice(0, limit)
@@ -1739,7 +1875,7 @@ const server = createServer(async (request, response) => {
       respondJson(response, refusal.status, refusal.body);
       return;
     }
-    respondJson(response, 200, previewNote(body));
+    respondJson(response, 200, previewNote(body, body.refund_method ?? null));
     return;
   }
   if (request.method === "POST" && path === "/api/v1/pos/returns-across") {

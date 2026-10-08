@@ -73,6 +73,9 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
   "return-customer-first": [
     { file: "20-sales.pw.ts", test: "a two order return: lines from both orders, one credit note in cash, and the drawer drops by its total" },
   ],
+  "return-walk-in": [
+    { file: "20-sales.pw.ts", test: "a walk in return: found by its receipt number, cash or card only, and the drawer drops by its total" },
+  ],
   "return-swap": [
     { file: "20-sales.pw.ts", test: "a swap: the credit pays a new order, the leftover goes back by cash, both documents name each other" },
   ],

@@ -674,9 +674,14 @@ export class CounterTillApp extends HHElement {
   /** Enter in the Pay balance find field finds, the way the Find button does. */
   readonly #onHostKey = (event: KeyboardEvent): void => {
     if (event.key !== "Enter") return;
-    const control = event
-      .composedPath()
-      .find((node): node is Element => node instanceof Element && node.getAttribute("data-field") === "pay-balance-term");
+    const path = event.composedPath();
+    const walkIn = path.find((node): node is Element => node instanceof Element && node.getAttribute("data-field") === "returns-walkin-number");
+    if (walkIn !== undefined) {
+      event.preventDefault();
+      void this.#returns.findWalkInSale();
+      return;
+    }
+    const control = path.find((node): node is Element => node instanceof Element && node.getAttribute("data-field") === "pay-balance-term");
     if (control === undefined) return;
     event.preventDefault();
     void this.#payBalance.find();
@@ -694,6 +699,7 @@ export class CounterTillApp extends HHElement {
     if (field === "returns-replacement-qty" && control instanceof HTMLInputElement) {
       this.#returns.setReplacementQty(control.getAttribute("data-product") ?? "", control.value);
     }
+    if (field === "returns-walkin-number" && control instanceof HTMLInputElement) this.#returns.setWalkInNumber(control.value);
     if (field === "returns-filter" && control instanceof HTMLInputElement) this.#returns.setFilter(control.value);
     if (field === "returns-qty" && control instanceof HTMLInputElement) {
       const line = control.getAttribute("data-line") ?? "";
@@ -771,6 +777,8 @@ export class CounterTillApp extends HHElement {
     if (returnsAction === "returns-replacement-down") this.#returns.stepReplacement(control.getAttribute("data-product") ?? "", -1);
     if (returnsAction === "returns-swap-tender") this.#returns.chooseSwapTender(control.getAttribute("data-tender") ?? "");
     if (returnsAction === "returns-ring-swap") void this.#returns.ringSwap();
+    if (returnsAction === "returns-walkin") this.#returns.toggleWalkIn();
+    if (returnsAction === "returns-walkin-find") void this.#returns.findWalkInSale();
     if (returnsAction === "returns-continue") void this.#returns.toRefund();
     if (returnsAction === "returns-method") this.#returns.chooseMethod(control.getAttribute("data-method") ?? "");
     if (returnsAction === "returns-submit") void this.#returns.submit();

@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ReturnDraft } from "./draft.js";
 import { readCustomerLines } from "./lines.js";
-import { buildNoteInput, buildPreviewInput, readNote, readPreview, railAvailable } from "./note.js";
+import { buildNoteInput, buildPreviewInput, readNote, readPreview, railAvailable, WALK_IN_CUSTOMER_ID } from "./note.js";
 
 const uuid = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const line = (n, over = {}) => ({
@@ -156,4 +156,62 @@ test("a preview with a missing or unsafe figure is unreadable, so no total is sh
   const bad = preview();
   delete bad.orders[0].lines[0].tax_cents;
   assert.equal(readPreview(bad), null);
+});
+
+// ---- the rulings round: the cash or card split, and the walk in customer --------------------------
+
+test("the preview body names the rail once one is chosen, so the server can split an order not fully paid", () => {
+  const d = draftOf([order(16)]);
+  d.setQty(uuid(161), "1");
+  assert.equal(buildPreviewInput(uuid(1), d).refund_method, undefined, "no rail chosen, none sent");
+  assert.equal(buildPreviewInput(uuid(1), d, "CASH").refund_method, "CASH");
+  assert.equal(buildPreviewInput(uuid(1), d, "ACCOUNT_CREDIT").refund_method, "ACCOUNT_CREDIT");
+});
+
+test("a preview with a rail reads each order's cash or card part, the part off the open invoice and the server's words", () => {
+  const split = preview({
+    rail_cents: 500, invoice_offset_cents: 1500,
+    orders: [
+      { order_id: uuid(16), order_no: "SO-16", subtotal_cents: 990, tax_cents: 10, total_cents: 1000, rail_cents: 0, invoice_offset_cents: 1000,
+        rail_note: "This order is not paid yet: nothing can go back in cash or card; the whole $10.00 comes off the open invoice",
+        lines: [pline(161, 1000)] },
+      { order_id: uuid(11), order_no: "SO-11", subtotal_cents: 990, tax_cents: 10, total_cents: 1000, rail_cents: 500, invoice_offset_cents: 500,
+        rail_note: "This order is not fully paid: up to $5.00 can go back in cash or card; the rest, $5.00, comes off the open invoice",
+        lines: [pline(111, 1000)] },
+    ],
+  });
+  const read = readPreview(split);
+  assert.equal(read.railCents, 500);
+  assert.equal(read.invoiceOffsetCents, 1500);
+  assert.equal(read.orders.length, 2);
+  assert.deepEqual(read.orders.map((o) => [o.orderNo, o.railCents, o.invoiceOffsetCents]), [["SO-16", 0, 1000], ["SO-11", 500, 500]]);
+  assert.match(read.orders[1].railNote, /up to \$5.00 can go back in cash or card/);
+});
+
+test("without a rail the preview carries no split, and a half stated split is unreadable", () => {
+  const plain = readPreview(preview());
+  assert.equal(plain.railCents, null);
+  assert.equal(plain.orders[0].railNote, "");
+  const half = preview();
+  half.orders[0].rail_cents = 100;
+  assert.equal(readPreview(half), null, "a rail figure without its offset is not a whole answer");
+});
+
+test("a committed return reads its server words and what came off the invoice when the order was not fully paid", () => {
+  const read = readNote(note({ returns: [child(10, { invoice_offset_cents: 300, payment_note: "This order is not fully paid: up to $8.30 can go back in cash or card; the rest, $3.00, comes off the open invoice" }), child(20)] }));
+  assert.equal(read.returns[0].invoiceOffsetCents, 300);
+  assert.match(read.returns[0].paymentNote, /not fully paid/);
+  assert.equal(read.returns[1].invoiceOffsetCents, 0);
+  assert.equal(read.returns[1].paymentNote, "");
+});
+
+test("the account rail is never offered for the walk in customer, and the others follow the draft", () => {
+  const d = draftOf([order(16)]);
+  d.setQty(uuid(161), "1");
+  assert.equal(railAvailable(d, "ACCOUNT_CREDIT", { kind: "open", sessionId: uuid(55) }, true), false);
+  assert.equal(railAvailable(d, "ACCOUNT_CREDIT", { kind: "open", sessionId: uuid(55) }, false), true);
+  assert.equal(railAvailable(d, "CASH", { kind: "open", sessionId: uuid(55) }, true), true);
+  assert.equal(railAvailable(d, "CARD", { kind: "unknown" }, true), true);
+  assert.equal(typeof WALK_IN_CUSTOMER_ID, "string");
+  assert.match(WALK_IN_CUSTOMER_ID, /^[0-9a-f-]{36}$/);
 });

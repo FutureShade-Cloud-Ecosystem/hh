@@ -498,6 +498,42 @@ test("a swap: the credit pays a new order, the leftover goes back by cash, both 
   await shot(page, "sales-11-swap-done", testInfo);
 });
 
+test("a walk in return: found by its receipt number, cash or card only, and the drawer drops by its total", async ({
+  page,
+}, testInfo) => {
+  // Item 10, ruling A: a walk in sale (rung with no customer) is a returns customer found only by its
+  // receipt or order number. The account rail is not offered (it goes back to cash or card), and a cash
+  // refund moves the drawer's expected cash by exactly the note's total, the server's figure on Done.
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "DEMO-EDGE-ALU", "Aluminum Edging 8ft (demo)");
+  const rung = await ringCash(page, "60.00");
+  const bearer = await mint(page, "sales");
+  const drawerId = await openDrawer(page, bearer);
+  const before = await expectedCash(page, bearer, drawerId);
+
+  await openReturns(page);
+  await page.getByRole("button", { name: "Walk in sale" }).click();
+  await page.getByLabel("Receipt or order number").fill(rung.order_no);
+  await page.getByRole("button", { name: "Find the sale" }).click();
+  await expect(page.getByTestId("returns")).toHaveAttribute("data-step", "lines");
+  const order = page.getByTestId("returns-order").filter({ hasText: rung.order_no });
+  await expect(order).toHaveCount(1);
+  await order.getByRole("button", { name: "Return to stock" }).first().click();
+  await page.getByRole("button", { name: "Continue to the refund" }).click();
+  await expect(page.getByRole("button", { name: "On the account", exact: true })).toBeDisabled();
+  await page.getByRole("button", { name: "Cash", exact: true }).click();
+  await page.getByRole("button", { name: "Record the credit note" }).click();
+  const done = page.getByTestId("returns-done");
+  await expect(done).toContainText("Credit note recorded");
+  const totalText = (await done.getByTestId("returns-note-total").textContent()) as string;
+  const totalMatch = totalText.match(/\$([0-9,]+)\.([0-9]{2})/);
+  expect(totalMatch).toBeTruthy();
+  // The string goes to cents through its parts, never through a float multiply.
+  const creditedCents = Number(totalMatch?.[1].replaceAll(",", "") as string) * 100 + Number(totalMatch?.[2]);
+  expect(await expectedCash(page, bearer, drawerId)).toBe(before - creditedCents);
+  await shot(page, "sales-12-walk-in-return-done", testInfo);
+});
+
 test("beyond the till: sign out, a reload, and a fresh page each leave the till nobody's", async ({
   page,
 }, testInfo) => {

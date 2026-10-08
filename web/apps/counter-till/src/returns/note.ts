@@ -9,6 +9,13 @@ import type { ReturnDraft } from "./draft.js";
 export type RefundMethod = "CASH" | "CARD" | "ACCOUNT_CREDIT";
 export const REFUND_METHODS: readonly RefundMethod[] = ["CASH", "CARD", "ACCOUNT_CREDIT"];
 
+/**
+ * The house WALK-IN customer's id: the canonical row migration 0029 seeds in every database. The
+ * customers search never lists it and no read hands the id out, so the Walk in sale entry names it
+ * here (a request is on file for the server to accept the empty id the sale already uses).
+ */
+export const WALK_IN_CUSTOMER_ID = "a1900000-0000-4000-9000-000000000001";
+
 /** The drawer at the note's branch, as the cash rail needs it. */
 export type DrawerState = { kind: "unknown" } | { kind: "open"; sessionId: string } | { kind: "closed" };
 
@@ -55,7 +62,9 @@ export function buildNoteInput(args: BuildNoteArgs): BuiltNote {
  * picked order to be refundable; the account rail is always offered, because only the server knows
  * whether the account can spend credit and it refuses in words where it cannot.
  */
-export function railAvailable(draft: ReturnDraft, method: RefundMethod, drawer: DrawerState): boolean {
+export function railAvailable(draft: ReturnDraft, method: RefundMethod, drawer: DrawerState, walkIn = false): boolean {
+  // A walk in sale goes back to cash or card only: there is no account to credit (D2).
+  if (method === "ACCOUNT_CREDIT" && walkIn) return false;
   if (method === "CASH") return drawer.kind === "open";
   if (method === "CARD") return draft.pickedOrders().every((order) => order.cardRefundable);
   return true;
@@ -71,6 +80,10 @@ export interface NoteReturn {
   subtotalCents: number;
   taxCents: number;
   totalCents: number;
+  /** What came off the order's open invoice when the order was not fully paid; 0 otherwise. */
+  invoiceOffsetCents: number;
+  /** The split in the server's words, empty when there was none. */
+  paymentNote: string;
 }
 
 /** The committed credit note. */
@@ -111,7 +124,10 @@ function readChild(raw: unknown): NoteReturn | null {
   if (returnId === null || returnNo === null || orderId === null || invoiceId === null || method === null) return null;
   if (subtotalCents === null || taxCents === null || totalCents === null) return null;
   if (r["status"] !== "COMMITTED") return null;
-  return { returnId, returnNo, orderId, invoiceId, method, subtotalCents, taxCents, totalCents };
+  const offset = r["invoice_offset_cents"] === undefined ? 0 : cents(r["invoice_offset_cents"]);
+  const paymentNote = r["payment_note"] === undefined ? "" : typeof r["payment_note"] === "string" ? r["payment_note"] : null;
+  if (offset === null || paymentNote === null) return null;
+  return { returnId, returnNo, orderId, invoiceId, method, subtotalCents, taxCents, totalCents, invoiceOffsetCents: offset, paymentNote };
 }
 
 /** Field by field, never a cast: the committed note the Done step spells, or null. */
@@ -164,9 +180,22 @@ export function noteOrders(draft: ReturnDraft): PosReturnAcrossInput["orders"] {
  * The preview's body: the same lines as the note, without a key, a rail or a drawer, and with a
  * disposition only once one is chosen. Null when nothing is picked.
  */
-export function buildPreviewInput(customerId: string, draft: ReturnDraft): PosReturnPreviewInput | null {
+export function buildPreviewInput(customerId: string, draft: ReturnDraft, method: RefundMethod | null = null): PosReturnPreviewInput | null {
   if (draft.pickedLines().length === 0) return null;
-  return { customer_id: customerId, orders: noteOrders(draft) };
+  return { customer_id: customerId, orders: noteOrders(draft), ...(method === null ? {} : { refund_method: method }) };
+}
+
+/** One order's share of the credit, with the server's split when a rail was named. */
+export interface PreviewOrder {
+  orderId: string;
+  orderNo: string;
+  totalCents: number;
+  /** What goes back in cash or card; null when no rail was named. */
+  railCents: number | null;
+  /** What comes off the order's open invoice; null when no rail was named. */
+  invoiceOffsetCents: number | null;
+  /** The split in the server's words, empty when nothing is split. */
+  railNote: string;
 }
 
 /** One line's priced figures, the server's own. */
@@ -183,6 +212,11 @@ export interface CreditPreview {
   totalCents: number;
   /** Each picked line's figures by order line id. */
   lines: Map<string, PreviewLine>;
+  /** Each order's share, in the order the server answered. */
+  orders: PreviewOrder[];
+  /** With a rail named: the sums of what goes back in cash or card and what comes off the open invoices. */
+  railCents: number | null;
+  invoiceOffsetCents: number | null;
 }
 
 /** Field by field, never a cast: the credit so far, or null so that no total shows rather than half of one. */
@@ -195,10 +229,26 @@ export function readPreview(raw: unknown): CreditPreview | null {
   const orders = r["orders"];
   if (subtotalCents === null || taxCents === null || totalCents === null) return null;
   if (!Array.isArray(orders) || orders.length === 0) return null;
+  const noteRail = r["rail_cents"] === undefined ? null : cents(r["rail_cents"]);
+  const noteOffset = r["invoice_offset_cents"] === undefined ? null : cents(r["invoice_offset_cents"]);
+  if ((r["rail_cents"] === undefined) !== (r["invoice_offset_cents"] === undefined)) return null;
+  if ((r["rail_cents"] !== undefined && noteRail === null) || (r["invoice_offset_cents"] !== undefined && noteOffset === null)) return null;
   const lines = new Map<string, PreviewLine>();
+  const previewOrders: PreviewOrder[] = [];
   for (const orderRaw of orders) {
     const order = record(orderRaw);
     if (order === null || !Array.isArray(order["lines"])) return null;
+    const orderId = filled(order["order_id"]);
+    const orderNo = filled(order["order_no"]);
+    const orderTotal = cents(order["total_cents"]);
+    if (orderId === null || orderNo === null || orderTotal === null) return null;
+    if ((order["rail_cents"] === undefined) !== (order["invoice_offset_cents"] === undefined)) return null;
+    const orderRail = order["rail_cents"] === undefined ? null : cents(order["rail_cents"]);
+    const orderOffset = order["invoice_offset_cents"] === undefined ? null : cents(order["invoice_offset_cents"]);
+    if ((order["rail_cents"] !== undefined && orderRail === null) || (order["invoice_offset_cents"] !== undefined && orderOffset === null)) return null;
+    const railNote = order["rail_note"] === undefined ? "" : typeof order["rail_note"] === "string" ? order["rail_note"] : null;
+    if (railNote === null) return null;
+    previewOrders.push({ orderId, orderNo, totalCents: orderTotal, railCents: orderRail, invoiceOffsetCents: orderOffset, railNote });
     for (const lineRaw of order["lines"]) {
       const line = record(lineRaw);
       if (line === null) return null;
@@ -210,5 +260,5 @@ export function readPreview(raw: unknown): CreditPreview | null {
       lines.set(id, { subtotalCents: sub, taxCents: tax, totalCents: total });
     }
   }
-  return { subtotalCents, taxCents, totalCents, lines };
+  return { subtotalCents, taxCents, totalCents, lines, orders: previewOrders, railCents: noteRail, invoiceOffsetCents: noteOffset };
 }

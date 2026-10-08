@@ -33,7 +33,10 @@ dealer's approval amount (judged on the note total) is refused with the amount
 and roles named and completes through a manager's own credential entered at the
 clerk's till, the token held in memory for the one call and dropped. The Done
 step names the note, each order's return with its number and the server's
-figures, and a receipt line per return. The swap sits beside the rails: add the
+figures, and a receipt line per return. A walk in sale (no customer) is found through the first step's Walk in sale entry by its
+receipt or order number only (the server never lists walk in sales) and goes back to cash or
+card. With a rail chosen, the preview carries the server's cash or card part and the part that
+comes off an open invoice for an order not fully paid, in its words. The swap sits beside the rails: add the
 replacement goods (the counter's own product search, in each product's sell
 unit), and `POST /api/v1/pos/swaps/preview` answers the credit, the new order
 total, what the credit pays, the leftover (back by the original tender) and any

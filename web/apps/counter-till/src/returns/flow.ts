@@ -33,7 +33,7 @@ import {
   type SwapDone,
   type SwapPreviewRead,
 } from "./swap.js";
-import { buildNoteInput, buildPreviewInput, railAvailable, readNote, readPreview, REFUND_METHODS, type CreditNote, type CreditPreview, type DrawerState, type RefundMethod } from "./note.js";
+import { buildNoteInput, buildPreviewInput, railAvailable, readNote, readPreview, REFUND_METHODS, WALK_IN_CUSTOMER_ID, type CreditNote, type CreditPreview, type DrawerState, type RefundMethod } from "./note.js";
 
 /** The stepper's four steps. */
 export type ReturnStep = "customer" | "lines" | "refund" | "done";
@@ -106,6 +106,10 @@ export class ReturnsFlow {
   /** True once a search has answered, so an empty answer reads as a miss rather than a blank. */
   searched = false;
   customer: CustomerSearchResult | null = null;
+  /** True while the Walk in sale entry is open on the customer step. */
+  walkInOpen = false;
+  /** The receipt or order number typed for a walk in sale: the only way its lines are found. */
+  walkInNumber = "";
   /** True while the customer's lines are being read. */
   loading = false;
   /** The customer's orders newest first, as the server answered. */
@@ -187,6 +191,11 @@ export class ReturnsFlow {
   /** Bumped on every fresh customer or reset: the view keys its uncontrolled fields on it. */
   get epoch(): number {
     return this.#epoch;
+  }
+
+  /** The customer on the draft is the house walk in account: cash or card only, no swap. */
+  get isWalkIn(): boolean {
+    return this.customer?.id === WALK_IN_CUSTOMER_ID;
   }
 
   get visibleOrders(): CustomerOrder[] {
@@ -276,6 +285,73 @@ export class ReturnsFlow {
     this.#onChange();
   }
 
+  /** Open or close the Walk in sale entry on the customer step. */
+  toggleWalkIn(): void {
+    if (this.loading) return;
+    this.walkInOpen = !this.walkInOpen;
+    this.notice = null;
+    this.#onChange();
+  }
+
+  setWalkInNumber(value: string): void {
+    this.walkInNumber = value;
+    this.#onChange();
+  }
+
+  /**
+   * Find a walk in sale by its receipt or order number, the only way the server answers the house
+   * walk in account (it never lists every walk in sale). A blank number is refused here in words,
+   * before the wire; everything else is the server's answer and the server's words.
+   */
+  async findWalkInSale(): Promise<void> {
+    if (this.loading) return;
+    const number = this.walkInNumber.trim();
+    if (number === "") {
+      this.notice = "Type the receipt or order number of the walk in sale: it is the only way to find one.";
+      this.#onChange();
+      return;
+    }
+    const seq = ++this.#seq;
+    this.loading = true;
+    this.notice = null;
+    this.#onChange();
+    const result = await staffPos.posCustomerReturnLines(this.#client, { customer_id: WALK_IN_CUSTOMER_ID, number });
+    if (seq !== this.#seq) return;
+    this.loading = false;
+    if (!result.ok) {
+      this.notice = result.error;
+      this.#onChange();
+      return;
+    }
+    const orders = readCustomerLines(result.value);
+    if (orders === null) {
+      this.notice = "The answer about this sale was not readable: nothing is shown rather than half of it.";
+      this.#onChange();
+      return;
+    }
+    if (orders.length === 0) {
+      this.notice = `No walk in sale answers to ${number}: check the number on the receipt.`;
+      this.#onChange();
+      return;
+    }
+    this.customer = {
+      id: WALK_IN_CUSTOMER_ID,
+      name: "Walk in sale",
+      account_no: "WALK-IN",
+      customer_type: "RETAIL",
+      payment_terms_days: 0,
+      credit_limit_cents: 0,
+      open_balance_cents: 0,
+    };
+    this.orders = orders;
+    this.draft = new ReturnDraft(orders);
+    this.filter = "";
+    this.draftNotice = null;
+    this.#epoch += 1;
+    this.step = "lines";
+    this.#onChange();
+  }
+
   setFilter(value: string): void {
     this.filter = value;
     this.#onChange();
@@ -322,7 +398,8 @@ export class ReturnsFlow {
    */
   async #refreshPreview(): Promise<void> {
     const seq = ++this.#previewSeq;
-    const body = this.customer === null ? null : buildPreviewInput(this.customer.id, this.draft);
+    const body =
+      this.customer === null ? null : buildPreviewInput(this.customer.id, this.draft, this.step === "refund" ? this.method : null);
     if (body === null) {
       this.preview = null;
       this.previewing = false;
@@ -378,7 +455,7 @@ export class ReturnsFlow {
   }
 
   railAvailable(method: RefundMethod): boolean {
-    return railAvailable(this.draft, method, this.drawer);
+    return railAvailable(this.draft, method, this.drawer, this.isWalkIn);
   }
 
   chooseMethod(method: string): void {
@@ -525,7 +602,7 @@ export class ReturnsFlow {
   }
 
   get swapReady(): boolean {
-    return this.step === "refund" && this.draft.ready && this.basket.lines.length > 0 && this.swapPreview !== null;
+    return this.step === "refund" && !this.isWalkIn && this.draft.ready && this.basket.lines.length > 0 && this.swapPreview !== null;
   }
 
   get canRing(): boolean {
@@ -772,6 +849,8 @@ export class ReturnsFlow {
     this.matches = [];
     this.searched = false;
     this.customer = null;
+    this.walkInOpen = false;
+    this.walkInNumber = "";
     this.loading = false;
     this.orders = [];
     this.draft = new ReturnDraft([]);

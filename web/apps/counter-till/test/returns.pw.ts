@@ -18,9 +18,14 @@ async function signIn(page: Page): Promise<void> {
 }
 
 async function openReturns(page: Page): Promise<void> {
-  // The route survives a sign out and a fresh sign in, so Returns may already be up.
-  if (!(await page.getByTestId("returns").isVisible())) await page.getByTestId("till-returns-entry").click();
-  await expect(page.getByTestId("returns")).toBeVisible();
+  // The route survives a sign out and a fresh sign in, so Returns may already be up, or the bar's entry
+  // may be. Wait for whichever the till shows (a check then a click raced the render after a sign in
+  // and clicked an entry that was not there), and click the entry only when it is the one that came.
+  const surface = page.getByTestId("returns");
+  const entry = page.getByTestId("till-returns-entry");
+  await expect(surface.or(entry)).toBeVisible();
+  if (!(await surface.isVisible())) await entry.click();
+  await expect(surface).toBeVisible();
 }
 
 async function pickCustomer(page: Page, search: string, name: string): Promise<void> {
@@ -179,7 +184,7 @@ test("a customer who holds no order says so, and Change customer starts clean", 
   await expect(page.getByTestId("returns-customers")).toHaveCount(0);
 });
 
-test("the walk-in is refused in words: it is not a returns customer", async ({ page }) => {
+test("a walk in row picked from the customer list is answered in the server's words, never a list of walk in sales", async ({ page }) => {
   // The customer search excludes the house walk-in, so a row for it is staged here and the stub's
   // customer lines read answers it the way the core does (422 with its words).
   await page.route("**/api/v1/customers/search*", (route) =>
@@ -188,7 +193,7 @@ test("the walk-in is refused in words: it is not a returns customer", async ({ p
       contentType: "application/json",
       body: JSON.stringify([
         {
-          id: "00000000-0000-4000-8000-0000000000ff",
+          id: "a1900000-0000-4000-9000-000000000001",
           name: "Walk-in",
           account_no: "WALK-IN",
           customer_type: "RETAIL",
@@ -201,9 +206,9 @@ test("the walk-in is refused in words: it is not a returns customer", async ({ p
   );
   await page.getByLabel("Search name or account number").fill("walk");
   await page.getByRole("button", { name: /Walk-in/ }).click();
-  await expect(page.getByTestId("returns-notice")).toContainText("the WALK-IN house account holds no customer history");
-  await expect(page.getByTestId("returns-notice")).toContainText("find the customer on the sale and return it from their account");
-  await expect(page.getByTestId("returns-notice")).not.toContainText("by its own order number");
+  // Ruling A: the server never lists the walk in sales, and says how to find one.
+  await expect(page.getByTestId("returns-notice")).toContainText("walk-in sales are never listed");
+  await expect(page.getByTestId("returns-notice")).toContainText("find the sale by the receipt or order number");
   await expect(page.getByTestId("returns")).toHaveAttribute("data-step", "customer");
 });
 
@@ -687,4 +692,122 @@ test("an order that still has an open invoice is refused by the server's preview
   await addPolymerSand(page);
   await expect(page.getByTestId("returns-swap-preview-notice")).toContainText("still has an open invoice");
   await expect(page.getByRole("button", { name: "Ring the swap" })).toBeDisabled();
+});
+
+// ---- The rulings round: the walk in sale (ruling A) and the cash or card split --------------------
+
+async function openWalkIn(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Walk in sale" }).click();
+  await expect(page.getByLabel("Receipt or order number")).toBeVisible();
+}
+
+async function findWalkIn(page: Page, number: string): Promise<void> {
+  await openWalkIn(page);
+  await page.getByLabel("Receipt or order number").fill(number);
+  await page.getByRole("button", { name: "Find the sale" }).click();
+}
+
+test("the customer step offers a Walk in sale, found only by its number, and a blank or unknown number says so in words", async ({ page }) => {
+  await expect(page.getByRole("button", { name: "Walk in sale" })).toBeVisible();
+  await openWalkIn(page);
+  await expect(page.getByTestId("returns-walkin")).toContainText("only by its receipt or order number");
+  await page.getByRole("button", { name: "Find the sale" }).click();
+  await expect(page.getByTestId("returns-notice")).toContainText("Type the receipt or order number");
+  expect((await stubState(page)).previewBodies).toHaveLength(0);
+  await page.getByLabel("Receipt or order number").fill("NOPE-1");
+  await page.getByRole("button", { name: "Find the sale" }).click();
+  await expect(page.getByTestId("returns-notice")).toContainText("No walk in sale answers to NOPE-1");
+  await expect(page.getByTestId("returns")).toHaveAttribute("data-step", "customer");
+});
+
+test("a walk in sale is found by its order number, with or without the hash, or by the bare digits, and only its own order answers", async ({ page }) => {
+  for (const number of ["CT-3001", "#ct-3001", "3001"]) {
+    await findWalkIn(page, number);
+    await expect(page.getByTestId("returns")).toHaveAttribute("data-step", "lines");
+    await expect(page.getByTestId("returns-order")).toHaveCount(1);
+    await expect(page.getByTestId("returns-order")).toContainText("CT-3001");
+    await expect(page.getByTestId("returns-customer-name")).toHaveText("Walk in sale");
+    await expect(page.getByTestId("returns-walkin-meta")).toContainText("cash or card only");
+    await page.getByRole("button", { name: "Change customer" }).click();
+  }
+  // Another customer's order number never reaches their lines through the walk in.
+  await findWalkIn(page, "CT-1001");
+  await expect(page.getByTestId("returns-notice")).toContainText("No walk in sale answers to CT-1001");
+  await expect(page.getByTestId("returns")).toHaveAttribute("data-step", "customer");
+});
+
+test("a walk in return goes to cash or card only: no account rail, no swap, and cash commits", async ({ page }) => {
+  const before = await drawerExpectedCash(page);
+  await findWalkIn(page, "CT-3001");
+  await lineOf(page, "CT-3001", WALL).getByLabel(/Return quantity/).fill("2");
+  await lineOf(page, "CT-3001", WALL).getByRole("button", { name: "Return to stock" }).click();
+  await expect(page.getByTestId("returns-credit-total")).toHaveText("$120.00");
+  await page.getByRole("button", { name: "Continue to the refund" }).click();
+  await expect(page.getByRole("button", { name: "On the account", exact: true })).toBeDisabled();
+  await expect(page.getByTestId("returns-walkin-rails")).toContainText("no account to credit");
+  await expect(page.getByTestId("returns-swap")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Card", exact: true })).toBeDisabled();
+  await page.getByRole("button", { name: "Cash", exact: true }).click();
+  await page.getByRole("button", { name: "Record the credit note" }).click();
+  await expect(page.getByTestId("returns-done")).toContainText("Credit note recorded");
+  await expect(page.getByTestId("returns-done")).toContainText("cash, from the drawer");
+  expect(await drawerExpectedCash(page)).toBe(before - 12000);
+  expect((await stubState(page)).lastNoteBody.refund_method).toBe("CASH");
+});
+
+test("a walk in card sale goes back to the card, and over the approval amount it asks for a manager's card", async ({ page }) => {
+  await setApprovalLimit(page, true);
+  await findWalkIn(page, "CT-3002");
+  await lineOf(page, "CT-3002", "Garden edger, grey, each").getByLabel(/Return quantity/).fill("3");
+  await lineOf(page, "CT-3002", "Garden edger, grey, each").getByRole("button", { name: "Return to stock" }).click();
+  await page.getByRole("button", { name: "Continue to the refund" }).click();
+  await page.getByRole("button", { name: "Card", exact: true }).click();
+  await page.getByRole("button", { name: "Record the credit note" }).click();
+  const refusal = page.getByTestId("refund-refusal");
+  await expect(refusal).toContainText("$250.00");
+  await refusal.getByRole("button", { name: "Manager approval" }).click();
+  await page.getByRole("dialog", { name: "Manager approval" }).getByRole("button", { name: "Sales manager" }).click();
+  await expect(page.getByTestId("returns-done")).toContainText("$267.00");
+  await expect(page.getByTestId("returns-done")).toContainText("Approved by Sales manager (demo).");
+  expect((await stubState(page)).lastNoteBody.refund_method).toBe("CARD");
+});
+
+test("an order not fully paid: the preview gives the cash or card part and the part off the open invoice, in the server's words, and cash pays out only the part", async ({ page }) => {
+  const before = await drawerExpectedCash(page);
+  await pickCustomer(page, "C07", "Lachance Retail");
+  await lineOf(page, "CT-3003", WALL).getByLabel(/Return quantity/).fill("2");
+  await lineOf(page, "CT-3003", WALL).getByRole("button", { name: "Return to stock" }).click();
+  await page.getByRole("button", { name: "Continue to the refund" }).click();
+  // No rail named yet: no split to show.
+  await expect(page.getByTestId("returns-split-note")).toHaveCount(0);
+  await page.getByRole("button", { name: "Cash", exact: true }).click();
+  await expect(page.getByTestId("returns-split-note")).toContainText(
+    "This order is not fully paid: up to $50.00 can go back in cash or card; the rest, $70.00, comes off the open invoice",
+  );
+  await expect(page.getByTestId("returns-split-figures")).toContainText("Goes back in cash: $50.00");
+  await expect(page.getByTestId("returns-split-figures")).toContainText("comes off the open invoice: $70.00");
+  const bodies = (await stubState(page)).previewBodies as unknown as { refund_method?: string }[];
+  expect(bodies[bodies.length - 1].refund_method).toBe("CASH");
+  // The account rail splits nothing: the whole credit comes off the invoice by its own rail.
+  await page.getByRole("button", { name: "On the account", exact: true }).click();
+  await expect(page.getByTestId("returns-split-note")).toHaveCount(0);
+  await page.getByRole("button", { name: "Cash", exact: true }).click();
+  await expect(page.getByTestId("returns-split-note")).toHaveCount(1);
+  await page.getByRole("button", { name: "Record the credit note" }).click();
+  const done = page.getByTestId("returns-done");
+  await expect(done).toContainText("Credit note recorded");
+  await expect(done.getByTestId("returns-done-payment-note")).toContainText("This order is not fully paid: up to $50.00");
+  await expect(done.getByTestId("returns-done-payment-note")).toContainText("$70.00 came off the open invoice");
+  expect(await drawerExpectedCash(page)).toBe(before - 5000);
+});
+
+test("an order not paid at all: cash or card say nothing can go back that way, in the server's words, and the account rail still works", async ({ page }) => {
+  await pickCustomer(page, "C07", "Lachance Retail");
+  await lineOf(page, "CT-3004", WALL).getByRole("button", { name: "Return to stock" }).click();
+  await page.getByRole("button", { name: "Continue to the refund" }).click();
+  await page.getByRole("button", { name: "Cash", exact: true }).click();
+  await expect(page.getByTestId("returns-split-note")).toContainText("This order is not paid yet: nothing can go back in cash or card; the whole $60.00 comes off the open invoice");
+  await page.getByRole("button", { name: "Record the credit note" }).click();
+  await expect(page.getByTestId("returns-notice")).toContainText("This order is not paid yet: nothing can go back in cash or card");
+  await expect(page.getByTestId("returns")).toHaveAttribute("data-step", "refund");
 });

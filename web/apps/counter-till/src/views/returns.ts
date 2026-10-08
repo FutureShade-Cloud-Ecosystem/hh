@@ -353,6 +353,9 @@ export const returnsStyles = css`
     gap: var(--hh-s-16);
     align-items: start;
   }
+  .returns .refund-step[data-walkin="true"] {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
   @media (max-width: 1100px) {
     .returns .refund-step {
       grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -581,6 +584,30 @@ function renderCustomerStep(flow: ReturnsFlow): TemplateResult {
             : nothing}
         ${flow.loading ? html`<p class="notice" role="status">Reading this customer's orders.</p>` : nothing}
       </div>
+      <div class="rt-card" data-testid="returns-walkin">
+        <span class="eyebrow">No account</span>
+        <button type="button" class="btn-secondary" data-action="returns-walkin" aria-expanded=${flow.walkInOpen ? "true" : "false"} ?disabled=${flow.loading}>
+          Walk in sale
+        </button>
+        ${flow.walkInOpen
+          ? html`
+              <p class="hint">A walk in sale is found only by its receipt or order number, and goes back to cash or card.</p>
+              ${keyed(
+                flow.epoch,
+                html`<input
+                  type="search"
+                  class="search-input"
+                  data-field="returns-walkin-number"
+                  aria-label="Receipt or order number"
+                  placeholder="Receipt or order number..."
+                  autocomplete="off"
+                  ?disabled=${flow.loading}
+                />`,
+              )}
+              <button type="button" class="btn-primary" data-action="returns-walkin-find" ?disabled=${flow.loading}>Find the sale</button>
+            `
+          : nothing}
+      </div>
       <div class="why">
         <h3>Why customer first</h3>
         <p>
@@ -603,10 +630,12 @@ function renderLinesStep(flow: ReturnsFlow): unknown {
           <div class="rt-card customer-card">
             <div>
               <p class="customer-name" data-testid="returns-customer-name">${customer?.name ?? ""}</p>
-              <p class="customer-meta">
-                ${customer?.account_no ?? ""} · ${customer === null ? "" : typeWords(customer.customer_type)} · Outstanding
-                ${customer === null ? "" : formatMoney(customer.open_balance_cents)}
-              </p>
+              ${flow.isWalkIn
+                ? html`<p class="customer-meta" data-testid="returns-walkin-meta">Found by its receipt or order number. Goes back to cash or card only.</p>`
+                : html`<p class="customer-meta">
+                    ${customer?.account_no ?? ""} · ${customer === null ? "" : typeWords(customer.customer_type)} · Outstanding
+                    ${customer === null ? "" : formatMoney(customer.open_balance_cents)}
+                  </p>`}
             </div>
             <button type="button" class="btn-secondary" data-action="returns-another">Change customer</button>
           </div>
@@ -757,6 +786,15 @@ function creditFigure(flow: ReturnsFlow): TemplateResult {
       <p class="notice" data-testid="returns-credit-tax">
         with tax: ${formatMoney(preview.subtotalCents)} before tax, ${formatMoney(preview.taxCents)} tax
       </p>
+      ${preview.orders
+        .filter((order) => order.railNote !== "")
+        .map((order) => html`<p class="notice" role="status" data-testid="returns-split-note"><strong>${order.orderNo}:</strong> ${order.railNote}.</p>`)}
+      ${preview.invoiceOffsetCents !== null && preview.invoiceOffsetCents > 0
+        ? html`<p class="figures" data-testid="returns-split-figures">
+            Goes back ${flow.method === "CARD" ? "to the card" : "in cash"}: ${formatMoney(preview.railCents ?? 0)} ·
+            comes off the open invoice: ${formatMoney(preview.invoiceOffsetCents)}
+          </p>`
+        : nothing}
     `;
   }
   if (flow.previewing) return html`<p class="notice" role="status" data-testid="returns-credit-pricing">Pricing the credit.</p>`;
@@ -832,7 +870,7 @@ function renderRefundStep(flow: ReturnsFlow): TemplateResult {
   const frozen = flow.submitting || flow.dialogOpen || flow.approving;
   const orders = flow.draft.pickedOrders();
   return html`
-    <div class="refund-step" data-testid="returns-refund">
+    <div class="refund-step" data-testid="returns-refund" data-walkin=${flow.isWalkIn ? "true" : "false"}>
       <div class="rt-card">
         <h3>The credit</h3>
         <p>
@@ -879,6 +917,9 @@ function renderRefundStep(flow: ReturnsFlow): TemplateResult {
           ? nothing
           : html`<p class="notice">No card refund: an order on this credit note was not paid by card, so there is no capture to reverse.</p>`}
         ${flow.railAvailable("CASH") ? nothing : html`<p class="notice">Cash waits on the drawer: ${drawerWords(flow)}</p>`}
+        ${flow.isWalkIn
+          ? html`<p class="notice" data-testid="returns-walkin-rails">A walk in sale has no account to credit: it goes back to cash or card.</p>`
+          : nothing}
         ${flow.method === "CARD" && flow.cardSimulated === true
           ? html`<p class="notice" role="status" data-testid="simulated-notice">Simulated refund: nothing reached a card.</p>`
           : flow.method !== null
@@ -892,7 +933,7 @@ function renderRefundStep(flow: ReturnsFlow): TemplateResult {
           </button>
         </div>
       </div>
-      ${renderSwapPanel(flow)}
+      ${flow.isWalkIn ? nothing : renderSwapPanel(flow)}
       <div class="refund-wide">
         ${flow.refusal === null ? nothing : renderRefusal(flow.refusal)}
         ${flow.dialogOpen ? renderApprovalDialog(flow) : nothing}
@@ -1085,6 +1126,9 @@ function renderDoneStep(flow: ReturnsFlow): TemplateResult {
                 <p class="figures">
                   ${formatMoney(child.totalCents)} (${formatMoney(child.subtotalCents)} before tax, ${formatMoney(child.taxCents)} tax)
                 </p>
+                ${child.paymentNote === ""
+                  ? nothing
+                  : html`<p class="notice" data-testid="returns-done-payment-note">${child.paymentNote}. ${formatMoney(child.invoiceOffsetCents)} came off the open invoice.</p>`}
                 <p class="receipt-line" data-testid="returns-receipt-line">
                   ${child.returnNo} · ${orderNo} · ${formatMoney(child.totalCents)} · ${railWords(child.method)}
                 </p>
