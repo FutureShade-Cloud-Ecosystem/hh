@@ -45,6 +45,11 @@ func (s *Service) Stage(ctx context.Context, in StageInput) (Task, error) {
 	if len(in.Ref) > 40 {
 		return Task{}, httpx.BadRequestf("stage ref is too long (max 40)")
 	}
+	// Item 9 Opus P2-1: a held order's material does not reach the staging
+	// area. The queue row was already marked ("Balance due"); this is the door.
+	if err := s.refuseHeldTask(ctx, in.TaskID); err != nil {
+		return Task{}, err
+	}
 	t, err := s.store.Stage(ctx, in)
 	if err != nil {
 		return Task{}, err

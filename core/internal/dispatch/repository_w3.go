@@ -139,16 +139,32 @@ const pickupFeedWhere = `
          SELECT 1 FROM delivery_stops s
           WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED','FAILED'))`
 
+// pickupOwedCents is the ONE owed number the pay before release hold reads
+// (billing/pick_hold.go's own arithmetic, in SQL): the open balances of the
+// order's live INVOICE documents plus the uninvoiced remainder of the order's
+// total. It is the same expression pos/repository_pay_balance.go's find
+// carries, so the feed's mark cannot disagree with the doors' refusals.
+const pickupOwedCents = `
+	       (SELECT COALESCE(SUM(i.balance_cents), 0) FROM invoices i
+	          WHERE i.order_id = o.id AND i.doc_type = 'INVOICE'
+	            AND i.status IN ('FINALIZED','PARTIALLY_PAID') AND i.balance_cents > 0)
+	     + GREATEST(o.total_cents -
+	       (SELECT COALESCE(SUM(i.total_cents), 0) FROM invoices i
+	          WHERE i.order_id = o.id AND i.doc_type = 'INVOICE'
+	            AND i.status NOT IN ('DRAFT','VOID')), 0)`
+
 const pickupFeedSelect = `
 SELECT o.id::text, COALESCE(o.order_no::text,''), o.branch_id::text, COALESCE(c.name,''),
-       COALESCE(o.fulfillment,''), COALESCE(to_char(o.requested_date,'YYYY-MM-DD'),''), o.status
+       COALESCE(o.fulfillment,''), COALESCE(to_char(o.requested_date,'YYYY-MM-DD'),''), o.status,
+       ` + pickupOwedCents + ` AS owed_cents,
+       (COALESCE(c.payment_terms_days, 1) <= 0 AND (` + pickupOwedCents + `) > 0) AS held
   FROM orders    o
   LEFT JOIN customers c ON c.id = o.customer_id` + pickupFeedWhere
 
 func scanPickFeedPickup(row pgx.Row) (pickFeedPickup, error) {
 	var p pickFeedPickup
 	err := row.Scan(&p.OrderID, &p.OrderNo, &p.BranchID, &p.CustomerName, &p.Fulfillment,
-		&p.PromisedDate, &p.OrderStatus)
+		&p.PromisedDate, &p.OrderStatus, &p.OwedCents, &p.HeldFromPicking)
 	return p, err
 }
 

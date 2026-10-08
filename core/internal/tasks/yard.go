@@ -93,6 +93,14 @@ type PickTicket struct {
 	// Source names the implementation that produced this ticket ("STUB", "DISPATCH", …). It is
 	// carried all the way to the UI on purpose: a queue fed by a fixture must SAY it is fixture data.
 	Source string `json:"source"`
+	// HeldFromPicking marks a ticket whose order owes money under a pay before
+	// release shape (item 9.3's hold): the order STAYS in the feed, marked,
+	// so the yard knows why it waits rather than wondering why its task
+	// refuses to claim or stage. The mark is words; the doors (Claim, Stage)
+	// are what refuse.
+	HeldFromPicking bool   `json:"held_from_picking,omitempty"`
+	HoldWords       string `json:"hold_words,omitempty"`
+	StillOwedCents  int64  `json:"still_owed_cents,omitempty"`
 }
 
 // PickSource feeds the yard pick queue. It is the ONLY thing tasks needs to know about whatever

@@ -115,6 +115,15 @@ type PickFeedTicket struct {
 	MTOClass      string // DIB-63: STANDARD | MTO | MIXED, the picker needs it before the driver does
 	TimeWindow    string
 	Lines         []PickFeedLine
+	// HeldFromPicking, HoldWords and StillOwedCents are the pay before
+	// release hold (item 9 Opus P2-1): a held order STAYS in the feed,
+	// marked, so the yard knows why it waits. The words are the mark the
+	// queue shows; the doors (tasks' Claim and Stage) are what refuse. The
+	// omitempty keeps a clear ticket byte identical to what this code
+	// produced before the mark existed (the delivery ticket's own pin).
+	HeldFromPicking bool   `json:",omitempty"`
+	HoldWords       string `json:",omitempty"`
+	StillOwedCents  int64  `json:",omitempty"`
 }
 
 // pickFeedPickup is the raw row the PICKUP read returns: everything a pull instruction needs when
@@ -131,6 +140,12 @@ type pickFeedPickup struct {
 	// the pickup's urgency signal and it is NOT a delivery date: nothing is scheduled to leave.
 	PromisedDate string
 	OrderStatus  string
+	// HeldFromPicking and OwedCents are the pay before release hold (item 9
+	// Opus P2-1): the row stays in the feed, marked, so the yard knows why it
+	// waits. The mark is derived from the money exactly as the doors derive
+	// their refusals (repository_w3.go's pickupOwedCents).
+	HeldFromPicking bool
+	OwedCents       int64
 }
 
 // pickFeedStop is the raw row the feed queries read: everything on the ticket except the lines.
@@ -485,6 +500,13 @@ func (f *PickFeed) pickupTicket(row pickFeedPickup) PickFeedTicket {
 		ScheduledDate: row.PromisedDate,
 		MTOClass:      MTOStandard,
 		Lines:         []PickFeedLine{},
+	}
+	// The hold mark (item 9 Opus P2-1): the ticket stays in the feed, marked
+	// with the words the queue shows, so the yard knows why it waits.
+	t.HeldFromPicking = row.HeldFromPicking
+	t.StillOwedCents = row.OwedCents
+	if row.HeldFromPicking {
+		t.HoldWords = "Balance due"
 	}
 	if d, err := time.Parse("2006-01-02", row.PromisedDate); err == nil {
 		at := d

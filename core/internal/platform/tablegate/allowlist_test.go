@@ -302,9 +302,15 @@ var allowlist = []allowlistEntry{
 	{
 		module: "dispatch",
 		file:   "core/internal/dispatch/repository_w3.go",
-		tables: []string{"customers", "orders"},
+		tables: []string{"customers", "invoices", "orders"},
 		writes: []string{"scope_sequences"},
-		reason: "the Wave 3 reads (pick feed, MTO, reschedule, scan trail) read the order and customer facts the stops carry; the 0213 seq stamp marks its rows",
+		// the Wave 3 reads (pick feed, MTO, reschedule, scan trail) read the
+		// order and customer facts the stops carry; the 0213 seq stamp marks
+		// its rows. The invoices read is item 9 Opus P2-1: the pickup feed
+		// rows carry the pay before release hold's mark (owed and held), the
+		// same expression pos/repository_pay_balance.go's find carries, so
+		// the feed's mark cannot disagree with the doors' refusals.
+		reason: "the Wave 3 reads (pick feed, MTO, reschedule, scan trail) read the order and customer facts the stops carry, and the pickup feed computes the pay before release hold's mark from the order's live invoice balances (item 9 Opus P2-1, the pos find's own expression); the 0213 seq stamp marks its rows",
 	},
 	{
 		module: "dispatch",

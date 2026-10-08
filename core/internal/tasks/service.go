@@ -22,6 +22,12 @@ var (
 	ErrIllegalTransition = errors.New("tasks: illegal transition")
 	// ErrNoTransition, the task is already in the requested status (a benign duplicate move). → 409.
 	ErrNoTransition = errors.New("tasks: status unchanged")
+	// ErrHeldFromPicking, the task's order owes money under a pay before release shape (item 9.3's
+	// hold): the goods wait for the money, so the yard cannot claim or stage its task. → 409.
+	ErrHeldFromPicking = errors.New("tasks: this order cannot reach picking until the balance is paid")
+	// ErrHoldUnreadable, a wired pick hold check could not be read: the move is refused rather than
+	// allowed (fail closed). Unreachable in a correct deploy. → 503.
+	ErrHoldUnreadable = errors.New("tasks: the pay before release hold could not be read")
 	// errNotConfigured, the OrderReader seam is not wired (a boot/wiring bug; dev always wires it and
 	// tests always inject a fake). Defensive only. → 500.
 	errNotConfigured = errors.New("tasks: order reader not configured")
@@ -95,6 +101,9 @@ type Service struct {
 	// yardOrders is the short pick's order seam (yard_short.go). Nil = a short pick is recorded with
 	// its reason and does not reach the order.
 	yardOrders YardOrderChanges
+	// holdCheck is the pick hold seam (yard_hold.go, item 9 Opus P2-1). Nil = the yard doors do not
+	// refuse a held order (the additive lane; the composition root asserts the wiring at boot).
+	holdCheck PickHoldCheck
 }
 
 // NewService wires the store. Inject the order + chat seams with WithOrderReader / WithChatNotifier.
@@ -157,7 +166,14 @@ func (s *Service) CreateFromOrder(ctx context.Context, in CreateInput) (Task, er
 
 // Claim moves a QUEUED/PUSHED task to ACCEPTED and stamps claimed_by/at (the store applies the field
 // effects on the ACCEPTED transition). Illegal from any other status.
+//
+// Item 9 Opus P2-1: the claim refuses when the order is held from picking
+// under a pay before release shape, BEFORE the picker walks out to the bays
+// (the queue row is marked; this is the door under the mark).
 func (s *Service) Claim(ctx context.Context, id, actor string) (Task, error) {
+	if err := s.refuseHeldTask(ctx, id); err != nil {
+		return Task{}, err
+	}
 	return s.transition(ctx, id, StatusAccepted, actor, "", "")
 }
 

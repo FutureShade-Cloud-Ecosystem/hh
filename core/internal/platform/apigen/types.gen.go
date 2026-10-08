@@ -4491,17 +4491,20 @@ type TaskPickLine struct {
 }
 
 type TaskPickTicket struct {
-	OrderId      string         `json:"order_id"`
-	OrderNo      *string        `json:"order_no,omitempty"`
-	BranchId     *string        `json:"branch_id,omitempty"`
-	CustomerName *string        `json:"customer_name,omitempty"`
-	Fulfillment  *string        `json:"fulfillment,omitempty"`
-	MtoClass     *string        `json:"mto_class,omitempty"`
-	Priority     *string        `json:"priority,omitempty"`
-	Reference    *string        `json:"reference,omitempty"`
-	RequestedAt  *time.Time     `json:"requested_at,omitempty"`
-	Lines        []TaskPickLine `json:"lines"`
-	Source       string         `json:"source"`
+	OrderId         string         `json:"order_id"`
+	OrderNo         *string        `json:"order_no,omitempty"`
+	BranchId        *string        `json:"branch_id,omitempty"`
+	CustomerName    *string        `json:"customer_name,omitempty"`
+	Fulfillment     *string        `json:"fulfillment,omitempty"`
+	MtoClass        *string        `json:"mto_class,omitempty"`
+	Priority        *string        `json:"priority,omitempty"`
+	Reference       *string        `json:"reference,omitempty"`
+	RequestedAt     *time.Time     `json:"requested_at,omitempty"`
+	Lines           []TaskPickLine `json:"lines"`
+	Source          string         `json:"source"`
+	HeldFromPicking *bool          `json:"held_from_picking,omitempty"`
+	HoldWords       *string        `json:"hold_words,omitempty"`
+	StillOwedCents  *int64         `json:"still_owed_cents,omitempty"`
 }
 
 type TaskShortage struct {

@@ -524,6 +524,13 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	orderSvc.WithInvoiceStanding(invoiceStandingAdapter{repo: billing.NewRepository(pool)})
 	orderSvc.WithBackorderNotifier(backorderNoticeAdapter{chat: yardChatNotifier{svc: messagingSvc, log: log}})
 	yardTasksSvc.WithYardOrderChanges(yardOrderAdapter{svc: orderSvc})
+	// Item 9 Opus P2-1: the yard's doors (Claim, Stage) carry the pick hold
+	// the will call doors carry, over the same billing read, with the boot
+	// fail-fast keeping a deploy from serving with the yard door dark.
+	yardTasksSvc.WithPickHoldCheck(tasksPickHoldAdapter{repo: billing.NewRepository(pool)})
+	if !yardTasksSvc.PickHoldCheckWired() {
+		panic("tasks: yard pick hold check not wired - a pay before release order's task could be claimed and staged unpaid")
+	}
 	tasks.NewHandler(yardTasksSvc, log).WithUserLinker(link).RegisterYardRoutes(r, g)
 	tasks.NewHandler(yardTasksSvc, log).WithUserLinker(link).RegisterWeightRoutes(r, g)
 
@@ -1111,6 +1118,11 @@ func pickTicketFromFeed(t dispatch.PickFeedTicket) tasks.PickTicket {
 		RequestedAt:  t.RequestedAt,
 		Lines:        lines,
 		Source:       "DISPATCH",
+		// The pay before release hold's mark (item 9 Opus P2-1): the row
+		// stays in the feed, marked, so the yard knows why it waits.
+		HeldFromPicking: t.HeldFromPicking,
+		HoldWords:       t.HoldWords,
+		StillOwedCents:  t.StillOwedCents,
 	}
 }
 

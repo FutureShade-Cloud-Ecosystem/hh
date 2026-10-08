@@ -48,3 +48,12 @@ func (a dispatchPickHoldAdapter) HeldFromPickingTx(ctx context.Context, tx pgx.T
 	held, owed, _, _, err := a.repo.PickHoldForOrderTx(ctx, tx, orderID)
 	return held, owed, err
 }
+
+// tasksPickHoldAdapter satisfies tasks.PickHoldCheck over the same read, so
+// the yard's doors and every other door read the one number.
+type tasksPickHoldAdapter struct{ repo *billing.Repository }
+
+func (a tasksPickHoldAdapter) OrderHeldFromPicking(ctx context.Context, orderID string) (bool, int64, error) {
+	held, owed, _, _, err := a.repo.PickHoldForOrder(ctx, orderID)
+	return held, owed, err
+}
