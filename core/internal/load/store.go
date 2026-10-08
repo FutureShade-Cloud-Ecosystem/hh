@@ -263,6 +263,21 @@ func readNameOwner(ctx context.Context, tx pgx.Tx, k nameKey, hhID string) (stri
 	return other, true, nil
 }
 
+// rowNamedBySource reports whether any source system of this org already
+// names the row under the kind: the wording read behind a conflict whose
+// own source system names no owner.
+func rowNamedBySource(ctx context.Context, tx pgx.Tx, k nameKey, hhID string) (bool, error) {
+	var n int
+	err := tx.QueryRow(ctx, `
+		SELECT count(*) FROM load_key_registry
+		WHERE org_id = $1::uuid AND kind = $2 AND hh_id = $3::uuid`,
+		k.OrgID, k.Kind, hhID).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("load: name source read: %w", err)
+	}
+	return n > 0, nil
+}
+
 // insertName records the name: the registry insert is the load's lock.
 // A unique violation comes back unwrapped so the caller can retry the
 // item the race belongs to.
