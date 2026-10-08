@@ -32,9 +32,12 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync"
@@ -117,6 +120,110 @@ func syncActor(ctx context.Context, link syncLinker, subject string) string {
 	return ""
 }
 
+// SyncRoleResolver is the authority seam the driver fence reads: the
+// bridged ERP role code of the caller's resolved staff authority, the
+// same resolution the guards ran for the request, read again here
+// because the Store seam carries the caller as the sync core's
+// ScopeFilter alone, which names the actor and the org and no role. The
+// composition root supplies it over identity's own resolver (cmd/core
+// wires it); a nil seam is legal and the fence then keys on the linked
+// driver record alone, so the adapters stay provable without identity
+// beside them.
+type SyncRoleResolver func(ctx context.Context, platformUserID, orgID string) (code string, has bool, err error)
+
+// driverFence is the driver arm one caller's scope predicate carries:
+// driver reports whether the caller is held to the driver fence at all,
+// and driverID names the dispatch_drivers.id whose runs are theirs. A
+// driver caller with no linked record carries driver with an empty
+// driverID: MyRuns answers that person "you are not set up as a driver"
+// and the sync read's honest shape is the same sentence said as an empty
+// feed, never the whole org.
+type driverFence struct {
+	driver   bool
+	driverID string
+}
+
+// resolveDriverFence resolves the driver arm for one caller. The chain
+// is the module's own: the filter's actor (a platform subject) through
+// the linker seam to the ERP users.id, then this module's own
+// dispatch_drivers row for that user (the table the REST surface's
+// MyRuns resolves the same way), so no cross-module table is read. The
+// role seam, when wired, decides who the fence binds: a DRIVERS-role
+// caller is held to their own runs (or to nothing when unlinked), and
+// every other role keeps the org scope even when a driver record links
+// to their login, the two-role edge the REST surface's
+// completionAuthority resolves the same way (role first, ownership
+// second). Without the seam the record alone decides, the adapters'
+// test posture.
+func resolveDriverFence(ctx context.Context, pool *pgxpool.Pool, link syncLinker, role SyncRoleResolver, f sync.ScopeFilter) (driverFence, error) {
+	if f.Tenant || f.Actor == "" {
+		return driverFence{}, nil
+	}
+	recordID := ""
+	if link != nil && pool != nil {
+		if userID, ok := link(ctx, f.Actor); ok && userID != "" {
+			var id string
+			err := pool.QueryRow(ctx,
+				`SELECT id::text FROM dispatch_drivers WHERE user_id = $1::uuid AND is_active
+				 ORDER BY created_at LIMIT 1`, userID).Scan(&id)
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return driverFence{}, fmt.Errorf("dispatch: sync driver fence record read: %w", err)
+			}
+			recordID = id
+		}
+	}
+	if role != nil {
+		code, has, err := role(ctx, f.Actor, f.OrgID)
+		if err != nil {
+			return driverFence{}, fmt.Errorf("dispatch: sync driver fence role read: %w", err)
+		}
+		if has {
+			if code == identity.RoleDrivers {
+				return driverFence{driver: true, driverID: recordID}, nil
+			}
+			return driverFence{}, nil
+		}
+	}
+	if recordID != "" {
+		return driverFence{driver: true, driverID: recordID}, nil
+	}
+	return driverFence{}, nil
+}
+
+// leg renders the driver arm for a row-addressed query. col is the
+// row's reach expression given the rendered placeholder for the bound
+// driver id: delivery_runs.driver_id compared directly, or the reach
+// through a run for the tables that hang off one. Every shape binds
+// exactly one argument, so the call site appends without branching: the
+// desk caller binds NULL and the arm short-circuits true, a driver with
+// a record binds their dispatch_drivers.id, and a driver with none gets
+// the arm that matches no row (nothing is theirs).
+func (d driverFence) leg(col func(ph string) string, ph int) (string, any) {
+	p := syncPH(ph)
+	if !d.driver {
+		return " AND (" + p + "::uuid IS NULL OR " + col(p) + ")", nil
+	}
+	if d.driverID == "" {
+		return " AND FALSE", nil
+	}
+	return " AND " + col(p), d.driverID
+}
+
+// runDriverCol, stopDriverCol and podDriverCol are the reach
+// expressions the adapters' row-addressed statements carry: a run's own
+// driver_id, a stop's run, and a POD photo's stop through to its run.
+func runDriverCol(p string) string { return "driver_id = " + p + "::uuid" }
+func stopDriverCol(p string) string {
+	return "run_id IN (SELECT id FROM delivery_runs WHERE driver_id = " + p + "::uuid)"
+}
+func podDriverCol(p string) string {
+	return "EXISTS (SELECT 1 FROM delivery_stops dsp JOIN delivery_runs drp ON drp.id = dsp.run_id WHERE dsp.id = p.stop_id AND drp.driver_id = " + p + "::uuid)"
+}
+
+// syncPH renders placeholder ph, the numbering every query that appends
+// legs past the predicate's own args computes off len(args).
+func syncPH(ph int) string { return "$" + strconv.Itoa(ph) }
+
 // syncCreateFields is the shape every adapter create shares: the row id
 // when the client generated one, else the server assigns it.
 func syncCreateID(fields map[string]any) (string, error) {
@@ -128,4 +235,63 @@ func syncCreateID(fields map[string]any) (string, error) {
 		return "", fmt.Errorf("dispatch: payload id must be a uuid: %w", sync.ErrOpRefused)
 	}
 	return id, nil
+}
+
+// DriverStopFence is the attachments scope's window onto this module's
+// driver fence: which of a set of candidate stops sit on runs assigned
+// to the driver the platform subject names. The attachments module owns
+// no run and no stop (its links reach stops polymorphically), so it
+// asks the owner through this seam instead of reading the tables; the
+// composition root wires NewDriverStopFence behind it.
+type DriverStopFence struct {
+	pool *pgxpool.Pool
+	link syncLinker
+	role SyncRoleResolver
+}
+
+// NewDriverStopFence wires the seam over the same linker and role
+// resolver the drive-run adapters fence through.
+func NewDriverStopFence(pool *pgxpool.Pool, link syncLinker, role SyncRoleResolver) *DriverStopFence {
+	return &DriverStopFence{pool: pool, link: link, role: role}
+}
+
+// StopsOnDriverRuns answers which candidate stops sit on runs assigned
+// to the driver the actor names. isDriver is false for every caller who
+// is not held to the driver fence (the desk logins, whose scope stays
+// the org's) and true for a driver caller, whose answer is the subset
+// on their own runs: empty when no candidate is theirs, and empty for a
+// driver login that links to no driver record, the same fail-closed
+// shape the sync scopes' own pulls carry.
+func (f *DriverStopFence) StopsOnDriverRuns(ctx context.Context, orgID, actor string, candidates []string) (map[string]bool, bool, error) {
+	if f == nil || orgID == "" || actor == "" || len(candidates) == 0 {
+		return map[string]bool{}, false, nil
+	}
+	d, err := resolveDriverFence(ctx, f.pool, f.link, f.role, sync.ScopeFilter{OrgID: orgID, Actor: actor})
+	if err != nil {
+		return nil, false, err
+	}
+	if !d.driver {
+		return map[string]bool{}, false, nil
+	}
+	out := map[string]bool{}
+	if d.driverID == "" {
+		return out, true, nil
+	}
+	rows, err := f.pool.Query(ctx, `
+		SELECT s.id::text FROM delivery_stops s
+		JOIN delivery_runs r ON r.id = s.run_id
+		WHERE s.org_id = $1::uuid AND r.driver_id = $2::uuid AND s.id = ANY($3::uuid[])`,
+		orgID, d.driverID, candidates)
+	if err != nil {
+		return nil, true, fmt.Errorf("dispatch: driver stop fence read: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, true, fmt.Errorf("dispatch: driver stop fence scan: %w", err)
+		}
+		out[id] = true
+	}
+	return out, true, rows.Err()
 }

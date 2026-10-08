@@ -26,6 +26,7 @@ type StopsSyncStore struct {
 	pool   *pgxpool.Pool
 	orders OrderReader
 	link   syncLinker
+	role   SyncRoleResolver
 }
 
 // NewStopsSyncStore wires the adapter. The order seam is the module's
@@ -34,6 +35,26 @@ type StopsSyncStore struct {
 // is legal only where creates will not run (tests).
 func NewStopsSyncStore(pool *pgxpool.Pool, orders OrderReader, link syncLinker) *StopsSyncStore {
 	return &StopsSyncStore{pool: pool, orders: orders, link: link}
+}
+
+// WithDriverRole wires the driver fence's role seam; the loads and
+// delivery_stops board adapters embed this store and ride the same
+// fence. The composition test in cmd/core pins the wiring.
+func (s *StopsSyncStore) WithDriverRole(role SyncRoleResolver) *StopsSyncStore {
+	s.role = role
+	return s
+}
+
+// DriverRoleWired answers whether the driver fence's role seam is
+// wired, the leg the composition test pins.
+func (s *StopsSyncStore) DriverRoleWired() bool { return s.role != nil }
+
+// resolveDriverFenceFor resolves the driver fence for one filter over
+// this adapter's own seams: the board scopes that embed this store
+// resolve the same arm before they address a row, so their writes hold
+// to the calling driver exactly as this store's reads do.
+func (s *StopsSyncStore) resolveDriverFenceFor(ctx context.Context, f sync.ScopeFilter) (driverFence, error) {
+	return resolveDriverFence(ctx, s.pool, s.link, s.role, f)
 }
 
 // stopsSyncQuery is the board's own stop columns plus the two sync legs
@@ -89,26 +110,42 @@ func stopStateOf(r syncStopRow) (sync.RowState, error) {
 }
 
 // stopScopePredicate is the WHERE predicate every stops adapter query
-// runs under; a tenant filter fails closed (stops is an org scope).
-func stopScopePredicate(f sync.ScopeFilter) (string, []any, bool) {
+// runs under; a tenant filter fails closed (stops is an org scope). A
+// driver caller carries the driver arm beside the org through the
+// delivery_runs join stopSelectFrom already carries: only the stops of
+// the runs assigned to them, so an unassigned stop (no run yet) is not
+// theirs either, and nothing at all when their login links to no
+// driver record.
+func stopScopePredicate(f sync.ScopeFilter, d driverFence) (string, []any, bool) {
 	if f.Tenant || f.OrgID == "" {
 		return "", nil, false
 	}
-	return "s.org_id = $1::uuid", []any{f.OrgID}, true
+	switch {
+	case !d.driver:
+		return "s.org_id = $1::uuid", []any{f.OrgID}, true
+	case d.driverID == "":
+		return "FALSE", nil, true
+	default:
+		return "s.org_id = $1::uuid AND r.driver_id = $2::uuid", []any{f.OrgID, d.driverID}, true
+	}
 }
 
 // Pull returns the page of stop changes past since, live rows and
 // tombstones in seq order, at most limit rows total, under the org
 // predicate.
 func (s *StopsSyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, limit int) ([]sync.Entity, []sync.Tombstone, error) {
-	where, args, ok := stopScopePredicate(f)
+	d, err := resolveDriverFence(ctx, s.pool, s.link, s.role, f)
+	if err != nil {
+		return nil, nil, err
+	}
+	where, args, ok := stopScopePredicate(f, d)
 	if !ok {
 		return []sync.Entity{}, []sync.Tombstone{}, nil
 	}
 	q := stopsSyncQuery + `
-		WHERE ` + where + ` AND s.seq IS NOT NULL AND s.seq > $2
+		WHERE ` + where + ` AND s.seq IS NOT NULL AND s.seq > ` + syncPH(len(args)+1) + `
 		ORDER BY s.seq ASC
-		LIMIT $3`
+		LIMIT ` + syncPH(len(args)+2)
 	args = append(args, since, limit)
 	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
@@ -142,12 +179,16 @@ func (s *StopsSyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int
 // column holding the latest live key and a tombstone keeping it (the
 // design note in syncscope.go's header).
 func (s *StopsSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key string) (sync.RowState, bool, error) {
-	where, args, ok := stopScopePredicate(f)
+	d, err := resolveDriverFence(ctx, s.pool, s.link, s.role, f)
+	if err != nil {
+		return sync.RowState{}, false, err
+	}
+	where, args, ok := stopScopePredicate(f, d)
 	if !ok {
 		return sync.RowState{}, false, nil
 	}
 	q := stopsSyncQuery + `
-		WHERE ` + where + ` AND s.idempotency_key = $2::uuid
+		WHERE ` + where + ` AND s.idempotency_key = ` + syncPH(len(args)+1) + `::uuid
 		LIMIT 1`
 	args = append(args, key)
 	r, err := scanSyncStop(s.pool.QueryRow(ctx, q, args...))
@@ -178,12 +219,16 @@ type stopsQuerier interface {
 // of asking the shared pool for a second one (connection starvation by
 // second acquisition when pool-size callers do this together).
 func (s *StopsSyncStore) load(ctx context.Context, db stopsQuerier, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
-	where, args, ok := stopScopePredicate(f)
+	d, err := resolveDriverFence(ctx, s.pool, s.link, s.role, f)
+	if err != nil {
+		return sync.RowState{}, false, err
+	}
+	where, args, ok := stopScopePredicate(f, d)
 	if !ok || !looksLikeUUID(id) {
 		return sync.RowState{}, false, nil
 	}
 	q := stopsSyncQuery + `
-		WHERE s.id = $2::uuid AND ` + where
+		WHERE s.id = ` + syncPH(len(args)+1) + `::uuid AND ` + where
 	args = append(args, id)
 	r, err := scanSyncStop(db.QueryRow(ctx, q, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -241,7 +286,11 @@ func stopWriteFields(fields map[string]any) error {
 // filed (COMPLETED, CANCELLED) refuses new stops. The row stamps the
 // caller's org, a freshly allocated seq and the idempotency key.
 func (s *StopsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, fields map[string]any) (sync.RowState, error) {
-	if _, _, ok := stopScopePredicate(f); !ok {
+	d, err := resolveDriverFence(ctx, s.pool, s.link, s.role, f)
+	if err != nil {
+		return sync.RowState{}, err
+	}
+	if _, _, ok := stopScopePredicate(f, d); !ok {
 		return sync.RowState{}, sync.ErrOpRefused
 	}
 	if err := stopCreateFields(fields); err != nil {
@@ -387,7 +436,11 @@ func (s *StopsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key str
 // pod door's alone), the per-status timestamps stamp in the same
 // statement, and the row draws a fresh seq beside the write.
 func (s *StopsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key string, fields map[string]any) (sync.RowState, error) {
-	if _, _, ok := stopScopePredicate(f); !ok {
+	d, err := resolveDriverFence(ctx, s.pool, s.link, s.role, f)
+	if err != nil {
+		return sync.RowState{}, err
+	}
+	if _, _, ok := stopScopePredicate(f, d); !ok {
 		return sync.RowState{}, sync.ErrOpRefused
 	}
 	if err := stopWriteFields(fields); err != nil {
@@ -414,10 +467,11 @@ func (s *StopsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key 
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var from, runID, fromReason string
+	preArm, preArg := d.leg(stopDriverCol, 3)
 	if err := tx.QueryRow(ctx,
 		`SELECT status, COALESCE(run_id::text,''), failure_reason FROM delivery_stops
-		 WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL FOR UPDATE`,
-		id, f.OrgID).Scan(&from, &runID, &fromReason); err != nil {
+		 WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL`+preArm+` FOR UPDATE`,
+		id, f.OrgID, preArg).Scan(&from, &runID, &fromReason); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return sync.RowState{}, sync.ErrRowNotFound
 		}
@@ -483,6 +537,7 @@ func (s *StopsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key 
 		return sync.RowState{}, err
 	}
 	var updated bool
+	setArm, setArg := d.leg(stopDriverCol, 9)
 	err = tx.QueryRow(ctx, `
 		UPDATE delivery_stops SET
 			status          = $3,
@@ -493,9 +548,9 @@ func (s *StopsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key 
 			updated_at      = now(),
 			seq             = $6,
 			idempotency_key = $7::uuid
-		WHERE id = $1::uuid AND org_id = $2::uuid AND status = $8
+		WHERE id = $1::uuid AND org_id = $2::uuid AND status = $8`+setArm+`
 		RETURNING (deleted_at IS NOT NULL)`,
-		id, f.OrgID, to, at, reason, seq, key, from).Scan(&updated)
+		id, f.OrgID, to, at, reason, seq, key, from, setArg).Scan(&updated)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, sync.ErrRowNotFound
 	}
@@ -516,7 +571,11 @@ func (s *StopsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key 
 // fresh seq, the live row's idempotency key kept (syncscope.go's
 // header).
 func (s *StopsSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, key string) (sync.RowState, error) {
-	if _, _, ok := stopScopePredicate(f); !ok {
+	d, err := resolveDriverFence(ctx, s.pool, s.link, s.role, f)
+	if err != nil {
+		return sync.RowState{}, err
+	}
+	if _, _, ok := stopScopePredicate(f, d); !ok {
 		return sync.RowState{}, sync.ErrOpRefused
 	}
 	_ = key
@@ -529,14 +588,15 @@ func (s *StopsSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, key
 	if err != nil {
 		return sync.RowState{}, err
 	}
+	delArm, delArg := d.leg(stopDriverCol, 4)
 	var deleted bool
 	err = tx.QueryRow(ctx, `
 		UPDATE delivery_stops SET
 			deleted_at = now(),
 			updated_at = now(),
 			seq        = $3
-		WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL
-		RETURNING (deleted_at IS NOT NULL)`, id, f.OrgID, seq).Scan(&deleted)
+		WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL`+delArm+`
+		RETURNING (deleted_at IS NOT NULL)`, id, f.OrgID, seq, delArg).Scan(&deleted)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, sync.ErrRowNotFound
 	}

@@ -95,14 +95,96 @@ func rowStateOf(r attachmentRow) (sync.RowState, error) {
 	return rs, nil
 }
 
+// DriverStopFence is the dispatch module's seam the attachments scope
+// fences a driver caller through: which of a set of candidate stops sit
+// on runs assigned to the driver the platform subject names. An
+// attachment's links reach stops polymorphically (owner_kind stop), and
+// whether a stop rides the calling driver's run is dispatch's fact over
+// dispatch's tables, so this module asks its owner through the narrow
+// interface rather than reading past the fence. isDriver false answers
+// an actor who is not held to the driver fence: every desk login, whose
+// scope stays the org's.
+type DriverStopFence interface {
+	StopsOnDriverRuns(ctx context.Context, orgID, actor string, candidates []string) (onDriver map[string]bool, isDriver bool, err error)
+}
+
 // SyncStore is the attachments Store over the pool.
 type SyncStore struct {
-	pool *pgxpool.Pool
+	pool  *pgxpool.Pool
+	fence DriverStopFence
 }
 
 // NewSyncStore wires the adapter.
 func NewSyncStore(pool *pgxpool.Pool) *SyncStore {
 	return &SyncStore{pool: pool}
+}
+
+// WithDriverStopFence wires the driver fence's stop seam (dispatch's
+// own adapter over its own tables). Production wires it; the
+// composition root's boot fail-fast pins that it did.
+func (s *SyncStore) WithDriverStopFence(f DriverStopFence) *SyncStore {
+	s.fence = f
+	return s
+}
+
+// DriverStopFenceWired answers whether the driver fence's seam is
+// wired, the leg the composition root's boot fail-fast reads.
+func (s *SyncStore) DriverStopFenceWired() bool { return s.fence != nil }
+
+// driverScope resolves the driver fence for one caller: the stop ids a
+// driver caller may reach, or ok false for every caller the fence does
+// not bind (no seam wired, a tenant filter, an empty actor, or a desk
+// login), whose scope stays the org's.
+func (s *SyncStore) driverScope(ctx context.Context, f sync.ScopeFilter, candidates []string) (map[string]bool, bool, error) {
+	if s.fence == nil || f.Tenant || f.Actor == "" || len(candidates) == 0 {
+		return nil, false, nil
+	}
+	return s.fence.StopsOnDriverRuns(ctx, f.OrgID, f.Actor, candidates)
+}
+
+// linksReachAStop answers whether one link set carries a link to one of
+// the allowed stops. A driver's attachments are the ones hanging off
+// their own runs' stops (the photos the drive-run app syncs); every
+// other link shape (order, plan, receiving, quote) is the desk's
+// business and not the driver's day.
+func linksReachAStop(links []Link, allowed map[string]bool) bool {
+	for _, l := range links {
+		if l.OwnerKind == OwnerStop && allowed[l.OwnerID] {
+			return true
+		}
+	}
+	return false
+}
+
+// stopCandidates collects the distinct stop owner ids a set of link
+// sets reaches, the candidates one seam call resolves.
+func stopCandidates(linkSets ...[]Link) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, links := range linkSets {
+		for _, l := range links {
+			if l.OwnerKind == OwnerStop && !seen[l.OwnerID] {
+				seen[l.OwnerID] = true
+				out = append(out, l.OwnerID)
+			}
+		}
+	}
+	return out
+}
+
+// holdToDriver answers whether one row's link set is visible to the
+// calling driver: false is the same answer an org-foreign row already
+// gets (the callers answer not-found), so the row's existence never
+// leaks. Every caller the fence does not bind passes untouched.
+func (s *SyncStore) holdToDriver(ctx context.Context, f sync.ScopeFilter, links []Link) (bool, error) {
+	allowed, isDriver, err := s.driverScope(ctx, f, stopCandidates(links))
+	if err != nil {
+		return false, err
+	}
+	if isDriver && !linksReachAStop(links, allowed) {
+		return false, nil
+	}
+	return true, nil
 }
 
 // scopePredicate is the mandatory org predicate; ok false fails closed.
@@ -200,12 +282,37 @@ func (s *SyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, l
 	if err := rows.Err(); err != nil {
 		return nil, nil, fmt.Errorf("attachments: sync pull: %w", err)
 	}
-	links, err := s.loadLinks(ctx, ids)
+	// The driver fence reads the links of every row on the page, live
+	// and tombstoned alike (a tombstone still names the row), resolves
+	// the stops the calling driver may reach in one seam call, and
+	// drops every row that does not hang off one of them: a colleague's
+	// photo is the same as absent, and the page an unseen row vacated
+	// is honestly shorter.
+	allIDs := ids
+	for _, r := range scanned {
+		if r.deleted {
+			allIDs = append(allIDs, r.attachment.ID)
+		}
+	}
+	links, err := s.loadLinks(ctx, allIDs)
 	if err != nil {
 		return nil, nil, err
 	}
+	linkSets := make([][]Link, 0, len(scanned))
+	for _, ls := range links {
+		linkSets = append(linkSets, ls)
+	}
+	allowed, isDriver, err := s.driverScope(ctx, f, stopCandidates(linkSets...))
+	if err != nil {
+		return nil, nil, err
+	}
+	tombstones = tombstones[:0]
 	for _, r := range scanned {
+		if isDriver && !linksReachAStop(links[r.attachment.ID], allowed) {
+			continue
+		}
 		if r.deleted {
+			tombstones = append(tombstones, sync.Tombstone{ID: r.attachment.ID, Seq: r.seq})
 			continue
 		}
 		r.attachment.Links = links[r.attachment.ID]
@@ -242,6 +349,15 @@ func (s *SyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key str
 	}
 	if err != nil {
 		return sync.RowState{}, false, fmt.Errorf("attachments: sync find applied: %w", err)
+	}
+	links, err := s.loadLinks(ctx, []string{r.attachment.ID})
+	if err != nil {
+		return sync.RowState{}, false, err
+	}
+	if visible, err := s.holdToDriver(ctx, f, links[r.attachment.ID]); err != nil {
+		return sync.RowState{}, false, err
+	} else if !visible {
+		return sync.RowState{}, false, nil
 	}
 	rs, err := rowStateOf(r)
 	return rs, true, err
@@ -281,13 +397,18 @@ func (s *SyncStore) load(ctx context.Context, q rowQuerier, f sync.ScopeFilter, 
 	if err != nil {
 		return sync.RowState{}, false, fmt.Errorf("attachments: sync load: %w", err)
 	}
-	if r.deleted {
-		rs, err := rowStateOf(r)
-		return rs, true, err
-	}
 	links, err := s.loadLinksOn(ctx, q, []string{r.attachment.ID})
 	if err != nil {
 		return sync.RowState{}, false, err
+	}
+	if visible, err := s.holdToDriver(ctx, f, links[r.attachment.ID]); err != nil {
+		return sync.RowState{}, false, err
+	} else if !visible {
+		return sync.RowState{}, false, nil
+	}
+	if r.deleted {
+		rs, err := rowStateOf(r)
+		return rs, true, err
 	}
 	a := r.attachment
 	a.Links = []Link{}
@@ -381,6 +502,17 @@ func (s *SyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, 
 	links, err := linksOf(fields["links"])
 	if err != nil {
 		return sync.RowState{}, fmt.Errorf("%v: %w", err, sync.ErrOpRefused)
+	}
+	// A driver caller registers attachments against their own stops
+	// alone: the drive-run app's photos. A declared stop link off their
+	// own runs, or a create that reaches no stop of theirs at all, is
+	// refused whole.
+	allowed, isDriver, err := s.driverScope(ctx, f, stopCandidates(links))
+	if err != nil {
+		return sync.RowState{}, err
+	}
+	if isDriver && !linksReachAStop(links, allowed) {
+		return sync.RowState{}, fmt.Errorf("attachments: a driver registers attachments against their own stops: %w", sync.ErrOpRefused)
 	}
 	id, hasID := fields["id"].(string)
 	if hasID && !looksLikeUUID(id) {
@@ -530,6 +662,14 @@ func (s *SyncStore) applyWrite(ctx context.Context, tx pgx.Tx, f sync.ScopeFilte
 	currentLinks, err := s.loadLinksTx(ctx, tx, id)
 	if err != nil {
 		return attachmentRow{}, err
+	}
+	// The driver fence holds the row-addressed paths to the calling
+	// driver's own stops: a colleague's attachment is the same as
+	// absent, before any field is compared or written.
+	if visible, err := s.holdToDriver(ctx, f, currentLinks); err != nil {
+		return attachmentRow{}, err
+	} else if !visible {
+		return attachmentRow{}, sync.ErrRowNotFound
 	}
 	if declaredIsNoOp(fields, mime, checksum, sizeBytes, links, current, currentLinks) {
 		return current, nil
@@ -720,6 +860,18 @@ func (s *SyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, _ string
 		return sync.RowState{}, fmt.Errorf("attachments: begin sync delete: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// The driver fence holds the tombstone to the calling driver's own
+	// attachments, read off the row's standing links before the seq is
+	// drawn: a colleague's row is the same as absent.
+	delLinks, err := s.loadLinksTx(ctx, tx, id)
+	if err != nil {
+		return sync.RowState{}, err
+	}
+	if visible, err := s.holdToDriver(ctx, f, delLinks); err != nil {
+		return sync.RowState{}, err
+	} else if !visible {
+		return sync.RowState{}, sync.ErrRowNotFound
+	}
 	seq, err := allocateSeqTx(ctx, tx)
 	if err != nil {
 		return sync.RowState{}, err
