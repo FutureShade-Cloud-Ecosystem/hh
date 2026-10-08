@@ -150,12 +150,13 @@ type quoteSpec struct {
 // doors) until it is paid or invoiced clear. Both lift themselves from the money when the last
 // dollar lands, whichever route took it.
 //
-// TWO CONSTRAINTS SHAPED ITS LINES. The account holds no pricing rule, so every
-// line must price where the engine's own tier rules and the plan's pricer agree: BULK at list (the
-// migrations' CONTRACTOR tier for the bulk category is zero bps, so both answer list), while a
-// PAVER line would fall to the CONTRACTOR tier default the plan does not carry and price below the
-// floor at Trenton. And both lines sit above the floor at list, so the floor seam writes nothing
-// for this quote: a COD story with a margin story riding it is two demos in one card.
+// TWO CONSTRAINTS SHAPED ITS LINES. The account prices by the seed's own customer rule (plan.go's
+// R06, pavers at ten percent off list), so every line prices where the engine's resolver and the
+// plan's pricer agree and neither reads the shared tier scopes the plan refuses to use. And both
+// lines sit above the floor, so the floor seam writes nothing for this quote: a COD story with a
+// margin story riding it is two demos in one card. (The account's pavers were once forbidden here
+// for want of a rule; the rule exists now, and a paver line for this account prices above the
+// floor at both branches' costs.)
 var demoQuotes = []quoteSpec{
 	{Key: "Q1", Cust: "C02", Status: "DRAFT", Owner: personaQuoteSales, Branch: 1, AgeDays: 3,
 		Project: "Marina Road patio", PO: "", Contact: "Site contact",

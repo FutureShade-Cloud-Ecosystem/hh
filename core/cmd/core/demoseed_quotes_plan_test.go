@@ -318,6 +318,140 @@ func quoteProdCategory(t *testing.T, prod string) string {
 	return ""
 }
 
+// The floor, priced the way the demo box prices. For every demo customer and every paver and bulk
+// product, the price the box strikes (the customer's own seeded rule, or the shared tier answer the
+// migrations plant when no rule covers the pair) clears the category floor at the Trenton cost,
+// except the pairings on the allow list below. Two kinds of entry live there, each labelled for
+// what it is: the named under floor stories the seed's own rules strike (the product's answer to a
+// rule price under the floor is to accept, mark and log it, CP0-3 answer A), and the paver pairs
+// the seed leaves to the shared tiers, recorded so the exposure stays visible and never endorsed.
+// What the list must never need again is the Cash On Demand account C10: a CONTRACTOR with no rule
+// reads the shared CONTRACTOR tier for its pavers, fifteen percent off list, which prices the
+// Holland Paver under the floor at Trenton, and the first tester who adds a paver line meets the
+// "rule under floor" chip the seed never chose (round 14's finding (b)). The account prices its
+// pavers by its own rule instead.
+func TestQuotePlan_PaverAndBulkPricesClearTheFloorExceptTheNamedStories(t *testing.T) {
+	b := &builder{prod: map[string]prodSpec{}}
+	for _, p := range demoProducts {
+		b.prod[p.Key] = p
+	}
+	custByKey := map[string]custSpec{}
+	for _, c := range demoCustomers {
+		custByKey[c.Key] = c
+	}
+	// priceOf is the price the demo box strikes for the pair: the customer's own rule when one
+	// covers it (the plan's pricer), else the shared tier answer over list.
+	priceOf := func(custKey, prodKey string) int64 {
+		p := b.prod[prodKey]
+		if !seedRuleCovers(custKey, prodKey) {
+			bps := tierBpsOffList(custByKey[custKey].Type, p.Category)
+			return p.ListCents - (p.ListCents*bps+5000)/10000
+		}
+		return b.unitPrice(custKey, prodKey)
+	}
+	allow := map[string]string{
+		// The named stories, each struck by a seeded rule.
+		"C01/P01": "R01, the account price Q2's Holland line carries, marked and logged",
+		"C01/P02": "R01, the account price",
+		"C01/P03": "R01, the account price",
+		"C01/P04": "R01, the account price",
+		"C01/P05": "R01, the account price",
+		"C03/P06": "R03, the bulk account price",
+		"C03/P07": "R03, the bulk account price",
+		"C03/P08": "R03, the bulk account price",
+		"C04/P04": "R05, the negotiated block price",
+		"C08/P01": "R04, the municipal supply agreement",
+		"C08/P02": "R04, the municipal supply agreement",
+		"C08/P03": "R04, the municipal supply agreement",
+		"C08/P04": "R04, the municipal supply agreement",
+		"C08/P05": "R04, the municipal supply agreement",
+		// The paver pairs no seeded rule covers, left to the shared tiers: recorded exposures, not
+		// stories. No seeded line carries any of them. C09 sits behind the branch fence (homed at
+		// the branch no demo login reaches); C03 is reachable at the demo logins' branch, and a
+		// paver line for it would trip the chip the same way C10's did.
+		"C03/P01": "no rule of its own, left to the shared tier (recorded exposure)",
+		"C03/P02": "no rule of its own, left to the shared tier (recorded exposure)",
+		"C03/P03": "no rule of its own, left to the shared tier (recorded exposure)",
+		"C03/P04": "no rule of its own, left to the shared tier (recorded exposure)",
+		"C03/P05": "no rule of its own, left to the shared tier (recorded exposure)",
+		"C09/P01": "no rule of its own, left to the shared tier, behind the branch fence (recorded exposure)",
+		"C09/P02": "no rule of its own, left to the shared tier, behind the branch fence (recorded exposure)",
+		"C09/P03": "no rule of its own, left to the shared tier, behind the branch fence (recorded exposure)",
+		"C09/P04": "no rule of its own, left to the shared tier, behind the branch fence (recorded exposure)",
+		"C09/P05": "no rule of its own, left to the shared tier, behind the branch fence (recorded exposure)",
+	}
+	seen := map[string]bool{}
+	for _, c := range demoCustomers {
+		for _, p := range demoProducts {
+			if p.Category != "PAVER" && p.Category != "BULK" {
+				continue
+			}
+			price := priceOf(c.Key, p.Key)
+			cost := branchCost[p.Key][1]
+			margin := qMarginBps(price, cost)
+			if margin >= demoFloorBps {
+				continue
+			}
+			key := c.Key + "/" + p.Key
+			if _, ok := allow[key]; !ok {
+				t.Errorf("%s x %s prices %d against a Trenton cost of %d, margin %d bps under the %d bps floor, and no seeded rule carries the pairing",
+					c.Key, p.Key, price, cost, margin, demoFloorBps)
+				continue
+			}
+			seen[key] = true
+		}
+	}
+	for key, why := range allow {
+		if !seen[key] {
+			t.Errorf("the allow list names %s (%s), which now clears the floor: the entry is stale, drop it", key, why)
+		}
+	}
+}
+
+// seedRuleCovers answers whether the customer's own seeded rule decides the product's price, as
+// opposed to the shared tier fallback the resolver reaches when none does. The matching is the
+// pricer's own (unitPrice): a customer product rule for the product, or a customer category rule
+// for its category.
+func seedRuleCovers(custKey, prodKey string) bool {
+	var cat string
+	for _, p := range demoProducts {
+		if p.Key == prodKey {
+			cat = p.Category
+			break
+		}
+	}
+	for _, r := range demoRules {
+		if r.Cust != custKey {
+			continue
+		}
+		if r.Scope == "CUSTOMER_PRODUCT" && r.Product == prodKey {
+			return true
+		}
+		if r.Scope == "CUSTOMER_CATEGORY" && r.Category == cat {
+			return true
+		}
+	}
+	return false
+}
+
+// tierBpsOffList is the shared tier answer, in basis points off list, that the resolver strikes for
+// a customer no seeded rule covers, on the database shape the demo world builds (the frozen
+// migrations alone: the demo image and the world proofs never run the wider dealer seed). 0024
+// plants the CONTRACTOR TIER_DEFAULT at fifteen percent off, and 0067 plants the CONTRACTOR bulk
+// category tier at zero, so bulk answers list; the other account types have no tier rule and answer
+// list. The plan refuses to write tier scopes of its own (plan.go's second ruling); the figures are
+// restated here so the test prices a rule-less pair exactly as the box would, and the world proof's
+// real resolver leg holds the restatement to the engine's own answer.
+func tierBpsOffList(customerType, category string) int64 {
+	if customerType != "CONTRACTOR" {
+		return 0
+	}
+	if category == "BULK" {
+		return 0
+	}
+	return 1500
+}
+
 // An accepted quote carries what a real accept leaves: the QUOTE_ACCEPTED audit row in the change
 // trail (the actor the link and not a staff user, only allowlisted details), the acceptance record
 // anchored to it, and an updated_at that is not earlier than the acceptance (share_repository.go

@@ -208,6 +208,14 @@ var demoRules = []customerRule{
 	{"R03", "C03", "CUSTOMER_CATEGORY", "BULK", "", "PCT_OFF_LIST", 1000, 0, "Account pricing, 10% off list on bulk"},
 	{"R04", "C08", "CUSTOMER_CATEGORY", "PAVER", "", "PCT_OFF_LIST", 1500, 0, "Municipal supply agreement, 15% off list"},
 	{"R05", "C04", "CUSTOMER_PRODUCT", "", "P04", "ABSOLUTE", 0, 1050, "Negotiated block price for the Harbourview build"},
+	// The Cash On Demand account's pricing. Without a rule of its own the account reads the shared
+	// CONTRACTOR tier for its pavers (the migrations' TIER_DEFAULT, fifteen percent off), which
+	// prices every paver in the catalogue under the PAVER floor at Trenton (round 14's finding (b)):
+	// a tester adding a paver line for the account met the "rule under floor" chip on a price no
+	// demo row chose. Ten percent off keeps every paver above the floor at both branches' costs, so
+	// the account's quote desk story carries no margin story riding it. The apply is keyed on the
+	// rule's stable id, so a database seeded before this row existed gains it on the next apply.
+	{"R06", "C10", "CUSTOMER_CATEGORY", "PAVER", "", "PCT_OFF_LIST", 1000, 0, "Cash On Demand account pricing, 10% off list on pavers"},
 }
 
 // quantity breaks. Both are PRODUCT-scoped onto a demo SKU, and both have their middle and top
