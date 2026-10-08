@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -663,4 +664,168 @@ func orderNos(rows []OwingOrder) []string {
 		out = append(out, r.OrderNo)
 	}
 	return out
+}
+
+// -- the review's P3-8 legs: multi invoice allocations, and two takes racing --
+
+// plantOwingOrder plants one zero day terms customer, one order and the open
+// invoices named, and unwinds all of it. It answers the order id, the
+// customer, the branch and the whole balance.
+func plantOwingOrder(t *testing.T, pool *pgxpool.Pool, invoices []struct {
+	total, balance int64
+}) (orderID, custID, branchID string, balance int64) {
+	t.Helper()
+	ctx := context.Background()
+	suffix := fmt.Sprintf("multi-%d", time.Now().UnixNano()%1_000_000_000)
+	if err := pool.QueryRow(ctx, `
+		WITH c AS (INSERT INTO customers (account_no, name, customer_type, payment_terms_days, credit_limit_cents)
+		           VALUES ('PBM-'||$1, 'Multi invoice proof', 'CONTRACTOR', 0, 5000000) RETURNING id)
+		INSERT INTO orders (order_no, customer_id, branch_id, status, fulfillment, subtotal_cents, total_cents)
+		SELECT '#SO-PBM-'||$1, c.id, (SELECT id FROM locations WHERE loc_type='BRANCH' LIMIT 1),
+		       'CONFIRMED', 'WILL_CALL', 15000, 15000
+		  FROM c RETURNING id::text, customer_id::text, branch_id::text`, suffix).Scan(&orderID, &custID, &branchID); err != nil {
+		t.Fatalf("plant the order: %v", err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE order_id = $1`, orderID)
+		_, _ = pool.Exec(c, `DELETE FROM orders WHERE id = $1`, orderID)
+		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1`, custID)
+	})
+	for _, inv := range invoices {
+		if _, err := pool.Exec(ctx, `
+INSERT INTO invoices (invoice_no, customer_id, order_id, branch_id, doc_type, status,
+                      subtotal_cents, tax_cents, total_cents, balance_cents, due_date, finalized_at)
+VALUES ('#INV-PBM-'||nextval('invoice_no_seq'), $1::uuid, $2::uuid, $3::uuid, 'INVOICE', 'FINALIZED',
+        $4, 0, $4, $5, current_date, now())`, custID, orderID, branchID, inv.total, inv.balance); err != nil {
+			t.Fatalf("plant an invoice: %v", err)
+		}
+		balance += inv.balance
+	}
+	return orderID, custID, branchID, balance
+}
+
+// A multi invoice order's take allocates once per invoice, at each invoice's
+// own balance, and the subledger's PAYMENT rows sum to the whole take.
+func TestIntegration_PayBalance_MultiInvoiceTakeAllocatesPerInvoice(t *testing.T) {
+	pool := intPool(t)
+	ctx := globalCtx(t, pool)
+	orderID, _, branchID, balance := plantOwingOrder(t, pool, []struct {
+		total, balance int64
+	}{{10000, 10000}, {5000, 5000}})
+	if balance != 15000 {
+		t.Fatalf("the planted balance is %d, want 15000", balance)
+	}
+	svc := realPosSvc(t, pool, stubCharger{})
+	session := openTill(t, pool, branchID)
+	out, err := svc.PayBalanceTake(ctx, PayBalanceTakeInput{
+		OrderID: orderID, Method: TenderCash, AmountCents: balance,
+		TillSessionID: session, IdempotencyKey: key(),
+	})
+	if err != nil {
+		t.Fatalf("take: %v", err)
+	}
+	if out.AmountCents != 15000 {
+		t.Fatalf("the take's amount is %d, want the whole 15000", out.AmountCents)
+	}
+	// One allocation per invoice, at that invoice's own balance.
+	arows, err := pool.Query(ctx, `
+		SELECT i.total_cents, a.amount_cents, i.status::text FROM payment_allocations a
+		  JOIN invoices i ON i.id = a.invoice_id WHERE i.order_id = $1 ORDER BY i.total_cents DESC`, orderID)
+	if err != nil {
+		t.Fatalf("read the allocations: %v", err)
+	}
+	defer arows.Close()
+	var count int
+	var allocated int64
+	for arows.Next() {
+		var total, amount int64
+		var status string
+		if err := arows.Scan(&total, &amount, &status); err != nil {
+			t.Fatalf("scan an allocation: %v", err)
+		}
+		count++
+		if amount != total || status != "PAID" {
+			t.Fatalf("the %d cent invoice took a %d cent allocation at %s, want its whole balance and PAID",
+				total, amount, status)
+		}
+		allocated += amount
+	}
+	if count != 2 || allocated != 15000 {
+		t.Fatalf("%d allocations summing %d, want one per invoice summing 15000", count, allocated)
+	}
+	// The subledger's PAYMENT rows sum to the whole take, once.
+	var ledgerSum int64
+	if err := pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(amount_cents), 0) FROM customer_transactions t
+		 WHERE t.txn_type = 'PAYMENT' AND t.source_ref_id IN
+		       (SELECT a.payment_id FROM payment_allocations a JOIN invoices i ON i.id = a.invoice_id WHERE i.order_id = $1)`,
+		orderID).Scan(&ledgerSum); err != nil || ledgerSum != -15000 {
+		t.Fatalf("the subledger's PAYMENT rows sum to %d (%v), want -15000 counted once", ledgerSum, err)
+	}
+}
+
+// Two takes racing on one order with one key: exactly one commits, the other
+// answers the winner as a replay (or the paid order's own refusal), and the
+// money counts once.
+func TestIntegration_PayBalance_TwoTakesRacingCountTheMoneyOnce(t *testing.T) {
+	pool := intPool(t)
+	ctx := globalCtx(t, pool)
+	orderID, _, branchID, balance := plantOwingOrder(t, pool, []struct {
+		total, balance int64
+	}{{15000, 15000}})
+	svc := realPosSvc(t, pool, stubCharger{})
+	session := openTill(t, pool, branchID)
+	raceKey := key()
+	const racers = 2
+	results := make([]PayBalanceTaken, racers)
+	errs := make([]error, racers)
+	var start sync.WaitGroup
+	start.Add(1)
+	var wg sync.WaitGroup
+	for i := 0; i < racers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			start.Wait()
+			results[i], errs[i] = svc.PayBalanceTake(ctx, PayBalanceTakeInput{
+				OrderID: orderID, Method: TenderCash, AmountCents: balance,
+				TillSessionID: session, IdempotencyKey: raceKey,
+			})
+		}(i)
+	}
+	start.Done()
+	wg.Wait()
+
+	var committed, replayed, refused int
+	for i := 0; i < racers; i++ {
+		switch {
+		case errs[i] != nil:
+			if !errors.Is(errs[i], ErrPayBalanceAlreadyPaid) {
+				t.Fatalf("racer %d errored beyond the paid refusal: %v", i, errs[i])
+			}
+			refused++
+		case results[i].Replayed:
+			replayed++
+		default:
+			committed++
+		}
+	}
+	if committed != 1 || committed+replayed+refused != racers {
+		t.Fatalf("the race answered %d committed, %d replayed, %d refused; want exactly one commit",
+			committed, replayed, refused)
+	}
+	var payments, allocated int64
+	if err := pool.QueryRow(ctx, `
+		SELECT count(DISTINCT a.payment_id), COALESCE(SUM(a.amount_cents), 0)
+		  FROM payment_allocations a JOIN invoices i ON i.id = a.invoice_id
+		 WHERE i.order_id = $1 AND EXISTS (SELECT 1 FROM payments p WHERE p.id = a.payment_id AND p.status = 'RECEIVED')`,
+		orderID).Scan(&payments, &allocated); err != nil || payments != 1 || allocated != balance {
+		t.Fatalf("after the race %d payments allocated %d, want one payment allocating %d once",
+			payments, allocated, balance)
+	}
+	var invStatus string
+	if err := pool.QueryRow(ctx, `SELECT status::text FROM invoices WHERE order_id=$1`, orderID).Scan(&invStatus); err != nil || invStatus != "PAID" {
+		t.Fatalf("the invoice is %s (%v), want PAID", invStatus, err)
+	}
 }
