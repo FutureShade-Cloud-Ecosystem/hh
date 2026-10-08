@@ -126,6 +126,14 @@ export class QuotePublicPage extends HHElement {
       .orderband .from {
         font-weight: 600;
       }
+      /* The confirmation line a converted quote carries beside its order title (FROM-PRINCIPAL 29):
+         the same words the accepted page's card uses, riding the gold band so the one statement says
+         both what this document became and that the customer's decision is made. */
+      .orderband .orderconfirmed {
+        margin: var(--hh-s-4) 0 0;
+        font-size: 0.88rem;
+        font-weight: 600;
+      }
       a {
         color: var(--doc-link);
       }
@@ -952,6 +960,11 @@ export class QuotePublicPage extends HHElement {
     // and no "closed" card either, because the band above already says what this page is.
     if (q.preview || this.hosted || this.printCopy) return nothing;
     if (!q.acceptable || this.landed) {
+      // A CONVERTED quote shows no closed card either (the review's observation B): its document is
+      // titled as the sales order and the confirmation line on that band says what happened, so a door
+      // marked "not awaiting acceptance" would speak to a decision already made. (A CONVERTED quote
+      // the dealer left acceptable under multi accept falls past here to the form and its repeat note.)
+      if (q.status === "CONVERTED") return nothing;
       // The customer reads this alone, with no staff beside them to translate,
       // so the state is SAID, in the same six states said mid-sentence: under
       // a heading, so the closed door reads deliberate rather than broken. An
@@ -1010,14 +1023,18 @@ export class QuotePublicPage extends HHElement {
    * The title: a quote reads "Quote #<number>"; once converted it reads as the order, "Sales order
    * <number>, converted from #<quote number>", on the gold band. A core that sent no order number is
    * never given one: the page keeps the quote's number and says only that it became an order.
+   * Beside that line the band carries the confirmation the accepted page already uses
+   * (FROM-PRINCIPAL 29): the decision is made, so the page confirms it rather than asking again.
    */
   private renderTitle(q: QuoteViewRef): TemplateResult {
     if (q.status !== "CONVERTED") return html`<h1>Quote ${quoteNumberLabel(q.quoteNo)}</h1>`;
+    const confirmed = html`<p class="orderconfirmed">You confirmed the quantities on this quote.</p>`;
     if (q.orderNo === null) {
-      return html`<div class="orderband"><h1>Quote ${quoteNumberLabel(q.quoteNo)}<span class="from">, now an order</span></h1></div>`;
+      return html`<div class="orderband"><h1>Quote ${quoteNumberLabel(q.quoteNo)}<span class="from">, now an order</span></h1>${confirmed}</div>`;
     }
     return html`<div class="orderband">
       <h1>Sales order ${q.orderNo}<span class="from">, converted from ${quoteNumberLabel(q.quoteNo)}</span></h1>
+      ${confirmed}
     </div>`;
   }
 
@@ -1040,9 +1057,13 @@ export class QuotePublicPage extends HHElement {
     return html`
       ${q.preview ? html`<div class="previewband" role="status">${PREVIEW_BAND}</div>` : nothing}
       ${this.renderTitle(q)}
+      <!-- A converted quote carries no "valid until" (FROM-PRINCIPAL 29): validity speaks to a
+           decision still open, and this document's decision is made. -->
       <div class="sub">
         Prepared for ${q.customerName} · last updated ${this.when(q.asOf)}
-        ${q.validUntil ? html` · ${q.expired ? "expired" : "valid until"} ${plainDay(q.validUntil)}` : nothing}
+        ${q.validUntil && q.status !== "CONVERTED"
+          ? html` · ${q.expired ? "expired" : "valid until"} ${plainDay(q.validUntil)}`
+          : nothing}
       </div>
       <div class="card">
         <div class="tablewrap">
@@ -1083,7 +1104,9 @@ export class QuotePublicPage extends HHElement {
             </tbody>
           </table>
         </div>
-        ${q.quantityNotice
+        <!-- The pre-acceptance notice asks the customer to review before accepting (FROM-PRINCIPAL
+             29); on a converted quote the acceptance is done, so the notice and its box go. -->
+        ${q.quantityNotice && q.status !== "CONVERTED"
           ? html`<div class="qtynotice" role="note">${this.renderNoticeIcon()}<span class="noticetext">${q.quantityNotice}</span></div>`
           : nothing}
         ${this.renderTermsFacts(q)}

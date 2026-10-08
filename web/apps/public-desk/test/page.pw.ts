@@ -753,6 +753,69 @@ test("a converted quote with no order number from the core says it became an ord
   expectToken(await measureAgainstToken(page, "--hh-accent-text", ".totals .grand", "color"), "--hh-accent-text", "the order total");
 });
 
+// The converted page's words (FROM-PRINCIPAL 29): both the "valid until" line and the pre-acceptance
+// notice speak to a decision still open, and a converted quote's decision is made, so the page drops
+// them and says instead what the accepted page says, the quantities confirmation line, beside the gold
+// order line. The closed acceptance card goes with them (the review's observation B): a door marked
+// closed reads against a document titled as the sales order, and the gold line plus the confirmation
+// say what happened.
+test("a converted quote's page drops the valid until line and the notice, and says the quantities were confirmed", async ({ page }) => {
+  await page.goto("/?t=q-conv-8");
+  await expect(page.getByRole("heading", { name: "Sales order SO-TRT-17, converted from #Q-7" })).toBeVisible();
+  const confirmed = page.locator(".orderband").getByText("You confirmed the quantities on this quote.");
+  await expect(confirmed).toBeVisible();
+  const body = page.locator("pd-quote-public");
+  await expect(body).not.toContainText("valid until");
+  await expect(page.locator(".qtynotice")).toHaveCount(0);
+  await expect(body).not.toContainText("All quantities are to be confirmed by the customer");
+  await expect(page.getByRole("heading", { name: "Acceptance closed" })).toHaveCount(0);
+  await expect(body).not.toContainText("not awaiting acceptance");
+  // The same words when the core sent no order number: the decision is made either way.
+  await page.goto("/?t=q-conv-bare-8");
+  await expect(page.locator(".orderband").getByText("You confirmed the quantities on this quote.")).toBeVisible();
+  await expect(page.locator("pd-quote-public")).not.toContainText("valid until");
+  await expect(page.locator(".qtynotice")).toHaveCount(0);
+});
+
+test("a converted quote's paper copy drops the same two and carries the confirmation line", async ({ page }) => {
+  await page.emulateMedia({ media: "print" });
+  await page.goto("/?t=q-conv-8&print=1");
+  await expect(page.getByRole("heading", { name: "Sales order SO-TRT-17, converted from #Q-7" })).toBeVisible();
+  await expect(page.locator(".orderband").getByText("You confirmed the quantities on this quote.")).toBeVisible();
+  const body = page.locator("pd-quote-public");
+  await expect(body).not.toContainText("valid until");
+  await expect(page.locator(".qtynotice")).toHaveCount(0);
+  await expect(body).not.toContainText("All quantities are to be confirmed by the customer");
+});
+
+test("an accepted quote that has not converted keeps its accepted wording: the line, the notice, the card", async ({ page }) => {
+  await page.goto("/?t=q-accepted-26");
+  await expect(page.getByRole("heading", { name: "Already accepted" })).toBeVisible();
+  await expect(page.getByText("This quote is accepted and is not awaiting acceptance.")).toBeVisible();
+  await expect(page.getByText(/valid until /)).toBeVisible();
+  await expect(page.locator(".qtynotice")).toBeVisible();
+  await expect(page.getByText("All quantities are to be confirmed by the customer.")).toBeVisible();
+  // The confirmation line belongs to the converted page and the thank you page, not to the accepted
+  // closed card: this page has not converted, so it says none of it.
+  await expect(page.getByText("You confirmed the quantities on this quote.")).toHaveCount(0);
+});
+
+test("multi-accept on: a converted quote the dealer left acceptable keeps the form, minus the pre-acceptance words", async ({ page }) => {
+  await page.route("**/api/public/v1/quotes/q-conv-8", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as { acceptable: boolean };
+    body.acceptable = true;
+    await route.fulfill({ response, json: body });
+  });
+  await page.goto("/?t=q-conv-8");
+  await expect(page.getByRole("heading", { name: "Sales order SO-TRT-17, converted from #Q-7" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Accept this quote" })).toBeVisible();
+  await expect(page.getByText(REPEAT_NOTE)).toBeVisible();
+  await expect(page.locator(".orderband").getByText("You confirmed the quantities on this quote.")).toBeVisible();
+  await expect(page.locator("pd-quote-public")).not.toContainText("valid until");
+  await expect(page.locator(".qtynotice")).toHaveCount(0);
+});
+
 // The core keeps an ACCEPTED quote acceptable when multi-accept is on
 // (share.go): the view of a committed quote reads ACCEPTED with acceptable true.
 async function multiAcceptView(page: Page, token: string): Promise<void> {
@@ -1263,7 +1326,7 @@ test("a 409 whose re-read shows ACCEPTED ends on the closed accepted card, with 
   await expect(page.getByText("not recorded", { exact: false })).toHaveCount(0);
 });
 
-test("a 409 whose re-read shows CONVERTED also ends on the closed accepted card", async ({ page }) => {
+test("a 409 whose re-read shows CONVERTED ends on the converted document: no closed card, the confirmation line", async ({ page }) => {
   await readyToAccept(page, "q-terms-28");
   await page.route("**/accept", (route) =>
     route.fulfill({
@@ -1284,7 +1347,10 @@ test("a 409 whose re-read shows CONVERTED also ends on the closed accepted card"
     await route.fulfill({ response, json: body });
   });
   await page.getByRole("button", { name: "Accept quote" }).click();
-  await expect(page.getByRole("heading", { name: "Already accepted" })).toBeVisible();
+  await expect(page.locator("pd-quote-public")).toContainText("now an order");
+  await expect(page.locator(".orderband").getByText("You confirmed the quantities on this quote.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Already accepted" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Acceptance closed" })).toHaveCount(0);
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(page.locator("pd-quote-public")).not.toContainText(STAFF_WORDS);
 });
@@ -1311,7 +1377,7 @@ test("a 409 whose re-read shows ACCEPTED yet still acceptable ends on the closed
   await expect(page.getByRole("alert")).toHaveCount(0);
 });
 
-test("an unknown outcome whose re-read shows CONVERTED ends on the closed accepted card", async ({ page }) => {
+test("an unknown outcome whose re-read shows CONVERTED ends on the converted document, no closed card", async ({ page }) => {
   await readyToAccept(page, "q-terms-28");
   await page.route("**/accept", (route) =>
     route.fulfill({ status: 504, contentType: "text/html", body: "<html><body>504</body></html>" }),
@@ -1324,7 +1390,9 @@ test("an unknown outcome whose re-read shows CONVERTED ends on the closed accept
     await route.fulfill({ response, json: body });
   });
   await page.getByRole("button", { name: "Accept quote" }).click();
-  await expect(page.getByRole("heading", { name: "Already accepted" })).toBeVisible();
+  await expect(page.locator("pd-quote-public")).toContainText("now an order");
+  await expect(page.locator(".orderband").getByText("You confirmed the quantities on this quote.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Already accepted" })).toHaveCount(0);
   await expect(page.getByRole("alert")).toHaveCount(0);
 });
 
