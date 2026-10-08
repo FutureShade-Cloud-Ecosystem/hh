@@ -302,6 +302,12 @@ func (s *StopsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key str
 	if err := stopCreateFields(fields); err != nil {
 		return sync.RowState{}, err
 	}
+	// A held driver's writes land on their own runs alone: a stop that
+	// names no run belongs to nobody (the driver could never read it
+	// back), and a colleague's run is refused below as absent.
+	if heldRunID, _ := fields["run_id"].(string); d.driver && heldRunID == "" {
+		return sync.RowState{}, refused(fmt.Errorf("a driver schedules stops onto their own run"))
+	}
 	orderID, _ := fields["order_id"].(string)
 	if !looksLikeUUID(orderID) {
 		return sync.RowState{}, fmt.Errorf("dispatch: order_id must be a uuid: %w", sync.ErrOpRefused)
@@ -333,19 +339,24 @@ func (s *StopsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key str
 		return sync.RowState{}, fmt.Errorf("dispatch: scheduled_date must be YYYY-MM-DD: %w", sync.ErrOpRefused)
 	}
 	runID, _ := fields["run_id"].(string)
-	var runBranch, runDate, runStatus string
+	var runBranch, runDate, runStatus, runDriver string
 	if runID != "" {
 		if !looksLikeUUID(runID) {
 			return sync.RowState{}, fmt.Errorf("dispatch: run_id must be a uuid: %w", sync.ErrOpRefused)
 		}
 		if err := s.pool.QueryRow(ctx,
-			`SELECT branch_id::text, to_char(scheduled_date,'YYYY-MM-DD'), status
+			`SELECT branch_id::text, to_char(scheduled_date,'YYYY-MM-DD'), status, COALESCE(driver_id::text,'')
 			 FROM delivery_runs WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL`,
-			runID, f.OrgID).Scan(&runBranch, &runDate, &runStatus); err != nil {
+			runID, f.OrgID).Scan(&runBranch, &runDate, &runStatus, &runDriver); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return sync.RowState{}, sync.ErrRowNotFound
 			}
 			return sync.RowState{}, fmt.Errorf("dispatch: stops sync create run read: %w", err)
+		}
+		// The fence: a colleague's run, or any run to a driver login
+		// with no driver record, is the same as an absent one.
+		if d.driver && (d.driverID == "" || runDriver != d.driverID) {
+			return sync.RowState{}, sync.ErrRowNotFound
 		}
 		if runBranch != brief.BranchID {
 			return sync.RowState{}, refused(fmt.Errorf("that run belongs to another branch"))

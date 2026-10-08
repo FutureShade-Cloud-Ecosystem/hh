@@ -438,3 +438,81 @@ func TestIntegration_DriverSyncFence_TheStopSeamBindsADriverWithNoCandidates(t *
 		t.Errorf("a desk caller must not be held to the fence: isDriver=%v err=%v", isDriver, err)
 	}
 }
+
+// TestIntegration_DriverSyncFence_CreatesHoldToTheCallingDriversOwnRuns:
+// a create is a write, and a held driver's writes land on their own runs
+// alone. A stop created with a colleague's run_id (or with no run, which
+// is nobody's) and a run created for a colleague's driver record (or for
+// none) would put a row where the driver can never read it again, onto
+// a colleague's day. The desk keeps both creates.
+func TestIntegration_DriverSyncFence_CreatesHoldToTheCallingDriversOwnRuns(t *testing.T) {
+	w := newFenceWorld(t)
+	ctx := context.Background()
+	fx := &syncFixture{pool: w.pool}
+
+	newStop := func(f sync.ScopeFilter, runID string) (sync.RowState, error) {
+		fields := map[string]any{
+			"order_id":       syncSeedOrder(t, fx, testkit.BranchNorthAID),
+			"scheduled_date": syncToday(),
+			"address_line":   "Fence create address", "city": "Fence City",
+		}
+		if runID != "" {
+			fields["run_id"] = runID
+		}
+		return w.stops.Create(ctx, f, syncFreshKey(), fields)
+	}
+	newRun := func(f sync.ScopeFilter, driverID string) (sync.RowState, error) {
+		fields := map[string]any{"branch_id": testkit.BranchNorthAID, "scheduled_date": syncToday()}
+		if driverID != "" {
+			fields["driver_id"] = driverID
+		}
+		return w.runs.Create(ctx, f, syncFreshKey(), fields)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = w.pool.Exec(c, `DELETE FROM delivery_stops WHERE org_id = $1::uuid AND address_line = 'Fence create address'`, testkit.OrgNorthID)
+		_, _ = w.pool.Exec(c, `DELETE FROM delivery_runs WHERE org_id = $1::uuid AND notes IS NOT DISTINCT FROM ''
+			AND id NOT IN ($2::uuid, $3::uuid)`, testkit.OrgNorthID, w.runA.ID, w.runB.ID)
+	})
+
+	// stops: a colleague's run, and no run at all, refuse for driver A.
+	if _, err := newStop(w.driverA, w.runB.ID); err == nil {
+		t.Errorf("driver A created a stop onto driver B's run %s", w.runB.ID)
+	}
+	if _, err := newStop(w.driverA, ""); err == nil {
+		t.Errorf("driver A created a stop that belongs to no run, a row they can never read")
+	}
+	if _, err := newStop(w.bare, w.runA.ID); err == nil {
+		t.Errorf("an unlinked driver login created a stop")
+	}
+	// ...their own run is theirs to write, and the desk keeps every run.
+	if _, err := newStop(w.driverA, w.runA.ID); err != nil {
+		t.Errorf("driver A could not create a stop on their own run: %v", err)
+	}
+	if _, err := newStop(w.desk, w.runB.ID); err != nil {
+		t.Errorf("the desk caller could not create a stop on a driver's run: %v", err)
+	}
+	if _, err := newStop(w.desk, ""); err != nil {
+		t.Errorf("the desk caller could not create an unassigned stop: %v", err)
+	}
+
+	// runs: a colleague's driver record, and none, refuse for driver A.
+	if _, err := newRun(w.driverA, w.runB.DriverID); err == nil {
+		t.Errorf("driver A created a run assigned to driver B")
+	}
+	if _, err := newRun(w.driverA, ""); err == nil {
+		t.Errorf("driver A created an unassigned run, a row they can never read")
+	}
+	if _, err := newRun(w.bare, w.runA.DriverID); err == nil {
+		t.Errorf("an unlinked driver login created a run")
+	}
+	if _, err := newRun(w.driverA, w.runA.DriverID); err != nil {
+		t.Errorf("driver A could not create a run assigned to themselves: %v", err)
+	}
+	if _, err := newRun(w.desk, w.runB.DriverID); err != nil {
+		t.Errorf("the desk caller could not create a run for a driver: %v", err)
+	}
+	if _, err := newRun(w.desk, ""); err != nil {
+		t.Errorf("the desk caller could not create an unassigned run: %v", err)
+	}
+}

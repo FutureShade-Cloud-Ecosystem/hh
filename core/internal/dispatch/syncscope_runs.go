@@ -330,6 +330,12 @@ func (s *RunsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key stri
 	if driverID != "" && !looksLikeUUID(driverID) {
 		return sync.RowState{}, fmt.Errorf("dispatch: driver_id must be a uuid: %w", sync.ErrOpRefused)
 	}
+	// A held driver's writes land on their own runs alone: a run for a
+	// colleague's driver record, or for none, would be a row the driver
+	// can never read back (and a colleague's day written onto).
+	if d.driver && (d.driverID == "" || driverID != d.driverID) {
+		return sync.RowState{}, refused(fmt.Errorf("a driver opens runs for themselves"))
+	}
 	if err := s.crewInBranch(ctx, branchID, truckID, driverID); err != nil {
 		return sync.RowState{}, err
 	}
