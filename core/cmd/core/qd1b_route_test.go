@@ -534,3 +534,23 @@ func TestQD1B_SettingsGrantRoleWithoutTheDeskIsRefusedAtTheGate(t *testing.T) {
 		}
 	}
 }
+
+// TestQD1B_PolicyReadAnswersTheChipSetAsAnArray is the served surface leg of round 14 (a)'s
+// qs-policy-unread: the policy read as Inside Sales answers 200, and quick_chip_set is an array
+// (empty when no set was authored), never null, as the contract types it.
+func TestQD1B_PolicyReadAnswersTheChipSetAsAnArray(t *testing.T) {
+	q := newQD1BFixture(t)
+	for _, branch := range []string{"", "?branch_id=" + testkit.BranchNorthAID} {
+		code, body := qd1bCall(t, q, http.MethodGet, "/api/v1/quotes/policy"+branch, testkit.SubInsideSales, nil)
+		if code != http.StatusOK {
+			t.Fatalf("the policy read as Inside Sales%s: %d %s", branch, code, body)
+		}
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(body), &raw); err != nil {
+			t.Fatalf("policy body %q: %v", body, err)
+		}
+		if got := strings.TrimSpace(string(raw["quick_chip_set"])); !strings.HasPrefix(got, "[") {
+			t.Fatalf("quick_chip_set%s = %s, want an array", branch, got)
+		}
+	}
+}
