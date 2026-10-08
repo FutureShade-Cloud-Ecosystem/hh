@@ -56,6 +56,18 @@ const (
 	LineTwoDueLater  = "Balance due later"
 )
 
+// The sentence under the two lines, by reason. Server owned like the line two
+// words, so a screen never words a money rule: a credit customer's rest rides
+// the account; a Cash On Demand account (zero day terms with a credit line) is
+// told what its posture means; every other pay before release account (a no
+// credit retail account, a walk in, a credit customer on hold) is told what it
+// is, in the words of the on account refusal (on_account_not_available).
+const (
+	SentenceOnAccount    = "A credit customer: the rest rides their account and is paid from the statement."
+	SentenceCashOnDemand = "Cash On Demand means pay before release, never cash on delivery: the deposit puts the order in process, and picking waits for paid in full."
+	SentenceCannotCarry  = "This account cannot carry this sale on account: pay in full now, or take a deposit with the balance due later. The deposit puts the order in process, and picking waits for paid in full."
+)
+
 // PaymentOption is one shape the counter may offer, with the words for line
 // two when the shape has one (the deposit shapes; the paid and on account
 // shapes carry no line two words of their own).
@@ -64,6 +76,10 @@ type PaymentOption struct {
 	// LineTwoWords is the server's wording for the shape's line two, present
 	// only on the deposit shapes.
 	LineTwoWords string `json:"line_two_words,omitempty"`
+	// LineTwoSentence is the one sentence the counter shows under the two
+	// lines, present only on the deposit shapes and chosen by the reason the
+	// account is offered that shape.
+	LineTwoSentence string `json:"line_two_sentence,omitempty"`
 }
 
 // paymentOptionsFor derives the shapes from the account's own facts. Pure, so
@@ -81,12 +97,16 @@ func paymentOptionsFor(termsDays int, creditLimitCents int64, held bool) []Payme
 		return []PaymentOption{
 			{Shape: PaymentShapePayInFull},
 			{Shape: PaymentShapeAllOnAccount},
-			{Shape: PaymentShapeDepositOnAccount, LineTwoWords: LineTwoOnAccount},
+			{Shape: PaymentShapeDepositOnAccount, LineTwoWords: LineTwoOnAccount, LineTwoSentence: SentenceOnAccount},
 		}
+	}
+	sentence := SentenceCannotCarry
+	if termsDays <= 0 && creditLimitCents > 0 {
+		sentence = SentenceCashOnDemand
 	}
 	return []PaymentOption{
 		{Shape: PaymentShapePayInFull},
-		{Shape: PaymentShapeDepositDueLater, LineTwoWords: LineTwoDueLater},
+		{Shape: PaymentShapeDepositDueLater, LineTwoWords: LineTwoDueLater, LineTwoSentence: sentence},
 	}
 }
 

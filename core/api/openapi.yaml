@@ -40298,6 +40298,9 @@ components:
             - On account
             - Balance due later
           description: The server's words for line two of a deposit sale, present only on the deposit shapes.
+        line_two_sentence:
+          type: string
+          description: "The one sentence the counter shows under the two lines of a deposit sale, present only on the deposit shapes. It follows the reason the account is offered the shape: a credit customer's rest rides the account, a Cash On Demand account hears the pay before release words, and any other pay before release account (no credit, walk in, on hold) is told it cannot carry the sale on account."
     PosSaleView:
       type: object
       description: The operator-reopen read; no evidence identifiers, no granular flow log

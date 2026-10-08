@@ -3,6 +3,7 @@ package pos
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
@@ -255,3 +256,43 @@ func TestSalePreview_PaymentOptions_HoldReadUnwiredOffersNoCredit(t *testing.T) 
 // The seam is standing.go's HoldReader: the wired repository satisfies it (the
 // compile proof the composition root relies on).
 var _ HoldReader = &till.Repository{}
+
+// Round 15 finding (a): the sentence under the two lines is the server's too, and it
+// differs by reason. A Cash On Demand account hears the pay before release words, a credit
+// customer hears that the rest rides the account, and every other pay before release
+// account (a no credit retail account such as a gate refused one, a walk in, a credit
+// customer on hold) is told what it is: this account cannot carry the sale on account.
+func TestPaymentOptionsFor_LineTwoSentenceFollowsTheReason(t *testing.T) {
+	sentenceOf := func(terms int, limit int64, held bool) string {
+		for _, o := range paymentOptionsFor(terms, limit, held) {
+			if o.Shape == PaymentShapeDepositOnAccount || o.Shape == PaymentShapeDepositDueLater {
+				return o.LineTwoSentence
+			}
+		}
+		return ""
+	}
+	cases := []struct {
+		name  string
+		terms int
+		limit int64
+		held  bool
+		want  string
+	}{
+		{"credit customer", 30, 500_000, false, SentenceOnAccount},
+		{"cash on demand account", 0, 500_000, false, SentenceCashOnDemand},
+		{"no credit retail account", 0, 0, false, SentenceCannotCarry},
+		{"terms with no line", 30, 0, false, SentenceCannotCarry},
+		{"credit customer on hold", 30, 500_000, true, SentenceCannotCarry},
+	}
+	for _, c := range cases {
+		if got := sentenceOf(c.terms, c.limit, c.held); got != c.want {
+			t.Errorf("%s: sentence %q, want %q", c.name, got, c.want)
+		}
+	}
+	if SentenceCannotCarry == SentenceCashOnDemand || SentenceCannotCarry == "" {
+		t.Fatalf("the cannot carry sentence must be its own words, got %q", SentenceCannotCarry)
+	}
+	if strings.Contains(SentenceCannotCarry, "Cash On Demand") {
+		t.Errorf("a no credit account is not a Cash On Demand account, yet the sentence says so: %q", SentenceCannotCarry)
+	}
+}
