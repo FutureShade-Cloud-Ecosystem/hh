@@ -154,9 +154,18 @@ test("the pay before release option rides Collect now too, and only the Cash On 
   await expect(page.getByTestId("pay-shape-PAY_BEFORE_RELEASE")).toHaveCount(0);
   await expect(page.getByTestId("pay-shape-ALL_ON_ACCOUNT")).toBeVisible();
 
-  // The retail account with no line is not offered it either: its menu is the walk-in's own.
+  // The retail account with no line is not offered it either: its menu is the walk-in's own,
+  // and the walk-in itself reads the same list (the house row has no line to draw the unpaid
+  // exposure against, the credit gate's own COD constraint).
   await signIn(page);
   await pickAccount(page, "C07", "Lachance Retail");
+  await addHolland(page);
+  await chooseWillCall(page);
+  await openStep(page, "payment");
+  await expect(page.getByTestId("pay-shape-PAY_BEFORE_RELEASE")).toHaveCount(0);
+  await expect(page.getByTestId("pay-shape-DEPOSIT_NOW_REST_DUE_LATER")).toBeVisible();
+
+  await signIn(page);
   await addHolland(page);
   await chooseWillCall(page);
   await openStep(page, "payment");

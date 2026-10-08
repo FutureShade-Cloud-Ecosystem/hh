@@ -2045,15 +2045,16 @@ export class HosPosTerminal extends LitElement {
        counter and in a panel the person may have dragged to 280px, and minmax lets the same rule
        answer both: four across where they fit, wrapping where they do not. The doctrine's own
        instruction, and the reason there is no media query here. */
-    /* UI-3 (visual GAP 9): 112px, not 132px, so all four choices (Collect now, Will-call, Delivery,
-       COD) share one row at the Panels layout's default panel width (about 535px inside); the
-       tile's gap and side padding below tighten with it so the longest label still fits. */
+    /* UI-3 (visual GAP 9): 112px, not 132px, so all the choices (Collect now, Will-call,
+       Delivery, before the row 1214 ruling removed it also COD) share one row at the Panels
+       layout's default panel width (about 535px inside); the tile's gap and side padding
+       below tighten with it so the longest label still fits. */
     .fulfil {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
       gap: 8px;
     }
- /* rev 8 (item 6): all four options as ICON TILES: inline currentColor SVG (the rev-6
+ /* rev 8 (item 6): every option as ICON TILES: inline currentColor SVG (the rev-6
        tender-icon discipline: aria-hidden art, the tile's own ink in every state, zero new
        colours), the same buttons and the same gates. */
     .fulfil button {
