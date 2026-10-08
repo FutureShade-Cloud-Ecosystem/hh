@@ -182,7 +182,14 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		WithRuleResolver(glRuleAdapter{svc: spine.glSvc}).
 		WithGLBalanceReader(glBalanceAdapter{svc: spine.glSvc}).
 		WithAudit(auditSvc)
-	invcount.NewHandler(invcountSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
+	// X3, the yard fence's counts half: the negative-stock worklist's
+	// cost leg rides only for a caller on the configuration's cost and
+	// margin list (inventory/cost_gate.go carries the argument).
+	invcountHandler := invcount.NewHandler(invcountSvc, log).WithUserLinker(link).WithCostRoles(spine.roleCfg)
+	if invcountHandler == nil || !invcountHandler.CostRolesWired() {
+		panic("invcount: cost roles not wired - the negative-stock worklist would answer the cost leg to every caller")
+	}
+	invcountHandler.RegisterRoutes(r, g)
 
 	// A-16 (W6): landed cost, capitalizing through inventory.
 	landedcostSvc := landedcost.NewService(landedcost.NewRepository(pool)).

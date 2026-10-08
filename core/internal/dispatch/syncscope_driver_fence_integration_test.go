@@ -82,6 +82,7 @@ func newFenceWorld(t *testing.T) *fenceWorld {
 		_, _ = pool.Exec(c, `DELETE FROM dispatch_drivers WHERE user_id = $1::uuid`, testkit.UserDriverID)
 		_, _ = pool.Exec(c, `DELETE FROM orders WHERE order_no LIKE '#SO-FXSYNC-%%' AND org_id = $1::uuid`, testkit.OrgNorthID)
 		_, _ = pool.Exec(c, `DELETE FROM scope_sequences WHERE scope IN ('runs','stops','pod')`)
+		_ = testkit.Cleanup(c, testkit.PgxPool(pool))
 	})
 
 	// The role seam the composition root wires: identity's own

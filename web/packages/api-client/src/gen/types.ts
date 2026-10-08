@@ -2669,7 +2669,7 @@ export type InventoryOnHand = {
   on_hand_base: number;
   allocated_base: number;
   available_base: number;
-  avg_cost_cents: number;
+  avg_cost_cents?: number;
 };
 export type InventoryPendingFulfilment = {
   order_id: string;
@@ -2723,7 +2723,7 @@ export type InventoryBranchStock = {
   in_transit_base: number;
   available_base: number;
   soft_held_base: number;
-  avg_cost_cents: number;
+  avg_cost_cents?: number;
 };
 export type InventoryBrowseRow = {
   product_id: string;
@@ -2744,7 +2744,7 @@ export type InventoryBrowseRow = {
   reserved_base: number;
   available_base: number;
   in_transit_base: number;
-  avg_cost_cents: number;
+  avg_cost_cents?: number;
 };
 export type InventoryFacetValue = {
   value: string;
@@ -2881,8 +2881,8 @@ export type InventoryShortfallRow = {
   preferred_vendor_id: string;
   preferred_vendor_name: string;
   lead_time_days: number;
-  avg_cost_cents: number;
-  suggested_value_cents: number;
+  avg_cost_cents?: number;
+  suggested_value_cents?: number;
 };
 export type InventoryReorderPoint = {
   product_id: string;
@@ -3067,7 +3067,7 @@ export type InvCountNegativeStockRow = {
   product_id: string;
   location_id: string;
   on_hand_base: number;
-  avg_cost_cents: number;
+  avg_cost_cents?: number;
 };
 export type InvCountCreateSheetRequest = {
   branch_id: string;

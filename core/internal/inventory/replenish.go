@@ -63,9 +63,9 @@ type ShortfallRow struct {
 	PreferredVendorID   string `json:"preferred_vendor_id"`
 	PreferredVendorName string `json:"preferred_vendor_name"`
 	LeadTimeDays        int    `json:"lead_time_days"`
-	AvgCostCents        int64  `json:"avg_cost_cents"`
+	AvgCostCents        int64  `json:"avg_cost_cents,omitempty"`
 	// SuggestedValueCents is suggested_qty × the branch weighted-average, what saying yes costs.
-	SuggestedValueCents int64 `json:"suggested_value_cents"`
+	SuggestedValueCents int64 `json:"suggested_value_cents,omitempty"`
 }
 
 // ReorderPoint is the per (product, branch) replenishment policy row.

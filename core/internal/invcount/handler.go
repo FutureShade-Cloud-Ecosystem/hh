@@ -127,6 +127,11 @@ func (h *Handler) negativeStock(w http.ResponseWriter, r *http.Request, caller g
 		h.writeErr(w, r, err)
 		return
 	}
+	// X3: the cost leg rides only for a caller the cost rule allows
+	// (cost_gate.go); it is byte-absent otherwise.
+	if !h.costAllowed(r) {
+		blankNegativeStockCost(rows)
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": rows})
 }
 

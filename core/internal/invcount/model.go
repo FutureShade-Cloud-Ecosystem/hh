@@ -105,7 +105,7 @@ type NegativeStockRow struct {
 	ProductID    string  `json:"product_id"`
 	LocationID   string  `json:"location_id"`
 	OnHandBase   float64 `json:"on_hand_base"`
-	AvgCostCents int64   `json:"avg_cost_cents"`
+	AvgCostCents int64   `json:"avg_cost_cents,omitempty"`
 }
 
 // - request payloads -

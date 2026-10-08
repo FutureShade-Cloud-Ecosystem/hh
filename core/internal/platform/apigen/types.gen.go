@@ -3179,7 +3179,7 @@ type InventoryOnHand struct {
 	OnHandBase    float64 `json:"on_hand_base"`
 	AllocatedBase float64 `json:"allocated_base"`
 	AvailableBase float64 `json:"available_base"`
-	AvgCostCents  int64   `json:"avg_cost_cents"`
+	AvgCostCents  *int64  `json:"avg_cost_cents,omitempty"`
 }
 
 type InventoryPendingFulfilment struct {
@@ -3240,7 +3240,7 @@ type InventoryBranchStock struct {
 	InTransitBase float64 `json:"in_transit_base"`
 	AvailableBase float64 `json:"available_base"`
 	SoftHeldBase  float64 `json:"soft_held_base"`
-	AvgCostCents  int64   `json:"avg_cost_cents"`
+	AvgCostCents  *int64  `json:"avg_cost_cents,omitempty"`
 }
 
 type InventoryBrowseRow struct {
@@ -3262,7 +3262,7 @@ type InventoryBrowseRow struct {
 	ReservedBase   float64 `json:"reserved_base"`
 	AvailableBase  float64 `json:"available_base"`
 	InTransitBase  float64 `json:"in_transit_base"`
-	AvgCostCents   int64   `json:"avg_cost_cents"`
+	AvgCostCents   *int64  `json:"avg_cost_cents,omitempty"`
 }
 
 type InventoryFacetValue struct {
@@ -3415,8 +3415,8 @@ type InventoryShortfallRow struct {
 	PreferredVendorId   string  `json:"preferred_vendor_id"`
 	PreferredVendorName string  `json:"preferred_vendor_name"`
 	LeadTimeDays        int32   `json:"lead_time_days"`
-	AvgCostCents        int64   `json:"avg_cost_cents"`
-	SuggestedValueCents int64   `json:"suggested_value_cents"`
+	AvgCostCents        *int64  `json:"avg_cost_cents,omitempty"`
+	SuggestedValueCents *int64  `json:"suggested_value_cents,omitempty"`
 }
 
 type InventoryReorderPoint struct {
@@ -3630,7 +3630,7 @@ type InvCountNegativeStockRow struct {
 	ProductId    string  `json:"product_id"`
 	LocationId   string  `json:"location_id"`
 	OnHandBase   float64 `json:"on_hand_base"`
-	AvgCostCents int64   `json:"avg_cost_cents"`
+	AvgCostCents *int64  `json:"avg_cost_cents,omitempty"`
 }
 
 type InvCountCreateSheetRequest struct {
