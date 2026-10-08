@@ -18,6 +18,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/quote"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -516,12 +517,23 @@ func TestIntegration_PayBalance_UninvoicedOrder_FoundTakenReleased(t *testing.T)
 }
 
 // raiseAdapter shapes the writer's answer into the take's seam (the
-// composition root's posPayBalanceInvoicer, test-side).
+// composition root's posPayBalanceInvoicer, test-side, refusal mapping
+// included: every refusal the raise can return crosses as the door's own
+// fixed 409 sentence, exactly as payBalanceRaiseRefusal maps them).
 type raiseAdapter struct{ w *billing.InvoiceWriter }
 
 func (a raiseAdapter) RaiseOrderInvoiceTx(ctx context.Context, tx pgx.Tx, orderID string) (RaisedOrderInvoice, error) {
 	doc, err := a.w.InvoiceOrderAtAgreedTx(ctx, tx, orderID)
 	if err != nil {
+		var already *billing.OrderAlreadyInvoicedError
+		var conflict *quote.OrderPaymentConflictError
+		var refusal *order.AgreedBillingRefusal
+		switch {
+		case errors.As(err, &already):
+			return RaisedOrderInvoice{}, ErrPayBalanceRestUnbillable
+		case errors.As(err, &conflict), errors.As(err, &refusal), errors.Is(err, billing.ErrNothingToInvoice):
+			return RaisedOrderInvoice{}, ErrPayBalanceRaiseRefused
+		}
 		return RaisedOrderInvoice{}, err
 	}
 	return RaisedOrderInvoice{InvoiceID: doc.InvoiceID, InvoiceNo: doc.InvoiceNo,
@@ -827,5 +839,156 @@ func TestIntegration_PayBalance_TwoTakesRacingCountTheMoneyOnce(t *testing.T) {
 	var invStatus string
 	if err := pool.QueryRow(ctx, `SELECT status::text FROM invoices WHERE order_id=$1`, orderID).Scan(&invStatus); err != nil || invStatus != "PAID" {
 		t.Fatalf("the invoice is %s (%v), want PAID", invStatus, err)
+	}
+}
+
+// -- the delta review's P2-A legs: no card is captured on a take that cannot complete --
+
+// countingCharger wraps the stub charger and counts the captures and
+// compensations it took, so a leg can assert ZERO captures (the refusal came
+// before the rail).
+type countingCharger struct {
+	stubCharger
+	count int
+	comps []string
+}
+
+func (c *countingCharger) Capture(ctx context.Context, in till.CardChargeInput) (till.CardCapture, error) {
+	capture, err := c.stubCharger.Capture(ctx, in)
+	if err != nil {
+		return till.CardCapture{}, err
+	}
+	c.count++
+	return capture, nil
+}
+
+func (c *countingCharger) Compensate(ctx context.Context, attemptID string) (till.CardCompensation, error) {
+	c.comps = append(c.comps, attemptID)
+	return c.stubCharger.Compensate(ctx, attemptID)
+}
+
+// A zero terms order PARTLY invoiced from its shipment groups (invoiced above
+// zero, remainder above zero) is the unbillable shape: the whole balance
+// includes a part no invoice covers and this door cannot bill, so the take
+// refuses BEFORE any capture, and no card is charged and reversed for it.
+func TestIntegration_PayBalance_PartlyInvoicedOrder_RefusedBeforeAnyCapture(t *testing.T) {
+	pool := intPool(t)
+	ctx := globalCtx(t, pool)
+	orderID, _, branchID, _ := plantOwingOrder(t, pool, []struct {
+		total, balance int64
+	}{{10000, 10000}})
+	// The planted order's total is 15000 with one live invoice of 10000: the
+	// remainder (5000) is the unbillable part.
+	charger := &countingCharger{}
+	svc := realPosSvc(t, pool, charger)
+	session := openTill(t, pool, branchID)
+	if _, err := svc.PayBalanceTake(ctx, PayBalanceTakeInput{
+		OrderID: orderID, Method: TenderCard, AmountCents: 15000, PaymentToken: "tok-x",
+		TillSessionID: session, IdempotencyKey: key(),
+	}); !errors.Is(err, ErrPayBalanceRestUnbillable) {
+		t.Fatalf("want the unbillable rest refusal, got %v", err)
+	}
+	if charger.count != 0 {
+		t.Fatalf("a card was captured for a take that cannot complete: %d captures", charger.count)
+	}
+	var payments int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM payments p JOIN payment_allocations a ON a.payment_id = p.id
+		  JOIN invoices i ON i.id = a.invoice_id WHERE i.order_id = $1`, orderID).Scan(&payments); err != nil || payments != 0 {
+		t.Fatalf("the refused take wrote payments: %d (%v)", payments, err)
+	}
+}
+
+// A cancelled order that still carries an open invoice is NOT this door's to
+// pay: the find does not answer it and the take answers the door's 404, before
+// any capture.
+func TestIntegration_PayBalance_CancelledOrder_NotFound(t *testing.T) {
+	pool := intPool(t)
+	ctx := globalCtx(t, pool)
+	orderID, _, branchID, _ := plantOwingOrder(t, pool, []struct {
+		total, balance int64
+	}{{15000, 15000}})
+	var orderNo string
+	if err := pool.QueryRow(ctx, `SELECT order_no FROM orders WHERE id=$1`, orderID).Scan(&orderNo); err != nil {
+		t.Fatalf("read the order number: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE orders SET status='CANCELLED' WHERE id=$1`, orderID); err != nil {
+		t.Fatalf("cancel the order: %v", err)
+	}
+	charger := &countingCharger{}
+	svc := realPosSvc(t, pool, charger)
+	rows, err := svc.PayBalanceFind(ctx, orderNo)
+	if err != nil {
+		t.Fatalf("find: %v", err)
+	}
+	for _, r := range rows {
+		if r.OrderID == orderID {
+			t.Fatalf("the find answered a cancelled order as owing money")
+		}
+	}
+	session := openTill(t, pool, branchID)
+	if _, err := svc.PayBalanceTake(ctx, PayBalanceTakeInput{
+		OrderID: orderID, Method: TenderCard, AmountCents: 15000, PaymentToken: "tok-x",
+		TillSessionID: session, IdempotencyKey: key(),
+	}); !errors.Is(err, ErrPayBalanceOrderNotFound) {
+		t.Fatalf("a cancelled order must answer the door's 404, got %v", err)
+	}
+	if charger.count != 0 {
+		t.Fatalf("a card was captured for a cancelled order: %d captures", charger.count)
+	}
+}
+
+// An order whose own header disagrees with its lines is refused by the raise
+// inside the transaction (a disagreement is something to look at, never a
+// document to bill): the refusal crosses as the door's own fixed 409 sentence,
+// never a bare 500, and nothing is taken.
+func TestIntegration_PayBalance_BrokenOrderRaiseRefusal_IsAFixedSentence(t *testing.T) {
+	pool := intPool(t)
+	ctx := globalCtx(t, pool)
+	productID, branchID := aPaver(t, pool)
+	suffix := fmt.Sprintf("brk-%d", time.Now().UnixNano()%1_000_000_000)
+	var custID, orderID string
+	if err := pool.QueryRow(ctx, `
+		WITH c AS (INSERT INTO customers (account_no, name, customer_type, payment_terms_days, credit_limit_cents)
+		           VALUES ('PBK-'||$1, 'Broken arithmetic proof', 'CONTRACTOR', 0, 5000000) RETURNING id)
+		INSERT INTO orders (order_no, customer_id, branch_id, status, fulfillment, subtotal_cents, total_cents)
+		SELECT '#SO-PBK-'||$1, c.id, $2::uuid, 'CONFIRMED', 'WILL_CALL', 10000, 10000
+		  FROM c RETURNING id::text, customer_id::text`, suffix, branchID).Scan(&orderID, &custID); err != nil {
+		t.Fatalf("plant the order: %v", err)
+	}
+	// The line sums to 9000 while the header says 10000: the order does not
+	// agree with its own lines.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO order_lines (order_id, line_no, product_id, description, qty_entered, uom_entered,
+		                         qty_base, unit_price_cents, price_uom, line_total_cents)
+		VALUES ($1::uuid, 1, $2::uuid, 'PBK line', 5, 'SF', 5, 1800, 'SF', 9000)`, orderID, productID); err != nil {
+		t.Fatalf("plant the order line: %v", err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE order_id = $1`, orderID)
+		_, _ = pool.Exec(c, `DELETE FROM order_lines WHERE order_id = $1`, orderID)
+		_, _ = pool.Exec(c, `DELETE FROM orders WHERE id = $1`, orderID)
+		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1`, custID)
+	})
+	billingRepo := billing.NewRepository(pool)
+	orderSvc := order.NewService(order.NewRepository(pool)).WithPickHoldReader(holdBridge{repo: billingRepo})
+	svc := realPosSvc(t, pool, stubCharger{}).WithPayBalanceInvoicer(
+		raiseAdapter{w: billing.NewInvoiceWriter(pool).WithOrderSource(payDoorOrderSource{svc: orderSvc})})
+	session := openTill(t, pool, branchID)
+	if _, err := svc.PayBalanceTake(ctx, PayBalanceTakeInput{
+		OrderID: orderID, Method: TenderCash, AmountCents: 10000,
+		TillSessionID: session, IdempotencyKey: key(),
+	}); !errors.Is(err, ErrPayBalanceRaiseRefused) {
+		t.Fatalf("the broken order's refusal must be the door's fixed sentence, got %v", err)
+	}
+	var payments, invoices int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM payments p JOIN payment_allocations a ON a.payment_id = p.id
+		  JOIN invoices i ON i.id = a.invoice_id WHERE i.order_id = $1`, orderID).Scan(&payments); err != nil || payments != 0 {
+		t.Fatalf("the refused take wrote payments: %d (%v)", payments, err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM invoices WHERE order_id = $1`, orderID).Scan(&invoices); err != nil || invoices != 0 {
+		t.Fatalf("the refused take wrote an invoice: %d (%v)", invoices, err)
 	}
 }

@@ -529,17 +529,15 @@ func quoteMoneyDoor(pool *pgxpool.Pool, orderSvc *order.Service) (quote.OrderInv
 
 // posPayBalanceInvoicer binds the Pay balance take's invoicer seam to the same billing writer the
 // desk's order payment raises with (item 9 review P2-2): an order that owes an uninvoiced remainder
-// gets its agreed invoice raised inside the take's transaction, one writer, never a copy. The one
-// refusal that can come back for money already billed another way (shipment groups) crosses as the
-// take door's own fixed words.
+// gets its agreed invoice raised inside the take's transaction, one writer, never a copy. Every
+// refusal the raise can return crosses as the take door's own fixed words (payBalanceRaiseRefusal).
 type posPayBalanceInvoicer struct{ w *billing.InvoiceWriter }
 
 func (a posPayBalanceInvoicer) RaiseOrderInvoiceTx(ctx context.Context, tx pgx.Tx, orderID string) (pos.RaisedOrderInvoice, error) {
 	doc, err := a.w.InvoiceOrderAtAgreedTx(ctx, tx, orderID)
 	if err != nil {
-		var already *billing.OrderAlreadyInvoicedError
-		if errors.As(err, &already) {
-			return pos.RaisedOrderInvoice{}, pos.ErrPayBalanceRestUnbillable
+		if mapped := payBalanceRaiseRefusal(err); mapped != nil {
+			return pos.RaisedOrderInvoice{}, mapped
 		}
 		return pos.RaisedOrderInvoice{}, err
 	}
@@ -547,6 +545,25 @@ func (a posPayBalanceInvoicer) RaiseOrderInvoiceTx(ctx context.Context, tx pgx.T
 		InvoiceID: doc.InvoiceID, InvoiceNo: doc.InvoiceNo,
 		TotalCents: doc.TotalCents, BalanceCents: doc.BalanceCents,
 	}, nil
+}
+
+// payBalanceRaiseRefusal maps every refusal the raise can still return once the take's pre read has
+// done its work to the door's own fixed 409 sentence (the delta review's P2-A): the order module's
+// refusals arrive wrapped as the desk's payment conflict (agreedFactsFor below), ErrNothingToInvoice
+// arrives raw, and an unwrapped AgreedBillingRefusal is mapped too in case a future source forgets
+// the wrapper. Any other error is not a refusal (it is a failure to answer, for the log) and comes
+// back nil to cross untouched.
+func payBalanceRaiseRefusal(err error) error {
+	var already *billing.OrderAlreadyInvoicedError
+	if errors.As(err, &already) {
+		return pos.ErrPayBalanceRestUnbillable
+	}
+	var conflict *quote.OrderPaymentConflictError
+	var refusal *order.AgreedBillingRefusal
+	if errors.As(err, &conflict) || errors.As(err, &refusal) || errors.Is(err, billing.ErrNothingToInvoice) {
+		return pos.ErrPayBalanceRaiseRefused
+	}
+	return nil
 }
 
 // quoteAgreedOrderSource is the money tail's order source plus the one answer the counter's agreed

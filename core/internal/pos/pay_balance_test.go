@@ -406,6 +406,87 @@ func TestPayBalanceTake_ReplayIsFencedAndOrderBound(t *testing.T) {
 	}
 }
 
+// -- the delta review's P2-A legs: no card is captured on a take that cannot complete --
+
+// partlyInvoicedFacts is the unbillable shape: one live invoice above zero and
+// an uninvoiced remainder above zero (an order partly invoiced from its
+// shipment groups), the whole of which this door cannot bill.
+func partlyInvoicedFacts(orderID string) payBalanceOrderFacts {
+	f := owingFacts(orderID, "cust-abc", "branch-trt", 0, 5000)
+	f.InvoicedCents = 6000 // the live invoice's own total; the remainder is 5300
+	return f
+}
+
+// A CARD take whose balance includes a remainder this door cannot bill is
+// refused BEFORE any capture: nothing is charged, nothing reversed, the raise
+// never runs.
+func TestPayBalanceTake_UnbillableRest_RefusedBeforeAnyCapture(t *testing.T) {
+	h := payBalanceHarness()
+	h.store.owing["ord-owing"] = partlyInvoicedFacts("ord-owing")
+	inv := &fakePayInvoicer{}
+	h.svc = h.svc.WithPayBalanceInvoicer(inv)
+	in := takeInput()
+	in.Method = TenderCard
+	in.PaymentToken = "tok-x"
+	in.AmountCents = 10300 // the open 5000 plus the uninvoiced remainder 5300
+	if _, err := h.svc.PayBalanceTake(context.Background(), in); !errors.Is(err, ErrPayBalanceRestUnbillable) {
+		t.Fatalf("want ErrPayBalanceRestUnbillable, got %v", err)
+	}
+	if len(h.tender.captureCalls) != 0 {
+		t.Fatalf("a card was charged for a take that cannot complete: %+v", h.tender.captureCalls)
+	}
+	if len(h.tender.takes) != 0 || len(h.store.settled) != 0 || len(inv.calls) != 0 {
+		t.Fatalf("the refused take moved money: %+v %+v raise %v", h.tender.takes, h.store.settled, inv.calls)
+	}
+}
+
+// A cancelled order is not this door's to pay: the door's 404, before any
+// capture.
+func TestPayBalanceTake_CancelledOrder_NotFoundBeforeAnyCapture(t *testing.T) {
+	h := payBalanceHarness()
+	gone := owingFacts("ord-gone", "cust-abc", "branch-trt", 0, 9300)
+	gone.Status = "CANCELLED"
+	h.store.owing["ord-gone"] = gone
+	in := takeInput()
+	in.OrderID = "ord-gone"
+	in.Method = TenderCard
+	in.PaymentToken = "tok-x"
+	if _, err := h.svc.PayBalanceTake(context.Background(), in); !errors.Is(err, ErrPayBalanceOrderNotFound) {
+		t.Fatalf("a cancelled order must answer the door's 404, got %v", err)
+	}
+	if len(h.tender.captureCalls) != 0 {
+		t.Fatalf("a card was charged for a cancelled order: %+v", h.tender.captureCalls)
+	}
+}
+
+// A refusal the raise itself returns inside the transaction (an order that
+// disagrees with its own lines, say) answers ITS OWN fixed words after the
+// captured card is compensated, never the ring's "sale" word and never a bare
+// 500.
+func TestPayBalanceTake_RaiseRefusalAfterCapture_AnswersItsOwnWords(t *testing.T) {
+	h := payBalanceHarness()
+	h.store.owing["ord-owing"] = remainderFacts("ord-owing")
+	inv := &fakePayInvoicer{err: ErrPayBalanceRaiseRefused}
+	h.svc = h.svc.WithPayBalanceInvoicer(inv)
+	in := takeInput()
+	in.Method = TenderCard
+	in.PaymentToken = "tok-x"
+	in.AmountCents = 11300
+	_, err := h.svc.PayBalanceTake(context.Background(), in)
+	if !errors.Is(err, ErrPayBalanceRaiseRefused) {
+		t.Fatalf("want the raise's own refusal words, got %v", err)
+	}
+	if len(h.tender.captureCalls) != 1 {
+		t.Fatalf("the capture: %+v", h.tender.captureCalls)
+	}
+	if len(h.tender.compCalls) != 1 {
+		t.Fatalf("the captured leg must be compensated exactly once: %v", h.tender.compCalls)
+	}
+	if len(h.tender.takes) != 0 || len(h.store.settled) != 0 {
+		t.Fatalf("a refused raise took money anyway: %+v %+v", h.tender.takes, h.store.settled)
+	}
+}
+
 // A non card tender failure maps to a fixed sentence (the review's P3-5),
 // never the till's internal error text: the cashier reads what to do, not the
 // drawer's internals.

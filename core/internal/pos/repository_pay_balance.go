@@ -54,18 +54,22 @@ const owingInvoiced = `
 // the hold share: the open invoice balances plus the uninvoiced remainder (the
 // order's total less what its live INVOICE documents bill). It is the read
 // behind the advisory pre read; the find builds the same number, and the take
-// settles exactly it.
+// settles exactly it. A cancelled order is not this door's, so the read does
+// not answer it at all (the delta review's P2-A: no card is captured on a take
+// that cannot complete).
 const owingOrderSelect = `
 	SELECT o.id::text, o.order_no::text, o.customer_id::text, COALESCE(c.name,''), o.branch_id::text,
-	       o.fulfillment, c.payment_terms_days, o.total_cents,` + owingOpenBalances + `,` + owingInvoiced + `
+	       o.fulfillment, o.status, c.payment_terms_days, o.total_cents,` + owingOpenBalances + `,` + owingInvoiced + `
 	  FROM orders o
-	  JOIN customers c ON c.id = o.customer_id`
+	  JOIN customers c ON c.id = o.customer_id
+	 WHERE o.status <> 'CANCELLED'`
 
 // FindOwingOrders answers the orders that owe money and match the term: an
 // order number (the visible #SO form and bare), a customer name, or a phone.
 // branchIDs nil reaches every branch (a global caller); otherwise the order's
 // branch must be one of them, which is the whole fence: another branch's
-// order is simply not in the answer.
+// order is simply not in the answer, and neither is a cancelled order (not
+// this door's, the delta review's P2-A).
 func (r *Repository) FindOwingOrders(ctx context.Context, term string, branchIDs []string, limit int) ([]OwingOrder, error) {
 	if r.pool == nil {
 		return nil, errNoPool
@@ -82,8 +86,9 @@ func (r *Repository) FindOwingOrders(ctx context.Context, term string, branchIDs
 		       COALESCE(NULLIF(o.job_reference,''), NULLIF(o.po_job_ref,''), '') AS job
 		  FROM orders o
 		  JOIN customers c ON c.id = o.customer_id
-		 WHERE (`+owingOpenBalances+` + GREATEST(o.total_cents -`+owingInvoiced+`, 0)) > 0
-		   AND (o.order_no ILIKE $1 OR c.name ILIKE $1
+	 WHERE (`+owingOpenBalances+` + GREATEST(o.total_cents -`+owingInvoiced+`, 0)) > 0
+	   AND o.status <> 'CANCELLED'
+	   AND (o.order_no ILIKE $1 OR c.name ILIKE $1
 		        OR EXISTS (SELECT 1 FROM customer_contacts cc
 		                    WHERE cc.customer_id = o.customer_id AND cc.is_active AND cc.phone LIKE $1))
 		   AND ($2::uuid[] IS NULL OR o.branch_id = ANY($2::uuid[]))
@@ -158,16 +163,17 @@ func escapeLikeWildcards(term string) string { return likeEscaper.Replace(term) 
 
 // ReadOwingOrder is the advisory pool read of one order: its facts and the
 // one number it owes (the open balances plus the uninvoiced remainder). found
-// false is the door's 404; an order that owes nothing is a different answer,
-// the caller refuses it in words.
+// false is the door's 404 (a cancelled order among them, never owing); an
+// order that owes nothing is a different answer, the caller refuses it in
+// words.
 func (r *Repository) ReadOwingOrder(ctx context.Context, orderID string) (payBalanceOrderFacts, bool, error) {
 	if r.pool == nil {
 		return payBalanceOrderFacts{}, false, errNoPool
 	}
 	var f payBalanceOrderFacts
 	var open int64
-	err := r.pool.QueryRow(ctx, owingOrderSelect+` WHERE o.id = $1::uuid`, orderID).
-		Scan(&f.OrderID, &f.OrderNo, &f.CustomerID, &f.CustomerName, &f.BranchID, &f.Fulfilment,
+	err := r.pool.QueryRow(ctx, owingOrderSelect+` AND o.id = $1::uuid`, orderID).
+		Scan(&f.OrderID, &f.OrderNo, &f.CustomerID, &f.CustomerName, &f.BranchID, &f.Fulfilment, &f.Status,
 			&f.TermsDays, &f.TotalCents, &open, &f.InvoicedCents)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -214,13 +220,16 @@ func (r *Repository) FindPayBalancePaymentByKey(ctx context.Context, key string)
 func (r *Repository) LockPayBalanceOrderTx(ctx context.Context, tx pgx.Tx, orderID string) (payBalanceOrderFacts, error) {
 	var f payBalanceOrderFacts
 	if err := tx.QueryRow(ctx,
-		`SELECT id::text, order_no::text, customer_id::text, branch_id::text, fulfillment, total_cents
+		`SELECT id::text, order_no::text, customer_id::text, branch_id::text, fulfillment, status, total_cents
 		   FROM orders WHERE id = $1::uuid FOR NO KEY UPDATE`, orderID).
-		Scan(&f.OrderID, &f.OrderNo, &f.CustomerID, &f.BranchID, &f.Fulfilment, &f.TotalCents); err != nil {
+		Scan(&f.OrderID, &f.OrderNo, &f.CustomerID, &f.BranchID, &f.Fulfilment, &f.Status, &f.TotalCents); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return payBalanceOrderFacts{}, ErrPayBalanceOrderNotFound
 		}
 		return payBalanceOrderFacts{}, fmt.Errorf("pos: lock pay balance order: %w", err)
+	}
+	if f.Status == payBalanceOrderCancelled {
+		return payBalanceOrderFacts{}, ErrPayBalanceOrderNotFound
 	}
 	if err := tx.QueryRow(ctx,
 		`SELECT name, payment_terms_days FROM customers WHERE id = $1::uuid`, f.CustomerID).

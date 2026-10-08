@@ -147,6 +147,7 @@ type payBalanceOrderFacts struct {
 	CustomerName string
 	BranchID     string
 	Fulfilment   string
+	Status       string
 	TermsDays    int
 	TotalCents   int64
 	// InvoicedCents is what the order's live INVOICE documents (neither DRAFT
@@ -154,6 +155,12 @@ type payBalanceOrderFacts struct {
 	InvoicedCents int64
 	Invoices      []payBalanceInvoice
 }
+
+// payBalanceOrderCancelled is the one order status this door refuses on sight:
+// a cancelled order is not payable here (its money is unwound by the desk, and
+// the raise would refuse it anyway), so every read treats it as not found
+// rather than owing.
+const payBalanceOrderCancelled = "CANCELLED"
 
 // payBalanceInvoice is one open invoice of the order, locked FOR NO KEY UPDATE.
 type payBalanceInvoice struct {
@@ -199,6 +206,14 @@ type payBalanceHoldView struct {
 // error text.
 var ErrPayBalanceRestUnbillable = clientError{status: http.StatusConflict,
 	msg: "Part of this order is not invoiced yet and cannot be billed at this door; its open invoices are paid at the register, the rest when its invoice exists."}
+
+// ErrPayBalanceRaiseRefused answers a refusal the invoice raise itself
+// returned inside the transaction (an order that is cancelled between the pre
+// read and the locks, has no lines, or disagrees with its own lines): one
+// fixed 409 sentence, never a bare 500 and never the ring's "sale" word (a
+// payment is not a sale).
+var ErrPayBalanceRaiseRefused = clientError{status: http.StatusConflict,
+	msg: "This order cannot be billed at this door right now; ask the desk to check the order and try again."}
 
 // ErrPayBalanceInvoicerUnwired answers a take that would have to raise an
 // invoice with no invoicer behind the door: the move is refused, never a take
@@ -350,6 +365,21 @@ func (s *Service) PayBalanceTake(ctx context.Context, in PayBalanceTakeInput) (P
 	if !caller.CanAccessBranch(pre.BranchID) {
 		return PayBalanceTaken{}, ErrPayBalanceOrderNotFound
 	}
+	// NO CARD IS EVER CAPTURED ON A TAKE THAT CANNOT COMPLETE (the delta
+	// review's P2-A): a cancelled order is not this door's (the read excludes
+	// it; the guard holds for the shapes a race can still present), and a
+	// balance that includes an uninvoiced remainder beside a live invoice is a
+	// part this door cannot bill (the raise would refuse it after the charge,
+	// and the charge and reversal is exactly what P2-3 removed).
+	if pre.Status == payBalanceOrderCancelled {
+		return PayBalanceTaken{}, ErrPayBalanceOrderNotFound
+	}
+	if pre.InvoicedCents > 0 && pre.remainderCents() > 0 {
+		return PayBalanceTaken{}, ErrPayBalanceRestUnbillable
+	}
+	if pre.remainderCents() > 0 && s.payInvoicer == nil {
+		return PayBalanceTaken{}, ErrPayBalanceInvoicerUnwired
+	}
 	if pre.balanceCents() == 0 {
 		return PayBalanceTaken{}, ErrPayBalanceAlreadyPaid
 	}
@@ -411,6 +441,15 @@ func (s *Service) PayBalanceTake(ctx context.Context, in PayBalanceTakeInput) (P
 		}
 		if !caller.CanAccessBranch(facts.BranchID) {
 			return ErrPayBalanceOrderNotFound
+		}
+		// The pre read's refusals, re-derived under the locks: a cancellation
+		// or a part invoice that landed between the read and the locks refuses
+		// here rather than charging and reversing.
+		if facts.Status == payBalanceOrderCancelled {
+			return ErrPayBalanceOrderNotFound
+		}
+		if facts.InvoicedCents > 0 && facts.remainderCents() > 0 {
+			return ErrPayBalanceRestUnbillable
 		}
 		// An uninvoiced remainder is owed too (the hold's own number), so the
 		// whole balance includes it: the take raises the invoice for it inside
@@ -516,8 +555,19 @@ func (s *Service) PayBalanceTake(ctx context.Context, in PayBalanceTakeInput) (P
 		}
 		if len(ring.captured) > 0 {
 			ring.rank = cardRankReversed
-			if _, serr := s.settleFailedCardRing(ctx, ring); serr != nil {
+			_, serr := s.settleFailedCardRing(ctx, ring)
+			// The compensation's own failures outrank the refusal's words (a
+			// held charge needs a manager); a cleanly reversed card falls
+			// through to the words below.
+			if serr != nil && !errors.Is(serr, ErrSaleFailedCardReversed) {
 				return PayBalanceTaken{}, serr
+			}
+			// A refusal this door can say in words answers its own words, never
+			// the ring's "sale" word: a payment is not a sale, and the cashier
+			// reads what to do next, not what the ring would have said.
+			var ce clientError
+			if errors.As(txErr, &ce) {
+				return PayBalanceTaken{}, ce
 			}
 			return PayBalanceTaken{}, ErrSaleFailedCardReversed
 		}
