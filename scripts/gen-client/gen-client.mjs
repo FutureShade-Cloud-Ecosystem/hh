@@ -118,8 +118,10 @@
 // the request URL: the wire spelling is text either way, and a missing
 // parameter stays visible to the transport, which refuses it as a Result), then the JSON body (when the operation carries
 // one), then the raw upload's contentType when the body declares more than
-// one content type (typed as the union of the declared types), then an opts
-// object typed from the query parameters, then an optional call object
+// one content type (typed as the union of the declared types), an opts
+// object typed from the query parameters (required before the optional
+// contentType when any query parameter is required, after it when none
+// is), then an optional call object
 // ({ signal, timeoutMs }) handed to the transport. Every function
 // returns Promise<Result<success type>>: the success schema is the lowest
 // declared 2xx response; a response whose content is not JSON resolves the raw
@@ -774,18 +776,24 @@ for (const tag of tagNames) {
         args.push(`${pName}: string | number`);
       }
       if (variant.body) args.push(`body: ${variant.body.typeSpelling}`);
+      // Required parameters precede the optional ones: a required query
+      // holder is pushed before the raw upload's optional content type,
+      // an optional holder after it, so no required parameter ever
+      // follows an optional one.
+      const queryRequired = op.queryParams.some((p) => p.required);
+      const queryLiteral =
+        op.queryParams.length > 0
+          ? objectLiteral(
+              { required: op.queryParams.filter((p) => p.required).map((p) => p.name), properties: Object.fromEntries(op.queryParams.map((p) => [p.name, p.schema])) },
+              where,
+              " ",
+            )
+          : null;
+      if (queryLiteral !== null && queryRequired) args.push(`opts: ${queryLiteral}`);
       if (raw) {
         args.push(`contentType?: ${raw.contentTypes.map((ct) => JSON.stringify(ct)).join(" | ")}`);
       }
-      const queryRequired = op.queryParams.some((p) => p.required);
-      if (op.queryParams.length > 0) {
-        const literal = objectLiteral(
-          { required: op.queryParams.filter((p) => p.required).map((p) => p.name), properties: Object.fromEntries(op.queryParams.map((p) => [p.name, p.schema])) },
-          where,
-          " ",
-        );
-        args.push(`opts${queryRequired ? "" : "?"}: ${literal}`);
-      }
+      if (queryLiteral !== null && !queryRequired) args.push(`opts?: ${queryLiteral}`);
       // A multipart form with binary fields carries a filename option per
       // field, so the caller names the part; with no option the part rides
       // under the platform's default name, "blob".
