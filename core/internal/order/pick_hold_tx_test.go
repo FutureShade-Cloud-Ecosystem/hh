@@ -21,8 +21,8 @@ type fakeTx struct{ pgx.Tx }
 // txRecordingPickHold answers the facts through BOTH halves and records which
 // half answered, the proof the read joined the write's transaction.
 type txRecordingPickHold struct {
-	facts    PickHoldFacts
-	err      error
+	facts     PickHoldFacts
+	err       error
 	poolReads int
 	txReads   int
 }

@@ -643,7 +643,7 @@ func (s *Service) OrderRead(ctx context.Context, orderID string) (OrderView, err
 		LegalActions:   s.legalActions(ctx, caller, orderID, status),
 		EditableFields: s.offeredEditableFields(ctx, caller, orderID, status),
 		Lines:          []OrderViewLine{},
-		PayHold:        s.payHoldView(ctx, orderID),
+		PayHold:        s.payHoldView(ctx, orderID, status),
 	}
 	// Lines + money are best-effort: a read that cannot load them still answers status and the
 	// available actions, exactly as it did before DIB-175 (an older fake/deploy without the edit seam

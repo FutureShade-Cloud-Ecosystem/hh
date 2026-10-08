@@ -131,7 +131,7 @@ func (c *LifecycleConsumer) onInvoiceFinalized(ctx context.Context, e notify.Eve
 	// the normal doors, which all carry the hold. The status writer's own
 	// guard (holdGuardedTarget) refuses the move anyway; this skip is the
 	// decision itself, kept here so it can be reverted alone.
-	if h := c.svc.payHoldView(ctx, orderID); h != nil && h.HeldFromPicking {
+	if h := c.svc.payHoldView(ctx, orderID, ""); h != nil && h.HeldFromPicking {
 		c.info("invoice finalized on an order that owes, it stays where it is until the balance is paid", e, orderID)
 		return nil
 	}

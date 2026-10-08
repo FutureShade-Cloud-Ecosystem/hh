@@ -511,3 +511,35 @@ func TestPayBalanceTake_NonCardTenderFailureIsAFixedSentence(t *testing.T) {
 		t.Fatalf("a refused tender settled anyway: %+v", h.store.settled)
 	}
 }
+
+// Item 9 Opus P3-4: an order already past picking that owes again (an NSF
+// after delivery) reads "Balance due" in the find's hold words, not the
+// picking sentence; a waiting order keeps the mandated sentence.
+func TestPayBalanceFind_PastPickingOwedReadsBalanceDue(t *testing.T) {
+	h := newHarness()
+	h.store.owingOrders = []OwingOrder{
+		{OrderID: "ord-delivered", OrderNo: "#SO-9", CustomerID: "cust-abc", CustomerName: "A customer",
+			Fulfilment: "DELIVERY", OrderTotalCents: 11300, PaidCents: 0, StillOwedCents: 11300,
+			HeldFromPicking: true, pastPicking: true},
+		{OrderID: "ord-waiting", OrderNo: "#SO-10", CustomerID: "cust-abc", CustomerName: "A customer",
+			Fulfilment: "WILL_CALL", OrderTotalCents: 11300, PaidCents: 2000, StillOwedCents: 9300,
+			HeldFromPicking: true, pastPicking: false},
+	}
+	out, err := h.svc.PayBalanceFind(context.Background(), "A customer")
+	if err != nil {
+		t.Fatalf("find: %v", err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("the find answered %d rows, want 2", len(out))
+	}
+	byOrder := map[string]string{}
+	for _, o := range out {
+		byOrder[o.OrderID] = o.HoldWords
+	}
+	if byOrder["ord-delivered"] != "Balance due" {
+		t.Fatalf("the delivered and re owed order's words: %q", byOrder["ord-delivered"])
+	}
+	if byOrder["ord-waiting"] != pickHoldSentence {
+		t.Fatalf("the waiting order's words: %q", byOrder["ord-waiting"])
+	}
+}

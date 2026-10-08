@@ -105,6 +105,11 @@ type OwingOrder struct {
 	HeldFromPicking bool           `json:"held_from_picking"`
 	HoldWords       string         `json:"hold_words,omitempty"`
 	Payments        []OwingPayment `json:"payments"`
+
+	// pastPicking is the order module's ruling that the order has already
+	// reached or passed picking: if it owes again (an NSF after delivery) the
+	// hold words say the balance is due (item 9 Opus P3-4).
+	pastPicking bool
 }
 
 // PayBalanceTakeInput is the POST body: the whole balance of one order.
@@ -161,6 +166,11 @@ type payBalanceOrderFacts struct {
 // the raise would refuse it anyway), so every read treats it as not found
 // rather than owing.
 const payBalanceOrderCancelled = "CANCELLED"
+
+// payBalanceDueWords is the find's hold words for an order already past
+// picking that owes again: the picking sentence would speak of a runway the
+// order has already used (item 9 Opus P3-4).
+const payBalanceDueWords = "Balance due"
 
 // payBalanceInvoice is one open invoice of the order, locked FOR NO KEY UPDATE.
 type payBalanceInvoice struct {
@@ -275,6 +285,9 @@ func (s *Service) PayBalanceFind(ctx context.Context, term string) ([]OwingOrder
 	for i := range out {
 		if out[i].HeldFromPicking {
 			out[i].HoldWords = pickHoldSentence
+			if out[i].pastPicking {
+				out[i].HoldWords = payBalanceDueWords
+			}
 		}
 	}
 	return out, nil

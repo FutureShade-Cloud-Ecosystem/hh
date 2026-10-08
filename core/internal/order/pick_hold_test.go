@@ -230,6 +230,38 @@ func TestTransitionManual_PickingAllowedWhenClearOrUnwired(t *testing.T) {
 	}
 }
 
+// Item 9 Opus P3-4: an order already past picking that owes again (an NSF
+// after delivery) reads "Balance due" on its pay hold block, not the picking
+// sentence: the runway the sentence speaks of is one the order has already
+// used, and what is true is the balance.
+func TestOrderRead_PastPickingOwedReadsBalanceDue(t *testing.T) {
+	for _, status := range []string{"PICKING", "READY", "PARTIALLY_FULFILLED", "FULFILLED", "INVOICED"} {
+		store := newFakeStore(mkDetail("ord-1", "cust-1", status))
+		svc := NewService(store).withCaller(testCallerFrom).
+			WithPickHoldReader(fakePickHold{facts: heldFacts(9300)})
+		view, err := svc.OrderRead(pickHoldCtx(), "ord-1")
+		if err != nil {
+			t.Fatalf("order read at %s: %v", status, err)
+		}
+		if view.PayHold == nil || !view.PayHold.HeldFromPicking {
+			t.Fatalf("the %s read carries no held block: %+v", status, view.PayHold)
+		}
+		if view.PayHold.Words != BalanceDueWords {
+			t.Fatalf("the %s read's words are %q, want %q", status, view.PayHold.Words, BalanceDueWords)
+		}
+	}
+	// Below the rung the mandated sentence stands: the order has not picked yet.
+	store := pickHoldStore()
+	svc := NewService(store).withCaller(testCallerFrom).WithPickHoldReader(fakePickHold{facts: heldFacts(9300)})
+	view, err := svc.OrderRead(pickHoldCtx(), "ord-1")
+	if err != nil {
+		t.Fatalf("order read: %v", err)
+	}
+	if view.PayHold == nil || view.PayHold.Words != PickHoldWords {
+		t.Fatalf("a waiting order's words: %+v", view.PayHold)
+	}
+}
+
 // The order read carries the hold: held or not, the words, the total, paid so
 // far, still owed, and the in process words when a deposit has landed.
 func TestOrderRead_CarriesThePayHold(t *testing.T) {
