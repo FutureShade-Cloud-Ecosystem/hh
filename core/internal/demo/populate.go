@@ -519,26 +519,21 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 	return roles, grants, nil
 }
 
-// convergePersonas verifies each persona's planted row and narrows its
+// convergePersonas verifies each persona's planted role and narrows its
 // branch grants onto the one branch it works, on the demo database only.
 // The verify half refuses before any write: a persona the flow table mints
-// whose row or role is missing would be a login that reaches nothing, and
-// that is a refusal, not a world. The converge half tombstones every live
-// grant outside the persona's branch (0200 plants every BRANCH location)
-// and heals a tombstone at its own, each guarded so a re-run writes
-// nothing. The dispatch persona is deliberately absent from demoPersonas:
-// no lane has converged it yet, and 0200's both-branch shape is its world
-// until one does.
+// whose role is missing would be a login that reaches nothing, and that is
+// a refusal, not a world. (The account-lifetime half is not this pass's to
+// check: the row is 0200's planted ACTIVE row, and the mint itself refuses
+// a non-ACTIVE account before any session exists, so the door that matters
+// already fails closed.) The converge half tombstones every live grant
+// outside the persona's branch (0200 plants every BRANCH location) and
+// heals a tombstone at its own, each guarded so a re-run writes nothing.
+// The dispatch persona is deliberately absent from demoPersonas: no lane
+// has converged it yet, and 0200's both-branch shape is its world until
+// one does.
 func convergePersonas(ctx context.Context, tx pgx.Tx, now time.Time) (converged, removed int, err error) {
 	for _, p := range demoPersonas {
-		var status string
-		if err := tx.QueryRow(ctx,
-			`SELECT status FROM users WHERE id = $1::uuid`, p.userID).Scan(&status); err != nil {
-			return 0, 0, fmt.Errorf("demo-populate: persona %s: %w", p.email, err)
-		}
-		if status != "ACTIVE" {
-			return 0, 0, fmt.Errorf("demo-populate: refusing: the persona %s carries status %s, the demo world plants it ACTIVE", p.email, status)
-		}
 		var roles int
 		if err := tx.QueryRow(ctx, `
 			SELECT count(*) FROM user_roles ur
