@@ -440,7 +440,13 @@ export class FrontDoorApp extends HHElement {
         padding: var(--hh-s-4) 0;
         text-align: start;
         background: transparent;
-        color: var(--hh-disabled-ink);
+        /* Round 2 (FROM-PRINCIPAL 9): the name wore the disabled INK on the card, and in
+           brand that pair reads 4.30:1 (the ink's own pair is on the disabled FILL, which
+           this lighter treatment drops). The name reads the dimmed text ink instead, the
+           ink the matrix holds at AA on the card in both halves and the one the chips and
+           the Coming pill beside it already carry; the disabled state stays in the
+           semantics and the pill, held by test/contrast.test.mjs. */
+        color: var(--hh-text-dim);
         border: none;
         font-weight: 600;
         cursor: default;
@@ -564,7 +570,10 @@ export class FrontDoorApp extends HHElement {
       }
       .tile.muted .module {
         font-size: 14px;
-        color: var(--hh-disabled-ink);
+        /* Round 2 (FROM-PRINCIPAL 9): one rule with the coming name above; the muted name
+           is text on the card and reads the dimmed text ink, not the disabled ink (4.30:1
+           in brand). The tile stays muted by its border, its lost shadow and its mark. */
+        color: var(--hh-text-dim);
       }
 
       /* ── the coming-soon page ─────────────────────────────────────────── */
