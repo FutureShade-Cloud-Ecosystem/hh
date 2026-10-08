@@ -317,13 +317,19 @@ function capturePod(res, stop, input) {
   return json(res, stopDetail(stop));
 }
 
+// The core's own limit (dispatch.MaxPhotoBytes): the handler stops reading one
+// byte past it (413), and the service refuses anything over it (400).
+const MAX_PHOTO_BYTES = 4 << 20;
+
 function addPhoto(res, stop, contentType, caption, raw) {
+  if (raw.length > MAX_PHOTO_BYTES + 1) return refuse(res, 413, "the photo is too large");
   if (scenario === "photo-fails") return refuse(res, 500, "internal error");
   if (!["EN_ROUTE", "DELIVERED", "FAILED"].includes(stop.status)) {
     return refuse(res, 409, `a ${stop.status} stop has nothing to photograph yet`);
   }
   if (!PHOTO_TYPES.has(contentType.toLowerCase())) return refuse(res, 400, "a proof photo must be a jpeg, png or webp");
   if (raw.length === 0) return refuse(res, 400, "the photo is empty");
+  if (raw.length > MAX_PHOTO_BYTES) return refuse(res, 400, "the photo is too large (max 4 MB)");
   photoSeq += 1;
   const meta = {
     id: `9b000000-0000-4000-9000-${String(photoSeq).padStart(12, "0")}`,
