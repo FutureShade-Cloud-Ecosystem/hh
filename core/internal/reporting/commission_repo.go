@@ -110,6 +110,12 @@ func (r *Repository) RetireCommissionRule(ctx context.Context, id string) error 
 // called per row because a commission run touches thousands of lines; the seam-conformance test
 // (TestIntegration_SalesByRep_AgreesWithRepAssignmentSeam) is what keeps this honest.
 //
+// SUPPLIER_DEPOSIT documents are excluded (item 9 delta review P2-B): their line is a liability
+// billed in advance, not goods sold, and the goods lines on the sale's own invoice already carry
+// the sale at its real prices. The header based readers (sales by day, branch and rep) keep
+// counting the deposit document's own total, which is money the account genuinely owes; only the
+// LINE sums would count the sale twice.
+//
 // COST is the branch weighted-average from v_product_weighted_avg_cost, the same source every margin
 // template uses, so a rep's margin-basis commission and the margin report agree. A line for a product
 // with no receipts has no weighted average and costs 0, which makes it 100% margin; that is visible in
@@ -139,6 +145,7 @@ SELECT il.id::text                                                    AS invoice
   LEFT JOIN rep_assignments ovr  ON ovr.order_id = i.order_id
   LEFT JOIN rep_assignments dflt ON dflt.customer_id = i.customer_id AND dflt.order_id IS NULL
  WHERE i.status NOT IN ('DRAFT','VOID')
+   AND i.source_kind <> 'SUPPLIER_DEPOSIT'
    AND i.issue_date >= $1::date
    AND i.issue_date <= $2::date
    AND ($3::uuid IS NULL OR i.branch_id = $3::uuid)

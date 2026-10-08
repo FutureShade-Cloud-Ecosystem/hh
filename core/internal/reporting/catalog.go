@@ -152,6 +152,7 @@ SELECT COALESCE(pc.code::text, '(uncategorised)') AS category_code,
   LEFT JOIN products p ON p.id = il.product_id
   LEFT JOIN product_categories pc ON pc.id = p.category_id
  WHERE i.status NOT IN ('DRAFT','VOID')
+   AND i.source_kind <> 'SUPPLIER_DEPOSIT'
    AND i.issue_date >= $1::date
    AND i.issue_date <= $2::date
    AND ($3::uuid IS NULL OR i.branch_id = $3::uuid)
@@ -191,6 +192,7 @@ SELECT p.sku::text                                                            AS
   LEFT JOIN v_product_weighted_avg_cost w
          ON w.product_id = il.product_id AND w.branch_id = i.branch_id
  WHERE i.status NOT IN ('DRAFT','VOID')
+   AND i.source_kind <> 'SUPPLIER_DEPOSIT'
    AND i.issue_date >= $1::date
    AND i.issue_date <= $2::date
    AND ($3::uuid IS NULL OR i.branch_id = $3::uuid)
@@ -228,6 +230,7 @@ SELECT COALESCE(pc.code::text, '(uncategorised)')                             AS
   LEFT JOIN v_product_weighted_avg_cost w
          ON w.product_id = il.product_id AND w.branch_id = i.branch_id
  WHERE i.status NOT IN ('DRAFT','VOID')
+   AND i.source_kind <> 'SUPPLIER_DEPOSIT'
    AND i.issue_date >= $1::date
    AND i.issue_date <= $2::date
    AND ($3::uuid IS NULL OR i.branch_id = $3::uuid)
