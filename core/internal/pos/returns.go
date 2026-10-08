@@ -88,6 +88,27 @@ func (s *Service) CustomerLines(ctx context.Context, in CustomerLinesInput) (Cus
 	if items == nil {
 		items = []CustomerOrderView{}
 	}
+	// Returnable: a till ring always; an order a quote became only with a live finalised invoice, read
+	// through billing's seam. The invoice the return would refund against rides invoice_id.
+	for i := range items {
+		items[i].Returnable = true
+		if items[i].Source != "QUOTE" {
+			continue
+		}
+		if s.orderInvoices == nil {
+			items[i].Returnable, items[i].NotReturnableReason = false, "orders a quote became cannot be returned here yet"
+			continue
+		}
+		id, status, found, ierr := s.orderInvoices.LiveOrderInvoice(ctx, items[i].OrderID)
+		if ierr != nil {
+			return CustomerLinesView{}, ierr
+		}
+		if why := convertedNotReturnable(found, status); why != "" {
+			items[i].Returnable, items[i].NotReturnableReason = false, why
+			continue
+		}
+		items[i].InvoiceID = id
+	}
 	// Each order names its branch, so the one branch refusal can name the branches. The names come
 	// through the branches module's seam; an unwired seam leaves them empty, never invented.
 	if s.branchNames != nil && len(items) > 0 {
@@ -240,7 +261,10 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 type returnPlan struct {
 	// cardRefunds are the processor refunds this return made inside its transaction (D4): read by
 	// the caller after the transaction ended to record the ones a rollback left unbooked.
-	cardRefunds    []cardRefundFact
+	cardRefunds []cardRefundFact
+	// applied is the part of this return\'s total spent on a swap\'s new order (10.5): the rail moves
+	// total less applied. Set inside the swap\'s transaction once the guard has priced the note.
+	applied        int64
 	in             ReturnInput
 	oc             returnOrderCtx
 	caller         identity.StaffContext
@@ -355,15 +379,20 @@ func (s *Service) prepareReturn(ctx context.Context, in ReturnInput) (*returnPla
 		plan.preReplayed = true
 		return plan, nil
 	}
-	if in.RefundMethod == RefundCash && in.TillSessionID == "" {
+	// A converted order's invoice comes from billing, after the wall and the replay (a replay answers
+	// from its stored return and needs no live invoice).
+	if plan.oc, err = s.resolveConverted(ctx, plan.oc); err != nil {
+		return nil, err
+	}
+	if in.RefundMethod == RefundCash && in.TillSessionID == "" && !in.railOptional {
 		return nil, ErrNoOpenTill{}
 	}
-	if in.RefundMethod == RefundAccountCredit {
+	if in.RefundMethod == RefundAccountCredit && !in.railOptional {
 		if err := s.accountCreditAllowed(ctx, plan.oc.CustomerID, in.internalRail); err != nil {
 			return nil, err
 		}
 	}
-	if in.RefundMethod == RefundCard {
+	if in.RefundMethod == RefundCard && !in.railOptional {
 		if plan.oc.SaleTender != TenderCard || plan.oc.GatewayRef == "" {
 			return nil, errCardRefundNoRef
 		}
@@ -730,7 +759,7 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 		RefundMethod: in.RefundMethod, SubtotalCents: subtotal, TaxCents: taxTotal, TotalCents: total,
 		FeeCents: feeCents, Reason: in.Reason, Restock: anyRestock(lines), TillSessionID: in.TillSessionID,
 		PickupRequired: pickupRequired, PickupSite: pickupSite, PickupDate: pickupDate, PickupStatus: pickupStatus,
-		IdempotencyKey: in.IdempotencyKey, CreatedBy: actor, NoteID: noteID,
+		IdempotencyKey: in.IdempotencyKey, CreatedBy: actor, NoteID: noteID, AppliedCents: plan.applied,
 	})
 	if ierr != nil {
 		return Return{}, ierr
@@ -755,10 +784,14 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 
 	// 3. The refund rail (all writes behind the till/payment seams; nothing here touches their tables).
 	var refundPaymentID string
-	switch in.RefundMethod {
-	case RefundCash:
+	// The rail moves the total less what a swap spent on its new order; with nothing left over no rail
+	// runs at all (no drawer payout, no processor call, no credit row).
+	railTotal := total - plan.applied
+	switch {
+	case railTotal <= 0:
+	case in.RefundMethod == RefundCash:
 		res, err := s.tender.RefundTender(ctx, tx, till.RefundInput{
-			TillSessionID: in.TillSessionID, Method: till.MethodCash, AmountCents: total,
+			TillSessionID: in.TillSessionID, Method: till.MethodCash, AmountCents: railTotal,
 			BranchID: oc.BranchID, CustomerID: oc.CustomerID, Reference: returnNo,
 			IdempotencyKey: "refund:" + in.IdempotencyKey,
 		})
@@ -766,16 +799,16 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 			return Return{}, clientErr(http.StatusConflict, "%s", err.Error())
 		}
 		refundPaymentID = res.PaymentID
-	case RefundCard:
+	case in.RefundMethod == RefundCard:
 		// The reversal rides THIS transaction (the CardRefunder seam's
 		// discipline): a pool read while the Return transaction holds a
 		// connection has the per-sale lock's holder wait for a second
 		// connection every other connection is a Return waiter that needs
 		// the holder's lock, deadlocking a full pool.
-		if err := s.checkCardCapTx(ctx, tx, oc, returnID, total); err != nil {
+		if err := s.checkCardCapTx(ctx, tx, oc, returnID, railTotal); err != nil {
 			return Return{}, err
 		}
-		refundRef, err := s.cardRefund.RefundCard(ctx, tx, oc.GatewayRef, total, returnNo, "refund:"+in.IdempotencyKey)
+		refundRef, err := s.cardRefund.RefundCard(ctx, tx, oc.GatewayRef, railTotal, returnNo, "refund:"+in.IdempotencyKey)
 		if err != nil {
 			return Return{}, clientErr(http.StatusBadGateway, "pos: card refund failed, %s", err.Error())
 		}
@@ -783,20 +816,20 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 		// rollback leaves a record of it (D4).
 		plan.cardRefunds = append(plan.cardRefunds, cardRefundFact{
 			RefundKey: "refund:" + in.IdempotencyKey, OrderID: oc.OrderID, BranchID: oc.BranchID, CustomerID: oc.CustomerID,
-			GatewayRef: oc.GatewayRef, RefundRef: refundRef, AmountCents: total,
+			GatewayRef: oc.GatewayRef, RefundRef: refundRef, AmountCents: railTotal,
 		})
 		res, err := s.tender.RefundTender(ctx, tx, till.RefundInput{
-			Method: till.MethodCard, AmountCents: total, BranchID: oc.BranchID, CustomerID: oc.CustomerID,
+			Method: till.MethodCard, AmountCents: railTotal, BranchID: oc.BranchID, CustomerID: oc.CustomerID,
 			GatewayRef: refundRef, Reference: returnNo, IdempotencyKey: "refund:" + in.IdempotencyKey,
 		})
 		if err != nil {
 			return Return{}, clientErr(http.StatusConflict, "%s", err.Error())
 		}
 		refundPaymentID = res.PaymentID
-	case RefundAccountCredit:
+	case in.RefundMethod == RefundAccountCredit:
 		// The restocking fee reduces what the customer's account is credited (total − fee); the fee
 		// itself books through the GL event's fee_cents, never a subledger row.
-		if err := s.applyAccountCredit(ctx, tx, oc, total-feeCents, depositDocs); err != nil {
+		if err := s.applyAccountCredit(ctx, tx, oc, railTotal-feeCents, depositDocs); err != nil {
 			return Return{}, err
 		}
 	}
@@ -851,6 +884,7 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 		"return_id": returnID, "order_id": oc.OrderID, "invoice_id": oc.InvoiceID,
 		"refund_method": in.RefundMethod, "subtotal_cents": subtotal, "tax_cents": taxTotal,
 		"total_cents": total, "fee_cents": feeCents, "branch_id": oc.BranchID,
+		"applied_cents": plan.applied,
 	}
 	if approvedHere {
 		committed["decided_by"] = approverStaff
@@ -872,7 +906,7 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 	out := Return{
 		ReturnID: returnID, ReturnNo: returnNo, OrderID: oc.OrderID, InvoiceID: oc.InvoiceID,
 		RefundMethod: in.RefundMethod, SubtotalCents: subtotal, TaxCents: taxTotal, TotalCents: total,
-		FeeCents: feeCents, RefundPaymentID: refundPaymentID, PickupStatus: pickupStatus, Status: "COMMITTED",
+		FeeCents: feeCents, AppliedCents: plan.applied, RefundPaymentID: refundPaymentID, PickupStatus: pickupStatus, Status: "COMMITTED",
 	}
 	return out, nil
 }
@@ -967,6 +1001,37 @@ func (s *Service) settleCardRefunds(ctx context.Context, plans []*returnPlan, tx
 	if err != nil {
 		slog.Default().Warn("pos: the card refund record could not be written", "err", err, "refunds", len(facts))
 	}
+}
+
+// convertedNotReturnable words why a converted order cannot be returned yet.
+func convertedNotReturnable(found bool, status string) string {
+	switch {
+	case !found:
+		return "no invoice has been raised for this order yet, so there is nothing to refund against"
+	case status == "DRAFT":
+		return "this order's invoice is still a draft, so there is nothing to refund against"
+	}
+	return ""
+}
+
+// resolveConverted fills a converted order's invoice from the billing seam, or refuses in words when
+// the order has no live finalised invoice. Orders rung at the till pass through untouched.
+func (s *Service) resolveConverted(ctx context.Context, oc returnOrderCtx) (returnOrderCtx, error) {
+	if !oc.Converted {
+		return oc, nil
+	}
+	if s.orderInvoices == nil {
+		return oc, clientErr(http.StatusUnprocessableEntity, "pos: orders a quote became cannot be returned here yet")
+	}
+	id, status, found, err := s.orderInvoices.LiveOrderInvoice(ctx, oc.OrderID)
+	if err != nil {
+		return oc, err
+	}
+	if why := convertedNotReturnable(found, status); why != "" {
+		return oc, clientErr(http.StatusUnprocessableEntity, "pos: order %s cannot be returned: %s", oc.OrderNo, why)
+	}
+	oc.InvoiceID, oc.InvoiceStatus = id, status
+	return oc, nil
 }
 
 // anyRestock answers whether any line of the return asked for its goods to go back on the shelf:

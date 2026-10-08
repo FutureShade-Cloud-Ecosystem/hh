@@ -61,6 +61,7 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/branches"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
@@ -368,6 +369,8 @@ func newTrentonStackOnPoolWithRail(t *testing.T, pool *pgxpool.Pool, rail CardRe
 		WithRoleConfig(cfg).
 		WithApproverSource(g).
 		WithUserLinker(linkerFor(pool)).
+		WithOrderInvoices(billing.NewRepository(pool)).
+		WithDepositDocuments(billing.NewInvoiceWriter(pool)).
 		WithBranchNames(trentonBranchNames{svc: branches.NewService(branches.NewRepository(pool))}).
 		WithClock(harness.Clock.Now)
 

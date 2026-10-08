@@ -93,6 +93,9 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// Sub item 10.2: the credit note across orders, several orders of one customer in one
 	// transaction, the approval threshold judging the note total (Q3).
 	r.Handle("POST /api/v1/pos/returns-across", g.RequireStaff(h.staff(h.createReturnAcross)))
+	// Sub item 10.5, the swap: a credit note across orders and a new order in one transaction.
+	r.Handle("POST /api/v1/pos/swaps", g.RequireStaff(h.staff(h.createSwap)))
+	r.Handle("POST /api/v1/pos/swaps/preview", g.RequireStaff(h.staff(h.previewSwap)))
 	// The credit preview of a draft note: the commit's own pricing, nothing written.
 	r.Handle("POST /api/v1/pos/returns/preview", g.RequireStaff(h.staff(h.previewReturnAcross)))
 	h.registerReturnRequestRoutes(r, g) // A-06 portal-return approval queue
@@ -273,6 +276,38 @@ func (h *Handler) createReturnAcross(w http.ResponseWriter, r *http.Request, cal
 func (h *Handler) lookupReturn(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	q := r.URL.Query()
 	out, err := h.svc.LookupReturn(r.Context(), q.Get("order_id"), q.Get("order_no"))
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// createSwap serves the swap; previewSwap its server figures.
+func (h *Handler) createSwap(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in SwapInput
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	in.ApproverCredential = r.Header.Get(approverAuthorizationHeader)
+	res, err := h.svc.Swap(r.Context(), in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	status := http.StatusCreated
+	if res.Replayed {
+		status = http.StatusOK
+	}
+	httpx.WriteJSON(w, status, res)
+}
+
+func (h *Handler) previewSwap(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in SwapInput
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	out, err := h.svc.PreviewSwap(r.Context(), in)
 	if err != nil {
 		h.writeErr(w, r, err)
 		return

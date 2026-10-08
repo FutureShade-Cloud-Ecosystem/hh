@@ -540,7 +540,10 @@ type posReturnCommittedPayload struct {
 	TaxCents      int64  `json:"tax_cents"`
 	TotalCents    int64  `json:"total_cents"`
 	FeeCents      int64  `json:"fee_cents"` // A-06 restocking fee, reduces the rail credit; books to fee_revenue
-	BranchID      string `json:"branch_id"`
+	// AppliedCents is the part of a swap child's total spent on the swap's new order (10.5): it
+	// credits the receivable (the new invoice it settles debits it) instead of the refund rail.
+	AppliedCents int64  `json:"applied_cents"`
+	BranchID     string `json:"branch_id"`
 }
 
 // buildPosReturnCommitted posts the money reversal of a POS return: DR 4000 revenue (subtotal) + DR 2200
@@ -569,6 +572,10 @@ func (s *Service) buildPosReturnCommitted(ctx context.Context, payload []byte) (
 	if p.FeeCents < 0 || p.FeeCents > p.TotalCents {
 		return journalDraft{}, false, fmt.Errorf("gl: pos.return.committed fee_cents %d out of range (total %d)",
 			p.FeeCents, p.TotalCents)
+	}
+	if p.AppliedCents < 0 || p.AppliedCents+p.FeeCents > p.TotalCents {
+		return journalDraft{}, false, fmt.Errorf("gl: pos.return.committed applied_cents %d out of range (total %d, fee %d)",
+			p.AppliedCents, p.TotalCents, p.FeeCents)
 	}
 	et := "pos.return.committed"
 	rules, err := s.store.PostingAccounts(ctx, et, p.BranchID)
@@ -605,8 +612,15 @@ func (s *Service) buildPosReturnCommitted(ctx context.Context, payload []byte) (
 		}
 		lines = append(lines, dr(hstCode, p.TaxCents, "HST reversed"))
 	}
-	if net := p.TotalCents - p.FeeCents; net > 0 {
+	if net := p.TotalCents - p.FeeCents - p.AppliedCents; net > 0 {
 		lines = append(lines, cr(railCode, net, "refund ("+p.RefundMethod+")"))
+	}
+	if p.AppliedCents > 0 {
+		arCode, err := pick(rules, et, "ar")
+		if err != nil {
+			return journalDraft{}, false, err
+		}
+		lines = append(lines, cr(arCode, p.AppliedCents, "credit applied to the swap's new order"))
 	}
 	if p.FeeCents > 0 {
 		feeCode, err := pick(rules, et, "fee_revenue")

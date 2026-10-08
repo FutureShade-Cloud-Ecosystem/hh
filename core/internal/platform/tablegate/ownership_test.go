@@ -568,6 +568,7 @@ var ownedObjects = map[string]string{
 	"report_templates":                "reporting",         // 0143_reporting_templates
 	"return_request_lines":            "pos",               // 0045_portal_return_requests
 	"return_requests":                 "pos",               // 0045_portal_return_requests
+	"pos_swaps":                       "pos",               // 0380_pos_swaps (the credit note and the new order, linked)
 	"pos_card_refund_attempts":        "pos",               // 0379_pos_card_refund_attempts (a card refund whose booking rolled back)
 	"return_notes":                    "pos",               // 0377_return_notes (the credit note across orders)
 	"review_status":                   "compliance",        // 0038_lien_holdback_compliance

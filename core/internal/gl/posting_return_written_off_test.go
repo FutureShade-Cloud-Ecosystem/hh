@@ -89,3 +89,29 @@ func TestPosReturnWrittenOff_IsAPostedTopicWithRequiredRules(t *testing.T) {
 		t.Fatal("a missing write off expense rule must fail the boot validation")
 	}
 }
+
+// Item 10.5: a swap child's applied credit leaves the refund rail and credits the receivable, the
+// new invoice it settles debits it; the journal stays balanced and the rail moves only the leftover.
+func TestPosReturnCommitted_AppliedCreditCreditsTheReceivableNotTheRail(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeStore()
+	svc := newTestService(f)
+	if err := svc.consume(ctx, ev("pos.return.committed", map[string]any{
+		"return_id": "ret-s1", "order_id": "o1", "invoice_id": "i1", "refund_method": "CARD",
+		"subtotal_cents": 10000, "tax_cents": 1300, "total_cents": 11300, "fee_cents": 0, "applied_cents": 7000, "branch_id": "b1",
+	})); err != nil {
+		t.Fatalf("consume: %v", err)
+	}
+	d := &f.inserted[0]
+	wantLeg(t, d, "4000", 10000, 0)
+	wantLeg(t, d, "2200", 1300, 0)
+	wantLeg(t, d, "1010", 0, 4300)
+	wantLeg(t, d, "1100", 0, 7000)
+	// Applied beyond the total is a malformed event.
+	if err := svc.consume(ctx, ev("pos.return.committed", map[string]any{
+		"return_id": "ret-s2", "order_id": "o1", "invoice_id": "i1", "refund_method": "CASH",
+		"subtotal_cents": 100, "tax_cents": 13, "total_cents": 113, "applied_cents": 200, "branch_id": "b1",
+	})); err == nil {
+		t.Fatal("applied credit above the total must be refused")
+	}
+}

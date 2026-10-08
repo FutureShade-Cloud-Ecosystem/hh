@@ -4731,6 +4731,7 @@ type PosTenderLegResult struct {
 }
 
 type PosSale struct {
+	SwapId                   *string               `json:"swap_id,omitempty"`
 	OrderId                  string                `json:"order_id"`
 	OrderNo                  string                `json:"order_no"`
 	InvoiceId                string                `json:"invoice_id"`
@@ -5185,6 +5186,7 @@ type PosReturnInput struct {
 }
 
 type PosReturn struct {
+	AppliedCents    *int64  `json:"applied_cents,omitempty"`
 	ReturnId        string  `json:"return_id"`
 	ReturnNo        string  `json:"return_no"`
 	OrderId         string  `json:"order_id"`
@@ -5217,14 +5219,16 @@ type PosReturnableLine struct {
 }
 
 type PosReturnLookup struct {
-	OrderId        string              `json:"order_id"`
-	OrderNo        string              `json:"order_no"`
-	BranchId       string              `json:"branch_id"`
-	CustomerId     string              `json:"customer_id"`
-	InvoiceId      string              `json:"invoice_id"`
-	SaleTender     string              `json:"sale_tender"`
-	CardRefundable bool                `json:"card_refundable"`
-	Lines          []PosReturnableLine `json:"lines"`
+	OrderId             string              `json:"order_id"`
+	OrderNo             string              `json:"order_no"`
+	BranchId            string              `json:"branch_id"`
+	CustomerId          string              `json:"customer_id"`
+	InvoiceId           string              `json:"invoice_id"`
+	SaleTender          string              `json:"sale_tender"`
+	CardRefundable      bool                `json:"card_refundable"`
+	Returnable          bool                `json:"returnable"`
+	NotReturnableReason string              `json:"not_returnable_reason"`
+	Lines               []PosReturnableLine `json:"lines"`
 }
 
 type PosReturnAcrossInput struct {
@@ -5273,7 +5277,58 @@ type PosReturnPreview struct {
 	Orders        []PosReturnPreviewOrder `json:"orders"`
 }
 
+type PosSwapInput struct {
+	IdempotencyKey string                 `json:"idempotency_key"`
+	CustomerId     string                 `json:"customer_id"`
+	Orders         []PosReturnAcrossOrder `json:"orders"`
+	Reason         *string                `json:"reason,omitempty"`
+	LeftoverMethod *string                `json:"leftover_method,omitempty"`
+	TillSessionId  string                 `json:"till_session_id"`
+	SaleType       *string                `json:"sale_type,omitempty"`
+	Tender         *string                `json:"tender,omitempty"`
+	PaymentToken   *string                `json:"payment_token,omitempty"`
+	CardType       *string                `json:"card_type,omitempty"`
+	SignatureRef   *string                `json:"signature_ref,omitempty"`
+	RequestedDate  *string                `json:"requested_date,omitempty"`
+	Notes          *string                `json:"notes,omitempty"`
+	PoJobRef       *string                `json:"po_job_ref,omitempty"`
+	SalespersonId  *string                `json:"salesperson_id,omitempty"`
+	JobAddress     *string                `json:"job_address,omitempty"`
+	JobReference   *string                `json:"job_reference,omitempty"`
+	Relief         *PosReliefDecision     `json:"relief,omitempty"`
+	Discount       *PosDiscountInput      `json:"discount,omitempty"`
+	Lines          []PosLineInput         `json:"lines"`
+}
+
+type PosSwapNewOrder struct {
+	SubtotalCents int64 `json:"subtotal_cents"`
+	TaxCents      int64 `json:"tax_cents"`
+	TotalCents    int64 `json:"total_cents"`
+}
+
+type PosSwapPreview struct {
+	Credit         PosReturnPreview `json:"credit"`
+	NewOrder       PosSwapNewOrder  `json:"new_order"`
+	AppliedCents   int64            `json:"applied_cents"`
+	LeftoverCents  int64            `json:"leftover_cents"`
+	ShortfallCents int64            `json:"shortfall_cents"`
+	LeftoverMethod string           `json:"leftover_method"`
+}
+
+type PosSwapResult struct {
+	SwapId         string        `json:"swap_id"`
+	Note           PosReturnNote `json:"note"`
+	Sale           PosSale       `json:"sale"`
+	CreditCents    int64         `json:"credit_cents"`
+	AppliedCents   int64         `json:"applied_cents"`
+	LeftoverCents  int64         `json:"leftover_cents"`
+	ShortfallCents int64         `json:"shortfall_cents"`
+	LeftoverMethod string        `json:"leftover_method"`
+	Replayed       bool          `json:"replayed"`
+}
+
 type PosReturnNote struct {
+	SwapId        *string     `json:"swap_id,omitempty"`
 	NoteId        string      `json:"note_id"`
 	NoteNo        string      `json:"note_no"`
 	CustomerId    string      `json:"customer_id"`

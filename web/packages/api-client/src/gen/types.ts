@@ -4029,6 +4029,7 @@ export type PosTenderLegResult = {
   gateway_ref?: string;
 };
 export type PosSale = {
+  swap_id?: string;
   order_id: string;
   order_no: string;
   invoice_id: string;
@@ -4434,6 +4435,7 @@ export type PosReturnInput = {
   fee_bps?: number;
 };
 export type PosReturn = {
+  applied_cents?: number;
   return_id: string;
   return_no: string;
   order_id: string;
@@ -4470,6 +4472,8 @@ export type PosReturnLookup = {
   invoice_id: string;
   sale_tender: "ACCOUNT" | "CASH" | "CARD" | "CHEQUE";
   card_refundable: boolean;
+  returnable: boolean;
+  not_returnable_reason: string;
   lines: PosReturnableLine[];
 };
 export type PosReturnAcrossInput = {
@@ -4512,7 +4516,54 @@ export type PosReturnPreview = {
   total_cents: number;
   orders: PosReturnPreviewOrder[];
 };
+export type PosSwapInput = {
+  idempotency_key: string;
+  customer_id: string;
+  orders: PosReturnAcrossOrder[];
+  reason?: string;
+  leftover_method?: "CASH" | "CARD" | "ACCOUNT_CREDIT";
+  till_session_id: string;
+  sale_type?: "COLLECT_NOW" | "COLLECT_LATER" | "DELIVERED";
+  tender?: "ACCOUNT" | "CASH" | "CARD" | "CHEQUE";
+  payment_token?: string;
+  card_type?: "DEBIT" | "CREDIT" | "PREPAID" | "UNKNOWN";
+  signature_ref?: string;
+  requested_date?: string;
+  notes?: string;
+  po_job_ref?: string;
+  salesperson_id?: string;
+  job_address?: string;
+  job_reference?: string;
+  relief?: PosReliefDecision;
+  discount?: PosDiscountInput;
+  lines: PosLineInput[];
+};
+export type PosSwapNewOrder = {
+  subtotal_cents: number;
+  tax_cents: number;
+  total_cents: number;
+};
+export type PosSwapPreview = {
+  credit: PosReturnPreview;
+  new_order: PosSwapNewOrder;
+  applied_cents: number;
+  leftover_cents: number;
+  shortfall_cents: number;
+  leftover_method: "CASH" | "CARD" | "ACCOUNT_CREDIT";
+};
+export type PosSwapResult = {
+  swap_id: string;
+  note: PosReturnNote;
+  sale: PosSale;
+  credit_cents: number;
+  applied_cents: number;
+  leftover_cents: number;
+  shortfall_cents: number;
+  leftover_method: "CASH" | "CARD" | "ACCOUNT_CREDIT";
+  replayed: boolean;
+};
 export type PosReturnNote = {
+  swap_id?: string;
   note_id: string;
   note_no: string;
   customer_id: string;

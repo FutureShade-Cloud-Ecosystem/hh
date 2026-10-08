@@ -74,6 +74,10 @@ type SaleInput struct {
 	// above is ignored (the primary leg is derived) and `deposit_cents` is refused, a split settles
 	// the sale itself. See split_tender.go.
 	Tenders []TenderLegInput `json:"tenders,omitempty"`
+
+	// swapCreditCents is the credit note a swap spends on this sale (10.5): unexported, so no JSON
+	// body can set it. The sale applies min(credit, total) to the new order, the tender takes the rest.
+	swapCreditCents int64
 }
 
 // LineInput is one cart line. The PRICE is NOT in the body, it is resolved server-side, and no
@@ -90,6 +94,7 @@ type LineInput struct {
 
 // Sale is the committed result (also returned verbatim on an idempotent replay).
 type Sale struct {
+	SwapID        string `json:"swap_id,omitempty"` // set when the sale is the new order of a swap
 	OrderID       string `json:"order_id"`
 	OrderNo       string `json:"order_no"`
 	InvoiceID     string `json:"invoice_id"`
@@ -718,6 +723,11 @@ type ReturnInput struct {
 	// replay slot.
 	internalRail bool
 
+	// railOptional marks a child of a swap (10.5) whose leftover is zero, in
+	// which case no refund rail runs and the rail's own preconditions (a drawer, a card capture, a
+	// spendable account) are not asked for.
+	railOptional bool
+
 	// noteChild marks a child of a returns-across note (returns_across.go), whose idempotency key
 	// is DERIVED under the reserved "note:" namespace. Unexported for the same reason: a public
 	// body can never claim it, only ReturnAcross's own children carry it.
@@ -735,6 +745,7 @@ type Return struct {
 	TaxCents        int64  `json:"tax_cents"`
 	TotalCents      int64  `json:"total_cents"`
 	FeeCents        int64  `json:"fee_cents,omitempty"`         // A-06 restocking fee, the credited amount is total − fee
+	AppliedCents    int64  `json:"applied_cents,omitempty"`     // a swap child: the part of the total spent on the new order, the rail moved total less this
 	RefundPaymentID string `json:"refund_payment_id,omitempty"` // the REFUNDED payments row (CASH/CARD)
 	PickupStatus    string `json:"pickup_status"`
 	Status          string `json:"status"`
@@ -801,19 +812,23 @@ type CustomerReturnableLineView struct {
 // an order like any other that carries no till facts). FulfilmentState is the order's own ladder word
 // (CONFIRMED through FULFILLED); ShelfState on each line says whether the goods ever left the shelf.
 type CustomerOrderView struct {
-	OrderID         string                       `json:"order_id"`
-	OrderNo         string                       `json:"order_no"`
-	BranchID        string                       `json:"branch_id"`
-	BranchName      string                       `json:"branch_name"`
-	CreatedAt       string                       `json:"created_at"`
-	JobLabel        string                       `json:"job_label"`
-	Source          string                       `json:"source"`
-	SaleType        string                       `json:"sale_type"`
-	Tender          string                       `json:"tender"`
-	FulfilmentState string                       `json:"fulfilment_state"`
-	InvoiceID       string                       `json:"invoice_id"`
-	CardRefundable  bool                         `json:"card_refundable"`
-	Lines           []CustomerReturnableLineView `json:"lines"`
+	OrderID         string `json:"order_id"`
+	OrderNo         string `json:"order_no"`
+	BranchID        string `json:"branch_id"`
+	BranchName      string `json:"branch_name"`
+	CreatedAt       string `json:"created_at"`
+	JobLabel        string `json:"job_label"`
+	Source          string `json:"source"`
+	SaleType        string `json:"sale_type"`
+	Tender          string `json:"tender"`
+	FulfilmentState string `json:"fulfilment_state"`
+	InvoiceID       string `json:"invoice_id"`
+	CardRefundable  bool   `json:"card_refundable"`
+	// Returnable says whether the order can be returned now; when it cannot, NotReturnableReason says
+	// why in words (a converted order with no live invoice has nothing to refund against yet).
+	Returnable          bool                         `json:"returnable"`
+	NotReturnableReason string                       `json:"not_returnable_reason"`
+	Lines               []CustomerReturnableLineView `json:"lines"`
 }
 
 // CustomerLinesView is the customer lines read's answer: the customer echoed, the orders newest
@@ -847,6 +862,14 @@ type ReturnAcrossInput struct {
 	// ApproverCredential rides X-Approver-Authorization beside the clerk's bearer, the single
 	// return's own second-credential machinery (row 482); the handler reads it from the header.
 	ApproverCredential string `json:"-"`
+
+	// The swap's facts (10.5), unexported: the credit the swap was priced against (the note must
+	// total exactly it), the part of it spent on the new order, and whether the leftover is zero
+	// (then no rail runs). All zero on an ordinary note.
+	swap         bool
+	swapCredit   int64
+	swapApplied  int64
+	railOptional bool
 }
 
 // ReturnPreviewInput is the POST /api/v1/pos/returns/preview body: the draft of a returns-across
@@ -900,6 +923,7 @@ type ReturnNote struct {
 	TotalCents    int64    `json:"total_cents"`
 	Returns       []Return `json:"returns"`
 	Replayed      bool     `json:"replayed"`
+	SwapID        string   `json:"swap_id,omitempty"` // set when the note is the credit of a swap
 }
 
 // ReturnPickup is one row on the logistics pickup queue (REQUESTED/SCHEDULED returns).
@@ -1008,6 +1032,9 @@ type returnOrderCtx struct {
 	// CapturedCents is what the original capture holds (payments.amount_cents of the sale's payment,
 	// 0 when it has none): the ceiling every card refund of the order is judged against (D5).
 	CapturedCents int64
+	// Converted marks an order a quote became (no pos_sale facet): its invoice comes from the billing
+	// seam, it has no tender and no card capture.
+	Converted bool
 }
 
 // cardRefundFact is one processor refund made inside a return transaction: what the processor
@@ -1061,6 +1088,9 @@ type returnRow struct {
 	CreatedBy       string
 	// NoteID links the return to its across-orders note (0377); empty on every single-order return.
 	NoteID string
+	// AppliedCents is the part of the total applied to a swap's new order instead of going out on the
+	// rail (0380); zero on every other return.
+	AppliedCents int64
 }
 
 // returnNoteRow is the return_notes header insert (sub item 10.2).
