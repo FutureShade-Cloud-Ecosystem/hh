@@ -266,9 +266,10 @@ func (d *Door) tryItem(ctx context.Context, tx pgx.Tx, in Batch, item Item, hash
 			}
 			return Outcome{LegacyID: item.LegacyID, Status: OutcomeUnchanged, HHID: hhID}, false, nil
 		}
+		var note *Refusal
 		wrote, refused, err := writerApply(ctx, tx, d.writer, Write{
 			OrgID: in.OrgID, LegacyID: item.LegacyID, RowID: hhID, DerivedKey: item.DerivedKey,
-			Record: item.Record, Refs: refs,
+			Record: item.Record, Refs: refs, Note: noteSink(&note),
 		})
 		if err != nil {
 			return Outcome{}, false, err
@@ -284,8 +285,23 @@ func (d *Door) tryItem(ctx context.Context, tx pgx.Tx, in Batch, item Item, hash
 			if err != nil {
 				return Outcome{}, false, err
 			}
+			detail := conflictDetail(item.LegacyID, other)
+			if other == "" {
+				// No key of this source system names the holder: say
+				// whether another source system does, or no key does at
+				// all (a staff row).
+				elsewhere, err := rowNamedBySource(ctx, tx, key, wrote)
+				if err != nil {
+					return Outcome{}, false, err
+				}
+				if elsewhere {
+					detail = fmt.Sprintf("legacy key %s would claim a row another source system already names", item.LegacyID)
+				} else {
+					detail = fmt.Sprintf("legacy key %s would claim a staff row no legacy key names", item.LegacyID)
+				}
+			}
 			return refusedOutcome(item, &Refusal{Code: ReasonKeyConflict, Field: "legacy_id",
-				Detail: conflictDetail(item.LegacyID, other)}), false, nil
+				Detail: detail}), false, nil
 		}
 		if err := stampName(ctx, tx, key, hash, in.BatchID); err != nil {
 			return Outcome{}, false, err
@@ -293,7 +309,7 @@ func (d *Door) tryItem(ctx context.Context, tx pgx.Tx, in Batch, item Item, hash
 		if err := tx.Commit(ctx); err != nil {
 			return Outcome{}, false, fmt.Errorf("load: commit: %w", err)
 		}
-		return Outcome{LegacyID: item.LegacyID, Status: OutcomeUpdated, HHID: hhID}, false, nil
+		return notedOutcome(Outcome{LegacyID: item.LegacyID, Status: OutcomeUpdated, HHID: hhID}, note), false, nil
 	}
 
 	// The create arm: the writer inserts (or attaches the row its own
@@ -301,9 +317,12 @@ func (d *Door) tryItem(ctx context.Context, tx pgx.Tx, in Batch, item Item, hash
 	// lock is where a name race waits; re-read the name after it, because
 	// the race's winner may have committed while this transaction stood
 	// in line, and the registry insert is the lock both contend on.
+	var createNote *Refusal
+	boundExisting := false
 	rowID, attached, refused, err := writerApplyAttached(ctx, tx, d.writer, Write{
 		OrgID: in.OrgID, LegacyID: item.LegacyID, DerivedKey: item.DerivedKey,
-		Record: item.Record, Refs: refs,
+		Record: item.Record, Refs: refs, Note: noteSink(&createNote),
+		Attached: func() { boundExisting = true },
 	})
 	if err != nil {
 		return Outcome{}, false, err
@@ -352,7 +371,7 @@ func (d *Door) tryItem(ctx context.Context, tx pgx.Tx, in Batch, item Item, hash
 		if err := tx.Commit(ctx); err != nil {
 			return Outcome{}, false, fmt.Errorf("load: commit: %w", err)
 		}
-		return Outcome{LegacyID: item.LegacyID, Status: OutcomeUpdated, HHID: rowID}, false, nil
+		return notedOutcome(Outcome{LegacyID: item.LegacyID, Status: OutcomeUpdated, HHID: rowID}, createNote), false, nil
 	}
 	if err := insertName(ctx, tx, key, rowID, hash, in.BatchID); err != nil {
 		if isUniqueViolation(err) {
@@ -370,10 +389,32 @@ func (d *Door) tryItem(ctx context.Context, tx pgx.Tx, in Batch, item Item, hash
 	// (the units door's seeded and staff made rows); every other create
 	// arm answers created.
 	status := OutcomeCreated
-	if d.attach || attached {
+	if d.attach || attached || boundExisting {
 		status = OutcomeAttached
 	}
-	return Outcome{LegacyID: item.LegacyID, Status: status, HHID: rowID}, false, nil
+	return notedOutcome(Outcome{LegacyID: item.LegacyID, Status: status, HHID: rowID}, createNote), false, nil
+}
+
+// noteSink is the Write.Note a writer calls: the first note of the
+// attempt stands, a later one never replaces it.
+func noteSink(dst **Refusal) func(Refusal) {
+	return func(n Refusal) {
+		if *dst == nil {
+			c := n
+			*dst = &c
+		}
+	}
+}
+
+// notedOutcome folds a writer's note into a landed item's outcome: the
+// code as the reason, the field, the detail. No note leaves the outcome
+// as it was.
+func notedOutcome(o Outcome, n *Refusal) Outcome {
+	if n == nil {
+		return o
+	}
+	o.Reason, o.Field, o.Detail = n.Code, n.Field, n.Detail
+	return o
 }
 
 // resolveRefs resolves the item's references against the registry inside
