@@ -188,13 +188,15 @@ export function readPolicy(value: unknown): QuotePolicyWire | null {
   const email = bool(value, "send_email_enabled");
   const sms = bool(value, "send_sms_enabled");
   const images = bool(value, "include_product_images");
-  const chips = strings(value, "quick_chip_set");
   const notice = value["quantity_notice"];
+  // quick_chip_set may be null on old servers; treat it as [] rather than refusing the whole policy.
+  const chips: string[] | null = value["quick_chip_set"] === null ? [] : strings(value, "quick_chip_set");
   if (
     !(COST_VISIBILITIES as readonly unknown[]).includes(visibility) ||
     !(ARRANGEMENTS as readonly unknown[]).includes(arrangement) ||
     validity === null || deposit === null || split === null ||
-    discounts === null || email === null || sms === null || images === null || chips === null ||
+    discounts === null || email === null || sms === null || images === null ||
+    chips === null ||
     typeof notice !== "string"
   ) {
     return null;
@@ -214,7 +216,8 @@ export function readPolicy(value: unknown): QuotePolicyWire | null {
   };
   const branch = str(value, "branch_id");
   if (branch !== null) out.branch_id = branch;
-  const effective = strings(value, "effective_chips");
+  // effective_chips is optional; absent or null means omit it (the server fills it in from chips).
+  const effective = value["effective_chips"] === null ? null : strings(value, "effective_chips");
   if (effective !== null) out.effective_chips = effective;
   return out;
 }
@@ -229,6 +232,25 @@ export function readAcceptance(value: unknown): AcceptanceView | null {
   const allow = bool(value, "allow_multi_accept");
   const wired = bool(value, "switch_wired");
   return allow === null || wired === null ? null : { allowMultiAccept: allow, switchWired: wired };
+}
+
+/** The settings grant: whether the signed-in caller holds the three settings panel grants. */
+export interface SettingsGrant {
+  canReadAcceptance: boolean;
+  canReadScopeRules: boolean;
+  canEditPolicy: boolean;
+}
+
+/** The settings grant, field by field: the answer to one question the Quote Desk asks before
+ * it mounts its settings panels. Each boolean uses the same predicate the refusing route uses,
+ * so the answer cannot drift from the refusal. */
+export function readSettingsGrant(value: unknown): SettingsGrant | null {
+  if (!isRecord(value)) return null;
+  const readAcceptance = bool(value, "can_read_acceptance");
+  const readScopeRules = bool(value, "can_read_scope_rules");
+  const editPolicy = bool(value, "can_edit_policy");
+  if (readAcceptance === null || readScopeRules === null || editPolicy === null) return null;
+  return { canReadAcceptance: readAcceptance, canReadScopeRules: readScopeRules, canEditPolicy: editPolicy };
 }
 
 export interface ScopeRuleRow {

@@ -46,12 +46,14 @@ import {
   readPolicy,
   readScopeRuleOne,
   readScopeRules,
+  readSettingsGrant,
   readShareLinks,
   type AcceptanceView,
   type CatalogHit,
   type ComparisonRow,
   type QuotePolicyWire,
   type ScopeRuleRow,
+  type SettingsGrant,
   type ShareLinkRow,
 } from "./_panel-wire.js";
 import {
@@ -965,6 +967,18 @@ export class QdClient {
     const record = result.value as unknown;
     if (!isRecord(record) || typeof record["can_take_payment"] !== "boolean") return err("the payment grant answer is not readable");
     return ok(record["can_take_payment"]);
+  }
+
+  /**
+   * The settings grant: one question the Quote Desk asks before it mounts its settings panels.
+   * Each boolean uses the very predicate the refusing route uses, so the answer cannot drift
+   * from the refusal. Cached per QdClient instance (one caller per session).
+   */
+  async settingsGrant(): Promise<Result<SettingsGrant>> {
+    const result = await staffQuote.quoteSettingsGrant(this.#client);
+    if (!result.ok) return result;
+    const grant = readSettingsGrant(result.value);
+    return grant === null ? err("the settings grant answer is not readable") : ok(grant);
   }
 
   /**
