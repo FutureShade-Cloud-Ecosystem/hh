@@ -43,6 +43,12 @@ const PaidInFullWords = "Paid in full"
 // sentence; this is the copy this module's answers carry, the same words).
 const pickHoldSentence = "This order cannot reach picking until the balance is paid."
 
+// errPayBalanceKeyUsedElsewhere refuses a take whose idempotency key already
+// holds a payment on ANOTHER order (a ring sale's leg key reused, say): the
+// replay fast path answers only this request's own order, fixed words.
+var errPayBalanceKeyUsedElsewhere = clientError{status: http.StatusConflict,
+	msg: "This idempotency key already took a payment on another order; use a new key for a new payment."}
+
 // ErrPayBalanceOrderNotFound answers an order this door cannot pay: missing,
 // or in a branch the caller does not reach (the same 404 for both, no
 // existence leak across the branch wall).
@@ -316,7 +322,14 @@ func (s *Service) PayBalanceTake(ctx context.Context, in PayBalanceTakeInput) (P
 	if past, found, ferr := s.store.FindPayBalancePaymentByKey(ctx, payKey); ferr != nil {
 		return PayBalanceTaken{}, ferr
 	} else if found {
-		return s.payBalanceReplay(ctx, in, past)
+		// The replay belongs to THIS request's order only (the review's P3-1):
+		// the key space is shared with the ring's own leg keys, so a key that
+		// took a payment on another order is refused, never answered as this
+		// order's replay.
+		if past.OrderID != in.OrderID {
+			return PayBalanceTaken{}, errPayBalanceKeyUsedElsewhere
+		}
+		return s.payBalanceReplay(ctx, caller, in, past)
 	}
 
 	// The advisory pre-read (pool): the early refusals a person can act on
@@ -491,7 +504,7 @@ func (s *Service) PayBalanceTake(ctx context.Context, in PayBalanceTakeInput) (P
 		if errors.As(txErr, &errPayBalanceLostRace{}) {
 			past := payBalanceReplayRow{OrderID: in.OrderID, PaymentID: tenderRes.PaymentID,
 				Method: in.Method, AmountCents: in.AmountCents}
-			return s.payBalanceReplay(ctx, in, past)
+			return s.payBalanceReplay(ctx, caller, in, past)
 		}
 		if len(ring.captured) > 0 {
 			ring.rank = cardRankReversed
@@ -536,7 +549,7 @@ type payBalanceReplayRow struct {
 // payBalanceReplay answers a take whose key already took a payment: the
 // order's own current facts, the money trail as it stands, and Replayed set,
 // having charged nothing and written nothing.
-func (s *Service) payBalanceReplay(ctx context.Context, in PayBalanceTakeInput, past payBalanceReplayRow) (PayBalanceTaken, error) {
+func (s *Service) payBalanceReplay(ctx context.Context, caller identity.StaffContext, in PayBalanceTakeInput, past payBalanceReplayRow) (PayBalanceTaken, error) {
 	orderID := past.OrderID
 	if orderID == "" {
 		// The row predates this door's bookkeeping: resolve through the input.
@@ -547,6 +560,12 @@ func (s *Service) payBalanceReplay(ctx context.Context, in PayBalanceTakeInput, 
 		return PayBalanceTaken{}, err
 	}
 	if !found {
+		return PayBalanceTaken{}, ErrPayBalanceOrderNotFound
+	}
+	// The same branch wall the find and the take hold (the review's P3-1): a
+	// replay of another branch's order answers the door's 404, never that
+	// order's number, customer or money trail.
+	if !caller.CanAccessBranch(facts.BranchID) {
 		return PayBalanceTaken{}, ErrPayBalanceOrderNotFound
 	}
 	trail, err := s.store.OrderPaymentsTrail(ctx, orderID)

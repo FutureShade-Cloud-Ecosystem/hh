@@ -375,3 +375,33 @@ func TestPayBalanceTake_ChecksTheDrawerBeforeAnyCapture(t *testing.T) {
 		})
 	}
 }
+
+// The replay is fenced and order bound (the review's P3-1): a key that
+// already took a payment on ANOTHER order (a ring sale's leg key, say) is
+// refused rather than answered as this order's replay, and a replay whose
+// order sits in a branch the caller does not reach answers the same 404 the
+// find and the take do.
+func TestPayBalanceTake_ReplayIsFencedAndOrderBound(t *testing.T) {
+	h := payBalanceHarness()
+	h.store.payByKey[legIdempotencyKey("take-key-1", 1)] = payBalanceReplayRow{
+		OrderID: "ord-elsewhere", PaymentID: "pay-9", Method: TenderCash, AmountCents: 700,
+	}
+	if _, err := h.svc.PayBalanceTake(context.Background(), takeInput()); err == nil {
+		t.Fatal("a key used on another order's payment answered this order's take as a replay")
+	} else if !strings.Contains(err.Error(), "another order") {
+		t.Fatalf("the cross order replay refusal: %v", err)
+	}
+
+	fenced := payBalanceHarness()
+	fenced.caller = identity.StaffContext{UserID: "u-harness", RoleCode: "CSR",
+		Tier: identity.TierManager, Scope: identity.ScopeBranch, Branches: map[string]bool{"branch-trt": true}}
+	fenced.store.owing["ord-elsewhere"] = owingFacts("ord-elsewhere", "cust-abc", "branch-else", 0, 9300)
+	elsewhere := takeInput()
+	elsewhere.OrderID = "ord-elsewhere"
+	fenced.store.payByKey[legIdempotencyKey(elsewhere.IdempotencyKey, 1)] = payBalanceReplayRow{
+		OrderID: "ord-elsewhere", PaymentID: "pay-9", Method: TenderCash, AmountCents: 9300,
+	}
+	if _, err := fenced.svc.PayBalanceTake(context.Background(), elsewhere); !errors.Is(err, ErrPayBalanceOrderNotFound) {
+		t.Fatalf("a replay on another branch's order must answer the door's 404, got %v", err)
+	}
+}
