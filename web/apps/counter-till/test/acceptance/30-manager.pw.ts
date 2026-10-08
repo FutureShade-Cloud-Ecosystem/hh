@@ -81,18 +81,20 @@ test("a contractor's pavers: the account price the clerk sees, and the margin co
   await shot(page, "manager-04-contractor-pavers", testInfo);
 });
 
-test("an account the credit gate refuses: the same words to the manager", async ({
+test("an account that cannot carry the sale on account: the same words to the manager", async ({
   page,
 }, testInfo) => {
   await signIn(page, "Sales manager");
+  // The same no credit account as the clerk's leg (20-sales): the shape
+  // refusal and its words do not bend for the manager's role.
   await pickCustomer(page, "DEMO-C07", "DEMO-C07");
   await searchAndAdd(page, "DEMO-PAV-HOLLAND", "Holland Paver, Charcoal (demo)");
   await openStep(page, "payment");
   await page.getByRole("button", { name: "Charge Account" }).click();
   await page.getByTestId("pos-complete-sale").click();
-  const refusal = page.getByRole("alert").filter({ hasText: "the credit gate refused it" });
-  await expect(refusal).toContainText("the credit gate refused it");
-  await expect(refusal).toContainText("Cash or card still works");
+  const refusal = page.getByRole("alert").filter({ hasText: "cannot carry" });
+  await expect(refusal).toContainText("This account cannot carry $6.72 on account.");
+  await expect(refusal).toContainText("Pay in full now, or take a deposit with the balance due later.");
   await expect(page.getByTestId("sold-panel")).toHaveCount(0);
   await shot(page, "manager-05-credit-refused", testInfo);
 });

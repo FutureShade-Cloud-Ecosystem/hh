@@ -1,7 +1,8 @@
 // The eleven screens of the plan's section 2 as the clerk: the way in, the
-// drawer, a sale, a contractor's pavers, an account the credit gate refuses,
-// tender and receipt, parked sales, a return within 250.00, a return above it
-// that commits with no approval at the demo dealer, a Kingston sale refused, and beyond the till.
+// drawer, a sale, a contractor's pavers, an account that cannot carry the
+// sale on account, tender and receipt, parked sales, a return within 250.00,
+// a return above it that commits with no approval at the demo dealer, a
+// Kingston sale refused, and beyond the till.
 // Driven against the demo image's own app and core; every figure the screen
 // shows is held against what the core answers through its own reads, and a
 // screenshot names every screen.
@@ -147,18 +148,22 @@ test("a contractor's pavers: the account price rings, and a below floor line rin
   await shot(page, "sales-04-below-floor-rung", testInfo);
 });
 
-test("an account the credit gate refuses: refused in words, cash and card intact", async ({
+test("an account that cannot carry the sale on account: refused in words, nothing rung", async ({
   page,
 }, testInfo) => {
   await signIn(page, "Sales");
+  // DEMO-C07 is a no credit account (zero day terms, no credit line): item
+  // 9's ring refuses the on account shape itself, before the credit gate
+  // runs, and the till shows the server's own words for the $6.72 the sale
+  // would have booked on the account.
   await pickCustomer(page, "DEMO-C07", "DEMO-C07");
   await searchAndAdd(page, "DEMO-PAV-HOLLAND", "Holland Paver, Charcoal (demo)");
   await openStep(page, "payment");
   await page.getByRole("button", { name: "Charge Account" }).click();
   await page.getByTestId("pos-complete-sale").click();
-  const refusal = page.getByRole("alert").filter({ hasText: "the credit gate refused it" });
-  await expect(refusal).toContainText("the credit gate refused it");
-  await expect(refusal).toContainText("Cash or card still works");
+  const refusal = page.getByRole("alert").filter({ hasText: "cannot carry" });
+  await expect(refusal).toContainText("This account cannot carry $6.72 on account.");
+  await expect(refusal).toContainText("Pay in full now, or take a deposit with the balance due later.");
   await expect(page.getByTestId("sold-panel")).toHaveCount(0);
   await shot(page, "sales-05-credit-refused", testInfo);
   // Nothing committed: the ticket stands.

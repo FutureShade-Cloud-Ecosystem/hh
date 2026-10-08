@@ -1781,9 +1781,10 @@ const server = createServer(async (request, response) => {
         respondJson(response, 400, { error: "the walk-in has no account to bill" });
         return;
       }
-      // Item 9.2's refusals, in the core's problem body style: integer cents fields and a
-      // message in dollars. A deposit never rides a collect now sale; an account the shape was
-      // not offered cannot carry anything on account.
+      // Item 9.2's collect now refusal, in the core's problem body style: integer cents fields
+      // and a message in dollars. A deposit never rides a collect now sale. (The on account
+      // shape refusal sits below, once the lines are priced, so its body names the amount the
+      // way the core's does.)
       const requestedDeposit =
         typeof parsed.deposit_cents === "number" && Number.isInteger(parsed.deposit_cents) && parsed.deposit_cents > 0
           ? parsed.deposit_cents
@@ -1794,15 +1795,6 @@ const server = createServer(async (request, response) => {
           deposit_cents: requestedDeposit,
           message:
             "A collect now sale is paid in full, the goods do not leave on a deposit. Take the whole amount now, or choose will call, delivery or a pay before release sale and leave a deposit.",
-        });
-        return;
-      }
-      if (tender === "ACCOUNT" && (customer.payment_terms_days ?? 0) <= 0) {
-        respondJson(response, 422, {
-          error: "on_account_not_available",
-          credit_limit_cents: customer.credit_limit_cents ?? 0,
-          message:
-            "This account cannot carry this sale on account. Pay in full now, or take a deposit with the balance due later.",
         });
         return;
       }
@@ -1950,6 +1942,28 @@ const server = createServer(async (request, response) => {
       // (the credit gate runs below, on the whole sale). The single-tender
       // arms below answer every other ring.
       const legs = Array.isArray(parsed.tenders) ? parsed.tenders : null;
+      // Item 9.2's shape refusal, the core's own rule and order: whatever this
+      // sale books ON ACCOUNT (the rest of a single ACCOUNT tender, a split's
+      // account leg) needs an account the shape was offered to, terms above
+      // zero AND a credit line. A zero terms or no credit account is refused
+      // here, before the credit gate, with the on account amount named in
+      // dollars (the core's problem body: integer cents fields, never cents in
+      // words). The credit gate's own refusals keep their arms below, for the
+      // accounts the shape fits.
+      const accountBooks = tender === "ACCOUNT" || (legs !== null && legs.some((leg) => leg?.method === "ACCOUNT"));
+      if (accountBooks && ((customer.payment_terms_days ?? 0) <= 0 || (customer.credit_limit_cents ?? 0) <= 0)) {
+        const onAccountCents =
+          legs !== null
+            ? (legs.find((leg) => leg?.method === "ACCOUNT")?.amount_cents ?? 0)
+            : total - requestedDeposit;
+        respondJson(response, 422, {
+          error: "on_account_not_available",
+          amount_cents: onAccountCents,
+          credit_limit_cents: customer.credit_limit_cents ?? 0,
+          message: `This account cannot carry ${dollarsWord(onAccountCents)} on account. Pay in full now, or take a deposit with the balance due later.`,
+        });
+        return;
+      }
       if (legs !== null) {
         if (legs.length < 2 || legs.length > 6) {
           respondJson(response, 400, { error: "a split settlement carries two to six legs" });
