@@ -229,6 +229,40 @@ func (f *fakeStore) UserDisplayName(_ context.Context, userID string) (string, e
 	return f.displayNames[userID], nil
 }
 
+// The channel/DM/member seams' base double: honest minimums (a slug always
+// converges on one channel, members seat idempotently). The route-level
+// double in channels_admin_route_test.go wraps this with the recording the
+// route legs assert on; service-level detail tests use these defaults.
+func (f *fakeStore) CreateChannel(_ context.Context, in CreateChannelInput, ownerID string) (Channel, bool, error) {
+	if in.Slug == "" {
+		in.Slug = sanitizeSlugPart(in.Name)
+	}
+	if id, ok := f.slugs[in.Slug]; ok {
+		_ = id
+		return Channel{ID: id, Kind: in.Kind, Slug: in.Slug, Name: in.Name}, false, nil
+	}
+	id := "ch-" + in.Slug
+	f.slugs[in.Slug] = id
+	f.setMember(id, ownerID)
+	return Channel{ID: id, Kind: in.Kind, BranchID: in.BranchID, Slug: in.Slug, Name: in.Name}, true, nil
+}
+
+func (f *fakeStore) CreateDM(_ context.Context, aUserID, bUserID string) (Channel, bool, error) {
+	return Channel{ID: "dm-" + aUserID + "-" + bUserID, Kind: KindDM}, true, nil
+}
+
+func (f *fakeStore) AddChannelMember(_ context.Context, channelID, userID string) (ChannelMember, error) {
+	f.setMember(channelID, userID)
+	return ChannelMember{ChannelID: channelID, UserID: userID, Role: "MEMBER", Source: SourceExplicit}, nil
+}
+
+func (f *fakeStore) RemoveChannelMember(_ context.Context, channelID, userID string) error {
+	if f.members[channelID] != nil {
+		delete(f.members[channelID], userID)
+	}
+	return nil
+}
+
 // svcWith builds a service over a fake store (bypassing the *Repository constructor).
 func svcWith(f *fakeStore) *Service { return &Service{repo: f} }
 

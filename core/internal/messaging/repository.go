@@ -865,6 +865,236 @@ func clampExport(n int) int {
 	}
 }
 
+// - Channel create, DM create, membership writes -
+
+// channelCols is the channel projection the create paths return (the same
+// columns ListChannelsForUser selects, minus the per-caller unread legs).
+const channelCols = `id::text, kind, COALESCE(branch_id::text,''), COALESCE(slug::text,''),
+	name, topic, tier, is_archived, created_at`
+
+func scanChannel(row pgx.Row) (Channel, error) {
+	var c Channel
+	if err := row.Scan(&c.ID, &c.Kind, &c.BranchID, &c.Slug, &c.Name, &c.Topic, &c.Tier,
+		&c.IsArchived, &c.CreatedAt); err != nil {
+		return Channel{}, err
+	}
+	return c, nil
+}
+
+// userActive resolves one staff row's status: found+ACTIVE, found+other
+// (ErrUserNotActive), or absent (errNotFound). The users read is the
+// module's existing attribution seam (EnsureApprovalChannel reads the same
+// columns through the identity-is-SoT allowance repository.go carries).
+func (r *Repository) userActive(ctx context.Context, userID string) error {
+	if r.pool == nil {
+		return errNoDB
+	}
+	var status string
+	if err := r.pool.QueryRow(ctx, `SELECT status FROM users WHERE id = $1`, userID).Scan(&status); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errNotFound
+		}
+		return fmt.Errorf("resolve user: %w", err)
+	}
+	if status != "ACTIVE" {
+		return ErrUserNotActive
+	}
+	return nil
+}
+
+// CreateChannel inserts one caller-founded channel idempotently: the slug's
+// unique index is the convergence point, so a second founding of the same
+// room returns the existing row (created false). DO UPDATE (not DO NOTHING)
+// keeps RETURNING answering on both arms, and xmax = 0 is the insert marker.
+// The founder is seated as OWNER, EXPLICIT, so the derived prune never drops
+// them out of their own room.
+func (r *Repository) CreateChannel(ctx context.Context, in CreateChannelInput, ownerUserID string) (Channel, bool, error) {
+	if r.pool == nil {
+		return Channel{}, false, errNoDB
+	}
+	// A named branch must be a real branch root: a branch that does not exist
+	// names no channel, and 404 leaks nothing a caller could use.
+	if in.BranchID != "" {
+		var ok bool
+		if err := r.pool.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM locations WHERE id = $1 AND loc_type = 'BRANCH')`,
+			in.BranchID).Scan(&ok); err != nil {
+			return Channel{}, false, fmt.Errorf("resolve branch: %w", err)
+		}
+		if !ok {
+			return Channel{}, false, errNotFound
+		}
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Channel{}, false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var c Channel
+	var created bool
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO msg_channels (kind, branch_id, slug, name, topic, tier)
+		VALUES ($1, NULLIF($2,'')::uuid, $3, $4, $5, 'STANDARD')
+		ON CONFLICT (slug) DO UPDATE SET updated_at = now()
+		RETURNING `+channelCols+`, (xmax = 0)`,
+		in.Kind, in.BranchID, in.Slug, in.Name, in.Topic).
+		Scan(&c.ID, &c.Kind, &c.BranchID, &c.Slug, &c.Name, &c.Topic, &c.Tier,
+			&c.IsArchived, &c.CreatedAt, &created); err != nil {
+		return Channel{}, false, fmt.Errorf("create channel: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO msg_members (channel_id, user_id, role, source)
+		VALUES ($1, $2, 'OWNER', 'EXPLICIT')
+		ON CONFLICT (channel_id, user_id) DO NOTHING`, c.ID, ownerUserID); err != nil {
+		return Channel{}, false, fmt.Errorf("seat channel owner: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Channel{}, false, err
+	}
+	return c, created, nil
+}
+
+// dmPairSlug is the STABLE, PAIR-UNIQUE handle for a direct message channel
+// (the two user ids in sorted order, the same discipline
+// approvalChannelSlug and repDMSlug carry: the handle must be unique per
+// pair no matter what display names change later).
+func dmPairSlug(aUserID, bUserID string) string {
+	if aUserID > bUserID {
+		aUserID, bUserID = bUserID, aUserID
+	}
+	return "dm-" + aUserID + "-" + bUserID
+}
+
+// CreateDM finds the DM channel a pair of staffers already shares (even a
+// seeded one, whose slug is NULL) or creates it exactly once, seating both
+// parties EXPLICIT. The pre-lookup covers the seeded NULL-slug pairs; the
+// deterministic slug's unique index is the race backstop (two simultaneous
+// openings converge on one row).
+func (r *Repository) CreateDM(ctx context.Context, aUserID, bUserID string) (Channel, bool, error) {
+	if r.pool == nil {
+		return Channel{}, false, errNoDB
+	}
+	if err := r.userActive(ctx, aUserID); err != nil {
+		return Channel{}, false, err
+	}
+	if err := r.userActive(ctx, bUserID); err != nil {
+		return Channel{}, false, err
+	}
+	var aName, bName string
+	if err := r.pool.QueryRow(ctx,
+		`SELECT COALESCE(display_name,'') FROM users WHERE id = $1`, aUserID).Scan(&aName); err != nil {
+		return Channel{}, false, fmt.Errorf("resolve caller: %w", err)
+	}
+	if err := r.pool.QueryRow(ctx,
+		`SELECT COALESCE(display_name,'') FROM users WHERE id = $1`, bUserID).Scan(&bName); err != nil {
+		return Channel{}, false, fmt.Errorf("resolve counterpart: %w", err)
+	}
+	// The seeded demo DMs carry no slug, so the pair lookup is by shape: a
+	// live DM channel whose members are exactly the two staffers.
+	var existing string
+	if err := r.pool.QueryRow(ctx, `
+		SELECT ch.id::text
+		FROM msg_channels ch
+		JOIN msg_members ma ON ma.channel_id = ch.id AND ma.user_id = $1
+		JOIN msg_members mb ON mb.channel_id = ch.id AND mb.user_id = $2
+		WHERE ch.kind = 'DM' AND ch.is_archived = FALSE
+		  AND (SELECT count(*) FROM msg_members m WHERE m.channel_id = ch.id) = 2
+		LIMIT 1`, aUserID, bUserID).Scan(&existing); err == nil {
+		c, cerr := scanChannel(r.pool.QueryRow(ctx,
+			`SELECT `+channelCols+` FROM msg_channels WHERE id = $1`, existing))
+		if cerr != nil && !errors.Is(cerr, pgx.ErrNoRows) {
+			return Channel{}, false, fmt.Errorf("load pair dm: %w", cerr)
+		}
+		if cerr == nil {
+			return c, false, nil
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return Channel{}, false, fmt.Errorf("find pair dm: %w", err)
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Channel{}, false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var c Channel
+	var created bool
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO msg_channels (kind, slug, name, topic, tier)
+		VALUES ('DM', $1, $2, '', 'STANDARD')
+		ON CONFLICT (slug) DO UPDATE SET updated_at = now()
+		RETURNING `+channelCols+`, (xmax = 0)`,
+		dmPairSlug(aUserID, bUserID), aName+", "+bName).
+		Scan(&c.ID, &c.Kind, &c.BranchID, &c.Slug, &c.Name, &c.Topic, &c.Tier,
+			&c.IsArchived, &c.CreatedAt, &created); err != nil {
+		return Channel{}, false, fmt.Errorf("create dm: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO msg_members (channel_id, user_id, role, source)
+		VALUES ($1, $2, 'OWNER', 'EXPLICIT'), ($1, $3, 'MEMBER', 'EXPLICIT')
+		ON CONFLICT (channel_id, user_id) DO NOTHING`, c.ID, aUserID, bUserID); err != nil {
+		return Channel{}, false, fmt.Errorf("seat dm parties: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Channel{}, false, err
+	}
+	return c, created, nil
+}
+
+// AddChannelMember seats one staff member EXPLICIT in a channel
+// (idempotent; an already-seated member changes nothing, whatever the
+// existing row's source). The unknown-user and inactive-user refusals run
+// before anything is written.
+func (r *Repository) AddChannelMember(ctx context.Context, channelID, userID string) (ChannelMember, error) {
+	if r.pool == nil {
+		return ChannelMember{}, errNoDB
+	}
+	if err := r.userActive(ctx, userID); err != nil {
+		return ChannelMember{}, err
+	}
+	var m ChannelMember
+	if err := r.pool.QueryRow(ctx, `
+		INSERT INTO msg_members (channel_id, user_id, role, source)
+		VALUES ($1, $2, 'MEMBER', 'EXPLICIT')
+		ON CONFLICT (channel_id, user_id) DO UPDATE SET source = 'EXPLICIT'
+		RETURNING channel_id::text, user_id::text, role, source, joined_at`,
+		channelID, userID).
+		Scan(&m.ChannelID, &m.UserID, &m.Role, &m.Source, &m.JoinedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ChannelMember{}, errNotFound // no such channel
+		}
+		return ChannelMember{}, fmt.Errorf("add channel member: %w", err)
+	}
+	return m, nil
+}
+
+// RemoveChannelMember drops one member row. A DERIVED row is refused
+// (ErrDerivedMember): the role and branch model re-derives it on the next
+// sync, so a hand removal would be undone and lie in between. An absent row
+// is not-found.
+func (r *Repository) RemoveChannelMember(ctx context.Context, channelID, userID string) error {
+	if r.pool == nil {
+		return errNoDB
+	}
+	var source string
+	if err := r.pool.QueryRow(ctx,
+		`SELECT source FROM msg_members WHERE channel_id = $1 AND user_id = $2`,
+		channelID, userID).Scan(&source); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errNotFound
+		}
+		return fmt.Errorf("resolve member: %w", err)
+	}
+	if source == SourceDerived {
+		return ErrDerivedMember
+	}
+	if _, err := r.pool.Exec(ctx,
+		`DELETE FROM msg_members WHERE channel_id = $1 AND user_id = $2 AND source = 'EXPLICIT'`,
+		channelID, userID); err != nil {
+		return fmt.Errorf("remove channel member: %w", err)
+	}
+	return nil
+}
+
 // - Feature B: retention archival (0070) -
 // ChannelRetentions returns every live channel with its EFFECTIVE hot-retention window in months:
 // per-channel policy override, else the global default row, else defaultRetentionMonths. The retention

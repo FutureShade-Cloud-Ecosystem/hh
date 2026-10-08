@@ -136,6 +136,18 @@ type Channel struct {
 	LatestAt    *time.Time `json:"latest_at,omitempty"`
 }
 
+// ChannelMember is one membership row as the member-add surface returns it:
+// the channel, the member, their role in the room, and the membership's
+// source (EXPLICIT rows are the hand-manageable ones; DERIVED rows belong to
+// the role and branch model).
+type ChannelMember struct {
+	ChannelID string    `json:"channel_id"`
+	UserID    string    `json:"user_id"`
+	Role      string    `json:"role"`
+	Source    string    `json:"source"`
+	JoinedAt  time.Time `json:"joined_at"`
+}
+
 // Message is one post. AuthorID is empty for a system EVENT message. Ref carries {topic, entity,
 // deep_link} for EVENT messages. ThreadRootID is empty for a top-level message.
 type Message struct {

@@ -57,6 +57,16 @@ func (h *Handler) WithStreamTickets(secret string) *Handler {
 // convention. There is otherwise no manager/admin split in P1 (channel-admin tooling is deferred).
 func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/messaging/channels", g.RequireStaff(h.staff(h.listChannels)))
+	// The house's own founding and membership routes (every role at Work on
+	// house-messages, the general manager at Admin, the roleconfig document's
+	// cells): create a TEAM/TOPIC channel (idempotent on its slug), open a DM
+	// with one colleague (found or created once), seat and drop explicit
+	// members. The walls are the module's existing ones: assertMember on every
+	// membership write, the branch wall on a channel that names a branch.
+	r.Handle("POST /api/v1/messaging/channels", g.RequireStaff(h.staff(h.createChannel)))
+	r.Handle("POST /api/v1/messaging/dms", g.RequireStaff(h.staff(h.createDM)))
+	r.Handle("POST /api/v1/messaging/channels/{id}/members", g.RequireStaff(h.staff(h.addChannelMember)))
+	r.Handle("DELETE /api/v1/messaging/channels/{id}/members/{userID}", g.RequireStaff(h.staff(h.removeChannelMember)))
 	r.Handle("GET /api/v1/messaging/channels/{id}/messages", g.RequireStaff(h.staff(h.listMessages)))
 	r.Handle("POST /api/v1/messaging/channels/{id}/messages", g.RequireStaff(h.staff(h.postMessage)))
 	r.Handle("GET /api/v1/messaging/channels/{id}/threads/{rootID}", g.RequireStaff(h.staff(h.listThread)))
@@ -150,6 +160,136 @@ func (h *Handler) listChannels(w http.ResponseWriter, r *http.Request, caller gu
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"channels": chans})
+}
+
+// createChannelRequest is the channel-create body. Slug is optional (derived
+// from the name when empty, so the same founding twice converges); branch_id
+// optionally scopes a TEAM channel to one yard.
+type createChannelRequest struct {
+	Kind     string `json:"kind"`
+	Name     string `json:"name"`
+	Topic    string `json:"topic"`
+	Slug     string `json:"slug"`
+	BranchID string `json:"branch_id"`
+}
+
+// createChannel founds a TEAM or TOPIC channel, 201 the first time and 200 on
+// the idempotent replay (the found channel), so a retried founding is not a
+// duplicate room.
+func (h *Handler) createChannel(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var req createChannelRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.BranchID != "" {
+		if _, err := uuid.Parse(req.BranchID); err != nil {
+			httpx.Error(w, http.StatusBadRequest, "branch_id must be a valid UUID")
+			return
+		}
+	}
+	ch, created, err := h.svc.CreateChannel(r.Context(), c, CreateChannelInput{
+		Kind: req.Kind, Name: req.Name, Topic: req.Topic, Slug: req.Slug, BranchID: req.BranchID,
+	})
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	if created {
+		httpx.WriteJSON(w, http.StatusCreated, ch)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, ch)
+}
+
+// createDM opens (or finds) the direct message channel between the caller and
+// the named staffer: 201 the first time, 200 when the pair's room already
+// exists (whoever opened it).
+func (h *Handler) createDM(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var req struct {
+		UserID string `json:"user_id"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.UserID != "" {
+		if _, err := uuid.Parse(req.UserID); err != nil {
+			httpx.Error(w, http.StatusBadRequest, "user_id must be a valid UUID")
+			return
+		}
+	}
+	ch, created, err := h.svc.CreateDM(r.Context(), c, req.UserID)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	if created {
+		httpx.WriteJSON(w, http.StatusCreated, ch)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, ch)
+}
+
+// addChannelMember seats one staffer in a channel the caller belongs to. The
+// body names the member; the row is EXPLICIT and idempotent.
+func (h *Handler) addChannelMember(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	channelID, ok := h.pathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	var req struct {
+		UserID string `json:"user_id"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if _, err := uuid.Parse(req.UserID); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "user_id must be a valid UUID")
+		return
+	}
+	m, err := h.svc.AddMember(r.Context(), c, channelID, req.UserID)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, m)
+}
+
+// removeChannelMember drops one EXPLICIT member row; a DERIVED row is a 409
+// conflict with the role and branch model that owns it.
+func (h *Handler) removeChannelMember(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	channelID, ok := h.pathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	userID, ok := h.pathUUID(w, r, "userID")
+	if !ok {
+		return
+	}
+	if err := h.svc.RemoveMember(r.Context(), c, channelID, userID); err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (h *Handler) listMessages(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
@@ -613,6 +753,23 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.Error(w, http.StatusBadRequest, "rule must be one of ONLINE, CROSS_BRANCH, OWN_ORDER")
 	case errors.Is(err, ErrBadMode):
 		httpx.Error(w, http.StatusBadRequest, "mode must be one of ALL, MENTIONS, MUTED")
+	// The founding and membership refusals: the branch wall is the caller's
+	// reach (403), a bad kind/name/target is a client fault (400), an inactive
+	// staffer can be named but not seated (403), and a DERIVED member row is
+	// the role and branch model's, a conflict (409) rather than a permission
+	// failure.
+	case errors.Is(err, ErrBadChannelKind):
+		httpx.Error(w, http.StatusBadRequest, "kind must be one of TEAM, TOPIC")
+	case errors.Is(err, ErrChannelNameRequired):
+		httpx.Error(w, http.StatusBadRequest, "channel name is required")
+	case errors.Is(err, ErrNotInBranch):
+		httpx.Error(w, http.StatusForbidden, "caller does not reach this branch")
+	case errors.Is(err, ErrBadDMTarget):
+		httpx.Error(w, http.StatusBadRequest, "a direct message needs another staff member")
+	case errors.Is(err, ErrUserNotActive):
+		httpx.Error(w, http.StatusForbidden, "that staff member is not active")
+	case errors.Is(err, ErrDerivedMember):
+		httpx.Error(w, http.StatusConflict, "derived membership is managed by the role and branch model")
 	case errors.Is(err, ErrAlreadyClaimed):
 		httpx.Error(w, http.StatusConflict, "conversation already claimed")
 	case errors.Is(err, ErrNoCustomer):
