@@ -262,8 +262,9 @@ func (s *Service) SalePreview(ctx context.Context, in SalePreviewInput) (SalePre
 		TotalCents:    priced.total,
 		TaxReasonCode: taxReason,
 		// Item 9.1: the account's own shapes, read off the same customer the
-		// pricing already resolved (the walk in resolution included).
-		PaymentOptions: s.previewPaymentOptions(ctx, cust),
+		// pricing already resolved (the walk in resolution included), and
+		// gated by the branch's COD switch (item 9 Opus P2-3).
+		PaymentOptions: s.previewPaymentOptions(ctx, in.BranchID, cust),
 		// Sub item 9.5: the supplier deposit's allowance rides the same read
 		// (the control the payment step shows and the guard the ring holds
 		// are one answer).
