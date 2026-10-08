@@ -10,7 +10,7 @@
 // this is the second wall, and the bundle fence is the third.
 //
 // Port provenance: the call set is the original app's app/src/dispatch-api.ts
-// (repository futurebuildai/hardscapeos_dibbits, commit
+// (the original HardscapeOS app, repository hardscapeos_dibbits, commit
 // f8f4973db317b92296ae8ec7e62a3f54f5dc82ab), rebuilt on HH's generated client.
 import { ApiClient, staffDispatch, type Result } from "@hardscapehouse/api-client";
 

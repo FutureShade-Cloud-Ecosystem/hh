@@ -2,8 +2,8 @@
 // what it is worth: no cost, price, margin, freight or value, and no figure
 // that reads as money, may exist in the shipped bytes or the sources.
 //
-// The word list is the original app's bundle fence (futurebuildai/
-// hardscapeos_dibbits, app/scripts/bundle-fence.mjs, commit
+// The word list is the original app's bundle fence (the original HardscapeOS
+// app, repository hardscapeos_dibbits, app/scripts/bundle-fence.mjs, commit
 // f8f4973db317b92296ae8ec7e62a3f54f5dc82ab: value_cents, freight_cents,
 // total_cents, unit_price, margin, cost, price), widened for HH to the cents
 // suffix, currency, dollar, amount due, balance and a formatted dollar figure.

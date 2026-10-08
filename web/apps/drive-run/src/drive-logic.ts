@@ -3,7 +3,7 @@
 // out, so the screens only draw it and a test can hold it without a browser.
 //
 // PROVENANCE (each port records its source: repository, commit, path).
-// Repository futurebuildai/hardscapeos_dibbits, commit
+// The original HardscapeOS app (repository hardscapeos_dibbits), commit
 // f8f4973db317b92296ae8ec7e62a3f54f5dc82ab, read only:
 //   - the stop lifecycle, its labels, runSummary, stopsInOrder, addressLine,
 //     qtyLabel, plainSentence, formatTime: app/src/dispatch-logic.ts
