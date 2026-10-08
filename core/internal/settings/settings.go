@@ -68,9 +68,15 @@ type Item struct {
 	Visible  bool   `json:"visible"`
 }
 
-// Profiles are 0140's five job shapes (spec OQ-2: reused as-is for the pilot).
+// Profiles are 0140's five job shapes (spec OQ-2: reused as-is for the pilot) plus the manager
+// refinements 0380 added (manager.<role>, one profile row per manager role, decision 5): the
+// curation write gate must accept every profile the dashboard substrate can hold, or a manager's
+// profile would be a profile an admin cannot curate.
 var validProfiles = map[string]bool{
 	"counter": true, "yard": true, "driver": true, "manager": true, "admin": true,
+	"manager.branch": true, "manager.sales": true, "manager.yard": true, "manager.logistics": true,
+	"manager.procurement": true, "manager.payables": true, "manager.controller": true,
+	"manager.general": true,
 }
 
 // ProfileFallback is the profile a role with no dashboard_role_profiles row resolves to, the

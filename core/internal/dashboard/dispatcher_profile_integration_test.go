@@ -25,23 +25,50 @@ func TestIntegration_0203_TheDispatcherFilesUnderTheDock(t *testing.T) {
 		Scan(&profile); err != nil {
 		t.Fatalf("LOGISTICS_MANAGER has no profile row at all: %v", err)
 	}
-	if profile != "yard" {
-		t.Fatalf("LOGISTICS_MANAGER files under %q; 0203 ruled it `yard`, the dock. Filed under "+
-			"`manager` a dispatcher opens on the controller's Home (an AR-aging hero), carries the "+
-			"controller's pinned tabs (the till and the statements) and loses the pick board.", profile)
+	// 0380 re-filed every manager role onto a profile of their own; the dispatcher's is BORN FROM
+	// the dock 0203 ruled them onto, which is the ruling's substance under the new filing: the
+	// dispatcher still opens on the dock Home (a deliveries hero, the pick board, the dock's tabs),
+	// not the controller's, and the profile is now theirs alone to curate.
+	if profile != ProfileManagerLogistics {
+		t.Fatalf("LOGISTICS_MANAGER files under %q; 0203 ruled the dock and 0380 kept that ruling "+
+			"as manager.logistics, born from `yard`. Filed under the controller's shape a dispatcher "+
+			"opens on an AR-aging hero, carries the controller's pinned tabs (the till and the "+
+			"statements) and loses the pick board.", profile)
 	}
 
 	// The control, and it is the whole point of the ruling: the controller must NOT have moved with
 	// them. Before 0203 these two shared a shape, which is how the dispatcher ended up on the wrong
-	// Home in the first place.
+	// Home in the first place; under 0380 they have DIFFERENT profiles born from DIFFERENT shapes.
 	if err := pool.QueryRow(ctx,
 		`SELECT profile FROM dashboard_role_profiles WHERE role_code = 'FINANCIAL_CONTROLLER'`).
 		Scan(&profile); err != nil {
 		t.Fatalf("FINANCIAL_CONTROLLER has no profile row: %v", err)
 	}
-	if profile != "manager" {
-		t.Fatalf("FINANCIAL_CONTROLLER files under %q, want `manager`, 0203 moved the dispatcher "+
-			"OUT of the shape they shared, and must not have taken the controller with them", profile)
+	if profile != ProfileManagerController {
+		t.Fatalf("FINANCIAL_CONTROLLER files under %q, want %q (born from `manager`): 0203 moved "+
+			"the dispatcher OUT of the shape they shared, and 0380 must not have taken the controller "+
+			"onto the dock with them", profile, ProfileManagerController)
+	}
+
+	// And the substance, not just the filing: the dispatcher's own profile IS the dock, widget for
+	// widget, so the per-role re-filing changed who curates that Home and nothing on its screen.
+	var dock, own int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM dashboard_profile_widgets w
+		   JOIN dashboard_profile_widgets d
+		     ON d.profile = 'yard' AND d.widget_key = w.widget_key
+		    AND d.shape = w.shape AND d.measure = w.measure AND d.position = w.position
+		 WHERE w.profile = $1`, ProfileManagerLogistics).Scan(&dock); err != nil {
+		t.Fatalf("join the dispatcher's Home to the dock: %v", err)
+	}
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM dashboard_profile_widgets WHERE profile = $1`,
+		ProfileManagerLogistics).Scan(&own); err != nil {
+		t.Fatalf("count the dispatcher's Home: %v", err)
+	}
+	if own == 0 || dock != own {
+		t.Fatalf("the dispatcher's Home holds %d widgets of which %d are the dock's; 0203's ruling "+
+			"is the dock, whole", own, dock)
 	}
 }
 

@@ -146,7 +146,16 @@ func VisibleFor(meta ActionMeta, cfg *ActionConfig, profile string) bool {
 			return v
 		}
 	}
-	return meta.DefaultProfiles[profile]
+	return defaultVisibleFor(meta, profile)
+}
+
+// defaultVisibleFor is the catalog default for one profile; a manager refinement with no entry of
+// its own answers as the shape it was born from (0380).
+func defaultVisibleFor(meta ActionMeta, profile string) bool {
+	if v, ok := meta.DefaultProfiles[profile]; ok {
+		return v
+	}
+	return meta.DefaultProfiles[ManagerBaseShape[profile]]
 }
 
 // ResolveVisible returns, in catalog order, the actions a caller with this job shape may see.
@@ -194,7 +203,7 @@ func EffectiveFor(meta ActionMeta, cfg *ActionConfig) EffectiveConfig {
 		eff.Enabled = cfg.Enabled
 	}
 	for _, p := range Profiles {
-		v := meta.DefaultProfiles[p]
+		v := defaultVisibleFor(meta, p)
 		if cfg != nil {
 			if stored, ok := cfg.Profiles[p]; ok {
 				v = stored
