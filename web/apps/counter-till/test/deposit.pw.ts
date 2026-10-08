@@ -255,7 +255,12 @@ test("a credit customer's supplier deposit is billed to the account", async ({ p
   // The control stands beside the tender tiles (pay in full now, no deposit shape chosen), only
   // for the account tender: on Cash it is gone.
   await expect(page.getByTestId("supplier-deposit")).toHaveCount(0);
-  await page.getByRole("button", { name: "Charge Account" }).click();
+  // Round 15: with the shape menu up, "All on account" is the one way onto the account, and the
+  // supplier's deposit stays behind a small link until it is reached for.
+  await expect(page.getByRole("button", { name: "Charge Account" })).toHaveCount(0);
+  await page.getByTestId("pay-shape-ALL_ON_ACCOUNT").click();
+  await expect(page.getByTestId("supplier-deposit")).toHaveCount(0);
+  await page.getByTestId("supplier-deposit-link").click();
   await expect(page.getByTestId("supplier-deposit")).toBeVisible();
   await expect(page.getByTestId("supplier-deposit")).toContainText("Supplier asked for a deposit");
   await page.getByTestId("supplier-deposit-amount").fill("1.00");
