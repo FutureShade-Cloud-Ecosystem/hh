@@ -138,6 +138,24 @@ export class DriveApi {
     return answer.ok ? { ok: true, value: toStop(answer.value) } : answer;
   }
 
+  /** The delivery's proof: the typed name and the recipient's own confirmation, the core's POD shape. */
+  async pod(id: string, receivedBy: string): Promise<Result<DriverStop>> {
+    const answer = await staffDispatch.dispatchCapturePod(this.#client, id, { received_by: receivedBy, affirmed: true });
+    return answer.ok ? { ok: true, value: toStop(answer.value) } : answer;
+  }
+
+  /** One proof photo, as the raw picture with its own content type. */
+  async uploadPhoto(id: string, bytes: Uint8Array, type: "image/jpeg" | "image/png" | "image/webp"): Promise<Result<true>> {
+    const answer = await staffDispatch.dispatchUploadStopPhoto(this.#client, id, bytes, type);
+    return answer.ok ? { ok: true, value: true } : answer;
+  }
+
+  /** Fold photos sent after the signature into the proof record. */
+  async attachPhotos(id: string): Promise<Result<DriverStop>> {
+    const answer = await staffDispatch.dispatchAttachStopPhotos(this.#client, id);
+    return answer.ok ? { ok: true, value: toStop(answer.value) } : answer;
+  }
+
   /** A plain move along the lifecycle. Delivered is never asked of this door: the core takes it only through proof. */
   async advance(id: string, status: "LOADED" | "EN_ROUTE" | "FAILED", reason = ""): Promise<Result<DriverStop>> {
     const answer = await staffDispatch.dispatchAdvanceStop(this.#client, id, { status, reason });

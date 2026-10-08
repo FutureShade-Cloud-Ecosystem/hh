@@ -121,3 +121,53 @@ test("a login that may not do this, or has no driver record, is told in the driv
   assert.equal(roadsideError("not found", 404, "x", { notFound: "You are not set up as a driver. Ask your branch manager to link your login." }), "You are not set up as a driver. Ask your branch manager to link your login.");
   assert.equal(roadsideError("not found", 404, "x"), "That is no longer on your run.");
 });
+
+// ---- sub item 3: proof of delivery ----
+import {
+  ATTESTATION,
+  PHOTO_LIMIT_BYTES,
+  canSign,
+  needsShrink,
+  normalizeName,
+  photoTypeFor,
+  signBlockedReason,
+} from "../src/drive-logic.ts";
+
+test("a delivery is signed only with a typed name AND the recipient's own confirmation", () => {
+  assert.equal(canSign({ receivedBy: "Site contact", affirmed: true, busy: false }), true);
+  assert.equal(canSign({ receivedBy: "   ", affirmed: true, busy: false }), false);
+  assert.equal(canSign({ receivedBy: "Site contact", affirmed: false, busy: false }), false);
+  assert.equal(canSign({ receivedBy: "Site contact", affirmed: true, busy: true }), false);
+});
+
+test("the sign control says why it is not ready, in order: name, then confirmation", () => {
+  assert.equal(signBlockedReason({ receivedBy: "", affirmed: false, busy: false }), "Type the name of the person receiving.");
+  assert.equal(signBlockedReason({ receivedBy: "A B", affirmed: false, busy: false }), "Tick the confirmation to sign.");
+  assert.equal(signBlockedReason({ receivedBy: "A B", affirmed: true, busy: true }), "Signing.");
+  assert.equal(signBlockedReason({ receivedBy: "A B", affirmed: true, busy: false }), "");
+});
+
+test("the name is trimmed before it is sent and never invented", () => {
+  assert.equal(normalizeName("  Site contact  "), "Site contact");
+  assert.equal(normalizeName(""), "");
+});
+
+test("the attestation says what it is: an electronic attestation, not a captured signature image", () => {
+  assert.match(ATTESTATION, /electronic attestation/);
+  assert.match(ATTESTATION, /not a captured signature image/);
+});
+
+test("only the three picture types the core takes are sent as proof photos", () => {
+  assert.equal(photoTypeFor("image/jpeg"), "image/jpeg");
+  assert.equal(photoTypeFor("IMAGE/PNG"), "image/png");
+  assert.equal(photoTypeFor("image/webp"), "image/webp");
+  assert.equal(photoTypeFor("image/heic"), null);
+  assert.equal(photoTypeFor("application/pdf"), null);
+  assert.equal(photoTypeFor(""), null);
+});
+
+test("a camera photo over a safe share of the core's limit is shrunk before it is sent", () => {
+  assert.equal(PHOTO_LIMIT_BYTES, 4 * 1024 * 1024);
+  assert.equal(needsShrink(200_000), false);
+  assert.equal(needsShrink(2 * 1024 * 1024), true);
+});

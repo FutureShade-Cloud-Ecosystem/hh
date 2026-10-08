@@ -25,9 +25,10 @@ import { entryStyles, renderEntry, type EntryView } from "@hardscapehouse/pos-ki
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { HOUSE_ZONE, houseDayInZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import { DriveApi, type DriverRun, type DriverStop } from "./drive-api.js";
-import { roadsideError } from "./drive-logic.js";
+import { canSign, normalizeName, roadsideError } from "./drive-logic.js";
 import { driveStyles } from "./styles.js";
-import { renderRunSheet, renderStopDetail } from "./views.js";
+import { readyPhoto } from "./photo.js";
+import { renderPod, renderRunSheet, renderStopDetail } from "./views.js";
 
 const DEMO_ORG = "hh-demo";
 
@@ -83,7 +84,15 @@ export class DriveRunApp extends HHElement {
   #error = "";
   #notice = "";
   #busy = false;
-  #view: { kind: "run" } | { kind: "stop"; id: string } = { kind: "run" };
+  #view: { kind: "run" } | { kind: "stop"; id: string } | { kind: "pod"; id: string } = { kind: "run" };
+
+  // Proof of delivery's draft. The name field is not bound (the position
+  // rules allow no value binding), so these mirror it from the input events.
+  #podName = "";
+  #podAffirmed = false;
+  #podBusy = false;
+  #podPrefill: string | null = null;
+  #photoBusy = false;
 
   // The entry view state, compatible with renderEntry's EntryView.
   #entryView: EntryView = { flows: { kind: "loading" }, busy: false, message: null };
@@ -133,6 +142,20 @@ export class DriveRunApp extends HHElement {
       void this.#loadRuns();
       return;
     }
+    if (action === "open-pod") {
+      this.#openPod();
+      return;
+    }
+    if (action === "back-to-stop") {
+      if (this.#view.kind === "pod") this.#view = { kind: "stop", id: this.#view.id };
+      this.#error = "";
+      this.requestUpdate();
+      return;
+    }
+    if (action === "sign") {
+      void this.#sign();
+      return;
+    }
     if (action === "advance") {
       const to = control?.getAttribute("data-status");
       if (to === "LOADED" || to === "EN_ROUTE") void this.#advance(to);
@@ -144,9 +167,31 @@ export class DriveRunApp extends HHElement {
     }
   };
 
+  // The form fields: the typed name, the recipient's confirmation, the photo.
+  readonly #onField = (event: Event): void => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) return;
+    const field = target.getAttribute("data-field");
+    if (field === "name") {
+      this.#podName = target.value;
+      this.requestUpdate();
+    } else if (field === "affirm") {
+      this.#podAffirmed = target.checked;
+      this.requestUpdate();
+    } else if (field === "photo" && event.type === "change") {
+      const file = target.files?.[0];
+      target.value = "";
+      if (file !== undefined) void this.#sendPhoto(file);
+    }
+  };
+
   connectedCallback(): void {
     super.connectedCallback();
     this.addEventListener("click", this.#onHostClick);
+    // input and change do not leave this element's own shadow root (change is
+    // not composed), so the form listeners sit on the root itself.
+    this.renderRoot.addEventListener("input", this.#onField);
+    this.renderRoot.addEventListener("change", this.#onField);
     const handoff = readFrontDoorHandoff();
     if (handoff.kind === "ready") {
       const adopted = this.#auth.adopt({
@@ -171,6 +216,8 @@ export class DriveRunApp extends HHElement {
 
   disconnectedCallback(): void {
     this.removeEventListener("click", this.#onHostClick);
+    this.renderRoot.removeEventListener("input", this.#onField);
+    this.renderRoot.removeEventListener("change", this.#onField);
     super.disconnectedCallback();
   }
 
@@ -183,6 +230,14 @@ export class DriveRunApp extends HHElement {
     if (header !== null) {
       header.roleLabel = this.#roleLabel;
       header.theme = this.#theme;
+    }
+    // The name field's first value, set once when proof of delivery opens.
+    if (this.#podPrefill !== null) {
+      const field = this.renderRoot.querySelector<HTMLInputElement>("input[data-field=name]");
+      if (field !== null) {
+        field.value = this.#podPrefill;
+        this.#podPrefill = null;
+      }
     }
     // A telephone address cannot ride a template binding (the position gate
     // admits only http, https and relative addresses), so the call links take
@@ -260,6 +315,76 @@ export class DriveRunApp extends HHElement {
     this.requestUpdate();
   }
 
+  #openPod(): void {
+    if (this.#view.kind !== "stop") return;
+    const found = this.#findStop(this.#view.id);
+    if (found === null) return;
+    // The first line of the form is the site contact the dispatcher recorded:
+    // a starting point the driver can change, never a signature.
+    this.#podName = found.stop.contact_name;
+    this.#podPrefill = found.stop.contact_name;
+    this.#podAffirmed = false;
+    this.#podBusy = false;
+    this.#error = "";
+    this.#notice = "";
+    this.#view = { kind: "pod", id: found.stop.id };
+    this.requestUpdate();
+  }
+
+  async #sign(): Promise<void> {
+    if (this.#view.kind !== "pod") return;
+    const draft = { receivedBy: this.#podName, affirmed: this.#podAffirmed, busy: this.#podBusy };
+    if (!canSign(draft)) return;
+    const stopId = this.#view.id;
+    const found = this.#findStop(stopId);
+    this.#podBusy = true;
+    this.#error = "";
+    this.requestUpdate();
+    const result = await this.#drive.pod(stopId, normalizeName(this.#podName));
+    this.#podBusy = false;
+    if (result.ok) {
+      await this.#refreshRuns();
+      this.#view = { kind: "stop", id: stopId };
+      this.#notice = `Delivery to ${found?.stop.customer_name || "this stop"} is signed for.`;
+    } else {
+      this.#error = roadsideError(result.error, result.status, "The signature did not go through. Check your signal and try again.");
+    }
+    this.requestUpdate();
+  }
+
+  // One proof photo: checked, shrunk if it is camera sized, sent on its own
+  // call. On the proof screen the stop is still en route; on a delivered stop
+  // it is a late photo and is folded into the proof once it is up. A failure
+  // never touches the signature.
+  async #sendPhoto(file: File): Promise<void> {
+    if (this.#view.kind === "run" || this.#photoBusy) return;
+    const stopId = this.#view.id;
+    const late = this.#view.kind === "stop";
+    this.#photoBusy = true;
+    this.#error = "";
+    this.#notice = "";
+    this.requestUpdate();
+    const ready = await readyPhoto(file);
+    if (!ready.ok) {
+      this.#error = ready.error;
+    } else {
+      const sent = await this.#drive.uploadPhoto(stopId, ready.bytes, ready.type);
+      if (!sent.ok) {
+        this.#error = roadsideError(sent.error, sent.status, "The photo did not send. Check your signal and add it again.");
+      } else {
+        if (late) {
+          const folded = await this.#drive.attachPhotos(stopId);
+          if (!folded.ok) {
+            this.#error = roadsideError(folded.error, folded.status, "The photo is up but is not on the proof yet. Add it again in a moment.");
+          }
+        }
+        await this.#refreshRuns();
+      }
+    }
+    this.#photoBusy = false;
+    this.requestUpdate();
+  }
+
   // Re-read the day without blanking the screen: the server's order and
   // statuses win, and a failed re-read keeps what is on the glass.
   async #refreshRuns(): Promise<void> {
@@ -305,10 +430,21 @@ export class DriveRunApp extends HHElement {
   }
 
   private renderWork(): TemplateResult {
+    if (this.#view.kind === "pod") {
+      const found = this.#findStop(this.#view.id);
+      if (found !== null) {
+        return renderPod({
+          stop: found.stop,
+          draft: { receivedBy: this.#podName, affirmed: this.#podAffirmed, busy: this.#podBusy },
+          photoBusy: this.#photoBusy,
+          error: this.#error,
+        });
+      }
+    }
     if (this.#view.kind === "stop") {
       const found = this.#findStop(this.#view.id);
       if (found !== null) {
-        return renderStopDetail({ ...found, busy: this.#busy, error: this.#error, notice: this.#notice });
+        return renderStopDetail({ ...found, busy: this.#busy, photoBusy: this.#photoBusy, error: this.#error, notice: this.#notice });
       }
     }
     return html`

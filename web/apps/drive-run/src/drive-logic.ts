@@ -179,3 +179,56 @@ export function roadsideError(
   const cased = plain.charAt(0).toUpperCase() + plain.slice(1);
   return /[.!?]$/.test(cased) ? cased : `${cased}.`;
 }
+
+// ---- proof of delivery ----
+
+export interface PodDraft {
+  receivedBy: string;
+  affirmed: boolean;
+  busy: boolean;
+}
+
+/**
+ * The words the recipient confirms. They state what the record is: an
+ * electronic attestation with a name typed, not a captured signature image
+ * (the product's standing rule that an artifact must not imply more than it
+ * captured). Port of the original's dispatch-pod.ts wording, same repository
+ * and commit as the header, with its dash removed.
+ */
+export const ATTESTATION =
+  "I confirm the goods listed on this order were delivered to the person named above, and that they accepted them. This is recorded as an electronic attestation: it is not a captured signature image.";
+
+export function normalizeName(name: string): string {
+  return name.trim();
+}
+
+/** Both facts are required and neither is inferred: a typed name, and the recipient's own tick. */
+export function canSign(d: PodDraft): boolean {
+  return normalizeName(d.receivedBy).length > 0 && d.affirmed && !d.busy;
+}
+
+/** Why the sign control is not ready, in the order the driver acts; empty when it is ready. */
+export function signBlockedReason(d: PodDraft): string {
+  if (d.busy) return "Signing.";
+  if (normalizeName(d.receivedBy).length === 0) return "Type the name of the person receiving.";
+  if (!d.affirmed) return "Tick the confirmation to sign.";
+  return "";
+}
+
+export type PhotoType = "image/jpeg" | "image/png" | "image/webp";
+
+/** The core takes exactly these three picture types (dispatch AddPhoto); anything else is refused on the phone. */
+export function photoTypeFor(type: string): PhotoType | null {
+  const t = type.trim().toLowerCase();
+  return t === "image/jpeg" || t === "image/png" || t === "image/webp" ? t : null;
+}
+
+/** The core's photo limit (dispatch.MaxPhotoBytes). */
+export const PHOTO_LIMIT_BYTES = 4 * 1024 * 1024;
+
+/** A camera photo above this is shrunk before it is sent, so a phone on a bad connection sends less and never meets the limit. */
+export const SHRINK_ABOVE_BYTES = 1.5 * 1024 * 1024;
+
+export function needsShrink(bytes: number): boolean {
+  return bytes > SHRINK_ABOVE_BYTES;
+}

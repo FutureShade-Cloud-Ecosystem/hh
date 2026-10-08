@@ -134,4 +134,43 @@ export const driveStyles = css`
   .alert-ok { color: var(--hh-success); border-color: var(--hh-success); background: var(--hh-card); }
 
   .theme-button { min-height: 44px; }
+
+  /* Proof of delivery. */
+  .field-label { display: block; font-weight: 700; margin-bottom: var(--hh-s-8); }
+  .text-field {
+    width: 100%;
+    min-height: 56px;
+    padding: 0 var(--hh-s-16);
+    margin-bottom: var(--hh-s-16);
+    border-radius: var(--hh-radius-control);
+    border: 2px solid var(--hh-control-line);
+    background: var(--hh-field);
+    color: var(--hh-text);
+    font: inherit;
+    font-size: 18px;
+  }
+  .text-field:focus-visible { outline: 3px solid var(--hh-focus-ring); outline-offset: 2px; }
+  .confirm { display: grid; grid-template-columns: 32px 1fr; gap: var(--hh-s-12); align-items: start; margin-bottom: var(--hh-s-16); }
+  .confirm-box { width: 32px; height: 32px; margin: 0; accent-color: var(--hh-accent-text); }
+  .hint { color: var(--hh-text-dim); margin: var(--hh-s-8) 0 var(--hh-s-12); }
+  .small { font-size: 14px; }
+  .section-label { text-transform: uppercase; letter-spacing: 0.06em; color: var(--hh-text-dim); font-size: 14px; }
+  .photo-list { list-style: none; margin: 0 0 var(--hh-s-8); padding: 0; }
+  .photo-sent { color: var(--hh-success); font-weight: 700; padding: var(--hh-s-4) 0; }
+  .photo-add {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--hh-s-12);
+    min-height: 72px;
+    margin-bottom: var(--hh-s-12);
+    border-radius: var(--hh-radius-control);
+    border: 2px dashed var(--hh-control-line);
+    background: var(--hh-card);
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .photo-add:focus-within { outline: 3px solid var(--hh-focus-ring); outline-offset: 2px; }
+  .photo-plus { font-size: 28px; line-height: 1; }
+  .card .btn + .hint, .card .big + .big { margin-top: var(--hh-s-12); }
 `;

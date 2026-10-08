@@ -63,3 +63,21 @@ export function houseDay(at: Date = new Date()): string {
     day: "2-digit",
   }).format(at);
 }
+
+import type { Page } from "@playwright/test";
+
+/** A tiny, valid PNG (one pixel): a stand-in for a camera photo that needs no shrinking. */
+export const TINY_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+  "base64",
+);
+
+/** Opens stop 1 and moves it loaded, then en route: the state proof of delivery starts from. */
+export async function takeFirstStopEnRoute(page: Page): Promise<void> {
+  await page.goto("/");
+  await page.locator("[data-stop]").first().click();
+  await page.getByRole("button", { name: "Mark loaded" }).click();
+  await page.getByRole("button", { name: "Mark en route" }).waitFor();
+  await page.getByRole("button", { name: "Mark en route" }).click();
+  await page.getByRole("button", { name: "Proof of delivery" }).waitFor();
+}

@@ -13,14 +13,17 @@ import { hhAddress } from "@hardscapehouse/design-system/src/address.js";
 import { HOUSE_ZONE } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import type { DriverLine, DriverRun, DriverStop } from "./drive-api.js";
 import {
+  ATTESTATION,
   STOP_LABEL,
   addressLine,
   driverActions,
   formatTime,
   qtyLabel,
   runSummary,
+  signBlockedReason,
   stopsInOrder,
   weightLabel,
+  type PodDraft,
 } from "./drive-logic.js";
 
 /** The status pill's tone, by status: colour never carries the meaning alone, the word is always there. */
@@ -107,6 +110,8 @@ export interface StopDetailModel {
   readonly stop: DriverStop;
   /** True while a move is on its way: the controls go grey. */
   readonly busy: boolean;
+  /** True while a late photo is going up. */
+  readonly photoBusy: boolean;
   readonly error: string;
   readonly notice: string;
 }
@@ -160,6 +165,7 @@ export function renderStopDetail(model: StopDetailModel): TemplateResult {
         : nothing}
     </section>
     ${linesBlock(stop, run.lines[stop.id])}
+    ${stop.status === "DELIVERED" ? renderLatePhoto(model.photoBusy) : nothing}
     ${actions.length > 0
       ? html`<div class="actions">
           ${actions.map(
@@ -175,4 +181,59 @@ export function renderStopDetail(model: StopDetailModel): TemplateResult {
         </div>`
       : nothing}
   `;
+}
+
+function photoAdd(label: string, busy: boolean): TemplateResult {
+  // The picker is a real file input behind a large label: the camera or the
+  // library, as the phone offers. It stays focusable for a keyboard.
+  return html`<label class="photo-add" data-tap>
+    <input type="file" accept="image/jpeg,image/png,image/webp" class="visually-hidden" data-field="photo" ?disabled=${busy} />
+    <span class="photo-plus" aria-hidden="true">+</span>
+    <span>${busy ? "Sending the photo" : label}</span>
+  </label>`;
+}
+
+export interface PodModel {
+  readonly stop: DriverStop;
+  readonly draft: PodDraft;
+  readonly photoBusy: boolean;
+  readonly error: string;
+}
+
+/** Proof of delivery: a typed name, the recipient's own confirmation, and an optional photo of the drop. */
+export function renderPod(model: PodModel): TemplateResult {
+  const { stop, draft } = model;
+  const blocked = signBlockedReason(draft);
+  return html`
+    <button type="button" class="back" data-action="back-to-stop" data-tap>Stop ${stop.stop_no}</button>
+    <h1>Proof of delivery</h1>
+    <p class="dim" data-pod>Stop ${stop.stop_no} · ${stop.customer_name || "Customer"} · ${stop.order_no}</p>
+    ${renderMessages(model.error, "")}
+    <section class="card">
+      <label class="field-label" for="pod-name">Full name of the person receiving</label>
+      <input id="pod-name" class="text-field" type="text" autocomplete="off" data-field="name" ?disabled=${draft.busy} />
+      <label class="confirm" for="pod-affirm">
+        <input id="pod-affirm" class="confirm-box" type="checkbox" data-field="affirm" ?disabled=${draft.busy} />
+        <span>${ATTESTATION}</span>
+      </label>
+      <button type="button" class="btn btn-primary big" data-action="sign" ?disabled=${blocked !== ""} data-tap>
+        ${draft.busy ? "Signing" : "Sign for this delivery"}
+      </button>
+      ${blocked !== "" ? html`<p class="hint" data-sign-hint>${blocked}</p>` : nothing}
+      <button type="button" class="btn btn-secondary big" data-action="back-to-stop" ?disabled=${draft.busy} data-tap>Not yet</button>
+    </section>
+    <section data-photos>
+      <h3 class="section-label">Photo of the drop · optional</h3>
+      <ul class="photo-list">
+        ${Array.from({ length: stop.photo_count }, (_, i) => html`<li class="photo-sent" data-photo-sent>Photo ${i + 1} sent</li>`)}
+      </ul>
+      ${photoAdd(stop.photo_count > 0 ? "Add another photo" : "Add a photo", model.photoBusy)}
+      <p class="dim small">Photos back the attestation. A photo that does not send never blocks the signature.</p>
+    </section>
+  `;
+}
+
+/** The late photo control on a delivered stop: the phone found signal after the drop. */
+export function renderLatePhoto(busy: boolean): TemplateResult {
+  return html`<section data-photos>${photoAdd("Add a photo to the proof", busy)}</section>`;
 }
