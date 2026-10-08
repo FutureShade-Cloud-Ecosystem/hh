@@ -201,6 +201,94 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 		t.Errorf("an unknown flow answered %d, want 400", unknownRsp.StatusCode)
 	}
 
+	// The personas. Each mints through the same gate as the till's pair (the
+	// resolver's live answer, the table's label), each reads its own branch
+	// only (the L-branch wall: its own branch answers, the other branch is
+	// refused by the fence), and a surface the role holds at none is refused
+	// by the server (the L-wall). The yard team's world is Trenton (the
+	// roadmap's queue); the driver's is Kingston, where its seeded driver
+	// and runs are.
+	var trentonID, kingstonID string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE code = 'TRT'`).Scan(&trentonID); err != nil {
+		t.Fatalf("the Trenton branch: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE code = 'KGN'`).Scan(&kingstonID); err != nil {
+		t.Fatalf("the Kingston branch: %v", err)
+	}
+	mintPersona := func(flow, wantRole, wantLabel, wantID string) (string, map[string]string) {
+		t.Helper()
+		rsp := post("/api/v1/demo/session", `{"flow":"`+flow+`"}`)
+		if rsp.StatusCode != http.StatusOK {
+			t.Fatalf("the %s mint: status %d, want 200 (body: %s)", flow, rsp.StatusCode, body(rsp))
+		}
+		var session struct {
+			Token string `json:"token"`
+			User  struct {
+				UserID   string `json:"user_id"`
+				RoleCode string `json:"role_code"`
+				RoleName string `json:"role_name"`
+				Tier     int    `json:"tier"`
+				Scope    string `json:"scope"`
+			} `json:"user"`
+		}
+		if err := json.Unmarshal([]byte(body(rsp)), &session); err != nil {
+			t.Fatalf("the %s session body does not decode: %v", flow, err)
+		}
+		if session.User.UserID != wantID || session.User.RoleCode != wantRole ||
+			session.User.RoleName != wantLabel || session.User.Tier != 3 || session.User.Scope != "BRANCH" {
+			t.Errorf("the %s credential is %+v, want %s/%s/%s at tier 3 BRANCH", flow, session.User, wantID, wantRole, wantLabel)
+		}
+		return session.Token, map[string]string{
+			"Authorization": "Bearer " + session.Token,
+			"X-Org":         "hh-demo",
+		}
+	}
+	branchCodes := func(headers map[string]string) []string {
+		t.Helper()
+		rsp := get("/api/v1/branches", headers)
+		if rsp.StatusCode != http.StatusOK {
+			t.Fatalf("GET /api/v1/branches: status %d, want 200 (body: %s)", rsp.StatusCode, body(rsp))
+		}
+		var rows []struct {
+			Code string `json:"code"`
+		}
+		if err := json.Unmarshal([]byte(body(rsp)), &rows); err != nil {
+			t.Fatalf("the branches body does not decode: %v", err)
+		}
+		codes := make([]string, 0, len(rows))
+		for _, r := range rows {
+			codes = append(codes, r.Code)
+		}
+		return codes
+	}
+
+	yardToken, yardHeaders := mintPersona("yard-team", "yard_team", "Yard Team", "d0200000-0000-4000-9000-000000000002")
+	if codes := branchCodes(yardHeaders); len(codes) != 1 || codes[0] != "TRT" {
+		t.Errorf("the yard persona reaches %v, want Trenton alone", codes)
+	}
+	if rsp := get("/api/v1/yard/pick-queue?branch_id="+trentonID, yardHeaders); rsp.StatusCode != http.StatusOK {
+		t.Errorf("the yard queue at Trenton: status %d, want 200 (body: %s)", rsp.StatusCode, body(rsp))
+	}
+	if rsp := get("/api/v1/yard/pick-queue?branch_id="+kingstonID, yardHeaders); rsp.StatusCode != http.StatusForbidden {
+		t.Errorf("the yard queue at Kingston: status %d, want the branch fence's 403", rsp.StatusCode)
+	}
+	if rsp := get("/api/v1/pos/policy", yardHeaders); rsp.StatusCode != http.StatusForbidden {
+		t.Errorf("the till's policy as the yard team: status %d, want the server's 403", rsp.StatusCode)
+	}
+
+	driverToken, driverHeaders := mintPersona("driver", "driver", "Driver", "d0200000-0000-4000-9000-000000000003")
+	if codes := branchCodes(driverHeaders); len(codes) != 1 || codes[0] != "KGN" {
+		t.Errorf("the driver persona reaches %v, want Kingston alone", codes)
+	}
+	if rsp := get("/api/v1/dispatch/my-runs", driverHeaders); rsp.StatusCode != http.StatusOK {
+		t.Errorf("the driver's runs: status %d, want 200 (body: %s)", rsp.StatusCode, body(rsp))
+	}
+	if rsp := get("/api/v1/pos/policy", driverHeaders); rsp.StatusCode != http.StatusForbidden {
+		t.Errorf("the till's policy as the driver: status %d, want the server's 403", rsp.StatusCode)
+	}
+	_ = yardToken
+	_ = driverToken
+
 	// A burst from this address is refused: hammer the mint until the
 	// limit answers, and hold that everything before the refusal minted
 	// and the refusal itself did not.
@@ -245,15 +333,16 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 		`SELECT count(*) FROM audit_log WHERE action = 'DEMO_SESSION_MINTED'`).Scan(&rows); err != nil {
 		t.Fatalf("the audit read failed: %v", err)
 	}
-	if rows != 2+burstMinted {
-		t.Errorf("audit_log holds %d DEMO_SESSION_MINTED rows, want one per minted session (%d)", rows, 2+burstMinted)
+	if rows != 4+burstMinted {
+		t.Errorf("audit_log holds %d DEMO_SESSION_MINTED rows, want one per minted session (%d)", rows, 4+burstMinted)
 	}
 	var namedActors int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*) FROM audit_log
 		 WHERE action = 'DEMO_SESSION_MINTED'
 		   AND entity_type = 'demo.session'
-		   AND actor_id::text IN ('de110000-0000-4000-9000-000000000001', 'de110000-0000-4000-9000-000000000002')`).Scan(&namedActors); err != nil {
+		   AND actor_id::text IN ('de110000-0000-4000-9000-000000000001', 'de110000-0000-4000-9000-000000000002',
+		                          'd0200000-0000-4000-9000-000000000002', 'd0200000-0000-4000-9000-000000000003')`).Scan(&namedActors); err != nil {
 		t.Fatalf("the audit actor read failed: %v", err)
 	}
 	if namedActors != rows {
