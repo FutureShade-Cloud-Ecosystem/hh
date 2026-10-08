@@ -40,10 +40,10 @@ const (
 )
 
 // errWalkInNotReturnable refuses the customer lines read for the house WALK-IN row (sub item 10.1):
-// its sales are everybody's walk-in sales, not one customer's history, and a walk-in sale is
-// returned by its own number on the single-order path.
+// its sales are everybody's walk-in sales, not one customer's history; the words send the clerk
+// to the customer on the sale, or to a card or cash refund of the walk-in sale itself.
 var errWalkInNotReturnable = clientErr(http.StatusUnprocessableEntity,
-	"pos: the WALK-IN house account holds no customer history; return a walk-in sale by its own order number")
+	"pos: the WALK-IN house account holds no customer history; find the customer on the sale and return it from their account, or refund the walk-in sale on its own to the card it was paid on or in cash")
 
 // CustomerLines is the customer lines read (sub item 10.1): every sales order the customer holds in
 // HH, till rings and quote conversions alike (the widened Q1 ruling), newest first, each line with
