@@ -109,6 +109,10 @@ func (s *StaffService) QuotePolicyFor(ctx context.Context, branchID string) (Quo
 	if err != nil {
 		return QuotePolicy{}, err
 	}
+	if p.QuickChipSet == nil {
+		// The contract types quick_chip_set an array: an un-curated set is [], never null.
+		p.QuickChipSet = []string{}
+	}
 	p.EffectiveChips = p.QuickChipSet
 	if len(p.EffectiveChips) == 0 {
 		if derived, derr := b.TopCatalogueApplications(ctx, 6); derr == nil {

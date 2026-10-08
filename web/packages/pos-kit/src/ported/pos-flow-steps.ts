@@ -58,6 +58,7 @@ export class HosPosFlowSteps extends LitElement {
       }
       nav {
         display: flex;
+        flex-wrap: wrap;
         align-items: center;
         gap: var(--hos-space-2);
       }
@@ -201,6 +202,9 @@ export class HosPosFlowSteps extends LitElement {
       /* Narrower than the four labels can share whole: each step keeps its own full width and the
          host's overflow-x scrolls the row, rather than cutting a label short. */
       @media (max-width: 359px) {
+        nav {
+          flex-wrap: nowrap;
+        }
         button {
           flex: 0 0 auto;
           overflow: visible;

@@ -334,6 +334,15 @@ func TestIntegration_StaffReject_SentBecomesLostWithItsRecord(t *testing.T) {
 	if !found {
 		t.Errorf("the change history must show status SENT to LOST by the staff member: %+v", hist.Changes)
 	}
+	// The staff read says why and how it was declined, from the decision's own row.
+	view, err := svc.StaffQuoteRead(ctx, quoteID)
+	if err != nil {
+		t.Fatalf("staff read: %v", err)
+	}
+	if view.Declined == nil || view.Declined.ReasonCode != "competitor" || view.Declined.Channel != "email" ||
+		view.Declined.Note != "went with the other yard" || view.Declined.DeclinedAt.IsZero() {
+		t.Errorf("the lost quote must carry its decline: %+v", view.Declined)
+	}
 }
 
 // A quote nobody sent can be marked lost too: the customer said no to what was read out, and an empty
@@ -403,6 +412,31 @@ func TestIntegration_StaffReject_AuthzAndBranch(t *testing.T) {
 		if _, err := svc.RejectOnBehalf(decisionCaller(role, intTrenton), q, in); err != nil {
 			t.Errorf("%s must be able to reject on the customer's behalf: %v", role, err)
 		}
+	}
+}
+
+// The decline is read only by a caller who can read the quote: a seller in another branch gets the quote read refused,
+// whole, and so never sees why or how it was declined; the owner branch's caller does.
+func TestIntegration_StaffReject_DeclinedIsReadWithinTheBranchOnly(t *testing.T) {
+	pool := intPool(t)
+	_, quoteID, _, _ := seedQuote(t, pool, "SENT", nil)
+	svc := shareSvc(t, pool, decisionNow())
+	if _, err := svc.RejectOnBehalf(decisionCaller("INSIDE_SALES", intTrenton), quoteID, StaffRejectIn{Channel: "phone", ReasonCode: "price", Note: "too dear"}); err != nil {
+		t.Fatalf("reject: %v", err)
+	}
+	view, err := svc.StaffQuoteRead(decisionCaller("INSIDE_SALES", intTrenton), quoteID)
+	if err != nil || view.Declined == nil || view.Declined.ReasonCode != "price" || view.Declined.Note != "too dear" {
+		t.Fatalf("the branch's seller must read the decline: %+v, %v", view.Declined, err)
+	}
+	other, err := svc.StaffQuoteRead(decisionCaller("INSIDE_SALES", intKingston), quoteID)
+	if err == nil || other.Declined != nil {
+		t.Errorf("a seller in another branch must not read the quote or its decline: %+v, %v", other.Declined, err)
+	}
+	// A quote nobody declined carries none, whatever its status.
+	_, sent, _, _ := seedQuote(t, pool, "SENT", nil)
+	plain, err := svc.StaffQuoteRead(decisionCaller("INSIDE_SALES", intTrenton), sent)
+	if err != nil || plain.Declined != nil {
+		t.Errorf("a quote nobody declined must carry no decline: %+v, %v", plain.Declined, err)
 	}
 }
 

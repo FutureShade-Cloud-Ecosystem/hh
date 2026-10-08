@@ -14,9 +14,11 @@
 // The geometry is bound through the rendering layer's escaped attribute path,
 // never joined into a markup string: each path's d is one interpolated
 // attribute value, so even a poisoned registry entry could not close the
-// attribute and inject.
+// attribute and inject. The paths are drawn with the svg tag, not the html
+// one: a path parsed as html markup lands in the html namespace inside the
+// svg and paints nothing.
 
-import { html, nothing, type TemplateResult as Template } from 'lit';
+import { html, nothing, svg, type TemplateResult as Template } from 'lit';
 
 export interface StateIcon {
   /** SVG path `d` strings, drawn in order, stroked in currentColor. */
@@ -36,6 +38,8 @@ export const STATE_ICONS = {
   alertOctagon: { paths: ['M8 2h8l6 6v8l-6 6H8l-6-6V8z', 'M9 9l6 6', 'M15 9l-6 6'] },
   // a step that is done: the check that pairs with the word "done".
   check: { paths: ['M5 12l5 5 9-10'] },
+  // an action that makes something new: the plus beside a "New ..." label.
+  plus: { paths: ['M12 5v14', 'M5 12h14'] },
 } as const satisfies Record<string, StateIcon>;
 
 export type StateIconName = keyof typeof STATE_ICONS;
@@ -63,5 +67,5 @@ export function icon(name: StateIconName, label?: string): Template {
     aria-hidden="${label ? 'false' : 'true'}"
     role="${label ? 'img' : 'presentation'}"
     aria-label=${label ?? nothing}
-  >${paths.map((d) => html`<path d="${d}"></path>`)}</svg>`;
+  >${paths.map((d) => svg`<path d="${d}"></path>`)}</svg>`;
 }
