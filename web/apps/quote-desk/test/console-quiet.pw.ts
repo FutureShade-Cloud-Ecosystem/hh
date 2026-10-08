@@ -19,7 +19,27 @@ function refusals(page: Page): string[] {
   return seen;
 }
 
-test("a read the server refuses this role is asked once for the session, not on every quote page", async ({ page }) => {
+test("a read the server would refuse this role is not asked at all, and the grant is asked once", async ({ page }) => {
+  await seed(page, { customer_id: "c-fenwick" });
+  const seen = refusals(page);
+  const asked: string[] = [];
+  page.on("request", (r) => asked.push(new URL(r.url()).pathname));
+  await signIn(page);
+  await open(page, "Q-1004");
+  await expect(page.getByTestId("qb-context")).toContainText("Q-1004");
+  await showList(page);
+  await open(page, "Q-1001");
+  await showList(page);
+  await open(page, "Q-1004");
+  await page.getByRole("button", { name: /^Increase quantity/ }).first().click();
+  await page.waitForTimeout(800);
+  expect(asked.filter((line) => line.includes("/settings/acceptance") || line.includes("/quote-assist/scope-rules"))).toHaveLength(0);
+  expect(seen).toHaveLength(0);
+  expect(asked.filter((line) => line.endsWith("/quotes/settings-grant"))).toHaveLength(1);
+});
+
+test("a read the server refuses this role anyway (a grant that outran a role change) is asked once for the session", async ({ page }) => {
+  await page.request.put("/_stub/grant-all-true", { data: { on: true } });
   await seed(page, { customer_id: "c-fenwick" });
   const seen = refusals(page);
   await signIn(page);

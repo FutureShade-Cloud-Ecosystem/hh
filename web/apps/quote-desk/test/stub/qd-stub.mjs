@@ -349,7 +349,7 @@ const HST_RATE_BPS = 1300;
 // the suite flips, and the submissions seen, for the sender's assertions.
 const feedbackFiled = [];
 const feedbackMode = { value: "ok" };
-const switches = { convertWall: false, callerOnCostList: true, callerIsGeneralManager: false, chipSetNull: false, floorRaiseBps: 0, approvalsShape: "page", quotePageSize: 0, paymentRoleRefused: false, paymentGhost: false, paymentKeyCrossed: false, paymentGrantRefused: false };
+const switches = { convertWall: false, callerOnCostList: true, callerIsGeneralManager: false, chipSetNull: false, grantAllTrue: false, floorRaiseBps: 0, approvalsShape: "page", quotePageSize: 0, paymentRoleRefused: false, paymentGhost: false, paymentKeyCrossed: false, paymentGrantRefused: false };
 
 // Every write the stub sees, for the suite's layout save assertions. The
 // ledger is test scaffolding: no contract path reads it.
@@ -1242,6 +1242,13 @@ const server = createServer(async (request, response) => {
     });
     return;
   }
+  if (path === "/_stub/grant-all-true" && request.method === "PUT") {
+    readBody(request, response, (body) => {
+      switches.grantAllTrue = body.on === true;
+      respondJson(response, 200, { on: switches.grantAllTrue });
+    });
+    return;
+  }
   if (path === "/_stub/chip-set-null" && request.method === "PUT") {
     readBody(request, response, (body) => {
       switches.chipSetNull = body.on === true;
@@ -1423,6 +1430,7 @@ const server = createServer(async (request, response) => {
     switches.callerOnCostList = true;
     switches.callerIsGeneralManager = false;
     switches.chipSetNull = false;
+    switches.grantAllTrue = false;
     switches.floorRaiseBps = 0;
     switches.approvalsShape = "page";
     switches.quotePageSize = 0;
@@ -1659,10 +1667,11 @@ const server = createServer(async (request, response) => {
   // round 14 (a): settings grant -- mirrors the three predicates the real server uses.
   if (path === "/api/v1/quotes/settings-grant" && request.method === "GET") {
     // can_read_acceptance + can_edit_policy: holdsQuoteSettingsAuthority (LevelManage on quote-desk).
-    const canReadAcceptance = isSettingsAdmin(caller);
-    const canEditPolicy = isSettingsAdmin(caller);
+    // The grantAllTrue switch is a grant that outran a role change: it says yes where the routes still refuse.
+    const canReadAcceptance = switches.grantAllTrue || isSettingsAdmin(caller);
+    const canEditPolicy = switches.grantAllTrue || isSettingsAdmin(caller);
     // can_read_scope_rules: IsAdmin (TierLeadership + ScopeGlobal).
-    const canReadScopeRules = isAdmin(caller);
+    const canReadScopeRules = switches.grantAllTrue || isAdmin(caller);
     respondJson(response, 200, {
       can_read_acceptance: canReadAcceptance,
       can_read_scope_rules: canReadScopeRules,
