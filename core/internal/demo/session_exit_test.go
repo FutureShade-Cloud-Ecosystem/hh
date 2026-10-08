@@ -280,8 +280,55 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 	if codes := branchCodes(driverHeaders); len(codes) != 1 || codes[0] != "KGN" {
 		t.Errorf("the driver persona reaches %v, want Kingston alone", codes)
 	}
-	if rsp := get("/api/v1/dispatch/my-runs", driverHeaders); rsp.StatusCode != http.StatusOK {
-		t.Errorf("the driver's runs: status %d, want 200 (body: %s)", rsp.StatusCode, body(rsp))
+	runsRsp := get("/api/v1/dispatch/my-runs?date="+seedClock.UTC().Format("2006-01-02"), driverHeaders)
+	if runsRsp.StatusCode != http.StatusOK {
+		t.Errorf("the driver's runs: status %d, want 200 (body: %s)", runsRsp.StatusCode, body(runsRsp))
+	}
+	// The runs themselves are Kingston's: the 200 alone only shows the
+	// grant does not trap the login. The seeded driver row, and every run
+	// the driver's own read answers, sit at Kingston.
+	var driverRuns struct {
+		Items []struct {
+			RunNo    string `json:"run_no"`
+			BranchID string `json:"branch_id"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(body(runsRsp)), &driverRuns); err != nil {
+		t.Fatalf("the driver's runs body does not decode: %v", err)
+	}
+	if len(driverRuns.Items) == 0 {
+		t.Errorf("the driver's day holds no run, want the seeded Kingston runs")
+	}
+	for _, run := range driverRuns.Items {
+		if run.BranchID != kingstonID {
+			t.Errorf("the driver's run %s sits at branch %s, want Kingston %s", run.RunNo, run.BranchID, kingstonID)
+		}
+	}
+	var driverRowBranch string
+	if err := pool.QueryRow(ctx,
+		`SELECT branch_id::text FROM dispatch_drivers WHERE user_id = $1::uuid AND is_active`,
+		"d0200000-0000-4000-9000-000000000003").Scan(&driverRowBranch); err != nil {
+		t.Fatalf("the persona's seeded driver row: %v", err)
+	}
+	if driverRowBranch != kingstonID {
+		t.Errorf("the persona's driver row sits at branch %s, want Kingston %s", driverRowBranch, kingstonID)
+	}
+	// Refused at Trenton: the branch list leaves it out (checked above) and
+	// the server fences a read named at it. The role already holds yard-pick
+	// at none, so this 403 is the gates' joint answer, and the one grant
+	// check below is what pins the branch half.
+	if rsp := get("/api/v1/yard/pick-queue?branch_id="+trentonID, driverHeaders); rsp.StatusCode != http.StatusForbidden {
+		t.Errorf("the driver at Trenton: status %d, want 403", rsp.StatusCode)
+	}
+	var liveGrants int
+	var liveAt string
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*), coalesce(min(branch_id::text), '') FROM user_branch_grants WHERE user_id = $1::uuid AND deleted_at IS NULL`,
+		"d0200000-0000-4000-9000-000000000003").Scan(&liveGrants, &liveAt); err != nil {
+		t.Fatalf("the driver's live branch grants: %v", err)
+	}
+	if liveGrants != 1 || liveAt != kingstonID {
+		t.Errorf("the driver holds %d live branch grants (first %s), want one at Kingston %s", liveGrants, liveAt, kingstonID)
 	}
 	if rsp := get("/api/v1/pos/policy", driverHeaders); rsp.StatusCode != http.StatusForbidden {
 		t.Errorf("the till's policy as the driver: status %d, want the server's 403", rsp.StatusCode)
