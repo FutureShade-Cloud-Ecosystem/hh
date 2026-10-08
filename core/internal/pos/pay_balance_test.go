@@ -343,3 +343,35 @@ func TestPayBalanceTake_UninvoicedRemainder_RefusedWhenItCannotBeBilled(t *testi
 		t.Fatalf("an unwired raise took money anyway: %+v", bare.tender.takes)
 	}
 }
+
+// The take checks the drawer BEFORE any capture (the review's P2-3, the
+// ring's step 5b): a session that is not open, and a session belonging to
+// another branch, refuse in the ring's own 409 words with no card charged.
+func TestPayBalanceTake_ChecksTheDrawerBeforeAnyCapture(t *testing.T) {
+	cases := []struct {
+		name string
+		set  func(h *harness)
+	}{
+		{"a closed session", func(h *harness) { h.tender.sessionStatus = "CLOSED" }},
+		{"an unreachable session", func(h *harness) { h.tender.sessionErr = errors.New("till: not found") }},
+		{"another branch's session", func(h *harness) { h.tender.sessionBranch = "branch-else" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := payBalanceHarness()
+			tc.set(h)
+			in := takeInput()
+			in.Method = TenderCard
+			in.PaymentToken = "tok-x"
+			if _, err := h.svc.PayBalanceTake(context.Background(), in); err == nil {
+				t.Fatalf("the take succeeded on %s", tc.name)
+			}
+			if len(h.tender.captureCalls) != 0 {
+				t.Fatalf("a card was charged before the drawer was checked: %+v", h.tender.captureCalls)
+			}
+			if len(h.tender.takes) != 0 {
+				t.Fatalf("money moved before the drawer was checked: %+v", h.tender.takes)
+			}
+		})
+	}
+}

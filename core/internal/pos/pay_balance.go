@@ -339,6 +339,24 @@ func (s *Service) PayBalanceTake(ctx context.Context, in PayBalanceTakeInput) (P
 		return PayBalanceTaken{}, ErrPayBalancePartAmount{SentCents: in.AmountCents, BalanceCents: pre.balanceCents()}
 	}
 
+	// The ring's step 5b (DIB-389), ahead of any capture: the session must
+	// exist, be open and belong to the order's branch, in the ring's own 409
+	// words, so no card is charged for a take the drawer would refuse anyway
+	// (a charge then reversal the customer sees) and no cash lands in another
+	// branch's drawer.
+	if s.tender != nil {
+		sess, serr := s.tender.GetSession(ctx, in.TillSessionID)
+		if serr != nil {
+			return PayBalanceTaken{}, clientErr(http.StatusConflict, "pos: till session %s unavailable: %s", in.TillSessionID, serr.Error())
+		}
+		if sess.Status != till.StatusOpen {
+			return PayBalanceTaken{}, clientErr(http.StatusConflict, "pos: till session %s is not open", in.TillSessionID)
+		}
+		if sess.BranchID != pre.BranchID {
+			return PayBalanceTaken{}, clientErr(http.StatusConflict, "pos: till session %s belongs to another branch", in.TillSessionID)
+		}
+	}
+
 	actor := identity.StaffUserIDFromContext(ctx)
 
 	// The card leg: captured on the rail before the transaction, exactly the

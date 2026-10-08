@@ -733,6 +733,7 @@ type fakeTender struct {
 	// sessionBranch is the branch GetSession reports for the drawer (DIB-389). Defaults to
 	// baseInput()'s branch so the equality guard is satisfied unless a test deliberately diverges.
 	sessionBranch string
+	sessionStatus string
 	sessionErr    error
 }
 
@@ -740,7 +741,11 @@ func (t *fakeTender) GetSession(_ context.Context, id string) (till.SessionDetai
 	if t.sessionErr != nil {
 		return till.SessionDetail{}, t.sessionErr
 	}
-	return till.SessionDetail{TillSession: till.TillSession{ID: id, BranchID: t.sessionBranch, Status: "OPEN"}}, nil
+	status := t.sessionStatus
+	if status == "" {
+		status = "OPEN"
+	}
+	return till.SessionDetail{TillSession: till.TillSession{ID: id, BranchID: t.sessionBranch, Status: status}}, nil
 }
 
 // CaptureCard is the pre-transaction capture double: one canned capture per leg, keyed by the leg
