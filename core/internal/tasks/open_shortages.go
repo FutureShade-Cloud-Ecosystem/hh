@@ -1,6 +1,6 @@
 package tasks
 
-// open_shortages.go, the open-shortage count behind the yard manager's Needs-you row (0380).
+// open_shortages.go, the open-shortage count behind the yard manager's Needs-you row (0381).
 //
 // The count lives here because task_shortages is this module's table: the dashboard's adapter asks
 // through this seam and never reads the table itself. The seam is optional, discovered by type

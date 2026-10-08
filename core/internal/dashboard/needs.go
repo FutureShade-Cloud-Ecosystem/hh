@@ -56,7 +56,7 @@ const (
 	NeedsDueToCommit   = "dispatch.due_to_commit"
 	NeedsParkedTickets = "pos.parked"
 	NeedsStalePicks    = "tasks.stale_picks"
-	// The yard manager's two own sources (0380): shortages the yard team raised and left open, and
+	// The yard manager's two own sources (0381): shortages the yard team raised and left open, and
 	// purchase orders that landed short and are still partial.
 	NeedsOpenShortages        = "tasks.open_shortages"
 	NeedsReceivingDifferences = "purchasing.receiving_differences"
@@ -191,7 +191,7 @@ var DefaultNeedsSources = map[string][]NeedsPolicy{
 	},
 }
 
-// yardManagerNeeds is the yard manager's own policy, the Go copy of 0380 §5. Stale picks keep the
+// yardManagerNeeds is the yard manager's own policy, the Go copy of 0381 §5. Stale picks keep the
 // yard shape's edges; the two new sources carry count edges only.
 var yardManagerNeeds = []NeedsPolicy{
 	{SourceKey: NeedsOpenShortages, Position: 0, Visible: true, WarnAt: 1, StopAt: 5},
@@ -201,7 +201,7 @@ var yardManagerNeeds = []NeedsPolicy{
 
 // defaultNeedsFor is the fallback policy for one profile: a job shape serves its own row set from
 // DefaultNeedsSources, the yard manager its own, and every other manager refinement the rows of the
-// shape it was born from (0380 copies them, so the fallback and the table agree).
+// shape it was born from (0381 copies them, so the fallback and the table agree).
 func defaultNeedsFor(profile string) []NeedsPolicy {
 	if profile == ProfileManagerYard {
 		return yardManagerNeeds

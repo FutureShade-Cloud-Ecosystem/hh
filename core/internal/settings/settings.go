@@ -69,7 +69,7 @@ type Item struct {
 }
 
 // Profiles are 0140's five job shapes (spec OQ-2: reused as-is for the pilot) plus the manager
-// refinements 0380 added (manager.<role>, one profile row per manager role, decision 5): the
+// refinements 0381 added (manager.<role>, one profile row per manager role, decision 5): the
 // curation write gate must accept every profile the dashboard substrate can hold, or a manager's
 // profile would be a profile an admin cannot curate.
 var validProfiles = map[string]bool{

@@ -8,7 +8,7 @@ import (
 )
 
 // TestIntegration_ReceivingDifferences_CountsShortReceiptsInsideTheReach is the yard manager's
-// "receipts that landed short" source (0380): purchase orders left PARTIAL, counted by the module
+// "receipts that landed short" source (0381): purchase orders left PARTIAL, counted by the module
 // that owns them, fenced to the reach, and dropped the moment the rest lands or the order is closed.
 // The harness database is shared, so every assertion is a delta against a baseline read first.
 func TestIntegration_ReceivingDifferences_CountsShortReceiptsInsideTheReach(t *testing.T) {

@@ -1,6 +1,6 @@
 package purchasing
 
-// receiving_differences.go, the short-receipt count behind the yard manager's Needs-you row (0380).
+// receiving_differences.go, the short-receipt count behind the yard manager's Needs-you row (0381).
 //
 // A receiving difference is a purchase order that landed part of what was ordered and was neither
 // finished nor closed: status PARTIAL with at least one line still short. It leaves the count when

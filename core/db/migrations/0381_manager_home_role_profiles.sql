@@ -1,4 +1,4 @@
--- 0380_manager_home_role_profiles.sql ── one Manager Home, one profile row per manager role.
+-- 0381_manager_home_role_profiles.sql ── one Manager Home, one profile row per manager role.
 --
 -- THE DECISION THIS CARRIES (the principal's item 4, decision 5, recommended A): one Manager Home
 -- app whose landing (needs you, widgets, tabs) is a per role profile in the dashboard's existing

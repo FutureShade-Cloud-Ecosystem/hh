@@ -10,7 +10,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 )
 
-// The approvals list per kind (Manager Home, 0380 lane): the same list the caller already reads,
+// The approvals list per kind (Manager Home, 0381 lane): the same list the caller already reads,
 // narrowed to one policy kind, and only for a kind the caller could decide. A kind the caller holds
 // no authority over is refused rather than answered empty, so a surface offering a tab per kind has
 // one honest source for which tabs to draw.

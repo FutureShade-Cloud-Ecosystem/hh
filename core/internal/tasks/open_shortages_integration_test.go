@@ -8,7 +8,7 @@ import (
 )
 
 // TestIntegrationOpenShortageSummaryCountsWhatTheYardLeftOpen is the yard manager's "open
-// shortages" source (0380): unresolved shortages the yard team raised, counted by the module that
+// shortages" source (0381): unresolved shortages the yard team raised, counted by the module that
 // owns them, fenced to the reach, with the age of the oldest. The database is shared, so each
 // assertion is a delta against a baseline read first.
 func TestIntegrationOpenShortageSummaryCountsWhatTheYardLeftOpen(t *testing.T) {

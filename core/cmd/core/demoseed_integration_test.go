@@ -651,7 +651,7 @@ func TestIntegration_TheNeedsQueueHasSomethingToCount(t *testing.T) {
 // -- Promise 6 · the yard manager's Needs-you counts match the seed -------------------------------
 
 // TestIntegration_TheYardManagersNeedsCountsMatchTheSeed reads the three sources of the yard
-// manager's landing (0380) through the adapters the composition root registers, over the seeded
+// manager's landing (0381) through the adapters the composition root registers, over the seeded
 // demo world, and compares each to the plan: the open shortages (SH1 and SH2 open, SH3 resolved) and
 // the stale picks (the PUSHED picks past their accept deadline), counted from demoShortages and
 // demoTasks rather than typed. The receiving differences source has no rows in this world (the demo

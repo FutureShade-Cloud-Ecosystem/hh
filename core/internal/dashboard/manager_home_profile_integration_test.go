@@ -8,7 +8,7 @@ import (
 )
 
 // manager_home_profile_integration_test.go, the per-manager-role profiles as SEEDED ROWS (decision
-// 5, migration 0380). The unit half pins the vocabulary; this half pins what a login actually
+// 5, migration 0381). The unit half pins the vocabulary; this half pins what a login actually
 // reads, for the reason TestIntegration_0203_TheDispatcherFilesUnderTheDock gives: the thing being
 // pinned is a row, and the failure this guards is a later migration or a hand edit silently
 // handing a manager somebody else's Home.
@@ -21,11 +21,11 @@ import (
 //   - the dispatcher ruling (0203) keeps its SUBSTANCE: the logistics manager's own profile leads
 //     with the day's deliveries, exactly as the dock shape it was born from.
 
-// TestIntegration_0380_EveryManagerRoleAnswersItsOwnProfile pins the role to profile rows for all
+// TestIntegration_0381_EveryManagerRoleAnswersItsOwnProfile pins the role to profile rows for all
 // eight manager roles the matrix files under manager-home (default.json: work or manage). Six were
 // filed under the shared "manager" shape, the yard manager under "yard", the general manager under
 // "admin"; each now has their own.
-func TestIntegration_0380_EveryManagerRoleAnswersItsOwnProfile(t *testing.T) {
+func TestIntegration_0381_EveryManagerRoleAnswersItsOwnProfile(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 
@@ -72,10 +72,10 @@ func TestIntegration_0380_EveryManagerRoleAnswersItsOwnProfile(t *testing.T) {
 	}
 }
 
-// TestIntegration_0380_TheYardManagersHomeIsItsOwn is the red test the brief names: the yard
+// TestIntegration_0381_TheYardManagersHomeIsItsOwn is the red test the brief names: the yard
 // manager's home answers its own profile, whose widgets are the picks board and the deliveries
 // board (0201's catalog), NOT the shared "manager" shape's book-first set.
-func TestIntegration_0380_TheYardManagersHomeIsItsOwn(t *testing.T) {
+func TestIntegration_0381_TheYardManagersHomeIsItsOwn(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 
@@ -143,11 +143,11 @@ func TestIntegration_0380_TheYardManagersHomeIsItsOwn(t *testing.T) {
 	}
 }
 
-// TestIntegration_0380_TheOtherManagersKeepTheirShape is the control half: a manager profile is
+// TestIntegration_0381_TheOtherManagersKeepTheirShape is the control half: a manager profile is
 // born from its base shape's rows, so no manager wakes up on a changed screen. The branch manager
 // (born from "manager") keeps the controller's widget set under their own name; the logistics
 // manager (born from the dock, 0203's ruling) still leads with the day's deliveries.
-func TestIntegration_0380_TheOtherManagersKeepTheirShape(t *testing.T) {
+func TestIntegration_0381_TheOtherManagersKeepTheirShape(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 
@@ -208,12 +208,12 @@ func TestIntegration_0380_TheOtherManagersKeepTheirShape(t *testing.T) {
 	}
 }
 
-// TestIntegration_0380_TheYardManagersNeedsSourcesAreDeclared pins the three sources the roadmap
+// TestIntegration_0381_TheYardManagersNeedsSourcesAreDeclared pins the three sources the roadmap
 // names for the yard manager's Needs-you (open shortages raised by the yard team, stale picks,
 // receiving differences). The rows are policy; the adapters that count them land with the sources
 // themselves, and a source nobody has wired renders nothing (0201's posture), so this asserts the
 // DECLARATION, not the count.
-func TestIntegration_0380_TheYardManagersNeedsSourcesAreDeclared(t *testing.T) {
+func TestIntegration_0381_TheYardManagersNeedsSourcesAreDeclared(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 
@@ -245,9 +245,9 @@ func TestIntegration_0380_TheYardManagersNeedsSourcesAreDeclared(t *testing.T) {
 	}
 }
 
-// TestIntegration_0380_ManagerNeedsPolicyMatchesTheGoFallback keeps the table and its code copy
+// TestIntegration_0381_ManagerNeedsPolicyMatchesTheGoFallback keeps the table and its code copy
 // from drifting for the refinements, the way the 0201 drift gate does for the job shapes.
-func TestIntegration_0380_ManagerNeedsPolicyMatchesTheGoFallback(t *testing.T) {
+func TestIntegration_0381_ManagerNeedsPolicyMatchesTheGoFallback(t *testing.T) {
 	repo := widgetRepo(t)
 	for _, profile := range managerProfiles {
 		want := defaultNeedsFor(profile)
@@ -266,9 +266,9 @@ func TestIntegration_0380_ManagerNeedsPolicyMatchesTheGoFallback(t *testing.T) {
 	}
 }
 
-// TestIntegration_0380_EveryProfileKeyedTableCarriesEveryManagerProfile pins the §6 copies: no
+// TestIntegration_0381_EveryProfileKeyedTableCarriesEveryManagerProfile pins the §6 copies: no
 // manager opens a screen whose curated items, quick actions or gallery have gone missing.
-func TestIntegration_0380_EveryProfileKeyedTableCarriesEveryManagerProfile(t *testing.T) {
+func TestIntegration_0381_EveryProfileKeyedTableCarriesEveryManagerProfile(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 	for _, table := range []string{

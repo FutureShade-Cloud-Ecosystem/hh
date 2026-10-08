@@ -150,7 +150,7 @@ func VisibleFor(meta ActionMeta, cfg *ActionConfig, profile string) bool {
 }
 
 // defaultVisibleFor is the catalog default for one profile; a manager refinement with no entry of
-// its own answers as the shape it was born from (0380).
+// its own answers as the shape it was born from (0381).
 func defaultVisibleFor(meta ActionMeta, profile string) bool {
 	if v, ok := meta.DefaultProfiles[profile]; ok {
 		return v
