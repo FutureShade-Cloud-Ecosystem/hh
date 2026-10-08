@@ -85,6 +85,7 @@ export class ReturnDraft {
       return { ok: true };
     }
     const { order, line } = hit;
+    if (!order.returnable) return { ok: false, words: `${order.orderNo} cannot be returned from here: ${order.notReturnableReason}` };
     if (line.qtyOpen <= 0) {
       return { ok: false, words: `Nothing on ${line.description} is open to return: every unit has gone back already.` };
     }
@@ -96,9 +97,11 @@ export class ReturnDraft {
     }
     const tied = this.branchId;
     if (tied !== null && tied !== order.branchId && !this.#qty.has(orderLineId)) {
+      const here = this.#orders.find((candidate) => candidate.branchId === tied)?.branchName ?? "";
+      const there = order.branchName;
       return {
         ok: false,
-        words: "A credit note is for one branch: this line is on an order from another branch. Finish this credit note first, then start another for that branch.",
+        words: `A credit note is for one branch: this credit note is at ${here === "" ? "one branch" : here}, and ${order.orderNo} is at ${there === "" ? "another" : there}. Finish this credit note first, then start another for that branch.`,
       };
     }
     this.#qty.set(orderLineId, parsed);

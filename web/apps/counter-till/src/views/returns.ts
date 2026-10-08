@@ -303,8 +303,18 @@ export const returnsStyles = css`
     font-size: 11px;
     font-variant-numeric: tabular-nums;
   }
+  .returns .credit-total {
+    font-size: 28px;
+    font-weight: 700;
+    margin: 0 0 var(--hh-s-4);
+    font-variant-numeric: tabular-nums;
+  }
   .returns .credit-count {
     font-weight: 600;
+    margin: 0 0 var(--hh-s-12);
+  }
+  .returns .order-blocked {
+    color: var(--hh-state-stop);
     margin: 0 0 var(--hh-s-12);
   }
   .returns .btn-wide {
@@ -590,9 +600,12 @@ function renderOrder(flow: ReturnsFlow, order: CustomerOrder): TemplateResult {
   return html`
     <section class="rt-card" data-testid="returns-order" data-order=${order.orderNo}>
       <div class="order-head">
-        <span>${order.orderNo}${order.jobLabel === "" ? "" : html` · job ${order.jobLabel}`}</span>
+        <span>${order.orderNo}${order.jobLabel === "" ? "" : html` · job ${order.jobLabel}`}${order.branchName === "" ? "" : html` · ${order.branchName}`}</span>
         <span class="open-count">${open} of ${order.lines.length} ${order.lines.length === 1 ? "line" : "lines"} open to return</span>
       </div>
+      ${order.returnable
+        ? nothing
+        : html`<p class="order-blocked" role="status" data-testid="returns-order-blocked">${order.notReturnableReason}</p>`}
       <ul class="line-list" aria-label="Lines of ${order.orderNo}">
         ${order.lines.map((line) => renderLine(flow, order, line))}
       </ul>
@@ -603,7 +616,7 @@ function renderOrder(flow: ReturnsFlow, order: CustomerOrder): TemplateResult {
 function renderLine(flow: ReturnsFlow, order: CustomerOrder, line: CustomerLine): TemplateResult {
   const qty = flow.draft.qtyOf(line.orderLineId);
   const chosen = flow.draft.dispositionOf(line.orderLineId);
-  const exhausted = line.qtyOpen <= 0;
+  const exhausted = line.qtyOpen <= 0 || !order.returnable;
   return html`
     <li class="line" data-testid="returns-line" data-line=${line.orderLineId} data-picked=${qty > 0 ? "true" : "false"}>
       <div class="line-top">
@@ -616,7 +629,9 @@ function renderLine(flow: ReturnsFlow, order: CustomerOrder, line: CustomerLine)
             bought ${shownQty(line.qtySold)} at ${formatMoney(line.unitPriceCents)} · ${shownQty(line.qtyOpen)} open
           </p>
           ${exhausted
+            ? order.returnable
             ? html`<p class="notice">Every unit has gone back already.</p>`
+            : nothing
             : html`
                 <span class="qty" role="group" aria-label="Quantity to return: ${line.description} on ${order.orderNo}">
                   <button
@@ -683,39 +698,49 @@ function shownQty(value: number): string {
   return String(Number(value.toFixed(4)));
 }
 
+function creditFigure(flow: ReturnsFlow): TemplateResult {
+  const preview = flow.preview;
+  if (preview !== null) {
+    return html`
+      <p class="credit-total" data-testid="returns-credit-total">${formatMoney(preview.totalCents)}</p>
+      <p class="notice" data-testid="returns-credit-tax">
+        with tax: ${formatMoney(preview.subtotalCents)} before tax, ${formatMoney(preview.taxCents)} tax
+      </p>
+    `;
+  }
+  if (flow.previewing) return html`<p class="notice" role="status" data-testid="returns-credit-pricing">Pricing the credit.</p>`;
+  if (flow.previewNotice !== null) return html`<p class="note-stop" role="alert" data-testid="returns-preview-notice">${flow.previewNotice}</p>`;
+  return html``;
+}
+
 function renderCredit(flow: ReturnsFlow): TemplateResult {
   const picked = flow.draft.pickedLines();
   const missing = flow.draft.missingDispositions;
-  const lineById = new Map<string, CustomerLine>();
-  for (const order of flow.orders) for (const line of order.lines) lineById.set(line.orderLineId, line);
   return html`
     <aside class="rt-card rt-credit" data-testid="returns-credit" aria-label="The credit so far">
       <h3>The credit so far</h3>
       ${picked.length === 0
         ? html`<p class="notice" data-testid="returns-credit-empty">Pick a line to start the credit note.</p>`
         : html`
+            ${creditFigure(flow)}
             <p class="credit-count" data-testid="returns-credit-count">
               ${picked.length} ${picked.length === 1 ? "line" : "lines"} from ${flow.draft.orderCount}
               ${flow.draft.orderCount === 1 ? "order" : "orders"}
             </p>
             <ul class="credit-lines" aria-label="Lines on the credit note">
               ${picked.map((pick) => {
-                const line = lineById.get(pick.orderLineId);
+                const priced = flow.preview?.lines.get(pick.orderLineId);
                 return html`
                   <li data-testid="returns-credit-line">
                     ${shownQty(pick.qty)} ${pick.description} on ${pick.orderNo} ·
                     ${pick.disposition === null ? "choose what happens" : DISPOSITION_WORDS[pick.disposition]}
-                    ${line === undefined
+                    ${priced === undefined
                       ? nothing
-                      : html`<span class="server-figure">${formatMoney(line.unitPriceCents)} each on the order, line ${formatMoney(line.lineTotalCents)} plus ${formatMoney(line.taxCents)} tax</span>`}
+                      : html`<span class="server-figure" data-testid="returns-credit-line-figure">${formatMoney(priced.totalCents)} with ${formatMoney(priced.taxCents)} tax</span>`}
                   </li>
                 `;
               })}
             </ul>
-            <p class="notice" data-testid="returns-credit-pending">
-              The credit's own total is the server's figure, with tax: it is priced when the refund is drafted. The figures
-              above are what the order says, not the credit.
-            </p>
           `}
       ${missing > 0
         ? html`<p class="notice" data-testid="returns-missing">
@@ -775,9 +800,9 @@ function renderRefundStep(flow: ReturnsFlow): TemplateResult {
             `,
           )}
         </ul>
+        ${creditFigure(flow)}
         <p class="hint">
-          The credit's own total, with tax, is the server's figure and appears on the Done step. Damaged lines never touch the
-          shelf; nothing returned is money back against the paper alone.
+          Damaged lines never touch the shelf; nothing returned is money back against the paper alone.
         </p>
         <button type="button" class="btn-secondary" data-action="returns-back-to-lines" ?disabled=${frozen}>Back to the lines</button>
       </div>

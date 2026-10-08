@@ -415,6 +415,15 @@ test("a two order return: lines from both orders, one credit note in cash, and t
   await expect(orderOne.getByTestId("returns-line").first()).toHaveAttribute("data-picked", "true");
   await expect(orderTwo.getByTestId("returns-line").first()).toHaveAttribute("data-picked", "true");
   await expect(page.getByTestId("returns-credit-count")).toHaveText("2 lines from 2 orders");
+  // The credit so far is the server's preview (the commit's own pricing), money with tax.
+  const totalOf = (text: string): number => {
+    const match = text.match(/\$([0-9,]+)\.([0-9]{2})/);
+    expect(match).toBeTruthy();
+    return Number(match?.[1].replaceAll(",", "") as string) * 100 + Number(match?.[2]);
+  };
+  await expect(page.getByTestId("returns-credit-total")).toBeVisible();
+  const previewed = totalOf((await page.getByTestId("returns-credit-total").textContent()) as string);
+  expect(previewed).toBeGreaterThan(0);
   await expect(page.getByRole("button", { name: "Continue to the refund" })).toBeEnabled();
   await shot(page, "sales-08-return-two-orders", testInfo);
 
@@ -435,6 +444,8 @@ test("a two order return: lines from both orders, one credit note in cash, and t
   expect(totalMatch).toBeTruthy();
   // The string goes to cents through its parts, never through a float multiply.
   const creditedCents = Number(totalMatch?.[1].replaceAll(",", "") as string) * 100 + Number(totalMatch?.[2]);
+  // The commit books exactly what the preview priced.
+  expect(creditedCents).toBe(previewed);
   expect(await expectedCash(page, bearer, drawerId)).toBe(before - creditedCents);
   await shot(page, "sales-09-credit-note-done", testInfo);
 });

@@ -25,6 +25,7 @@
 //   POST /api/v1/pos/parked/{id}/resume     -> PosParkedTicket
 //   DELETE /api/v1/pos/parked/{id}          -> PosParkedDiscard
 //   GET  /api/v1/pos/returns/customer-lines -> PosCustomerLines (422 for the house WALK-IN)
+//   POST /api/v1/pos/returns/preview        -> PosReturnPreview (the commit's own pricing, nothing written)
 //   POST /api/v1/pos/returns-across         -> PosReturnNote (409 PosRefundApprovalRequired on the note total)
 //   GET  /api/v1/pos/policy                 -> PosPolicy
 //   GET  /api/v1/pos/workspace              -> PosWorkspacePrefs (PUT writes, DELETE resets)
@@ -556,11 +557,13 @@ const SALES = {
 // return path kept. Tax is zero in this world, so the money returned is the unit price times the
 // quantity returned. The second branch exists to show the one branch per credit note rule.
 const BRANCH_ID_2 = "5d1b3f6e-0000-4000-9000-000000000002";
+const BRANCH_NAMES = { [BRANCH_ID]: "Trenton", [BRANCH_ID_2]: "Kingston" };
 const WALK_IN_ID = "00000000-0000-4000-8000-0000000000ff";
 
 const CUSTOMER_ORDER_FACTS = {
   "CT-1001": { created_at: "2026-10-03T15:20:00Z", job_label: "Marina Road patio", source: "TILL", sale_type: "COLLECT_NOW" },
   "CT-1002": { created_at: "2026-10-01T09:05:00Z", job_label: "Front walk", source: "TILL", sale_type: "COLLECT_NOW" },
+  "CT-1003": { created_at: "2026-10-05T10:00:00Z", job_label: "", source: "TILL", sale_type: "COLLECT_NOW" },
   "CT-2001": { created_at: "2026-10-04T11:40:00Z", job_label: "", source: "TILL", sale_type: "COLLECT_NOW" },
   "CT-2002": { created_at: "2026-10-02T13:10:00Z", job_label: "Garden wall", source: "TILL", sale_type: "COLLECT_NOW" },
 };
@@ -576,6 +579,8 @@ const CUSTOMER_ORDERS = {
     customerOrderOf("c-fenwick", "CT-2002", { branch_id: BRANCH_ID_2, source: "QUOTE", sale_tender: "", sale_type: "" }),
   ],
   "c-harbour": [],
+  // An account with no terms and no credit line: the account rail is refused in the core's words.
+  "c-retail": [customerOrderOf("c-retail", "CT-1003")],
 };
 
 function customerOrderView(order) {
@@ -583,6 +588,7 @@ function customerOrderView(order) {
     order_id: order.order_id,
     order_no: order.order_no,
     branch_id: order.branch_id,
+    branch_name: BRANCH_NAMES[order.branch_id] ?? "",
     created_at: order.created_at,
     job_label: order.job_label,
     source: order.source,
@@ -635,6 +641,8 @@ function reseedReturns() {
   RETURNED_QTY.set(uuid(11012), 2);
   NOTES_BY_KEY.clear();
   NOTE_META.clear();
+  CARD_REFUNDED.clear();
+  PREVIEW_BODIES.length = 0;
   NOTE_KEYS_SEEN.length = 0;
   LAST_NOTE_BODY = null;
   SIGHTINGS.length = 0;
@@ -649,6 +657,8 @@ const SIGHTINGS = [];
 const NOTE_KEYS_SEEN = [];
 let LAST_NOTE_BODY = null;
 const NOTE_META = new Map();
+const CARD_REFUNDED = new Map();
+const PREVIEW_BODIES = [];
 const NOTES_BY_KEY = new Map();
 let NOTE_SEQ = 0;
 let RETURN_SEQ = 0;
@@ -1025,14 +1035,23 @@ function refuse(status, error, extra = {}) {
   return { status, body: { error, ...extra } };
 }
 
-function noteRefusal(caller, body, approver) {
+function centsWords(cents) {
+  return `$${(cents / 100).toFixed(2)}`;
+}
+
+// The shape, wall and guard rules shared by the commit and the preview, in the core's words and order
+// (checkNoteShape, then each order through the walls and the line guard). `commit` adds the rail,
+// the replay, the 10.4 account and card refusals and the approval, which the preview never judges.
+function noteRefusal(caller, body, approver, commit = true) {
   if (body === null || typeof body !== "object") return refuse(400, "the request body is not JSON");
-  if (typeof body.idempotency_key !== "string" || body.idempotency_key === "") {
-    return refuse(400, "idempotency_key (client UUID) is required");
+  if (commit) {
+    if (typeof body.idempotency_key !== "string" || body.idempotency_key === "") {
+      return refuse(400, "idempotency_key (client UUID) is required");
+    }
+    if (body.idempotency_key.startsWith("rreq:")) return refuse(400, "idempotency_key: the rreq: prefix is reserved");
   }
-  if (body.idempotency_key.startsWith("rreq:")) return refuse(400, "idempotency_key: the rreq: prefix is reserved");
   if (!Array.isArray(body.orders) || body.orders.length === 0) return refuse(400, "pos: a return note needs at least one order");
-  if (!["CASH", "CARD", "ACCOUNT_CREDIT"].includes(body.refund_method)) return refuse(400, "pos: refund_method must be CASH, CARD or ACCOUNT_CREDIT");
+  if (commit && !["CASH", "CARD", "ACCOUNT_CREDIT"].includes(body.refund_method)) return refuse(400, "pos: refund_method must be CASH, CARD or ACCOUNT_CREDIT");
   const customerId = typeof body.customer_id === "string" ? body.customer_id.trim() : "";
   if (customerId === "") return refuse(400, "pos: customer_id is required");
   if (customerId === WALK_IN_ID) {
@@ -1044,17 +1063,31 @@ function noteRefusal(caller, body, approver) {
     if (seen.has(entry.order_id)) return refuse(422, `pos: order ${entry.order_id} appears twice on one note`);
     seen.add(entry.order_id);
     if (!Array.isArray(entry.lines) || entry.lines.length === 0) return refuse(422, `pos: order ${entry.order_id} carries no return lines`);
+    for (const asked of entry.lines) {
+      if (typeof asked.order_line_id !== "string" || asked.order_line_id === "" || !(asked.qty_base > 0)) {
+        return refuse(422, "pos: every return line needs an order_line_id and a positive qty_base");
+      }
+    }
   }
-  if (NOTES_BY_KEY.has(body.idempotency_key)) return null;
+  if (commit && NOTES_BY_KEY.has(body.idempotency_key)) return null;
+  if (commit && body.refund_method === "ACCOUNT_CREDIT") {
+    const account = CUSTOMERS.find((row) => row.id === customerId);
+    if (account === undefined || account.payment_terms_days <= 0 || account.credit_limit_cents <= 0) {
+      return refuse(
+        422,
+        "pos: this account cannot spend a credit (it has no credit terms or no credit line); refund to the card it was paid on or in cash, or set the account up with terms and a credit line first",
+      );
+    }
+  }
   let branchId = null;
   let totalCents = 0;
   for (const entry of body.orders) {
     const order = orderById(entry.order_id);
     if (order === undefined) return refuse(404, `pos: no sale ${entry.order_id}`);
-    if (body.refund_method === "CASH" && body.till_session_id !== DRAWER.session_id) {
+    if (commit && body.refund_method === "CASH" && body.till_session_id !== DRAWER.session_id) {
       return refuse(422, "pos: a cash refund needs the open drawer at the sale's branch");
     }
-    if (body.refund_method === "CARD" && !order.card_refundable) {
+    if (commit && body.refund_method === "CARD" && !order.card_refundable) {
       return refuse(422, `pos: order ${order.order_no} has no card capture to reverse`);
     }
     if (order.customer_id !== customerId) {
@@ -1064,22 +1097,61 @@ function noteRefusal(caller, body, approver) {
       return refuse(422, `pos: a return note covers one branch, order ${order.order_no} sits in another`);
     }
     branchId = order.branch_id;
+    const named = new Set();
+    let orderCents = 0;
     for (const asked of entry.lines) {
-      const line = order.lines.find((row) => row.order_line_id === asked.order_line_id);
-      if (line === undefined || !(asked.qty_base > 0)) {
-        return refuse(422, "pos: every return line needs an order_line_id and a positive qty_base");
+      if (named.has(asked.order_line_id)) {
+        return refuse(422, `pos: line ${asked.order_line_id} appears twice on order ${order.order_no}, send it once with the whole quantity`);
       }
+      named.add(asked.order_line_id);
+      if (asked.disposition !== undefined && !["RESTOCK", "DAMAGED", "NO_RETURN"].includes(asked.disposition)) {
+        return refuse(400, "pos: disposition must be RESTOCK, DAMAGED or NO_RETURN");
+      }
+      const line = order.lines.find((row) => row.order_line_id === asked.order_line_id);
+      if (line === undefined) return refuse(422, `pos: line ${asked.order_line_id} does not belong to order ${order.order_no}`);
       const open = line.qty_sold - (RETURNED_QTY.get(line.order_line_id) ?? 0);
       if (asked.qty_base > open + 1e-6) {
         return refuse(422, `pos: over-return on line ${asked.order_line_id}, ${asked.qty_base.toFixed(4)} requested but only ${open.toFixed(4)} returnable`);
       }
-      totalCents += line.unit_price_cents * asked.qty_base;
+      orderCents += line.unit_price_cents * asked.qty_base;
     }
+    if (commit && body.refund_method === "CARD") {
+      const captured = order.lines.reduce((sum, row) => sum + row.line_total_cents, 0);
+      const refunded = CARD_REFUNDED.get(order.order_id) ?? 0;
+      if (refunded + orderCents > captured) {
+        return refuse(
+          422,
+          `pos: a card refund of ${centsWords(orderCents)} would take the card past what the original capture holds (${centsWords(captured)} captured, ${centsWords(refunded)} already refunded); refund the rest in cash or to the account`,
+        );
+      }
+    }
+    totalCents += orderCents;
   }
-  if (approvalLimitEnabled && totalCents > APPROVAL_AMOUNT_CENTS && !APPROVER_ROLES.includes(caller.account.role_code) && !approver.present) {
+  if (commit && approvalLimitEnabled && totalCents > APPROVAL_AMOUNT_CENTS && !APPROVER_ROLES.includes(caller.account.role_code) && !approver.present) {
     return refuse(409, "refund_approval_required", { approval: { amount_cents: APPROVAL_AMOUNT_CENTS, approvers: APPROVER_ROLES } });
   }
   return null;
+}
+
+// The preview: the commit's own figures per line, per order and for the note (this world carries no
+// tax), nothing written.
+function previewNote(body) {
+  const orders = [];
+  let subtotal = 0;
+  let branchId = "";
+  for (const entry of body.orders) {
+    const order = orderById(entry.order_id);
+    branchId = order.branch_id;
+    const lines = entry.lines.map((asked) => {
+      const line = order.lines.find((row) => row.order_line_id === asked.order_line_id);
+      const total = line.unit_price_cents * asked.qty_base;
+      return { order_line_id: asked.order_line_id, qty_base: asked.qty_base, subtotal_cents: total, tax_cents: 0, total_cents: total };
+    });
+    const orderTotal = lines.reduce((sum, row) => sum + row.total_cents, 0);
+    subtotal += orderTotal;
+    orders.push({ order_id: order.order_id, order_no: order.order_no, subtotal_cents: orderTotal, tax_cents: 0, total_cents: orderTotal, lines });
+  }
+  return { customer_id: body.customer_id.trim(), branch_id: branchId, subtotal_cents: subtotal, tax_cents: 0, total_cents: subtotal, orders };
 }
 
 function commitNote(caller, body, approver) {
@@ -1098,6 +1170,7 @@ function commitNote(caller, body, approver) {
       const line = order.lines.find((row) => row.order_line_id === asked.order_line_id);
       RETURNED_QTY.set(line.order_line_id, (RETURNED_QTY.get(line.order_line_id) ?? 0) + asked.qty_base);
       childTotal += line.unit_price_cents * asked.qty_base;
+      if (body.refund_method === "CARD") CARD_REFUNDED.set(order.order_id, (CARD_REFUNDED.get(order.order_id) ?? 0) + line.unit_price_cents * asked.qty_base);
     }
     subtotal += childTotal;
     returns.push({
@@ -1316,6 +1389,7 @@ const server = createServer(async (request, response) => {
     respondJson(response, 200, {
       keys: NOTE_KEYS_SEEN,
       lastNoteBody: LAST_NOTE_BODY,
+      previewBodies: PREVIEW_BODIES,
       sightings: SIGHTINGS,
       approvalLimitEnabled,
       notes: [...NOTE_META.entries()].map(([key, meta]) => ({ key, ...meta })),
@@ -1422,6 +1496,28 @@ const server = createServer(async (request, response) => {
       },
       closing_float_cents: 0,
     });
+    return;
+  }
+  if (request.method === "POST" && path === "/api/v1/pos/returns/preview") {
+    const caller = callerFromRequest(request);
+    if (caller === null) {
+      respondJson(response, 401, { error: "no usable staff credential" });
+      return;
+    }
+    let body;
+    try {
+      body = JSON.parse(await readRawBody(request));
+    } catch {
+      respondJson(response, 400, { error: "the request body is not JSON" });
+      return;
+    }
+    PREVIEW_BODIES.push(body);
+    const refusal = noteRefusal(caller, body, { present: false, account: null }, false);
+    if (refusal !== null) {
+      respondJson(response, refusal.status, refusal.body);
+      return;
+    }
+    respondJson(response, 200, previewNote(body));
     return;
   }
   if (request.method === "POST" && path === "/api/v1/pos/returns-across") {

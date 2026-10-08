@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ReturnDraft } from "./draft.js";
 import { readCustomerLines } from "./lines.js";
-import { buildNoteInput, readNote, railAvailable } from "./note.js";
+import { buildNoteInput, buildPreviewInput, readNote, readPreview, railAvailable } from "./note.js";
 
 const uuid = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const line = (n, over = {}) => ({
@@ -14,7 +14,7 @@ const line = (n, over = {}) => ({
   money_returned_cents: 0, tax_returned_cents: 0, shelf_state: "FULFILLED", ...over,
 });
 const order = (n, over = {}) => ({
-  order_id: uuid(n), order_no: `SO-${n}`, branch_id: uuid(9000), created_at: "2026-10-01T10:00:00Z", job_label: "",
+  order_id: uuid(n), order_no: `SO-${n}`, branch_id: uuid(9000), branch_name: "Trenton", created_at: "2026-10-01T10:00:00Z", job_label: "",
   source: "TILL", sale_type: "COLLECT_NOW", tender: "CARD", fulfilment_state: "FULFILLED", invoice_id: uuid(n + 100),
   card_refundable: true, lines: [line(n * 10 + 1), line(n * 10 + 2)], ...over,
 });
@@ -34,8 +34,8 @@ test("the body groups the picked lines by order, one key, one rail, and restock 
   assert.deepEqual(built.input, {
     idempotency_key: KEY, customer_id: uuid(1), refund_method: "CARD", reason: "", restock: true, till_session_id: "",
     orders: [
-      { order_id: uuid(16), lines: [{ order_line_id: uuid(161), qty_base: 2, reason_code: "OTHER" }] },
-      { order_id: uuid(11), lines: [{ order_line_id: uuid(111), qty_base: 1, reason_code: "OTHER" }] },
+      { order_id: uuid(16), lines: [{ order_line_id: uuid(161), qty_base: 2, reason_code: "OTHER", disposition: "RESTOCK" }] },
+      { order_id: uuid(11), lines: [{ order_line_id: uuid(111), qty_base: 1, reason_code: "OTHER", disposition: "RESTOCK" }] },
     ],
   });
 });
@@ -49,22 +49,19 @@ test("two lines of one order share one order entry", () => {
   assert.equal(built.input.orders[0].lines.length, 2);
 });
 
-test("damaged and nothing returned send restock false, and damaged names its reason", () => {
-  const d = draftOf([order(16)]);
-  d.setQty(uuid(161), "1"); d.setDisposition(uuid(161), "DAMAGED");
-  d.setQty(uuid(162), "1"); d.setDisposition(uuid(162), "NO_RETURN");
-  const built = buildNoteInput({ customerId: uuid(1), key: KEY, draft: d, method: "ACCOUNT_CREDIT", drawerSessionId: "" });
-  assert.equal(built.input.restock, false);
-  assert.deepEqual(built.input.orders[0].lines.map((l) => l.reason_code), ["DAMAGED", "OTHER"]);
-});
-
-test("a mix of back to stock with damaged or nothing returned is refused before the wire, in words", () => {
+test("every line sends its own disposition, and a mix is sent as it is, never refused or flattened", () => {
   const d = draftOf([order(16)]);
   d.setQty(uuid(161), "1"); d.setDisposition(uuid(161), "RESTOCK");
   d.setQty(uuid(162), "1"); d.setDisposition(uuid(162), "DAMAGED");
-  const built = buildNoteInput({ customerId: uuid(1), key: KEY, draft: d, method: "CARD", drawerSessionId: "" });
-  assert.equal(built.ok, false);
-  assert.match(built.words, /one choice for the whole note/);
+  const built = buildNoteInput({ customerId: uuid(1), key: KEY, draft: d, method: "ACCOUNT_CREDIT", drawerSessionId: "" });
+  assert.equal(built.ok, true);
+  assert.deepEqual(built.input.orders[0].lines.map((l) => l.disposition), ["RESTOCK", "DAMAGED"]);
+  assert.deepEqual(built.input.orders[0].lines.map((l) => l.reason_code), ["OTHER", "DAMAGED"]);
+  const none = draftOf([order(16)]);
+  none.setQty(uuid(161), "1"); none.setDisposition(uuid(161), "NO_RETURN");
+  const sent = buildNoteInput({ customerId: uuid(1), key: KEY, draft: none, method: "ACCOUNT_CREDIT", drawerSessionId: "" });
+  assert.equal(sent.input.orders[0].lines[0].disposition, "NO_RETURN");
+  assert.equal(sent.input.restock, false, "the legacy flag is only the all-restock summary");
 });
 
 test("cash carries the open drawer and refuses without one; other rails send no drawer", () => {
@@ -119,4 +116,44 @@ test("a note with a missing field, no children, or a child that is not committed
   assert.equal(readNote(note({ note_no: "" })), null);
   assert.equal(readNote(note({ returns: [child(10, { status: "PENDING" })] })), null);
   assert.equal(readNote(note({ refund_method: "BARTER" })), null);
+});
+
+test("the preview body carries no key, rail or drawer, and sends a disposition only once one is chosen", () => {
+  const d = draftOf([order(16), order(11)]);
+  d.setQty(uuid(161), "2");
+  d.setQty(uuid(111), "1"); d.setDisposition(uuid(111), "DAMAGED");
+  const body = buildPreviewInput(uuid(1), d);
+  assert.deepEqual(body, {
+    customer_id: uuid(1),
+    orders: [
+      { order_id: uuid(16), lines: [{ order_line_id: uuid(161), qty_base: 2, reason_code: "OTHER" }] },
+      { order_id: uuid(11), lines: [{ order_line_id: uuid(111), qty_base: 1, reason_code: "DAMAGED", disposition: "DAMAGED" }] },
+    ],
+  });
+  assert.equal(buildPreviewInput(uuid(1), draftOf([order(16)])), null, "nothing picked asks nothing");
+});
+
+const pline = (n, t) => ({ order_line_id: uuid(n), qty_base: 1, subtotal_cents: t - 10, tax_cents: 10, total_cents: t });
+const preview = (over = {}) => ({
+  customer_id: uuid(1), branch_id: uuid(2), subtotal_cents: 1980, tax_cents: 20, total_cents: 2000,
+  orders: [{ order_id: uuid(16), order_no: "SO-16", subtotal_cents: 990, tax_cents: 10, total_cents: 1000, lines: [pline(161, 1000)] },
+           { order_id: uuid(11), order_no: "SO-11", subtotal_cents: 990, tax_cents: 10, total_cents: 1000, lines: [pline(111, 1000)] }],
+  ...over,
+});
+
+test("a preview reads whole: the note total with tax, and each line's own figure by line id", () => {
+  const read = readPreview(preview());
+  assert.equal(read.totalCents, 2000);
+  assert.equal(read.taxCents, 20);
+  assert.equal(read.lines.get(uuid(161)).totalCents, 1000);
+  assert.equal(read.lines.get(uuid(111)).taxCents, 10);
+});
+
+test("a preview with a missing or unsafe figure is unreadable, so no total is shown rather than half of one", () => {
+  assert.equal(readPreview(null), null);
+  assert.equal(readPreview(preview({ total_cents: 20.5 })), null);
+  assert.equal(readPreview(preview({ orders: [] })), null);
+  const bad = preview();
+  delete bad.orders[0].lines[0].tax_cents;
+  assert.equal(readPreview(bad), null);
 });

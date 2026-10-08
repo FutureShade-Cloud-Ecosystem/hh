@@ -105,10 +105,15 @@ test("lines from two orders go into one draft, each with its own disposition, an
   await expect(wall.getByRole("button", { name: "Refund, do not restock (damaged)" })).toHaveAttribute("aria-pressed", "true");
 
   await expect(page.getByTestId("returns-credit-count")).toHaveText("2 lines from 2 orders");
+  // The credit so far is the server's priced total with tax (2 Holland at 60.00 plus 1 wall block at 60.00).
+  await expect(page.getByTestId("returns-credit-total")).toHaveText("$180.00");
+  await expect(page.getByTestId("returns-credit-tax")).toContainText("with tax");
   const credit = page.getByTestId("returns-credit-line");
   await expect(credit).toHaveCount(2);
   await expect(credit.nth(0)).toContainText("2 Holland paver, bevelled, each on CT-1001 · Return to stock");
   await expect(credit.nth(1)).toContainText("1 Wall block, charcoal, each on CT-1002 · Refund, do not restock (damaged)");
+  await expect(page.getByTestId("returns-credit-line-figure").nth(0)).toHaveText("$120.00 with $0.00 tax");
+  await expect(page.getByTestId("returns-credit-line-figure").nth(1)).toHaveText("$60.00 with $0.00 tax");
   await expect(page.getByTestId("returns-credit")).toContainText("The credit so far");
 
   // A third line with a quantity but no disposition holds the draft back, in words.
@@ -159,6 +164,9 @@ test("one credit note is for one branch: a line from another branch's order is r
   await page.getByTestId("returns-order").filter({ hasText: "CT-2001" }).getByRole("button", { name: "Return to stock" }).click();
   await page.getByTestId("returns-order").filter({ hasText: "CT-2002" }).getByRole("button", { name: "Return to stock" }).click();
   await expect(page.getByTestId("returns-draft-notice")).toContainText("one branch");
+  // The refusal names the two branches.
+  await expect(page.getByTestId("returns-draft-notice")).toContainText("Trenton");
+  await expect(page.getByTestId("returns-draft-notice")).toContainText("Kingston");
   await expect(page.getByTestId("returns-credit-count")).toHaveText("1 line from 1 order");
 });
 
@@ -215,6 +223,7 @@ async function drawerExpectedCash(page: Page): Promise<number> {
 async function stubState(page: Page): Promise<{
   keys: string[];
   lastNoteBody: { orders: { order_id: string; lines: unknown[] }[]; restock: boolean; refund_method: string; till_session_id: string };
+  previewBodies: { orders: { lines: { disposition?: string }[] }[] }[];
   sightings: { path: string; approverHeader: boolean }[];
 }> {
   return (await (await page.request.get("/_stub/state")).json()) as never;
@@ -306,15 +315,16 @@ test("a card note on a card paid order commits, and says nothing reached a card 
   await expect(page.getByTestId("returns-done-return")).toHaveCount(1);
 });
 
-test("a mix of back to stock and damaged is refused before anything is sent, in words, and nothing is posted", async ({ page }) => {
+test("a mix of back to stock and damaged is sent as it is, one disposition per line, and commits", async ({ page }) => {
   await pickCustomer(page, "maple", "Maple Ridge Contracting");
   await lineOf(page, "CT-1001", HOLLAND).getByRole("button", { name: "Return to stock" }).click();
   await lineOf(page, "CT-1002", WALL).getByRole("button", { name: "Refund, do not restock (damaged)" }).click();
   await page.getByRole("button", { name: "Continue to the refund" }).click();
   await page.getByRole("button", { name: "On the account", exact: true }).click();
   await page.getByRole("button", { name: "Record the credit note" }).click();
-  await expect(page.getByTestId("returns-notice")).toContainText("one choice for the whole note");
-  expect((await stubState(page)).keys).toHaveLength(0);
+  await expect(page.getByTestId("returns-done")).toContainText("Credit note recorded");
+  const sent = (await stubState(page)).lastNoteBody as unknown as { orders: { lines: { disposition: string }[] }[] };
+  expect(sent.orders.map((order) => order.lines[0].disposition)).toEqual(["RESTOCK", "DAMAGED"]);
 });
 
 test("a refusal from the server shows in its own words, the note stays drafted, and a retry sends the same key", async ({ page }) => {
@@ -434,4 +444,81 @@ test("a sign out under an in flight approval leaves the surface blank for the ne
 
 test.afterEach(async ({ page }) => {
   await setApprovalLimit(page, false);
+});
+
+// ---- Stage 3: the credit preview, branch names, and the rails' refusals in the server's words -----
+
+test("the credit so far is priced by the server on every change, a disposition rides the preview once chosen, and Continue waits for the price", async ({ page }) => {
+  await pickCustomer(page, "maple", "Maple Ridge Contracting");
+  await lineOf(page, "CT-1001", HOLLAND).getByRole("button", { name: /One more/ }).click();
+  await expect(page.getByTestId("returns-credit-total")).toHaveText("$60.00");
+  await expect(page.getByRole("button", { name: "Continue to the refund" })).toBeDisabled();
+  await lineOf(page, "CT-1001", HOLLAND).getByRole("button", { name: "Refund, nothing returned" }).click();
+  await expect(page.getByRole("button", { name: "Continue to the refund" })).toBeEnabled();
+  await lineOf(page, "CT-1001", HOLLAND).getByRole("button", { name: /One more/ }).click();
+  await expect(page.getByTestId("returns-credit-total")).toHaveText("$120.00");
+  const bodies = (await stubState(page)).previewBodies;
+  expect(bodies.length).toBeGreaterThanOrEqual(3);
+  expect(bodies[0].orders[0].lines[0].disposition).toBeUndefined();
+  expect(bodies[bodies.length - 1].orders[0].lines[0].disposition).toBe("NO_RETURN");
+  // Taking the line out drops the figure with it.
+  await lineOf(page, "CT-1001", HOLLAND).getByLabel(/Return quantity/).fill("");
+  await expect(page.getByTestId("returns-credit-empty")).toBeVisible();
+  await expect(page.getByTestId("returns-credit-total")).toHaveCount(0);
+});
+
+test("each order names its branch", async ({ page }) => {
+  await pickCustomer(page, "fenwick", "Fenwick Builders Ltd");
+  await expect(page.getByTestId("returns-order").filter({ hasText: "CT-2001" })).toContainText("Trenton");
+  await expect(page.getByTestId("returns-order").filter({ hasText: "CT-2002" })).toContainText("Kingston");
+});
+
+test("an account that cannot spend a credit is refused in the server's words and the note stays drafted", async ({ page }) => {
+  await pickCustomer(page, "C07", "Lachance Retail");
+  await lineOf(page, "CT-1003", WALL).getByRole("button", { name: "Return to stock" }).click();
+  await page.getByRole("button", { name: "Continue to the refund" }).click();
+  await page.getByRole("button", { name: "On the account", exact: true }).click();
+  await page.getByRole("button", { name: "Record the credit note" }).click();
+  await expect(page.getByTestId("returns-notice")).toContainText("this account cannot spend a credit");
+  await expect(page.getByTestId("returns-notice")).toContainText("refund to the card it was paid on or in cash");
+  await expect(page.getByTestId("returns")).toHaveAttribute("data-step", "refund");
+  // The cash rail is open to the same note.
+  await page.getByRole("button", { name: "Cash", exact: true }).click();
+  await page.getByRole("button", { name: "Record the credit note" }).click();
+  await expect(page.getByTestId("returns-done")).toContainText("Credit note recorded");
+});
+
+test("a card refund past what the capture holds is refused in the server's words", async ({ page }) => {
+  await pickCustomer(page, "fenwick", "Fenwick Builders Ltd");
+  await page.getByTestId("returns-order").filter({ hasText: "CT-2001" }).getByRole("button", { name: "Return to stock" }).click();
+  await page.getByRole("button", { name: "Continue to the refund" }).click();
+  await page.getByRole("button", { name: "Card", exact: true }).click();
+  // The capture's earlier card refunds are the server's to know: stage them through the write route.
+  const mint = await page.request.post("/api/v1/demo/session", { data: { flow: "sales" } });
+  const token = ((await mint.json()) as { token: string }).token;
+  const staged = await page.request.post("/api/v1/pos/returns-across", {
+    headers: { Authorization: `Bearer ${token}` },
+    data: {
+      idempotency_key: "00000000-0000-4000-8000-0000000000bb", customer_id: "c-fenwick", refund_method: "CARD", reason: "",
+      restock: true, till_session_id: "",
+      orders: [{ order_id: "00000000-0000-4000-8000-000000002001", lines: [{ order_line_id: "00000000-0000-4000-8000-000000012011", qty_base: 1, reason_code: "OTHER" }] }],
+    },
+  });
+  expect(staged.status()).toBe(201);
+  await page.getByRole("button", { name: "Record the credit note" }).click();
+  // The line itself is now fully returned, so the server's first refusal is the over-return; the card cap
+  // is the same route's next guard (covered by the stub in the core's words and by the core's own legs).
+  await expect(page.getByTestId("returns-notice")).toContainText("The credit note was refused: pos:");
+});
+
+test("a line sent twice is refused by the server in its words (the till itself never sends one)", async ({ page }) => {
+  const mint = await page.request.post("/api/v1/demo/session", { data: { flow: "sales" } });
+  const token = ((await mint.json()) as { token: string }).token;
+  const line = { order_line_id: "00000000-0000-4000-8000-000000011011", qty_base: 1, reason_code: "OTHER" };
+  const answer = await page.request.post("/api/v1/pos/returns/preview", {
+    headers: { Authorization: `Bearer ${token}` },
+    data: { customer_id: "c-maple-ridge", orders: [{ order_id: "00000000-0000-4000-8000-000000001001", lines: [line, line] }] },
+  });
+  expect(answer.status()).toBe(422);
+  expect(((await answer.json()) as { error: string }).error).toContain("appears twice on order CT-1001, send it once with the whole quantity");
 });

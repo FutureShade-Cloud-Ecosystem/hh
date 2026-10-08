@@ -31,6 +31,8 @@ export interface CustomerOrder {
   orderId: string;
   orderNo: string;
   branchId: string;
+  /** The branch's name, so the one branch refusal can name the branches. */
+  branchName: string;
   createdAt: string;
   /** The job address, else the job reference, else the PO reference; empty when the order has none. */
   jobLabel: string;
@@ -40,6 +42,13 @@ export interface CustomerOrder {
   fulfilmentState: string;
   invoiceId: string;
   cardRefundable: boolean;
+  /**
+   * False when the read says this order cannot be returned yet (the server decides, and gives its
+   * reason); absent means returnable. The contract does not carry the field yet: this is read when
+   * the server sends it, never invented.
+   */
+  returnable: boolean;
+  notReturnableReason: string;
   lines: CustomerLine[];
 }
 
@@ -107,6 +116,7 @@ function readOrder(raw: unknown): CustomerOrder | null {
   const orderId = filled(r["order_id"]);
   const orderNo = filled(r["order_no"]);
   const branchId = filled(r["branch_id"]);
+  const branchName = text(r["branch_name"]);
   const createdAt = filled(r["created_at"]);
   const jobLabel = text(r["job_label"]);
   const source = r["source"];
@@ -116,7 +126,9 @@ function readOrder(raw: unknown): CustomerOrder | null {
   const invoiceId = filled(r["invoice_id"]);
   const cardRefundable = r["card_refundable"];
   const rawLines = r["lines"];
-  if (orderId === null || orderNo === null || branchId === null || createdAt === null) return null;
+  const returnable = r["returnable"] !== false;
+  const reasonText = text(r["returnable_reason"]);
+  if (orderId === null || orderNo === null || branchId === null || branchName === null || createdAt === null) return null;
   if (jobLabel === null || saleType === null || tender === null || fulfilmentState === null) return null;
   if (invoiceId === null || typeof cardRefundable !== "boolean" || !Array.isArray(rawLines)) return null;
   if (typeof source !== "string" || !SOURCES.includes(source as OrderSource)) return null;
@@ -130,6 +142,7 @@ function readOrder(raw: unknown): CustomerOrder | null {
     orderId,
     orderNo,
     branchId,
+    branchName,
     createdAt,
     jobLabel,
     source: source as OrderSource,
@@ -138,6 +151,9 @@ function readOrder(raw: unknown): CustomerOrder | null {
     fulfilmentState,
     invoiceId,
     cardRefundable,
+    returnable,
+    notReturnableReason:
+      returnable ? "" : reasonText !== null && reasonText !== "" ? reasonText : "This order cannot be returned from here yet.",
     lines,
   };
 }

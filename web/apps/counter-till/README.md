@@ -23,7 +23,7 @@ search over the customers search route (the walk-in is not a returns customer,
 and the server says so in words), then every order the customer holds from
 `GET /api/v1/pos/returns/customer-lines`, grouped by order and job, each line
 with the quantity still open, a quantity stepper capped at it, and three
-dispositions (return to stock, damaged, nothing returned). Lines from several
+dispositions (each line's own disposition rides the preview and the write) (return to stock, damaged, nothing returned). Lines from several
 orders go into one draft (one branch per credit note); the sales order number
 only filters the list. There is no search by one sale's number. The Refund step
 chooses the rail (card where every order was paid by card, on the account,

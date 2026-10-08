@@ -20,7 +20,7 @@ import { isApproverRole, type OneTimeCredential } from "./approval.js";
 import type { RefundApprovalCapture } from "./capture.js";
 import { ReturnDraft, type DraftAnswer } from "./draft.js";
 import { filterOrders, readCustomerLines, type CustomerOrder } from "./lines.js";
-import { buildNoteInput, railAvailable, readNote, REFUND_METHODS, type CreditNote, type DrawerState, type RefundMethod } from "./note.js";
+import { buildNoteInput, buildPreviewInput, railAvailable, readNote, readPreview, REFUND_METHODS, type CreditNote, type CreditPreview, type DrawerState, type RefundMethod } from "./note.js";
 
 /** The stepper's four steps. */
 export type ReturnStep = "customer" | "lines" | "refund" | "done";
@@ -99,6 +99,13 @@ export class ReturnsFlow {
   filter = "";
   /** A refusal or an empty answer in words. */
   notice: string | null = null;
+  /** The credit so far, as the server priced the draft; null until it answers or when nothing is picked. */
+  preview: CreditPreview | null = null;
+  /** True while a preview is on the wire. */
+  previewing = false;
+  /** The preview's refusal in the server's words (a wall, an over-return), shown beside the credit. */
+  previewNotice: string | null = null;
+  #previewSeq = 0;
   /** A draft refusal in words, shown beside the lines (a quantity above open, another branch). */
   draftNotice: string | null = null;
   /** The chosen refund rail, until the clerk picks one. */
@@ -150,7 +157,7 @@ export class ReturnsFlow {
   }
 
   get canContinue(): boolean {
-    return this.step === "lines" && this.draft.ready && !this.loading;
+    return this.step === "lines" && this.draft.ready && !this.loading && this.preview !== null;
   }
 
   setTerm(value: string): void {
@@ -259,6 +266,44 @@ export class ReturnsFlow {
     this.refusal = null;
     this.#pendingKey = null;
     this.#pendingInput = null;
+    this.#onChange();
+    void this.#refreshPreview();
+  }
+
+  /**
+   * Ask the server what the draft would credit (the commit's own pricing function, nothing written).
+   * The till computes no money: the answer, or nothing, is what the screen shows. The latest ask wins.
+   */
+  async #refreshPreview(): Promise<void> {
+    const seq = ++this.#previewSeq;
+    const body = this.customer === null ? null : buildPreviewInput(this.customer.id, this.draft);
+    if (body === null) {
+      this.preview = null;
+      this.previewing = false;
+      this.previewNotice = null;
+      this.#onChange();
+      return;
+    }
+    this.previewing = true;
+    this.#onChange();
+    const result = await staffPos.posPreviewReturnAcross(this.#client, body);
+    if (seq !== this.#previewSeq) return;
+    this.previewing = false;
+    if (!result.ok) {
+      this.preview = null;
+      this.previewNotice = `The credit could not be priced: ${result.error}`;
+      this.#onChange();
+      return;
+    }
+    const read = readPreview(result.value);
+    if (read === null) {
+      this.preview = null;
+      this.previewNotice = "The credit's pricing was not readable: no total is shown rather than half of one.";
+      this.#onChange();
+      return;
+    }
+    this.preview = read;
+    this.previewNotice = null;
     this.#onChange();
   }
 
@@ -495,6 +540,10 @@ export class ReturnsFlow {
     this.notice = null;
     this.draftNotice = null;
     this.method = null;
+    this.#previewSeq += 1;
+    this.preview = null;
+    this.previewing = false;
+    this.previewNotice = null;
     this.drawer = { kind: "unknown" };
     this.cardSimulated = null;
     this.submitting = false;

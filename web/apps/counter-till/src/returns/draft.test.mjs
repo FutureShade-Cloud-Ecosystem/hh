@@ -33,6 +33,7 @@ function order(n, over = {}) {
     order_id: uuid(n),
     order_no: `SO-TRT-${n}`,
     branch_id: uuid(9000),
+    branch_name: "Trenton",
     created_at: "2026-10-01T10:00:00Z",
     job_label: `Job ${n}`,
     source: "TILL",
@@ -142,12 +143,14 @@ test("choosing a disposition on an unpicked line picks one unit; an exhausted li
 });
 
 test("one credit note is for one branch: a line from another branch's order is refused in words", () => {
-  const other = order(11, { branch_id: uuid(9001) });
+  const other = order(11, { branch_id: uuid(9001), branch_name: "Kingston" });
   const draft = new ReturnDraft(readCustomerLines(answer([order(16), other])));
   assert.equal(draft.setQty(uuid(161), "1").ok, true);
   const refused = draft.setQty(uuid(111), "1");
   assert.equal(refused.ok, false);
   assert.match(refused.words, /one branch/);
+  assert.match(refused.words, /Kingston/, "the refusal names the order's branch");
+  assert.match(refused.words, /Trenton/, "and the branch the note is already at");
   assert.equal(draft.qtyOf(uuid(111)), 0);
   // Taking the first branch's lines out frees the draft to start on the other branch.
   draft.setQty(uuid(161), "");
@@ -172,4 +175,30 @@ test("a draft with a picked line from a hidden order still counts it, and the co
   draft.setQty(uuid(162), "4");
   assert.equal(draft.pickedLines().length, 2);
   assert.equal(draft.orderCount, 1);
+});
+
+test("branch_name must be a string on every order", () => {
+  const broken = order(16);
+  delete broken.branch_name;
+  assert.equal(readCustomerLines(answer([broken])), null);
+});
+
+test("an order the read marks returnable false keeps its reason and its lines cannot be drafted", () => {
+  const blocked = order(16, { returnable: false, returnable_reason: "This quote order was not rung at the counter." });
+  const read = readCustomerLines(answer([blocked, order(11)]));
+  assert.equal(read[0].returnable, false);
+  assert.equal(read[0].notReturnableReason, "This quote order was not rung at the counter.");
+  assert.equal(read[1].returnable, true, "absent means returnable");
+  const draft = new ReturnDraft(read);
+  const refused = draft.setQty(uuid(161), "1");
+  assert.equal(refused.ok, false);
+  assert.match(refused.words, /not rung at the counter/);
+  assert.equal(draft.setDisposition(uuid(161), "RESTOCK").ok, false);
+  assert.equal(draft.qtyOf(uuid(161)), 0);
+  assert.equal(draft.setQty(uuid(111), "1").ok, true);
+});
+
+test("returnable false without a reason still refuses, in generic words", () => {
+  const read = readCustomerLines(answer([order(16, { returnable: false })]));
+  assert.match(read[0].notReturnableReason, /cannot be returned/);
 });

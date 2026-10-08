@@ -2,7 +2,7 @@
 // the committed note it reads back. One key per note, lines grouped by order, one rail. The till
 // decides no money rule: the server judges every quantity, the rail, the approval and the totals,
 // and the figures read back here are the server's own.
-import type { PosReturnAcrossInput } from "@hardscapehouse/api-client";
+import type { PosReturnAcrossInput, PosReturnPreviewInput } from "@hardscapehouse/api-client";
 import type { ReturnDraft } from "./draft.js";
 
 /** The refund rails the contract carries. */
@@ -23,23 +23,16 @@ export interface BuildNoteArgs {
 export type BuiltNote = { ok: true; input: PosReturnAcrossInput } | { ok: false; words: string };
 
 /**
- * The contract's body. The write carries ONE restock flag for the whole note (per line dispositions
- * are later server work), so a note whose lines are all "return to stock" restocks, a note with none
- * of them does not, and a mix is refused here in words rather than sent as something it is not.
- * Damaged lines name DAMAGED as their line reason; the rest name OTHER.
+ * The contract's body. Every line carries its own disposition, which the server reads over the
+ * whole note's `restock` flag; the flag is sent only as the summary the contract still requires
+ * (true when every picked line goes back to stock). Damaged lines name DAMAGED as their line
+ * reason; the rest name OTHER.
  */
 export function buildNoteInput(args: BuildNoteArgs): BuiltNote {
   const picked = args.draft.pickedLines();
   if (picked.length === 0) return { ok: false, words: "Pick at least one line to return." };
   if (!args.draft.ready) return { ok: false, words: "Every picked line needs its choice: return to stock, damaged, or nothing returned." };
   const restocking = picked.filter((line) => line.disposition === "RESTOCK").length;
-  if (restocking !== 0 && restocking !== picked.length) {
-    return {
-      ok: false,
-      words:
-        "The refund takes one choice for the whole note for now: either every line goes back to stock, or none does. Put the lines that differ on a credit note of their own.",
-    };
-  }
   if (args.method === "CASH" && args.drawerSessionId === "") {
     return { ok: false, words: "Cash is paid from the open drawer, and no drawer is open at this branch." };
   }
@@ -54,6 +47,7 @@ export function buildNoteInput(args: BuildNoteArgs): BuiltNote {
       order_line_id: line.orderLineId,
       qty_base: line.qty,
       reason_code: line.disposition === "DAMAGED" ? "DAMAGED" : "OTHER",
+      ...(line.disposition === null ? {} : { disposition: line.disposition }),
     });
   }
   return {
@@ -156,4 +150,72 @@ export function readNote(raw: unknown): CreditNote | null {
     returns.push(child);
   }
   return { noteId, noteNo, customerId, branchId, method, subtotalCents, taxCents, totalCents, returns, replayed };
+}
+
+/**
+ * The preview's body: the same lines as the note, without a key, a rail or a drawer, and with a
+ * disposition only once one is chosen. Null when nothing is picked.
+ */
+export function buildPreviewInput(customerId: string, draft: ReturnDraft): PosReturnPreviewInput | null {
+  const picked = draft.pickedLines();
+  if (picked.length === 0) return null;
+  const orders: PosReturnPreviewInput["orders"] = [];
+  for (const line of picked) {
+    let entry = orders.find((candidate) => candidate.order_id === line.orderId);
+    if (entry === undefined) {
+      entry = { order_id: line.orderId, lines: [] };
+      orders.push(entry);
+    }
+    entry.lines.push({
+      order_line_id: line.orderLineId,
+      qty_base: line.qty,
+      reason_code: line.disposition === "DAMAGED" ? "DAMAGED" : "OTHER",
+      ...(line.disposition === null ? {} : { disposition: line.disposition }),
+    });
+  }
+  return { customer_id: customerId, orders };
+}
+
+/** One line's priced figures, the server's own. */
+export interface PreviewLine {
+  subtotalCents: number;
+  taxCents: number;
+  totalCents: number;
+}
+
+/** The credit so far, as the server priced it; the note total includes tax. */
+export interface CreditPreview {
+  subtotalCents: number;
+  taxCents: number;
+  totalCents: number;
+  /** Each picked line's figures by order line id. */
+  lines: Map<string, PreviewLine>;
+}
+
+/** Field by field, never a cast: the credit so far, or null so that no total shows rather than half of one. */
+export function readPreview(raw: unknown): CreditPreview | null {
+  const r = record(raw);
+  if (r === null) return null;
+  const subtotalCents = cents(r["subtotal_cents"]);
+  const taxCents = cents(r["tax_cents"]);
+  const totalCents = cents(r["total_cents"]);
+  const orders = r["orders"];
+  if (subtotalCents === null || taxCents === null || totalCents === null) return null;
+  if (!Array.isArray(orders) || orders.length === 0) return null;
+  const lines = new Map<string, PreviewLine>();
+  for (const orderRaw of orders) {
+    const order = record(orderRaw);
+    if (order === null || !Array.isArray(order["lines"])) return null;
+    for (const lineRaw of order["lines"]) {
+      const line = record(lineRaw);
+      if (line === null) return null;
+      const id = filled(line["order_line_id"]);
+      const sub = cents(line["subtotal_cents"]);
+      const tax = cents(line["tax_cents"]);
+      const total = cents(line["total_cents"]);
+      if (id === null || sub === null || tax === null || total === null) return null;
+      lines.set(id, { subtotalCents: sub, taxCents: tax, totalCents: total });
+    }
+  }
+  return { subtotalCents, taxCents, totalCents, lines };
 }
