@@ -67,6 +67,23 @@ you, in this package and in any package that adopts its rules.
   proposal surface only. The header inside records the merge decisions role by
   role, including the gold rule and the two per-theme fill splits this sheet
   carries from the ERP's rulings.
+- The quote blue family (`--hh-quote*`, decision log rows 1047 item 7 and 1063):
+  quotes and their documents read in an indigo, orders and the till keep gold.
+  Five roles that mirror the gold family's, theme-measured by
+  `test/quote-accent.test.mjs`. hh-pro keeps the same values.
+
+  | Token | Light | Brand mode | Role |
+  |---|---|---|---|
+  | `--hh-quote` | #1C45B8 | #A3BCFF | the accent as ink: text, borders, the focus ring's quote twin |
+  | `--hh-quote-fill` | #1D4ED8 | #1D4ED8 | the pressable control, one value in both modes |
+  | `--hh-quote-fill-on` | #FFFFFF | #FFFFFF | the ink the fill carries (6.70:1) |
+  | `--hh-quote-link` | #1C45B8 | #A3BCFF | links and text actions |
+  | `--hh-quote-tint` | #E8EDFB | #242938 | the quote header band's ground |
+
+  Measured: quote ink 8.10 on the light card and 6.81 on the page, 7.88 on the
+  brand page and 6.74 on the brand card; ink on the tint 6.92 light and 7.72
+  brand. On navy the fill is seen by its 1px fill-on border, the `.btn-primary`
+  pattern. The gold family is unchanged and the till never uses these tokens.
 - The five kits: `scan-and-confirm`, `list-detail`, `guided-flow`, `dashboard`,
   `inbox` (`src/kits/`). Every kit renders its ready state and the five states
   designed once per pattern: empty, loading, offline, conflict, error
