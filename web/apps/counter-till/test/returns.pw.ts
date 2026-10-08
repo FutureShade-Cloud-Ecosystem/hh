@@ -202,6 +202,8 @@ test("the walk-in is refused in words: it is not a returns customer", async ({ p
   await page.getByLabel("Search name or account number").fill("walk");
   await page.getByRole("button", { name: /Walk-in/ }).click();
   await expect(page.getByTestId("returns-notice")).toContainText("the WALK-IN house account holds no customer history");
+  await expect(page.getByTestId("returns-notice")).toContainText("find the customer on the sale and return it from their account");
+  await expect(page.getByTestId("returns-notice")).not.toContainText("by its own order number");
   await expect(page.getByTestId("returns")).toHaveAttribute("data-step", "customer");
 });
 

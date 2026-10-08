@@ -1073,7 +1073,7 @@ function noteRefusal(caller, body, approver, commit = true) {
   const customerId = typeof body.customer_id === "string" ? body.customer_id.trim() : "";
   if (customerId === "") return refuse(400, "pos: customer_id is required");
   if (customerId === WALK_IN_ID) {
-    return refuse(422, "pos: the WALK-IN house account holds no customer history; return a walk-in sale by its own order number");
+    return refuse(422, "pos: the WALK-IN house account holds no customer history; find the customer on the sale and return it from their account, or refund the walk-in sale on its own to the card it was paid on or in cash");
   }
   const seen = new Set();
   for (const entry of body.orders) {
@@ -1613,7 +1613,7 @@ const server = createServer(async (request, response) => {
     }
     if (customerId === WALK_IN_ID) {
       respondJson(response, 422, {
-        error: "pos: the WALK-IN house account holds no customer history; return a walk-in sale by its own order number",
+        error: "pos: the WALK-IN house account holds no customer history; find the customer on the sale and return it from their account, or refund the walk-in sale on its own to the card it was paid on or in cash",
       });
       return;
     }
