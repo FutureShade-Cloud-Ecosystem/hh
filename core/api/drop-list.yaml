@@ -106,3 +106,5 @@ additions:
     reason: "Staff accepting a quote on the customer's behalf after a phone, text, email or in person yes: the same selling-role rule as convert, the channel, a note and the quantity statement recorded in the audit and the change history; the ERP's only accept is the contractor portal's own; no ERP source route."
   - route: "POST /api/v1/quotes/{id}/reject"
     reason: "Staff marking a quote lost on the customer's behalf after a phone, text, email or in person no: a reason code and note, the same selling-role rule as convert, the soft holds released and the follow-ups stopped; the ERP's only reject is the contractor portal's own; no ERP source route."
+  - route: "GET /api/v1/quotes/settings-grant"
+    reason: "The grant read the Quote Desk asks before it mounts its settings sections (round 14 item 1): whether the caller may read the acceptance settings, read the scope rules and write the quote policy, each answered by the very predicate the refusing route uses; the ERP has no read of the caller's grants; no ERP source route."
