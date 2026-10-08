@@ -1804,31 +1804,13 @@ const server = createServer(async (request, response) => {
         respondJson(response, 400, { error: "the walk-in has no account to bill" });
         return;
       }
-      // Item 9.2's refusals, in the core's problem body style: integer cents fields and a
-      // message in dollars. A deposit never rides a collect now sale; an account the shape was
-      // not offered cannot carry anything on account.
+      // The ring's deposit, as the body sent it. The bound refusal below judges
+      // the raw integer the way the core's own ring does: a negative deposit is
+      // no deposit at all and meets the bound, it is not quietly read as none.
       const requestedDeposit =
-        typeof parsed.deposit_cents === "number" && Number.isInteger(parsed.deposit_cents) && parsed.deposit_cents > 0
+        typeof parsed.deposit_cents === "number" && Number.isInteger(parsed.deposit_cents)
           ? parsed.deposit_cents
           : 0;
-      if (requestedDeposit > 0 && (parsed.sale_type ?? "COLLECT_NOW") === "COLLECT_NOW") {
-        respondJson(response, 422, {
-          error: "deposit_not_collect_now",
-          deposit_cents: requestedDeposit,
-          message:
-            "A collect now sale is paid in full, the goods do not leave on a deposit. Take the whole amount now, or choose will call, delivery or a pay before release sale and leave a deposit.",
-        });
-        return;
-      }
-      if (tender === "ACCOUNT" && (customer.payment_terms_days ?? 0) <= 0) {
-        respondJson(response, 422, {
-          error: "on_account_not_available",
-          credit_limit_cents: customer.credit_limit_cents ?? 0,
-          message:
-            "This account cannot carry this sale on account. Pay in full now, or take a deposit with the balance due later.",
-        });
-        return;
-      }
       // Item 9.5's refusals, the core's own rule: the supplier's demanded deposit rides only a
       // credit account's plain on-account ring (it is BILLED to the account), never above the
       // sale's pre-tax amount.
@@ -1944,21 +1926,37 @@ const server = createServer(async (request, response) => {
           error: "supplier_deposit_over_pretax",
           deposit_cents: requestedSupplierDeposit,
           subtotal_cents: subtotal,
-          message: `The supplier deposit of $${(requestedSupplierDeposit / 100).toFixed(2)} is more than the sale's pre-tax amount.`,
+          message: `The supplier deposit of ${dollarsWord(requestedSupplierDeposit)} is more than the sale's pre-tax ${dollarsWord(subtotal)}.`,
         });
         return;
       }
       const total = subtotal + tax;
-      // Item 9 visual review P3-3, widened by run D's finding: the core's own deposit bound
-      // (0 < deposit < total, judged once the lines are priced) answers as the problem body the
-      // other deposit refusals use (a stable code, integer cents fields, a message in dollars).
-      // The till holds no bound of its own; this is the refusal the person reads.
-      if (requestedDeposit >= total) {
+      // The core's own deposit bound, judged once the lines are priced so the
+      // body names the real total (0 < deposit < total: a deposit equal to the
+      // total is just a paid sale, ring it paid; a negative one is no deposit
+      // at all), and the collect now refusal AFTER it, in the server's order
+      // (service.go prices, answers the bound, then refuses the collect now
+      // deposit): so a collect now sale with a deposit at or over the total
+      // meets deposit_out_of_range from the stub as from the server, and the
+      // stub never hides a divergence behind the earlier word. Both answer as
+      // the problem body the other deposit refusals use: a stable code, the
+      // money as integer cents fields, and a message in dollars, the total
+      // named the way the server's own dollars word names it.
+      if (requestedDeposit !== 0 && (requestedDeposit < 0 || requestedDeposit >= total)) {
         respondJson(response, 422, {
           error: "deposit_out_of_range",
           deposit_cents: requestedDeposit,
           total_cents: total,
-          message: `The deposit must be more than $0.00 and less than the sale total of $${(total / 100).toFixed(2)}.`,
+          message: `The deposit must be more than ${dollarsWord(0)} and less than the sale total of ${dollarsWord(total)}.`,
+        });
+        return;
+      }
+      if (requestedDeposit > 0 && (parsed.sale_type ?? "COLLECT_NOW") === "COLLECT_NOW") {
+        respondJson(response, 422, {
+          error: "deposit_not_collect_now",
+          deposit_cents: requestedDeposit,
+          total_cents: total,
+          message: `A collect now sale is paid in full, the goods do not leave on a deposit. Take the whole ${dollarsWord(total)} now, or choose will call, delivery or a pay before release sale and leave a deposit.`,
         });
         return;
       }
@@ -1973,6 +1971,28 @@ const server = createServer(async (request, response) => {
       // (the credit gate runs below, on the whole sale). The single-tender
       // arms below answer every other ring.
       const legs = Array.isArray(parsed.tenders) ? parsed.tenders : null;
+      // Item 9.2's shape refusal, the core's own rule and order: whatever this
+      // sale books ON ACCOUNT (the rest of a single ACCOUNT tender, a split's
+      // account leg) needs an account the shape was offered to, terms above
+      // zero AND a credit line. A zero terms or no credit account is refused
+      // here, before the credit gate, with the on account amount named in
+      // dollars (the core's problem body: integer cents fields, never cents in
+      // words). The credit gate's own refusals keep their arms below, for the
+      // accounts the shape fits.
+      const accountBooks = tender === "ACCOUNT" || (legs !== null && legs.some((leg) => leg?.method === "ACCOUNT"));
+      if (accountBooks && ((customer.payment_terms_days ?? 0) <= 0 || (customer.credit_limit_cents ?? 0) <= 0)) {
+        const onAccountCents =
+          legs !== null
+            ? (legs.find((leg) => leg?.method === "ACCOUNT")?.amount_cents ?? 0)
+            : total - requestedDeposit;
+        respondJson(response, 422, {
+          error: "on_account_not_available",
+          amount_cents: onAccountCents,
+          credit_limit_cents: customer.credit_limit_cents ?? 0,
+          message: `This account cannot carry ${dollarsWord(onAccountCents)} on account. Pay in full now, or take a deposit with the balance due later.`,
+        });
+        return;
+      }
       if (legs !== null) {
         if (legs.length < 2 || legs.length > 6) {
           respondJson(response, 400, { error: "a split settlement carries two to six legs" });
