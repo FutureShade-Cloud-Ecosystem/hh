@@ -18,6 +18,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func drainAll(t *testing.T, d *notify.Dispatcher) {
@@ -34,6 +35,18 @@ func drainAll(t *testing.T, d *notify.Dispatcher) {
 // the real consumer, optionally releases it as a fulfilment would, returns the
 // whole sale to the account, drains, and reads the books.
 func depositSaleReturn(t *testing.T, fulfilFirst bool) {
+	depositSaleReturnLeg(t, depositLeg{fulfilFirst: fulfilFirst})
+}
+
+// depositLeg shapes one return leg: partial returns the first of two lines
+// only, refund picks the rail (zero is ACCOUNT_CREDIT).
+type depositLeg struct {
+	fulfilFirst, partial bool
+	refund               string
+}
+
+func depositSaleReturnLeg(t *testing.T, leg depositLeg) {
+	fulfilFirst := leg.fulfilFirst
 	pool := intPool(t)
 	ctx := globalCtx(t, pool)
 	productID, branchID := aPaver(t, pool)
@@ -46,11 +59,15 @@ func depositSaleReturn(t *testing.T, fulfilFirst bool) {
 		t.Fatalf("plant the customer: %v", err)
 	}
 	svc := realPosSvc(t, pool, stubCharger{}).WithRoleConfig(defaultConfig(t))
+	lines := []LineInput{{ProductID: productID, QtyEntered: 5, UOMEntered: "SF"}}
+	if leg.partial {
+		lines = append(lines, LineInput{ProductID: productID, QtyEntered: 3, UOMEntered: "SF"})
+	}
 	out, err := svc.Sale(ctx, SaleInput{
 		IdempotencyKey: key(), BranchID: branchID, CustomerID: custID,
 		SaleType: SaleCollectLater, Tender: TenderAccount,
 		SupplierDepositCents: 4000,
-		Lines:                []LineInput{{ProductID: productID, QtyEntered: 5, UOMEntered: "SF"}},
+		Lines:                lines,
 	})
 	if err != nil {
 		t.Fatalf("the ring: %v", err)
@@ -94,11 +111,19 @@ func depositSaleReturn(t *testing.T, fulfilFirst bool) {
 	if err := pool.QueryRow(ctx, `SELECT id::text, qty_base FROM order_lines WHERE order_id = $1 ORDER BY line_no LIMIT 1`, out.OrderID).Scan(&lineID, &qty); err != nil {
 		t.Fatalf("read the sale's line: %v", err)
 	}
-	ret, err := svc.Return(ctx, ReturnInput{
+	refund := leg.refund
+	if refund == "" {
+		refund = RefundAccountCredit
+	}
+	in := ReturnInput{
 		IdempotencyKey: key(), OrderID: out.OrderID,
 		Lines:        []ReturnLineInput{{OrderLineID: lineID, QtyBase: qty, ReasonCode: "OTHER"}},
-		RefundMethod: RefundAccountCredit, Reason: "special order cancelled",
-	})
+		RefundMethod: refund, Reason: "special order cancelled",
+	}
+	if refund == RefundCash {
+		in.TillSessionID = openTill(t, pool, branchID)
+	}
+	ret, err := svc.Return(ctx, in)
 	if err != nil {
 		t.Fatalf("the return: %v", err)
 	}
@@ -118,6 +143,13 @@ func depositSaleReturn(t *testing.T, fulfilFirst bool) {
 			t.Fatalf("net %s: %v", code, err)
 		}
 		return n
+	}
+	if leg.partial {
+		assertPartialDepositReturn(t, pool, ctx, out, ret, lineID, custID, dep, refund, net)
+		return
+	}
+	if refund != RefundAccountCredit {
+		t.Fatalf("the whole return legs run on the account credit rail only")
 	}
 	if got := net("4000"); got != 0 {
 		t.Fatalf("revenue nets %d after the return, want zero", got)
@@ -158,3 +190,78 @@ func TestIntegration_SupplierDeposit_ReturnBeforeFulfilment(t *testing.T) {
 }
 
 func TestIntegration_SupplierDeposit_ReturnAfterFulfilment(t *testing.T) { depositSaleReturn(t, true) }
+
+func TestIntegration_SupplierDeposit_PartialReturnAfterFulfilment(t *testing.T) {
+	depositSaleReturnLeg(t, depositLeg{fulfilFirst: true, partial: true})
+}
+
+func TestIntegration_SupplierDeposit_PartialCashRefundAfterFulfilment(t *testing.T) {
+	depositSaleReturnLeg(t, depositLeg{fulfilFirst: true, partial: true, refund: RefundCash})
+}
+
+// assertPartialDepositReturn pins the principal's ruling 17: a partial return
+// releases the whole deposit once, and what the customer gets back is the
+// returned goods' value through the normal return path, never a share of the
+// deposit. Revenue nets to the sale's pre tax total minus exactly the returned
+// goods' pre tax value, 2300 is zero, the trial balance is zero, one release
+// journal stands, and no store credit rides the account rail while the
+// deposit invoice is unpaid (the rest invoice absorbs the credit and the
+// deposit invoice stays open at its amount).
+func assertPartialDepositReturn(t *testing.T, pool *pgxpool.Pool, ctx context.Context, out Sale, ret Return, lineID, custID, dep string, refund string, net func(string) int64) {
+	t.Helper()
+	var saleSub int64
+	if err := pool.QueryRow(ctx, `SELECT subtotal_cents FROM orders WHERE id = $1`, out.OrderID).Scan(&saleSub); err != nil {
+		t.Fatalf("read the sale's pre tax total: %v", err)
+	}
+	var returnedGoods int64
+	if err := pool.QueryRow(ctx, `SELECT COALESCE(SUM(line_total_cents),0) FROM pos_return_lines WHERE return_id = $1`, ret.ReturnID).Scan(&returnedGoods); err != nil {
+		t.Fatalf("read the returned goods' value: %v", err)
+	}
+	if returnedGoods <= 0 || returnedGoods >= saleSub {
+		t.Fatalf("the leg must return one line of several: returned %d of %d", returnedGoods, saleSub)
+	}
+	// Revenue is a credit balance, so its net is negative.
+	if got := -net("4000"); got != saleSub-returnedGoods {
+		t.Fatalf("revenue nets %d, want the sale's %d minus the returned goods' %d", got, saleSub, returnedGoods)
+	}
+	if got := net("2300"); got != 0 {
+		t.Fatalf("2300 nets %d after the partial return, want zero", got)
+	}
+	var tb int64
+	if err := pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(COALESCE(l.debit_cents,0) - COALESCE(l.credit_cents,0)), 0)
+		  FROM gl_journal_lines l JOIN gl_journals j ON j.id = l.journal_id
+		 WHERE j.idempotency_key IN ($1, $2, $3, $4)`,
+		"ar.invoice.finalized:"+dep, "ar.invoice.finalized:"+out.InvoiceID, "deposit.released:"+dep,
+		"pos.return.committed:"+ret.ReturnID).Scan(&tb); err != nil {
+		t.Fatal(err)
+	}
+	if tb != 0 {
+		t.Fatalf("the trial balance of the sale's journals is %d, want zero", tb)
+	}
+	var jn int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM gl_journals WHERE idempotency_key = $1`, "deposit.released:"+dep).Scan(&jn); err != nil || jn != 1 {
+		t.Fatalf("the release stands at %d journals (%v), want exactly the one", jn, err)
+	}
+	var depBalance, depTotal int64
+	if err := pool.QueryRow(ctx, `SELECT balance_cents, total_cents FROM invoices WHERE id = $1`, dep).Scan(&depBalance, &depTotal); err != nil {
+		t.Fatal(err)
+	}
+	if depBalance != depTotal {
+		t.Fatalf("the unpaid deposit invoice stands at %d of %d, want it still open at its amount", depBalance, depTotal)
+	}
+	var stray int64
+	if err := pool.QueryRow(ctx, `SELECT COALESCE(SUM(amount_cents),0) FROM customer_transactions
+		 WHERE customer_id = $1 AND source_type = 'pos_return'`, custID).Scan(&stray); err != nil {
+		t.Fatal(err)
+	}
+	if stray != 0 {
+		t.Fatalf("a stray store credit of %d stands after the %s return, want none", stray, refund)
+	}
+}
+
+// The return itself releases the deposit when no fulfilment did (ruling 17: any return, partial or
+// whole, releases the whole deposit once).
+func TestIntegration_SupplierDeposit_PartialReturnBeforeFulfilment(t *testing.T) {
+	depositSaleReturnLeg(t, depositLeg{partial: true})
+}
