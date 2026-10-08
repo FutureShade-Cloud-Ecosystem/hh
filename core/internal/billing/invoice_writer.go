@@ -274,6 +274,7 @@ type InvoiceWriter struct {
 	source    OrderInvoiceSource
 	glPoster  CreditMemoPoster
 	delivered DeliveredOrderReader // deposit_release.go; nil = the deposit sweep skips
+	journals  JournalKeyReader     // deposit_release.go; nil = the deposit sweep skips
 	now       func() time.Time
 }
 
