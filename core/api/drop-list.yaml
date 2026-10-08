@@ -114,3 +114,7 @@ additions:
     reason: "HH-LOAD-1 load doors (LD-5): the product image put through the product module's own image store and size cap, the product named by legacy key; no ERP source route."
   - route: "PUT /api/v1/load/supplier-skus"
     reason: "HH-LOAD-1 load doors (LD-5): the supplier SKU upsert through the purchasing module's writer, the product and supplier each named by legacy key; no ERP source route."
+  - route: "POST /api/v1/pos/swaps"
+    reason: "Row 1047 returns across orders, the swap: a credit note across orders and a new order in one transaction, the credit spent on the new order and the leftover back by the original tender; the ERP has neither the credit note nor the move; no ERP source route."
+  - route: "POST /api/v1/pos/swaps/preview"
+    reason: "Row 1047 returns across orders, the swap preview: the credit, the new order, the applied credit, the leftover and the shortfall priced by the swap's own functions and writing nothing; no ERP source route."

@@ -63,6 +63,7 @@ type fakeStore struct {
 	returnRows       []returnRow
 	returnLineRows   []returnLineRow
 	unbookedRefunds  []cardRefundFact
+	swaps            []swapRow
 	bookedRefundKeys []string
 	priorSums        map[string]int64      // order_id → the sale's earlier committed return total (the per-sale sum the refund gate reads)
 	noteKeys         map[string]ReturnNote // the note idempotency key → its committed note (the across-orders replay)
@@ -493,6 +494,20 @@ func (f *fakeStore) RecordUnbookedCardRefunds(_ context.Context, facts []cardRef
 func (f *fakeStore) MarkCardRefundsBooked(_ context.Context, keys []string) error {
 	f.bookedRefundKeys = append(f.bookedRefundKeys, keys...)
 	return nil
+}
+
+func (f *fakeStore) InsertSwap(_ context.Context, _ pgx.Tx, w swapRow) (string, error) {
+	f.swaps = append(f.swaps, w)
+	return "swap-" + w.IdempotencyKey, nil
+}
+
+func (f *fakeStore) FindSwapByKey(_ context.Context, key string) (swapRow, bool, error) {
+	for _, w := range f.swaps {
+		if w.IdempotencyKey == key {
+			return w, true, nil
+		}
+	}
+	return swapRow{}, false, nil
 }
 
 func (f *fakeStore) ReadReturnableLine(ctx context.Context, orderID, orderLineID string) (returnableLine, bool, error) {

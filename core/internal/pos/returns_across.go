@@ -87,35 +87,43 @@ func noteWalls(first *returnOrderCtx, oc returnOrderCtx, customerID string) erro
 // guardLines, read without locks, and nothing written. The note total is the sum of the same
 // per-line figures the commit would book.
 func (s *Service) PreviewReturnAcross(ctx context.Context, in ReturnPreviewInput) (ReturnPreview, error) {
+	out, _, err := s.previewNote(ctx, in)
+	return out, err
+}
+
+// previewNote is PreviewReturnAcross that also answers each order's resolved return context, which
+// the swap judges its source orders and its leftover rail by.
+func (s *Service) previewNote(ctx context.Context, in ReturnPreviewInput) (ReturnPreview, []returnOrderCtx, error) {
+	var ocs []returnOrderCtx
 	if len(in.Orders) == 0 {
-		return ReturnPreview{}, clientErr(http.StatusBadRequest, "pos: a return note needs at least one order")
+		return ReturnPreview{}, nil, clientErr(http.StatusBadRequest, "pos: a return note needs at least one order")
 	}
 	customerID, err := s.checkNoteShape(ctx, in.CustomerID, in.Orders)
 	if err != nil {
-		return ReturnPreview{}, err
+		return ReturnPreview{}, nil, err
 	}
 	caller, err := s.caller(ctx)
 	if err != nil {
-		return ReturnPreview{}, err
+		return ReturnPreview{}, nil, err
 	}
 	out := ReturnPreview{CustomerID: customerID, Orders: make([]ReturnPreviewOrder, 0, len(in.Orders))}
 	var first *returnOrderCtx
 	for _, o := range in.Orders {
 		oc, found, err := s.store.ReturnOrderContextFor(ctx, o.OrderID, "", reachableBranches(caller))
 		if err != nil {
-			return ReturnPreview{}, err
+			return ReturnPreview{}, nil, err
 		}
 		if !found {
-			return ReturnPreview{}, errReturnNotFound
+			return ReturnPreview{}, nil, errReturnNotFound
 		}
 		if err := requireBranchReach(caller, oc.BranchID); err != nil {
-			return ReturnPreview{}, err
+			return ReturnPreview{}, nil, err
 		}
 		if err := noteWalls(first, oc, customerID); err != nil {
-			return ReturnPreview{}, err
+			return ReturnPreview{}, nil, err
 		}
 		if oc, err = s.resolveConverted(ctx, oc); err != nil {
-			return ReturnPreview{}, err
+			return ReturnPreview{}, nil, err
 		}
 		if first == nil {
 			ocCopy := oc
@@ -124,8 +132,9 @@ func (s *Service) PreviewReturnAcross(ctx context.Context, in ReturnPreviewInput
 		}
 		g, err := s.previewReturnLines(ctx, oc, o.Lines)
 		if err != nil {
-			return ReturnPreview{}, err
+			return ReturnPreview{}, nil, err
 		}
+		ocs = append(ocs, oc)
 		po := ReturnPreviewOrder{
 			OrderID: oc.OrderID, OrderNo: oc.OrderNo, SubtotalCents: g.subtotal, TaxCents: g.taxTotal,
 			TotalCents: g.subtotal + g.taxTotal, Lines: make([]ReturnPreviewLine, 0, len(g.lines)),
@@ -141,7 +150,7 @@ func (s *Service) PreviewReturnAcross(ctx context.Context, in ReturnPreviewInput
 		out.Orders = append(out.Orders, po)
 	}
 	out.TotalCents = out.SubtotalCents + out.TaxCents
-	return out, nil
+	return out, ocs, nil
 }
 
 // returnAcrossPlan is everything the note resolves BEFORE its transaction opens, one child plan
@@ -212,6 +221,7 @@ func (s *Service) prepareReturnAcross(ctx context.Context, in ReturnAcrossInput)
 			Restock:        in.Restock,
 			TillSessionID:  in.TillSessionID,
 			noteChild:      true,
+			railOptional:   in.railOptional,
 		}
 		child, perr := s.prepareReturn(ctx, childIn)
 		if perr != nil {
@@ -313,8 +323,14 @@ func (s *Service) ReturnAcross(ctx context.Context, in ReturnAcrossInput) (Retur
 	if replayedHere {
 		return out, nil
 	}
-	// The completion row names the note, one row for the one decision (the children's own trails
-	// are the rail's rows and journals themselves).
+	s.recordNoteCompleted(ctx, plan, out, approvedHere)
+	return out, nil
+}
+
+// recordNoteCompleted writes the completion row of a committed note, one row for the one decision
+// (the children's own trails are the rail's rows and journals themselves).
+func (s *Service) recordNoteCompleted(ctx context.Context, plan *returnAcrossPlan, out ReturnNote, approvedHere bool) {
+	in := plan.in
 	completed := audit.SensitiveAccess{
 		Action: audit.ActReturnCompleted, EntityType: "pos.return_note", EntityID: out.NoteID,
 		ActorID: plan.actor, BranchID: out.BranchID, Purpose: "POS_RETURN", Reason: in.RefundMethod,
@@ -329,7 +345,6 @@ func (s *Service) ReturnAcross(ctx context.Context, in ReturnAcrossInput) (Retur
 		completed.Reason = refundApprovalRequiredError
 	}
 	s.record(ctx, completed)
-	return out, nil
 }
 
 // returnAcrossInTx is the note's transactional body: the ascending per-sale locks, the in-tx
@@ -376,6 +391,26 @@ func (s *Service) returnAcrossInTx(ctx context.Context, tx pgx.Tx, plan *returnA
 	}
 	noteTotal := subtotal + taxTotal
 
+	// A swap (10.5): the credit the swap was priced against must be exactly what the guard now
+	// prices (a concurrent return of the same lines would change it), and the part spent on the new
+	// order is taken from the children in order; the rest of each child goes out on the rail.
+	if in.swap {
+		if noteTotal != in.swapCredit {
+			return ReturnNote{}, false, false, clientErr(http.StatusConflict,
+				"pos: the credit changed while the swap was being rung (%s priced, %s now); review the swap and ring it again",
+				centsWords(in.swapCredit), centsWords(noteTotal))
+		}
+		remaining := in.swapApplied
+		for i, child := range plan.children {
+			childTotal := guards[i].subtotal + guards[i].taxTotal
+			child.applied = childTotal
+			if child.applied > remaining {
+				child.applied = remaining
+			}
+			remaining -= child.applied
+		}
+	}
+
 	// The approval gate judges the NOTE total (the Q3 ruling), ahead of every write and every
 	// rail, the single path's own refusal body and credential discipline.
 	var approvedHere bool
@@ -402,7 +437,7 @@ func (s *Service) returnAcrossInTx(ctx context.Context, tx pgx.Tx, plan *returnA
 	// heard of the others.
 	if in.RefundMethod == RefundCard {
 		for i, child := range plan.children {
-			if cerr := s.checkCardCapTx(ctx, tx, child.oc, "", guards[i].subtotal+guards[i].taxTotal); cerr != nil {
+			if cerr := s.checkCardCapTx(ctx, tx, child.oc, "", guards[i].subtotal+guards[i].taxTotal-child.applied); cerr != nil {
 				return ReturnNote{}, false, false, cerr
 			}
 		}

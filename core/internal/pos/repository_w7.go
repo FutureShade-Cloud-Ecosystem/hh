@@ -457,7 +457,7 @@ func (r *Repository) ReadReturnableLine(ctx context.Context, orderID, orderLineI
 // exceptReturnID leaves out the return whose header is already written ahead of its rail.
 func (r *Repository) SumCardRefundedTx(ctx context.Context, tx pgx.Tx, orderID, exceptReturnID string) (int64, error) {
 	var sum int64
-	err := tx.QueryRow(ctx, `SELECT COALESCE(SUM(total_cents - fee_cents), 0) FROM pos_returns
+	err := tx.QueryRow(ctx, `SELECT COALESCE(SUM(total_cents - fee_cents - applied_cents), 0) FROM pos_returns
  WHERE order_id = $1 AND refund_method = 'CARD' AND ($2 = '' OR id::text <> $2)`, orderID, exceptReturnID).Scan(&sum)
 	return sum, err
 }
@@ -540,14 +540,14 @@ func (r *Repository) InsertReturn(ctx context.Context, tx pgx.Tx, ret returnRow)
 INSERT INTO pos_returns (return_no, order_id, invoice_id, customer_id, branch_id, refund_method,
                          subtotal_cents, tax_cents, total_cents, fee_cents, reason, restock, till_session_id,
                          pickup_required, pickup_site, pickup_requested_date, pickup_status,
-                         idempotency_key, created_by, note_id)
-VALUES ('#RET-' || nextval('return_no_seq'), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+                         idempotency_key, created_by, note_id, applied_cents)
+VALUES ('#RET-' || nextval('return_no_seq'), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
 RETURNING id::text, return_no`
 	var id, no string
 	err := tx.QueryRow(ctx, q, ret.OrderID, ret.InvoiceID, ret.CustomerID, ret.BranchID, ret.RefundMethod,
 		ret.SubtotalCents, ret.TaxCents, ret.TotalCents, ret.FeeCents, ret.Reason, ret.Restock, nullStr(ret.TillSessionID),
 		ret.PickupRequired, ret.PickupSite, nullStr(ret.PickupDate), ret.PickupStatus,
-		ret.IdempotencyKey, nullStr(ret.CreatedBy), nullStr(ret.NoteID)).Scan(&id, &no)
+		ret.IdempotencyKey, nullStr(ret.CreatedBy), nullStr(ret.NoteID), ret.AppliedCents).Scan(&id, &no)
 	return id, no, err
 }
 
@@ -561,7 +561,7 @@ SELECT n.id::text, n.note_no, n.customer_id::text, n.branch_id::text, n.refund_m
 const findReturnNoteChildrenQuery = `
 SELECT r.id::text, r.return_no, r.order_id::text, r.invoice_id::text, r.refund_method,
        r.subtotal_cents, r.tax_cents, r.total_cents, r.fee_cents,
-       COALESCE(r.refund_payment_id::text,''), r.pickup_status, r.status
+       COALESCE(r.refund_payment_id::text,''), r.pickup_status, r.status, r.applied_cents
   FROM pos_returns r WHERE r.note_id = $1 ORDER BY r.return_no`
 
 func scanReturnNote(row pgx.Row) (ReturnNote, bool, error) {
@@ -619,7 +619,7 @@ func (r *Repository) readNoteChildren(ctx context.Context, query func(context.Co
 		var ret Return
 		if err := rows.Scan(&ret.ReturnID, &ret.ReturnNo, &ret.OrderID, &ret.InvoiceID, &ret.RefundMethod,
 			&ret.SubtotalCents, &ret.TaxCents, &ret.TotalCents, &ret.FeeCents, &ret.RefundPaymentID,
-			&ret.PickupStatus, &ret.Status); err != nil {
+			&ret.PickupStatus, &ret.Status, &ret.AppliedCents); err != nil {
 			return err
 		}
 		n.Returns = append(n.Returns, ret)
@@ -993,4 +993,36 @@ func (r *Repository) ReadProductSnapshot(ctx context.Context, productID string) 
 		return "", "", clientErr(http.StatusUnprocessableEntity, "pos: unknown product %s", productID)
 	}
 	return sku, name, err
+}
+
+// InsertSwap writes the swap's link row inside the swap's transaction, after both documents exist.
+func (r *Repository) InsertSwap(ctx context.Context, tx pgx.Tx, w swapRow) (string, error) {
+	const q = `
+INSERT INTO pos_swaps (idempotency_key, note_id, order_id, customer_id, branch_id, credit_cents, applied_cents,
+                       new_total_cents, leftover_cents, shortfall_cents, leftover_method, created_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id::text`
+	var id string
+	err := tx.QueryRow(ctx, q, w.IdempotencyKey, w.NoteID, w.OrderID, w.CustomerID, w.BranchID, w.CreditCents,
+		w.AppliedCents, w.NewTotalCents, w.LeftoverCents, w.ShortfallCents, w.LeftoverMethod, nullStr(w.CreatedBy)).Scan(&id)
+	return id, err
+}
+
+// FindSwapByKey is the swap replay's pool read.
+func (r *Repository) FindSwapByKey(ctx context.Context, key string) (swapRow, bool, error) {
+	if r.pool == nil {
+		return swapRow{}, false, errNoPool
+	}
+	var w swapRow
+	err := r.pool.QueryRow(ctx, `
+SELECT id::text, idempotency_key, note_id::text, order_id::text, customer_id::text, branch_id::text, credit_cents,
+       applied_cents, new_total_cents, leftover_cents, shortfall_cents, leftover_method
+  FROM pos_swaps WHERE idempotency_key = $1`, key).Scan(&w.ID, &w.IdempotencyKey, &w.NoteID, &w.OrderID, &w.CustomerID,
+		&w.BranchID, &w.CreditCents, &w.AppliedCents, &w.NewTotalCents, &w.LeftoverCents, &w.ShortfallCents, &w.LeftoverMethod)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return swapRow{}, false, nil
+	}
+	if err != nil {
+		return swapRow{}, false, err
+	}
+	return w, true, nil
 }

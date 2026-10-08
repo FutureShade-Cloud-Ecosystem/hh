@@ -203,6 +203,9 @@ type posStore interface {
 	// ReadReturnableLine is LockReturnableLine without the lock or the transaction: the credit
 	// preview's read of the same line and the same prior-return sums.
 	ReadReturnableLine(ctx context.Context, orderID, orderLineID string) (returnableLine, bool, error)
+	// InsertSwap and FindSwapByKey keep the swap's link between its credit note and its new order (10.5).
+	InsertSwap(ctx context.Context, tx pgx.Tx, w swapRow) (string, error)
+	FindSwapByKey(ctx context.Context, key string) (swapRow, bool, error)
 	// SumCardRefundedTx is what earlier CARD returns of the order refunded to the card (D5).
 	SumCardRefundedTx(ctx context.Context, tx pgx.Tx, orderID, exceptReturnID string) (int64, error)
 	// RecordUnbookedCardRefunds and MarkCardRefundsBooked keep the record of processor refunds a
@@ -498,6 +501,7 @@ type salePlan struct {
 	captures         []captureLeg
 	capturedCents    int64
 	fullyPaid        bool
+	applied          int64 // the swap credit spent on this order (10.5), 0 on an ordinary sale
 	actor            string
 	ring             *cardRing
 }
@@ -732,6 +736,14 @@ func (s *Service) prepareSale(ctx context.Context, in SaleInput) (*salePlan, *Sa
 	subtotal := priced.subtotal
 	tax := priced.tax
 	total := priced.total
+	// Item 10.5: a swap spends its credit note on the new order first; the tender takes the rest.
+	var applied int64
+	if in.swapCreditCents > 0 {
+		applied = in.swapCreditCents
+		if applied > total {
+			applied = total
+		}
+	}
 
 	// Per-line tax_cents, the largest-remainder split of the header tax over the line totals (writes to the
 	// 0042 order_lines.tax_cents / invoice_lines.tax_cents columns). The parts sum EXACTLY to the header tax,
@@ -799,7 +811,11 @@ func (s *Service) prepareSale(ctx context.Context, in SaleInput) (*salePlan, *Sa
 	// sale (COD) never books on account at all, its line two is due later by
 	// definition. This runs BEFORE the credit gate: the gate answers how much
 	// credit fits, this answers whether on account is a shape the account has.
-	if onAccount := onAccountCents(tender, splitLegs, isSplit, total, deposit); onAccount > 0 {
+	onAccount := onAccountCents(tender, splitLegs, isSplit, total, deposit)
+	if applied > 0 && tender == TenderAccount && !isSplit {
+		onAccount = total - applied
+	}
+	if onAccount > 0 {
 		if codSale || cust.PaymentTermsDays <= 0 || cust.CreditLimitCents <= 0 {
 			return nil, nil, ErrAccountShapeNotAvailable{
 				AmountCents:      onAccount,
@@ -837,8 +853,10 @@ func (s *Service) prepareSale(ctx context.Context, in SaleInput) (*salePlan, *Sa
 	case isSplit:
 		captures = captureLegsForSplit(splitLegs, in.IdempotencyKey)
 	case paid:
-		captures = []captureLeg{{Seq: 1, Method: tender, AmountCents: total, IdemKey: in.IdempotencyKey,
-			PaymentToken: in.PaymentToken, CardType: in.CardType}}
+		if amt := total - applied; amt > 0 {
+			captures = []captureLeg{{Seq: 1, Method: tender, AmountCents: amt, IdemKey: in.IdempotencyKey,
+				PaymentToken: in.PaymentToken, CardType: in.CardType}}
+		}
 	case deposit > 0:
 		captures = []captureLeg{{Seq: 1, Method: in.DepositMethod, AmountCents: deposit, IdemKey: in.IdempotencyKey,
 			PaymentToken: in.PaymentToken, CardType: in.CardType}}
@@ -847,13 +865,13 @@ func (s *Service) prepareSale(ctx context.Context, in SaleInput) (*salePlan, *Sa
 	// fullyPaid replaces the old `paid` from here down: a split with an ACCOUNT leg is neither
 	// "paid" nor "unpaid at ring", it is settled up to capturedCents. Every downstream branch keys
 	// off the money, not the posture.
-	fullyPaid := capturedCents == total
+	fullyPaid := capturedCents+applied == total
 
 	// 5. Credit gate on the UNCAPTURED remainder, the exposure the business is actually carrying.
 	//    ACCOUNT and COD sales expose the whole total (less any deposit); a split exposes its ACCOUNT
 	//    leg; a fully-captured sale exposes nothing and is not gated (unchanged). No tx is opened if
 	//    it blocks.
-	if exposure := total - capturedCents; exposure > 0 {
+	if exposure := total - capturedCents - applied; exposure > 0 {
 		if blk := s.credit.Check(ctx, customerID, exposure, cust.OpenBalanceCents, cust.CreditLimitCents, true, in.BranchID, false); blk != nil {
 			return nil, nil, ErrCreditBlocked{Policy: string(blk.Policy)}
 		}
@@ -912,7 +930,7 @@ func (s *Service) prepareSale(ctx context.Context, in SaleInput) (*salePlan, *Sa
 		deposit: deposit, supplierDeposit: supplierDeposit, subtotal: subtotal, tax: tax, total: total,
 		lines: lines, priced: priced, taxReason: taxReason, poJobRef: poJobRef, jobAddress: jobAddress,
 		jobReference: jobReference, salespersonName: salespersonName, customerID: customerID, cust: cust,
-		captures: captures, capturedCents: capturedCents, fullyPaid: fullyPaid, actor: actor, ring: ring,
+		captures: captures, capturedCents: capturedCents, fullyPaid: fullyPaid, applied: applied, actor: actor, ring: ring,
 	}, nil, nil
 }
 
@@ -925,6 +943,7 @@ func (s *Service) saleInTx(ctx context.Context, tx pgx.Tx, p *salePlan, outp *Sa
 	lines, priced, taxReason := p.lines, p.priced, p.taxReason
 	poJobRef, jobAddress, jobReference, salespersonName := p.poJobRef, p.jobAddress, p.jobReference, p.salespersonName
 	customerID, cust, captures, capturedCents, fullyPaid, actor := p.customerID, p.cust, p.captures, p.capturedCents, p.fullyPaid, p.actor
+	applied := p.applied
 	var tenderResults []till.TenderResult
 	defer func() { *trp = tenderResults }()
 	var out Sale
@@ -941,6 +960,9 @@ func (s *Service) saleInTx(ctx context.Context, tx pgx.Tx, p *salePlan, outp *Sa
 		// ring; the later payment/release flow (stubbed at W7) issues the stock.
 		meta["cod"] = true
 		meta["cod_posture"] = "AWAITING_PAYMENT"
+	}
+	if applied > 0 {
+		meta["swap_credit_cents"] = applied
 	}
 	if in.CashTenderedCents > 0 {
 		// DIB-488 rev 6 (item F): the tendered amount is a display fact of THIS ring (change due
@@ -1087,8 +1109,8 @@ func (s *Service) saleInTx(ctx context.Context, tx pgx.Tx, p *salePlan, outp *Sa
 	dueDate := issueDate
 	if !fullyPaid {
 		invStatus = "FINALIZED"
-		balance = total - capturedCents
-		if capturedCents > 0 {
+		balance = total - capturedCents - applied
+		if capturedCents+applied > 0 {
 			invStatus = "PARTIALLY_PAID"
 		}
 		if !codSale {
@@ -1165,7 +1187,10 @@ func (s *Service) saleInTx(ctx context.Context, tx pgx.Tx, p *salePlan, outp *Sa
 	// generalizes). An uncaptured remainder books the INVOICE first, then each capture nets it
 	// down, landing at open + (total − captured), which is exactly the invoice's own balance.
 	running := cust.OpenBalanceCents
-	if !fullyPaid {
+	// A swap's applied credit settles the invoice without a tender: the invoice is booked to the
+	// account and the credit comes off it, so the account nets to the shortfall alone.
+	invoiceBooked := !fullyPaid || applied > 0
+	if invoiceBooked {
 		running += invTotal
 		if err := s.store.InsertCustomerTxn(ctx, tx, customerTxnRow{
 			CustomerID: customerID, TxnType: "INVOICE", AmountCents: invTotal,
@@ -1184,8 +1209,17 @@ func (s *Service) saleInTx(ctx context.Context, tx pgx.Tx, p *salePlan, outp *Sa
 			return err
 		}
 	}
+	if applied > 0 {
+		running -= applied
+		if err := s.store.InsertCustomerTxn(ctx, tx, customerTxnRow{
+			CustomerID: customerID, TxnType: "CREDIT_MEMO", AmountCents: -applied,
+			BalanceAfter: running, SourceType: "invoice", SourceRefID: invoiceID, BranchID: in.BranchID,
+		}); err != nil {
+			return err
+		}
+	}
 	for _, c := range captures {
-		if !fullyPaid {
+		if invoiceBooked {
 			running -= c.AmountCents
 		}
 		if err := s.store.InsertPaymentAllocation(ctx, tx, c.PaymentID, invoiceID, c.AmountCents, actor); err != nil {
