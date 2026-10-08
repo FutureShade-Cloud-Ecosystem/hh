@@ -1,9 +1,9 @@
-# The demo image's Caddy configuration template (plan r7 section 5, the
-# Railway shape). The entrypoint substitutes the placeholders and pipes the
-# result to Caddy on standard input; Caddy's autosave of the adapted
-# configuration is pointed at the container's shared-memory tmpfs, so
-# nothing generated and no secret reaches the image's layers, a volume, or
-# anything that outlives the container.
+# The demo image's Caddy configuration template (Lane 0 sub item 1): multi-app
+# shape. The entrypoint substitutes the placeholders and pipes the result to
+# Caddy on standard input; Caddy's autosave of the adapted configuration is
+# pointed at the container's shared-memory tmpfs, so nothing generated and no
+# secret reaches the image's layers, a volume, or anything that outlives the
+# container.
 #
 # Placeholders:
 #   __GATE_PORT__  the public port Caddy listens on (the platform's PORT)
@@ -18,10 +18,13 @@
 # still answers, and /healthz answers unauthenticated for the platform.
 #
 # The handle blocks are ordered most specific first: the demo mint routes,
-# then every other api route, then the health leg, then everything else,
-# which is the app. The core answers /api/v1/* itself (staff routes 401
-# without a bearer, the public legs answer as on any box), and Caddy adds
-# nothing to those; the app is the only thing Caddy serves from disk.
+# then every other api route, then the health leg, then each app's prefixed
+# static route, and finally everything else which is the front door.
+#
+# Each app is served under its own prefix with its own file root. The base
+# path each app builds with (Vite's base option) is encoded in its asset
+# references, and handle_path strips the prefix before the file server looks
+# the file up in the app's own root, so the assets resolve correctly.
 #
 # The forwarded address discipline (W2's review, routed here): the demo
 # mint's per-address limit must see the address the client really came
@@ -39,6 +42,7 @@
 
 :__GATE_PORT__
 
+# Demo mint and staff API routes, gated by the phrase.
 handle /api/v1/demo/* {
 	basic_auth {
 		demo __GATE_HASH__
@@ -48,23 +52,59 @@ handle /api/v1/demo/* {
 	}
 }
 
+# All other API routes: the core answers these directly.
 handle /api/* {
 	reverse_proxy __UPSTREAM__ {
 		header_up X-Forwarded-For "{remote_host}"
 	}
 }
 
+# Health check: no phrase, no auth, core answers.
 handle /healthz {
 	reverse_proxy __UPSTREAM__ {
 		header_up X-Forwarded-For "{remote_host}"
 	}
 }
 
+# The Counter Till, served at /till/. The app builds with base /till/ so
+# its asset references are /till/assets/...; handle_path strips /till before
+# the file server looks up the asset in the app's own root. The phrase gate
+# applies here: the till is a staff-facing app, same as the front door.
+handle /till/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	handle_path /till/*
+	root * /srv/app/counter-till
+	try_files {path} /index.html
+	file_server
+}
+
+# The Public Desk, served at /public/. Same pattern as the till.
+handle /public/* {
+	handle_path /public/*
+	root * /srv/app/public-desk
+	try_files {path} /index.html
+	file_server
+}
+
+# The Quote Desk, served at /quote/ when the desk is present in the image.
+# The image is always built with this route included; when BUILD_QUOTE_DESK=0
+# the dist directory is empty and Caddy returns 404 for every /quote/
+# request, which is correct behaviour until the desk lands on main.
+handle /quote/* {
+	handle_path /quote/*
+	root * /srv/app/quote-desk
+	try_files {path} /index.html
+	file_server
+}
+
+# The front door at /, the catch-all route.
 handle {
 	basic_auth {
 		demo __GATE_HASH__
 	}
-	root * /srv/app
+	root * /srv/app/front-door
 	try_files {path} /index.html
 	file_server
 }

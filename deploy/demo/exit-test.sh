@@ -1,6 +1,13 @@
 #!/bin/sh
-# W5's exit test (plan r7 section 4, item W5): the demo image, end to end,
-# against a throwaway local Postgres. Run from a checkout of the branch:
+# W5's exit test (plan r7 section 4, item W5) updated for Lane 0's
+# multi-app image. The script tests the full boot contract and adds
+# assertions for each app's prefix route:
+#   /         front door  (fd-app-root, phrase gate)
+#   /till/    counter till (ct-app-root, phrase gate)
+#   /public/  public desk (pd-quote-public, no phrase gate for public routes)
+#   /quote/   quote desk (404 when desk not in image; 401+phrase when present)
+#
+# Run from a checkout of the branch:
 #
 #   ./deploy/demo/exit-test.sh
 #
@@ -65,9 +72,9 @@ set -eu
 
 cd "$(git rev-parse --show-toplevel)"
 
-IMAGE="${W5_EXIT_IMAGE:-hh-demo-till:w5-exit}"
-PG_NAME="${W5_EXIT_PG:-hh-till-l3d-pg}"
-NET="${W5_EXIT_NET:-hh-till-l3d-net}"
+IMAGE="${W5_EXIT_IMAGE:-hh-lane0-demo:local}"
+PG_NAME="${W5_EXIT_PG:-hh-lane0-pg}"
+NET="${W5_EXIT_NET:-hh-lane0-net}"
 PG_PORT="${W5_EXIT_PG_PORT:-5599}"
 APP_PORT="${W5_EXIT_APP_PORT:-5811}"
 PREFIX="${W5_EXIT_PREFIX:-w5x}"
@@ -164,10 +171,18 @@ wait_box_exited() {
 }
 
 echo "== building the image"
-docker build -f deploy/demo/Dockerfile -t "$IMAGE" . >/dev/null || {
-	fail "the image build failed"
-	exit 1
-}
+# Build with the build-image.sh script which auto-detects quote-desk.
+if [ -x "./deploy/demo/build-image.sh" ]; then
+	./deploy/demo/build-image.sh 2>&1 || {
+		fail "the image build failed"
+		exit 1
+	}
+else
+	docker build -f deploy/demo/Dockerfile -t "$IMAGE" . >/dev/null 2>&1 || {
+		fail "the image build failed"
+		exit 1
+	}
+fi
 pass "the image builds"
 
 # The throwaway phrase and its hash, made here and held in these shell
@@ -222,14 +237,37 @@ code="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/healthz")"
 	|| fail "the health leg answered $code without a phrase, want 200"
 
 code="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/")"
-[ "$code" = "401" ] && pass "a page without the phrase is refused" \
-	|| fail "a page without the phrase answered $code, want 401"
+[ "$code" = "401" ] && pass "the front door without the phrase is refused" \
+	|| fail "the front door without the phrase answered $code, want 401"
 
 page="$(curl -s -u "demo:$PHRASE" "$BASE/")"
 case "$page" in
-	*ct-app-root*) pass "the app's first page serves with the phrase" ;;
-	*) fail "the app's first page did not serve (no app markup in the answer)" ;;
+	*fd-app-root*) pass "the front door serves with the phrase (fd-app-root)" ;;
+	*) fail "the front door did not serve (no fd-app-root in the answer)" ;;
 esac
+
+# Counter till at /till/
+code="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/till/")"
+[ "$code" = "401" ] && pass "the till without the phrase is refused at /till/" \
+	|| fail "the till without the phrase answered $code at /till/, want 401"
+
+till_page="$(curl -s -u "demo:$PHRASE" "$BASE/till/")"
+case "$till_page" in
+	*ct-app-root*) pass "the counter till serves with the phrase at /till/ (ct-app-root)" ;;
+	*) fail "the counter till did not serve at /till/ (no ct-app-root in the answer)" ;;
+esac
+
+# Public desk at /public/ (no phrase gate: public routes are unauthenticated)
+public_page="$(curl -s "$BASE/public/")"
+case "$public_page" in
+	*pd-quote-public*) pass "the public desk serves without phrase at /public/ (pd-quote-public)" ;;
+	*) fail "the public desk did not serve at /public/ (no pd-quote-public in the answer)" ;;
+esac
+
+# Quote desk at /quote/ (404 without the desk on main yet)
+quote_code="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/quote/")"
+[ "$quote_code" = "404" ] && pass "/quote/ answers 404 (quote desk not on main yet)" \
+	|| fail "/quote/ answered $quote_code, want 404"
 
 flows="$(curl -s -u "demo:$PHRASE" "$BASE/api/v1/demo/flows")"
 case "$flows" in
