@@ -116,6 +116,11 @@ export const payBalanceStyles = [heldOrderStyles, css`
     color: var(--hos-text-dim);
     overflow-wrap: anywhere;
   }
+  /* Item 9 visual review P3-2: the shared card carries no bottom margin of its own, so where it
+     sits above the order's rows here the panel touched the Order total row. */
+  .pay-balance .held-order {
+    margin-bottom: var(--hh-s-16);
+  }
   .pay-balance .figure {
     display: flex;
     justify-content: space-between;

@@ -125,6 +125,23 @@ test("the Pay balance order card reads the held chips for a held order, and none
   await expect(page.getByTestId("held-order")).toHaveCount(0);
 });
 
+// Item 9 visual review P3-2: the held panel must sit clear of the order's rows beneath it on the
+// Pay balance card (it touched the Order total row before, both widths).
+test("the held card leaves a gap above the order's rows on the Pay balance card", async ({ page }) => {
+  await signIn(page);
+  await page.getByTestId("till-pay-balance-entry").click();
+  await page.getByTestId("pay-balance-term").fill("DEMO-TRT-D02");
+  await page.getByTestId("pay-balance-find").click();
+  const held = page.getByTestId("held-order");
+  await expect(held).toBeVisible();
+  const heldBox = await held.boundingBox();
+  const totalBox = await page.getByTestId("pay-balance-order").locator(".figure").first().boundingBox();
+  expect(heldBox).not.toBeNull();
+  expect(totalBox).not.toBeNull();
+  const gap = totalBox!.y - (heldBox!.y + heldBox!.height);
+  expect(gap).toBeGreaterThanOrEqual(12);
+});
+
 test("at 390 the held card does not scroll sideways", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await signIn(page);
