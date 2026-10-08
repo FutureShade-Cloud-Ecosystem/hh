@@ -44,6 +44,19 @@ test("the entry page shows the two demo role cards and the eleven coming roles",
   await expect(manager).toBeVisible();
   await expect(manager).toBeEnabled();
 
+  // The stub's table, like the core's, mints four logins; the till offers a
+  // card for its own pair alone (a persona card would lead into a surface
+  // the server refuses), and the personas stay in the coming list.
+  const listing = (await (await flows).json()) as { flows: Array<{ flow: string }> };
+  expect(listing.flows.map((row) => row.flow)).toEqual([
+    "sales",
+    "sales-manager",
+    "yard-team",
+    "driver",
+  ]);
+  await expect(page.getByRole("button", { name: "Yard Team", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Driver", exact: true })).toBeDisabled();
+
   const coming = page.getByRole("list", { name: "Coming roles" });
   await expect(coming).toBeVisible();
   await expect(coming.getByRole("listitem")).toHaveCount(11);

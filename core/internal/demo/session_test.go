@@ -251,6 +251,51 @@ func TestSessionMintsTheManagerFlow(t *testing.T) {
 	}
 }
 
+// The persona flows mint the roles roadmap's first increments' logins: the
+// Yard Team and the Driver personas migration 0200 plants, each answered by
+// the resolver's live role (tier 3, branch scope), with the table's labels.
+func TestSessionMintsThePersonaFlows(t *testing.T) {
+	for _, tc := range []struct {
+		flow  string
+		role  string
+		label string
+		id    string
+	}{
+		{"yard-team", "yard_team", "Yard Team", "d0200000-0000-4000-9000-000000000002"},
+		{"driver", "driver", "Driver", "d0200000-0000-4000-9000-000000000003"},
+	} {
+		t.Run(tc.flow, func(t *testing.T) {
+			minter := &fakeMinter{token: "demo-token-" + tc.flow}
+			m, _, _ := newTestMint(t, minter, &fakeStaff{
+				auth: identity.StaffAuthority{
+					RoleID: tc.role, Tier: identity.TierFrontline, Scope: identity.ScopeBranch,
+				},
+				ok: true,
+			})
+			rsp := postSession(t, m, `{"flow":"`+tc.flow+`"}`)
+			if rsp.Code != http.StatusOK {
+				t.Fatalf("status %d, want 200 (body: %s)", rsp.Code, rsp.Body.String())
+			}
+			if len(minter.subjects) != 1 || minter.subjects[0] != tc.id {
+				t.Fatalf("the minter was asked to sign %v, want the persona's platform user id", minter.subjects)
+			}
+			var got sessionResponse
+			if err := json.Unmarshal(rsp.Body.Bytes(), &got); err != nil {
+				t.Fatalf("body does not decode: %v", err)
+			}
+			if got.Flow != tc.flow {
+				t.Errorf("the answer echoes flow %q, want %q", got.Flow, tc.flow)
+			}
+			if got.User.UserID != tc.id || got.User.RoleCode != tc.role || got.User.RoleName != tc.label {
+				t.Errorf("the persona credential is %+v, want the flow table's %s account", got.User, tc.flow)
+			}
+			if got.User.Tier != identity.TierFrontline || got.User.Scope != "BRANCH" {
+				t.Errorf("tier %d scope %q, want the resolver's answer", got.User.Tier, got.User.Scope)
+			}
+		})
+	}
+}
+
 // The request carries a flow name and nothing else: a malformed body, a
 // missing flow and a name outside the closed table are all 400, and none
 // of them reaches the issuer.

@@ -69,21 +69,26 @@ import { createServer } from "node:http";
 
 const port = Number(process.env.CT_STUB_PORT ?? 4821);
 
-// The closed flow table: the two logins this release shows, with the labels
-// the cards carry and the role each minted account holds (the mint's role
-// label comes from this table, never from the roles table).
+// The closed flow table, mirroring the core's (core/internal/demo/flows):
+// the Counter Till's pair plus the two personas the roles roadmap's first
+// increments mint. The till's entry offers a card for its own pair alone;
+// the listing still answers the whole table, as the core's route does (the
+// mint's role label comes from this table, never from the roles table).
 const FLOWS = [
   { flow: "sales", role_code: "inside_sales", label: "Sales" },
   { flow: "sales-manager", role_code: "sales_manager", label: "Sales manager" },
+  { flow: "yard-team", role_code: "yard_team", label: "Yard Team" },
+  { flow: "driver", role_code: "driver", label: "Driver" },
 ];
 
 // The minted accounts, one per flow, shaped field for field like the staff
 // login user block (core/api/openapi.yaml, IdentityUser). The tiers are the
 // core resolver's own answer (core/internal/identity/authority.go, read only):
-// 1 leadership, 2 manager, 3 frontline; inside_sales is frontline and
-// sales_manager is management, and the real mint carries the resolver's live
-// tier, so the stub says the same. The accounts are demo labels on reserved
-// domains, not people. Each account's grant reaches its own branch only (the
+// 1 leadership, 2 manager, 3 frontline; inside_sales is frontline,
+// sales_manager is management, and the two personas are frontline, and the
+// real mint carries the resolver's live tier, so the stub says the same. The
+// accounts are demo labels on reserved domains, not people. Each account's
+// grant reaches its own branch only (the
 // demo world's Trenton), which is the branch fence the core's middleware
 // holds: the stub reads the same grant from the token's account, so one branch
 // never answers for another.
@@ -104,6 +109,24 @@ const USERS = {
     role_code: "sales_manager",
     role_name: "Sales Manager",
     tier: 2,
+    scope: "BRANCH",
+  },
+  "yard-team": {
+    user_id: "demo-account-yard-team",
+    email: "yard.demo@dibbits.example",
+    display_name: "Yard persona (demo)",
+    role_code: "yard_team",
+    role_name: "Yard Team",
+    tier: 3,
+    scope: "BRANCH",
+  },
+  driver: {
+    user_id: "demo-account-driver",
+    email: "driver.demo@dibbits.example",
+    display_name: "Driver persona (demo)",
+    role_code: "driver",
+    role_name: "Driver",
+    tier: 3,
     scope: "BRANCH",
   },
 };
