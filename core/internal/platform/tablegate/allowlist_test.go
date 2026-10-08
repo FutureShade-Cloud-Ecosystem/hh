@@ -161,6 +161,21 @@ var allowlist = []allowlistEntry{
 	},
 	{
 		module: "billing",
+		file:   "core/internal/billing/pick_hold.go",
+		tables: []string{"customers", "orders"},
+		// item 9.3 (the row 1047 deposits work): the pay before release hold
+		// is computed FROM THE MONEY in one round trip, the order's total and
+		// the customer's terms beside billing's own invoice sums. The credit
+		// gates' OrderDispatchFacts (the entry above) is the same one-trip
+		// shape over the same two foreign facts; splitting this read behind
+		// an order seam and a customer seam would answer three numbers where
+		// the hold needs one under one snapshot, and the guarded writers
+		// (order's status moves, the will call doors) ask for this read
+		// beside their own row locks, which no seam chain carries.
+		reason: "the item 9.3 pay before release hold reads the order's total and the customer's terms beside billing's own invoice sums in one round trip (the credit gates' OrderDispatchFacts shape); read only",
+	},
+	{
+		module: "billing",
 		file:   "core/internal/billing/register_detail_repository.go",
 		tables: []string{"credit_holds", "customer_contacts", "customers", "delivery_pod_photos", "delivery_stops", "orders", "payment_allocations", "payments", "product_images", "products", "users"},
 		// the file's own header: ONE document read, everything the right
@@ -674,6 +689,22 @@ var allowlist = []allowlistEntry{
 		// till.TakeTender's, the allocation of that payment is the ring's).
 		// The reads are the counter's catalogue, stock and supervisor facts.
 		reason: "the POS ring writes the sale's documents (order, lines, invoice, AR transaction, tender allocation) in one transaction and reads the catalogue, stock, tax snapshot and supervisor facts the counter acts on; the counter discount reads the staff role grants and the role catalogue to judge who may approve a discount at the branch (ListDiscountStaff) and the role label a committed discount's approver held (ReadSaleDiscounts), read only, the dealer's list of who may approve staying in roleconfig",
+	},
+	{
+		module: "pos",
+		file:   "core/internal/pos/repository_pay_balance.go",
+		tables: []string{"customer_contacts", "customers", "invoices", "orders", "payment_allocations", "payments"},
+		writes: []string{"customer_transactions", "invoices", "payment_allocations", "scope_sequences"},
+		// item 9.4 (Pay balance at the counter): the find, the advisory pre
+		// read and the replay read walk the committed order, its customer,
+		// its live invoice balances and the money trail, read only. The take
+		// follows the ring's own pattern (the repository.go entry above): one
+		// transaction writing the payment's allocation, the invoice balance
+		// move and the AR subledger row, in the money lock order
+		// payments/LOCK-ORDER.md states (order row, payments sequence row
+		// without advancing it, then the invoice rows), mirrored from the
+		// payments module's settle with the order row in front.
+		reason: "the item 9.4 Pay balance door reads the owing orders, their customers and money trail, and its take writes the allocation, the invoice balance move and the AR subledger row in one transaction in the money lock order (payments/LOCK-ORDER.md), the ring's own settle pattern",
 	},
 	{
 		module: "pos",
