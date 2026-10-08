@@ -418,6 +418,30 @@ func (r *Repository) journalIDByKey(ctx context.Context, key string) (string, bo
 	return journalIDByKeyOn(ctx, r.pool, key)
 }
 
+// JournalKeysExist answers which of the given idempotency keys already name a journal. A keyed
+// existence read for the sweeps that heal a lost emission (billing asks it instead of reading
+// gl_journals); blank keys name nothing and are never answered.
+func (r *Repository) JournalKeysExist(ctx context.Context, keys []string) ([]string, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT idempotency_key FROM gl_journals WHERE idempotency_key = ANY($1::text[]) AND idempotency_key <> ''`, keys)
+	if err != nil {
+		return nil, fmt.Errorf("gl: journal keys exist: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var k string
+		if err := rows.Scan(&k); err != nil {
+			return nil, fmt.Errorf("gl: scan journal key: %w", err)
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
 func journalIDByKeyOn(ctx context.Context, q rowQuerier, key string) (string, bool, error) {
 	var id string
 	err := q.QueryRow(ctx, `SELECT id::text FROM gl_journals WHERE idempotency_key = $1 AND idempotency_key <> ''`, key).Scan(&id)

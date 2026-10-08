@@ -8,8 +8,9 @@
 # app's built files, Caddy as the static host in front, and the frozen
 # migration set the migrate role reads from its working directory. The
 # entrypoint (deploy/demo/entrypoint.sh) is the only place the boot order
-# lives: demo-check first, then migrate, demoseed -apply and
-# demo-populate, then serve behind Caddy.
+# lives: demo-check first, then migrate, demoseed -apply, demo-populate and
+# demoseed -apply again (the quote world needs the two role logins the
+# populate plants), then serve behind Caddy.
 
 FROM golang:1.27-alpine AS core-build
 WORKDIR /src/core

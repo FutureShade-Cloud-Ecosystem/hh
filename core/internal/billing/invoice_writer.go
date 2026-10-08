@@ -269,11 +269,13 @@ type InvoiceDoc struct {
 // invoices + invoice_lines + customer_transactions + events_outbox, and those four rows are one
 // atomic fact: an invoice that exists without its subledger row is a balance nobody can explain.
 type InvoiceWriter struct {
-	pool     *pgxpool.Pool
-	tax      TaxAssessor
-	source   OrderInvoiceSource
-	glPoster CreditMemoPoster
-	now      func() time.Time
+	pool      *pgxpool.Pool
+	tax       TaxAssessor
+	source    OrderInvoiceSource
+	glPoster  CreditMemoPoster
+	delivered DeliveredOrderReader // deposit_release.go; nil = the deposit sweep skips
+	journals  JournalKeyReader     // deposit_release.go; nil = the deposit sweep skips
+	now       func() time.Time
 }
 
 // NewInvoiceWriter builds the writer. The tax assessor defaults to FlatHSTAssessor (the W4/W5

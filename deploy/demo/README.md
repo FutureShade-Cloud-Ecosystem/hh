@@ -22,7 +22,10 @@ baked):
 
 The entrypoint runs, in order: a bounded wait for the database; the
 database shape's classification; `core demo-check` (G0) before anything
-writes; `core migrate`; `core demoseed -apply`; `core demo-populate`; then
+writes; `core migrate`; `core demoseed -apply`; `core demo-populate`;
+`core demoseed -apply` again, because the quote world's owners are the two
+demo role logins the populate plants and the seed is idempotent, so the
+second pass writes the quotes and nothing else; then
 `core serve` on a loopback port with Caddy on the public port. Both
 database variables are derived from the one the operator sets: the serve
 role reads `CORE_DATABASE_URL` and the one-shots read `DATABASE_URL`, and
