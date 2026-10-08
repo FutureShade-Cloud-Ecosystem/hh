@@ -2077,7 +2077,13 @@ export class HosPosTerminal extends LitElement {
     .fulfil button.active {
       border-color: var(--hos-stone-amber);
       color: var(--hos-stone-amber-text);
-      background: color-mix(in srgb, var(--hos-stone-amber) 10%, var(--hos-deep-earth));
+      /* Round 16 (PR 267 review P3-3): the gold wash rode the PAGE token, and in light the gold
+         ink (AA on the flat page at 4.55) fell under AA on its own tinted ground at 4.38. The
+         wash now rides the FIELD token, the one input ground, which is the page's own tone in
+         the brand half (byte-identical there, brand does not move) and the card tone in light,
+         where the same ten percent of gold holds the ink at 5.13. Held by
+         test/tile-contrast.test.mjs. */
+      background: color-mix(in srgb, var(--hos-stone-amber) 10%, var(--hos-field));
     }
     .fulfil button:disabled {
       background: transparent;
@@ -2182,7 +2188,8 @@ export class HosPosTerminal extends LitElement {
     .paytiles button.active {
       border-color: var(--hos-stone-amber);
       color: var(--hos-stone-amber-text);
-      background: color-mix(in srgb, var(--hos-stone-amber) 10%, var(--hos-deep-earth));
+      /* Round 16: one recipe with the fulfilment tiles above, the wash over the field token. */
+      background: color-mix(in srgb, var(--hos-stone-amber) 10%, var(--hos-field));
     }
     .paytiles button:disabled {
       background: transparent;
@@ -2297,7 +2304,8 @@ export class HosPosTerminal extends LitElement {
     .dpmethods button.active {
       border-color: var(--hos-stone-amber);
       color: var(--hos-stone-amber-text);
-      background: color-mix(in srgb, var(--hos-stone-amber) 10%, var(--hos-deep-earth));
+      /* Round 16: one recipe with the fulfilment tiles above, the wash over the field token. */
+      background: color-mix(in srgb, var(--hos-stone-amber) 10%, var(--hos-field));
     }
     .shapemenu button:disabled,
     .dpmethods button:disabled {
