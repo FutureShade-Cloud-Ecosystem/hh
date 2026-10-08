@@ -304,6 +304,34 @@ func TestSale_Deposit_PreviewTotalsMatchTheRing(t *testing.T) {
 	}
 }
 
+// The preview shares the ring's refusal (the delta review's P3-d): a terms
+// account's COD sale type is refused at the read the payment step already
+// opens, so the till can say it BEFORE the ring. The choice, stated plainly:
+// the preview REFUSES rather than flagging its answer, with the ring's own
+// typed refusal and therefore its problem body, because the till's preview
+// read already renders a 422's words in the total row and a flag the till
+// would ignore (it renders the ring's refusal well already) is worth nothing.
+func TestSalePreview_CODSaleType_RefusedForATermsAccount(t *testing.T) {
+	h := depositHarness(30, 500_000)
+	_, err := h.svc.SalePreview(context.Background(), SalePreviewInput{
+		BranchID: "branch-trt", CustomerID: "cust-abc", SaleType: SaleCOD, Fulfilment: "WILL_CALL",
+		Lines: []LineInput{{ProductID: "prod-blu", QtyEntered: 100, UOMEntered: "SF"}},
+	})
+	var e ErrCODNotForTermsAccount
+	if !errors.As(err, &e) {
+		t.Fatalf("want the pay before release refusal at the preview, got %v", err)
+	}
+	// A zero day terms account's preview answers normally: the sale type is its
+	// own posture.
+	zero := depositHarness(0, 500_000)
+	if _, err := zero.svc.SalePreview(context.Background(), SalePreviewInput{
+		BranchID: "branch-trt", CustomerID: "cust-abc", SaleType: SaleCOD, Fulfilment: "WILL_CALL",
+		Lines: []LineInput{{ProductID: "prod-blu", QtyEntered: 100, UOMEntered: "SF"}},
+	}); err != nil {
+		t.Fatalf("a zero day terms account's COD preview must answer, got %v", err)
+	}
+}
+
 // A pay before release (COD) sale type does not fit an account that pays on
 // terms (the principal's ruling: Cash On Demand is the account's posture, COD
 // and credit are guards, not order states). The ring refuses it in plain words

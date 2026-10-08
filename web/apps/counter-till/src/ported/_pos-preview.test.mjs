@@ -62,3 +62,25 @@ test('the split refusal reads from its fields, then the server message, then a f
   assert.equal(splitMismatchWords({ message: 'The server says so.' }, money), 'The server says so.');
   assert.match(splitMismatchWords({}, money), /do not add up to the sale total/);
 });
+
+// Item 9 delta review P3-d: a 422 problem body (a stable code in error, the sentence in message)
+// speaks its MESSAGE, never its code; a plain envelope (a sentence in error, no message) keeps
+// speaking its sentence. The pay before release refusal is the first problem body the preview
+// answers, and a raw code in the total row is the one shape the house never allows on a screen.
+test('a refused preview speaks its message when it carries one, never its code', () => {
+  const refused = readPreview(
+    {
+      error: 'cod_not_for_terms_account',
+      message: 'This account pays on terms, so its sale is not pay before release. Ring it on account or paid in full.',
+    },
+    422,
+  );
+  assert.equal(refused.kind, 'refused');
+  assert.equal(
+    refused.words,
+    'This account pays on terms, so its sale is not pay before release. Ring it on account or paid in full.',
+  );
+  const plain = readPreview({ error: 'a sale rings at least one line' }, 422);
+  assert.deepEqual(plain, { kind: 'refused', words: 'a sale rings at least one line' });
+  assert.deepEqual(readPreview({}, 422), { kind: 'unavailable' });
+});

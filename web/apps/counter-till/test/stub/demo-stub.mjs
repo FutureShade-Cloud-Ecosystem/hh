@@ -1690,6 +1690,17 @@ const server = createServer(async (request, response) => {
         respondJson(response, 400, { error: "that customer is not in this dealer's book" });
         return;
       }
+      // Item 9 delta review P3-d: the core's pay before release guard (item 9 review P3-7),
+      // mirrored at the preview: the sale type is the guard of a Cash On Demand account, and an
+      // account that pays on terms is refused here first, in the core's problem body, so the total
+      // row says it before the ring.
+      if (parsed.sale_type === "COD" && (customer.payment_terms_days ?? 0) > 0) {
+        respondJson(response, 422, {
+          error: "cod_not_for_terms_account",
+          message: "This account pays on terms, so its sale is not pay before release. Ring it on account or paid in full.",
+        });
+        return;
+      }
       const gross = [];
       for (let index = 0; index < lines.length; index += 1) {
         const line = lines[index] ?? {};

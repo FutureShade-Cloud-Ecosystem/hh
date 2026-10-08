@@ -610,9 +610,33 @@ test("a walk-in COD sale and a terms account COD sale are both refused in words 
   expect(refusedTerms.status()).toBe(422);
   const termsBody = (await refusedTerms.json()) as Record<string, unknown>;
   expect(termsBody.error).toBe("cod_not_for_terms_account");
-  await expect(page.getByRole("alert")).toContainText("This account pays on terms");
+  // The ring's banner speaks (the preview's refused total row speaks the same
+  // words beside it, its own leg pins that).
+  await expect(page.locator(".banner.bad")).toContainText("This account pays on terms");
   await expect(page.getByTestId("sold-panel")).toHaveCount(0);
 
+});
+
+// Item 9 delta review P3-d: the preview shares the ring's pay before release
+// refusal for a terms account, so the payment step's total row says it BEFORE
+// the ring is built: the words arrive with the totals read the step already
+// opens, rendered from the problem body's message, never its code.
+test("a terms account's COD sale is refused at the preview, before the ring", async ({ page }) => {
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await page.getByRole("button", { name: /^COD/ }).click();
+  await page.getByLabel("Requested date: type eight digits YYYYMMDD, or use the calendar button").fill(
+    houseDay().replace(/-/g, ""),
+  );
+  await openStep(page, "customer");
+  await pickAccount(page, "C02", "Fenwick Builders Ltd");
+  await openStep(page, "payment");
+  const refused = page.getByTestId("pos-preview-refused");
+  await expect(refused).toBeVisible();
+  await expect(refused).toContainText(
+    "This account pays on terms, so its sale is not pay before release. Ring it on account or paid in full.",
+  );
+  await expect(refused).not.toContainText("cod_not_for_terms_account");
 });
 
 // The same COD sale with the Cash On Demand account on it rings: the sale

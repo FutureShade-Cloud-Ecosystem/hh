@@ -232,6 +232,14 @@ func (s *Service) SalePreview(ctx context.Context, in SalePreviewInput) (SalePre
 	if err != nil {
 		return SalePreview{}, err
 	}
+	// Item 9 delta review P3-d: the pay before release sale type is the guard
+	// of a Cash On Demand ACCOUNT, and an account that pays on terms is not in
+	// it whatever the tender (the ring's own refusal, P3-7's ruling). The
+	// preview shares the SAME typed refusal, so the till can say it at the read
+	// the payment step already opens, before the ring builds the whole sale.
+	if in.SaleType == SaleCOD && cust.PaymentTermsDays > 0 {
+		return SalePreview{}, ErrCODNotForTermsAccount{}
+	}
 	taxReason := TaxStdON13
 	if in.Relief != nil && in.Relief.ReasonCode != "" {
 		taxReason = in.Relief.ReasonCode

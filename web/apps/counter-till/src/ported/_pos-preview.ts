@@ -98,14 +98,21 @@ export function previewKey(body: PreviewBody | null): string {
 
 /**
  * Read an answer; anything that is not three whole-cent figures is not an answer. A 422 carrying
- * the ring's words (status given) is a refusal the total row can say in those words; any other
- * non answer is just unavailable.
+ * the ring's words (status given) is a refusal the total row can say in those words; a problem
+ * body (a stable code in error, the sentence in message, the pay before release refusal the
+ * first of them) speaks its MESSAGE, never its code; any other non answer is just unavailable.
  */
 export function readPreview(answer: unknown, status = 200): PreviewState {
   if (answer === null || typeof answer !== 'object') return { kind: 'unavailable' };
   const a = answer as Record<string, unknown>;
   if (status === 422) {
-    return typeof a.error === 'string' && a.error !== '' ? { kind: 'refused', words: a.error } : { kind: 'unavailable' };
+    const words =
+      typeof a.message === 'string' && a.message !== ''
+        ? a.message
+        : typeof a.error === 'string' && a.error !== ''
+          ? a.error
+          : '';
+    return words !== '' ? { kind: 'refused', words } : { kind: 'unavailable' };
   }
   if (status !== 200) return { kind: 'unavailable' };
   const { subtotal_cents: s, tax_cents: t, total_cents: n } = a;
