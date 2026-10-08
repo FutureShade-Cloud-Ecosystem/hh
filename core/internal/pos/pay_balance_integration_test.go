@@ -526,3 +526,74 @@ func (a raiseAdapter) RaiseOrderInvoiceTx(ctx context.Context, tx pgx.Tx, orderI
 	return RaisedOrderInvoice{InvoiceID: doc.InvoiceID, InvoiceNo: doc.InvoiceNo,
 		TotalCents: doc.TotalCents, BalanceCents: doc.BalanceCents}, nil
 }
+
+// The advisory pre read and the locked read use the SAME predicate (the
+// review's P3-2 pin): an order carrying a credit memo beside its open invoice
+// is the shape the two reads used to disagree on (the pre read summed the
+// memo's negative balance into the take's amount, the locked read skipped it,
+// and a card charged on the first figure was reversed by the second). One
+// predicate feeds both now: the open balances of live INVOICE documents, plus
+// the uninvoiced remainder, and the hold reads the same number third.
+func TestIntegration_PayBalance_PreReadAndLockedReadAgree(t *testing.T) {
+	pool := intPool(t)
+	ctx := context.Background()
+	suffix := fmt.Sprintf("agree-%d", time.Now().UnixNano()%1_000_000_000)
+	var custID, orderID string
+	if err := pool.QueryRow(ctx, `
+		WITH c AS (INSERT INTO customers (account_no, name, customer_type, payment_terms_days, credit_limit_cents)
+		           VALUES ('PBA-'||$1, 'Pre and locked proof', 'CONTRACTOR', 0, 5000000) RETURNING id)
+		INSERT INTO orders (order_no, customer_id, branch_id, status, fulfillment, subtotal_cents, total_cents)
+		SELECT '#SO-PBA-'||$1, c.id, (SELECT id FROM locations WHERE loc_type='BRANCH' LIMIT 1),
+		       'CONFIRMED', 'WILL_CALL', 10000, 10000
+		  FROM c RETURNING id::text, customer_id::text`, suffix).Scan(&orderID, &custID); err != nil {
+		t.Fatalf("plant the order: %v", err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE order_id = $1`, orderID)
+		_, _ = pool.Exec(c, `DELETE FROM orders WHERE id = $1`, orderID)
+		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1`, custID)
+	})
+	var branchID string
+	if err := pool.QueryRow(ctx, `SELECT branch_id::text FROM orders WHERE id=$1`, orderID).Scan(&branchID); err != nil {
+		t.Fatalf("read the order: %v", err)
+	}
+	for _, doc := range []struct {
+		docType, status string
+		total, balance  int64
+	}{
+		{"INVOICE", "PARTIALLY_PAID", 10000, 7000},
+		{"CREDIT_MEMO", "FINALIZED", -2000, -2000},
+		{"INVOICE", "PAID", 0, 0},
+	} {
+		if _, err := pool.Exec(ctx, `
+INSERT INTO invoices (invoice_no, customer_id, order_id, branch_id, doc_type, status,
+                      subtotal_cents, tax_cents, total_cents, balance_cents, due_date, finalized_at)
+VALUES ('#INV-PBA-'||nextval('invoice_no_seq'), $1::uuid, $2::uuid, $3::uuid, $4, $5, $6, 0, $6, $7, current_date, now())`,
+			custID, orderID, branchID, doc.docType, doc.status, doc.total, doc.balance); err != nil {
+			t.Fatalf("plant %s %s: %v", doc.docType, doc.status, err)
+		}
+	}
+	repo := NewRepository(pool)
+	pre, found, err := repo.ReadOwingOrder(ctx, orderID)
+	if err != nil || !found {
+		t.Fatalf("the pre read: (%v, %v)", found, err)
+	}
+	var locked payBalanceOrderFacts
+	txErr := repo.RunInTx(ctx, func(tx pgx.Tx) error {
+		var err error
+		locked, err = repo.LockPayBalanceOrderTx(ctx, tx, orderID)
+		return err
+	})
+	if txErr != nil {
+		t.Fatalf("the locked read: %v", txErr)
+	}
+	_, owedHold, _, _, err := billing.NewRepository(pool).PickHoldForOrder(ctx, orderID)
+	if err != nil {
+		t.Fatalf("the hold read: %v", err)
+	}
+	if pre.balanceCents() != 7000 || locked.balanceCents() != 7000 || owedHold != 7000 {
+		t.Fatalf("the three reads answer %d, %d and %d, want 7000 at all three: the pre read, the locked read and the hold are one number",
+			pre.balanceCents(), locked.balanceCents(), owedHold)
+	}
+}
