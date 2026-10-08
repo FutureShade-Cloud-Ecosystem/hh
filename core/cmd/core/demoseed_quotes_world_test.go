@@ -70,10 +70,11 @@ var qwOtherWorldTables = []string{
 	"system_settings", "demo_box",
 }
 
-// qwFreshDB creates the test's own database from zero and applies the migration set, the same
-// files and order the migrate role applies. The name is the caller's, so each world proof holds a
-// database of its own and two proofs cannot collide on one name.
-func qwFreshDB(t *testing.T, ctx context.Context, dsn, name string) (*pgxpool.Pool, string) {
+// qwCreateDB creates the test's own database from zero. The name is the caller's, so each world
+// proof holds a database of its own and two proofs cannot collide on one name. Nothing is applied
+// here: the first boot proof runs the entrypoint's steps between the empty database and migrate,
+// so the migration set has its own helper below.
+func qwCreateDB(t *testing.T, ctx context.Context, dsn, name string) (*pgxpool.Pool, string) {
 	t.Helper()
 	admin, err := pgxpool.New(ctx, swapDSNDatabase(dsn, "postgres"))
 	if err != nil {
@@ -92,20 +93,63 @@ func qwFreshDB(t *testing.T, ctx context.Context, dsn, name string) (*pgxpool.Po
 		t.Fatalf("connecting to %s: %v", name, err)
 	}
 	t.Cleanup(pool.Close)
+	return pool, testDSN
+}
+
+// qwMigrateFrozenSet runs what the migrate role runs (roles_oneshot.go migrateRole): the numbered
+// files of the frozen set, in sort order, each in one transaction, recorded in schema_migrations,
+// and an already recorded version is skipped, so a second call is the role's own no-op.
+func qwMigrateFrozenSet(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	if _, err := pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
+		version TEXT PRIMARY KEY,
+		applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`); err != nil {
+		t.Fatalf("migrate: bookkeeping table: %v", err)
+	}
 	files, err := filepath.Glob(filepath.Join("..", "..", "db", "migrations", "*.sql"))
 	if err != nil || len(files) == 0 {
 		t.Fatalf("no migrations found (err=%v)", err)
 	}
 	sort.Strings(files)
 	for _, f := range files {
+		version := strings.TrimSuffix(filepath.Base(f), ".sql")
+		var exists bool
+		if err := pool.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=$1)`, version).Scan(&exists); err != nil {
+			t.Fatalf("migrate: check %s: %v", version, err)
+		}
+		if exists {
+			continue
+		}
 		body, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatalf("reading %s: %v", filepath.Base(f), err)
 		}
-		if _, err := pool.Exec(ctx, string(body)); err != nil {
-			t.Fatalf("applying %s: %v", filepath.Base(f), err)
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("migrate: begin %s: %v", version, err)
+		}
+		if _, err := tx.Exec(ctx, string(body)); err != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatalf("migrate: applying %s: %v", filepath.Base(f), err)
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations(version) VALUES($1)`, version); err != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatalf("migrate: recording %s: %v", version, err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatalf("migrate: committing %s: %v", version, err)
 		}
 	}
+}
+
+// qwFreshDB creates the test's own database from zero and applies the migration set, the same
+// files and order the migrate role applies.
+func qwFreshDB(t *testing.T, ctx context.Context, dsn, name string) (*pgxpool.Pool, string) {
+	t.Helper()
+	pool, testDSN := qwCreateDB(t, ctx, dsn, name)
+	qwMigrateFrozenSet(t, ctx, pool)
 	return pool, testDSN
 }
 
@@ -438,6 +482,37 @@ func TestDemoWorld_Quotes(t *testing.T) {
 	// The cleared line names its clearer.
 	if l := seeded["Q3"].Lines[0]; l.FloorClearedBy == "" {
 		t.Error("Q3 line 1 (cleared by the Sales manager) shows no clearer")
+	}
+
+	// The Cash On Demand account prices its pavers by its own rule (the seed's R06, ten percent off
+	// list), not by the shared CONTRACTOR tier the account read before the rule existed (round 14's
+	// finding (b): the tier's fifteen percent put the Holland Paver at 506, under the floor). The
+	// engine's answer is R06's net at the resolver's own rounding, 536 (535.5 half up; the plan's
+	// pricer rounds the discount instead and carries 535, the one cent on which the two roundings
+	// part, and both sit above the floor), and that answer clears the floor over the seeded Trenton
+	// cost.
+	codRsp := manager.call("POST", "/api/v1/pos/counter-prices", map[string]any{
+		"branch_id": trentonBranchID, "customer_id": custID("C10"),
+		"items": []map[string]any{{"product_id": demoID("product:P01"), "qty_entered": 1.0, "uom_entered": "PC"}}})
+	codRsp.ok(t, http.StatusOK)
+	var codPrices counterPrices
+	codRsp.decode(t, &codPrices)
+	if len(codPrices.Prices) != 1 {
+		t.Fatalf("the C10 x P01 price answer carries %d rows, want 1", len(codPrices.Prices))
+	}
+	if codPrices.Prices[0].CustomerCents != 536 {
+		t.Errorf("the engine prices C10 x P01 at %d, want the account rule's 536 (the shared tier would answer 506)",
+			codPrices.Prices[0].CustomerCents)
+	}
+	var codCost int64
+	if err := pool.QueryRow(ctx,
+		`SELECT avg_unit_cost_cents FROM product_branch_costs WHERE product_id = $1 AND branch_id = $2`,
+		demoID("product:P01"), trentonBranchID).Scan(&codCost); err != nil {
+		t.Fatalf("the seeded Trenton cost of P01: %v", err)
+	}
+	if margin := qMarginBps(codPrices.Prices[0].CustomerCents, codCost); margin < demoFloorBps {
+		t.Errorf("C10 x P01 prices %d over a Trenton cost of %d, margin %d bps under the %d bps floor",
+			codPrices.Prices[0].CustomerCents, codCost, margin, demoFloorBps)
 	}
 
 	// 9. the totals equal what the builder computes: the terms write, unchanged terms, restamps the
