@@ -28,6 +28,33 @@ func (d deliveredFake) DeliveredOrderIDs(_ context.Context, ids []string) ([]str
 	return out, nil
 }
 
+// journalFake is the ledger's keyed existence read (gl.Service.JournalKeysExist in production). It
+// reads the planted journals off the pool so the test stays on the schema, and counts its calls and
+// the widest key list it was handed, which is what the sweep's paging bounds.
+type journalFake struct {
+	pool   *pgxpool.Pool
+	calls  int
+	widest int
+}
+
+func (j *journalFake) JournalKeysExist(ctx context.Context, keys []string) ([]string, error) {
+	j.calls++
+	if len(keys) > j.widest {
+		j.widest = len(keys)
+	}
+	var out []string
+	for _, k := range keys {
+		var n int
+		if err := j.pool.QueryRow(ctx, `SELECT count(*) FROM gl_journals WHERE idempotency_key = $1`, k).Scan(&n); err != nil {
+			return nil, err
+		}
+		if n > 0 {
+			out = append(out, k)
+		}
+	}
+	return out, nil
+}
+
 func seedDepositOrder(t *testing.T, pool *pgxpool.Pool, tag string) (cust, orderID, dep string) {
 	t.Helper()
 	ctx := context.Background()
@@ -80,7 +107,8 @@ func TestIntegration_DepositSweep_HealsALostEmissionExactlyOnce(t *testing.T) {
 	_, orderID, dep := seedDepositOrder(t, pool, tag)
 
 	// An undelivered order is never released by the sweep, whatever its status.
-	w := NewInvoiceWriter(pool).WithDeliveredOrders(deliveredFake{delivered: map[string]bool{}})
+	jk := &journalFake{pool: pool}
+	w := NewInvoiceWriter(pool).WithDeliveredOrders(deliveredFake{delivered: map[string]bool{}}).WithJournalKeyReader(jk)
 	if _, err := w.ReleaseDeliveredDeposits(ctx, 0); err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
@@ -89,7 +117,7 @@ func TestIntegration_DepositSweep_HealsALostEmissionExactlyOnce(t *testing.T) {
 	}
 
 	// A delivered order with no release journal (the emission was lost) heals.
-	w = NewInvoiceWriter(pool).WithDeliveredOrders(deliveredFake{delivered: map[string]bool{orderID: true}})
+	w = NewInvoiceWriter(pool).WithDeliveredOrders(deliveredFake{delivered: map[string]bool{orderID: true}}).WithJournalKeyReader(jk)
 	res, err := w.ReleaseDeliveredDeposits(ctx, 0)
 	if err != nil {
 		t.Fatalf("sweep: %v", err)
@@ -115,5 +143,49 @@ func TestIntegration_DepositSweep_HealsALostEmissionExactlyOnce(t *testing.T) {
 	}
 	if got := releasedRows(t, pool, dep); got != 1 {
 		t.Fatalf("after the journal posted the sweep emitted again: %d rows, want the one", got)
+	}
+}
+
+// The sweep pages its candidates: a long list of undelivered deposits is read a page at a time, the
+// ledger is asked about one page's keys at a time, and a delivered deposit behind them still heals.
+func TestIntegration_DepositSweep_PagesItsCandidates(t *testing.T) {
+	pool := intPool(t)
+	ctx := context.Background()
+	tag := ns(t)
+	delivered := map[string]bool{}
+	var healed string
+	for i := 0; i < 5; i++ {
+		_, orderID, dep := seedDepositOrder(t, pool, fmt.Sprintf("%s-p%d", tag, i))
+		if i == 4 {
+			delivered[orderID] = true
+			healed = dep
+		}
+	}
+	old := depositSweepPageSize
+	depositSweepPageSize = 2
+	t.Cleanup(func() { depositSweepPageSize = old })
+
+	jk := &journalFake{pool: pool}
+	w := NewInvoiceWriter(pool).WithDeliveredOrders(deliveredFake{delivered: delivered}).WithJournalKeyReader(jk)
+	if _, err := w.ReleaseDeliveredDeposits(ctx, 0); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if jk.widest > 2 {
+		t.Fatalf("the ledger was asked about %d keys at once, want at most the page of 2", jk.widest)
+	}
+	if jk.calls < 2 {
+		t.Fatalf("the ledger was asked %d times, want one question per page", jk.calls)
+	}
+	if got := releasedRows(t, pool, healed); got != 1 {
+		t.Fatalf("the delivered deposit behind the pages was not healed: %d rows", got)
+	}
+}
+
+// Without the ledger read the sweep cannot tell a released document from a lost one, so it skips.
+func TestIntegration_DepositSweep_SkipsWithoutTheLedgerRead(t *testing.T) {
+	pool := intPool(t)
+	res, err := NewInvoiceWriter(pool).WithDeliveredOrders(deliveredFake{}).ReleaseDeliveredDeposits(context.Background(), 0)
+	if err != nil || !res.Skipped {
+		t.Fatalf("got %+v, %v; want a skip", res, err)
 	}
 }

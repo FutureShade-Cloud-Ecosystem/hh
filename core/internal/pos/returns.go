@@ -513,11 +513,13 @@ func (s *Service) returnInTx(ctx context.Context, tx pgx.Tx, plan *returnPlan) (
 	// 2b. A supplier deposit order releases its deposit on ANY return, partial or whole (the
 	//     supervisor's default, pending the principal's ruling): the goods were dealt with, so the
 	//     deposit is recognised once. The documents are read here, inside the transaction, and the
-	//     release events are emitted below ahead of the revenue reversal (step 5).
+	//     release events are emitted below ahead of the revenue reversal (step 5). The documents
+	//     are billing's: they are read through its seam (DepositDocumentLister), never from the
+	//     invoices table here.
 	var depositDocs []string
-	if ds, ok := s.store.(returnDepositStore); ok {
+	if s.deposits != nil {
 		var derr error
-		if depositDocs, derr = ds.DepositDocumentIDsTx(ctx, tx, oc.OrderID); derr != nil {
+		if depositDocs, derr = s.deposits.DepositDocumentIDsTx(ctx, tx, oc.OrderID); derr != nil {
 			return Return{}, false, false, derr
 		}
 	}
@@ -825,11 +827,15 @@ func (s *Service) applyAccountCredit(ctx context.Context, tx pgx.Tx, oc returnOr
 	return nil
 }
 
-// returnDepositStore is the capability the return needs to find the order's live supplier deposit
-// documents. Satisfied by the real *Repository; a store without it releases nothing.
-type returnDepositStore interface {
+// DepositDocumentLister is the seam the return reads the order's live supplier deposit documents
+// through, on the return's own transaction. Billing owns those documents and satisfies it at the
+// composition root; unwired, a return releases nothing.
+type DepositDocumentLister interface {
 	DepositDocumentIDsTx(ctx context.Context, tx pgx.Tx, orderID string) ([]string, error)
 }
+
+// WithDepositDocuments binds the deposit document read the return releases deposits from.
+func (s *Service) WithDepositDocuments(l DepositDocumentLister) *Service { s.deposits = l; return s }
 
 // reachableBranches is the branch ids a bare number may be searched in: nil for a caller who reaches
 // every branch (global scope), otherwise the granted ids, a non-nil slice even when there are none.

@@ -285,6 +285,9 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithAudit(auditSvc).
 		WithAuditTrail(auditSvc).
 		WithActorNames(staffNameAdapter{repo: orderRepo}).
+		// A return releases the order's supplier deposit; the documents are billing's, read through
+		// its writer on the return's transaction.
+		WithDepositDocuments(billing.NewInvoiceWriter(pool)).
 		WithClock(time.Now), roleCfg, g, link)
 	posHandler := pos.NewHandler(posSvc, log).WithUserLinker(link)
 	posHandler.RegisterRoutes(r, g)

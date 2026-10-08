@@ -289,6 +289,12 @@ func (s *Service) PostExternalTx(ctx context.Context, tx pgx.Tx, in ExternalJour
 	return s.postExternalTx(ctx, tx, in)
 }
 
+// JournalKeysExist answers which of the given idempotency keys already name a journal (a keyed
+// existence read; the nightly sweeps in billing ask it rather than reading gl_journals).
+func (s *Service) JournalKeysExist(ctx context.Context, keys []string) ([]string, error) {
+	return s.repo.JournalKeysExist(ctx, keys)
+}
+
 // GLBalanceCents returns the balance of an account for a period/branch, read from v_gl_account_balances.
 // FROZEN signature; A-01 fills the body (must go real early, bankrec's variance check depends on it).
 func (s *Service) GLBalanceCents(ctx context.Context, accountCode string, year, month int, branchID string) (int64, error) {

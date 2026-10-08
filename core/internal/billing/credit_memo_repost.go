@@ -191,33 +191,38 @@ func (w *InvoiceWriter) findCreditMemosWithoutJournals(ctx context.Context, limi
 	return out, rows.Err()
 }
 
-// depositAwaitingRelease is one live deposit document with no release journal.
-type depositAwaitingRelease struct{ invoiceID, orderID string }
+// depositAwaitingRelease is one live deposit document, with the cursor position it sits at.
+type depositAwaitingRelease struct {
+	invoiceID, orderID string
+	createdAt          time.Time
+}
 
-// findDepositsWithoutRelease is the deposit sweep's anti-join, the same shape as the credit memo's
-// above: the release journal's key is DERIVED (deposit.released:<invoice id>, the gl builder's key),
-// so "which deposits have no release?" needs no new column. Live SUPPLIER_DEPOSIT documents bound to
-// an order, oldest first. Whether the order's goods actually left is not asked here, the order
-// module answers that (DeliveredOrderReader), never a status read.
-func (w *InvoiceWriter) findDepositsWithoutRelease(ctx context.Context) ([]depositAwaitingRelease, error) {
+// depositSweepPageSize is how many live deposit documents one sweep read takes. A var so a test can
+// shrink it; the sweep's read, and the keys it asks the ledger about, never exceed it.
+var depositSweepPageSize = 500
+
+// findDepositPage is one page of the deposit sweep's candidates: live SUPPLIER_DEPOSIT documents
+// bound to an order, oldest first, strictly after the cursor (the zero time starts from the top). Whether
+// a document already has its release journal is the ledger's to say (JournalKeyReader), and whether
+// the order's goods actually left is the order module's (DeliveredOrderReader), never a status read.
+func (w *InvoiceWriter) findDepositPage(ctx context.Context, afterCreatedAt time.Time, afterID string, size int) ([]depositAwaitingRelease, error) {
 	rows, err := w.pool.Query(ctx, `
-		SELECT i.id::text, i.order_id::text
+		SELECT i.id::text, i.order_id::text, i.created_at
 		  FROM invoices i
 		 WHERE i.doc_type = 'INVOICE' AND i.source_kind = 'SUPPLIER_DEPOSIT'
 		   AND i.status NOT IN ('DRAFT','VOID') AND i.order_id IS NOT NULL
-		   AND NOT EXISTS (
-		         SELECT 1 FROM gl_journals j
-		          WHERE j.idempotency_key = 'deposit.released:' || i.id::text)
-		 ORDER BY i.created_at, i.id`)
+		   AND (i.created_at, i.id) > ($1::timestamptz, $2::uuid)
+		 ORDER BY i.created_at, i.id
+		 LIMIT $3`, afterCreatedAt, afterID, size)
 	if err != nil {
-		return nil, fmt.Errorf("billing: find deposits without a release: %w", err)
+		return nil, fmt.Errorf("billing: find deposits for the release sweep: %w", err)
 	}
 	defer rows.Close()
 	var out []depositAwaitingRelease
 	for rows.Next() {
 		var d depositAwaitingRelease
-		if err := rows.Scan(&d.invoiceID, &d.orderID); err != nil {
-			return nil, fmt.Errorf("billing: scan deposit without a release: %w", err)
+		if err := rows.Scan(&d.invoiceID, &d.orderID, &d.createdAt); err != nil {
+			return nil, fmt.Errorf("billing: scan deposit for the release sweep: %w", err)
 		}
 		out = append(out, d)
 	}
