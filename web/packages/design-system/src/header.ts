@@ -191,14 +191,15 @@ const styles = css`
       flex: 1 0 100%;
       justify-self: stretch;
     }
-    :host([compact]) .controls > *,
+    :host([compact]) .controls > button,
     :host([compact]) .controls slot[name='theme'] > * {
       flex: 1 1 auto;
     }
     :host([compact]) .controls button {
       min-height: 44px;
-      padding: 0 var(--hh-s-12);
-      font-size: 14px;
+      padding: 0 var(--hh-s-8);
+      font-size: 13px;
+      white-space: nowrap;
     }
     :host([compact]) .demo-banner {
       order: 4;
