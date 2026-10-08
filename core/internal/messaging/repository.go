@@ -1101,6 +1101,36 @@ func (r *Repository) RemoveChannelMember(ctx context.Context, channelID, userID 
 	return nil
 }
 
+// personaUsersByRole resolves the ACTIVE users holding each seeded role, the
+// identity tables read through the attribution seam this file already carries
+// (the users/roles/user_roles reads the derived-membership rule itself runs
+// on). The persona seeding (personaseed.go) keys off this: roles, never user
+// ids, so a persona whose rows land later gets its rooms the next seed.
+func (r *Repository) personaUsersByRole(ctx context.Context) (map[string][]string, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT ro.code::text, u.id::text
+		FROM users u
+		JOIN user_roles ur ON ur.user_id = u.id
+		JOIN roles ro ON ro.id = ur.role_id
+		WHERE u.status = 'ACTIVE'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]string{}
+	for rows.Next() {
+		var code, uid string
+		if err := rows.Scan(&code, &uid); err != nil {
+			return nil, err
+		}
+		out[code] = append(out[code], uid)
+	}
+	return out, rows.Err()
+}
+
 // - The sync feeds (0381): per-caller reads and the stamped writes -
 //
 // Every feed query here is fenced to ONE user's own world: the channels and

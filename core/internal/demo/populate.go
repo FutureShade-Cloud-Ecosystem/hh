@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/messaging"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/db"
 	"github.com/jackc/pgx/v5"
@@ -205,6 +206,11 @@ type Report struct {
 	StaffGrantsInserted  int64
 	PaymentConfigCreated int
 	DemoBoxCreated       bool
+	// The persona inboxes (House Messages): memberships materialized for the
+	// persona roles and rep DM channels ensured for the sales floor, the
+	// messaging module's own seeding keyed by role.
+	PersonaMemberships int
+	PersonaRepChannels int
 }
 
 // staticDirectory is the populate's PlatformDirectory: it answers exactly
@@ -367,6 +373,26 @@ func RunPopulate(ctx context.Context, opt Options) (Report, error) {
 
 	if err := tx.Commit(ctx); err != nil {
 		return report, fmt.Errorf("demo-populate: commit: %w", err)
+	}
+
+	// The personas' House Messages inboxes, seeded BY ROLE after the
+	// transactional world commits (the seeding's every statement converges
+	// on its own rows, so it needs no share of the all-or-nothing
+	// transaction above): every persona role's derived membership in its
+	// branch's rooms, and the sales floor's rep DM channels, the path a yard
+	// short pick's notice reaches the order's rep through. Keyed by role, so
+	// a persona whose rows land on a later branch gets its rooms the next
+	// time this populate runs.
+	seedPool, err := db.Connect(ctx, databaseURL)
+	if err != nil {
+		return report, fmt.Errorf("demo-populate: persona seed connect: %w", err)
+	}
+	seeded, err := messaging.SeedPersonaInboxes(ctx, seedPool)
+	seedPool.Close()
+	report.PersonaMemberships = seeded.MembershipsSynced
+	report.PersonaRepChannels = seeded.RepChannelsSeeded
+	if err != nil {
+		return report, fmt.Errorf("demo-populate: persona inboxes: %w", err)
 	}
 
 	writeReport(opt.Out, report)
@@ -662,6 +688,7 @@ func writeReport(out io.Writer, r Report) {
 	fmt.Fprintf(out, "  payment config   %d created (merchant %s, simulator, no host, surcharges off)\n",
 		r.PaymentConfigCreated, demoMerchantID)
 	fmt.Fprintf(out, "  demo_box         row created: %v\n", r.DemoBoxCreated)
+	fmt.Fprintf(out, "  persona inboxes  %d memberships, %d rep channels\n", r.PersonaMemberships, r.PersonaRepChannels)
 	if r.createdNothing() {
 		fmt.Fprintln(out, "  the demo world was already complete, this run wrote nothing.")
 	}

@@ -163,6 +163,40 @@ func (r *Repository) DeleteRepAssignment(ctx context.Context, customerID, orderI
 	return int(ct), nil
 }
 
+// RepDMChannelExists reports whether the rep's customer-message DM channel is already provisioned
+// WITH its member row (the seeded shape). The persona seeding guards on this before calling
+// EnsureRepDMChannel, whose upsert DO UPDATE arm touches the row's updated_at on every call, a touch
+// the demo populate's write-nothing discipline refuses.
+func (r *Repository) RepDMChannelExists(ctx context.Context, userID string) (bool, error) {
+	if r.pool == nil {
+		return false, errNoDB
+	}
+	var displayName, email string
+	if err := r.pool.QueryRow(ctx,
+		`SELECT COALESCE(display_name,''), COALESCE(email::text,'') FROM users WHERE id = $1`, userID).
+		Scan(&displayName, &email); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("resolve rep: %w", err)
+	}
+	handle := displayName
+	if handle == "" {
+		handle, _, _ = strings.Cut(email, "@")
+	}
+	var exists bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS(
+		  SELECT 1 FROM msg_channels ch
+		  JOIN msg_members m ON m.channel_id = ch.id AND m.user_id = $1
+		  WHERE ch.slug = $2)`,
+		userID, repDMSlug(handle, userID)).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("rep dm channel exists: %w", err)
+	}
+	return exists, nil
+}
+
 // EnsureRepDMChannel lazily + idempotently provisions the rep's customer-message DM channel and
 // returns its id. It is EnsureApprovalChannel's twin (0075) and deliberately so: same slug discipline
 // (userID-suffixed so two reps sharing a display name never share a channel), same DO UPDATE so
