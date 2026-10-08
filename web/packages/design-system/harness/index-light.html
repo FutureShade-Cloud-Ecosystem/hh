@@ -111,6 +111,21 @@
      the ERP sheet states for its ring. Declared in both halves. */
   --hh-focus-ring: var(--hh-accent-text);
 
+  /* ── the quote blue family (decision log rows 1047 item 7 and 1063) ─────────
+     Quotes and their documents read in an indigo quote blue; orders and the till keep gold,
+     so a conversion visibly changes colour. The roles mirror the gold family's. Brand mode
+     half here, light half below. The FILL is one value in both modes and carries white (the
+     D-077 shape), so those two are re-valued by no block; on navy the control is seen by its
+     1px fill-on border (the .btn-primary pattern). The tint is the quote header band's ground,
+     written flat so the gates can measure it: light is mix(#1D4ED8, white 90%), brand mode is
+     mix(#A3BCFF, black 78%), both in srgb. Nothing here re-values the gold family, and the
+     till never consumes these. */
+  --hh-quote: #A3BCFF;         /* the accent as ink: text, borders, the focus ring's quote twin */
+  --hh-quote-fill: #1D4ED8;    /* the pressable control, one value in both modes */
+  --hh-quote-fill-on: #FFFFFF; /* the ink the fill carries: 6.70:1 */
+  --hh-quote-link: #A3BCFF;    /* links and text actions */
+  --hh-quote-tint: #242938;    /* the quote header band's ground */
+
   /* ── status inks ───────────────────────────────────────────────────────────
      Danger, info and success AS TEXT, per theme. Each is tuned to be READ on
      the theme's own page, and the values are the ERP's: #FF8F9F is 6.81:1 on
@@ -347,6 +362,12 @@
      dark-gold that clears 4.5:1 on the page, the card and the widget ground. */
   --hh-accent-text: #896400;
   --hh-focus-ring: var(--hh-accent-text);
+
+  /* The quote blue's light half: 8.10:1 on the card, 6.81:1 on the page; the tint is
+     mix(#1D4ED8, white 90%) and quote ink on it is 6.92:1. The fill and its ink stay put. */
+  --hh-quote: #1C45B8;
+  --hh-quote-link: #1C45B8;
+  --hh-quote-tint: #E8EDFB;
 
   --hh-danger: #AB1C31;
   --hh-danger-fill: #C0223A;

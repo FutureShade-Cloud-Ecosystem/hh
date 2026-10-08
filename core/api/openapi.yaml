@@ -47880,6 +47880,9 @@ components:
         delivery_fee_cents:
           type: integer
           format: int64
+        order_no:
+          type: string
+          description: The number of the order a CONVERTED quote became, so the page can read as the order; present only while status is CONVERTED
     QuotePublicLine:
       type: object
       description: "The customer-visible shape of a quote line: no product id, no base quantity, no pricing mechanics. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8)."
