@@ -441,10 +441,13 @@ func buildStatements() []string {
 			QuoteGammaLine, QuoteGammaID, ProductID, OrgSouthID),
 
 		// Invoices and lines (carried due-date discipline via CURRENT_DATE
-		// arithmetic, never a literal date).
-		fmt.Sprintf(`INSERT INTO invoices (id, invoice_no, customer_id, branch_id, status, due_date, org_id) VALUES
-			('%s', 'FXINV-A-1', '%s', '%s', 'DRAFT', CURRENT_DATE + 30, '%s'),
-			('%s', 'FXINV-B-1', '%s', '%s', 'DRAFT', CURRENT_DATE + 30, '%s')
+		// arithmetic, never a literal date). The issue day is named rather
+		// than left to the column default: a writer that leaves it out takes
+		// the database session's day, and testaudit's invoice census holds
+		// every INSERT INTO invoices in the production tree to that rule.
+		fmt.Sprintf(`INSERT INTO invoices (id, invoice_no, customer_id, branch_id, status, issue_date, due_date, org_id) VALUES
+			('%s', 'FXINV-A-1', '%s', '%s', 'DRAFT', CURRENT_DATE, CURRENT_DATE + 30, '%s'),
+			('%s', 'FXINV-B-1', '%s', '%s', 'DRAFT', CURRENT_DATE, CURRENT_DATE + 30, '%s')
 			ON CONFLICT (id) DO NOTHING`,
 			InvoiceAlphaID, TenantAlphaID, BranchNorthAID, OrgNorthID,
 			InvoiceBetaID, TenantBetaID, BranchNorthAID, OrgNorthID),

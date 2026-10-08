@@ -24,11 +24,23 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync"
 )
 
+// arAgingZone names the house zone inside the aging SQL: the SQL twin of platform/houseday's
+// zone, spelled here because a SQL literal cannot read a Go constant. The backend-wide zone
+// census (dashboard's TestHouseZone_EveryCopyInTheBackendNamesTheSameZone) enumerates the copies,
+// this one included.
+const arAgingZone = "America/Toronto"
+
+// houseDaySQL is the ONE expression every SQL-side aging computation derives the dealer's day
+// from, the choice the 0376 migration names in its comment: the session clock converted to the
+// house zone. CURRENT_DATE and now()::date name the session zone's day instead, which is the UTC
+// day here, and age every open item one day early through the Ontario evening.
+const houseDaySQL = `(now() AT TIME ZONE '` + arAgingZone + `')::date`
+
 // agingColumns is the projection: the invoice legs the payer reads plus
 // the computed aging legs and the sync legs.
 const agingColumns = `i.id::text, i.invoice_no::text, i.status, i.issue_date, i.due_date,
 	i.total_cents, i.balance_cents,
-	(now()::date - i.due_date)::bigint,
+	(` + houseDaySQL + ` - i.due_date)::bigint,
 	i.seq, (i.deleted_at IS NOT NULL) AS deleted`
 
 // AgingStore is the aging pull-only Store.
