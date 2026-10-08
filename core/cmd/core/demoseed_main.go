@@ -238,6 +238,10 @@ func writeSummary(out *os.File, s planSummary) {
 			fmt.Fprintf(out, "    %s\n", l)
 		}
 	}
+	fmt.Fprintln(out, "  deposit sales (item 9.9, walk them at the Trenton till and on Pay balance)")
+	for _, l := range s.DepositOrders {
+		fmt.Fprintf(out, "    %s\n", l)
+	}
 	// THE ONLY ROWS THAT GROW PER DEPLOY, printed rather than described, because "which rows are
 	// day-keyed" is a question about THIS run's plan and an operator should not have to read ids.go
 	// to answer it. Everything not on this list is written once, ever.

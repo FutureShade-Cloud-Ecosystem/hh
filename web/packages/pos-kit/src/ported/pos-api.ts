@@ -110,6 +110,11 @@ export interface SaleResult {
   tax_cents: number;
   total_cents: number;
   deposit_cents?: number; // taken at ring on an unpaid sale; balance = total − deposit
+  // ── item 9.5 ── the supplier's demanded deposit billed to the account: its own invoice, the
+  // sale's own invoice carries the rest.
+  supplier_deposit_cents?: number;
+  supplier_deposit_invoice_id?: string;
+  supplier_deposit_invoice_no?: string;
   tax_reason_code: string;
   status: string;
   replayed: boolean;
@@ -230,6 +235,8 @@ export interface SalePost {
   offline?: boolean;
   deposit_cents?: number; // unpaid-at-ring only (Charge Account / COD)
   deposit_method?: string;
+  // ── item 9.5 ── the supplier's demanded deposit, billed to a credit account as its own invoice.
+  supplier_deposit_cents?: number;
   // ── DIB-488 rev 6 ── item D (optional More-options facts) + item F (cash tendered, only sent
   // when it covers the total). All three ride the ring BODY, so stableRingKey's fingerprint
   // (JSON.stringify of the payload) re-mints the idempotency key naturally when any of them change.
@@ -252,13 +259,17 @@ export interface SaleError {
   tendered_cents?: number;
   total_cents?: number;
   message?: string;
+  /** Item 9.2's deposit refusals: integer cents fields beside the message (`on_account_not_available`, `deposit_not_collect_now`). */
+  amount_cents?: number;
+  credit_limit_cents?: number;
+  deposit_cents?: number;
 }
 
 // createSale returns either a SaleResult or a structured SaleError (409 credit/price, 402 decline).
 export async function createSale(body: SalePost): Promise<{ ok: true; sale: SaleResult } | { ok: false; err: SaleError }> {
   const res = await api('/api/v1/pos/sales', { method: 'POST', body: JSON.stringify(body) });
   if (res.ok) return { ok: true, sale: (await res.json()) as SaleResult };
-  let parsed: { error?: string; policy?: string; line?: number; tendered_cents?: number; total_cents?: number; message?: string } = {};
+  let parsed: Partial<Omit<SaleError, 'status' | 'error'>> & { error?: string } = {};
   try {
     parsed = (await res.json()) as typeof parsed;
   } catch {
@@ -274,6 +285,9 @@ export async function createSale(body: SalePost): Promise<{ ok: true; sale: Sale
       tendered_cents: parsed.tendered_cents,
       total_cents: parsed.total_cents,
       message: parsed.message,
+      amount_cents: parsed.amount_cents,
+      credit_limit_cents: parsed.credit_limit_cents,
+      deposit_cents: parsed.deposit_cents,
     },
   };
 }

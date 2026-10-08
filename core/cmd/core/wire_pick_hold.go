@@ -1,0 +1,87 @@
+package main
+
+// wire_pick_hold.go, item 9.3 (the row 1047 deposits work): the two adapters
+// that map billing's pay before release facts onto the seams its consumers
+// declare. The order module's picking hold wants the whole facts block; the
+// dispatch module's will call doors want held and owed only. Both read the
+// same repository method, so the two doors and the hold cannot disagree about
+// the money.
+
+import (
+	"context"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
+)
+
+// pickHoldAdapter satisfies order.PickHoldReader over the billing repository.
+type pickHoldAdapter struct{ repo *billing.Repository }
+
+func (a pickHoldAdapter) PickHoldFacts(ctx context.Context, orderID string) (order.PickHoldFacts, error) {
+	held, owed, paid, total, err := a.repo.PickHoldForOrder(ctx, orderID)
+	if err != nil {
+		return order.PickHoldFacts{}, err
+	}
+	out := order.PickHoldFacts{Held: held, OrderTotalCents: total, PaidCents: paid, OwedCents: owed}
+	if held {
+		out.Words = order.PickHoldWords
+	}
+	if paid > 0 && owed > 0 {
+		out.InProcessWords = order.PickInProcessWords
+	}
+	return out, nil
+}
+
+// PickHoldFactsTx is the same read on a caller's transaction (order's
+// PickHoldTxReader, item 9 Opus P3-2): the guarded status writers read the
+// hold inside their own transaction under the order row lock.
+func (a pickHoldAdapter) PickHoldFactsTx(ctx context.Context, tx pgx.Tx, orderID string) (order.PickHoldFacts, error) {
+	held, owed, paid, total, err := a.repo.PickHoldForOrderTx(ctx, tx, orderID)
+	if err != nil {
+		return order.PickHoldFacts{}, err
+	}
+	out := order.PickHoldFacts{Held: held, OrderTotalCents: total, PaidCents: paid, OwedCents: owed}
+	if held {
+		out.Words = order.PickHoldWords
+	}
+	if paid > 0 && owed > 0 {
+		out.InProcessWords = order.PickInProcessWords
+	}
+	return out, nil
+}
+
+// dispatchPickHoldAdapter satisfies dispatch.PickHoldGate over the same read.
+type dispatchPickHoldAdapter struct{ repo *billing.Repository }
+
+func (a dispatchPickHoldAdapter) HeldFromPicking(ctx context.Context, orderID string) (bool, int64, error) {
+	held, owed, _, _, err := a.repo.PickHoldForOrder(ctx, orderID)
+	return held, owed, err
+}
+
+// HeldFromPickingTx is the same read on a caller's transaction, the sync
+// confirm's guard inside the transaction that seals the pickup.
+func (a dispatchPickHoldAdapter) HeldFromPickingTx(ctx context.Context, tx pgx.Tx, orderID string) (bool, int64, error) {
+	held, owed, _, _, err := a.repo.PickHoldForOrderTx(ctx, tx, orderID)
+	return held, owed, err
+}
+
+// tasksPickHoldAdapter satisfies tasks.PickHoldCheck over the same read, so
+// the yard's doors and every other door read the one number.
+type tasksPickHoldAdapter struct{ repo *billing.Repository }
+
+func (a tasksPickHoldAdapter) OrderHeldFromPicking(ctx context.Context, orderID string) (bool, int64, error) {
+	held, owed, _, _, err := a.repo.PickHoldForOrder(ctx, orderID)
+	return held, owed, err
+}
+
+// holdBillingRepo is a billing repository bound to the order and customer
+// repositories the pay before release hold reads the order's total and the
+// customer's terms through (billing declares the two seams and never imports
+// either module).
+func holdBillingRepo(pool *pgxpool.Pool) *billing.Repository {
+	return billing.NewRepository(pool).WithPickHoldSources(order.NewRepository(pool), customer.NewRepository(pool))
+}

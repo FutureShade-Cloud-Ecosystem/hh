@@ -255,6 +255,19 @@ const CUSTOMERS = [
     percent_off: 12,
     on_hold: true,
   },
+  // Item 9.9: the pay before release account (zero day terms, no credit line), the stub's
+  // Cash On Demand customer: the preview offers it the deposit with the balance due later.
+  {
+    id: "c-cod",
+    account_no: "C10",
+    name: "Cash On Demand Landscaping",
+    customer_type: "CONTRACTOR",
+    payment_terms_days: 0,
+    credit_limit_cents: 0,
+    open_balance_cents: 0,
+    percent_off: 0,
+    on_hold: false,
+  },
 ];
 
 const WALK_IN = {
@@ -310,6 +323,53 @@ const drawers = new Map(); // branch_id -> session row
 // Committed sales, by order id, in ring order.
 const sales = new Map();
 const salesByKey = new Map(); // idempotency_key -> order_id
+// Item 9.4 to 9.8: the orders that still owe, by order id (the core's pay balance world). Two are
+// planted so a tester can walk them: a credit customer's deposit sale (the rest rides the account,
+// not held) and the Cash On Demand account's (the rest due later, held from picking until paid).
+// A deposit sale rung through the till joins them. Each carries what the core answers: the money
+// trail oldest first, the hold words when held, and the lines for the held order card.
+const owing = new Map();
+const PAY_HOLD_WORDS = "This order cannot reach picking until the balance is paid.";
+const IN_PROCESS_WORDS = "In process: deposit taken";
+const PAY_BALANCE_KEYS = new Map(); // idempotency_key -> the take's answer body
+function addOwing(order) {
+  owing.set(order.order_id, order);
+}
+function owingStill(order) {
+  return order.order_total_cents - order.payments.reduce((sum, p) => sum + p.amount_cents, 0);
+}
+function seedOwingOrders() {
+  addOwing({
+    order_id: uuidFromCounter(4901),
+    order_no: "DEMO-TRT-D01",
+    branch_id: TRENTON_ID,
+    customer_id: "c-fenwick",
+    customer_name: "Fenwick Builders Ltd",
+    account_line: "C02 · Builder · on account",
+    job: "Marina Road patio",
+    fulfilment: "WILL_CALL",
+    sale_type: "COLLECT_LATER",
+    order_total_cents: 191359,
+    held: false,
+    payments: [{ payment_id: uuidFromCounter(4911), method: "CARD", amount_cents: 50000 }],
+    lines: [{ description: "Holland Stone 60 mm", qty: "200 sf", line_total_cents: 169359 }],
+  });
+  addOwing({
+    order_id: uuidFromCounter(4902),
+    order_no: "DEMO-TRT-D02",
+    branch_id: TRENTON_ID,
+    customer_id: "c-cod",
+    customer_name: "Cash On Demand Landscaping",
+    account_line: "C10 · Contractor · Cash On Demand",
+    fulfilment: "WILL_CALL",
+    sale_type: "COD",
+    order_total_cents: 6102,
+    held: true,
+    payments: [{ payment_id: uuidFromCounter(4912), method: "CASH", amount_cents: 2000 }],
+    lines: [{ description: "Clear Stone", qty: "1 yd", line_total_cents: 5400 }],
+  });
+}
+
 // Parked tickets, by id. Kingston's pre-seeded ticket proves the fence: a
 // Trenton login lists parked tickets for its own branch and never this one.
 const parked = new Map();
@@ -329,6 +389,7 @@ function seedParkedKingstonTicket() {
   });
 }
 seedParkedKingstonTicket();
+seedOwingOrders();
 
 // ---------------------------------------------------------------------------
 // The returns world: the demo branch's sales, the drawer, and the returns
@@ -533,6 +594,37 @@ let RETURN_SEQ = 0;
 function customerFor(customerId) {
   if (typeof customerId !== "string" || customerId === "") return WALK_IN;
   return CUSTOMERS.find((c) => c.id === customerId) ?? null;
+}
+
+// Item 9.1's menu, the core's own rule (payment_options.go): a credit customer is terms above
+// zero AND a credit line and not on hold; everything else (Cash On Demand, walk in, no credit,
+// a held credit account) is offered the deposit with the balance due later.
+function paymentOptionsFor(customer) {
+  const terms = customer.payment_terms_days ?? 0;
+  const limit = customer.credit_limit_cents ?? 0;
+  if (terms > 0 && limit > 0 && customer.on_hold !== true) {
+    return [
+      { shape: "PAY_IN_FULL_NOW" },
+      { shape: "ALL_ON_ACCOUNT" },
+      { shape: "DEPOSIT_NOW_REST_ON_ACCOUNT", line_two_words: "On account" },
+    ];
+  }
+  return [
+    { shape: "PAY_IN_FULL_NOW" },
+    { shape: "DEPOSIT_NOW_REST_DUE_LATER", line_two_words: "Balance due later" },
+  ];
+}
+
+// Item 9.5's allowance, the core's own rule (sale_supplier_deposit.go): the supplier's demanded
+// deposit is billed to a credit account's own on-account ring, so the same facts that offer
+// ALL_ON_ACCOUNT allow it, and nobody else does.
+function supplierDepositFor(customer) {
+  const terms = customer.payment_terms_days ?? 0;
+  const limit = customer.credit_limit_cents ?? 0;
+  if (terms > 0 && limit > 0 && customer.on_hold !== true) {
+    return { allowed: true, words: "Supplier deposit, billed to the account" };
+  }
+  return { allowed: false };
 }
 
 // One resolved line: the price the engine would answer for this customer, this
@@ -1148,6 +1240,16 @@ const server = createServer(async (request, response) => {
     respondJson(response, 200, { ok: true });
     return;
   }
+  if (request.method === "POST" && path === "/_stub/reseed-owing") {
+    // Harness-only: put the two planted owing orders back as they were (a leg that takes a balance
+    // leaves the world changed; the next leg starts from the planted one).
+    owing.clear();
+    PAY_BALANCE_KEYS.clear();
+    seedOwingOrders();
+    respondJson(response, 200, { ok: true });
+    return;
+  }
+
   if (request.method === "GET" && path === "/_stub/state") {
     // Harness-only: the tests' read back of this stub's ledgers. No contract
     // path shares the namespace, and the app never calls it.
@@ -1588,6 +1690,17 @@ const server = createServer(async (request, response) => {
         respondJson(response, 400, { error: "that customer is not in this dealer's book" });
         return;
       }
+      // Item 9 delta review P3-d: the core's pay before release guard (item 9 review P3-7),
+      // mirrored at the preview: the sale type is the guard of a Cash On Demand account, and an
+      // account that pays on terms is refused here first, in the core's problem body, so the total
+      // row says it before the ring.
+      if (parsed.sale_type === "COD" && (customer.payment_terms_days ?? 0) > 0) {
+        respondJson(response, 422, {
+          error: "cod_not_for_terms_account",
+          message: "This account pays on terms, so its sale is not pay before release. Ring it on account or paid in full.",
+        });
+        return;
+      }
       const gross = [];
       for (let index = 0; index < lines.length; index += 1) {
         const line = lines[index] ?? {};
@@ -1618,6 +1731,8 @@ const server = createServer(async (request, response) => {
         tax_lines: tax > 0 ? [{ reason_code: "STD_ON_HST_13", rate_bps: HST_RATE_BPS, tax_cents: tax }] : [],
         total_cents: subtotal + tax,
         tax_reason_code: "STD_ON_HST_13",
+        payment_options: paymentOptionsFor(customer),
+        supplier_deposit: supplierDepositFor(customer),
         ticket_base_cents: subtotal + discounted.saleCents,
         ticket_discount_max_cents: subtotal + discounted.saleCents - 1,
         ...(discounted.discountCents > 0
@@ -1666,6 +1781,67 @@ const server = createServer(async (request, response) => {
         respondJson(response, 400, { error: "the walk-in has no account to bill" });
         return;
       }
+      // Item 9.2's refusals, in the core's problem body style: integer cents fields and a
+      // message in dollars. A deposit never rides a collect now sale; an account the shape was
+      // not offered cannot carry anything on account.
+      const requestedDeposit =
+        typeof parsed.deposit_cents === "number" && Number.isInteger(parsed.deposit_cents) && parsed.deposit_cents > 0
+          ? parsed.deposit_cents
+          : 0;
+      if (requestedDeposit > 0 && (parsed.sale_type ?? "COLLECT_NOW") === "COLLECT_NOW") {
+        respondJson(response, 422, {
+          error: "deposit_not_collect_now",
+          deposit_cents: requestedDeposit,
+          message:
+            "A collect now sale is paid in full, the goods do not leave on a deposit. Take the whole amount now, or choose will call, delivery or a pay before release sale and leave a deposit.",
+        });
+        return;
+      }
+      if (tender === "ACCOUNT" && (customer.payment_terms_days ?? 0) <= 0) {
+        respondJson(response, 422, {
+          error: "on_account_not_available",
+          credit_limit_cents: customer.credit_limit_cents ?? 0,
+          message:
+            "This account cannot carry this sale on account. Pay in full now, or take a deposit with the balance due later.",
+        });
+        return;
+      }
+      // Item 9.5's refusals, the core's own rule: the supplier's demanded deposit rides only a
+      // credit account's plain on-account ring (it is BILLED to the account), never above the
+      // sale's pre-tax amount.
+      const requestedSupplierDeposit =
+        typeof parsed.supplier_deposit_cents === "number" &&
+        Number.isInteger(parsed.supplier_deposit_cents) &&
+        parsed.supplier_deposit_cents !== 0
+          ? parsed.supplier_deposit_cents
+          : 0;
+      if (requestedSupplierDeposit !== 0) {
+        const shapeFits =
+          tender === "ACCOUNT" &&
+          !Array.isArray(parsed.tenders) &&
+          requestedDeposit === 0 &&
+          (customer.payment_terms_days ?? 0) > 0 &&
+          (customer.credit_limit_cents ?? 0) > 0;
+        if (!shapeFits) {
+          respondJson(response, 422, {
+            error: "supplier_deposit_not_credit",
+            message:
+              "A supplier deposit is billed to a credit account, on account. This sale is not that shape: ring it as the account fits, or take the deposit at the counter.",
+          });
+          return;
+        }
+      }
+      // Item 9 review P3-7, the core's own ruling: the COD sale type is the
+      // guard of a Cash On Demand ACCOUNT (zero day terms, the walk in). An
+      // account that pays on terms is not in it, whatever the tender.
+      if (parsed.sale_type === "COD" && (customer.payment_terms_days ?? 0) > 0) {
+        respondJson(response, 422, {
+          error: "cod_not_for_terms_account",
+          message:
+            "This account pays on terms, so its sale is not pay before release. Ring it on account or paid in full.",
+        });
+        return;
+      }
       // The COD constraint, the core's own gate for an unpaid-at-ring sale: a
       // COD sale draws on an account, and the walk-in has none (its limit is
       // no credit at all), so the ring answers the credit gate's refusal
@@ -1673,7 +1849,7 @@ const server = createServer(async (request, response) => {
       // pass through here. The same word an on-hold account's sale meets
       // below; the policy names the constraint, and the account sales keep
       // their own arms.
-      if (parsed.sale_type === "COD" && customer.id === "") {
+      if (parsed.sale_type === "COD" && customer.id === "" && !(parsed.deposit_cents > 0)) {
         const blocked = creditBlocked("COD_CONSTRAINT");
         respondJson(response, blocked.status, blocked.body);
         return;
@@ -1740,7 +1916,29 @@ const server = createServer(async (request, response) => {
         });
       }
       const tax = taxCents(subtotal);
+      if (requestedSupplierDeposit > subtotal) {
+        respondJson(response, 422, {
+          error: "supplier_deposit_over_pretax",
+          deposit_cents: requestedSupplierDeposit,
+          subtotal_cents: subtotal,
+          message: `The supplier deposit of $${(requestedSupplierDeposit / 100).toFixed(2)} is more than the sale's pre-tax amount.`,
+        });
+        return;
+      }
       const total = subtotal + tax;
+      // Item 9 visual review P3-3, widened by run D's finding: the core's own deposit bound
+      // (0 < deposit < total, judged once the lines are priced) answers as the problem body the
+      // other deposit refusals use (a stable code, integer cents fields, a message in dollars).
+      // The till holds no bound of its own; this is the refusal the person reads.
+      if (requestedDeposit >= total) {
+        respondJson(response, 422, {
+          error: "deposit_out_of_range",
+          deposit_cents: requestedDeposit,
+          total_cents: total,
+          message: `The deposit must be more than $0.00 and less than the sale total of $${(total / 100).toFixed(2)}.`,
+        });
+        return;
+      }
       const tenders = [];
       let cashTendered;
       let changeDue;
@@ -1823,6 +2021,13 @@ const server = createServer(async (request, response) => {
             ...(leg.method === "CARD" ? { gateway_ref: `rp_sim_${docCounter + 1}` } : {}),
           });
         });
+      } else if (parsed.sale_type === "COD" && requestedDeposit > 0) {
+        // Pay before release with a deposit: the deposit is the only capture (its own leg lands
+        // below); the rest is the invoice's balance, held from picking until it is paid.
+        if (parsed.deposit_method === "CARD" && (typeof parsed.payment_token !== "string" || parsed.payment_token === "")) {
+          respondJson(response, 400, { error: "a card deposit carries the terminal's token, never a card number" });
+          return;
+        }
       } else if (tender === "CASH") {
         // The contract's own rule: cash_tendered_cents 0 (or absent) means not
         // entered, and the sale rings for the exact total. A typed figure that
@@ -1863,12 +2068,12 @@ const server = createServer(async (request, response) => {
           respondJson(response, blocked.status, blocked.body);
           return;
         }
-        if (customer.open_balance_cents + total > customer.credit_limit_cents) {
+        if (customer.open_balance_cents + total - requestedDeposit > customer.credit_limit_cents) {
           const blocked = creditBlocked("CREDIT_LIMIT_EXCEEDED");
           respondJson(response, blocked.status, blocked.body);
           return;
         }
-        customer.open_balance_cents += total;
+        customer.open_balance_cents += total - requestedDeposit;
       } else if (tender !== "CHEQUE") {
         respondJson(response, 400, { error: "unknown tender" });
         return;
@@ -1930,6 +2135,10 @@ const server = createServer(async (request, response) => {
         cash_tendered_cents: cashTendered,
         change_due_cents: changeDue,
         deposit_cents: depositCents,
+        supplier_deposit_cents: requestedSupplierDeposit > 0 ? requestedSupplierDeposit : undefined,
+        supplier_deposit_invoice_id:
+          requestedSupplierDeposit > 0 ? uuidFromCounter(7000 + sales.size + 1) : undefined,
+        supplier_deposit_invoice_no: requestedSupplierDeposit > 0 ? nextDocNo("INV") : undefined,
         balance_cents: total - tenders.reduce((sum, leg) => sum + leg.amount_cents, 0),
         created_at: new Date().toISOString(),
         created_by: caller.userId,
@@ -1941,8 +2150,127 @@ const server = createServer(async (request, response) => {
         discounts: discounted.discounts.length > 0 ? discounted.discounts : undefined,
       };
       sales.set(orderId, sale);
+      if (depositCents > 0 && sale.balance_cents > 0) {
+        // A deposit sale owes: it joins the pay balance world, held when it is a pay before release sale.
+        addOwing({
+          order_id: orderId,
+          order_no: sale.order_no,
+          branch_id: branchId,
+          customer_id: customer.id,
+          customer_name: customer.name,
+          account_line: `${customer.account_no} · ${customer.customer_type === "RETAIL" ? "Walk-in" : "Account"}`,
+          fulfilment: parsed.fulfilment ?? (parsed.sale_type === "DELIVERED" ? "DELIVERY" : "WILL_CALL"),
+          sale_type: sale.sale_type,
+          order_total_cents: total,
+          held: parsed.sale_type === "COD",
+          payments: tenders.map((t) => ({ payment_id: t.payment_id, method: t.method, amount_cents: t.amount_cents })),
+          lines: outLines.map((l) => ({
+            description: l.description,
+            qty: `${l.qty_entered} ${l.uom_entered}`,
+            line_total_cents: l.line_total_cents,
+          })),
+        });
+      }
       if (idempotencyKey !== "") salesByKey.set(idempotencyKey, orderId);
       respondJson(response, 201, saleResponseBody(sale, false));
+    });
+    return;
+  }
+
+  // Item 9.4: find the orders that owe, by order number or customer name (the core also matches a phone).
+  if (request.method === "GET" && path === "/api/v1/pos/pay-balance") {
+    const term = (url.searchParams.get("q") ?? "").trim().toLowerCase();
+    if (term === "") {
+      respondJson(response, 400, { error: "q is required: an order number, a customer name or a phone" });
+      return;
+    }
+    const items = [...owing.values()]
+      .filter((o) => o.branch_id === callerBranch && owingStill(o) > 0)
+      .filter((o) => o.order_no.toLowerCase().includes(term) || o.customer_name.toLowerCase().includes(term))
+      .map((o) => owingBody(o));
+    // The core answers at most twenty and says so when more match (item 9 F review N5).
+    respondJson(response, 200, { items: items.slice(0, 20), truncated: items.length > 20 });
+    return;
+  }
+
+  // Item 9.4: take the whole balance, CASH or CARD, idempotent by key.
+  if (request.method === "POST" && path === "/api/v1/pos/pay-balance") {
+    readBody(request, (parsed) => {
+      const key = typeof parsed.idempotency_key === "string" ? parsed.idempotency_key : "";
+      const replay = key === "" ? undefined : PAY_BALANCE_KEYS.get(key);
+      if (replay !== undefined) {
+        respondJson(response, 200, { ...replay, replayed: true });
+        return;
+      }
+      const order = owing.get(typeof parsed.order_id === "string" ? parsed.order_id : "");
+      if (order === undefined || order.branch_id !== callerBranch) {
+        respondJson(response, 404, { error: "no such order at this branch" });
+        return;
+      }
+      const balance = owingStill(order);
+      if (balance <= 0) {
+        respondJson(response, 409, { error: "The order is paid in full." });
+        return;
+      }
+      if (parsed.method !== "CASH" && parsed.method !== "CARD") {
+        respondJson(response, 400, { error: "the method is CASH or CARD" });
+        return;
+      }
+      if (parsed.amount_cents !== balance) {
+        respondJson(response, 422, {
+          error: "pay_balance_whole_only",
+          sent_cents: parsed.amount_cents,
+          balance_cents: balance,
+          message: `This door takes the whole balance of ${dollarsWord(balance)}, not a part payment.`,
+        });
+        return;
+      }
+      const session = drawers.get(callerBranch);
+      if (session === undefined || session === null || parsed.till_session_id !== session.id) {
+        respondJson(response, 409, { error: "the payment's drawer is not this branch's open till session" });
+        return;
+      }
+      if (parsed.method === "CARD" && (typeof parsed.payment_token !== "string" || parsed.payment_token === "")) {
+        respondJson(response, 400, { error: "a card payment carries the terminal's token, never a card number" });
+        return;
+      }
+      const paymentId = nextDocNo("pay");
+      order.payments.push({ payment_id: paymentId, method: parsed.method, amount_cents: balance });
+      const wasHeld = order.held;
+      order.held = false;
+      const answer = {
+        order_id: order.order_id,
+        order_no: order.order_no,
+        customer_id: order.customer_id,
+        payment_id: paymentId,
+        method: parsed.method,
+        amount_cents: balance,
+        paid_words: "Paid in full",
+        released_to_picking: wasHeld,
+        still_owed_cents: 0,
+        held_from_picking_now: false,
+        payments: order.payments.map((pay) => ({ ...pay })),
+      };
+      PAY_BALANCE_KEYS.set(key, answer);
+      respondJson(response, 201, answer);
+    });
+    return;
+  }
+
+  // Item 9.3: the staff order read, only the pay hold and the lines the till's held card needs.
+  const orderMatch = path.match(/^\/api\/v1\/orders\/([^/]+)$/);
+  if (request.method === "GET" && orderMatch !== null) {
+    const order = owing.get(orderMatch[1]);
+    if (order === undefined || order.branch_id !== callerBranch) {
+      respondJson(response, 404, { error: "no such order" });
+      return;
+    }
+    respondJson(response, 200, {
+      id: order.order_id,
+      order_no: order.order_no,
+      customer_id: order.customer_id,
+      status: "CONFIRMED",
+      pay_hold: payHoldBody(order),
     });
     return;
   }
@@ -2704,6 +3032,37 @@ function pageReceiptDocument(v, priorPrints) {
 </html>`;
 }
 
+function payHoldBody(order) {
+  const paid = order.payments.reduce((sum, p) => sum + p.amount_cents, 0);
+  const owed = order.order_total_cents - paid;
+  return {
+    held_from_picking: order.held && owed > 0,
+    ...(order.held && owed > 0 ? { words: PAY_HOLD_WORDS } : {}),
+    ...(paid > 0 && owed > 0 ? { in_process_words: IN_PROCESS_WORDS } : {}),
+    order_total_cents: order.order_total_cents,
+    paid_cents: paid,
+    owed_cents: owed,
+  };
+}
+
+function owingBody(order) {
+  const hold = payHoldBody(order);
+  return {
+    order_id: order.order_id,
+    order_no: order.order_no,
+    customer_id: order.customer_id,
+    customer_name: order.customer_name,
+    ...(order.job ? { job: order.job } : {}),
+    fulfilment: order.fulfilment,
+    order_total_cents: order.order_total_cents,
+    paid_cents: hold.paid_cents,
+    still_owed_cents: hold.owed_cents,
+    held_from_picking: hold.held_from_picking,
+    ...(hold.words ? { hold_words: hold.words } : {}),
+    payments: order.payments.map((pay) => ({ ...pay })),
+  };
+}
+
 function saleResponseBody(sale, replayed) {
   return {
     order_id: sale.order_id,
@@ -2724,6 +3083,9 @@ function saleResponseBody(sale, replayed) {
     cash_tendered_cents: sale.cash_tendered_cents,
     change_due_cents: sale.change_due_cents,
     deposit_cents: sale.deposit_cents,
+    supplier_deposit_cents: sale.supplier_deposit_cents,
+    supplier_deposit_invoice_id: sale.supplier_deposit_invoice_id,
+    supplier_deposit_invoice_no: sale.supplier_deposit_invoice_no,
     tenders: sale.tenders,
     discount_cents: sale.discount_cents,
     discounts: sale.discounts,

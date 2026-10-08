@@ -125,6 +125,9 @@ func TestSale_COD_FulfilmentField_MapsAndValidates(t *testing.T) {
 
 func depositInput() SaleInput {
 	in := baseInput()
+	// Item 9.2: a deposit sale is a fulfilment that waits (will call here),
+	// a collect now sale is paid in full and takes no deposit.
+	in.SaleType = SaleCollectLater
 	in.Tender = TenderAccount
 	in.DepositCents = 2000
 	in.DepositMethod = TenderCash
@@ -133,6 +136,8 @@ func depositInput() SaleInput {
 
 func TestSale_Deposit_PartiallyPaid_AllocationAndSubledger(t *testing.T) {
 	h := newHarness()
+	// Item 9.2: an ACCOUNT tender + deposit needs a credit shaped account.
+	h.store.customers["cust-abc"] = customerRec{ID: "cust-abc", CustomerType: "CONTRACTOR", PaymentTermsDays: 30, CreditLimitCents: 5000000}
 	out, err := h.svc.Sale(context.Background(), depositInput())
 	if err != nil {
 		t.Fatalf("deposit sale: %v", err)
@@ -171,6 +176,8 @@ func TestSale_Deposit_PartiallyPaid_AllocationAndSubledger(t *testing.T) {
 
 func TestSale_Deposit_CreditGate_RunsOnRemainder(t *testing.T) {
 	h := newHarness()
+	// Item 9.2: an ACCOUNT tender + deposit needs a credit shaped account.
+	h.store.customers["cust-abc"] = customerRec{ID: "cust-abc", CustomerType: "CONTRACTOR", PaymentTermsDays: 30, CreditLimitCents: 5000000}
 	if _, err := h.svc.Sale(context.Background(), depositInput()); err != nil {
 		t.Fatalf("deposit sale: %v", err)
 	}
@@ -181,10 +188,25 @@ func TestSale_Deposit_CreditGate_RunsOnRemainder(t *testing.T) {
 
 func TestSale_Deposit_Bounds(t *testing.T) {
 	h := newHarness()
+	// Item 9.2: an ACCOUNT tender + deposit needs a credit shaped account.
+	h.store.customers["cust-abc"] = customerRec{ID: "cust-abc", CustomerType: "CONTRACTOR", PaymentTermsDays: 30, CreditLimitCents: 5000000}
 	in := depositInput()
 	in.DepositCents = 11300 // == total: just ring it paid
-	if _, err := h.svc.Sale(context.Background(), in); !errors.Is(err, errDepositTooLarge) {
-		t.Fatalf("deposit == total must reject, got %v", err)
+	var bounds ErrDepositOutOfRange
+	if _, err := h.svc.Sale(context.Background(), in); !errors.As(err, &bounds) ||
+		bounds.DepositCents != 11300 || bounds.TotalCents != 11300 {
+		t.Fatalf("deposit == total must reject with the bound's own facts, got %v", err)
+	}
+	// A negative deposit is the same refusal at the same bound: one spelling,
+	// answered once the lines are priced so the body can name the real total.
+	neg := depositInput()
+	neg.DepositCents = -500
+	if _, err := h.svc.Sale(context.Background(), neg); !errors.As(err, &bounds) ||
+		bounds.DepositCents != -500 || bounds.TotalCents != 11300 {
+		t.Fatalf("a negative deposit must reject with the bound's own facts, got %v", err)
+	}
+	if msg := depositOutOfRangeMessage(bounds); msg == "" || strings.Contains(msg, "cents") {
+		t.Fatalf("the bound's message must speak dollars: %q", msg)
 	}
 	in = depositInput()
 	in.Tender = TenderCash // paid at ring, no deposit rides

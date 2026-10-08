@@ -159,13 +159,25 @@ type SalePreviewTaxLine struct {
 
 // SalePreview is the read-only answer: the server-resolved subtotal, each
 // tax line, and the total in integer cents, exactly as the ring computes
-// them for the same body.
+// them for the same body, plus the payment shapes the counter may offer this
+// customer (payment_options.go, item 9.1): the menu the payment step renders
+// from, so no screen decides a money rule.
 type SalePreview struct {
 	SubtotalCents int64                `json:"subtotal_cents"`
 	TaxCents      int64                `json:"tax_cents"`
 	TaxLines      []SalePreviewTaxLine `json:"tax_lines"`
 	TotalCents    int64                `json:"total_cents"`
 	TaxReasonCode string               `json:"tax_reason_code"`
+	// PaymentOptions is which payment shapes fit the account (one per shape,
+	// with the words for line two on the deposit shapes). Always present: the
+	// preview is the payment step's own read.
+	PaymentOptions []PaymentOption `json:"payment_options"`
+	// SupplierDeposit says whether the counter may mark a supplier's demanded
+	// deposit on this sale (sub item 9.5): allowed exactly on the credit
+	// shape's ring, with the words the Summary and the receipt print. Always
+	// present, so the payment step shows its control only when the server
+	// says so.
+	SupplierDeposit *SupplierDepositOption `json:"supplier_deposit"`
 	// The manual discounts the ring would apply (discount.go): the total, the ticket discount's
 	// own cents, and one row per line with its own and its share of the ticket discount, so the
 	// counter shows the server's cents and never computes one.
@@ -220,6 +232,14 @@ func (s *Service) SalePreview(ctx context.Context, in SalePreviewInput) (SalePre
 	if err != nil {
 		return SalePreview{}, err
 	}
+	// Item 9 delta review P3-d: the pay before release sale type is the guard
+	// of a Cash On Demand ACCOUNT, and an account that pays on terms is not in
+	// it whatever the tender (the ring's own refusal, P3-7's ruling). The
+	// preview shares the SAME typed refusal, so the till can say it at the read
+	// the payment step already opens, before the ring builds the whole sale.
+	if in.SaleType == SaleCOD && cust.PaymentTermsDays > 0 {
+		return SalePreview{}, ErrCODNotForTermsAccount{}
+	}
 	taxReason := TaxStdON13
 	if in.Relief != nil && in.Relief.ReasonCode != "" {
 		taxReason = in.Relief.ReasonCode
@@ -241,6 +261,14 @@ func (s *Service) SalePreview(ctx context.Context, in SalePreviewInput) (SalePre
 		TaxLines:      []SalePreviewTaxLine{},
 		TotalCents:    priced.total,
 		TaxReasonCode: taxReason,
+		// Item 9.1: the account's own shapes, read off the same customer the
+		// pricing already resolved (the walk in resolution included), and
+		// gated by the branch's COD switch (item 9 Opus P2-3).
+		PaymentOptions: s.previewPaymentOptions(ctx, in.BranchID, cust),
+		// Sub item 9.5: the supplier deposit's allowance rides the same read
+		// (the control the payment step shows and the guard the ring holds
+		// are one answer).
+		SupplierDeposit: s.previewSupplierDeposit(ctx, cust),
 	}
 	if priced.subtotal > 0 {
 		out.TicketBaseCents = priced.subtotal + priced.saleDiscount.AmountCents

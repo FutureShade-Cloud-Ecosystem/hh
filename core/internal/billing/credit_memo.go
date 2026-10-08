@@ -105,6 +105,27 @@ const (
 	RoleTax     = "tax"
 )
 
+// SupplierDepositNotCreditable refuses a credit memo against a supplier
+// deposit document (sub item 9.5, the delta review's P2-C): that document
+// posted DR AR / CR Customer Deposits and booked no revenue and no tax, so
+// the memo's ordinary reversing entry would debit revenue that was never
+// credited and leave the deposit liability overstated. A deposit is RELEASED
+// when its special order is fulfilled (the release item that follows item 9),
+// never credited.
+type SupplierDepositNotCreditable struct{ InvoiceNo string }
+
+func (e *SupplierDepositNotCreditable) Error() string {
+	return "billing: a supplier deposit is released when its special order is fulfilled, not credited"
+}
+
+// The refusal's stable code and words at the register's door: the register's
+// envelope carries the sentence a person reads and the code a client switches
+// on, beside it.
+const (
+	SupplierDepositNotCreditableCode  = "supplier_deposit_not_creditable"
+	SupplierDepositNotCreditableWords = "A supplier deposit is released when its special order is fulfilled, not credited."
+)
+
 // JournalLeg is one leg of the reversing entry, addressed by ROLE. Exactly one of DebitCents /
 // CreditCents is non-zero, and both are POSITIVE magnitudes.
 type JournalLeg struct {
@@ -284,15 +305,16 @@ func (w *InvoiceWriter) planAccommodation(ctx context.Context, in CreditMemoInpu
 // planReversal: mirror the original. Tax is COPIED, never re-assessed.
 func (w *InvoiceWriter) planReversal(ctx context.Context, in CreditMemoInput) (creditPlan, error) {
 	var (
-		p                          creditPlan
-		origSub, origTax, origTot  int64
-		docType, customerID, brnch string
+		p                         creditPlan
+		origSub, origTax, origTot int64
+		docType, sourceKind       string
+		customerID, brnch         string
 	)
 	err := w.pool.QueryRow(ctx, `
-SELECT invoice_no::text, doc_type, customer_id::text, branch_id::text,
+SELECT invoice_no::text, doc_type, source_kind, customer_id::text, branch_id::text,
        subtotal_cents, tax_cents, total_cents
   FROM invoices WHERE id = $1`, in.ReversesInvoiceID).
-		Scan(&p.origNo, &docType, &customerID, &brnch, &origSub, &origTax, &origTot)
+		Scan(&p.origNo, &docType, &sourceKind, &customerID, &brnch, &origSub, &origTax, &origTot)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return creditPlan{}, httpx.BadRequestf("no such invoice to reverse")
@@ -303,6 +325,12 @@ SELECT invoice_no::text, doc_type, customer_id::text, branch_id::text,
 		// Reversing a reversal is how a ledger becomes a hall of mirrors. If the credit was wrong,
 		// the answer is an invoice, which is a document with its own name and its own number.
 		return creditPlan{}, httpx.BadRequestf("a credit memo cannot reverse another credit memo")
+	}
+	if sourceKind == SourceSupplierDeposit {
+		// The deposit is a liability, not revenue (P2-C above): a memo against it
+		// would reverse revenue that was never booked. The fulfilment path
+		// releases it, whole or not at all.
+		return creditPlan{}, &SupplierDepositNotCreditable{InvoiceNo: p.origNo}
 	}
 	if in.CustomerID != "" && in.CustomerID != customerID {
 		return creditPlan{}, httpx.BadRequestf("the credit memo's customer must match the invoice it reverses")

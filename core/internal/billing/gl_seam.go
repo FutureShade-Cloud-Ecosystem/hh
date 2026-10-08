@@ -25,10 +25,10 @@ func (r *Repository) InvoiceForGL(ctx context.Context, invoiceID string) (gl.Inv
 	err := r.pool.QueryRow(ctx,
 		`SELECT subtotal_cents, tax_cents, total_cents, holdback_cents,
 		        branch_id::text, customer_id::text, invoice_no::text,
-		        COALESCE(finalized_at, created_at)
+		        COALESCE(finalized_at, created_at), source_kind
 		 FROM invoices WHERE id = $1`, invoiceID,
 	).Scan(&a.SubtotalCents, &a.TaxCents, &a.TotalCents, &a.HoldbackCents,
-		&a.BranchID, &a.CustomerID, &a.InvoiceNo, &a.FinalizedAt)
+		&a.BranchID, &a.CustomerID, &a.InvoiceNo, &a.FinalizedAt, &a.SourceKind)
 	if err != nil {
 		return gl.InvoiceAmounts{}, fmt.Errorf("billing: invoice for gl %q: %w", invoiceID, err)
 	}

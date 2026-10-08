@@ -57,11 +57,16 @@ type SaleInput struct {
 	// DIB-488 rev 6 (item F): the optional cash-tendered quick entry. Only meaningful on a plain
 	// CASH-tendered, fully-paid ring; must cover the total (change due = tendered − total). 0 =
 	// not entered, one-click cash is unchanged.
-	CashTenderedCents int64       `json:"cash_tendered_cents,omitempty"`
-	Offline           bool        `json:"offline"`
-	DepositCents      int64       `json:"deposit_cents,omitempty"`  // unpaid-at-ring only (ACCOUNT/COD); 0 < deposit < total
-	DepositMethod     string      `json:"deposit_method,omitempty"` // CASH|CARD|CHEQUE, taken through the till at ring
-	Lines             []LineInput `json:"lines"`
+	CashTenderedCents int64  `json:"cash_tendered_cents,omitempty"`
+	Offline           bool   `json:"offline"`
+	DepositCents      int64  `json:"deposit_cents,omitempty"`  // unpaid-at-ring only (ACCOUNT/COD); 0 < deposit < total
+	DepositMethod     string `json:"deposit_method,omitempty"` // CASH|CARD|CHEQUE, taken through the till at ring
+	// SupplierDepositCents is what the SUPPLIER demanded on a special order
+	// (sub item 9.5): billed to a credit account at once as its own invoice,
+	// never taken at the counter. Allowed only on a credit shape (an ACCOUNT
+	// tender, terms above zero, a credit line, no counter deposit, no split).
+	SupplierDepositCents int64       `json:"supplier_deposit_cents,omitempty"`
+	Lines                []LineInput `json:"lines"`
 	// Discount is the optional whole-ticket discount, struck from the subtotal after every line
 	// discount. It names the manager who approved it (discount.go).
 	Discount *DiscountInput `json:"discount,omitempty"`
@@ -97,9 +102,16 @@ type Sale struct {
 	TaxCents      int64  `json:"tax_cents"` // PROVISIONAL flat-13% (D-A19-9); M5 owns the real value
 	TotalCents    int64  `json:"total_cents"`
 	DepositCents  int64  `json:"deposit_cents,omitempty"` // taken at ring on an unpaid sale; balance = total − deposit
-	TaxReasonCode string `json:"tax_reason_code"`
-	Status        string `json:"status"`
-	Replayed      bool   `json:"replayed"`
+	// SupplierDepositCents is the supplier's demanded deposit billed to the
+	// account (its own FINALIZED invoice, posted to Customer Deposits); the
+	// sale's own invoice carries the rest. SupplierDepositInvoiceID/No name
+	// the deposit document for the receipt and the Summary.
+	SupplierDepositCents     int64  `json:"supplier_deposit_cents,omitempty"`
+	SupplierDepositInvoiceID string `json:"supplier_deposit_invoice_id,omitempty"`
+	SupplierDepositInvoiceNo string `json:"supplier_deposit_invoice_no,omitempty"`
+	TaxReasonCode            string `json:"tax_reason_code"`
+	Status                   string `json:"status"`
+	Replayed                 bool   `json:"replayed"`
 	// -- DIB-488 rev 6 -- the item-D facts echoed back (and on a replay, read back off the order),
 	// plus the item-F change-due arithmetic the sold panel shows. All absent when not used.
 	POJobRef          string `json:"po_job_ref,omitempty"`
@@ -301,6 +313,11 @@ type invoiceRow struct {
 	TotalCents    int64
 	BalanceCents  int64
 	CreatedBy     string
+	// SourceKind is the document's provenance (invoices.source_kind, 0146):
+	// "" for the ring's ordinary invoice, SUPPLIER_DEPOSIT for the deposit
+	// document a supplier demanded (its GL posting is the liability, not
+	// revenue; sub item 9.5).
+	SourceKind string
 }
 
 type customerTxnRow struct {
@@ -466,7 +483,6 @@ var (
 	errCODDisabled      = clientError{status: http.StatusUnprocessableEntity, msg: "cash-on-demand sales are disabled by policy for this branch"}
 	errBadFulfilment    = clientError{status: http.StatusUnprocessableEntity, msg: "pos: fulfilment must be PICKUP, WILL_CALL or DELIVERY"}
 	errDepositOnPaid    = clientError{status: http.StatusUnprocessableEntity, msg: "pos: a deposit is only valid on an unpaid-at-ring sale (ACCOUNT tender or COD)"}
-	errDepositTooLarge  = clientError{status: http.StatusUnprocessableEntity, msg: "pos: deposit must be greater than zero and less than the sale total"}
 	errBadDepositMethod = clientError{status: http.StatusUnprocessableEntity, msg: "pos: deposit_method must be CASH, CARD or CHEQUE"}
 	errBadRefundMethod  = clientError{status: http.StatusUnprocessableEntity, msg: "pos: refund_method must be CASH, CARD or ACCOUNT_CREDIT"}
 	errReturnNotFound   = clientError{status: http.StatusNotFound, msg: "pos: no committed POS sale found for that order"}

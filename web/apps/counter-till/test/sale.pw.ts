@@ -558,7 +558,7 @@ test("the read-back states the server's tax and total, and the confirmation read
   );
 });
 
-test("a walk-in COD sale is refused in words that are true, and the same sale with an account rings", async ({
+test("a walk-in COD sale and a terms account COD sale are both refused in words that are true", async ({
   page,
 }) => {
   await signIn(page, "Sales");
@@ -596,9 +596,61 @@ test("a walk-in COD sale is refused in words that are true, and the same sale wi
   await expect(page.getByTestId("sold-panel")).toHaveCount(0);
 
   // The other edge, pinned so the rule cuts both ways: the same COD sale with
-  // an account on it rings.
+  // an account that pays on terms is refused in the ruling's own words (Cash
+  // On Demand is the account's posture, and this account is not in it), and
+  // with the Cash On Demand account it rings.
   await openStep(page, "customer");
   await pickAccount(page, "C02", "Fenwick Builders Ltd");
+  const ringTerms = page.waitForResponse(
+    (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
+  );
+  await openStep(page, "payment");
+  await page.getByTestId("pos-complete-sale").click();
+  const refusedTerms = await ringTerms;
+  expect(refusedTerms.status()).toBe(422);
+  const termsBody = (await refusedTerms.json()) as Record<string, unknown>;
+  expect(termsBody.error).toBe("cod_not_for_terms_account");
+  // The ring's banner speaks (the preview's refused total row speaks the same
+  // words beside it, its own leg pins that).
+  await expect(page.locator(".banner.bad")).toContainText("This account pays on terms");
+  await expect(page.getByTestId("sold-panel")).toHaveCount(0);
+
+});
+
+// Item 9 delta review P3-d: the preview shares the ring's pay before release
+// refusal for a terms account, so the payment step's total row says it BEFORE
+// the ring is built: the words arrive with the totals read the step already
+// opens, rendered from the problem body's message, never its code.
+test("a terms account's COD sale is refused at the preview, before the ring", async ({ page }) => {
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await page.getByRole("button", { name: /^COD/ }).click();
+  await page.getByLabel("Requested date: type eight digits YYYYMMDD, or use the calendar button").fill(
+    houseDay().replace(/-/g, ""),
+  );
+  await openStep(page, "customer");
+  await pickAccount(page, "C02", "Fenwick Builders Ltd");
+  await openStep(page, "payment");
+  const refused = page.getByTestId("pos-preview-refused");
+  await expect(refused).toBeVisible();
+  await expect(refused).toContainText(
+    "This account pays on terms, so its sale is not pay before release. Ring it on account or paid in full.",
+  );
+  await expect(refused).not.toContainText("cod_not_for_terms_account");
+});
+
+// The same COD sale with the Cash On Demand account on it rings: the sale
+// type is that account's own posture (its own ticket, because the ticket above
+// keeps its refused customer).
+test("the same COD sale with the Cash On Demand account rings", async ({ page }) => {
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await page.getByRole("button", { name: /^COD/ }).click();
+  await page.getByLabel("Requested date: type eight digits YYYYMMDD, or use the calendar button").fill(
+    houseDay().replace(/-/g, ""),
+  );
+  await openStep(page, "customer");
+  await pickAccount(page, "C10", "Cash On Demand Landscaping");
   const ringWithAccount = page.waitForResponse(
     (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
   );
@@ -636,18 +688,17 @@ test("a deposit sale's confirmation labels the balance due a derived figure", as
   await signIn(page, "Sales");
   await pickAccount(page, "C02", "Fenwick Builders Ltd");
   await searchAndAdd(page, "holland", "Holland Stone 60 mm");
-  // The deposit rides Charge Account or COD, so the tender is chosen first;
-  // the deposit box lives on the customer step's More options.
+  // Item 9.6: the deposit is line one of the payment step on a fulfilment that waits; the
+  // credit account's line two is the rest on account.
+  await openStep(page, "items");
+  await page.getByRole("button", { name: "Will-call" }).click();
   await openStep(page, "payment");
-  await page.getByRole("button", { name: "Charge Account" }).click();
-  await openStep(page, "customer");
-  await page.locator("details.more > summary").filter({ hasText: "More options" }).click();
-  await page.locator(".deposit input").fill("1.00");
+  await page.getByTestId("pay-shape-DEPOSIT_NOW_REST_ON_ACCOUNT").click();
+  await page.getByTestId("deposit-amount").fill("1.00");
   const ringPost = page.waitForResponse(
     (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
   );
-  await openStep(page, "payment");
-  await page.getByTestId("pos-complete-sale").click();
+  await page.getByTestId("deposit-commit").click();
   const sale = (await (await ringPost).json()) as Record<string, unknown>;
   expect(sale.deposit_cents).toBe(100);
 

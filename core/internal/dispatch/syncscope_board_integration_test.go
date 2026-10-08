@@ -80,7 +80,7 @@ func newBoardFixture(t *testing.T) *boardFixture {
 	f.stops = NewStopsSyncStore(pool, orders, linkedSyncUser(pool))
 	f.loads = NewLoadsSyncStore(f.stops)
 	f.delivery = NewDeliveryStopsSyncStore(f.stops)
-	f.willCall = NewWillCallSyncStore(pool, orders, picks, linkedSyncUser(pool))
+	f.willCall = NewWillCallSyncStore(pool, orders, picks, nil, linkedSyncUser(pool))
 	f.engine = sync.NewEngine().WithAudit(syncIntAudit{svc: audit.NewService(audit.NewRepository(pool), nil)}, nil)
 	for name, store := range map[string]sync.Store{
 		"stops": f.stops, "loads": f.loads, "delivery_stops": f.delivery, "will_call": f.willCall,

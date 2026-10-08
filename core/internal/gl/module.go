@@ -61,6 +61,11 @@ type InvoiceAmounts struct {
 	CustomerID    string
 	InvoiceNo     string
 	FinalizedAt   time.Time
+	// SourceKind is the document's provenance (invoices.source_kind): the
+	// builder posts SUPPLIER_DEPOSIT documents to Customer Deposits instead of
+	// revenue and tax (sub item 9.5), the deposit being the liability it is
+	// until the special order's fulfilment applies it.
+	SourceKind string
 }
 
 // TaxSplitReader resolves the FN relief split (full HST / on-credit / net collected) recorded on the sale's

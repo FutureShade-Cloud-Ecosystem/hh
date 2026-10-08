@@ -247,6 +247,13 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.Error(w, http.StatusConflict, "illegal task transition")
 	case errors.Is(err, ErrNoTransition):
 		httpx.Error(w, http.StatusConflict, "task already in that status")
+	case errors.Is(err, ErrHeldFromPicking):
+		// Item 9 Opus P2-1: the yard door's refusal speaks the mandated
+		// sentence every other door speaks, so the picker reads the same
+		// reason the counter and the desk do.
+		httpx.Error(w, http.StatusConflict, "This order cannot reach picking until the balance is paid.")
+	case errors.Is(err, ErrHoldUnreadable):
+		httpx.Error(w, http.StatusServiceUnavailable, "the balance hold could not be read, try again in a moment")
 	case errors.Is(err, errNoDB):
 		httpx.Error(w, http.StatusServiceUnavailable, "database unavailable")
 	default:

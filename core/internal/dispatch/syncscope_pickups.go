@@ -74,19 +74,25 @@ type TenantOrderReader interface {
 
 // PickupsSyncStore is the pickups Store over will_call_pickups.
 type PickupsSyncStore struct {
-	pool   *pgxpool.Pool
-	orders TenantOrderReader
-	sig    SignatureCapturer
-	link   pickupsLinker
+	pool     *pgxpool.Pool
+	orders   TenantOrderReader
+	sig      SignatureCapturer
+	pickHold PickHoldGate
+	link     pickupsLinker
 }
 
-// NewPickupsSyncStore wires the adapter: the tenant order seam and the
-// signature capturer are mandatory for creates and confirms; nil sig
-// refuses confirms exactly as the public path's ErrNoSignatureProvider
-// does.
-func NewPickupsSyncStore(pool *pgxpool.Pool, orders TenantOrderReader, sig SignatureCapturer, link pickupsLinker) *PickupsSyncStore {
-	return &PickupsSyncStore{pool: pool, orders: orders, sig: sig, link: link}
+// NewPickupsSyncStore wires the adapter: the tenant order seam, the
+// signature capturer and the pick hold gate are mandatory for creates and
+// confirms; nil sig refuses confirms exactly as the public path's
+// ErrNoSignatureProvider does.
+func NewPickupsSyncStore(pool *pgxpool.Pool, orders TenantOrderReader, sig SignatureCapturer, pickHold PickHoldGate, link pickupsLinker) *PickupsSyncStore {
+	return &PickupsSyncStore{pool: pool, orders: orders, sig: sig, pickHold: pickHold, link: link}
 }
+
+// PickHoldGateWired reports whether the sync confirm carries the hold (the
+// composition root's boot assertion's fact, the Service door's own
+// PickHoldGateWired posture).
+func (s *PickupsSyncStore) PickHoldGateWired() bool { return s.pickHold != nil }
 
 // pickupsColumns is the pull projection: the module's own pickup legs
 // plus the sync legs. The token hash is never in the projection: it is
@@ -420,6 +426,15 @@ func (s *PickupsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, ke
 	}
 	if before.pickup.Status != "ACTIVE" {
 		return sync.RowState{}, fmt.Errorf("dispatch: the pickup is %s, it cannot be confirmed again: %w", before.pickup.Status, sync.ErrOpRefused)
+	}
+	// Item 9 Opus P1-2: the offline confirm carries the pick hold inside the
+	// confirm's own transaction (the row lock is held above, so the read and
+	// the seal see one state): a held order's goods do not leave through the
+	// contractor's phone either, whatever live token predates the reopened
+	// balance. The read rides the transaction (HeldFromPickingTx), never a
+	// second pool connection while this one is held.
+	if err := refuseHeldFromPickingSyncTx(ctx, s.pickHold, tx, before.pickup.OrderID); err != nil {
+		return sync.RowState{}, err
 	}
 	// The attestation rides THIS transaction (CaptureTypedTx): its signature row and its audit row
 	// commit or roll back with the confirm, and the capture never asks the shared pool for a second

@@ -114,6 +114,17 @@ func (h *Handler) writeErr(w http.ResponseWriter, err error) {
 		httpx.Error(w, http.StatusNotFound, "order not found")
 	case errors.Is(err, ErrIllegalTransition):
 		httpx.Error(w, http.StatusConflict, "illegal status transition")
+	case errors.Is(err, ErrHeldFromPicking):
+		// Item 9.3: the pay before release hold, a business refusal with the
+		// stable word held_from_picking and the mandated sentence.
+		httpx.ErrorWith(w, http.StatusConflict, "held_from_picking", map[string]any{
+			"message": PickHoldWords,
+		})
+	case errors.Is(err, ErrPickHoldUnverifiable):
+		// A wiring or read fault on the hold, fail closed: name it, never a
+		// generic 500. Unreachable in a correct deploy (the composition root
+		// asserts the wiring at boot).
+		httpx.Error(w, http.StatusServiceUnavailable, ErrPickHoldUnverifiable.Error())
 	case errors.Is(err, ErrNoTransition):
 		httpx.Error(w, http.StatusConflict, "order is already in the requested state")
 	case errors.Is(err, ErrCancelBlocked):

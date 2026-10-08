@@ -3445,6 +3445,15 @@ export type OrderView = {
   subtotal_cents: number;
   tax_cents: number;
   total_cents: number;
+  pay_hold?: OrderPayHold;
+};
+export type OrderPayHold = {
+  held_from_picking: boolean;
+  words?: string;
+  in_process_words?: string;
+  order_total_cents: number;
+  paid_cents: number;
+  owed_cents: number;
 };
 export type OrderTransitionResult = {
   order_id: string;
@@ -3818,6 +3827,9 @@ export type TaskPickTicket = {
   requested_at?: string | null;
   lines: TaskPickLine[];
   source: string;
+  held_from_picking?: boolean;
+  hold_words?: string;
+  still_owed_cents?: number;
 };
 export type TaskShortage = {
   id: string;
@@ -4004,6 +4016,7 @@ export type PosSaleInput = {
   offline: boolean;
   deposit_cents?: number;
   deposit_method?: "CASH" | "CARD" | "CHEQUE";
+  supplier_deposit_cents?: number;
   lines: PosLineInput[];
   discount?: PosDiscountInput;
   tenders?: PosTenderLegInput[];
@@ -4028,6 +4041,9 @@ export type PosSale = {
   tax_cents: number;
   total_cents: number;
   deposit_cents?: number;
+  supplier_deposit_cents?: number;
+  supplier_deposit_invoice_id?: string;
+  supplier_deposit_invoice_no?: string;
   tax_reason_code: "STD_ON_HST_13" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "MANUAL_TAX_REVIEW" | "RELIEF_DECLINED_EVIDENCE";
   status: "COMMITTED" | "VOIDED";
   replayed: boolean;
@@ -4057,6 +4073,8 @@ export type PosSalePreview = {
   tax_cents: number;
   tax_lines: PosSalePreviewTaxLine[];
   total_cents: number;
+  payment_options: PosPaymentOption[];
+  supplier_deposit: PosSupplierDepositOption;
   tax_reason_code: "STD_ON_HST_13" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "MANUAL_TAX_REVIEW" | "RELIEF_DECLINED_EVIDENCE";
   discount_cents?: number;
   sale_discount_cents?: number;
@@ -4075,6 +4093,14 @@ export type PosSalePreviewTaxLine = {
   reason_code: string;
   rate_bps: number;
   tax_cents: number;
+};
+export type PosSupplierDepositOption = {
+  allowed: boolean;
+  words?: string;
+};
+export type PosPaymentOption = {
+  shape: "PAY_IN_FULL_NOW" | "ALL_ON_ACCOUNT" | "DEPOSIT_NOW_REST_ON_ACCOUNT" | "DEPOSIT_NOW_REST_DUE_LATER";
+  line_two_words?: "On account" | "Balance due later";
 };
 export type PosSaleView = {
   order_id: string;
@@ -4108,6 +4134,53 @@ export type PosSaleViewLine = {
   line_total_cents: number;
   discount_cents?: number;
   sale_discount_cents?: number;
+};
+export type PosOwingPayment = {
+  payment_id: string;
+  method: "CASH" | "CARD" | "CHEQUE" | "EFT" | "OTHER";
+  amount_cents: number;
+};
+export type PosOwingOrder = {
+  order_id: string;
+  order_no: string;
+  customer_id: string;
+  customer_name: string;
+  job?: string;
+  fulfilment: "PICKUP" | "WILL_CALL" | "DELIVERY";
+  order_total_cents: number;
+  paid_cents: number;
+  still_owed_cents: number;
+  held_from_picking: boolean;
+  hold_words?: string;
+  payments: PosOwingPayment[];
+};
+export type PosOwingOrderList = {
+  items: PosOwingOrder[];
+  truncated: boolean;
+};
+export type PosPayBalanceTakeInput = {
+  order_id: string;
+  method: "CASH" | "CARD";
+  amount_cents: number;
+  till_session_id: string;
+  idempotency_key: string;
+  payment_token?: string;
+  card_type?: "DEBIT" | "CREDIT" | "PREPAID" | "UNKNOWN";
+  offline?: boolean;
+};
+export type PosPayBalanceTaken = {
+  order_id: string;
+  order_no: string;
+  customer_id: string;
+  payment_id: string;
+  method: "CASH" | "CARD";
+  amount_cents: number;
+  paid_words: string;
+  released_to_picking: boolean;
+  still_owed_cents: number;
+  held_from_picking_now: boolean;
+  payments: PosOwingPayment[];
+  replayed?: boolean;
 };
 export type PosSaleSummary = {
   sale_id: string;

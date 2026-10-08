@@ -141,13 +141,14 @@ type quoteSpec struct {
 // "the defining COD account", and an accepted quote is what puts the Convert to Order button in
 // front of a tester.
 //
-// WHERE THE HOLD ACTUALLY SITS TODAY, said here because the acronym invites the stronger story.
-// The dispatch rule holds money the account OWES: it reads the invoiced balance
-// (billing/credit_repository.go OrderDispatchFacts), so the till's COD sale is held the moment it
-// rings (its invoice exists, unpaid, due on demand) and stays held until the payment lands. A
-// converted order has no invoice at conversion, so it is NOT held today; holding a Cash On Demand
-// order before it is invoiced is planned work (the principal's decision log, row 1047 item 6) and
-// no seeded sentence may claim it. The quote's Notes tell the tester exactly that.
+// WHERE THE HOLD SITS, said here because the acronym invites the stronger story. Two rules read
+// this account and each its own way. The DISPATCH rule holds money the account owes on INVOICED
+// balances (billing/credit_repository.go OrderDispatchFacts), so the till's COD sale is held the
+// moment it rings and a converted order is not (nothing invoiced it). The PICKING hold (the row
+// 1047 item 6 work, order/pick_hold.go) reads the money wider: an uninvoiced remainder counts as
+// owed too, so the converted order is held from picking (and from the yard and the will call
+// doors) until it is paid or invoiced clear. Both lift themselves from the money when the last
+// dollar lands, whichever route took it.
 //
 // TWO CONSTRAINTS SHAPED ITS LINES. The account holds no pricing rule, so every
 // line must price where the engine's own tier rules and the plan's pricer agree: BULK at list (the
@@ -174,7 +175,7 @@ var demoQuotes = []quoteSpec{
 		}, Link: true, Editor: personaQuoteManager},
 	{Key: "Q4", Cust: "C10", Status: "ACCEPTED", Owner: personaQuoteSales, Branch: 1, AgeDays: 4,
 		Project: "Patio base material", PO: "PO-DEMO-0091", Contact: "Site contact",
-		Notes: "Accepted by the customer. The account pays before release: a COD sale at the till is held until it is paid, a converted order is not held yet.",
+		Notes: "Accepted by the customer. The account pays before release: a COD sale at the till is held until it is paid, and a converted order is held from picking until its balance is paid.",
 		Lines: []quoteLineSpec{
 			{Prod: "P08", Qty: 10},
 			{Prod: "P07", Qty: 4},

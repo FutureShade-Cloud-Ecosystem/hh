@@ -488,18 +488,25 @@ func boardWithdrawStop(ctx context.Context, pool *pgxpool.Pool, f sync.ScopeFilt
 
 // WillCallSyncStore serves the will_call scope over will_call_pickups.
 type WillCallSyncStore struct {
-	pool   *pgxpool.Pool
-	orders OrderReader
-	picks  PickCompletionReader
-	link   syncLinker
+	pool     *pgxpool.Pool
+	orders   OrderReader
+	picks    PickCompletionReader
+	pickHold PickHoldGate
+	link     syncLinker
 }
 
-// NewWillCallSyncStore wires the adapter: the order seam and the pick
-// state seam are the module's own (the tag follows the pick), the
+// NewWillCallSyncStore wires the adapter: the order seam, the pick
+// state seam and the pick hold gate are the module's own (the tag follows
+// the pick, and a held order's goods wait for the money), the
 // linker resolves the audit actor.
-func NewWillCallSyncStore(pool *pgxpool.Pool, orders OrderReader, picks PickCompletionReader, link syncLinker) *WillCallSyncStore {
-	return &WillCallSyncStore{pool: pool, orders: orders, picks: picks, link: link}
+func NewWillCallSyncStore(pool *pgxpool.Pool, orders OrderReader, picks PickCompletionReader, pickHold PickHoldGate, link syncLinker) *WillCallSyncStore {
+	return &WillCallSyncStore{pool: pool, orders: orders, picks: picks, pickHold: pickHold, link: link}
 }
+
+// PickHoldGateWired reports whether the sync mint carries the hold (the
+// composition root's boot assertion's fact, the Service door's own
+// PickHoldGateWired posture).
+func (s *WillCallSyncStore) PickHoldGateWired() bool { return s.pickHold != nil }
 
 // willCallSyncColumns is the pull projection: the module's own pickup
 // shape (the staff surface's), whose token_hash leg it already omits,
@@ -736,6 +743,13 @@ func (s *WillCallSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key 
 		if err := requirePickedFor(ctx, s.picks, brief.ID); err != nil {
 			return sync.RowState{}, err
 		}
+	}
+	// Item 9 Opus P1-2: the sync mint carries the pick hold the staff mint
+	// carries (pick_hold.go). The board app minting over sync is the same
+	// door goods leave through, and a held order's tag must not exist in
+	// either hand.
+	if err := refuseHeldFromPickingSync(ctx, s.pickHold, brief.ID); err != nil {
+		return sync.RowState{}, err
 	}
 	id, err := syncCreateID(fields)
 	if err != nil {

@@ -94,7 +94,7 @@ func compose(pool *pgxpool.Pool, log *slog.Logger, vaultKey string) (*world, err
 	// no serving surface (the one-shot seeds and stops), so the approver
 	// credential source has no gate to resolve through here; the demo
 	// serve path wires it with wireTillRules like the serve role.
-	posSvc := pos.NewService(pos.NewRepository(pool)).
+	posSvc := pos.NewService(pos.NewRepository(pool).WithPayBalanceSources(newPayBalanceSources(pool))).
 		WithLineResolver(pricingSvc).
 		WithTenderTaker(tillSvc).
 		WithCreditGate(till.NewHoldAwareCreditGate(tillRepo)).
@@ -104,6 +104,10 @@ func compose(pool *pgxpool.Pool, log *slog.Logger, vaultKey string) (*world, err
 		WithAudit(auditSvc).
 		WithRoleConfig(loadRoleConfig())
 
+	// This compose builds no serving surface (the one-shot seeds and stop), so
+	// it wires NEITHER pick hold seam (the order reader, the dispatch gate):
+	// no route consults them here, and the serving graph's boot fail-fasts in
+	// wire_tops are what keep a deploy from serving with the lane dark.
 	orderRepo := order.NewRepository(pool)
 	orderSvc := order.NewService(orderRepo).WithAudit(auditSvc).WithAuditTrail(auditSvc)
 
