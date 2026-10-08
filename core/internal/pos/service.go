@@ -996,7 +996,7 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 				invSubtotal, invTotal = subtotal-supplierDeposit, total-supplierDeposit
 				balance -= supplierDeposit
 				invLines = append(append([]orderLineRow{}, lines...),
-					supplierDepositPointerLine(lines, supplierDepositInvoiceNo))
+					supplierDepositPointerLine(lines, supplierDepositInvoiceNo, supplierDeposit))
 			}
 			invoiceID, invoiceNo, err := s.store.InsertInvoice(ctx, tx, invoiceRow{
 				CustomerID:    customerID,

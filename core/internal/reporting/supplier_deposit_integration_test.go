@@ -51,6 +51,13 @@ func TestIntegration_Reporting_SupplierDepositDocument_CountsTheGoodsOnce(t *tes
 	rest := f.invoicePaid(cust, trentonBranch, ord, from, 30_000, 0)
 	f.invoiceLine(rest, prod, 1, 10, 2_000, 20_000)
 	f.invoiceLine(rest, prod, 2, 5, 2_000, 10_000)
+	// The rest's own pointer line (item 9 Opus P3-5): no product, one unit, no
+	// money, naming the deposit document. It explains the gap between the
+	// goods lines and the header; it is not a sale, so no report counts it.
+	f.exec(`INSERT INTO invoice_lines (id, invoice_id, line_no, description, qty_entered,
+	          uom_entered, qty_base, unit_price_cents, price_uom, line_total_cents, tax_cents)
+	        VALUES ($1::uuid, $2::uuid, 3, 'Supplier deposit of $50.00, billed on its own invoice X, is not part of this invoice''s total',
+	                1, 'EA', 1, 0, 'EA', 0, 0)`, f.newID(), rest)
 	supplierDepositInvoice(f, cust, trentonBranch, ord, from, 5_000)
 
 	params := map[string]string{"from_date": from, "to_date": to, "branch_id": trentonBranch}
@@ -64,6 +71,9 @@ func TestIntegration_Reporting_SupplierDepositDocument_CountsTheGoodsOnce(t *tes
 	wantCents(t, res, 0, "revenue_cents", 30_000)
 	if code, _ := cell(t, res, 0, "category_code").(string); code != f.tag+"-deposit proof cat" {
 		t.Errorf("the one category is %q, want the goods' own", code)
+	}
+	if qty, _ := cell(t, res, 0, "qty_base").(float64); qty != 15 {
+		t.Errorf("the goods' units read %v, want 15 (the pointer line is not a unit sold)", qty)
 	}
 
 	// Margin by product: the same goods, once.
