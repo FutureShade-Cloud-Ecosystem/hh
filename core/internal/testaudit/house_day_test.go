@@ -164,6 +164,13 @@ var dayAllowlisted = map[string]dayExemption{
 			"means 'no from was given', and gets safer with every year. No statement predates it and no " +
 			"answer changes if it moves four hours."},
 
+	// -- LEGITIMATE · the UTC day boundary is the object under test ------------------------------
+	"internal/platform/houseday/houseday.go": {[]string{kindCalendar},
+		"JustAfterUTCDayChange builds half past UTC midnight on a named UTC day on purpose: it is the " +
+			"pinned test instant at which the UTC day and the house zone's day DISAGREE, so date code " +
+			"under test can be proven to follow the dealer's day rather than Greenwich's. It answers no " +
+			"business date itself; every day this package names comes from Location and dayText."},
+
 	// -- LEGITIMATE · the day text is a canonical key, never a day boundary ----------------------
 	"internal/bankrec/statement_source.go": {[]string{kindDayText},
 		"DedupeHash canonicalises (date, amount, description, reference) into a UNIQUE index key. Both " +
