@@ -298,3 +298,135 @@ func TestIntegration_Rulings_ACardShortfallSwapMeetsTheCreditRefusalBeforeTheCar
 		t.Fatalf("no card was to be charged: %d captures, %d voids", charger.captures-before, charger.voids)
 	}
 }
+
+// plantDepositOrder plants a converted order of 6 units (6780) whose money sits on two documents: the
+// sale's own invoice (2780) and a supplier deposit document (4000), each with the amount paid on it.
+func (s *trentonStack) plantDepositOrder(cust string, mainPaid, depPaid int64) (orderID, mainInv, depInv string) {
+	s.t.Helper()
+	orderID = plantConvertedOrder(s.t, s, cust, trentonBranchID, fmt.Sprintf("#SO-DP-%d", time.Now().UnixNano()%1_000_000), 6, 1000, 6000, 780)
+	st := func(total, paid int64) string {
+		switch {
+		case paid >= total:
+			return "PAID"
+		case paid > 0:
+			return "PARTIALLY_PAID"
+		}
+		return "FINALIZED"
+	}
+	mainInv = s.plantInvoice(orderID, cust, trentonBranchID, st(2780, mainPaid), "ORDER", 2780, 2780-mainPaid)
+	depInv = s.plantInvoice(orderID, cust, trentonBranchID, st(4000, depPaid), "SUPPLIER_DEPOSIT", 4000, 4000-depPaid)
+	return orderID, mainInv, depInv
+}
+
+// D-P2-1: on an order whose money sits on the sale's invoice AND a supplier deposit document, cash goes
+// back only up to what was paid across both documents; nothing paid is no cash at all, and the rest
+// comes off the open documents (the main invoice first, then the deposit document), the deposit
+// released once and never through the credit memo path.
+func TestIntegration_Rulings_TheSplitCountsTheDepositDocument(t *testing.T) {
+	s := newTrentonStack(t)
+	cust := s.plantCustomer("Ruling deposit split", 30, 5000000)
+
+	// Nothing paid on either document: no cash, even though the return is worth more than the main invoice.
+	o, mainInv, depInv := s.plantDepositOrder(cust, 0, 0)
+	rec := s.noteFor(cust, o, RefundCash, 6)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("cash against two unpaid documents must be refused, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if msg, _ := s.decodeBody(rec)["error"].(string); !containsStr(msg, "This order is not paid yet") {
+		t.Fatalf("the principal's words: %q", msg)
+	}
+	if s.countAll(`SELECT count(*) FROM payments WHERE customer_id = $1::uuid AND status = 'REFUNDED'`, cust) != 0 {
+		t.Fatal("no cash left the drawer")
+	}
+	if _, b := s.invoiceNow(mainInv); b != 2780 {
+		t.Fatalf("the refused return moved the main invoice: %d", b)
+	}
+
+	// The deposit paid, the sale's own invoice not: 4000 goes back in cash, 2780 comes off the main invoice.
+	o2, main2, dep2 := s.plantDepositOrder(cust, 0, 4000)
+	rec = s.noteFor(cust, o2, RefundCash, 6)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("cash up to the deposit paid: %d %s", rec.Code, rec.Body.String())
+	}
+	child := s.decodeBody(rec)["returns"].([]any)[0].(map[string]any)
+	if num(t, child, "invoice_offset_cents") != 2780 {
+		t.Fatalf("the unpaid main invoice is cleared by the offset: %v", child)
+	}
+	var cash int64
+	_ = s.pool.QueryRow(context.Background(), `SELECT COALESCE(SUM(p.amount_cents),0) FROM pos_returns r JOIN payments p ON p.id = r.refund_payment_id WHERE r.order_id = $1::uuid`, o2).Scan(&cash)
+	if cash != 4000 {
+		t.Fatalf("exactly what was paid went back in cash: %d", cash)
+	}
+	if st, b := s.invoiceNow(main2); st != "PAID" || b != 0 {
+		t.Fatalf("main invoice %s %d", st, b)
+	}
+	if st, b := s.invoiceNow(dep2); st != "PAID" || b != 0 {
+		t.Fatalf("the paid deposit document is untouched: %s %d", st, b)
+	}
+
+	// The sale's invoice paid, the deposit document not: 2780 in cash, 4000 off the deposit document,
+	// and the deposit released exactly once.
+	o3, main3, dep3 := s.plantDepositOrder(cust, 2780, 0)
+	rec = s.noteFor(cust, o3, RefundCash, 6)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("cash up to the sale invoice paid: %d %s", rec.Code, rec.Body.String())
+	}
+	child = s.decodeBody(rec)["returns"].([]any)[0].(map[string]any)
+	if num(t, child, "invoice_offset_cents") != 4000 {
+		t.Fatalf("the open deposit document takes the offset: %v", child)
+	}
+	if st, b := s.invoiceNow(dep3); st != "PAID" || b != 0 {
+		t.Fatalf("the deposit document is offset to nothing: %s %d", st, b)
+	}
+	if _, b := s.invoiceNow(main3); b != 0 {
+		t.Fatalf("the paid main invoice is untouched: %d", b)
+	}
+	if n := s.countAll(`SELECT count(*) FROM events_outbox WHERE topic = 'deposit.released' AND payload->>'invoice_id' = $1`, dep3); n != 1 {
+		t.Fatalf("the deposit is released exactly once, got %d", n)
+	}
+	_ = depInv
+}
+
+// D-P2-2: a two order CASH note whose orders are partly paid takes its invoices, sorted, before the
+// first offset takes one and then the shared invoice sequence row; a payer holding the second order's
+// invoice and then asking for the sequence row no longer deadlocks with it.
+func TestIntegration_Rulings_TheCashSplitLocksItsInvoicesFirst(t *testing.T) {
+	s := newTrentonStack(t)
+	cust := s.plantCustomer("Ruling cash lock order", 30, 5000000)
+	a, _ := s.plantOwed(cust, 3780)
+	b, invB := s.plantOwed(cust, 3780)
+	ctx := context.Background()
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM invoices WHERE id = $1::uuid FOR NO KEY UPDATE`, invB); err != nil {
+		t.Fatalf("hold the second order's invoice: %v", err)
+	}
+	var wg sync.WaitGroup
+	var noteCode int
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		line := func(o string) any {
+			return map[string]any{"order_id": o, "lines": []any{map[string]any{"order_line_id": s.lineOf(o), "qty_base": 6}}}
+		}
+		rec := s.postNote(trentonClerkSub, "", map[string]any{"idempotency_key": key(), "customer_id": cust, "refund_method": RefundCash,
+			"reason": "x", "restock": false, "till_session_id": s.trentonTill, "orders": []any{line(a), line(b)}})
+		noteCode = rec.Code
+	}()
+	time.Sleep(700 * time.Millisecond)
+	_, seqErr := tx.Exec(ctx, `INSERT INTO scope_sequences (scope) VALUES ('invoices') ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value + 1`)
+	if seqErr == nil {
+		seqErr = tx.Commit(ctx)
+	} else {
+		_ = tx.Rollback(ctx)
+	}
+	wg.Wait()
+	if seqErr != nil {
+		t.Fatalf("the payer was chosen as the deadlock victim: %v", seqErr)
+	}
+	if noteCode != http.StatusCreated {
+		t.Fatalf("the note must commit once the payer is done, got %d", noteCode)
+	}
+}

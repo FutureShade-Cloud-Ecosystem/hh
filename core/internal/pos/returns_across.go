@@ -413,8 +413,8 @@ func (s *Service) returnAcrossInTx(ctx context.Context, tx pgx.Tx, plan *returnA
 	for i, child := range ordered {
 		ocs[i] = child.oc
 	}
-	if in.RefundMethod == RefundAccountCredit && !in.railOptional {
-		if err := s.lockReturnInvoicesTx(ctx, tx, ocs); err != nil {
+	if !in.railOptional {
+		if err := s.lockReturnInvoicesTx(ctx, tx, ocs, in.RefundMethod != RefundAccountCredit); err != nil {
 			return ReturnNote{}, false, false, err
 		}
 	}
