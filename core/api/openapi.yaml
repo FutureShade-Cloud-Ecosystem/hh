@@ -11348,6 +11348,50 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /api/v1/load/customers:
+    put:
+      operationId: loadUpsertCustomers
+      tags:
+        - load
+      summary: Upsert customers by legacy key, through the customer module's own validation
+      description: "One item per customer. The legacy id is the account number unless the record names another; the record names the customer name and, named, the customer type, the payment terms in days, the credit limit in cents, the active flag and the billing address. The address runs the Canadian normalisation the staff write runs: one that fails is left out and the item still lands, its outcome carrying the reason address_left_out and the field billing_address, never a value. The home branch (a reference of kind branch) and the reps (references of kind user) are named by legacy key and resolve against the registry before any write, so a reference not yet loaded refuses naming the kind and the key. A credit hold or a tax exemption in the record refuses naming the field: both wait for the receivables load. A row the account number already names attaches and takes the load's org, sequence and key; a second legacy key claiming it, or a recorded key re-pointing at another customer's, refuses as a key conflict naming both legacy ids (the staff row, when no key names the holder). A first bind to a staff made row answers attached, and the row's existing metadata keys are kept. A reload that names no account number keeps the stored one; the legacy id serves only a first load that names none. A row another org owns refuses as org_mismatch naming the kind and the key; its org is never overwritten."
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: HH-LOAD-1 load doors; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadSubmitRequest"
+      responses:
+        "200":
+          description: One outcome per item and the batch's counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadSubmitResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The batch id is recorded under another door; the submission is a collision of two doors' batch namespaces, not a replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "The batch contended with another in flight batch on shared names and Postgres rolled it back whole: nothing of it stands, and resubmitting the whole batch is safe. The one answer a caller may retry the batch on, never a per item outcome."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/load/products/unit-sets:
     put:
       operationId: loadPutUnitSets
@@ -11355,6 +11399,50 @@ paths:
         - load
       summary: Replace a product's unit set atomically, the product named by legacy key
       description: "One item per product's unit set. The product arrives as a reference of kind product and resolves against the registry before any write, so a name not yet loaded refuses as a missing reference naming the kind and the key; the product door itself is a later item, so until it lands the registry is the only way a product name stands. The record's rows are the set, each naming the code, the factor as decimal text only (a factor that arrives as a number refuses naming factor_type: the door never re-spells a float), the base flag and, if named, the role hints. The set REPLACES the product's rows atomically, the old set deleted and the new inserted inside the item's transaction: exactly one base row at factor one, and that base row the product's own base unit (products.base_uom, compared the way CITEXT compares); every factor positive and at scale eight or under, a factor beyond that refused naming the legacy key and the field, never a value, never rounded (the plan's section 8 point 3); every code naming a catalogue unit; the product's price unit inside the set; no unit removed while a price, break, rule, override or stock row still names it (the list price, the pricing rules and the quantity break headers and items of the product and of the product's category, matched the way the price resolver matches them so a row carrying a product beside the category still applies, the customer category overrides priced in the unit, the promotions' fixed prices, the clearance prices, the supplier skus, the product's rounding rule, the stock moves and the pricing conversion edges; the category scoped and store wide promotions and the tier default rules are deliberately beyond this check: a unit mismatch leaves such a promotion inert rather than failing a resolve, and a rule that applies to every product is no one product's row to hold); and the decimal round trip holding on every conversion against the representation the price resolver reads: factors are exact only to what the resolver reads, and a factor the float read would corrupt is refused (the plan's risk 1, stated honestly). The open document lines (open quotes and orders, open purchase order lines, transfers in transit) are deliberately not read: the plan's load order loads unit sets before any document exists, and the document reload is LD-12's follow up. Nothing of a refused replace stands."
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: HH-LOAD-1 load doors; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadSubmitRequest"
+      responses:
+        "200":
+          description: One outcome per item and the batch's counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadSubmitResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The batch id is recorded under another door; the submission is a collision of two doors' batch namespaces, not a replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "The batch contended with another in flight batch on shared names and Postgres rolled it back whole: nothing of it stands, and resubmitting the whole batch is safe. The one answer a caller may retry the batch on, never a per item outcome."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/load/contacts:
+    put:
+      operationId: loadUpsertContacts
+      tags:
+        - load
+      summary: Upsert contacts under their customer by legacy key
+      description: "One item per contact. The record names the contact name and, named, the email, the phone, the role, the primary flag and the active flag; the one reference of kind customer names the customer the contact belongs under. A contact has no org column of its own: its org rides through its customer, so a customer another org owns refuses as org_mismatch naming the kind and the key."
       x-role: machine
       security:
         - MachineBearer: []
@@ -11438,6 +11526,207 @@ paths:
                 $ref: "#/components/schemas/Error"
         "503":
           description: The batch contended with another in flight batch and rolled back whole, nothing landed and the id was never recorded; Retry-After names the pause, and the caller resubmits the whole batch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/load/jobs:
+    put:
+      operationId: loadUpsertJobs
+      tags:
+        - load
+      summary: Upsert jobs as project records under their customer by legacy key
+      description: "One item per job. The record names the job name and, named, the job address; the one reference of kind customer names the customer the job belongs to. The job is the record only: balances, statements and receivables attribution are not loaded here. The project row has no org column, so its org rides through its customer, and the writer stamps the tenant, the sync sequence and the derived key; a customer another org owns refuses as org_mismatch naming the kind and the key."
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: HH-LOAD-1 load doors; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadSubmitRequest"
+      responses:
+        "200":
+          description: One outcome per item and the batch's counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadSubmitResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The batch id is recorded under another door; the submission is a collision of two doors' batch namespaces, not a replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "The batch contended with another in flight batch on shared names and Postgres rolled it back whole: nothing of it stands, and resubmitting the whole batch is safe. The one answer a caller may retry the batch on, never a per item outcome."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/load/products:
+    put:
+      operationId: loadUpsertProducts
+      tags:
+        - load
+      summary: Upsert the product master by legacy key
+      description: "One item per product. The record names the SKU (the table's own natural key, so a product a staff member already made attaches to that row and takes the load's stamps), the name (both required), the descriptive names, the 0018 promoted attributes (color family, texture, product size, sold by, the featured, special order and contractor pricing event flags, the full skid and layer quantities, the minimum order quantity), the dimensions and weight, the metadata object, and the active flag. The base and price units name catalogue codes (the unit door loads first); a code the catalogue does not carry refuses naming the field. The category arrives as a reference of kind category (LD-4's door loads first) and resolves against the registry before any write, so a category not yet loaded refuses as a missing reference naming the kind and the key. The product row is valid without a unit set row (0002 relates product_uoms to products one way and asks no base row of a product), so the door creates the product alone; the unit set door (LD-3) replaces the set afterwards. Until that set lands, the product prices on no conversion: the price resolver reads the set's factors, so the product prices only after the unit set door lands its set (the load order: products, then unit sets), and a reload whose base or price unit would leave the landed set refuses naming the field. A SKU that would claim a second row, or a row a second key would claim, refuses as a key conflict naming both legacy keys. A row another org owns refuses naming the kind and the key; its org is never overwritten. A changed hash updates that row alone and draws one sequence from the products scope; an unchanged replay writes nothing and draws none."
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: HH-LOAD-1 load doors; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadSubmitRequest"
+      responses:
+        "200":
+          description: One outcome per item and the batch's counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadSubmitResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The batch id is recorded under another door; the submission is a collision of two doors' batch namespaces, not a replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "The batch contended with another in flight batch on shared names and Postgres rolled it back whole: nothing of it stands, and resubmitting the whole batch is safe. The one answer a caller may retry the batch on, never a per item outcome."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/load/products/{legacyId}/image:
+    put:
+      operationId: loadPutProductImage
+      tags:
+        - load
+      summary: Put the product's catalogue image through the product module's own store
+      description: "One put per image, not a batch. The body is the raw image bytes with a Content-Type header, not base64 in JSON; the declared type must be on the raster allowlist, the magic bytes must agree with it, and the body must sit under the product module's own size cap: a body over the cap refuses with 400 naming the field, never a value. The product resolves by legacy key against the registry before anything writes; a name not yet loaded refuses as a missing reference naming the kind and the key (the product door loads first). The bytes land in the product module's own image store (one primary image per product); the image's registry name rides the product's legacy key under its own kind, so a replay with identical bytes answers unchanged and writes nothing, and changed bytes answer updated and replace the image. One audit row per put. The source system rides the source_system query parameter; the alt text, if wanted, the alt query parameter."
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: HH-LOAD-1 load doors; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: legacyId
+          in: path
+          required: true
+          description: The product's legacy key
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+        - name: source_system
+          in: query
+          required: true
+          description: The source system the names live under
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 64
+        - name: alt
+          in: query
+          required: false
+          description: Alt text for the image
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          image/jpeg:
+            schema:
+              type: string
+              format: binary
+          image/png:
+            schema:
+              type: string
+              format: binary
+          image/webp:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: One outcome on the product's legacy key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadBatchItemOutcome"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: "The put contended with another in flight load and Postgres rolled it back whole: nothing of it stands, and resubmitting it is safe."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/load/supplier-skus:
+    put:
+      operationId: loadUpsertSupplierSkus
+      tags:
+        - load
+      summary: Upsert the supplier's own SKU and selling unit for one product
+      description: "One item per supplier and product. The product and the supplier each arrive as a reference of their kind (LD-4's supplier door and this item's product door load first) and resolve against the registry before any write, so a name not yet loaded refuses as a missing reference naming the kind and the key. The record names the supplier's own code (bounded text) and, as a pair, the unit the supplier sells in (a catalogue code) and the base units one of them holds: the pair is all or nothing, the table's own check, and the writer refuses half a pair before the write; a factor at a fifth decimal place or beyond refuses naming the field, never rounded; a unit the catalogue does not carry refuses naming the field. The table carries no cost column: a record field naming a cost is refused naming the field, never dropped, so no caller is left believing a cost landed. A negative pack factor refuses its own item before any write stands. A reload whose record names no pair clears the pair: the record is the whole truth. The table carries no org, sequence or idempotency column (0213's lists name it on none), so the org rides through the supplier row the supplier door stamped; a supplier row another org owns refuses as org_mismatch naming the kind and the key. The registry names the row by a uuid derived from the vendor and product pair, the table carrying no uuid column."
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: HH-LOAD-1 load doors; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadSubmitRequest"
+      responses:
+        "200":
+          description: One outcome per item and the batch's counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadSubmitResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The batch id is recorded under another door; the submission is a collision of two doors' batch namespaces, not a replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "The batch contended with another in flight batch on shared names and Postgres rolled it back whole: nothing of it stands, and resubmitting the whole batch is safe. The one answer a caller may retry the batch on, never a per item outcome."
           content:
             application/json:
               schema:

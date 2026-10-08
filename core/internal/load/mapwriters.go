@@ -20,14 +20,26 @@ import (
 // The map doors' registry kinds. The kind is the batch record's kind
 // and the reference kind later doors name these rows by. KindUnit and
 // KindUnitSet are HH-LOAD-1 LD-3's: the unit catalogue door and the
-// product unit set door.
+// product unit set door. KindProduct, KindProductImage and
+// KindSupplierSku are HH-LOAD-1 LD-5's: the product master door (the
+// kind the unit set door's items already name their product by), the
+// product image door (the image name rides the product's legacy key
+// under its own kind, so the image's content hash never collides with
+// the master record's), and the supplier SKU door.
 const (
-	KindBranch   = "branch"
-	KindUser     = "user"
-	KindCategory = "category"
-	KindSupplier = "supplier"
-	KindUnit     = "unit"
-	KindUnitSet  = "unit_set"
+	KindBranch       = "branch"
+	KindUser         = "user"
+	KindCategory     = "category"
+	KindSupplier     = "supplier"
+	KindUnit         = "unit"
+	KindUnitSet      = "unit_set"
+	KindProduct      = "product"
+	KindProductImage = "product_image"
+	KindSupplierSku  = "supplier_sku"
+	// The customer, contact and job doors' kinds (HH-LOAD-1 LD-6).
+	KindCustomer = "customer"
+	KindContact  = "contact"
+	KindJob      = "job"
 )
 
 // The writer level refusal codes the maps carry. A refusal names the

@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { LoadBatchView, LoadKeysResolveRequest, LoadKeysResolveResult, LoadReceivablesResult, LoadReceivablesUpsertRequest, LoadSubmitRequest, LoadSubmitResult } from "./types.js";
+import type { LoadBatchItemOutcome, LoadBatchView, LoadKeysResolveRequest, LoadKeysResolveResult, LoadReceivablesResult, LoadReceivablesUpsertRequest, LoadSubmitRequest, LoadSubmitResult } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -52,6 +52,51 @@ export async function loadUpsertCategories(
   });
 }
 
+export async function loadUpsertContacts(
+  client: ApiClient,
+  body: LoadSubmitRequest,
+  call?: ApiCallOptions
+): Promise<Result<LoadSubmitResult>> {
+  return client.request<LoadSubmitResult>({
+    method: "PUT",
+    path: "/api/v1/load/contacts",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "loadUpsertContacts",
+  });
+}
+
+export async function loadUpsertCustomers(
+  client: ApiClient,
+  body: LoadSubmitRequest,
+  call?: ApiCallOptions
+): Promise<Result<LoadSubmitResult>> {
+  return client.request<LoadSubmitResult>({
+    method: "PUT",
+    path: "/api/v1/load/customers",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "loadUpsertCustomers",
+  });
+}
+
+export async function loadUpsertJobs(
+  client: ApiClient,
+  body: LoadSubmitRequest,
+  call?: ApiCallOptions
+): Promise<Result<LoadSubmitResult>> {
+  return client.request<LoadSubmitResult>({
+    method: "PUT",
+    path: "/api/v1/load/jobs",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "loadUpsertJobs",
+  });
+}
+
 export async function loadResolveKeys(
   client: ApiClient,
   body: LoadKeysResolveRequest,
@@ -64,6 +109,21 @@ export async function loadResolveKeys(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "loadResolveKeys",
+  });
+}
+
+export async function loadUpsertProducts(
+  client: ApiClient,
+  body: LoadSubmitRequest,
+  call?: ApiCallOptions
+): Promise<Result<LoadSubmitResult>> {
+  return client.request<LoadSubmitResult>({
+    method: "PUT",
+    path: "/api/v1/load/products",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "loadUpsertProducts",
   });
 }
 
@@ -82,6 +142,31 @@ export async function loadPutUnitSets(
   });
 }
 
+// The document declares this upload as image/jpeg, image/png, image/webp; contentType says
+// which declared type rides the wire, and with no contentType no Content-Type
+// header is sent at all, so an unsaid upload is refused, never mislabeled.
+// The document declares the body format: binary: the body is the raw bytes
+// (a string rides its UTF-8 bytes verbatim).
+export async function loadPutProductImage(
+  client: ApiClient,
+  legacyId: string | number,
+  body: string | Uint8Array,
+  opts: { source_system: string; alt?: string },
+  contentType?: "image/jpeg" | "image/png" | "image/webp",
+  call?: ApiCallOptions
+): Promise<Result<LoadBatchItemOutcome>> {
+  return client.request<LoadBatchItemOutcome>({
+    method: "PUT",
+    path: "/api/v1/load/products/{legacyId}/image",
+    pathParams: { legacyId },
+    query: opts,
+    rawBody: { contentType, content: body },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "loadPutProductImage",
+  });
+}
+
 export async function loadUpsertReceivables(
   client: ApiClient,
   body: LoadReceivablesUpsertRequest,
@@ -94,6 +179,21 @@ export async function loadUpsertReceivables(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "loadUpsertReceivables",
+  });
+}
+
+export async function loadUpsertSupplierSkus(
+  client: ApiClient,
+  body: LoadSubmitRequest,
+  call?: ApiCallOptions
+): Promise<Result<LoadSubmitResult>> {
+  return client.request<LoadSubmitResult>({
+    method: "PUT",
+    path: "/api/v1/load/supplier-skus",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "loadUpsertSupplierSkus",
   });
 }
 

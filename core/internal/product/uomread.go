@@ -13,6 +13,7 @@ import (
 	"fmt"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
+	"github.com/jackc/pgx/v5"
 )
 
 // Uom is one row of the unit catalogue as the staff read answers it.
@@ -99,4 +100,23 @@ func (r *Repository) ListUOMs(ctx context.Context, limit int, afterCode string) 
 		return nil, fmt.Errorf("product: uom list walk: %w", err)
 	}
 	return out, nil
+}
+
+// UnitCatalogueReader is the load doors' read of the catalogue: whether
+// the catalogue carries one code, inside the caller's transaction. The
+// supplier SKU door (HH-LOAD-1 LD-5, the purchasing module's writer)
+// checks a pack unit through it, the narrow interface the module
+// boundary rules ask for; a nil reader fails the check loudly at the
+// first ask, never as a silent clear.
+type UnitCatalogueReader struct{}
+
+// UnitCodeKnownTx answers whether the catalogue carries the code.
+func (UnitCatalogueReader) UnitCodeKnownTx(ctx context.Context, tx pgx.Tx, code string) (bool, error) {
+	var known bool
+	if err := tx.QueryRow(ctx, `SELECT true FROM uoms WHERE code = $1`, code).Scan(&known); errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	} else if err != nil {
+		return false, fmt.Errorf("product: unit catalogue code read: %w", err)
+	}
+	return true, nil
 }

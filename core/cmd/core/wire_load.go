@@ -26,10 +26,12 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/branches"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/inventory"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/load"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/portal"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/product"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/purchasing"
@@ -42,7 +44,8 @@ import (
 // registrar, the machine gate wraps each one, and the handler's org and
 // actor come from the scope the gate stamps. The frame's two read
 // operations register beside the four submit doors of LD-4 (the branch
-// map, the user map, the categories and the suppliers) and the open
+// map, the user map, the categories and the suppliers), the three
+// customer doors of LD-6 (customers, contacts, jobs) and the open
 // receivables door of LD-11 (billing's own import writer over the money
 // batch protocol): every door over the same store, each owning module's
 // writer or read taken by constructor, all of them off until the switch
@@ -75,8 +78,27 @@ func wireLoad(r httpx.Registrar, pool *pgxpool.Pool, log *slog.Logger, doors boo
 				Stock:   inventory.LoadedUnitUseReader{},
 				Vendor:  purchasing.LoadedUnitUseReader{},
 			}, auditSvc),
+		// LD-6's three customer doors.
+		"PUT /api/v1/load/customers": newLoadDoor(store, load.KindCustomer,
+			customer.CustomerLoadWriter{}, auditSvc),
+		"PUT /api/v1/load/contacts": newLoadDoor(store, load.KindContact,
+			customer.ContactLoadWriter{}, auditSvc),
+		"PUT /api/v1/load/jobs": newLoadDoor(store, load.KindJob,
+			portal.JobLoadWriter{Customers: customer.OrgReader{}}, auditSvc),
+		// LD-5's three doors: the product master upsert, the supplier
+		// SKU upsert through the purchasing module's writer, and the
+		// product image put (its own handler: one put per image, not a
+		// batch) over the product module's own image rules and store.
+		"PUT /api/v1/load/products": newLoadDoor(store, load.KindProduct,
+			product.ProductLoadWriter{}, auditSvc),
+		"PUT /api/v1/load/supplier-skus": newLoadDoor(store, load.KindSupplierSku,
+			purchasing.SupplierSKULoadWriter{Units: product.UnitCatalogueReader{}}, auditSvc),
 	})
 	submits.RegisterRoutes(r)
+	images := load.NewImageHandler(
+		load.NewImageDoor(store, product.ProductImageLoadRules{}, product.ProductImageLoadWriter{},
+			loadAuditSeam{svc: auditSvc}), log)
+	images.RegisterRoutes(r)
 	log.Info("load: the load doors serve behind the machine gate")
 }
 
