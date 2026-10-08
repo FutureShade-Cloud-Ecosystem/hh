@@ -25,6 +25,10 @@
 // A module the matrix gives a live role but the box does not serve yet is a
 // coming tile for that role, not a silent omission: the chips and the tiles
 // tell the same story.
+//
+// A role goes live by the steps in web/apps/_role-template/ROLE-GOES-LIVE.md
+// (the flow row, the populate account, the move from COMING_ROLES to
+// LIVE_ROLES, the app's prefix in the image and the common acceptance legs).
 
 /** A module tile on a role's home. */
 export interface ModuleTile {

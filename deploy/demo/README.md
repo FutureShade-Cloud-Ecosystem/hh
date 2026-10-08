@@ -1,7 +1,8 @@
 # The demo image (the Counter Till cycle, item W5)
 
 One image in the Railway shape (plan r7 section 5): the core built with
-`-tags demo`, the Counter Till app's built files, Caddy in front, and the
+`-tags demo`, the built files of every web app (front door at `/`, till at
+`/till/`, public desk at `/q/`, Quote Desk at `/quote/` when present), Caddy in front, and the
 frozen migration set. Build from the repository root:
 
     docker build -f deploy/demo/Dockerfile -t hh-demo-till .

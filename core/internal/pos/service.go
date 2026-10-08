@@ -9,6 +9,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/moneyutil"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
@@ -979,9 +980,16 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 			// Keyed off the MONEY (capturedCents), not the posture, so the split-with-an-ACCOUNT-leg case
 			// lands on PARTIALLY_PAID with the account remainder as its balance, the same place a deposit
 			// lands, because it is the same fact.
+			//
+			// The document's days are the dealer's, decided here on the ring's clock and bound: between
+			// the UTC day change and the house zone's own the database session's CURRENT_DATE is a day
+			// the yard has not reached, so an evening sale would otherwise be invoiced and due tomorrow.
+			// The terms count from the day the invoice is issued, so the two dates can never name
+			// different "todays".
 			invStatus := "PAID"
 			balance := int64(0)
-			dueDate := s.now().Format("2006-01-02")
+			issueDate := houseday.Today(s.now)
+			dueDate := issueDate
 			if !fullyPaid {
 				invStatus = "FINALIZED"
 				balance = total - capturedCents
@@ -989,7 +997,7 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 					invStatus = "PARTIALLY_PAID"
 				}
 				if !codSale {
-					dueDate = s.now().AddDate(0, 0, cust.PaymentTermsDays).Format("2006-01-02")
+					dueDate = houseday.AddDays(s.now, cust.PaymentTermsDays)
 				}
 			}
 			// Sub item 9.5: a supplier's demanded deposit rides the sale as its
@@ -1003,7 +1011,7 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 				var err error
 				supplierDepositInvoiceID, supplierDepositInvoiceNo, err = s.store.InsertInvoice(ctx, tx, invoiceRow{
 					CustomerID: customerID, OrderID: orderID, BranchID: in.BranchID, Status: "FINALIZED",
-					DueDate: dueDate, SubtotalCents: supplierDeposit, TotalCents: supplierDeposit,
+					IssueDate: issueDate, DueDate: dueDate, SubtotalCents: supplierDeposit, TotalCents: supplierDeposit,
 					BalanceCents: supplierDeposit, CreatedBy: actor, SourceKind: SourceSupplierDeposit,
 				})
 				if err != nil {
@@ -1038,6 +1046,7 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 				OrderID:       orderID,
 				BranchID:      in.BranchID,
 				Status:        invStatus,
+				IssueDate:     issueDate,
 				DueDate:       dueDate,
 				SubtotalCents: invSubtotal,
 				TaxCents:      tax,

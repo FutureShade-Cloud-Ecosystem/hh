@@ -303,10 +303,15 @@ type orderLineRow struct {
 }
 
 type invoiceRow struct {
-	CustomerID    string
-	OrderID       string
-	BranchID      string
-	Status        string
+	CustomerID string
+	OrderID    string
+	BranchID   string
+	Status     string
+	// IssueDate and DueDate are YYYY-MM-DD bound by the service on the
+	// ring's clock in the house zone: the ring never leaves either to the
+	// invoices table's CURRENT_DATE default, which names the database
+	// session's day (the dealer's day rule, see platform/houseday).
+	IssueDate     string // YYYY-MM-DD
 	DueDate       string // YYYY-MM-DD
 	SubtotalCents int64
 	TaxCents      int64

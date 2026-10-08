@@ -164,6 +164,13 @@ var dayAllowlisted = map[string]dayExemption{
 			"means 'no from was given', and gets safer with every year. No statement predates it and no " +
 			"answer changes if it moves four hours."},
 
+	// -- LEGITIMATE · the UTC day boundary is the object under test ------------------------------
+	"internal/platform/houseday/houseday.go": {[]string{kindCalendar},
+		"JustAfterUTCDayChange builds half past UTC midnight on a named UTC day on purpose: it is the " +
+			"pinned test instant at which the UTC day and the house zone's day DISAGREE, so date code " +
+			"under test can be proven to follow the dealer's day rather than Greenwich's. It answers no " +
+			"business date itself; every day this package names comes from Location and dayText."},
+
 	// -- LEGITIMATE · the day text is a canonical key, never a day boundary ----------------------
 	"internal/bankrec/statement_source.go": {[]string{kindDayText},
 		"DedupeHash canonicalises (date, amount, description, reference) into a UNIQUE index key. Both " +
@@ -248,10 +255,6 @@ var dayAllowlisted = map[string]dayExemption{
 		"DEFERRED · NudgeEventKey is a once-a-day idempotency key on the UTC day; its own comment says " +
 			"'tomorrow it can be raised again, which is exactly right', and at 8pm tomorrow arrives " +
 			"early and the nudge repeats."},
-	"internal/billing/ar_landing.go": {[]string{kindTruncate},
-		"DEFERRED · DaysPastDue truncates asOf and due at Greenwich. Both sides share a basis so most " +
-			"answers are stable, but asOf is a real clock: an account read after 8pm ages ONE DAY EARLY " +
-			"and can cross an escalation bucket boundary an evening before it is actually late."},
 	"internal/billing/register_service.go": {[]string{kindCalendar},
 		"DEFERRED · daysBetween rebuilds due and asOf as UTC midnights from their own components, which " +
 			"is ar_landing.go's defect in a second spelling. Two aging calculations that can disagree is " +

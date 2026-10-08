@@ -153,6 +153,21 @@ export class QuotePublicPage extends HHElement {
         font-weight: 700;
         letter-spacing: 0.01em;
       }
+      /* Round 2 (FROM-PRINCIPAL 9), the header rule's print twin. On screen the rule rides the
+         --doc-ink alias and renders the family; the principal's live check found the PAPER copy
+         with a black rule, the currentColor a border falls back to when a print path re-resolves
+         the alias chain and loses it. The print half therefore states the family itself, as an
+         ordinary longhand inside the print media block: the quote blue for a quote, the gold ink
+         for the converted order. Pinned by test/print-rule.test.mjs (the shipped source) and the
+         print leg in test/page.pw.ts (the computed colour under print emulation). */
+      @media print {
+        header.dealer {
+          border-bottom-color: var(--hh-quote);
+        }
+        :host([data-doc="order"]) header.dealer {
+          border-bottom-color: var(--hh-accent-text);
+        }
+      }
       /* Full text ink, NOT the dimmed one: this line sits on the page rather
          than on a card, and it is load bearing information, not decoration. */
       .previewband {
