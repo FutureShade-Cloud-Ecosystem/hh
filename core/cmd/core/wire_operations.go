@@ -522,6 +522,8 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// The yard's short pick: the order takes the shortfall as a backorder and the notice facts read
 	// the live invoice through billing (wire_yard_short.go).
 	orderSvc.WithInvoiceStanding(invoiceStandingAdapter{repo: billing.NewRepository(pool)})
+	// The delivery road asks billing, the owner of the deposit documents, to release them (deposit_release.go).
+	orderSvc.WithDepositReleaser(billing.NewInvoiceWriter(pool))
 	orderSvc.WithBackorderNotifier(backorderNoticeAdapter{chat: yardChatNotifier{svc: messagingSvc, log: log}})
 	yardTasksSvc.WithYardOrderChanges(yardOrderAdapter{svc: orderSvc})
 	// Item 9 Opus P2-1: the yard's doors (Claim, Stage) carry the pick hold
@@ -827,13 +829,13 @@ func (a dispatchOrderAdapter) ResolveOrderID(ctx context.Context, idOrNo string,
 }
 
 // dispatchFulfilAdapter satisfies dispatch.OrderFulfiller over
-// order.Service.AdvanceFromEvent, the ONLY sanctioned system/event status
-// writer: the move is graded against the forward-only ladder inside the
-// guarded write.
+// order.Service.AdvanceFromDelivery, the fulfilment roads' door over the
+// guarded event writer (it also releases a supplier deposit): the move is
+// graded against the forward-only ladder inside the guarded write.
 type dispatchFulfilAdapter struct{ svc *order.Service }
 
 func (a dispatchFulfilAdapter) MarkFulfilled(ctx context.Context, orderID, reason string) error {
-	return a.svc.AdvanceFromEvent(ctx, orderID, "FULFILLED", reason)
+	return a.svc.AdvanceFromDelivery(ctx, orderID, reason)
 }
 
 // dispatchPrintAdapter satisfies dispatch.PrintEnqueuer over

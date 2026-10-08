@@ -147,6 +147,8 @@ type Service struct {
 	invoicer MultiShipInvoicer
 	// standing is the billing read behind the yard pick notice facts (yard_pick.go); nil = none.
 	standing InvoiceStandingReader
+	// depositReleaser is billing's seam the delivery road calls (deposit_release.go); nil = none.
+	depositReleaser DepositReleaser
 	// backorderNotifier tells the rep when an order edit clears a short line's backorder (yard_pick_edit.go).
 	backorderNotifier BackorderNotifier
 	// pickHold is the billing read behind the pay before release hold (pick_hold.go,
@@ -432,20 +434,8 @@ func (s *Service) AdvanceFromEvent(ctx context.Context, orderID, target, eventID
 		return ErrIllegalTransition
 	}
 	err := s.setStatusGuarded(ctx, "", orderID, target, eventID, allowed, nil)
-	if target == "FULFILLED" {
-		switch {
-		case err == nil || errors.Is(err, ErrNoTransition):
-			s.completeCounterInvoiced(ctx, orderID, eventID) // QD-5, consumer.go; a redelivery reaches it too
-			// The deposit release (deposit_release.go): the material has
-			// left, the order's deposit documents release. A redelivery
-			// re-reaches it; the ledger's journal key keeps it exactly once.
-			s.releaseSupplierDeposits(ctx, orderID, eventID)
-		case errors.Is(err, ErrIllegalTransition) && s.orderSitsAtInvoiced(ctx, orderID):
-			// The pos ring's invoice beat the yard to INVOICED, the beat the
-			// dispatch handoff names; the material still left, so the deposit
-			// releases anyway (a CANCELLED or CLOSED decline does not).
-			s.releaseSupplierDeposits(ctx, orderID, eventID)
-		}
+	if target == "FULFILLED" && (err == nil || errors.Is(err, ErrNoTransition)) {
+		s.completeCounterInvoiced(ctx, orderID, eventID) // QD-5, consumer.go; a redelivery reaches it too
 	}
 	return err
 }

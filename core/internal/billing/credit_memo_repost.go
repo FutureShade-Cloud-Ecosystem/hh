@@ -191,6 +191,39 @@ func (w *InvoiceWriter) findCreditMemosWithoutJournals(ctx context.Context, limi
 	return out, rows.Err()
 }
 
+// depositAwaitingRelease is one live deposit document with no release journal.
+type depositAwaitingRelease struct{ invoiceID, orderID string }
+
+// findDepositsWithoutRelease is the deposit sweep's anti-join, the same shape as the credit memo's
+// above: the release journal's key is DERIVED (deposit.released:<invoice id>, the gl builder's key),
+// so "which deposits have no release?" needs no new column. Live SUPPLIER_DEPOSIT documents bound to
+// an order, oldest first. Whether the order's goods actually left is not asked here, the order
+// module answers that (DeliveredOrderReader), never a status read.
+func (w *InvoiceWriter) findDepositsWithoutRelease(ctx context.Context) ([]depositAwaitingRelease, error) {
+	rows, err := w.pool.Query(ctx, `
+		SELECT i.id::text, i.order_id::text
+		  FROM invoices i
+		 WHERE i.doc_type = 'INVOICE' AND i.source_kind = 'SUPPLIER_DEPOSIT'
+		   AND i.status NOT IN ('DRAFT','VOID') AND i.order_id IS NOT NULL
+		   AND NOT EXISTS (
+		         SELECT 1 FROM gl_journals j
+		          WHERE j.idempotency_key = 'deposit.released:' || i.id::text)
+		 ORDER BY i.created_at, i.id`)
+	if err != nil {
+		return nil, fmt.Errorf("billing: find deposits without a release: %w", err)
+	}
+	defer rows.Close()
+	var out []depositAwaitingRelease
+	for rows.Next() {
+		var d depositAwaitingRelease
+		if err := rows.Scan(&d.invoiceID, &d.orderID); err != nil {
+			return nil, fmt.Errorf("billing: scan deposit without a release: %w", err)
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
 // CreditMemoRepostJob builds the nightly JobFunc.
 //
 // Exported as a constructor rather than wired here, matching CreditHoldSweepJob: composition stays in
@@ -206,7 +239,23 @@ func CreditMemoRepostJob(w *InvoiceWriter, limit int) jobs.JobFunc {
 		if err != nil {
 			return jobs.Result{}, err
 		}
-		return renderRepostJobResult(res), nil
+		out := renderRepostJobResult(res)
+		// The same nightly reconciliation also heals a supplier deposit release whose emission was
+		// lost (deposit_release.go); its counts ride the run detail beside the credit memo's.
+		dep, derr := w.ReleaseDeliveredDeposits(ctx, limit)
+		if derr != nil {
+			return out, derr
+		}
+		out.RowsRead += int64(dep.Candidates)
+		out.RowsWritten += int64(dep.Released)
+		out.Skipped = out.Skipped && dep.Released == 0
+		out.Detail["deposit_candidates"] = dep.Candidates
+		out.Detail["deposit_released"] = dep.Released
+		out.Detail["deposit_failed"] = dep.Failed
+		if dep.FirstError != "" {
+			out.Detail["deposit_first_error"] = dep.FirstError
+		}
+		return out, nil
 	}
 }
 
