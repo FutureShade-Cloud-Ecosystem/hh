@@ -114,6 +114,25 @@ func TestIntegration_PickHold_CashOnDemandDepositHoldsEveryReleasingPath(t *test
 	}); !errors.Is(err, order.ErrHeldFromPicking) {
 		t.Fatalf("a yard pick on a held order: %v", err)
 	}
+	// The shipment group's own ladder into PICKING (and so READY) refuses the
+	// same hold: a group moves through none of the order's own status writers.
+	shipPlan, err := orderSvc.PlanShipment(ctx, out.OrderID, []order.ShipmentGroupInput{{
+		Label: "One truck", Lines: []order.ShipmentGroupLineInput{{LineNo: 1, QtyBase: 5}},
+	}})
+	if err != nil {
+		t.Fatalf("plan the held order's shipment: %v", err)
+	}
+	if len(shipPlan.Groups) != 1 {
+		t.Fatalf("the plan carries %d groups, want one", len(shipPlan.Groups))
+	}
+	if _, err := orderSvc.TransitionGroup(ctx, shipPlan.Groups[0].ID, order.GroupPicking); !errors.Is(err, order.ErrHeldFromPicking) {
+		t.Fatalf("a shipment group move to PICKING on a held order: %v", err)
+	}
+	var groupStatus string
+	if err := pool.QueryRow(ctx, `SELECT status FROM shipment_groups WHERE id=$1`, shipPlan.Groups[0].ID).
+		Scan(&groupStatus); err != nil || groupStatus != "PLANNED" {
+		t.Fatalf("the held order's group sits at %s (%v), want PLANNED", groupStatus, err)
+	}
 	var status string
 	if err := pool.QueryRow(ctx, `SELECT status FROM orders WHERE id=$1`, out.OrderID).Scan(&status); err != nil || status != "CONFIRMED" {
 		t.Fatalf("a held order sits at %s (%v), want CONFIRMED", status, err)

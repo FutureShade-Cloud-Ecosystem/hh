@@ -421,6 +421,15 @@ func (s *Service) TransitionGroup(ctx context.Context, groupID, target string) (
 	if !caller.CanAccessBranch(branchID) {
 		return ShipmentGroup{}, ErrGroupNotFound
 	}
+	// Item 9.3: a group has its own ladder into PICKING and so READY, and an
+	// order held from picking under a pay before release shape cannot start
+	// down it (the same guard the order's own statuses and the yard picks
+	// carry; the group's order id comes from the load above).
+	if target == GroupPicking {
+		if err := s.refuseHeldFromPicking(ctx, g.OrderID); err != nil {
+			return ShipmentGroup{}, err
+		}
+	}
 	g, err = ss.TransitionShipmentGroup(ctx, groupID, target, allowed)
 	if err != nil {
 		return ShipmentGroup{}, err
