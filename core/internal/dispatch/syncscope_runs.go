@@ -47,6 +47,16 @@ func (s *RunsSyncStore) WithDriverRole(role SyncRoleResolver) *RunsSyncStore {
 // ship the fence's desk half silently.
 func (s *RunsSyncStore) DriverRoleWired() bool { return s.role != nil }
 
+// driverFence resolves the caller's driver arm over the pool. Every
+// caller resolves it BEFORE a transaction opens (Create, Write, Delete)
+// or with none held (Pull, FindApplied, Load) and passes the answer
+// down: the loader runs inside an open transaction and must not ask
+// the pool for a second connection (the pool-cycle rule the create
+// census keeps).
+func (s *RunsSyncStore) driverFence(ctx context.Context, f sync.ScopeFilter) (driverFence, error) {
+	return resolveDriverFence(ctx, s.pool, s.link, s.role, f)
+}
+
 // runsSyncQuery is the board's own run columns plus the two sync legs
 // (the per-scope seq, the tombstone flag) over the board's own joins,
 // so the device's cached run and the board's run are one shape read
@@ -126,7 +136,7 @@ func runScopePredicate(f sync.ScopeFilter, d driverFence) (string, []any, bool) 
 // tombstones in seq order, at most limit rows total, under the org
 // predicate and the driver arm.
 func (s *RunsSyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, limit int) ([]sync.Entity, []sync.Tombstone, error) {
-	d, err := resolveDriverFence(ctx, s.pool, s.link, s.role, f)
+	d, err := s.driverFence(ctx, f)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -172,7 +182,7 @@ func (s *RunsSyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int6
 // keeps it); the delete leg dedups through the engine's
 // already-tombstoned arm, the design note in syncscope.go's header.
 func (s *RunsSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key string) (sync.RowState, bool, error) {
-	d, err := resolveDriverFence(ctx, s.pool, s.link, s.role, f)
+	d, err := s.driverFence(ctx, f)
 	if err != nil {
 		return sync.RowState{}, false, err
 	}
@@ -198,7 +208,11 @@ func (s *RunsSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key
 // Load reads one run by id under the org predicate; a row outside the
 // caller's org is the same as an absent one (existence never leaks).
 func (s *RunsSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
-	return s.load(ctx, s.pool, f, id)
+	d, err := s.driverFence(ctx, f)
+	if err != nil {
+		return sync.RowState{}, false, err
+	}
+	return s.load(ctx, s.pool, f, d, id)
 }
 
 // runsQuerier is the read surface a pool and a transaction share, so one
@@ -212,11 +226,7 @@ type runsQuerier interface {
 // transaction, so the read rides the connection it already holds instead
 // of asking the shared pool for a second one (connection starvation by
 // second acquisition when pool-size callers do this together).
-func (s *RunsSyncStore) load(ctx context.Context, db runsQuerier, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
-	d, err := resolveDriverFence(ctx, s.pool, s.link, s.role, f)
-	if err != nil {
-		return sync.RowState{}, false, err
-	}
+func (s *RunsSyncStore) load(ctx context.Context, db runsQuerier, f sync.ScopeFilter, d driverFence, id string) (sync.RowState, bool, error) {
 	where, args, ok := runScopePredicate(f, d)
 	if !ok || !looksLikeUUID(id) {
 		return sync.RowState{}, false, nil
@@ -291,7 +301,7 @@ func branchInOrg(ctx context.Context, q interface {
 // whole (inside the caller's org as the caller's own fact, outside it
 // as not-found so existence never leaks).
 func (s *RunsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, fields map[string]any) (sync.RowState, error) {
-	d, err := resolveDriverFence(ctx, s.pool, s.link, s.role, f)
+	d, err := s.driverFence(ctx, f)
 	if err != nil {
 		return sync.RowState{}, err
 	}
@@ -353,7 +363,7 @@ func (s *RunsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key stri
 		// WHERE it is taken: inside the caller's org the collision is
 		// the caller's own fact, outside it the answer is not-found so
 		// existence never leaks across the scope boundary.
-		if _, own, _ := s.load(ctx, tx, f, id); own {
+		if _, own, _ := s.load(ctx, tx, f, d, id); own {
 			return sync.RowState{}, sync.ErrRowExists
 		}
 		return sync.RowState{}, sync.ErrRowNotFound
@@ -415,7 +425,7 @@ func (s *RunsSyncStore) crewInBranch(ctx context.Context, branchID, truckID, dri
 // cancelled stop, the settled-set precondition every closer shares.
 // The narrower REST rule keeps its own door; this one is the replay's.
 func (s *RunsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key string, fields map[string]any) (sync.RowState, error) {
-	d, err := resolveDriverFence(ctx, s.pool, s.link, s.role, f)
+	d, err := s.driverFence(ctx, f)
 	if err != nil {
 		return sync.RowState{}, err
 	}
@@ -547,7 +557,7 @@ func (s *RunsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key s
 // dedups after the delete, and the delete itself is idempotent through
 // the engine's already-tombstoned arm (syncscope.go's header).
 func (s *RunsSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, key string) (sync.RowState, error) {
-	d, err := resolveDriverFence(ctx, s.pool, s.link, s.role, f)
+	d, err := s.driverFence(ctx, f)
 	if err != nil {
 		return sync.RowState{}, err
 	}

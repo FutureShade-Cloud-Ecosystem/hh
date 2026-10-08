@@ -53,6 +53,12 @@ func (s *StopsSyncStore) DriverRoleWired() bool { return s.role != nil }
 // this adapter's own seams: the board scopes that embed this store
 // resolve the same arm before they address a row, so their writes hold
 // to the calling driver exactly as this store's reads do.
+//
+// Every caller resolves it BEFORE a transaction opens (Create, Write,
+// Delete) or with none held (Pull, FindApplied, Load) and passes the
+// answer down: the loader runs inside an open transaction and must not
+// ask the pool for a second connection (the pool-cycle rule the create
+// census keeps).
 func (s *StopsSyncStore) resolveDriverFenceFor(ctx context.Context, f sync.ScopeFilter) (driverFence, error) {
 	return resolveDriverFence(ctx, s.pool, s.link, s.role, f)
 }
@@ -134,7 +140,7 @@ func stopScopePredicate(f sync.ScopeFilter, d driverFence) (string, []any, bool)
 // tombstones in seq order, at most limit rows total, under the org
 // predicate.
 func (s *StopsSyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, limit int) ([]sync.Entity, []sync.Tombstone, error) {
-	d, err := resolveDriverFence(ctx, s.pool, s.link, s.role, f)
+	d, err := s.resolveDriverFenceFor(ctx, f)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -179,7 +185,7 @@ func (s *StopsSyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int
 // column holding the latest live key and a tombstone keeping it (the
 // design note in syncscope.go's header).
 func (s *StopsSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key string) (sync.RowState, bool, error) {
-	d, err := resolveDriverFence(ctx, s.pool, s.link, s.role, f)
+	d, err := s.resolveDriverFenceFor(ctx, f)
 	if err != nil {
 		return sync.RowState{}, false, err
 	}
@@ -204,7 +210,11 @@ func (s *StopsSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, ke
 
 // Load reads one stop by id under the org predicate.
 func (s *StopsSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
-	return s.load(ctx, s.pool, f, id)
+	d, err := s.resolveDriverFenceFor(ctx, f)
+	if err != nil {
+		return sync.RowState{}, false, err
+	}
+	return s.load(ctx, s.pool, f, d, id)
 }
 
 // stopsQuerier is the read surface a pool and a transaction share, so one
@@ -218,11 +228,7 @@ type stopsQuerier interface {
 // transaction, so the read rides the connection it already holds instead
 // of asking the shared pool for a second one (connection starvation by
 // second acquisition when pool-size callers do this together).
-func (s *StopsSyncStore) load(ctx context.Context, db stopsQuerier, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
-	d, err := resolveDriverFence(ctx, s.pool, s.link, s.role, f)
-	if err != nil {
-		return sync.RowState{}, false, err
-	}
+func (s *StopsSyncStore) load(ctx context.Context, db stopsQuerier, f sync.ScopeFilter, d driverFence, id string) (sync.RowState, bool, error) {
 	where, args, ok := stopScopePredicate(f, d)
 	if !ok || !looksLikeUUID(id) {
 		return sync.RowState{}, false, nil
@@ -286,7 +292,7 @@ func stopWriteFields(fields map[string]any) error {
 // filed (COMPLETED, CANCELLED) refuses new stops. The row stamps the
 // caller's org, a freshly allocated seq and the idempotency key.
 func (s *StopsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, fields map[string]any) (sync.RowState, error) {
-	d, err := resolveDriverFence(ctx, s.pool, s.link, s.role, f)
+	d, err := s.resolveDriverFenceFor(ctx, f)
 	if err != nil {
 		return sync.RowState{}, err
 	}
@@ -403,7 +409,7 @@ func (s *StopsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key str
 		str("address_line"), str("city"), str("postal_code"), str("instructions"),
 		actor, f.OrgID, seq, key).Scan(&rowID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		if _, own, _ := s.load(ctx, tx, f, id); own {
+		if _, own, _ := s.load(ctx, tx, f, d, id); own {
 			return sync.RowState{}, sync.ErrRowExists
 		}
 		return sync.RowState{}, sync.ErrRowNotFound
@@ -436,7 +442,7 @@ func (s *StopsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key str
 // pod door's alone), the per-status timestamps stamp in the same
 // statement, and the row draws a fresh seq beside the write.
 func (s *StopsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key string, fields map[string]any) (sync.RowState, error) {
-	d, err := resolveDriverFence(ctx, s.pool, s.link, s.role, f)
+	d, err := s.resolveDriverFenceFor(ctx, f)
 	if err != nil {
 		return sync.RowState{}, err
 	}
@@ -571,7 +577,7 @@ func (s *StopsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key 
 // fresh seq, the live row's idempotency key kept (syncscope.go's
 // header).
 func (s *StopsSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, key string) (sync.RowState, error) {
-	d, err := resolveDriverFence(ctx, s.pool, s.link, s.role, f)
+	d, err := s.resolveDriverFenceFor(ctx, f)
 	if err != nil {
 		return sync.RowState{}, err
 	}

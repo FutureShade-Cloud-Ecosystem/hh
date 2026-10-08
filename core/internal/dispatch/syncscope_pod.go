@@ -59,6 +59,16 @@ func (s *PODSyncStore) WithDriverRole(role SyncRoleResolver) *PODSyncStore {
 // wired, the leg the composition test pins.
 func (s *PODSyncStore) DriverRoleWired() bool { return s.role != nil }
 
+// driverFence resolves the caller's driver arm over the pool. Every
+// caller resolves it BEFORE a transaction opens (Create, Write, Delete)
+// or with none held (Pull, FindApplied, Load) and passes the answer
+// down: the loader runs inside an open transaction and must not ask
+// the pool for a second connection (the pool-cycle rule the create
+// census keeps).
+func (s *PODSyncStore) driverFence(ctx context.Context, f sync.ScopeFilter) (driverFence, error) {
+	return resolveDriverFence(ctx, s.pool, s.link, s.role, f)
+}
+
 // podSyncQuery is the photo metadata projection plus the two sync
 // legs, fenced on the owning stop's org stamp.
 const podSyncQuery = `
@@ -127,7 +137,7 @@ func podStateOf(r syncPodRow) (sync.RowState, error) {
 // and tombstones in seq order, at most limit rows total, under the org
 // predicate.
 func (s *PODSyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, limit int) ([]sync.Entity, []sync.Tombstone, error) {
-	d, err := resolveDriverFence(ctx, s.pool, s.link, s.role, f)
+	d, err := s.driverFence(ctx, f)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -172,7 +182,7 @@ func (s *PODSyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64
 // column holding the latest live key and a tombstone keeping it (the
 // design note in syncscope.go's header).
 func (s *PODSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key string) (sync.RowState, bool, error) {
-	d, err := resolveDriverFence(ctx, s.pool, s.link, s.role, f)
+	d, err := s.driverFence(ctx, f)
 	if err != nil {
 		return sync.RowState{}, false, err
 	}
@@ -197,7 +207,11 @@ func (s *PODSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key 
 
 // Load reads one POD record by id under the org predicate.
 func (s *PODSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
-	return s.load(ctx, s.pool, f, id)
+	d, err := s.driverFence(ctx, f)
+	if err != nil {
+		return sync.RowState{}, false, err
+	}
+	return s.load(ctx, s.pool, f, d, id)
 }
 
 // podQuerier is the read surface a pool and a transaction share, so one
@@ -211,11 +225,7 @@ type podQuerier interface {
 // transaction, so the read rides the connection it already holds instead
 // of asking the shared pool for a second one (connection starvation by
 // second acquisition when pool-size callers do this together).
-func (s *PODSyncStore) load(ctx context.Context, db podQuerier, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
-	d, err := resolveDriverFence(ctx, s.pool, s.link, s.role, f)
-	if err != nil {
-		return sync.RowState{}, false, err
-	}
+func (s *PODSyncStore) load(ctx context.Context, db podQuerier, f sync.ScopeFilter, d driverFence, id string) (sync.RowState, bool, error) {
 	where, args, ok := podScopePredicate(f, d)
 	if !ok || !looksLikeUUID(id) {
 		return sync.RowState{}, false, nil
@@ -281,7 +291,7 @@ func decodePhotoBytes(contentType, encoded string) ([]byte, error) {
 // linked user as the capturer, a freshly allocated seq and the
 // idempotency key.
 func (s *PODSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, fields map[string]any) (sync.RowState, error) {
-	d, err := resolveDriverFence(ctx, s.pool, s.link, s.role, f)
+	d, err := s.driverFence(ctx, f)
 	if err != nil {
 		return sync.RowState{}, err
 	}
@@ -343,7 +353,7 @@ func (s *PODSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key strin
 		id, stopID, branchID, strings.ToLower(strings.TrimSpace(contentType)), len(data), data,
 		strings.TrimSpace(caption), actor, seq, key).Scan(&rowID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		if _, own, _ := s.load(ctx, tx, f, id); own {
+		if _, own, _ := s.load(ctx, tx, f, d, id); own {
 			return sync.RowState{}, sync.ErrRowExists
 		}
 		return sync.RowState{}, sync.ErrRowNotFound
@@ -383,7 +393,7 @@ func podWriteFields(fields map[string]any) error {
 // what a stale write does; this method only ever runs for a write the
 // engine judged fresh.
 func (s *PODSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key string, fields map[string]any) (sync.RowState, error) {
-	d, err := resolveDriverFence(ctx, s.pool, s.link, s.role, f)
+	d, err := s.driverFence(ctx, f)
 	if err != nil {
 		return sync.RowState{}, err
 	}
@@ -466,7 +476,7 @@ func (s *PODSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key st
 // (the bytes stay under the table's own fence), a fresh seq, the live
 // row's idempotency key kept (syncscope.go's header).
 func (s *PODSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, key string) (sync.RowState, error) {
-	d, err := resolveDriverFence(ctx, s.pool, s.link, s.role, f)
+	d, err := s.driverFence(ctx, f)
 	if err != nil {
 		return sync.RowState{}, err
 	}
