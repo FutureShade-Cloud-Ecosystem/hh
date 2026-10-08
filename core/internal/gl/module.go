@@ -326,7 +326,7 @@ func (s *Service) RegisterPostingHandlers(d *notify.Dispatcher) {
 }
 
 // PostedTopics is the frozen set of outbox topics the GL posting consumer owns (the W5 eight + the two
-// W7 POS-return topics + the deposit release, 0374).
+// W7 POS-return topics + the deposit release and the deposit cancel, 0374/0375).
 var PostedTopics = []string{
 	"ar.invoice.finalized",
 	"payment.received",
@@ -339,6 +339,7 @@ var PostedTopics = []string{
 	"pos.return.committed",
 	"order.returned",
 	"deposit.released",
+	"deposit.cancelled",
 }
 
 // postEvent is the single outbox handler for all eight posted topics. It resolves the mapped posting rules,

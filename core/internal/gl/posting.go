@@ -47,6 +47,8 @@ func (s *Service) consume(ctx context.Context, e notify.Event) error {
 		draft, post, err = s.buildOrderFulfilled(ctx, e.Payload)
 	case "deposit.released":
 		draft, post, err = s.buildDepositReleased(ctx, e.Payload)
+	case "deposit.cancelled":
+		draft, post, err = s.buildDepositCancelled(ctx, e.Payload)
 	case "till.session.completed":
 		draft, post, err = s.buildTillSessionCompleted(ctx, e.Payload)
 	case "pos.return.committed":
@@ -529,6 +531,102 @@ func (s *Service) buildDepositReleased(ctx context.Context, payload []byte) (jou
 	}, true, nil
 }
 
+// depositCancelledPayload is the cancel event's payload: the deposit
+// document whose liability leaves the books, the order it secured, and the
+// disposition the cancel applied (the settlement's own words, billing's
+// CREDIT_BACK / KEPT).
+type depositCancelledPayload struct {
+	InvoiceID   string `json:"invoice_id"`
+	OrderID     string `json:"order_id"`
+	Disposition string `json:"disposition"`
+}
+
+// buildDepositCancelled posts the exit of a supplier deposit whose special
+// order was cancelled (row 1193): the liability the deposit document booked
+// in 2300 Customer Deposits leaves the books, one entry, both dispositions
+// under the one journal key deposit.cancelled:<invoice id> so the document
+// cancels exactly once whichever disposition the first event carried.
+//
+//	CREDIT_BACK: DR 2300 / CR the customer's receivable. The settlement
+//	  cleared the open document (or credited the account for the paid part),
+//	  so the AR leg is the credit on the account the ruling names.
+//	KEPT: DR 2300 / CR other income. The dealer keeps the deposit; the
+//	  document stands as it is (owed when unpaid, settled when paid), so
+//	  no AR leg and no tax leg: the deposit document booked neither.
+func (s *Service) buildDepositCancelled(ctx context.Context, payload []byte) (journalDraft, bool, error) {
+	var p depositCancelledPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return journalDraft{}, false, fmt.Errorf("gl: deposit.cancelled payload: %w", err)
+	}
+	if p.InvoiceID == "" {
+		return journalDraft{}, false, fmt.Errorf("gl: deposit.cancelled missing invoice_id")
+	}
+	const creditBack, kept = "CREDIT_BACK", "KEPT"
+	if p.Disposition != creditBack && p.Disposition != kept {
+		return journalDraft{}, false, fmt.Errorf("gl: deposit.cancelled disposition %q is neither %s nor %s",
+			p.Disposition, creditBack, kept)
+	}
+	if s.invoices == nil {
+		return journalDraft{}, false, fmt.Errorf("gl: invoice reader not configured")
+	}
+	a, err := s.invoices.InvoiceForGL(ctx, p.InvoiceID)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	// Only a deposit document may cancel out: the event names the liability
+	// leaving, an ordinary invoice here is malformed money, refused loudly
+	// (the row retries into visibility) never silently posted.
+	if a.SourceKind != "SUPPLIER_DEPOSIT" {
+		return journalDraft{}, false, fmt.Errorf("gl: deposit.cancelled names invoice %s whose source_kind %q is not SUPPLIER_DEPOSIT",
+			p.InvoiceID, a.SourceKind)
+	}
+	if a.TotalCents == 0 {
+		return journalDraft{}, false, nil // a nothing deposit is no liability, the zero-leg no-op posture
+	}
+	et := "deposit.cancelled"
+	rules, err := s.store.PostingAccounts(ctx, et, a.BranchID)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	depCode, err := pick(rules, et, "customer_deposit")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	var lines []draftLine
+	var memo string
+	switch p.Disposition {
+	case creditBack:
+		arCode, err := pick(rules, et, "ar")
+		if err != nil {
+			return journalDraft{}, false, err
+		}
+		lines = []draftLine{
+			dr(depCode, a.TotalCents, "customer deposit credited back"),
+			cr(arCode, a.TotalCents, "AR credited"),
+		}
+		memo = "Deposit credited back " + a.InvoiceNo
+	case kept:
+		oiCode, err := pick(rules, et, "other_income")
+		if err != nil {
+			return journalDraft{}, false, err
+		}
+		lines = []draftLine{
+			dr(depCode, a.TotalCents, "customer deposit kept"),
+			cr(oiCode, a.TotalCents, "other income"),
+		}
+		memo = "Deposit kept " + a.InvoiceNo
+	}
+	return journalDraft{
+		Source:         SourceInvoice,
+		SourceRefID:    p.InvoiceID,
+		IdempotencyKey: "deposit.cancelled:" + p.InvoiceID,
+		Memo:           memo,
+		BranchID:       a.BranchID,
+		OccurredAt:     s.clock(),
+		Lines:          lines,
+	}, true, nil
+}
+
 type posReturnCommittedPayload struct {
 	ReturnID      string `json:"return_id"`
 	OrderID       string `json:"order_id"`
@@ -835,6 +933,7 @@ func (s *Service) ValidatePostingRules(ctx context.Context) error {
 		"pos.return.committed":   {"revenue", "hst", "undeposited", "card_clearing", "ar", "fee_revenue"},
 		"order.returned":         {"inventory", "cogs"},
 		"deposit.released":       {"customer_deposit", "revenue"},
+		"deposit.cancelled":      {"customer_deposit", "ar", "other_income"},
 	}
 	for et, roles := range required {
 		for _, role := range roles {
