@@ -66,6 +66,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/moneyutil"
 )
@@ -523,7 +524,13 @@ func (w *InvoiceWriter) writeCore(ctx context.Context, ctxTx pgx.Tx, f OrderInvo
 	if terms <= 0 {
 		terms = defaultTermsDays
 	}
-	dueDate := w.now().AddDate(0, 0, terms).Format("2006-01-02")
+	// The document's days are the dealer's, decided here on the writer's clock and bound: between
+	// the UTC day change and the house zone's own the database session's CURRENT_DATE is a day the
+	// yard has not reached, so an evening invoice would be dated tomorrow and age a day early from
+	// the moment it is written. The due date counts the terms from the SAME day the document is
+	// issued, so the two dates can never name different "todays".
+	issueDate := houseday.Today(w.now)
+	dueDate := houseday.AddDays(w.now, terms)
 
 	var doc InvoiceDoc
 	var covered *InvoiceDoc
@@ -574,16 +581,16 @@ func (w *InvoiceWriter) writeCore(ctx context.Context, ctxTx pgx.Tx, f OrderInvo
 		// FINALIZED, not DRAFT. The order was delivered; the document is real the moment it exists,
 		// and a DRAFT invoice is a promise to remember to finalize it that nobody keeps.
 		err := tx.QueryRow(ctx, invoiceWriterSeqCTE+`
-INSERT INTO invoices (id, invoice_no, customer_id, order_id, branch_id, status, due_date,
+INSERT INTO invoices (id, invoice_no, customer_id, order_id, branch_id, status, issue_date, due_date,
                       subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at,
                       doc_type, source_kind, idempotency_key, closes_order, org_id, seq, metadata)
 VALUES (COALESCE(NULLIF($1,'')::uuid, gen_random_uuid()), '#INV-' || nextval('invoice_no_seq'),
-        $2, $3, $4, 'FINALIZED', $5,
-        $6, $7, $8, $8, now(), 'INVOICE', $9, $10, $11,
+        $2, $3, $4, 'FINALIZED', $5, $6,
+        $7, $8, $9, $9, now(), 'INVOICE', $10, $11, $12,
         (SELECT org_id FROM locations WHERE id = $4::uuid),
-        (SELECT next_value FROM iseq), $12::jsonb)
+        (SELECT next_value FROM iseq), $13::jsonb)
 RETURNING id::text, invoice_no`,
-			docID, f.CustomerID, nullUUID(f.OrderID), f.BranchID, dueDate,
+			docID, f.CustomerID, nullUUID(f.OrderID), f.BranchID, issueDate, dueDate,
 			subtotal, quote.TaxCents, total, sourceKind, idemKey, f.ClosesOrder, headerMetadata(f),
 		).Scan(&invoiceID, &invoiceNo)
 		if err != nil {
