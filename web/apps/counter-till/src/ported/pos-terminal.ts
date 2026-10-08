@@ -6526,8 +6526,12 @@ ${/* Fulfilment: the EXISTING sale types (counter / will-call / delivered / COD 
     const deposit = this.depositCents();
     // Item 9 visual review P3-3: the till holds no bound of its own. The server refuses a deposit
     // at or over the total once it has priced the lines, and its refusal speaks; the commit stands
-    // for any positive amount. Line two's rest stays blank when the typed deposit covers the whole
-    // total, because no honest rest exists to show (never a confident wrong number).
+    // for any positive amount.
+    // Item 9 Opus review P3-1: when the typed deposit covers the whole sale, line two says one
+    // plain sentence instead of a figure. The missing price marker would be false (the total sits
+    // directly above line two), and no honest rest exists to show; the sentence names the way
+    // forward, and the commit stays enabled so the server's refusal still speaks.
+    const coversWholeSale = total !== null && deposit > 0 && deposit >= total;
     const restCents = total === null ? null : deposit <= 0 ? total : deposit < total ? balanceAfterDepositCents(total, deposit) : null;
     const method = this.depositMethod === 'CARD' ? 'Card' : 'Cash';
     const disabled = this.cart.length === 0 || this.ringBusy() || this.ringDone() || deposit <= 0;
@@ -6563,9 +6567,11 @@ ${/* Fulfilment: the EXISTING sale types (counter / will-call / delivered / COD 
         <span class="dptag">now</span>
       </div>
       <div class="dpline two" data-testid="deposit-line-two">
-        <span class="dpname">${option?.lineTwoWords ?? 'Balance due later'}</span>
-        <span class="num">${formatMoney(restCents)}</span>
-        <span class="dptag">later</span>
+        ${coversWholeSale
+          ? html`<span class="dpname" data-testid="deposit-covers">The deposit covers the whole sale: choose Pay in full now.</span>`
+          : html`<span class="dpname">${option?.lineTwoWords ?? 'Balance due later'}</span>
+              <span class="num">${formatMoney(restCents)}</span>
+              <span class="dptag">later</span>`}
       </div>
       <p class="dpsentence" data-testid="deposit-sentence">${depositSentence(shape)}</p>
       ${this.renderCardType()}
