@@ -43,6 +43,11 @@ const PaidInFullWords = "Paid in full"
 // sentence; this is the copy this module's answers carry, the same words).
 const pickHoldSentence = "This order cannot reach picking until the balance is paid."
 
+// errPayBalanceDrawerRefused answers a non card tender the drawer would not
+// take: one fixed sentence, never the till's internal error text.
+var errPayBalanceDrawerRefused = clientError{status: http.StatusConflict,
+	msg: "The payment could not be taken at the drawer. Check the drawer and try again."}
+
 // errPayBalanceKeyUsedElsewhere refuses a take whose idempotency key already
 // holds a payment on ANOTHER order (a ring sale's leg key reused, say): the
 // replay fast path answers only this request's own order, fixed words.
@@ -460,7 +465,10 @@ func (s *Service) PayBalanceTake(ctx context.Context, in PayBalanceTakeInput) (P
 			if in.Method == TenderCard {
 				return terr
 			}
-			return clientErr(http.StatusConflict, "%s", terr.Error())
+			// A non card tender failure is answered with ONE fixed sentence
+			// (the review's P3-5): the till's own error taxonomy is its
+			// package's, and its internals never reach the cashier.
+			return errPayBalanceDrawerRefused
 		}
 		tenderRes = res
 		if !res.Inserted {

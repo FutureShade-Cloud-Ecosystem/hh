@@ -405,3 +405,28 @@ func TestPayBalanceTake_ReplayIsFencedAndOrderBound(t *testing.T) {
 		t.Fatalf("a replay on another branch's order must answer the door's 404, got %v", err)
 	}
 }
+
+// A non card tender failure maps to a fixed sentence (the review's P3-5),
+// never the till's internal error text: the cashier reads what to do, not the
+// drawer's internals.
+func TestPayBalanceTake_NonCardTenderFailureIsAFixedSentence(t *testing.T) {
+	h := payBalanceHarness()
+	h.tender.err = errors.New("till: internal drawer fault INSERT CONSTRAINT 42P01")
+	out, err := h.svc.PayBalanceTake(context.Background(), takeInput())
+	if err == nil {
+		t.Fatalf("the take succeeded on a drawer fault: %+v", out)
+	}
+	var ce clientError
+	if !errors.As(err, &ce) {
+		t.Fatalf("the refusal is %T, want the door's own 409 words: %v", err, err)
+	}
+	if strings.Contains(err.Error(), "42P01") || strings.Contains(err.Error(), "internal drawer fault") {
+		t.Fatalf("the refusal carries the drawer's internals: %v", err)
+	}
+	if !strings.Contains(err.Error(), "could not be taken") {
+		t.Fatalf("the refusal's words: %v", err)
+	}
+	if len(h.store.settled) != 0 {
+		t.Fatalf("a refused tender settled anyway: %+v", h.store.settled)
+	}
+}
