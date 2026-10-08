@@ -255,6 +255,19 @@ const CUSTOMERS = [
     percent_off: 12,
     on_hold: true,
   },
+  // Item 9.9: the pay before release account (zero day terms, no credit line), the stub's
+  // Cash On Demand customer: the preview offers it the deposit with the balance due later.
+  {
+    id: "c-cod",
+    account_no: "C10",
+    name: "Cash On Demand Landscaping",
+    customer_type: "CONTRACTOR",
+    payment_terms_days: 0,
+    credit_limit_cents: 0,
+    open_balance_cents: 0,
+    percent_off: 0,
+    on_hold: false,
+  },
 ];
 
 const WALK_IN = {
@@ -533,6 +546,25 @@ let RETURN_SEQ = 0;
 function customerFor(customerId) {
   if (typeof customerId !== "string" || customerId === "") return WALK_IN;
   return CUSTOMERS.find((c) => c.id === customerId) ?? null;
+}
+
+// Item 9.1's menu, the core's own rule (payment_options.go): a credit customer is terms above
+// zero AND a credit line and not on hold; everything else (Cash On Demand, walk in, no credit,
+// a held credit account) is offered the deposit with the balance due later.
+function paymentOptionsFor(customer) {
+  const terms = customer.payment_terms_days ?? 0;
+  const limit = customer.credit_limit_cents ?? 0;
+  if (terms > 0 && limit > 0 && customer.on_hold !== true) {
+    return [
+      { shape: "PAY_IN_FULL_NOW" },
+      { shape: "ALL_ON_ACCOUNT" },
+      { shape: "DEPOSIT_NOW_REST_ON_ACCOUNT", line_two_words: "On account" },
+    ];
+  }
+  return [
+    { shape: "PAY_IN_FULL_NOW" },
+    { shape: "DEPOSIT_NOW_REST_DUE_LATER", line_two_words: "Balance due later" },
+  ];
 }
 
 // One resolved line: the price the engine would answer for this customer, this
@@ -1618,6 +1650,7 @@ const server = createServer(async (request, response) => {
         tax_lines: tax > 0 ? [{ reason_code: "STD_ON_HST_13", rate_bps: HST_RATE_BPS, tax_cents: tax }] : [],
         total_cents: subtotal + tax,
         tax_reason_code: "STD_ON_HST_13",
+        payment_options: paymentOptionsFor(customer),
         ticket_base_cents: subtotal + discounted.saleCents,
         ticket_discount_max_cents: subtotal + discounted.saleCents - 1,
         ...(discounted.discountCents > 0
@@ -1666,6 +1699,31 @@ const server = createServer(async (request, response) => {
         respondJson(response, 400, { error: "the walk-in has no account to bill" });
         return;
       }
+      // Item 9.2's refusals, in the core's problem body style: integer cents fields and a
+      // message in dollars. A deposit never rides a collect now sale; an account the shape was
+      // not offered cannot carry anything on account.
+      const requestedDeposit =
+        typeof parsed.deposit_cents === "number" && Number.isInteger(parsed.deposit_cents) && parsed.deposit_cents > 0
+          ? parsed.deposit_cents
+          : 0;
+      if (requestedDeposit > 0 && (parsed.sale_type ?? "COLLECT_NOW") === "COLLECT_NOW") {
+        respondJson(response, 422, {
+          error: "deposit_not_collect_now",
+          deposit_cents: requestedDeposit,
+          message:
+            "A collect now sale is paid in full, the goods do not leave on a deposit. Take the whole amount now, or choose will call, delivery or a pay before release sale and leave a deposit.",
+        });
+        return;
+      }
+      if (tender === "ACCOUNT" && (customer.payment_terms_days ?? 0) <= 0) {
+        respondJson(response, 422, {
+          error: "on_account_not_available",
+          credit_limit_cents: customer.credit_limit_cents ?? 0,
+          message:
+            "This account cannot carry this sale on account. Pay in full now, or take a deposit with the balance due later.",
+        });
+        return;
+      }
       // The COD constraint, the core's own gate for an unpaid-at-ring sale: a
       // COD sale draws on an account, and the walk-in has none (its limit is
       // no credit at all), so the ring answers the credit gate's refusal
@@ -1673,7 +1731,7 @@ const server = createServer(async (request, response) => {
       // pass through here. The same word an on-hold account's sale meets
       // below; the policy names the constraint, and the account sales keep
       // their own arms.
-      if (parsed.sale_type === "COD" && customer.id === "") {
+      if (parsed.sale_type === "COD" && customer.id === "" && !(parsed.deposit_cents > 0)) {
         const blocked = creditBlocked("COD_CONSTRAINT");
         respondJson(response, blocked.status, blocked.body);
         return;
@@ -1823,6 +1881,13 @@ const server = createServer(async (request, response) => {
             ...(leg.method === "CARD" ? { gateway_ref: `rp_sim_${docCounter + 1}` } : {}),
           });
         });
+      } else if (parsed.sale_type === "COD" && requestedDeposit > 0) {
+        // Pay before release with a deposit: the deposit is the only capture (its own leg lands
+        // below); the rest is the invoice's balance, held from picking until it is paid.
+        if (parsed.deposit_method === "CARD" && (typeof parsed.payment_token !== "string" || parsed.payment_token === "")) {
+          respondJson(response, 400, { error: "a card deposit carries the terminal's token, never a card number" });
+          return;
+        }
       } else if (tender === "CASH") {
         // The contract's own rule: cash_tendered_cents 0 (or absent) means not
         // entered, and the sale rings for the exact total. A typed figure that
@@ -1863,12 +1928,12 @@ const server = createServer(async (request, response) => {
           respondJson(response, blocked.status, blocked.body);
           return;
         }
-        if (customer.open_balance_cents + total > customer.credit_limit_cents) {
+        if (customer.open_balance_cents + total - requestedDeposit > customer.credit_limit_cents) {
           const blocked = creditBlocked("CREDIT_LIMIT_EXCEEDED");
           respondJson(response, blocked.status, blocked.body);
           return;
         }
-        customer.open_balance_cents += total;
+        customer.open_balance_cents += total - requestedDeposit;
       } else if (tender !== "CHEQUE") {
         respondJson(response, 400, { error: "unknown tender" });
         return;

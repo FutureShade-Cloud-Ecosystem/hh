@@ -636,18 +636,17 @@ test("a deposit sale's confirmation labels the balance due a derived figure", as
   await signIn(page, "Sales");
   await pickAccount(page, "C02", "Fenwick Builders Ltd");
   await searchAndAdd(page, "holland", "Holland Stone 60 mm");
-  // The deposit rides Charge Account or COD, so the tender is chosen first;
-  // the deposit box lives on the customer step's More options.
+  // Item 9.6: the deposit is line one of the payment step on a fulfilment that waits; the
+  // credit account's line two is the rest on account.
+  await openStep(page, "items");
+  await page.getByRole("button", { name: "Will-call" }).click();
   await openStep(page, "payment");
-  await page.getByRole("button", { name: "Charge Account" }).click();
-  await openStep(page, "customer");
-  await page.locator("details.more > summary").filter({ hasText: "More options" }).click();
-  await page.locator(".deposit input").fill("1.00");
+  await page.getByTestId("pay-shape-DEPOSIT_NOW_REST_ON_ACCOUNT").click();
+  await page.getByTestId("deposit-amount").fill("1.00");
   const ringPost = page.waitForResponse(
     (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
   );
-  await openStep(page, "payment");
-  await page.getByTestId("pos-complete-sale").click();
+  await page.getByTestId("deposit-commit").click();
   const sale = (await (await ringPost).json()) as Record<string, unknown>;
   expect(sale.deposit_cents).toBe(100);
 

@@ -24,6 +24,12 @@ export interface PreviewBody {
   discount?: ReturnType<typeof discountWire>;
 }
 
+/** One payment shape the server says the counter may offer, with line two's words on the deposit shapes. */
+export interface PaymentOption {
+  shape: string;
+  lineTwoWords?: string;
+}
+
 /** What the till knows about the ticket's totals: nothing asked, asked and waiting, answered, or unreachable. */
 export type PreviewState =
   | { kind: 'idle' }
@@ -41,6 +47,8 @@ export type PreviewState =
       ticketDiscountMaxCents: number;
       /** Per line, only when a discount applies: the net the line charges and what came off. */
       lines: PreviewDiscountLine[];
+      /** The shapes the account may be offered (item 9.1), the server's list: empty when it sent none. */
+      paymentOptions: PaymentOption[];
     }
   /** The ring refused the ticket in words (a discount past what it comes off, an approver it will not take). */
   | { kind: 'refused'; words: string }
@@ -140,7 +148,20 @@ export function readPreview(answer: unknown, status = 200): PreviewState {
     ticketBaseCents: base,
     ticketDiscountMaxCents: max,
     lines,
+    paymentOptions: readPaymentOptions(a.payment_options),
   };
+}
+
+/** The server's payment_options: entries that are not a shape word are dropped, never guessed. */
+export function readPaymentOptions(raw: unknown): PaymentOption[] {
+  if (!Array.isArray(raw)) return [];
+  const out: PaymentOption[] = [];
+  for (const entry of raw) {
+    const o = (entry ?? {}) as Record<string, unknown>;
+    if (typeof o.shape !== 'string' || o.shape === '') continue;
+    out.push(typeof o.line_two_words === 'string' && o.line_two_words !== '' ? { shape: o.shape, lineTwoWords: o.line_two_words } : { shape: o.shape });
+  }
+  return out;
 }
 
 /** The words for the split refusal, from its fields (the server's `split_total_mismatch`). */
