@@ -744,9 +744,11 @@ type Return struct {
 	SubtotalCents   int64  `json:"subtotal_cents"`
 	TaxCents        int64  `json:"tax_cents"`
 	TotalCents      int64  `json:"total_cents"`
-	FeeCents        int64  `json:"fee_cents,omitempty"`         // A-06 restocking fee, the credited amount is total − fee
-	AppliedCents    int64  `json:"applied_cents,omitempty"`     // a swap child: the part of the total spent on the new order, the rail moved total less this
-	RefundPaymentID string `json:"refund_payment_id,omitempty"` // the REFUNDED payments row (CASH/CARD)
+	FeeCents        int64  `json:"fee_cents,omitempty"`            // A-06 restocking fee, the credited amount is total − fee
+	OffsetCents     int64  `json:"invoice_offset_cents,omitempty"` // the part of an unpaid order's return that came off its open invoice, the rail moved the rest
+	PaymentNote     string `json:"payment_note,omitempty"`         // the split in words, when there was one
+	AppliedCents    int64  `json:"applied_cents,omitempty"`        // a swap child: the part of the total spent on the new order, the rail moved total less this
+	RefundPaymentID string `json:"refund_payment_id,omitempty"`    // the REFUNDED payments row (CASH/CARD)
 	PickupStatus    string `json:"pickup_status"`
 	Status          string `json:"status"`
 	Replayed        bool   `json:"replayed"`
@@ -785,6 +787,10 @@ type CustomerLinesInput struct {
 	CustomerID string
 	BranchID   string
 	Limit      int
+	// Number is the receipt or order number filter (an order number, an invoice number, with or
+	// without the hash, or the bare digits a branch's numbers end in). The WALK-IN house account is
+	// answered ONLY through it, never as a list of every walk in sale.
+	Number string
 }
 
 // CustomerReturnableLineView is one line of one order in the customer lines read: the guard's own
@@ -877,6 +883,9 @@ type ReturnAcrossInput struct {
 type ReturnPreviewInput struct {
 	CustomerID string                   `json:"customer_id"`
 	Orders     []ReturnAcrossOrderInput `json:"orders"`
+	// RefundMethod is optional: with CASH or CARD the preview carries, per order, the split the commit
+	// will make on an order that is not fully paid (the principal's ruling).
+	RefundMethod string `json:"refund_method,omitempty"`
 }
 
 // ReturnPreviewLine is one draft line's credit, priced by the commit's own function.
@@ -890,23 +899,32 @@ type ReturnPreviewLine struct {
 
 // ReturnPreviewOrder is one order's share of the draft credit.
 type ReturnPreviewOrder struct {
-	OrderID       string              `json:"order_id"`
-	OrderNo       string              `json:"order_no"`
-	SubtotalCents int64               `json:"subtotal_cents"`
-	TaxCents      int64               `json:"tax_cents"`
-	TotalCents    int64               `json:"total_cents"`
-	Lines         []ReturnPreviewLine `json:"lines"`
+	OrderID       string `json:"order_id"`
+	OrderNo       string `json:"order_no"`
+	SubtotalCents int64  `json:"subtotal_cents"`
+	TaxCents      int64  `json:"tax_cents"`
+	TotalCents    int64  `json:"total_cents"`
+	// RailCents, OffsetCents and RailNote carry the split of a CASH or CARD return of an order that is
+	// not fully paid: what goes back in cash or card, what comes off the open invoice, and the split in
+	// words. Present only when the preview was asked with a refund_method.
+	RailCents   *int64              `json:"rail_cents,omitempty"`
+	OffsetCents *int64              `json:"invoice_offset_cents,omitempty"`
+	RailNote    string              `json:"rail_note,omitempty"`
+	Lines       []ReturnPreviewLine `json:"lines"`
 }
 
 // ReturnPreview is the credit so far: what the note would credit, money and tax, were it
 // committed now. The figures are the commit's own (priceReturnLine); nothing is written.
 type ReturnPreview struct {
-	CustomerID    string               `json:"customer_id"`
-	BranchID      string               `json:"branch_id"`
-	SubtotalCents int64                `json:"subtotal_cents"`
-	TaxCents      int64                `json:"tax_cents"`
-	TotalCents    int64                `json:"total_cents"`
-	Orders        []ReturnPreviewOrder `json:"orders"`
+	CustomerID    string `json:"customer_id"`
+	BranchID      string `json:"branch_id"`
+	SubtotalCents int64  `json:"subtotal_cents"`
+	TaxCents      int64  `json:"tax_cents"`
+	TotalCents    int64  `json:"total_cents"`
+	// RailCents and OffsetCents sum the orders' split when the preview was asked with a refund_method.
+	RailCents   *int64               `json:"rail_cents,omitempty"`
+	OffsetCents *int64               `json:"invoice_offset_cents,omitempty"`
+	Orders      []ReturnPreviewOrder `json:"orders"`
 }
 
 // ReturnNote is the committed credit note across orders (answered verbatim on an idempotent
@@ -1060,6 +1078,8 @@ type returnableLine struct {
 	PriorQty       float64
 	PriorMoney     int64
 	PriorTax       int64
+	// PriorCreditOnly is the part of the earlier returns that was credit only (no goods came back).
+	PriorCreditOnly float64
 	// LeftShelfBase is the quantity of the line that has left the shelf: all of it on a collect now
 	// ring (stock is decremented at the ring), else what fulfilment has taken out (fulfilled_base).
 	LeftShelfBase float64
@@ -1091,6 +1111,8 @@ type returnRow struct {
 	// AppliedCents is the part of the total applied to a swap's new order instead of going out on the
 	// rail (0380); zero on every other return.
 	AppliedCents int64
+	// OffsetCents is the part that reduced the order's open invoice instead of going out on the rail (0384).
+	OffsetCents int64
 }
 
 // returnNoteRow is the return_notes header insert (sub item 10.2).
@@ -1121,6 +1143,9 @@ type returnLineRow struct {
 	Disposition    string
 	RestockedBase  float64
 	WrittenOffBase float64
+	// CreditOnlyBase is the part of the returned quantity that was credit only: the goods never left
+	// the shelf, so none came back (0383).
+	CreditOnlyBase float64
 }
 
 // -- DIB-488 rev 8 (item 10): the role-gated margin glance ---------------------------------------

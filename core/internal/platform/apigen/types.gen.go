@@ -5186,20 +5186,22 @@ type PosReturnInput struct {
 }
 
 type PosReturn struct {
-	AppliedCents    *int64  `json:"applied_cents,omitempty"`
-	ReturnId        string  `json:"return_id"`
-	ReturnNo        string  `json:"return_no"`
-	OrderId         string  `json:"order_id"`
-	InvoiceId       string  `json:"invoice_id"`
-	RefundMethod    string  `json:"refund_method"`
-	SubtotalCents   int64   `json:"subtotal_cents"`
-	TaxCents        int64   `json:"tax_cents"`
-	TotalCents      int64   `json:"total_cents"`
-	FeeCents        *int64  `json:"fee_cents,omitempty"`
-	RefundPaymentId *string `json:"refund_payment_id,omitempty"`
-	PickupStatus    string  `json:"pickup_status"`
-	Status          string  `json:"status"`
-	Replayed        bool    `json:"replayed"`
+	InvoiceOffsetCents *int64  `json:"invoice_offset_cents,omitempty"`
+	PaymentNote        *string `json:"payment_note,omitempty"`
+	AppliedCents       *int64  `json:"applied_cents,omitempty"`
+	ReturnId           string  `json:"return_id"`
+	ReturnNo           string  `json:"return_no"`
+	OrderId            string  `json:"order_id"`
+	InvoiceId          string  `json:"invoice_id"`
+	RefundMethod       string  `json:"refund_method"`
+	SubtotalCents      int64   `json:"subtotal_cents"`
+	TaxCents           int64   `json:"tax_cents"`
+	TotalCents         int64   `json:"total_cents"`
+	FeeCents           *int64  `json:"fee_cents,omitempty"`
+	RefundPaymentId    *string `json:"refund_payment_id,omitempty"`
+	PickupStatus       string  `json:"pickup_status"`
+	Status             string  `json:"status"`
+	Replayed           bool    `json:"replayed"`
 }
 
 type PosRefundApproval struct {
@@ -5237,8 +5239,8 @@ type PosReturnAcrossInput struct {
 	Orders         []PosReturnAcrossOrder `json:"orders"`
 	RefundMethod   string                 `json:"refund_method"`
 	Reason         string                 `json:"reason"`
-	Restock        bool                   `json:"restock"`
-	TillSessionId  string                 `json:"till_session_id"`
+	Restock        *bool                  `json:"restock,omitempty"`
+	TillSessionId  *string                `json:"till_session_id,omitempty"`
 }
 
 type PosReturnAcrossOrder struct {
@@ -5247,8 +5249,9 @@ type PosReturnAcrossOrder struct {
 }
 
 type PosReturnPreviewInput struct {
-	CustomerId string                 `json:"customer_id"`
-	Orders     []PosReturnAcrossOrder `json:"orders"`
+	CustomerId   string                 `json:"customer_id"`
+	RefundMethod *string                `json:"refund_method,omitempty"`
+	Orders       []PosReturnAcrossOrder `json:"orders"`
 }
 
 type PosReturnPreviewLine struct {
@@ -5260,21 +5263,26 @@ type PosReturnPreviewLine struct {
 }
 
 type PosReturnPreviewOrder struct {
-	OrderId       string                 `json:"order_id"`
-	OrderNo       string                 `json:"order_no"`
-	SubtotalCents int64                  `json:"subtotal_cents"`
-	TaxCents      int64                  `json:"tax_cents"`
-	TotalCents    int64                  `json:"total_cents"`
-	Lines         []PosReturnPreviewLine `json:"lines"`
+	RailCents          *int64                 `json:"rail_cents,omitempty"`
+	InvoiceOffsetCents *int64                 `json:"invoice_offset_cents,omitempty"`
+	RailNote           *string                `json:"rail_note,omitempty"`
+	OrderId            string                 `json:"order_id"`
+	OrderNo            string                 `json:"order_no"`
+	SubtotalCents      int64                  `json:"subtotal_cents"`
+	TaxCents           int64                  `json:"tax_cents"`
+	TotalCents         int64                  `json:"total_cents"`
+	Lines              []PosReturnPreviewLine `json:"lines"`
 }
 
 type PosReturnPreview struct {
-	CustomerId    string                  `json:"customer_id"`
-	BranchId      string                  `json:"branch_id"`
-	SubtotalCents int64                   `json:"subtotal_cents"`
-	TaxCents      int64                   `json:"tax_cents"`
-	TotalCents    int64                   `json:"total_cents"`
-	Orders        []PosReturnPreviewOrder `json:"orders"`
+	RailCents          *int64                  `json:"rail_cents,omitempty"`
+	InvoiceOffsetCents *int64                  `json:"invoice_offset_cents,omitempty"`
+	CustomerId         string                  `json:"customer_id"`
+	BranchId           string                  `json:"branch_id"`
+	SubtotalCents      int64                   `json:"subtotal_cents"`
+	TaxCents           int64                   `json:"tax_cents"`
+	TotalCents         int64                   `json:"total_cents"`
+	Orders             []PosReturnPreviewOrder `json:"orders"`
 }
 
 type PosSwapInput struct {

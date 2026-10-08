@@ -18,6 +18,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -76,7 +77,7 @@ VALUES ('DSP-'||$1, 'Dispositions proof', 'CONTRACTOR', 30, 5000000) RETURNING i
 	}
 	stock := &recordingRestocker{}
 	f := &dispFixture{t: t, pool: pool, ctx: ctx, productID: productID, branchID: branchID, custID: custID, stock: stock,
-		svc: realPosSvc(t, pool, stubCharger{}).WithRoleConfig(modifiedDefault(t, roleconfig.SettingRefundApprovalLimitEnabled, false)).WithRestocker(stock)}
+		svc: realPosSvc(t, pool, stubCharger{}).WithRoleConfig(modifiedDefault(t, roleconfig.SettingRefundApprovalLimitEnabled, false)).WithRestocker(stock).WithOpenQuantityReleaser(order.NewRepository(pool))}
 	t.Cleanup(func() {
 		c := context.Background()
 		for _, oid := range f.orders {

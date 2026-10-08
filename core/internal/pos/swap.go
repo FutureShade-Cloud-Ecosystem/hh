@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
@@ -27,7 +28,10 @@ import (
 )
 
 // swapNoteKey and swapSaleKey derive the two documents' own idempotency keys from the swap's.
-func swapNoteKey(key string) string { return "swap:" + key }
+// reservedSwapKeyPrefix is the idempotency-key namespace the swap derives its credit note's key in.
+const reservedSwapKeyPrefix = "swap:"
+
+func swapNoteKey(key string) string { return reservedSwapKeyPrefix + key }
 func swapSaleKey(key string) string {
 	// The sale's key is a uuid column everywhere it travels (the ring, the card legs): derive one,
 	// deterministically, so a retry of the swap names the same sale.
@@ -118,6 +122,7 @@ type swapRow struct {
 // swapFig is the swap's priced shape, one computation for the preview and the commit.
 type swapFig struct {
 	credit    ReturnPreview
+	products  []string // the products the swap's two halves move, sorted and unique
 	ocs       []returnOrderCtx
 	subtotal  int64
 	tax       int64
@@ -141,6 +146,14 @@ func originalTenderRail(oc returnOrderCtx) (string, bool) {
 		return RefundAccountCredit, true // "" is an order a quote became: its money sits on the account
 	}
 	return "", false
+}
+
+func productIDsOf(lines []LineInput) []string {
+	out := make([]string, 0, len(lines))
+	for _, l := range lines {
+		out = append(out, l.ProductID)
+	}
+	return out
 }
 
 // swapFigures prices a swap: the credit (the commit's own guard, no locks), the new order (the ring's
@@ -168,11 +181,19 @@ func (s *Service) swapFigures(ctx context.Context, in SwapInput) (swapFig, error
 	default:
 		return fig, errBadTender
 	}
-	credit, ocs, err := s.previewNote(ctx, ReturnPreviewInput{CustomerID: in.CustomerID, Orders: in.Orders})
+	credit, ocs, retProducts, err := s.previewNoteProducts(ctx, ReturnPreviewInput{CustomerID: in.CustomerID, Orders: in.Orders}, false)
 	if err != nil {
 		return fig, err
 	}
 	fig.credit, fig.ocs = credit, ocs
+	seenProduct := map[string]bool{}
+	for _, id := range append(retProducts, productIDsOf(in.Lines)...) {
+		if id != "" && !seenProduct[id] {
+			seenProduct[id] = true
+			fig.products = append(fig.products, id)
+		}
+	}
+	sort.Strings(fig.products)
 	for _, oc := range ocs {
 		// A swap spends credit that is already in hand: a source order whose invoice is still open
 		// would have the credit offset what the customer still owes first, not buy anything.
@@ -185,9 +206,14 @@ func (s *Service) swapFigures(ctx context.Context, in SwapInput) (swapFig, error
 	if err != nil {
 		return fig, err
 	}
+	// The new order is priced with the relief the swap carries, exactly as the ring prices it.
+	taxReason := TaxStdON13
+	if in.Relief != nil && in.Relief.ReasonCode != "" {
+		taxReason = in.Relief.ReasonCode
+	}
 	priced, err := s.priceAndAssess(ctx, saleMoneyInput{
 		customerID: in.CustomerID, customerType: cust.CustomerType, branchID: credit.BranchID,
-		lines: in.Lines, taxReason: TaxStdON13, discount: in.Discount,
+		lines: in.Lines, taxReason: taxReason, discount: in.Discount,
 	})
 	if err != nil {
 		return fig, err
@@ -288,6 +314,32 @@ func (s *Service) Swap(ctx context.Context, in SwapInput) (SwapResult, error) {
 		return SwapResult{}, clientErr(http.StatusConflict, "pos: this swap's credit note exists without its swap; ask a manager")
 	}
 
+	// The credit side's refusals that can be known now are answered BEFORE any card is charged: the
+	// approval gate, judged on the figures the swap was priced with (the transaction judges it again,
+	// exact). A swap with a card shortfall must never charge a card and then void it for a refusal
+	// the clerk could have been told first.
+	priors := make([]int64, len(notePlan.children))
+	shares := make([]int64, len(notePlan.children))
+	for i, child := range notePlan.children {
+		prior, perr := s.store.SumCommittedReturnTotals(ctx, child.oc.OrderID)
+		if perr != nil {
+			return SwapResult{}, perr
+		}
+		priors[i], shares[i] = prior, fig.credit.Orders[i].TotalCents
+	}
+	if _, gerr := s.judgeNoteGate(fig.credit.TotalCents, priors, shares, caller, notePlan.children[0]); gerr != nil {
+		var refusal ErrRefundApprovalRequired
+		if errors.As(gerr, &refusal) {
+			s.record(ctx, audit.SensitiveAccess{
+				Action: auditActionRefundApprovalRefused, EntityType: "pos.return_note", EntityID: in.CustomerID,
+				ActorID: notePlan.actor, BranchID: branchID, Purpose: "POS_RETURN",
+				Reason: refundApprovalRequiredError,
+				Extra:  map[string]any{"amount_cents": refusal.RefundCents},
+			})
+		}
+		return SwapResult{}, gerr
+	}
+
 	saleIn := SaleInput{
 		IdempotencyKey: swapSaleKey(in.IdempotencyKey), BranchID: branchID, TillSessionID: in.TillSessionID,
 		CustomerID: in.CustomerID, SaleType: fig.saleType, Tender: fig.tender, PaymentToken: in.PaymentToken,
@@ -322,6 +374,13 @@ func (s *Service) Swap(ctx context.Context, in SwapInput) (SwapResult, error) {
 	var swapID string
 	actor := identity.StaffUserIDFromContext(ctx)
 	txErr := s.store.RunInTx(ctx, func(tx pgx.Tx) error {
+		// Both halves move stock: take the balance rows of every product either touches, sorted,
+		// before the first move, so two crossed swaps queue instead of deadlocking.
+		if s.stockLocks != nil {
+			if lerr := s.stockLocks.LockStockTx(ctx, tx, branchID, fig.products); lerr != nil {
+				return lerr
+			}
+		}
 		var nerr error
 		note, replayedHere, approvedHere, nerr = s.returnAcrossInTx(ctx, tx, notePlan)
 		if nerr != nil {
@@ -354,8 +413,17 @@ func (s *Service) Swap(ctx context.Context, in SwapInput) (SwapResult, error) {
 		}
 		if len(salePlan.ring.captured) > 0 {
 			salePlan.ring.rank = cardRankReversed
-			if _, cerr := s.settleFailedCardRing(ctx, salePlan.ring); cerr != nil {
+			if _, cerr := s.settleFailedCardRing(ctx, salePlan.ring); cerr != nil && !errors.Is(cerr, ErrSaleFailedCardReversed) {
+				// The compensation itself did not end clean (a manager item, an unknown): that answer.
 				return SwapResult{}, cerr
+			}
+			// The card was reversed cleanly: the clerk is told the credit side's own reason, not the
+			// reversal (a refusal in words, not a 503).
+			if isClientRefusal(txErr) {
+				return SwapResult{}, txErr
+			}
+			if !isUniqueViolationErr(txErr) && !errors.Is(txErr, errSwapTwinWon) {
+				return SwapResult{}, ErrSaleFailedCardReversed
 			}
 		}
 		// A twin of the same key won the race: answer its swap.
@@ -405,4 +473,12 @@ func (s *Service) replaySwap(ctx context.Context, key string, caller identity.St
 		SwapID: row.ID, Note: note, Sale: sale, CreditCents: row.CreditCents, AppliedCents: row.AppliedCents,
 		LeftoverCents: row.LeftoverCents, ShortfallCents: row.ShortfallCents, LeftoverMethod: row.LeftoverMethod, Replayed: true,
 	}, true, nil
+}
+
+// isClientRefusal is an error the clerk can act on, in its own words (a refusal or a 4xx), as opposed
+// to a fault: after a card was reversed cleanly, the clerk is told this, not the reversal.
+func isClientRefusal(err error) bool {
+	var ce clientError
+	var ap ErrRefundApprovalRequired
+	return errors.As(err, &ce) || errors.As(err, &ap)
 }

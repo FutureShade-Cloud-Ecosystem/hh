@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
@@ -43,7 +44,12 @@ const (
 // its sales are everybody's walk-in sales, not one customer's history; the words send the clerk
 // to the customer on the sale, or to a card or cash refund of the walk-in sale itself.
 var errWalkInNotReturnable = clientErr(http.StatusUnprocessableEntity,
-	"pos: the WALK-IN house account holds no customer history; find the customer on the sale and return it from their account, or refund the walk-in sale on its own to the card it was paid on or in cash")
+	"pos: a swap is rung for a customer's own account, not the WALK-IN house account; return the walk-in sale to the card it was paid on or in cash, and ring the new order apart")
+
+// errWalkInNeedsNumber answers the WALK-IN house account's lines read without a number: its sales are
+// everybody's walk-in sales, so they are never listed, only found by the number on the receipt.
+var errWalkInNeedsNumber = clientErr(http.StatusUnprocessableEntity,
+	"pos: walk-in sales are never listed; find the sale by the receipt or order number, and it goes back to the card it was paid on or in cash")
 
 // CustomerLines is the customer lines read (sub item 10.1): every sales order the customer holds in
 // HH, till rings and quote conversions alike (the widened Q1 ruling), newest first, each line with
@@ -60,10 +66,12 @@ func (s *Service) CustomerLines(ctx context.Context, in CustomerLinesInput) (Cus
 	if err != nil {
 		return CustomerLinesView{}, err
 	}
-	// The house WALK-IN row is refused in words (D2's read-side half): the shared row's sales are not
-	// one customer's history, and crediting across them is exactly the shared-wallet defect.
-	if walkIn, werr := s.store.ResolveWalkIn(ctx); werr == nil && walkIn == in.CustomerID {
-		return CustomerLinesView{}, errWalkInNotReturnable
+	// The house WALK-IN row (ruling A): its sales are found only through a receipt or order number
+	// filter, never listed, and the filter never leaves the customer's own orders; its refunds go to
+	// cash or card only (D2).
+	in.Number = normalizeSaleRef(in.Number)
+	if walkIn, werr := s.store.ResolveWalkIn(ctx); werr == nil && walkIn != "" && walkIn == in.CustomerID && in.Number == "" {
+		return CustomerLinesView{}, errWalkInNeedsNumber
 	}
 	// The branch wall: naming a branch the caller's resolved authority does not reach is the same 403
 	// the return itself answers; naming none answers every branch the caller reaches (a global caller
@@ -81,7 +89,7 @@ func (s *Service) CustomerLines(ctx context.Context, in CustomerLinesInput) (Cus
 	if in.Limit > maxCustomerLinesLimit {
 		in.Limit = maxCustomerLinesLimit
 	}
-	items, err := s.store.ListCustomerReturnableOrders(ctx, in.CustomerID, branchIDs, in.Limit)
+	items, err := s.store.ListCustomerReturnableOrders(ctx, in.CustomerID, branchIDs, in.Limit, in.Number)
 	if err != nil {
 		return CustomerLinesView{}, err
 	}
@@ -264,7 +272,11 @@ type returnPlan struct {
 	cardRefunds []cardRefundFact
 	// applied is the part of this return\'s total spent on a swap\'s new order (10.5): the rail moves
 	// total less applied. Set inside the swap\'s transaction once the guard has priced the note.
-	applied        int64
+	applied int64
+	// offset and paymentNote are the ruling\'s split of an order that is not fully paid: the part that
+	// comes off the open invoice, and the split in words.
+	offset         int64
+	paymentNote    string
 	in             ReturnInput
 	oc             returnOrderCtx
 	caller         identity.StaffContext
@@ -473,6 +485,11 @@ func (s *Service) returnInTx(ctx context.Context, tx pgx.Tx, plan *returnPlan) (
 	if err := s.store.LockSaleForReturn(ctx, tx, oc.OrderID); err != nil {
 		return Return{}, false, false, err
 	}
+	if in.RefundMethod == RefundAccountCredit && !in.railOptional {
+		if err := s.lockReturnInvoicesTx(ctx, tx, []returnOrderCtx{oc}); err != nil {
+			return Return{}, false, false, err
+		}
+	}
 	// A same-key duplicate that arrived while its twin held the lock
 	// passed the pre-transaction replay check before either row existed.
 	// The lock has now serialized them, so whatever is committed under
@@ -639,6 +656,8 @@ func guardLines(oc returnOrderCtx, reqs []ReturnLineInput, defaultRestock bool, 
 			writeOffLines = append(writeOffLines, map[string]any{"product_id": rl.ProductID, "qty_base": row.WrittenOffBase})
 		}
 	}
+	// Sorted by product: a restock takes its balance rows in the one order every move does.
+	sort.SliceStable(stockLines, func(i, j int) bool { return stockLines[i].ProductID < stockLines[j].ProductID })
 	return guardedReturn{lines: lines, stockLines: stockLines, eventLines: eventLines, writeOffLines: writeOffLines,
 		subtotal: subtotal, taxTotal: taxTotal}, nil
 }
@@ -663,11 +682,14 @@ func applyDisposition(row *returnLineRow, rl returnableLine, req ReturnLineInput
 		return clientErr(http.StatusUnprocessableEntity,
 			"pos: disposition on line %s must be RESTOCK, DAMAGED or NO_RETURN", req.OrderLineID)
 	}
-	physical := math.Min(req.QtyBase, math.Max(0, rl.LeftShelfBase-rl.PriorQty))
+	// The goods that came back so far are the earlier returns less their credit only parts: a credit
+	// only return brought nothing back, so goods that ship after it are still returnable in full.
+	physical := math.Min(req.QtyBase, math.Max(0, rl.LeftShelfBase-(rl.PriorQty-rl.PriorCreditOnly)))
 	if physical < qtyEpsilon {
 		physical = 0
 	}
 	row.Disposition = disp
+	row.CreditOnlyBase = req.QtyBase - physical
 	switch disp {
 	case DispositionRestock:
 		row.RestockedBase = physical
@@ -752,6 +774,20 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 		feeCents = (subtotal*int64(in.FeeBps) + 5000) / 10000
 	}
 
+	// The ruling on an order that is not fully paid: cash or card go back only up to what was paid on
+	// the invoice, the rest comes off the open invoice. A swap child's sources are paid in full, so it
+	// has nothing to split. An order with nothing paid at all gets no cash or card, in words.
+	if plan.applied == 0 && (in.RefundMethod == RefundCash || in.RefundMethod == RefundCard) {
+		sp, serr := s.railSplitFor(ctx, tx, oc, in.RefundMethod, total-feeCents)
+		if serr != nil {
+			return Return{}, serr
+		}
+		if sp.rail == 0 && sp.offset > 0 {
+			return Return{}, clientErr(http.StatusUnprocessableEntity, "%s", sp.note)
+		}
+		plan.offset, plan.paymentNote = sp.offset, sp.note
+	}
+
 	// 2. Header first, ux_pos_returns_idem makes a concurrent duplicate abort the whole tx before
 	//    any rail write.
 	returnID, returnNo, ierr := s.store.InsertReturn(ctx, tx, returnRow{
@@ -759,13 +795,24 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 		RefundMethod: in.RefundMethod, SubtotalCents: subtotal, TaxCents: taxTotal, TotalCents: total,
 		FeeCents: feeCents, Reason: in.Reason, Restock: anyRestock(lines), TillSessionID: in.TillSessionID,
 		PickupRequired: pickupRequired, PickupSite: pickupSite, PickupDate: pickupDate, PickupStatus: pickupStatus,
-		IdempotencyKey: in.IdempotencyKey, CreatedBy: actor, NoteID: noteID, AppliedCents: plan.applied,
+		IdempotencyKey: in.IdempotencyKey, CreatedBy: actor, NoteID: noteID, AppliedCents: plan.applied, OffsetCents: plan.offset,
 	})
 	if ierr != nil {
 		return Return{}, ierr
 	}
 	if err := s.store.InsertReturnLines(ctx, tx, returnID, lines); err != nil {
 		return Return{}, err
+	}
+	// Q5: goods credited that never left the shelf are released from the order's open lines, through
+	// the order module's seam, so the yard cannot pick them.
+	if s.openQty != nil {
+		for _, ln := range lines {
+			if ln.CreditOnlyBase > qtyEpsilon {
+				if err := s.openQty.ReleaseOpenQuantityTx(ctx, tx, ln.OrderLineID, ln.CreditOnlyBase); err != nil {
+					return Return{}, err
+				}
+			}
+		}
 	}
 
 	// 2b. A supplier deposit order releases its deposit on ANY return, partial or whole (the
@@ -786,7 +833,7 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 	var refundPaymentID string
 	// The rail moves the total less what a swap spent on its new order; with nothing left over no rail
 	// runs at all (no drawer payout, no processor call, no credit row).
-	railTotal := total - plan.applied
+	railTotal := total - plan.applied - plan.offset
 	switch {
 	case railTotal <= 0:
 	case in.RefundMethod == RefundCash:
@@ -805,7 +852,7 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 		// connection has the per-sale lock's holder wait for a second
 		// connection every other connection is a Return waiter that needs
 		// the holder's lock, deadlocking a full pool.
-		if err := s.checkCardCapTx(ctx, tx, oc, returnID, railTotal); err != nil {
+		if err := s.checkCardCapTx(ctx, tx, oc, returnID, "refund:"+in.IdempotencyKey, railTotal); err != nil {
 			return Return{}, err
 		}
 		refundRef, err := s.cardRefund.RefundCard(ctx, tx, oc.GatewayRef, railTotal, returnNo, "refund:"+in.IdempotencyKey)
@@ -829,13 +876,39 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 	case in.RefundMethod == RefundAccountCredit:
 		// The restocking fee reduces what the customer's account is credited (total − fee); the fee
 		// itself books through the GL event's fee_cents, never a subledger row.
-		if err := s.applyAccountCredit(ctx, tx, oc, railTotal-feeCents, depositDocs); err != nil {
+		offsetMade, err := s.applyAccountCredit(ctx, tx, oc, railTotal-feeCents, depositDocs)
+		if err != nil {
 			return Return{}, err
+		}
+		if offsetMade > 0 {
+			if err := s.store.SetReturnOffset(ctx, tx, returnID, offsetMade); err != nil {
+				return Return{}, err
+			}
 		}
 	}
 	if refundPaymentID != "" {
 		if err := s.store.SetReturnRefundPayment(ctx, tx, returnID, refundPaymentID); err != nil {
 			return Return{}, err
+		}
+	}
+	// The split's account part comes off the order's open invoice (the rail moved only what was paid).
+	if plan.offset > 0 {
+		done, oerr := s.store.ApplyCreditToInvoice(ctx, tx, oc.InvoiceID, plan.offset)
+		if oerr != nil {
+			return Return{}, oerr
+		}
+		if done != plan.offset {
+			return Return{}, clientErr(http.StatusConflict, "pos: the order's invoice changed while the return was being rung; review the return and ring it again")
+		}
+		cust, cerr := s.store.ReadCustomerTx(ctx, tx, oc.CustomerID)
+		if cerr != nil {
+			return Return{}, cerr
+		}
+		if terr := s.store.InsertCustomerTxn(ctx, tx, customerTxnRow{
+			CustomerID: oc.CustomerID, TxnType: "CREDIT_MEMO", AmountCents: -done,
+			BalanceAfter: cust.OpenBalanceCents - done, SourceType: "invoice", SourceRefID: oc.InvoiceID, BranchID: oc.BranchID,
+		}); terr != nil {
+			return Return{}, terr
 		}
 	}
 
@@ -884,7 +957,7 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 		"return_id": returnID, "order_id": oc.OrderID, "invoice_id": oc.InvoiceID,
 		"refund_method": in.RefundMethod, "subtotal_cents": subtotal, "tax_cents": taxTotal,
 		"total_cents": total, "fee_cents": feeCents, "branch_id": oc.BranchID,
-		"applied_cents": plan.applied,
+		"applied_cents": plan.applied, "invoice_offset_cents": plan.offset,
 	}
 	if approvedHere {
 		committed["decided_by"] = approverStaff
@@ -906,7 +979,7 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 	out := Return{
 		ReturnID: returnID, ReturnNo: returnNo, OrderID: oc.OrderID, InvoiceID: oc.InvoiceID,
 		RefundMethod: in.RefundMethod, SubtotalCents: subtotal, TaxCents: taxTotal, TotalCents: total,
-		FeeCents: feeCents, AppliedCents: plan.applied, RefundPaymentID: refundPaymentID, PickupStatus: pickupStatus, Status: "COMMITTED",
+		FeeCents: feeCents, AppliedCents: plan.applied, OffsetCents: plan.offset, PaymentNote: plan.paymentNote, RefundPaymentID: refundPaymentID, PickupStatus: pickupStatus, Status: "COMMITTED",
 	}
 	return out, nil
 }
@@ -945,13 +1018,22 @@ func (s *Service) accountCreditAllowed(ctx context.Context, customerID string, i
 // checkCardCapTx is D5: a card refund never takes the card past what the original capture holds
 // less what earlier card refunds of the order already took. Read on the open transaction after the
 // per-sale lock, so the earlier refunds are exact. A capture of unknown size (0) sets no ceiling.
-func (s *Service) checkCardCapTx(ctx context.Context, tx pgx.Tx, oc returnOrderCtx, exceptReturnID string, refundCents int64) error {
+func (s *Service) checkCardCapTx(ctx context.Context, tx pgx.Tx, oc returnOrderCtx, exceptReturnID, refundKey string, refundCents int64) error {
 	if oc.CapturedCents <= 0 {
 		return nil
 	}
 	refunded, err := s.store.SumCardRefundedTx(ctx, tx, oc.OrderID, exceptReturnID)
 	if err != nil {
 		return err
+	}
+	unbooked, err := s.store.SumUnbookedCardRefundsTx(ctx, tx, oc.OrderID, refundKey)
+	if err != nil {
+		return err
+	}
+	if unbooked > 0 && refunded+unbooked+refundCents > oc.CapturedCents {
+		return clientErr(http.StatusUnprocessableEntity,
+			"pos: the processor already refunded %s of this card sale that is not booked yet, so another card refund of %s would pass what the capture holds; ring the return that made it again, with its own number, to book it",
+			centsWords(unbooked), centsWords(refundCents))
 	}
 	if refunded+refundCents > oc.CapturedCents {
 		return clientErr(http.StatusUnprocessableEntity,
@@ -1003,6 +1085,52 @@ func (s *Service) settleCardRefunds(ctx context.Context, plans []*returnPlan, tx
 	}
 }
 
+// railSplit is the ruling's split of one return of an order that is not fully paid.
+type railSplit struct {
+	rail   int64  // what goes back in cash or card
+	offset int64  // what comes off the order's open invoice
+	note   string // the split in words, empty when nothing is split
+}
+
+// railSplitFor decides the split for a CASH or CARD return of total cents (the principal's ruling,
+// FROM-PRINCIPAL 47): cash or card only up to what was actually paid on the order's invoice, less what
+// earlier returns already paid out that way; the rest comes off the open invoice. A fully paid invoice
+// splits nothing. tx nil reads the pool (the preview).
+func (s *Service) railSplitFor(ctx context.Context, tx pgx.Tx, oc returnOrderCtx, method string, total int64) (railSplit, error) {
+	if (method != RefundCash && method != RefundCard) || oc.InvoiceStatus == "PAID" || oc.InvoiceID == "" {
+		return railSplit{rail: total}, nil
+	}
+	invTotal, balance, err := s.store.InvoiceMoney(ctx, tx, oc.InvoiceID)
+	if err != nil {
+		return railSplit{}, err
+	}
+	offsets, payouts, err := s.store.SumReturnRails(ctx, tx, oc.OrderID)
+	if err != nil {
+		return railSplit{}, err
+	}
+	avail := invTotal - balance - offsets - payouts
+	if avail < 0 {
+		avail = 0
+	}
+	sp := railSplit{rail: total}
+	if avail < total {
+		sp.rail = avail
+		sp.offset = total - avail
+		if sp.offset > balance { // never more than the invoice still asks for; the rest is paid out
+			sp.rail += sp.offset - balance
+			sp.offset = balance
+		}
+	}
+	switch {
+	case sp.offset == 0:
+	case sp.rail == 0:
+		sp.note = fmt.Sprintf("This order is not paid yet: nothing can go back in cash or card; the whole %s comes off the open invoice", centsWords(sp.offset))
+	default:
+		sp.note = fmt.Sprintf("This order is not fully paid: up to %s can go back in cash or card; the rest, %s, comes off the open invoice", centsWords(sp.rail), centsWords(sp.offset))
+	}
+	return sp, nil
+}
+
 // convertedNotReturnable words why a converted order cannot be returned yet.
 func convertedNotReturnable(found bool, status string) string {
 	switch {
@@ -1032,6 +1160,36 @@ func (s *Service) resolveConverted(ctx context.Context, oc returnOrderCtx) (retu
 	}
 	oc.InvoiceID, oc.InvoiceStatus = id, status
 	return oc, nil
+}
+
+// lockReturnInvoicesTx locks, sorted and before any credit offset, every invoice the returns of these
+// orders may touch: each order's own invoice and its live deposit documents (P2-1). Only the account
+// rail offsets invoices, so only it takes these locks: a cash or card return touches an invoice by its
+// foreign key share alone, and a stronger lock there would queue it against a multi invoice reversal
+// that draws the payments counter first (lockorder_pos_return_test.go).
+func (s *Service) lockReturnInvoicesTx(ctx context.Context, tx pgx.Tx, ocs []returnOrderCtx) error {
+	seen := map[string]bool{}
+	var ids []string
+	add := func(id string) {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	for _, oc := range ocs {
+		add(oc.InvoiceID)
+		if s.deposits != nil {
+			docs, err := s.deposits.DepositDocumentIDsTx(ctx, tx, oc.OrderID)
+			if err != nil {
+				return err
+			}
+			for _, d := range docs {
+				add(d)
+			}
+		}
+	}
+	sort.Strings(ids)
+	return s.store.LockInvoicesTx(ctx, tx, ids)
 }
 
 // anyRestock answers whether any line of the return asked for its goods to go back on the shelf:
@@ -1187,7 +1345,7 @@ func (s *Service) refundApprovalRefusal(cumulativeCents, newTotalCents int64, ca
 // A supplier deposit order carries a third place for the remainder: the live deposit documents
 // (depositDocs). What the sale's own invoice cannot absorb is applied to them in turn, so the
 // deposit invoice does not stay open and owed beside a store credit for the same money.
-func (s *Service) applyAccountCredit(ctx context.Context, tx pgx.Tx, oc returnOrderCtx, total int64, depositDocs []string) error {
+func (s *Service) applyAccountCredit(ctx context.Context, tx pgx.Tx, oc returnOrderCtx, total int64, depositDocs []string) (int64, error) {
 	// The customer read rides THIS transaction (ReadCustomerTx, the
 	// FindReturnByKeyTx discipline): a pool read while the Return
 	// transaction holds its connection has the per-sale lock's holder wait
@@ -1195,14 +1353,15 @@ func (s *Service) applyAccountCredit(ctx context.Context, tx pgx.Tx, oc returnOr
 	// that needs the holder's lock, deadlocking a full pool.
 	cust, err := s.store.ReadCustomerTx(ctx, tx, oc.CustomerID)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	var applied int64
+	var applied, invoiceOffset int64
 	if oc.InvoiceStatus == "FINALIZED" || oc.InvoiceStatus == "PARTIALLY_PAID" {
 		applied, err = s.store.ApplyCreditToInvoice(ctx, tx, oc.InvoiceID, total)
 		if err != nil {
-			return err
+			return 0, err
 		}
+		invoiceOffset = applied
 	}
 	open := cust.OpenBalanceCents
 	if applied > 0 {
@@ -1210,7 +1369,7 @@ func (s *Service) applyAccountCredit(ctx context.Context, tx pgx.Tx, oc returnOr
 			CustomerID: oc.CustomerID, TxnType: "CREDIT_MEMO", AmountCents: -applied,
 			BalanceAfter: open - applied, SourceType: "invoice", SourceRefID: oc.InvoiceID, BranchID: oc.BranchID,
 		}); err != nil {
-			return err
+			return 0, err
 		}
 	}
 	remainder := total - applied
@@ -1220,14 +1379,14 @@ func (s *Service) applyAccountCredit(ctx context.Context, tx pgx.Tx, oc returnOr
 		}
 		depApplied, err := s.store.ApplyCreditToInvoice(ctx, tx, depID, remainder)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if depApplied > 0 {
 			if err := s.store.InsertCustomerTxn(ctx, tx, customerTxnRow{
 				CustomerID: oc.CustomerID, TxnType: "CREDIT_MEMO", AmountCents: -depApplied,
 				BalanceAfter: open - applied - depApplied, SourceType: "invoice", SourceRefID: depID, BranchID: oc.BranchID,
 			}); err != nil {
-				return err
+				return 0, err
 			}
 			applied += depApplied
 			remainder -= depApplied
@@ -1238,10 +1397,10 @@ func (s *Service) applyAccountCredit(ctx context.Context, tx pgx.Tx, oc returnOr
 			CustomerID: oc.CustomerID, TxnType: "CREDIT_MEMO", AmountCents: -remainder,
 			BalanceAfter: open - total, SourceType: "pos_return", SourceRefID: oc.OrderID, BranchID: oc.BranchID,
 		}); err != nil {
-			return err
+			return 0, err
 		}
 	}
-	return nil
+	return invoiceOffset, nil
 }
 
 // DepositDocumentLister is the seam the return reads the order's live supplier deposit documents
