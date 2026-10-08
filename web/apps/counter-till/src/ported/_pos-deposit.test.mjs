@@ -53,15 +53,14 @@ test('a deposit is offered only where the goods wait, and only when the server o
   assert.equal(depositOffered('COLLECT_LATER', [{ shape: 'PAY_IN_FULL_NOW' }]), false);
 });
 
-test('the sentence under the lines follows the shape', () => {
-  assert.equal(
-    depositSentence('DEPOSIT_NOW_REST_ON_ACCOUNT'),
-    'A credit customer: the rest rides their account and is paid from the statement.',
-  );
-  assert.equal(
-    depositSentence('DEPOSIT_NOW_REST_DUE_LATER'),
-    'Cash On Demand means pay before release, never cash on delivery: the deposit puts the order in process, and picking waits for paid in full.',
-  );
+test('the sentence under the lines is the server\'s, by reason, and absent when the server sent none', () => {
+  const sentence = 'This account cannot carry this sale on account: pay in full now, or take a deposit with the balance due later.';
+  const refused = [{ shape: 'PAY_IN_FULL_NOW' }, { shape: 'DEPOSIT_NOW_REST_DUE_LATER', lineTwoWords: 'Balance due later', lineTwoSentence: sentence }];
+  assert.equal(depositSentence(depositOption(refused)), sentence);
+  assert.equal(depositSentence(depositOption(cod)), '');
+  assert.equal(depositSentence(null), '');
+  const answer = { subtotal_cents: 1, tax_cents: 0, total_cents: 1, payment_options: [{ shape: 'DEPOSIT_NOW_REST_DUE_LATER', line_two_words: 'Balance due later', line_two_sentence: sentence }] };
+  assert.equal(readPreview(answer).paymentOptions[0].lineTwoSentence, sentence);
 });
 
 test('the button names the deposit in dollars', () => {

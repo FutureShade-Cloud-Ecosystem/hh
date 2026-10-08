@@ -4807,8 +4807,9 @@ type PosSupplierDepositOption struct {
 }
 
 type PosPaymentOption struct {
-	Shape        string  `json:"shape"`
-	LineTwoWords *string `json:"line_two_words,omitempty"`
+	Shape           string  `json:"shape"`
+	LineTwoWords    *string `json:"line_two_words,omitempty"`
+	LineTwoSentence *string `json:"line_two_sentence,omitempty"`
 }
 
 type PosSaleView struct {

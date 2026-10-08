@@ -6573,7 +6573,9 @@ ${/* Fulfilment: the EXISTING sale types (counter / will-call / delivered / COD 
               <span class="num">${formatMoney(restCents)}</span>
               <span class="dptag">later</span>`}
       </div>
-      <p class="dpsentence" data-testid="deposit-sentence">${depositSentence(shape)}</p>
+      ${depositSentence(option ?? null) !== ''
+        ? html`<p class="dpsentence" data-testid="deposit-sentence">${depositSentence(option ?? null)}</p>`
+        : nothing}
       ${this.renderCardType()}
       <button
         class="complete-cta"

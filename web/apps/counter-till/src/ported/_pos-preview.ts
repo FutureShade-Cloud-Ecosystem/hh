@@ -28,6 +28,8 @@ export interface PreviewBody {
 export interface PaymentOption {
   shape: string;
   lineTwoWords?: string;
+  /** The server's sentence under the two lines of a deposit sale; it follows the reason the account has this shape. */
+  lineTwoSentence?: string;
 }
 
 /** What the till knows about the ticket's totals: nothing asked, asked and waiting, answered, or unreachable. */
@@ -182,7 +184,10 @@ export function readPaymentOptions(raw: unknown): PaymentOption[] {
   for (const entry of raw) {
     const o = (entry ?? {}) as Record<string, unknown>;
     if (typeof o.shape !== 'string' || o.shape === '') continue;
-    out.push(typeof o.line_two_words === 'string' && o.line_two_words !== '' ? { shape: o.shape, lineTwoWords: o.line_two_words } : { shape: o.shape });
+    const option: PaymentOption = { shape: o.shape };
+    if (typeof o.line_two_words === 'string' && o.line_two_words !== '') option.lineTwoWords = o.line_two_words;
+    if (typeof o.line_two_sentence === 'string' && o.line_two_sentence !== '') option.lineTwoSentence = o.line_two_sentence;
+    out.push(option);
   }
   return out;
 }
