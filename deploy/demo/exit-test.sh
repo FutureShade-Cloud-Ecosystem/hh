@@ -24,7 +24,9 @@
 #
 #   the image builds;
 #   on a clean database it answers /healthz ok (no phrase asked);
-#   the app's first page asks for the phrase (refused without, served with);
+#   each app serves under its own prefix behind the phrase gate (refused
+#     without, served with): the front door at /, the till at /till/, the
+#     public desk at /q/ and /quote.html, /quote/ per the desk being present;
 #   /api/v1/demo/flows answers the closed table's two flows;
 #   POST /api/v1/demo/session without the phrase is refused by the gate,
 #     and with the phrase mints a token;
@@ -225,11 +227,46 @@ code="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/")"
 [ "$code" = "401" ] && pass "a page without the phrase is refused" \
 	|| fail "a page without the phrase answered $code, want 401"
 
-page="$(curl -s -u "demo:$PHRASE" "$BASE/")"
-case "$page" in
-	*ct-app-root*) pass "the app's first page serves with the phrase" ;;
-	*) fail "the app's first page did not serve (no app markup in the answer)" ;;
-esac
+# The apps the box serves, each under its own prefix behind the one phrase
+# gate (the front door at /, the counter till at /till/, the public desk at
+# /q/ and at /quote.html where the server's emailed share link lands, the
+# Quote Desk at /quote/ whenever web/apps/quote-desk exists in this tree).
+page_has() {
+	# path, marker, label
+	body="$(curl -s -u "demo:$PHRASE" "$BASE$1")"
+	case "$body" in
+		*"$2"*) pass "$3 serves with the phrase" ;;
+		*) fail "$3 did not serve at $1 (no $2 in the answer)" ;;
+	esac
+}
+page_gated() {
+	code="$(curl -s -o /dev/null -w '%{http_code}' "$BASE$1")"
+	[ "$code" = "401" ] && pass "$2 is refused without the phrase" \
+		|| fail "$2 answered $code without the phrase, want 401"
+}
+page_has / fd-app-root "the front door at /"
+page_has /till/ ct-app-root "the counter till at /till/"
+page_has /q/ pd-quote-public "the public desk at /q/"
+page_has "/quote.html?t=x" pd-quote-public "the public desk at /quote.html"
+page_gated /till/ "the counter till at /till/"
+page_gated /q/ "the public desk at /q/"
+page_gated /quote/ "the /quote/ prefix"
+if [ -d web/apps/quote-desk ]; then
+	code="$(curl -s -o /dev/null -w '%{http_code}' -u "demo:$PHRASE" "$BASE/quote/")"
+	[ "$code" = "200" ] && pass "the Quote Desk serves at /quote/ (the desk is in this tree)" \
+		|| fail "the Quote Desk answered $code at /quote/, want 200"
+else
+	code="$(curl -s -o /dev/null -w '%{http_code}' -u "demo:$PHRASE" "$BASE/quote/")"
+	[ "$code" = "404" ] && pass "/quote/ answers 404 with the phrase while the desk is absent" \
+		|| fail "/quote/ answered $code with the phrase while the desk is absent, want 404"
+fi
+# A till asset resolves under its own prefix (the base flag reached the build).
+asset="$(curl -s -u "demo:$PHRASE" "$BASE/till/" | sed -n 's/.*src="\(\/till\/assets\/[^"]*\.js\)".*/\1/p' | head -1)"
+if [ -n "$asset" ] && [ "$(curl -s -o /dev/null -w '%{http_code}' -u "demo:$PHRASE" "$BASE$asset")" = "200" ]; then
+	pass "the till's script asset resolves under /till/"
+else
+	fail "the till's script asset did not resolve under /till/ (found: ${asset:-none})"
+fi
 
 flows="$(curl -s -u "demo:$PHRASE" "$BASE/api/v1/demo/flows")"
 case "$flows" in
