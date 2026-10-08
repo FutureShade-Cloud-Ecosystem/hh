@@ -294,9 +294,11 @@ func (s *Service) SetStatus(ctx context.Context, tenant, actor, orderID, newStat
 	if !validStatus(newStatus) {
 		return httpx.BadRequestf("unknown order status %q", newStatus)
 	}
-	// Item 9.3: the pay before release hold guards the one status that starts
-	// releasing goods, at the choke point itself, whatever caller reached it.
-	if newStatus == "PICKING" {
+	// Item 9.3: the pay before release hold guards the statuses that release
+	// or advance goods, at the choke point itself, whatever caller reached it.
+	// Item 9 Opus P2-2 widened the target from the picking rung alone to every
+	// forward move whose target ranks at or above it (holdGuardedTarget below).
+	if holdGuardedTarget(newStatus) {
 		if err := s.refuseHeldFromPicking(ctx, orderID); err != nil {
 			return err
 		}
@@ -370,6 +372,19 @@ func eventAllowedFrom(target string) []string {
 	}
 	sort.Strings(out) // deterministic order, the set is a query parameter and rides into test assertions
 	return out
+}
+
+// holdGuardedTarget names the status targets the pay before release hold
+// guards (item 9 Opus P2-2): every target that ranks at or above PICKING and
+// below CLOSED. PICKING starts releasing goods; READY, PARTIALLY_FULFILLED
+// and FULFILLED are the goods leaving or gone; INVOICED is the event driver
+// that jumps an order past the whole ladder the moment its invoice
+// finalizes. CLOSED is the terminal bookkeeping state, not a goods release,
+// and stays outside the hold; a held order's money question stays open
+// whatever the column says.
+func holdGuardedTarget(status string) bool {
+	r, ok := statusRank[status]
+	return ok && r >= statusRank["PICKING"] && r < statusRank["CLOSED"]
 }
 
 // AdvanceFromEvent is the ONLY sanctioned status writer for the event-driven drivers (consumer.go). It
@@ -675,9 +690,14 @@ func (s *Service) legalActions(ctx context.Context, caller identity.StaffContext
 // variant so the predicate runs under the order-row lock; nil uses the single-statement guarded write.
 func (s *Service) setStatusGuarded(ctx context.Context, actor, orderID, newStatus, reason string, allowedFrom []string, precheck func(context.Context) error) error {
 	// Item 9.3: the pay before release hold guards the manual and event driven
-	// moves into PICKING (this is the path TransitionManual and AdvanceFromEvent
-	// take; SetStatus carries its own copy of the guard at the choke point).
-	if newStatus == "PICKING" {
+	// moves into the statuses that release or advance goods (this is the path
+	// TransitionManual and AdvanceFromEvent take, and so the tasks advance
+	// rule's adapter; SetStatus carries its own copy of the guard at the choke
+	// point). Item 9 Opus P2-2 widened the target from the picking rung alone
+	// to every forward move whose target ranks at or above it, so the event
+	// drivers cannot step a held order straight to READY, FULFILLED or
+	// INVOICED past the guard.
+	if holdGuardedTarget(newStatus) {
 		if err := s.refuseHeldFromPicking(ctx, orderID); err != nil {
 			return err
 		}

@@ -155,6 +155,14 @@ func (c *LifecycleConsumer) settle(e notify.Event, orderID, target string, err e
 	switch {
 	case err == nil, errors.Is(err, ErrNoTransition):
 		return nil
+	case errors.Is(err, ErrHeldFromPicking):
+		// Item 9 Opus P2-2: the order owes money under a pay before release
+		// shape, so it stays where it is until the balance is paid. Not an
+		// error: a non-owning observer must never fail or retry a financial
+		// row on the hold, and once paid the order moves on as any order
+		// does, through the normal doors (which all carry the hold).
+		c.info("held, stayed put on the "+target+" advance until the balance is paid", e, orderID)
+		return nil
 	case errors.Is(err, ErrIllegalTransition):
 		// Not a failure: the ladder refused a non-forward move. Logged so an unexpected pattern is
 		// visible without polluting the error path.
