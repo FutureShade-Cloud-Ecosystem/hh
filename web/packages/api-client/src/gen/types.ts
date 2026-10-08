@@ -6192,6 +6192,7 @@ export type QuotePublicView = {
   delivery_address?: string;
   requested_date?: string;
   delivery_fee_cents?: number;
+  order_no?: string;
 };
 export type QuotePublicLine = {
   line_no: number;

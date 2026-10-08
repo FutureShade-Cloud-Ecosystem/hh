@@ -675,6 +675,84 @@ test("the paper copy carries the same quote colours, and prints them", async ({ 
   expect(adjust, "colours must survive the print dialog's default of dropping backgrounds").toBe("exact");
 });
 
+// A conversion visibly changes colour (decision log row 1063): the same quote reads blue before and
+// gold after, the page reads as the order, and nothing on it is quote blue.
+async function convertInFlight(page: Page, token: string): Promise<void> {
+  await page.route(`**/api/public/v1/quotes/${token}`, async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as { status: string; acceptable: boolean; order_no?: string };
+    body.status = "CONVERTED";
+    body.acceptable = false;
+    body.order_no = "SO-TRT-17";
+    await route.fulfill({ response, json: body });
+  });
+}
+
+test("the same quote reads blue before conversion and gold after, light and on paper", async ({ page, context }) => {
+  for (const print of [false, true]) {
+    const query = print ? "&print=1" : "";
+    if (print) await page.emulateMedia({ media: "print" });
+    await page.goto(`/?t=q-flip-8${query}`);
+    await expect(page.locator("pd-quote-public").getByRole("heading", { level: 1 })).toHaveText(/Quote #Q-7/);
+    expectToken(await measureAgainstToken(page, "--hh-quote", "h1", "color"), "--hh-quote", `the quote title (print ${print})`);
+    expectToken(await measureAgainstToken(page, "--hh-quote", ".totals .grand", "color"), "--hh-quote", `the quote total (print ${print})`);
+    const after = await context.newPage();
+    if (print) await after.emulateMedia({ media: "print" });
+    await convertInFlight(after, "q-flip-8");
+    await after.goto(`/?t=q-flip-8${query}`);
+    await expect(after.locator("pd-quote-public").getByRole("heading", { level: 1 })).toHaveText(
+      "Sales order SO-TRT-17, converted from #Q-7",
+    );
+    expectToken(await measureAgainstToken(after, "--hh-accent-text", ".totals .grand", "color"), "--hh-accent-text", `the order total (print ${print})`);
+    expectToken(await measureAgainstToken(after, "--hh-accent", ".orderband", "backgroundColor"), "--hh-accent", `the order band (print ${print})`);
+    expectToken(await measureAgainstToken(after, "--hh-accent-ink", "h1", "color"), "--hh-accent-ink", `the order title ink on its gold band (print ${print})`);
+    expectToken(await measureAgainstToken(after, "--hh-accent-text", "header.dealer", "borderBottomColor"), "--hh-accent-text", `the order's dealer rule (print ${print})`);
+    await after.close();
+  }
+});
+
+test("a converted quote's page is the order's, in the gold family only: no quote blue, no Accept form", async ({ page }) => {
+  await page.goto("/?t=q-conv-8");
+  const heading = page.locator("pd-quote-public").getByRole("heading", { level: 1 });
+  await expect(heading).toHaveText("Sales order SO-TRT-17, converted from #Q-7");
+  await expect(page.getByRole("button", { name: "Accept quote" })).toHaveCount(0);
+  await expect(page.locator("#name")).toHaveCount(0);
+  // No element on the page paints the quote family: walk every computed colour and refuse the blue.
+  const blue = await page.evaluate(() => {
+    const px = (c: string): number[] => {
+      const ctx = document.createElement("canvas").getContext("2d") as CanvasRenderingContext2D;
+      ctx.fillStyle = c;
+      ctx.fillRect(0, 0, 1, 1);
+      return Array.from(ctx.getImageData(0, 0, 1, 1).data).slice(0, 3);
+    };
+    const tokens = ["--hh-quote", "--hh-quote-fill", "--hh-quote-link", "--hh-quote-tint"].map((t) =>
+      px(getComputedStyle(document.documentElement).getPropertyValue(t).trim()),
+    );
+    const root = document.querySelector("pd-quote-public")?.shadowRoot;
+    const hits: string[] = [];
+    for (const el of Array.from(root?.querySelectorAll("*") ?? [])) {
+      const cs = getComputedStyle(el);
+      for (const prop of ["color", "backgroundColor", "borderBottomColor", "borderTopColor", "outlineColor"] as const) {
+        const p = px(cs[prop]);
+        if (tokens.some((t) => t.every((c, i) => Math.abs(c - p[i]) <= 2))) hits.push(`${el.tagName}.${el.className} ${prop}`);
+      }
+    }
+    return hits;
+  });
+  expect(blue, "nothing on a converted page may read in the quote blue").toEqual([]);
+  expectToken(await measureAgainstToken(page, "--hh-accent-text", ".totals .grand", "color"), "--hh-accent-text", "the order total");
+  expectToken(await measureAgainstToken(page, "--hh-accent", ".orderband", "backgroundColor"), "--hh-accent", "the order band");
+});
+
+test("a converted quote with no order number from the core says it became an order and invents no number", async ({ page }) => {
+  await page.goto("/?t=q-conv-bare-8");
+  const heading = page.locator("pd-quote-public").getByRole("heading", { level: 1 });
+  await expect(heading).toHaveText(/Quote #Q-7/);
+  await expect(page.locator("pd-quote-public")).toContainText("now an order");
+  await expect(page.locator("pd-quote-public")).not.toContainText("Sales order");
+  expectToken(await measureAgainstToken(page, "--hh-accent-text", ".totals .grand", "color"), "--hh-accent-text", "the order total");
+});
+
 // The core keeps an ACCEPTED quote acceptable when multi-accept is on
 // (share.go): the view of a committed quote reads ACCEPTED with acceptable true.
 async function multiAcceptView(page: Page, token: string): Promise<void> {

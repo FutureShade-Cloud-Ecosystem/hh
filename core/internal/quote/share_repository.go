@@ -183,10 +183,26 @@ func (r *Repository) PublicQuote(ctx context.Context, quoteID string) (PublicQuo
 		}
 		v.Lines = append(v.Lines, l)
 	}
+	if err := rows.Err(); err != nil {
+		return v, err
+	}
+	rows.Close()
 	if v.DepositRequired && v.DepositPct > 0 {
 		v.DepositCents = (v.TotalCents*int64(v.DepositPct) + 50) / 100
 	}
-	return v, rows.Err()
+	// The order a converted quote became, and ONLY then: the number rides the status, so a quote that
+	// is not CONVERTED serves the exact payload it always did. Read from the quote's own provenance
+	// table (the module never touches the order's tables), the first conversion, as the repeat-accept
+	// refusal names the earliest order.
+	if v.Status == "CONVERTED" {
+		err := tx.QueryRow(ctx, `
+			SELECT order_no FROM quote_accept_provenance
+			 WHERE quote_id = $1::uuid ORDER BY accept_seq ASC LIMIT 1`, quoteID).Scan(&v.OrderNo)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return v, fmt.Errorf("read the converted quote's order: %w", err)
+		}
+	}
+	return v, nil
 }
 
 // MarkSent moves DRAFT -> SENT under the quote row lock, recording the transition on the same tx.

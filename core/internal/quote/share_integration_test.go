@@ -736,3 +736,62 @@ func TestIntegration_PublicQuote_CarriesStoredTax(t *testing.T) {
 		}
 	})
 }
+
+// TestIntegration_PublicQuote_OrderNoOnlyAfterConversion is the fence of the quote accent's one new
+// field: a SENT or ACCEPTED quote's view carries no order number, and the same quote read after it
+// converts carries the number of the order it became (the earliest, as the repeat-accept refusal
+// names it), on the token read and on the staff preview alike, because both are one code path.
+func TestIntegration_PublicQuote_OrderNoOnlyAfterConversion(t *testing.T) {
+	pool := intPool(t)
+	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	svc, quoteID, token := mintedFor(t, pool, now, nil)
+	cust := ""
+	if err := pool.QueryRow(context.Background(), `SELECT customer_id::text FROM quotes WHERE id=$1`, quoteID).Scan(&cust); err != nil {
+		t.Fatalf("read customer: %v", err)
+	}
+	cleanupConvertedOrders(t, pool, quoteID)
+	setCreditLimit(t, pool, cust, 5_000_00)
+
+	for _, status := range []string{"SENT", "ACCEPTED"} {
+		if _, err := pool.Exec(context.Background(), `UPDATE quotes SET status=$2 WHERE id=$1`, quoteID, status); err != nil {
+			t.Fatalf("force %s: %v", status, err)
+		}
+		view, err := svc.PublicQuoteByToken(context.Background(), token)
+		if err != nil {
+			t.Fatalf("view a %s quote: %v", status, err)
+		}
+		if view.OrderNo != "" {
+			t.Errorf("a %s quote must carry no order number; got %q", status, view.OrderNo)
+		}
+	}
+
+	res, err := gatedRepo(pool).Convert(context.Background(), cust, quoteID, ConvertOptions{})
+	if err != nil {
+		t.Fatalf("convert: %v", err)
+	}
+	view, err := svc.PublicQuoteByToken(context.Background(), token)
+	if err != nil {
+		t.Fatalf("view the converted quote: %v", err)
+	}
+	if view.Status != "CONVERTED" || view.OrderNo == "" || view.OrderNo != res.OrderNo {
+		t.Errorf("a converted quote's view = status %q order_no %q, want CONVERTED and %q", view.Status, view.OrderNo, res.OrderNo)
+	}
+	preview, err := svc.CustomerViewPreview(qCtxAs(intStaff(intTrenton)), quoteID)
+	if err != nil {
+		t.Fatalf("preview the converted quote: %v", err)
+	}
+	if preview.OrderNo != res.OrderNo {
+		t.Errorf("the staff preview carries order_no %q, want %q: the two reads are one code path", preview.OrderNo, res.OrderNo)
+	}
+	// Forcing the status away again hides the number: it rides the status, not the order row alone.
+	if _, err := pool.Exec(context.Background(), `UPDATE quotes SET status='LOST' WHERE id=$1`, quoteID); err != nil {
+		t.Fatalf("force LOST: %v", err)
+	}
+	lost, err := svc.PublicQuoteByToken(context.Background(), token)
+	if err != nil {
+		t.Fatalf("view: %v", err)
+	}
+	if lost.OrderNo != "" {
+		t.Errorf("only a CONVERTED quote carries an order number; got %q on %s", lost.OrderNo, lost.Status)
+	}
+}

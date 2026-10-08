@@ -97,10 +97,34 @@ export class QuotePublicPage extends HHElement {
         -webkit-print-color-adjust: exact;
         print-color-adjust: exact;
       }
+      /* A converted quote is the ORDER's document: the same page, re-pointed to the gold family
+         (gold as ink, the gold fill with its near-black ink), and nothing on it reads quote blue. */
+      :host([data-doc="order"]) {
+        --doc-ink: var(--hh-accent-text);
+        --doc-fill: var(--hh-accent);
+        --doc-fill-on: var(--hh-accent-ink);
+        --doc-link: var(--hh-accent-text);
+      }
       h1 {
         font-size: 1.3rem;
         margin: 0 0 var(--hh-s-4);
         color: var(--doc-ink);
+      }
+      /* The order's band: the gold fill under the near-black accent ink, the one pair the gold rule
+         allows (11.23:1). The title rides it; the quote has no band on this page. */
+      .orderband {
+        background: var(--hh-accent);
+        color: var(--hh-accent-ink);
+        border-radius: var(--hh-radius-card);
+        padding: var(--hh-s-12) var(--hh-s-16);
+        margin-bottom: var(--hh-s-12);
+      }
+      .orderband h1 {
+        color: var(--hh-accent-ink);
+        margin: 0;
+      }
+      .orderband .from {
+        font-weight: 600;
       }
       a {
         color: var(--doc-link);
@@ -561,6 +585,12 @@ export class QuotePublicPage extends HHElement {
   }
 
   /** Fire the one-shot print once the loaded quote has painted. */
+  /** The document's family follows the quote's state: a CONVERTED quote reads as the order. */
+  willUpdate(): void {
+    if (this.quote?.status === "CONVERTED") this.setAttribute("data-doc", "order");
+    else this.removeAttribute("data-doc");
+  }
+
   updated(): void {
     this.syncNameLock();
     this.syncAcceptHint();
@@ -976,6 +1006,21 @@ export class QuotePublicPage extends HHElement {
     return html`<header class="dealer"><span class="dealer-name">${DEALER_NAME}</span></header>${this.renderBody()}`;
   }
 
+  /**
+   * The title: a quote reads "Quote #<number>"; once converted it reads as the order, "Sales order
+   * <number>, converted from #<quote number>", on the gold band. A core that sent no order number is
+   * never given one: the page keeps the quote's number and says only that it became an order.
+   */
+  private renderTitle(q: QuoteViewRef): TemplateResult {
+    if (q.status !== "CONVERTED") return html`<h1>Quote ${quoteNumberLabel(q.quoteNo)}</h1>`;
+    if (q.orderNo === null) {
+      return html`<div class="orderband"><h1>Quote ${quoteNumberLabel(q.quoteNo)}<span class="from">, now an order</span></h1></div>`;
+    }
+    return html`<div class="orderband">
+      <h1>Sales order ${q.orderNo}<span class="from">, converted from ${quoteNumberLabel(q.quoteNo)}</span></h1>
+    </div>`;
+  }
+
   private renderBody(): TemplateResult {
     if (this.previewRefused) {
       return html`<div class="card refusal">
@@ -994,7 +1039,7 @@ export class QuotePublicPage extends HHElement {
     const withImages = showsImages(q);
     return html`
       ${q.preview ? html`<div class="previewband" role="status">${PREVIEW_BAND}</div>` : nothing}
-      <h1>Quote ${quoteNumberLabel(q.quoteNo)}</h1>
+      ${this.renderTitle(q)}
       <div class="sub">
         Prepared for ${q.customerName} · last updated ${this.when(q.asOf)}
         ${q.validUntil ? html` · ${q.expired ? "expired" : "valid until"} ${plainDay(q.validUntil)}` : nothing}

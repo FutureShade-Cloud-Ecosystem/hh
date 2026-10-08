@@ -53,6 +53,8 @@ export interface QuoteViewRef {
   deliveryFeeCents: number | null;
   /** The dealer's notice that the quantities are the customer's to confirm; absent is honest, never a sentence of the page's own. */
   quantityNotice: string | null;
+  /** The order a CONVERTED quote became; honoured only while the status is CONVERTED, as the view fences it. */
+  orderNo: string | null;
 }
 
 export interface AcceptanceRef {
@@ -225,6 +227,7 @@ export function validateQuoteView(value: unknown): QuoteViewRef | null {
     requestedDate: stringAt(record, "requested_date"),
     deliveryFeeCents: integerAt(record, "delivery_fee_cents"),
     quantityNotice: stringAt(record, "quantity_notice"),
+    orderNo: status === "CONVERTED" ? stringAt(record, "order_no") : null,
   };
 }
 
