@@ -26,6 +26,8 @@
 //   DELETE /api/v1/pos/parked/{id}          -> PosParkedDiscard
 //   GET  /api/v1/pos/returns/customer-lines -> PosCustomerLines (422 for the house WALK-IN)
 //   POST /api/v1/pos/returns/preview        -> PosReturnPreview (the commit's own pricing, nothing written)
+//   POST /api/v1/pos/swaps/preview          -> PosSwapPreview (the credit, the new order, applied, leftover, shortfall)
+//   POST /api/v1/pos/swaps                  -> PosSwapResult (409 changed, 502 processor, 409 approval on the note total)
 //   POST /api/v1/pos/returns-across         -> PosReturnNote (409 PosRefundApprovalRequired on the note total)
 //   GET  /api/v1/pos/policy                 -> PosPolicy
 //   GET  /api/v1/pos/workspace              -> PosWorkspacePrefs (PUT writes, DELETE resets)
@@ -564,6 +566,7 @@ const CUSTOMER_ORDER_FACTS = {
   "CT-1001": { created_at: "2026-10-03T15:20:00Z", job_label: "Marina Road patio", source: "TILL", sale_type: "COLLECT_NOW" },
   "CT-1002": { created_at: "2026-10-01T09:05:00Z", job_label: "Front walk", source: "TILL", sale_type: "COLLECT_NOW" },
   "CT-1003": { created_at: "2026-10-05T10:00:00Z", job_label: "", source: "TILL", sale_type: "COLLECT_NOW" },
+  "CT-1004": { created_at: "2026-10-06T10:00:00Z", job_label: "Garden steps", source: "QUOTE", sale_type: "" },
   "CT-2001": { created_at: "2026-10-04T11:40:00Z", job_label: "", source: "TILL", sale_type: "COLLECT_NOW" },
   "CT-2002": { created_at: "2026-10-02T13:10:00Z", job_label: "Garden wall", source: "TILL", sale_type: "COLLECT_NOW" },
 };
@@ -580,7 +583,15 @@ const CUSTOMER_ORDERS = {
   ],
   "c-harbour": [],
   // An account with no terms and no credit line: the account rail is refused in the core's words.
-  "c-retail": [customerOrderOf("c-retail", "CT-1003")],
+  "c-retail": [
+    // An order a quote became with no live invoice yet: the read marks it blocked, with the core's words.
+    customerOrderOf("c-retail", "CT-1004", {
+      sale_tender: "",
+      returnable: false,
+      not_returnable_reason: "no invoice has been raised for this order yet, so there is nothing to refund against",
+    }),
+    customerOrderOf("c-retail", "CT-1003"),
+  ],
 };
 
 function customerOrderView(order) {
@@ -595,8 +606,10 @@ function customerOrderView(order) {
     sale_type: order.sale_type,
     tender: order.sale_tender,
     fulfilment_state: order.fulfilment_state,
-    invoice_id: order.invoice_id,
+    invoice_id: order.returnable === false ? "" : order.invoice_id,
     card_refundable: order.card_refundable,
+    returnable: order.returnable !== false,
+    not_returnable_reason: order.returnable === false ? order.not_returnable_reason : "",
     lines: order.lines.map((line) => {
       const returned = RETURNED_QTY.get(line.order_line_id) ?? 0;
       return {
@@ -643,6 +656,11 @@ function reseedReturns() {
   NOTE_META.clear();
   CARD_REFUNDED.clear();
   PREVIEW_BODIES.length = 0;
+  SWAPS_BY_KEY.clear();
+  SWAP_KEYS_SEEN.length = 0;
+  LAST_SWAP_BODY = null;
+  swapFailure = null;
+  DRAWER.cash_in_cents = 0;
   NOTE_KEYS_SEEN.length = 0;
   LAST_NOTE_BODY = null;
   SIGHTINGS.length = 0;
@@ -1084,6 +1102,7 @@ function noteRefusal(caller, body, approver, commit = true) {
   for (const entry of body.orders) {
     const order = orderById(entry.order_id);
     if (order === undefined) return refuse(404, `pos: no sale ${entry.order_id}`);
+    if (order.returnable === false) return refuse(422, `pos: ${order.not_returnable_reason}`);
     if (commit && body.refund_method === "CASH" && body.till_session_id !== DRAWER.session_id) {
       return refuse(422, "pos: a cash refund needs the open drawer at the sale's branch");
     }
@@ -1154,7 +1173,7 @@ function previewNote(body) {
   return { customer_id: body.customer_id.trim(), branch_id: branchId, subtotal_cents: subtotal, tax_cents: 0, total_cents: subtotal, orders };
 }
 
-function commitNote(caller, body, approver) {
+function commitNote(caller, body, approver, swap = null) {
   const replay = NOTES_BY_KEY.get(body.idempotency_key);
   if (replay !== undefined) return { status: 200, body: { ...replay, replayed: true } };
   NOTE_SEQ += 1;
@@ -1173,6 +1192,11 @@ function commitNote(caller, body, approver) {
       if (body.refund_method === "CARD") CARD_REFUNDED.set(order.order_id, (CARD_REFUNDED.get(order.order_id) ?? 0) + line.unit_price_cents * asked.qty_base);
     }
     subtotal += childTotal;
+    let applied;
+    if (swap !== null) {
+      applied = Math.min(childTotal, swap.remaining);
+      swap.remaining -= applied;
+    }
     returns.push({
       return_id: uuid(40000 + RETURN_SEQ),
       return_no: `CT-R-${100 + RETURN_SEQ}`,
@@ -1182,12 +1206,14 @@ function commitNote(caller, body, approver) {
       subtotal_cents: childTotal,
       tax_cents: 0,
       total_cents: childTotal,
+      ...(applied === undefined ? {} : { applied_cents: applied }),
       pickup_status: "NONE",
       status: "COMMITTED",
       replayed: false,
     });
   }
   const answer = {
+    ...(swap === null ? {} : { swap_id: swap.swapId }),
     note_id: uuid(60000 + NOTE_SEQ),
     note_no: `CT-CN-${100 + NOTE_SEQ}`,
     customer_id: body.customer_id,
@@ -1204,7 +1230,132 @@ function commitNote(caller, body, approver) {
     clerk: caller.account.user_id,
     approver: approver.present && approver.account !== null ? approver.account.user_id : null,
   });
-  if (body.refund_method === "CASH" && body.till_session_id === DRAWER.session_id) DRAWER.cash_out_cents += subtotal;
+  if (body.refund_method === "CASH" && body.till_session_id === DRAWER.session_id) {
+    DRAWER.cash_out_cents += swap === null ? subtotal : subtotal - swap.applied;
+  }
+  return { status: 201, body: answer };
+}
+
+// ---------------------------------------------------------------------------
+// The swap: the core's swap.go, one function for the preview and the ring (swapFigures). The credit is
+// the note's own preview, the new order is priced from the stub's catalogue at the customer's price
+// with the stub's flat tax, applied = min(credit, total), leftover = credit - applied, shortfall =
+// total - applied, and the leftover goes back by the original tender (Q7).
+// ---------------------------------------------------------------------------
+
+const SWAPS_BY_KEY = new Map();
+const SWAP_KEYS_SEEN = [];
+let LAST_SWAP_BODY = null;
+let SWAP_SEQ = 0;
+// One shot harness switch for the two failures a till must say in words: "changed" (409) and "processor" (502).
+let swapFailure = null;
+
+function swapFigures(caller, body, approver, commit) {
+  if (body === null || typeof body !== "object") return refuse(400, "the request body is not JSON");
+  if (!Array.isArray(body.lines) || body.lines.length === 0) return refuse(422, "pos: a sale needs at least one line");
+  const saleType = body.sale_type ?? "COLLECT_NOW";
+  if (!["COLLECT_NOW", "COLLECT_LATER", "DELIVERED"].includes(saleType)) {
+    return refuse(422, `pos: a swap rings a collect now, collect later or delivered order, not ${saleType}`);
+  }
+  const tender = body.tender ?? "CASH";
+  if (!["CASH", "CARD", "CHEQUE", "ACCOUNT"].includes(tender)) return refuse(400, "pos: tender must be CASH, CARD, CHEQUE or ACCOUNT");
+  // The credit through the note's own shape, walls and guard (preview mode: no rail yet).
+  const shape = noteRefusal(caller, { ...body, refund_method: "CASH", idempotency_key: "swap-preview" }, approver, false);
+  if (shape !== null) return shape;
+  const credit = previewNote(body);
+  const customer = customerFor(body.customer_id);
+  let newSub = 0;
+  for (const asked of body.lines) {
+    const resolved = resolveLine(body.customer_id, asked.product_id, credit.branch_id);
+    if (resolved === null || customer === null) return refuse(422, `pos: product ${asked.product_id} is not sold here`);
+    newSub += lineTotalCents(resolved.customer_cents, asked.qty_entered);
+  }
+  const newTax = taxCents(newSub);
+  const newTotal = newSub + newTax;
+  const applied = Math.min(credit.total_cents, newTotal);
+  const leftover = credit.total_cents - applied;
+  const shortfall = newTotal - applied;
+  let method = "";
+  let uniform = true;
+  for (const [index, entry] of body.orders.entries()) {
+    const order = orderById(entry.order_id);
+    if (order.invoice_status === "OPEN") {
+      return refuse(422, `pos: order ${order.order_no} still has an open invoice, so its return is not credit in hand; return it as a credit note first, then ring the new order`);
+    }
+    const m = order.sale_tender === "CASH" ? "CASH" : order.sale_tender === "CARD" ? "CARD" : order.sale_tender === "" || order.sale_tender === "ACCOUNT" ? "ACCOUNT_CREDIT" : "";
+    if (m === "") {
+      if (leftover > 0) return refuse(422, `pos: order ${order.order_no} was paid by ${order.sale_tender.toLowerCase()}, which has no refund rail; return it as a credit note and ring the new order apart`);
+    }
+    if (index === 0) method = m || "ACCOUNT_CREDIT";
+    else if (m !== method) uniform = false;
+  }
+  if (leftover > 0) {
+    if (!uniform) return refuse(422, "pos: these orders were paid by different tenders and the leftover goes back by the original tender; swap them one tender at a time");
+    if (body.leftover_method && body.leftover_method !== method) {
+      return refuse(422, `pos: the leftover goes back by the original tender, ${method}, not ${body.leftover_method}`);
+    }
+  }
+  if (commit) {
+    // The note's own rail checks and the approval, judged on the note total, the way the note's commit does.
+    const railed = noteRefusal(caller, { ...body, refund_method: leftover > 0 ? method : "ACCOUNT_CREDIT", idempotency_key: body.idempotency_key }, approver, true);
+    if (railed !== null && !(leftover === 0 && railed.status === 422)) return railed;
+  }
+  return {
+    ok: true,
+    figures: { credit, newSub, newTax, newTotal, applied, leftover, shortfall, method: method || "ACCOUNT_CREDIT", tender, saleType },
+  };
+}
+
+function swapPreviewBody(f) {
+  return {
+    credit: f.credit,
+    new_order: { subtotal_cents: f.newSub, tax_cents: f.newTax, total_cents: f.newTotal },
+    applied_cents: f.applied,
+    leftover_cents: f.leftover,
+    shortfall_cents: f.shortfall,
+    leftover_method: f.method,
+  };
+}
+
+function commitSwap(caller, body, approver, f) {
+  const replay = SWAPS_BY_KEY.get(body.idempotency_key);
+  if (replay !== undefined) return { status: 200, body: { ...replay, replayed: true } };
+  SWAP_SEQ += 1;
+  const swapId = uuid(70000 + SWAP_SEQ);
+  const noted = commitNote(
+    caller,
+    { ...body, idempotency_key: `swap:${body.idempotency_key}`, refund_method: f.method },
+    approver,
+    { swapId, remaining: f.applied, applied: f.applied },
+  );
+  const sale = {
+    swap_id: swapId,
+    order_id: uuid(80000 + SWAP_SEQ),
+    order_no: `CT-S-${200 + SWAP_SEQ}`,
+    invoice_id: uuid(81000 + SWAP_SEQ),
+    invoice_no: `CT-INV-${300 + SWAP_SEQ}`,
+    tender: f.tender,
+    sale_type: f.saleType,
+    subtotal_cents: f.newSub,
+    tax_cents: f.newTax,
+    total_cents: f.newTotal,
+    tax_reason_code: "STD_ON_HST_13",
+    status: "COMMITTED",
+    replayed: false,
+  };
+  if (f.tender === "CASH" && body.till_session_id === DRAWER.session_id) DRAWER.cash_in_cents += f.shortfall;
+  const answer = {
+    swap_id: swapId,
+    note: noted.body,
+    sale,
+    credit_cents: f.credit.total_cents,
+    applied_cents: f.applied,
+    leftover_cents: f.leftover,
+    shortfall_cents: f.shortfall,
+    leftover_method: f.method,
+    replayed: false,
+  };
+  SWAPS_BY_KEY.set(body.idempotency_key, answer);
   return { status: 201, body: answer };
 }
 
@@ -1377,6 +1528,14 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === "POST" && path === "/_stub/swap-failure") {
+    // Harness-only: the next swap ring fails once, as "changed" (409) or "processor" (502).
+    readBody(request, (parsed) => {
+      swapFailure = parsed !== null && typeof parsed === "object" && ["changed", "processor"].includes(parsed.mode) ? parsed.mode : null;
+      respondJson(response, 200, { swapFailure });
+    });
+    return;
+  }
   if (request.method === "POST" && path === "/_stub/reseed-returns") {
     // Harness-only: put the returns world back as it started (a leg that commits a note leaves it changed).
     reseedReturns();
@@ -1390,6 +1549,8 @@ const server = createServer(async (request, response) => {
       keys: NOTE_KEYS_SEEN,
       lastNoteBody: LAST_NOTE_BODY,
       previewBodies: PREVIEW_BODIES,
+      swapKeys: SWAP_KEYS_SEEN,
+      lastSwapBody: LAST_SWAP_BODY,
       sightings: SIGHTINGS,
       approvalLimitEnabled,
       notes: [...NOTE_META.entries()].map(([key, meta]) => ({ key, ...meta })),
@@ -1496,6 +1657,67 @@ const server = createServer(async (request, response) => {
       },
       closing_float_cents: 0,
     });
+    return;
+  }
+  if (request.method === "POST" && (path === "/api/v1/pos/swaps/preview" || path === "/api/v1/pos/swaps")) {
+    const caller = callerFromRequest(request);
+    if (caller === null) {
+      respondJson(response, 401, { error: "no usable staff credential" });
+      return;
+    }
+    const commit = path === "/api/v1/pos/swaps";
+    const approver = approverFromRequest(request);
+    if (
+      approver.present &&
+      (approver.account === null ||
+        !APPROVER_ROLES.includes(approver.account.role_code) ||
+        approver.account.user_id === caller.account.user_id)
+    ) {
+      respondJson(response, 403, { error: "the approver credential does not name an approver other than the clerk" });
+      return;
+    }
+    let body;
+    try {
+      body = JSON.parse(await readRawBody(request));
+    } catch {
+      respondJson(response, 400, { error: "the request body is not JSON" });
+      return;
+    }
+    if (!commit) {
+      PREVIEW_BODIES.push(body);
+      const figured = swapFigures(caller, body, approver, false);
+      if (figured.ok !== true) {
+        respondJson(response, figured.status, figured.body);
+        return;
+      }
+      respondJson(response, 200, swapPreviewBody(figured.figures));
+      return;
+    }
+    if (body !== null && typeof body === "object" && typeof body.idempotency_key === "string") {
+      SWAP_KEYS_SEEN.push(body.idempotency_key);
+      LAST_SWAP_BODY = body;
+    }
+    if (body !== null && typeof body === "object" && typeof body.idempotency_key === "string" && SWAPS_BY_KEY.has(body.idempotency_key)) {
+      respondJson(response, 200, { ...SWAPS_BY_KEY.get(body.idempotency_key), replayed: true });
+      return;
+    }
+    const figured = swapFigures(caller, body, approver, true);
+    if (figured.ok !== true) {
+      respondJson(response, figured.status, figured.body);
+      return;
+    }
+    if (swapFailure === "changed") {
+      swapFailure = null;
+      respondJson(response, 409, { error: "pos: the swap's figures changed while it was being rung; review the swap and ring it again" });
+      return;
+    }
+    if (swapFailure === "processor") {
+      swapFailure = null;
+      respondJson(response, 502, { error: "pos: card refund failed, the processor refused the refund" });
+      return;
+    }
+    const committed = commitSwap(caller, body, approver, figured.figures);
+    respondJson(response, committed.status, committed.body);
     return;
   }
   if (request.method === "POST" && path === "/api/v1/pos/returns/preview") {

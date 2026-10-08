@@ -13,13 +13,26 @@ import {
   type DemoFlow,
   type PosRefundApproval,
   type PosReturnAcrossInput,
+  type PosSwapInput,
   type Result,
 } from "@hardscapehouse/api-client";
 import type { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { isApproverRole, type OneTimeCredential } from "./approval.js";
 import type { RefundApprovalCapture } from "./capture.js";
+import { DEMO_CARD_TOKEN } from "../till-client.js";
 import { ReturnDraft, type DraftAnswer } from "./draft.js";
 import { filterOrders, readCustomerLines, type CustomerOrder } from "./lines.js";
+import {
+  ReplacementBasket,
+  buildSwapInput,
+  buildSwapPreviewInput,
+  readSwapPreview,
+  readSwapResult,
+  type ReplacementProduct,
+  type ShortfallTender,
+  type SwapDone,
+  type SwapPreviewRead,
+} from "./swap.js";
 import { buildNoteInput, buildPreviewInput, railAvailable, readNote, readPreview, REFUND_METHODS, type CreditNote, type CreditPreview, type DrawerState, type RefundMethod } from "./note.js";
 
 /** The stepper's four steps. */
@@ -65,6 +78,8 @@ export interface ReturnsFlowOptions {
   clerk: () => ClerkIdentity | null;
   /** The wrapped fetch's reader for the refusal body's approval. */
   capture: RefundApprovalCapture;
+  /** The counter's product search, for the replacement goods of a swap. */
+  searchProducts: (query: string) => Promise<Result<ReplacementProduct[]>>;
   /** The branch this login reaches, read live; null before it resolves. */
   branchId: () => string | null;
   /** Called after every state change, so the host re-renders. */
@@ -78,6 +93,7 @@ export class ReturnsFlow {
   readonly #credential: OneTimeCredential;
   readonly #clerk: () => ClerkIdentity | null;
   readonly #capture: RefundApprovalCapture;
+  readonly #searchProducts: ReturnsFlowOptions["searchProducts"];
   readonly #branchId: () => string | null;
   readonly #onChange: () => void;
 
@@ -106,6 +122,29 @@ export class ReturnsFlow {
   /** The preview's refusal in the server's words (a wall, an over-return), shown beside the credit. */
   previewNotice: string | null = null;
   #previewSeq = 0;
+
+  // ---- The swap: the credit pays a new order (10.5) --------------------------------------------
+  /** The replacement goods going out. */
+  readonly basket = new ReplacementBasket();
+  /** The tender that pays any shortfall. */
+  swapTender: ShortfallTender = "CASH";
+  productTerm = "";
+  productMatches: ReplacementProduct[] = [];
+  productSearching = false;
+  productSearched = false;
+  /** The server's figures for the draft swap: the credit, the new order, applied, leftover, shortfall. */
+  swapPreview: SwapPreviewRead | null = null;
+  swapPreviewing = false;
+  swapPreviewNotice: string | null = null;
+  /** A refusal of the ring in the server's words. */
+  swapNotice: string | null = null;
+  swapping = false;
+  /** The committed swap, once one is; the Done step then shows both documents. */
+  doneSwap: SwapDone | null = null;
+  #swapKey: string | null = null;
+  #pendingSwapInput: PosSwapInput | null = null;
+  #swapPreviewSeq = 0;
+  #productSeq = 0;
   /** A draft refusal in words, shown beside the lines (a quantity above open, another branch). */
   draftNotice: string | null = null;
   /** The chosen refund rail, until the clerk picks one. */
@@ -127,6 +166,8 @@ export class ReturnsFlow {
   #pendingKey: string | null = null;
   /** The exact body sent and, when refused for approval, sent again unchanged. */
   #pendingInput: PosReturnAcrossInput | null = null;
+  /** Which send an approval would resend: the credit note, or the swap. */
+  #pendingKind: "note" | "swap" = "note";
   #epoch = 0;
   /** A search or a read that has been overtaken: its late answer is dropped. */
   #seq = 0;
@@ -138,6 +179,7 @@ export class ReturnsFlow {
     this.#credential = options.credential;
     this.#clerk = options.clerk;
     this.#capture = options.capture;
+    this.#searchProducts = options.searchProducts;
     this.#branchId = options.branchId;
     this.#onChange = options.onChange;
   }
@@ -266,8 +308,12 @@ export class ReturnsFlow {
     this.refusal = null;
     this.#pendingKey = null;
     this.#pendingInput = null;
+    this.#swapKey = null;
+    this.#pendingSwapInput = null;
+    this.swapNotice = null;
     this.#onChange();
     void this.#refreshPreview();
+    void this.#refreshSwapPreview();
   }
 
   /**
@@ -344,7 +390,7 @@ export class ReturnsFlow {
   }
 
   get canSubmit(): boolean {
-    return this.step === "refund" && this.method !== null && !this.submitting && !this.approving && !this.dialogOpen;
+    return this.step === "refund" && this.method !== null && !this.submitting && !this.swapping && !this.approving && !this.dialogOpen;
   }
 
   /** Commit the note once. The server's answer is the Done step's facts. */
@@ -364,6 +410,7 @@ export class ReturnsFlow {
       return;
     }
     this.#pendingInput = built.input;
+    this.#pendingKind = "note";
     this.submitting = true;
     this.notice = null;
     this.#onChange();
@@ -421,6 +468,193 @@ export class ReturnsFlow {
     this.#onChange();
   }
 
+  // ---- The swap -----------------------------------------------------------------------------
+
+  setProductTerm(value: string): void {
+    this.productTerm = value;
+    void this.#findProducts();
+  }
+
+  async #findProducts(): Promise<void> {
+    const q = this.productTerm.trim();
+    const seq = ++this.#productSeq;
+    if (q.length < 2) {
+      this.productSearching = false;
+      this.productMatches = [];
+      this.productSearched = false;
+      this.#onChange();
+      return;
+    }
+    this.productSearching = true;
+    this.#onChange();
+    const result = await this.#searchProducts(q);
+    if (seq !== this.#productSeq) return;
+    this.productSearching = false;
+    this.productSearched = true;
+    this.productMatches = result.ok ? result.value : [];
+    this.#onChange();
+  }
+
+  addReplacement(productId: string): void {
+    const product = this.productMatches.find((row) => row.productId === productId);
+    if (product === undefined || this.submitting || this.swapping) return;
+    this.basket.add(product);
+    this.#draftChanged();
+  }
+
+  setReplacementQty(productId: string, raw: string): void {
+    this.basket.setQty(productId, raw);
+    this.#draftChanged();
+  }
+
+  stepReplacement(productId: string, by: 1 | -1): void {
+    const line = this.basket.lines.find((row) => row.productId === productId);
+    if (line !== undefined) this.setReplacementQty(productId, String(line.qty + by));
+  }
+
+  chooseSwapTender(tender: string): void {
+    if (tender !== "CASH" && tender !== "ACCOUNT" && tender !== "CARD") return;
+    if (tender === "CARD" && !this.cardShortfallAvailable) return;
+    this.swapTender = tender;
+    this.#draftChanged();
+  }
+
+  /** A card shortfall rides the simulated card only where the status route says the rail is simulated. */
+  get cardShortfallAvailable(): boolean {
+    return this.cardSimulated === true;
+  }
+
+  get swapReady(): boolean {
+    return this.step === "refund" && this.draft.ready && this.basket.lines.length > 0 && this.swapPreview !== null;
+  }
+
+  get canRing(): boolean {
+    return this.swapReady && !this.swapping && !this.submitting && !this.approving && !this.dialogOpen;
+  }
+
+  /** The server's figures for the draft swap; nothing is computed here. The latest ask wins. */
+  async #refreshSwapPreview(): Promise<void> {
+    const seq = ++this.#swapPreviewSeq;
+    const body =
+      this.customer === null
+        ? null
+        : buildSwapPreviewInput({ customerId: this.customer.id, draft: this.draft, basket: this.basket, tender: this.swapTender });
+    if (body === null) {
+      this.swapPreview = null;
+      this.swapPreviewing = false;
+      this.swapPreviewNotice = null;
+      this.#onChange();
+      return;
+    }
+    this.swapPreviewing = true;
+    this.#onChange();
+    const result = await staffPos.posPreviewSwap(this.#client, body);
+    if (seq !== this.#swapPreviewSeq) return;
+    this.swapPreviewing = false;
+    if (!result.ok) {
+      this.swapPreview = null;
+      this.swapPreviewNotice = `The swap could not be priced: ${result.error}`;
+      this.#onChange();
+      return;
+    }
+    const read = readSwapPreview(result.value);
+    if (read === null) {
+      this.swapPreview = null;
+      this.swapPreviewNotice = "The swap's pricing was not readable: no figures are shown rather than half of them.";
+      this.#onChange();
+      return;
+    }
+    this.swapPreview = read;
+    this.swapPreviewNotice = null;
+    this.#onChange();
+  }
+
+  /** Ring the swap once: one key per drafted swap, the server's figures and words throughout. */
+  async ringSwap(): Promise<void> {
+    if (!this.canRing || this.customer === null) return;
+    if (this.#swapKey === null) this.#swapKey = crypto.randomUUID();
+    const built = buildSwapInput({
+      customerId: this.customer.id,
+      key: this.#swapKey,
+      draft: this.draft,
+      basket: this.basket,
+      tender: this.swapTender,
+      drawerSessionId: this.drawer.kind === "open" ? this.drawer.sessionId : "",
+      paymentToken: this.swapTender === "CARD" && this.cardSimulated === true ? DEMO_CARD_TOKEN : "",
+    });
+    if (!built.ok) {
+      this.swapNotice = built.words;
+      this.#onChange();
+      return;
+    }
+    this.#pendingSwapInput = built.input;
+    this.#pendingKind = "swap";
+    this.swapping = true;
+    this.swapNotice = null;
+    this.#onChange();
+    const result = await staffPos.posCreateSwap(this.#client, built.input);
+    this.swapping = false;
+    if (this.customer === null) return;
+    if (!result.ok) {
+      if (result.status === 409 && result.error === "refund_approval_required") {
+        const approval = this.#capture.take();
+        if (approval !== null) {
+          this.refusal = approval;
+          this.#onChange();
+          return;
+        }
+        this.swapNotice = "The swap needs a manager whose role holds the approval, but the refusal did not say which: try again or call the desk lead.";
+        this.#onChange();
+        return;
+      }
+      if (result.status === 409) {
+        // The credit changed while the swap was being rung: say so in the server's words, take a fresh
+        // price and a fresh key (a different swap is a different send).
+        this.swapNotice = result.error;
+        this.#swapKey = null;
+        this.#pendingSwapInput = null;
+        this.#onChange();
+        void this.#refreshSwapPreview();
+        return;
+      }
+      // 502 (the processor refused the leftover) and every 422 keep the key: the swap rolled back whole,
+      // and a retry of the same draft is a replay of nothing.
+      this.swapNotice = `The swap was refused: ${result.error}`;
+      this.#onChange();
+      return;
+    }
+    this.#finishSwap(result.value, null);
+  }
+
+  #finishSwap(raw: unknown, approverName: string | null): void {
+    const swap = readSwapResult(raw);
+    if (swap === null) {
+      this.swapNotice = "The swap's answer was not readable: the receipt waits rather than guessing.";
+      this.#onChange();
+      return;
+    }
+    const orderNos: Record<string, string> = {};
+    for (const order of this.orders) orderNos[order.orderId] = order.orderNo;
+    const clerk = this.#clerk();
+    const ownApprover =
+      approverName === null && clerk !== null && clerk.roleCode !== null && isApproverRole(clerk.roleCode)
+        ? `the ${clerk.roleLabel ?? clerk.roleCode} on this till: ${clerk.name}`
+        : approverName;
+    this.doneSwap = swap;
+    this.done = {
+      note: swap.note,
+      orderNos,
+      approverName: ownApprover,
+      clerkName: clerk?.name ?? null,
+      cardSimulated: swap.note.method === "CARD" ? this.cardSimulated : null,
+    };
+    this.step = "done";
+    this.refusal = null;
+    this.#swapKey = null;
+    this.#pendingSwapInput = null;
+    this.#onChange();
+  }
+
   /** The refusal's "Manager approval" control: the dialog with the approver roles' cards. */
   async openApprovalDialog(): Promise<void> {
     if (this.refusal === null || this.dialogOpen) return;
@@ -455,7 +689,8 @@ export class ReturnsFlow {
    */
   async approveWithFlow(flowName: string): Promise<void> {
     if (this.refusal === null || this.approving) return;
-    const input = this.#pendingInput;
+    const swap = this.#pendingKind === "swap";
+    const input = swap ? this.#pendingSwapInput : this.#pendingInput;
     if (input === null) return;
     this.approving = true;
     this.#onChange();
@@ -473,7 +708,10 @@ export class ReturnsFlow {
     this.#credential.set(minted.value.token);
     let result: Result<unknown>;
     try {
-      result = await staffPos.posCreateReturnAcross(this.#approverClient, input);
+      result =
+        this.#pendingKind === "swap"
+          ? await staffPos.posCreateSwap(this.#approverClient, input as PosSwapInput)
+          : await staffPos.posCreateReturnAcross(this.#approverClient, input as PosReturnAcrossInput);
     } finally {
       this.#credential.drop();
     }
@@ -488,7 +726,8 @@ export class ReturnsFlow {
     this.approving = false;
     this.dialogOpen = false;
     this.approverFlows = null;
-    this.#finish(result.value, approverName);
+    if (swap) this.#finishSwap(result.value, approverName);
+    else this.#finish(result.value, approverName);
   }
 
   #endApproval(notice: string | null): void {
@@ -554,6 +793,23 @@ export class ReturnsFlow {
     this.approving = false;
     this.#pendingKey = null;
     this.#pendingInput = null;
+    this.basket.clear();
+    this.swapTender = "CASH";
+    this.productTerm = "";
+    this.productMatches = [];
+    this.productSearching = false;
+    this.productSearched = false;
+    this.#productSeq += 1;
+    this.#swapPreviewSeq += 1;
+    this.swapPreview = null;
+    this.swapPreviewing = false;
+    this.swapPreviewNotice = null;
+    this.swapNotice = null;
+    this.swapping = false;
+    this.doneSwap = null;
+    this.#swapKey = null;
+    this.#pendingSwapInput = null;
+    this.#pendingKind = "note";
     this.#epoch += 1;
     this.#onChange();
   }

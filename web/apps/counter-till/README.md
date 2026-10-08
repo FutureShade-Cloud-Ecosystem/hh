@@ -33,7 +33,14 @@ dealer's approval amount (judged on the note total) is refused with the amount
 and roles named and completes through a manager's own credential entered at the
 clerk's till, the token held in memory for the one call and dropped. The Done
 step names the note, each order's return with its number and the server's
-figures, and a receipt line per return. The swap waits on its own contract.
+figures, and a receipt line per return. The swap sits beside the rails: add the
+replacement goods (the counter's own product search, in each product's sell
+unit), and `POST /api/v1/pos/swaps/preview` answers the credit, the new order
+total, what the credit pays, the leftover (back by the original tender) and any
+shortfall; "Ring the swap" sends `POST /api/v1/pos/swaps` under one key, and the
+Done step shows the credit note and the new order naming each other. The server
+says in its words when the credit changed (409) or the processor refused the
+leftover (502). The till computes none of it.
 
 Money on the counter is integer cents throughout. The figures the core states
 (line prices from the pricing resolve, the committed sale's and return's own

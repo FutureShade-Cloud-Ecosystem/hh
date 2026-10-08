@@ -522,3 +522,168 @@ test("a line sent twice is refused by the server in its words (the till itself n
   expect(answer.status()).toBe(422);
   expect(((await answer.json()) as { error: string }).error).toContain("appears twice on order CT-1001, send it once with the whole quantity");
 });
+
+// ---- Stage 4: the converted order that is blocked, and the swap ----------------------------------
+
+test("an order a quote became with no live invoice is shown blocked with the server's reason, and its lines cannot be drafted", async ({ page }) => {
+  await pickCustomer(page, "C07", "Lachance Retail");
+  const blocked = page.getByTestId("returns-order").filter({ hasText: "CT-1004" });
+  await expect(blocked.getByTestId("returns-order-blocked")).toContainText(
+    "no invoice has been raised for this order yet, so there is nothing to refund against",
+  );
+  await expect(blocked.getByRole("button", { name: "Return to stock" })).toHaveCount(0);
+  await expect(blocked.getByLabel(/Return quantity/)).toHaveCount(0);
+  // Its sibling order is an ordinary till ring and drafts as usual.
+  await lineOf(page, "CT-1003", WALL).getByRole("button", { name: "Return to stock" }).click();
+  await expect(page.getByTestId("returns-credit-count")).toHaveText("1 line from 1 order");
+});
+
+async function toSwap(page: Page, wallQty = "1"): Promise<void> {
+  await draftTwoOrders(page, wallQty);
+}
+
+async function addPolymerSand(page: Page, qty?: string): Promise<void> {
+  await page.getByLabel("Search replacement goods").fill("polymer");
+  await page.getByTestId("returns-products").getByRole("button", { name: /Polymeric Locking Sand/ }).click();
+  await expect(page.getByTestId("returns-replacement")).toHaveCount(1);
+  if (qty !== undefined) await page.getByLabel("Replacement quantity: Polymeric Locking Sand", { exact: true }).last().fill(qty);
+}
+
+test("the swap panel shows the server's figures: the credit, the new order with tax, what the credit pays and the leftover going back by the original tender", async ({ page }) => {
+  await toSwap(page);
+  const swap = page.getByTestId("returns-swap");
+  await expect(swap.getByTestId("returns-swap-empty")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Ring the swap" })).toBeDisabled();
+  await addPolymerSand(page);
+  // 1 bag at Maple Ridge's price, with tax; the credit is two lines at 60.00 (the stub's world).
+  await expect(swap.getByTestId("swap-credit")).toHaveText("$120.00");
+  await expect(swap.getByTestId("swap-new-total")).toHaveText("$12.97");
+  await expect(swap.getByTestId("swap-applied")).toHaveText("$12.97");
+  await expect(swap.getByTestId("swap-leftover")).toHaveText("$107.03");
+  await expect(swap.getByTestId("swap-words")).toContainText("left over goes back cash, from the drawer");
+  await expect(swap.getByTestId("swap-shortfall")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Ring the swap" })).toBeEnabled();
+  const bodies = (await stubState(page)).previewBodies as unknown as { lines?: { uom_entered: string }[] }[];
+  expect(bodies[bodies.length - 1].lines?.[0].uom_entered).toBe("bag");
+});
+
+test("ringing a swap with a leftover: one body, the Done step names both documents pointing at each other, each receipt line, and the drawer pays out only the leftover", async ({ page }) => {
+  const before = await drawerExpectedCash(page);
+  await toSwap(page);
+  await addPolymerSand(page);
+  await expect(page.getByTestId("swap-leftover")).toHaveText("$107.03");
+  await page.getByRole("button", { name: "Ring the swap" }).click();
+  await expect(page.getByTestId("returns")).toHaveAttribute("data-step", "done");
+  const done = page.getByTestId("returns-done");
+  await expect(done).toContainText("Swap rung: credit note recorded");
+  await expect(done.getByTestId("returns-note-no")).toHaveText(/CT-CN-\d+/);
+  await expect(done.getByTestId("returns-swap-sale")).toContainText(/CT-S-\d+/);
+  await expect(done.getByTestId("returns-swap-sale")).toContainText("$12.97");
+  await expect(done.getByTestId("returns-swap-link")).toContainText("point at each other");
+  await expect(done.getByTestId("returns-swap-split")).toContainText("$107.03 went back cash, from the drawer");
+  await expect(done.getByTestId("returns-done-return")).toHaveCount(2);
+  await expect(done.getByTestId("returns-receipt-line").first()).toContainText(/CT-R-\d+/);
+  await expect(done.getByTestId("returns-receipt-line-sale")).toContainText("paid by credit note");
+  expect(await drawerExpectedCash(page)).toBe(before - 10703);
+  const state = (await stubState(page)) as unknown as { swapKeys: string[]; lastSwapBody: { orders: { lines: { disposition: string }[] }[]; lines: unknown[]; tender: string; till_session_id: string } };
+  expect(state.swapKeys).toHaveLength(1);
+  expect(state.lastSwapBody.orders).toHaveLength(2);
+  expect(state.lastSwapBody.lines).toHaveLength(1);
+  expect(state.lastSwapBody.tender).toBe("CASH");
+  expect(state.lastSwapBody.till_session_id).toBe(DRAWER_SESSION_ID);
+  // The swap's two documents carry dispositions as drafted: back to stock on both here.
+  expect(state.lastSwapBody.orders.map((order) => order.lines[0].disposition)).toEqual(["RESTOCK", "RESTOCK"]);
+});
+
+test("a shortfall is paid by the tender chosen: cash by default, or put on the account", async ({ page }) => {
+  const before = await drawerExpectedCash(page);
+  await toSwap(page);
+  await addPolymerSand(page, "20");
+  const swap = page.getByTestId("returns-swap");
+  await expect(swap.getByTestId("swap-new-total")).toHaveText("$259.45");
+  await expect(swap.getByTestId("swap-applied")).toHaveText("$120.00");
+  await expect(swap.getByTestId("swap-shortfall")).toHaveText("$139.45");
+  await expect(swap.getByTestId("swap-leftover")).toHaveCount(0);
+  await expect(swap.getByRole("button", { name: "Pay the rest in cash" })).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "Ring the swap" }).click();
+  await expect(page.getByTestId("returns-swap-split")).toContainText("$139.45 was paid by cash");
+  expect(await drawerExpectedCash(page)).toBe(before + 13945);
+
+  await page.request.post("/_stub/reseed-returns");
+  await page.getByRole("button", { name: "Start another return" }).click();
+  await openReturns(page);
+  await toSwap(page);
+  await addPolymerSand(page, "20");
+  await page.getByTestId("returns-swap").getByRole("button", { name: "Put the rest on the account" }).click();
+  await expect(page.getByTestId("swap-shortfall")).toHaveText("$139.45");
+  await page.getByRole("button", { name: "Ring the swap" }).click();
+  await expect(page.getByTestId("returns-swap-split")).toContainText("was paid by account");
+  expect(((await stubState(page)) as unknown as { lastSwapBody: { tender: string } }).lastSwapBody.tender).toBe("ACCOUNT");
+});
+
+test("a credit that changed while the swap was rung is refused in the server's words, and the next ring is a fresh swap with a fresh key", async ({ page }) => {
+  await toSwap(page);
+  await addPolymerSand(page);
+  await page.request.post("/_stub/swap-failure", { data: { mode: "changed" } });
+  await page.getByRole("button", { name: "Ring the swap" }).click();
+  await expect(page.getByTestId("returns-swap-notice")).toContainText("the swap's figures changed while it was being rung; review the swap and ring it again");
+  await expect(page.getByTestId("returns")).toHaveAttribute("data-step", "refund");
+  await expect(page.getByTestId("swap-leftover")).toBeVisible();
+  await page.getByRole("button", { name: "Ring the swap" }).click();
+  await expect(page.getByTestId("returns-done")).toContainText("Swap rung");
+  const keys = ((await stubState(page)) as unknown as { swapKeys: string[] }).swapKeys;
+  expect(keys).toHaveLength(2);
+  expect(keys[0]).not.toBe(keys[1]);
+});
+
+test("a processor that refuses the leftover on a card sale is said in the server's words, nothing is posted, and the retry replays the same key", async ({ page }) => {
+  await pickCustomer(page, "fenwick", "Fenwick Builders Ltd");
+  await page.getByTestId("returns-order").filter({ hasText: "CT-2001" }).getByRole("button", { name: "Return to stock" }).click();
+  await page.getByRole("button", { name: "Continue to the refund" }).click();
+  await addPolymerSand(page);
+  await expect(page.getByTestId("swap-leftover")).toHaveText("$74.76");
+  await expect(page.getByTestId("swap-words")).toContainText("left over goes back card");
+  await page.request.post("/_stub/swap-failure", { data: { mode: "processor" } });
+  await page.getByRole("button", { name: "Ring the swap" }).click();
+  await expect(page.getByTestId("returns-swap-notice")).toContainText("The swap was refused: pos: card refund failed, the processor refused the refund");
+  await expect(page.getByTestId("returns")).toHaveAttribute("data-step", "refund");
+  await page.getByRole("button", { name: "Ring the swap" }).click();
+  await expect(page.getByTestId("returns-done")).toContainText("Swap rung");
+  const keys = ((await stubState(page)) as unknown as { swapKeys: string[] }).swapKeys;
+  expect(keys).toHaveLength(2);
+  expect(keys[0]).toBe(keys[1]);
+});
+
+test("a swap over the approval amount asks for a manager's card on the swap route, and completes with the till still the clerk's", async ({ page }) => {
+  await setApprovalLimit(page, true);
+  await pickCustomer(page, "maple", "Maple Ridge Contracting");
+  await lineOf(page, "CT-1001", WALL).getByLabel(/Return quantity/).fill("3");
+  await lineOf(page, "CT-1001", WALL).getByRole("button", { name: "Return to stock" }).click();
+  await lineOf(page, "CT-1002", WALL).getByLabel(/Return quantity/).fill("3");
+  await lineOf(page, "CT-1002", WALL).getByRole("button", { name: "Return to stock" }).click();
+  await page.getByRole("button", { name: "Continue to the refund" }).click();
+  await addPolymerSand(page);
+  await page.getByRole("button", { name: "Ring the swap" }).click();
+  const refusal = page.getByTestId("refund-refusal");
+  await expect(refusal).toContainText("$250.00");
+  await refusal.getByRole("button", { name: "Manager approval" }).click();
+  await page.getByRole("dialog", { name: "Manager approval" }).getByRole("button", { name: "Sales manager" }).click();
+  await expect(page.getByTestId("returns-done")).toContainText("Swap rung");
+  await expect(page.getByTestId("returns-done")).toContainText("Approved by Sales manager (demo).");
+  await expect(page.getByTestId("signed-in-role")).toHaveText("Sales");
+  const posts = (await stubState(page)).sightings.filter((sighting) => sighting.path === "/api/v1/pos/swaps");
+  expect(posts).toHaveLength(2);
+  expect(posts[0].approverHeader).toBe(false);
+  expect(posts[1].approverHeader).toBe(true);
+});
+
+test("an order that still has an open invoice is refused by the server's preview in its words, and nothing can be rung", async ({ page }) => {
+  await toSwap(page);
+  // The preview is the server's: a refusal of the draft shows in its words with no figures.
+  await page.route("**/api/v1/pos/swaps/preview", (route) =>
+    route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify({ error: "pos: order CT-1001 still has an open invoice, so its return is not credit in hand; return it as a credit note first, then ring the new order" }) }),
+  );
+  await addPolymerSand(page);
+  await expect(page.getByTestId("returns-swap-preview-notice")).toContainText("still has an open invoice");
+  await expect(page.getByRole("button", { name: "Ring the swap" })).toBeDisabled();
+});

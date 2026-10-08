@@ -450,6 +450,54 @@ test("a two order return: lines from both orders, one credit note in cash, and t
   await shot(page, "sales-09-credit-note-done", testInfo);
 });
 
+test("a swap: the credit pays a new order, the leftover goes back by cash, both documents name each other", async ({
+  page,
+}, testInfo) => {
+  // Item 10, the swap: a cash sale is rung to the Bay Ridge account, then Returns takes its line back to
+  // stock and the replacement goods (the server prices them) are paid by the credit. The leftover goes back
+  // by the original tender, cash from the drawer, so the drawer's expected cash drops by exactly the
+  // leftover the Done step states. The figures are the server's: the preview before and the commit after
+  // must say the same new order total.
+  await signIn(page, "Sales");
+  await pickCustomer(page, "Bay Ridge", "Bay Ridge Landscaping (demo)");
+  await searchAndAdd(page, "DEMO-PAV-HOLLAND", "Holland Paver, Charcoal (demo)");
+  await setQuantity(page, "Holland Paver, Charcoal (demo)", "40");
+  const rung = await ringCash(page, "400.00");
+  const bearer = await mint(page, "sales");
+  const drawerId = await openDrawer(page, bearer);
+  const before = await expectedCash(page, bearer, drawerId);
+
+  await openReturns(page);
+  await page.getByLabel("Search name or account number").fill("Bay Ridge");
+  await page.getByRole("button", { name: /Bay Ridge Landscaping \(demo\)/ }).click();
+  const order = page.getByTestId("returns-order").filter({ hasText: rung.order_no });
+  await expect(order).toHaveCount(1);
+  await order.getByRole("button", { name: "Return to stock" }).first().click();
+  await page.getByRole("button", { name: "Continue to the refund" }).click();
+  await page.getByLabel("Search replacement goods").fill("Aluminum");
+  await page.getByTestId("returns-products").getByRole("button", { name: /Aluminum Edging 8ft/ }).first().click();
+  const swap = page.getByTestId("returns-swap");
+  await expect(swap.getByTestId("swap-new-total")).toBeVisible();
+  const centsOf = (text: string): number => {
+    const match = text.match(/\$([0-9,]+)\.([0-9]{2})/);
+    expect(match).toBeTruthy();
+    return Number(match?.[1].replaceAll(",", "") as string) * 100 + Number(match?.[2]);
+  };
+  const newTotal = centsOf((await swap.getByTestId("swap-new-total").textContent()) as string);
+  const leftover = centsOf((await swap.getByTestId("swap-leftover").textContent()) as string);
+  expect(newTotal).toBeGreaterThan(0);
+  expect(leftover).toBeGreaterThan(0);
+  await shot(page, "sales-10-swap-preview", testInfo);
+  await page.getByRole("button", { name: "Ring the swap" }).click();
+  const done = page.getByTestId("returns-done");
+  await expect(done).toContainText("Swap rung");
+  await expect(done.getByTestId("returns-swap-link")).toContainText("point at each other");
+  await expect(done.getByTestId("returns-done-return")).toHaveCount(1);
+  expect(centsOf((await done.getByTestId("returns-swap-sale").textContent()) as string)).toBe(newTotal);
+  expect(await expectedCash(page, bearer, drawerId)).toBe(before - leftover);
+  await shot(page, "sales-11-swap-done", testInfo);
+});
+
 test("beyond the till: sign out, a reload, and a fresh page each leave the till nobody's", async ({
   page,
 }, testInfo) => {

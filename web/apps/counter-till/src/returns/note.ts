@@ -36,26 +36,12 @@ export function buildNoteInput(args: BuildNoteArgs): BuiltNote {
   if (args.method === "CASH" && args.drawerSessionId === "") {
     return { ok: false, words: "Cash is paid from the open drawer, and no drawer is open at this branch." };
   }
-  const orders: PosReturnAcrossInput["orders"] = [];
-  for (const line of picked) {
-    let entry = orders.find((candidate) => candidate.order_id === line.orderId);
-    if (entry === undefined) {
-      entry = { order_id: line.orderId, lines: [] };
-      orders.push(entry);
-    }
-    entry.lines.push({
-      order_line_id: line.orderLineId,
-      qty_base: line.qty,
-      reason_code: line.disposition === "DAMAGED" ? "DAMAGED" : "OTHER",
-      ...(line.disposition === null ? {} : { disposition: line.disposition }),
-    });
-  }
   return {
     ok: true,
     input: {
       idempotency_key: args.key,
       customer_id: args.customerId,
-      orders,
+      orders: noteOrders(args.draft),
       refund_method: args.method,
       reason: "",
       restock: restocking === picked.length,
@@ -99,6 +85,8 @@ export interface CreditNote {
   totalCents: number;
   returns: NoteReturn[];
   replayed: boolean;
+  /** Present when the note is the credit of a swap. */
+  swapId: string | null;
 }
 
 function record(raw: unknown): Record<string, unknown> | null {
@@ -149,18 +137,14 @@ export function readNote(raw: unknown): CreditNote | null {
     if (child === null) return null;
     returns.push(child);
   }
-  return { noteId, noteNo, customerId, branchId, method, subtotalCents, taxCents, totalCents, returns, replayed };
+  const swapId = filled(r["swap_id"]);
+  return { noteId, noteNo, customerId, branchId, method, subtotalCents, taxCents, totalCents, returns, replayed, swapId };
 }
 
-/**
- * The preview's body: the same lines as the note, without a key, a rail or a drawer, and with a
- * disposition only once one is chosen. Null when nothing is picked.
- */
-export function buildPreviewInput(customerId: string, draft: ReturnDraft): PosReturnPreviewInput | null {
-  const picked = draft.pickedLines();
-  if (picked.length === 0) return null;
-  const orders: PosReturnPreviewInput["orders"] = [];
-  for (const line of picked) {
+/** The picked lines grouped by order, each with its own disposition once chosen: the body's `orders`, shared by the note, the preview and the swap. */
+export function noteOrders(draft: ReturnDraft): PosReturnAcrossInput["orders"] {
+  const orders: PosReturnAcrossInput["orders"] = [];
+  for (const line of draft.pickedLines()) {
     let entry = orders.find((candidate) => candidate.order_id === line.orderId);
     if (entry === undefined) {
       entry = { order_id: line.orderId, lines: [] };
@@ -173,7 +157,16 @@ export function buildPreviewInput(customerId: string, draft: ReturnDraft): PosRe
       ...(line.disposition === null ? {} : { disposition: line.disposition }),
     });
   }
-  return { customer_id: customerId, orders };
+  return orders;
+}
+
+/**
+ * The preview's body: the same lines as the note, without a key, a rail or a drawer, and with a
+ * disposition only once one is chosen. Null when nothing is picked.
+ */
+export function buildPreviewInput(customerId: string, draft: ReturnDraft): PosReturnPreviewInput | null {
+  if (draft.pickedLines().length === 0) return null;
+  return { customer_id: customerId, orders: noteOrders(draft) };
 }
 
 /** One line's priced figures, the server's own. */

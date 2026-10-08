@@ -347,9 +347,56 @@ export const returnsStyles = css`
   }
   .returns .refund-step {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.2fr);
     gap: var(--hh-s-16);
     align-items: start;
+  }
+  @media (max-width: 1100px) {
+    .returns .refund-step {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    }
+  }
+  .returns .rt-card.swap {
+    border-color: var(--hh-accent);
+    background: color-mix(in srgb, var(--hh-accent) 8%, var(--hos-slate-warm));
+  }
+  .returns .rt-card.swap .hint {
+    margin: 0 0 var(--hh-s-12);
+  }
+  .returns .rt-card.swap .matches button {
+    align-items: center;
+  }
+  .returns .swap-lines {
+    list-style: none;
+    margin: var(--hh-s-12) 0;
+    padding: 0;
+    display: grid;
+    gap: var(--hh-s-8);
+  }
+  .returns .swap-lines li {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--hh-s-8);
+    flex-wrap: wrap;
+    border: 1px solid var(--hos-line);
+    border-radius: var(--hos-radius-control);
+    padding: var(--hh-s-8) var(--hh-s-12);
+    background: var(--hos-field);
+  }
+  .returns .swap-figures {
+    display: grid;
+    gap: var(--hh-s-4);
+    margin: var(--hh-s-12) 0;
+    font-variant-numeric: tabular-nums;
+  }
+  .returns .swap-figures div {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--hh-s-12);
+  }
+  .returns .swap-figures .strong {
+    font-weight: 700;
   }
   @media (max-width: 760px) {
     .returns .refund-step {
@@ -363,6 +410,9 @@ export const returnsStyles = css`
   .returns .refund-actions,
   .returns .rt-card > button.btn-secondary {
     margin-top: var(--hh-s-16);
+  }
+  .returns .refund-wide {
+    grid-column: 1 / -1;
   }
   .returns .refund-orders {
     list-style: none;
@@ -835,16 +885,114 @@ function renderRefundStep(flow: ReturnsFlow): TemplateResult {
             : nothing}
         <p class="hint">The account rail is refused in the server's words where the account cannot spend credit. No restocking fee rides this credit note.</p>
         ${flow.notice === null ? nothing : html`<p class="note-stop" role="alert" data-testid="returns-notice">${flow.notice}</p>`}
-        ${flow.refusal === null ? nothing : renderRefusal(flow.refusal)}
-        ${flow.dialogOpen ? renderApprovalDialog(flow) : nothing}
         <div class="refund-actions">
           <button type="button" class="btn-primary" data-action="returns-submit" ?disabled=${!flow.canSubmit}>
             Record the credit note
           </button>
         </div>
       </div>
+      ${renderSwapPanel(flow)}
+      <div class="refund-wide">
+        ${flow.refusal === null ? nothing : renderRefusal(flow.refusal)}
+        ${flow.dialogOpen ? renderApprovalDialog(flow) : nothing}
+      </div>
     </div>
   `;
+}
+
+function renderSwapPanel(flow: ReturnsFlow): TemplateResult {
+  const frozen = flow.submitting || flow.swapping || flow.dialogOpen || flow.approving;
+  const preview = flow.swapPreview;
+  const lines = flow.basket.lines;
+  return html`
+    <div class="rt-card swap" data-testid="returns-swap">
+      <h3>The swap: the credit pays a new order</h3>
+      <p class="hint">Replacement goods, rung now as a sales order. The credit pays for them; what is left goes back, and what is short is paid.</p>
+      <input
+        type="search"
+        class="search-input"
+        data-field="returns-product"
+        aria-label="Search replacement goods"
+        placeholder="Search replacement goods..."
+        autocomplete="off"
+        ?disabled=${frozen}
+        .value=${flow.productTerm}
+      />
+      ${flow.productMatches.length > 0
+        ? html`<ul class="matches" aria-label="Products" data-testid="returns-products">
+            ${flow.productMatches.map(
+              (row) => html`
+                <li>
+                  <button type="button" class="btn-secondary" data-action="returns-add-replacement" data-product=${row.productId} ?disabled=${frozen}>
+                    <span>${row.name}</span><span>per ${row.soldBy}</span>
+                  </button>
+                </li>
+              `,
+            )}
+          </ul>`
+        : flow.productSearched && !flow.productSearching
+          ? html`<p class="notice" role="status">No product answers to that.</p>`
+          : nothing}
+      ${lines.length === 0
+        ? html`<p class="notice" data-testid="returns-swap-empty">Add the goods going out to see what the credit covers.</p>`
+        : html`<ul class="swap-lines" aria-label="Replacement goods" data-testid="returns-replacements">
+            ${lines.map(
+              (line) => html`
+                <li data-testid="returns-replacement">
+                  <span>${line.name} (${line.soldBy})</span>
+                  <span class="qty" role="group" aria-label="Replacement quantity: ${line.name}">
+                    <button type="button" class="btn-secondary" data-action="returns-replacement-down" data-product=${line.productId} aria-label="One fewer: ${line.name}" ?disabled=${frozen}>-</button>
+                    <input type="number" min="0" step="any" inputmode="decimal" data-field="returns-replacement-qty" data-product=${line.productId} aria-label="Replacement quantity: ${line.name}" .value=${String(line.qty)} ?disabled=${frozen} />
+                    <button type="button" class="btn-secondary" data-action="returns-replacement-up" data-product=${line.productId} aria-label="One more: ${line.name}" ?disabled=${frozen}>+</button>
+                  </span>
+                </li>
+              `,
+            )}
+          </ul>`}
+      ${preview === null
+        ? flow.swapPreviewing
+          ? html`<p class="notice" role="status" data-testid="returns-swap-pricing">Pricing the swap.</p>`
+          : flow.swapPreviewNotice !== null
+            ? html`<p class="note-stop" role="alert" data-testid="returns-swap-preview-notice">${flow.swapPreviewNotice}</p>`
+            : nothing
+        : html`
+            <div class="swap-figures" data-testid="returns-swap-figures">
+              <div><span>The credit</span><span data-testid="swap-credit">${formatMoney(preview.creditCents)}</span></div>
+              <div class="strong"><span>New order total, with tax</span><span data-testid="swap-new-total">${formatMoney(preview.newOrderCents)}</span></div>
+              <div><span>The credit pays</span><span data-testid="swap-applied">${formatMoney(preview.appliedCents)}</span></div>
+              ${preview.leftoverCents > 0
+                ? html`<div><span>Left over, back ${railWords(preview.leftoverMethod)}</span><span data-testid="swap-leftover">${formatMoney(preview.leftoverCents)}</span></div>`
+                : nothing}
+              ${preview.shortfallCents > 0
+                ? html`<div><span>Still to pay</span><span data-testid="swap-shortfall">${formatMoney(preview.shortfallCents)}</span></div>`
+                : nothing}
+            </div>
+            <p class="notice" data-testid="swap-words">${swapWords(preview.leftoverCents, preview.shortfallCents, preview.leftoverMethod)}</p>
+          `}
+      ${preview !== null && preview.shortfallCents > 0
+        ? html`<div class="methods" role="group" aria-label="Shortfall tender">
+            ${(["CASH", "ACCOUNT", "CARD"] as const)
+              .filter((tender) => tender !== "CARD" || flow.cardShortfallAvailable)
+              .map(
+                (tender) => html`
+                  <button type="button" class="btn-secondary" data-action="returns-swap-tender" data-tender=${tender} aria-pressed=${flow.swapTender === tender ? "true" : "false"} ?disabled=${frozen}>
+                    ${tender === "CASH" ? "Pay the rest in cash" : tender === "ACCOUNT" ? "Put the rest on the account" : "Pay the rest by card"}
+                  </button>
+                `,
+              )}
+          </div>`
+        : nothing}
+      ${flow.swapNotice === null ? nothing : html`<p class="note-stop" role="alert" data-testid="returns-swap-notice">${flow.swapNotice}</p>`}
+      <button type="button" class="btn-primary btn-wide" data-action="returns-ring-swap" ?disabled=${!flow.canRing}>Ring the swap</button>
+      <p class="hint">After: the credit note and the new order point at each other, the restocked lines are back on the shelf, and the damaged lines are written off.</p>
+    </div>
+  `;
+}
+
+function swapWords(leftover: number, shortfall: number, method: RefundMethod): string {
+  if (leftover > 0) return `The credit covers it whole; the ${formatMoney(leftover)} left over goes back ${railWords(method)}.`;
+  if (shortfall > 0) return "The credit pays part of it; the rest is paid by the tender chosen below.";
+  return "The credit covers the new order exactly.";
 }
 
 function renderRefusal(approval: PosRefundApproval): TemplateResult {
@@ -896,12 +1044,29 @@ function renderDoneStep(flow: ReturnsFlow): TemplateResult {
   const done = flow.done;
   if (done === null) return html``;
   const note = done.note;
+  const swap = flow.doneSwap;
   return html`
     <div class="customer-step">
       <section class="rt-card focus" data-testid="returns-done" role="status">
         <span class="eyebrow">Done</span>
-        <h3>Credit note recorded</h3>
+        <h3>${swap === null ? "Credit note recorded" : "Swap rung: credit note recorded"}</h3>
         <p data-testid="returns-note-no">${note.noteNo}</p>
+        ${swap === null
+          ? nothing
+          : html`
+              <p class="figures" data-testid="returns-swap-sale">
+                New order ${swap.sale.orderNo} · invoice ${swap.sale.invoiceNo} · ${formatMoney(swap.sale.totalCents)} with tax
+              </p>
+              <p data-testid="returns-swap-link">
+                The credit note ${note.noteNo} and the new order ${swap.sale.orderNo}, one swap, point at each other.
+              </p>
+              <p class="notice" data-testid="returns-swap-split">
+                The credit ${formatMoney(swap.creditCents)} paid ${formatMoney(swap.appliedCents)}${swap.leftoverCents > 0 ? `; ${formatMoney(swap.leftoverCents)} went back ${railWords(swap.leftoverMethod)}` : ""}${swap.shortfallCents > 0 ? `; ${formatMoney(swap.shortfallCents)} was paid by ${swap.sale.tender.toLowerCase()}` : ""}.
+              </p>
+              <p class="receipt-line" data-testid="returns-receipt-line-sale">
+                ${swap.sale.orderNo} · ${swap.sale.invoiceNo} · ${formatMoney(swap.sale.totalCents)} · new order, paid by credit note ${note.noteNo}
+              </p>
+            `}
         ${note.replayed ? html`<p class="notice">The same credit note, answered again: nothing was posted twice.</p>` : nothing}
         <p class="figures" data-testid="returns-note-total">
           Total credited ${formatMoney(note.totalCents)} ${railWords(note.method)}

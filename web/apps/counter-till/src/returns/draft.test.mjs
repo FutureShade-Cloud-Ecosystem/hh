@@ -42,6 +42,8 @@ function order(n, over = {}) {
     fulfilment_state: "FULFILLED",
     invoice_id: uuid(n + 100),
     card_refundable: true,
+    returnable: true,
+    not_returnable_reason: "",
     lines: [line(n * 10 + 1), line(n * 10 + 2, { qty_open: 4, qty_returned: 6 })],
     ...over,
   };
@@ -184,7 +186,7 @@ test("branch_name must be a string on every order", () => {
 });
 
 test("an order the read marks returnable false keeps its reason and its lines cannot be drafted", () => {
-  const blocked = order(16, { returnable: false, returnable_reason: "This quote order was not rung at the counter." });
+  const blocked = order(16, { returnable: false, not_returnable_reason: "This quote order was not rung at the counter." });
   const read = readCustomerLines(answer([blocked, order(11)]));
   assert.equal(read[0].returnable, false);
   assert.equal(read[0].notReturnableReason, "This quote order was not rung at the counter.");
@@ -199,6 +201,27 @@ test("an order the read marks returnable false keeps its reason and its lines ca
 });
 
 test("returnable false without a reason still refuses, in generic words", () => {
-  const read = readCustomerLines(answer([order(16, { returnable: false })]));
+  const read = readCustomerLines(answer([order(16, { returnable: false, not_returnable_reason: "" })]));
   assert.match(read[0].notReturnableReason, /cannot be returned/);
+});
+
+test("the guessed field name is gone: returnable_reason is not read, and returnable must be a boolean", () => {
+  const guessed = readCustomerLines(answer([order(16, { returnable: false, not_returnable_reason: "", returnable_reason: "guess" })]));
+  assert.doesNotMatch(guessed[0].notReturnableReason, /guess/);
+  assert.equal(readCustomerLines(answer([order(16, { returnable: "no" })])), null);
+  const missing = order(16);
+  delete missing.returnable;
+  assert.equal(readCustomerLines(answer([missing])), null, "the contract makes both fields required");
+});
+
+test("a converted order with no live invoice reads with an empty invoice id, blocked; the same gap on a returnable order is unreadable", () => {
+  const blocked = order(16, {
+    source: "QUOTE", tender: "", sale_type: "", invoice_id: "", returnable: false,
+    not_returnable_reason: "no invoice has been raised for this order yet, so there is nothing to refund against",
+  });
+  const read = readCustomerLines(answer([blocked, order(11)]));
+  assert.ok(read !== null, "the empty invoice id of a blocked order does not sink the whole read");
+  assert.equal(read[0].invoiceId, "");
+  assert.equal(read[0].returnable, false);
+  assert.equal(readCustomerLines(answer([order(16, { invoice_id: "" })])), null);
 });

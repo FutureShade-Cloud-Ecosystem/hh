@@ -42,11 +42,7 @@ export interface CustomerOrder {
   fulfilmentState: string;
   invoiceId: string;
   cardRefundable: boolean;
-  /**
-   * False when the read says this order cannot be returned yet (the server decides, and gives its
-   * reason); absent means returnable. The contract does not carry the field yet: this is read when
-   * the server sends it, never invented.
-   */
+  /** False when the server says this order cannot be returned yet, with its reason in words (the contract's `returnable`, `not_returnable_reason`). */
   returnable: boolean;
   notReturnableReason: string;
   lines: CustomerLine[];
@@ -123,14 +119,17 @@ function readOrder(raw: unknown): CustomerOrder | null {
   const saleType = text(r["sale_type"]);
   const tender = text(r["tender"]);
   const fulfilmentState = text(r["fulfilment_state"]);
-  const invoiceId = filled(r["invoice_id"]);
+  const invoiceId = text(r["invoice_id"]);
   const cardRefundable = r["card_refundable"];
   const rawLines = r["lines"];
-  const returnable = r["returnable"] !== false;
-  const reasonText = text(r["returnable_reason"]);
+  const returnable = r["returnable"];
+  const reasonText = text(r["not_returnable_reason"]);
   if (orderId === null || orderNo === null || branchId === null || branchName === null || createdAt === null) return null;
   if (jobLabel === null || saleType === null || tender === null || fulfilmentState === null) return null;
   if (invoiceId === null || typeof cardRefundable !== "boolean" || !Array.isArray(rawLines)) return null;
+  if (typeof returnable !== "boolean" || reasonText === null) return null;
+  // A blocked converted order has no live invoice, so its invoice id is empty; a returnable one always names it.
+  if (invoiceId === "" && returnable) return null;
   if (typeof source !== "string" || !SOURCES.includes(source as OrderSource)) return null;
   const lines: CustomerLine[] = [];
   for (const entry of rawLines) {

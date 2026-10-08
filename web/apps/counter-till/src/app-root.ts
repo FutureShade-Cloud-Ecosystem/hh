@@ -498,6 +498,12 @@ export class CounterTillApp extends HHElement {
         };
       },
       capture,
+      searchProducts: async (query) => {
+        const found = await this.#tillClient.searchProducts(query);
+        return found.ok
+          ? { ok: true, value: found.value.map((row) => ({ productId: row.productId, name: row.name, soldBy: row.soldBy })) }
+          : found;
+      },
       branchId: () => this.#branch?.id ?? null,
       onChange: () => this.requestUpdate(),
     });
@@ -684,6 +690,10 @@ export class CounterTillApp extends HHElement {
     const field = control.getAttribute("data-field");
     if (field === "pay-balance-term" && control instanceof HTMLInputElement) this.#payBalance.setTerm(control.value);
     if (field === "returns-customer" && control instanceof HTMLInputElement) this.#returns.setTerm(control.value);
+    if (field === "returns-product" && control instanceof HTMLInputElement) this.#returns.setProductTerm(control.value);
+    if (field === "returns-replacement-qty" && control instanceof HTMLInputElement) {
+      this.#returns.setReplacementQty(control.getAttribute("data-product") ?? "", control.value);
+    }
     if (field === "returns-filter" && control instanceof HTMLInputElement) this.#returns.setFilter(control.value);
     if (field === "returns-qty" && control instanceof HTMLInputElement) {
       const line = control.getAttribute("data-line") ?? "";
@@ -759,6 +769,11 @@ export class CounterTillApp extends HHElement {
     if (returnsAction === "returns-disposition") {
       this.#returns.setDisposition(returnsLine, control.getAttribute("data-disposition") ?? "");
     }
+    if (returnsAction === "returns-add-replacement") this.#returns.addReplacement(control.getAttribute("data-product") ?? "");
+    if (returnsAction === "returns-replacement-up") this.#returns.stepReplacement(control.getAttribute("data-product") ?? "", 1);
+    if (returnsAction === "returns-replacement-down") this.#returns.stepReplacement(control.getAttribute("data-product") ?? "", -1);
+    if (returnsAction === "returns-swap-tender") this.#returns.chooseSwapTender(control.getAttribute("data-tender") ?? "");
+    if (returnsAction === "returns-ring-swap") void this.#returns.ringSwap();
     if (returnsAction === "returns-continue") void this.#returns.toRefund();
     if (returnsAction === "returns-method") this.#returns.chooseMethod(control.getAttribute("data-method") ?? "");
     if (returnsAction === "returns-submit") void this.#returns.submit();
