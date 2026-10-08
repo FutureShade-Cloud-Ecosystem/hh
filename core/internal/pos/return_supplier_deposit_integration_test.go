@@ -205,8 +205,14 @@ func TestIntegration_SupplierDeposit_PartialCashRefundAfterFulfilment(t *testing
 // deposit. Revenue nets to the sale's pre tax total minus exactly the returned
 // goods' pre tax value, 2300 is zero, the trial balance is zero, one release
 // journal stands, and no store credit rides the account rail while the
-// deposit invoice is unpaid (the rest invoice absorbs the credit and the
-// deposit invoice stays open at its amount).
+// deposit invoice can absorb what the rest invoice could not: the return's
+// credit offsets the sale's own rest invoice first, and only the part that
+// rest invoice could not absorb is applied to the deposit document, so the
+// deposit invoice's balance equals its amount minus exactly that unabsorbed
+// part (zero when the rest invoice took the whole credit). The figures are
+// computed from the database's own rows, never from the code under test, so
+// the pin holds on any seeded line the ring prices, dear or cheap: which
+// product the fixture lands on is the database's choice, not the test's.
 func assertPartialDepositReturn(t *testing.T, pool *pgxpool.Pool, ctx context.Context, out Sale, ret Return, lineID, custID, dep string, refund string, net func(string) int64) {
 	t.Helper()
 	var saleSub int64
@@ -243,12 +249,42 @@ func assertPartialDepositReturn(t *testing.T, pool *pgxpool.Pool, ctx context.Co
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM gl_journals WHERE idempotency_key = $1`, "deposit.released:"+dep).Scan(&jn); err != nil || jn != 1 {
 		t.Fatalf("the release stands at %d journals (%v), want exactly the one", jn, err)
 	}
+	var restBalance, restTotal int64
+	if err := pool.QueryRow(ctx, `SELECT balance_cents, total_cents FROM invoices WHERE id = $1`, out.InvoiceID).Scan(&restBalance, &restTotal); err != nil {
+		t.Fatal(err)
+	}
 	var depBalance, depTotal int64
 	if err := pool.QueryRow(ctx, `SELECT balance_cents, total_cents FROM invoices WHERE id = $1`, dep).Scan(&depBalance, &depTotal); err != nil {
 		t.Fatal(err)
 	}
-	if depBalance != depTotal {
-		t.Fatalf("the unpaid deposit invoice stands at %d of %d, want it still open at its amount", depBalance, depTotal)
+	if refund == RefundCash {
+		// The cash rail pays the credit out of the drawer: neither document
+		// moves, whatever the seeded line priced.
+		if restBalance != restTotal || depBalance != depTotal {
+			t.Fatalf("after the cash refund the invoices stand at %d of %d and %d of %d, want both open at their amounts", restBalance, restTotal, depBalance, depTotal)
+		}
+	} else {
+		var credit int64
+		if err := pool.QueryRow(ctx, `SELECT COALESCE(SUM(line_total_cents + tax_cents),0) FROM pos_return_lines WHERE return_id = $1`, ret.ReturnID).Scan(&credit); err != nil {
+			t.Fatalf("read the return's credit: %v", err)
+		}
+		// The account sale pays nothing at the ring, so the rest invoice opens
+		// at its total: the balance it held before this return's credit
+		// landed. What it could not absorb is applied to the deposit.
+		wantRest := restTotal - credit
+		if wantRest < 0 {
+			wantRest = 0
+		}
+		if restBalance != wantRest {
+			t.Fatalf("the rest invoice stands at %d, want %d, its total %d minus the return's credit %d floored at zero", restBalance, wantRest, restTotal, credit)
+		}
+		unabsorbed := credit - restTotal
+		if unabsorbed < 0 {
+			unabsorbed = 0
+		}
+		if depBalance != depTotal-unabsorbed {
+			t.Fatalf("the deposit invoice stands at %d of %d, want %d: the return's credit %d held %d beyond the rest invoice's %d and the excess is applied to the deposit", depBalance, depTotal, depTotal-unabsorbed, credit, unabsorbed, restTotal)
+		}
 	}
 	var stray int64
 	if err := pool.QueryRow(ctx, `SELECT COALESCE(SUM(amount_cents),0) FROM customer_transactions
