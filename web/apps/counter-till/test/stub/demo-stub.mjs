@@ -2068,10 +2068,12 @@ const server = createServer(async (request, response) => {
             ...(leg.method === "CARD" ? { gateway_ref: `rp_sim_${docCounter + 1}` } : {}),
           });
         });
-      } else if (parsed.sale_type === "COD" && requestedDeposit > 0) {
-        // Pay before release with a deposit: the deposit is the only capture (its own leg lands
-        // below); the rest is the invoice's balance, held from picking until it is paid.
-        if (parsed.deposit_method === "CARD" && (typeof parsed.payment_token !== "string" || parsed.payment_token === "")) {
+      } else if (parsed.sale_type === "COD") {
+        // Pay before release: nothing is captured at ring, whatever the tender tile names (it is
+        // the settlement method only, as the core's ring takes no tender for the sale type). With
+        // a deposit, the deposit is the only capture (its own leg lands below); the rest is the
+        // invoice's balance, held from picking until it is paid.
+        if (requestedDeposit > 0 && parsed.deposit_method === "CARD" && (typeof parsed.payment_token !== "string" || parsed.payment_token === "")) {
           respondJson(response, 400, { error: "a card deposit carries the terminal's token, never a card number" });
           return;
         }
