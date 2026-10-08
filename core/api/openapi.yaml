@@ -39299,6 +39299,16 @@ components:
             $ref: "#/components/schemas/TaskPickLine"
         source:
           type: string
+        held_from_picking:
+          type: boolean
+          description: The order owes money under a pay before release shape. The ticket stays in the feed, marked, so the yard knows why its task refuses to claim or stage; the mark is words, the doors are what refuse.
+        hold_words:
+          type: string
+          description: The mark's words, "Balance due"; absent when not held
+        still_owed_cents:
+          type: integer
+          format: int64
+          description: The money the order still owes under the hold; absent when nothing
     TaskShortage:
       type: object
       description: One reported shortage on a pick

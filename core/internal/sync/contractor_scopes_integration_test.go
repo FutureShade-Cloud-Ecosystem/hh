@@ -146,7 +146,7 @@ func new169Fixture(t *testing.T) *the169Fixture {
 	must(engine.RegisterScope("delivery_instructions", planflow.NewInstructionsSyncStore(pool)))
 	must(engine.RegisterScope("customer_quotes", customerquote.NewSyncStore(cqStore, cqSvc)))
 	must(engine.RegisterScope("team", portal.NewTeamSyncStore(pool)))
-	must(engine.RegisterScope("pickups", dispatch.NewPickupsSyncStore(pool, tenantOrdersAdap{repo: orderRepo}, sig, nil)))
+	must(engine.RegisterScope("pickups", dispatch.NewPickupsSyncStore(pool, tenantOrdersAdap{repo: orderRepo}, sig, nil, nil)))
 	f.engine = engine
 	return f
 }
@@ -450,7 +450,7 @@ func (f *the169Fixture) teamKit() harness.Kit {
 func (f *the169Fixture) pickupsKit() harness.Kit {
 	info := mustInfo("pickups")
 	return harness.Kit{
-		Scope: info, Filter: alphaFilter(), Store: dispatch.NewPickupsSyncStore(f.pool, tenantOrdersAdap{repo: f.orderRepo}, f.sig, nil),
+		Scope: info, Filter: alphaFilter(), Store: dispatch.NewPickupsSyncStore(f.pool, tenantOrdersAdap{repo: f.orderRepo}, f.sig, nil, nil),
 		Create: func(id string) map[string]any {
 			fields := map[string]any{"order_id": f.insertWillCallOrderT()}
 			if id != "" {
@@ -733,7 +733,7 @@ func Test169TenantIsolationPerScope(t *testing.T) {
 	if ids := pullOf(t, f.engine, "pickups", beta, 0, 200); contains(ids, pickup.ID) {
 		t.Fatalf("beta's pickups pull saw alpha's pickup")
 	}
-	if _, ok, _ := dispatch.NewPickupsSyncStore(f.pool, tenantOrdersAdap{repo: f.orderRepo}, f.sig, nil).Load(ctx, beta, pickup.ID); ok {
+	if _, ok, _ := dispatch.NewPickupsSyncStore(f.pool, tenantOrdersAdap{repo: f.orderRepo}, f.sig, nil, nil).Load(ctx, beta, pickup.ID); ok {
 		t.Fatalf("beta loaded alpha's pickup by id: existence leaked across tenants")
 	}
 

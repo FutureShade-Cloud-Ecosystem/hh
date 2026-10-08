@@ -31,11 +31,27 @@ package order
 import (
 	"context"
 	"errors"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // PickHoldWords is the refusal's sentence, the item's mandated words, the same
 // at every path and on the order read.
 const PickHoldWords = "This order cannot reach picking until the balance is paid."
+
+// BalanceDueWords is the hold's words for an order already past picking that
+// owes again (an NSF after delivery, item 9 Opus P3-4): the picking sentence
+// would speak of a runway the order has already used, so the read says what
+// is true instead, the balance is due. The doors keep the mandated sentence.
+const BalanceDueWords = "Balance due"
+
+// pastPicking reports whether the order's status has already reached or
+// passed the picking rung: the hold's words for such an order are the balance
+// due words, not the picking sentence.
+func pastPicking(status string) bool {
+	r, ok := statusRank[status]
+	return ok && r >= statusRank["PICKING"]
+}
 
 // PickInProcessWords is the order read's chip when a payment has landed and
 // money remains: a deposit puts the order in process, and the hold stays.
@@ -77,6 +93,17 @@ type PickHoldReader interface {
 	PickHoldFacts(ctx context.Context, orderID string) (PickHoldFacts, error)
 }
 
+// PickHoldTxReader is the transaction-joining variant of PickHoldReader (the
+// cancel guards' FinalizedInvoiceTxReader shape, item 9 Opus P3-2): the
+// guarded status writers run the hold read inside their own transaction under
+// the order row lock, and a reader that asked the shared pool there would hold
+// two connections per caller (the starvation the tree's store seams rule out).
+// A reader that implements this reads through the caller's tx instead; a
+// reader with only the pool half keeps working and keeps the pool read.
+type PickHoldTxReader interface {
+	PickHoldFactsTx(ctx context.Context, tx pgx.Tx, orderID string) (PickHoldFacts, error)
+}
+
 // WithPickHoldReader wires (or overrides) the pick hold read.
 func (s *Service) WithPickHoldReader(r PickHoldReader) *Service { s.pickHold = r; return s }
 
@@ -87,11 +114,24 @@ func (s *Service) PickHoldWired() bool { return s.pickHold != nil }
 // refuseHeldFromPicking is the guard every goods releasing move consults:
 // nil seam allows (the additive lane), a read that fails refuses with
 // ErrPickHoldUnverifiable, a held order refuses with ErrHeldFromPicking.
+// Inside a guarded write the read joins the write's transaction when the
+// reader can (PickHoldTxReader, the context's precheck tx), so the read and
+// the move are one act under the order row lock.
 func (s *Service) refuseHeldFromPicking(ctx context.Context, orderID string) error {
 	if s.pickHold == nil {
 		return nil
 	}
-	f, err := s.pickHold.PickHoldFacts(ctx, orderID)
+	var f PickHoldFacts
+	var err error
+	if r, ok := s.pickHold.(PickHoldTxReader); ok {
+		if tx := precheckTx(ctx); tx != nil {
+			f, err = r.PickHoldFactsTx(ctx, tx, orderID)
+		} else {
+			f, err = s.pickHold.PickHoldFacts(ctx, orderID)
+		}
+	} else {
+		f, err = s.pickHold.PickHoldFacts(ctx, orderID)
+	}
 	if err != nil {
 		return ErrPickHoldUnverifiable
 	}
@@ -114,8 +154,9 @@ type OrderPayHold struct {
 // payHoldView reads the block for the order read. Best effort like the edit
 // lines: an unwired seam omits the block entirely (the read keeps answering
 // status and actions), a wired seam that cannot answer also omits it, never a
-// block that reads as clear.
-func (s *Service) payHoldView(ctx context.Context, orderID string) *OrderPayHold {
+// block that reads as clear. The words follow the order's own status (item 9
+// Opus P3-4): past picking and owing again, the block says the balance is due.
+func (s *Service) payHoldView(ctx context.Context, orderID, status string) *OrderPayHold {
 	if s.pickHold == nil {
 		return nil
 	}
@@ -123,8 +164,12 @@ func (s *Service) payHoldView(ctx context.Context, orderID string) *OrderPayHold
 	if err != nil {
 		return nil
 	}
+	words := f.Words
+	if f.Held && pastPicking(status) {
+		words = BalanceDueWords
+	}
 	return &OrderPayHold{
-		HeldFromPicking: f.Held, Words: f.Words, InProcessWords: f.InProcessWords,
+		HeldFromPicking: f.Held, Words: words, InProcessWords: f.InProcessWords,
 		OrderTotalCents: f.OrderTotalCents, PaidCents: f.PaidCents, OwedCents: f.OwedCents,
 	}
 }

@@ -162,7 +162,7 @@ func TestIntegration_PayBalance_TakeInFullByCash_LiftsTheHold_AndReplays(t *test
 	ctx := globalCtx(t, pool)
 	_, _, orderID, invoiceID, session, _, balance := seedOwingWorld(t, pool, stubCharger{}, "cash")
 	svc := realPosSvc(t, pool, stubCharger{})
-	billingRepo := billing.NewRepository(pool)
+	billingRepo := testBillingRepo(pool)
 	if held, _, _, _, err := billingRepo.PickHoldForOrder(ctx, orderID); err != nil || !held {
 		t.Fatalf("the order does not start held: (%v, %v)", held, err)
 	}
@@ -419,7 +419,7 @@ func TestIntegration_PayBalance_UninvoicedOrder_FoundTakenReleased(t *testing.T)
 		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1`, custID)
 	})
 
-	billingRepo := billing.NewRepository(pool)
+	billingRepo := testBillingRepo(pool)
 	orderSvc := order.NewService(order.NewRepository(pool)).WithPickHoldReader(holdBridge{repo: billingRepo})
 	svc := realPosSvc(t, pool, stubCharger{}).WithPayBalanceInvoicer(
 		raiseAdapter{w: billing.NewInvoiceWriter(pool).WithOrderSource(payDoorOrderSource{svc: orderSvc})})
@@ -587,7 +587,7 @@ VALUES ('#INV-PBA-'||nextval('invoice_no_seq'), $1::uuid, $2::uuid, $3::uuid, $4
 			t.Fatalf("plant %s %s: %v", doc.docType, doc.status, err)
 		}
 	}
-	repo := NewRepository(pool)
+	repo := testPosRepo(pool)
 	pre, found, err := repo.ReadOwingOrder(ctx, orderID)
 	if err != nil || !found {
 		t.Fatalf("the pre read: (%v, %v)", found, err)
@@ -601,7 +601,7 @@ VALUES ('#INV-PBA-'||nextval('invoice_no_seq'), $1::uuid, $2::uuid, $3::uuid, $4
 	if txErr != nil {
 		t.Fatalf("the locked read: %v", txErr)
 	}
-	_, owedHold, _, _, err := billing.NewRepository(pool).PickHoldForOrder(ctx, orderID)
+	_, owedHold, _, _, err := testBillingRepo(pool).PickHoldForOrder(ctx, orderID)
 	if err != nil {
 		t.Fatalf("the hold read: %v", err)
 	}
@@ -971,7 +971,7 @@ func TestIntegration_PayBalance_BrokenOrderRaiseRefusal_IsAFixedSentence(t *test
 		_, _ = pool.Exec(c, `DELETE FROM orders WHERE id = $1`, orderID)
 		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1`, custID)
 	})
-	billingRepo := billing.NewRepository(pool)
+	billingRepo := testBillingRepo(pool)
 	orderSvc := order.NewService(order.NewRepository(pool)).WithPickHoldReader(holdBridge{repo: billingRepo})
 	svc := realPosSvc(t, pool, stubCharger{}).WithPayBalanceInvoicer(
 		raiseAdapter{w: billing.NewInvoiceWriter(pool).WithOrderSource(payDoorOrderSource{svc: orderSvc})})

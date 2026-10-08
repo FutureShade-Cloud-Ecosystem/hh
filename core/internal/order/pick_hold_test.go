@@ -62,9 +62,50 @@ func TestSetStatus_PickingRefusedWhileHeld(t *testing.T) {
 	if err := svc.SetStatus(pickHoldCtx(), "", "u-1", "ord-1", "PICKING", ""); !errors.Is(err, ErrHeldFromPicking) {
 		t.Fatalf("want ErrHeldFromPicking, got %v", err)
 	}
-	// A held order still moves to statuses that release nothing.
-	if err := svc.SetStatus(pickHoldCtx(), "", "u-1", "ord-1", "READY", ""); errors.Is(err, ErrHeldFromPicking) {
-		t.Fatalf("the hold refused a non picking move: %v", err)
+}
+
+// Item 9 Opus P2-2: every forward move whose target ranks at or above PICKING
+// refuses a held order, not the picking rung alone. Before the widening, a
+// held order could be moved to READY, PARTIALLY_FULFILLED, FULFILLED or
+// INVOICED straight past the guard (the review's scenario: the ring's
+// ar.invoice.finalized jumped a held order to INVOICED within a dispatcher
+// tick). CLOSED stays outside: it is the terminal bookkeeping state, not a
+// goods release.
+func TestSetStatus_ForwardMovesAtOrAbovePickingRefusedWhileHeld(t *testing.T) {
+	for _, target := range []string{"PICKING", "READY", "PARTIALLY_FULFILLED", "FULFILLED", "INVOICED"} {
+		store := pickHoldStore()
+		svc := NewService(store).WithPickHoldReader(fakePickHold{facts: heldFacts(1)})
+		if err := svc.SetStatus(pickHoldCtx(), "", "u-1", "ord-1", target, ""); !errors.Is(err, ErrHeldFromPicking) {
+			t.Fatalf("SetStatus to %s on a held order: %v", target, err)
+		}
+		status, _, _ := store.OrderHeader(pickHoldCtx(), "ord-1")
+		if status != "CONFIRMED" {
+			t.Fatalf("a held order moved to %s", status)
+		}
+	}
+	// A target below the ladder's picking rung, and the terminal CLOSED, are
+	// not goods releases and stay outside the hold.
+	store := pickHoldStore()
+	svc := NewService(store).WithPickHoldReader(fakePickHold{facts: heldFacts(1)})
+	if err := svc.SetStatus(pickHoldCtx(), "", "u-1", "ord-1", "CLOSED", ""); errors.Is(err, ErrHeldFromPicking) {
+		t.Fatalf("the hold refused a CLOSED move: %v", err)
+	}
+}
+
+// The event driver's FULFILLED and INVOICED targets carry the guard too: the
+// outbox observer and the tasks advance rule both funnel through here, and a
+// held order must not be advanced past the picking rung by either.
+func TestAdvanceFromEvent_FulfilledAndInvoicedRefusedWhileHeld(t *testing.T) {
+	for _, target := range []string{"FULFILLED", "INVOICED", "READY", "PARTIALLY_FULFILLED"} {
+		store := pickHoldStore()
+		svc := NewService(store).withCaller(testCallerFrom).WithPickHoldReader(fakePickHold{facts: heldFacts(1)})
+		if err := svc.AdvanceFromEvent(pickHoldCtx(), "ord-1", target, "evt-"+target); !errors.Is(err, ErrHeldFromPicking) {
+			t.Fatalf("AdvanceFromEvent to %s on a held order: %v", target, err)
+		}
+		status, _, _ := store.OrderHeader(pickHoldCtx(), "ord-1")
+		if status != "CONFIRMED" {
+			t.Fatalf("a held order moved to %s by event", status)
+		}
 	}
 }
 
@@ -189,6 +230,38 @@ func TestTransitionManual_PickingAllowedWhenClearOrUnwired(t *testing.T) {
 	}
 }
 
+// Item 9 Opus P3-4: an order already past picking that owes again (an NSF
+// after delivery) reads "Balance due" on its pay hold block, not the picking
+// sentence: the runway the sentence speaks of is one the order has already
+// used, and what is true is the balance.
+func TestOrderRead_PastPickingOwedReadsBalanceDue(t *testing.T) {
+	for _, status := range []string{"PICKING", "READY", "PARTIALLY_FULFILLED", "FULFILLED", "INVOICED"} {
+		store := newFakeStore(mkDetail("ord-1", "cust-1", status))
+		svc := NewService(store).withCaller(testCallerFrom).
+			WithPickHoldReader(fakePickHold{facts: heldFacts(9300)})
+		view, err := svc.OrderRead(pickHoldCtx(), "ord-1")
+		if err != nil {
+			t.Fatalf("order read at %s: %v", status, err)
+		}
+		if view.PayHold == nil || !view.PayHold.HeldFromPicking {
+			t.Fatalf("the %s read carries no held block: %+v", status, view.PayHold)
+		}
+		if view.PayHold.Words != BalanceDueWords {
+			t.Fatalf("the %s read's words are %q, want %q", status, view.PayHold.Words, BalanceDueWords)
+		}
+	}
+	// Below the rung the mandated sentence stands: the order has not picked yet.
+	store := pickHoldStore()
+	svc := NewService(store).withCaller(testCallerFrom).WithPickHoldReader(fakePickHold{facts: heldFacts(9300)})
+	view, err := svc.OrderRead(pickHoldCtx(), "ord-1")
+	if err != nil {
+		t.Fatalf("order read: %v", err)
+	}
+	if view.PayHold == nil || view.PayHold.Words != PickHoldWords {
+		t.Fatalf("a waiting order's words: %+v", view.PayHold)
+	}
+}
+
 // The order read carries the hold: held or not, the words, the total, paid so
 // far, still owed, and the in process words when a deposit has landed.
 func TestOrderRead_CarriesThePayHold(t *testing.T) {
@@ -237,5 +310,25 @@ func TestAdvanceFromEvent_PickingRefusedWhileHeld(t *testing.T) {
 		WithPickHoldReader(fakePickHold{facts: PickHoldFacts{Held: false}})
 	if err := clear.AdvanceFromEvent(pickHoldCtx(), "ord-1", "PICKING", "evt-2"); err != nil {
 		t.Fatalf("a clear account's event driven pick: %v", err)
+	}
+}
+
+// Item 9 Opus P3-2 follow up: the hold's sentence outranks the ladder's. The
+// hold read moved inside the guarded write, behind the legality check, so a
+// held order whose move was also off the ladder (a converted order not yet
+// confirmed) answered "illegal status transition" and never the sentence the
+// counter acts on. A held order answers the hold, whatever its status.
+func TestTransitionManual_HeldOrderOffTheLadderStillAnswersTheHold(t *testing.T) {
+	store := newFakeStore(mkDetail("ord-1", "cust-1", "DRAFT"))
+	svc := NewService(store).withCaller(testCallerFrom).WithPickHoldReader(fakePickHold{facts: heldFacts(11300)})
+	_, err := svc.TransitionManual(pickHoldCtx(), "ord-1", ActionPicking, "")
+	if !errors.Is(err, ErrHeldFromPicking) {
+		t.Fatalf("want ErrHeldFromPicking, got %v", err)
+	}
+	// A clear order off the ladder still answers the ladder.
+	clear := NewService(newFakeStore(mkDetail("ord-1", "cust-1", "DRAFT"))).withCaller(testCallerFrom).
+		WithPickHoldReader(fakePickHold{facts: PickHoldFacts{}})
+	if _, err := clear.TransitionManual(pickHoldCtx(), "ord-1", ActionPicking, ""); !errors.Is(err, ErrIllegalTransition) {
+		t.Fatalf("a clear order off the ladder: want ErrIllegalTransition, got %v", err)
 	}
 }

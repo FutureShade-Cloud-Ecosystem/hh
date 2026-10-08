@@ -3827,6 +3827,9 @@ export type TaskPickTicket = {
   requested_at?: string | null;
   lines: TaskPickLine[];
   source: string;
+  held_from_picking?: boolean;
+  hold_words?: string;
+  still_owed_cents?: number;
 };
 export type TaskShortage = {
   id: string;

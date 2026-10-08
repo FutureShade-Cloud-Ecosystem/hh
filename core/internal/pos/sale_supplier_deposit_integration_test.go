@@ -86,7 +86,7 @@ func TestIntegration_SupplierDeposit_BilledToTheCreditAccount(t *testing.T) {
 	var pointerCount int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*) FROM invoice_lines WHERE invoice_id = $1
-		  AND line_total_cents = 0 AND description LIKE 'Supplier deposit, billed on its own invoice %'`,
+		  AND line_total_cents = 0 AND description LIKE 'Supplier deposit of %, billed on its own invoice %, is not part of this invoice''s total'`,
 		out.InvoiceID).Scan(&pointerCount); err != nil || pointerCount != 1 {
 		t.Fatalf("the rest's invoice carries %d deposit pointer lines (%v), want the one", pointerCount, err)
 	}

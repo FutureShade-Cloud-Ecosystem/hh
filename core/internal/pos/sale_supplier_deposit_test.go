@@ -213,3 +213,19 @@ func TestSalePreview_SupplierDepositAllowance(t *testing.T) {
 		}
 	}
 }
+
+// Item 9 Opus P3-5: the rest invoice's pointer line reads as the explanation
+// of the gap between the goods lines and the header, not an arithmetic error:
+// it names the amount, the deposit document, and that the amount is not in
+// this invoice's total.
+func TestSupplierDepositPointerLine_ExplainsTheGap(t *testing.T) {
+	lines := []orderLineRow{{LineNo: 1, UOMEntered: "SF", PriceUOM: "SF"}}
+	l := supplierDepositPointerLine(lines, "INV-00042", 123456)
+	want := "Supplier deposit of $1,234.56, billed on its own invoice INV-00042, is not part of this invoice's total"
+	if l.Description != want {
+		t.Fatalf("the pointer line reads %q, want %q", l.Description, want)
+	}
+	if l.LineNo != 2 || l.LineTotalCents != 0 || l.UnitPriceCents != 0 || l.ProductID != "" {
+		t.Fatalf("the pointer line carries money or a product: %+v", l)
+	}
+}

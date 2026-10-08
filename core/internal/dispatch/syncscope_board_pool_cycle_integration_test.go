@@ -104,7 +104,7 @@ func TestWillCallSyncCreateConflictArm_ReadsThroughTx_NoPoolCycle(t *testing.T) 
 		_, _ = probePool.Exec(context.Background(), `DELETE FROM orders WHERE id = $1::uuid`, orderID)
 	})
 
-	store := NewWillCallSyncStore(scenario, testOrders{pool: probePool}, nil, nil)
+	store := NewWillCallSyncStore(scenario, testOrders{pool: probePool}, nil, nil, nil)
 	filter := hhsync.ScopeFilter{OrgID: testkit.OrgNorthID, Actor: "pool-cycle-leg"}
 	fields := func(i int) map[string]any {
 		return map[string]any{

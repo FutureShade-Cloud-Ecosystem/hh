@@ -97,8 +97,18 @@ func paymentOptionsFor(termsDays int, creditLimitCents int64, held bool) []Payme
 // could not prove is clear. The production wiring (wire_tops.go) hands the
 // preview the same hold repository the standing read and the credit gate read,
 // so the unwired shape is a composition gap, not a state a dealer meets.
-func (s *Service) previewPaymentOptions(ctx context.Context, cust customerRec) []PaymentOption {
+//
+// Item 9 Opus P2-3: the due later deposit rides the COD sale type, so the
+// branch's pos_policy.cod_enabled gates it too. With Cash On Demand off (or a
+// policy read that cannot be made), the pay before release accounts are
+// offered pay in full now only, the same fact the ring's own errCODDisabled
+// refuses on: the menu never promises a shape the ring will not take. A credit
+// customer's shapes ride on account, not the COD sale type, and are untouched.
+func (s *Service) previewPaymentOptions(ctx context.Context, branchID string, cust customerRec) []PaymentOption {
 	if cust.PaymentTermsDays <= 0 || cust.CreditLimitCents <= 0 {
+		if !s.codEnabledAtBranch(ctx, branchID) {
+			return []PaymentOption{{Shape: PaymentShapePayInFull}}
+		}
 		return paymentOptionsFor(cust.PaymentTermsDays, cust.CreditLimitCents, false)
 	}
 	held := true
@@ -109,5 +119,23 @@ func (s *Service) previewPaymentOptions(ctx context.Context, cust customerRec) [
 		}
 		// An errored read keeps held=true: the fail closed posture above.
 	}
+	if held && !s.codEnabledAtBranch(ctx, branchID) {
+		// A held credit account is offered what a pay before release account
+		// is, and the due later deposit is off with the switch: cash or card
+		// only, the hold rule's own words.
+		return []PaymentOption{{Shape: PaymentShapePayInFull}}
+	}
 	return paymentOptionsFor(cust.PaymentTermsDays, cust.CreditLimitCents, held)
+}
+
+// codEnabledAtBranch answers the branch's Cash On Demand switch, failing
+// closed (the branch row overrides the org default, the ring's own gate
+// shape). A false or unreadable switch drops the due later deposit from the
+// menu; the ring's refusal stays the enforcement either way.
+func (s *Service) codEnabledAtBranch(ctx context.Context, branchID string) bool {
+	policy, err := s.store.ReadPosPolicy(ctx, branchID)
+	if err != nil {
+		return false
+	}
+	return policy.CODEnabled
 }

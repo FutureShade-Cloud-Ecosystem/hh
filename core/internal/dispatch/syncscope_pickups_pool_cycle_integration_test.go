@@ -123,7 +123,7 @@ func TestPickupsSyncCreateConflictArm_ReadsThroughTx_NoPoolCycle(t *testing.T) {
 		_, _ = probePool.Exec(context.Background(), `DELETE FROM orders WHERE id = $1::uuid`, orderID)
 	})
 
-	store := NewPickupsSyncStore(scenario, pickupsCycleOrders{repo: order.NewRepository(scenario)}, nil, nil)
+	store := NewPickupsSyncStore(scenario, pickupsCycleOrders{repo: order.NewRepository(scenario)}, nil, nil, nil)
 	filter := hhsync.ScopeFilter{OrgID: testkit.OrgNorthID, Tenant: true, TenantID: testkit.TenantAlphaID, Actor: "pool-cycle-leg"}
 	fields := func(int) map[string]any {
 		return map[string]any{"id": pickupsCycleRowID, "order_id": orderID}

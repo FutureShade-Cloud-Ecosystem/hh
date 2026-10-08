@@ -186,7 +186,7 @@ func TestPickupsSyncWrite_TenantIDsBeforeTx_NoConnectionStarvation(t *testing.T)
 	}
 
 	gate := newWriteStarveGate(order.NewRepository(scenario), poolSize)
-	store := NewPickupsSyncStore(scenario, gate, writeStarveSig{}, nil)
+	store := NewPickupsSyncStore(scenario, gate, writeStarveSig{}, nil, nil)
 	filter := hhsync.ScopeFilter{OrgID: testkit.OrgNorthID, Tenant: true, TenantID: testkit.TenantAlphaID, Actor: "starve-leg"}
 
 	// One deadline for the whole scenario: on the unfixed tree every caller still waiting at the

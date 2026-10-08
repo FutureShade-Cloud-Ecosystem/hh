@@ -74,7 +74,7 @@ func TestIntegration_PickHold_CashOnDemandDepositHoldsEveryReleasingPath(t *test
 	})
 
 	svc := realPosSvc(t, pool, stubCharger{})
-	billingRepo := billing.NewRepository(pool)
+	billingRepo := testBillingRepo(pool)
 	orderSvc := order.NewService(order.NewRepository(pool)).WithPickHoldReader(holdBridge{repo: billingRepo})
 
 	// The ring: a deposit as line one, the balance due later, on a fulfilment
@@ -187,7 +187,7 @@ func TestIntegration_PickHold_ConvertedCashOnDemandOrderOwesBeforeInvoicing(t *t
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM orders WHERE id = $1::uuid`, orderID)
 	})
-	billingRepo := billing.NewRepository(pool)
+	billingRepo := testBillingRepo(pool)
 	held, owed, paid, total, err := billingRepo.PickHoldForOrder(ctx, orderID)
 	if err != nil || !held || owed != 11300 || paid != 0 || total != 11300 {
 		t.Fatalf("the uninvoiced cash on demand order reads (held %v, owed %d, paid %d, total %d, err %v), want held owing its whole total",
@@ -216,7 +216,7 @@ func TestIntegration_PickHold_CreditCustomerOnAccountNeverHeld(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the on account ring: %v", err)
 	}
-	billingRepo := billing.NewRepository(pool)
+	billingRepo := testBillingRepo(pool)
 	held, owed, _, _, err := billingRepo.PickHoldForOrder(ctx, out.OrderID)
 	if err != nil || held || owed != out.TotalCents {
 		t.Fatalf("a credit customer's on account order reads (held %v, owed %d, err %v), want owing on terms but never held",
@@ -256,7 +256,7 @@ func TestIntegration_PickHold_PaymentsSettleLiftsOnce_UnderConcurrency(t *testin
 	if err != nil {
 		t.Fatalf("the unpaid ring: %v", err)
 	}
-	billingRepo := billing.NewRepository(pool)
+	billingRepo := testBillingRepo(pool)
 	if held, _, _, _, err := billingRepo.PickHoldForOrder(ctx, out.OrderID); err != nil || !held {
 		t.Fatalf("the unpaid order reads (held %v, err %v), want held", held, err)
 	}

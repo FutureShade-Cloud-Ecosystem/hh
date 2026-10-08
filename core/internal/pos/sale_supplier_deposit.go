@@ -118,13 +118,18 @@ func supplierDepositDocumentLine(lines []orderLineRow, cents int64) orderLineRow
 // lines are the goods at their real prices; the pointer line says, on the
 // document, where the deposit lives, and the header's subtotal and total carry
 // the rest. The gap between the goods lines' sum and the header's subtotal is
-// the deposit, named on the document by this line.
-func supplierDepositPointerLine(lines []orderLineRow, depositInvoiceNo string) orderLineRow {
+// the deposit, named on the document by this line. The words say so (item 9
+// Opus P3-5): the amount, the document it lives on, and that it is not in this
+// invoice's total, so every register detail, copy or listing that shows the
+// lines reads the zero row as the explanation of the gap, not an arithmetic
+// error. No line report counts it: it has no product and no money.
+func supplierDepositPointerLine(lines []orderLineRow, depositInvoiceNo string, depositCents int64) orderLineRow {
 	l := orderLineRow{
-		LineNo:      len(lines) + 1,
-		Description: "Supplier deposit, billed on its own invoice " + depositInvoiceNo,
-		QtyEntered:  1,
-		QtyBase:     1,
+		LineNo: len(lines) + 1,
+		Description: "Supplier deposit of " + splitMismatchDollars(depositCents) + ", billed on its own invoice " +
+			depositInvoiceNo + ", is not part of this invoice's total",
+		QtyEntered: 1,
+		QtyBase:    1,
 	}
 	if len(lines) > 0 {
 		l.UOMEntered, l.PriceUOM = lines[0].UOMEntered, lines[0].PriceUOM

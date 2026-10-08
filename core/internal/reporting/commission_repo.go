@@ -146,6 +146,7 @@ SELECT il.id::text                                                    AS invoice
   LEFT JOIN rep_assignments dflt ON dflt.customer_id = i.customer_id AND dflt.order_id IS NULL
  WHERE i.status NOT IN ('DRAFT','VOID')
    AND i.source_kind <> 'SUPPLIER_DEPOSIT'
+   AND (il.product_id IS NOT NULL OR il.line_total_cents <> 0)
    AND i.issue_date >= $1::date
    AND i.issue_date <= $2::date
    AND ($3::uuid IS NULL OR i.branch_id = $3::uuid)

@@ -2,6 +2,7 @@ package pos
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
@@ -147,6 +148,65 @@ func TestSalePreview_PaymentOptions_WalkIn(t *testing.T) {
 	want := []string{PaymentShapePayInFull, PaymentShapeDepositDueLater}
 	if !equalStrings(got, want) {
 		t.Fatalf("the walk in's preview answered %v, want %v", got, want)
+	}
+}
+
+// Item 9 Opus P2-3: the due later deposit rides the COD sale type, which the
+// branch's policy can turn off (0043). With Cash On Demand off at the branch
+// the menu drops it and offers pay in full now only, the same fact the ring's
+// own errCODDisabled refuses on: the menu must not promise a shape the ring
+// will not take.
+func TestSalePreview_PaymentOptions_CodOffDropsTheDueLaterDeposit(t *testing.T) {
+	for _, account := range []struct {
+		name string
+		cust customerRec
+	}{
+		{"walk in", customerRec{CustomerType: "RETAIL", PaymentTermsDays: 0, CreditLimitCents: 0}},
+		{"cash on demand customer", customerRec{CustomerType: "CONTRACTOR", PaymentTermsDays: 0, CreditLimitCents: 500_000}},
+		{"no credit account", customerRec{CustomerType: "CONTRACTOR", PaymentTermsDays: 30, CreditLimitCents: 0}},
+	} {
+		t.Run(account.name, func(t *testing.T) {
+			h := newHarness()
+			account.cust.ID = "cust-abc"
+			h.store.customers["cust-abc"] = account.cust
+			h.store.customers[h.store.walkInID] = customerRec{ID: h.store.walkInID, CustomerType: "RETAIL",
+				PaymentTermsDays: 0, CreditLimitCents: 0}
+			h.store.policies["branch-trt"] = PosPolicy{BranchID: "branch-trt", CODEnabled: false}
+			got := shapeCodes(previewOptions(t, h, "cust-abc"))
+			want := []string{PaymentShapePayInFull}
+			if !equalStrings(got, want) {
+				t.Fatalf("with COD off the preview answered %v, want %v (no due later deposit the ring would refuse)", got, want)
+			}
+		})
+	}
+}
+
+// A policy read that cannot be made fails closed the same way: no due later
+// deposit the ring might refuse.
+func TestSalePreview_PaymentOptions_UnreadablePolicyDropsTheDueLaterDeposit(t *testing.T) {
+	h := newHarness()
+	h.store.customers[h.store.walkInID] = customerRec{ID: h.store.walkInID, CustomerType: "RETAIL",
+		PaymentTermsDays: 0, CreditLimitCents: 0}
+	h.store.policyErr = errors.New("policy unreadable")
+	got := shapeCodes(previewOptions(t, h, ""))
+	want := []string{PaymentShapePayInFull}
+	if !equalStrings(got, want) {
+		t.Fatalf("with the policy unreadable the preview answered %v, want %v", got, want)
+	}
+}
+
+// A credit customer's menu is untouched by the switch: its deposit rides on
+// account, not the COD sale type.
+func TestSalePreview_PaymentOptions_CodOffLeavesTheCreditShapes(t *testing.T) {
+	h := newHarness()
+	h.store.customers["cust-abc"] = customerRec{ID: "cust-abc", CustomerType: "CONTRACTOR",
+		PaymentTermsDays: 30, CreditLimitCents: 500_000}
+	h.store.policies["branch-trt"] = PosPolicy{BranchID: "branch-trt", CODEnabled: false}
+	h.svc.WithHoldReader(fakeHoldReader{})
+	got := shapeCodes(previewOptions(t, h, "cust-abc"))
+	want := []string{PaymentShapePayInFull, PaymentShapeAllOnAccount, PaymentShapeDepositOnAccount}
+	if !equalStrings(got, want) {
+		t.Fatalf("with COD off the credit customer's preview answered %v, want %v", got, want)
 	}
 }
 

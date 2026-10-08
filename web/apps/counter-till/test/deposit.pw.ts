@@ -284,3 +284,33 @@ test("the Cash On Demand customer sees no supplier deposit control", async ({ pa
   await page.getByRole("button", { name: "Charge Account" }).click().catch(() => undefined);
   await expect(page.getByTestId("supplier-deposit")).toHaveCount(0);
 });
+
+// Item 9 Opus review P3-1: a deposit typed at or over the total. Line two says the one plain
+// sentence instead of a figure: the missing price marker would be false with the total directly
+// above, and no honest rest exists. The commit stays enabled, the server's refusal still speaks.
+test("a deposit at or over the total says the sale is covered, never not priced", async ({ page }) => {
+  await signIn(page);
+  await pickAccount(page, "C10", "Cash On Demand Landscaping");
+  await addHolland(page);
+  await chooseWillCall(page);
+  await openStep(page, "payment");
+  await page.getByTestId("pay-shape-DEPOSIT_NOW_REST_DUE_LATER").click();
+
+  // Over the total: the $4.52 sale with a $5.00 deposit.
+  await page.getByTestId("deposit-amount").fill("5.00");
+  const lineTwo = page.getByTestId("deposit-line-two");
+  await expect(lineTwo).toContainText("The deposit covers the whole sale: choose Pay in full now.");
+  await expect(lineTwo).not.toContainText("(not priced)");
+  await expect(lineTwo).not.toContainText("later");
+  await expect(page.getByTestId("deposit-commit")).toBeEnabled();
+
+  // Exactly the total: the same sentence, the boundary is "at or over".
+  await page.getByTestId("deposit-amount").fill("4.52");
+  await expect(lineTwo).toContainText("The deposit covers the whole sale: choose Pay in full now.");
+  await expect(lineTwo).not.toContainText("(not priced)");
+
+  // Below it again, the rest comes back with the server's words and figure.
+  await page.getByTestId("deposit-amount").fill("1.00");
+  await expect(lineTwo).toContainText("Balance due later");
+  await expect(lineTwo).toContainText("$3.52");
+});

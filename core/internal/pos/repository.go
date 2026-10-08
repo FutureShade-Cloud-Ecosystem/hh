@@ -17,6 +17,9 @@ import (
 // Repository implements posStore over pgx. The constructor is the stable surface.
 type Repository struct {
 	pool *pgxpool.Pool
+	// payBalance is the Pay balance door's seam to the owning modules
+	// (pay_balance_sources.go), bound at the composition root.
+	payBalance PayBalanceSources
 }
 
 // NewRepository wraps a pool (may be nil in scaffold/offline mode). The Sale opens a tx from this pool.

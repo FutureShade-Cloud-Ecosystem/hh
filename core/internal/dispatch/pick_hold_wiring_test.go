@@ -8,6 +8,8 @@ package dispatch
 import (
 	"context"
 	"testing"
+
+	"github.com/jackc/pgx/v5"
 )
 
 type fakePickHoldGate struct {
@@ -17,6 +19,12 @@ type fakePickHoldGate struct {
 }
 
 func (f fakePickHoldGate) HeldFromPicking(context.Context, string) (bool, int64, error) {
+	return f.held, f.owed, f.err
+}
+
+// HeldFromPickingTx answers the same canned facts on the transaction half
+// (the fake never touches the tx).
+func (f fakePickHoldGate) HeldFromPickingTx(context.Context, pgx.Tx, string) (bool, int64, error) {
 	return f.held, f.owed, f.err
 }
 

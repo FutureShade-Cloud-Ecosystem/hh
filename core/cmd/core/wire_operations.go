@@ -333,7 +333,14 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	if err := syncEngine.RegisterScope("delivery_stops", dispatch.NewDeliveryStopsSyncStore(boardStops)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
-	if err := syncEngine.RegisterScope("will_call", dispatch.NewWillCallSyncStore(pool, dispatchOrderAdapter{repo: orderRepo}, dispatchPickStateAdapter{repo: tasks.NewRepository(pool)}, link)); err != nil {
+	// Item 9 Opus P1-2: the sync will call mint carries the pick hold gate
+	// the Service door carries (the same billing read, the same adapter), and
+	// the boot fail-fast keeps a deploy from serving with the sync door dark.
+	willCallSync := dispatch.NewWillCallSyncStore(pool, dispatchOrderAdapter{repo: orderRepo}, dispatchPickStateAdapter{repo: tasks.NewRepository(pool)}, dispatchPickHoldAdapter{repo: holdBillingRepo(pool)}, link)
+	if !willCallSync.PickHoldGateWired() {
+		panic("dispatch: will call sync store pick hold gate not wired - a pay before release order's rack tag could be minted over sync unpaid")
+	}
+	if err := syncEngine.RegisterScope("will_call", willCallSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 	if err := syncEngine.RegisterScope("purchase_orders", purchasing.NewSyncStore(pool, w4cVendorDirectory{pool: pool}, link)); err != nil {
@@ -517,6 +524,13 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	orderSvc.WithInvoiceStanding(invoiceStandingAdapter{repo: billing.NewRepository(pool)})
 	orderSvc.WithBackorderNotifier(backorderNoticeAdapter{chat: yardChatNotifier{svc: messagingSvc, log: log}})
 	yardTasksSvc.WithYardOrderChanges(yardOrderAdapter{svc: orderSvc})
+	// Item 9 Opus P2-1: the yard's doors (Claim, Stage) carry the pick hold
+	// the will call doors carry, over the same billing read, with the boot
+	// fail-fast keeping a deploy from serving with the yard door dark.
+	yardTasksSvc.WithPickHoldCheck(tasksPickHoldAdapter{repo: holdBillingRepo(pool)})
+	if !yardTasksSvc.PickHoldCheckWired() {
+		panic("tasks: yard pick hold check not wired - a pay before release order's task could be claimed and staged unpaid")
+	}
 	tasks.NewHandler(yardTasksSvc, log).WithUserLinker(link).RegisterYardRoutes(r, g)
 	tasks.NewHandler(yardTasksSvc, log).WithUserLinker(link).RegisterWeightRoutes(r, g)
 
@@ -1104,6 +1118,11 @@ func pickTicketFromFeed(t dispatch.PickFeedTicket) tasks.PickTicket {
 		RequestedAt:  t.RequestedAt,
 		Lines:        lines,
 		Source:       "DISPATCH",
+		// The pay before release hold's mark (item 9 Opus P2-1): the row
+		// stays in the feed, marked, so the yard knows why it waits.
+		HeldFromPicking: t.HeldFromPicking,
+		HoldWords:       t.HoldWords,
+		StillOwedCents:  t.StillOwedCents,
 	}
 }
 
