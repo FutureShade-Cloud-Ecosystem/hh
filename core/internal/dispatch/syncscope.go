@@ -261,9 +261,11 @@ func NewDriverStopFence(pool *pgxpool.Pool, link syncLinker, role SyncRoleResolv
 // the org's) and true for a driver caller, whose answer is the subset
 // on their own runs: empty when no candidate is theirs, and empty for a
 // driver login that links to no driver record, the same fail-closed
-// shape the sync scopes' own pulls carry.
+// shape the sync scopes' own pulls carry. Whether a caller is held does
+// not depend on the candidates: a driver asked about no stops is still a
+// driver, so a page that reaches no stop is held to nothing.
 func (f *DriverStopFence) StopsOnDriverRuns(ctx context.Context, orgID, actor string, candidates []string) (map[string]bool, bool, error) {
-	if f == nil || orgID == "" || actor == "" || len(candidates) == 0 {
+	if f == nil || orgID == "" || actor == "" {
 		return map[string]bool{}, false, nil
 	}
 	d, err := resolveDriverFence(ctx, f.pool, f.link, f.role, sync.ScopeFilter{OrgID: orgID, Actor: actor})
@@ -274,7 +276,7 @@ func (f *DriverStopFence) StopsOnDriverRuns(ctx context.Context, orgID, actor st
 		return map[string]bool{}, false, nil
 	}
 	out := map[string]bool{}
-	if d.driverID == "" {
+	if d.driverID == "" || len(candidates) == 0 {
 		return out, true, nil
 	}
 	rows, err := f.pool.Query(ctx, `

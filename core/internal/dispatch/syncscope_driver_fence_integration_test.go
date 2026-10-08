@@ -416,3 +416,25 @@ func TestIntegration_DriverSyncFence_TheStopSeamAnswersForAttachments(t *testing
 		t.Errorf("a desk caller must not be held to the fence: isDriver=%v err=%v", isDriver, err)
 	}
 }
+
+// TestIntegration_DriverSyncFence_TheStopSeamBindsADriverWithNoCandidates
+// pins that whether the seam holds a caller does not depend on the
+// candidate set: a page that reaches no stop at all (an order photo, a
+// bare row) still answers isDriver for the driver login, or the
+// attachments scope would hand that page to the driver whole.
+func TestIntegration_DriverSyncFence_TheStopSeamBindsADriverWithNoCandidates(t *testing.T) {
+	w := newFenceWorld(t)
+	ctx := context.Background()
+	seam := NewDriverStopFence(w.pool, linkedSyncUser(w.pool), w.role)
+
+	got, isDriver, err := seam.StopsOnDriverRuns(ctx, testkit.OrgNorthID, testkit.SubDriver, nil)
+	if err != nil {
+		t.Fatalf("stop seam: %v", err)
+	}
+	if !isDriver || len(got) != 0 {
+		t.Errorf("a driver login with no candidate stops must still be held and answer none: isDriver=%v got=%v", isDriver, got)
+	}
+	if _, isDriver, err := seam.StopsOnDriverRuns(ctx, testkit.OrgNorthID, testkit.SubInsideSales, nil); err != nil || isDriver {
+		t.Errorf("a desk caller must not be held to the fence: isDriver=%v err=%v", isDriver, err)
+	}
+}

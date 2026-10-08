@@ -2,7 +2,8 @@
 
 // syncscope_driver_fence_pool_integration_test.go: the attachments
 // driver fence must never ask the shared pool for a second connection
-// while a write already holds one in an open transaction.
+// while a write already holds one in an open transaction, and the
+// driver's pull must not stall behind a page of colleagues' rows.
 //
 // The pool the deploy runs is small (pgx sets max(4, CPUs)), and the
 // real seam (dispatch's DriverStopFence) reads over a pool of its own
@@ -209,5 +210,100 @@ func TestIntegration_AttachmentsDriverFence_WritesNeverTakeASecondConnection(t *
 		if len(bad) > 0 {
 			t.Fatalf("%s: unexpected outcomes: %s", op, strings.Join(bad, "; "))
 		}
+	}
+}
+
+// TestIntegration_AttachmentsDriverFence_AnOrderLinkedPhotoIsNotTheDrivers:
+// an attachment with no stop link at all (an order photo, or a bare row)
+// is the desk's business. The fence must still bind the driver caller
+// when a page or a row reaches no stop, or the driver reads every such
+// row in the org.
+func TestIntegration_AttachmentsDriverFence_AnOrderLinkedPhotoIsNotTheDrivers(t *testing.T) {
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		t.Skip("attachments driver fence order leg: DATABASE_URL not set")
+	}
+	const (
+		orgID   = "a0e10000-0000-4000-8000-0000000000c1"
+		ownStop = "a0e10000-0000-4000-8000-0000000000c2"
+		driver  = "fx-order-driver"
+	)
+	ctx := context.Background()
+	pool := fencePool(t, url, 4)
+	seedFenceOrg(t, pool, orgID, "attachments-driver-fence-order-leg")
+	store := NewSyncStore(pool).WithDriverStopFence(fenceStub{driver: driver, allowed: map[string]bool{ownStop: true}})
+	desk := hhsync.ScopeFilter{OrgID: orgID, Actor: "fx-order-desk"}
+	drv := hhsync.ScopeFilter{OrgID: orgID, Actor: driver}
+
+	rs, err := store.Create(ctx, desk, "a1e10000-0000-4000-8000-000000000301", map[string]any{
+		"kind": "photo", "appwrite_file_id": "fx-order", "bucket": "fx-bucket",
+		"links": []any{map[string]any{"owner_kind": "order", "owner_id": "a0e10000-0000-4000-8000-0000000000c9", "role": "proof"}},
+	})
+	if err != nil {
+		t.Fatalf("desk create order photo: %v", err)
+	}
+	// The only row in the org reaches no stop, so the page the driver
+	// pulls carries no stop candidate at all.
+	items, _, err := store.Pull(ctx, drv, 0, 50)
+	if err != nil {
+		t.Fatalf("driver pull: %v", err)
+	}
+	for _, e := range items {
+		if e.ID == rs.ID {
+			t.Errorf("the driver's pull answered the desk's order-linked attachment %s", rs.ID)
+		}
+	}
+	if _, found, err := store.Load(ctx, drv, rs.ID); err != nil || found {
+		t.Errorf("the driver's Load of the order-linked attachment: found=%v err=%v", found, err)
+	}
+	if _, err := store.Create(ctx, drv, "a1e10000-0000-4000-8000-000000000302", map[string]any{
+		"kind": "photo", "appwrite_file_id": "fx-bare", "bucket": "fx-bucket",
+	}); err == nil {
+		t.Errorf("the driver registered an attachment that reaches no stop of theirs")
+	}
+}
+
+// TestIntegration_AttachmentsDriverFence_AColleaguesPageDoesNotStallThePull:
+// the pull filters after the page is cut, so a page made only of
+// colleagues' rows used to answer empty with no cursor and the driver's
+// own later photo never arrived.
+func TestIntegration_AttachmentsDriverFence_AColleaguesPageDoesNotStallThePull(t *testing.T) {
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		t.Skip("attachments driver fence pull leg: DATABASE_URL not set")
+	}
+	const (
+		orgID    = "a0e10000-0000-4000-8000-0000000000d1"
+		ownStop  = "a0e10000-0000-4000-8000-0000000000d2"
+		awayStop = "a0e10000-0000-4000-8000-0000000000d3"
+		driver   = "fx-stall-driver"
+		limit    = 3
+	)
+	ctx := context.Background()
+	pool := fencePool(t, url, 4)
+	seedFenceOrg(t, pool, orgID, "attachments-driver-fence-stall-leg")
+	store := NewSyncStore(pool).WithDriverStopFence(fenceStub{driver: driver, allowed: map[string]bool{ownStop: true}})
+	desk := hhsync.ScopeFilter{OrgID: orgID, Actor: "fx-stall-desk"}
+
+	mk := func(i int, stop string) string {
+		rs, err := store.Create(ctx, desk, fmt.Sprintf("a1e10000-0000-4000-8000-0000000002%02d", i), map[string]any{
+			"kind": "photo", "appwrite_file_id": fmt.Sprintf("fx-stall-%d", i), "bucket": "fx-bucket", "links": stopLink(stop),
+		})
+		if err != nil {
+			t.Fatalf("create %d: %v", i, err)
+		}
+		return rs.ID
+	}
+	for i := 1; i <= limit+2; i++ {
+		mk(i, awayStop)
+	}
+	own := mk(limit+3, ownStop)
+
+	items, _, err := store.Pull(ctx, hhsync.ScopeFilter{OrgID: orgID, Actor: driver}, 0, limit)
+	if err != nil {
+		t.Fatalf("driver pull: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != own {
+		t.Errorf("the driver's first pull must reach past the colleagues' page to their own photo %s, got %d items", own, len(items))
 	}
 }

@@ -139,7 +139,7 @@ func (s *SyncStore) DriverStopFenceWired() bool { return s.fence != nil }
 // page happens to reach, and a driver whose page reaches no stop at all
 // (an order photo, a bare row) is held to nothing, never to the org.
 func (s *SyncStore) driverScope(ctx context.Context, f sync.ScopeFilter, candidates []string) (map[string]bool, bool, error) {
-	if s.fence == nil || f.Tenant || f.Actor == "" || len(candidates) == 0 {
+	if s.fence == nil || f.Tenant || f.Actor == "" {
 		return nil, false, nil
 	}
 	return s.fence.StopsOnDriverRuns(ctx, f.OrgID, f.Actor, candidates)
@@ -296,85 +296,107 @@ func (s *SyncStore) withLinks(ctx context.Context, a Attachment) (Attachment, er
 
 // Pull returns the page of attachment changes past since, live rows and
 // tombstones in seq order, at most limit rows total, under the org
-// predicate.
+// predicate. The driver fence filters AFTER a page is cut (whether a
+// row hangs off the driver's stops is a link fact resolved through the
+// seam), so a page made only of colleagues' rows would answer empty
+// with no cursor and the driver's own later rows would never arrive.
+// Pull therefore keeps cutting pages from the last scanned seq until
+// limit visible rows are gathered or the feed ends; a caller the fence
+// does not bind fills the first page, so its path is one query.
 func (s *SyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, limit int) ([]sync.Entity, []sync.Tombstone, error) {
 	where, args, ok := scopePredicate(f)
 	if !ok {
+		return []sync.Entity{}, []sync.Tombstone{}, nil
+	}
+	if limit <= 0 {
 		return []sync.Entity{}, []sync.Tombstone{}, nil
 	}
 	q := fmt.Sprintf(`SELECT %s FROM attachment
 		WHERE %s AND seq IS NOT NULL AND seq > $2
 		ORDER BY seq ASC
 		LIMIT $3`, attachmentColumns, where)
-	args = append(args, since, limit)
-	rows, err := s.pool.Query(ctx, q, args...)
-	if err != nil {
-		return nil, nil, fmt.Errorf("attachments: sync pull: %w", err)
-	}
-	defer rows.Close()
 	items := []sync.Entity{}
 	tombstones := []sync.Tombstone{}
-	ids := []string{}
+	cursor := since
+	for {
+		scanned, err := s.pullPage(ctx, q, append(append([]any{}, args...), cursor, limit))
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(scanned) == 0 {
+			return items, tombstones, nil
+		}
+		// The driver fence reads the links of every row on the page, live
+		// and tombstoned alike (a tombstone still names the row), resolves
+		// the stops the calling driver may reach in one seam call, and
+		// drops every row that does not hang off one of them: a colleague's
+		// photo is the same as absent.
+		ids := make([]string, 0, len(scanned))
+		for _, r := range scanned {
+			ids = append(ids, r.attachment.ID)
+		}
+		links, err := s.loadLinks(ctx, ids)
+		if err != nil {
+			return nil, nil, err
+		}
+		linkSets := make([][]Link, 0, len(scanned))
+		for _, ls := range links {
+			linkSets = append(linkSets, ls)
+		}
+		allowed, isDriver, err := s.driverScope(ctx, f, stopCandidates(linkSets...))
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, r := range scanned {
+			cursor = r.seq
+			if isDriver && !linksReachAStop(links[r.attachment.ID], allowed) {
+				continue
+			}
+			if r.deleted {
+				tombstones = append(tombstones, sync.Tombstone{ID: r.attachment.ID, Seq: r.seq})
+			} else {
+				r.attachment.Links = links[r.attachment.ID]
+				if r.attachment.Links == nil {
+					r.attachment.Links = []Link{}
+				}
+				data, err := attachmentData(r.attachment)
+				if err != nil {
+					return nil, nil, err
+				}
+				items = append(items, sync.Entity{ID: r.attachment.ID, Seq: r.seq, Data: data})
+			}
+			// The page is full: stop mid page, the next pull resumes from
+			// the last row answered.
+			if len(items)+len(tombstones) >= limit {
+				return items, tombstones, nil
+			}
+		}
+		// A short page is the end of the feed.
+		if len(scanned) < limit {
+			return items, tombstones, nil
+		}
+	}
+}
+
+// pullPage reads and scans one page of attachment rows.
+func (s *SyncStore) pullPage(ctx context.Context, q string, args []any) ([]attachmentRow, error) {
+	rows, err := s.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("attachments: sync pull: %w", err)
+	}
+	defer rows.Close()
 	scanned := []attachmentRow{}
 	for rows.Next() {
 		r, err := scanAttachment(rows)
 		if err != nil {
-			return nil, nil, fmt.Errorf("attachments: sync pull scan: %w", err)
+			return nil, fmt.Errorf("attachments: sync pull scan: %w", err)
 		}
 		scanned = append(scanned, r)
-		if r.deleted {
-			tombstones = append(tombstones, sync.Tombstone{ID: r.attachment.ID, Seq: r.seq})
-			continue
-		}
-		ids = append(ids, r.attachment.ID)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, nil, fmt.Errorf("attachments: sync pull: %w", err)
+		return nil, fmt.Errorf("attachments: sync pull: %w", err)
 	}
-	// The driver fence reads the links of every row on the page, live
-	// and tombstoned alike (a tombstone still names the row), resolves
-	// the stops the calling driver may reach in one seam call, and
-	// drops every row that does not hang off one of them: a colleague's
-	// photo is the same as absent, and the page an unseen row vacated
-	// is honestly shorter.
-	allIDs := ids
-	for _, r := range scanned {
-		if r.deleted {
-			allIDs = append(allIDs, r.attachment.ID)
-		}
-	}
-	links, err := s.loadLinks(ctx, allIDs)
-	if err != nil {
-		return nil, nil, err
-	}
-	linkSets := make([][]Link, 0, len(scanned))
-	for _, ls := range links {
-		linkSets = append(linkSets, ls)
-	}
-	allowed, isDriver, err := s.driverScope(ctx, f, stopCandidates(linkSets...))
-	if err != nil {
-		return nil, nil, err
-	}
-	tombstones = tombstones[:0]
-	for _, r := range scanned {
-		if isDriver && !linksReachAStop(links[r.attachment.ID], allowed) {
-			continue
-		}
-		if r.deleted {
-			tombstones = append(tombstones, sync.Tombstone{ID: r.attachment.ID, Seq: r.seq})
-			continue
-		}
-		r.attachment.Links = links[r.attachment.ID]
-		if r.attachment.Links == nil {
-			r.attachment.Links = []Link{}
-		}
-		data, err := attachmentData(r.attachment)
-		if err != nil {
-			return nil, nil, err
-		}
-		items = append(items, sync.Entity{ID: r.attachment.ID, Seq: r.seq, Data: data})
-	}
-	return items, tombstones, nil
+	return scanned, nil
 }
 
 // FindApplied resolves one idempotency key to the row it applied under
