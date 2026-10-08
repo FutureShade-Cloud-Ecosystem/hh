@@ -9082,7 +9082,7 @@ paths:
       tags:
         - staff-identity
       summary: List the approval requests the caller may see
-      description: A GLOBAL caller sees every branch; a scoped caller sees only their granted branches.
+      description: "A GLOBAL caller sees every branch; a scoped caller sees only their granted branches. With kind, the list is narrowed to one policy kind and only for a kind the caller could decide (the dealer's configured approvers): an unknown kind is a 400, a kind the caller holds no decide authority over is a 403."
       x-role: requireStaff
       x-access:
         surfaces:
@@ -9100,6 +9100,12 @@ paths:
           description: Filter by approval status
           schema:
             $ref: "#/components/schemas/IdentityApprovalStatus"
+        - name: kind
+          in: query
+          required: false
+          description: Narrow the list to one policy kind the caller decides
+          schema:
+            $ref: "#/components/schemas/IdentityPolicyType"
       responses:
         "200":
           description: The page of approval requests
@@ -9107,6 +9113,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/IdentityApprovalPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
