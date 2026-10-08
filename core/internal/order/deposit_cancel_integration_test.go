@@ -115,7 +115,12 @@ func (w *depositCancelWorld) bookTheLiability(t *testing.T, dep string) {
 	}
 }
 
-func (w *depositCancelWorld) accountNet(t *testing.T, code string) int64 {
+// journalAccountNet sums one account's legs over ONLY the journals this test
+// owns (their idempotency keys). The integration suite shares one database,
+// so an account-wide sum would read every other suite's journals posted in
+// the same period; the proof is the pair of journals the deposit's own life
+// wrote, the finalize and the cancel.
+func (w *depositCancelWorld) journalAccountNet(t *testing.T, code, dep string) int64 {
 	t.Helper()
 	var net int64
 	if err := w.pool.QueryRow(context.Background(), `
@@ -123,7 +128,9 @@ func (w *depositCancelWorld) accountNet(t *testing.T, code string) int64 {
 		  FROM gl_journal_lines l
 		  JOIN gl_journals j ON j.id = l.journal_id
 		  JOIN gl_accounts a ON a.id = l.account_id
-		 WHERE a.code = $1`, code).Scan(&net); err != nil {
+		 WHERE a.code = $1
+		   AND j.idempotency_key IN ('ar.invoice.finalized:'||$2, 'deposit.cancelled:'||$2)`,
+		code, dep).Scan(&net); err != nil {
 		t.Fatalf("account net %s: %v", code, err)
 	}
 	return net
@@ -137,7 +144,7 @@ func TestIntegration_DepositCancel_UnpaidCreditBackEndToEnd(t *testing.T) {
 	w := newDepositCancelWorld(t)
 	_, ord, dep := w.seedDepositOrder(t, "U", false)
 	w.bookTheLiability(t, dep)
-	if got := w.accountNet(t, "2300"); got != -4000 {
+	if got := w.journalAccountNet(t, "2300", dep); got != -4000 {
 		t.Fatalf("before the cancel 2300 nets %d, want -4000", got)
 	}
 
@@ -165,10 +172,10 @@ func TestIntegration_DepositCancel_UnpaidCreditBackEndToEnd(t *testing.T) {
 
 	// The books: 2300 back to zero, 1100 net zero for the pair (the
 	// finalize's DR and the credit back's CR), balanced by construction.
-	if got := w.accountNet(t, "2300"); got != 0 {
+	if got := w.journalAccountNet(t, "2300", dep); got != 0 {
 		t.Errorf("2300 nets %d, want 0", got)
 	}
-	if got := w.accountNet(t, "1100"); got != 0 {
+	if got := w.journalAccountNet(t, "1100", dep); got != 0 {
 		t.Errorf("1100 nets %d, want 0 (the credit back cleared the deposit's own AR)", got)
 	}
 
@@ -241,7 +248,7 @@ func TestIntegration_DepositCancel_PaidCreditBackEndToEnd(t *testing.T) {
 	// account row names (the fixture plants the paid shape without a payment
 	// journal, so the deposit's finalize DR and the cancel CR net 1100 to
 	// zero and the credit itself is the pair of the ADJUSTMENT row).
-	if got := w.accountNet(t, "2300"); got != 0 {
+	if got := w.journalAccountNet(t, "2300", dep); got != 0 {
 		t.Errorf("2300 nets %d, want 0", got)
 	}
 	var crAR int64
@@ -287,13 +294,13 @@ func TestIntegration_DepositCancel_ManagerKeepsTheDepositEndToEnd(t *testing.T) 
 		t.Fatalf("the kept deposit = %s/%d, want FINALIZED/4000", status, balance)
 	}
 	// The books: 2300 zero, the deposit in other income, AR standing.
-	if got := w.accountNet(t, "2300"); got != 0 {
+	if got := w.journalAccountNet(t, "2300", dep); got != 0 {
 		t.Errorf("2300 nets %d, want 0", got)
 	}
-	if got := w.accountNet(t, "4950"); got != -4000 {
+	if got := w.journalAccountNet(t, "4950", dep); got != -4000 {
 		t.Errorf("4950 Other Income nets %d, want -4000", got)
 	}
-	if got := w.accountNet(t, "1100"); got != 4000 {
+	if got := w.journalAccountNet(t, "1100", dep); got != 4000 {
 		t.Errorf("1100 nets %d, want 4000 (the kept deposit's standing debt)", got)
 	}
 
