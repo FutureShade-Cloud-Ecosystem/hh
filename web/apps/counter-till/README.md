@@ -143,3 +143,32 @@ the box for the restart leg, runs both lanes' stub suites and the typecheck,
 the repository root's gates, and the two source scans and the sink scan, and
 removes everything it raised. It needs docker, node 22 (CI's version), npm and
 bun.
+
+## The front door walk
+
+`npm run walk-front-door` walks the assembled demo box the way a person walks
+it at the front door: pick a role from the front door's picker, open each
+module signed in (the Counter Till and the Quote Desk, each adopting the
+front door's handoff with no second picker), open a not yet module's coming
+soon page as the Sales manager, then Switch role and Sign out, holding after
+each that the session keys are cleared. Its Playwright config is
+`test/walk-front-door.config.ts` and its spec is
+`test/acceptance/walk/walk-front-door.pw.ts`, one level below the acceptance
+specs: the default config's `testIgnore` covers everything under
+`test/acceptance/`, the acceptance config's match stops one level short, and
+the popout and default-build configs name their own files, so the walk runs
+only through its own config and never in the default legs.
+
+The run needs the assembled demo image's box (the front door at `/`, the
+till at `/till/`, the Quote Desk at `/quote/`), which the till exit image is
+not: the walk is pointed at the box with `CT_IMAGE_URL` and answers the
+phrase gate with `CT_GATE_PHRASE`, the same variables the acceptance run
+reads, held by whoever boots the box. Check the box's `/healthz` before the
+run spends its mint pace on a stranger. The green line is 1 passed (the walk
+is one story, every landing asserted in its turn); it signs in five times at
+the box's mint pace, so it takes its time. Like the acceptance run it needs
+node 22, the web workspace installed, and the system Chrome.
+
+The two module landings read different chrome on purpose (round 7): the
+Quote Desk wears the design system's shared header, whose word is
+`header-word`; the till keeps its own session bar's `signed-in-role`.

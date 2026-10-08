@@ -53,6 +53,8 @@ func (s *Service) consume(ctx context.Context, e notify.Event) error {
 		draft, post, err = s.buildPosReturnCommitted(ctx, e.Payload)
 	case "order.returned":
 		draft, post, err = s.buildOrderReturned(ctx, e.Payload)
+	case "pos.return.written_off":
+		draft, post, err = s.buildPosReturnWrittenOff(ctx, e.Payload)
 	case "pos.sale.committed", "bank.recon.completed":
 		// No direct GL effect: a POS sale's revenue/cash post via its own invoice.finalized / payment.received
 		// events; bankrec posts its clearing journals directly through PostExternal. Ack to avoid double-count.
@@ -685,6 +687,58 @@ func (s *Service) buildOrderReturned(ctx context.Context, payload []byte) (journ
 	}, true, nil
 }
 
+// buildPosReturnWrittenOff posts the write off of goods that came back damaged (sub item 10.3, the Q4
+// ruling): DR 5200 inventory adjustments / CR 5000 COGS at the CostBasis weighted average, the cost the
+// sale booked to COGS moving to the damage expense so the loss reads as damage, not cost of sales.
+// found=false (no cost row) skips quietly like the COGS reversal. Keyed per RETURN.
+func (s *Service) buildPosReturnWrittenOff(ctx context.Context, payload []byte) (journalDraft, bool, error) {
+	var p orderReturnedPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return journalDraft{}, false, fmt.Errorf("gl: pos.return.written_off payload: %w", err)
+	}
+	if p.ReturnID == "" {
+		return journalDraft{}, false, fmt.Errorf("gl: pos.return.written_off missing return_id")
+	}
+	if s.costBasis == nil {
+		return journalDraft{}, false, nil
+	}
+	var total int64
+	for _, ln := range p.Lines {
+		cost, found, err := s.costBasis.UnitCostCents(ctx, ln.ProductID, ln.QtyBase)
+		if err != nil {
+			return journalDraft{}, false, err
+		}
+		if found {
+			total += cost
+		}
+	}
+	if total == 0 {
+		return journalDraft{}, false, nil
+	}
+	et := "pos.return.written_off"
+	rules, err := s.store.PostingAccounts(ctx, et, p.BranchID)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	expenseCode, err := pick(rules, et, "expense")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	cogsCode, err := pick(rules, et, "cogs")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	return journalDraft{
+		Source:         SourceAdjustment,
+		SourceRefID:    p.ReturnID,
+		IdempotencyKey: "pos.return.written_off:" + p.ReturnID,
+		Memo:           "Damaged goods written off on return",
+		BranchID:       p.BranchID,
+		OccurredAt:     s.clock(),
+		Lines:          []draftLine{dr(expenseCode, total, "damaged goods written off"), cr(cogsCode, total, "COGS moved to write off")},
+	}, true, nil
+}
+
 type tillCompletedPayload struct {
 	SessionID      string `json:"session_id"`
 	BranchID       string `json:"branch_id"`
@@ -835,6 +889,7 @@ func (s *Service) ValidatePostingRules(ctx context.Context) error {
 		"pos.return.committed":   {"revenue", "hst", "undeposited", "card_clearing", "ar", "fee_revenue"},
 		"order.returned":         {"inventory", "cogs"},
 		"deposit.released":       {"customer_deposit", "revenue"},
+		"pos.return.written_off": {"expense", "cogs"},
 	}
 	for et, roles := range required {
 		for _, role := range roles {

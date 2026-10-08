@@ -52,31 +52,34 @@ type fakeStore struct {
 	signatures  []signatureRow
 
 	// -- W7 counter-v2 state --
-	policies        map[string]PosPolicy        // branch_id ("" = org default) → row
-	userWS          map[string]userWorkspaceRow // DIB-488 rev2: user_id → workspace ergonomics row
-	userWSWrites    int                         // upsert count, the replay tests assert "no second write"
-	cachedReturns   map[string]Return           // idempotency key → committed return
-	retCtx          map[string]returnOrderCtx   // order_id → the original-sale context
-	retLines        map[string]returnableLine   // order_line_id → the sold line (prior sums derive from returnLineRows)
-	retLineOrders   map[string]string           // order_line_id → order_id (the customer lines fake's grouping)
-	returnRows      []returnRow
-	returnLineRows  []returnLineRow
-	priorSums       map[string]int64      // order_id → the sale's earlier committed return total (the per-sale sum the refund gate reads)
-	noteKeys        map[string]ReturnNote // the note idempotency key → its committed note (the across-orders replay)
-	noteSeq         int
-	lastNoteID      string            // the most recent InsertReturnNote's id, the across path binds children with
-	returnLocks     []string          // order ids the per-sale return advisory lock was taken for, in order
-	refundPayments  map[string]string // return id → refund payment id
-	creditApplies   []creditApply
-	invoiceBalance  map[string]int64 // invoice id → open balance (drives ApplyCreditToInvoice)
-	parked          map[string]ParkedTicket
-	lastResumeActor string // the actor the last resume stamped (the parked fence's who-resumed)
-	pricingDocs     map[string]PricingOrder
-	products        map[string][2]string     // product id → {sku, name}
-	stockMeta       map[string]fakeStockMeta // DIB-488: canned glance unit meta per product
-	staff           map[string]string        // DIB-488 rev 6: user id → display name (ACTIVE staff)
-	discountStaff   []discountStaffRow       // the counter discount's candidate logins (discount_test.go)
-	discountReads   []SaleDiscount           // canned ReadSaleDiscounts answer
+	policies         map[string]PosPolicy        // branch_id ("" = org default) → row
+	userWS           map[string]userWorkspaceRow // DIB-488 rev2: user_id → workspace ergonomics row
+	userWSWrites     int                         // upsert count, the replay tests assert "no second write"
+	cachedReturns    map[string]Return           // idempotency key → committed return
+	retCtx           map[string]returnOrderCtx   // order_id → the original-sale context
+	retLines         map[string]returnableLine   // order_line_id → the sold line (prior sums derive from returnLineRows)
+	neverLeftShelf   map[string]bool             // order_line_id → goods that never left the shelf (the D1 case)
+	retLineOrders    map[string]string           // order_line_id → order_id (the customer lines fake's grouping)
+	returnRows       []returnRow
+	returnLineRows   []returnLineRow
+	unbookedRefunds  []cardRefundFact
+	bookedRefundKeys []string
+	priorSums        map[string]int64      // order_id → the sale's earlier committed return total (the per-sale sum the refund gate reads)
+	noteKeys         map[string]ReturnNote // the note idempotency key → its committed note (the across-orders replay)
+	noteSeq          int
+	lastNoteID       string            // the most recent InsertReturnNote's id, the across path binds children with
+	returnLocks      []string          // order ids the per-sale return advisory lock was taken for, in order
+	refundPayments   map[string]string // return id → refund payment id
+	creditApplies    []creditApply
+	invoiceBalance   map[string]int64 // invoice id → open balance (drives ApplyCreditToInvoice)
+	parked           map[string]ParkedTicket
+	lastResumeActor  string // the actor the last resume stamped (the parked fence's who-resumed)
+	pricingDocs      map[string]PricingOrder
+	products         map[string][2]string     // product id → {sku, name}
+	stockMeta        map[string]fakeStockMeta // DIB-488: canned glance unit meta per product
+	staff            map[string]string        // DIB-488 rev 6: user id → display name (ACTIVE staff)
+	discountStaff    []discountStaffRow       // the counter discount's candidate logins (discount_test.go)
+	discountReads    []SaleDiscount           // canned ReadSaleDiscounts answer
 	// -- DIB-488 rev 8 canned state (interface compliance, the rev-1/2/5/6 fake-extension class) --
 	weights       map[string]float64  // product id → kg per base unit (absent = none on file)
 	branchCosts   map[string]int64    // product id → WAC cents at the (single) test branch
@@ -472,10 +475,39 @@ func (f *fakeStore) ListCustomerReturnableOrders(_ context.Context, customerID s
 	return out, nil
 }
 
+func (f *fakeStore) SumCardRefundedTx(_ context.Context, _ pgx.Tx, orderID, _ string) (int64, error) {
+	var sum int64
+	for _, r := range f.returnRows {
+		if r.OrderID == orderID && r.RefundMethod == RefundCard {
+			sum += r.TotalCents - r.FeeCents
+		}
+	}
+	return sum, nil
+}
+
+func (f *fakeStore) RecordUnbookedCardRefunds(_ context.Context, facts []cardRefundFact, _ string) error {
+	f.unbookedRefunds = append(f.unbookedRefunds, facts...)
+	return nil
+}
+
+func (f *fakeStore) MarkCardRefundsBooked(_ context.Context, keys []string) error {
+	f.bookedRefundKeys = append(f.bookedRefundKeys, keys...)
+	return nil
+}
+
+func (f *fakeStore) ReadReturnableLine(ctx context.Context, orderID, orderLineID string) (returnableLine, bool, error) {
+	return f.LockReturnableLine(ctx, nil, orderID, orderLineID)
+}
+
 func (f *fakeStore) LockReturnableLine(_ context.Context, _ pgx.Tx, orderID, orderLineID string) (returnableLine, bool, error) {
 	rl, ok := f.retLines[orderLineID]
 	if !ok || f.retCtx[orderID].OrderID != orderID {
 		return returnableLine{}, false, nil
+	}
+	// The fixtures are collect now rings unless a test names a line as one that never left the
+	// shelf (the real repo reads leftShelfExpr).
+	if !f.neverLeftShelf[orderLineID] {
+		rl.LeftShelfBase = rl.QtySold
 	}
 	// Prior sums derive from the COMMITTED return lines (the real repo sums pos_return_lines).
 	for _, prev := range f.returnLineRows {

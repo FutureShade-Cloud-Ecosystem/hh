@@ -22,6 +22,9 @@ func defaultRules() map[string]map[string]string {
 		"till.session.completed": {"over_short": "6350", "undeposited": "1020"},
 		"order.fulfilled":        {"cogs": "5000", "inventory": "1200"},
 		"deposit.released":       {"customer_deposit": "2300", "revenue": "4000"},
+		"order.returned":         {"inventory": "1200", "cogs": "5000"},
+		// Item 10.3: goods returned damaged are written off to inventory adjustments (Q4).
+		"pos.return.written_off": {"expense": "5200", "cogs": "5000"},
 	}
 }
 

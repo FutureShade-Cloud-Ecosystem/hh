@@ -9,13 +9,19 @@ package billing
 import (
 	"testing"
 	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
-// arDay is the AR-landing lane's date helper (midnight). Union train 13 renamed it off the plain
-// `day`, which the invoices register lane declares in dib510_register_test.go at 09:30, two
-// different times of day, both load-bearing for their own lane's aging arithmetic, so both are kept.
+// arDay is the AR-landing lane's date helper: noon in the house zone. Union train 13 renamed it
+// off the plain `day`, which the invoices register lane declares in dib510_register_test.go at
+// 09:30, two different times of day, both load-bearing for their own lane's aging arithmetic, so
+// both are kept. Noon in the house zone is the AR lane's load-bearing choice since the aging day
+// became the dealer's: an instant there carries its own calendar date whatever reads it, and as a
+// clock it names the house zone's day, where this lane's old midnight (UTC) names the evening
+// before and ages the book one day short.
 func arDay(y int, m time.Month, d int) time.Time {
-	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
+	return time.Date(y, m, d, 12, 0, 0, 0, houseday.Location())
 }
 
 func testPolicy() ARLandingPolicy { return DefaultARLandingPolicy() }
@@ -61,11 +67,18 @@ func TestBucketFor_EdgesAreConfiguration(t *testing.T) {
 }
 
 func TestDaysPastDue_CountsWholeDays(t *testing.T) {
+	// arDay is noon in the house zone: right as a due date (it carries its own calendar day) and
+	// as the clock (it names the house zone's day). A due date off a DATE column arrives from the
+	// scan at UTC midnight and must land on the same answer, which the second pair pins.
 	if got := DaysPastDue(arDay(2026, 8, 1), arDay(2026, 8, 27)); got != 26 {
 		t.Fatalf("DaysPastDue = %d, want 26", got)
 	}
 	if got := DaysPastDue(arDay(2026, 8, 27), arDay(2026, 8, 27)); got != 0 {
 		t.Fatalf("an invoice due today is %d days past due, want 0", got)
+	}
+	scanned := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
+	if got := DaysPastDue(scanned, arDay(2026, 8, 27)); got != 0 {
+		t.Fatalf("a due date scanned at UTC midnight, read on the house zone's day, is %d days past due, want 0", got)
 	}
 }
 

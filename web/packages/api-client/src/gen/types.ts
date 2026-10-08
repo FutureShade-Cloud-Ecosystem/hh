@@ -4414,6 +4414,7 @@ export type PosReturnLineInput = {
   order_line_id: string;
   qty_base: number;
   reason_code: "DAMAGED" | "DEFECT" | "WRONG_ITEM" | "NO_LONGER_NEEDED" | "OTHER";
+  disposition?: "RESTOCK" | "DAMAGED" | "NO_RETURN";
 };
 export type PosPickupInput = {
   required: boolean;
@@ -4484,6 +4485,33 @@ export type PosReturnAcrossOrder = {
   order_id: string;
   lines: PosReturnLineInput[];
 };
+export type PosReturnPreviewInput = {
+  customer_id: string;
+  orders: PosReturnAcrossOrder[];
+};
+export type PosReturnPreviewLine = {
+  order_line_id: string;
+  qty_base: number;
+  subtotal_cents: number;
+  tax_cents: number;
+  total_cents: number;
+};
+export type PosReturnPreviewOrder = {
+  order_id: string;
+  order_no: string;
+  subtotal_cents: number;
+  tax_cents: number;
+  total_cents: number;
+  lines: PosReturnPreviewLine[];
+};
+export type PosReturnPreview = {
+  customer_id: string;
+  branch_id: string;
+  subtotal_cents: number;
+  tax_cents: number;
+  total_cents: number;
+  orders: PosReturnPreviewOrder[];
+};
 export type PosReturnNote = {
   note_id: string;
   note_no: string;
@@ -4515,6 +4543,7 @@ export type PosCustomerOrder = {
   order_id: string;
   order_no: string;
   branch_id: string;
+  branch_name: string;
   created_at: string;
   job_label: string;
   source: "TILL" | "QUOTE";

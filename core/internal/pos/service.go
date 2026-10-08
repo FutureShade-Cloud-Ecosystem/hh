@@ -9,6 +9,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/moneyutil"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
@@ -199,6 +200,15 @@ type posStore interface {
 	// quantity netted by the same shared prior-return sums the commit guard reads.
 	ListCustomerReturnableOrders(ctx context.Context, customerID string, branchIDs []string, limit int) ([]CustomerOrderView, error)
 	LockReturnableLine(ctx context.Context, tx pgx.Tx, orderID, orderLineID string) (returnableLine, bool, error)
+	// ReadReturnableLine is LockReturnableLine without the lock or the transaction: the credit
+	// preview's read of the same line and the same prior-return sums.
+	ReadReturnableLine(ctx context.Context, orderID, orderLineID string) (returnableLine, bool, error)
+	// SumCardRefundedTx is what earlier CARD returns of the order refunded to the card (D5).
+	SumCardRefundedTx(ctx context.Context, tx pgx.Tx, orderID, exceptReturnID string) (int64, error)
+	// RecordUnbookedCardRefunds and MarkCardRefundsBooked keep the record of processor refunds a
+	// rolled back transaction left behind, on the pool and after that transaction ended (D4).
+	RecordUnbookedCardRefunds(ctx context.Context, facts []cardRefundFact, reason string) error
+	MarkCardRefundsBooked(ctx context.Context, refundKeys []string) error
 	// the per-sale return sums and lock: the refund approval amount counts
 	// every return against the same sale together, so the gate reads the
 	// sale's earlier committed returns inside its transaction (the Tx read)
@@ -340,8 +350,11 @@ type Service struct {
 	// actorNames turns an audit actor id into the person's name for that same history. Nil degrades
 	// every row to its role word, which is what the history said before names existed.
 	actorNames ActorNameResolver
-	now        func() time.Time
-	callerFrom func(context.Context) (identity.StaffContext, bool)
+	// branchNames turns a branch id into the branch's name for the customer lines read (the branches
+	// module owns the table). Nil leaves the names empty.
+	branchNames BranchNamer
+	now         func() time.Time
+	callerFrom  func(context.Context) (identity.StaffContext, bool)
 }
 
 // NewService wires the store. Sibling seams are injected via the With* methods. tax + stock default to the
@@ -434,6 +447,16 @@ func (s *Service) WithUserLinker(l identity.UserIDLinker) *Service { s.userLink 
 func errRoleConfigUnwired() error {
 	return clientErr(http.StatusServiceUnavailable, "pos: the dealer's role configuration is not wired")
 }
+
+// BranchNamer is the narrow read the customer lines answer needs: every branch's id with its name.
+// Satisfied in cmd/core by a thin adapter over the branches module's service, so pos never reads the
+// locations table.
+type BranchNamer interface {
+	BranchNames(ctx context.Context) (map[string]string, error)
+}
+
+// WithBranchNames injects the branch name read.
+func (s *Service) WithBranchNames(b BranchNamer) *Service { s.branchNames = b; return s }
 
 // WithClock injects a deterministic clock (tests).
 func (s *Service) WithClock(now func() time.Time) *Service { s.now = now; return s }
@@ -957,9 +980,16 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 			// Keyed off the MONEY (capturedCents), not the posture, so the split-with-an-ACCOUNT-leg case
 			// lands on PARTIALLY_PAID with the account remainder as its balance, the same place a deposit
 			// lands, because it is the same fact.
+			//
+			// The document's days are the dealer's, decided here on the ring's clock and bound: between
+			// the UTC day change and the house zone's own the database session's CURRENT_DATE is a day
+			// the yard has not reached, so an evening sale would otherwise be invoiced and due tomorrow.
+			// The terms count from the day the invoice is issued, so the two dates can never name
+			// different "todays".
 			invStatus := "PAID"
 			balance := int64(0)
-			dueDate := s.now().Format("2006-01-02")
+			issueDate := houseday.Today(s.now)
+			dueDate := issueDate
 			if !fullyPaid {
 				invStatus = "FINALIZED"
 				balance = total - capturedCents
@@ -967,7 +997,7 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 					invStatus = "PARTIALLY_PAID"
 				}
 				if !codSale {
-					dueDate = s.now().AddDate(0, 0, cust.PaymentTermsDays).Format("2006-01-02")
+					dueDate = houseday.AddDays(s.now, cust.PaymentTermsDays)
 				}
 			}
 			// Sub item 9.5: a supplier's demanded deposit rides the sale as its
@@ -981,7 +1011,7 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 				var err error
 				supplierDepositInvoiceID, supplierDepositInvoiceNo, err = s.store.InsertInvoice(ctx, tx, invoiceRow{
 					CustomerID: customerID, OrderID: orderID, BranchID: in.BranchID, Status: "FINALIZED",
-					DueDate: dueDate, SubtotalCents: supplierDeposit, TotalCents: supplierDeposit,
+					IssueDate: issueDate, DueDate: dueDate, SubtotalCents: supplierDeposit, TotalCents: supplierDeposit,
 					BalanceCents: supplierDeposit, CreatedBy: actor, SourceKind: SourceSupplierDeposit,
 				})
 				if err != nil {
@@ -1016,6 +1046,7 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 				OrderID:       orderID,
 				BranchID:      in.BranchID,
 				Status:        invStatus,
+				IssueDate:     issueDate,
 				DueDate:       dueDate,
 				SubtotalCents: invSubtotal,
 				TaxCents:      tax,

@@ -152,7 +152,8 @@ SELECT id::text, return_no, order_id::text, invoice_id::text, refund_method,
 // first, then the newest sale).
 const returnOrderContextQuery = `
 SELECT o.id::text, o.order_no, o.branch_id::text, o.customer_id::text,
-       COALESCE(ps.invoice_id::text,''), COALESCE(i.status,''), ps.tender, COALESCE(pay.gateway_ref,'')
+       COALESCE(ps.invoice_id::text,''), COALESCE(i.status,''), ps.tender, COALESCE(pay.gateway_ref,''),
+       COALESCE(pay.amount_cents,0)
   FROM pos_sale ps
   JOIN orders o ON o.id = ps.order_id
   LEFT JOIN invoices i ON i.id = ps.invoice_id
@@ -219,7 +220,7 @@ func (r *Repository) ReturnOrderContextFor(ctx context.Context, orderID, orderNo
 	// the ORIGINAL capture's payments row, the CARD refund rail reverses against it.
 	var oc returnOrderCtx
 	err := r.pool.QueryRow(ctx, returnOrderContextQuery, orderID, orderNo, reach).Scan(&oc.OrderID, &oc.OrderNo, &oc.BranchID,
-		&oc.CustomerID, &oc.InvoiceID, &oc.InvoiceStatus, &oc.SaleTender, &oc.GatewayRef)
+		&oc.CustomerID, &oc.InvoiceID, &oc.InvoiceStatus, &oc.SaleTender, &oc.GatewayRef, &oc.CapturedCents)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return returnOrderCtx{}, false, nil
 	}
@@ -234,7 +235,7 @@ func (r *Repository) ReturnOrderContextFor(ctx context.Context, orderID, orderNo
 func (r *Repository) ReturnOrderContextTx(ctx context.Context, tx pgx.Tx, orderID, orderNo string) (returnOrderCtx, bool, error) {
 	var oc returnOrderCtx
 	err := tx.QueryRow(ctx, returnOrderContextQuery, orderID, orderNo, nil).Scan(&oc.OrderID, &oc.OrderNo, &oc.BranchID,
-		&oc.CustomerID, &oc.InvoiceID, &oc.InvoiceStatus, &oc.SaleTender, &oc.GatewayRef)
+		&oc.CustomerID, &oc.InvoiceID, &oc.InvoiceStatus, &oc.SaleTender, &oc.GatewayRef, &oc.CapturedCents)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return returnOrderCtx{}, false, nil
 	}
@@ -298,6 +299,14 @@ const (
 	priorReturnMoneyExpr = `COALESCE((SELECT SUM(rl.line_total_cents) FROM pos_return_lines rl WHERE rl.order_line_id = ol.id), 0)`
 	priorReturnTaxExpr   = `COALESCE((SELECT SUM(rl.tax_cents) FROM pos_return_lines rl WHERE rl.order_line_id = ol.id), 0)`
 )
+
+// leftShelfExpr is the quantity of an order line that has physically left the shelf: the whole line
+// on a collect now ring (the ring decrements stock), else what fulfilment has taken out. The
+// commit's restock and write off rules read it, so goods that never left the shelf move no stock
+// (the D1 defect). The customer lines read's shelf_state speaks the same rule in words.
+const leftShelfExpr = `CASE WHEN EXISTS (SELECT 1 FROM pos_sale ps WHERE ps.order_id = ol.order_id
+                                              AND ps.status = 'COMMITTED' AND ps.sale_type = 'COLLECT_NOW')
+                         THEN ol.qty_base ELSE ol.fulfilled_base END`
 
 // ListCustomerReturnableOrders is the customer lines read (sub item 10.1): every sales order the
 // customer holds in HH, the widened Q1 ruling's source. A committed till ring (its newest COMMITTED
@@ -373,19 +382,22 @@ SELECT co.id::text, co.order_no, co.branch_id, co.status, co.job_label, co.creat
 	return out, rows.Err()
 }
 
-func (r *Repository) LockReturnableLine(ctx context.Context, tx pgx.Tx, orderID, orderLineID string) (returnableLine, bool, error) {
-	// FOR UPDATE on the original order line serializes concurrent returns of the SAME line, the
-	// prior-return sums read after the lock are therefore exact.
-	const q = `
+// returnableLineQuery is the one read of an original order line with its prior-return sums: the
+// commit appends FOR UPDATE OF ol (LockReturnableLine), the credit preview reads it as is
+// (ReadReturnableLine), so the preview prices off the very same numbers.
+const returnableLineQuery = `
 SELECT ol.id::text, COALESCE(ol.product_id::text,''), ol.qty_base::float8, ol.unit_price_cents,
        ol.line_total_cents, ol.tax_cents,
-       ` + priorReturnQtyExpr + `::float8, ` + priorReturnMoneyExpr + `, ` + priorReturnTaxExpr + `
+       ` + priorReturnQtyExpr + `::float8, ` + priorReturnMoneyExpr + `, ` + priorReturnTaxExpr + `,
+       ` + leftShelfExpr + `::float8
   FROM order_lines ol
- WHERE ol.id = $2 AND ol.order_id = $1
-   FOR UPDATE OF ol`
+ WHERE ol.id = $2 AND ol.order_id = $1`
+
+func scanReturnableLine(row pgx.Row) (returnableLine, bool, error) {
 	var rl returnableLine
-	err := tx.QueryRow(ctx, q, orderID, orderLineID).Scan(&rl.OrderLineID, &rl.ProductID, &rl.QtySold,
-		&rl.UnitPriceCents, &rl.LineTotalCents, &rl.TaxCents, &rl.PriorQty, &rl.PriorMoney, &rl.PriorTax)
+	err := row.Scan(&rl.OrderLineID, &rl.ProductID, &rl.QtySold,
+		&rl.UnitPriceCents, &rl.LineTotalCents, &rl.TaxCents, &rl.PriorQty, &rl.PriorMoney, &rl.PriorTax,
+		&rl.LeftShelfBase)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return returnableLine{}, false, nil
 	}
@@ -393,6 +405,61 @@ SELECT ol.id::text, COALESCE(ol.product_id::text,''), ol.qty_base::float8, ol.un
 		return returnableLine{}, false, err
 	}
 	return rl, true, nil
+}
+
+func (r *Repository) LockReturnableLine(ctx context.Context, tx pgx.Tx, orderID, orderLineID string) (returnableLine, bool, error) {
+	// FOR UPDATE on the original order line serializes concurrent returns of the SAME line, the
+	// prior-return sums read after the lock are therefore exact.
+	return scanReturnableLine(tx.QueryRow(ctx, returnableLineQuery+`
+   FOR UPDATE OF ol`, orderID, orderLineID))
+}
+
+// ReadReturnableLine is the credit preview's unlocked read of the same line and sums.
+func (r *Repository) ReadReturnableLine(ctx context.Context, orderID, orderLineID string) (returnableLine, bool, error) {
+	if r.pool == nil {
+		return returnableLine{}, false, errNoPool
+	}
+	return scanReturnableLine(r.pool.QueryRow(ctx, returnableLineQuery, orderID, orderLineID))
+}
+
+// SumCardRefundedTx is what earlier CARD returns of the order have already refunded to the card,
+// read on the open return transaction after the per-sale lock (the D5 ceiling's other half);
+// exceptReturnID leaves out the return whose header is already written ahead of its rail.
+func (r *Repository) SumCardRefundedTx(ctx context.Context, tx pgx.Tx, orderID, exceptReturnID string) (int64, error) {
+	var sum int64
+	err := tx.QueryRow(ctx, `SELECT COALESCE(SUM(total_cents - fee_cents), 0) FROM pos_returns
+ WHERE order_id = $1 AND refund_method = 'CARD' AND ($2 = '' OR id::text <> $2)`, orderID, exceptReturnID).Scan(&sum)
+	return sum, err
+}
+
+// RecordUnbookedCardRefunds files, on the pool and AFTER the failed transaction ended, every
+// processor refund that transaction made and then rolled back (D4). One row per refund key; a retry
+// that fails again refreshes the row.
+func (r *Repository) RecordUnbookedCardRefunds(ctx context.Context, facts []cardRefundFact, reason string) error {
+	if r.pool == nil {
+		return errNoPool
+	}
+	const q = `
+INSERT INTO pos_card_refund_attempts (refund_key, order_id, branch_id, customer_id, gateway_ref, refund_ref, amount_cents, status, last_error)
+VALUES ($1, $2, $3, $4, $5, $6, $7, 'UNBOOKED', $8)
+ON CONFLICT (refund_key) DO UPDATE SET status = 'UNBOOKED', last_error = EXCLUDED.last_error,
+       refund_ref = EXCLUDED.refund_ref, amount_cents = EXCLUDED.amount_cents, updated_at = now()`
+	for _, f := range facts {
+		if _, err := r.pool.Exec(ctx, q, f.RefundKey, f.OrderID, f.BranchID, f.CustomerID, f.GatewayRef, f.RefundRef, f.AmountCents, reason); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// MarkCardRefundsBooked closes the records of refunds a committed transaction has now booked.
+func (r *Repository) MarkCardRefundsBooked(ctx context.Context, refundKeys []string) error {
+	if r.pool == nil {
+		return errNoPool
+	}
+	_, err := r.pool.Exec(ctx, `UPDATE pos_card_refund_attempts SET status = 'BOOKED', updated_at = now()
+ WHERE refund_key = ANY($1::text[]) AND status = 'UNBOOKED'`, refundKeys)
+	return err
 }
 
 // sumCommittedReturnTotalsQuery is the sale's committed return total. Every
@@ -548,10 +615,10 @@ func (r *Repository) InsertReturnLines(ctx context.Context, tx pgx.Tx, returnID 
 	for _, l := range lines {
 		const q = `
 INSERT INTO pos_return_lines (return_id, order_line_id, product_id, qty_base, unit_price_cents,
-                              line_total_cents, tax_cents, reason_code)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+                              line_total_cents, tax_cents, reason_code, disposition, restocked_base, written_off_base)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 		if _, err := tx.Exec(ctx, q, returnID, l.OrderLineID, l.ProductID, l.QtyBase, l.UnitPriceCents,
-			l.LineTotalCents, l.TaxCents, l.ReasonCode); err != nil {
+			l.LineTotalCents, l.TaxCents, l.ReasonCode, l.Disposition, l.RestockedBase, l.WrittenOffBase); err != nil {
 			return err
 		}
 	}

@@ -8,6 +8,8 @@ package pos
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"math"
 	"net/http"
 	"strings"
@@ -85,6 +87,17 @@ func (s *Service) CustomerLines(ctx context.Context, in CustomerLinesInput) (Cus
 	}
 	if items == nil {
 		items = []CustomerOrderView{}
+	}
+	// Each order names its branch, so the one branch refusal can name the branches. The names come
+	// through the branches module's seam; an unwired seam leaves them empty, never invented.
+	if s.branchNames != nil && len(items) > 0 {
+		names, nerr := s.branchNames.BranchNames(ctx)
+		if nerr != nil {
+			return CustomerLinesView{}, nerr
+		}
+		for i := range items {
+			items[i].BranchName = names[items[i].BranchID]
+		}
 	}
 	return CustomerLinesView{CustomerID: in.CustomerID, Items: items}, nil
 }
@@ -175,11 +188,14 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 		// judged against the winner's own sale by the same wall.
 		if isUniqueViolationErr(err) {
 			if cached, found, ferr := s.replayIfAllowed(ctx, in.IdempotencyKey, plan.caller); ferr == nil && found {
+				s.settleCardRefunds(ctx, []*returnPlan{plan}, nil)
 				return cached, nil
 			}
 		}
+		s.settleCardRefunds(ctx, []*returnPlan{plan}, err)
 		return Return{}, err
 	}
+	s.settleCardRefunds(ctx, []*returnPlan{plan}, nil)
 	// The in-transaction duplicate answered its twin's replay: the twin's
 	// own completion row already exists, this answer writes none.
 	if replayedHere {
@@ -222,6 +238,9 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 // starvation a pool of pool-size concurrent rails dies of, every holder
 // waiting for a connection the pool can never give.
 type returnPlan struct {
+	// cardRefunds are the processor refunds this return made inside its transaction (D4): read by
+	// the caller after the transaction ended to record the ones a rollback left unbooked.
+	cardRefunds    []cardRefundFact
 	in             ReturnInput
 	oc             returnOrderCtx
 	caller         identity.StaffContext
@@ -339,6 +358,11 @@ func (s *Service) prepareReturn(ctx context.Context, in ReturnInput) (*returnPla
 	if in.RefundMethod == RefundCash && in.TillSessionID == "" {
 		return nil, ErrNoOpenTill{}
 	}
+	if in.RefundMethod == RefundAccountCredit {
+		if err := s.accountCreditAllowed(ctx, plan.oc.CustomerID, in.internalRail); err != nil {
+			return nil, err
+		}
+	}
 	if in.RefundMethod == RefundCard {
 		if plan.oc.SaleTender != TenderCard || plan.oc.GatewayRef == "" {
 			return nil, errCardRefundNoRef
@@ -444,7 +468,7 @@ func (s *Service) returnInTx(ctx context.Context, tx pgx.Tx, plan *returnPlan) (
 	}
 
 	// 1. Lock + guard every requested line, derive its refund money/tax (the shared guard half).
-	g, gerr := s.guardReturnLines(ctx, tx, oc, in.Lines)
+	g, gerr := s.guardReturnLines(ctx, tx, oc, in.Lines, in.Restock)
 	if gerr != nil {
 		return Return{}, false, false, gerr
 	}
@@ -517,76 +541,159 @@ type guardedReturn struct {
 	lines      []returnLineRow
 	stockLines []StockLine
 	eventLines []map[string]any
-	subtotal   int64
-	taxTotal   int64
+	// writeOffLines are the damaged goods written off (pos.return.written_off), product and quantity.
+	writeOffLines []map[string]any
+	subtotal      int64
+	taxTotal      int64
 }
 
 // guardReturnLines locks and guards every requested line of ONE order under FOR UPDATE and derives
 // its refund money and tax: the shared step 1 of the single return's transactional body
 // (returnInTx) and of every child of a note (ReturnAcross). The over-return refusal and the money
 // invariants are the single return's own words, unchanged.
-func (s *Service) guardReturnLines(ctx context.Context, tx pgx.Tx, oc returnOrderCtx, reqs []ReturnLineInput) (guardedReturn, error) {
+func (s *Service) guardReturnLines(ctx context.Context, tx pgx.Tx, oc returnOrderCtx, reqs []ReturnLineInput, defaultRestock bool) (guardedReturn, error) {
+	return guardLines(oc, reqs, defaultRestock, func(orderLineID string) (returnableLine, bool, error) {
+		return s.store.LockReturnableLine(ctx, tx, oc.OrderID, orderLineID)
+	})
+}
+
+// previewReturnLines is the credit preview's guard: the SAME guardLines over the same prior-return
+// sums, read without the lock (a preview takes none and writes nothing).
+func (s *Service) previewReturnLines(ctx context.Context, oc returnOrderCtx, reqs []ReturnLineInput) (guardedReturn, error) {
+	return guardLines(oc, reqs, false, func(orderLineID string) (returnableLine, bool, error) {
+		return s.store.ReadReturnableLine(ctx, oc.OrderID, orderLineID)
+	})
+}
+
+// guardLines is the ONE guard and pricing walk over a return's requested lines, the single order
+// return's, every child of a note's and the credit preview's: read is the line source (locked in a
+// transaction, or a plain read for the preview). A line named twice in one request is refused in
+// words: each entry is guarded against what was committed BEFORE the request, so two entries
+// could together return more than is open.
+func guardLines(oc returnOrderCtx, reqs []ReturnLineInput, defaultRestock bool, read func(orderLineID string) (returnableLine, bool, error)) (guardedReturn, error) {
 	lines := make([]returnLineRow, 0, len(reqs))
 	var subtotal, taxTotal int64
 	stockLines := make([]StockLine, 0, len(reqs))
 	eventLines := make([]map[string]any, 0, len(reqs))
+	writeOffLines := make([]map[string]any, 0, len(reqs))
+	seen := make(map[string]bool, len(reqs))
 	for _, req := range reqs {
-		rl, ok, lerr := s.store.LockReturnableLine(ctx, tx, oc.OrderID, req.OrderLineID)
+		if seen[req.OrderLineID] {
+			return guardedReturn{}, clientErr(http.StatusUnprocessableEntity,
+				"pos: line %s appears twice on order %s, send it once with the whole quantity", req.OrderLineID, oc.OrderNo)
+		}
+		seen[req.OrderLineID] = true
+		rl, ok, lerr := read(req.OrderLineID)
 		if lerr != nil {
 			return guardedReturn{}, lerr
 		}
 		if !ok {
 			return guardedReturn{}, clientErr(http.StatusUnprocessableEntity, "pos: line %s does not belong to order %s", req.OrderLineID, oc.OrderNo)
 		}
-		remainingQty := returnableQtyOpen(rl.QtySold, rl.PriorQty)
-		if req.QtyBase > remainingQty+qtyEpsilon {
-			return guardedReturn{}, clientErr(http.StatusUnprocessableEntity,
-				"pos: over-return on line %s, %.4f requested but only %.4f returnable", req.OrderLineID, req.QtyBase, remainingQty)
+		row, perr := priceReturnLine(rl, req)
+		if perr != nil {
+			return guardedReturn{}, perr
 		}
-		var money, tax int64
-		if math.Abs(req.QtyBase-remainingQty) <= qtyEpsilon {
-			// Returning everything still out: pay out exactly what remains so the line zeroes.
-			money = rl.LineTotalCents - rl.PriorMoney
-			tax = rl.TaxCents - rl.PriorTax
-		} else {
-			// Partial return: PROPORTIONAL by base qty, mirroring the tax proration below.
-			// qty_base is base-UOM while unit_price_cents is per PRICE-UOM, so qty × unit price
-			// mixes units whenever they differ (e.g. 1000 SF entered / 4100 PC base / 300¢ per SF)
-			// and over-refunds up to the cap. line_total / qty_sold is unit-consistent by
-			// construction; round half-up like the tax line, capped at the remaining un-refunded
-			// line money so cumulative partials can never exceed line_total.
-			if rl.QtySold > 0 {
-				money = int64(math.Round(float64(rl.LineTotalCents) * req.QtyBase / rl.QtySold))
-			}
-			if rem := rl.LineTotalCents - rl.PriorMoney; money > rem {
-				money = rem
-			}
-			if rl.QtySold > 0 {
-				tax = int64(math.Round(float64(rl.TaxCents) * req.QtyBase / rl.QtySold))
-			}
-			if rem := rl.TaxCents - rl.PriorTax; tax > rem {
-				tax = rem
-			}
+		if derr := applyDisposition(&row, rl, req, defaultRestock); derr != nil {
+			return guardedReturn{}, derr
 		}
-		if money < 0 || tax < 0 {
-			return guardedReturn{}, clientErr(http.StatusUnprocessableEntity, "pos: line %s has nothing left to refund", req.OrderLineID)
+		lines = append(lines, row)
+		subtotal += row.LineTotalCents
+		taxTotal += row.TaxCents
+		// Only goods that physically went back on the shelf move stock and reverse COGS, and only
+		// goods that physically came back damaged are written off: the rest is credit only.
+		if row.RestockedBase > 0 {
+			stockLines = append(stockLines, StockLine{ProductID: rl.ProductID, QtyBase: row.RestockedBase})
+			eventLines = append(eventLines, map[string]any{"product_id": rl.ProductID, "qty_base": row.RestockedBase})
 		}
-		// Money invariant (never weakened): Σ refunded tax per order line ≤ the original line tax.
-		if rl.PriorTax+tax > rl.TaxCents {
-			return guardedReturn{}, clientErr(http.StatusUnprocessableEntity, "pos: tax refund would exceed the original line tax on %s", req.OrderLineID)
+		if row.WrittenOffBase > 0 {
+			writeOffLines = append(writeOffLines, map[string]any{"product_id": rl.ProductID, "qty_base": row.WrittenOffBase})
 		}
-		lines = append(lines, returnLineRow{
-			OrderLineID: req.OrderLineID, ProductID: rl.ProductID, QtyBase: req.QtyBase,
-			UnitPriceCents: rl.UnitPriceCents, LineTotalCents: money, TaxCents: tax, ReasonCode: req.ReasonCode,
-		})
-		subtotal += money
-		taxTotal += tax
-		stockLines = append(stockLines, StockLine{ProductID: rl.ProductID, QtyBase: req.QtyBase})
-		eventLines = append(eventLines, map[string]any{"product_id": rl.ProductID, "qty_base": req.QtyBase})
 	}
+	return guardedReturn{lines: lines, stockLines: stockLines, eventLines: eventLines, writeOffLines: writeOffLines,
+		subtotal: subtotal, taxTotal: taxTotal}, nil
+}
 
-	g := guardedReturn{lines: lines, stockLines: stockLines, eventLines: eventLines, subtotal: subtotal, taxTotal: taxTotal}
-	return g, nil
+// applyDisposition resolves what became of one returned line's goods and how much of it physically
+// went where (sub item 10.3, the D1 fix and the Q4 and Q5 rulings). A line without a disposition
+// takes the whole return's restock flag (true RESTOCK, false NO_RETURN). The physical part of the
+// return is what had left the shelf and not yet come back: min(returned qty, left the shelf less
+// every earlier return of the line). A RESTOCK puts the physical part back on the shelf, a DAMAGED
+// writes the physical part off; the rest of the quantity (goods that never left the shelf) is credit
+// only, the money reversal whole and no stock or cost entry at all.
+func applyDisposition(row *returnLineRow, rl returnableLine, req ReturnLineInput, defaultRestock bool) error {
+	disp := req.Disposition
+	switch disp {
+	case "":
+		disp = DispositionNoReturn
+		if defaultRestock {
+			disp = DispositionRestock
+		}
+	case DispositionRestock, DispositionDamaged, DispositionNoReturn:
+	default:
+		return clientErr(http.StatusUnprocessableEntity,
+			"pos: disposition on line %s must be RESTOCK, DAMAGED or NO_RETURN", req.OrderLineID)
+	}
+	physical := math.Min(req.QtyBase, math.Max(0, rl.LeftShelfBase-rl.PriorQty))
+	if physical < qtyEpsilon {
+		physical = 0
+	}
+	row.Disposition = disp
+	switch disp {
+	case DispositionRestock:
+		row.RestockedBase = physical
+	case DispositionDamaged:
+		row.WrittenOffBase = physical
+	}
+	return nil
+}
+
+// priceReturnLine is the ONE pricing function of a return line: the over-return guard and the
+// refund money and tax of the requested quantity against the line's sold quantity and its prior
+// returns. The commit (single order and note children) and the credit preview both call it, so the
+// preview and the commit can never differ.
+func priceReturnLine(rl returnableLine, req ReturnLineInput) (returnLineRow, error) {
+	remainingQty := returnableQtyOpen(rl.QtySold, rl.PriorQty)
+	if req.QtyBase > remainingQty+qtyEpsilon {
+		return returnLineRow{}, clientErr(http.StatusUnprocessableEntity,
+			"pos: over-return on line %s, %.4f requested but only %.4f returnable", req.OrderLineID, req.QtyBase, remainingQty)
+	}
+	var money, tax int64
+	if math.Abs(req.QtyBase-remainingQty) <= qtyEpsilon {
+		// Returning everything still out: pay out exactly what remains so the line zeroes.
+		money = rl.LineTotalCents - rl.PriorMoney
+		tax = rl.TaxCents - rl.PriorTax
+	} else {
+		// Partial return: PROPORTIONAL by base qty, mirroring the tax proration below.
+		// qty_base is base-UOM while unit_price_cents is per PRICE-UOM, so qty × unit price
+		// mixes units whenever they differ (e.g. 1000 SF entered / 4100 PC base / 300¢ per SF)
+		// and over-refunds up to the cap. line_total / qty_sold is unit-consistent by
+		// construction; round half-up like the tax line, capped at the remaining un-refunded
+		// line money so cumulative partials can never exceed line_total.
+		if rl.QtySold > 0 {
+			money = int64(math.Round(float64(rl.LineTotalCents) * req.QtyBase / rl.QtySold))
+		}
+		if rem := rl.LineTotalCents - rl.PriorMoney; money > rem {
+			money = rem
+		}
+		if rl.QtySold > 0 {
+			tax = int64(math.Round(float64(rl.TaxCents) * req.QtyBase / rl.QtySold))
+		}
+		if rem := rl.TaxCents - rl.PriorTax; tax > rem {
+			tax = rem
+		}
+	}
+	if money < 0 || tax < 0 {
+		return returnLineRow{}, clientErr(http.StatusUnprocessableEntity, "pos: line %s has nothing left to refund", req.OrderLineID)
+	}
+	// Money invariant (never weakened): Σ refunded tax per order line ≤ the original line tax.
+	if rl.PriorTax+tax > rl.TaxCents {
+		return returnLineRow{}, clientErr(http.StatusUnprocessableEntity, "pos: tax refund would exceed the original line tax on %s", req.OrderLineID)
+	}
+	return returnLineRow{
+		OrderLineID: req.OrderLineID, ProductID: rl.ProductID, QtyBase: req.QtyBase,
+		UnitPriceCents: rl.UnitPriceCents, LineTotalCents: money, TaxCents: tax, ReasonCode: req.ReasonCode,
+	}, nil
 }
 
 // commitReturnTx is the write half of one return's transactional body: the shared steps 2 through
@@ -621,7 +728,7 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 	returnID, returnNo, ierr := s.store.InsertReturn(ctx, tx, returnRow{
 		OrderID: oc.OrderID, InvoiceID: oc.InvoiceID, CustomerID: oc.CustomerID, BranchID: oc.BranchID,
 		RefundMethod: in.RefundMethod, SubtotalCents: subtotal, TaxCents: taxTotal, TotalCents: total,
-		FeeCents: feeCents, Reason: in.Reason, Restock: in.Restock, TillSessionID: in.TillSessionID,
+		FeeCents: feeCents, Reason: in.Reason, Restock: anyRestock(lines), TillSessionID: in.TillSessionID,
 		PickupRequired: pickupRequired, PickupSite: pickupSite, PickupDate: pickupDate, PickupStatus: pickupStatus,
 		IdempotencyKey: in.IdempotencyKey, CreatedBy: actor, NoteID: noteID,
 	})
@@ -665,10 +772,19 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 		// connection has the per-sale lock's holder wait for a second
 		// connection every other connection is a Return waiter that needs
 		// the holder's lock, deadlocking a full pool.
+		if err := s.checkCardCapTx(ctx, tx, oc, returnID, total); err != nil {
+			return Return{}, err
+		}
 		refundRef, err := s.cardRefund.RefundCard(ctx, tx, oc.GatewayRef, total, returnNo, "refund:"+in.IdempotencyKey)
 		if err != nil {
 			return Return{}, clientErr(http.StatusBadGateway, "pos: card refund failed, %s", err.Error())
 		}
+		// The processor now holds this refund whatever becomes of the transaction: keep the fact so a
+		// rollback leaves a record of it (D4).
+		plan.cardRefunds = append(plan.cardRefunds, cardRefundFact{
+			RefundKey: "refund:" + in.IdempotencyKey, OrderID: oc.OrderID, BranchID: oc.BranchID, CustomerID: oc.CustomerID,
+			GatewayRef: oc.GatewayRef, RefundRef: refundRef, AmountCents: total,
+		})
 		res, err := s.tender.RefundTender(ctx, tx, till.RefundInput{
 			Method: till.MethodCard, AmountCents: total, BranchID: oc.BranchID, CustomerID: oc.CustomerID,
 			GatewayRef: refundRef, Reference: returnNo, IdempotencyKey: "refund:" + in.IdempotencyKey,
@@ -692,7 +808,9 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 
 	// 4. Restock, RETURN moves at the current weighted average through the seam, then the stock-side
 	//    GL event (mirrors the Sale's decrement + order.fulfilled pairing; skips quietly when no cost).
-	if in.Restock {
+	//    Only the lines whose goods physically went back on the shelf are in stockLines (the D1 fix:
+	//    goods that never left the shelf move no stock and have no COGS to reverse).
+	if len(stockLines) > 0 {
 		if err := s.restocker().RestockForReturnTx(ctx, tx, RestockInput{
 			ReturnID: returnID, OrderID: oc.OrderID, BranchID: oc.BranchID, ReturnNo: returnNo, Lines: stockLines,
 		}); err != nil {
@@ -700,6 +818,15 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 		}
 		if err := s.store.EmitEvent(ctx, tx, "order.returned", map[string]any{
 			"order_id": oc.OrderID, "return_id": returnID, "branch_id": oc.BranchID, "lines": eventLines,
+		}); err != nil {
+			return Return{}, err
+		}
+	}
+	//    Damaged goods that came back are written off (Q4): the cost leaves COGS for 5200 at the
+	//    average at posting time.
+	if len(g.writeOffLines) > 0 {
+		if err := s.store.EmitEvent(ctx, tx, "pos.return.written_off", map[string]any{
+			"order_id": oc.OrderID, "return_id": returnID, "branch_id": oc.BranchID, "lines": g.writeOffLines,
 		}); err != nil {
 			return Return{}, err
 		}
@@ -748,6 +875,109 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 		FeeCents: feeCents, RefundPaymentID: refundPaymentID, PickupStatus: pickupStatus, Status: "COMMITTED",
 	}
 	return out, nil
+}
+
+// errWalkInNoAccountCredit refuses an account credit on the house WALK-IN row (D2): the one shared
+// row's credit is nobody's to spend and any walk-in could in principle draw it.
+var errWalkInNoAccountCredit = clientErr(http.StatusUnprocessableEntity,
+	"pos: the WALK-IN house account holds no credit; refund this walk-in sale to the card it was paid on or in cash")
+
+// errAccountCannotSpendCredit is the Q6 ruling in words: there is no store credit wallet, so a
+// credit on an account that cannot spend it (D3) would be a dead end.
+var errAccountCannotSpendCredit = clientErr(http.StatusUnprocessableEntity,
+	"pos: this account cannot spend a credit (it has no credit terms or no credit line); refund to the card it was paid on or in cash, or set the account up with terms and a credit line first")
+
+// accountCreditAllowed judges the ACCOUNT_CREDIT rail for a customer before any transaction opens:
+// never the house WALK-IN row (D2, every caller), and, outside the portal request rail whose
+// customers the queue's own decision already vouched for, only an account that can spend a credit,
+// the same shape the ring offers on account (terms above zero and a credit line, D3 by Q6).
+func (s *Service) accountCreditAllowed(ctx context.Context, customerID string, internalRail bool) error {
+	if walkIn, werr := s.store.ResolveWalkIn(ctx); werr == nil && walkIn != "" && walkIn == customerID {
+		return errWalkInNoAccountCredit
+	}
+	if internalRail {
+		return nil
+	}
+	cust, err := s.store.ReadCustomer(ctx, customerID)
+	if err != nil {
+		return err
+	}
+	if cust.PaymentTermsDays <= 0 || cust.CreditLimitCents <= 0 {
+		return errAccountCannotSpendCredit
+	}
+	return nil
+}
+
+// checkCardCapTx is D5: a card refund never takes the card past what the original capture holds
+// less what earlier card refunds of the order already took. Read on the open transaction after the
+// per-sale lock, so the earlier refunds are exact. A capture of unknown size (0) sets no ceiling.
+func (s *Service) checkCardCapTx(ctx context.Context, tx pgx.Tx, oc returnOrderCtx, exceptReturnID string, refundCents int64) error {
+	if oc.CapturedCents <= 0 {
+		return nil
+	}
+	refunded, err := s.store.SumCardRefundedTx(ctx, tx, oc.OrderID, exceptReturnID)
+	if err != nil {
+		return err
+	}
+	if refunded+refundCents > oc.CapturedCents {
+		return clientErr(http.StatusUnprocessableEntity,
+			"pos: a card refund of %s would take the card past what the original capture holds (%s captured, %s already refunded); refund the rest in cash or to the account",
+			centsWords(refundCents), centsWords(oc.CapturedCents), centsWords(refunded))
+	}
+	return nil
+}
+
+// centsWords writes integer cents as dollars and cents for a refusal's words.
+func centsWords(cents int64) string {
+	sign := ""
+	if cents < 0 {
+		sign, cents = "-", -cents
+	}
+	return fmt.Sprintf("%s$%d.%02d", sign, cents/100, cents%100)
+}
+
+// settleCardRefunds records, on the pool after the transaction ended, what the processor refunded
+// inside it: a rolled back transaction leaves each refund on record as UNBOOKED for a manager to
+// see, a committed one closes any earlier such record as BOOKED (D4). Best effort by design: the
+// return's own answer must not change because the record could not be written, so a failure is
+// logged, never returned.
+func (s *Service) settleCardRefunds(ctx context.Context, plans []*returnPlan, txErr error) {
+	var facts []cardRefundFact
+	for _, p := range plans {
+		facts = append(facts, p.cardRefunds...)
+		p.cardRefunds = nil
+	}
+	if len(facts) == 0 {
+		return
+	}
+	var err error
+	if txErr != nil {
+		reason := txErr.Error()
+		if r := []rune(reason); len(r) > 300 {
+			reason = string(r[:300])
+		}
+		err = s.store.RecordUnbookedCardRefunds(context.WithoutCancel(ctx), facts, reason)
+	} else {
+		keys := make([]string, len(facts))
+		for i, f := range facts {
+			keys[i] = f.RefundKey
+		}
+		err = s.store.MarkCardRefundsBooked(context.WithoutCancel(ctx), keys)
+	}
+	if err != nil {
+		slog.Default().Warn("pos: the card refund record could not be written", "err", err, "refunds", len(facts))
+	}
+}
+
+// anyRestock answers whether any line of the return asked for its goods to go back on the shelf:
+// the pos_returns.restock header column, kept for the readers that predate dispositions.
+func anyRestock(lines []returnLineRow) bool {
+	for _, l := range lines {
+		if l.Disposition == DispositionRestock {
+			return true
+		}
+	}
+	return false
 }
 
 // replayIfAllowed answers an idempotent replay only to a caller the wall

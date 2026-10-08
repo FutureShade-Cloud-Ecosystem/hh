@@ -740,7 +740,10 @@ reason instead).
 | `PUT /api/v1/inventory/transit-days` | hardscapeos_dibbits/backend/internal/inventory/module.go:295 |
 | `PUT /api/v1/load/branches` | (addition) HH-LOAD-1 load doors: the branch map, names against existing branch rows, behind the load doors deployment switch; no ERP source route. |
 | `PUT /api/v1/load/categories` | (addition) HH-LOAD-1 load doors: the product category upsert, the parent named by legacy key, behind the load doors deployment switch; no ERP source route. |
+| `PUT /api/v1/load/products` | (addition) HH-LOAD-1 load doors (LD-5): the product master upsert by legacy key, the SKU the natural key and the category by key, behind the load doors deployment switch; no ERP source route. |
+| `PUT /api/v1/load/products/{legacyId}/image` | (addition) HH-LOAD-1 load doors (LD-5): the product image put through the product module's own image store and size cap, the product named by legacy key; no ERP source route. |
 | `PUT /api/v1/load/products/unit-sets` | (addition) HH-LOAD-1 load doors (LD-3): the product unit set replace, the product named by legacy key, behind the load doors deployment switch; no ERP source route. |
+| `PUT /api/v1/load/supplier-skus` | (addition) HH-LOAD-1 load doors (LD-5): the supplier SKU upsert through the purchasing module's writer, the product and supplier each named by legacy key; no ERP source route. |
 | `PUT /api/v1/load/suppliers` | (addition) HH-LOAD-1 load doors: the supplier upsert with its contact through the purchasing contact store, behind the load doors deployment switch; no ERP source route. |
 | `PUT /api/v1/load/units` | (addition) HH-LOAD-1 load doors (LD-3): the unit catalogue upsert, a unit that already stands with the same code and dimension attached, behind the load doors deployment switch; no ERP source route. |
 | `PUT /api/v1/load/users` | (addition) HH-LOAD-1 load doors: the user map, names against existing staff rows by verified email, behind the load doors deployment switch; no ERP source route. |

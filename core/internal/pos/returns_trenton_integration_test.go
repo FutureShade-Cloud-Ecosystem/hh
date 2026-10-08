@@ -61,6 +61,7 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/branches"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
@@ -367,6 +368,7 @@ func newTrentonStackOnPoolWithRail(t *testing.T, pool *pgxpool.Pool, rail CardRe
 		WithRoleConfig(cfg).
 		WithApproverSource(g).
 		WithUserLinker(linkerFor(pool)).
+		WithBranchNames(trentonBranchNames{svc: branches.NewService(branches.NewRepository(pool))}).
 		WithClock(harness.Clock.Now)
 
 	handler := NewHandler(svc, slog.Default()).WithUserLinker(linkerFor(pool))
@@ -374,6 +376,22 @@ func newTrentonStackOnPoolWithRail(t *testing.T, pool *pgxpool.Pool, rail CardRe
 	handler.RegisterRoutes(mux, g)
 	return &trentonStack{t: t, pool: pool, harness: harness, cards: cards, mux: mux, svc: svc,
 		trentonTill: trentonTill, kingstonTill: kingstonTill, keys: newSaleKeys()}
+}
+
+// trentonBranchNames is the cmd/core adapter's twin for the stack: branch names through the branches
+// module's service.
+type trentonBranchNames struct{ svc *branches.Service }
+
+func (a trentonBranchNames) BranchNames(ctx context.Context) (map[string]string, error) {
+	list, err := a.svc.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(list))
+	for _, b := range list {
+		out[b.ID] = b.Name
+	}
+	return out, nil
 }
 
 // linkerFor resolves the ERP users.id a platform user id links to, the B4

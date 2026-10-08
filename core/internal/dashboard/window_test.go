@@ -188,10 +188,12 @@ func TestHouseZone_EveryCopyInTheBackendNamesTheSameZone(t *testing.T) {
 
 	// zoneFloor is the number of copies that existed when this gate was made self-enumerating:
 	// messaging/rollup.go, inventory/transfer_eta.go, messagingprovider/policy.go, gl/businessday.go,
-	// dashboard/window.go and pos/sale_lookup.go. Raise it when a seventh module takes its own copy.
+	// dashboard/window.go and pos/sale_lookup.go, raised to eight when billing took its own copy
+	// (syncscope.go's arAgingZone, the SQL-side aging expression's zone). Raise it when a further
+	// module takes its own copy.
 	// NEVER lower it to make a failure go away, a copy that disappeared either moved (say so here)
 	// or was deleted, and a deleted copy means a module went back to reading the server's clock.
-	const zoneFloor = 7
+	const zoneFloor = 8
 
 	type site struct {
 		file, konst string
