@@ -232,3 +232,97 @@ export const SHRINK_ABOVE_BYTES = 1.5 * 1024 * 1024;
 export function needsShrink(bytes: number): boolean {
   return bytes > SHRINK_ABOVE_BYTES;
 }
+
+// ---- could not deliver, and the end of the run ----
+
+/** Said to the driver once a stop is recorded as not delivered. Port of the original's handback words (dispatch-logic.ts), dash free. */
+export const HANDBACK_TITLE = "Recorded. This stop is closed.";
+export const HANDBACK_BODY =
+  "Bring the load back to the yard: the order is free to be booked again, and a dispatcher will set a new date.";
+export const HANDBACK_PROMPT = "What stopped this delivery?";
+
+/** The core refuses a failed stop with no reason (400), so the control stays grey until there is one. */
+export function canRecordFailure(reason: string): boolean {
+  return reason.trim().length > 0;
+}
+
+export interface CloseStop {
+  status: string;
+  stop_no?: number;
+  customer_name?: string;
+}
+
+const OUTSTANDING_WORD: Record<string, string> = {
+  READY: "not loaded yet",
+  LOADED: "on the truck",
+  EN_ROUTE: "still en route",
+};
+
+/** "Stop 2 · Customer": a stop as a person finds it on the sheet. */
+export function stopHandle(stop: CloseStop): string {
+  const seq = stop.stop_no ? `Stop ${stop.stop_no}` : "A stop";
+  const who = (stop.customer_name ?? "").trim();
+  return who ? `${seq} · ${who}` : seq;
+}
+
+export const CLOSE_RULE = "Every stop has to be delivered or marked not delivered before the run can be closed.";
+
+/** One line of the end of run recap: the stop and where it ended. */
+export function closeLine(stop: CloseStop): string {
+  const label = STOP_LABEL[stop.status] ?? "";
+  return label ? `${stopHandle(stop)} · ${label}` : stopHandle(stop);
+}
+
+export interface RunClose {
+  can: boolean;
+  /** The sentence shown in place of the control when the run cannot be closed. */
+  blocked: string;
+  progress: RunProgress;
+}
+
+/**
+ * May this driver close this run, and if not, why not. It mirrors the core's
+ * order (core/internal/dispatch/service.go, CompleteRun): the run must be out,
+ * every stop must be settled, and for a driver every stop must be delivered or
+ * not delivered. The third gate differs from the original app's rule, which
+ * counted a cancelled stop as settled: the core refuses a driver's close on a
+ * cancelled stop, so the screen says so up front and names who closes it.
+ * Port of the original's drive-logic.ts runClose, same repository and commit
+ * as the header, with HH's driver gate added.
+ */
+export function runClose(
+  run: { status?: string } | null | undefined,
+  stops: ReadonlyArray<CloseStop> | null | undefined,
+): RunClose {
+  const list: CloseStop[] = [...(stops ?? [])];
+  const progress = runSummary(list);
+  const status = run?.status ?? "";
+  if (status === "COMPLETED") {
+    return { can: false, blocked: "This run is closed. Nothing else is needed from you today.", progress };
+  }
+  if (status !== "DISPATCHED") {
+    const blocked =
+      status === "PLANNED"
+        ? "This run has not been sent out yet. A dispatcher marks it out for delivery, and it can be closed once they have."
+        : status === "CANCELLED"
+          ? "This run is cancelled, so there is nothing here to close."
+          : "This run is not open, so there is nothing here to close.";
+    return { can: false, blocked, progress };
+  }
+  if (list.length === 0) {
+    return { can: false, blocked: "There are no stops on this run yet. A dispatcher puts them here.", progress };
+  }
+  const open = list.find((s) => s.status !== "DELIVERED" && s.status !== "FAILED" && s.status !== "CANCELLED");
+  if (open !== undefined) {
+    return { can: false, blocked: `${stopHandle(open)} is ${OUTSTANDING_WORD[open.status] ?? "not finished yet"}. ${CLOSE_RULE}`, progress };
+  }
+  const cancelled = list.find((s) => s.status === "CANCELLED");
+  if (cancelled !== undefined) {
+    return {
+      can: false,
+      blocked: `${stopHandle(cancelled)} is cancelled, and that is not an outcome a driver records. Ask dispatch to close this run.`,
+      progress,
+    };
+  }
+  return { can: true, blocked: "", progress };
+}

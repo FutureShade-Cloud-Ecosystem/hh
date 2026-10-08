@@ -156,6 +156,12 @@ export class DriveApi {
     return answer.ok ? { ok: true, value: toStop(answer.value) } : answer;
   }
 
+  /** Close the run. The core refuses it, in words, unless every stop has an answer a driver records. */
+  async completeRun(id: string): Promise<Result<true>> {
+    const answer = await staffDispatch.dispatchCompleteRun(this.#client, id);
+    return answer.ok ? { ok: true, value: true } : answer;
+  }
+
   /** A plain move along the lifecycle. Delivered is never asked of this door: the core takes it only through proof. */
   async advance(id: string, status: "LOADED" | "EN_ROUTE" | "FAILED", reason = ""): Promise<Result<DriverStop>> {
     const answer = await staffDispatch.dispatchAdvanceStop(this.#client, id, { status, reason });

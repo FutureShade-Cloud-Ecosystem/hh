@@ -189,6 +189,8 @@ async function handle(req, res) {
   if (req.method === "POST" && path === "/_stub/scenario") {
     const body = JSON.parse((await readBody(req)).toString("utf8"));
     scenario = String(body.name ?? "");
+    // A cancelled stop is something only dispatch records; the world starts with one.
+    if (scenario === "has-cancelled") world.stops[2].status = "CANCELLED";
     return json(res, { ok: true, scenario });
   }
   if (req.method === "GET" && path === "/_stub/log") return json(res, log);
@@ -315,6 +317,9 @@ function addPhoto(res, stop, contentType, caption, raw) {
 }
 
 function completeRun(res) {
+  if (scenario === "close-refused") {
+    return refuse(res, 409, "stop 2 (SO-1002) is on the truck, every stop must be delivered or marked not delivered before this run can be closed");
+  }
   if (world.run.status !== "DISPATCHED") return refuse(res, 409, "illegal status transition");
   const open = stopsInOrder().find((s) => !SETTLED.has(s.status));
   if (open) {

@@ -81,3 +81,28 @@ export async function takeFirstStopEnRoute(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Mark en route" }).click();
   await page.getByRole("button", { name: "Proof of delivery" }).waitFor();
 }
+
+/** From the run sheet: take stop `n` (1 based) loaded, en route and delivered, and come back to the run sheet. */
+export async function deliverStop(page: Page, n: number): Promise<void> {
+  await page.locator("[data-stop]").nth(n - 1).click();
+  await page.getByRole("button", { name: "Mark loaded" }).click();
+  await page.getByRole("button", { name: "Mark en route" }).click();
+  await page.getByRole("button", { name: "Proof of delivery" }).click();
+  await page.getByLabel("Full name of the person receiving").fill("Receiving clerk");
+  await page.getByRole("checkbox").check();
+  await page.getByRole("button", { name: "Sign for this delivery" }).click();
+  await page.locator("[data-stop-status]").filter({ hasText: "Delivered" }).waitFor();
+  await page.getByRole("button", { name: "Back to my run" }).click();
+}
+
+/** From the run sheet: take stop `n` en route, then record it as not delivered with a reason. */
+export async function failStop(page: Page, n: number, reason: string): Promise<void> {
+  await page.locator("[data-stop]").nth(n - 1).click();
+  await page.getByRole("button", { name: "Mark loaded" }).click();
+  await page.getByRole("button", { name: "Mark en route" }).click();
+  await page.getByRole("button", { name: "Could not deliver" }).click();
+  await page.getByLabel("What stopped this delivery?").fill(reason);
+  await page.getByRole("button", { name: "Could not deliver" }).click();
+  await page.locator("[data-stop-status]").filter({ hasText: "Not delivered" }).waitFor();
+  await page.getByRole("button", { name: "Back to my run" }).click();
+}

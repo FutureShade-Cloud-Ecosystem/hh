@@ -171,3 +171,66 @@ test("a camera photo over a safe share of the core's limit is shrunk before it i
   assert.equal(needsShrink(200_000), false);
   assert.equal(needsShrink(2 * 1024 * 1024), true);
 });
+
+// ---- sub item 4: could not deliver, and closing the run ----
+import {
+  CLOSE_RULE,
+  HANDBACK_BODY,
+  HANDBACK_PROMPT,
+  HANDBACK_TITLE,
+  canRecordFailure,
+  closeLine,
+  runClose,
+  stopHandle,
+} from "../src/drive-logic.ts";
+
+const stop = (over) => ({ stop_no: 1, customer_name: "Northline", status: "READY", ...over });
+
+test("the handback words tell the driver the stop is closed and the load comes back to the yard", () => {
+  assert.equal(HANDBACK_TITLE, "Recorded. This stop is closed.");
+  assert.match(HANDBACK_BODY, /Bring the load back to the yard/);
+  assert.match(HANDBACK_BODY, /a dispatcher will set a new date/);
+  assert.equal(HANDBACK_PROMPT, "What stopped this delivery?");
+});
+
+test("a stop is marked not delivered only with a reason in the driver's own words", () => {
+  assert.equal(canRecordFailure("Nobody on site"), true);
+  assert.equal(canRecordFailure("   "), false);
+  assert.equal(canRecordFailure(""), false);
+});
+
+test("a stop is named by its number and its customer", () => {
+  assert.equal(stopHandle(stop()), "Stop 1 · Northline");
+  assert.equal(stopHandle({ status: "READY" }), "A stop");
+  assert.equal(closeLine(stop({ status: "DELIVERED" })), "Stop 1 · Northline · Delivered");
+});
+
+test("a run closes only from a dispatched run whose every stop is delivered or not delivered", () => {
+  const done = runClose({ status: "DISPATCHED" }, [stop({ status: "DELIVERED" }), stop({ stop_no: 2, status: "FAILED" })]);
+  assert.equal(done.can, true);
+  assert.equal(done.blocked, "");
+  assert.equal(done.progress.done, true);
+});
+
+test("an open stop blocks the close and is named, with the rule", () => {
+  const out = runClose({ status: "DISPATCHED" }, [stop({ status: "DELIVERED" }), stop({ stop_no: 2, customer_name: "Harbourview", status: "LOADED" })]);
+  assert.equal(out.can, false);
+  assert.equal(out.blocked, `Stop 2 · Harbourview is on the truck. ${CLOSE_RULE}`);
+  assert.equal(runClose({ status: "DISPATCHED" }, [stop({ status: "READY" })]).blocked, `Stop 1 · Northline is not loaded yet. ${CLOSE_RULE}`);
+  assert.equal(runClose({ status: "DISPATCHED" }, [stop({ status: "EN_ROUTE" })]).blocked, `Stop 1 · Northline is still en route. ${CLOSE_RULE}`);
+});
+
+test("a cancelled stop blocks a driver's close, as the core does, and says who closes it", () => {
+  const out = runClose({ status: "DISPATCHED" }, [stop({ status: "DELIVERED" }), stop({ stop_no: 2, customer_name: "Harbourview", status: "CANCELLED" })]);
+  assert.equal(out.can, false);
+  assert.equal(out.blocked, "Stop 2 · Harbourview is cancelled, and that is not an outcome a driver records. Ask dispatch to close this run.");
+});
+
+test("a run that is not out, is closed, is cancelled or has no stops cannot be closed, and says why", () => {
+  assert.match(runClose({ status: "PLANNED" }, [stop()]).blocked, /has not been sent out yet/);
+  assert.equal(runClose({ status: "COMPLETED" }, [stop({ status: "DELIVERED" })]).blocked, "This run is closed. Nothing else is needed from you today.");
+  assert.equal(runClose({ status: "CANCELLED" }, [stop()]).blocked, "This run is cancelled, so there is nothing here to close.");
+  assert.match(runClose({ status: "DISPATCHED" }, []).blocked, /There are no stops on this run yet/);
+  assert.equal(runClose({ status: "DISPATCHED" }, []).can, false);
+  assert.equal(runClose(null, null).can, false);
+});

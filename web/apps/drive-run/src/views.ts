@@ -14,11 +14,17 @@ import { HOUSE_ZONE } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import type { DriverLine, DriverRun, DriverStop } from "./drive-api.js";
 import {
   ATTESTATION,
+  HANDBACK_BODY,
+  HANDBACK_PROMPT,
   STOP_LABEL,
   addressLine,
+  canRecordFailure,
+  closeLine,
   driverActions,
   formatTime,
   qtyLabel,
+  plainSentence,
+  runClose,
   runSummary,
   signBlockedReason,
   stopsInOrder,
@@ -96,7 +102,10 @@ export function renderRunSheet(model: RunSheetModel): TemplateResult {
       </div>
     `;
   } else {
-    body = html`${model.runs.map(runCard)}`;
+    body = html`
+      ${model.runs.map(runCard)}
+      <button type="button" class="btn btn-secondary big" data-action="open-close" data-tap>End of run</button>
+    `;
   }
   return html`
     <h1>My run</h1>
@@ -160,6 +169,12 @@ export function renderStopDetail(model: StopDetailModel): TemplateResult {
         ? html`<p class="detail-contact">${stop.contact_name}${stop.contact_phone !== "" ? html` <a class="phone" data-tel=${stop.contact_phone} data-tap>${stop.contact_phone}</a>` : nothing}</p>`
         : nothing}
       ${stop.instructions !== "" ? html`<p class="detail-note">${stop.instructions}</p>` : nothing}
+      ${stop.status === "FAILED"
+        ? html`<div class="handback" data-handback>
+            <p class="handback-why">Not delivered${stop.failure_reason !== "" ? `: ${plainSentence(stop.failure_reason)}` : ""}</p>
+            <p>${HANDBACK_BODY}</p>
+          </div>`
+        : nothing}
       ${stop.pod_received_by !== ""
         ? html`<p class="signed">Signed by ${stop.pod_received_by}${stop.pod_at !== "" ? ` at ${formatTime(stop.pod_at, HOUSE_ZONE)}` : ""}${stop.photo_count > 0 ? ` · ${stop.photo_count} ${stop.photo_count === 1 ? "photo" : "photos"} on the proof` : ""}</p>`
         : nothing}
@@ -236,4 +251,66 @@ export function renderPod(model: PodModel): TemplateResult {
 /** The late photo control on a delivered stop: the phone found signal after the drop. */
 export function renderLatePhoto(busy: boolean): TemplateResult {
   return html`<section data-photos>${photoAdd("Add a photo to the proof", busy)}</section>`;
+}
+
+export interface FailModel {
+  readonly stop: DriverStop;
+  readonly reason: string;
+  readonly busy: boolean;
+  readonly error: string;
+}
+
+/** Could not deliver: the reason in the driver's own words, and what happens to the load. */
+export function renderFail(model: FailModel): TemplateResult {
+  const { stop } = model;
+  return html`
+    <button type="button" class="back" data-action="back-to-stop" data-tap>Stop ${stop.stop_no}</button>
+    <h1>Could not deliver</h1>
+    <p class="dim">Stop ${stop.stop_no} · ${stop.customer_name || "Customer"} · ${stop.order_no}</p>
+    ${renderMessages(model.error, "")}
+    <section class="card">
+      <label class="field-label" for="fail-why">${HANDBACK_PROMPT}</label>
+      <textarea id="fail-why" class="text-field text-area" rows="3" data-field="reason" ?disabled=${model.busy}></textarea>
+      <p class="handback-words" data-handback-words>${HANDBACK_BODY}</p>
+      <button type="button" class="btn btn-danger big" data-action="confirm-fail" ?disabled=${model.busy || !canRecordFailure(model.reason)} data-tap>
+        Could not deliver
+      </button>
+      <button type="button" class="btn btn-secondary big" data-action="back-to-stop" ?disabled=${model.busy} data-tap>Back</button>
+    </section>
+  `;
+}
+
+export interface CloseModel {
+  readonly runs: readonly DriverRun[];
+  readonly closing: boolean;
+  readonly error: string;
+  readonly notice: string;
+}
+
+/** The end of the run: where each stop ended, and the one control that closes the run when it may be closed. */
+export function renderClose(model: CloseModel): TemplateResult {
+  const cards = model.runs.map((run) => {
+    const stops = stopsInOrder(run.stops);
+    const close = runClose(run, stops);
+    return html`
+      <section class="card" data-close-run data-can-complete=${close.can ? "yes" : "no"}>
+        <h2 class="run-title">${run.run_no}${run.truck_code ? ` · ${run.truck_code}` : ""}</h2>
+        <p class="run-progress" data-close-progress>${close.progress.sentence}</p>
+        <ul class="recap">${stops.map((s) => html`<li data-recap-stop>${closeLine(s)}</li>`)}</ul>
+        ${close.can
+          ? html`<button type="button" class="btn btn-primary big" data-action="complete-run" data-run-id=${run.id} ?disabled=${model.closing} data-tap>
+              ${model.closing ? "Closing the run" : "Complete run"}
+            </button>`
+          : html`<p class="blocked" data-close-blocked>${close.blocked}</p>`}
+      </section>
+    `;
+  });
+  return html`
+    <button type="button" class="back" data-action="back" data-tap>Back to my run</button>
+    <h1>End of run</h1>
+    ${renderMessages(model.error, model.notice)}
+    ${model.runs.length === 0
+      ? html`<div class="card empty" data-empty><p class="empty-head">No run assigned to you today.</p></div>`
+      : cards}
+  `;
 }

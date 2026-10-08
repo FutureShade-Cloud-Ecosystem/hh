@@ -172,5 +172,14 @@ export const driveStyles = css`
   }
   .photo-add:focus-within { outline: 3px solid var(--hh-focus-ring); outline-offset: 2px; }
   .photo-plus { font-size: 28px; line-height: 1; }
+  .text-area { padding: var(--hh-s-12) var(--hh-s-16); min-height: 112px; resize: vertical; }
+  .handback { padding: var(--hh-s-12); border-radius: var(--hh-radius-control); border: 2px solid var(--hh-state-stop); }
+  .handback-why { font-weight: 700; color: var(--hh-state-stop); }
+  .handback-words { padding: var(--hh-s-12); border-radius: var(--hh-radius-control); background: var(--hh-row-alt); margin-bottom: var(--hh-s-16); }
+  .recap { list-style: none; margin: var(--hh-s-12) 0; padding: 0; border-top: 1px solid var(--hh-line); }
+  .recap li { padding: var(--hh-s-8) 0; border-bottom: 1px solid var(--hh-line); }
+  .recap li:last-child { border-bottom: 0; }
+  .blocked { padding: var(--hh-s-12); border-radius: var(--hh-radius-control); border: 2px solid var(--hh-control-line); margin: 0; }
+  .run-sheet-end { margin-top: var(--hh-s-8); }
   .card .btn + .hint, .card .big + .big { margin-top: var(--hh-s-12); }
 `;

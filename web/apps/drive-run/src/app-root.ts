@@ -25,10 +25,10 @@ import { entryStyles, renderEntry, type EntryView } from "@hardscapehouse/pos-ki
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { HOUSE_ZONE, houseDayInZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import { DriveApi, type DriverRun, type DriverStop } from "./drive-api.js";
-import { canSign, normalizeName, roadsideError } from "./drive-logic.js";
+import { HANDBACK_BODY, HANDBACK_TITLE, canRecordFailure, canSign, normalizeName, roadsideError } from "./drive-logic.js";
 import { driveStyles } from "./styles.js";
 import { readyPhoto } from "./photo.js";
-import { renderPod, renderRunSheet, renderStopDetail } from "./views.js";
+import { renderClose, renderFail, renderPod, renderRunSheet, renderStopDetail } from "./views.js";
 
 const DEMO_ORG = "hh-demo";
 
@@ -84,7 +84,12 @@ export class DriveRunApp extends HHElement {
   #error = "";
   #notice = "";
   #busy = false;
-  #view: { kind: "run" } | { kind: "stop"; id: string } | { kind: "pod"; id: string } = { kind: "run" };
+  #view: { kind: "run" } | { kind: "stop"; id: string } | { kind: "pod"; id: string } | { kind: "fail"; id: string } | { kind: "close" } =
+    { kind: "run" };
+
+  // Could not deliver's draft: the reason in the driver's words.
+  #failReason = "";
+  #closing = false;
 
   // Proof of delivery's draft. The name field is not bound (the position
   // rules allow no value binding), so these mirror it from the input events.
@@ -147,9 +152,34 @@ export class DriveRunApp extends HHElement {
       return;
     }
     if (action === "back-to-stop") {
-      if (this.#view.kind === "pod") this.#view = { kind: "stop", id: this.#view.id };
+      if (this.#view.kind === "pod" || this.#view.kind === "fail") this.#view = { kind: "stop", id: this.#view.id };
       this.#error = "";
       this.requestUpdate();
+      return;
+    }
+    if (action === "open-fail") {
+      if (this.#view.kind === "stop") {
+        this.#failReason = "";
+        this.#error = "";
+        this.#notice = "";
+        this.#view = { kind: "fail", id: this.#view.id };
+        this.requestUpdate();
+      }
+      return;
+    }
+    if (action === "confirm-fail") {
+      void this.#recordFailure();
+      return;
+    }
+    if (action === "open-close") {
+      this.#view = { kind: "close" };
+      this.#error = "";
+      this.#notice = "";
+      this.requestUpdate();
+      return;
+    }
+    if (action === "complete-run") {
+      void this.#completeRun(control?.getAttribute("data-run-id") ?? "");
       return;
     }
     if (action === "sign") {
@@ -170,6 +200,11 @@ export class DriveRunApp extends HHElement {
   // The form fields: the typed name, the recipient's confirmation, the photo.
   readonly #onField = (event: Event): void => {
     const target = event.target;
+    if (target instanceof HTMLTextAreaElement && target.getAttribute("data-field") === "reason") {
+      this.#failReason = target.value;
+      this.requestUpdate();
+      return;
+    }
     if (!(target instanceof HTMLInputElement)) return;
     const field = target.getAttribute("data-field");
     if (field === "name") {
@@ -331,6 +366,42 @@ export class DriveRunApp extends HHElement {
     this.requestUpdate();
   }
 
+  async #recordFailure(): Promise<void> {
+    if (this.#view.kind !== "fail" || this.#busy || !canRecordFailure(this.#failReason)) return;
+    const stopId = this.#view.id;
+    this.#busy = true;
+    this.#error = "";
+    this.requestUpdate();
+    const result = await this.#drive.advance(stopId, "FAILED", this.#failReason.trim());
+    this.#busy = false;
+    if (result.ok) {
+      await this.#refreshRuns();
+      this.#view = { kind: "stop", id: stopId };
+      this.#notice = `${HANDBACK_TITLE} ${HANDBACK_BODY}`;
+    } else {
+      this.#error = roadsideError(result.error, result.status, "That did not go through. Check your signal and try again.");
+    }
+    this.requestUpdate();
+  }
+
+  async #completeRun(runId: string): Promise<void> {
+    if (runId === "" || this.#closing) return;
+    const run = this.#runs.find((candidate) => candidate.id === runId);
+    this.#closing = true;
+    this.#error = "";
+    this.#notice = "";
+    this.requestUpdate();
+    const result = await this.#drive.completeRun(runId);
+    if (result.ok) {
+      this.#notice = `${run?.run_no ?? "The run"} is closed. Thanks: that is the day.`;
+    } else {
+      this.#error = roadsideError(result.error, result.status, "The run did not close. Check your signal and try again.");
+    }
+    await this.#refreshRuns();
+    this.#closing = false;
+    this.requestUpdate();
+  }
+
   async #sign(): Promise<void> {
     if (this.#view.kind !== "pod") return;
     const draft = { receivedBy: this.#podName, affirmed: this.#podAffirmed, busy: this.#podBusy };
@@ -357,7 +428,7 @@ export class DriveRunApp extends HHElement {
   // it is a late photo and is folded into the proof once it is up. A failure
   // never touches the signature.
   async #sendPhoto(file: File): Promise<void> {
-    if (this.#view.kind === "run" || this.#photoBusy) return;
+    if (this.#view.kind === "run" || this.#view.kind === "close" || this.#view.kind === "fail" || this.#photoBusy) return;
     const stopId = this.#view.id;
     const late = this.#view.kind === "stop";
     this.#photoBusy = true;
@@ -440,6 +511,15 @@ export class DriveRunApp extends HHElement {
           error: this.#error,
         });
       }
+    }
+    if (this.#view.kind === "fail") {
+      const found = this.#findStop(this.#view.id);
+      if (found !== null) {
+        return renderFail({ stop: found.stop, reason: this.#failReason, busy: this.#busy, error: this.#error });
+      }
+    }
+    if (this.#view.kind === "close") {
+      return renderClose({ runs: this.#runs, closing: this.#closing, error: this.#error, notice: this.#notice });
     }
     if (this.#view.kind === "stop") {
       const found = this.#findStop(this.#view.id);
