@@ -22,11 +22,9 @@ export function depositOffered(saleType: string, options: readonly PaymentOption
   return !(saleType === 'COD' && option.shape === SHAPE_DEPOSIT_ON_ACCOUNT);
 }
 
-/** The sentence under the two lines: what line two means for this account type. */
-export function depositSentence(shape: string): string {
-  return shape === SHAPE_DEPOSIT_ON_ACCOUNT
-    ? 'A credit customer: the rest rides their account and is paid from the statement.'
-    : 'Cash On Demand means pay before release, never cash on delivery: the deposit puts the order in process, and picking waits for paid in full.';
+/** The sentence under the two lines: the server's words for why this account has this shape, or none. */
+export function depositSentence(option: PaymentOption | null): string {
+  return option?.lineTwoSentence ?? '';
 }
 
 /** The one commit button's words: the deposit in dollars, or what is missing. */

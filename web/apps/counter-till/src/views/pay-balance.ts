@@ -174,7 +174,7 @@ export const payBalanceStyles = [heldOrderStyles, css`
     width: 100%;
   }
   .pay-balance .done {
-    border: 1px solid var(--hh-state-ok, var(--hos-line));
+    border: 2px solid var(--hh-success); /* board 02: the green success border (--hh-state-ok was never a token) */
     border-radius: var(--hos-radius-card);
     padding: var(--hh-s-16);
     margin: var(--hh-s-16) 0 0;

@@ -4101,6 +4101,7 @@ export type PosSupplierDepositOption = {
 export type PosPaymentOption = {
   shape: "PAY_IN_FULL_NOW" | "ALL_ON_ACCOUNT" | "DEPOSIT_NOW_REST_ON_ACCOUNT" | "DEPOSIT_NOW_REST_DUE_LATER";
   line_two_words?: "On account" | "Balance due later";
+  line_two_sentence?: string;
 };
 export type PosSaleView = {
   order_id: string;

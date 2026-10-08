@@ -255,7 +255,20 @@ const CUSTOMERS = [
     percent_off: 12,
     on_hold: true,
   },
-  // Item 9.9: the pay before release account (zero day terms, no credit line), the stub's
+  // Round 15: DEMO-C07's shape, a retail account with no credit line: the gate refuses it on
+  // account, so its payment step is pay before release words that say what the account is.
+  {
+    id: "c-retail",
+    account_no: "C07",
+    name: "Lachance Retail",
+    customer_type: "RETAIL",
+    payment_terms_days: 0,
+    credit_limit_cents: 0,
+    open_balance_cents: 0,
+    percent_off: 0,
+    on_hold: false,
+  },
+  // Item 9.9: the pay before release account (zero day terms with a credit line, as the core's C10), the stub's
   // Cash On Demand customer: the preview offers it the deposit with the balance due later.
   {
     id: "c-cod",
@@ -263,7 +276,7 @@ const CUSTOMERS = [
     name: "Cash On Demand Landscaping",
     customer_type: "CONTRACTOR",
     payment_terms_days: 0,
-    credit_limit_cents: 0,
+    credit_limit_cents: 500000, // the demo world's own C10 line: Cash On Demand is zero day terms WITH a line
     open_balance_cents: 0,
     percent_off: 0,
     on_hold: false,
@@ -599,6 +612,12 @@ function customerFor(customerId) {
 // Item 9.1's menu, the core's own rule (payment_options.go): a credit customer is terms above
 // zero AND a credit line and not on hold; everything else (Cash On Demand, walk in, no credit,
 // a held credit account) is offered the deposit with the balance due later.
+const SENTENCE_ON_ACCOUNT = "A credit customer: the rest rides their account and is paid from the statement.";
+const SENTENCE_CASH_ON_DEMAND =
+  "Cash On Demand means pay before release, never cash on delivery: the deposit puts the order in process, and picking waits for paid in full.";
+const SENTENCE_CANNOT_CARRY =
+  "This account cannot carry this sale on account: pay in full now, or take a deposit with the balance due later. The deposit puts the order in process, and picking waits for paid in full.";
+
 function paymentOptionsFor(customer) {
   const terms = customer.payment_terms_days ?? 0;
   const limit = customer.credit_limit_cents ?? 0;
@@ -606,12 +625,16 @@ function paymentOptionsFor(customer) {
     return [
       { shape: "PAY_IN_FULL_NOW" },
       { shape: "ALL_ON_ACCOUNT" },
-      { shape: "DEPOSIT_NOW_REST_ON_ACCOUNT", line_two_words: "On account" },
+      { shape: "DEPOSIT_NOW_REST_ON_ACCOUNT", line_two_words: "On account", line_two_sentence: SENTENCE_ON_ACCOUNT },
     ];
   }
   return [
     { shape: "PAY_IN_FULL_NOW" },
-    { shape: "DEPOSIT_NOW_REST_DUE_LATER", line_two_words: "Balance due later" },
+    {
+      shape: "DEPOSIT_NOW_REST_DUE_LATER",
+      line_two_words: "Balance due later",
+      line_two_sentence: terms <= 0 && limit > 0 ? SENTENCE_CASH_ON_DEMAND : SENTENCE_CANNOT_CARRY,
+    },
   ];
 }
 
