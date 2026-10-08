@@ -229,8 +229,9 @@ code="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/")"
 
 # The apps the box serves, each under its own prefix behind the one phrase
 # gate (the front door at /, the counter till at /till/, the public desk at
-# /q/ and at /quote.html where the server's emailed share link lands, the
-# Quote Desk at /quote/ whenever web/apps/quote-desk exists in this tree).
+# /q/ and at /quote.html where the server's emailed share link lands, HH
+# Drive at /drive/, the Quote Desk at /quote/ whenever web/apps/quote-desk
+# exists in this tree).
 page_has() {
 	# path, marker, label
 	body="$(curl -s -u "demo:$PHRASE" "$BASE$1")"
@@ -246,9 +247,11 @@ page_gated() {
 }
 page_has / fd-app-root "the front door at /"
 page_has /till/ ct-app-root "the counter till at /till/"
+page_has /drive/ drive-run-app "HH Drive at /drive/"
 page_has /q/ pd-quote-public "the public desk at /q/"
 page_has "/quote.html?t=x" pd-quote-public "the public desk at /quote.html"
 page_gated /till/ "the counter till at /till/"
+page_gated /drive/ "HH Drive at /drive/"
 page_gated /q/ "the public desk at /q/"
 page_gated /quote/ "the /quote/ prefix"
 if [ -d web/apps/quote-desk ]; then
@@ -266,6 +269,14 @@ if [ -n "$asset" ] && [ "$(curl -s -o /dev/null -w '%{http_code}' -u "demo:$PHRA
 	pass "the till's script asset resolves under /till/"
 else
 	fail "the till's script asset did not resolve under /till/ (found: ${asset:-none})"
+fi
+
+# HH Drive's script asset resolves under its own prefix too.
+asset="$(curl -s -u "demo:$PHRASE" "$BASE/drive/" | sed -n 's/.*src="\(\/drive\/assets\/[^"]*\.js\)".*/\1/p' | head -1)"
+if [ -n "$asset" ] && [ "$(curl -s -o /dev/null -w '%{http_code}' -u "demo:$PHRASE" "$BASE$asset")" = "200" ]; then
+	pass "HH Drive's script asset resolves under /drive/"
+else
+	fail "HH Drive's script asset did not resolve under /drive/ (found: ${asset:-none})"
 fi
 
 flows="$(curl -s -u "demo:$PHRASE" "$BASE/api/v1/demo/flows")"
