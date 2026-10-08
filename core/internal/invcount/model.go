@@ -55,8 +55,8 @@ type Line struct {
 	SnapshotQtyBase    float64  `json:"snapshot_qty_base"`
 	CountedQtyBase     *float64 `json:"counted_qty_base"`
 	VarianceBase       float64  `json:"variance_base"`
-	UnitCostCents      int64    `json:"unit_cost_cents"`
-	VarianceValueCents int64    `json:"variance_value_cents"`
+	UnitCostCents      int64    `json:"unit_cost_cents,omitempty"`
+	VarianceValueCents int64    `json:"variance_value_cents,omitempty"`
 	ReasonCode         string   `json:"reason_code,omitempty"`
 	MoveID             string   `json:"move_id,omitempty"`
 }
@@ -96,8 +96,8 @@ type VarianceSummary struct {
 	LineCount             int   `json:"line_count"`
 	CountedLines          int   `json:"counted_lines"`
 	VarianceLines         int   `json:"variance_lines"`
-	NetVarianceValueCents int64 `json:"net_variance_value_cents"`
-	AbsVarianceValueCents int64 `json:"abs_variance_value_cents"`
+	NetVarianceValueCents int64 `json:"net_variance_value_cents,omitempty"`
+	AbsVarianceValueCents int64 `json:"abs_variance_value_cents,omitempty"`
 }
 
 // NegativeStockRow is one product carrying by-design negative on-hand (sell-before-receipt detection).

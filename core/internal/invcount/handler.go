@@ -47,6 +47,11 @@ func (h *Handler) sheetDetail(w http.ResponseWriter, r *http.Request, caller gua
 		h.writeErr(w, r, err)
 		return
 	}
+	// X3: the frozen average and the variance values ride only for a
+	// caller the cost rule allows (cost_gate.go); byte-absent otherwise.
+	if !h.costAllowed(r) {
+		blankDetailCost(&detail)
+	}
 	httpx.WriteJSON(w, http.StatusOK, detail)
 }
 

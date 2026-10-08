@@ -455,6 +455,13 @@ func (h *Handler) listTransfers(w http.ResponseWriter, r *http.Request, _ guards
 		h.writeErr(w, r, err)
 		return
 	}
+	// X3: a line's unit cost is the branch average the ship move priced
+	// it at; it rides only for a caller the cost rule allows.
+	if !h.costAllowed(r) {
+		for i := range rows {
+			blankTransferCost(&rows[i])
+		}
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"transfers": rows})
 }
 
@@ -463,6 +470,9 @@ func (h *Handler) getTransfer(w http.ResponseWriter, r *http.Request, _ guards.S
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
+	}
+	if !h.costAllowed(r) {
+		blankTransferCost(&t)
 	}
 	httpx.WriteJSON(w, http.StatusOK, t)
 }

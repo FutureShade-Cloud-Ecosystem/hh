@@ -205,3 +205,79 @@ func TestIntegration_CostGate_TheStockReadsHoldCostOutByRole(t *testing.T) {
 		t.Errorf("the counter caller's shortfall row lost a cost leg: %v", clerkShort[0])
 	}
 }
+
+// TestIntegration_CostGate_TheMovesAndTransfersReadsHoldCostOutByRole
+// walks the three reads the first cut of the gate missed: the stock
+// move ledger and the transfer list and detail. A ship move prices its
+// lines at the branch average, so each carries a unit cost a yard
+// caller must not receive (byte-absent), while a caller on the cost and
+// margin list keeps it.
+func TestIntegration_CostGate_TheMovesAndTransfersReadsHoldCostOutByRole(t *testing.T) {
+	w := newCostGateWorld(t)
+	pool := w.h.svc.repo.pool
+	// A shipped transfer leaves the source down and the destination not
+	// yet up, the transient drift window the shared lease covers.
+	dib396LeaseShared(t, pool, 3960002)
+	product := mkProduct(t, pool, "X3-MOVES")
+	seedBalance(t, pool, product, branch2, 50, 1900)
+	tr := shippedTransfer(t, w.h.svc, branch2, branch1, product, 5)
+
+	// the move ledger
+	yardMoves := rowsOf(t, costGateGet(t, w.h.moves, withQuery(w.yard, "product_id", product)), "moves")
+	if costKeyPresent(yardMoves, "unit_cost_cents") {
+		t.Errorf("the yard caller's move row carries unit_cost_cents: %v", yardMoves[0])
+	}
+	clerkMoves := rowsOf(t, costGateGet(t, w.h.moves, withQuery(w.clerk, "product_id", product)), "moves")
+	if !costKeyPresent(clerkMoves, "unit_cost_cents") {
+		t.Errorf("the counter caller's move row lost unit_cost_cents: %v", clerkMoves[0])
+	}
+
+	// the transfer list: lines ride each transfer
+	linesOf := func(body map[string]any) []map[string]any {
+		var out []map[string]any
+		for _, tm := range rowsOf(t, body, "transfers") {
+			if tm["id"] != tr.ID {
+				continue
+			}
+			raw, _ := tm["lines"].([]any)
+			for _, l := range raw {
+				if m, ok := l.(map[string]any); ok {
+					out = append(out, m)
+				}
+			}
+		}
+		if len(out) == 0 {
+			t.Fatalf("transfer %s has no lines in %v", tr.ID, body)
+		}
+		return out
+	}
+	yardList := linesOf(costGateGet(t, w.h.listTransfers, withQuery(w.yard, "branch_id", branch2, "limit", "200")))
+	if costKeyPresent(yardList, "unit_cost_cents") {
+		t.Errorf("the yard caller's transfer list carries unit_cost_cents: %v", yardList[0])
+	}
+	clerkList := linesOf(costGateGet(t, w.h.listTransfers, withQuery(w.clerk, "branch_id", branch2, "limit", "200")))
+	if !costKeyPresent(clerkList, "unit_cost_cents") {
+		t.Errorf("the counter caller's transfer list lost unit_cost_cents: %v", clerkList[0])
+	}
+
+	// the transfer detail
+	detail := func(req *http.Request) []map[string]any {
+		req.SetPathValue("id", tr.ID)
+		w2 := httptest.NewRecorder()
+		w.h.getTransfer(w2, req, guards.StaffCaller{})
+		if w2.Code != http.StatusOK {
+			t.Fatalf("transfer detail answered %d: %s", w2.Code, w2.Body.String())
+		}
+		var body map[string]any
+		if err := json.Unmarshal(w2.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		return rowsOf(t, body, "lines")
+	}
+	if costKeyPresent(detail(w.yard.Clone(w.yard.Context())), "unit_cost_cents") {
+		t.Errorf("the yard caller's transfer detail carries unit_cost_cents")
+	}
+	if !costKeyPresent(detail(w.clerk.Clone(w.clerk.Context())), "unit_cost_cents") {
+		t.Errorf("the counter caller's transfer detail lost unit_cost_cents")
+	}
+}

@@ -58,3 +58,20 @@ func blankNegativeStockCost(rows []NegativeStockRow) {
 		rows[i].AvgCostCents = 0
 	}
 }
+
+// blankDetailCost holds every cost leg out of one count sheet's detail
+// for a caller the cost rule refuses: each line's frozen average and
+// variance value, and the summary's two rolled-up values (variance
+// value over variance quantity names the average, so none may ride).
+// The lines are copied before they are written.
+func blankDetailCost(d *SheetDetail) {
+	lines := make([]Line, len(d.Lines))
+	copy(lines, d.Lines)
+	for i := range lines {
+		lines[i].UnitCostCents = 0
+		lines[i].VarianceValueCents = 0
+	}
+	d.Lines = lines
+	d.Summary.NetVarianceValueCents = 0
+	d.Summary.AbsVarianceValueCents = 0
+}

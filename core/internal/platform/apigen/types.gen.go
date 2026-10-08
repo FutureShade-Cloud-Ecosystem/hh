@@ -3168,7 +3168,7 @@ type InventoryStockMove struct {
 	MoveType      string    `json:"move_type"`
 	SourceType    string    `json:"source_type"`
 	SourceRefId   string    `json:"source_ref_id"`
-	UnitCostCents int64     `json:"unit_cost_cents"`
+	UnitCostCents *int64    `json:"unit_cost_cents,omitempty"`
 	OccurredAt    time.Time `json:"occurred_at"`
 }
 
@@ -3359,7 +3359,7 @@ type InventoryTransferLine struct {
 	QtyBase         float64 `json:"qty_base"`
 	QtyShippedBase  float64 `json:"qty_shipped_base"`
 	QtyReceivedBase float64 `json:"qty_received_base"`
-	UnitCostCents   int64   `json:"unit_cost_cents"`
+	UnitCostCents   *int64  `json:"unit_cost_cents,omitempty"`
 	ShipMoveId      string  `json:"ship_move_id"`
 	RecvMoveId      string  `json:"recv_move_id"`
 }
@@ -3586,8 +3586,8 @@ type InvCountLine struct {
 	SnapshotQtyBase    float64  `json:"snapshot_qty_base"`
 	CountedQtyBase     *float64 `json:"counted_qty_base"`
 	VarianceBase       float64  `json:"variance_base"`
-	UnitCostCents      int64    `json:"unit_cost_cents"`
-	VarianceValueCents int64    `json:"variance_value_cents"`
+	UnitCostCents      *int64   `json:"unit_cost_cents,omitempty"`
+	VarianceValueCents *int64   `json:"variance_value_cents,omitempty"`
 	ReasonCode         *string  `json:"reason_code,omitempty"`
 	MoveId             *string  `json:"move_id,omitempty"`
 }
@@ -3613,11 +3613,11 @@ type InvCountReconRun struct {
 }
 
 type InvCountVarianceSummary struct {
-	LineCount             int32 `json:"line_count"`
-	CountedLines          int32 `json:"counted_lines"`
-	VarianceLines         int32 `json:"variance_lines"`
-	NetVarianceValueCents int64 `json:"net_variance_value_cents"`
-	AbsVarianceValueCents int64 `json:"abs_variance_value_cents"`
+	LineCount             int32  `json:"line_count"`
+	CountedLines          int32  `json:"counted_lines"`
+	VarianceLines         int32  `json:"variance_lines"`
+	NetVarianceValueCents *int64 `json:"net_variance_value_cents,omitempty"`
+	AbsVarianceValueCents *int64 `json:"abs_variance_value_cents,omitempty"`
 }
 
 type InvCountSheetDetail struct {

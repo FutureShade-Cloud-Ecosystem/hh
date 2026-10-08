@@ -99,3 +99,24 @@ func blankShortfallCost(rows []ShortfallRow) {
 		rows[i].SuggestedValueCents = 0
 	}
 }
+
+// blankMoveCost holds the unit cost out of the stock move ledger for a
+// caller the cost rule refuses.
+func blankMoveCost(rows []StockMove) {
+	for i := range rows {
+		rows[i].UnitCostCents = 0
+	}
+}
+
+// blankTransferCost holds the line unit cost (the ship move prices a
+// line at the branch average) out of a transfer for a caller the cost
+// rule refuses. Transfer.Lines is a slice shared with the service's
+// answer, so the lines are copied before they are written.
+func blankTransferCost(t *Transfer) {
+	lines := make([]TransferLine, len(t.Lines))
+	copy(lines, t.Lines)
+	for i := range lines {
+		lines[i].UnitCostCents = 0
+	}
+	t.Lines = lines
+}

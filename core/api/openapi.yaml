@@ -35228,7 +35228,6 @@ components:
         - move_type
         - source_type
         - source_ref_id
-        - unit_cost_cents
         - occurred_at
       properties:
         id:
@@ -35265,6 +35264,7 @@ components:
         unit_cost_cents:
           type: integer
           format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         occurred_at:
           type: string
           format: date-time
@@ -35841,7 +35841,6 @@ components:
         - qty_base
         - qty_shipped_base
         - qty_received_base
-        - unit_cost_cents
         - ship_move_id
         - recv_move_id
       properties:
@@ -35869,6 +35868,7 @@ components:
         unit_cost_cents:
           type: integer
           format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         ship_move_id:
           type: string
         recv_move_id:
@@ -36475,8 +36475,6 @@ components:
         - snapshot_qty_base
         - counted_qty_base
         - variance_base
-        - unit_cost_cents
-        - variance_value_cents
       properties:
         id:
           type: string
@@ -36506,9 +36504,11 @@ components:
         unit_cost_cents:
           type: integer
           format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         variance_value_cents:
           type: integer
           format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         reason_code:
           type: string
         move_id:
@@ -36584,8 +36584,6 @@ components:
         - line_count
         - counted_lines
         - variance_lines
-        - net_variance_value_cents
-        - abs_variance_value_cents
       properties:
         line_count:
           type: integer
@@ -36599,9 +36597,11 @@ components:
         net_variance_value_cents:
           type: integer
           format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         abs_variance_value_cents:
           type: integer
           format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
     InvCountSheetDetail:
       type: object
       description: A sheet plus its lines and a variance summary (the count-variance screen payload)

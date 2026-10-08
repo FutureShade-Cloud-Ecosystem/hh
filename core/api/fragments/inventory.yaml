@@ -1250,7 +1250,7 @@ components:
     InventoryStockMove:
       type: object
       description: One immutable ledger line; corrections are compensating moves
-      required: [id, product_id, branch_id, qty_base, uom, direction, move_type, source_type, source_ref_id, unit_cost_cents, occurred_at]
+      required: [id, product_id, branch_id, qty_base, uom, direction, move_type, source_type, source_ref_id, occurred_at]
       properties:
         id: { type: string, format: uuid }
         product_id: { type: string, format: uuid }
@@ -1265,7 +1265,10 @@ components:
           enum: [RECEIPT, SHIP, COUNT, ADJUST, RETURN, TRANSFER]
         source_type: { type: string }
         source_ref_id: { type: string }
-        unit_cost_cents: { type: integer, format: int64 }
+        unit_cost_cents:
+          type: integer
+          format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         occurred_at: { type: string, format: date-time }
 
     InventoryOnHand:
@@ -1587,7 +1590,7 @@ components:
     InventoryTransferLine:
       type: object
       description: One product on a transfer, carrying both halves of the ship/receive pair
-      required: [id, line_no, product_id, sku, product_name, uom, qty_base, qty_shipped_base, qty_received_base, unit_cost_cents, ship_move_id, recv_move_id]
+      required: [id, line_no, product_id, sku, product_name, uom, qty_base, qty_shipped_base, qty_received_base, ship_move_id, recv_move_id]
       properties:
         id: { type: string, format: uuid }
         line_no: { type: integer, format: int32 }
@@ -1598,7 +1601,10 @@ components:
         qty_base: { type: number }
         qty_shipped_base: { type: number }
         qty_received_base: { type: number }
-        unit_cost_cents: { type: integer, format: int64 }
+        unit_cost_cents:
+          type: integer
+          format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         ship_move_id: { type: string }
         recv_move_id: { type: string }
 
@@ -1943,7 +1949,7 @@ components:
     InvCountLine:
       type: object
       description: A snapshot on-hand vs counted reading, its variance, the valuation and the reason
-      required: [id, sheet_id, product_id, location_id, snapshot_qty_base, counted_qty_base, variance_base, unit_cost_cents, variance_value_cents]
+      required: [id, sheet_id, product_id, location_id, snapshot_qty_base, counted_qty_base, variance_base]
       properties:
         id: { type: string, format: uuid }
         sheet_id: { type: string, format: uuid }
@@ -1956,8 +1962,14 @@ components:
           type: [number, "null"]
           description: Null until the maker counts this line
         variance_base: { type: number }
-        unit_cost_cents: { type: integer, format: int64 }
-        variance_value_cents: { type: integer, format: int64 }
+        unit_cost_cents:
+          type: integer
+          format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
+        variance_value_cents:
+          type: integer
+          format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         reason_code: { type: string }
         move_id:
           type: string
@@ -1994,13 +2006,19 @@ components:
 
     InvCountVarianceSummary:
       type: object
-      required: [line_count, counted_lines, variance_lines, net_variance_value_cents, abs_variance_value_cents]
+      required: [line_count, counted_lines, variance_lines]
       properties:
         line_count: { type: integer, format: int32 }
         counted_lines: { type: integer, format: int32 }
         variance_lines: { type: integer, format: int32 }
-        net_variance_value_cents: { type: integer, format: int64 }
-        abs_variance_value_cents: { type: integer, format: int64 }
+        net_variance_value_cents:
+          type: integer
+          format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
+        abs_variance_value_cents:
+          type: integer
+          format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
 
     InvCountSheetDetail:
       type: object

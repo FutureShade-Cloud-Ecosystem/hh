@@ -2659,7 +2659,7 @@ export type InventoryStockMove = {
   move_type: "RECEIPT" | "SHIP" | "COUNT" | "ADJUST" | "RETURN" | "TRANSFER";
   source_type: string;
   source_ref_id: string;
-  unit_cost_cents: number;
+  unit_cost_cents?: number;
   occurred_at: string;
 };
 export type InventoryOnHand = {
@@ -2830,7 +2830,7 @@ export type InventoryTransferLine = {
   qty_base: number;
   qty_shipped_base: number;
   qty_received_base: number;
-  unit_cost_cents: number;
+  unit_cost_cents?: number;
   ship_move_id: string;
   recv_move_id: string;
 };
@@ -3028,8 +3028,8 @@ export type InvCountLine = {
   snapshot_qty_base: number;
   counted_qty_base: number | null;
   variance_base: number;
-  unit_cost_cents: number;
-  variance_value_cents: number;
+  unit_cost_cents?: number;
+  variance_value_cents?: number;
   reason_code?: string;
   move_id?: string;
 };
@@ -3055,8 +3055,8 @@ export type InvCountVarianceSummary = {
   line_count: number;
   counted_lines: number;
   variance_lines: number;
-  net_variance_value_cents: number;
-  abs_variance_value_cents: number;
+  net_variance_value_cents?: number;
+  abs_variance_value_cents?: number;
 };
 export type InvCountSheetDetail = {
   sheet: InvCountSheet;

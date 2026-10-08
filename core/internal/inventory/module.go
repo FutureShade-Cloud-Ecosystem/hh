@@ -53,7 +53,7 @@ type StockMove struct {
 	MoveType      string  `json:"move_type"`
 	SourceType    string  `json:"source_type"`
 	SourceRefID   string  `json:"source_ref_id"`
-	UnitCostCents int64   `json:"unit_cost_cents"`
+	UnitCostCents int64   `json:"unit_cost_cents,omitempty"`
 	OccurredAt    string  `json:"occurred_at"`
 }
 
