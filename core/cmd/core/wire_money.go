@@ -194,7 +194,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	quoteInvoicer, quotePayer := quoteMoneyDoor(pool, orderSvc)
 	quoteStaffSvc.WithOrderInvoicer(quoteInvoicer).WithCounterPayer(quotePayer)
 	quoteRepo.WithStockReserver(w5aQuoteStockReserver{svc: inventorySvc})
-	quoteStaffHandler := quote.NewStaffHandler(quoteStaffSvc).WithUserLinker(link)
+	quoteStaffHandler := quote.NewStaffHandler(quoteStaffSvc).WithUserLinker(link).WithSettingsGrantReader(quoteStaffSvc.SettingsGrant)
 	quoteStaffHandler.RegisterStaffRoutes(r, g)
 	quoteStaffHandler.RegisterShareRoutes(r, g)
 	quoteStaffHandler.RegisterPublicRoutes(r)

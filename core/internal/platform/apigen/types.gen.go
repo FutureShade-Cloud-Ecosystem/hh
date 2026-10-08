@@ -7116,6 +7116,12 @@ type QuoteAcceptanceSettings struct {
 	SwitchWired      bool `json:"switch_wired"`
 }
 
+type QuoteSettingsGrant struct {
+	CanReadAcceptance bool `json:"can_read_acceptance"`
+	CanReadScopeRules bool `json:"can_read_scope_rules"`
+	CanEditPolicy     bool `json:"can_edit_policy"`
+}
+
 type QuoteAcceptanceSettingsWrite struct {
 	AllowMultiAccept bool    `json:"allow_multi_accept"`
 	Reason           *string `json:"reason,omitempty"`

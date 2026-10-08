@@ -103,17 +103,54 @@ type NotSettingsAdminError struct{ RoleCode string }
 
 func (e *NotSettingsAdminError) Error() string {
 	if e.RoleCode == "" {
-		return "quote: changing the acceptance settings is limited to administrators"
+		return "quote: changing the quote-desk settings is limited to administrators"
 	}
 	return fmt.Sprintf(
-		"quote: the acceptance settings decide whether a quote can be accepted more than once, and changing them "+
-			"is limited to administrators, %s cannot do it; ask a tech admin", e.RoleCode)
+		"quote: the quote-desk settings decide what customers see and how quotes behave, and changing them "+
+			"is limited to administrators, %s cannot do it; ask a manager", e.RoleCode)
 }
 
 // ErrAcceptSettingsNotConfigured, the settings write seam is not wired (a store that predates it).
 // A deliberate 503-shaped refusal, not a 500: an operator should learn this is a deploy problem.
 var ErrAcceptSettingsNotConfigured = errors.New(
 	"quote: the acceptance settings are not configured on this server")
+
+// SettingsGrant is the answer to one question the Quote Desk asks before it
+// mounts its settings panels: does the signed-in caller hold the grants the
+// three settings panels need? The three booleans each answer with the very
+// predicate the panel's own gate or in-service guard uses, so the answer
+// cannot drift from the refusal.
+type SettingsGrant struct {
+	// CanReadAcceptance is true when the caller may read the acceptance settings
+	// (holdsQuoteSettingsAuthority: the Sales manager or the General Manager).
+	CanReadAcceptance bool `json:"can_read_acceptance"`
+	// CanReadScopeRules is true when the caller may read the scope rules
+	// (IsAdmin: a Tier-1 GLOBAL user).
+	CanReadScopeRules bool `json:"can_read_scope_rules"`
+	// CanEditPolicy is true when the caller may write the quote policy
+	// (holdsQuoteSettingsAuthority: the Sales manager or the General Manager;
+	// the General Manager writes the dealer default, the Sales manager writes
+	// its own branch's row).
+	CanEditPolicy bool `json:"can_edit_policy"`
+}
+
+// SettingsGrant answers the grant read for the given caller. It returns the
+// three booleans using the same predicates the refusing routes use, so the
+// answer cannot drift from the refusal.
+func (s *StaffService) SettingsGrant(ctx context.Context) (SettingsGrant, error) {
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return SettingsGrant{}, err
+	}
+	if caller.Status != identity.StatusActive {
+		return SettingsGrant{}, ErrForbidden
+	}
+	return SettingsGrant{
+		CanReadAcceptance: s.holdsQuoteSettingsAuthority(caller),
+		CanReadScopeRules: caller.IsAdmin(),
+		CanEditPolicy:     s.holdsQuoteSettingsAuthority(caller),
+	}, nil
+}
 
 // multiAcceptReader is the read seam: does this dealer allow accepting a quote more than once?
 // *Repository satisfies it; a fake that omits it leaves the feature at its restrictive default.
