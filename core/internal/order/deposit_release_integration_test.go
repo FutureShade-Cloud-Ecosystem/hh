@@ -5,7 +5,7 @@
 // the supplier's deposit billed to the account (the 9.5 shape), the ring's two
 // documents finalised through the REAL gl posting consumer, the order's
 // invoice beating the yard to INVOICED exactly as the runtime drain orders it,
-// and then the fulfilment road (AdvanceFromEvent, the choke point the dispatch
+// and then the fulfilment road (AdvanceFromDelivery, the door the dispatch
 // handoff and the will-call collection call) releasing the deposit: a
 // deposit.released outbox row the same gl consumer posts as DR 2300 / CR
 // revenue, after which 2300 has returned to zero and the revenue recognised
@@ -127,7 +127,8 @@ func TestIntegration_DepositRelease_TheRingTheBeatAndTheFulfilment(t *testing.T)
 	// owner of the finance topics (production's wiring), the lifecycle consumer
 	// as the observer, the real dispatcher draining the real outbox.
 	auditSvc := audit.NewService(audit.NewRepository(pool), nil)
-	orderSvc := NewService(NewRepository(pool)).WithAudit(auditSvc).WithAuditTrail(auditSvc)
+	orderSvc := NewService(NewRepository(pool)).WithAudit(auditSvc).WithAuditTrail(auditSvc).
+		WithDepositReleaser(billing.NewInvoiceWriter(pool))
 	billingRepo := billing.NewRepository(pool)
 	glSvc := gl.NewService(gl.NewRepository(pool)).WithInvoiceReader(billingRepo)
 	dispatcher := notify.NewDispatcher(notify.NewPgOutboxStore(pool), nil)
@@ -172,12 +173,32 @@ func TestIntegration_DepositRelease_TheRingTheBeatAndTheFulfilment(t *testing.T)
 		t.Fatalf("%d deposit.released rows before any fulfilment, want none", pending)
 	}
 
+	// P2-2: a task rule's plain event move to FULFILLED (declined here, the
+	// order sits INVOICED) is not a delivery: nothing is released or recorded.
+	if err := orderSvc.AdvanceFromEvent(ctx, out.OrderID, "FULFILLED", "task-rule"); !errors.Is(err, ErrIllegalTransition) {
+		t.Fatalf("the task rule move answers %v, want ErrIllegalTransition", err)
+	}
+	if got, _ := orderSvc.DeliveredOrderIDs(ctx, []string{out.OrderID}); len(got) != 0 {
+		t.Fatalf("a task rule recorded a delivery: %v", got)
+	}
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM events_outbox WHERE topic = 'deposit.released'
+		  AND (payload->>'invoice_id')::uuid = $1`, dep).Scan(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 0 {
+		t.Fatalf("a task rule's move wrote %d deposit.released rows, want none", pending)
+	}
+
 	// The fulfilment road: the material has left, the yard's MarkFulfilled is
 	// declined by the ladder (the ring's invoice beat it), and the release
 	// fires anyway.
-	err = orderSvc.AdvanceFromEvent(ctx, out.OrderID, "FULFILLED", "dispatch:test-stop")
+	err = orderSvc.AdvanceFromDelivery(ctx, out.OrderID, "dispatch:test-stop")
 	if !errors.Is(err, ErrIllegalTransition) {
 		t.Fatalf("the beat order answers %v, want ErrIllegalTransition", err)
+	}
+	if got, _ := orderSvc.DeliveredOrderIDs(ctx, []string{out.OrderID}); len(got) != 1 {
+		t.Fatalf("the delivery was not recorded on the order: %v", got)
 	}
 	var released int
 	if err := pool.QueryRow(ctx,
@@ -204,7 +225,7 @@ func TestIntegration_DepositRelease_TheRingTheBeatAndTheFulfilment(t *testing.T)
 
 	// A redelivered fulfilment (a second MarkFulfilled reaching the same
 	// order) re-reaches the emission and the ledger dedupes it.
-	if err := orderSvc.AdvanceFromEvent(ctx, out.OrderID, "FULFILLED", "dispatch:test-stop"); !errors.Is(err, ErrIllegalTransition) {
+	if err := orderSvc.AdvanceFromDelivery(ctx, out.OrderID, "dispatch:test-stop"); !errors.Is(err, ErrIllegalTransition) {
 		t.Fatalf("the second fulfilment answers %v, want ErrIllegalTransition", err)
 	}
 	drainOutbox(t, dispatcher)
