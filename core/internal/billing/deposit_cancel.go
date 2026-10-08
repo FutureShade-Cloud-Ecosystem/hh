@@ -200,8 +200,8 @@ func (w *InvoiceWriter) recordDepositCancel(ctx context.Context, tx pgx.Tx, d de
 		BranchID:   d.branch,
 		Reason:     reason,
 		Extra: map[string]any{
-			"disposition": disposition,
-			"invoice_no":  d.no,
+			"disposition":  disposition,
+			"invoice_no":   d.no,
 			"amount_cents": d.total,
 		},
 	}
