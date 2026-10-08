@@ -108,6 +108,15 @@ func (s *Service) UpdatePolicy(ctx context.Context, p PosPolicy) (PosPolicy, err
 	// before-image costs a history row, and refusing a legitimate settings change because a second read
 	// failed would cost them the change itself.
 	before, beforeErr := s.store.ReadPosPolicy(ctx, p.BranchID)
+	// The counter settings screen echoes the row it read, and Policy() read an
+	// un-curated chip set as the derived one. Echoing the derived set back is no
+	// curation: over an empty stored set it stays empty, so a one-knob save never
+	// freezes the derivation or writes a chip set row nobody authored.
+	if beforeErr == nil && len(before.QuickChipSet) == 0 && len(p.QuickChipSet) > 0 {
+		if derived, derr := s.store.TopSellingApplications(ctx, 6); derr == nil && sameChips(derived, p.QuickChipSet) {
+			p.QuickChipSet = nil
+		}
+	}
 	if err := s.store.UpsertPosPolicy(ctx, p); err != nil {
 		return PosPolicy{}, err
 	}
@@ -247,4 +256,17 @@ func (s *Service) parkedBranchAccess(ctx context.Context, id string) error {
 		return errParkedNotFound
 	}
 	return nil
+}
+
+// sameChips reports whether two chip lists are the same names in the same order.
+func sameChips(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

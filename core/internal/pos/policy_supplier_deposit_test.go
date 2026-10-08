@@ -89,3 +89,33 @@ func TestSupplierDepositCancelDefault_AnswersTheStoredValue(t *testing.T) {
 		t.Fatalf("a stored KEPT must answer KEPT, got %q", got)
 	}
 }
+
+// The counter settings screen reads the policy (which DERIVES an un-curated
+// quick_chip_set) and writes the whole row back with the deposit knob moved.
+// Echoing the derived set must not freeze it as a curated one, nor write a
+// quick_chip_set history row nobody authored.
+func TestUpdatePolicy_EchoedDerivedChipSetStaysUncurated(t *testing.T) {
+	h := adminHarness()
+	h.store.topApps = []string{"Pavers", "Walls"}
+	seedPolicy(h, "")
+	read, err := h.svc.Policy(context.Background(), "")
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(read.QuickChipSet) == 0 {
+		t.Fatal("the read must derive a chip set for this proof to mean anything")
+	}
+	next := read
+	next.SupplierDepositCancel = SupplierDepositCancelKept
+	if _, err := h.svc.UpdatePolicy(context.Background(), next); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if got := h.store.policies[""].QuickChipSet; len(got) != 0 {
+		t.Fatalf("the derived chip set was frozen as curated: %v", got)
+	}
+	for _, r := range policyRows(h.rec) {
+		if r.Extra["field"] == "quick_chip_set" {
+			t.Fatalf("a chip set history row nobody authored: %+v", r.Extra)
+		}
+	}
+}
