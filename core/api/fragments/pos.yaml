@@ -2972,7 +2972,7 @@ components:
     PosReturnLookup:
       type: object
       description: The pre-return read of the original sale
-      required: [order_id, order_no, branch_id, customer_id, invoice_id, sale_tender, card_refundable, lines]
+      required: [order_id, order_no, branch_id, customer_id, invoice_id, sale_tender, card_refundable, returnable, not_returnable_reason, lines]
       properties:
         order_id: { type: string, format: uuid }
         order_no: { type: string }
@@ -2981,6 +2981,8 @@ components:
         invoice_id: { type: string, format: uuid }
         sale_tender: { type: string, enum: [ACCOUNT, CASH, CARD, CHEQUE] }
         card_refundable: { type: boolean, description: The original CARD capture carried a gateway reference }
+        returnable: { type: boolean, description: Whether the order can be returned now }
+        not_returnable_reason: { type: string, description: "In words, why not (an order a quote became has no live finalised invoice yet); empty when returnable" }
         lines:
           type: array
           items: { $ref: "#/components/schemas/PosReturnableLine" }

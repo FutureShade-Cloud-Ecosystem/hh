@@ -4470,6 +4470,8 @@ export type PosReturnLookup = {
   invoice_id: string;
   sale_tender: "ACCOUNT" | "CASH" | "CARD" | "CHEQUE";
   card_refundable: boolean;
+  returnable: boolean;
+  not_returnable_reason: string;
   lines: PosReturnableLine[];
 };
 export type PosReturnAcrossInput = {

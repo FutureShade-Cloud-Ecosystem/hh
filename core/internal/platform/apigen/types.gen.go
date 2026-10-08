@@ -5217,14 +5217,16 @@ type PosReturnableLine struct {
 }
 
 type PosReturnLookup struct {
-	OrderId        string              `json:"order_id"`
-	OrderNo        string              `json:"order_no"`
-	BranchId       string              `json:"branch_id"`
-	CustomerId     string              `json:"customer_id"`
-	InvoiceId      string              `json:"invoice_id"`
-	SaleTender     string              `json:"sale_tender"`
-	CardRefundable bool                `json:"card_refundable"`
-	Lines          []PosReturnableLine `json:"lines"`
+	OrderId             string              `json:"order_id"`
+	OrderNo             string              `json:"order_no"`
+	BranchId            string              `json:"branch_id"`
+	CustomerId          string              `json:"customer_id"`
+	InvoiceId           string              `json:"invoice_id"`
+	SaleTender          string              `json:"sale_tender"`
+	CardRefundable      bool                `json:"card_refundable"`
+	Returnable          bool                `json:"returnable"`
+	NotReturnableReason string              `json:"not_returnable_reason"`
+	Lines               []PosReturnableLine `json:"lines"`
 }
 
 type PosReturnAcrossInput struct {

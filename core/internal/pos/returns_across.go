@@ -114,6 +114,9 @@ func (s *Service) PreviewReturnAcross(ctx context.Context, in ReturnPreviewInput
 		if err := noteWalls(first, oc, customerID); err != nil {
 			return ReturnPreview{}, err
 		}
+		if oc, err = s.resolveConverted(ctx, oc); err != nil {
+			return ReturnPreview{}, err
+		}
 		if first == nil {
 			ocCopy := oc
 			first = &ocCopy

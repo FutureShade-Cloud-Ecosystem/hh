@@ -353,6 +353,8 @@ type Service struct {
 	// branchNames turns a branch id into the branch's name for the customer lines read (the branches
 	// module owns the table). Nil leaves the names empty.
 	branchNames BranchNamer
+	// orderInvoices resolves a converted order's live invoice (billing owns the documents).
+	orderInvoices OrderInvoiceReader
 	now         func() time.Time
 	callerFrom  func(context.Context) (identity.StaffContext, bool)
 }
@@ -454,6 +456,15 @@ func errRoleConfigUnwired() error {
 type BranchNamer interface {
 	BranchNames(ctx context.Context) (map[string]string, error)
 }
+
+// OrderInvoiceReader is the narrow read a converted order's return needs: its live (non-void, non
+// deposit) invoice. Satisfied in cmd/core by billing's repository.
+type OrderInvoiceReader interface {
+	LiveOrderInvoice(ctx context.Context, orderID string) (invoiceID, status string, found bool, err error)
+}
+
+// WithOrderInvoices injects the converted order invoice read.
+func (s *Service) WithOrderInvoices(r OrderInvoiceReader) *Service { s.orderInvoices = r; return s }
 
 // WithBranchNames injects the branch name read.
 func (s *Service) WithBranchNames(b BranchNamer) *Service { s.branchNames = b; return s }

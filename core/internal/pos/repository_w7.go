@@ -222,6 +222,33 @@ func (r *Repository) ReturnOrderContextFor(ctx context.Context, orderID, orderNo
 	err := r.pool.QueryRow(ctx, returnOrderContextQuery, orderID, orderNo, reach).Scan(&oc.OrderID, &oc.OrderNo, &oc.BranchID,
 		&oc.CustomerID, &oc.InvoiceID, &oc.InvoiceStatus, &oc.SaleTender, &oc.GatewayRef, &oc.CapturedCents)
 	if errors.Is(err, pgx.ErrNoRows) {
+		if orderID == "" {
+			return returnOrderCtx{}, false, nil
+		}
+		return r.convertedOrderContext(ctx, r.pool, orderID)
+	}
+	if err != nil {
+		return returnOrderCtx{}, false, err
+	}
+	return oc, true, nil
+}
+
+// orderQuerier is the one read both the pool and a transaction answer.
+type orderQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// convertedOrderContext is the return context of an order a quote became: an order with no pos_sale
+// facet (nothing rung at the till). It carries the order's facts only; its invoice comes through the
+// billing seam in the service (Converted marks it), and it has no tender and no card capture.
+func (r *Repository) convertedOrderContext(ctx context.Context, q orderQuerier, orderID string) (returnOrderCtx, bool, error) {
+	oc := returnOrderCtx{Converted: true}
+	err := q.QueryRow(ctx, `
+SELECT o.id::text, o.order_no, o.branch_id::text, o.customer_id::text
+  FROM orders o
+ WHERE o.id::text = $1 AND o.quote_id IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM pos_sale ps WHERE ps.order_id = o.id)`, orderID).Scan(&oc.OrderID, &oc.OrderNo, &oc.BranchID, &oc.CustomerID)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return returnOrderCtx{}, false, nil
 	}
 	if err != nil {
@@ -237,7 +264,10 @@ func (r *Repository) ReturnOrderContextTx(ctx context.Context, tx pgx.Tx, orderI
 	err := tx.QueryRow(ctx, returnOrderContextQuery, orderID, orderNo, nil).Scan(&oc.OrderID, &oc.OrderNo, &oc.BranchID,
 		&oc.CustomerID, &oc.InvoiceID, &oc.InvoiceStatus, &oc.SaleTender, &oc.GatewayRef, &oc.CapturedCents)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return returnOrderCtx{}, false, nil
+		if orderID == "" {
+			return returnOrderCtx{}, false, nil
+		}
+		return r.convertedOrderContext(ctx, tx, orderID)
 	}
 	if err != nil {
 		return returnOrderCtx{}, false, err

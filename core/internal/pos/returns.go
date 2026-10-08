@@ -88,6 +88,27 @@ func (s *Service) CustomerLines(ctx context.Context, in CustomerLinesInput) (Cus
 	if items == nil {
 		items = []CustomerOrderView{}
 	}
+	// Returnable: a till ring always; an order a quote became only with a live finalised invoice, read
+	// through billing's seam. The invoice the return would refund against rides invoice_id.
+	for i := range items {
+		items[i].Returnable = true
+		if items[i].Source != "QUOTE" {
+			continue
+		}
+		if s.orderInvoices == nil {
+			items[i].Returnable, items[i].NotReturnableReason = false, "orders a quote became cannot be returned here yet"
+			continue
+		}
+		id, status, found, ierr := s.orderInvoices.LiveOrderInvoice(ctx, items[i].OrderID)
+		if ierr != nil {
+			return CustomerLinesView{}, ierr
+		}
+		if why := convertedNotReturnable(found, status); why != "" {
+			items[i].Returnable, items[i].NotReturnableReason = false, why
+			continue
+		}
+		items[i].InvoiceID = id
+	}
 	// Each order names its branch, so the one branch refusal can name the branches. The names come
 	// through the branches module's seam; an unwired seam leaves them empty, never invented.
 	if s.branchNames != nil && len(items) > 0 {
@@ -354,6 +375,11 @@ func (s *Service) prepareReturn(ctx context.Context, in ReturnInput) (*returnPla
 		plan.preReplay = cached
 		plan.preReplayed = true
 		return plan, nil
+	}
+	// A converted order's invoice comes from billing, after the wall and the replay (a replay answers
+	// from its stored return and needs no live invoice).
+	if plan.oc, err = s.resolveConverted(ctx, plan.oc); err != nil {
+		return nil, err
 	}
 	if in.RefundMethod == RefundCash && in.TillSessionID == "" {
 		return nil, ErrNoOpenTill{}
@@ -967,6 +993,37 @@ func (s *Service) settleCardRefunds(ctx context.Context, plans []*returnPlan, tx
 	if err != nil {
 		slog.Default().Warn("pos: the card refund record could not be written", "err", err, "refunds", len(facts))
 	}
+}
+
+// convertedNotReturnable words why a converted order cannot be returned yet.
+func convertedNotReturnable(found bool, status string) string {
+	switch {
+	case !found:
+		return "no invoice has been raised for this order yet, so there is nothing to refund against"
+	case status == "DRAFT":
+		return "this order's invoice is still a draft, so there is nothing to refund against"
+	}
+	return ""
+}
+
+// resolveConverted fills a converted order's invoice from the billing seam, or refuses in words when
+// the order has no live finalised invoice. Orders rung at the till pass through untouched.
+func (s *Service) resolveConverted(ctx context.Context, oc returnOrderCtx) (returnOrderCtx, error) {
+	if !oc.Converted {
+		return oc, nil
+	}
+	if s.orderInvoices == nil {
+		return oc, clientErr(http.StatusUnprocessableEntity, "pos: orders a quote became cannot be returned here yet")
+	}
+	id, status, found, err := s.orderInvoices.LiveOrderInvoice(ctx, oc.OrderID)
+	if err != nil {
+		return oc, err
+	}
+	if why := convertedNotReturnable(found, status); why != "" {
+		return oc, clientErr(http.StatusUnprocessableEntity, "pos: order %s cannot be returned: %s", oc.OrderNo, why)
+	}
+	oc.InvoiceID, oc.InvoiceStatus = id, status
+	return oc, nil
 }
 
 // anyRestock answers whether any line of the return asked for its goods to go back on the shelf:

@@ -41957,6 +41957,8 @@ components:
         - invoice_id
         - sale_tender
         - card_refundable
+        - returnable
+        - not_returnable_reason
         - lines
       properties:
         order_id:
@@ -41983,6 +41985,12 @@ components:
         card_refundable:
           type: boolean
           description: The original CARD capture carried a gateway reference
+        returnable:
+          type: boolean
+          description: Whether the order can be returned now
+        not_returnable_reason:
+          type: string
+          description: In words, why not (an order a quote became has no live finalised invoice yet); empty when returnable
         lines:
           type: array
           items:

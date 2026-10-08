@@ -813,6 +813,10 @@ type CustomerOrderView struct {
 	FulfilmentState string                       `json:"fulfilment_state"`
 	InvoiceID       string                       `json:"invoice_id"`
 	CardRefundable  bool                         `json:"card_refundable"`
+	// Returnable says whether the order can be returned now; when it cannot, NotReturnableReason says
+	// why in words (a converted order with no live invoice has nothing to refund against yet).
+	Returnable          bool                         `json:"returnable"`
+	NotReturnableReason string                       `json:"not_returnable_reason"`
 	Lines           []CustomerReturnableLineView `json:"lines"`
 }
 
@@ -1008,6 +1012,9 @@ type returnOrderCtx struct {
 	// CapturedCents is what the original capture holds (payments.amount_cents of the sale's payment,
 	// 0 when it has none): the ceiling every card refund of the order is judged against (D5).
 	CapturedCents int64
+	// Converted marks an order a quote became (no pos_sale facet): its invoice comes from the billing
+	// seam, it has no tender and no card capture.
+	Converted bool
 }
 
 // cardRefundFact is one processor refund made inside a return transaction: what the processor
