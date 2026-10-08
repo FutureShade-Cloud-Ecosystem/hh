@@ -363,22 +363,16 @@ func CanSellOnCredit(c StaffContext) bool {
 	return sellingRoles[c.RoleCode]
 }
 
-// RoleYardManager is the one role the cash customer's combined convert and pay admits beyond the
-// selling roles: a yard manager rings sales on the till, and converting an accepted quote at its
-// agreed totals as part of taking its payment asks no more authority than that.
-const RoleYardManager = "YARD_MANAGER"
-
 // CanConvertAndPay reports whether this caller may take the order payment that converts an accepted
-// cash quote in the same action: a selling role, or the yard manager. It is the ONE predicate behind
-// that rule. The order-payment door calls it, and the payment grant read folds it into its answer,
-// so the flag a client reads can never say yes where the door answers not-selling-role. Status is
-// checked inside, as CanSellOnCredit does. The platform roles pass every gate level and are in
-// neither set, so they are refused here, and the grant must say so.
+// cash quote in the same action: a selling role, alone. It is the ONE predicate behind that rule.
+// The order-payment door calls it, and the payment grant read folds it into its answer, so the flag
+// a client reads can never say yes where the door answers not-selling-role. Status is checked
+// inside, as CanSellOnCredit does. The platform roles pass every gate level and are in neither
+// set, so they are refused here, and the grant must say so. The yard manager sat here once (the
+// admission row 370's cells carried); decision log row 1156 removed its Counter Till and Quote
+// Desk, and this predicate names no role for a payment the matrix refuses it.
 func CanConvertAndPay(c StaffContext) bool {
-	if CanSellOnCredit(c) {
-		return true
-	}
-	return c.Status == StatusActive && c.RoleCode == RoleYardManager
+	return CanSellOnCredit(c)
 }
 
 // SellingRoles returns the ruled selling-role codes, sorted, for surfaces that need to EXPLAIN the

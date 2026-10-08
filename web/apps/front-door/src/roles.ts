@@ -115,8 +115,6 @@ export const COMING_ROLES: readonly ComingRole[] = [
     id: "yard_manager",
     label: "Yard Manager",
     modules: [
-      "Counter Till",
-      "Quote Desk",
       "Yard Pick and Receive",
       "Dispatch and Load Building",
       "Buying and Stock",

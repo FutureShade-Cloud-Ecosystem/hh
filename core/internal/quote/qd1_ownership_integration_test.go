@@ -477,7 +477,7 @@ func TestQD1_RoleConfigHoldsQuoteDeskCells(t *testing.T) {
 		t.Fatalf("roleconfig.Default: %v", err)
 	}
 	for role, want := range map[string]string{
-		"inside_sales": "work", "outside_sales": "work", "yard_manager": "work",
+		"inside_sales": "work", "outside_sales": "work", "yard_manager": "none",
 		"branch_manager": "work", "sales_manager": "manage", "general_manager": "read",
 		"financial_controller": "none", "hr": "none", "yard_team": "none",
 	} {
