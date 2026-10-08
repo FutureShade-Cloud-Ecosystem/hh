@@ -801,23 +801,23 @@ type CustomerReturnableLineView struct {
 // an order like any other that carries no till facts). FulfilmentState is the order's own ladder word
 // (CONFIRMED through FULFILLED); ShelfState on each line says whether the goods ever left the shelf.
 type CustomerOrderView struct {
-	OrderID         string                       `json:"order_id"`
-	OrderNo         string                       `json:"order_no"`
-	BranchID        string                       `json:"branch_id"`
-	BranchName      string                       `json:"branch_name"`
-	CreatedAt       string                       `json:"created_at"`
-	JobLabel        string                       `json:"job_label"`
-	Source          string                       `json:"source"`
-	SaleType        string                       `json:"sale_type"`
-	Tender          string                       `json:"tender"`
-	FulfilmentState string                       `json:"fulfilment_state"`
-	InvoiceID       string                       `json:"invoice_id"`
-	CardRefundable  bool                         `json:"card_refundable"`
+	OrderID         string `json:"order_id"`
+	OrderNo         string `json:"order_no"`
+	BranchID        string `json:"branch_id"`
+	BranchName      string `json:"branch_name"`
+	CreatedAt       string `json:"created_at"`
+	JobLabel        string `json:"job_label"`
+	Source          string `json:"source"`
+	SaleType        string `json:"sale_type"`
+	Tender          string `json:"tender"`
+	FulfilmentState string `json:"fulfilment_state"`
+	InvoiceID       string `json:"invoice_id"`
+	CardRefundable  bool   `json:"card_refundable"`
 	// Returnable says whether the order can be returned now; when it cannot, NotReturnableReason says
 	// why in words (a converted order with no live invoice has nothing to refund against yet).
 	Returnable          bool                         `json:"returnable"`
 	NotReturnableReason string                       `json:"not_returnable_reason"`
-	Lines           []CustomerReturnableLineView `json:"lines"`
+	Lines               []CustomerReturnableLineView `json:"lines"`
 }
 
 // CustomerLinesView is the customer lines read's answer: the customer echoed, the orders newest

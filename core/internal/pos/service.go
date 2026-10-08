@@ -355,8 +355,8 @@ type Service struct {
 	branchNames BranchNamer
 	// orderInvoices resolves a converted order's live invoice (billing owns the documents).
 	orderInvoices OrderInvoiceReader
-	now         func() time.Time
-	callerFrom  func(context.Context) (identity.StaffContext, bool)
+	now           func() time.Time
+	callerFrom    func(context.Context) (identity.StaffContext, bool)
 }
 
 // NewService wires the store. Sibling seams are injected via the With* methods. tax + stock default to the
@@ -472,23 +472,96 @@ func (s *Service) WithBranchNames(b BranchNamer) *Service { s.branchNames = b; r
 // WithClock injects a deterministic clock (tests).
 func (s *Service) WithClock(now func() time.Time) *Service { s.now = now; return s }
 
+// salePlan is everything a sale resolves BEFORE its transaction opens (validation, the customer,
+// pricing and tax, the capture plan, the credit gate and the card captures), carried to the
+// transactional body (saleInTx) and the post-commit step (finishSale). The swap runs the same body
+// inside its own transaction after the credit note.
+type salePlan struct {
+	in               SaleInput
+	saleType, tender string
+	isSplit          bool
+	splitLegs        []TenderLeg
+	codSale          bool
+	deposit          int64
+	supplierDeposit  int64
+	subtotal, tax    int64
+	total            int64
+	lines            []orderLineRow
+	priced           saleMoney
+	taxReason        string
+	poJobRef         string
+	jobAddress       string
+	jobReference     string
+	salespersonName  string
+	customerID       string
+	cust             customerRec
+	captures         []captureLeg
+	capturedCents    int64
+	fullyPaid        bool
+	actor            string
+	ring             *cardRing
+}
+
 // Sale commits one atomic counter sale (price → CheckCredit → order → tender → invoice → allocate, one
 // tx; capture-before-fulfil). A declined card rolls the WHOLE tx back; a below-floor line or an
 // over-limit account NEVER opens the tx. The client idempotency key makes it replay-safe (US-A19-05).
 func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
+	p, early, err := s.prepareSale(ctx, in)
+	if early != nil {
+		return *early, err
+	}
+	if err != nil {
+		return Sale{}, err
+	}
+	var out Sale
+	// tenderResults holds one entry per CAPTURED leg, out of the tx so the Q-044 PAYMENT_RECEIVED
+	// records can be written POST-COMMIT (a rollback must leave no receipt record; a replay carries
+	// Inserted=false). A single-tender sale puts exactly one entry here, as before.
+	var tenderResults []till.TenderResult
+
+	// 6-12. One atomic tx: order → tender → invoice → allocate → POS facets → events → commit,
+	//       with the bounded rerun on a serialization fault (the design's step 5): the captures
+	//       are unbound, so a rerun binds them, with no void and no second charge.
+	runSaleTx := func() error {
+		return s.store.RunInTx(ctx, func(tx pgx.Tx) error {
+			return s.saleInTx(ctx, tx, p, &out, &tenderResults)
+		})
+	}
+	txErr := runSaleTx()
+	for rerun := 0; txErr != nil && rerun < saleTxSerializationReruns && isSerializationFault(txErr); rerun++ {
+		// The transient fault (the design's step 5): the captures are unbound, so the rerun binds
+		// them on a fresh transaction, with no void and no second charge.
+		txErr = runSaleTx()
+	}
+	if txErr != nil {
+		if len(p.ring.captured) > 0 {
+			// A fault after the captures: compensate and answer in words, never the bare 500 a
+			// rolled-back card ring used to answer (the design's step 6).
+			p.ring.rank = cardRankReversed
+			return s.settleFailedCardRing(ctx, p.ring)
+		}
+		return Sale{}, txErr
+	}
+	s.finishSale(ctx, p, out, tenderResults)
+	return out, nil
+}
+
+// prepareSale is the sale's pre-transaction section (steps 1 to 5c): it answers a plan, or an early
+// answer (an idempotent replay, or the card ring's from-row answer) with the error that goes with it.
+func (s *Service) prepareSale(ctx context.Context, in SaleInput) (*salePlan, *Sale, error) {
 	// 1. Validate + idempotency precheck (offline-safety is not optional).
 	if in.IdempotencyKey == "" {
-		return Sale{}, errMissingKey
+		return nil, nil, errMissingKey
 	}
 	if len(in.Lines) == 0 {
-		return Sale{}, errNoLines
+		return nil, nil, errNoLines
 	}
 	// DIB-165 split tender: 2..6 legs settling ONE sale. The legs are validated for shape here (the
 	// sum check needs the priced total and runs at step 4b); a split derives its pos_sale.tender from
 	// the largest leg so every existing reader of that column still sees a real tender.
 	splitLegs, err := normalizeSplitLegs(in)
 	if err != nil {
-		return Sale{}, err
+		return nil, nil, err
 	}
 	isSplit := len(splitLegs) > 0
 	tender := in.Tender
@@ -498,7 +571,7 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 	switch tender {
 	case TenderAccount, TenderCash, TenderCard, TenderCheque:
 	default:
-		return Sale{}, errBadTender
+		return nil, nil, errBadTender
 	}
 	// DIB-389, branch scope, asserted for EVERY tender before ANY read or write.
 	//
@@ -512,10 +585,10 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 	// is not number-guessable, so there is no enumeration oracle to protect here.
 	caller, err := s.caller(ctx)
 	if err != nil {
-		return Sale{}, err
+		return nil, nil, err
 	}
 	if !caller.CanAccessBranch(in.BranchID) {
-		return Sale{}, clientErr(http.StatusForbidden, "pos: caller cannot access branch %s", in.BranchID)
+		return nil, nil, clientErr(http.StatusForbidden, "pos: caller cannot access branch %s", in.BranchID)
 	}
 	// -- DIB-488 rev 6 (item D): the optional More-options facts, validated in words BEFORE any
 	// write (the 0168 CHECK and FK must never be the thing that answers the counter). The
@@ -523,29 +596,29 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 	// panel shows.
 	poJobRef := strings.TrimSpace(in.POJobRef)
 	if len([]rune(poJobRef)) > 64 {
-		return Sale{}, errPORefTooLong
+		return nil, nil, errPORefTooLong
 	}
 	// DIB-488 rev 8 (item 11, 0170): the JOB fields, same posture as poJobRef (422 in words
 	// before the CHECK could 500; trimmed; optional).
 	jobAddress := strings.TrimSpace(in.JobAddress)
 	if len([]rune(jobAddress)) > 200 {
-		return Sale{}, errJobAddressTooLong
+		return nil, nil, errJobAddressTooLong
 	}
 	jobReference := strings.TrimSpace(in.JobReference)
 	if len([]rune(jobReference)) > 64 {
-		return Sale{}, errJobReferenceTooLong
+		return nil, nil, errJobReferenceTooLong
 	}
 	salespersonName := ""
 	if in.SalespersonID != "" {
 		if _, perr := uuid.Parse(in.SalespersonID); perr != nil {
-			return Sale{}, errSalespersonNotFound
+			return nil, nil, errSalespersonNotFound
 		}
 		name, ok, err := s.store.ReadStaffName(ctx, in.SalespersonID)
 		if err != nil {
-			return Sale{}, err
+			return nil, nil, err
 		}
 		if !ok {
-			return Sale{}, errSalespersonNotFound
+			return nil, nil, errSalespersonNotFound
 		}
 		salespersonName = name
 	}
@@ -568,28 +641,28 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 		switch in.Fulfilment {
 		case "", "PICKUP", "WILL_CALL", "DELIVERY":
 		default:
-			return Sale{}, errBadFulfilment
+			return nil, nil, errBadFulfilment
 		}
 		// Policy gate: pos_policy.cod_enabled (branch row overrides the org default). Refused BEFORE
 		// any tx, the cashier sees the server message.
 		policy, err := s.store.ReadPosPolicy(ctx, in.BranchID)
 		if err != nil {
-			return Sale{}, err
+			return nil, nil, err
 		}
 		if !policy.CODEnabled {
-			return Sale{}, errCODDisabled
+			return nil, nil, errCODDisabled
 		}
 	}
 	// Deposits ride only on an unpaid-at-ring sale; the money bound (0 < deposit < total) is checked
 	// once the engine has priced the lines.
 	if in.DepositCents != 0 {
 		if !unpaidAtRing {
-			return Sale{}, errDepositOnPaid
+			return nil, nil, errDepositOnPaid
 		}
 		switch in.DepositMethod {
 		case TenderCash, TenderCard, TenderCheque:
 		default:
-			return Sale{}, errBadDepositMethod
+			return nil, nil, errBadDepositMethod
 		}
 	}
 	// -- DIB-488 rev 6 (item F): the optional cash-tendered amount is only meaningful on a plain
@@ -597,17 +670,17 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 	// cash now). The must-cover-the-total half waits for the engine-priced total below.
 	if in.CashTenderedCents != 0 {
 		if in.CashTenderedCents < 0 {
-			return Sale{}, errCashTenderedShort
+			return nil, nil, errCashTenderedShort
 		}
 		if isSplit || tender != TenderCash || unpaidAtRing {
-			return Sale{}, errCashTenderedNotCash
+			return nil, nil, errCashTenderedNotCash
 		}
 	}
 	if cached, found, err := s.findSaleByKey(ctx, in.IdempotencyKey); err != nil {
-		return Sale{}, err
+		return nil, nil, err
 	} else if found {
 		cached.Replayed = true
-		return cached, nil
+		return nil, &cached, nil
 	}
 	// CARD offline is BLOCKED at the counter by default (D-A19-3); cash/cheque stay first-class offline.
 	// A charge happens at ring only for a CARD tender on a paid ring or a CARD deposit, a COD sale
@@ -617,7 +690,7 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 		(in.DepositCents > 0 && in.DepositMethod == TenderCard) ||
 		(isSplit && hasCardLeg(captureLegsForSplit(splitLegs, in.IdempotencyKey)))
 	if chargesCardAtRing && in.Offline {
-		return Sale{}, errCardOffline
+		return nil, nil, errCardOffline
 	}
 
 	// 2. Resolve the customer (the house WALK-IN when none is supplied) + read its credit facts.
@@ -625,13 +698,13 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 	if customerID == "" {
 		walkIn, err := s.store.ResolveWalkIn(ctx)
 		if err != nil {
-			return Sale{}, err
+			return nil, nil, err
 		}
 		customerID = walkIn
 	}
 	cust, err := s.store.ReadCustomer(ctx, customerID)
 	if err != nil {
-		return Sale{}, err
+		return nil, nil, err
 	}
 
 	// 3 and 4. Price every line and assess the totals through the shared
@@ -653,7 +726,7 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 		discount:     in.Discount,
 	})
 	if err != nil {
-		return Sale{}, err
+		return nil, nil, err
 	}
 	lines := priced.lines
 	subtotal := priced.subtotal
@@ -682,7 +755,7 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 	// validated against the sale's shape above.
 	supplierDeposit := in.SupplierDepositCents
 	if deposit != 0 && (deposit < 0 || deposit >= total) {
-		return Sale{}, ErrDepositOutOfRange{DepositCents: deposit, TotalCents: total}
+		return nil, nil, ErrDepositOutOfRange{DepositCents: deposit, TotalCents: total}
 	}
 
 	// Item 9.2: a deposit sale cannot be collect now. The goods do not leave on
@@ -690,7 +763,7 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 	// to a held shape the customer did not ask for (the choice and its reason
 	// live on ErrDepositNotCollectNow, sale_deposit.go).
 	if deposit > 0 && saleType == SaleCollectNow {
-		return Sale{}, ErrDepositNotCollectNow{TotalCents: total, DepositCents: deposit}
+		return nil, nil, ErrDepositNotCollectNow{TotalCents: total, DepositCents: deposit}
 	}
 
 	// Item 9 review P3-7 (the principal's ruling): the pay before release
@@ -701,7 +774,7 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 	// refusal: the sale type not fitting the account is the more fundamental
 	// refusal, and its words name the two honest shapes for a terms account.
 	if codSale && cust.PaymentTermsDays > 0 {
-		return Sale{}, ErrCODNotForTermsAccount{}
+		return nil, nil, ErrCODNotForTermsAccount{}
 	}
 
 	// Sub item 9.5: a supplier's demanded deposit on a special order rides
@@ -711,12 +784,12 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 	// pre-tax amount (the rest's invoice keeps an honest subtotal).
 	if in.SupplierDepositCents != 0 {
 		if !supplierDepositAllowedOn(tender, isSplit, deposit, cust.PaymentTermsDays, cust.CreditLimitCents) {
-			return Sale{}, ErrSupplierDepositNotCredit{
+			return nil, nil, ErrSupplierDepositNotCredit{
 				TermsDays: cust.PaymentTermsDays, CreditLimitCents: cust.CreditLimitCents,
 			}
 		}
 		if in.SupplierDepositCents < 0 || in.SupplierDepositCents > subtotal {
-			return Sale{}, ErrSupplierDepositOverPretax{DepositCents: in.SupplierDepositCents, SubtotalCents: subtotal}
+			return nil, nil, ErrSupplierDepositOverPretax{DepositCents: in.SupplierDepositCents, SubtotalCents: subtotal}
 		}
 	}
 
@@ -728,7 +801,7 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 	// credit fits, this answers whether on account is a shape the account has.
 	if onAccount := onAccountCents(tender, splitLegs, isSplit, total, deposit); onAccount > 0 {
 		if codSale || cust.PaymentTermsDays <= 0 || cust.CreditLimitCents <= 0 {
-			return Sale{}, ErrAccountShapeNotAvailable{
+			return nil, nil, ErrAccountShapeNotAvailable{
 				AmountCents:      onAccount,
 				CreditLimitCents: cust.CreditLimitCents,
 				ZeroDayTerms:     codSale || cust.PaymentTermsDays <= 0,
@@ -739,7 +812,7 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 	// DIB-488 rev 6 (item F): tendered cash must COVER the total, change due is tendered − total,
 	// and a short tender is refused in words (the drawer cannot owe the customer a negative).
 	if in.CashTenderedCents > 0 && in.CashTenderedCents < total {
-		return Sale{}, errCashTenderedShort
+		return nil, nil, errCashTenderedShort
 	}
 
 	// 4b. DIB-165, the split-tender sum guard, checked the moment the total exists and BEFORE any
@@ -747,7 +820,7 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 	//     COMMIT; this arm is what lets the cashier see the two numbers instead of a 500.
 	if isSplit {
 		if err := checkTenderSum(splitLegs, total); err != nil {
-			return Sale{}, err
+			return nil, nil, err
 		}
 	}
 
@@ -782,7 +855,7 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 	//    it blocks.
 	if exposure := total - capturedCents; exposure > 0 {
 		if blk := s.credit.Check(ctx, customerID, exposure, cust.OpenBalanceCents, cust.CreditLimitCents, true, in.BranchID, false); blk != nil {
-			return Sale{}, ErrCreditBlocked{Policy: string(blk.Policy)}
+			return nil, nil, ErrCreditBlocked{Policy: string(blk.Policy)}
 		}
 	}
 
@@ -797,10 +870,10 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 			// The till's error taxonomy is its own package's unexported type, so it cannot be read for
 			// a status here. Map it to a 409 rather than letting it fall through pos.writeErr's default
 			// and reach the cashier as a bare 500 (the DIB-197 lesson).
-			return Sale{}, clientErr(http.StatusConflict, "pos: till session %s unavailable: %s", in.TillSessionID, serr.Error())
+			return nil, nil, clientErr(http.StatusConflict, "pos: till session %s unavailable: %s", in.TillSessionID, serr.Error())
 		}
 		if sess.BranchID != in.BranchID {
-			return Sale{}, clientErr(http.StatusConflict, "pos: till session %s belongs to another branch", in.TillSessionID)
+			return nil, nil, clientErr(http.StatusConflict, "pos: till session %s belongs to another branch", in.TillSessionID)
 		}
 	}
 
@@ -821,435 +894,435 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 	//     card_charge_needs_manager for an unknown, 503 sale_failed_card_reversed when every
 	//     captured leg reached VOIDED.
 	if len(captures) > 0 && in.TillSessionID == "" {
-		return Sale{}, ErrNoOpenTill{}
+		return nil, nil, ErrNoOpenTill{}
 	}
 	ring, err := s.captureCardLegs(ctx, in, captures, customerID, actor)
 	if err != nil {
-		return Sale{}, err
+		return nil, nil, err
 	}
 	if ring.replay != nil {
-		return *ring.replay, nil
+		return nil, ring.replay, nil
 	}
 	if ring.failed() {
-		return s.settleFailedCardRing(ctx, ring)
+		failed, ferr := s.settleFailedCardRing(ctx, ring)
+		return nil, &failed, ferr
 	}
+	return &salePlan{
+		in: in, saleType: saleType, tender: tender, isSplit: isSplit, splitLegs: splitLegs, codSale: codSale,
+		deposit: deposit, supplierDeposit: supplierDeposit, subtotal: subtotal, tax: tax, total: total,
+		lines: lines, priced: priced, taxReason: taxReason, poJobRef: poJobRef, jobAddress: jobAddress,
+		jobReference: jobReference, salespersonName: salespersonName, customerID: customerID, cust: cust,
+		captures: captures, capturedCents: capturedCents, fullyPaid: fullyPaid, actor: actor, ring: ring,
+	}, nil, nil
+}
 
-	var out Sale
-	// tenderResults holds one entry per CAPTURED leg, out of the tx so the Q-044 PAYMENT_RECEIVED
-	// records can be written POST-COMMIT (a rollback must leave no receipt record; a replay carries
-	// Inserted=false). A single-tender sale puts exactly one entry here, as before.
+// saleInTx is the sale's transactional body: order, stock, tender, invoice, allocation, POS facets and
+// events, all on the transaction it is handed. Behaviour preserving: it is the body Sale always ran,
+// lifted out so the swap can run it inside its own transaction after the credit note.
+func (s *Service) saleInTx(ctx context.Context, tx pgx.Tx, p *salePlan, outp *Sale, trp *[]till.TenderResult) error {
+	in, saleType, tender, isSplit, splitLegs, codSale := p.in, p.saleType, p.tender, p.isSplit, p.splitLegs, p.codSale
+	deposit, supplierDeposit, subtotal, tax, total := p.deposit, p.supplierDeposit, p.subtotal, p.tax, p.total
+	lines, priced, taxReason := p.lines, p.priced, p.taxReason
+	poJobRef, jobAddress, jobReference, salespersonName := p.poJobRef, p.jobAddress, p.jobReference, p.salespersonName
+	customerID, cust, captures, capturedCents, fullyPaid, actor := p.customerID, p.cust, p.captures, p.capturedCents, p.fullyPaid, p.actor
 	var tenderResults []till.TenderResult
-
-	// 6-12. One atomic tx: order → tender → invoice → allocate → POS facets → events → commit,
-	//       with the bounded rerun on a serialization fault (the design's step 5): the captures
-	//       are unbound, so a rerun binds them, with no void and no second charge.
-	runSaleTx := func() error {
-		return s.store.RunInTx(ctx, func(tx pgx.Tx) error {
-			meta := map[string]any{
-				"sale_type":       saleType,
-				"cash_sale":       in.CashSale,
-				"tax_reason_code": taxReason,
-				"notes":           in.Notes,
-			}
-			if codSale {
-				// Cash on DEMAND: printable/emailable immediately (the FINALIZED invoice below carries the
-				// number customers pay against) but LOCKED from fulfilment until paid, no stock moves at
-				// ring; the later payment/release flow (stubbed at W7) issues the stock.
-				meta["cod"] = true
-				meta["cod_posture"] = "AWAITING_PAYMENT"
-			}
-			if in.CashTenderedCents > 0 {
-				// DIB-488 rev 6 (item F): the tendered amount is a display fact of THIS ring (change due
-				// derives from it), parked in the order metadata so a replay answers verbatim; the money
-				// itself is unchanged (the till captures exactly the total, as always).
-				meta["cash_tendered_cents"] = in.CashTenderedCents
-			}
-			if deposit > 0 {
-				// Item 9.2: the taken deposit as the order's own display fact (the
-				// receipt's line one, a replay's echo). orders.deposit_required_cents
-				// is deliberately NOT written: it names the deposit an order
-				// REQUIRES, and this deposit is taken, its remainder lives in the
-				// invoice balance, which every money reader already reads.
-				meta["deposit_cents"] = deposit
-				meta["deposit_method"] = in.DepositMethod
-			}
-			if supplierDeposit > 0 {
-				// Sub item 9.5: the supplier's demanded deposit, billed to the
-				// account as its own invoice, the order's own display fact.
-				meta["supplier_deposit_cents"] = supplierDeposit
-			}
-			orderID, orderNo, err := s.store.InsertOrder(ctx, tx, orderRow{
-				CustomerID:    customerID,
-				BranchID:      in.BranchID,
-				Status:        "CONFIRMED",
-				Fulfillment:   fulfillmentFor(saleType, in.Fulfilment),
-				RequestedDate: in.RequestedDate,
-				SubtotalCents: subtotal,
-				TaxCents:      tax,
-				TotalCents:    total,
-				CreatedBy:     actor,
-				Metadata:      meta,
-				POJobRef:      poJobRef,         // DIB-488 rev 6 (0168)
-				SalespersonID: in.SalespersonID, // DIB-488 rev 6 (0168)
-				JobAddress:    jobAddress,       // DIB-488 rev 8 (0170)
-				JobReference:  jobReference,     // DIB-488 rev 8 (0170)
-			})
-			if err != nil {
-				return err
-			}
-			lineIDs, err := s.store.InsertOrderLines(ctx, tx, orderID, lines)
-			if err != nil {
-				return err
-			}
-
-			// Stock decrement + COGS trigger, COLLECT_NOW only (DX-01 PARTIAL: COLLECT_LATER/DELIVERED record
-			// zero moves and surface on pending-fulfilment; COD is LOCKED from fulfilment until paid, so it
-			// never matches here, stock issues on the later payment/release, not at ring). The stock decrement
-			// runs in THIS tx (default NoopStock → no moves at scaffold); the order.fulfilled event (frozen
-			// payload {order_id, branch_id, lines: [{product_id, qty_base}]}) posts COGS through the GL
-			// consumer, dormant at scaffold because the swapped inventory CostBasis returns found=false, so no
-			// COGS leg posts and the event is acked quietly.
-			if saleType == SaleCollectNow {
-				stockLines := make([]StockLine, len(lines))
-				fulfilledLines := make([]map[string]any, len(lines))
-				for i, l := range lines {
-					stockLines[i] = StockLine{ProductID: l.ProductID, QtyBase: l.QtyBase}
-					fulfilledLines[i] = map[string]any{"product_id": l.ProductID, "qty_base": l.QtyBase}
-				}
-				if err := s.stockDec().DecrementForSaleTx(ctx, tx, StockDecrementInput{
-					OrderID: orderID, BranchID: in.BranchID, SaleType: saleType, Lines: stockLines,
-				}); err != nil {
-					return err
-				}
-				if err := s.store.EmitEvent(ctx, tx, "order.fulfilled", map[string]any{
-					"order_id": orderID, "branch_id": in.BranchID, "lines": fulfilledLines,
-				}); err != nil {
-					return err
-				}
-			}
-
-			// Capture-before-fulfil: take the tender BEFORE the invoice/allocation so the money row lands
-			// before the stock is issued. A-03 writes the SINGLE payments row in THIS tx. A CARD tender no
-			// longer charges here: the capture loop above took it on the pool before this transaction
-			// opened, and the till BINDS the attempt to the payments row this loop writes (the card charge
-			// design 3.3), so a rolled-back transaction leaves the capture for the compensator instead of
-			// orphaning a charge nobody recorded. An unpaid-at-ring sale with a DEPOSIT goes through the
-			// same two halves for its deposit leg.
-			var paymentID, gatewayRef string
-			// Every capture leg runs through the SAME till seam, inside THIS tx. A split therefore writes N
-			// ordinary payments rows and N ordinary drawer movements, the till, the GL and the drawer close
-			// see nothing exotic, only several tenders that happen to belong to one order. Each leg carries
-			// its OWN derived idempotency key (payments.idempotency_key is UNIQUE, so reusing the sale's key
-			// would silently collapse legs 2..n onto leg 1's row and leave the drawer short).
-			tenderResults = tenderResults[:0]
-			for i := range captures {
-				c := &captures[i]
-				res, err := s.tender.TakeTender(ctx, tx, till.TenderInput{
-					TillSessionID:  in.TillSessionID,
-					Method:         c.Method,
-					AmountCents:    c.AmountCents,
-					CustomerID:     customerID,
-					PaymentToken:   c.PaymentToken,
-					CardType:       c.CardType,
-					SignatureRef:   in.SignatureRef,
-					IdempotencyKey: c.IdemKey,
-					Offline:        in.Offline,
-					Capture:        till.CardCapture{AttemptID: c.AttemptID, ProcessorRef: c.GatewayRef},
-				})
-				if err != nil {
-					// A CARD failure here is a bind failure, not a decline: the capture loop already took
-					// the money, this transaction fails whole, and the compensation below decides the
-					// answer (the decline answers were all given before the transaction opened). Every
-					// other till failure (session not open, branch access, conflict) surfaces with its own
-					// message for the non-card tenders, wrapped into pos's client-error type so the handler
-					// maps it (409, not 500).
-					if c.Method == TenderCard {
-						return err
-					}
-					return clientErr(http.StatusConflict, "%s", err.Error())
-				}
-				// The till is the SOLE payments-row writer; its result is the single source of truth for both
-				// the response field and the payment.received event (CARD carries the gateway_ref; cash/cheque
-				// have none → empty, which is correct for them).
-				c.PaymentID = res.PaymentID
-				c.GatewayRef = res.GatewayRef
-				tenderResults = append(tenderResults, res)
-			}
-			// pos_sale's scalar payment_id/gateway_ref keep pointing at the PRIMARY leg (the one whose
-			// method landed in pos_sale.tender), so single-tender readers are unchanged and split readers
-			// get a payment that really is the largest slice of the sale.
-			for _, c := range captures {
-				if c.Method == tender {
-					paymentID, gatewayRef = c.PaymentID, c.GatewayRef
-					break
-				}
-			}
-
-			// Invoice: PAID for a tendered sale; for the unpaid-at-ring postures the invoice FINALIZES now
-			// (COD customers need the invoice number to pay against), PARTIALLY_PAID when a deposit landed.
-			// COD is due on demand (today); ACCOUNT runs on the customer's terms.
-			// Keyed off the MONEY (capturedCents), not the posture, so the split-with-an-ACCOUNT-leg case
-			// lands on PARTIALLY_PAID with the account remainder as its balance, the same place a deposit
-			// lands, because it is the same fact.
-			//
-			// The document's days are the dealer's, decided here on the ring's clock and bound: between
-			// the UTC day change and the house zone's own the database session's CURRENT_DATE is a day
-			// the yard has not reached, so an evening sale would otherwise be invoiced and due tomorrow.
-			// The terms count from the day the invoice is issued, so the two dates can never name
-			// different "todays".
-			invStatus := "PAID"
-			balance := int64(0)
-			issueDate := houseday.Today(s.now)
-			dueDate := issueDate
-			if !fullyPaid {
-				invStatus = "FINALIZED"
-				balance = total - capturedCents
-				if capturedCents > 0 {
-					invStatus = "PARTIALLY_PAID"
-				}
-				if !codSale {
-					dueDate = houseday.AddDays(s.now, cust.PaymentTermsDays)
-				}
-			}
-			// Sub item 9.5: a supplier's demanded deposit rides the sale as its
-			// OWN document (FINALIZED, due from the terms, the deposit amount,
-			// the SUPPLIER_DEPOSIT source kind whose GL posting is the
-			// Customer Deposits liability), written FIRST because the sale's
-			// own invoice names it. Its own subledger INVOICE row and its own
-			// ar.invoice.finalized event ride the same transaction.
-			var supplierDepositInvoiceID, supplierDepositInvoiceNo string
-			if supplierDeposit > 0 {
-				var err error
-				supplierDepositInvoiceID, supplierDepositInvoiceNo, err = s.store.InsertInvoice(ctx, tx, invoiceRow{
-					CustomerID: customerID, OrderID: orderID, BranchID: in.BranchID, Status: "FINALIZED",
-					IssueDate: issueDate, DueDate: dueDate, SubtotalCents: supplierDeposit, TotalCents: supplierDeposit,
-					BalanceCents: supplierDeposit, CreatedBy: actor, SourceKind: SourceSupplierDeposit,
-				})
-				if err != nil {
-					return err
-				}
-				if err := s.store.InsertInvoiceLines(ctx, tx, supplierDepositInvoiceID, nil,
-					[]orderLineRow{supplierDepositDocumentLine(lines, supplierDeposit)}); err != nil {
-					return err
-				}
-				if err := s.store.EmitEvent(ctx, tx, "ar.invoice.finalized", map[string]any{
-					"invoice_id": supplierDepositInvoiceID, "customer_id": customerID,
-					"total_cents": supplierDeposit, "due_date": dueDate,
-				}); err != nil {
-					return err
-				}
-			}
-			// The sale's own invoice carries THE REST: subtotal and total less
-			// the deposit (the account's two documents bill the sale's whole
-			// total once), the goods lines unchanged at their real prices plus
-			// the zero line naming the deposit document (the schema forbids a
-			// negative line; sale_supplier_deposit.go states the choice).
-			invLines := lines
-			invSubtotal, invTotal := subtotal, total
-			if supplierDeposit > 0 {
-				invSubtotal, invTotal = subtotal-supplierDeposit, total-supplierDeposit
-				balance -= supplierDeposit
-				invLines = append(append([]orderLineRow{}, lines...),
-					supplierDepositPointerLine(lines, supplierDepositInvoiceNo, supplierDeposit))
-			}
-			invoiceID, invoiceNo, err := s.store.InsertInvoice(ctx, tx, invoiceRow{
-				CustomerID:    customerID,
-				OrderID:       orderID,
-				BranchID:      in.BranchID,
-				Status:        invStatus,
-				IssueDate:     issueDate,
-				DueDate:       dueDate,
-				SubtotalCents: invSubtotal,
-				TaxCents:      tax,
-				TotalCents:    invTotal,
-				BalanceCents:  balance,
-				CreatedBy:     actor,
-			})
-			if err != nil {
-				return err
-			}
-			if err := s.store.InsertInvoiceLines(ctx, tx, invoiceID, lineIDs, invLines); err != nil {
-				return err
-			}
-
-			// Allocate + AR, driven by the capture list. The actor is stamped as allocated_by on every
-			// allocation (Q-044). `running` is the customer's balance as each row lands, so the subledger
-			// reads as a true running total rather than a set of independently-computed snapshots.
-			//
-			// A fully-captured sale never touches AR: the invoice books PAID, so the running balance is
-			// unchanged and only PAYMENT rows are written (identical to the single-tender behavior this
-			// generalizes). An uncaptured remainder books the INVOICE first, then each capture nets it
-			// down, landing at open + (total − captured), which is exactly the invoice's own balance.
-			running := cust.OpenBalanceCents
-			if !fullyPaid {
-				running += invTotal
-				if err := s.store.InsertCustomerTxn(ctx, tx, customerTxnRow{
-					CustomerID: customerID, TxnType: "INVOICE", AmountCents: invTotal,
-					BalanceAfter: running, SourceType: "invoice", SourceRefID: invoiceID, BranchID: in.BranchID,
-				}); err != nil {
-					return err
-				}
-			}
-			if supplierDeposit > 0 {
-				running += supplierDeposit
-				if err := s.store.InsertCustomerTxn(ctx, tx, customerTxnRow{
-					CustomerID: customerID, TxnType: "INVOICE", AmountCents: supplierDeposit,
-					BalanceAfter: running, SourceType: "invoice", SourceRefID: supplierDepositInvoiceID,
-					BranchID: in.BranchID,
-				}); err != nil {
-					return err
-				}
-			}
-			for _, c := range captures {
-				if !fullyPaid {
-					running -= c.AmountCents
-				}
-				if err := s.store.InsertPaymentAllocation(ctx, tx, c.PaymentID, invoiceID, c.AmountCents, actor); err != nil {
-					return err
-				}
-				if err := s.store.InsertCustomerTxn(ctx, tx, customerTxnRow{
-					CustomerID: customerID, TxnType: "PAYMENT", AmountCents: c.AmountCents,
-					BalanceAfter: running, SourceType: "payment", SourceRefID: c.PaymentID, BranchID: in.BranchID,
-				}); err != nil {
-					return err
-				}
-			}
-
-			// POS facets (idempotency record) + optional relief snapshot.
-			posSaleID, err := s.store.InsertPosSale(ctx, tx, posSaleRow{
-				IdempotencyKey: in.IdempotencyKey, OrderID: orderID, InvoiceID: invoiceID, PaymentID: paymentID,
-				BranchID: in.BranchID, TillSessionID: in.TillSessionID, SaleType: saleType, CashSale: in.CashSale,
-				Tender: tender, TaxReasonCode: taxReason, OfflineOrigin: in.Offline, CreatedBy: actor,
-				SplitTender: isSplit, Discount: priced.saleDiscount,
-			})
-			if err != nil {
-				return err
-			}
-			// The pricing log row of every manual discount, on THIS transaction (discount.go).
-			if err := s.logDiscounts(ctx, tx, orderID, actor, priced.discounts); err != nil {
-				return err
-			}
-			// DIB-165: the legs. Written AFTER pos_sale (they reference it) and inside this tx, so the
-			// deferred sum guard in 0100 fires at COMMIT with every leg present.
-			if isSplit {
-				rows := make([]saleTenderRow, 0, len(splitLegs))
-				bySeq := map[int]captureLeg{}
-				for _, c := range captures {
-					bySeq[c.Seq] = c
-				}
-				for _, l := range splitLegs {
-					r := saleTenderRow{Seq: l.Seq, Method: l.Method, AmountCents: l.AmountCents}
-					if c, ok := bySeq[l.Seq]; ok {
-						r.PaymentID, r.GatewayRef, r.TillSessionID = c.PaymentID, c.GatewayRef, in.TillSessionID
-					}
-					rows = append(rows, r)
-				}
-				if err := s.store.InsertSaleTenders(ctx, tx, posSaleID, rows); err != nil {
-					return err
-				}
-			}
-			if in.Relief != nil {
-				// The audit snapshot records the quote the ring bound, in the shape the tax package's W4
-				// recompute reads back: rate_bps the ASSESSED rate, full_hst_cents the STANDARD-rate HST on
-				// the subtotal (flatHST13, bit-identical to the engine's hstOn at 1300; the recompute's
-				// reconstructBase divides this column by the constant 1300, so it must never carry the
-				// assessed rate's tax), on_credit_cents the quote's ON credit, net_collected_cents the
-				// assessed tax the ring actually collected. At the standard rate this row is byte-identical
-				// to the old flat-constant write.
-				if _, err := s.store.InsertTaxSnapshot(ctx, tx, taxSnapshotRow{
-					OrderID: orderID, TaxReasonCode: taxReason, RuleVersion: ruleVersionW4, RateBps: priced.rateBps,
-					FullHSTCents: flatHST13(subtotal), OnCreditCents: priced.onCreditCents,
-					NetCollectedCents: tax, Automated: false,
-					EvidenceDocID: in.Relief.EvidenceDocID,
-				}); err != nil {
-					return err
-				}
-			}
-
-			// Events (transactional outbox; carry no PII / no card data / no FN identifiers).
-			if err := s.store.EmitEvent(ctx, tx, "pos.sale.committed", map[string]any{
-				"order_id": orderID, "invoice_id": invoiceID, "payment_id": paymentID,
-				"tender": tender, "sale_type": saleType, "branch_id": in.BranchID, "total_cents": total,
-			}); err != nil {
-				return err
-			}
-			// The invoice ALWAYS finalizes for its full total, so buildInvoiceFinalized posts the accrual
-			// (DR 1100 AR / CR 4000 revenue / CR 2200 HST) off the invoice's own subtotal/tax facts. Each
-			// captured leg then settles its slice of that AR through payment.received (DR 1020 undeposited /
-			// CR 1100). A fully-captured counter sale therefore nets to DR 1020 / CR 4000 / CR 2200 with AR
-			// closing to zero; a split with an account leg leaves exactly the account leg in 1100, which is
-			// the receivable that genuinely exists. Same rules, same builders, no new posting_rules and no
-			// new topic, a split is N ordinary payment.received events, not a new kind of money.
-			if err := s.store.EmitEvent(ctx, tx, "ar.invoice.finalized", map[string]any{
-				"invoice_id": invoiceID, "customer_id": customerID, "total_cents": invTotal, "due_date": dueDate,
-			}); err != nil {
-				return err
-			}
-			for _, c := range captures {
-				if err := s.store.EmitEvent(ctx, tx, "payment.received", map[string]any{
-					"payment_id": c.PaymentID, "order_id": orderID, "amount_cents": c.AmountCents,
-					"method": c.Method, "gateway_ref": c.GatewayRef,
-				}); err != nil {
-					return err
-				}
-			}
-			if in.Relief != nil {
-				if err := s.store.EmitEvent(ctx, tx, "tax.relief.assessed", map[string]any{
-					"order_id": orderID, "reason_code": taxReason, "automated": false,
-				}); err != nil {
-					return err
-				}
-			}
-
-			out = Sale{
-				OrderID: orderID, OrderNo: orderNo, InvoiceID: invoiceID, InvoiceNo: invoiceNo,
-				PaymentID: paymentID, GatewayRef: gatewayRef, Tender: tender, SaleType: saleType,
-				SubtotalCents: subtotal, TaxCents: tax, TotalCents: total, DepositCents: deposit,
-				SupplierDepositCents:     supplierDeposit,
-				SupplierDepositInvoiceID: supplierDepositInvoiceID, SupplierDepositInvoiceNo: supplierDepositInvoiceNo,
-				TaxReasonCode: taxReason, Status: "COMMITTED", SplitTender: isSplit,
-				// DIB-488 rev 6: the item-D facts echoed back; item-F change due for the sold panel.
-				POJobRef: poJobRef, SalespersonID: in.SalespersonID, SalespersonName: salespersonName,
-				CashTenderedCents: in.CashTenderedCents,
-				// DIB-488 rev 8 (item 11): the job facts echoed back for the sold panel.
-				JobAddress: jobAddress, JobReference: jobReference,
-			}
-			out.DiscountCents, out.Discounts = reportDiscounts(priced.discounts)
-			if in.CashTenderedCents > 0 {
-				out.ChangeDueCents = in.CashTenderedCents - total
-			}
-			if isSplit {
-				bySeq := map[int]captureLeg{}
-				for _, c := range captures {
-					bySeq[c.Seq] = c
-				}
-				for _, l := range splitLegs {
-					r := TenderLegResult{Seq: l.Seq, Method: l.Method, AmountCents: l.AmountCents}
-					if c, ok := bySeq[l.Seq]; ok {
-						r.PaymentID, r.GatewayRef = c.PaymentID, c.GatewayRef
-					}
-					out.Tenders = append(out.Tenders, r)
-				}
-			}
-			return nil
-		})
+	defer func() { *trp = tenderResults }()
+	var out Sale
+	defer func() { *outp = out }()
+	meta := map[string]any{
+		"sale_type":       saleType,
+		"cash_sale":       in.CashSale,
+		"tax_reason_code": taxReason,
+		"notes":           in.Notes,
 	}
-	txErr := runSaleTx()
-	for rerun := 0; txErr != nil && rerun < saleTxSerializationReruns && isSerializationFault(txErr); rerun++ {
-		// The transient fault (the design's step 5): the captures are unbound, so the rerun binds
-		// them on a fresh transaction, with no void and no second charge.
-		txErr = runSaleTx()
+	if codSale {
+		// Cash on DEMAND: printable/emailable immediately (the FINALIZED invoice below carries the
+		// number customers pay against) but LOCKED from fulfilment until paid, no stock moves at
+		// ring; the later payment/release flow (stubbed at W7) issues the stock.
+		meta["cod"] = true
+		meta["cod_posture"] = "AWAITING_PAYMENT"
 	}
-	if txErr != nil {
-		if len(ring.captured) > 0 {
-			// A fault after the captures: compensate and answer in words, never the bare 500 a
-			// rolled-back card ring used to answer (the design's step 6).
-			ring.rank = cardRankReversed
-			return s.settleFailedCardRing(ctx, ring)
+	if in.CashTenderedCents > 0 {
+		// DIB-488 rev 6 (item F): the tendered amount is a display fact of THIS ring (change due
+		// derives from it), parked in the order metadata so a replay answers verbatim; the money
+		// itself is unchanged (the till captures exactly the total, as always).
+		meta["cash_tendered_cents"] = in.CashTenderedCents
+	}
+	if deposit > 0 {
+		// Item 9.2: the taken deposit as the order's own display fact (the
+		// receipt's line one, a replay's echo). orders.deposit_required_cents
+		// is deliberately NOT written: it names the deposit an order
+		// REQUIRES, and this deposit is taken, its remainder lives in the
+		// invoice balance, which every money reader already reads.
+		meta["deposit_cents"] = deposit
+		meta["deposit_method"] = in.DepositMethod
+	}
+	if supplierDeposit > 0 {
+		// Sub item 9.5: the supplier's demanded deposit, billed to the
+		// account as its own invoice, the order's own display fact.
+		meta["supplier_deposit_cents"] = supplierDeposit
+	}
+	orderID, orderNo, err := s.store.InsertOrder(ctx, tx, orderRow{
+		CustomerID:    customerID,
+		BranchID:      in.BranchID,
+		Status:        "CONFIRMED",
+		Fulfillment:   fulfillmentFor(saleType, in.Fulfilment),
+		RequestedDate: in.RequestedDate,
+		SubtotalCents: subtotal,
+		TaxCents:      tax,
+		TotalCents:    total,
+		CreatedBy:     actor,
+		Metadata:      meta,
+		POJobRef:      poJobRef,         // DIB-488 rev 6 (0168)
+		SalespersonID: in.SalespersonID, // DIB-488 rev 6 (0168)
+		JobAddress:    jobAddress,       // DIB-488 rev 8 (0170)
+		JobReference:  jobReference,     // DIB-488 rev 8 (0170)
+	})
+	if err != nil {
+		return err
+	}
+	lineIDs, err := s.store.InsertOrderLines(ctx, tx, orderID, lines)
+	if err != nil {
+		return err
+	}
+
+	// Stock decrement + COGS trigger, COLLECT_NOW only (DX-01 PARTIAL: COLLECT_LATER/DELIVERED record
+	// zero moves and surface on pending-fulfilment; COD is LOCKED from fulfilment until paid, so it
+	// never matches here, stock issues on the later payment/release, not at ring). The stock decrement
+	// runs in THIS tx (default NoopStock → no moves at scaffold); the order.fulfilled event (frozen
+	// payload {order_id, branch_id, lines: [{product_id, qty_base}]}) posts COGS through the GL
+	// consumer, dormant at scaffold because the swapped inventory CostBasis returns found=false, so no
+	// COGS leg posts and the event is acked quietly.
+	if saleType == SaleCollectNow {
+		stockLines := make([]StockLine, len(lines))
+		fulfilledLines := make([]map[string]any, len(lines))
+		for i, l := range lines {
+			stockLines[i] = StockLine{ProductID: l.ProductID, QtyBase: l.QtyBase}
+			fulfilledLines[i] = map[string]any{"product_id": l.ProductID, "qty_base": l.QtyBase}
 		}
-		return Sale{}, txErr
+		if err := s.stockDec().DecrementForSaleTx(ctx, tx, StockDecrementInput{
+			OrderID: orderID, BranchID: in.BranchID, SaleType: saleType, Lines: stockLines,
+		}); err != nil {
+			return err
+		}
+		if err := s.store.EmitEvent(ctx, tx, "order.fulfilled", map[string]any{
+			"order_id": orderID, "branch_id": in.BranchID, "lines": fulfilledLines,
+		}); err != nil {
+			return err
+		}
 	}
 
+	// Capture-before-fulfil: take the tender BEFORE the invoice/allocation so the money row lands
+	// before the stock is issued. A-03 writes the SINGLE payments row in THIS tx. A CARD tender no
+	// longer charges here: the capture loop above took it on the pool before this transaction
+	// opened, and the till BINDS the attempt to the payments row this loop writes (the card charge
+	// design 3.3), so a rolled-back transaction leaves the capture for the compensator instead of
+	// orphaning a charge nobody recorded. An unpaid-at-ring sale with a DEPOSIT goes through the
+	// same two halves for its deposit leg.
+	var paymentID, gatewayRef string
+	// Every capture leg runs through the SAME till seam, inside THIS tx. A split therefore writes N
+	// ordinary payments rows and N ordinary drawer movements, the till, the GL and the drawer close
+	// see nothing exotic, only several tenders that happen to belong to one order. Each leg carries
+	// its OWN derived idempotency key (payments.idempotency_key is UNIQUE, so reusing the sale's key
+	// would silently collapse legs 2..n onto leg 1's row and leave the drawer short).
+	tenderResults = tenderResults[:0]
+	for i := range captures {
+		c := &captures[i]
+		res, err := s.tender.TakeTender(ctx, tx, till.TenderInput{
+			TillSessionID:  in.TillSessionID,
+			Method:         c.Method,
+			AmountCents:    c.AmountCents,
+			CustomerID:     customerID,
+			PaymentToken:   c.PaymentToken,
+			CardType:       c.CardType,
+			SignatureRef:   in.SignatureRef,
+			IdempotencyKey: c.IdemKey,
+			Offline:        in.Offline,
+			Capture:        till.CardCapture{AttemptID: c.AttemptID, ProcessorRef: c.GatewayRef},
+		})
+		if err != nil {
+			// A CARD failure here is a bind failure, not a decline: the capture loop already took
+			// the money, this transaction fails whole, and the compensation below decides the
+			// answer (the decline answers were all given before the transaction opened). Every
+			// other till failure (session not open, branch access, conflict) surfaces with its own
+			// message for the non-card tenders, wrapped into pos's client-error type so the handler
+			// maps it (409, not 500).
+			if c.Method == TenderCard {
+				return err
+			}
+			return clientErr(http.StatusConflict, "%s", err.Error())
+		}
+		// The till is the SOLE payments-row writer; its result is the single source of truth for both
+		// the response field and the payment.received event (CARD carries the gateway_ref; cash/cheque
+		// have none → empty, which is correct for them).
+		c.PaymentID = res.PaymentID
+		c.GatewayRef = res.GatewayRef
+		tenderResults = append(tenderResults, res)
+	}
+	// pos_sale's scalar payment_id/gateway_ref keep pointing at the PRIMARY leg (the one whose
+	// method landed in pos_sale.tender), so single-tender readers are unchanged and split readers
+	// get a payment that really is the largest slice of the sale.
+	for _, c := range captures {
+		if c.Method == tender {
+			paymentID, gatewayRef = c.PaymentID, c.GatewayRef
+			break
+		}
+	}
+
+	// Invoice: PAID for a tendered sale; for the unpaid-at-ring postures the invoice FINALIZES now
+	// (COD customers need the invoice number to pay against), PARTIALLY_PAID when a deposit landed.
+	// COD is due on demand (today); ACCOUNT runs on the customer's terms.
+	// Keyed off the MONEY (capturedCents), not the posture, so the split-with-an-ACCOUNT-leg case
+	// lands on PARTIALLY_PAID with the account remainder as its balance, the same place a deposit
+	// lands, because it is the same fact.
+	//
+	// The document's days are the dealer's, decided here on the ring's clock and bound: between
+	// the UTC day change and the house zone's own the database session's CURRENT_DATE is a day
+	// the yard has not reached, so an evening sale would otherwise be invoiced and due tomorrow.
+	// The terms count from the day the invoice is issued, so the two dates can never name
+	// different "todays".
+	invStatus := "PAID"
+	balance := int64(0)
+	issueDate := houseday.Today(s.now)
+	dueDate := issueDate
+	if !fullyPaid {
+		invStatus = "FINALIZED"
+		balance = total - capturedCents
+		if capturedCents > 0 {
+			invStatus = "PARTIALLY_PAID"
+		}
+		if !codSale {
+			dueDate = houseday.AddDays(s.now, cust.PaymentTermsDays)
+		}
+	}
+	// Sub item 9.5: a supplier's demanded deposit rides the sale as its
+	// OWN document (FINALIZED, due from the terms, the deposit amount,
+	// the SUPPLIER_DEPOSIT source kind whose GL posting is the
+	// Customer Deposits liability), written FIRST because the sale's
+	// own invoice names it. Its own subledger INVOICE row and its own
+	// ar.invoice.finalized event ride the same transaction.
+	var supplierDepositInvoiceID, supplierDepositInvoiceNo string
+	if supplierDeposit > 0 {
+		var err error
+		supplierDepositInvoiceID, supplierDepositInvoiceNo, err = s.store.InsertInvoice(ctx, tx, invoiceRow{
+			CustomerID: customerID, OrderID: orderID, BranchID: in.BranchID, Status: "FINALIZED",
+			IssueDate: issueDate, DueDate: dueDate, SubtotalCents: supplierDeposit, TotalCents: supplierDeposit,
+			BalanceCents: supplierDeposit, CreatedBy: actor, SourceKind: SourceSupplierDeposit,
+		})
+		if err != nil {
+			return err
+		}
+		if err := s.store.InsertInvoiceLines(ctx, tx, supplierDepositInvoiceID, nil,
+			[]orderLineRow{supplierDepositDocumentLine(lines, supplierDeposit)}); err != nil {
+			return err
+		}
+		if err := s.store.EmitEvent(ctx, tx, "ar.invoice.finalized", map[string]any{
+			"invoice_id": supplierDepositInvoiceID, "customer_id": customerID,
+			"total_cents": supplierDeposit, "due_date": dueDate,
+		}); err != nil {
+			return err
+		}
+	}
+	// The sale's own invoice carries THE REST: subtotal and total less
+	// the deposit (the account's two documents bill the sale's whole
+	// total once), the goods lines unchanged at their real prices plus
+	// the zero line naming the deposit document (the schema forbids a
+	// negative line; sale_supplier_deposit.go states the choice).
+	invLines := lines
+	invSubtotal, invTotal := subtotal, total
+	if supplierDeposit > 0 {
+		invSubtotal, invTotal = subtotal-supplierDeposit, total-supplierDeposit
+		balance -= supplierDeposit
+		invLines = append(append([]orderLineRow{}, lines...),
+			supplierDepositPointerLine(lines, supplierDepositInvoiceNo, supplierDeposit))
+	}
+	invoiceID, invoiceNo, err := s.store.InsertInvoice(ctx, tx, invoiceRow{
+		CustomerID:    customerID,
+		OrderID:       orderID,
+		BranchID:      in.BranchID,
+		Status:        invStatus,
+		IssueDate:     issueDate,
+		DueDate:       dueDate,
+		SubtotalCents: invSubtotal,
+		TaxCents:      tax,
+		TotalCents:    invTotal,
+		BalanceCents:  balance,
+		CreatedBy:     actor,
+	})
+	if err != nil {
+		return err
+	}
+	if err := s.store.InsertInvoiceLines(ctx, tx, invoiceID, lineIDs, invLines); err != nil {
+		return err
+	}
+
+	// Allocate + AR, driven by the capture list. The actor is stamped as allocated_by on every
+	// allocation (Q-044). `running` is the customer's balance as each row lands, so the subledger
+	// reads as a true running total rather than a set of independently-computed snapshots.
+	//
+	// A fully-captured sale never touches AR: the invoice books PAID, so the running balance is
+	// unchanged and only PAYMENT rows are written (identical to the single-tender behavior this
+	// generalizes). An uncaptured remainder books the INVOICE first, then each capture nets it
+	// down, landing at open + (total − captured), which is exactly the invoice's own balance.
+	running := cust.OpenBalanceCents
+	if !fullyPaid {
+		running += invTotal
+		if err := s.store.InsertCustomerTxn(ctx, tx, customerTxnRow{
+			CustomerID: customerID, TxnType: "INVOICE", AmountCents: invTotal,
+			BalanceAfter: running, SourceType: "invoice", SourceRefID: invoiceID, BranchID: in.BranchID,
+		}); err != nil {
+			return err
+		}
+	}
+	if supplierDeposit > 0 {
+		running += supplierDeposit
+		if err := s.store.InsertCustomerTxn(ctx, tx, customerTxnRow{
+			CustomerID: customerID, TxnType: "INVOICE", AmountCents: supplierDeposit,
+			BalanceAfter: running, SourceType: "invoice", SourceRefID: supplierDepositInvoiceID,
+			BranchID: in.BranchID,
+		}); err != nil {
+			return err
+		}
+	}
+	for _, c := range captures {
+		if !fullyPaid {
+			running -= c.AmountCents
+		}
+		if err := s.store.InsertPaymentAllocation(ctx, tx, c.PaymentID, invoiceID, c.AmountCents, actor); err != nil {
+			return err
+		}
+		if err := s.store.InsertCustomerTxn(ctx, tx, customerTxnRow{
+			CustomerID: customerID, TxnType: "PAYMENT", AmountCents: c.AmountCents,
+			BalanceAfter: running, SourceType: "payment", SourceRefID: c.PaymentID, BranchID: in.BranchID,
+		}); err != nil {
+			return err
+		}
+	}
+
+	// POS facets (idempotency record) + optional relief snapshot.
+	posSaleID, err := s.store.InsertPosSale(ctx, tx, posSaleRow{
+		IdempotencyKey: in.IdempotencyKey, OrderID: orderID, InvoiceID: invoiceID, PaymentID: paymentID,
+		BranchID: in.BranchID, TillSessionID: in.TillSessionID, SaleType: saleType, CashSale: in.CashSale,
+		Tender: tender, TaxReasonCode: taxReason, OfflineOrigin: in.Offline, CreatedBy: actor,
+		SplitTender: isSplit, Discount: priced.saleDiscount,
+	})
+	if err != nil {
+		return err
+	}
+	// The pricing log row of every manual discount, on THIS transaction (discount.go).
+	if err := s.logDiscounts(ctx, tx, orderID, actor, priced.discounts); err != nil {
+		return err
+	}
+	// DIB-165: the legs. Written AFTER pos_sale (they reference it) and inside this tx, so the
+	// deferred sum guard in 0100 fires at COMMIT with every leg present.
+	if isSplit {
+		rows := make([]saleTenderRow, 0, len(splitLegs))
+		bySeq := map[int]captureLeg{}
+		for _, c := range captures {
+			bySeq[c.Seq] = c
+		}
+		for _, l := range splitLegs {
+			r := saleTenderRow{Seq: l.Seq, Method: l.Method, AmountCents: l.AmountCents}
+			if c, ok := bySeq[l.Seq]; ok {
+				r.PaymentID, r.GatewayRef, r.TillSessionID = c.PaymentID, c.GatewayRef, in.TillSessionID
+			}
+			rows = append(rows, r)
+		}
+		if err := s.store.InsertSaleTenders(ctx, tx, posSaleID, rows); err != nil {
+			return err
+		}
+	}
+	if in.Relief != nil {
+		// The audit snapshot records the quote the ring bound, in the shape the tax package's W4
+		// recompute reads back: rate_bps the ASSESSED rate, full_hst_cents the STANDARD-rate HST on
+		// the subtotal (flatHST13, bit-identical to the engine's hstOn at 1300; the recompute's
+		// reconstructBase divides this column by the constant 1300, so it must never carry the
+		// assessed rate's tax), on_credit_cents the quote's ON credit, net_collected_cents the
+		// assessed tax the ring actually collected. At the standard rate this row is byte-identical
+		// to the old flat-constant write.
+		if _, err := s.store.InsertTaxSnapshot(ctx, tx, taxSnapshotRow{
+			OrderID: orderID, TaxReasonCode: taxReason, RuleVersion: ruleVersionW4, RateBps: priced.rateBps,
+			FullHSTCents: flatHST13(subtotal), OnCreditCents: priced.onCreditCents,
+			NetCollectedCents: tax, Automated: false,
+			EvidenceDocID: in.Relief.EvidenceDocID,
+		}); err != nil {
+			return err
+		}
+	}
+
+	// Events (transactional outbox; carry no PII / no card data / no FN identifiers).
+	if err := s.store.EmitEvent(ctx, tx, "pos.sale.committed", map[string]any{
+		"order_id": orderID, "invoice_id": invoiceID, "payment_id": paymentID,
+		"tender": tender, "sale_type": saleType, "branch_id": in.BranchID, "total_cents": total,
+	}); err != nil {
+		return err
+	}
+	// The invoice ALWAYS finalizes for its full total, so buildInvoiceFinalized posts the accrual
+	// (DR 1100 AR / CR 4000 revenue / CR 2200 HST) off the invoice's own subtotal/tax facts. Each
+	// captured leg then settles its slice of that AR through payment.received (DR 1020 undeposited /
+	// CR 1100). A fully-captured counter sale therefore nets to DR 1020 / CR 4000 / CR 2200 with AR
+	// closing to zero; a split with an account leg leaves exactly the account leg in 1100, which is
+	// the receivable that genuinely exists. Same rules, same builders, no new posting_rules and no
+	// new topic, a split is N ordinary payment.received events, not a new kind of money.
+	if err := s.store.EmitEvent(ctx, tx, "ar.invoice.finalized", map[string]any{
+		"invoice_id": invoiceID, "customer_id": customerID, "total_cents": invTotal, "due_date": dueDate,
+	}); err != nil {
+		return err
+	}
+	for _, c := range captures {
+		if err := s.store.EmitEvent(ctx, tx, "payment.received", map[string]any{
+			"payment_id": c.PaymentID, "order_id": orderID, "amount_cents": c.AmountCents,
+			"method": c.Method, "gateway_ref": c.GatewayRef,
+		}); err != nil {
+			return err
+		}
+	}
+	if in.Relief != nil {
+		if err := s.store.EmitEvent(ctx, tx, "tax.relief.assessed", map[string]any{
+			"order_id": orderID, "reason_code": taxReason, "automated": false,
+		}); err != nil {
+			return err
+		}
+	}
+
+	out = Sale{
+		OrderID: orderID, OrderNo: orderNo, InvoiceID: invoiceID, InvoiceNo: invoiceNo,
+		PaymentID: paymentID, GatewayRef: gatewayRef, Tender: tender, SaleType: saleType,
+		SubtotalCents: subtotal, TaxCents: tax, TotalCents: total, DepositCents: deposit,
+		SupplierDepositCents:     supplierDeposit,
+		SupplierDepositInvoiceID: supplierDepositInvoiceID, SupplierDepositInvoiceNo: supplierDepositInvoiceNo,
+		TaxReasonCode: taxReason, Status: "COMMITTED", SplitTender: isSplit,
+		// DIB-488 rev 6: the item-D facts echoed back; item-F change due for the sold panel.
+		POJobRef: poJobRef, SalespersonID: in.SalespersonID, SalespersonName: salespersonName,
+		CashTenderedCents: in.CashTenderedCents,
+		// DIB-488 rev 8 (item 11): the job facts echoed back for the sold panel.
+		JobAddress: jobAddress, JobReference: jobReference,
+	}
+	out.DiscountCents, out.Discounts = reportDiscounts(priced.discounts)
+	if in.CashTenderedCents > 0 {
+		out.ChangeDueCents = in.CashTenderedCents - total
+	}
+	if isSplit {
+		bySeq := map[int]captureLeg{}
+		for _, c := range captures {
+			bySeq[c.Seq] = c
+		}
+		for _, l := range splitLegs {
+			r := TenderLegResult{Seq: l.Seq, Method: l.Method, AmountCents: l.AmountCents}
+			if c, ok := bySeq[l.Seq]; ok {
+				r.PaymentID, r.GatewayRef = c.PaymentID, c.GatewayRef
+			}
+			out.Tenders = append(out.Tenders, r)
+		}
+	}
+	return nil
+}
+
+// finishSale is the sale's post-commit step: the audit rows, the order history seed and the receipt
+// records, all best effort and after the money committed.
+func (s *Service) finishSale(ctx context.Context, p *salePlan, out Sale, tenderResults []till.TenderResult) {
+	in, tender, captures, actor := p.in, p.tender, p.captures, p.actor
+	poJobRef, jobAddress, jobReference, salespersonName, priced := p.poJobRef, p.jobAddress, p.jobReference, p.salespersonName, p.priced
 	// Audit the completed sale post-commit (the Recorder owns the audit_log table; zero-trust).
 	// DIB-488 rev 6 (item D): the PO / job reference and the credited salesperson ride the SAME
 	// record's Extra, the order's audit/activity trail carries the salesperson's ID and the
@@ -1323,7 +1396,6 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 			})
 		}
 	}
-	return out, nil
 }
 
 // -- the card capture loop, its ring and its compensation (the card charge design 3.3 to 3.7) --
