@@ -70,7 +70,15 @@ func (s *CreditService) CustomerAging(ctx context.Context, customerID string) (A
 	}
 	// branchID "", the account's WHOLE position, for the reason in the file header. asOf is the
 	// service clock, so a test can pin the buckets without pinning wall time.
-	rows, err := s.Aging(ctx, asOf, "")
+	// THE ACCOUNT'S WHOLE POSITION, whatever branch the caller works: this is the counter's standing,
+	// which warns the till off selling on credit to a held or past due account, and an account held in
+	// another branch is held. It is the internal read (every branch), as the sweep's is; the register,
+	// the aging worklist and the holds list are the reach fenced reads.
+	pol, err := s.store.CreditPolicy(ctx, "")
+	if err != nil {
+		return AgingRow{}, asOf, false, err
+	}
+	rows, err := s.store.AgingRowsIn(ctx, asOf, pol.AgingBucketDays, "", AllBranches)
 	if err != nil {
 		return AgingRow{}, asOf, false, err
 	}
