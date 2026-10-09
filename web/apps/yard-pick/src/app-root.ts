@@ -23,8 +23,8 @@ import { ApiClient } from "@hardscapehouse/api-client";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
-import { YardApi } from "./yard-api.js";
-import { yardError } from "./yard-logic.js";
+import { YardApi, type YardPick } from "./yard-api.js";
+import { actionDone, yardError } from "./yard-logic.js";
 import { yardStyles } from "./styles.js";
 import { renderEntry, renderQueue, type EntryView } from "./views.js";
 
@@ -62,10 +62,14 @@ export class YardPickApp extends HHElement {
   // yard team holds Trenton); the queue names it on every read because a
   // branch-scoped caller must.
   #phase: "loading" | "ready" | "error" = "loading";
+  #picks: YardPick[] = [];
   #branchId = "";
   #branchName = "";
   #error = "";
   #notice = "";
+  #busy = false;
+  #moreBehind = false;
+  #nextCursor = "";
 
   // The way in: this app's own card, drawn by views.ts.
   #entryView: EntryView = { flows: { kind: "loading" }, busy: false, message: null };
@@ -78,6 +82,9 @@ export class YardPickApp extends HHElement {
 
   // The role label the header shows; set from the handoff or the mint.
   #roleLabel = "";
+
+  // The caller's own id, so the board can say "Claimed by you".
+  #me = "";
 
   // The theme: light by default (the yard reads this in daylight), brand
   // (the dark half) one tap away. Held in memory only: nothing here persists.
@@ -97,6 +104,14 @@ export class YardPickApp extends HHElement {
     if (action === "theme") {
       this.#theme = this.#theme === "light" ? "dark" : "light";
       this.requestUpdate();
+      return;
+    }
+    if (action === "reload" || action === "more") {
+      void this.#loadQueue(action !== "more");
+      return;
+    }
+    if (action === "claim") {
+      void this.#claim(control?.getAttribute("data-task-id") ?? "");
       return;
     }
     if (action === "choose") {
@@ -122,6 +137,7 @@ export class YardPickApp extends HHElement {
       });
       if (adopted) {
         this.#roleLabel = handoff.session.roleName;
+        this.#me = handoff.session.user.userId;
         clearFrontDoorHandoff();
         void this.#loadWorld();
       }
@@ -180,7 +196,47 @@ export class YardPickApp extends HHElement {
     }
     this.#branchId = branches.value[0]?.id ?? "";
     this.#branchName = branches.value[0]?.name ?? "";
-    this.#phase = "ready";
+    await this.#loadQueue(true);
+  }
+
+  async #loadQueue(reset: boolean): Promise<void> {
+    if (this.#branchId === "") {
+      await this.#loadWorld();
+      return;
+    }
+    if (reset) this.#phase = "loading";
+    this.requestUpdate();
+    const cursor = reset ? "" : this.#nextCursor;
+    const answer = await this.#yard.queue(this.#branchId, cursor);
+    if (answer.ok) {
+      this.#picks = reset ? answer.value.picks : [...this.#picks, ...answer.value.picks];
+      this.#nextCursor = answer.value.nextCursor;
+      this.#moreBehind = answer.value.nextCursor !== "";
+      this.#phase = "ready";
+      this.#error = "";
+    } else {
+      this.#phase = this.#picks.length > 0 ? "ready" : "error";
+      this.#error = yardError(answer.error, answer.status, "The board did not load. Check your signal and try again.");
+    }
+    this.requestUpdate();
+  }
+
+  async #claim(taskId: string): Promise<void> {
+    if (taskId === "" || this.#busy) return;
+    this.#busy = true;
+    this.#error = "";
+    this.#notice = "";
+    this.requestUpdate();
+    const answer = await this.#yard.claim(taskId);
+    this.#busy = false;
+    if (answer.ok) {
+      this.#notice = actionDone("claim");
+      await this.#loadQueue(true);
+    } else {
+      this.#error = yardError(answer.error, answer.status, "That did not go through. Check your signal and try again.", {
+        notFound: "That pick is no longer on the board.",
+      });
+    }
     this.requestUpdate();
   }
 
@@ -192,6 +248,7 @@ export class YardPickApp extends HHElement {
       const adopted = this.#auth.adopt(result.value);
       if (adopted) {
         this.#roleLabel = result.value.identity.roleName;
+        this.#me = result.value.user.userId;
         this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
         void this.#loadWorld();
       } else {
@@ -206,6 +263,7 @@ export class YardPickApp extends HHElement {
   #onSignOut(): void {
     this.#sessions.clear();
     this.#phase = "loading";
+    this.#picks = [];
     this.#branchId = "";
     this.#branchName = "";
     this.#error = "";
@@ -225,8 +283,11 @@ export class YardPickApp extends HHElement {
     return renderQueue({
       phase: this.#phase,
       branchName: this.#branchName,
+      picks: this.#picks,
+      me: this.#me,
       error: this.#error,
       notice: this.#notice,
+      moreBehind: this.#moreBehind,
     });
   }
 

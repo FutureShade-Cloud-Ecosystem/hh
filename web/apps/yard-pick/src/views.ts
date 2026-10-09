@@ -10,6 +10,19 @@
 // under row 563 (take the existing and improve it).
 import { html, nothing, type TemplateResult } from "lit";
 import type { DemoFlow } from "@hardscapehouse/api-client";
+import type { YardPick } from "./yard-api.js";
+import {
+  STATUS_LABEL,
+  ageLabel,
+  isUnclaimed,
+  mtoLabel,
+  nextAction,
+  orderHandle,
+  priorityWord,
+  shortageSummary,
+  statusTone,
+  ticketIsFixture,
+} from "./yard-logic.js";
 
 /** Messages the yard must see: a refusal in the server's words, or an outcome. */
 export function renderMessages(error: string, notice: string): TemplateResult | typeof nothing {
@@ -25,21 +38,83 @@ export function renderMessages(error: string, notice: string): TemplateResult | 
 export interface QueueModel {
   readonly phase: "loading" | "ready" | "error";
   readonly branchName: string;
+  readonly picks: readonly YardPick[];
+  readonly me: string;
   readonly error: string;
   readonly notice: string;
+  readonly moreBehind: boolean;
 }
 
-/** The landing: the branch's board. The picks themselves land with the queue's own item. */
+/** The status pill: colour never carries the meaning alone, the word is always there. */
+function statusPill(status: string): TemplateResult {
+  return html`<span class="status status-${statusTone(status)}" data-task-status>${STATUS_LABEL[status] ?? status}</span>`;
+}
+
+function pickCard(entry: YardPick, me: string, busy: boolean): TemplateResult {
+  const t = entry.task;
+  const mine = t.claimed_by !== "" && t.claimed_by === me;
+  const unclaimed = isUnclaimed(t.status);
+  const ticket = entry.ticket;
+  const lineCount = ticket?.lines.length ?? 0;
+  const summary = shortageSummary(entry.shortages);
+  const mto = ticket !== null ? mtoLabel(ticket.mto_class, ticket.fulfillment) : "";
+  const priority = priorityWord(ticket?.priority || t.priority);
+  const action = nextAction(t.status);
+  return html`
+    <section class="card pick-card ${mine ? "mine" : ""}" data-pick-card data-task-id=${t.id}>
+      <div class="pick-head">
+        <span class="pick-no" data-order-no>${orderHandle(ticket)}</span>
+        ${statusPill(t.status)}
+      </div>
+      ${ticket?.customer_name ? html`<p class="pick-who">${ticket.customer_name}</p>` : nothing}
+      <div class="pick-facts">
+        <span>${lineCount} ${lineCount === 1 ? "line" : "lines"}</span>
+        ${priority !== "" ? html`<span class="pill pill-watch">${priority}</span>` : nothing}
+        <span>waiting ${ageLabel(t.created_at, new Date())}</span>
+        ${ticket !== null && ticketIsFixture(ticket) ? html`<span class="pill">fixture ticket</span>` : nothing}
+      </div>
+      ${mto !== "" ? html`<p class="pick-facts">${mto}</p>` : nothing}
+      ${ticket?.held_from_picking === true
+        ? html`<p class="held" data-held>${ticket.hold_words || "This order waits: it cannot be picked yet."}</p>`
+        : nothing}
+      ${summary !== "" ? html`<p class="shortage-open" data-queue-shortage>${summary}</p>` : nothing}
+      ${mine ? html`<p class="mine-tag">Claimed by you</p>` : nothing}
+      ${unclaimed
+        ? html`<button type="button" class="btn btn-primary big" data-action="claim" data-task-id=${t.id} ?disabled=${busy} data-tap>Claim</button>`
+        : action !== null
+          ? html`<button type="button" class="btn btn-primary big" data-action="open-pick" data-task-id=${t.id} data-tap>Open</button>`
+          : html`<button type="button" class="btn btn-secondary big" data-action="open-pick" data-task-id=${t.id} data-tap>Open</button>`}
+    </section>
+  `;
+}
+
+/** The landing: the branch's open picks, the unclaimed half first, claimed and yours marked. */
 export function renderQueue(model: QueueModel): TemplateResult {
   let body: TemplateResult;
-  if (model.phase === "loading") {
+  if (model.phase === "loading" && model.picks.length === 0) {
     body = html`<p class="dim" role="status">Checking the yard.</p>`;
-  } else if (model.phase === "ready") {
+  } else if (model.phase === "ready" && model.picks.length === 0) {
     body = html`
       <div class="card empty" data-empty>
         <p class="empty-head">Nothing to pick at this branch.</p>
         <p class="dim">When the counter queues a pick it lands here, and the oldest one is the one somebody is standing around for.</p>
       </div>
+    `;
+  } else if (model.phase === "ready" || model.picks.length > 0) {
+    const unclaimed = model.picks.filter((p) => isUnclaimed(p.task.status));
+    const claimed = model.picks.filter((p) => !isUnclaimed(p.task.status));
+    body = html`
+      ${unclaimed.length > 0
+        ? html`<p class="section-label" data-unclaimed>${unclaimed.length} unclaimed</p>
+            <div class="pick-grid">${unclaimed.map((p) => pickCard(p, model.me, false))}</div>`
+        : nothing}
+      ${claimed.length > 0
+        ? html`<p class="section-label" data-claimed>${claimed.length} claimed</p>
+            <div class="pick-grid">${claimed.map((p) => pickCard(p, model.me, false))}</div>`
+        : nothing}
+      ${model.moreBehind
+        ? html`<button type="button" class="btn btn-secondary big" data-action="more" data-tap>Show more behind</button>`
+        : nothing}
     `;
   } else {
     body = html``;
@@ -47,6 +122,7 @@ export function renderQueue(model: QueueModel): TemplateResult {
   return html`
     <div class="branch-row">
       <span class="pill" data-branch>${model.branchName !== "" ? model.branchName : "This yard"}</span>
+      <button type="button" class="btn btn-secondary" data-action="reload" data-tap>Refresh</button>
     </div>
     <h1>Pick queue</h1>
     ${renderMessages(model.error, model.notice)}
