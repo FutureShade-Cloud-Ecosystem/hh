@@ -16,7 +16,7 @@
 // attribute value, so even a poisoned registry entry could not close the
 // attribute and inject.
 
-import { html, nothing, type TemplateResult as Template } from 'lit';
+import { html, nothing, svg, type TemplateResult as Template } from 'lit';
 
 export interface StateIcon {
   /** SVG path `d` strings, drawn in order, stroked in currentColor. */
@@ -49,7 +49,12 @@ export type StateIconName = keyof typeof STATE_ICONS;
  * expression inside a raw-text element's body (title, textarea, style, script
  * are read as text by the template parser), and a raw-markup path to put the
  * label there is exactly what this package refuses. role stays img, so the
- * accessible name is carried either way. */
+ * accessible name is carried either way.
+ *
+ * The paths are built with the svg tag, not html: a template made with html
+ * is parsed as HTML even when it is slotted into an svg, so its paths would
+ * be HTMLUnknownElements and paint nothing. test/browser.test.mjs holds the
+ * namespace in a real page. */
 export function icon(name: StateIconName, label?: string): Template {
   const paths = STATE_ICONS[name].paths;
   return html`<svg
@@ -63,5 +68,5 @@ export function icon(name: StateIconName, label?: string): Template {
     aria-hidden="${label ? 'false' : 'true'}"
     role="${label ? 'img' : 'presentation'}"
     aria-label=${label ?? nothing}
-  >${paths.map((d) => html`<path d="${d}"></path>`)}</svg>`;
+  >${paths.map((d) => svg`<path d="${d}"></path>`)}</svg>`;
 }

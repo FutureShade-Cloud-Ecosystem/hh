@@ -1088,8 +1088,11 @@ components:
     # --- shared vocabulary ---------------------------------------------------
     DashboardProfile:
       type: string
-      description: The five layout job shapes; the role-code-to-profile mapping is data, not code
-      enum: [counter, yard, driver, manager, admin]
+      description: >-
+        The five layout job shapes plus the manager refinements (one
+        profile per manager role, manager.<role>, born from its base
+        shape's rows); the role-code-to-profile mapping is data, not code
+      enum: [counter, yard, driver, manager, admin, manager.branch, manager.sales, manager.yard, manager.logistics, manager.procurement, manager.payables, manager.controller, manager.general]
     DashboardKind:
       type: string
       description: How a tile or measure's number is classified so the client formats it without guessing

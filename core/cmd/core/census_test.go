@@ -3,7 +3,7 @@ package main
 // The census half of the completeness contract (the PR 44 review's P2-5),
 // split out of the composition walk so it runs where the repository's CI
 // actually runs: with no gate variable, no database, no composition. The
-// document and the census are asserted here in both directions: all 615
+// document and the census are asserted here in both directions: all 620
 // staff operations carry a surface and a level in roleconfig's
 // vocabulary, no non-staff operation carries an annotation, and every
 // named list is one the gate reads. What this test cannot see is a route
@@ -32,8 +32,8 @@ func TestCensusStaffRoutesCarrySurfaceAndLevel(t *testing.T) {
 			}
 		}
 	}
-	if staff != 615 {
-		t.Fatalf("census staff operations: %d, want the document's 615", staff)
+	if staff != 620 {
+		t.Fatalf("census staff operations: %d, want the document's 620", staff)
 	}
 	t.Logf("surface and level asserted for all %d census staff operations, no database needed", staff)
 }
