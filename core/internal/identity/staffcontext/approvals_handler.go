@@ -107,10 +107,35 @@ func (h *ApprovalsHandler) listApprovals(w http.ResponseWriter, r *http.Request,
 		writeApprovalErr(w, r, err)
 		return
 	}
-	if list == nil {
-		list = []ApprovalRequest{}
+	// The contract's IdentityApprovalPage: the list is ordered (newest first, id as the tie break), the
+	// cursor is the id of the last row of the page before, and a page of limit rows carries next_cursor
+	// while more follow.
+	p, perr := httpx.ParseCursorPage(r)
+	if perr != nil {
+		httpx.Error(w, http.StatusBadRequest, "cursor is malformed")
+		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, list)
+	start := 0
+	if p.Cursor != "" {
+		found := false
+		for i, a := range list {
+			if a.ID == p.Cursor {
+				start, found = i+1, true
+				break
+			}
+		}
+		if !found {
+			httpx.Error(w, http.StatusBadRequest, "cursor is malformed")
+			return
+		}
+	}
+	page := list[start:]
+	next := ""
+	if len(page) > p.Limit {
+		page = page[:p.Limit]
+		next = page[len(page)-1].ID
+	}
+	httpx.WriteCursorPage(w, page, next, p.Limit)
 }
 
 type decideApprovalRequest struct {

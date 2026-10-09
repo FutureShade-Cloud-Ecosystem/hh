@@ -580,7 +580,7 @@ func (r *ApprovalRepository) ListApprovals(ctx context.Context, status string, b
 		q += ` AND branch_id = ANY($2::uuid[])`
 		args = append(args, branches)
 	}
-	q += ` ORDER BY requested_at DESC`
+	q += ` ORDER BY requested_at DESC, id`
 	rows, err := r.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err

@@ -166,13 +166,35 @@ func TestDemoWorld_Controller(t *testing.T) {
 
 	listPending := func(c *tillClient) map[string]cwApproval {
 		t.Helper()
-		rsp := c.call("GET", "/api/v1/staff/approvals?status=PENDING", nil)
-		rsp.ok(t, http.StatusOK)
-		var rows []cwApproval
-		rsp.decode(t, &rows)
+		// The contract's page: items and next_cursor, followed two rows at a time to prove the cursor
+		// walks every row once.
 		out := map[string]cwApproval{}
-		for _, r := range rows {
-			out[r.ID] = r
+		cursor := ""
+		for pages := 0; ; pages++ {
+			if pages > 20 {
+				t.Fatal("the approvals cursor never ended")
+			}
+			path := "/api/v1/staff/approvals?status=PENDING&limit=2"
+			if cursor != "" {
+				path += "&cursor=" + cursor
+			}
+			rsp := c.call("GET", path, nil)
+			rsp.ok(t, http.StatusOK)
+			var page struct {
+				Items      []cwApproval `json:"items"`
+				NextCursor *string      `json:"next_cursor"`
+			}
+			rsp.decode(t, &page)
+			for _, r := range page.Items {
+				if _, dup := out[r.ID]; dup {
+					t.Fatalf("approval %s came on two pages", r.ID)
+				}
+				out[r.ID] = r
+			}
+			if page.NextCursor == nil {
+				break
+			}
+			cursor = *page.NextCursor
 		}
 		return out
 	}

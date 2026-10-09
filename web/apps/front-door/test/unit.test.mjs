@@ -215,12 +215,13 @@ import { countMarginApprovals, readApprovalsPage } from "../src/approvals-count.
 const row = (policy_type, status) => ({ id: "a", requested_by: "u", branch_id: "b", policy_type, detail: "d", status });
 const pageOf = (pages) => async (cursor) => ({ ok: true, value: pages[cursor ?? ""] });
 
-test("the count reads the core's bare array", async () => {
-  const n = await countMarginApprovals(pageOf({ "": [row("MARGIN_BELOW_MINIMUM", "PENDING"), row("MARGIN_BELOW_MINIMUM", "PENDING")] }));
+test("the count reads the contract's page object, and a bare array is not a page", async () => {
+  const n = await countMarginApprovals(pageOf({ "": { items: [row("MARGIN_BELOW_MINIMUM", "PENDING"), row("MARGIN_BELOW_MINIMUM", "PENDING")], next_cursor: null } }));
   assert.equal(n, 2);
+  assert.equal(await countMarginApprovals(pageOf({ "": [row("MARGIN_BELOW_MINIMUM", "PENDING")] })), null);
 });
 
-test("the count reads the contract's page object and follows every cursor", async () => {
+test("the count follows every cursor", async () => {
   const n = await countMarginApprovals(
     pageOf({
       "": { items: [row("MARGIN_BELOW_MINIMUM", "PENDING")], next_cursor: "c2" },
@@ -234,12 +235,15 @@ test("the count reads the contract's page object and follows every cursor", asyn
 test("the count is the margin kind and pending only", async () => {
   const n = await countMarginApprovals(
     pageOf({
-      "": [
-        row("MARGIN_BELOW_MINIMUM", "PENDING"),
-        row("MARGIN_BELOW_MINIMUM", "APPROVED"),
-        row("CREDIT_LIMIT_EXCEEDED", "PENDING"),
-        row("FREIGHT_ABOVE_QUOTE", "PENDING"),
-      ],
+      "": {
+        items: [
+          row("MARGIN_BELOW_MINIMUM", "PENDING"),
+          row("MARGIN_BELOW_MINIMUM", "APPROVED"),
+          row("CREDIT_LIMIT_EXCEEDED", "PENDING"),
+          row("FREIGHT_ABOVE_QUOTE", "PENDING"),
+        ],
+        next_cursor: null,
+      },
     }),
   );
   assert.equal(n, 1);
@@ -247,7 +251,7 @@ test("the count is the margin kind and pending only", async () => {
 
 test("an unreadable answer, a bad row, a failed page or a repeated cursor yields no count", async () => {
   assert.equal(await countMarginApprovals(pageOf({ "": "nope" })), null);
-  assert.equal(await countMarginApprovals(pageOf({ "": [{ policy_type: 1, status: "PENDING" }] })), null);
+  assert.equal(await countMarginApprovals(pageOf({ "": { items: [{ policy_type: 1, status: "PENDING" }], next_cursor: null } })), null);
   assert.equal(await countMarginApprovals(async () => ({ ok: false })), null);
   assert.equal(
     await countMarginApprovals(pageOf({ "": { items: [], next_cursor: "x" }, x: { items: [], next_cursor: "x" } })),
