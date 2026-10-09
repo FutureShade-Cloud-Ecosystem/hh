@@ -163,6 +163,26 @@ jobs:
         # HQ). The default ok lines print every package's elapsed time
         # and stay in the log, so growth shows before it bites.
         run: go test ./... -count=1 -p 1 -timeout 30m
+      - name: Evening guard, the date sensitive unit packages
+        # Item 55's guard: the date sensitive legs rerun every run with the clock pinned inside
+        # the evening window (half past UTC midnight, where the UTC day has rolled over and the
+        # house zone is still on the dealer's previous evening), so a daytime run can never
+        # again hide the UTC day class. The pin is a go build overlay that shifts the wall
+        # clock only (scripts/evening-guard/prepare.sh); monotonic clocks, timers and deadlines
+        # are untouched. HH_EVENING_GUARD wakes the self proof legs in
+        # internal/platform/houseday, which fail the step if the overlay stopped applying, so
+        # the guard cannot silently guard nothing. The four packages are the date sensitive
+        # ones, named with the reason in the PR body; the rest of the suite pins its own
+        # calendar instants or reads no day at all.
+        working-directory: core
+        run: |
+          set -euo pipefail
+          ../scripts/evening-guard/prepare.sh "$RUNNER_TEMP/evening-guard"
+          shift_s="$(../scripts/evening-guard/shift.sh evening)"
+          GOFLAGS="-overlay=$RUNNER_TEMP/evening-guard/overlay.json" \
+            HH_CLOCK_SHIFT_SECONDS="$shift_s" HH_EVENING_GUARD=1 \
+            go test ./internal/platform/houseday ./internal/billing ./internal/pos ./internal/purchasing \
+            -count=1 -p 1 -timeout 30m
       - name: Web packages (typecheck and Node 22 suite)
         working-directory: web
         # setup-node pins Node 22, whose type stripping of the packages' .ts
@@ -211,6 +231,21 @@ jobs:
             echo "no web package ran a test suite; the loop above is broken" >&2
             exit 1
           fi
+      - name: Evening guard, the date sensitive web specs
+        # The web half of item 55's guard: the date sensitive specs rerun with TZ on the house
+        # zone and with the browser and stub clocks pinned inside the evening window by the
+        # legs themselves (the drive run sheet's legs pin their own clocks on every run, and
+        # the till's day legs pin the page and the stub to the same instant), the same
+        # pinning the drive run sheet's fix introduced. The suite's first run above already
+        # covers these legs on a UTC runner; this second run holds them on the dealer's own
+        # zone, so the pair covers both machines and no wall hour can hide the UTC day class.
+        working-directory: web
+        run: |
+          set -euo pipefail
+          cd apps/drive-run
+          TZ=America/Toronto npx --no-install playwright test test/run-sheet.pw.ts
+          cd ../counter-till
+          TZ=America/Toronto npx --no-install playwright test test/sale.pw.ts
 
   # The demo tag, and the gated legs whose absence the cycle recorded: the
   # demo tag never compiled or ran in CI, and the composition and identity
@@ -454,3 +489,49 @@ jobs:
           # before it bites.
           go test -tags integration -p 1 -count=1 -timeout 30m \
             $(go list ./... | grep -Ev "/$red")
+      - name: Evening guard, the date sensitive integration packages
+        # The integration half of item 55's guard: the same date sensitive packages as the ci
+        # job's guard step, under the integration tag, rerun against a database whose own
+        # clock sits in the same evening window as the Go clock, or a fixture seeded from
+        # now() or CURRENT_DATE and read through the house day would fail for the wrong
+        # reason. A service container's clock cannot be shifted in place, so this step runs
+        # its own throwaway Postgres under libfaketime, pinned to the same target instant as
+        # the Go overlay, and couples the overlay's shift to that database's pinned clock
+        # (both clocks then advance at real speed, so they stay in step for the whole run).
+        # The database proof leg in internal/platform/houseday (HH_EVENING_GUARD) fails the
+        # step if either half of the pin stopped applying.
+        working-directory: core
+        env:
+          GUARD: postgres://postgres:postgres@127.0.0.1:5601
+        run: |
+          set -euo pipefail
+          docker rm -f -v hh-evening-guard-pg >/dev/null 2>&1 || true
+          trap 'docker rm -f -v hh-evening-guard-pg >/dev/null 2>&1 || true' EXIT
+          ../scripts/evening-guard/prepare.sh "$RUNNER_TEMP/evening-guard"
+          target="$(date -u +%s)"
+          target=$(( target - target % 86400 + 1800 ))
+          pin="$(date -u -d "@$target" '+%Y-%m-%d %H:%M:%S')"
+          docker run -d --name hh-evening-guard-pg -p 127.0.0.1:5601:5432 \
+            -e POSTGRES_PASSWORD=postgres -e TZ=UTC \
+            -e LD_PRELOAD=/usr/lib/faketime/libfaketime.so.1 \
+            -e FAKETIME="@$pin" -e FAKETIME_NO_CACHE=1 \
+            postgres:16-alpine \
+            sh -c 'apk update >/dev/null && apk add --no-cache libfaketime >/dev/null && exec docker-entrypoint.sh postgres' >/dev/null
+          shift_s="$(../scripts/evening-guard/shift.sh "$GUARD/postgres?sslmode=disable")"
+          psql "$GUARD/postgres?sslmode=disable" -v ON_ERROR_STOP=1 \
+            -c 'CREATE DATABASE integration_gate' \
+            -c 'CREATE DATABASE integration_core_gate'
+          # The gate databases are built under the same pinned clock the legs run under, so
+          # the seed's days sit inside the window too.
+          GOFLAGS="-overlay=$RUNNER_TEMP/evening-guard/overlay.json" HH_CLOCK_SHIFT_SECONDS="$shift_s" \
+            DATABASE_URL="$GUARD/integration_gate?sslmode=disable" go run ./cmd/core migrate
+          GOFLAGS="-overlay=$RUNNER_TEMP/evening-guard/overlay.json" HH_CLOCK_SHIFT_SECONDS="$shift_s" \
+            DATABASE_URL="$GUARD/integration_gate?sslmode=disable" go run ./cmd/core seed
+          GOFLAGS="-overlay=$RUNNER_TEMP/evening-guard/overlay.json" HH_CLOCK_SHIFT_SECONDS="$shift_s" \
+            DATABASE_URL="$GUARD/integration_core_gate?sslmode=disable" go run ./cmd/core migrate
+          # -timeout 30m as on every go test step in this file.
+          GOFLAGS="-overlay=$RUNNER_TEMP/evening-guard/overlay.json" HH_CLOCK_SHIFT_SECONDS="$shift_s" HH_EVENING_GUARD=1 \
+            DATABASE_URL="$GUARD/integration_gate?sslmode=disable" \
+            HH_CORE_TEST_DATABASE_URL="$GUARD/integration_core_gate?sslmode=disable" \
+            go test -tags integration ./internal/platform/houseday ./internal/billing ./internal/pos ./internal/purchasing \
+            -count=1 -p 1 -timeout 30m
