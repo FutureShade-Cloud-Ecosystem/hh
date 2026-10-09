@@ -11,17 +11,8 @@ import {
   canDecide,
   journalTone,
   journalWord,
-  readList,
   refusalWords,
 } from "../src/gl/gl-logic.ts";
-
-test("the core's bare array and the contract's page object both read as a list", () => {
-  assert.deepEqual(readList([{ id: "a" }]), [{ id: "a" }]);
-  assert.deepEqual(readList({ items: [{ id: "a" }], next_cursor: null }), [{ id: "a" }]);
-  assert.equal(readList({ rows: [] }), null);
-  assert.equal(readList("nope"), null);
-  assert.equal(readList(null), null);
-});
 
 test("cents read as dollars, and a missing figure is never a plausible zero", () => {
   assert.equal(formatMoney(750000), "$7,500.00");

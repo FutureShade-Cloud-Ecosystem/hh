@@ -9,8 +9,9 @@
 // which is also how a parked journal is approved: the core posts the journal
 // in the same transaction that stamps the request.
 //
-// The approvals list is read through readList because the core answers a bare
-// array where the contract says a page object.
+// The approvals list and the journal register are the contract's pages (items,
+// next_cursor); the branches are the contract's plain array. Each is read as
+// its contract says and nothing else is accepted.
 import {
   staffBranches,
   staffGl,
@@ -22,7 +23,9 @@ import {
   type IdentityApproval,
   type Result,
 } from "@hardscapehouse/api-client";
-import { readList } from "./gl-logic.js";
+
+/** A hard stop on cursor following, so a server that never ends cannot hold the desk. */
+const MAX_PAGES = 50;
 
 export class GlApi {
   readonly #client: ApiClient;
@@ -31,13 +34,20 @@ export class GlApi {
     this.#client = client;
   }
 
-  /** Every pending approval the caller may see, whichever shape the core answers. */
+  /** Every pending approval the caller may see, following the page's cursor to its end. */
   async pendingApprovals(): Promise<Result<IdentityApproval[]>> {
-    const answer = await staffIdentity.identityListApprovals(this.#client, { status: "PENDING", limit: 100 });
-    if (!answer.ok) return answer;
-    const rows = readList<IdentityApproval>(answer.value as unknown);
-    if (rows === null) return { ok: false, error: "The approvals list was not readable." };
-    return { ok: true, value: rows };
+    const rows: IdentityApproval[] = [];
+    let cursor: string | undefined;
+    for (let pages = 0; pages < MAX_PAGES; pages += 1) {
+      const answer = await staffIdentity.identityListApprovals(this.#client, { status: "PENDING", limit: 100, ...(cursor === undefined ? {} : { cursor }) });
+      if (!answer.ok) return answer;
+      if (!Array.isArray(answer.value.items)) return { ok: false, error: "The approvals list was not readable." };
+      rows.push(...answer.value.items);
+      const next = answer.value.next_cursor;
+      if (next === undefined || next === null || next === "") return { ok: true, value: rows };
+      cursor = next;
+    }
+    return { ok: false, error: "The approvals list did not end." };
   }
 
   /** A decision on one request: approve or decline, with the reason the requester reads. */
@@ -52,20 +62,15 @@ export class GlApi {
   async journals(): Promise<Result<GlJournal[]>> {
     const answer = await staffGl.glListJournals(this.#client, { limit: 100 });
     if (!answer.ok) return answer;
-    const rows = readList<GlJournal>(answer.value as unknown);
-    if (rows === null) return { ok: false, error: "The journal register was not readable." };
-    return { ok: true, value: rows };
+    if (!Array.isArray(answer.value.items)) return { ok: false, error: "The journal register was not readable." };
+    return { ok: true, value: answer.value.items };
   }
 
   trialBalance(): Promise<Result<GlTrialBalanceResult>> {
     return staffGl.glTrialBalance(this.#client);
   }
 
-  async branches(): Promise<Result<Branch[]>> {
-    const answer = await staffBranches.branchesList(this.#client);
-    if (!answer.ok) return answer;
-    const rows = readList<Branch>(answer.value as unknown);
-    if (rows === null) return { ok: false, error: "The branch list was not readable." };
-    return { ok: true, value: rows };
+  branches(): Promise<Result<Branch[]>> {
+    return staffBranches.branchesList(this.#client);
   }
 }

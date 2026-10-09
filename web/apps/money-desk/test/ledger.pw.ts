@@ -5,7 +5,7 @@
 // trial balance carries it; it cannot decide its own request, and the screen
 // says so in words before a press; it reads the trial balance; and a refused
 // decision names who may decide it.
-import { test, expect, openApprovals } from "./gl-helpers.js";
+import { test, expect, openApprovals, controllerHandoff } from "./gl-helpers.js";
 
 const FR1 = "2f6a1c00-0000-4000-9000-0000000000f1";
 const J1_REQUEST = "2f6a1c00-0000-4000-9000-0000000000a1";
@@ -110,4 +110,15 @@ test("a refused decision names who may decide it, never the bare gate word", asy
   await expect(alert).not.toContainText("Forbidden");
   // The request is still waiting.
   await expect(page.locator(`[data-approval-id="${FR1}"]`)).toHaveCount(1);
+});
+
+test("a bare array where the contract says a page is refused, never half read", async ({ page, request }) => {
+  await request.post("/_stub/reset");
+  await page.addInitScript(controllerHandoff);
+  await page.route("**/api/v1/staff/approvals?*", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) }),
+  );
+  await page.goto("/");
+  await expect(page.locator("[data-error]")).toContainText("The approvals list was not readable.");
+  await expect(page.locator("[data-approval-id]")).toHaveCount(0);
 });

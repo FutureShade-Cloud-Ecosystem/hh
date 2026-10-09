@@ -3,16 +3,6 @@
 // loud. Nothing here computes money and nothing here is rendered.
 import { formatMoney } from "./gl-money.js";
 
-/** Both shapes the core answers a list in: the bare array it sends today and the contract's page object. */
-export function readList<T>(value: unknown): T[] | null {
-  if (Array.isArray(value)) return value as T[];
-  if (typeof value === "object" && value !== null) {
-    const items = (value as { items?: unknown }).items;
-    if (Array.isArray(items)) return items as T[];
-  }
-  return null;
-}
-
 /**
  * The core files a journal request with its debit total in cents inside the
  * sentence ("(750000 cents)"). A person reads dollars, so the figure is

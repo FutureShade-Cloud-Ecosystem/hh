@@ -218,7 +218,13 @@ export function createGlWorld() {
     if (req.method === "GET" && path === "/api/v1/staff/approvals") {
       const wanted = url.searchParams.get("status");
       const rows = world.approvals.filter((a) => (wanted === null || wanted === "" || a.status === wanted) && (caller.global || a.branch_id === IDS.trenton));
-      return { status: 200, body: rows };
+      // The contract's page: items, next_cursor (the id of the last row of the page) and the limit.
+      const limit = Number(url.searchParams.get("limit") ?? 20) || 20;
+      const cursor = url.searchParams.get("cursor");
+      const from = cursor === null ? 0 : rows.findIndex((r) => r.id === cursor) + 1;
+      const items = rows.slice(from, from + limit);
+      const more = from + limit < rows.length;
+      return { status: 200, body: { items, next_cursor: more ? items[items.length - 1].id : null, limit } };
     }
     const decide = path.match(/^\/api\/v1\/staff\/approvals\/([^/]+)\/decide$/);
     if (req.method === "POST" && decide) {

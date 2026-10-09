@@ -136,16 +136,23 @@ function refused(res, status, fragment) {
 
 const decide = (as, id, approve) => call(as, "POST", `/api/v1/staff/approvals/${id}/decide`, { approve, reason: "stub" });
 
-test("the approvals queue answers the contract's rows, every branch to the controller and Trenton alone to the branch manager", async () => {
+test("the approvals queue answers the contract's page, every branch to the controller and Trenton alone to the branch manager", async () => {
   await reset();
   const mine = await call(IDS.controller, "GET", "/api/v1/staff/approvals?status=PENDING");
   assert.equal(mine.status, 200);
-  assert.ok(Array.isArray(mine.json), "the core answers a bare array");
-  mine.json.forEach((row) => holds("IdentityApproval", row));
-  assert.equal(mine.json.length, 5);
-  assert.deepEqual([...new Set(mine.json.map((r) => r.branch_id))].sort(), [IDS.kingston, IDS.trenton].sort());
+  holds("IdentityApprovalPage", mine.json);
+  assert.equal(mine.json.items.length, 5);
+  assert.equal(mine.json.next_cursor, null);
+  assert.deepEqual([...new Set(mine.json.items.map((r) => r.branch_id))].sort(), [IDS.kingston, IDS.trenton].sort());
   const theirs = await call(IDS.manager, "GET", "/api/v1/staff/approvals?status=PENDING");
-  assert.ok(theirs.json.every((r) => r.branch_id === IDS.trenton));
+  assert.ok(theirs.json.items.every((r) => r.branch_id === IDS.trenton));
+  // The cursor walks every row once.
+  const first = await call(IDS.controller, "GET", "/api/v1/staff/approvals?status=PENDING&limit=2");
+  assert.equal(first.json.items.length, 2);
+  assert.ok(typeof first.json.next_cursor === "string");
+  const second = await call(IDS.controller, "GET", `/api/v1/staff/approvals?status=PENDING&limit=2&cursor=${first.json.next_cursor}`);
+  assert.equal(second.json.items.length, 2);
+  assert.ok(second.json.items.every((r) => !first.json.items.some((f) => f.id === r.id)));
 });
 
 test("the journals, a journal, the trial balance and the branches answer the contract's shapes", async () => {
