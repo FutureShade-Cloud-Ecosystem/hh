@@ -126,8 +126,16 @@ test('the compact layout is opt in, narrow only, and its controls are at least 4
   assert.ok(at !== -1, 'a compact rule exists');
   const compactRules = css.slice(at);
   assert.ok(/max-width:\s*480px/.test(css), 'it rides the narrow breakpoint');
-  assert.ok(/min-height:\s*max\(44px,\s*var\(--hh-header-control-min\)\)/.test(compactRules), 'compact controls are 44 px tall, or the host floor when higher');
+  assert.ok(/min-height:\s*max\(44px,\s*var\(--hh-header-control-min,\s*0px\)\)/.test(compactRules), 'compact controls are 44 px tall, or the host floor when higher');
   // Nothing outside the opt in changed: the plain control rule keeps its small face.
-  assert.ok(/\.controls button \{\s*min-height: var\(--hh-header-control-min\);/.test(css));
+  assert.ok(/\.controls button \{\s*min-height: var\(--hh-header-control-min, 0px\);/.test(css));
   assert.match(readPkg('src/tokens.css'), /--hh-header-control-min:\s*0px;/, 'the knob defaults to zero, so an app that sets nothing keeps its own small face');
+});
+
+test('every read of the header floor knob carries a zero fallback, so a page without tokens.css computes the old rules', () => {
+  const css = HosAppHeader.styles.map((s) => s.cssText ?? String(s)).join('\n');
+  const reads = css.match(/var\(--hh-header-control-min[^)]*\)/g) ?? [];
+  assert.equal(reads.length, 2, 'the knob is read in the compact and the plain control rules, and nowhere else');
+  for (const read of reads) assert.equal(read, 'var(--hh-header-control-min, 0px)', 'each read names its own zero fallback');
+  // With the token undefined the reads collapse to main's rules: max(44px, 0px) is 44px, and the plain rule is 0px.
 });
