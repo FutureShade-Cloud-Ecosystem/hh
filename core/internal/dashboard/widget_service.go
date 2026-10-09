@@ -534,13 +534,13 @@ func (s *Service) SaveProfileWidgets(ctx context.Context, profile string, rows [
 // would not read.
 func (s *Service) needsPolicy(ctx context.Context, profile string) []NeedsPolicy {
 	if s.needsStore == nil {
-		return DefaultNeedsSources[profile]
+		return defaultNeedsFor(profile)
 	}
 	rows, err := s.needsStore.NeedsSources(ctx, profile)
 	if err != nil {
 		s.warn("dashboard: needs-source policy unreadable; serving the shipped defaults",
 			"profile", profile, "err", err)
-		return DefaultNeedsSources[profile]
+		return defaultNeedsFor(profile)
 	}
 	return rows
 }

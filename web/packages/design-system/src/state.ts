@@ -231,7 +231,7 @@ export const stateStyles = css`
     color: var(--hh-text);
     font-weight: 600;
   }
-  .state-indicator .icon { width: 20px; height: 20px; }
+  .state-indicator .icon { width: 20px; height: 20px; flex: none; }
   .state-empty .state-indicator { color: var(--hh-state-watch); }
   .state-loading .state-indicator { color: var(--hh-info); }
   .state-error .state-indicator { color: var(--hh-danger); }
@@ -259,7 +259,7 @@ export const stateStyles = css`
     gap: var(--hh-s-12);
   }
   .review-head { display: flex; align-items: center; gap: var(--hh-s-8); color: var(--hh-state-watch); font-weight: 600; }
-  .review-head .icon { width: 18px; height: 18px; }
+  .review-head .icon { width: 18px; height: 18px; flex: none; }
   .review-title { color: var(--hh-text); }
   .review-rows { margin: 0; display: grid; gap: var(--hh-s-8); }
   .review-row { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--hh-s-16); }

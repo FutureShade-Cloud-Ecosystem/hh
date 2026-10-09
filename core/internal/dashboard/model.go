@@ -64,8 +64,46 @@ const (
 	ProfileAdmin   = "admin"
 )
 
+// Manager profiles (0381, decision 5: one Manager Home, one profile row per manager role). A
+// manager.<role> value is a REFINEMENT of a job shape, not a sixth shape: it is born from its base
+// shape's rows (tiles, tabs, widgets, Needs-you policy) and diverges from there by editing data.
+// The dashboard read answers the caller's own role's profile, so six manager roles stop sharing the
+// controller's Home and each manager's landing becomes curatable on its own.
+//
+// ADD-ONLY, LIKE EVERY ID UNDER THIS ROOF: a stored layout row keys these strings, so a rename
+// orphans it. The closed set travels with the CHECK constraint 0381 widened (the same thirteen
+// values in every profile-keyed table) and with the OpenAPI DashboardProfile enum.
+const (
+	ProfileManagerBranch      = "manager.branch"      // born from "manager"
+	ProfileManagerSales       = "manager.sales"       // born from "manager"
+	ProfileManagerYard        = "manager.yard"        // born from "yard"; the first per-role landing (0381 §4)
+	ProfileManagerLogistics   = "manager.logistics"   // born from "yard", 0203's dock ruling kept
+	ProfileManagerProcurement = "manager.procurement" // born from "manager"
+	ProfileManagerPayables    = "manager.payables"    // born from "manager"
+	ProfileManagerController  = "manager.controller"  // born from "manager"
+	ProfileManagerGeneral     = "manager.general"     // born from "admin"
+)
+
+// ManagerBaseShape names the job shape each manager profile was born from (0381 §3). The rows are
+// copies, not a live inheritance, so this map is read only where a copy may be missing: the
+// fallback policy for an unreadable table and the quick action defaults.
+var ManagerBaseShape = map[string]string{
+	ProfileManagerBranch:      ProfileManager,
+	ProfileManagerSales:       ProfileManager,
+	ProfileManagerYard:        ProfileYard,
+	ProfileManagerLogistics:   ProfileYard,
+	ProfileManagerProcurement: ProfileManager,
+	ProfileManagerPayables:    ProfileManager,
+	ProfileManagerController:  ProfileManager,
+	ProfileManagerGeneral:     ProfileAdmin,
+}
+
 // Profiles is the closed set the migration's CHECK constraint also encodes.
-var Profiles = []string{ProfileCounter, ProfileYard, ProfileDriver, ProfileManager, ProfileAdmin}
+var Profiles = []string{
+	ProfileCounter, ProfileYard, ProfileDriver, ProfileManager, ProfileAdmin,
+	ProfileManagerBranch, ProfileManagerSales, ProfileManagerYard, ProfileManagerLogistics,
+	ProfileManagerProcurement, ProfileManagerPayables, ProfileManagerController, ProfileManagerGeneral,
+}
 
 // IsProfile reports whether p names a known layout profile.
 func IsProfile(p string) bool {
@@ -247,8 +285,18 @@ var Catalog = []TileMeta{
 		// does not NAME the card gets it appended visible, while any layout that names it (which is
 		// every save the editor makes, hides included) is honoured exactly as stored. DefaultVisible
 		// stays false: counter/yard/driver still never see it, on any path.
-		DefaultOnProfiles: map[string]bool{ProfileManager: true, ProfileAdmin: true},
-		Lead:              "Today's payments, the same count and total as the #payments channel's day line.",
+		//
+		// 0381's manager refinements join the set because a refinement must not LOSE a guarantee its
+		// base shape carried: a general manager filed under manager.general is the same owner the
+		// card was defaulted on for, and the manager.* profiles born from "manager" inherit the same
+		// promise. The two born from the dock (manager.yard, manager.logistics) stay OUT, exactly as
+		// their base shape did: the payments card was never a yard-screen card.
+		DefaultOnProfiles: map[string]bool{
+			ProfileManager: true, ProfileAdmin: true,
+			ProfileManagerBranch: true, ProfileManagerSales: true, ProfileManagerProcurement: true,
+			ProfileManagerPayables: true, ProfileManagerController: true, ProfileManagerGeneral: true,
+		},
+		Lead: "Today's payments, the same count and total as the #payments channel's day line.",
 	},
 }
 
