@@ -121,6 +121,12 @@ func depositDocumentIDs(ctx context.Context, q depositQuerier, orderID string) (
 // DepositDocumentIDsTx is the pos return's read of the order's live deposit documents, on the
 // return's own transaction (pos.DepositDocumentLister, satisfied at the composition root).
 func (w *InvoiceWriter) DepositDocumentIDsTx(ctx context.Context, tx pgx.Tx, orderID string) ([]string, error) {
+	if tx == nil { // the pool read, for a preview that holds no transaction
+		if w.pool == nil {
+			return nil, errNoDB
+		}
+		return depositDocumentIDs(ctx, w.pool, orderID)
+	}
 	return depositDocumentIDs(ctx, tx, orderID)
 }
 

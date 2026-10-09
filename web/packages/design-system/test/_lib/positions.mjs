@@ -110,9 +110,15 @@ export const PORTED_SURFACE_PREFIX = 'apps/counter-till/src/ported/';
 
 export const isPortedSurfaceFile = (file) => file.startsWith(PORTED_SURFACE_PREFIX);
 
-/** The . and @ binding names the ported files use, sigils included. */
+/** The . and @ binding names the ported files use, sigils included.
+ *
+ * Two names joined with the change orders stage 1 port, each a real use: @blur is the
+ * reference's own save-on-blur on the line edit's quantity field (order-edit.ts at the
+ * port pin), and @toggle re-reads the one Change order action when its disclosure is
+ * reopened (the yard and finance decide a change out of band; the disclosure is the
+ * port's HH wrapper, so the reference carries no word for it). */
 export const PORTED_PROPERTY_OR_EVENT = new Set([
-  '@change', '@click', '@error', '@focus', '@focusin', '@hos-customer-picker-close',
+  '@blur', '@change', '@click', '@error', '@focus', '@focusin', '@hos-customer-picker-close',
   '@hos-customer-selected', '@input', '@keydown', '@open-order', '@order-changed',
   '@order-lifecycle-loaded', '@order-status-changed', '@pointercancel', '@pointerdown',
   '@pointermove', '@pointerup', '@pos-add-echo', '@pos-add-product', '@pos-discount-apply', '@pos-discount-close', '@pos-discount-remove', '@pos-drop-exit',
@@ -122,7 +128,7 @@ export const PORTED_PROPERTY_OR_EVENT = new Set([
   '@pos-scan-resolved', '@pos-signature', '@pos-split-cancel', '@pos-split-ring',
   '@pos-step-toggle', '@pos-term-changed', '@pos-term-commit-top', '@pos-term-enter-list',
   '@pricing-doc-close', '@quick-start-clear', '@quick-start-continue', '@quick-start-park',
-  '@related-doc-open', '@submit', '@till-close-cancel', '@till-closed',
+  '@related-doc-open', '@submit', '@till-close-cancel', '@till-closed', '@toggle',
   '.active', '.alt', '.branchId', '.breakdown', '.busy', '.checked', '.complete',
   '.category', '.curated', '.customer', '.customerId', '.customerName', '.doc', '.existing', '.externalTerm',
   '.fault', '.hasCustomer', '.hasImage', '.hint', '.homeBranchId', '.info', '.label',
