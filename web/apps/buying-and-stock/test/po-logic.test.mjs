@@ -5,6 +5,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   deliveryWord,
+  draftOf,
+  landedWords,
+  relativeDay,
   incomingLines,
   isOpen,
   poRows,
@@ -37,7 +40,7 @@ test("incoming lines are read from the key the core writes, and from the contrac
 
 test("order states are words, and RECEIVED, PARTIAL and ORDERED are never buttons", () => {
   assert.equal(statusWord("ORDERED"), "Ordered");
-  assert.equal(statusWord("PARTIAL"), "Part received");
+  assert.equal(statusWord("PARTIAL"), "Partial");
   assert.equal(statusWord("RECEIVED"), "Received");
   assert.equal(statusWord("DRAFT"), "Draft");
   assert.equal(statusTone("RECEIVED"), "good");
@@ -64,8 +67,11 @@ test("the expected date must be a real date", () => {
 });
 
 test("a 403 names who may do the move; the server's own sentence is otherwise kept", () => {
-  assert.match(refusalWords("order", "Forbidden", 403), /Procurement Manager/);
-  assert.match(refusalWords("order", "Forbidden", 403), /read what is on order/);
+  const wall = refusalWords("order", "Forbidden", 403);
+  assert.equal(
+    wall,
+    "Placing, editing and cancelling a purchase order is for the Procurement Manager, the General Manager and the super admin only. The Yard Manager receives goods only; other roles can read.",
+  );
   const bill = refusalWords("post-bill", "Forbidden", 403);
   assert.match(bill, /Payables and Receivables/);
   assert.match(bill, /does not post them/);
@@ -88,4 +94,27 @@ test("quantities read plainly, with the unit unless it is a piece", () => {
   assert.equal(formatQty(-40, "pc"), "-40");
   assert.equal(formatQty(0.5, "T"), "0.5 T");
   assert.equal(formatQty(undefined, "T"), "(unknown)");
+});
+
+test("a row carries the draft that does not cover it, or none", () => {
+  assert.deepEqual(draftOf({ draft_po_id: "d1", draft_po_no: "PO-TRT-142" }), { id: "d1", no: "PO-TRT-142" });
+  assert.equal(draftOf({}), null);
+  assert.equal(draftOf({ draft_po_id: "" }), null);
+});
+
+test("promised days read against today, and far dates are left to the date", () => {
+  assert.equal(relativeDay("2031-03-04", "2031-03-02"), "in 2 days");
+  assert.equal(relativeDay("2031-03-03", "2031-03-02"), "tomorrow");
+  assert.equal(relativeDay("2031-03-02", "2031-03-02"), "today");
+  assert.equal(relativeDay("2031-03-01", "2031-03-02"), "yesterday");
+  assert.equal(relativeDay("2031-02-27", "2031-03-02"), "3 days ago");
+  assert.equal(relativeDay("2032-03-04", "2031-03-02"), "");
+  assert.equal(relativeDay("soon", "2031-03-02"), "");
+});
+
+test("what has landed reads as a count against what was ordered", () => {
+  assert.equal(landedWords([{ qty_ordered_base: 10, qty_received_base: 6, uom: "pc" }]), "6 of 10 pc landed");
+  assert.equal(landedWords([{ qty_ordered_base: 4, qty_received_base: 1, uom: "pc" }, { qty_ordered_base: 6, qty_received_base: 5, uom: "pc" }]), "6 of 10 pc landed");
+  assert.equal(landedWords([{ qty_ordered_base: 4, qty_received_base: 1, uom: "pc" }, { qty_ordered_base: 6, qty_received_base: 5, uom: "T" }]), "part landed");
+  assert.equal(landedWords([]), "");
 });

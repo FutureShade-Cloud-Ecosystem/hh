@@ -84,10 +84,12 @@ let world;
 
 function productRow(p) {
   const onOrder = world.pos
-    .filter((po) => po.status === "DRAFT" || po.status === "ORDERED" || po.status === "PARTIAL")
+    .filter((po) => po.status === "ORDERED" || po.status === "PARTIAL")
     .flatMap((po) => po.lines)
     .filter((l) => l.product === p.n)
     .reduce((sum, l) => sum + (l.qty - (l.received ?? 0)), 0);
+  // PENDING on lane B core (FROM-PRINCIPAL 72): the row carries the draft that does not cover it.
+  const draft = world.pos.find((po) => po.status === "DRAFT" && po.lines.some((l) => l.product === p.n));
   const available = p.onHand - p.reserved;
   const projected = available + onOrder;
   const short = Math.max(p.point - projected, 0);
@@ -116,6 +118,7 @@ function productRow(p) {
     lead_time_days: p.lead,
     avg_cost_cents: p.cost,
     suggested_value_cents: suggested * p.cost,
+    ...(draft === undefined ? {} : { draft_po_id: draft.id, draft_po_no: draft.no }),
   };
 }
 
@@ -255,6 +258,24 @@ async function handle(req, res) {
     const rows = PRODUCTS.filter((p) => p.unmanaged !== true).map(productRow).filter((r) => r.short_base > 0);
     rows.sort((a, b) => b.short_base - a.short_base);
     return json(res, { shortfall: rows, on_order_degraded: false });
+  }
+  if (method === "GET" && path === "/api/v1/branches") {
+    return json(res, [
+      { id: BRANCH, code: "TRT", name: "Trenton yard", address: { line1: "1 Yard Road", city: "Trenton", province: "ON", postal: "K0K 0K0", country: "CA" }, is_default: true, is_system_default: false, is_active: true },
+    ]);
+  }
+  const skus = path.match(/^\/api\/v1\/purchasing\/vendors\/([^/]+)\/skus$/);
+  if (method === "GET" && skus) {
+    const vendor = VENDORS.find((v) => uuid("a", v.n) === skus[1]);
+    if (vendor === undefined) return json(res, { items: [] });
+    const items = PRODUCTS.filter((p) => p.vendor === vendor.n).map((p) => ({
+      vendor_id: skus[1],
+      product_id: uuid("f", p.n),
+      sku: p.sku,
+      product_name: p.name,
+      vendor_sku: p.sku === "DBS-BRUS-DIM" ? "ALC-BRU-DIM-60" : `${vendor.no}-${p.sku}`,
+    }));
+    return json(res, { items });
   }
   if (method === "GET" && path === "/api/v1/purchasing/pos") {
     const status = url.searchParams.get("status");

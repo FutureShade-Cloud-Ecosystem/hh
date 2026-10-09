@@ -148,7 +148,15 @@ test("the shortfall worklist: the core's key, and each row in the contract's sha
   assert.equal(typeof res.json.on_order_degraded, "boolean");
   assert.equal(res.json.items, undefined);
   assert.equal(res.json.shortfall.length, 3);
-  for (const row of res.json.shortfall) holds("InventoryShortfallRow", row);
+  for (const row of res.json.shortfall) {
+    // PENDING on lane B core (FROM-PRINCIPAL 72): the row's draft marker. Until the contract declares
+    // draft_po_id and draft_po_no, the stub may carry exactly those two beyond the descriptor; the day the
+    // descriptor declares them this strips nothing and the whole row is held to it.
+    const declared = SCHEMA_DESCRIPTORS.InventoryShortfallRow.props ?? {};
+    const { draft_po_id, draft_po_no, ...base } = row;
+    holds("InventoryShortfallRow", declared.draft_po_id === undefined ? base : row);
+    assert.equal(draft_po_id === undefined, draft_po_no === undefined, "the two draft fields come together");
+  }
   const gap = res.json.shortfall.find((r) => r.sku === "DBS-BRUS-DIM");
   assert.equal(gap.projected_base, -40);
   assert.equal(gap.on_order_base, 0);
@@ -166,7 +174,7 @@ test("the PO register answers in the contract's shapes, and a PO reads with its 
   holds("PurchasingPODetail", one.json);
 });
 
-test("drafting from a shortfall row makes a DRAFT PO the contract's shape, and counts as on order", async () => {
+test("drafting from a shortfall row makes a DRAFT PO the contract's shape, and does not cover the row", async () => {
   await reset();
   const rows = (await call("GET", "/api/v1/inventory/shortfall")).json.shortfall;
   const gap = rows.find((r) => r.sku === "DBS-BRUS-DIM");
@@ -180,7 +188,12 @@ test("drafting from a shortfall row makes a DRAFT PO the contract's shape, and c
   assert.equal(po.json.lines[0].qty_ordered_base, 240);
   // The core's on-order leg counts DRAFT, so the line leaves the worklist (replenish.go: short is always > 0).
   const after = (await call("GET", "/api/v1/inventory/shortfall")).json.shortfall;
-  assert.equal(after.find((r) => r.sku === "DBS-BRUS-DIM"), undefined);
+  // FROM-PRINCIPAL 72: a draft never covers a shortfall. The row stays, with its draft, and the draft is not on order.
+  const stays = after.find((r) => r.sku === "DBS-BRUS-DIM");
+  assert.equal(stays.draft_po_id, made.json.po_id);
+  assert.equal(stays.draft_po_no, made.json.po_no);
+  assert.equal(stays.on_order_base, 0);
+  assert.equal(stays.projected_base, -40);
 });
 
 test("placing moves a draft to ORDERED, and the product's incoming read answers under the core's key", async () => {
@@ -198,6 +211,9 @@ test("placing moves a draft to ORDERED, and the product's incoming read answers 
   assert.equal(placed.status, 200);
   holds("PurchasingPODetail", placed.json);
   assert.equal(placed.json.status, "ORDERED");
+  // Placing is what closes the gap: only now does the row leave the worklist.
+  const left = (await call("GET", "/api/v1/inventory/shortfall")).json.shortfall;
+  assert.equal(left.find((r) => r.sku === "DBS-BRUS-DIM"), undefined);
   const incoming = await call("GET", `/api/v1/purchasing/incoming?product_id=${gap.product_id}`);
   assert.equal(incoming.status, 200);
   assert.ok(/"lines":\s*lines/.test(coreSource), "the core no longer writes the incoming read under the key lines");
@@ -234,4 +250,17 @@ test("the gate's refusal is the shared Forbidden body, and a bill cannot be post
   const walled = await call("POST", "/api/v1/inventory/reorder-po", { product_id: "x", branch_id: BRANCH, qty_base: 0 });
   assert.equal(walled.status, 403);
   assert.deepEqual(walled.json, { error: "Forbidden" });
+});
+
+test("the branch name and a vendor's codes answer in the contract's shapes", async () => {
+  await reset();
+  const branches = await call("GET", "/api/v1/branches");
+  assert.equal(branches.status, 200);
+  assert.ok(Array.isArray(branches.json));
+  for (const b of branches.json) holds("Branch", b);
+  const vendorId = (await call("GET", "/api/v1/purchasing/pos")).json.items.find((p) => p.vendor_name === "Alcli (demo)").vendor_id;
+  const skus = await call("GET", `/api/v1/purchasing/vendors/${vendorId}/skus`);
+  assert.equal(skus.status, 200);
+  for (const k of skus.json.items) holds("PurchasingVendorSKU", k);
+  assert.ok(skus.json.items.some((k) => k.vendor_sku === "ALC-BRU-DIM-60"));
 });

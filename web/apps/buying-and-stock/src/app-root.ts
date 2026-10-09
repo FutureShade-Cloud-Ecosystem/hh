@@ -144,7 +144,7 @@ export class BuyingAndStockApp extends HHElement {
         },
       });
       if (adopted) {
-        this.#roleLabel = handoff.session.roleName;
+        this.#roleLabel = handoff.session.user.name;
         clearFrontDoorHandoff();
         void this.#po.load();
       }
@@ -195,7 +195,7 @@ export class BuyingAndStockApp extends HHElement {
     if (result.ok) {
       const adopted = this.#auth.adopt(result.value);
       if (adopted) {
-        this.#roleLabel = result.value.identity.roleName;
+        this.#roleLabel = result.value.user.name;
         void this.#po.load();
         this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
       } else {
@@ -217,13 +217,13 @@ export class BuyingAndStockApp extends HHElement {
   // The theme control rides the header's named slot; its word names the
   // theme a tap moves to.
   private renderThemeControl(): TemplateResult {
-    const label = this.#theme === "light" ? "Brand theme" : "Light theme";
-    return html`<button slot="theme" type="button" class="btn btn-secondary" data-action="theme">${label}</button>`;
+    const label = this.#theme === "light" ? "Theme: Light" : "Theme: Brand";
+    return html`<button slot="theme" type="button" class="theme-btn" data-action="theme">${label}</button>`;
   }
 
   private renderSignedIn(): TemplateResult {
     return html`
-      <hos-app-header signed-in demo compact product-name="Buying and Stock" product-sub="Procurement · HH Work shell">${this.renderThemeControl()}</hos-app-header>
+      <hos-app-header signed-in demo compact product-name="Yard" product-sub="Buying and Stock · HH Work shell">${this.renderThemeControl()}</hos-app-header>
       <main class="desk">
         ${this.#po.render()}
       </main>
@@ -234,7 +234,7 @@ export class BuyingAndStockApp extends HHElement {
     const session = this.#sessions.current;
     if (session !== null) return this.renderSignedIn();
     return html`
-      <hos-app-header demo compact product-name="Buying and Stock" product-sub="Procurement · HH Work shell">${this.renderThemeControl()}</hos-app-header>
+      <hos-app-header demo compact product-name="Yard" product-sub="Buying and Stock · HH Work shell">${this.renderThemeControl()}</hos-app-header>
       <main class="desk">
         <h1>Buying and Stock</h1>
         <p class="dim">Purchase orders and the reorder worklist for the procurement manager. Demo data only.</p>

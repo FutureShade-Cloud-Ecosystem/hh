@@ -32,7 +32,7 @@ for (const size of SIZES) {
       await page.setViewportSize(size);
       const take = (order: string, name: string) => shot(page, theme, size.width, order, name);
       const brandOn = async () => {
-        if (theme === "brand") await page.getByRole("button", { name: "Brand theme" }).click();
+        if (theme === "brand") await page.getByRole("button", { name: "Theme: Light" }).click();
       };
 
       await request.post("/_stub/reset");
@@ -47,15 +47,19 @@ for (const size of SIZES) {
       await brandOn();
       await take("02", "home-k08-gap");
 
-      await page.locator("[data-shortfall-row]", { hasText: "DBS-BRUS-DIM" }).getByRole("checkbox").click();
-      await take("03", "gap-row-picked");
+      await take("03", "gap-row-picked-on-landing");
 
       await page.getByRole("button", { name: "Draft PO (1)" }).click();
       await expect(page.locator("[data-draft]")).toBeVisible();
       await take("04", "draft-from-shortfall");
 
       await page.locator("[data-field='expected']").fill("2031-03-04");
-      await page.locator("[data-field='delivery']").selectOption("DELIVERY");
+      await page.locator("[data-method='DELIVERY']").click();
+      await page.getByRole("button", { name: "Save draft" }).click();
+      await expect(page.locator("[data-open-draft]")).toBeVisible();
+      await take("04b", "drafted-not-placed-row-stays");
+
+      await page.locator("[data-open-draft]").click();
       await page.getByRole("button", { name: "Place order" }).click();
       await expect(page.locator("[data-notice]")).toContainText("Placed: PO-TRT-142");
       await take("05", "placed");

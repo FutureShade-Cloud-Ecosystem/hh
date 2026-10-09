@@ -11,7 +11,7 @@
 import type { TemplateResult } from "lit";
 import type { InventoryShortfallRow, PurchasingPO, PurchasingPODetail, Result } from "@hardscapehouse/api-client";
 import { PoApi, type DeliveryMethod } from "./po-api.js";
-import { incomingLines, poRows, refusalWords, shortfallRows, validateExpectedDate } from "./po-logic.js";
+import { draftOf, incomingLines, landedWords, poRows, refusalWords, shortfallRows, validateExpectedDate } from "./po-logic.js";
 import { formatMoney, formatQty } from "./po-money.js";
 import { incomingWords, renderDesk, type DeskModel, type DraftModel, type Tab } from "./po-views.js";
 
@@ -40,6 +40,12 @@ export class PoDesk {
   #notice = "";
   // The draft whose starting field values the screen has already been given.
   #seeded: string | null = null;
+  // The delivery the draft's segmented control holds, the branch names, the vendor's codes and the
+  // part received orders' landed words: reads the core answered, kept for the screen.
+  #method = "UNKNOWN";
+  #branchNames: ReadonlyMap<string, string> = new Map();
+  #vendorCodes: ReadonlyMap<string, string> = new Map();
+  #landed: ReadonlyMap<string, string> = new Map();
 
   constructor(api: PoApi, host: DeskHost) {
     this.#api = api;
@@ -52,11 +58,17 @@ export class PoDesk {
   async load(): Promise<void> {
     this.#phase = "loading";
     this.#host.repaint();
-    const [shortfall, orders] = await Promise.all([this.#api.shortfall(), this.#api.orders()]);
+    const [shortfall, orders, branches] = await Promise.all([this.#api.shortfall(), this.#api.orders(), this.#api.branches()]);
     if (!shortfall.ok) return this.#loadFailed(shortfall);
     if (!orders.ok) return this.#loadFailed(orders);
     this.#shortfall = shortfallRows(shortfall.value);
     this.#orders = poRows(orders.value);
+    // A branch name is a nicety: without it the screen reads the branch code.
+    if (branches.ok) this.#branchNames = new Map(branches.value.map((b) => [b.id, b.name]));
+    await this.#readLanded();
+    // The yard's gap is what the manager came for: the worst short line that has no draft is already picked.
+    const first = this.#shortfall.find((r) => draftOf(r) === null && r.projected_base < 0);
+    this.#picked = first?.product_id ?? null;
     this.#phase = "ready";
     this.#host.repaint();
   }
@@ -72,6 +84,50 @@ export class PoDesk {
     const [shortfall, orders] = await Promise.all([this.#api.shortfall(), this.#api.orders()]);
     if (shortfall.ok) this.#shortfall = shortfallRows(shortfall.value);
     if (orders.ok) this.#orders = poRows(orders.value);
+    await this.#readLanded();
+    if (this.#picked !== null && !this.#shortfall.some((r) => r.product_id === this.#picked && draftOf(r) === null)) this.#picked = null;
+  }
+
+  /** How much of each part received order has landed, from the order's own lines. */
+  async #readLanded(): Promise<void> {
+    const partial = this.#orders.filter((o) => o.status === "PARTIAL");
+    const details = await Promise.all(partial.map((o) => this.#api.order(o.id)));
+    const landed = new Map<string, string>();
+    details.forEach((d, i) => {
+      const po = partial[i];
+      if (po !== undefined && d.ok) {
+        const words = landedWords(d.value.lines);
+        if (words !== "") landed.set(po.id, words);
+      }
+    });
+    this.#landed = landed;
+  }
+
+  /** The vendor's own codes for the draft's lines, one read; a refusal leaves the column saying none on file. */
+  async #readVendorCodes(vendorId: string): Promise<void> {
+    const codes = await this.#api.vendorCodes(vendorId);
+    if (!codes.ok) return;
+    this.#vendorCodes = new Map((codes.value.items ?? []).map((c) => [c.product_id, c.vendor_sku]));
+  }
+
+  async #openDraft(poId: string): Promise<void> {
+    if (poId === "" || this.#busy) return;
+    this.#busy = true;
+    this.#clearMessages();
+    this.#host.repaint();
+    const detail = await this.#api.order(poId);
+    if (!detail.ok) {
+      this.#fail("order", detail);
+    } else {
+      await this.#readVendorCodes(detail.value.vendor_id);
+      const first = detail.value.lines[0];
+      const row = first === undefined ? null : (this.#shortfall.find((r) => r.product_id === first.product_id) ?? null);
+      this.#draft = { po: detail.value, row };
+      this.#method = detail.value.delivery_method ?? "UNKNOWN";
+      this.#seeded = null;
+    }
+    this.#busy = false;
+    this.#host.repaint();
   }
 
   // ---- the press ------------------------------------------------------------------------------
@@ -100,6 +156,13 @@ export class PoDesk {
       }
       case "draft":
         void this.#draftFromShortfall();
+        return true;
+      case "open-draft":
+        void this.#openDraft(attr("data-po-id"));
+        return true;
+      case "method":
+        this.#method = attr("data-method");
+        this.#host.repaint();
         return true;
       case "remove-line":
         void this.#removeLine(attr("data-line-id"));
@@ -150,10 +213,13 @@ export class PoDesk {
       this.#host.repaint();
       return;
     }
-    this.#draft = { po: detail.value, row };
+    await this.#readVendorCodes(detail.value.vendor_id);
     this.#picked = null;
     this.#seeded = null;
+    this.#method = detail.value.delivery_method ?? "UNKNOWN";
     await this.#reload();
+    // The row as the core now reads it: it carries the draft that does not cover it.
+    this.#draft = { po: detail.value, row: this.#shortfall.find((r) => r.product_id === row.product_id) ?? row };
     this.#busy = false;
     this.#host.repaint();
   }
@@ -175,8 +241,7 @@ export class PoDesk {
       }
       current = set.value;
     }
-    const chosen = this.#host.field("delivery");
-    const method = DELIVERY.find((d) => d === chosen);
+    const method = DELIVERY.find((d) => d === this.#method);
     if (method !== undefined && method !== (current.delivery_method ?? "UNKNOWN")) {
       const set = await this.#api.setDelivery(current.id, method);
       if (!set.ok) {
@@ -249,7 +314,8 @@ export class PoDesk {
       if (lines.ok) onOrder = incomingWords(incomingLines(lines.value));
     }
     const what = po.lines.map((l) => `${formatQty(l.qty_ordered_base, l.uom)} ${l.description}`).join(", ");
-    this.#notice = `Placed: ${po.po_no} to ${po.vendor_name}, ${what}, ${formatMoney(po.subtotal_cents)}. It shows under Incoming${onOrder === "" ? "" : ` (on order now: ${onOrder})`}. The yard team receives it in Yard Pick and Receive.`;
+    const promised = ready.expected_at === undefined || ready.expected_at === "" ? "no promised date yet" : `promised ${ready.expected_at.slice(0, 10)}`;
+    this.#notice = `Placed: ${po.po_no} to ${po.vendor_name}, ${what}, ${formatMoney(po.subtotal_cents)}.\nMoved to Ordered, ${promised}. It shows under Incoming${onOrder === "" ? "" : `; the core reads ${onOrder}`}. The yard team receives it in Yard Pick and Receive.`;
     this.#busy = false;
     this.#host.repaint();
   }
@@ -282,7 +348,6 @@ export class PoDesk {
     const draft = this.#draft;
     if (draft === null || this.#seeded === draft.po.id) return;
     set("expected", (draft.po.expected_at ?? "").slice(0, 10));
-    set("delivery", draft.po.delivery_method ?? "UNKNOWN");
     this.#seeded = draft.po.id;
   }
 
@@ -298,6 +363,11 @@ export class PoDesk {
       busy: this.#busy,
       error: this.#phase === "error" || this.#error !== "" ? this.#error : "",
       notice: this.#notice,
+      method: this.#method,
+      branchNames: this.#branchNames,
+      vendorCodes: this.#vendorCodes,
+      landed: this.#landed,
+      today: new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()),
     });
   }
 }

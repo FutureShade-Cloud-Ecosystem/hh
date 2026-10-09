@@ -9,14 +9,17 @@
 // route), set a draft's promised date and delivery, remove a draft's line, and
 // move a PO to ORDERED (place) or CANCELLED.
 import {
+  staffBranches,
   staffInventory,
   staffPurchasing,
   type ApiClient,
+  type Branch,
   type InventoryReorderResult,
   type InventoryShortfallPage,
   type PurchasingIncomingLinePage,
   type PurchasingPODetail,
   type PurchasingPOPage,
+  type PurchasingVendorSKUPage,
   type Result,
 } from "@hardscapehouse/api-client";
 
@@ -39,6 +42,16 @@ export class PoApi {
 
   order(id: string): Promise<Result<PurchasingPODetail>> {
     return staffPurchasing.purchasingGetPO(this.#client, id);
+  }
+
+  /** The branches the caller reaches: the name shown beside "Ship to". */
+  branches(): Promise<Result<Branch[]>> {
+    return staffBranches.branchesList(this.#client);
+  }
+
+  /** A vendor's own codes for our SKUs (the draft's "vendor code" column). */
+  vendorCodes(vendorId: string): Promise<Result<PurchasingVendorSKUPage>> {
+    return staffPurchasing.purchasingListVendorSKUs(this.#client, vendorId);
   }
 
   /** What is on order for one product, soonest first; the core answers it per product. */

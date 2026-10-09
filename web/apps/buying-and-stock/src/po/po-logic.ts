@@ -42,7 +42,7 @@ export function incomingLines(page: { lines?: PurchasingIncomingLine[] | null; i
 const STATUS_WORD: Record<string, string> = {
   DRAFT: "Draft",
   ORDERED: "Ordered",
-  PARTIAL: "Part received",
+  PARTIAL: "Partial",
   RECEIVED: "Received",
   CLOSED: "Closed",
   CANCELLED: "Cancelled",
@@ -96,10 +96,14 @@ export function validateExpectedDate(text: string): DateCheck {
 
 // ---- words for a refusal ------------------------------------------------------------------------------
 
-/** What each walled move is, and who may do it (the decided matrix, row 457). */
+/**
+ * What each walled move is, and who may do it. The order walls are the principal's ruling (FROM-PRINCIPAL 72):
+ * placing, editing and cancelling a PO are the Procurement Manager's, the General Manager's and super admin's;
+ * the Yard Manager receives only; the rest read. Posting a bill is Payables and Receivables' (row 457).
+ */
 const WHO_MAY: Record<string, string> = {
   order:
-    "Drafting, changing and placing purchase orders is for the Procurement Manager. Other roles can read what is on order and when it is due.",
+    "Placing, editing and cancelling a purchase order is for the Procurement Manager, the General Manager and the super admin only. The Yard Manager receives goods only; other roles can read.",
   "post-bill":
     "Posting a vendor bill is for Payables and Receivables. The Procurement Manager can read the bills against its own orders and the three way match, but does not post them.",
 };
@@ -127,4 +131,55 @@ export function refusalWords(action: string, error: string, status: number | und
   if (status >= 500) return "The server hit a problem. Nothing was changed. Try again.";
   const words = sentence(error);
   return words === "" ? "The server refused that." : words;
+}
+
+// ---- the draft the core says does not cover a row ----------------------------------------------------
+
+/**
+ * PENDING on lane B core (FROM-PRINCIPAL 72): the shortfall row will carry the draft that does not cover it.
+ * The field names are the app's reading of that change (draft_po_id, draft_po_no); the stub contract test
+ * holds the stub to them and switches to the generated descriptor the day the contract declares them.
+ */
+export type DraftMarker = { readonly id: string; readonly no: string };
+
+export function draftOf(row: InventoryShortfallRow): DraftMarker | null {
+  const marked = row as InventoryShortfallRow & { draft_po_id?: string; draft_po_no?: string };
+  if (marked.draft_po_id === undefined || marked.draft_po_id === "") return null;
+  return { id: marked.draft_po_id, no: marked.draft_po_no ?? "" };
+}
+
+// ---- dates as the yard reads them -------------------------------------------------------------------------
+
+function dayNumber(date: string): number | null {
+  const m = date.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m === null ? null : Math.floor(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) / 86_400_000);
+}
+
+/**
+ * A promised day as words against today (both YYYY-MM-DD, today in the reader's own day): "in 2 days",
+ * "tomorrow", "today", "yesterday", "3 days ago". Further than sixty days either way it is left to the
+ * date itself and this returns "".
+ */
+export function relativeDay(date: string, today: string): string {
+  const a = dayNumber(date);
+  const b = dayNumber(today);
+  if (a === null || b === null) return "";
+  const d = a - b;
+  if (Math.abs(d) > 60) return "";
+  if (d === 0) return "today";
+  if (d === 1) return "tomorrow";
+  if (d === -1) return "yesterday";
+  return d > 0 ? `in ${d} days` : `${-d} days ago`;
+}
+
+/** What has landed against an order, as the register's small line: "6 of 10 pc landed". "" when nothing is known. */
+export function landedWords(lines: readonly { qty_ordered_base: number; qty_received_base: number; uom: string }[]): string {
+  if (lines.length === 0) return "";
+  const uoms = new Set(lines.map((l) => l.uom));
+  if (uoms.size !== 1) return "part landed";
+  const ordered = lines.reduce((sum, l) => sum + l.qty_ordered_base, 0);
+  const received = lines.reduce((sum, l) => sum + l.qty_received_base, 0);
+  const unit = [...uoms][0] ?? "";
+  const fmt = (n: number): string => n.toLocaleString("en-CA", { maximumFractionDigits: 3 });
+  return `${fmt(received)} of ${fmt(ordered)} ${unit} landed`;
 }
