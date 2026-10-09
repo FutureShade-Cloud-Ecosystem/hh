@@ -117,11 +117,21 @@ export interface QueueTask {
   readonly accept_deadline_at: string | null;
 }
 
+/** One line of the pick's ticket: what the order asked for, the resolve panel's ordered figure. */
+export interface TicketLine {
+  readonly line_no: number;
+  readonly product_id: string;
+  readonly description: string;
+  readonly qty_ordered: string;
+  readonly uom: string;
+}
+
 export interface QueueEntry {
   readonly task: QueueTask;
   /** The ticket's order number, when the pick source carries one; empty says "not on the ticket". */
   readonly order_no: string;
   readonly customer_name: string;
+  readonly lines: readonly TicketLine[];
   readonly shortages: readonly Shortage[];
 }
 
@@ -280,6 +290,16 @@ export function toQueueEntry(raw: unknown): QueueEntry {
     task: toQueueTask(r.task),
     order_no: text(ticket.order_no),
     customer_name: text(ticket.customer_name),
+    lines: list(ticket.lines).map((l) => {
+      const b = bag(l);
+      return {
+        line_no: num(b.line_no),
+        product_id: text(b.product_id),
+        description: text(b.description),
+        qty_ordered: text(b.qty_ordered),
+        uom: text(b.uom),
+      };
+    }),
     shortages: list(r.shortages).map(toShortage),
   };
 }

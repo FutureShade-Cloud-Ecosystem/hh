@@ -8,22 +8,29 @@ import {
   APPROVAL_KINDS,
   APPROVAL_DECIDER_WORDS,
   RECEIVING_DIFFERENCE_WORDS,
+  RESOLUTION_CHOICES,
   SHORTAGE_RESOLVER_WORDS,
   UNSOURCED_NEEDS,
   UNSOURCED_TILES,
   approvalsRefusalWords,
   canResolve,
+  dateWords,
+  errorWords,
   figureFor,
   grouped,
   isReceivingDifference,
   kindWord,
   needsRowTarget,
+  pickedWords,
+  qtyWords,
   rangeWord,
   resolutionText,
   resolveRefusalWords,
   severityWord,
   shareNote,
   stateNote,
+  taskStatusWord,
+  welcomeLine,
 } from "../src/manager-logic.ts";
 
 test("a widget figure exists only for an ok state with a real total, and null is never zero", () => {
@@ -112,19 +119,32 @@ test("a resolve needs one of the three choices; the note rides beside the senten
   );
 });
 
+test("each resolution choice carries its one line consequence, the board's own words", () => {
+  const byKey = Object.fromEntries(RESOLUTION_CHOICES.map((c) => [c.key, c]));
+  assert.equal(byKey.backorder.consequence, "The line is backordered and the order's rep is notified.");
+  assert.equal(byKey.substitute.consequence, "Pick the swap line before the truck leaves.");
+  assert.equal(byKey.approve.consequence, "The order ships as picked; the shortfall is written off.");
+});
+
 test("the list wall's Forbidden body becomes words naming who may resolve", () => {
   assert.equal(resolveRefusalWords("Forbidden", 403), "You may not resolve this shortage. Shortages are resolved by the yard team and the yard manager.");
   assert.equal(resolveRefusalWords("shortage already resolved", 409), "shortage already resolved");
   assert.equal(SHORTAGE_RESOLVER_WORDS, "Shortages are resolved by the yard team and the yard manager.");
 });
 
-test("a kind this caller does not decide becomes the core's own words plus who decides it", () => {
+test("a kind this caller does not decide becomes plain words naming who decides it, no enum on screen", () => {
   const words = approvalsRefusalWords("MARGIN_BELOW_MINIMUM", "you do not decide MARGIN_BELOW_MINIMUM approvals", 403);
-  assert.match(words, /^you do not decide MARGIN_BELOW_MINIMUM approvals /);
-  assert.match(words, /financial controller/);
-  assert.match(words, /sales manager or branch manager in their own branch/);
+  assert.equal(
+    words,
+    "You do not decide margin approvals. Margin approvals are decided by the financial controller, " +
+      "the general manager, and a sales manager or branch manager in their own branch.",
+  );
   const cod = approvalsRefusalWords("COD_CONSTRAINT", "you do not decide COD_CONSTRAINT approvals", 403);
-  assert.match(cod, /financial controller and the general manager/);
+  assert.equal(
+    cod,
+    "You do not decide cash on delivery approvals. Cash on delivery approvals are decided by the " +
+      "financial controller and the general manager.",
+  );
   assert.equal(approvalsRefusalWords("MARGIN_BELOW_MINIMUM", "boom", 500), "boom");
 });
 
@@ -142,4 +162,52 @@ test("a receiving difference is a PARTIAL purchase order, per the ruled definiti
   assert.equal(isReceivingDifference({ po_id: "1", po_no: "PO-1", vendor_name: "", branch_id: "", status: "ORDERED", expected_at: "", open_lines: 3, qty_outstanding_base: 30 }), false);
   assert.match(RECEIVING_DIFFERENCE_WORDS, /landed part of what was ordered/);
   assert.match(RECEIVING_DIFFERENCE_WORDS, /closed short/);
+});
+
+test("quantities render as a person reads them, never the wire's padded decimal", () => {
+  assert.equal(qtyWords("4.0000"), "4");
+  assert.equal(qtyWords("12.5000"), "12.5");
+  assert.equal(qtyWords("0.7500"), "0.75");
+  assert.equal(qtyWords("0.0000"), "0");
+  assert.equal(qtyWords(""), "");
+});
+
+test("picked is ordered less short, computed only when both are honest decimals", () => {
+  assert.equal(pickedWords("12.0000", "4.0000"), "8");
+  assert.equal(pickedWords("12.0000", "12.0000"), "0");
+  assert.equal(pickedWords("12.0000", "13.0000"), null);
+  assert.equal(pickedWords("", "4.0000"), null);
+  assert.equal(pickedWords("12.0000", ""), null);
+});
+
+test("task statuses map to plain words; an unknown one is omitted, never shown raw", () => {
+  assert.equal(taskStatusWord("QUEUED"), "Waiting");
+  assert.equal(taskStatusWord("PUSHED"), "Sent");
+  assert.equal(taskStatusWord("ACCEPTED"), "Claimed");
+  assert.equal(taskStatusWord("IN_PROGRESS"), "In progress");
+  assert.equal(taskStatusWord("STAGED"), "Staged");
+  assert.equal(taskStatusWord("DONE"), "Done");
+  assert.equal(taskStatusWord("CANCELLED"), "Cancelled");
+  assert.equal(taskStatusWord("SOMETHING_ELSE"), "");
+});
+
+test("expected dates render as words; anything unparsable is omitted", () => {
+  assert.equal(dateWords("2026-10-14"), "Oct 14");
+  assert.equal(dateWords("2026-01-02"), "Jan 2");
+  assert.equal(dateWords("not-a-date"), "");
+  assert.equal(dateWords(""), "");
+});
+
+test("a one word server error becomes plain words; a sentence stays the server's own", () => {
+  assert.equal(errorWords("internal"), "Try again in a moment.");
+  assert.equal(errorWords("MARGIN_BELOW_MINIMUM"), "Try again in a moment.");
+  assert.equal(errorWords("shortage already resolved"), "shortage already resolved");
+  assert.equal(errorWords(""), "Try again in a moment.");
+});
+
+test("the welcome line names the caller in the board's own sentence", () => {
+  assert.equal(welcomeLine("Yard manager"), "Welcome back, yard manager.");
+  assert.equal(welcomeLine("Sales manager"), "Welcome back, sales manager.");
+  assert.equal(welcomeLine("General Manager"), "Welcome back, general manager.");
+  assert.equal(welcomeLine(""), "Welcome back.");
 });

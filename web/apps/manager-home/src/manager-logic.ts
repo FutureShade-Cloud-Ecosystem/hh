@@ -137,10 +137,31 @@ export const UNSOURCED_TILES: readonly { readonly title: string; readonly words:
 // -- shortage resolves -------------------------------------------------------------------------------
 
 /** The resolution choices the resolve sheet offers, each a full sentence the core records. */
-export const RESOLUTION_CHOICES: readonly { readonly key: string; readonly label: string; readonly sentence: string }[] = Object.freeze([
-  { key: "backorder", label: "Backorder the shortfall", sentence: "Backordered the shortfall; the order keeps the short line open." },
-  { key: "substitute", label: "Substitute from stock", sentence: "Substituted from stock at this branch." },
-  { key: "approve", label: "Approve the short pick", sentence: "Approved the short pick; the order goes out short." },
+export const RESOLUTION_CHOICES: readonly {
+  readonly key: string;
+  readonly label: string;
+  readonly sentence: string;
+  /** The one line consequence, the cost of a wrong click (the board's own words). */
+  readonly consequence: string;
+}[] = Object.freeze([
+  {
+    key: "backorder",
+    label: "Backorder the shortfall",
+    sentence: "Backordered the shortfall; the order keeps the short line open.",
+    consequence: "The line is backordered and the order's rep is notified.",
+  },
+  {
+    key: "substitute",
+    label: "Substitute from stock",
+    sentence: "Substituted from stock at this branch.",
+    consequence: "Pick the swap line before the truck leaves.",
+  },
+  {
+    key: "approve",
+    label: "Approve the short pick",
+    sentence: "Approved the short pick; the order goes out short.",
+    consequence: "The order ships as picked; the shortfall is written off.",
+  },
 ]);
 
 /** The note may be empty; the choice must be one of the three. The server caps the text at 400. */
@@ -172,6 +193,79 @@ export function resolveRefusalWords(error: string, status: number | undefined): 
   return error !== "" ? error : "That did not go through. Try again in a moment.";
 }
 
+// -- the words only zone (the round 1 review's P2-3) ------------------------------------------------
+//
+// No raw enum, no raw wire decimal, no raw ISO day reaches a screen: every
+// system value renders as the words a person reads, and anything this file
+// cannot say honestly is omitted by the view, never shown raw.
+
+/** A wire decimal ("4.0000") as a person reads it ("4"); "" stays "". */
+export function qtyWords(qty: string): string {
+  const trimmed = qty.trim();
+  if (trimmed === "" || !/^\d+(\.\d+)?$/.test(trimmed)) return trimmed;
+  if (!trimmed.includes(".")) return trimmed;
+  const cut = trimmed.replace(/0+$/, "").replace(/\.$/, "");
+  return cut === "" ? "0" : cut;
+}
+
+/**
+ * Picked is ordered less short, computed only when both are honest decimals and
+ * the short does not exceed the ordered. Anything else answers null and the
+ * view omits the line: never a confident wrong number.
+ */
+export function pickedWords(ordered: string, short: string): string | null {
+  if (!/^\d+(\.\d+)?$/.test(ordered.trim()) || !/^\d+(\.\d+)?$/.test(short.trim())) return null;
+  const a = Number.parseFloat(ordered);
+  const b = Number.parseFloat(short);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b > a) return null;
+  return qtyWords((a - b).toFixed(4));
+}
+
+/** Task statuses in plain words; an unknown one is omitted, never shown raw. */
+const TASK_STATUS_WORD: Readonly<Record<string, string>> = Object.freeze({
+  QUEUED: "Waiting",
+  PUSHED: "Sent",
+  ACCEPTED: "Claimed",
+  IN_PROGRESS: "In progress",
+  STAGED: "Staged",
+  DONE: "Done",
+  CANCELLED: "Cancelled",
+});
+
+export function taskStatusWord(status: string): string {
+  return TASK_STATUS_WORD[status] ?? "";
+}
+
+/** Month words for an expected day the server sends as YYYY-MM-DD. */
+const MONTH_WORD = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
+
+/** An ISO day as words ("2026-10-14" becomes "Oct 14"); unparsable answers "". */
+export function dateWords(day: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(day.trim());
+  if (m === null) return "";
+  const month = Number.parseInt(m[2], 10);
+  const date = Number.parseInt(m[3], 10);
+  if (month < 1 || month > 12 || date < 1 || date > 31) return "";
+  return `${MONTH_WORD[month - 1]} ${date}`;
+}
+
+/**
+ * A server error a person reads. A one word token (a status word, an enum) is
+ * not a sentence; it becomes plain words. A sentence stays the server's own.
+ */
+export function errorWords(error: string): string {
+  const trimmed = error.trim();
+  if (trimmed === "" || !trimmed.includes(" ")) return "Try again in a moment.";
+  return trimmed;
+}
+
+/** The board's welcome line, the caller's own role label in it. */
+export function welcomeLine(roleLabel: string): string {
+  if (roleLabel === "") return "Welcome back.";
+  const first = roleLabel.charAt(0).toLowerCase() + roleLabel.slice(1);
+  return `Welcome back, ${first}.`;
+}
+
 // -- approvals by kind --------------------------------------------------------------------------------
 
 /** The closed kind vocabulary, in the core's own order, with the words a person reads. */
@@ -201,13 +295,20 @@ export const APPROVAL_DECIDER_WORDS: Readonly<Record<string, string>> = Object.f
   FREIGHT_ABOVE_QUOTE: "Freight approvals are decided by the financial controller and the general manager.",
 });
 
-/** Map a kind refusal to plain words: the core's own sentence, then who decides this kind. */
+/** Map a kind refusal to plain words naming who decides it: no enum on screen, ever. */
 export function approvalsRefusalWords(kind: string, error: string, status: number | undefined): string {
   if (status === 403) {
+    const word = kindWord(kind).toLowerCase();
     const who = APPROVAL_DECIDER_WORDS[kind] ?? "Approvals are decided by the financial controller and the general manager.";
-    return error !== "" ? `${error} ${who}` : who;
+    return `You do not decide ${word} approvals. ${who}`;
   }
   return error !== "" ? error : "The approvals list did not load. Try again in a moment.";
+}
+
+/** A decide refusal, the same plain words for the row's own kind. */
+export function decideRefusalWords(kind: string, error: string, status: number | undefined): string {
+  if (status === 403) return approvalsRefusalWords(kind, error, status);
+  return `The decision did not go through. ${errorWords(error)}`;
 }
 
 // -- receiving -----------------------------------------------------------------------------------------
