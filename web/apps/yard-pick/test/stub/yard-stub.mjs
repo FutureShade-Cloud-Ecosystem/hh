@@ -146,7 +146,7 @@ const TICKETS = {
     requested_at: "2026-10-08T17:00:00Z",
     source: "DISPATCH",
     held_from_picking: true,
-    hold_words: "Balance due: this order waits until the balance is paid.",
+    hold_words: "Balance due",
     still_owed_cents: 43210,
     lines: [
       { line_no: 1, product_id: "1a000000-0000-4000-9000-0000000000d1", sku: "PAVER-HOLLAND", description: "Holland paver, sandstone", qty_ordered: "30.0000", uom: "EA", location: "Yard A" },

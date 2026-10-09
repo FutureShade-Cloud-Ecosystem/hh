@@ -37,6 +37,7 @@ import {
   pickSummary,
   qtyText,
   recordBlockedReason,
+  shortOf,
   shortPickWords,
   validateStage,
   skidBlockedReason,
@@ -204,6 +205,21 @@ export class YardPickApp extends HHElement {
       this.requestUpdate();
       return;
     }
+    if (action === "pick-reason") {
+      const scope = control?.getAttribute("data-scope") ?? "";
+      const reason = control?.getAttribute("data-reason") ?? "";
+      if (scope === "line") {
+        const lineNo = Number(control?.getAttribute("data-line-no") ?? "0");
+        this.#reasonMirror.set(lineNo, reason);
+        this.#draftFor(lineNo).reason = reason;
+      } else if (scope === "sheet") {
+        this.#sheetReason = reason;
+      } else if (scope === "skid") {
+        this.#skidReason = reason;
+      }
+      this.requestUpdate();
+      return;
+    }
     if (action === "save-pick") {
       void this.#savePick();
       return;
@@ -278,6 +294,8 @@ export class YardPickApp extends HHElement {
       }
       if (field === "sheet-qty") {
         this.#sheetQty = value;
+        // The SHORT tile reads live from what the yard types.
+        this.requestUpdate();
         return;
       }
       if (field === "sheet-note") {
@@ -294,25 +312,8 @@ export class YardPickApp extends HHElement {
       }
       return;
     }
-    if (target instanceof HTMLSelectElement) {
-      const value = target.value;
-      if (field === "reason") {
-        this.#reasonMirror.set(lineNo, value);
-        this.#draftFor(lineNo).reason = value;
-        this.requestUpdate();
-        return;
-      }
-      if (field === "skid-reason") {
-        this.#skidReason = value;
-        this.requestUpdate();
-        return;
-      }
-      if (field === "sheet-reason") {
-        this.#sheetReason = value;
-        this.requestUpdate();
-        return;
-      }
-    }
+    // The reasons are radio rows, not selects: they ride data-action clicks,
+    // not change events, so nothing else needs mirroring here.
   };
 
   connectedCallback(): void {
@@ -370,12 +371,9 @@ export class YardPickApp extends HHElement {
       const lineNo = Number(field.getAttribute("data-line-no") ?? "0");
       let value: string | null = null;
       if (name === "qty") value = this.#qtyMirror.get(lineNo) ?? "";
-      else if (name === "reason") value = this.#reasonMirror.get(lineNo) ?? "";
       else if (name === "short-note") value = this.#noteMirror.get(lineNo) ?? "";
       else if (name === "sheet-qty") value = this.#sheetQty;
-      else if (name === "sheet-reason") value = this.#sheetReason;
       else if (name === "sheet-note") value = this.#sheetNote;
-      else if (name === "skid-reason") value = this.#skidReason;
       else if (name === "skid-note") value = this.#skidNote;
       else if (name === "stage-where") value = this.#stageWhere;
       else if (name === "resolution") value = this.#resolveText;
@@ -626,7 +624,12 @@ export class YardPickApp extends HHElement {
       lineNo = (shortDrafted ?? ticket.lines[0]).line_no;
     }
     this.#sheetFor = lineNo;
-    this.#sheetQty = "";
+    // The board's SHORT tile starts from what the pull already measured: the
+    // ordered less what was pulled, when the line has a number; empty when it
+    // does not, never a confident guess.
+    const line = ticket.lines.find((l) => l.line_no === lineNo);
+    const pulled = line === undefined ? "" : (this.#drafts.get(lineNo)?.qty.trim() ?? this.#pick?.picked.find((p) => p.order_line_no === lineNo)?.qty_picked ?? "");
+    this.#sheetQty = line === undefined || pulled === "" ? "" : shortOf(line.qty_ordered, pulled);
     this.#sheetReason = "";
     this.#sheetNote = "";
     this.#error = "";
@@ -791,10 +794,11 @@ export class YardPickApp extends HHElement {
   }
 
   // The theme control rides the header's named slot; its word names the
-  // theme a tap moves to.
+  // theme a tap moves to. It is a control like any other: the app's own
+  // 56 px floor applies.
   private renderThemeControl(): TemplateResult {
     const label = this.#theme === "light" ? "Brand theme" : "Light theme";
-    return html`<button slot="theme" type="button" class="btn btn-secondary" data-action="theme">${label}</button>`;
+    return html`<button slot="theme" type="button" class="btn btn-secondary theme-button" data-action="theme">${label}</button>`;
   }
 
   private renderWork(): TemplateResult {
@@ -810,11 +814,14 @@ export class YardPickApp extends HHElement {
         drafts,
         editing: this.#editing,
         sheetFor: this.#sheetFor,
+        sheetQty: this.#sheetQty,
+        sheetReason: this.#sheetReason,
         resolveFor: this.#resolveFor,
         busy: this.#busy,
         error: this.#error,
         notice: this.#notice,
         skids: this.#skids,
+        skidReason: this.#skidReason,
       });
     }
     return renderQueue({

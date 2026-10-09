@@ -25,8 +25,8 @@ import {
   qtyLabel,
   qtyText,
   queueOrder,
-  reasonLabel,
   reasonPhrase,
+  reasonWord,
   recordBlockedReason,
   shortOf,
   shortPickWords,
@@ -163,13 +163,26 @@ test("the reason list is the core's own, in the order a screen shows it", () => 
   assert.equal(reasonPhrase("CONDENSED_SKIDS"), "Skids condensed");
   assert.equal(reasonPhrase("NOT_IN_YARD"), "Not in the yard");
   assert.equal(reasonPhrase("SOMETHING"), "SOMETHING");
-  assert.equal(reasonLabel("DAMAGED"), "Damaged (DAMAGED)");
 });
 
-test("the static options the screens carry match the core's list, word for word", () => {
+test("the picker's reason words are words on the board's pattern, never the core's codes", () => {
+  assert.equal(reasonWord("NOT_IN_YARD"), "Not enough on the yard");
+  assert.equal(reasonWord("DAMAGED"), "Damaged stock");
+  assert.equal(reasonWord("CONDENSED_SKIDS"), "Skids condensed");
+  assert.equal(reasonWord("COUNT_CORRECTION"), "Count corrected");
+  assert.equal(reasonWord("OTHER"), "Something else");
   for (const code of SHORT_REASONS) {
-    assert.ok(viewsSource.includes(`<option value="${code}">${reasonLabel(code)}</option>`), `views.ts is missing the static option for ${code}`);
+    const word = reasonWord(code);
+    assert.ok(!word.includes(code), `${code} leaked its own code to a screen`);
   }
+  assert.equal(reasonWord("SOMETHING"), "SOMETHING");
+});
+
+test("the screens draw the reasons as radio rows from the closed list, and no reason select remains", () => {
+  assert.ok(viewsSource.includes("SHORT_REASONS.map"), "the rows are generated from the core's closed list");
+  assert.ok(viewsSource.includes("data-reason=${code}"), "each row carries its code as the data-reason value");
+  assert.ok(viewsSource.includes("${reasonWord(code)}"), "each row shows the picker's words, never the code");
+  assert.ok(!viewsSource.includes("<option"), "a reason select survived: the reasons are radio rows now");
 });
 
 // ---- recording what was pulled ----

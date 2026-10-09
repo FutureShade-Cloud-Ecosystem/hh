@@ -33,7 +33,7 @@ const rawTicket = {
   priority: "URGENT",
   source: "DISPATCH",
   held_from_picking: true,
-  hold_words: "Balance due: this order waits until the balance is paid.",
+  hold_words: "Balance due",
   still_owed_cents: POISON,
   lines: [rawLine],
 };
@@ -88,7 +88,7 @@ test("a ticket keeps the hold's words and drops the owed figure and every cost o
   assert.ok(!everyKeyAndValue(ticket).join("|").includes(String(POISON)), "a poisoned figure survived the projection");
   const keys = everyKey(ticket).join("|").toLowerCase();
   for (const word of MONEY_WORDS) assert.ok(!keys.includes(word), `the projection kept a field named ${word}`);
-  assert.equal(ticket.hold_words, "Balance due: this order waits until the balance is paid.");
+  assert.equal(ticket.hold_words, "Balance due");
   assert.equal(ticket.held_from_picking, true);
   assert.equal(ticket.lines.length, 1);
 });

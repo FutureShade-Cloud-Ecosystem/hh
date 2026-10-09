@@ -265,9 +265,25 @@ export function reasonPhrase(code: string): string {
   return code;
 }
 
-/** The reason as a control shows it: the phrase, with the code beside it for the one who needs the exact word. */
-export function reasonLabel(code: string): string {
-  return `${reasonPhrase(code)} (${code})`;
+/**
+ * The reason in the picker's own words, the board's pattern: words a person
+ * says out loud, never the core's codes. The code rides the wire (the closed
+ * CHECK list); it never reaches a screen.
+ */
+export function reasonWord(code: string): string {
+  switch (code) {
+    case "CONDENSED_SKIDS":
+      return "Skids condensed";
+    case "DAMAGED":
+      return "Damaged stock";
+    case "NOT_IN_YARD":
+      return "Not enough on the yard";
+    case "COUNT_CORRECTION":
+      return "Count corrected";
+    case "OTHER":
+      return "Something else";
+  }
+  return code;
 }
 
 // ---- recording what was pulled ----

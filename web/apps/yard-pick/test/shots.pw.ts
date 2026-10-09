@@ -8,7 +8,7 @@
 // The brand theme is the design system's dark half; light is this app's
 // default, one tap on the header's theme control moves between them.
 import { test, expect, type Page } from "@playwright/test";
-import { resetStub, useScenario, yardHandoff } from "./helpers.js";
+import { chooseReason, resetStub, useScenario, yardHandoff } from "./helpers.js";
 import { join } from "node:path";
 
 const dir = process.env.YARD_SHOT_DIR ?? "";
@@ -68,23 +68,23 @@ for (const size of SIZES) {
       await brandOn();
       await take("04", "pick-started");
 
-      // The quantity editor on a line, with the reason a short line needs.
+      // The quantity editor on a line, with the reason rows a short line needs.
       await page.locator("[data-line]", { hasText: "Granular A gravel" }).locator(".line-row").click();
       await page.getByRole("button", { name: "Add one on" }).click();
       await page.getByRole("button", { name: "Add one on" }).click();
       await page.getByRole("button", { name: "Add one on" }).click();
       await page.getByRole("button", { name: "Add one on" }).click();
-      await page.getByLabel("Why line 1 is short").selectOption("NOT_IN_YARD");
+      await page.getByRole("radio", { name: "Not enough on the yard" }).click();
       await take("05", "line-editor");
 
-      // The skid stepper with its reason.
+      // The skid stepper with its reason rows.
       await page.getByRole("button", { name: "One skid more" }).click();
       await take("06", "skid-stepper");
-      await page.getByLabel("The reason for the skid count").selectOption("CONDENSED_SKIDS");
+      await chooseReason(page, "skid", "CONDENSED_SKIDS");
       await page.getByRole("button", { name: "One skid more" }).click();
       await page.getByRole("button", { name: "One skid more" }).click();
       await page.getByRole("button", { name: "Save skid count" }).click();
-      await expect(page.locator("[data-notice]")).toContainText("skids");
+      await expect(page.locator("[data-notice]")).toContainText("now holds");
 
       // The save: the server's words for the short pick and the backorder.
       await page.getByRole("button", { name: "Done" }).click();
@@ -99,15 +99,15 @@ for (const size of SIZES) {
       await expect(page.locator("[data-pick-order]")).toHaveText("SO-1041");
       await brandOn();
 
-      // The shortage sheet.
+      // The shortage sheet, the board's own shape.
       await page.getByRole("button", { name: "Report a shortage" }).click();
       await expect(page.locator("[data-shortage-sheet]")).toBeVisible();
       await page.getByLabel("How many are short").fill("3");
-      await page.getByLabel("Why it is short").selectOption("DAMAGED");
+      await page.getByRole("radio", { name: "Damaged stock" }).click();
       await take("08", "shortage-sheet");
 
       // The shortages on the pick, open and cleared.
-      await page.getByRole("button", { name: "Never mind" }).click();
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
       await take("09", "shortages");
       await page.locator("[data-shortage]", { hasText: "22 SQFT" }).getByRole("button", { name: "Mark it settled" }).click();
       await page.getByLabel("How the shortage was settled").fill("Substituted mixed blue from Yard C");

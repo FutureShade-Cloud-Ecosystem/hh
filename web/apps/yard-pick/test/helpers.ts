@@ -1,6 +1,6 @@
 // Shared helpers for the Playwright legs: the front door's handoff, written
 // the way the front door writes it, and the stub's controls.
-import type { APIRequestContext } from "@playwright/test";
+import type { APIRequestContext, Page } from "@playwright/test";
 
 /**
  * Runs in the page before any script: the front door's record, as the minted
@@ -69,4 +69,20 @@ export interface RepNotice {
 export async function repNotices(request: APIRequestContext): Promise<RepNotice[]> {
   const response = await request.get("/_stub/rep-notices");
   return (await response.json()) as RepNotice[];
+}
+
+const REASON_FIELD = { line: "reason", sheet: "sheet-reason", skid: "skid-reason" } as const;
+
+/**
+ * Chooses a short pick reason by its code, the way the screen offers it: a
+ * radio row when the screen draws rows, the select's option otherwise, so a
+ * leg reads the same on either shape of the control.
+ */
+export async function chooseReason(page: Page, scope: keyof typeof REASON_FIELD, code: string): Promise<void> {
+  const row = page.locator(`[data-reason-group="${scope}"] [data-reason="${code}"]`);
+  if ((await row.count()) > 0) {
+    await row.click();
+    return;
+  }
+  await page.locator(`select[data-field="${REASON_FIELD[scope]}"]`).selectOption(code);
 }

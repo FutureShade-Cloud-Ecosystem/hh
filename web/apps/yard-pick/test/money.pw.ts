@@ -58,7 +58,7 @@ test("with money laid on every read, no screen shows a figure or a money word", 
   await page.getByRole("button", { name: "One skid more" }).click();
   await page.getByRole("button", { name: "Save skid count" }).click();
   await expect(page.locator("[data-error]")).toContainText("Give the reason for the skid count.");
-  await page.getByLabel("The reason for the skid count").selectOption("COUNT_CORRECTION");
+  await page.getByRole("radio", { name: "Count corrected" }).click();
   await page.getByRole("button", { name: "One skid more" }).click();
   await page.getByRole("button", { name: "Save skid count" }).click();
   await expect(page.locator("[data-notice]")).toContainText("skids");
@@ -71,8 +71,8 @@ test("with money laid on every read, no screen shows a figure or a money word", 
   await expect(page.locator("[data-shortage-sheet]")).toBeVisible();
   screens.push(await everyWordOnScreen(page));
   await page.getByLabel("How many are short").fill("5");
-  await page.getByLabel("Why it is short").selectOption("NOT_IN_YARD");
-  await page.getByRole("button", { name: "Send shortage" }).click();
+  await page.getByRole("radio", { name: "Not enough on the yard" }).click();
+  await page.getByRole("button", { name: "Report short pick" }).click();
   await expect(page.locator("[data-notice]")).toContainText("Shortage sent");
   screens.push(await everyWordOnScreen(page));
   await page.locator("[data-shortage]", { hasText: "22 SQFT" }).getByRole("button", { name: "Mark it settled" }).click();
@@ -98,7 +98,7 @@ test("nothing the app sends to the core carries a money field", async ({ page, r
   await page.getByRole("button", { name: "Start picking" }).click();
   await page.locator("[data-line]").first().locator(".line-row").click();
   await page.getByRole("button", { name: "Add one on" }).click();
-  await page.getByLabel(/Why line \d+ is short/).selectOption("DAMAGED");
+  await page.getByRole("radio", { name: "Damaged stock" }).click();
   await page.getByRole("button", { name: "Save pick" }).click();
   await expect(page.locator("[data-notice]")).toContainText("backorder");
   const calls = await stubLog(request);

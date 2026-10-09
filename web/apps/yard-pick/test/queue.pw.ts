@@ -40,12 +40,13 @@ test("a claimed pick is marked as yours, with the made to order note on the mixe
   await expect(page.locator("[data-pick-card]", { hasText: "SO-1039" })).toContainText("Mixed load: check each pallet");
 });
 
-test("a held order waits on the board with its words, and the claim is refused in the server's sentence", async ({ page }) => {
+test("a held order waits on the board with its words and no claim to press", async ({ page }) => {
   await page.goto("/");
   const held = page.locator("[data-pick-card]", { hasText: "SO-1044" });
   await expect(held.locator("[data-held]")).toContainText("Balance due");
-  await held.getByRole("button", { name: "Claim" }).click();
-  await expect(page.locator("[data-error]")).toContainText("This order cannot reach picking until the balance is paid.");
+  await expect(held.locator("[data-hold-pill]")).toHaveText("On hold");
+  // A button the server will not honour invites a refusal: the held card offers none.
+  await expect(held.getByRole("button")).toHaveCount(0);
 });
 
 test("claiming a pick makes it mine and opens it", async ({ page }) => {
@@ -60,11 +61,18 @@ test("claiming a pick makes it mine and opens it", async ({ page }) => {
   await expect(nowMine.locator("[data-task-status]")).toHaveText("Claimed");
 });
 
-test("an open shortage leads its card and the board order keeps it first", async ({ page }) => {
+test("an open shortage leads its card with a Short pill and the first item", async ({ page }) => {
   await page.goto("/");
   const card = page.locator("[data-pick-card]", { hasText: "SO-1041" });
   await expect(card.locator("[data-queue-shortage]")).toContainText("1 open shortage");
   await expect(card.locator("[data-queue-shortage]")).toContainText("short 22 SQFT of Flagstone");
+  await expect(card.locator("[data-short-pill]")).toHaveText("Short");
+});
+
+test("the board carries its footnote in the board's own words", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator("[data-queue-footnote]")).toContainText("The queue is fed by dispatched orders.");
+  await expect(page.locator("[data-queue-footnote]")).toContainText("a short pick stays on the board until the yard manager clears it");
 });
 
 test("the empty branch state says so in words", async ({ page, request }) => {

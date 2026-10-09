@@ -25,7 +25,7 @@ test("a short pick with a reason backorders the line and the rep's read holds th
   await page.locator("[data-line]", { hasText: "Flagstone" }).locator(".line-row").click();
   await page.getByRole("button", { name: "Add one on" }).click();
   await page.getByRole("button", { name: "Add one on" }).click();
-  await page.getByLabel("Why line 1 is short").selectOption("DAMAGED");
+  await page.getByRole("radio", { name: "Damaged stock" }).click();
   await page.getByRole("button", { name: "Done" }).click();
   await page.getByRole("button", { name: "Save pick" }).click();
   await expect(page.locator("[data-notice]")).toContainText("Picked 2 of 46 SQFT. The rest (44 SQFT) is on backorder and the order's rep has been told.");
@@ -38,15 +38,29 @@ test("a short pick with a reason backorders the line and the rep's read holds th
   expect(notice?.body).toContain("Reason: Damaged");
 });
 
-test("the shortage sheet sends what is short and why, and the counter is told", async ({ page }) => {
+test("the shortage sheet is the board's: the asked and short figures, radio rows, a labelled note, the banner", async ({ page }) => {
   await openInProgress(page);
   await page.getByRole("button", { name: "Report a shortage" }).click();
-  await expect(page.locator("[data-shortage-sheet]")).toContainText("Shortage sheet · line 1");
+  const sheet = page.locator("[data-shortage-sheet]");
+  await expect(sheet).toContainText("Short pick · line 1");
+  await expect(sheet).toContainText("Flagstone, random, mixed grey");
+  // The two labelled figures on one row: what was asked, and the short tile.
+  await expect(sheet.locator("[data-tile=asked]")).toContainText("ASKED");
+  await expect(sheet.locator("[data-tile=asked]")).toContainText("46 SQFT");
+  await expect(sheet.locator("[data-tile=short]")).toContainText("SHORT");
   await page.getByLabel("How many are short").fill("10");
-  await page.getByRole("button", { name: "Send shortage" }).click();
+  await expect(sheet.locator("[data-tile=short]")).toContainText("10 SQFT");
+  // The reasons are big radio rows, in words.
+  await expect(sheet.getByRole("radio")).toHaveCount(5);
+  await expect(sheet.getByRole("radio", { name: "Not enough on the yard" })).toBeVisible();
+  // The note field is labelled on the sheet itself.
+  await expect(sheet.getByPlaceholder("Note for the counter (optional)")).toBeVisible();
+  // The banner says what sending does, in the board's words.
+  await expect(sheet.locator("[data-sheet-banner]")).toContainText("The line is backordered and the order's rep is told.");
+  await page.getByRole("button", { name: "Report short pick" }).click();
   await expect(page.locator("[data-error]")).toContainText("Give the reason.");
-  await page.getByLabel("Why it is short").selectOption("NOT_IN_YARD");
-  await page.getByRole("button", { name: "Send shortage" }).click();
+  await page.getByRole("radio", { name: "Not enough on the yard" }).click();
+  await page.getByRole("button", { name: "Report short pick" }).click();
   await expect(page.locator("[data-notice]")).toContainText("Shortage sent: 10 SQFT of Flagstone, random, mixed grey. The counter has been told.");
   await expect(page.locator("[data-shortage]", { hasText: "Short 10 SQFT" })).toBeVisible();
 });

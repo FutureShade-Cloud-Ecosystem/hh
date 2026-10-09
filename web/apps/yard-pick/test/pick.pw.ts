@@ -63,16 +63,20 @@ test("a short line needs its reason before the save, and the server backorders i
   await page.getByRole("button", { name: "Add one on" }).click();
   await page.getByRole("button", { name: "Add one on" }).click();
   await page.getByRole("button", { name: "Add one on" }).click();
-  // Four of ten pulled: the reason select is offered and the save is refused without one.
+  // Four of ten pulled: the reason rows are offered and the save is refused without one.
   await page.getByRole("button", { name: "Save pick" }).click();
   await expect(page.locator("[data-error]")).toContainText("A short line needs the reason.");
-  await page.getByLabel("Why line 1 is short").selectOption("NOT_IN_YARD");
+  await page.getByRole("radio", { name: "Not enough on the yard" }).click();
   await page.getByRole("button", { name: "Done" }).click();
   await page.getByRole("button", { name: "Save pick" }).click();
   await expect(page.locator("[data-notice]")).toContainText("Picked 4 of 10 TONNE. The rest (6 TONNE) is on backorder");
   const line = page.locator("[data-line]", { hasText: "Granular A gravel" });
   await expect(line).toContainText("6 TONNE on backorder");
-  await expect(line).toContainText("Not in the yard (NOT_IN_YARD)");
+  // Words only on the line: the core's code never reaches a picker.
+  await expect(line).toContainText("Not enough on the yard");
+  await expect(line).not.toContainText("NOT_IN_YARD");
+  // The name still reads on one row: the figures do not squeeze it to a column.
+  await expect(line.locator(".line-desc")).toBeVisible();
 });
 
 test("a quantity above what was ordered is refused in the server's own words", async ({ page }) => {
@@ -84,24 +88,51 @@ test("a quantity above what was ordered is refused in the server's own words", a
   await expect(page.locator("[data-error]")).toContainText("that is more than was ordered, the yard cannot raise a quantity");
 });
 
-test("the skid stepper changes the count with a reason, and the answer is the server's own", async ({ page }) => {
+test("the skid stepper says Not counted until it is changed, then changes with a reason", async ({ page }) => {
   await openInProgress(page);
   await expect(page.locator("[data-skids]")).toBeVisible();
-  await expect(page.locator("[data-skid-count]")).toHaveText("··");
-  // The first save without a reason is refused before the round trip.
+  // The honest unknown is words, not dots and not a confident zero.
+  await expect(page.locator("[data-skid-count]")).toHaveText("Not counted");
+  // Nothing to save yet: the reason rows are not even offered.
+  await expect(page.locator("[data-skids]").getByRole("radio")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Save skid count" })).toHaveCount(0);
   await page.getByRole("button", { name: "One skid more" }).click();
+  await expect(page.locator("[data-skid-count]")).toHaveText("1");
   await page.getByRole("button", { name: "Save skid count" }).click();
   await expect(page.locator("[data-error]")).toContainText("Give the reason for the skid count.");
-  await page.getByLabel("The reason for the skid count").selectOption("COUNT_CORRECTION");
+  await page.getByRole("radio", { name: "Count corrected" }).click();
   await page.getByRole("button", { name: "One skid more" }).click();
   await expect(page.locator("[data-skid-count]")).toHaveText("2");
   await page.getByRole("button", { name: "Save skid count" }).click();
   await expect(page.locator("[data-notice]")).toContainText("SO-1040 now holds 2 skids.");
   // A change names both numbers, and the deposit figures never show.
-  await page.getByLabel("The reason for the skid count").selectOption("CONDENSED_SKIDS");
+  await page.getByRole("radio", { name: "Skids condensed" }).click();
   for (let i = 0; i < 3; i += 1) await page.getByRole("button", { name: "One skid more" }).click();
   await page.getByRole("button", { name: "Save skid count" }).click();
   await expect(page.locator("[data-notice]")).toContainText("SO-1040 changed from 2 to 5 skids.");
+});
+
+test("the skids sit with the pull list, and the shortages come before the stage form", async ({ page }) => {
+  await openInProgress(page);
+  // On SO-1040 there is no shortage and no stage above the skids; the shape is
+  // proved where it bit: SO-1041 carries an open shortage.
+  await page.getByRole("button", { name: "Back to the queue" }).click();
+  await page.locator("[data-pick-card]", { hasText: "SO-1041" }).getByRole("button", { name: "Open" }).click();
+  const shortages = page.locator("[data-shortages]");
+  const stage = page.locator("[data-stage-form]");
+  await expect(shortages).toBeVisible();
+  await expect(stage).toBeVisible();
+  const shortagesAfter = await shortages.boundingBox();
+  const stageAfter = await stage.boundingBox();
+  expect(shortagesAfter?.y, "the shortages read before the stage form").toBeLessThan(stageAfter?.y ?? Number.MAX_VALUE);
+  const pull = page.locator("[data-pull-list]");
+  const skids = page.locator("[data-skids]");
+  const pullBox = await pull.boundingBox();
+  const skidsBox = await skids.boundingBox();
+  expect(skidsBox?.y, "the skid stepper sits with the pull list").toBeGreaterThan(pullBox?.y ?? 0);
+  const recordDoor = page.locator("[data-record-door]");
+  const recordBox = await recordDoor.boundingBox();
+  expect(skidsBox?.y).toBeLessThan(recordBox?.y ?? Number.MAX_VALUE);
 });
 
 test("the record goes to the server as one call, in the ticket's own order", async ({ page, request }) => {
