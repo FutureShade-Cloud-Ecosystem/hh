@@ -16,6 +16,10 @@
 //   - SHORT_REASONS and reasonPhrase mirror core/internal/tasks/yard_short.go
 //     and yard_notice.go (reasonPhrase is the core's own sentence form)
 //   - the skid rules mirror core/internal/tasks/yard_short.go (RecordSkids)
+//   - FORBIDDEN_BODY mirrors the role gate's shared body
+//     (core/internal/platform/authz/middleware.go), and RESOLVE_WALL_NAMES the
+//     shortage_resolvers list (core/internal/roleconfig/default.json), the
+//     labels from the role catalog
 // The words use no dashes: where the original wrote one, a comma, a colon or
 // a middle dot stands.
 
@@ -418,6 +422,30 @@ export function skidWords(answer: { skid_count: number; previous_skid_count: num
 }
 // ---- refusals ----
 
+/**
+ * The role gate's shared Forbidden body, byte for byte (the gate writes it
+ * itself, core/internal/platform/authz/middleware.go): a list walled route
+ * answers a caller off the list with this bare body and no sentence at all.
+ */
+export const FORBIDDEN_BODY = "Forbidden";
+
+/**
+ * Who may resolve a shortage, the matrix's own labels for the
+ * shortage_resolvers list the core holds (core/internal/roleconfig,
+ * default.json: yard_team, yard_manager). The refusal names them, in words,
+ * because a picker told only "Forbidden" cannot know whom to fetch.
+ */
+export const RESOLVE_WALL_NAMES: readonly string[] = ["Yard Team", "Yard Manager"];
+
+/** The plain words a list wall's refusal becomes: who may do the thing, named. */
+export function wallWords(who: readonly string[]): string {
+  const names = who.filter((n) => n !== "");
+  if (names.length === 0) return "That is not yours to settle.";
+  const named = names.map((n) => (/^the /i.test(n) ? n : `the ${n}`));
+  const list = named.length === 1 ? named[0] : `${named.slice(0, -1).join(", ")} and ${named[named.length - 1]}`;
+  return `That is not yours to settle. Only ${list} may resolve a shortage.`;
+}
+
 /** The core's refusals arrive as "module: sentence" already stripped to the sentence by the envelope; the yard reads the sentence. */
 export function plainSentence(msg: string | null | undefined): string {
   const s = (msg ?? "").trim();
@@ -429,11 +457,17 @@ export function yardError(
   error: string,
   status: number | undefined,
   fallback: string,
-  words: { notFound?: string } = {},
+  words: { notFound?: string; wall?: readonly string[] } = {},
 ): string {
   if (status === undefined || status >= 500) return fallback;
   if (status === 401) return "Your sign in has ended. Sign out and sign in again.";
-  if (status === 403) return "You are not allowed to do that on this yard.";
+  if (status === 403) {
+    // The gate's bare body is the one 403 with no sentence: a list wall. It
+    // is answered with the wall's own words naming who may, never shown as
+    // the bare "Forbidden" the gate writes.
+    if (plainSentence(error) === FORBIDDEN_BODY) return wallWords(words.wall ?? RESOLVE_WALL_NAMES);
+    return "You are not allowed to do that on this yard.";
+  }
   if (status === 404) return words.notFound ?? "That is no longer on the board.";
   const plain = plainSentence(error);
   if (plain === "") return fallback;

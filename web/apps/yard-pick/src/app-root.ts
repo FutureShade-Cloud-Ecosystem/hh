@@ -31,6 +31,7 @@ import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js"
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { YardApi, type YardPick, type YardRecordLine } from "./yard-api.js";
 import {
+  RESOLVE_WALL_NAMES,
   actionDone,
   lineIsShort,
   pickSummary,
@@ -695,7 +696,9 @@ export class YardPickApp extends HHElement {
       this.#notice = `Shortage cleared: ${answer.value.resolution}`;
       await this.#refreshPick();
     } else {
-      this.#error = yardError(answer.error, answer.status, "That did not go through. Check your signal and try again.");
+      // The resolve door is the one list wall this app meets: a caller off the
+      // shortage resolvers list is answered with the wall's own words.
+      this.#error = yardError(answer.error, answer.status, "That did not go through. Check your signal and try again.", { wall: RESOLVE_WALL_NAMES });
     }
     this.requestUpdate();
   }
