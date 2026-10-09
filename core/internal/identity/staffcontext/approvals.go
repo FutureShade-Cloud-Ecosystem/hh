@@ -364,6 +364,69 @@ func (s *Approvals) ListApprovals(ctx context.Context, caller StaffContext, stat
 	return kept, nil
 }
 
+// approvalKinds is the closed policy vocabulary a list can be narrowed to (the CHECK constraint's
+// set). A kind outside it is a bad request, never an empty answer.
+var approvalKinds = []PolicyType{PolicyMargin, PolicyCredit, PolicyCOD, PolicyJEThreshold, PolicyFreightAboveQuote}
+
+// DecidesKind answers whether the caller holds decide authority over at least one request of this
+// kind in a branch it reaches, under the configured floor set (exception_approvers). It probes the
+// same CanApproveFloor rule the decide path runs: a global caller is probed once, a scoped one at
+// each granted branch, and the margin arm at each salesperson role a branch scoped approver may
+// decide for (row 743).
+func (s *Approvals) DecidesKind(caller StaffContext, kind PolicyType) bool {
+	branches := []string{""}
+	if caller.Scope != ScopeGlobal {
+		branches = branches[:0]
+		for b := range caller.Branches {
+			branches = append(branches, b)
+		}
+	}
+	roles := []string{""}
+	if kind == PolicyMargin {
+		roles = []string{"INSIDE_SALES", "OUTSIDE_SALES"}
+	}
+	for _, b := range branches {
+		for _, role := range roles {
+			if CanApproveFloor(caller, kind, b, role, s.floorApprovers) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ListApprovalsByKind is ListApprovals narrowed to one policy kind, for a kind the caller decides.
+// An empty kind is the unchanged list. An unknown kind is a 400; a known kind the caller holds no
+// decide authority over is a 403, so a surface drawing a tab per kind has one honest answer for
+// which tabs exist. The narrowing runs after ListApprovals, so the branch fence and the floor
+// request read rule apply exactly as they do to the whole list.
+func (s *Approvals) ListApprovalsByKind(ctx context.Context, caller StaffContext, status string, kind PolicyType) ([]ApprovalRequest, error) {
+	if kind == "" {
+		return s.ListApprovals(ctx, caller, status)
+	}
+	known := false
+	for _, k := range approvalKinds {
+		known = known || k == kind
+	}
+	if !known {
+		return nil, clientErr(http.StatusBadRequest, "unknown approval kind")
+	}
+	if !s.DecidesKind(caller, kind) {
+		return nil, clientErr(http.StatusForbidden, "you do not decide %s approvals", kind)
+	}
+	list, err := s.ListApprovals(ctx, caller, status)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ApprovalRequest, 0, len(list))
+	for _, r := range list {
+		if r.Policy == kind {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
 // DecideApproval enforces the authority model, bridges a JE decision to the GL maker-checker (GL first),
 // then persists the decision via a compare-and-swap and fires the decision echo.
 //

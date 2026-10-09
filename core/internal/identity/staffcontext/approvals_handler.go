@@ -102,7 +102,7 @@ func (h *ApprovalsHandler) listApprovals(w http.ResponseWriter, r *http.Request,
 		httpx.Error(w, http.StatusUnauthorized, "no caller")
 		return
 	}
-	list, err := h.svc.ListApprovals(r.Context(), caller, r.URL.Query().Get("status"))
+	list, err := h.svc.ListApprovalsByKind(r.Context(), caller, r.URL.Query().Get("status"), PolicyType(r.URL.Query().Get("kind")))
 	if err != nil {
 		writeApprovalErr(w, r, err)
 		return

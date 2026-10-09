@@ -161,7 +161,11 @@ const posCounterSurfaceID = PlatformSurfaceCounter
 // not just the caller's: a platform operator is setting a floor for a whole deployment, so "does
 // any till at this dealer already use that key for something else" is the question, and asking it
 // of one job shape would answer it for one desk.
-var counterRosterProfiles = []string{"counter", "yard", "driver", "manager", "admin"}
+var counterRosterProfiles = []string{
+	"counter", "yard", "driver", "manager", "admin",
+	"manager.branch", "manager.sales", "manager.yard", "manager.logistics",
+	"manager.procurement", "manager.payables", "manager.controller", "manager.general",
+}
 
 // DealerRosterFor reads the DEALER OVERRIDE tier for one surface, the level immediately above the
 // platform roster, and the one whose disagreements with it are invisible from either screen.

@@ -45,7 +45,7 @@ func yardOrderRefusal(err error) error {
 		return fmt.Errorf("%w (%v)", tasks.ErrAboveOrdered, err)
 	case errors.Is(err, order.ErrNotFound), errors.Is(err, order.ErrLineNotFound):
 		return fmt.Errorf("%w: %v", tasks.ErrNotFound, err)
-	case errors.Is(err, order.ErrLineInUse), errors.As(err, &notEditable):
+	case errors.Is(err, order.ErrLineInUse), errors.Is(err, order.ErrCreditedAway), errors.As(err, &notEditable):
 		return fmt.Errorf("%w: %v", tasks.ErrOrderRefused, err)
 	}
 	return err
