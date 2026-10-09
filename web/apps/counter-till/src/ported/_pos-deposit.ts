@@ -8,6 +8,7 @@ import type { PaymentOption } from './_pos-preview.js';
 
 export const SHAPE_DEPOSIT_ON_ACCOUNT = 'DEPOSIT_NOW_REST_ON_ACCOUNT';
 export const SHAPE_DEPOSIT_DUE_LATER = 'DEPOSIT_NOW_REST_DUE_LATER';
+export const SHAPE_PAY_BEFORE_RELEASE = 'PAY_BEFORE_RELEASE';
 
 /** Whichever deposit shape the server offered for this account, or null when it offered none. */
 export function depositOption(options: readonly PaymentOption[]): PaymentOption | null {
@@ -20,6 +21,28 @@ export function depositOffered(saleType: string, options: readonly PaymentOption
   if (option === null || saleType === 'COLLECT_NOW') return false;
   // A COD sale is pay before release by definition: its line two is never "on account".
   return !(saleType === 'COD' && option.shape === SHAPE_DEPOSIT_ON_ACCOUNT);
+}
+
+/**
+ * The row 1214 ruling: whether the server offered the no deposit pay before release shape, the
+ * former COD fulfilment tile's ring. The server alone decides (the Cash On Demand account's own
+ * option, dropped when the branch's switch is off); the till reads the answer and computes nothing.
+ */
+export function payBeforeReleaseOffered(options: readonly PaymentOption[]): boolean {
+  return options.some((o) => o.shape === SHAPE_PAY_BEFORE_RELEASE);
+}
+
+/**
+ * The ring's facts for the pay before release shape: the COD sale type on the fulfilment of the
+ * chosen tile (any fulfilment; the goods never leave at ring), no deposit. The tender is not the
+ * shape's to choose: it stays the settlement method the counter picked, and nothing captures at
+ * ring.
+ */
+export function payBeforeReleaseRingFacts(
+  saleType: string,
+): { saleType: 'COD'; fulfilment: 'PICKUP' | 'WILL_CALL' | 'DELIVERY' } {
+  const fulfilment = saleType === 'DELIVERED' ? 'DELIVERY' : saleType === 'COLLECT_LATER' ? 'WILL_CALL' : 'PICKUP';
+  return { saleType: 'COD', fulfilment };
 }
 
 /** The sentence under the two lines: the server's words for why this account has this shape, or none. */

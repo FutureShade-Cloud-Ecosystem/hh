@@ -114,12 +114,13 @@ test("the preview is asked again when the lines, the customer or the fulfilment 
   await expect(total).toContainText("$40.68");
   expect((bodies.at(-1)?.lines as unknown[]).length).toBe(2);
 
-  // The fulfilment: choosing COD asks again, naming the sale type and fulfilment.
+  // The fulfilment: choosing Will-call asks again, naming the sale type. (The row 1214 ruling
+  // removed the COD tile whose choice used to stand here; a fulfilment rides the preview body
+  // only on the pay before release shape's ring, never its read.)
   const before = bodies.length;
-  await page.getByRole("button", { name: /^COD/ }).click();
+  await page.getByRole("button", { name: "Will-call" }).click();
   await expect.poll(() => bodies.length).toBeGreaterThan(before);
-  expect(bodies.at(-1)?.sale_type).toBe("COD");
-  expect(bodies.at(-1)?.fulfilment).toBeTruthy();
+  expect(bodies.at(-1)?.sale_type).toBe("COLLECT_LATER");
   // Nothing in any ask is a tender.
   for (const body of bodies) expect(body).not.toHaveProperty("tender");
 });
