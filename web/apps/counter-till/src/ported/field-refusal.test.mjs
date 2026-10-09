@@ -46,7 +46,7 @@ test('the shared visibility validator anchors to the column the screen actually 
 test('a sentence that names no knob names no field', () => {
   for (const msg of [
     'Nothing was saved because the request could not be read',
-    'changing dealer screen settings is limited to administrators',
+    'changing dealer screen settings is limited to the General Manager, Financial Controller, HR or Platform Administrator',
     'internal error',
     'branch_id is required',
     '',
@@ -83,8 +83,8 @@ test('a refusal for a control this screen does not render still reaches the read
     'a knob this screen does not draw must not be swallowed',
   );
   assert.equal(
-    formRefusal(fieldRefusal('changing dealer screen settings is limited to administrators'), rendered),
-    'changing dealer screen settings is limited to administrators',
+    formRefusal(fieldRefusal('changing dealer screen settings is limited to the General Manager, Financial Controller, HR or Platform Administrator'), rendered),
+    'changing dealer screen settings is limited to the General Manager, Financial Controller, HR or Platform Administrator',
     'and a refusal that names no knob at all belongs at the top',
   );
   assert.equal(formRefusal(null, rendered), '');

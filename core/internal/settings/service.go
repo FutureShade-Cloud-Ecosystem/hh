@@ -123,9 +123,9 @@ type NotAdminError struct{ RoleCode string }
 
 func (e *NotAdminError) Error() string {
 	if e.RoleCode == "" {
-		return "settings: changing dealer screen settings is limited to administrators"
+		return "settings: changing dealer screen settings is limited to the General Manager, Financial Controller, HR or Platform Administrator"
 	}
-	return fmt.Sprintf("settings: changing dealer screen settings is limited to administrators, %s cannot do it; ask a tech admin", e.RoleCode)
+	return fmt.Sprintf("settings: changing dealer screen settings is limited to the General Manager, Financial Controller, HR or Platform Administrator; %s cannot do it", e.RoleCode)
 }
 
 // SurfaceConfig is the GET /api/v1/surfaces/{surface}/config answer.

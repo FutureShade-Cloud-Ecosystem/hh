@@ -618,7 +618,7 @@ func (s *RegisterService) SetPolicy(ctx context.Context, p RegisterPolicy) error
 		return httpx.BadRequestf("no authenticated staff caller")
 	}
 	if !caller.IsAdmin() {
-		return httpx.BadRequestf("changing dealer screen settings is limited to administrators, ask a tech admin")
+		return httpx.BadRequestf("billing: changing dealer screen settings is limited to the General Manager, Financial Controller, HR or Platform Administrator")
 	}
 	if !containsString([]string{VisibilityManagerUp, VisibilityAllStaff, VisibilityHidden}, p.AccountPositionVisibility) {
 		return httpx.BadRequestf("account position visibility must be MANAGER_UP, ALL_STAFF or HIDDEN")
