@@ -75,6 +75,7 @@ const port = Number(process.env.CT_STUB_PORT ?? 4821);
 const FLOWS = [
   { flow: "sales", role_code: "inside_sales", label: "Sales" },
   { flow: "sales-manager", role_code: "sales_manager", label: "Sales manager" },
+  { flow: "yard-manager", role_code: "yard_manager", label: "Yard manager" },
 ];
 
 // The minted accounts, one per flow, shaped field for field like the staff
@@ -103,6 +104,15 @@ const USERS = {
     display_name: "Sales manager (demo)",
     role_code: "sales_manager",
     role_name: "Sales Manager",
+    tier: 2,
+    scope: "BRANCH",
+  },
+  "yard-manager": {
+    user_id: "demo-account-yard-manager",
+    email: "yard-manager@demo.invalid",
+    display_name: "Yard manager (demo)",
+    role_code: "yard_manager",
+    role_name: "Yard Manager",
     tier: 2,
     scope: "BRANCH",
   },
@@ -141,7 +151,11 @@ const BRANCHES = [
 
 // Each account's grant reaches one branch: the demo logins work the Trenton
 // counter. Kingston exists so a fence is observable, never reachable.
-const ACCOUNT_BRANCH = { "demo-account-sales": TRENTON_ID, "demo-account-sales-manager": TRENTON_ID };
+const ACCOUNT_BRANCH = {
+  "demo-account-sales": TRENTON_ID,
+  "demo-account-sales-manager": TRENTON_ID,
+  "demo-account-yard-manager": TRENTON_ID,
+};
 
 // The counter catalogue. list_cents is the retail anchor; branch_cost_cents is
 // the weighted cost the margin glance reads, per branch. The edge restraint

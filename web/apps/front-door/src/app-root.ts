@@ -1,10 +1,10 @@
 // The front door: the demo box's first screen (HH-DEMO-1 D2). One element,
 // three states, one header.
 //
-//   picker      pre-auth: "Pick a role to walk the demo.", the two live role
-//               cards, and the decided matrix's eleven other roles as coming
+//   picker      pre-auth: "Pick a role to walk the demo.", the live role
+//               cards, and the decided matrix's other roles as coming
 //               rows that show their modules and never tap.
-//   home        post-auth: the role's modules as tiles. The box's two live
+//   home        post-auth: the role's modules as tiles. The box's live
 //               modules navigate (D1 wires the routes); the manager's three
 //               not-yet-on-the-box modules open the polite coming-soon page.
 //   coming-soon a module a tile pointed at that the box does not serve yet.
@@ -374,7 +374,7 @@ export class FrontDoorApp extends HHElement {
         color: var(--hh-danger);
       }
 
-      /* ── the coming list: one collapsed disclosure. The eleven coming
+      /* ── the coming list: one collapsed disclosure. The ten coming
          roles are honesty about scope, not a page of their own: closed they
          take one row, open they show today's list unchanged, chips muted
          as they ever were. ────────────────────────────────────────────── */

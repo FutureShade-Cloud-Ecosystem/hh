@@ -32,7 +32,7 @@
 #   the served bundle carries the picker's structure: the two live card
 #     labels ("Sales", "Sales manager"), the eleven coming rows' labels, the
 #     Coming heading, and the demo badge's copy;
-#   /api/v1/demo/flows answers the closed table's two flows;
+#   /api/v1/demo/flows answers the closed table's three flows;
 #   POST /api/v1/demo/session without the phrase is refused by the gate, and
 #     with it mints for both flow ids the front door maps (sales,
 #     sales-manager);
@@ -267,8 +267,8 @@ done
 echo "== the demo routes through the gate"
 flows="$(curl -s -u "demo:$PHRASE" "$BASE/api/v1/demo/flows")"
 case "$flows" in
-	*'"flow":"sales"'*'"flow":"sales-manager"'*)
-		pass "/api/v1/demo/flows answers the closed table's two flows"
+	*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"yard-manager"'*)
+		pass "/api/v1/demo/flows answers the closed table's three flows"
 		;;
 	*) fail "/api/v1/demo/flows did not answer the two flows: $flows" ;;
 esac

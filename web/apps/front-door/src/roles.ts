@@ -5,14 +5,15 @@
 // read only; this branch does not carry a copy of it). The rule the D2 brief
 // gives, applied to that record once, by hand, here:
 //
-//   - The two roles whose logins the demo mints today are LIVE:
-//     inside_sales and sales_manager, labelled on the cards the way the demo
-//     adapter's contract names them ("Sales", "Sales manager" - the flows
-//     route's own labels, the same rule the till's entry view follows, so
-//     every name-based selector keeps reading exactly those words). The flow
-//     ids are the till's own mapping: inside_sales -> "sales",
-//     sales_manager -> "sales-manager".
-//   - The eleven others are COMING. Each shows the modules the matrix gives
+//   - The three roles whose logins the demo mints today are LIVE:
+//     inside_sales, sales_manager and yard_manager, labelled on the cards the
+//     way the demo adapter's contract names them ("Sales", "Sales manager",
+//     "Yard manager" - the flows route's own labels, the same rule the till's
+//     entry view follows, so every name-based selector keeps reading exactly
+//     those words). The flow ids are the till's own mapping: inside_sales ->
+//     "sales", sales_manager -> "sales-manager", yard_manager ->
+//     "yard-manager".
+//   - The ten others are COMING. Each shows the modules the matrix gives
 //     that role at work, manage or admin level, by the surfaces table's own
 //     names; read cells (and none) show nothing. A coming role is never
 //     tappable.
@@ -20,7 +21,9 @@
 //     modules of the box plus Manager Home, Dealer Admin and House Messages,
 //     the modules the matrix gives him at work or manage level, shown as the
 //     modules he will see and never navigable to nothing (they open the
-//     polite coming-soon page).
+//     polite coming-soon page). The yard manager's five follow the same rule:
+//     Manager Home (live, under /home/) plus the four modules the matrix
+//     gives the role that the box does not serve yet.
 //
 // A module the matrix gives a live role but the box does not serve yet is a
 // coming tile for that role, not a silent omission: the chips and the tiles
@@ -47,19 +50,22 @@ export interface ModuleTile {
 /** The live roles' tiles, shared by both roles where the box serves them. */
 const TILL_TILE: ModuleTile = { name: "Counter Till", icon: "lucide:receipt", href: "/till/" };
 const QUOTE_TILE: ModuleTile = { name: "Quote Desk", icon: "lucide:file-pen-line", href: "/quote/" };
-const MANAGER_HOME_TILE: ModuleTile = { name: "Manager Home", icon: "lucide:house", href: null };
+const MANAGER_HOME_TILE: ModuleTile = { name: "Manager Home", icon: "lucide:house", href: "/home/" };
 const DEALER_ADMIN_TILE: ModuleTile = { name: "Dealer Admin", icon: "lucide:settings", href: null };
 const HOUSE_MESSAGES_TILE: ModuleTile = {
   name: "House Messages",
   icon: "lucide:message-square",
   href: null,
 };
+const YARD_PICK_TILE: ModuleTile = { name: "Yard Pick and Receive", icon: "lucide:forklift", href: null };
+const DISPATCH_TILE: ModuleTile = { name: "Dispatch and Load Building", icon: "lucide:route", href: null };
+const BUYING_AND_STOCK_TILE: ModuleTile = { name: "Buying and Stock", icon: "lucide:boxes", href: null };
 
 /** A role the demo signs in today: a card on the picker, a home behind it. */
 export interface LiveRole {
-  readonly id: "inside_sales" | "sales_manager";
+  readonly id: "inside_sales" | "sales_manager" | "yard_manager";
   /** The demo flow id the mint takes, the till's own mapping. */
-  readonly flow: "sales" | "sales-manager";
+  readonly flow: "sales" | "sales-manager" | "yard-manager";
   /**
    * The card's label and its accessible name, alone: the demo adapter's
    * contract words, never decorated.
@@ -103,10 +109,18 @@ export const LIVE_ROLES: readonly LiveRole[] = [
     icon: "lucide:badge-check",
     tiles: [TILL_TILE, QUOTE_TILE, MANAGER_HOME_TILE, DEALER_ADMIN_TILE, HOUSE_MESSAGES_TILE],
   },
+  {
+    id: "yard_manager",
+    flow: "yard-manager",
+    label: "Yard manager",
+    line: "The yard: picks, shortages and deliveries.",
+    icon: "lucide:warehouse",
+    tiles: [MANAGER_HOME_TILE, YARD_PICK_TILE, DISPATCH_TILE, BUYING_AND_STOCK_TILE, HOUSE_MESSAGES_TILE],
+  },
 ];
 
 /**
- * The eleven coming roles, in the till's entry view's own order, each with
+ * The ten coming roles, in the till's entry view's own order, each with
  * the modules ROLE-ACCESS-r3 gives it at work, manage or admin level (read
  * cells and none show nothing). Outside Sales has no till (rows 363 and 364);
  * HR's two are House Messages and Dealer Admin, and the matrix gives its
@@ -115,17 +129,6 @@ export const LIVE_ROLES: readonly LiveRole[] = [
 export const COMING_ROLES: readonly ComingRole[] = [
   { id: "outside_sales", label: "Outside Sales", modules: ["Quote Desk", "House Messages"] },
   { id: "yard_team", label: "Yard Team", modules: ["Yard Pick and Receive", "House Messages"] },
-  {
-    id: "yard_manager",
-    label: "Yard Manager",
-    modules: [
-      "Yard Pick and Receive",
-      "Dispatch and Load Building",
-      "Buying and Stock",
-      "Manager Home",
-      "House Messages",
-    ],
-  },
   {
     id: "logistics_manager",
     label: "Logistics Manager",

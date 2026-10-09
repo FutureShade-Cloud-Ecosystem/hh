@@ -18,12 +18,12 @@ export interface ClaimProof {
 
 export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
   "sign-in-roles": [
-    { file: "10-world.pw.ts", test: "the way in's data: two flows with role codes and labels" },
-    { file: "20-sales.pw.ts", test: "the way in: two cards, the eleven coming roles untapped, and the banner" },
+    { file: "10-world.pw.ts", test: "the way in's data: three flows with role codes and labels" },
+    { file: "20-sales.pw.ts", test: "the way in: three cards, the ten coming roles untapped, and the banner" },
     { file: "30-manager.pw.ts", test: "the way in: the manager's card opens the same till under its own name" },
   ],
-  "coming-eleven": [
-    { file: "20-sales.pw.ts", test: "the way in: two cards, the eleven coming roles untapped, and the banner" },
+  "coming-ten": [
+    { file: "20-sales.pw.ts", test: "the way in: three cards, the ten coming roles untapped, and the banner" },
     { file: "30-manager.pw.ts", test: "beyond the till: the manager's reach past the counter's walls, and the cards come back" },
   ],
   "world-invented": [

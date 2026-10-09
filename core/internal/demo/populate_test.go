@@ -300,11 +300,11 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 		counts.UserBranchGrantsUnstampedOrg != 0 || counts.PortalUsersUnstampedTenant != 0 {
 		t.Errorf("the org scope did not stamp clean: %+v", counts)
 	}
-	if counts.UsersLinked != 2 || counts.UsersUnlinked != 10 {
-		t.Errorf("linked %d / unlinked %d users, want the 2 demo role accounts linked and the 10 planted rows unlinked", counts.UsersLinked, counts.UsersUnlinked)
+	if counts.UsersLinked != 3 || counts.UsersUnlinked != 10 {
+		t.Errorf("linked %d / unlinked %d users, want the 3 demo role accounts linked and the 10 planted rows unlinked", counts.UsersLinked, counts.UsersUnlinked)
 	}
-	if counts.StaffGrants != 2 || counts.StaffGrantsBranch != 2 || counts.StaffGrantsGlobal != 0 {
-		t.Errorf("staff grants %d (branch %d, global %d), want the two role accounts' Trenton grants only", counts.StaffGrants, counts.StaffGrantsBranch, counts.StaffGrantsGlobal)
+	if counts.StaffGrants != 3 || counts.StaffGrantsBranch != 3 || counts.StaffGrantsGlobal != 0 {
+		t.Errorf("staff grants %d (branch %d, global %d), want the role accounts' Trenton grants only", counts.StaffGrants, counts.StaffGrantsBranch, counts.StaffGrantsGlobal)
 	}
 	if counts.StaffGrantShapeViolations != 0 || counts.StaffGrantsUnlinked != 0 {
 		t.Errorf("grant shape or linkage defects: %+v", counts)
@@ -326,9 +326,10 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 		t.Errorf("%d user row(s) sit outside the reserved domains", outside)
 	}
 
-	// The two role accounts are exactly as the demo sign-in will resolve them.
+	// The role accounts are exactly as the demo sign-in will resolve them.
 	assertRoleAccount(t, ctx, pool, salesUserID, salesEmail, salesDisplayName, "INSIDE_SALES")
 	assertRoleAccount(t, ctx, pool, managerUserID, managerEmail, managerDisplayName, "SALES_MANAGER")
+	assertRoleAccount(t, ctx, pool, yardUserID, yardEmail, yardDisplayName, "YARD_MANAGER")
 
 	// The real-domain planted rows are inactive, renamed, re-addressed on
 	// the reserved demo domain and carry no credential.
@@ -357,13 +358,14 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 		}
 	}
 
-	// Every users row renders an invented name: the twelve display names
+	// Every users row renders an invented name: the thirteen display names
 	// this populate and the migrations' planted set allow, exactly, and
 	// nothing else. A surname token or an unreplaced placeholder on any row
 	// fails the allowlist, without the test itself naming a token.
 	allowedNames := map[string]bool{
 		salesDisplayName:                true,
 		managerDisplayName:              true,
+		yardDisplayName:                 true,
 		"Platform admin (demo)":         true,
 		"Demo teammate (demo)":          true,
 		"Homework account one (demo)":   true,
@@ -394,8 +396,8 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	if err := nameRows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if len(saw) != len(allowedNames) || len(saw) != 12 {
-		t.Errorf("the users rows render %d distinct display names, want exactly the 12 invented ones (saw: %v)", len(saw), saw)
+	if len(saw) != len(allowedNames) || len(saw) != 13 {
+		t.Errorf("the users rows render %d distinct display names, want exactly the 13 invented ones (saw: %v)", len(saw), saw)
 	}
 
 	// The receipt's letterhead row: system_settings org_name carries the

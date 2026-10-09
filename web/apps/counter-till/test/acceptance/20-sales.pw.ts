@@ -45,12 +45,13 @@ async function readSale(page: Page, bearer: string, orderId: string) {
   return answer.body;
 }
 
-test("the way in: two cards, the eleven coming roles untapped, and the banner", async ({
+test("the way in: three cards, the ten coming roles untapped, and the banner", async ({
   page,
 }, testInfo) => {
   await page.goto("/");
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Sales manager", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Yard manager", exact: true })).toBeVisible();
   // The coming roles: shown, labelled Coming, and dead controls.
   for (const role of ["Outside Sales", "Yard Team", "Driver", "Branch Manager", "General Manager", "HR"]) {
     const coming = page.getByRole("list", { name: "Coming roles" }).getByRole("button", { name: role });

@@ -13,7 +13,6 @@ import { expect, test, type Page } from "@playwright/test";
 const COMING_LABELS = [
   "Outside Sales",
   "Yard Team",
-  "Yard Manager",
   "Logistics Manager",
   "Driver",
   "Branch Manager",

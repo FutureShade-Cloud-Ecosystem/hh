@@ -28,7 +28,6 @@ import { drawIcon, iconForId } from "./_icon-consumer.js";
 export const COMING_ROLES: readonly string[] = [
   "Outside Sales",
   "Yard Team",
-  "Yard Manager",
   "Logistics Manager",
   "Driver",
   "Branch Manager",
@@ -62,10 +61,12 @@ export interface EntryView {
 const FLOW_ICONS: Record<string, string> = {
   sales: "lucide:receipt",
   "sales-manager": "lucide:badge-check",
+  "yard-manager": "lucide:warehouse",
 };
 const FLOW_BLURBS: Record<string, string> = {
   sales: "The counter sale flow.",
   "sales-manager": "The counter plus approvals and margins.",
+  "yard-manager": "The yard: picks, shortages and deliveries.",
 };
 
 export const entryStyles = css`

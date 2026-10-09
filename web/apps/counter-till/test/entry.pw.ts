@@ -15,7 +15,6 @@ import { expect, test, type Page, type Response } from "@playwright/test";
 const COMING_ROLES = [
   "Outside Sales",
   "Yard Team",
-  "Yard Manager",
   "Logistics Manager",
   "Driver",
   "Branch Manager",
@@ -30,7 +29,7 @@ function flowsCall(page: Page): Promise<Response> {
   return page.waitForResponse((response) => response.url().endsWith("/api/v1/demo/flows"));
 }
 
-test("the entry page shows the two demo role cards and the eleven coming roles", async ({ page }) => {
+test("the entry page shows the three demo role cards and the ten coming roles", async ({ page }) => {
   const flows = flowsCall(page);
   await page.goto("/");
   // The demo org rides on the flows call: it is the client configuration's
@@ -43,10 +42,13 @@ test("the entry page shows the two demo role cards and the eleven coming roles",
   const manager = page.getByRole("button", { name: "Sales manager", exact: true });
   await expect(manager).toBeVisible();
   await expect(manager).toBeEnabled();
+  const yardManager = page.getByRole("button", { name: "Yard manager", exact: true });
+  await expect(yardManager).toBeVisible();
+  await expect(yardManager).toBeEnabled();
 
   const coming = page.getByRole("list", { name: "Coming roles" });
   await expect(coming).toBeVisible();
-  await expect(coming.getByRole("listitem")).toHaveCount(11);
+  await expect(coming.getByRole("listitem")).toHaveCount(10);
   for (const role of COMING_ROLES) {
     const control = coming.getByRole("button", { name: role, exact: true });
     await expect(control).toBeVisible();

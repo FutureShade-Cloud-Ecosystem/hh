@@ -14,7 +14,7 @@
 //     and no others, and the demo database guard holds every ACTIVE user
 //     to the reserved domain.
 //
-// The table is closed: two flows, the pair the Counter Till cycle ships
+// The table is closed: three flows, the pair the Counter Till cycle ships
 // (D49, DECISIONS.md). A new flow is an edit here, reviewed, never a
 // runtime input: the entry page may only ever offer what this file lists.
 package flows
@@ -91,6 +91,16 @@ var accounts = map[string]Account{
 		Label:          "Sales manager",
 		Role:           "sales_manager",
 	},
+	// The yard manager, Manager Home's first per-role landing (roadmap 2.3):
+	// the demo persona whose card opens the manager.yard profile.
+	"yard-manager": {
+		Flow:           "yard-manager",
+		PlatformUserID: "de110000-0000-4000-9000-000000000003",
+		Email:          "yard.manager@" + ReservedDomain,
+		DisplayName:    "Yard manager (demo)",
+		Label:          "Yard manager",
+		Role:           "yard_manager",
+	},
 }
 
 // Get returns the account one flow name stands for. The second return is
@@ -107,6 +117,7 @@ func All() []Account {
 	return []Account{
 		accounts["sales"],
 		accounts["sales-manager"],
+		accounts["yard-manager"],
 	}
 }
 
