@@ -120,13 +120,22 @@ type depositCancelDoc struct {
 // settleDepositDocument settles ONE live deposit document under the
 // disposition. It re-reads the document inside the caller's transaction so a
 // document that stopped being live under the cancel's lock settles nothing.
+//
+// The re-read takes the row FOR NO KEY UPDATE, the lock the payments path
+// takes on the invoices it allocates against (lockAndTotal). A payment racing
+// the cancel either commits first, and the settlement then reads its balance
+// and credits the paid part, or waits behind the settlement and is refused on
+// the voided document. Without the lock the overwrite below swallowed a
+// payment that committed between the read and the write. The lock order is
+// unchanged: the caller's order row first, then this invoice row.
 func (w *InvoiceWriter) settleDepositDocument(ctx context.Context, tx pgx.Tx, orderID, invoiceID, disposition, reason string) error {
 	var d depositCancelDoc
 	err := tx.QueryRow(ctx, `
 		SELECT id::text, invoice_no::text, customer_id::text, branch_id::text, total_cents, balance_cents
 		  FROM invoices
 		 WHERE id = $1::uuid AND doc_type = 'INVOICE' AND source_kind = 'SUPPLIER_DEPOSIT'
-		   AND status NOT IN ('DRAFT','VOID')`,
+		   AND status NOT IN ('DRAFT','VOID')
+		   FOR NO KEY UPDATE`,
 		invoiceID).Scan(&d.id, &d.no, &d.customer, &d.branch, &d.total, &d.balance)
 	if err == pgx.ErrNoRows {
 		return nil // no longer live, a raced void or a second cancel: nothing to settle

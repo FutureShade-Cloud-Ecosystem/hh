@@ -12,6 +12,7 @@ package billing
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -332,4 +333,95 @@ func TestIntegration_CancelDeposits_SecondSettlementWritesNothing(t *testing.T) 
 		t.Fatalf("the unpaid document's second settlement wrote %d account rows", credits)
 	}
 	_ = dep
+}
+
+// The settlement lock (PR272-GLM-REVIEW P2-1): a counter payment allocating
+// against the deposit invoice while the manager's cancel settles it. The
+// payment's transaction takes the invoice row FOR NO KEY UPDATE, the lock the
+// payments path takes (lockAndTotal), and moves the balance by 2500 of 4000;
+// the cancel starts while that transaction is open and is seen waiting on the
+// row; then the payment commits. The settlement's re-read must wait for the
+// payment and see its balance, so the 2500 lands as the account credit. Read
+// without the lock, the cancel computed the credit from the balance it saw
+// before the payment (4000, nothing paid), the overwrite voided the document,
+// and the 2500 vanished: the account held the payment row and no credit, so
+// the AR tie out broke by the payment's amount.
+func TestIntegration_CancelDeposits_RacingPaymentIsNotSwallowed(t *testing.T) {
+	pool := intPool(t)
+	ctx := context.Background()
+	tag := ns(t)
+	cust, orderID, dep := seedDepositOrderAt(t, pool, tag, 4_000)
+
+	pay, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = pay.Rollback(ctx) }()
+	var bal int64
+	if err := pay.QueryRow(ctx,
+		`SELECT balance_cents FROM invoices WHERE id = $1::uuid AND customer_id = $2::uuid FOR NO KEY UPDATE`,
+		dep, cust).Scan(&bal); err != nil || bal != 4_000 {
+		t.Fatalf("payment lock read = %d, %v", bal, err)
+	}
+	if _, err := pay.Exec(ctx,
+		`UPDATE invoices SET balance_cents = balance_cents - 2500, status = 'PARTIALLY_PAID', updated_at = now() WHERE id = $1::uuid`,
+		dep); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pay.Exec(ctx, `
+		INSERT INTO customer_transactions (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id)
+		VALUES ($1::uuid, 'PAYMENT', -2500, 1500, 'payment', $2::uuid, $3::uuid)`,
+		cust, dep, trentonBranch); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := NewInvoiceWriter(pool).CancelOrderDeposits(ctx, nil, orderID, "CREDIT_BACK", "racing a payment")
+		done <- err
+	}()
+
+	// Wait until the cancel is parked on a lock (the settlement's read with
+	// the fix, its overwrite without it) before the payment commits.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var waiting int
+		if err := pool.QueryRow(ctx, `
+			SELECT count(*) FROM pg_stat_activity
+			 WHERE datname = current_database() AND wait_event_type = 'Lock' AND pid <> pg_backend_pid()
+			   AND query LIKE '%invoices%'`).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting > 0 {
+			break
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("the cancel finished (%v) without waiting on the payment's row lock", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the cancel never reached a lock wait")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err := pay.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("settle: %v", err)
+	}
+
+	var credit int64
+	if err := pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(amount_cents),0) FROM customer_transactions
+		 WHERE customer_id = $1::uuid AND source_type = 'deposit_cancel'`, cust).Scan(&credit); err != nil {
+		t.Fatal(err)
+	}
+	if credit != -2_500 {
+		t.Fatalf("the account credit = %d, want the racing payment's -2500 (the payment was swallowed)", credit)
+	}
+	if _, paid, closed := depositCancelEvent(t, pool, dep); paid != 2_500 || closed != 1_500 {
+		t.Fatalf("the event paid %d closed %d, want 2500 and 1500", paid, closed)
+	}
 }
