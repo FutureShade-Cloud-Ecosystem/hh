@@ -296,7 +296,10 @@ paths:
         caller's branch reach and a not open invoice are all refused in words
         with nothing applied. preview true answers the same split without
         writing anything. The branch reach refusal answers as not found, the
-        same 404 as a missing invoice.
+        same 404 as a missing invoice. A replayed key is judged like a first
+        attempt: an invoice it paid that is outside the caller's branch reach
+        answers 404, and a key that recorded a payment for another account is
+        refused 422.
       x-role: requireStaff
       x-access:
         surfaces: [money-desk]
@@ -320,6 +323,15 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: >-
+            The payment is refused in words with nothing applied: an amount over
+            the selected invoices' payable, an invoice that is not open, an empty
+            or oversized list, the same invoice named twice, or a key already
+            spent on another account's payment
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /api/v1/ar/register/invoices/{id}/send:
     post:
       operationId: billingSendInvoice
