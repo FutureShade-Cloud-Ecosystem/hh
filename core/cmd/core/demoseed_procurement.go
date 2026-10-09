@@ -76,7 +76,17 @@ var demoProcurementPOs = []procPOSpec{
 		[]procLineSpec{{"P08", "40.0000"}, {"P10", "100.0000"}}},
 }
 
-func (b *builder) procurementWorld() {
+// reorderVendor names the usual supplier of each managed line, so a draft from the shortfall has a
+// vendor to go to (the draft refuses a line with none). Aggregates and mulch come from the granular
+// supplier, pavers, wall block and step slabs from the paver supplier.
+var reorderVendor = map[string]string{
+	"P01": "V2", "P04": "V2", "P05": "V2",
+	"P06": "V1", "P07": "V1", "P09": "V1",
+}
+
+// procurementVendors inserts the buyer's supplier set. It runs BEFORE the stock section, which
+// plants the reorder points that name these vendors, so every foreign key resolves in plan order.
+func (b *builder) procurementVendors() {
 	for _, v := range demoProcurementVendors {
 		remit := "{}"
 		if v.Email != "" {
@@ -93,6 +103,10 @@ func (b *builder) procurementWorld() {
 			"created_at", b.agoDays(90), "updated_at", b.agoDays(90),
 		))
 	}
+}
+
+// procurementWorld inserts the two open purchase orders, after the products their lines name.
+func (b *builder) procurementWorld() {
 	for _, po := range demoProcurementPOs {
 		poKey := "procurement-po:" + po.Key
 		at := b.agoDays(po.PlacedAgo)

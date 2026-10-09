@@ -136,3 +136,31 @@ func productKeyOf(t *testing.T, rows []row, productID string) string {
 	// no reorder point and fails no gap assertion above.
 	return productID
 }
+
+// TestProcurementPlan_EveryReorderPointNamesAVendorThePlanHasAlreadyInserted: the buyer's story is
+// drafting a purchase order from the shortfall, and the draft refuses a line whose reorder point
+// names no preferred vendor. The world therefore names one on every managed line, and the vendor
+// row comes earlier in the plan than the reorder point that points at it (the foreign key).
+func TestProcurementPlan_EveryReorderPointNamesAVendorThePlanHasAlreadyInserted(t *testing.T) {
+	rows, _ := buildForTest(t)
+	seen := map[string]bool{}
+	points := 0
+	for _, r := range rows {
+		f := fieldMap(r)
+		switch r.table {
+		case "vendors":
+			seen[fmt.Sprint(f["id"])] = true
+		case "product_reorder_points":
+			points++
+			v := fmt.Sprint(f["preferred_vendor_id"])
+			if v == "" || v == "<nil>" {
+				t.Errorf("the reorder point for %v at %v names no preferred vendor, a draft from the shortfall would be refused", f["product_id"], f["branch_id"])
+			} else if !seen[v] {
+				t.Errorf("the reorder point for %v names vendor %s before the plan inserts it", f["product_id"], v)
+			}
+		}
+	}
+	if points == 0 {
+		t.Fatal("the plan holds no reorder points to check")
+	}
+}
