@@ -262,8 +262,7 @@ export function errorWords(error: string): string {
 /** The board's welcome line, the caller's own role label in it. */
 export function welcomeLine(roleLabel: string): string {
   if (roleLabel === "") return "Welcome back.";
-  const first = roleLabel.charAt(0).toLowerCase() + roleLabel.slice(1);
-  return `Welcome back, ${first}.`;
+  return `Welcome back, ${roleLabel.toLowerCase()}.`;
 }
 
 // -- approvals by kind --------------------------------------------------------------------------------
