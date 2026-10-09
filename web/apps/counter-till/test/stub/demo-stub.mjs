@@ -75,6 +75,7 @@ const port = Number(process.env.CT_STUB_PORT ?? 4821);
 const FLOWS = [
   { flow: "sales", role_code: "inside_sales", label: "Sales" },
   { flow: "sales-manager", role_code: "sales_manager", label: "Sales manager" },
+  { flow: "payables-receivables", role_code: "payables_receivables", label: "Payables and Receivables" },
 ];
 
 // The minted accounts, one per flow, shaped field for field like the staff
@@ -105,6 +106,15 @@ const USERS = {
     role_name: "Sales Manager",
     tier: 2,
     scope: "BRANCH",
+  },
+  "payables-receivables": {
+    user_id: "demo-account-payables-receivables",
+    email: "payables-receivables@demo.invalid",
+    display_name: "Payables and Receivables (demo)",
+    role_code: "payables_receivables",
+    role_name: "Payables and Receivables",
+    tier: 2,
+    scope: "GLOBAL",
   },
 };
 
