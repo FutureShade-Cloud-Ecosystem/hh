@@ -15532,6 +15532,255 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/pos/returns/customer-lines:
+    get:
+      operationId: posCustomerReturnLines
+      tags:
+        - staff-pos
+      summary: Read one customer's every sales order with its returnable lines
+      description: "The pre-return read of the returns-across flow: every sales order the customer holds, till rings and quote conversions alike, newest first, bounded by limit. Each line's open quantity is the same netting the commit guard reads, so the screen and the guard cannot disagree. A scoped caller sees only the branches their resolved authority reaches, the other branches' orders simply absent; naming an unreachable branch is the wall's 403. The house WALK-IN account is answered only through the number filter, never as a list of every walk in sale, and the filter never leaves that account's own orders."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - counter-till
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: customer_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: The customer; leave it out with a number to read the WALK-IN house account's sale (the till carries no id for it); neither is a 400
+        - name: branch_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: number
+          in: query
+          required: false
+          schema:
+            type: string
+          description: A receipt or order number (an order number or an invoice number, with or without the hash, or the bare digits a branch's numbers end in) narrowing the answer to that order; required for the WALK-IN account
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The customer's orders with their returnable lines
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosCustomerLines"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          description: The house WALK-IN account asked without a receipt or order number (its sales are never listed)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/pos/returns-across:
+    post:
+      operationId: posCreateReturnAcross
+      tags:
+        - staff-pos
+      summary: Commit one credit note across several orders of one customer (idempotent; 200 on a replay)
+      description: "The credit note across orders: several orders of ONE customer at ONE branch returned in ONE transaction, each order keeping its own return number and its own journal, the note holding the totals summed over its children. The approval threshold judges the note total. Idempotent on the note's own key; keys in the reserved rreq: namespace are refused. No restocking fee rides this flow."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - counter-till
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/XApproverAuthorization"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosReturnAcrossInput"
+      responses:
+        "201":
+          description: The committed note (200 with the same body on an idempotent replay)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosReturnNote"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/PosRefundApprovalRequired"
+        "422":
+          description: "A well-formed note the shape refuses: account credit for the house WALK-IN account (it goes back to cash or card), another customer's order, an order of another branch, one order twice, or an over-return on any order (the whole note refuses)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: The approver credential could not be checked, or the dealer's role configuration is not wired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/pos/returns/preview:
+    post:
+      operationId: posPreviewReturnAcross
+      tags:
+        - staff-pos
+      summary: Preview the credit of a draft note across orders, priced exactly as the commit prices it
+      description: "The credit so far: the draft note's lines (order, order line, quantity) priced by the commit's own pricing function, per line, per order and for the note, money and tax. Nothing is written and no lock is taken. The same shape rules and walls as the commit answer in the commit's own words (the branch wall, one branch, one customer, the house WALK-IN account, an over-return, a line sent twice)."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - counter-till
+        level: read
+        reason: prices a draft credit note through the commit's own pricing function and writes nothing
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosReturnPreviewInput"
+      responses:
+        "200":
+          description: The credit the note would book
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosReturnPreview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: A well-formed draft the shape refuses, in the commit's words.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/pos/swaps:
+    post:
+      operationId: posCreateSwap
+      tags:
+        - staff-pos
+      summary: Ring a swap, a credit note across orders and a new order in one move (idempotent; 200 on a replay)
+      description: "The goods coming back (orders and lines, as the credit note takes them) and the goods going out (the new order's lines) in ONE transaction. The credit is spent on the new order; what the new order does not take goes back by the original tender (leftover_method, which the server derives and refuses to differ from); what it takes beyond the credit is paid by tender (CASH default, CARD, CHEQUE, ACCOUNT). Every source order's invoice must be paid: a swap spends credit already in hand. The credit note and the new order carry the swap's id and point at each other. The approval threshold judges the credit note total. Idempotent on the swap's key; the figures are the server's, see the swap preview."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - counter-till
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/XApproverAuthorization"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosSwapInput"
+      responses:
+        "201":
+          description: The committed swap (200 with the same body on an idempotent replay)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosSwapResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "402":
+          description: The card shortfall was declined
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/PosRefundApprovalRequired"
+        "422":
+          description: "A well-formed swap the shape refuses: a source order with an open invoice, the house WALK-IN account, a leftover rail that is not the original tender, an over-return, a priced line the ring refuses."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          description: The processor refused the leftover refund; nothing was booked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: The approver credential could not be checked, or the dealer's role configuration is not wired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/pos/swaps/preview:
+    post:
+      operationId: posPreviewSwap
+      tags:
+        - staff-pos
+      summary: Preview a swap's server figures, writing nothing
+      description: The credit (priced as the commit prices it), the new order (priced as the ring prices it), the part of the credit spent on it, the leftover going back and the shortfall to collect, with the same walls and words as the swap.
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - counter-till
+        level: read
+        reason: prices a draft swap through the commit's own pricing functions and writes nothing
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosSwapInput"
+      responses:
+        "200":
+          description: The swap's figures
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosSwapPreview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: A well-formed draft the shape refuses, in the swap's words
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/pos/returns/pickups:
     get:
       operationId: posListReturnPickups
@@ -40329,6 +40578,10 @@ components:
         - status
         - replayed
       properties:
+        swap_id:
+          type: string
+          format: uuid
+          description: Present when the sale is the new order of a swap
         order_id:
           type: string
           format: uuid
@@ -40586,7 +40839,7 @@ components:
           description: The line the Summary and the receipt print for the billed deposit, present when allowed
     PosPaymentOption:
       type: object
-      description: One payment shape the counter may offer this account. A credit customer (terms above zero and a credit line) is offered pay in full, all on account, and a deposit with the rest on account; a cash on demand account, a walk in and any no credit account are offered pay in full and a deposit with the rest due later, never on account. A credit customer on hold loses on account (the hold rule's own posture, cash or card only).
+      description: "One payment shape the counter may offer this account. A credit customer (terms above zero and a credit line) is offered pay in full, all on account, and a deposit with the rest on account; a cash on demand account (zero day terms with a line) is offered pay in full, pay before release (the whole ticket unpaid at ring, no deposit: the invoice issues now and is due today, and fulfilment waits for paid in full, any fulfilment), and a deposit with the rest due later; a walk in and any no credit account are offered pay in full and a deposit with the rest due later, never on account. A credit customer on hold loses on account (the hold rule's own posture, cash or card only)."
       required:
         - shape
       properties:
@@ -40597,6 +40850,7 @@ components:
             - ALL_ON_ACCOUNT
             - DEPOSIT_NOW_REST_ON_ACCOUNT
             - DEPOSIT_NOW_REST_DUE_LATER
+            - PAY_BEFORE_RELEASE
         line_two_words:
           type: string
           enum:
@@ -41771,6 +42025,13 @@ components:
             - WRONG_ITEM
             - NO_LONGER_NEEDED
             - OTHER
+        disposition:
+          type: string
+          enum:
+            - RESTOCK
+            - DAMAGED
+            - NO_RETURN
+          description: What became of the goods. RESTOCK puts them back on the shelf, DAMAGED writes them off, NO_RETURN leaves them with the customer (the money reversal only). Goods that never left the shelf are credit only whatever is asked. Absent, the return's restock flag decides (true RESTOCK, false NO_RETURN).
     PosPickupInput:
       type: object
       description: The optional logistics pickup block on a return
@@ -41851,6 +42112,18 @@ components:
         - status
         - replayed
       properties:
+        invoice_offset_cents:
+          type: integer
+          format: int64
+          description: The part of an order that is not fully paid that came off its open invoice; the rail moved the rest
+        payment_note:
+          type: string
+          description: The split in words, when there was one
+        applied_cents:
+          type: integer
+          format: int64
+          description: A swap child; the part of the total spent on the new order
+          the rail moved the rest: null
         return_id:
           type: string
           format: uuid
@@ -41960,6 +42233,8 @@ components:
         - invoice_id
         - sale_tender
         - card_refundable
+        - returnable
+        - not_returnable_reason
         - lines
       properties:
         order_id:
@@ -41986,10 +42261,564 @@ components:
         card_refundable:
           type: boolean
           description: The original CARD capture carried a gateway reference
+        returnable:
+          type: boolean
+          description: Whether the order can be returned now
+        not_returnable_reason:
+          type: string
+          description: In words, why not (an order a quote became has no live finalised invoice yet); empty when returnable
         lines:
           type: array
           items:
             $ref: "#/components/schemas/PosReturnableLine"
+    PosReturnAcrossInput:
+      type: object
+      description: The idempotent credit-note-across-orders body. One customer, one branch, one refund rail; each line may carry its own disposition, and the whole-note restock flag stands for lines that name none; the drawer (till_session_id) is needed only by a CASH refund. No fee field, the flow carries no restocking fee.
+      required:
+        - idempotency_key
+        - orders
+        - refund_method
+        - reason
+      properties:
+        idempotency_key:
+          type: string
+          format: uuid
+        customer_id:
+          type: string
+          format: uuid
+          description: The customer; empty with a number is the WALK-IN house account
+        number:
+          type: string
+          description: The receipt or order number the sale was found by; with an empty customer_id it makes the note the walk-in's
+        orders:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/PosReturnAcrossOrder"
+        refund_method:
+          type: string
+          enum:
+            - CASH
+            - CARD
+            - ACCOUNT_CREDIT
+        reason:
+          type: string
+        restock:
+          type: boolean
+        till_session_id:
+          type: string
+          format: uuid
+          description: "CASH refunds: the open drawer"
+    PosReturnAcrossOrder:
+      type: object
+      description: One order's share of a returns-across note, the order id and its returned lines.
+      required:
+        - order_id
+        - lines
+      properties:
+        order_id:
+          type: string
+          format: uuid
+        lines:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/PosReturnLineInput"
+    PosReturnPreviewInput:
+      type: object
+      description: The draft of a returns-across note, without a key or a drawer. With a refund_method of CASH or CARD the answer carries, per order, the split the commit will make on an order that is not fully paid.
+      required:
+        - orders
+      properties:
+        customer_id:
+          type: string
+          format: uuid
+          description: The customer; empty with a number is the WALK-IN house account
+        number:
+          type: string
+          description: The receipt or order number the sale was found by; with an empty customer_id it makes the draft the walk-in's
+        refund_method:
+          type: string
+          enum:
+            - CASH
+            - CARD
+            - ACCOUNT_CREDIT
+        orders:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/PosReturnAcrossOrder"
+    PosReturnPreviewLine:
+      type: object
+      required:
+        - order_line_id
+        - qty_base
+        - subtotal_cents
+        - tax_cents
+        - total_cents
+      properties:
+        order_line_id:
+          type: string
+          format: uuid
+        qty_base:
+          type: number
+        subtotal_cents:
+          type: integer
+          format: int64
+        tax_cents:
+          type: integer
+          format: int64
+        total_cents:
+          type: integer
+          format: int64
+    PosReturnPreviewOrder:
+      type: object
+      required:
+        - order_id
+        - order_no
+        - subtotal_cents
+        - tax_cents
+        - total_cents
+        - lines
+      properties:
+        rail_cents:
+          type: integer
+          format: int64
+          description: "With a refund_method: what goes back in cash or card"
+        invoice_offset_cents:
+          type: integer
+          format: int64
+          description: "With a refund_method: what comes off the order's open invoice"
+        rail_note:
+          type: string
+          description: The split in words, empty when nothing is split
+        order_id:
+          type: string
+          format: uuid
+        order_no:
+          type: string
+        subtotal_cents:
+          type: integer
+          format: int64
+        tax_cents:
+          type: integer
+          format: int64
+        total_cents:
+          type: integer
+          format: int64
+        lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/PosReturnPreviewLine"
+    PosReturnPreview:
+      type: object
+      description: "The credit so far of a draft note: the figures the commit would book, priced by the commit's own function."
+      required:
+        - customer_id
+        - branch_id
+        - subtotal_cents
+        - tax_cents
+        - total_cents
+        - orders
+      properties:
+        rail_cents:
+          type: integer
+          format: int64
+          description: "With a refund_method: the sum of what goes back in cash or card"
+        invoice_offset_cents:
+          type: integer
+          format: int64
+          description: "With a refund_method: the sum of what comes off the open invoices"
+        customer_id:
+          type: string
+          format: uuid
+        branch_id:
+          type: string
+          format: uuid
+        subtotal_cents:
+          type: integer
+          format: int64
+        tax_cents:
+          type: integer
+          format: int64
+        total_cents:
+          type: integer
+          format: int64
+          description: The note total with tax
+        orders:
+          type: array
+          items:
+            $ref: "#/components/schemas/PosReturnPreviewOrder"
+    PosSwapInput:
+      type: object
+      description: "The idempotent swap body: one customer, the orders and lines coming back, the lines going out. The new order's branch is the credit note's one branch; the shortfall tender defaults to CASH."
+      required:
+        - idempotency_key
+        - customer_id
+        - orders
+        - till_session_id
+        - lines
+      properties:
+        idempotency_key:
+          type: string
+          format: uuid
+        customer_id:
+          type: string
+          format: uuid
+        orders:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/PosReturnAcrossOrder"
+        reason:
+          type: string
+        leftover_method:
+          type: string
+          enum:
+            - CASH
+            - CARD
+            - ACCOUNT_CREDIT
+          description: Optional; must be the original tender when named
+        till_session_id:
+          type: string
+          format: uuid
+        sale_type:
+          type: string
+          enum:
+            - COLLECT_NOW
+            - COLLECT_LATER
+            - DELIVERED
+          default: COLLECT_NOW
+        tender:
+          type: string
+          enum:
+            - ACCOUNT
+            - CASH
+            - CARD
+            - CHEQUE
+          description: The shortfall's tender
+        payment_token:
+          type: string
+          description: "CARD shortfall only: client-tokenized; never a PAN"
+        card_type:
+          type: string
+          enum:
+            - DEBIT
+            - CREDIT
+            - PREPAID
+            - UNKNOWN
+        signature_ref:
+          type: string
+        requested_date:
+          type: string
+          format: date
+        notes:
+          type: string
+        po_job_ref:
+          type: string
+          maxLength: 64
+        salesperson_id:
+          type: string
+        job_address:
+          type: string
+          maxLength: 200
+        job_reference:
+          type: string
+          maxLength: 64
+        relief:
+          $ref: "#/components/schemas/PosReliefDecision"
+        discount:
+          $ref: "#/components/schemas/PosDiscountInput"
+        lines:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/PosLineInput"
+    PosSwapNewOrder:
+      type: object
+      required:
+        - subtotal_cents
+        - tax_cents
+        - total_cents
+      properties:
+        subtotal_cents:
+          type: integer
+          format: int64
+        tax_cents:
+          type: integer
+          format: int64
+        total_cents:
+          type: integer
+          format: int64
+    PosSwapPreview:
+      type: object
+      description: The server's figures for a draft swap (applied + leftover = credit; applied + shortfall = new order total)
+      required:
+        - credit
+        - new_order
+        - applied_cents
+        - leftover_cents
+        - shortfall_cents
+        - leftover_method
+      properties:
+        credit:
+          $ref: "#/components/schemas/PosReturnPreview"
+        new_order:
+          $ref: "#/components/schemas/PosSwapNewOrder"
+        applied_cents:
+          type: integer
+          format: int64
+          description: The part of the credit spent on the new order
+        leftover_cents:
+          type: integer
+          format: int64
+          description: The part going back by the original tender
+        shortfall_cents:
+          type: integer
+          format: int64
+          description: The part of the new order the tender pays
+        leftover_method:
+          type: string
+          enum:
+            - CASH
+            - CARD
+            - ACCOUNT_CREDIT
+    PosSwapResult:
+      type: object
+      description: The committed swap, returned verbatim on an idempotent replay; both documents carry swap_id
+      required:
+        - swap_id
+        - note
+        - sale
+        - credit_cents
+        - applied_cents
+        - leftover_cents
+        - shortfall_cents
+        - leftover_method
+        - replayed
+      properties:
+        swap_id:
+          type: string
+          format: uuid
+        note:
+          $ref: "#/components/schemas/PosReturnNote"
+        sale:
+          $ref: "#/components/schemas/PosSale"
+        credit_cents:
+          type: integer
+          format: int64
+        applied_cents:
+          type: integer
+          format: int64
+        leftover_cents:
+          type: integer
+          format: int64
+        shortfall_cents:
+          type: integer
+          format: int64
+        leftover_method:
+          type: string
+          enum:
+            - CASH
+            - CARD
+            - ACCOUNT_CREDIT
+        replayed:
+          type: boolean
+    PosReturnNote:
+      type: object
+      description: The committed credit note across orders, returned verbatim on an idempotent replay. The totals are summed over the children; each child keeps its own return number.
+      required:
+        - note_id
+        - note_no
+        - customer_id
+        - branch_id
+        - refund_method
+        - subtotal_cents
+        - tax_cents
+        - total_cents
+        - returns
+        - replayed
+      properties:
+        swap_id:
+          type: string
+          format: uuid
+          description: Present when the note is the credit of a swap
+        note_id:
+          type: string
+          format: uuid
+        note_no:
+          type: string
+        customer_id:
+          type: string
+          format: uuid
+        branch_id:
+          type: string
+          format: uuid
+        refund_method:
+          type: string
+          enum:
+            - CASH
+            - CARD
+            - ACCOUNT_CREDIT
+        subtotal_cents:
+          type: integer
+          format: int64
+        tax_cents:
+          type: integer
+          format: int64
+        total_cents:
+          type: integer
+          format: int64
+        returns:
+          type: array
+          description: The note's children, one per order, each its own committed return
+          items:
+            $ref: "#/components/schemas/PosReturn"
+        replayed:
+          type: boolean
+    PosCustomerLine:
+      type: object
+      description: "One line of one order in the customer lines read: the open quantity is the commit guard's own netting (qty sold less every returned qty), the money and tax already returned ride the same sums, and the shelf state says whether the goods ever left the shelf (NOT_FULFILLED, PARTIALLY_FULFILLED, FULFILLED)."
+      required:
+        - order_line_id
+        - product_id
+        - sku
+        - description
+        - qty_sold
+        - qty_returned
+        - qty_open
+        - unit_price_cents
+        - line_total_cents
+        - tax_cents
+        - money_returned_cents
+        - tax_returned_cents
+        - shelf_state
+      properties:
+        order_line_id:
+          type: string
+          format: uuid
+        product_id:
+          type: string
+          format: uuid
+        sku:
+          type: string
+        description:
+          type: string
+        qty_sold:
+          type: number
+        qty_returned:
+          type: number
+        qty_open:
+          type: number
+        unit_price_cents:
+          type: integer
+          format: int64
+        line_total_cents:
+          type: integer
+          format: int64
+        tax_cents:
+          type: integer
+          format: int64
+        money_returned_cents:
+          type: integer
+          format: int64
+        tax_returned_cents:
+          type: integer
+          format: int64
+        shelf_state:
+          type: string
+          enum:
+            - NOT_FULFILLED
+            - PARTIALLY_FULFILLED
+            - FULFILLED
+    PosCustomerOrder:
+      type: object
+      description: "One order of the customer lines read. Source names where it came from: TILL, a committed ring whose facts ride beside it, or QUOTE, an order a quote became (an order like any other, carrying no till facts)."
+      required:
+        - order_id
+        - order_no
+        - branch_id
+        - branch_name
+        - created_at
+        - job_label
+        - source
+        - sale_type
+        - tender
+        - fulfilment_state
+        - invoice_id
+        - card_refundable
+        - lines
+      properties:
+        order_id:
+          type: string
+          format: uuid
+        order_no:
+          type: string
+        branch_id:
+          type: string
+          format: uuid
+        branch_name:
+          type: string
+          description: The branch's name
+          so the one branch refusal can name the branches: null
+        created_at:
+          type: string
+          format: date-time
+        job_label:
+          type: string
+          description: The job address
+          else the job reference: null
+          else the customer's PO or job reference: null
+        source:
+          type: string
+          enum:
+            - TILL
+            - QUOTE
+        sale_type:
+          type: string
+          enum:
+            - ""
+            - COLLECT_NOW
+            - COLLECT_LATER
+            - DELIVERED
+            - COD
+        tender:
+          type: string
+          enum:
+            - ""
+            - ACCOUNT
+            - CASH
+            - CARD
+            - CHEQUE
+          description: The original ring's tender; empty on a quote conversion
+        fulfilment_state:
+          type: string
+          description: The order's own ladder word
+          CONFIRMED through FULFILLED: null
+        invoice_id:
+          type: string
+          description: The order's live invoice id; empty when it has none
+        card_refundable:
+          type: boolean
+          description: The original CARD capture carried a gateway reference
+        lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/PosCustomerLine"
+    PosCustomerLines:
+      type: object
+      description: The customer lines read's answer. The orders are newest first and bounded by the limit; no cursor rides the envelope (a narrower branch query is the reader's own drill down).
+      required:
+        - customer_id
+        - items
+      properties:
+        customer_id:
+          type: string
+          format: uuid
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PosCustomerOrder"
     PosReturnPickup:
       type: object
       description: One row on the logistics pickup queue

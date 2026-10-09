@@ -128,7 +128,10 @@ func loposRingSale(t *testing.T, mux *http.ServeMux, sg *testkit.StaffGuards, w 
 }
 
 // loposSaleInvoice reads the sale's invoice and re-opens it (the ring paid it; the settle's balance
-// ceiling must see room again). The locks the settle takes are the same either way.
+// ceiling must see room again). The locks the settle takes are the same either way. A cash or card
+// refund of an open invoice is refused (the interim rule of the Opus review's P2-2), so the legs put
+// the status back to PAID for the moment the return is made (loposStatus) and re-open it once the
+// return is parked in its transaction.
 func loposSaleInvoice(t *testing.T, pool *pgxpool.Pool, orderID string) (invoiceID string) {
 	t.Helper()
 	ctx := context.Background()
@@ -141,6 +144,16 @@ func loposSaleInvoice(t *testing.T, pool *pgxpool.Pool, orderID string) (invoice
 		t.Fatalf("re-open the sale's invoice: %v", err)
 	}
 	return invoiceID
+}
+
+// loposStatus sets the invoice's status and its balance together.
+func loposStatus(t *testing.T, pool *pgxpool.Pool, invoiceID, status string) {
+	t.Helper()
+	// PAID means nothing owed, FINALIZED the whole total owed: the status and the balance move together,
+	// as the return's split reads the balance.
+	if _, err := pool.Exec(context.Background(), `UPDATE invoices SET status=$2, balance_cents = CASE WHEN $2 = 'PAID' THEN 0 ELSE total_cents END WHERE id=$1::uuid`, invoiceID, status); err != nil {
+		t.Fatalf("set the invoice %s: %v", status, err)
+	}
 }
 
 // loposArmReturnWindow parks the NEXT POS return inside its pos_returns INSERT, once, AFTER the
@@ -262,6 +275,7 @@ func TestIntegration_LockOrder_POSReturnBesideSettle(t *testing.T) {
 						orderID).Scan(&lineID, &qty); err != nil {
 						t.Fatalf("read the sale's line: %v", err)
 					}
+					loposStatus(t, pool, inv, "PAID")
 					loposArmReturnWindow(t, obs)
 					parkSettle := variant == "card settle"
 					if parkSettle {
@@ -286,6 +300,7 @@ func TestIntegration_LockOrder_POSReturnBesideSettle(t *testing.T) {
 						retDone <- rec.Code
 					}()
 					loposWait(t, obs, "return parked holding the invoice key share", 1, loposParkedInReturn())
+					loposStatus(t, pool, inv, "FINALIZED")
 					if parkSettle {
 						if _, err := obs.Exec(context.Background(), `INSERT INTO lopos_flag VALUES (2) ON CONFLICT DO NOTHING`); err != nil {
 							t.Fatalf("arm the settle's counter window: %v", err)
@@ -377,6 +392,7 @@ func TestIntegration_LockOrder_MultiInvoiceReversalBesidePOSReturn(t *testing.T)
 				orderID).Scan(&lineID, &qty); err != nil {
 				t.Fatalf("read the sale's line: %v", err)
 			}
+			loposStatus(t, pool, inv, "PAID")
 			loposArmReturnWindow(t, obs)
 			retDone := make(chan int, 1)
 			retBody := make(chan string, 1)
@@ -394,6 +410,7 @@ func TestIntegration_LockOrder_MultiInvoiceReversalBesidePOSReturn(t *testing.T)
 				retDone <- rec.Code
 			}()
 			loposWait(t, obs, "return parked holding the invoice key share", 1, loposParkedInReturn())
+			loposStatus(t, pool, inv, "FINALIZED")
 			revErr := make(chan error, 1)
 			go func() {
 				_, err := payments.NewRepository(pool).ReversePayment(context.Background(), payments.ReverseInput{

@@ -37,6 +37,9 @@ import './pos-parked.js';
 import '@hardscapehouse/pos-kit/src/ported/pos-scan-box.js';
 import './pos-split-tender.js';
 import './pos-lookup.js';
+// The one Change order action: its import registers the surface's elements, and the surface's own
+// import registers the line edit and the edits trail it embeds.
+import './order-change.js';
 import '@hardscapehouse/pos-kit/src/ported/product-thumb.js';
 import type { RelatedDoc } from '@hardscapehouse/pos-kit/src/ported/ports.js';
 import type { PosCustomer } from '@hardscapehouse/pos-kit/src/ported/pos-customer-strip.js';
@@ -196,6 +199,7 @@ import { previewBody, previewKey, readPreview, splitMismatchWords, type PaymentO
 import {
   SHAPE_DEPOSIT_DUE_LATER,
   SHAPE_DEPOSIT_ON_ACCOUNT,
+  SHAPE_PAY_BEFORE_RELEASE,
   SUPPLIER_DEPOSIT_LABEL,
   depositButtonWords,
   depositOffered,
@@ -204,6 +208,8 @@ import {
   depositRingFacts,
   depositSentence,
   cashOnDemandPosture,
+  payBeforeReleaseOffered,
+  payBeforeReleaseRingFacts,
   supplierDepositLine,
   supplierDepositRefusalWords,
   supplierDepositShown,
@@ -625,16 +631,18 @@ export class HosPosTerminal extends LitElement {
   @state() private showTillClose = false;
 
   // ── W7 counter-v2 state ──
-  // COD availability from pos_policy (branch override wins). null = not yet loaded → option disabled.
-  @state() private codEnabled: boolean | null = null;
-  @state() private fulfilment = 'PICKUP'; // COD only: the payment posture rides any fulfilment
+  // The row 1214 ruling removed the COD fulfilment tile and its cod_enabled read: the branch
+  // switch now governs the SERVER's offer (the preview drops the pay before release shape and
+  // the due later deposit when the switch is off), and the ring's own refusal stays the
+  // enforcement. The fulfilment field stays: the pay before release shape rides any fulfilment.
+  @state() private fulfilment = 'PICKUP'; // the pay before release ring's fulfilment (PICKUP|WILL_CALL|DELIVERY)
   @state() private depositDollars = '';
   /** Item 9.5: the supplier's demanded deposit, typed in dollars, billed to the account at once. */
   @state() private supplierDepositDollars = '';
   /** The quiet "Supplier asked for a deposit" link has been opened (a typed amount keeps the field open on its own). */
   @state() private supplierDepositOpen = false;
   @state() private depositMethod = 'CASH';
-  /** Item 9.6: PAY_IN_FULL_NOW (the tender tiles), or a deposit shape the preview offered. */
+  /** Item 9.6: PAY_IN_FULL_NOW (the tender tiles), a deposit shape, or PAY_BEFORE_RELEASE (row 1214). */
   @state() private payShape = 'PAY_IN_FULL_NOW';
   /** Item 9.8: the held card for the sale just rung, when the server says it is held from picking. */
   @state() private heldCard: HeldOrderCard | null = null;
@@ -841,7 +849,7 @@ export class HosPosTerminal extends LitElement {
    */
   private refreshOrderPanels(): void {
     this.renderRoot
-      ?.querySelectorAll('hos-order-history, hos-order-edits, hos-order-edit')
+      ?.querySelectorAll('hos-order-history, hos-order-edits, hos-order-edit, hos-order-change')
       .forEach((el) => (el as HTMLElement & { reload?: () => void }).reload?.());
   }
 
@@ -2040,15 +2048,16 @@ export class HosPosTerminal extends LitElement {
        counter and in a panel the person may have dragged to 280px, and minmax lets the same rule
        answer both: four across where they fit, wrapping where they do not. The doctrine's own
        instruction, and the reason there is no media query here. */
-    /* UI-3 (visual GAP 9): 112px, not 132px, so all four choices (Collect now, Will-call, Delivery,
-       COD) share one row at the Panels layout's default panel width (about 535px inside); the
-       tile's gap and side padding below tighten with it so the longest label still fits. */
+    /* UI-3 (visual GAP 9): 112px, not 132px, so all the choices (Collect now, Will-call,
+       Delivery, before the row 1214 ruling removed it also COD) share one row at the Panels
+       layout's default panel width (about 535px inside); the tile's gap and side padding
+       below tighten with it so the longest label still fits. */
     .fulfil {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
       gap: 8px;
     }
- /* rev 8 (item 6): all four options as ICON TILES: inline currentColor SVG (the rev-6
+ /* rev 8 (item 6): every option as ICON TILES: inline currentColor SVG (the rev-6
        tender-icon discipline: aria-hidden art, the tile's own ink in every state, zero new
        colours), the same buttons and the same gates. */
     .fulfil button {
@@ -3556,14 +3565,12 @@ export class HosPosTerminal extends LitElement {
     }
   }
 
-  // Resolve pos_policy so the COD sale type is offered honestly (disabled + tooltip when off).
- // DIB-488: the same read now carries the dealer's workspace preferences (D-096): the default
-  // items presentation and whether the quick-chip row exists at all.
+  // Resolve pos_policy for the dealer's workspace preferences (D-096) and the margin word.
+  // The COD switch itself is no longer read here: the row 1214 ruling moved the pay before
+  // release offer to the server's payment options, where the switch already governs it.
   private async loadPolicy(): Promise<void> {
     try {
       const p = await getPosPolicy(this.branchId);
-      this.codEnabled = p.cod_enabled;
-      if (!p.cod_enabled && this.saleType === 'COD') this.saleType = 'COLLECT_NOW';
       this.presentation = p.line_presentation === 'CARDS' ? 'CARDS' : 'LINES';
       this.quickChips = p.quick_chips_enabled !== false;
       // rev 8 (item 4): the curated chip set (dealer-authored, or the server's top-sellers
@@ -3573,7 +3580,6 @@ export class HosPosTerminal extends LitElement {
       // absent word stays undefined: the helper fails closed on it.
       this.marginVisibility = p.margin_visibility;
     } catch {
-      this.codEnabled = null; // unknown: keep the option disabled rather than wrong
  // presentation/chips keep their defaults (LINES / on): a policy outage must not blank the till
  // P3-10: marginVisibility stays undefined, so the margin surface refuses: a policy outage
  // must not blank the till, and it must not show the glance either.
@@ -4159,9 +4165,9 @@ export class HosPosTerminal extends LitElement {
     return depositCentsFromTyped(this.depositDollars || '');
   }
 
-  /** DIB-512 · is this sale going out on a truck? (Delivery tile, or a COD released by delivery.) */
+  /** DIB-512 · is this sale going out on a truck? (The Delivery tile: a pay before release ring rides the tile's own delivery.) */
   private deliveryActive(): boolean {
-    return this.saleType === 'DELIVERED' || (this.saleType === 'COD' && this.fulfilment === 'DELIVERY');
+    return this.saleType === 'DELIVERED';
   }
 
   /** Item 9.6: the shapes the server says this account may be offered (empty until the preview answers). */
@@ -4179,6 +4185,15 @@ export class HosPosTerminal extends LitElement {
     const options = this.paymentOptions();
     if (!depositOffered(this.saleType, options)) return '';
     return options.some((o) => o.shape === this.payShape) ? this.payShape : '';
+  }
+
+  /**
+   * Row 1214: the pay before release shape in force. Like a deposit shape it stands only while
+   * the server still offers it (the account or the branch switch moved under it): otherwise the
+   * screen quietly returns to pay in full now. It rides any fulfilment, so no tile guards it.
+   */
+  private activePayBeforeRelease(): boolean {
+    return this.payShape === SHAPE_PAY_BEFORE_RELEASE && payBeforeReleaseOffered(this.paymentOptions());
   }
 
   /** The deposit the clerk typed, only while a deposit shape is in force. */
@@ -4446,11 +4461,15 @@ export class HosPosTerminal extends LitElement {
     this.soldPanelDismissed = false; // DIB-444: a new ring always gets its own confirmation
     this.ring = { state: 'busy' };
     // Item 9.6: a deposit shape rides its own facts (the credit shape the ACCOUNT tender, the pay
-    // before release shape the COD sale on the fulfilment that waits); anything else rings as before.
+    // before release shape the COD sale on the fulfilment that waits). Row 1214: the no deposit
+    // pay before release shape rides the COD sale on the fulfilment of the chosen tile, and the
+    // tender stays the settlement method the counter picked; anything else rings as before.
     const shape = this.activeDepositShape();
     const facts = shape === '' ? null : depositRingFacts(shape, this.saleType, this.fulfilment);
+    const payBeforeRelease = this.activePayBeforeRelease();
+    const payBeforeReleaseFacts = payBeforeRelease ? payBeforeReleaseRingFacts(this.saleType) : null;
     if (facts !== null) tender = facts.tender;
-    const ringSaleType = facts?.saleType ?? this.saleType;
+    const ringSaleType = payBeforeReleaseFacts?.saleType ?? facts?.saleType ?? this.saleType;
     const isCOD = ringSaleType === 'COD';
     const unpaidAtRing = tender === 'ACCOUNT' || isCOD;
     const deposit = unpaidAtRing ? this.depositCentsActive() : 0;
@@ -4468,7 +4487,7 @@ export class HosPosTerminal extends LitElement {
       till_session_id: this.tillSessionId,
       customer_id: this.customer?.id ?? '',
       sale_type: ringSaleType,
-      fulfilment: isCOD ? (facts?.fulfilment ?? this.fulfilment) : undefined,
+      fulfilment: isCOD ? (payBeforeReleaseFacts?.fulfilment ?? facts?.fulfilment ?? this.fulfilment) : undefined,
       tender,
       payment_token: cardAtRing ? 'tok_simulated_runner' : undefined,
       card_type: cardAtRing ? this.cardType : undefined,
@@ -4869,7 +4888,10 @@ export class HosPosTerminal extends LitElement {
       // walk-in. Set before the cart is built so reprice() sees the right customer.
       this.customer = restoreParkedCustomer(t, this.parkedInfo);
       void this.refreshStanding();
-      this.saleType = t.sale_type === 'COD' && !this.codEnabled ? 'COLLECT_NOW' : t.sale_type;
+      // The ticket's own sale type resumes verbatim (the pay before release option is chosen at
+      // the payment step, not carried by a tile): a branch that has since switched Cash On
+      // Demand off is answered by the ring's own refusal, in the server's words.
+      this.saleType = t.sale_type;
       this.notes = t.notes;
       const cart: CartLine[] = [];
       const missing: string[] = [];
@@ -5114,7 +5136,12 @@ export class HosPosTerminal extends LitElement {
     // clerk who taps Cash on a sale that was already defaulted to Cash has still answered the
     // question, and the step must read done even though nothing about the tender changed.
     this.tenderConfirmed = true;
-    this.payShape = 'PAY_IN_FULL_NOW'; // item 9.6: a tender tile is the pay in full now shape
+    // item 9.6: a tender tile is the pay in full now shape. Row 1214: except that Cash and Card,
+    // pressed while Pay Before Release is in force, set the settlement method only; Charge
+    // Account and split step out of it as they always did.
+    if (!((method === 'CASH' || method === 'CARD') && this.activePayBeforeRelease())) {
+      this.payShape = 'PAY_IN_FULL_NOW';
+    }
     if (this.payMethod === method) {
  // Tapping the chosen tile again UNDOES the choice: which now means falling back to cash, not
       // to nothing. "Un-choose" used to leave the ticket untenderable, and a gesture that can
@@ -6399,11 +6426,14 @@ ${/* DIB-488: the quieter order facts fold away (native details: no state to des
   /**
    * The fulfilment tiles, one markup for the two places they stand: STEP 2's pinned foot and the
    * payment step's sale column (stepper layout), where the deposit shapes depend on the choice.
+   * The row 1214 ruling removed the COD tile from this row: the payment posture is not a
+   * fulfilment, it is the Cash On Demand account's own payment option, offered by the server at
+   * the payment step (the pay before release shape) and rideable on any of these three tiles.
    */
   private renderFulfilTiles(): TemplateResult {
     return html`
-${/* Fulfilment: the EXISTING sale types (counter / will-call / delivered / COD with its
-   policy gate: the M3 will-call machinery), worn as tiles instead of a select. */ ''}
+${/* Fulfilment: the EXISTING sale types (counter / will-call / delivered: the M3 will-call
+   machinery), worn as tiles instead of a select. */ ''}
             <label id="fulfil-label">Fulfilment</label>
             <div class="fulfil" role="group" aria-labelledby="fulfil-label">
               <button
@@ -6443,24 +6473,6 @@ ${/* Fulfilment: the EXISTING sale types (counter / will-call / delivered / COD 
                 </svg>
                 Delivery
               </button>
-              <button
-                class="${this.saleType === 'COD' ? 'active' : ''}"
-                aria-pressed=${this.saleType === 'COD' ? 'true' : 'false'}
-                ?disabled=${this.codEnabled !== true}
-                title=${this.codEnabled === false
-                  ? 'Cash on demand is disabled by policy for this branch.'
-                  : this.codEnabled === null
-                    ? 'Cash-on-demand availability not confirmed: policy unreachable.'
-                    : 'Unpaid at ring: invoice number issues now, goods release once paid.'}
-                @click=${() => (this.saleType = 'COD')}
-              >
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-                  <rect x="2.5" y="8" width="13" height="9" rx="1.5"></rect>
-                  <circle cx="9" cy="12.5" r="2"></circle>
-                  <path d="M17.5 3.5a4.6 4.6 0 013 4.3M17.5 6a2.2 2.2 0 011.6 2"></path>
-                </svg>
-                COD${this.codEnabled === false ? ': off' : ''}
-              </button>
             </div>
     `;
   }
@@ -6478,14 +6490,6 @@ ${/* Fulfilment: the EXISTING sale types (counter / will-call / delivered / COD 
     return html`
 ${this.renderFulfilTiles()}
 
-            ${this.saleType === 'COD'
-            ? html`<label>Fulfilment (released once paid)</label>
-                <select .value=${this.fulfilment} @change=${(e: Event) => (this.fulfilment = (e.target as HTMLSelectElement).value)}>
-                  <option value="PICKUP">Pickup</option>
-                  <option value="WILL_CALL">Will-call</option>
-                  <option value="DELIVERY">Delivery</option>
-                </select>`
-            : nothing}
           ${this.deliveryActive()
             ? html`<label>Delivery address</label>
                 ${/* DIB-512 · the field delivery NEEDS sits BESIDE the choice that needs it
@@ -6579,10 +6583,11 @@ ${this.renderFulfilTiles()}
 
   /**
    * Item 9.6: the payment shape menu, from the preview's payment_options (the server decides what
-   * the account may be offered; the till only draws it). Shown only where a deposit is on offer: a
-   * collect now sale is paid in full, so it gets no menu, and says in one quiet line why not.
+   * the account may be offered; the till only draws it). The menu stands wherever the server
+   * offered more than pay in full: a deposit shape on a fulfilment that waits, and, since the row
+   * 1214 ruling, the pay before release shape for a Cash On Demand account on any fulfilment.
    */
-  /** The shape menu stands (a deposit is on offer for this fulfilment): the one place the choice is made. */
+  /** The deposit menu stands (a deposit is on offer for this fulfilment): the one place the Charge Account tile steps aside for "All on account". */
   private shapeMenuOn(): boolean {
     return !this.ringDone() && depositOffered(this.saleType, this.paymentOptions());
   }
@@ -6594,19 +6599,32 @@ ${this.renderFulfilTiles()}
 
   private renderShapeMenu(): TemplateResult | typeof nothing {
     const options = this.paymentOptions();
-    if (this.ringDone() || depositOption(options) === null) return nothing;
-    if (this.saleType === 'COLLECT_NOW') {
+    const deposit = depositOption(options);
+    const payBeforeRelease = payBeforeReleaseOffered(options);
+    if (this.ringDone() || (deposit === null && !payBeforeRelease)) return nothing;
+    // A deposit rides only a fulfilment that waits (the ring's own refusal); the pay before
+    // release shape rides ANY fulfilment, its goods never leave at ring. Collect now keeps the
+    // menu standing for the pay before release shape alone, and the standing quiet line says
+    // where the deposit went. An account not offered the shape sees the line alone, as before.
+    if (this.saleType === 'COLLECT_NOW' && !payBeforeRelease) {
       return html`<p class="shapehint" data-testid="deposit-hint">A deposit needs Will-call or Delivery.</p>`;
     }
-    if (!depositOffered(this.saleType, options)) return nothing;
+    const menu = this.saleType === 'COLLECT_NOW'
+      ? options.filter((o) => o.shape !== SHAPE_DEPOSIT_ON_ACCOUNT && o.shape !== SHAPE_DEPOSIT_DUE_LATER)
+      : options;
+    if (!depositOffered(this.saleType, options) && !payBeforeRelease) return nothing;
     const active = this.activeDepositShape();
+    const payBeforeReleaseActive = this.activePayBeforeRelease();
     const words = (o: PaymentOption): string => {
       if (o.shape === 'PAY_IN_FULL_NOW') return 'Pay in full now';
+      if (o.shape === SHAPE_PAY_BEFORE_RELEASE) return 'Pay Before Release';
       if (o.shape === 'ALL_ON_ACCOUNT') return 'All on account';
       return `Deposit now, ${(o.lineTwoWords ?? 'rest later').toLowerCase()}`;
     };
     const pressed = (o: PaymentOption): boolean =>
-      o.shape === active || (active === '' && o.shape === (this.payMethod === 'ACCOUNT' ? 'ALL_ON_ACCOUNT' : 'PAY_IN_FULL_NOW'));
+      o.shape === active ||
+      (o.shape === SHAPE_PAY_BEFORE_RELEASE && payBeforeReleaseActive) ||
+      (active === '' && !payBeforeReleaseActive && o.shape === (this.payMethod === 'ACCOUNT' ? 'ALL_ON_ACCOUNT' : 'PAY_IN_FULL_NOW'));
     const pick = (o: PaymentOption): void => {
       this.tenderConfirmed = true;
       if (o.shape === SHAPE_DEPOSIT_ON_ACCOUNT || o.shape === SHAPE_DEPOSIT_DUE_LATER) {
@@ -6615,11 +6633,19 @@ ${this.renderFulfilTiles()}
         this.showSplit = false;
         return;
       }
+      if (o.shape === SHAPE_PAY_BEFORE_RELEASE) {
+        // No money moves at ring: the tender tiles below stay the settlement method's own,
+        // the sale is unpaid at ring whatever they say.
+        this.payShape = SHAPE_PAY_BEFORE_RELEASE;
+        if (this.payMethod === 'SPLIT') this.payMethod = 'CASH';
+        this.showSplit = false;
+        return;
+      }
       this.payShape = 'PAY_IN_FULL_NOW';
       this.choosePay(o.shape === 'ALL_ON_ACCOUNT' ? 'ACCOUNT' : 'CASH');
     };
     return html`<div class="shapemenu" role="group" aria-label="How this sale is paid" data-testid="pay-shapes">
-      ${options.map(
+      ${menu.map(
         (o) => html`<button
           type="button"
           class="${pressed(o) ? 'active' : ''}"
@@ -6631,7 +6657,13 @@ ${this.renderFulfilTiles()}
           ${words(o)}
         </button>`,
       )}
-    </div>`;
+    </div>
+    ${this.saleType === 'COLLECT_NOW' && deposit !== null
+      ? html`<p class="shapehint" data-testid="deposit-hint">A deposit needs Will-call or Delivery.</p>`
+      : nothing}
+    ${payBeforeReleaseActive
+      ? html`<p class="shapehint" data-testid="pay-before-release-hint">Unpaid at ring: the invoice number issues now, and the goods release once it is paid. Cash or Card below settles how it is paid.</p>`
+      : nothing}`;
   }
 
   /**
@@ -7126,16 +7158,14 @@ ${this.ring.state === 'done'
                 ${/* DIB-159: the committed order's status timeline, next to where the sale + its payment
                    facts show: how the order moved from→to, by whom, when (staff-gated read). */ ''}
                 <hos-order-history order-id=${this.ring.sale.order_id}></hos-order-history>
-                ${/* DIB-175: the staff edit controls the SERVER offers for this order + the who/what/when
-                   change trail. A just-rung sale carries a finalized invoice, so the money predicate
-                   omits every line edit here and the panel renders nothing: which is the ruling made
-                   visible, not a missing feature. */ ''}
-                <hos-order-edit
+                ${/* DIB-175 and SCOPE:F10 as ONE action: "Change order" opens the line edit while
+                   the pick has not started (the server's editable_fields decide what renders, and a
+                   just-rung sale's finalized invoice omits every line edit: the ruling made
+                   visible), and the change-request flow once it has. */ ''}
+                <hos-order-change
                   order-id=${this.ring.sale.order_id}
                   @order-changed=${this.onOrderChanged}
-                ></hos-order-edit>
-                <hos-order-edits order-id=${this.ring.sale.order_id}></hos-order-edits>
-                <hos-order-change order-id=${this.ring.sale.order_id}></hos-order-change>
+                ></hos-order-change>
                 <hos-order-shipments order-id=${this.ring.sale.order_id}></hos-order-shipments>
                 ${/* DIB-489: same order again (multi-truck, or with a tweak) without re-keying it. */ ''}
                 <hos-order-duplicate
@@ -7169,12 +7199,10 @@ ${this.receiptMsg ? html`<div class="banner bad" role="alert">${this.receiptMsg}
                 ${this.lookupFound
                   ? html`<hos-order-activity order-id=${this.lookupOpenId}></hos-order-activity>
                       <hos-order-history order-id=${this.lookupOpenId}></hos-order-history>
-                      <hos-order-edit
+                      <hos-order-change
                         order-id=${this.lookupOpenId}
                         @order-changed=${this.onOrderChanged}
-                      ></hos-order-edit>
-                      <hos-order-edits order-id=${this.lookupOpenId}></hos-order-edits>
-                      <hos-order-change order-id=${this.lookupOpenId}></hos-order-change>
+                      ></hos-order-change>
                       <hos-order-shipments order-id=${this.lookupOpenId}></hos-order-shipments>
                       ${/* DIB-489: duplicate the looked-up order (a past order or a draft) as a
                          fresh DRAFT with a line picker + quantity tweaks. */ ''}

@@ -285,6 +285,9 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithAudit(auditSvc).
 		WithAuditTrail(auditSvc).
 		WithActorNames(staffNameAdapter{repo: orderRepo}).
+		WithBranchNames(posBranchNameAdapter{svc: branchesSvc}).
+		WithOrderInvoices(billingRepo).
+		WithOpenQuantityReleaser(orderRepo).
 		// A return releases the order's supplier deposit; the documents are billing's, read through
 		// its writer on the return's transaction.
 		WithDepositDocuments(billing.NewInvoiceWriter(pool)).
@@ -396,6 +399,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	posSvc.WithTaxAssessor(posTaxAdapter{svc: taxSvc}).
 		WithTaxRuleSource(posTaxRuleAdapter{svc: taxSvc}).
 		WithStock(posStockAdapter{svc: inventorySvc}).
+		WithStockLocks(posStockAdapter{svc: inventorySvc}).
 		WithRestocker(posRestockAdapter{svc: inventorySvc}).
 		WithCardRefunder(cardRefunder)
 

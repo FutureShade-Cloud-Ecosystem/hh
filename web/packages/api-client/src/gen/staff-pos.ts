@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { PosAccountStanding, PosAddonSuggestions, PosCounterPriceInput, PosCounterPrices, PosDiscountApproverList, PosHotkeys, PosMarginGlance, PosMarginGlanceInput, PosOwingOrderList, PosParkInput, PosParkedDiscard, PosParkedTicket, PosParkedTicketPage, PosPayBalanceTakeInput, PosPayBalanceTaken, PosPaymentGrant, PosPickupAdvance, PosPolicy, PosPolicyChangePage, PosPricingOrder, PosPricingOrderInput, PosPricingOrderPage, PosQuickPicks, PosReliefAssessInput, PosReliefOutcome, PosReturn, PosReturnInput, PosReturnLookup, PosReturnPickup, PosReturnPickupPage, PosReturnRequest, PosReturnRequestPage, PosReturnRequestReject, PosSale, PosSaleInput, PosSalePreview, PosSalePreviewInput, PosSaleSummaryPage, PosSaleView, PosSalespersonPage, PosSignatureCapture, PosSignatureRef, PosStockGlance, PosTaxRate, PosTypedAttestation, PosTypedSignatureRef, PosWorkspacePrefs, PosWorkspaceSaveInput } from "./types.js";
+import type { PosAccountStanding, PosAddonSuggestions, PosCounterPriceInput, PosCounterPrices, PosCustomerLines, PosDiscountApproverList, PosHotkeys, PosMarginGlance, PosMarginGlanceInput, PosOwingOrderList, PosParkInput, PosParkedDiscard, PosParkedTicket, PosParkedTicketPage, PosPayBalanceTakeInput, PosPayBalanceTaken, PosPaymentGrant, PosPickupAdvance, PosPolicy, PosPolicyChangePage, PosPricingOrder, PosPricingOrderInput, PosPricingOrderPage, PosQuickPicks, PosReliefAssessInput, PosReliefOutcome, PosReturn, PosReturnAcrossInput, PosReturnInput, PosReturnLookup, PosReturnNote, PosReturnPickup, PosReturnPickupPage, PosReturnPreview, PosReturnPreviewInput, PosReturnRequest, PosReturnRequestPage, PosReturnRequestReject, PosSale, PosSaleInput, PosSalePreview, PosSalePreviewInput, PosSaleSummaryPage, PosSaleView, PosSalespersonPage, PosSignatureCapture, PosSignatureRef, PosStockGlance, PosSwapInput, PosSwapPreview, PosSwapResult, PosTaxRate, PosTypedAttestation, PosTypedSignatureRef, PosWorkspacePrefs, PosWorkspaceSaveInput } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -387,6 +387,41 @@ export async function posCreateReturn(
   });
 }
 
+// The document lets this call carry X-Approver-Authorization beside the caller's
+// bearer: the approver's own credential for a return above the approval amount,
+// held in memory for this one call and dropped. It rides the caller-set headers
+// (the credential is the caller's business, never a generated argument) and the
+// server never logs it.
+export async function posCreateReturnAcross(
+  client: ApiClient,
+  body: PosReturnAcrossInput,
+  call?: ApiCallOptions
+): Promise<Result<PosReturnNote>> {
+  return client.request<PosReturnNote>({
+    method: "POST",
+    path: "/api/v1/pos/returns-across",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "posCreateReturnAcross",
+  });
+}
+
+export async function posCustomerReturnLines(
+  client: ApiClient,
+  opts?: { customer_id?: string; branch_id?: string; number?: string; limit?: number },
+  call?: ApiCallOptions
+): Promise<Result<PosCustomerLines>> {
+  return client.request<PosCustomerLines>({
+    method: "GET",
+    path: "/api/v1/pos/returns/customer-lines",
+    query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "posCustomerReturnLines",
+  });
+}
+
 export async function posLookupReturn(
   client: ApiClient,
   opts?: { order_id?: string; order_no?: string },
@@ -414,6 +449,21 @@ export async function posListReturnPickups(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "posListReturnPickups",
+  });
+}
+
+export async function posPreviewReturnAcross(
+  client: ApiClient,
+  body: PosReturnPreviewInput,
+  call?: ApiCallOptions
+): Promise<Result<PosReturnPreview>> {
+  return client.request<PosReturnPreview>({
+    method: "POST",
+    path: "/api/v1/pos/returns/preview",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "posPreviewReturnAcross",
   });
 }
 
@@ -551,6 +601,41 @@ export async function posStockGlance(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "posStockGlance",
+  });
+}
+
+// The document lets this call carry X-Approver-Authorization beside the caller's
+// bearer: the approver's own credential for a return above the approval amount,
+// held in memory for this one call and dropped. It rides the caller-set headers
+// (the credential is the caller's business, never a generated argument) and the
+// server never logs it.
+export async function posCreateSwap(
+  client: ApiClient,
+  body: PosSwapInput,
+  call?: ApiCallOptions
+): Promise<Result<PosSwapResult>> {
+  return client.request<PosSwapResult>({
+    method: "POST",
+    path: "/api/v1/pos/swaps",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "posCreateSwap",
+  });
+}
+
+export async function posPreviewSwap(
+  client: ApiClient,
+  body: PosSwapInput,
+  call?: ApiCallOptions
+): Promise<Result<PosSwapPreview>> {
+  return client.request<PosSwapPreview>({
+    method: "POST",
+    path: "/api/v1/pos/swaps/preview",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "posPreviewSwap",
   });
 }
 

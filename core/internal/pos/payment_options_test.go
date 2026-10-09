@@ -75,7 +75,7 @@ func TestPaymentOptionsFor_TheAccountTypeDecides(t *testing.T) {
 		{"credit customer on hold", 30, 500_000, true, []string{
 			PaymentShapePayInFull, PaymentShapeDepositDueLater}},
 		{"cash on demand customer (zero day terms with a line)", 0, 500_000, false, []string{
-			PaymentShapePayInFull, PaymentShapeDepositDueLater}},
+			PaymentShapePayInFull, PaymentShapePayBeforeRelease, PaymentShapeDepositDueLater}},
 		{"no credit account (terms with no line)", 30, 0, false, []string{
 			PaymentShapePayInFull, PaymentShapeDepositDueLater}},
 		{"walk in (zero day terms, no line)", 0, 0, false, []string{
@@ -125,18 +125,67 @@ func TestSalePreview_PaymentOptions_CreditCustomer(t *testing.T) {
 	}
 }
 
-// A cash on demand account never sees on account, its deposit leaves the
-// balance due later.
+// A cash on demand account never sees on account; its no deposit shape is the
+// pay before release ring (the COD tile's sale, row 1214) and its deposit
+// leaves the balance due later.
 func TestSalePreview_PaymentOptions_CashOnDemandCustomer(t *testing.T) {
 	h := newHarness()
 	h.store.customers["cust-abc"] = customerRec{ID: "cust-abc", CustomerType: "CONTRACTOR",
 		PaymentTermsDays: 0, CreditLimitCents: 500_000}
 	h.svc.WithHoldReader(fakeHoldReader{})
 	got := shapeCodes(previewOptions(t, h, "cust-abc"))
-	want := []string{PaymentShapePayInFull, PaymentShapeDepositDueLater}
+	want := []string{PaymentShapePayInFull, PaymentShapePayBeforeRelease, PaymentShapeDepositDueLater}
 	if !equalStrings(got, want) {
 		t.Fatalf("the cash on demand customer's preview answered %v, want %v", got, want)
 	}
+}
+
+// The ruling (row 1214): the pay before release option is the Cash On Demand
+// account's alone. A terms account never sees it (its sale books on account or
+// paid in full, the ruling 11 refusal), and a no credit retail account never
+// sees it either (no line, the walk in's own facts): the shape is the
+// ACCOUNT'S payment posture (row 999), zero day terms with a line, never the
+// customer type's label.
+func TestSalePreview_PaymentOptions_PayBeforeReleaseIsTheCashOnDemandAccountsAlone(t *testing.T) {
+	cases := []struct {
+		name  string
+		cust  customerRec
+		want  bool
+		reason string
+	}{
+		{"cash on demand account (zero day terms with a line)", customerRec{CustomerType: "CONTRACTOR",
+			PaymentTermsDays: 0, CreditLimitCents: 500_000}, true, "the posture's own account"},
+		{"terms account with a credit line", customerRec{CustomerType: "CONTRACTOR",
+			PaymentTermsDays: 30, CreditLimitCents: 2_500_000}, false, "ruling 11: not a pay before release account"},
+		{"retail account with no line", customerRec{CustomerType: "RETAIL",
+			PaymentTermsDays: 0, CreditLimitCents: 0}, false, "no line is not the posture"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := newHarness()
+			c.cust.ID = "cust-abc"
+			h.store.customers["cust-abc"] = c.cust
+			h.svc.WithHoldReader(fakeHoldReader{})
+			got := shapeCodes(previewOptions(t, h, "cust-abc"))
+			for _, shape := range got {
+				if shape == PaymentShapePayBeforeRelease && !c.want {
+					t.Fatalf("%s: the preview offered %s, the shape is the Cash On Demand account's alone (%s)", c.name, shape, c.reason)
+				}
+			}
+			if c.want && !containsShape(got, PaymentShapePayBeforeRelease) {
+				t.Fatalf("%s: the preview did not offer %s, want it offered (%s)", c.name, PaymentShapePayBeforeRelease, c.reason)
+			}
+		})
+	}
+}
+
+func containsShape(shapes []string, shape string) bool {
+	for _, s := range shapes {
+		if s == shape {
+			return true
+		}
+	}
+	return false
 }
 
 // The walk in (no customer named) resolves to the house row and is answered
@@ -156,7 +205,8 @@ func TestSalePreview_PaymentOptions_WalkIn(t *testing.T) {
 // branch's policy can turn off (0043). With Cash On Demand off at the branch
 // the menu drops it and offers pay in full now only, the same fact the ring's
 // own errCODDisabled refuses on: the menu must not promise a shape the ring
-// will not take.
+// will not take. The pay before release option rides the same sale type and
+// drops with it.
 func TestSalePreview_PaymentOptions_CodOffDropsTheDueLaterDeposit(t *testing.T) {
 	for _, account := range []struct {
 		name string
@@ -294,5 +344,63 @@ func TestPaymentOptionsFor_LineTwoSentenceFollowsTheReason(t *testing.T) {
 	}
 	if strings.Contains(SentenceCannotCarry, "Cash On Demand") {
 		t.Errorf("a no credit account is not a Cash On Demand account, yet the sentence says so: %q", SentenceCannotCarry)
+	}
+}
+
+// The ruling's parity leg (row 1214): ringing the offered pay before release
+// option gives exactly the order state the removed fulfilment tile's COD ring
+// gave, which TestSale_COD_UnpaidAtRing_InvoiceFinalized_FulfilmentLocked pins
+// shape for shape (service_w7_test.go). Here the ring is driven by the menu:
+// the preview offers the shape to the Cash On Demand account, and the body the
+// shape implies (the COD sale type, the fulfilment of the chosen tile, no
+// deposit, the settlement tender) commits to the same invoice, the same due
+// date and the same locked posture.
+func TestSale_PayBeforeReleaseOption_RingsTheCODOrderState(t *testing.T) {
+	h := newHarness()
+	h.store.customers["cust-abc"] = customerRec{ID: "cust-abc", CustomerType: "CONTRACTOR",
+		PaymentTermsDays: 0, CreditLimitCents: 500_000}
+	h.svc.WithHoldReader(fakeHoldReader{})
+	got := shapeCodes(previewOptions(t, h, "cust-abc"))
+	if !containsShape(got, PaymentShapePayBeforeRelease) {
+		t.Fatalf("the preview did not offer %s, want it offered to the Cash On Demand account", PaymentShapePayBeforeRelease)
+	}
+	in := baseInput()
+	in.SaleType = SaleCOD
+	in.Fulfilment = "WILL_CALL" // the Will-call tile's fulfilment
+	in.Tender = TenderCash      // the settlement method collected later
+	out, err := h.svc.Sale(context.Background(), in)
+	if err != nil {
+		t.Fatalf("the offered shape's ring: %v", err)
+	}
+	if out.SaleType != SaleCOD {
+		t.Fatalf("the ring's sale type = %q, want %q", out.SaleType, SaleCOD)
+	}
+	if h.tender.called {
+		t.Fatal("the shape is unpaid at ring, TakeTender must NOT be called")
+	}
+	inv := h.store.invoices[0]
+	if inv.Status != "FINALIZED" || inv.BalanceCents != out.TotalCents {
+		t.Fatalf("the shape's invoice must FINALIZE for the full balance: %+v", inv)
+	}
+	if inv.DueDate != "2026-06-29" {
+		t.Fatalf("the shape's due date must be today, got %s", inv.DueDate)
+	}
+	if out.InvoiceNo == "" {
+		t.Fatal("the shape's ring must surface the invoice number")
+	}
+	if h.store.orders[0].Fulfillment != "WILL_CALL" {
+		t.Fatalf("the shape keeps the chosen tile's fulfilment: %q", h.store.orders[0].Fulfillment)
+	}
+	order := h.store.orders[0]
+	if m, ok := order.Metadata["cod"]; !ok || m != true {
+		t.Fatalf("the shape's order must carry the cod fact: %+v", order.Metadata)
+	}
+	if m, ok := order.Metadata["cod_posture"]; !ok || m != "AWAITING_PAYMENT" {
+		t.Fatalf("the shape's order must carry the AWAITING_PAYMENT posture: %+v", order.Metadata)
+	}
+	for _, ev := range h.store.events {
+		if ev == "order.fulfilled" {
+			t.Fatal("the shape must NOT fulfil at ring")
+		}
 	}
 }
