@@ -146,3 +146,7 @@ additions:
     reason: "The vendor create route of the roles roadmap's Buying and Stock core slice (vendor_master.go); the ERP had no vendor create or edit route."
   - route: "PUT /api/v1/purchasing/vendors/{vendorID}"
     reason: "The vendor edit route of the roles roadmap's Buying and Stock core slice (vendor_master.go); the ERP had no vendor create or edit route."
+  - route: "PUT /api/v1/dispatch/trucks/{id}"
+    reason: "The truck registry update, the fields the create takes plus active or not (the roles roadmap's Dispatch core): the ERP registered trucks but never edited one; no ERP source route."
+  - route: "PUT /api/v1/dispatch/drivers/{id}"
+    reason: "The driver registry update, the truck update's twin (the login link included): the ERP registered drivers but never edited one; no ERP source route."
