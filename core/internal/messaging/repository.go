@@ -1208,6 +1208,15 @@ func (r *Repository) AddChannelMember(ctx context.Context, channelID, userID str
 	if err != nil {
 		return ChannelMember{}, fmt.Errorf("add channel member: %w", err)
 	}
+	// The fresh seat bumps the channel's feed seq in the same transaction:
+	// a device holding a cursor past the room's stamped seq (every device
+	// that synced before this seat) must see the room arrive through the
+	// channels feed, and the seat is the only change to the room. The
+	// read-back arm (an already-seated member) changed nothing and bumps
+	// nothing.
+	if err := r.bumpChannelSeq(ctx, channelID); err != nil {
+		return ChannelMember{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return ChannelMember{}, err
 	}
