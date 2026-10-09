@@ -36,6 +36,10 @@ const (
 	KindProduct      = "product"
 	KindProductImage = "product_image"
 	KindSupplierSku  = "supplier_sku"
+	// The customer, contact and job doors' kinds (HH-LOAD-1 LD-6).
+	KindCustomer = "customer"
+	KindContact  = "contact"
+	KindJob      = "job"
 )
 
 // The writer level refusal codes the maps carry. A refusal names the

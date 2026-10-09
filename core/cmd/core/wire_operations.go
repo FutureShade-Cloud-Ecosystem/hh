@@ -348,7 +348,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// scope registered with the reference caches below, over the
 	// messaging module's own tables. The Phase D stop (no org column on
 	// these tables, the GLOBAL channels crossing orgs, and the two
-	// per-user tables' composite keys) is closed by 0381's feed keys
+	// per-user tables' composite keys) is closed by 0385's feed keys
 	// and by the fence the stores prove, which is stronger than an org
 	// predicate: every read resolves the caller's linked ERP user and
 	// answers only that user's own world (its channels and their
@@ -393,7 +393,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// warranty pair is two projections over the one claims feed;
 	// widget_measures is the caller's own Home configuration; projects,
 	// payment_methods and aging are the tenant's reads. channels is the
-	// messaging module's own pull-only feed (0381 and the stores in
+	// messaging module's own pull-only feed (0385 and the stores in
 	// internal/messaging/syncscope.go): the caller's rooms, membership
 	// fenced, the stronger-than-org fence the messaging feeds carry.
 	// tracking_events stays unwired (the D26 schema-shaped stop the lane

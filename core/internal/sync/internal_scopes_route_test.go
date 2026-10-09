@@ -101,7 +101,7 @@ func TestInternalScopesRouteTenancy(t *testing.T) {
 		t.Fatalf("staff pull on price_matrix: %d %s, want 200", rec.Code, rec.Body.String())
 	}
 
-	// The messaging scopes are WIRED stores now (House Messages core, 0381
+	// The messaging scopes are WIRED stores now (House Messages core, 0385
 	// and internal/messaging/syncscope.go): the composition-level proof that
 	// the real server serves them is cmd/core's messaging_sync_comp_test;
 	// here the route half proves what the wiring closed, that a staff bearer

@@ -5,7 +5,7 @@
 //
 // THE FENCE, once and plainly: these tables carry no org column and the
 // GLOBAL channels cross orgs by design, so the recorded Phase D stop said an
-// org fence could not be proven and the scopes answered 501. Migration 0381
+// org fence could not be proven and the scopes answered 501. Migration 0385
 // finished 0213's feed keys, and the fence these stores prove is STRONGER
 // than org: every read resolves the caller through the linked ERP user the
 // filter's Actor names and answers only that user's own world, its channels

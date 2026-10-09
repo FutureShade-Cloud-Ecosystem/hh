@@ -1131,7 +1131,7 @@ func (r *Repository) personaUsersByRole(ctx context.Context) (map[string][]strin
 	return out, rows.Err()
 }
 
-// - The sync feeds (0381): per-caller reads and the stamped writes -
+// - The sync feeds (0385): per-caller reads and the stamped writes -
 //
 // Every feed query here is fenced to ONE user's own world: the channels and
 // messages feeds join the caller's membership, the acks and prefs feeds bind

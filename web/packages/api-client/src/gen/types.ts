@@ -4116,7 +4116,7 @@ export type PosSupplierDepositOption = {
   words?: string;
 };
 export type PosPaymentOption = {
-  shape: "PAY_IN_FULL_NOW" | "ALL_ON_ACCOUNT" | "DEPOSIT_NOW_REST_ON_ACCOUNT" | "DEPOSIT_NOW_REST_DUE_LATER";
+  shape: "PAY_IN_FULL_NOW" | "ALL_ON_ACCOUNT" | "DEPOSIT_NOW_REST_ON_ACCOUNT" | "DEPOSIT_NOW_REST_DUE_LATER" | "PAY_BEFORE_RELEASE";
   line_two_words?: "On account" | "Balance due later";
   line_two_sentence?: string;
 };

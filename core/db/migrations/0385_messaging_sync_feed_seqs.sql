@@ -1,4 +1,4 @@
--- 0381: the messaging sync feeds (House Messages core, roles roadmap Lane E).
+-- 0385: the messaging sync feeds (House Messages core, roles roadmap Lane E).
 -- Owner: internal/messaging.
 --
 -- WHAT THIS DOES. The four sync scopes the contract already declares
