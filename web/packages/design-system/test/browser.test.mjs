@@ -32,6 +32,7 @@ import { fileURLToPath } from 'node:url';
 
 import { findBrowserBinary, launchBrowser } from './_lib/cdp.mjs';
 import { KIT_STATES, STATE_META } from '../src/state.js';
+import { STATE_ICONS } from '../src/state-icons.js';
 import { KITS, buildHarnessPage, harnessSheets } from '../src/harness-page.js';
 
 // Guarded, not static: a runtime without this export (bun's node:module) would
@@ -169,6 +170,42 @@ function headerPage() {
 </html>`;
 }
 
+// The icon leg's page: every state mark rendered bare through icon(), the way
+// a host renders one, in the light DOM so the nodes are plain to inspect.
+function iconPage() {
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>hh design system icon leg</title>
+<script type="importmap">
+  {
+    "imports": {
+      "lit": "/node_modules/lit/index.js",
+      "lit/": "/node_modules/lit/",
+      "lit-html": "/node_modules/lit-html/lit-html.js",
+      "lit-html/": "/node_modules/lit-html/",
+      "lit-element": "/node_modules/lit-element/lit-element.js",
+      "lit-element/": "/node_modules/lit-element/",
+      "@lit/reactive-element": "/node_modules/@lit/reactive-element/reactive-element.js",
+      "@lit/reactive-element/": "/node_modules/@lit/reactive-element/"
+    }
+  }
+</script>
+<style>svg.icon { width: 48px; height: 48px; color: #000; }</style>
+</head>
+<body>
+<main id="marks"></main>
+<script type="module">
+  import { render, html } from 'lit';
+  import { icon } from '/src/state-icons.js';
+  render(html${'`'}${'$'}{${JSON.stringify(Object.keys(STATE_ICONS))}.map((n) => html${'`'}<div data-mark="${'$'}{n}">${'$'}{icon(n)}</div>${'`'})}${'`'}, document.getElementById('marks'));
+  window.__marksReady = true;
+</script>
+</body>
+</html>`;
+}
+
 function startServer() {
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
@@ -188,6 +225,11 @@ function startServer() {
     if (url.pathname === '/harness') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       res.end(buildHarnessPage({ theme: 'dark', brand: 'base' }));
+      return;
+    }
+    if (url.pathname === '/icons') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(iconPage());
       return;
     }
     if (url.pathname === '/header') {
@@ -1077,6 +1119,89 @@ if (reason && inCI && !underBun) {
         'the slotted control paints inside the header bar',
       );
       assert.deepEqual(out.received, ['theme-cycle:auto'], 'a click on the slotted control reaches the host listener off composedPath');
+    } finally {
+      await cdp.close();
+      await close();
+    }
+  });
+
+  test('every state mark paints: each path is an SVG element with a box, not an HTML unknown element', async () => {
+    // icon() once built its paths with the html tag inside the svg, so the
+    // browser made them HTMLUnknownElements in the XHTML namespace and no mark
+    // painted. Source gates cannot see a namespace; the live DOM can.
+    const { port, close } = await startServer();
+    const cdp = await launchBrowser(binary);
+    try {
+      await cdp.navigate(`http://127.0.0.1:${port}/icons`);
+      const marks = await cdp.evaluate(
+        `(async () => {
+          await new Promise((done) => {
+            const t0 = Date.now();
+            const poll = () => (window.__marksReady || Date.now() - t0 > 5000 ? done() : setTimeout(poll, 25));
+            poll();
+          });
+          return [...document.querySelectorAll('[data-mark]')].map((cell) => ({
+            mark: cell.dataset.mark,
+            svgNs: cell.querySelector('svg') ? cell.querySelector('svg').namespaceURI : null,
+            paths: [...cell.querySelectorAll('svg > *')].map((p) => {
+              const b = p.getBBox ? p.getBBox() : { width: 0, height: 0 };
+              return { tag: p.localName, ns: p.namespaceURI, ctor: p.constructor.name, width: b.width, height: b.height };
+            }),
+          }));
+        })()`,
+      );
+      const SVG_NS = 'http://www.w3.org/2000/svg';
+      assert.deepEqual(marks.map((m) => m.mark), Object.keys(STATE_ICONS), 'every mark rendered');
+      for (const m of marks) {
+        assert.equal(m.svgNs, SVG_NS, `${m.mark}: the svg root is in the SVG namespace`);
+        assert.equal(m.paths.length, STATE_ICONS[m.mark].paths.length, `${m.mark}: one path per geometry string`);
+        for (const [i, p] of m.paths.entries()) {
+          assert.equal(p.ns, SVG_NS, `${m.mark} path ${i}: namespaceURI is ${p.ns}, ${p.ctor}, not the SVG namespace`);
+          assert.ok(p.width > 0 || p.height > 0, `${m.mark} path ${i}: the bounding box is empty (${p.width} x ${p.height})`);
+        }
+      }
+    } finally {
+      await cdp.close();
+      await close();
+    }
+  });
+
+  test('at a phone width every mark keeps its square: a long word beside it does not squeeze it', async () => {
+    // Once the marks paint, a flex row with no flex: none on the mark lets the
+    // word beside it shrink the mark to a sliver (13 by 18 at 390).
+    const { port, close } = await startServer();
+    const cdp = await launchBrowser(binary);
+    try {
+      await cdp.setViewport(390, 900);
+      await cdp.navigate(`http://127.0.0.1:${port}/`);
+      const squeezed = await cdp.evaluate(
+        `(async () => {
+          await new Promise((done) => {
+            const t0 = Date.now();
+            const poll = () => {
+              const els = [...document.querySelectorAll('main > *')];
+              const ok = ${JSON.stringify(TAGS)}.every((tag) => !!customElements.get(tag)) &&
+                els.length > 0 && els.every((el) => el.shadowRoot !== null);
+              if (ok || Date.now() - t0 > 5000) done();
+              else setTimeout(poll, 25);
+            };
+            poll();
+          });
+          await new Promise((r) => setTimeout(r, 200));
+          const bad = [];
+          let seen = 0;
+          for (const el of document.querySelectorAll('main > *')) {
+            for (const i of el.shadowRoot.querySelectorAll('svg.icon')) {
+              seen += 1;
+              const r = i.getBoundingClientRect();
+              if (Math.abs(r.width - r.height) > 0.5 || r.width < 12) bad.push(el.dataset.cell + ' ' + r.width + 'x' + r.height);
+            }
+          }
+          return { seen, bad };
+        })()`,
+      );
+      assert.ok(squeezed.seen > 0, 'no marks were found to measure');
+      assert.deepEqual(squeezed.bad, [], 'these marks are not square at 390');
     } finally {
       await cdp.close();
       await close();
