@@ -23,12 +23,15 @@ import { AuthController, authHeaderProvider, SessionStore, type AccountSurface }
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { entryStyles, renderEntry, type EntryView } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
+import { PoApi } from "./po/po-api.js";
+import { PoDesk } from "./po/po-desk.js";
+import { poStyles } from "./po/po-styles.js";
 
 const DEMO_ORG = "hh-demo";
 
 export class BuyingAndStockApp extends HHElement {
-  static styles = [baseStyles, entryStyles, css`
-    :host { display: block; min-height: 100vh; background: var(--hh-page); }
+  static styles = [baseStyles, entryStyles, poStyles, css`
+    :host { display: block; min-height: 100vh; background: var(--hh-page); color: var(--hh-text); }
     main { padding: var(--hh-s-4) 0; }
   `];
 
@@ -53,6 +56,25 @@ export class BuyingAndStockApp extends HHElement {
     baseUrl: "",
     headers: authHeaderProvider({ callerClass: "staff", sessions: this.#sessions, activeOrg: () => DEMO_ORG }),
   });
+
+  // The procurement slice (src/po): its state, its loads, its presses. The
+  // fields it reads are looked up in this element's own shadow root.
+  #po = this.#newDesk();
+
+  #newDesk(): PoDesk {
+    return new PoDesk(new PoApi(this.#staffClient), {
+      repaint: () => this.requestUpdate(),
+      field: (name) => this.#fieldElement(name)?.value ?? "",
+    });
+  }
+
+  #fieldElement(name: string): HTMLInputElement | HTMLSelectElement | null {
+    return this.renderRoot.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-field="${name}"]`);
+  }
+
+  // The theme: light by default, brand (the dark half) one tap away. Held in
+  // memory only: nothing here persists.
+  #theme: "light" | "dark" = "light";
 
   readonly #feedback = new HHFeedback();
 
@@ -95,6 +117,12 @@ export class BuyingAndStockApp extends HHElement {
       this.#onSignOut();
       return;
     }
+    if (action === "theme") {
+      this.#theme = this.#theme === "light" ? "dark" : "light";
+      this.requestUpdate();
+      return;
+    }
+    if (control !== undefined && this.#po.press(control)) return;
     const flow = control?.getAttribute("data-flow");
     if (action === "choose" && typeof flow === "string" && flow !== "") {
       void this.#chooseFlow(flow);
@@ -118,6 +146,7 @@ export class BuyingAndStockApp extends HHElement {
       if (adopted) {
         this.#roleLabel = handoff.session.roleName;
         clearFrontDoorHandoff();
+        void this.#po.load();
       }
       this.requestUpdate();
     } else {
@@ -135,8 +164,16 @@ export class BuyingAndStockApp extends HHElement {
   // set on the element here, after each render.
   protected override updated(changed: Map<PropertyKey, unknown>): void {
     super.updated(changed);
-    const header = this.renderRoot.querySelector("hos-app-header") as (HTMLElement & { roleLabel: string }) | null;
-    if (header !== null) header.roleLabel = this.#roleLabel;
+    const header = this.renderRoot.querySelector("hos-app-header") as (HTMLElement & { roleLabel: string; theme: string }) | null;
+    if (header !== null) {
+      header.roleLabel = this.#roleLabel;
+      header.theme = this.#theme;
+    }
+    // A draft's starting field values: set once per draft, after the render that drew them.
+    this.#po.seed((name, value) => {
+      const field = this.#fieldElement(name);
+      if (field !== null) field.value = value;
+    });
   }
 
   private async loadFlows(): Promise<void> {
@@ -159,6 +196,7 @@ export class BuyingAndStockApp extends HHElement {
       const adopted = this.#auth.adopt(result.value);
       if (adopted) {
         this.#roleLabel = result.value.identity.roleName;
+        void this.#po.load();
         this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
       } else {
         this.#entryView = { ...this.#entryView, busy: false, message: "Demo sign-in refused: the mint's session was not usable." };
@@ -171,17 +209,23 @@ export class BuyingAndStockApp extends HHElement {
 
   #onSignOut(): void {
     this.#sessions.clear();
+    this.#po = this.#newDesk();
     clearFrontDoorHandoff();
     void this.loadFlows();
   }
 
+  // The theme control rides the header's named slot; its word names the
+  // theme a tap moves to.
+  private renderThemeControl(): TemplateResult {
+    const label = this.#theme === "light" ? "Brand theme" : "Light theme";
+    return html`<button slot="theme" type="button" class="btn btn-secondary" data-action="theme">${label}</button>`;
+  }
+
   private renderSignedIn(): TemplateResult {
-    const session = this.#sessions.current;
-    const profile = session?.user;
     return html`
-      <hos-app-header signed-in demo></hos-app-header>
-      <main>
-        <p>Role app: ${profile?.name ?? "?"}, ${this.#roleLabel}</p>
+      <hos-app-header signed-in demo compact product-name="Buying and Stock" product-sub="Procurement · HH Work shell">${this.renderThemeControl()}</hos-app-header>
+      <main class="desk">
+        ${this.#po.render()}
       </main>
     `;
   }
@@ -190,8 +234,10 @@ export class BuyingAndStockApp extends HHElement {
     const session = this.#sessions.current;
     if (session !== null) return this.renderSignedIn();
     return html`
-      <hos-app-header demo></hos-app-header>
-      <main>
+      <hos-app-header demo compact product-name="Buying and Stock" product-sub="Procurement · HH Work shell">${this.renderThemeControl()}</hos-app-header>
+      <main class="desk">
+        <h1>Buying and Stock</h1>
+        <p class="dim">Purchase orders and the reorder worklist for the procurement manager. Demo data only.</p>
         ${renderEntry(this.#entryView)}
       </main>
     `;
