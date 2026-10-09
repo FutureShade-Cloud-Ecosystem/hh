@@ -498,7 +498,7 @@ export class HosOrderChange extends LitElement {
           ${(co.next_actions ?? []).map(
             (a) => html`
               <button
-                class=${a === ACTION_APPLY ? 'primary' : a === ACTION_REJECT ? 'danger' : ''}
+                class="${a === ACTION_APPLY ? 'primary' : a === ACTION_REJECT ? 'danger' : ''}"
                 data-change-action=${a}
                 ?disabled=${this.busy || !canDoChangeAction(co, a)}
                 @click=${() => void this.act(co, a)}
