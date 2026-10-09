@@ -247,10 +247,12 @@ page_gated() {
 }
 page_has / fd-app-root "the front door at /"
 page_has /till/ ct-app-root "the counter till at /till/"
+page_has /buying-and-stock/ buying-and-stock-app "Buying and Stock at /buying-and-stock/"
 page_has /drive/ drive-run-app "HH Drive at /drive/"
 page_has /q/ pd-quote-public "the public desk at /q/"
 page_has "/quote.html?t=x" pd-quote-public "the public desk at /quote.html"
 page_gated /till/ "the counter till at /till/"
+page_gated /buying-and-stock/ "Buying and Stock at /buying-and-stock/"
 page_gated /drive/ "HH Drive at /drive/"
 page_gated /q/ "the public desk at /q/"
 page_gated /quote/ "the /quote/ prefix"
