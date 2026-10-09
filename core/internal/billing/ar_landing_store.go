@@ -249,11 +249,34 @@ func (r *ARLandingRepository) OpenPaperPathFlags(ctx context.Context, reach Bran
 
 // -- the reminder half --------------------------------------------------------------------------
 
+// accountInReachSQL is the predicate "this account is one the branch reach touches": its home branch
+// is in the reach, or it has an invoice in it. cust is the SQL expression for the account's id and p
+// the placeholder of the reach array. A NULL reach (every branch) is true.
+func accountInReachSQL(cust, p string) string {
+	return "(" + p + "::uuid[] IS NULL OR EXISTS (SELECT 1 FROM customers ac WHERE ac.id = " + cust +
+		" AND ac.home_branch_id = ANY(" + p + "::uuid[])) OR EXISTS (SELECT 1 FROM invoices ai WHERE ai.customer_id = " + cust +
+		" AND ai.branch_id = ANY(" + p + "::uuid[])))"
+}
+
+// AccountInReach reports whether an account is one the branch reach touches (home branch or an
+// invoice in it). The door every account level read or act goes through.
+func (r *ARLandingRepository) AccountInReach(ctx context.Context, customerID string, reach BranchReach) (bool, error) {
+	if r.pool == nil {
+		return false, errNoDB
+	}
+	var in bool
+	if err := r.pool.QueryRow(ctx, `SELECT `+accountInReachSQL("$1::uuid", "$2")+` AND EXISTS (SELECT 1 FROM customers WHERE id = $1::uuid)`,
+		customerID, reach.SQLArg()).Scan(&in); err != nil {
+		return false, fmt.Errorf("billing: account in reach: %w", err)
+	}
+	return in, nil
+}
+
 // ReminderContextFor reads everything one send needs in one round trip.
 //
 // The candidate list is the account's OTHER addresses on this channel, and it exists only so
 // ResolveTarget can REFUSE an ambiguous fallback. Nothing downstream iterates it to send.
-func (r *ARLandingRepository) ReminderContextFor(ctx context.Context, customerID, invoiceID, channel string) (ReminderContext, error) {
+func (r *ARLandingRepository) ReminderContextFor(ctx context.Context, customerID, invoiceID, channel string, reach BranchReach) (ReminderContext, error) {
 	if r.pool == nil {
 		return ReminderContext{}, errNoDB
 	}
@@ -276,10 +299,11 @@ func (r *ARLandingRepository) ReminderContextFor(ctx context.Context, customerID
 		          AND iv.balance_cents > 0
 		          AND iv.doc_type = 'INVOICE'
 		          AND ($2::uuid IS NULL OR iv.id = $2::uuid)
+		          AND ($4::uuid[] IS NULL OR iv.branch_id = ANY($4::uuid[]))
 		        ORDER BY iv.due_date
 		        LIMIT 1
 		  ) i ON TRUE
-		 WHERE c.id = $1::uuid`, customerID, nullUUID(invoiceID), houseday.Today(nil)).
+		 WHERE c.id = $1::uuid`, customerID, nullUUID(invoiceID), houseday.Today(nil), reach.SQLArg()).
 		Scan(&rc.CustomerID, &rc.CustomerName, &rc.AccountNo, &rc.InvoiceNo, &rc.DueDate, &rc.BalanceCents)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ReminderContext{}, ErrNotFound
@@ -435,14 +459,15 @@ func (r *ARLandingRepository) RecordTrackEvent(ctx context.Context, token, event
 }
 
 // ListSends is one account's reminder history, newest first.
-func (r *ARLandingRepository) ListSends(ctx context.Context, customerID string, limit int) ([]ReminderSend, error) {
+func (r *ARLandingRepository) ListSends(ctx context.Context, customerID string, limit int, reach BranchReach) ([]ReminderSend, error) {
 	if r.pool == nil {
 		return nil, errNoDB
 	}
 	rows, err := r.pool.Query(ctx,
 		`SELECT `+arSendColumns+` FROM ar_reminder_sends
 		  WHERE ($1 = '' OR customer_id = $1::uuid)
-		  ORDER BY sent_at DESC LIMIT $2`, customerID, limit)
+		    AND `+accountInReachSQL("ar_reminder_sends.customer_id", "$3")+`
+		  ORDER BY sent_at DESC LIMIT $2`, customerID, limit, reach.SQLArg())
 	if err != nil {
 		return nil, fmt.Errorf("billing: list sends: %w", err)
 	}
@@ -510,14 +535,15 @@ func (r *ARLandingRepository) RaisePaperPathFlag(ctx context.Context, e Engageme
 }
 
 // ResolvePaperPathFlag closes one flag with a person and a reason attached.
-func (r *ARLandingRepository) ResolvePaperPathFlag(ctx context.Context, flagID, status, note, actorID string, at time.Time) error {
+func (r *ARLandingRepository) ResolvePaperPathFlag(ctx context.Context, flagID, status, note, actorID string, at time.Time, reach BranchReach) error {
 	if r.pool == nil {
 		return errNoDB
 	}
 	tag, err := r.pool.Exec(ctx, `
 		UPDATE ar_paper_path_flags
 		   SET status = $2, resolution_note = $3, resolved_by = $4::uuid, resolved_at = $5
-		 WHERE id = $1::uuid AND status = 'OPEN'`, flagID, status, note, nullUUID(actorID), at)
+		 WHERE id = $1::uuid AND status = 'OPEN'
+		   AND `+accountInReachSQL("ar_paper_path_flags.customer_id", "$6"), flagID, status, note, nullUUID(actorID), at, reach.SQLArg())
 	if err != nil {
 		return fmt.Errorf("billing: resolve paper-path flag: %w", err)
 	}

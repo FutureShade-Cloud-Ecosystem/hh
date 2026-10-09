@@ -66,7 +66,7 @@ func (f *fakeARStore) EngagementFor(context.Context, []string, int, time.Time) (
 func (f *fakeARStore) OpenPaperPathFlags(context.Context, BranchReach) ([]PaperPathEntry, error) {
 	return f.flags, nil
 }
-func (f *fakeARStore) ReminderContextFor(context.Context, string, string, string) (ReminderContext, error) {
+func (f *fakeARStore) ReminderContextFor(context.Context, string, string, string, BranchReach) (ReminderContext, error) {
 	rc := f.ctxRow
 	rc.APContact = f.apContact
 	return rc, nil
@@ -126,7 +126,10 @@ func (f *fakeARStore) RecordTrackEvent(_ context.Context, token, event, _ string
 	}
 	return id, true, nil
 }
-func (f *fakeARStore) ListSends(context.Context, string, int) ([]ReminderSend, error) {
+func (f *fakeARStore) AccountInReach(context.Context, string, BranchReach) (bool, error) {
+	return true, nil
+}
+func (f *fakeARStore) ListSends(context.Context, string, int, BranchReach) ([]ReminderSend, error) {
 	return f.sends, nil
 }
 func (f *fakeARStore) EngagementWindows(context.Context, int, time.Time) ([]EngagementWindow, error) {
@@ -141,7 +144,7 @@ func (f *fakeARStore) RaisePaperPathFlag(_ context.Context, e EngagementWindow, 
 	f.raised = append(f.raised, e.CustomerID)
 	return true, nil
 }
-func (f *fakeARStore) ResolvePaperPathFlag(context.Context, string, string, string, string, time.Time) error {
+func (f *fakeARStore) ResolvePaperPathFlag(context.Context, string, string, string, string, time.Time, BranchReach) error {
 	return nil
 }
 func (f *fakeARStore) ReadAPContact(context.Context, string) (APContact, bool, error) {
