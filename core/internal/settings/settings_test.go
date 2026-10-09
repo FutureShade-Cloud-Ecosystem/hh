@@ -426,3 +426,17 @@ func TestConfig_AnUnknownProfileIsRefusedInWords(t *testing.T) {
 		t.Fatalf("and it must name the profiles that exist: %v", err)
 	}
 }
+
+// Every profile the curation gate accepts is a profile the counter roster reads: a manager.* shape
+// left out would hide a dealer's key claim from the platform operator's collision check.
+func TestCounterRosterReadsEveryValidProfile(t *testing.T) {
+	in := map[string]bool{}
+	for _, p := range counterRosterProfiles {
+		in[p] = true
+	}
+	for p := range validProfiles {
+		if !in[p] {
+			t.Errorf("profile %q is curatable but not read by the counter roster", p)
+		}
+	}
+}

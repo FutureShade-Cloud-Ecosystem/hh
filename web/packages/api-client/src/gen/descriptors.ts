@@ -171,7 +171,7 @@ export const SCHEMA_DESCRIPTORS = {
   "PrintingJobList": {"k":"object","req":["jobs"],"props":{"jobs":{"k":"array","of":{"k":"ref","name":"PrintingJob"}}}},
   "BranchAddress": {"k":"object","req":["line1","city","province","postal","country"],"props":{"line1":{"k":"string"},"city":{"k":"string"},"province":{"k":"string"},"postal":{"k":"string"},"country":{"k":"string"}}},
   "Branch": {"k":"object","req":["id","code","name","address","is_default","is_system_default","is_active"],"props":{"id":{"k":"string"},"code":{"k":"string"},"name":{"k":"string"},"address":{"k":"ref","name":"BranchAddress"},"is_default":{"k":"boolean"},"is_system_default":{"k":"boolean"},"is_active":{"k":"boolean"}}},
-  "DashboardProfile": {"k":"lit","v":["counter","yard","driver","manager","admin"]},
+  "DashboardProfile": {"k":"lit","v":["counter","yard","driver","manager","admin","manager.branch","manager.sales","manager.yard","manager.logistics","manager.procurement","manager.payables","manager.controller","manager.general"]},
   "DashboardKind": {"k":"lit","v":["count","money_cents","days","basis_points"]},
   "DashboardSource": {"k":"lit","v":["user","role","catalog"]},
   "DashboardTileState": {"k":"lit","v":["ok","unwired","error","hidden"]},

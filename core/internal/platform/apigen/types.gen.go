@@ -1390,7 +1390,7 @@ type Branch struct {
 	IsActive        bool          `json:"is_active"`
 }
 
-// DashboardProfile is the document's enum: "counter", "yard", "driver", "manager", "admin".
+// DashboardProfile is the document's enum: "counter", "yard", "driver", "manager", "admin", "manager.branch", "manager.sales", "manager.yard", "manager.logistics", "manager.procurement", "manager.payables", "manager.controller", "manager.general".
 type DashboardProfile string
 
 // DashboardKind is the document's enum: "count", "money_cents", "days", "basis_points".
