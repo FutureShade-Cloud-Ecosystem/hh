@@ -2,8 +2,8 @@
 // phone, the stop's two doors are drawn as the board draws them, a thumbnail
 // shows each photo taken, and the confirmation box and the grey sign control
 // can be found in brand. Measured in the browser, on the stub.
-import { test, expect, type Page } from "@playwright/test";
-import { TINY_PNG, driverHandoff, resetStub, takeFirstStopEnRoute } from "./helpers.js";
+import type { Page } from "@playwright/test";
+import { test, expect, TINY_PNG, driverHandoff, resetStub, takeFirstStopEnRoute } from "./helpers.js";
 
 test.use({ viewport: { width: 390, height: 844 } });
 

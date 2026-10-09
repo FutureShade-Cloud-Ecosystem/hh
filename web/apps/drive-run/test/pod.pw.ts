@@ -1,8 +1,7 @@
 // HH Drive, sub item 3: proof of delivery. A typed name, the recipient's own
 // confirmation and, if the driver wants it, a photo. Sent as the core's shape:
 // {received_by, affirmed}, and the photo as the raw picture on its own call.
-import { test, expect } from "@playwright/test";
-import { TINY_PNG, driverHandoff, resetStub, stubLog, takeFirstStopEnRoute, useScenario } from "./helpers.js";
+import { test, expect, TINY_PNG, driverHandoff, resetStub, stubLog, takeFirstStopEnRoute, useScenario } from "./helpers.js";
 
 test.use({ viewport: { width: 390, height: 844 } });
 
