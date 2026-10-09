@@ -38,7 +38,7 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: "node test/stub/role-stub.mjs",
+      command: "node test/stub/money-desk-stub.mjs",
       url: `http://127.0.0.1:${stubPort}/healthz`,
       reuseExistingServer: false,
       cwd: appDir,
