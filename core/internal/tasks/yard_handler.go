@@ -125,6 +125,9 @@ func (h *Handler) pickQueue(w http.ResponseWriter, r *http.Request, caller guard
 		items = items[:p.Limit]
 		next = taskCursorKey(items[len(items)-1].Task)
 	}
+	if !h.moneyAllowed(r) {
+		blankEntriesMoney(items)
+	}
 	httpx.WriteCursorPage(w, items, next, p.Limit)
 }
 
@@ -163,6 +166,9 @@ func (h *Handler) pendingTickets(w http.ResponseWriter, r *http.Request, caller 
 		items = items[:p.Limit]
 		next = feedPositionCursorKey(offset + p.Limit)
 	}
+	if !h.moneyAllowed(r) {
+		blankTicketsMoney(items)
+	}
 	httpx.WriteCursorPage(w, items, next, p.Limit)
 }
 
@@ -194,6 +200,9 @@ func (h *Handler) pickDetail(w http.ResponseWriter, r *http.Request, caller guar
 	if err != nil {
 		h.writeYardErr(w, r, err)
 		return
+	}
+	if !h.moneyAllowed(r) {
+		e.Ticket = blankTicketMoney(e.Ticket)
 	}
 	httpx.WriteJSON(w, http.StatusOK, e)
 }
@@ -277,10 +286,11 @@ func (h *Handler) recordSkids(w http.ResponseWriter, r *http.Request, caller gua
 		h.writeYardErr(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, recordSkidsResponse{
+	out := recordSkidsResponse{
 		SkidCount: res.CountAfter, PreviousSkidCount: res.CountBefore, DepositCents: res.DepositAfterCents,
 		PreviousDepositCents: res.DepositBeforeCents, Changed: res.Changed, OrderNo: res.Order.OrderNo,
-	})
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 type stageRequest struct {

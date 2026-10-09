@@ -39862,7 +39862,7 @@ components:
         still_owed_cents:
           type: integer
           format: int64
-          description: The money the order still owes under the hold; absent when nothing
+          description: The money the order still owes under the hold. Carried only to a role on the cost and margin list and absent for every other role and when nothing is owed; the hold mark and its words stay.
     TaskShortage:
       type: object
       description: One reported shortage on a pick

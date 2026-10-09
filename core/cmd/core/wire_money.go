@@ -226,6 +226,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 		pricingSvc:      pricingSvc,
 		quoteStaffSvc:   quoteStaffSvc,
 		quoteAutomation: quoteAutomation,
+		roleCfg:         roleCfg,
 	}
 }
 
@@ -249,6 +250,10 @@ type moneySpine struct {
 	pricingSvc      *pricing.Service
 	quoteStaffSvc   *quote.StaffService
 	quoteAutomation *quote.AutomationService
+	// roleCfg rides the spine for the operations wiring's role-gated
+	// reads (the counts' X3 cost gate), the same configuration the
+	// money-side reads already gate through here.
+	roleCfg *roleconfig.Config
 }
 
 // jeApprovalFilerAdapter satisfies gl.ApprovalFiler over the approvals

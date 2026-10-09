@@ -534,7 +534,13 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	if !yardTasksSvc.PickHoldCheckWired() {
 		panic("tasks: yard pick hold check not wired - a pay before release order's task could be claimed and staged unpaid")
 	}
-	tasks.NewHandler(yardTasksSvc, log).WithUserLinker(link).RegisterYardRoutes(r, g)
+	// The yard fence's money half: a held ticket's still owed figure and the skid answer's deposit
+	// pair ride only for a caller on the configuration's cost and margin list (tasks/cost_gate.go).
+	yardHandler := tasks.NewHandler(yardTasksSvc, log).WithUserLinker(link).WithCostRoles(spine.roleCfg)
+	if !yardHandler.CostRolesWired() {
+		panic("tasks: cost roles not wired - the yard payloads would answer the still owed and deposit figures to every caller")
+	}
+	yardHandler.RegisterYardRoutes(r, g)
 	tasks.NewHandler(yardTasksSvc, log).WithUserLinker(link).RegisterWeightRoutes(r, g)
 
 	// The rail's HTTP surface (the A3 ownership ruling): the staff
