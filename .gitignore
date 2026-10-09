@@ -1,3 +1,6 @@
 node_modules/
 dist/
 core/core
+core/cmd/core/core
+core/cmd/core/core.test
+core/*.test
