@@ -151,6 +151,13 @@ jobs:
         run: |
           go build ./...
           go vet ./...
+      - name: Vulnerability scan (govulncheck)
+        working-directory: core
+        # Reachable vulnerabilities in the standard library at the pinned
+        # toolchain or in a required module fail the job (exit 3).
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          "$(go env GOPATH)/bin/govulncheck" ./...
       - name: Test core
         working-directory: core
         # The untagged suite. The database-gated legs skip politely here
