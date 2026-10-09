@@ -1,7 +1,7 @@
 // The front door's node suite: the mint validation, the session custody's two
 // keys and refusals of every unusable input, and the catalog's shape against
 // the rule the D2 brief fixes (two live roles with the contract's labels and
-// the till's flow ids; eleven coming roles, each carrying the modules the
+// the till's flow ids; ten coming roles, each carrying the modules the
 // matrix gives it at work, manage or admin level). A test that read the
 // catalog from the app would pass on an app that forgot a role, so the
 // counts and the labels are written here the way the till's entry test
@@ -136,9 +136,9 @@ test("a hostile storage accessor degrades to memory and nothing throws", () => {
   assert.equal(store.current(), null);
 });
 
-test("the catalog holds the two live roles with the contract's labels and the till's flows", () => {
-  assert.equal(LIVE_ROLES.length, 2);
-  const [sales, manager] = LIVE_ROLES;
+test("the catalog holds the three live roles with the contract's labels and the flows", () => {
+  assert.equal(LIVE_ROLES.length, 3);
+  const [sales, manager, controller] = LIVE_ROLES;
   assert.equal(sales.label, "Sales");
   assert.equal(sales.flow, "sales");
   assert.deepEqual(sales.tiles.map((tile) => tile.name), ["Counter Till", "Quote Desk"]);
@@ -157,9 +157,15 @@ test("the catalog holds the two live roles with the contract's labels and the ti
     manager.tiles.map((tile) => tile.href),
     ["/till/", "/quote/", null, null, null],
   );
+  // The controller's one live module is the Money Desk; its Manager Home and
+  // House Messages tiles are not on the box yet.
+  assert.equal(controller.label, "Financial Controller");
+  assert.equal(controller.flow, "financial-controller");
+  assert.deepEqual(controller.tiles.map((tile) => tile.name), ["Money Desk", "Manager Home", "House Messages"]);
+  assert.deepEqual(controller.tiles.map((tile) => tile.href), ["/money-desk/", null, null]);
 });
 
-test("the catalog holds the eleven coming roles, each with its matrix modules", () => {
+test("the catalog holds the ten coming roles, each with its matrix modules", () => {
   const labels = [
     "Outside Sales",
     "Yard Team",
@@ -169,7 +175,6 @@ test("the catalog holds the eleven coming roles, each with its matrix modules", 
     "Branch Manager",
     "Procurement Manager",
     "Payables and Receivables",
-    "Financial Controller",
     "General Manager",
     "HR",
   ];
