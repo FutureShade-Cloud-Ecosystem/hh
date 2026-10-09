@@ -23,13 +23,22 @@ import { AuthController, authHeaderProvider, SessionStore, type AccountSurface }
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { entryStyles, renderEntry, type EntryView } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
+import { GlApi } from "./gl/gl-api.js";
+import { GlDesk } from "./gl/gl-desk.js";
+import { glStyles } from "./gl/gl-styles.js";
 
 const DEMO_ORG = "hh-demo";
 
+// The role whose desk is the ledger slice (src/gl): the approvals queue, the
+// journals and the trial balance. The label is the role name the mint and the
+// front door's handoff both carry.
+const CONTROLLER_ROLE = "Financial Controller";
+
 export class MoneyDeskApp extends HHElement {
-  static styles = [baseStyles, entryStyles, css`
-    :host { display: block; min-height: 100vh; background: var(--hh-page); }
+  static styles = [baseStyles, entryStyles, glStyles, css`
+    :host { display: block; min-height: 100vh; background: var(--hh-page); color: var(--hh-text); }
     main { padding: var(--hh-s-4) 0; }
+    main.gl-desk { max-width: var(--hh-content-max, 1180px); margin: 0 auto; padding: var(--hh-s-24) var(--hh-s-24) var(--hh-s-48); }
   `];
 
   // The demo account surface: listFlows() and chooseFlow() over the core's
@@ -53,6 +62,22 @@ export class MoneyDeskApp extends HHElement {
     baseUrl: "",
     headers: authHeaderProvider({ callerClass: "staff", sessions: this.#sessions, activeOrg: () => DEMO_ORG }),
   });
+
+  // The theme: light by default, brand (the dark half) one tap away. Held in
+  // memory only: nothing here persists.
+  #theme: "light" | "dark" = "light";
+
+  // The ledger slice (src/gl): its state, its loads, its presses. The field
+  // it reads is looked up in this element's own shadow root.
+  #gl = this.#newGlDesk();
+
+  #newGlDesk(): GlDesk {
+    return new GlDesk(new GlApi(this.#staffClient), {
+      repaint: () => this.requestUpdate(),
+      field: (name) => this.renderRoot.querySelector<HTMLTextAreaElement>(`[data-field="${name}"]`)?.value ?? "",
+      userId: () => this.#sessions.current?.user.userId ?? "",
+    });
+  }
 
   readonly #feedback = new HHFeedback();
 
@@ -95,6 +120,12 @@ export class MoneyDeskApp extends HHElement {
       this.#onSignOut();
       return;
     }
+    if (action === "theme") {
+      this.#theme = this.#theme === "light" ? "dark" : "light";
+      this.requestUpdate();
+      return;
+    }
+    if (control !== undefined && this.#isController() && this.#gl.press(control)) return;
     const flow = control?.getAttribute("data-flow");
     if (action === "choose" && typeof flow === "string" && flow !== "") {
       void this.#chooseFlow(flow);
@@ -118,6 +149,7 @@ export class MoneyDeskApp extends HHElement {
       if (adopted) {
         this.#roleLabel = handoff.session.roleName;
         clearFrontDoorHandoff();
+        if (this.#isController()) void this.#gl.load();
       }
       this.requestUpdate();
     } else {
@@ -135,8 +167,11 @@ export class MoneyDeskApp extends HHElement {
   // set on the element here, after each render.
   protected override updated(changed: Map<PropertyKey, unknown>): void {
     super.updated(changed);
-    const header = this.renderRoot.querySelector("hos-app-header") as (HTMLElement & { roleLabel: string }) | null;
-    if (header !== null) header.roleLabel = this.#roleLabel;
+    const header = this.renderRoot.querySelector("hos-app-header") as (HTMLElement & { roleLabel: string; theme: string }) | null;
+    if (header !== null) {
+      header.roleLabel = this.#roleLabel;
+      header.theme = this.#theme;
+    }
   }
 
   private async loadFlows(): Promise<void> {
@@ -159,6 +194,7 @@ export class MoneyDeskApp extends HHElement {
       const adopted = this.#auth.adopt(result.value);
       if (adopted) {
         this.#roleLabel = result.value.identity.roleName;
+        if (this.#isController()) void this.#gl.load();
         this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
       } else {
         this.#entryView = { ...this.#entryView, busy: false, message: "Demo sign-in refused: the mint's session was not usable." };
@@ -171,13 +207,33 @@ export class MoneyDeskApp extends HHElement {
 
   #onSignOut(): void {
     this.#sessions.clear();
+    this.#gl = this.#newGlDesk();
     clearFrontDoorHandoff();
     void this.loadFlows();
+  }
+
+  // The theme control rides the header's named slot; its word names the
+  // current theme.
+  private renderThemeControl(): TemplateResult {
+    const label = this.#theme === "light" ? "Theme: Light" : "Theme: Brand";
+    return html`<button slot="theme" type="button" class="btn btn-secondary" data-action="theme">${label}</button>`;
+  }
+
+  #isController(): boolean {
+    return this.#roleLabel === CONTROLLER_ROLE;
   }
 
   private renderSignedIn(): TemplateResult {
     const session = this.#sessions.current;
     const profile = session?.user;
+    if (this.#isController()) {
+      return html`
+        <hos-app-header signed-in demo compact product-name="Money Desk" product-sub="Approvals and ledger · HH Work shell">${this.renderThemeControl()}</hos-app-header>
+        <main class="gl-desk">
+          ${this.#gl.render()}
+        </main>
+      `;
+    }
     return html`
       <hos-app-header signed-in demo></hos-app-header>
       <main>
@@ -190,7 +246,7 @@ export class MoneyDeskApp extends HHElement {
     const session = this.#sessions.current;
     if (session !== null) return this.renderSignedIn();
     return html`
-      <hos-app-header demo></hos-app-header>
+      <hos-app-header demo>${this.renderThemeControl()}</hos-app-header>
       <main>
         ${renderEntry(this.#entryView)}
       </main>

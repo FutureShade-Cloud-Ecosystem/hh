@@ -2,12 +2,16 @@
 // dev server's /api proxy and the Playwright harness. This is a development
 // and test double only; the real routes are the core's.
 import { createServer } from "node:http";
+import { IDS, createGlWorld } from "./gl-world.mjs";
+
+const glWorld = createGlWorld();
 
 const port = Number(process.env.ROLE_STUB_PORT ?? 4959);
 
 const FLOWS = [
   { flow: "sales", role_code: "inside_sales", label: "Sales" },
   { flow: "sales-manager", role_code: "sales_manager", label: "Sales manager" },
+  { flow: "financial-controller", role_code: "financial_controller", label: "Financial Controller" },
 ];
 
 const USERS = {
@@ -28,6 +32,15 @@ const USERS = {
     role_name: "Sales Manager",
     tier: 2,
     scope: "BRANCH",
+  },
+  "financial-controller": {
+    user_id: IDS.controller,
+    email: "financial.controller@hh-demo.invalid",
+    display_name: "Financial controller (demo)",
+    role_code: "financial_controller",
+    role_name: "Financial Controller",
+    tier: 1,
+    scope: "GLOBAL",
   },
 };
 
@@ -53,6 +66,16 @@ function notFound(res) {
 function handle(req, res) {
   const url = new URL(req.url, `http://127.0.0.1:${port}`);
   if (url.pathname === "/healthz") return json(res, { ok: true });
+  if (url.pathname.startsWith("/api/v1/") && url.pathname !== "/api/v1/demo/flows" && url.pathname !== "/api/v1/demo/session" || url.pathname === "/_stub/reset") {
+    let text = "";
+    req.on("data", (c) => (text += c));
+    req.on("end", () => {
+      const answer = glWorld.handle(req, url, text);
+      if (answer === null) return notFound(res);
+      json(res, answer.body, answer.status);
+    });
+    return;
+  }
   if (url.pathname === "/api/v1/demo/flows") {
     return json(res, { flows: FLOWS });
   }
