@@ -1,7 +1,6 @@
 // HH Drive, sub item 4a: could not deliver. A reason in the driver's own
 // words, the handback sentence, and a stop that is closed for good.
-import { test, expect } from "@playwright/test";
-import { driverHandoff, resetStub, stubLog, takeFirstStopEnRoute } from "./helpers.js";
+import { test, expect, driverHandoff, resetStub, stubLog, takeFirstStopEnRoute } from "./helpers.js";
 
 test.use({ viewport: { width: 390, height: 844 } });
 

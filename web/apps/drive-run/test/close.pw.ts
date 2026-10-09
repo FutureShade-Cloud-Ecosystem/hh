@@ -1,8 +1,7 @@
 // HH Drive, sub item 4b: the end of the run. The run closes only when every
 // stop has an answer a driver records, and the screen names the stop that
 // stands in the way.
-import { test, expect } from "@playwright/test";
-import { deliverStop, driverHandoff, failStop, resetStub, stubLog, useScenario } from "./helpers.js";
+import { test, expect, deliverStop, driverHandoff, failStop, resetStub, stubLog, useScenario } from "./helpers.js";
 
 test.use({ viewport: { width: 390, height: 844 } });
 
