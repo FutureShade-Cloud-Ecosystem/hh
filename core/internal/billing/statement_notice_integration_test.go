@@ -119,8 +119,11 @@ func TestIntegration_StatementNotices_EnqueuedRowsAndZeroSends(t *testing.T) {
 	if got["amount_cents"] != float64(137000) {
 		t.Fatalf("payload amount_cents = %v, want 137000", got["amount_cents"])
 	}
-	if got["invoice_no"] != StatementRef(asOf.Format("2006-01-02")) {
-		t.Fatalf("payload invoice_no = %v, want %q", got["invoice_no"], StatementRef(asOf.Format("2006-01-02")))
+	// The ref names the dealer's day of the run's as-of clock, never the test process's own zone:
+	// read bare, the want rides the runner's zone and the guard's pinned clock turns it against the
+	// payload exactly when the runner sits nearer Greenwich than the house.
+	if got["invoice_no"] != StatementRef(houseClock(asOf).Format("2006-01-02")) {
+		t.Fatalf("payload invoice_no = %v, want %q", got["invoice_no"], StatementRef(houseClock(asOf).Format("2006-01-02")))
 	}
 	// -- THE CONSENT RULE. UNION-W4 dropped the pre-resolved `to` fast path because a number captured
 	// at enqueue time skipped the consent check at delivery time. This producer must give a future
