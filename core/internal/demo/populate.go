@@ -433,6 +433,9 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 		}
 		roles += int(tag.RowsAffected())
 	}
+	// Payables and Receivables is a global role, so the staff grant derived for it carries no branch and
+	// its reach is every branch; the Trenton row below is inert for it (reach follows the role's scope,
+	// never user_branch_grants) and is written only so the account has the same shape as the others.
 	for _, userID := range []string{salesUserID, managerUserID, payRecUserID} {
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO user_branch_grants (user_id, branch_id)
