@@ -271,7 +271,7 @@ export function welcomeLine(roleLabel: string): string {
 export const APPROVAL_KINDS: readonly { readonly kind: string; readonly word: string }[] = Object.freeze([
   { kind: "MARGIN_BELOW_MINIMUM", word: "Margin" },
   { kind: "CREDIT_LIMIT_EXCEEDED", word: "Credit" },
-  { kind: "COD_CONSTRAINT", word: "Cash on delivery" },
+  { kind: "COD_CONSTRAINT", word: "Cash On Demand" },
   { kind: "JE_OVER_THRESHOLD", word: "Journal entry" },
   { kind: "FREIGHT_ABOVE_QUOTE", word: "Freight above quote" },
 ]);
@@ -289,7 +289,7 @@ export const APPROVAL_DECIDER_WORDS: Readonly<Record<string, string>> = Object.f
   MARGIN_BELOW_MINIMUM:
     "Margin approvals are decided by the financial controller, the general manager, and a sales manager or branch manager in their own branch.",
   CREDIT_LIMIT_EXCEEDED: "Credit approvals are decided by the financial controller and the general manager.",
-  COD_CONSTRAINT: "Cash on delivery approvals are decided by the financial controller and the general manager.",
+  COD_CONSTRAINT: "Cash On Demand approvals are decided by the financial controller and the general manager.",
   JE_OVER_THRESHOLD: "Journal entry approvals are decided by the financial controller and the general manager.",
   FREIGHT_ABOVE_QUOTE: "Freight approvals are decided by the financial controller and the general manager.",
 });
@@ -297,7 +297,9 @@ export const APPROVAL_DECIDER_WORDS: Readonly<Record<string, string>> = Object.f
 /** Map a kind refusal to plain words naming who decides it: no enum on screen, ever. */
 export function approvalsRefusalWords(kind: string, error: string, status: number | undefined): string {
   if (status === 403) {
-    const word = kindWord(kind).toLowerCase();
+    const shown = kindWord(kind);
+    // A name with its own capitals (Cash On Demand) keeps them; a plain one reads lower case mid sentence.
+    const word = /[A-Z]/.test(shown.slice(1)) ? shown : shown.toLowerCase();
     const who = APPROVAL_DECIDER_WORDS[kind] ?? "Approvals are decided by the financial controller and the general manager.";
     return `You do not decide ${word} approvals. ${who}`;
   }

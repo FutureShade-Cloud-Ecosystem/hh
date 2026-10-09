@@ -28,7 +28,7 @@ test("the five kinds of the closed vocabulary sit as tabs, the decided one first
   const tabs = page.locator(".kind-tab");
   await expect(tabs).toHaveCount(5);
   const words = await tabs.evaluateAll((nodes) => nodes.map((n) => n.textContent?.trim()));
-  expect(words).toEqual(["Margin", "Credit", "Cash on delivery", "Journal entry", "Freight above quote"]);
+  expect(words).toEqual(["Margin", "Credit", "Cash On Demand", "Journal entry", "Freight above quote"]);
   await expect(tabs.first()).toHaveAttribute("aria-selected", "true");
 });
 

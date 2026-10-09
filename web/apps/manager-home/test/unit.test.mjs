@@ -142,7 +142,7 @@ test("a kind this caller does not decide becomes plain words naming who decides 
   const cod = approvalsRefusalWords("COD_CONSTRAINT", "you do not decide COD_CONSTRAINT approvals", 403);
   assert.equal(
     cod,
-    "You do not decide cash on delivery approvals. Cash on delivery approvals are decided by the " +
+    "You do not decide Cash On Demand approvals. Cash On Demand approvals are decided by the " +
       "financial controller and the general manager.",
   );
   assert.equal(approvalsRefusalWords("MARGIN_BELOW_MINIMUM", "boom", 500), "boom");
@@ -153,7 +153,7 @@ test("the approval kind vocabulary is the core's closed set, in its order", () =
     APPROVAL_KINDS.map((k) => k.kind),
     ["MARGIN_BELOW_MINIMUM", "CREDIT_LIMIT_EXCEEDED", "COD_CONSTRAINT", "JE_OVER_THRESHOLD", "FREIGHT_ABOVE_QUOTE"],
   );
-  assert.equal(kindWord("COD_CONSTRAINT"), "Cash on delivery");
+  assert.equal(kindWord("COD_CONSTRAINT"), "Cash On Demand");
   assert.equal(Object.keys(APPROVAL_DECIDER_WORDS).length, 5);
 });
 
@@ -210,4 +210,10 @@ test("the welcome line names the caller in the board's own sentence", () => {
   assert.equal(welcomeLine("Sales manager"), "Welcome back, sales manager.");
   assert.equal(welcomeLine("General Manager"), "Welcome back, general manager.");
   assert.equal(welcomeLine(""), "Welcome back.");
+});
+
+test("Cash On Demand is named as the house names it, never cash on delivery (decision row 999)", () => {
+  const words = [kindWord("COD_CONSTRAINT"), approvalsRefusalWords("COD_CONSTRAINT", "x", 403), APPROVAL_DECIDER_WORDS.COD_CONSTRAINT].join(" ");
+  assert.match(words, /Cash On Demand/);
+  assert.doesNotMatch(words, /on delivery/i);
 });
