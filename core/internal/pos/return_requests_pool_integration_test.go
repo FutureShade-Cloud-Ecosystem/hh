@@ -350,7 +350,7 @@ func TestIntegration_ReturnRequests_ApprovePoolSizeConcurrent(t *testing.T) {
 
 	requestIDs := make([]string, rreqPoolSize)
 	for i := range requestIDs {
-		sale := s.ringSale(key(), trentonBranchID, s.trentonTill, "trenton", []float64{30}, TenderCash)
+		sale := s.ringForCustomer(t, key(), trentonBranchID, s.trentonTill, "trenton", s.plantCustomer("Account credit rig", 30, 5000000), "", 30, TenderCash)
 		requestIDs[i] = rreqPlantRequest(t, s.svc, helper, sctx, sale.OrderID)
 	}
 
@@ -419,7 +419,7 @@ func TestIntegration_ReturnRequests_RejectPoolSizeConcurrent(t *testing.T) {
 
 	requestIDs := make([]string, rreqPoolSize)
 	for i := range requestIDs {
-		sale := s.ringSale(key(), trentonBranchID, s.trentonTill, "trenton", []float64{30}, TenderCash)
+		sale := s.ringForCustomer(t, key(), trentonBranchID, s.trentonTill, "trenton", s.plantCustomer("Account credit rig", 30, 5000000), "", 30, TenderCash)
 		requestIDs[i] = rreqPlantRequest(t, s.svc, helper, sctx, sale.OrderID)
 	}
 
@@ -478,7 +478,7 @@ func TestIntegration_ReturnRequests_ApproveRejectRace(t *testing.T) {
 	s := newTrentonStackOnPool(t, scenario)
 	sctx := rreqStaffCtx(t, helper)
 
-	sale := s.ringSale(key(), trentonBranchID, s.trentonTill, "trenton", []float64{30}, TenderCash)
+	sale := s.ringForCustomer(t, key(), trentonBranchID, s.trentonTill, "trenton", s.plantCustomer("Account credit rig", 30, 5000000), "", 30, TenderCash)
 	requestID := rreqPlantRequest(t, s.svc, helper, sctx, sale.OrderID)
 
 	// The blocker holds the request row on its own helper connection: every

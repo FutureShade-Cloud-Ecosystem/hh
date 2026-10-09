@@ -25,6 +25,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/dashboard"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/purchasing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tasks"
 )
 
 // seedClock pins every integration run. A fixed instant means the demo world's dates, and so every
@@ -641,5 +645,63 @@ func TestIntegration_TheNeedsQueueHasSomethingToCount(t *testing.T) {
 	if lines == 0 || priced != lines {
 		t.Errorf("%d of %d demo order lines resolve a branch cost, the rest are read as free and put "+
 			"the gross-margin bars near 100%%", priced, lines)
+	}
+}
+
+// -- Promise 6 · the yard manager's Needs-you counts match the seed -------------------------------
+
+// TestIntegration_TheYardManagersNeedsCountsMatchTheSeed reads the three sources of the yard
+// manager's landing (0381) through the adapters the composition root registers, over the seeded
+// demo world, and compares each to the plan: the open shortages (SH1 and SH2 open, SH3 resolved) and
+// the stale picks (the PUSHED picks past their accept deadline), counted from demoShortages and
+// demoTasks rather than typed. The receiving differences source has no rows in this world (the demo
+// seed plants no purchase orders), so its count is zero here and the module's own integration test
+// carries the positive case.
+func TestIntegration_TheYardManagersNeedsCountsMatchTheSeed(t *testing.T) {
+	ctx := context.Background()
+	pool := freshMigratedDB(t, "yardneeds")
+	seedOnce(t, ctx, pool)
+
+	wantShortages := 0
+	for _, s := range demoShortages {
+		if s.Resolution == "" {
+			wantShortages++
+		}
+	}
+	wantStale := 0
+	for _, k := range demoTasks {
+		if k.Type == "PICK" && (k.Status == "QUEUED" || k.Status == "PUSHED") && k.Deadline > 0 {
+			wantStale++
+		}
+	}
+	if wantShortages != 2 || wantStale != 2 {
+		t.Fatalf("the plan changed under this test: %d open shortages, %d stale picks (want 2 and 2)",
+			wantShortages, wantStale)
+	}
+
+	scope := dashboard.Scope{AllBranches: true, Now: seedClock}
+	tasksSvc := tasks.NewService(tasks.NewRepository(pool))
+	purchasingSvc := purchasing.NewService(purchasing.NewRepository(pool))
+	for _, tc := range []struct {
+		name string
+		src  dashboard.NeedsFunc
+		want int
+	}{
+		{"open shortages", w6bOpenShortages(tasksSvc), wantShortages},
+		{"stale picks", w6bStalePicks(pool), wantStale},
+		{"receiving differences", w6bReceivingDifferences(purchasingSvc), 0},
+	} {
+		m, err := tc.src(ctx, scope)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if m.Count != tc.want {
+			t.Errorf("%s counts %d, the seed plants %d", tc.name, m.Count, tc.want)
+		}
+	}
+	// A caller granted no branch sees none of it: the fence fails closed through the adapter.
+	none := dashboard.Scope{Now: seedClock}
+	if m, err := w6bOpenShortages(tasksSvc)(ctx, none); err != nil || m.Count != 0 {
+		t.Errorf("a caller with no grants counted %d open shortages (%v)", m.Count, err)
 	}
 }

@@ -42,14 +42,15 @@ import (
 )
 
 // Four parallel ACCOUNT_CREDIT returns of one sale on a two-connection
-// pool: one line of 30 SF, four returns of 5 SF each on four distinct keys,
-// each paying 56.50, the four together 226.00, under the configured 250.00,
-// so on a healthy core every one of them commits. Each return's customer
+// pool: one line of 30 SF rung for a contractor account (the house walk-in
+// row holds no account credit), four returns of 5 SF each on four distinct
+// keys, the four together under the configured 250.00, so on a healthy core
+// every one of them commits. Each return's customer
 // read runs inside its Return transaction: through the pool it is the stall
 // this leg names, on the transaction it is four clean commits.
 func TestIntegration_Trenton_AccountCredit_ParallelReturnsSmallPool(t *testing.T) {
 	s := newTrentonStackOnPool(t, smallPool(t, 2))
-	sale := s.ringSale(key(), trentonBranchID, s.trentonTill, "trenton", []float64{30}, TenderCash)
+	sale := s.ringForCustomer(t, key(), trentonBranchID, s.trentonTill, "trenton", s.plantCustomer("Account credit rig", 30, 5000000), "", 30, TenderCash)
 
 	bearer := s.bearer(trentonClerkSub)
 	bodies := make([]*bytes.Reader, 4)
@@ -99,7 +100,14 @@ func TestIntegration_Trenton_AccountCredit_ParallelReturnsSmallPool(t *testing.T
 		  WHERE source_type = 'pos_return' AND source_ref_id = $1::uuid`, sale.OrderID).Scan(&rows, &sum); err != nil {
 		t.Fatalf("subledger read: %v", err)
 	}
-	if rows != 4 || sum != -22600 {
-		t.Fatalf("the four ACCOUNT_CREDIT returns must book four credit memos totaling -226.00 on the sale's subledger, got %d rows summing %d", rows, sum)
+	// The sale is rung for a contractor account (the walk-in row holds no account credit), so the
+	// four returns' total is whatever the sale's own price was: the subledger must carry exactly it.
+	var returned int64
+	if err := s.pool.QueryRow(context.Background(),
+		`SELECT COALESCE(SUM(total_cents), 0) FROM pos_returns WHERE order_id = $1::uuid`, sale.OrderID).Scan(&returned); err != nil {
+		t.Fatalf("returns read: %v", err)
+	}
+	if rows != 4 || returned <= 0 || sum != -returned {
+		t.Fatalf("the four ACCOUNT_CREDIT returns must book four credit memos totaling the returns (%d) on the sale's subledger, got %d rows summing %d", returned, rows, sum)
 	}
 }

@@ -139,6 +139,7 @@ type store interface {
 	OnHandQtyBranch(ctx context.Context, tx pgx.Tx, productID, branchID string) (float64, error)
 	UpsertBalanceDelta(ctx context.Context, tx pgx.Tx, productID, locationID, branchID string, delta float64) error
 	LockBranchCost(ctx context.Context, tx pgx.Tx, productID, branchID string) error
+	LockBalances(ctx context.Context, tx pgx.Tx, branchID string, productIDs []string) error
 	GetBranchCost(ctx context.Context, tx pgx.Tx, productID, branchID string) (int64, bool, error)
 	UpsertBranchCost(ctx context.Context, tx pgx.Tx, productID, branchID string, avgCents int64) error
 
