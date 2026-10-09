@@ -498,6 +498,36 @@ type BillingReceiptResult struct {
 	Replayed     bool   `json:"replayed"`
 }
 
+type BillingApplyPaymentInput struct {
+	CustomerId     string   `json:"customer_id"`
+	Method         string   `json:"method"`
+	AmountCents    int64    `json:"amount_cents"`
+	Reference      string   `json:"reference"`
+	InvoiceIds     []string `json:"invoice_ids"`
+	IdempotencyKey string   `json:"idempotency_key"`
+	Preview        *bool    `json:"preview,omitempty"`
+}
+
+type BillingApplyPaymentLine struct {
+	InvoiceId         string `json:"invoice_id"`
+	InvoiceNo         string `json:"invoice_no"`
+	AppliedCents      int64  `json:"applied_cents"`
+	Outcome           string `json:"outcome"`
+	BalanceAfterCents int64  `json:"balance_after_cents"`
+	StaysOpenCents    int64  `json:"stays_open_cents"`
+}
+
+type BillingApplyPaymentAnswer struct {
+	Preview        bool                      `json:"preview"`
+	PaymentId      *string                   `json:"payment_id,omitempty"`
+	PaymentNo      *string                   `json:"payment_no,omitempty"`
+	AmountCents    int64                     `json:"amount_cents"`
+	AppliedCents   int64                     `json:"applied_cents"`
+	UnappliedCents int64                     `json:"unapplied_cents"`
+	Lines          []BillingApplyPaymentLine `json:"lines"`
+	Replayed       bool                      `json:"replayed"`
+}
+
 type BillingReminderInput struct {
 	InvoiceIds     []string `json:"invoice_ids"`
 	Tone           string   `json:"tone"`

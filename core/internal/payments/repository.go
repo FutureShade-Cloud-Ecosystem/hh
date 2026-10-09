@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -270,6 +272,113 @@ func (r *Repository) SetDefaultMethod(ctx context.Context, customerID, methodID 
 		return ErrNotFound
 	}
 	return tx.Commit(ctx)
+}
+
+// lockApplyInvoicesTx takes every named invoice of a received payment FOR NO KEY UPDATE, one
+// statement per id in ascending id order (the payments counter is already held), and judges each
+// one as it lands: the account's, open, and inside a scoped caller's branch reach. A row that
+// fails any judgement answers as not found: no such invoice, the same words for a missing row,
+// another account's row and an out of reach row, so the refusal is no existence oracle across
+// the account or branch walls.
+//
+// FOR NO KEY UPDATE, not FOR UPDATE, for the reason LOCK-ORDER.md writes down: this writer takes
+// no key column, and NO KEY UPDATE still conflicts with every other invoice writer's row lock
+// while never queuing behind a foreign key's FOR KEY SHARE (a POS return's pos_returns insert).
+// The ascending order is PR 277's (the till's returns lock their documents the same way), so a
+// received payment and a return can never meet head on, whatever order the caller's list came in.
+func (r *Repository) lockApplyInvoicesTx(ctx context.Context, tx pgx.Tx, in ApplyRequest) ([]applyInvoiceRow, error) {
+	ids := append([]string(nil), in.InvoiceIDs...)
+	sort.Strings(ids)
+	reach := map[string]bool{}
+	for _, b := range in.BranchIDs {
+		reach[b] = true
+	}
+	global := in.BranchIDs == nil
+	rows := make([]applyInvoiceRow, 0, len(ids))
+	for _, id := range ids {
+		var row applyInvoiceRow
+		err := tx.QueryRow(ctx, `
+			SELECT id::text, invoice_no, customer_id::text, branch_id::text, status::text,
+			       issue_date, due_date, balance_cents, holdback_cents
+			  FROM invoices WHERE id = $1::uuid FOR NO KEY UPDATE`, id).
+			Scan(&row.InvoiceID, &row.InvoiceNo, &row.CustomerID, &row.BranchID, &row.Status,
+				&row.IssueDate, &row.DueDate, &row.BalanceCents, &row.HoldbackCents)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, NoSuchInvoiceError{InvoiceID: id}
+		}
+		if err != nil {
+			return nil, fmt.Errorf("apply: lock invoice %q: %w", id, err)
+		}
+		if row.CustomerID != in.CustomerID {
+			return nil, NoSuchInvoiceError{InvoiceID: id}
+		}
+		if !global && !reach[row.BranchID] {
+			return nil, NoSuchInvoiceError{InvoiceID: id}
+		}
+		if row.Status != "FINALIZED" && row.Status != "PARTIALLY_PAID" {
+			return nil, httpx.BadRequestf("invoice %s (%s) is not open; a payment applies to a finalized or partially paid invoice",
+				row.InvoiceNo, strings.ToLower(row.Status))
+		}
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+// replayAnswer rebuilds the split answer for a key that already posted: the stored payment with
+// its stored allocations, and each invoice's balance read live so the desk sees what the ledger
+// says now, not what it said when the cheque first landed. The balances are the invoice's current
+// ones (a later payment may have moved them since); the outcome words read the invoice's live
+// status.
+func (r *Repository) replayAnswer(ctx context.Context, p Payment) (ApplyAnswer, error) {
+	ans := ApplyAnswer{
+		PaymentID: p.ID, PaymentNo: p.PaymentNo, AmountCents: p.AmountCents,
+		AppliedCents: 0, Replayed: true,
+	}
+	if p.Allocations == nil {
+		p.Allocations = []Allocation{}
+	}
+	appliedBy := map[string]int64{}
+	for _, a := range p.Allocations {
+		appliedBy[a.InvoiceID] += a.AmountCents
+		ans.AppliedCents += a.AmountCents
+	}
+	ids := make([]string, 0, len(appliedBy))
+	for id := range appliedBy {
+		ids = append(ids, id)
+	}
+	rows := make([]applyInvoiceRow, 0, len(ids))
+	for _, id := range ids {
+		var row applyInvoiceRow
+		err := r.pool.QueryRow(ctx, `
+			SELECT id::text, invoice_no, customer_id::text, branch_id::text, status::text,
+			       issue_date, due_date, balance_cents, holdback_cents
+			  FROM invoices WHERE id = $1::uuid`, id).
+			Scan(&row.InvoiceID, &row.InvoiceNo, &row.CustomerID, &row.BranchID, &row.Status,
+				&row.IssueDate, &row.DueDate, &row.BalanceCents, &row.HoldbackCents)
+		if err != nil {
+			return ApplyAnswer{}, fmt.Errorf("apply: replay read invoice %q: %w", id, err)
+		}
+		rows = append(rows, row)
+	}
+	// The zero amount walk answers the rows in the allocation's own oldest first order with their
+	// live balances; each line is then patched with what THIS payment put on it.
+	lines, _ := allocateOldestFirst(rows, 0)
+	for i := range lines {
+		take := appliedBy[lines[i].InvoiceID]
+		lines[i].AppliedCents = take
+		outcome := ApplyOutcomeNone
+		if take > 0 {
+			if rowStatus(rows, lines[i].InvoiceID) == "PAID" {
+				outcome = ApplyOutcomeCloses
+			} else {
+				outcome = ApplyOutcomePart
+			}
+		}
+		lines[i].Outcome = outcome
+	}
+	ans.Lines = lines
+	ans.UnappliedCents = ans.AmountCents - ans.AppliedCents
+	return ans, nil
 }
 
 // PayableInvoices reads the payable balance of each requested invoice, tenant-scoped, and

@@ -345,6 +345,18 @@ type ReceiptInput struct {
 	IdempotencyKey string `json:"idempotency_key"`
 }
 
+// ApplyPaymentInput records ONE received payment against a list of the account's open invoices and
+// asks the server to split it oldest first. The split is never the caller's to compute.
+type ApplyPaymentInput struct {
+	CustomerID     string   `json:"customer_id"`
+	Method         string   `json:"method"` // CASH | CARD | CHEQUE | EFT
+	AmountCents    int64    `json:"amount_cents"`
+	Reference      string   `json:"reference"`
+	InvoiceIDs     []string `json:"invoice_ids"`
+	IdempotencyKey string   `json:"idempotency_key"`
+	Preview        bool     `json:"preview"`
+}
+
 // ReceiptResult is what the Record Payment control gets back. Replayed=true means the key had
 // already been honoured and THIS REQUEST POSTED NOTHING, the guarantee a double-click needs.
 type ReceiptResult struct {
