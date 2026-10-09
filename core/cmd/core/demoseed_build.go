@@ -179,6 +179,8 @@ func buildPlan(in planInput) ([]row, planSummary, error) {
 		return nil, planSummary{}, err
 	}
 	b.picking()
+	// The yard manager's receiving difference, after the products its lines name.
+	b.purchaseOrders()
 	b.parkedTickets()
 	b.freightApprovals()
 	// The quote world, after the customers and products it prices and before the day-keyed rows.
@@ -1105,6 +1107,74 @@ func (b *builder) picking() {
 }
 
 // -- §13 parked tickets ---------------------------------------------------------------------------
+
+// purchaseOrders writes the demo world's purchase orders: the one PARTIAL
+// order whose short line is the yard manager's receiving difference (§12b of
+// the plan). Idempotent by fixed ids, like everything above; the numbers are
+// the plan's own, never a live sequence.
+func (b *builder) purchaseOrders() {
+	for _, po := range demoPurchaseOrders {
+		vendorID := demoID("vendor:" + po.VendorKey)
+		b.add(insert("vendors", "(id)",
+			"id", vendorID,
+			"vendor_no", po.VendorNo,
+			"name", po.VendorName,
+			"payment_terms_days", 30,
+			"is_edi", false,
+			"remit_address", "{}",
+			"is_active", true,
+			"metadata", fmt.Sprintf(`{"demo_seed": %q}`, demoMarker),
+			"created_at", b.agoDays(40), "updated_at", b.agoDays(40),
+		))
+		poID := demoID("po:" + po.Key)
+		b.add(insert("purchasing_pos", "(id)",
+			"id", poID,
+			"po_no", po.PONo,
+			"vendor_id", vendorID,
+			"branch_id", b.branchID(po.Branch),
+			"status", po.Status,
+			"expected_at", b.day(po.ExpectedIn),
+			"ordered_at", b.ago(po.AgeHours),
+			"notes", "",
+			"created_at", b.ago(po.AgeHours), "updated_at", b.ago(po.AgeHours),
+		))
+		receiptValue := int64(0)
+		for i, l := range po.Lines {
+			b.add(insert("purchasing_po_lines", "(id)",
+				"id", demoID(fmt.Sprintf("poline:%s:%d", po.Key, i+1)),
+				"po_id", poID,
+				"line_no", i+1,
+				"product_id", demoID("product:" + l.Prod),
+				"description", b.prod[l.Prod].Name,
+				"qty_ordered_base", l.Qty,
+				"uom", b.prod[l.Prod].UOM,
+				"unit_cost_cents", l.UnitCost,
+				"qty_received_base", l.Received,
+				"qty_billed_base", "0.0000",
+				"billed_cents", 0,
+				"created_at", b.ago(po.AgeHours), "updated_at", b.ago(po.AgeHours),
+			))
+			// The receipt's value: received quantity at the buying price, integer cents. The
+			// plan's literals are fixed decimals, so the parse cannot fail; a bad literal is a
+			// plan defect and the seed refuses to write a wrong figure.
+			recv, err := strconv.ParseFloat(l.Received, 64)
+			if err != nil {
+				panic(fmt.Sprintf("demoseed: po %s line %d received qty: %v", po.Key, i+1, err))
+			}
+			receiptValue += int64(recv*float64(l.UnitCost) + 0.5)
+		}
+		b.add(insert("purchasing_receipts", "(id)",
+			"id", demoID("receipt:"+po.Key),
+			"po_id", poID,
+			"seq", 1,
+			"grn_no", po.PONo+"-GRN1",
+			"value_cad_cents", receiptValue,
+			"received_at", b.ago(po.AgeHours),
+			"notes", "Landed short; the rest is expected.",
+			"created_at", b.ago(po.AgeHours),
+		))
+	}
+}
 
 func (b *builder) parkedTickets() {
 	for _, t := range demoParked {

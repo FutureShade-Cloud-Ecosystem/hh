@@ -136,6 +136,8 @@ export interface ReceivingRow {
   readonly expected_at: string;
   readonly open_lines: number;
   readonly qty_outstanding_base: number;
+  /** The order's still-open value, integer cents. Absent when the cost gate refuses the caller. */
+  readonly value_open_cents: number | null;
 }
 
 // -- approvals ---------------------------------------------------------------------------------------
@@ -148,7 +150,6 @@ export interface ApprovalRow {
   readonly subject_ref: string;
   readonly amount_cents: number;
   readonly status: string;
-  readonly created_at: string;
 }
 
 // -- the caller's branch ---------------------------------------------------------------------------
@@ -294,6 +295,7 @@ export function toReceivingRow(raw: unknown): ReceivingRow {
     expected_at: text(r.expected_at),
     open_lines: num(r.open_lines),
     qty_outstanding_base: num(r.qty_outstanding_base),
+    value_open_cents: maybeNum(r.value_open_cents),
   };
 }
 
@@ -307,7 +309,6 @@ export function toApprovalRow(raw: unknown): ApprovalRow {
     subject_ref: text(r.subject_ref),
     amount_cents: num(r.amount_cents),
     status: text(r.status),
-    created_at: text(r.created_at),
   };
 }
 

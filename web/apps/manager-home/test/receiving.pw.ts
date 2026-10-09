@@ -37,6 +37,8 @@ test("the receiving difference definition is said in words, and only the differe
   await expect(cards.first().locator(".order")).toHaveText("PO-TRT-77");
   await expect(cards.first().locator(".chip")).toContainText("Partial");
   await expect(cards.first().locator(".detail").first()).toContainText("1 line still short");
+  // Cost, visible: the order's still-open value, the core's integer cents formatted for a person.
+  await expect(cards.first().locator(".detail .amount")).toHaveText("$54.00");
   // The worklist's not-short orders are said as a count, not hidden and not listed as differences.
   await expect(page.locator(".count-line")).toContainText("1 purchase order on the dock landed everything ordered");
 });

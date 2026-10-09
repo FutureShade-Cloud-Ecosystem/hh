@@ -386,6 +386,9 @@ export function renderReceiving(model: ReceivingModel): TemplateResult {
                         <span class="chip watch">Partial</span>
                       </div>
                       <p class="detail">${row.open_lines} line${row.open_lines === 1 ? "" : "s"} still short</p>
+                      ${row.value_open_cents !== null
+                        ? html`<p class="detail"><span class="amount">${money(row.value_open_cents)}</span> still open on this order</p>`
+                        : nothing}
                       ${row.expected_at !== "" ? html`<p class="detail">expected ${row.expected_at}</p>` : nothing}
                     </article>
                   `)}
