@@ -3,7 +3,7 @@
 // aging tiles and Needs you, an account's open invoices with the payment panel,
 // the statement, and the credit holds. The stub is held to the core's shapes and
 // sentences by test/stub-contract.test.mjs.
-import { test, expect, openDesk, dayFromToday } from "./helpers.js";
+import { test, expect, openDesk, dayFromToday, receivablesHandoff } from "./helpers.js";
 import type { Page } from "@playwright/test";
 
 async function openAccount(page: Page, name: string): Promise<void> {
@@ -64,55 +64,67 @@ test("the register's filters: overdue, promised, disputed and paid", async ({ pa
   await expect(page.locator("[data-register-row]")).toContainText("INV-1010");
 });
 
-test("aging to payment applied: Record payment on a row opens the account with the payment ready, and the server's balance shows", async ({ page, request }) => {
+test("aging to payment applied: Record payment on a row opens the account with the payment ready, and the server's split and balance show", async ({ page, request }) => {
   await openDesk(page, request);
   await page.locator("[data-register-row]", { hasText: "INV-1002" }).getByRole("button", { name: "Record payment" }).click();
   await expect(page.getByRole("heading", { name: "Granite Edge Landscaping (demo)" })).toBeVisible();
   await expect(page.locator("[data-hold-banner]")).toContainText("on hold: Returned payment");
-  await expect(page.locator("[data-field='receive-amount']")).toHaveValue("960.00");
+  await expect(page.locator("[data-field='receive-amount']")).toHaveValue("$960.00");
   await expect(page.locator("[data-applied]")).toHaveText("$960.00 of $960.00");
-  await page.locator("[data-field='receive-amount']").fill("100.00");
-  await page.locator("[data-field='apply'][data-key]").nth(1).fill("100.00");
+  await expect(page.locator("[data-allocation]")).toContainText("INV-1002 · closes");
+  const amount = page.locator("[data-field='receive-amount']");
+  await amount.fill("100");
+  await amount.blur();
+  await expect(amount).toHaveValue("$100.00");
+  await expect(page.locator("[data-allocation]")).toContainText("INV-1002 · part, $860.00 stays open");
+  await expect(page.locator("[data-applied]")).toHaveText("$100.00 of $100.00");
+  await expect(page.locator("[data-invoice-row]", { hasText: "INV-1002" }).locator("[data-applied-cell]")).toHaveText("$100.00");
   await page.locator("[data-field='receive-reference']").fill("Cheque 1042");
   await page.getByRole("button", { name: "Record payment" }).click();
-  await expect(page.locator("[data-notice]")).toContainText("PAY-0101 $100.00 on INV-1002, balance now $860.00");
+  await expect(page.locator("[data-notice]")).toContainText("PAY-0101 applied: $100.00 on INV-1002, balance now $860.00");
   await expect(page.locator("[data-invoice-row]", { hasText: "INV-1002" })).toContainText("$860.00");
   await expect(page.locator("[data-hold-stays]")).toContainText("The hold stays");
 });
 
-test("one payment across two invoices: oldest first fills the apply column and posts once per invoice", async ({ page, request }) => {
+test("one payment across two invoices: the server splits it oldest first and posts it as one payment", async ({ page, request }) => {
   await openDesk(page, request);
   await openAccount(page, "Granite Edge Landscaping (demo)");
-  await page.locator("[data-field='receive-amount']").fill("5000.00");
-  await page.getByRole("button", { name: "Oldest first" }).click();
+  await page.getByRole("button", { name: "Pick all open" }).click();
+  const amount = page.locator("[data-field='receive-amount']");
+  await amount.fill("$5,000.00");
+  await amount.blur();
   await expect(page.locator("[data-allocation]")).toContainText("INV-1001 · closes");
-  await expect(page.locator("[data-allocation]")).toContainText("INV-1002 · part");
+  await expect(page.locator("[data-allocation]")).toContainText("INV-1002 · part, $785.00 stays open");
   await expect(page.locator("[data-applied]")).toHaveText("$5,000.00 of $5,000.00");
   await expect(page.locator("[data-unapplied]")).toContainText("unapplied $0.00");
+  await expect(page.locator("[data-hold-stays]")).toContainText("$785.00 left on INV-1002");
   await page.locator("[data-field='receive-reference']").fill("Cheque 4471");
   await page.getByRole("button", { name: "Record payment" }).click();
-  await expect(page.locator("[data-notice]")).toContainText("PAY-0101 $4,825.00 on INV-1001, balance now $0.00");
-  await expect(page.locator("[data-notice]")).toContainText("PAY-0102 $175.00 on INV-1002, balance now $785.00");
-  await expect(page.locator("[data-invoice-row]")).toHaveCount(1);
+  await expect(page.locator("[data-notice]")).toContainText("Payment PAY-0101 applied: $4,825.00 on INV-1001, balance now $0.00; $175.00 on INV-1002, balance now $785.00");
+  await expect(page.locator("[data-notice]")).not.toContainText("PAY-0102");
 });
 
-test("a payment that does not add up is stopped in words before anything is sent", async ({ page, request }) => {
+test("a payment that cannot be posted is stopped in words, and the server's refusal shows beside the split", async ({ page, request }) => {
   await openDesk(page, request);
   await openAccount(page, "Granite Edge Landscaping (demo)");
   await page.getByRole("button", { name: "Clear" }).first().click();
-  const reference = page.locator("[data-field='receive-reference']");
-  await reference.fill("x");
+  await page.locator("[data-field='receive-reference']").fill("x");
   await page.locator("[data-field='receive-amount']").fill("100.00");
   await page.getByRole("button", { name: "Record payment" }).click();
-  await expect(page.locator("[data-error]")).toContainText("Apply the payment to at least one invoice");
-  await page.locator("[data-field='apply']").nth(1).fill("960.01");
+  await expect(page.locator("[data-error]")).toContainText("Pick the invoices the payment is for");
+  await page.getByRole("checkbox", { name: "Pay INV-1002" }).click();
   await page.locator("[data-field='receive-amount']").fill("960.01");
-  await page.getByRole("button", { name: "Record payment" }).click();
-  await expect(page.locator("[data-error]")).toHaveText("That is more than the balance of INV-1002, $960.00.");
-  await page.locator("[data-field='apply']").nth(1).fill("50.00");
-  await page.getByRole("button", { name: "Record payment" }).click();
-  await expect(page.locator("[data-error]")).toContainText("$910.01 of the payment is not applied");
-  await expect(page.locator("[data-error]")).toContainText("later");
+  await expect(page.locator("[data-preview-error]")).toHaveText("The payment is more than the selected invoices can take.");
+  await expect(page.locator("[data-applied]")).toHaveText("$0.00 of $0.00");
+});
+
+test("a paid invoice stays for context, dimmed, and takes nothing", async ({ page, request }) => {
+  await openDesk(page, request);
+  await openAccount(page, "Granite Edge Landscaping (demo)");
+  const paid = page.locator("[data-invoice-row]", { hasText: "INV-1010" });
+  await expect(paid).toBeVisible();
+  await expect(paid).toContainText("paid");
+  await expect(paid.getByRole("checkbox")).toHaveCount(0);
 });
 
 test("a promise to pay is recorded, and a second is refused in the core's words", async ({ page, request }) => {
@@ -140,10 +152,10 @@ test("a payment is marked bounced from its invoice, and worked from the queue", 
   await openDesk(page, request);
   await openAccount(page, "Riverstone Paving (demo)");
   await page.locator("[data-field='receive-amount']").fill("250.00");
-  await page.locator("[data-field='apply']").nth(0).fill("250.00");
+  await expect(page.locator("[data-applied]")).toHaveText("$250.00 of $250.00");
   await page.locator("[data-field='receive-reference']").fill("Cheque 7781");
   await page.getByRole("button", { name: "Record payment" }).click();
-  await expect(page.locator("[data-notice]")).toContainText("PAY-0101 $250.00 on INV-1005");
+  await expect(page.locator("[data-notice]")).toContainText("PAY-0101 applied: $250.00 on INV-1005");
   await page.locator("[data-invoice-row]", { hasText: "INV-1005" }).getByRole("button", { name: "INV-1005" }).click();
   await page.locator("[data-payment-row]").getByRole("button", { name: "Mark bounced" }).click();
   await page.locator("[data-field='bounce-reason']").fill("Cheque returned NSF");
@@ -216,9 +228,13 @@ test("credit holds: the sweep's holds are listed, lifting is held for this role 
   await expect(words).not.toContainText("Forbidden");
   await expect(page.locator("[data-held-words]")).toContainText("held for this role");
   await expect(page.locator("[data-hold-row]")).toHaveCount(3);
-  await page.getByRole("button", { name: /Place a hold/ }).click();
-  await expect(page.locator("[data-hold-panel]")).toContainText("later");
+  const place = page.getByRole("button", { name: /Place a hold/ });
+  await expect(place).toHaveAttribute("aria-disabled", "true");
+  await place.click({ force: true });
   await expect(page.locator("[data-hold-panel]")).toContainText("no route for it yet");
+  await expect(page.locator("[data-hold-panel] fieldset[disabled]")).toBeVisible();
+  await page.getByRole("button", { name: "Run the sweep" }).click({ force: true });
+  await expect(page.locator("[data-error]")).toContainText("Running the sweep is the Financial Controller's");
 });
 
 test("the controller lifts a hold with a reason, and overrides another", async ({ page, request }) => {
@@ -244,6 +260,8 @@ test("the statement: none yet, run it, read the aging strip, send it; PDF reads 
   await expect(page.locator("[data-statement]")).toContainText("No statement has been run for this account yet.");
   await page.getByRole("button", { name: "Run a statement" }).click();
   await expect(page.locator("[data-closing]")).toContainText("$623.00");
+  await expect(page.locator("[data-statement]")).toContainText("As of today");
+  await expect(page.locator("[data-statement-limits]")).toContainText("does not carry the dealer's name");
   await expect(page.locator("[data-statement]")).toContainText("1 to 30");
   await page.getByRole("button", { name: "Send to the AP contact" }).click();
   await expect(page.locator("[data-notice]")).toContainText("Statement queued to the AP contact");
@@ -261,4 +279,41 @@ test("the Statements tab lists every account and runs them all", async ({ page, 
   await page.getByRole("button", { name: "Run for every account" }).click();
   await expect(page.locator("[data-notice]")).toContainText("Statements run: 5 accounts");
   await expect(page.locator("[data-statement-row]").first()).toContainText("As of");
+});
+
+test("the controller's holds screen has no Place a hold button", async ({ page, request }) => {
+  await openDesk(page, request, "controller");
+  await page.getByRole("button", { name: "Credit holds", exact: true }).click();
+  await expect(page.getByRole("button", { name: /Place a hold/ })).toHaveCount(0);
+});
+
+test("on a phone no screen scrolls the page sideways", async ({ page, request }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openDesk(page, request);
+  const wide = () => page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  expect(await wide()).toBeLessThanOrEqual(0);
+  await page.getByRole("button", { name: "Statements", exact: true }).click();
+  await expect(page.locator("[data-statement-row]")).toHaveCount(5);
+  expect(await wide()).toBeLessThanOrEqual(0);
+  await page.getByRole("button", { name: "Credit holds", exact: true }).click();
+  await expect(page.locator("[data-hold-row]")).toHaveCount(3);
+  expect(await wide()).toBeLessThanOrEqual(0);
+  await page.getByRole("button", { name: "Receivables", exact: true }).click();
+  await openAccount(page, "Granite Edge Landscaping (demo)");
+  expect(await wide()).toBeLessThanOrEqual(0);
+  await page.getByRole("button", { name: "Statement", exact: true }).click();
+  expect(await wide()).toBeLessThanOrEqual(0);
+});
+
+test("the empty world: each screen says so in words", async ({ page, request }) => {
+  await request.post("/_stub/scenario", { data: { name: "empty" } });
+  await page.addInitScript(receivablesHandoff);
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Receivables", exact: true })).toBeVisible();
+  await expect(page.locator("[data-register-foot]")).toBeVisible();
+  await expect(page.locator(".empty", { hasText: "No invoices in this view." })).toBeVisible();
+  await expect(page.getByText("Nothing needs you right now.")).toBeVisible();
+  await page.getByRole("button", { name: "Credit holds", exact: true }).click();
+  await expect(page.locator(".empty", { hasText: "No account is on hold." })).toBeVisible();
+  await request.post("/_stub/reset");
 });

@@ -105,8 +105,9 @@ const NSF_FEE = 3500;
 
 let world;
 
-function reset() {
+function reset(kind = "full") {
   world = {
+    empty: kind === "empty",
     invoices: INVOICES.map((i) => ({
       id: uuid("a", i.n),
       invoice_no: `INV-${1000 + i.n}`,
@@ -124,6 +125,10 @@ function reset() {
     keys: new Map(),
     counter: 0,
   };
+  if (kind === "empty") {
+    world.invoices = [];
+    return;
+  }
   world.invoices[0].promise = {
     id: uuid("f", 1),
     promised_cents: 100_000,
@@ -307,7 +312,7 @@ function landing() {
     },
     cards,
     escalation_queue: queue,
-    paper_path: [
+    paper_path: world.empty ? [] : [
       {
         flag_id: uuid("6", 1),
         customer_id: custId(4),
@@ -487,6 +492,11 @@ async function handle(req, res) {
     reset();
     return send(res, 200, { ok: true });
   }
+  if (method === "POST" && path === "/_stub/scenario") {
+    const body = await readBody(req);
+    reset(body?.name === "empty" ? "empty" : "full");
+    return send(res, 200, { ok: true });
+  }
   if (path === "/api/v1/demo/flows") return send(res, 200, { flows: FLOWS });
   if (method === "POST" && path === "/api/v1/demo/session") {
     const body = await readBody(req);
@@ -497,6 +507,72 @@ async function handle(req, res) {
   if (method === "GET" && path === "/api/v1/branches") return send(res, 200, BRANCHES);
   if (!path.startsWith("/api/v1/ar/")) return refuse(res, 404, "not found");
   if ((req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");
+
+  // PROVISIONAL (FROM-PRINCIPAL 73): the received payment route, modelled from
+  // briefs/ITEM64-A-CORE-FOLLOWUP.md. One payment against an ordered list of the account's invoices, split
+  // oldest first (the order given) in one step; preview answers the split and writes nothing. The refusal
+  // sentences below are this stub's own words until the core's contract commit lands.
+  if (method === "POST" && path === "/api/v1/ar/payments/apply") {
+    const body = await readBody(req);
+    if (body === null) return refuse(res, 400, "invalid JSON body");
+    const preview = body.preview === true;
+    if (!preview && (typeof body.idempotency_key !== "string" || body.idempotency_key === "")) return refuse(res, 400, "recording a payment needs an idempotency key");
+    if (!Number.isInteger(body.amount_cents) || body.amount_cents <= 0) return refuse(res, 400, "a payment amount must be greater than zero");
+    if (!Array.isArray(body.invoice_ids) || body.invoice_ids.length === 0) return refuse(res, 400, "choose at least one invoice for the payment");
+    if (!preview) {
+      const replay = world.keys.get(`apply:${body.idempotency_key}`);
+      if (replay !== undefined) return send(res, 200, { ...replay, replayed: true });
+    }
+    const picked = body.invoice_ids.map(invById);
+    if (picked.some((i) => i === undefined || custId(i.acct) !== body.customer_id)) return refuse(res, 400, "an invoice of another account cannot take this payment");
+    const room = picked.reduce((t, i) => t + i.balance_cents, 0);
+    if (body.amount_cents > room) return refuse(res, 400, "the payment is more than the selected invoices can take");
+    let left = body.amount_cents;
+    const lines = picked.map((inv) => {
+      const take = Math.min(left, inv.balance_cents);
+      left -= take;
+      const after = inv.balance_cents - take;
+      return {
+        invoice_id: inv.id,
+        invoice_no: inv.invoice_no,
+        applied_cents: take,
+        outcome: take === 0 ? "NONE" : after === 0 ? "CLOSES" : "PART",
+        balance_after_cents: after,
+        stays_open_cents: after,
+      };
+    });
+    const answer = {
+      preview,
+      amount_cents: body.amount_cents,
+      applied_cents: body.amount_cents - left,
+      unapplied_cents: left,
+      lines,
+      replayed: false,
+    };
+    if (preview) return send(res, 200, answer);
+    world.counter += 1;
+    const no = `PAY-${String(100 + world.counter).padStart(4, "0")}`;
+    const payment = {
+      id: uuid("c", 100 + world.counter),
+      no,
+      acct: picked[0].acct,
+      method: body.method,
+      amount_cents: body.amount_cents,
+      status: "RECEIVED",
+      reason: "",
+      received_at: NOW_ISO(),
+      bounced_at: "",
+      allocations: lines.filter((l) => l.applied_cents > 0).map((l) => ({ invoice_n: invNumber(invById(l.invoice_id)), amount_cents: l.applied_cents })),
+    };
+    world.payments.push(payment);
+    for (const l of lines) {
+      const inv = invById(l.invoice_id);
+      inv.balance_cents = l.balance_after_cents;
+    }
+    const done = { ...answer, payment_id: payment.id, payment_no: no };
+    world.keys.set(`apply:${body.idempotency_key}`, done);
+    return send(res, 200, done);
+  }
 
   if (method === "GET" && path === "/api/v1/ar/landing") return send(res, 200, landing());
   if (method === "GET" && path === "/api/v1/ar/aging") return send(res, 200, { items: agingRows(), as_of: dayOffset(0) });

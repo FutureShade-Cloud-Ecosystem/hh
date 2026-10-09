@@ -28,8 +28,9 @@ import type {
   TillInvoicePayments,
   TillPaymentHistory,
 } from "@hardscapehouse/api-client";
-import { cardRange, cardTitle, holdKindWord, holdMarks, relativeDay, rowMarks, type Mark } from "./ar-logic.js";
-import { formatMoney, parseAmountToCents } from "./ar-money.js";
+import type { ApplyAnswer } from "./ar-api.js";
+import { cardRange, cardTitle, holdKindWord, holdMarks, lineWords, relativeDay, rowMarks, type Mark } from "./ar-logic.js";
+import { formatMoney } from "./ar-money.js";
 
 export type Tab = "receivables" | "statements" | "holds";
 export type RegisterFilter = "open" | "overdue" | "promised" | "disputed" | "paid";
@@ -54,7 +55,11 @@ export interface AccountModel {
   readonly statement: BillingStatement | "none" | null;
   readonly method: PayMethod;
   readonly amountText: string;
-  readonly apply: Readonly<Record<string, string>>;
+  /** The invoices picked for the payment, in the order they are sent: the server splits across them. */
+  readonly picked: readonly string[];
+  /** The server's answer to the payment as it stands, or why it could not answer. */
+  readonly preview: ApplyAnswer | null;
+  readonly previewError: string;
 }
 
 export interface BouncedWork {
@@ -143,15 +148,30 @@ function tabsBar(model: DeskModel): TemplateResult {
 
 // ---- the way in --------------------------------------------------------------------------------
 
+// The page keeps its frame while it loads or fails, so nothing jumps when the data lands.
+function frame(body: TemplateResult): TemplateResult {
+  return html`
+    <div class="head">
+      <div><h1>Receivables</h1><p class="dim">The AR register with its aging, overdue first. Bounced payments and accounts on hold wait in Needs you.</p></div>
+    </div>
+    <nav class="tabs" aria-label="Money Desk views">
+      <span class="tab" aria-disabled="true">Receivables</span><span class="tab" aria-disabled="true">Statements</span><span class="tab" aria-disabled="true">Credit holds</span>
+    </nav>
+    ${body}
+  `;
+}
+
 export function renderLoading(): TemplateResult {
-  return html`<p class="dim" role="status">Loading receivables.</p>`;
+  return frame(html`<section class="panel" aria-busy="true"><p class="dim" role="status">Loading receivables.</p><div class="ghost"></div><div class="ghost"></div><div class="ghost"></div></section>`);
 }
 
 export function renderLoadFailed(error: string): TemplateResult {
-  return html`
-    <p class="alert alert-error" role="alert" data-error>${error}</p>
-    <button type="button" class="btn btn-secondary" data-action="reload">Try again</button>
-  `;
+  return frame(html`
+    <section class="panel">
+      <p class="alert alert-error" role="alert" data-error>${error}</p>
+      <button type="button" class="btn btn-secondary" data-action="reload">Try again</button>
+    </section>
+  `);
 }
 
 // ---- receivables home --------------------------------------------------------------------------
@@ -319,7 +339,7 @@ function bouncedWork(model: DeskModel, work: BouncedWork): TemplateResult {
         <dt>Account</dt><dd>${work.accountName}</dd>
         <dt>Payment</dt><dd>${h.payment_no} · ${h.method.toLowerCase()} · ${formatMoney(h.amount_cents)}</dd>
         <dt>What happened</dt><dd>${bounce?.reason ?? "Returned by the bank"}. Reversed across ${reopened === "" ? "no invoices" : reopened}${bounce === undefined ? "" : `; fee ${formatMoney(bounce.fee_cents)} charged`}.</dd>
-        <dt>Received by</dt><dd>${h.received_by_name ?? "Not recorded"}, ${relativeDay(h.received_at, model.asOf)}</dd>
+        ${h.received_by_name === undefined || h.received_by_name === "" ? nothing : html`<dt>Received by</dt><dd>${h.received_by_name}, ${relativeDay(h.received_at, model.asOf)}</dd>`}
       </dl>
       <h3>Work it</h3>
       <div class="choices" role="radiogroup" aria-label="How to work it">
@@ -386,7 +406,7 @@ export function renderStatements(model: DeskModel): TemplateResult {
     <section class="panel" aria-label="Statements by account">
       <div class="panel-head"><h3>Statements</h3></div>
       <div class="scroll">
-        <table>
+        <table class="stack stmt">
           <thead><tr><th>Account</th><th class="num">Balance</th><th>Last statement</th><th><span class="visually-hidden">Open</span></th></tr></thead>
           <tbody>
             ${model.aging.map((a) => {
@@ -395,7 +415,7 @@ export function renderStatements(model: DeskModel): TemplateResult {
                 <tr data-statement-row>
                   <td><span class="who">${a.customer_name}</span><span class="dim small">${a.account_no}</span></td>
                   <td class="num">${formatMoney(a.total_cents)}</td>
-                  <td>${s === undefined ? "Loading" : s === "none" ? "None yet" : `As of ${s.as_of_date}`}</td>
+                  <td>${s === undefined ? "Loading" : s === "none" ? "None yet" : `As of ${relativeDay(s.as_of_date, model.asOf)}`}</td>
                   <td class="act"><button type="button" class="btn btn-secondary small-btn" data-action="open-account" data-customer-id="${a.customer_id}" data-right="receive" data-sub="statement">Open statement</button></td>
                 </tr>
               `;
@@ -424,10 +444,16 @@ function holdsPanel(model: DeskModel): TemplateResult {
   if (model.holdPanel === "place-later") {
     return html`
       <section class="panel side" aria-label="Place a hold" data-hold-panel>
-        <div class="panel-head"><h2>Place a hold</h2>${later()}</div>
-        <p>Placing a hold by hand is later: the core has no route for it yet. The sweep places the Aged AR, Over limit and Pay before release holds, and a returned payment places its own.</p>
-        <p class="dim small">When it lands, a manual hold will carry a reason and the list of what it blocks (new orders at the till, release to dispatch, portal checkout), and both the branch and the account's sales rep will hear of it.</p>
-        <div class="actions"><button type="button" class="btn btn-secondary" data-action="hold-close">Close</button></div>
+        <div class="panel-head"><h2>Place a hold</h2><span class="later">later</span></div>
+        <p class="note" data-later-words>Placing a hold by hand is later: the core has no route for it yet. The sweep places the Aged AR, Over limit and Pay before release holds, and a returned payment places its own. The form below shows the shape it will take.</p>
+        <fieldset class="held-form" disabled>
+          <label>Account<select><option>Pick an account</option></select></label>
+          <label>Kind<input type="text" value="Manual" readonly /></label>
+          <label>Reason<textarea rows="2" placeholder="Why the account is held"></textarea></label>
+          <p class="label">What it blocks</p>
+          <ul class="blocks"><li>New orders at the till</li><li>Release to dispatch</li><li>Portal checkout</li><li>Cash sales (still ring)</li></ul>
+        </fieldset>
+        <div class="actions"><button type="button" class="btn btn-secondary held" aria-disabled="true">Place hold</button><button type="button" class="btn btn-secondary" data-action="hold-close">Close</button></div>
       </section>
     `;
   }
@@ -467,12 +493,12 @@ function holdsPanel(model: DeskModel): TemplateResult {
         <button type="button" class="choice" role="radio" aria-checked="${model.liftChoice === "lift" ? "true" : "false"}" data-action="lift-choice" data-choice="lift"><span class="radio"></span><span><strong>Lift the hold</strong><span class="dim small">Ends the hold now. The sweep may place it again if the balance ages past the policy edge.</span></span></button>
         <button type="button" class="choice" role="radio" aria-checked="${model.liftChoice === "override" ? "true" : "false"}" data-action="lift-choice" data-choice="override"><span class="radio"></span><span><strong>Override instead</strong><span class="dim small">Keep the hold on the record and let the account transact until the override expires.</span></span></button>
       </div>
-      <label>Reason<textarea data-field="release-reason" rows="3" placeholder="Why this is right"></textarea></label>
+      <label class="gap">Reason<textarea data-field="release-reason" rows="3" placeholder="Why this is right"></textarea></label>
       <div class="actions">
         <button type="button" class="btn btn-primary" data-action="lift-go" ?disabled=${model.busy}>${model.liftChoice === "lift" ? "Lift hold" : "Override hold"}</button>
         <button type="button" class="btn btn-secondary" data-action="hold-close">Cancel</button>
       </div>
-      <p class="ok-note small"><b>Audited.</b> The release carries your role, the reason and the time.</p>
+      <p class="ok-note" data-audited><b>Audited.</b> The release carries your role, the reason and the time.</p>
     </section>
   `;
 }
@@ -482,11 +508,12 @@ export function renderHolds(model: DeskModel): TemplateResult {
   return html`
     <div class="head">
       <div><h1>Credit holds</h1><p class="dim">A hold stops release at the till, the gate and the portal. Lifting and overriding both carry a reason, and both are audited.</p></div>
-      <div class="actions"><button type="button" class="btn btn-primary" data-action="place-later">Place a hold ${later()}</button></div>
+      ${model.canLift ? nothing : html`<div class="actions"><button type="button" class="btn btn-secondary held" data-action="place-later" aria-disabled="true">Place a hold <span class="later">later</span></button></div>`}
     </div>
-    ${tabsBar(model)} ${messages(model)}
+    ${tabsBar(model)}
     <div class="cols">
       <section class="panel col-main" aria-label="Credit holds">
+        ${messages(model)}
         <div class="panel-head">
           <h3>Credit holds</h3>
           <div class="tools">
@@ -507,7 +534,7 @@ export function renderHolds(model: DeskModel): TemplateResult {
                           <td><button type="button" class="link-row" data-action="show-hold" data-hold-id="${h.id}"><span class="who">${h.customer_name ?? accountName(model, h.customer_id)}</span></button></td>
                           <td><span class="marks"><span class="pill pill-stop">${holdKindWord(h.hold_kind)}</span>${holdMarks(h, model.nowMs).map((m) => html`<span class="pill pill-plain ${m === "override in force" ? "pill-dashed" : ""}">${m}</span>`)}${h.status === "RELEASED" ? html`<span class="pill pill-good">released</span>` : nothing}</span></td>
                           <td>${h.reason}</td>
-                          <td>${relativeDay(h.created_at, model.asOf)}<span class="dim small">${h.auto_placed ? "by the credit sweep" : "by hand"}</span></td>
+                          <td class="placed"><span class="nowrap">${relativeDay(h.created_at, model.asOf)}</span><span class="dim small">${h.auto_placed ? "by the credit sweep" : "by hand"}</span></td>
                           <td class="act">${h.status === "ACTIVE" ? holdActions(model, h) : nothing}</td>
                         </tr>
                       `,
@@ -526,12 +553,12 @@ export function renderHolds(model: DeskModel): TemplateResult {
 
 // ---- an account --------------------------------------------------------------------------------
 
-function applyCents(model: AccountModel, id: string): number {
-  return parseAmountToCents(model.apply[id] ?? "") ?? 0;
-}
-
 function invoiceTable(model: DeskModel, account: AccountModel): TemplateResult {
-  const rows = account.invoices.filter((r) => account.showAll || r.status !== "PAID");
+  const paid = account.invoices.filter((r) => r.status === "PAID").sort((x, y) => y.due_date.localeCompare(x.due_date));
+  const rows = account.invoices.filter((r) => account.showAll || r.status !== "PAID").concat(account.showAll ? [] : paid.slice(0, 1));
+  rows.sort((x, y) => y.days_overdue - x.days_overdue || x.due_date.localeCompare(y.due_date));
+  const split = account.preview === null ? new Map<string, number>() : new Map(account.preview.lines.map((l) => [l.invoice_id, l.applied_cents]));
+  const firstId = rows.find((r) => r.status !== "PAID")?.id ?? "";
   return html`
     <section class="panel" aria-label="Open invoices">
       <div class="panel-head">
@@ -541,68 +568,80 @@ function invoiceTable(model: DeskModel, account: AccountModel): TemplateResult {
       <div class="scroll">
         <table class="stack inv">
           <thead>
-            <tr><th>Invoice</th><th>Issued</th><th>Due</th><th>Status</th><th class="num">Amount</th><th class="num">Paid</th><th class="num">Balance</th><th class="num">Apply</th></tr>
+            <tr><th>Invoice</th><th>Issued</th><th>Due</th><th>Status</th><th class="num">Amount</th><th class="num">Balance</th><th class="num">Pick</th><th class="num">Applied</th></tr>
           </thead>
           <tbody>
             ${rows.map((r) => {
-              const paid = r.status === "PAID";
+              const paidRow = r.status === "PAID";
+              const picked = account.picked.includes(r.id);
+              const applied = split.get(r.id);
               return html`
-                <tr data-invoice-row aria-current="${account.selectedInvoiceId === r.id ? "true" : "false"}">
+                <tr data-invoice-row class="${paidRow ? "dimrow" : ""}" aria-current="${account.selectedInvoiceId === r.id ? "true" : "false"}">
                   <td><button type="button" class="link-row" data-action="open-invoice" data-invoice-id="${r.id}"><span class="who">${r.invoice_no}</span></button><span class="dim small">${r.order_no ?? ""}</span></td>
-                  <td>${relativeDay(r.issue_date, model.asOf)}</td>
-                  <td class="${r.days_overdue > 0 && !paid ? "late" : ""}">${relativeDay(r.due_date, model.asOf)}</td>
+                  <td class="nowrap">${relativeDay(r.issue_date, model.asOf)}</td>
+                  <td class="nowrap ${r.days_overdue > 0 && !paidRow ? "late" : ""}">${relativeDay(r.due_date, model.asOf)}</td>
                   <td><span class="marks">${rowMarks(r).map(markPill)}</span></td>
                   <td class="num">${formatMoney(r.total_cents)}</td>
-                  <td class="num">${formatMoney(r.total_cents - r.balance_cents)}</td>
                   <td class="num"><b>${formatMoney(r.balance_cents)}</b></td>
-                  <td class="num"><input type="text" inputmode="decimal" class="apply" data-field="apply" data-key="${r.id}" autocomplete="off" aria-label="Apply to ${r.invoice_no}" ?disabled=${paid} /></td>
+                  <td class="num">${paidRow ? nothing : html`<button type="button" class="pick" role="checkbox" aria-checked="${picked ? "true" : "false"}" aria-label="Pay ${r.invoice_no}" data-action="pick" data-invoice-id="${r.id}"></button>`}</td>
+                  <td class="num applied-cell" data-applied-cell>${paidRow ? formatMoney(0) : applied === undefined ? "" : formatMoney(applied)}</td>
                 </tr>
               `;
             })}
           </tbody>
           <tfoot>
-            <tr><td colspan="6"><b>Open balance</b></td><td class="num"><b data-open-balance>${formatMoney(account.invoices.find((r) => r.account !== undefined)?.account?.open_balance_cents)}</b></td><td></td></tr>
+            <tr><td colspan="5"><b>Open balance</b></td><td class="num"><b data-open-balance>${formatMoney(account.invoices.find((r) => r.account !== undefined)?.account?.open_balance_cents)}</b></td><td></td><td></td></tr>
           </tfoot>
         </table>
       </div>
-      <p class="dim small foot">Oldest first fills the apply column; edit any cell to split differently. A paid invoice stays for context and takes nothing.</p>
+      <div class="foot-row">
+        <p class="dim small">Pick the invoices the payment is for and type the amount: the server splits it, oldest first. A paid invoice stays for context and takes nothing.</p>
+        ${firstId === "" ? nothing : html`<button type="button" class="link" data-action="open-invoice" data-invoice-id="${account.selectedInvoiceId ?? firstId}">Invoice history ›</button>`}
+      </div>
     </section>
   `;
 }
 
 function receivePanel(model: DeskModel, account: AccountModel): TemplateResult {
-  const open = account.invoices.filter((r) => r.status !== "PAID");
-  const amount = parseAmountToCents(account.amountText) ?? 0;
-  const lines = open.map((r) => ({ r, cents: applyCents(account, r.id) })).filter((l) => l.cents > 0);
-  const applied = lines.reduce((t, l) => t + l.cents, 0);
-  const unapplied = amount - applied;
+  const answer = account.preview;
   const onHold = account.invoices.some((r) => r.account_status === "CREDIT_HOLD") || model.holds.some((h) => h.status === "ACTIVE" && h.customer_id === account.customerId);
+  const stays = answer?.lines.filter((l) => l.outcome === "PART") ?? [];
   return html`
     <section class="panel side" aria-label="Receive a payment" data-receive>
-      <div class="panel-head"><h2>Receive a payment</h2><span class="pill ${unapplied === 0 ? "pill-good" : "pill-watch"}" data-unapplied>unapplied ${formatMoney(unapplied)}</span></div>
-      <div class="two">
-        <label>Amount<input type="text" inputmode="decimal" class="amount" data-field="receive-amount" autocomplete="off" placeholder="0.00" /></label>
-        <label>Received at<input type="text" readonly class="ro" data-field="received-at" /></label>
+      <div class="panel-head">
+        <h2>Receive a payment</h2>
+        ${answer === null ? nothing : html`<span class="pill ${answer.unapplied_cents === 0 ? "pill-good" : "pill-watch"}" data-unapplied>unapplied ${formatMoney(answer.unapplied_cents)}</span>`}
       </div>
-      <p class="label">Method</p>
+      <div class="two">
+        <label>Amount<input type="text" inputmode="decimal" class="amount" data-field="receive-amount" autocomplete="off" placeholder="$0.00" /></label>
+        <label>Received at<span class="ro" data-ro="received-at"></span></label>
+      </div>
+      <p class="label gap">Method</p>
       ${segmented("Method", [{ id: "CHEQUE", word: "Cheque" }, { id: "EFT", word: "EFT" }, { id: "CARD", word: "Card" }, { id: "CASH", word: "Cash" }], account.method, "method")}
-      <div class="two">
+      <div class="two gap">
         <label>Reference<input type="text" data-field="receive-reference" autocomplete="off" placeholder="Cheque number or transfer reference" /></label>
-        <label>Taken by<input type="text" readonly class="ro" data-field="taken-by" /></label>
+        <label>Taken by<span class="ro" data-ro="taken-by"></span></label>
       </div>
-      <h3>Allocation</h3>
-      <div class="actions"><button type="button" class="btn btn-secondary small-btn" data-action="oldest-first">Oldest first</button><button type="button" class="btn btn-secondary small-btn" data-action="clear-apply">Clear</button></div>
+      <h3 class="gap">Allocation</h3>
+      <div class="actions"><button type="button" class="btn btn-secondary small-btn" data-action="pick-all">Pick all open</button><button type="button" class="btn btn-secondary small-btn" data-action="clear-apply">Clear</button></div>
+      ${account.previewError === "" ? nothing : html`<p class="alert alert-error" role="alert" data-preview-error>${account.previewError}</p>`}
       <ul class="alloc" data-allocation>
-        ${lines.map((l) => html`<li><span>${l.r.invoice_no} · ${l.cents >= l.r.balance_cents ? "closes" : "part"}</span><span>${formatMoney(l.cents)}</span></li>`)}
-        <li class="dim"><span>Unapplied</span><span>${formatMoney(unapplied)}</span></li>
+        ${answer === null
+          ? html`<li class="dim"><span>Type an amount and pick the invoices; the server shows the split.</span></li>`
+          : html`
+              ${answer.lines.filter((l) => l.outcome !== "NONE").map((l) => html`<li><span>${l.invoice_no} · ${lineWords(l)}</span><span>${formatMoney(l.applied_cents)}</span></li>`)}
+              <li class="dim"><span>Unapplied</span><span>${formatMoney(answer.unapplied_cents)}</span></li>
+            `}
       </ul>
-      <p class="applied"><b>Applied</b><b data-applied>${formatMoney(applied)} of ${formatMoney(amount)}</b></p>
+      <p class="applied"><b>Applied</b><b data-applied>${answer === null ? formatMoney(0) : formatMoney(answer.applied_cents)} of ${answer === null ? formatMoney(0) : formatMoney(answer.amount_cents)}</b></p>
       <div class="actions">
         <button type="button" class="btn btn-primary" data-action="apply-payment" ?disabled=${model.busy}>Record payment</button>
         <button type="button" class="btn btn-secondary" data-action="clear-apply">Cancel</button>
       </div>
-      ${onHold ? html`<p class="note" data-hold-stays><b>The hold stays.</b> Recording this payment does not lift it; lifting is the controller's.</p>` : nothing}
-      <p class="dim small">One payment across several invoices posts once per invoice: the register records a payment per invoice. What shows afterwards is the server's balance.</p>
+      ${onHold
+        ? html`<p class="callout" data-hold-stays><b>The hold stays.</b> Lifting it is the controller's.${stays.length > 0 ? ` The ${stays.map((l) => `${formatMoney(l.stays_open_cents)} left on ${l.invoice_no}`).join(" and the ")} keeps the account where it is.` : ""}</p>`
+        : nothing}
+      <p class="dim small">One payment is one record: the server splits it across the picked invoices in one step. What shows afterwards is the server's balance.</p>
     </section>
   `;
 }
@@ -683,7 +722,7 @@ function statementDoc(model: DeskModel, account: AccountModel): TemplateResult {
         : s === "none"
           ? html`<div class="empty"><strong>No statement has been run for this account yet.</strong><button type="button" class="btn btn-secondary" data-action="run-statement" ?disabled=${model.busy}>Run a statement</button></div>`
           : html`
-              <div class="doc-head"><h2>Statement</h2><span class="dim">As of ${s.as_of_date}</span></div>
+              <div class="doc-head"><h2>${account.branchName === "" ? "Statement" : account.branchName}</h2><span><b>STATEMENT</b> <span class="dim">As of ${relativeDay(s.as_of_date, model.asOf)}</span></span></div>
               <p class="who">${account.name}</p>
               <p class="dim">Account ${account.accountNo}${account.terms === null ? "" : ` · Net ${account.terms}`}</p>
               <div class="scroll">
@@ -702,7 +741,8 @@ function statementDoc(model: DeskModel, account: AccountModel): TemplateResult {
                 <div><dt>Total due</dt><dd data-closing><span class="visually-hidden">Closing balance </span>${formatMoney(s.closing_balance_cents)}</dd></div>
               </dl>
               ${s.days_90_plus_cents > 0 ? html`<p class="overdue-note"><b>${formatMoney(s.days_90_plus_cents)}</b> of this balance is more than 60 days past due. Please contact our office to arrange payment.</p>` : nothing}
-              <p class="dim small">Statement generated ${dateOnly(s.created_at)}. Please contact the branch with any discrepancy.</p>
+              <p class="dim small">Statement generated ${relativeDay(s.created_at, model.asOf)}. Please contact the branch with any discrepancy.</p>
+              <p class="dim small" data-statement-limits>The statement read carries the account's aging and closing balance. It does not carry the dealer's name or address, a payments column or a running ledger, so none is drawn.</p>
             `}
     </section>
   `;

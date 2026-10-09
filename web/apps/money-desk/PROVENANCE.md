@@ -24,6 +24,9 @@ receivables-home, account-open-invoices, credit-hold), which now come first; the
 that round: the register with its status pills, Needs you, the apply column and payment panel, the statement document, the
 holds table with the controller's lift (the references' words, the core's routes), and the `later` tags.
 
+Round 3: the payment panel no longer splits in the app; the received payment route is the server's (provisional model in
+`src/ar/ar-api.ts` until fix/ar-payment-apply publishes its contract).
+
 Not ported on purpose: auto credit hold settings, the paper path and reminders
 (Base tier extras, not this role's first increment), the pop out and duplicate
 windows.

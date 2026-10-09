@@ -6,8 +6,8 @@
 import { css } from "lit";
 
 export const arStyles = css`
-  .desk { max-width: 1440px; margin: 0 auto; padding: var(--hh-s-24) var(--hh-s-24) var(--hh-s-48); }
-  h1 { margin: 0; font-size: 26px; line-height: 1.2; font-weight: 700; }
+  .desk { font-size: 14px; max-width: 1440px; margin: 0 auto; padding: var(--hh-s-24) var(--hh-s-24) var(--hh-s-48); }
+  h1 { margin: 0; font-size: 24px; line-height: 1.2; font-weight: 700; }
   h2 { margin: 0; font-size: 20px; line-height: 1.25; font-weight: 700; }
   h3 { margin: 0; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--hh-text-dim); font-weight: 700; }
   p { margin: 0 0 var(--hh-s-8); }
@@ -22,8 +22,26 @@ export const arStyles = css`
   .tile p.dim { font-size: 13px; }
   td:first-child .who { white-space: nowrap; }
   .tab { font-size: 14px; }
+  .nowrap { white-space: nowrap; }
+  .gap { margin-top: var(--hh-s-16); }
+  td.placed { min-width: 150px; }
+  .ro { display: block; min-height: 44px; padding: var(--hh-s-12); box-sizing: border-box; border: 1px solid var(--hh-line); border-radius: var(--hh-radius-control); background: var(--hh-row-alt); color: var(--hh-text); font-size: 14px; font-weight: 400; overflow-wrap: anywhere; line-height: 1.3; }
+  .pick { width: 22px; height: 22px; min-height: 0; padding: 0; border-radius: 6px; border: 2px solid var(--hh-control-line); background: transparent; cursor: pointer; }
+  .pick[aria-checked="true"] { background: var(--hh-accent); border-color: var(--hh-accent-ink); color: var(--hh-accent-ink); display: inline-flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; line-height: 1; }
+  .pick[aria-checked="true"]::after { content: "\\2713"; }
+  .applied-cell { color: var(--hh-text); font-weight: 700; }
+  .dimrow td { color: var(--hh-text-dim); }
+  .foot-row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--hh-s-8) var(--hh-s-16); margin-top: var(--hh-s-12); }
+  .foot-row p { margin: 0; }
+  .callout { background: var(--hh-quote-tint); border: 1px solid var(--hh-state-watch); border-radius: var(--hh-radius-control); padding: var(--hh-s-12) var(--hh-s-16); margin: var(--hh-s-12) 0; }
+  .ghost { height: 44px; margin-top: var(--hh-s-12); border-radius: var(--hh-radius-control); background: var(--hh-row-alt); }
+  .held-form { border: 0; padding: 0; margin: var(--hh-s-12) 0; display: grid; gap: var(--hh-s-12); min-width: 0; }
+  .blocks { margin: 0; padding-inline-start: var(--hh-s-20); color: var(--hh-text-dim); }
+  .seg { flex-wrap: wrap; border-radius: var(--hh-radius-control); }
+  .head p, .head .dim { max-width: 70ch; }
   .facts { font-size: 14px; }
   .panel .actions { margin-top: var(--hh-s-12); }
+  label.gap { margin-top: var(--hh-s-16); }
   .seg { max-width: 100%; overflow-x: auto; }
   td:nth-child(4) .small { white-space: normal; }
   .link { min-height: 0; background: none; border: 0; padding: 0; color: var(--hh-accent-text); font-weight: 700; font-size: 14px; cursor: pointer; }
@@ -37,7 +55,7 @@ export const arStyles = css`
   .alert-error { border-color: var(--hh-state-stop); border-inline-start-width: 4px; }
   .alert-ok { border-color: var(--hh-state-good); border-inline-start-width: 4px; }
   .note { background: var(--hh-row-alt); border-inline-start: 4px solid var(--hh-state-watch); border-radius: var(--hh-radius-control); padding: var(--hh-s-12) var(--hh-s-16); margin: var(--hh-s-12) 0; }
-  .ok-note { background: var(--hh-row-alt); border-inline-start: 4px solid var(--hh-state-good); border-radius: var(--hh-radius-control); padding: var(--hh-s-8) var(--hh-s-16); }
+  .ok-note { background: color-mix(in srgb, var(--hh-state-good) 16%, var(--hh-card)); border: 1px solid var(--hh-state-good); border-radius: var(--hh-radius-control); padding: var(--hh-s-12) var(--hh-s-16); margin-top: var(--hh-s-16); }
 
   /* Tabs: a rounded strip, the open one raised. */
   .tabs { display: flex; flex-wrap: wrap; align-items: center; gap: var(--hh-s-4); margin: 0 0 var(--hh-s-16); }
@@ -58,7 +76,7 @@ export const arStyles = css`
   .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--hh-s-16); margin-bottom: var(--hh-s-16); }
   .tile { background: var(--hh-card); border: 1px solid var(--hh-line); border-radius: var(--hh-radius-card); padding: var(--hh-s-20); box-shadow: var(--hh-elev-1); min-width: 0; }
   .tile p { margin: var(--hh-s-4) 0; }
-  .tile-figure { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .tile-figure { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
   .tile-escalation { color: var(--hh-state-stop); }
   .tile-late { color: var(--hh-state-watch); }
 
@@ -117,10 +135,10 @@ export const arStyles = css`
   form { display: grid; gap: var(--hh-s-12); margin: 0; }
   label { display: grid; gap: var(--hh-s-4); font-size: 13px; color: var(--hh-text-dim); font-weight: 700; }
   .label { margin: var(--hh-s-8) 0 var(--hh-s-4); font-size: 13px; color: var(--hh-text-dim); font-weight: 700; }
-  input, select, textarea { font: inherit; font-size: 16px; min-height: 44px; padding: 0 var(--hh-s-12); background: var(--hh-field); color: var(--hh-text); border: 1px solid var(--hh-control-line); border-radius: var(--hh-radius-control); width: 100%; box-sizing: border-box; }
+  input, select, textarea { font: inherit; font-size: 15px; font-weight: 400; min-height: 44px; padding: 0 var(--hh-s-12); background: var(--hh-field); color: var(--hh-text); border: 1px solid var(--hh-control-line); border-radius: var(--hh-radius-control); width: 100%; box-sizing: border-box; }
   textarea { padding: var(--hh-s-8) var(--hh-s-12); }
   input:disabled { background: var(--hh-disabled-fill); color: var(--hh-disabled-ink); border-color: var(--hh-disabled-line); }
-  input.ro { background: var(--hh-disabled-fill); color: var(--hh-text-dim); }
+  
   input.amount, input.apply { text-align: end; font-variant-numeric: tabular-nums; }
   input.apply { min-height: 36px; width: 110px; }
   input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--hh-focus-ring); outline-offset: 2px; }
@@ -128,7 +146,7 @@ export const arStyles = css`
   .inline-form { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: var(--hh-s-8); align-items: end; }
   .alloc { list-style: none; margin: var(--hh-s-8) 0; padding: 0; }
   .alloc li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--hh-s-8); padding: var(--hh-s-8) 0; border-bottom: 1px solid var(--hh-line); font-variant-numeric: tabular-nums; }
-  .applied { display: flex; justify-content: space-between; margin: var(--hh-s-8) 0 var(--hh-s-12); padding-top: var(--hh-s-8); border-top: 2px solid var(--hh-text); font-size: 16px; font-variant-numeric: tabular-nums; }
+  .applied { font-size: 15px; display: flex; justify-content: space-between; margin: var(--hh-s-8) 0 var(--hh-s-12); padding-top: var(--hh-s-8); border-top: 2px solid var(--hh-text); font-size: 16px; font-variant-numeric: tabular-nums; }
 
   /* The statement document. */
   .toolbar { display: flex; flex-wrap: wrap; gap: var(--hh-s-8); align-items: center; margin-bottom: var(--hh-s-16); }
@@ -151,6 +169,7 @@ export const arStyles = css`
     table.stack tr[aria-current="true"] { background: var(--hh-row-alt); }
     table.stack tr[aria-current="true"] td { background: none; }
     table.stack tfoot { display: table; width: 100%; }
+    table.stack tfoot td:empty { display: none; }
     table.reg tr { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "inv bal" "acct acct" "due due" "marks marks" "act act"; }
     table.reg tbody td:nth-child(1) { grid-area: inv; }
     table.reg tbody td:nth-child(2) { grid-area: acct; }
@@ -159,13 +178,20 @@ export const arStyles = css`
     table.reg tbody td:nth-child(5) { grid-area: marks; }
     table.reg tbody td:nth-child(6) { grid-area: bal; }
     table.reg tbody td:nth-child(7) { grid-area: act; text-align: start; }
-    table.inv tr { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "inv bal" "due due" "marks marks" "apply apply"; }
+    table.inv tr { grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "inv bal pick" "due due due" "marks marks marks" "applied applied applied"; }
     table.inv tbody td:nth-child(1) { grid-area: inv; }
-    table.inv tbody td:nth-child(2), table.inv tbody td:nth-child(5), table.inv tbody td:nth-child(6) { display: none; }
+    table.inv tbody td:nth-child(2), table.inv tbody td:nth-child(5) { display: none; }
     table.inv tbody td:nth-child(3) { grid-area: due; }
     table.inv tbody td:nth-child(4) { grid-area: marks; }
-    table.inv tbody td:nth-child(7) { grid-area: bal; }
-    table.inv tbody td:nth-child(8) { grid-area: apply; text-align: start; }
+    table.inv tbody td:nth-child(6) { grid-area: bal; }
+    table.inv tbody td:nth-child(7) { grid-area: pick; }
+    table.inv tbody td:nth-child(8) { grid-area: applied; text-align: start; }
+    table.inv tbody td.applied-cell:empty { display: none; }
+    table.stmt tr { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "acct bal" "last last" "act act"; }
+    table.stmt tbody td:nth-child(1) { grid-area: acct; }
+    table.stmt tbody td:nth-child(2) { grid-area: bal; }
+    table.stmt tbody td:nth-child(3) { grid-area: last; }
+    table.stmt tbody td:nth-child(4) { grid-area: act; text-align: start; }
     table.holdtbl tr { grid-template-columns: minmax(0, 1fr); }
     table.holdtbl td.act { text-align: start; }
     .holdbtns { display: flex; }

@@ -13,8 +13,8 @@
 import { html, type TemplateResult } from "lit";
 import type { BillingRegisterRow, Result } from "@hardscapehouse/api-client";
 import { ArApi, type PaymentMethod } from "./ar-api.js";
-import { allocateOldestFirst, canLiftHolds, refusalWords, validatePromise } from "./ar-logic.js";
-import { centsToField, formatMoney, parseAmountToCents } from "./ar-money.js";
+import { canLiftHolds, refusalWords, validatePromise } from "./ar-logic.js";
+import { formatMoney, parseAmountToCents } from "./ar-money.js";
 import {
   renderAccount,
   renderHolds,
@@ -88,7 +88,7 @@ export class ArDesk {
   #fillPending = false;
 
   // One key per attempt: a double press replays the first rather than writing twice.
-  #payKeys = new Map<string, string>();
+  #payKey = "";
   #promiseKey = newKey();
   #remindKey = newKey();
 
@@ -259,8 +259,11 @@ export class ArDesk {
         if (this.#account !== null) this.#account = { ...this.#account, method: choice as PayMethod };
         this.#host.repaint();
         return true;
-      case "oldest-first":
-        this.#oldestFirst();
+      case "pick":
+        this.#togglePick(attr("data-invoice-id"));
+        return true;
+      case "pick-all":
+        this.#pickAll();
         return true;
       case "clear-apply":
         this.#clearApply();
@@ -355,19 +358,25 @@ export class ArDesk {
     }
   }
 
-  /** An input in a field the screen carries. Only the receive panel reads its fields as they change. */
+  /** An input in a field the screen carries. Only the payment amount asks the server again as it changes. */
   input(control: Element): void {
     const account = this.#account;
     if (account === null) return;
-    const field = control.getAttribute("data-field");
-    if (field === "receive-amount") {
+    if (control.getAttribute("data-field") === "receive-amount") {
       this.#account = { ...account, amountText: (control as HTMLInputElement).value };
-      this.#host.repaint();
-    } else if (field === "apply") {
-      const id = control.getAttribute("data-key") ?? "";
-      this.#account = { ...account, apply: { ...account.apply, [id]: (control as HTMLInputElement).value } };
+      this.#schedulePreview();
       this.#host.repaint();
     }
+  }
+
+  /** A change (the field is left): the amount reads back as money, formatted only. */
+  change(control: Element): void {
+    if (control.getAttribute("data-field") !== "receive-amount" || this.#account === null) return;
+    const cents = parseAmountToCents((control as HTMLInputElement).value);
+    if (cents === null) return;
+    const text = formatMoney(cents);
+    this.#account = { ...this.#account, amountText: text };
+    this.#host.setField("receive-amount", text);
   }
 
   /** After each paint: the fills the screens cannot bind, and the read only fields. */
@@ -377,10 +386,8 @@ export class ArDesk {
     if (this.#fillPending) {
       this.#fillPending = false;
       this.#host.setField("receive-amount", account.amountText);
-      for (const r of account.invoices) this.#host.setField("apply", account.apply[r.id] ?? "", r.id);
     }
-    const branch = account.branchName;
-    this.#host.setField("received-at", branch);
+    this.#host.setField("received-at", account.branchName);
     this.#host.setField("taken-by", this.#who.userName);
   }
 
@@ -448,9 +455,11 @@ export class ArDesk {
       statement: null,
       method: "CHEQUE",
       amountText: "",
-      apply: {},
+      picked: [],
+      preview: null,
+      previewError: "",
     };
-    this.#payKeys = new Map();
+    this.#payKey = "";
     this.#host.repaint();
     const register = await this.#api.register({ chip: "PAID", customerId });
     if (this.#account === null || this.#account.customerId !== customerId) return;
@@ -462,7 +471,8 @@ export class ArDesk {
       this.#account = { ...this.#account, name: first?.customer_name ?? this.#account.name, accountNo: first?.account_no ?? this.#account.accountNo, branchName: branch, invoices: register.value.items };
       const target = invoiceId === null ? undefined : register.value.items.find((r) => r.id === invoiceId);
       if (target !== undefined && right === "receive" && target.balance_cents > 0) {
-        this.#account = { ...this.#account, amountText: centsToField(target.balance_cents), apply: { [target.id]: centsToField(target.balance_cents) } };
+        this.#account = { ...this.#account, amountText: formatMoney(target.balance_cents), picked: [target.id] };
+        this.#schedulePreview(0);
       }
       this.#afterFill();
     }
@@ -492,89 +502,107 @@ export class ArDesk {
     return (this.#account?.invoices ?? []).filter((r) => r.status !== "PAID");
   }
 
-  #oldestFirst(): void {
+  #togglePick(invoiceId: string): void {
     const account = this.#account;
-    if (account === null) return;
-    const amount = parseAmountToCents(this.#host.field("receive-amount"));
-    if (amount === null || amount === 0) {
-      this.#notice = "";
-      this.#error = "Enter the amount received first, such as 100.00.";
-      this.#host.repaint();
-      return;
-    }
-    const open = this.#openInvoices().sort((a, b) => b.days_overdue - a.days_overdue || a.due_date.localeCompare(b.due_date));
-    const filled = allocateOldestFirst(open.map((r) => r.balance_cents), amount);
-    const apply: Record<string, string> = {};
-    open.forEach((r, i) => {
-      apply[r.id] = (filled[i] ?? 0) > 0 ? centsToField(filled[i] ?? 0) : "";
-    });
-    this.#error = "";
-    this.#account = { ...account, amountText: this.#host.field("receive-amount"), apply };
-    this.#afterFill();
+    if (account === null || invoiceId === "") return;
+    const picked = account.picked.includes(invoiceId) ? account.picked.filter((id) => id !== invoiceId) : [...account.picked, invoiceId];
+    this.#account = { ...account, picked: this.#oldestFirstOrder(picked) };
+    this.#schedulePreview(0);
+    this.#host.repaint();
+  }
+
+  /** The order the invoices are sent in: most overdue first, then by due date. An order, not an amount. */
+  #oldestFirstOrder(ids: readonly string[]): string[] {
+    const rows = this.#openInvoices().filter((r) => ids.includes(r.id));
+    rows.sort((a, b) => b.days_overdue - a.days_overdue || a.due_date.localeCompare(b.due_date));
+    return rows.map((r) => r.id);
+  }
+
+  #pickAll(): void {
+    if (this.#account === null) return;
+    this.#account = { ...this.#account, picked: this.#oldestFirstOrder(this.#openInvoices().map((r) => r.id)) };
+    this.#schedulePreview(0);
     this.#host.repaint();
   }
 
   #clearApply(): void {
     if (this.#account === null) return;
     this.#clearMessages();
-    this.#account = { ...this.#account, amountText: "", apply: {} };
+    this.#previewGeneration += 1;
+    this.#account = { ...this.#account, amountText: "", picked: [], preview: null, previewError: "" };
     this.#afterFill();
+    this.#host.repaint();
+  }
+
+  // The server's split, asked again after the amount or the picks change (a short wait while typing).
+  #previewTimer: ReturnType<typeof setTimeout> | undefined;
+  #previewGeneration = 0;
+
+  #schedulePreview(delayMs = 300): void {
+    this.#payKey = "";
+    if (this.#previewTimer !== undefined) clearTimeout(this.#previewTimer);
+    this.#previewTimer = setTimeout(() => void this.#askPreview(), delayMs);
+  }
+
+  async #askPreview(): Promise<void> {
+    const account = this.#account;
+    if (account === null) return;
+    const cents = parseAmountToCents(account.amountText);
+    const generation = ++this.#previewGeneration;
+    if (cents === null || cents === 0 || account.picked.length === 0) {
+      this.#account = { ...account, preview: null, previewError: "" };
+      this.#host.repaint();
+      return;
+    }
+    const answer = await this.#api.applyPayment({
+      customerId: account.customerId,
+      method: METHODS.find((m) => m === account.method) ?? "CHEQUE",
+      amountCents: cents,
+      reference: "",
+      invoiceIds: account.picked,
+      key: "",
+      preview: true,
+    });
+    if (generation !== this.#previewGeneration || this.#account === null) return;
+    this.#account = answer.ok
+      ? { ...this.#account, preview: answer.value, previewError: "" }
+      : { ...this.#account, preview: null, previewError: refusalWords("payment", answer.error, answer.status) };
     this.#host.repaint();
   }
 
   async #applyPayment(): Promise<void> {
     const account = this.#account;
     if (account === null || this.#busy) return;
-    const amount = parseAmountToCents(account.amountText);
+    const cents = parseAmountToCents(account.amountText);
     const reference = this.#host.field("receive-reference").trim();
-    const open = this.#openInvoices();
-    const posts: { row: BillingRegisterRow; cents: number }[] = [];
-    for (const r of open) {
-      const typed = account.apply[r.id] ?? "";
-      if (typed.trim() === "") continue;
-      const cents = parseAmountToCents(typed);
-      if (cents === null) return this.#stop(`Enter the amount for ${r.invoice_no} as dollars and cents, such as 100.00.`);
-      if (cents > r.balance_cents) return this.#stop(`That is more than the balance of ${r.invoice_no}, ${formatMoney(r.balance_cents)}.`);
-      if (cents > 0) posts.push({ row: r, cents });
-    }
-    if (amount === null || amount === 0) return this.#stop("Enter the amount received, such as 100.00.");
-    if (posts.length === 0) return this.#stop("Apply the payment to at least one invoice. Oldest first fills it for you.");
-    const applied = posts.reduce((t, p) => t + p.cents, 0);
-    if (applied !== amount) {
-      return this.#stop(
-        applied < amount
-          ? `${formatMoney(amount - applied)} of the payment is not applied to an invoice. Apply all of it, or lower the amount: the core keeps no unapplied cash yet (later).`
-          : `The invoices take ${formatMoney(applied)}, more than the ${formatMoney(amount)} received. Lower an apply cell or raise the amount.`,
-      );
-    }
+    if (cents === null || cents === 0) return this.#stop("Enter the amount received, such as $100.00.");
+    if (account.picked.length === 0) return this.#stop("Pick the invoices the payment is for. Pick all open takes them oldest first.");
     if (reference === "") return this.#stop("Enter a reference, such as a cheque number.");
-    const method = METHODS.find((m) => m === account.method) ?? "CHEQUE";
     this.#busy = true;
     this.#clearMessages();
     this.#host.repaint();
-    const done: string[] = [];
-    for (const p of posts) {
-      let key = this.#payKeys.get(p.row.id);
-      if (key === undefined) {
-        key = newKey();
-        this.#payKeys.set(p.row.id, key);
-      }
-      const result = await this.#api.recordPayment(p.row.id, { method, amountCents: p.cents, reference, key });
-      if (!result.ok) {
-        this.#busy = false;
-        this.#fail("payment", result);
-        if (done.length > 0) this.#error += ` Already applied: ${done.join("; ")}. Fix the rest and press Record payment again.`;
-        await this.#reloadAccount();
-        this.#host.repaint();
-        return;
-      }
-      this.#payKeys.delete(p.row.id);
-      const r = result.value;
-      done.push(`${r.payment_no} ${formatMoney(r.amount_cents)} on ${p.row.invoice_no}, balance now ${formatMoney(r.balance_cents)}`);
-    }
+    if (this.#payKey === "") this.#payKey = newKey();
+    const result = await this.#api.applyPayment({
+      customerId: account.customerId,
+      method: METHODS.find((m) => m === account.method) ?? "CHEQUE",
+      amountCents: cents,
+      reference,
+      invoiceIds: account.picked,
+      key: this.#payKey,
+      preview: false,
+    });
     this.#busy = false;
-    this.#notice = `Payment applied: ${done.join("; ")}.`;
-    if (this.#account !== null) this.#account = { ...this.#account, amountText: "", apply: {} };
+    if (!result.ok) {
+      this.#fail("payment", result);
+      this.#host.repaint();
+      return;
+    }
+    this.#payKey = "";
+    const r = result.value;
+    const done = r.lines.filter((l) => l.outcome !== "NONE").map((l) => `${formatMoney(l.applied_cents)} on ${l.invoice_no}, balance now ${formatMoney(l.balance_after_cents)}`);
+    this.#notice = `Payment ${r.payment_no ?? "recorded"} ${r.replayed ? "was already applied" : "applied"}: ${done.join("; ")}.`;
+    this.#previewGeneration += 1;
+    if (this.#account !== null) this.#account = { ...this.#account, amountText: "", picked: [], preview: null, previewError: "" };
     this.#afterFill();
     await Promise.all([this.#reloadAccount(), this.#reloadBook()]);
     this.#host.repaint();

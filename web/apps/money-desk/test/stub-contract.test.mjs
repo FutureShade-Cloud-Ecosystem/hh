@@ -327,3 +327,65 @@ test("branches, the register selection, reminders, statement runs, the export an
   holds("BillingInvoiceDetail", one.json);
   assert.equal(one.json.dispute.status, "OPEN");
 });
+
+// PROVISIONAL: the received payment route (FROM-PRINCIPAL 73) is modelled from briefs/ITEM64-A-CORE-FOLLOWUP.md
+// until fix/ar-payment-apply publishes its contract. These cases hold the stub to the model's own shape and
+// behaviour; they cannot hold it to the core's descriptors or sentences yet. When the contract lands, replace the
+// shape check below with holds("<the generated schema>", ...) and the sentences with `refused(...)`.
+const APPLY = "/api/v1/ar/payments/apply";
+function appliedShape(answer) {
+  assert.equal(typeof answer.preview, "boolean");
+  for (const k of ["amount_cents", "applied_cents", "unapplied_cents"]) assert.ok(Number.isInteger(answer[k]), k);
+  assert.equal(typeof answer.replayed, "boolean");
+  for (const l of answer.lines) {
+    for (const k of ["invoice_id", "invoice_no", "outcome"]) assert.equal(typeof l[k], "string", k);
+    for (const k of ["applied_cents", "balance_after_cents", "stays_open_cents"]) assert.ok(Number.isInteger(l[k]), k);
+    assert.ok(["CLOSES", "PART", "NONE"].includes(l.outcome));
+  }
+}
+
+test("PROVISIONAL apply route: the preview splits and writes nothing, the post is one payment, a retry posts once", async () => {
+  await reset();
+  const register = await call("GET", "/api/v1/ar/register");
+  const mine = register.json.items.filter((r) => r.account_no === "GE-100").sort((a, b) => b.days_overdue - a.days_overdue);
+  const ids = mine.map((r) => r.id);
+  const body = { customer_id: mine[0].customer_id, method: "CHEQUE", amount_cents: 500000, reference: "c", invoice_ids: ids, idempotency_key: "a-1", preview: true };
+  const before = await call("GET", "/api/v1/ar/bounced");
+  const preview = await call("POST", APPLY, body);
+  assert.equal(preview.status, 200);
+  appliedShape(preview.json);
+  assert.equal(preview.json.preview, true);
+  assert.deepEqual(preview.json.lines.map((l) => l.outcome), ["CLOSES", "PART"]);
+  assert.equal(preview.json.unapplied_cents, 0);
+  const untouched = await call("GET", `/api/v1/ar/register/invoices/${ids[0]}`);
+  assert.equal(untouched.json.totals.balance_cents, mine[0].balance_cents);
+  assert.equal(preview.json.payment_no, undefined);
+
+  const posted = await call("POST", APPLY, { ...body, preview: false });
+  assert.equal(posted.status, 200);
+  appliedShape(posted.json);
+  assert.ok(posted.json.payment_no);
+  const again = await call("POST", APPLY, { ...body, preview: false });
+  assert.equal(again.json.replayed, true);
+  assert.equal(again.json.payment_no, posted.json.payment_no);
+  const one = await call("GET", `/api/v1/ar/invoices/${ids[1]}/payments`);
+  assert.equal(one.json.items.filter((p) => p.payment_no === posted.json.payment_no).length, 1);
+  void before;
+});
+
+test("PROVISIONAL apply route: refusals leave nothing applied", async () => {
+  await reset();
+  const register = await call("GET", "/api/v1/ar/register");
+  const granite = register.json.items.filter((r) => r.account_no === "GE-100");
+  const other = register.json.items.find((r) => r.account_no === "OB-200");
+  const base = { customer_id: granite[0].customer_id, method: "CASH", reference: "c", idempotency_key: "a-2", preview: false };
+  const mixed = await call("POST", APPLY, { ...base, amount_cents: 1000, invoice_ids: [granite[0].id, other.id] });
+  assert.equal(mixed.status, 400);
+  assert.equal(mixed.json.error, "an invoice of another account cannot take this payment");
+  const over = await call("POST", APPLY, { ...base, amount_cents: 99_999_999, invoice_ids: [granite[0].id] });
+  assert.equal(over.status, 400);
+  const after = await call("GET", `/api/v1/ar/register/invoices/${granite[0].id}`);
+  assert.equal(after.json.totals.balance_cents, granite[0].balance_cents);
+  const none = await call("POST", APPLY, { ...base, amount_cents: 0, invoice_ids: [granite[0].id] });
+  assert.equal(none.status, 400);
+});

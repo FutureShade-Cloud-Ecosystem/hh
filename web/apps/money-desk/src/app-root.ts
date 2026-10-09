@@ -78,7 +78,12 @@ export class MoneyDeskApp extends HHElement {
         setField: (name, value, key) => {
           const scope = key === undefined ? "" : `[data-key="${key}"]`;
           const found = this.renderRoot.querySelector<HTMLInputElement>(`[data-field="${name}"]${scope}`);
-          if (found !== null && found.value !== value) found.value = value;
+          if (found !== null) {
+            if (found.value !== value) found.value = value;
+            return;
+          }
+          const plain = this.renderRoot.querySelector<HTMLElement>(`[data-ro="${name}"]`);
+          if (plain !== null && plain.textContent !== value) plain.textContent = value;
         },
         download: (text, filename) => {
           const url = URL.createObjectURL(new Blob([text], { type: "text/csv" }));
@@ -155,11 +160,17 @@ export class MoneyDeskApp extends HHElement {
     if (target instanceof Element && target.hasAttribute("data-field")) this.#ar.input(target);
   };
 
+  readonly #onChange = (event: Event): void => {
+    const target = event.target;
+    if (target instanceof Element && target.hasAttribute("data-field")) this.#ar.change(target);
+  };
+
   connectedCallback(): void {
     super.connectedCallback();
     this.addEventListener("click", this.#onHostClick);
     // input does not leave this element's own shadow root, so the listener sits on the root itself.
     this.renderRoot.addEventListener("input", this.#onInput);
+    this.renderRoot.addEventListener("change", this.#onChange);
     const handoff = readFrontDoorHandoff();
     if (handoff.kind === "ready") {
       const adopted = this.#auth.adopt({
@@ -188,6 +199,7 @@ export class MoneyDeskApp extends HHElement {
   disconnectedCallback(): void {
     this.removeEventListener("click", this.#onHostClick);
     this.renderRoot.removeEventListener("input", this.#onInput);
+    this.renderRoot.removeEventListener("change", this.#onChange);
     super.disconnectedCallback();
   }
 

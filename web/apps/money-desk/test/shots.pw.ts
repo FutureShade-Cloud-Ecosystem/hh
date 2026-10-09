@@ -46,8 +46,10 @@ for (const size of SIZES) {
 
       await page.locator("[data-register-row]", { hasText: "INV-1001" }).getByRole("button", { name: "Record payment" }).click();
       await expect(page.locator("[data-field='receive-amount']")).not.toHaveValue("");
-      await page.locator("[data-field='receive-amount']").fill("5000.00");
-      await page.getByRole("button", { name: "Oldest first" }).click();
+      await page.getByRole("button", { name: "Pick all open" }).click();
+      const amount = page.locator("[data-field='receive-amount']");
+      await amount.fill("5000");
+      await amount.blur();
       await page.locator("[data-field='receive-reference']").fill("Cheque 4471");
       await expect(page.locator("[data-applied]")).toHaveText("$5,000.00 of $5,000.00");
       await take("account-open-invoices", "apply-payment");
@@ -58,8 +60,12 @@ for (const size of SIZES) {
       await take("account-open-invoices", "statement");
 
       await page.getByRole("button", { name: "‹ Receivables" }).click();
+      await page.getByRole("button", { name: "Statements", exact: true }).click();
+      await expect(page.locator("[data-statement-row]")).toHaveCount(5);
+      await take("receivables-home", "statements");
+
       await page.getByRole("button", { name: "Credit holds", exact: true }).click();
-      await page.getByRole("button", { name: /Place a hold/ }).click();
+      await page.getByRole("button", { name: /Place a hold/ }).click({ force: true });
       await expect(page.locator("[data-hold-panel]")).toContainText("later");
       await take("credit-hold", "place");
 
@@ -74,6 +80,19 @@ for (const size of SIZES) {
       await boss.locator("[data-hold-row]", { hasText: "Granite" }).getByRole("button", { name: "Lift..." }).click();
       await boss.locator("[data-field='release-reason']").fill("Payment applied; promise open on the balance");
       await take("credit-hold", "lift", boss);
+
+      await request.post("/_stub/scenario", { data: { name: "empty" } });
+      const bare = await context.newPage();
+      await bare.setViewportSize(size);
+      await bare.addInitScript(receivablesHandoff);
+      await bare.goto("/");
+      await expect(bare.locator(".empty", { hasText: "No invoices in this view." })).toBeVisible();
+      await brandOn(bare);
+      await take("receivables-home", "empty", bare);
+      await bare.getByRole("button", { name: "Credit holds", exact: true }).click();
+      await expect(bare.locator(".empty", { hasText: "No account is on hold." })).toBeVisible();
+      await take("credit-hold", "empty", bare);
+      await resetStub(request);
     });
   }
 }

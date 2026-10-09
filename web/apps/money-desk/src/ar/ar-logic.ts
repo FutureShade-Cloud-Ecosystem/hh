@@ -70,6 +70,7 @@ export function holdKindWord(kind: string): string {
 
 /** What each walled move is, and who may do it (the matrix: Money Desk at Administer or Manage). */
 const WHO_MAY: Record<string, string> = {
+  load: "Your role cannot open receivables. Ask the General Manager or the Financial Controller to widen your access.",
   "release-hold":
     "Releasing a credit hold is for the Financial Controller or the General Manager. Payables and Receivables can see the hold, chase the account and record the payment that clears it.",
   "approve-journal":
@@ -100,18 +101,6 @@ export function refusalWords(action: string, error: string, status: number | und
   const asDollars = error.replace(/\b(\d+) cents\b/g, (_whole, digits: string) => formatMoney(Number(digits)));
   const words = sentence(asDollars);
   return words === "" ? "The server refused that." : words;
-}
-
-export type PaymentCheck = { ok: true; amountCents: number } | { ok: false; words: string };
-
-export function validatePayment(input: { amountText: string; reference: string; balanceCents: number }): PaymentCheck {
-  if (input.amountText.trim() === "") return { ok: false, words: "Enter the amount received, such as 100.00." };
-  const cents = parseAmountToCents(input.amountText);
-  if (cents === null) return { ok: false, words: "Enter the amount as dollars and cents, such as 100.00." };
-  if (cents === 0) return { ok: false, words: "The amount must be more than zero." };
-  if (cents > input.balanceCents) return { ok: false, words: `That is more than the invoice balance of ${formatMoney(input.balanceCents)}.` };
-  if (input.reference.trim() === "") return { ok: false, words: "Enter a reference, such as a cheque number." };
-  return { ok: true, amountCents: cents };
 }
 
 export type PromiseCheck = { ok: true; promisedCents: number } | { ok: false; words: string };
@@ -168,18 +157,11 @@ export function rowMarks(row: { status: string; days_overdue: number; disputed: 
   return marks;
 }
 
-/**
- * Fills the apply column oldest first: each invoice takes what it can of what is left, whole cents,
- * and what no invoice can take stays unapplied. Bookkeeping over the server's own balances; every
- * post is still the server's to accept or refuse.
- */
-export function allocateOldestFirst(balances: readonly number[], amountCents: number): number[] {
-  let left = amountCents;
-  return balances.map((balance) => {
-    const take = Math.min(Math.max(balance, 0), left);
-    left -= take;
-    return take;
-  });
+/** What the server's split says about one invoice, in the references' words. */
+export function lineWords(line: { outcome: string; stays_open_cents: number }): string {
+  if (line.outcome === "CLOSES") return "closes";
+  if (line.outcome === "PART") return `part, ${formatMoney(line.stays_open_cents)} stays open`;
+  return "untouched";
 }
 
 /** The small tags beside a hold's kind: auto when the sweep placed it, override in force while one runs. */

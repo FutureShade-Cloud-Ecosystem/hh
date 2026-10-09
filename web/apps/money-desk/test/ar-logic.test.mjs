@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { formatMoney, parseAmountToCents, centsToField } from "../src/ar/ar-money.ts";
-import { allocateOldestFirst, canLiftHolds, cardRange, cardTitle, holdKindWord, holdMarks, refusalWords, relativeDay, rowMarks, statusTone, statusWord, validatePayment, validatePromise } from "../src/ar/ar-logic.ts";
+import { canLiftHolds, lineWords, cardRange, cardTitle, holdKindWord, holdMarks, refusalWords, relativeDay, rowMarks, statusTone, statusWord, validatePromise } from "../src/ar/ar-logic.ts";
 
 test("an amount typed is read through the decimal string and never a float", () => {
   assert.equal(parseAmountToCents("19.68"), 1968);
@@ -12,7 +12,6 @@ test("an amount typed is read through the decimal string and never a float", () 
   assert.equal(parseAmountToCents("0.1"), 10);
   assert.equal(parseAmountToCents("20.005"), null);
   assert.equal(parseAmountToCents("-5"), null);
-  assert.equal(parseAmountToCents("1,200"), null);
   assert.equal(parseAmountToCents(""), null);
 });
 
@@ -64,15 +63,6 @@ test("the core's own sentence is kept, and a figure in cents reads as dollars", 
   assert.equal(refusalWords("payment", "payments: transport error: x", undefined), "The server could not be reached. Nothing was changed. Try again.");
 });
 
-test("a payment is checked before it is sent, in words", () => {
-  const ok = validatePayment({ amountText: "100.00", reference: "Cheque 1042", balanceCents: 96000 });
-  assert.deepEqual(ok, { ok: true, amountCents: 10000 });
-  assert.deepEqual(validatePayment({ amountText: "", reference: "r", balanceCents: 96000 }), { ok: false, words: "Enter the amount received, such as 100.00." });
-  assert.deepEqual(validatePayment({ amountText: "0", reference: "r", balanceCents: 96000 }), { ok: false, words: "The amount must be more than zero." });
-  assert.deepEqual(validatePayment({ amountText: "960.01", reference: "r", balanceCents: 96000 }), { ok: false, words: "That is more than the invoice balance of $960.00." });
-  assert.deepEqual(validatePayment({ amountText: "5", reference: " ", balanceCents: 96000 }), { ok: false, words: "Enter a reference, such as a cheque number." });
-});
-
 test("a promise needs an amount, a date, and who promised it", () => {
   const good = { amountText: "50.00", date: "2999-01-01", by: "Accounts payable", note: "", balanceCents: 96000 };
   assert.deepEqual(validatePromise(good), { ok: true, promisedCents: 5000 });
@@ -106,11 +96,25 @@ test("a register row's marks: the day count is the status word, a promise or a d
   assert.deepEqual(rowMarks({ status: "PAID", days_overdue: 0, disputed: false }), [{ word: "paid", tone: "good", dashed: false }]);
 });
 
-test("the oldest invoice is filled first, to the cent, and what is left over stays unapplied", () => {
-  assert.deepEqual(allocateOldestFirst([1425000, 1322400, 0], 2000000), [1425000, 575000, 0]);
-  assert.deepEqual(allocateOldestFirst([100, 200], 50), [50, 0]);
-  assert.deepEqual(allocateOldestFirst([100, 200], 1000), [100, 200]);
-  assert.deepEqual(allocateOldestFirst([100], 0), [0]);
+test("what the server's split says about an invoice, in the references' words", () => {
+  assert.equal(lineWords({ outcome: "CLOSES", stays_open_cents: 0 }), "closes");
+  assert.equal(lineWords({ outcome: "PART", stays_open_cents: 747400 }), "part, $7,474.00 stays open");
+  assert.equal(lineWords({ outcome: "NONE", stays_open_cents: 100 }), "untouched");
+});
+
+test("an amount typed as money reads back, and a malformed one is still refused", () => {
+  assert.equal(parseAmountToCents("$20,000.00"), 2000000);
+  assert.equal(parseAmountToCents("$ 5"), null);
+  assert.equal(parseAmountToCents("1,200"), 120000);
+  assert.equal(parseAmountToCents("1,20"), null);
+  assert.equal(parseAmountToCents("12,34,567"), null);
+  assert.equal(parseAmountToCents("5000.00"), 500000);
+});
+
+test("a refused read says who may open the desk, not the words for a refused action", () => {
+  const words = refusalWords("load", "Forbidden", 403);
+  assert.ok(words.includes("open"), words);
+  assert.ok(words.includes("General Manager"), words);
 });
 
 test("a hold reads as the references draw it: Aged AR and auto, Returned payment, Over limit and override in force", () => {

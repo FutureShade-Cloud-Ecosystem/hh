@@ -19,7 +19,6 @@ import {
   type BillingCreditHoldPage,
   type BillingInvoiceDetail,
   type BillingPromiseView,
-  type BillingReceiptResult,
   type BillingRegisterPage,
   type BillingStatement,
   type Branch,
@@ -37,6 +36,34 @@ import {
 } from "@hardscapehouse/api-client";
 
 export type PaymentMethod = "CASH" | "CARD" | "CHEQUE" | "EFT";
+
+// THE RECEIVED PAYMENT ROUTE, PROVISIONAL. The server allocates a received payment (FROM-PRINCIPAL 73):
+// one payment against an ordered list of the account's invoices, oldest first in one transaction, with
+// a preview flag that answers the same split without writing. Lane A pay builds it on
+// fix/ar-payment-apply; until its contract commit lands the path, request and answer below are modelled
+// from briefs/ITEM64-A-CORE-FOLLOWUP.md and the stub holds to this model, not to the core. When the
+// route is published in openapi.yaml, this block is replaced by the generated client and its types.
+export interface ApplyLine {
+  readonly invoice_id: string;
+  readonly invoice_no: string;
+  readonly applied_cents: number;
+  readonly outcome: "CLOSES" | "PART" | "NONE";
+  readonly balance_after_cents: number;
+  readonly stays_open_cents: number;
+}
+
+export interface ApplyAnswer {
+  readonly preview: boolean;
+  readonly payment_id?: string;
+  readonly payment_no?: string;
+  readonly amount_cents: number;
+  readonly applied_cents: number;
+  readonly unapplied_cents: number;
+  readonly lines: readonly ApplyLine[];
+  readonly replayed: boolean;
+}
+
+export const APPLY_PATH_PROVISIONAL = "/api/v1/ar/payments/apply";
 
 export class ArApi {
   readonly #client: ApiClient;
@@ -122,15 +149,29 @@ export class ArApi {
     return staffBilling.billingGetCustomerStatement(this.#client, customerId);
   }
 
-  recordPayment(
-    invoiceId: string,
-    input: { method: PaymentMethod; amountCents: number; reference: string; key: string },
-  ): Promise<Result<BillingReceiptResult>> {
-    return staffBilling.billingRecordInvoicePayment(this.#client, invoiceId, {
-      method: input.method,
-      amount_cents: input.amountCents,
-      reference: input.reference,
-      idempotency_key: input.key,
+  /** One received payment against the picked invoices, in the order given; the server splits it. */
+  applyPayment(input: {
+    customerId: string;
+    method: PaymentMethod;
+    amountCents: number;
+    reference: string;
+    invoiceIds: readonly string[];
+    key: string;
+    preview: boolean;
+  }): Promise<Result<ApplyAnswer>> {
+    return this.#client.request<ApplyAnswer>({
+      method: "POST",
+      path: APPLY_PATH_PROVISIONAL,
+      body: {
+        customer_id: input.customerId,
+        method: input.method,
+        amount_cents: input.amountCents,
+        reference: input.reference,
+        invoice_ids: [...input.invoiceIds],
+        idempotency_key: input.key,
+        preview: input.preview,
+      },
+      operationId: "paymentsApplyReceived",
     });
   }
 
