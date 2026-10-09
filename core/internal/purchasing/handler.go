@@ -59,7 +59,10 @@ func (h *Handler) listPOs(w http.ResponseWriter, r *http.Request, caller guards.
 		h.writeErr(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+	if items == nil {
+		items = []PO{}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items, "next_cursor": nil})
 }
 
 func (h *Handler) createPO(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
@@ -163,7 +166,9 @@ func (h *Handler) incoming(w http.ResponseWriter, r *http.Request, caller guards
 	if lines == nil {
 		lines = []IncomingPOLine{}
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"lines": lines})
+	// The contract's page (PurchasingIncomingLinePage): the list under `items`, the cursor key
+	// present and null, the same envelope every list carries. The ERP wrote it under `lines`.
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": lines, "next_cursor": nil})
 }
 
 // PUT /api/v1/purchasing/pos/{id}/expected-date, DIB-460's edit path.
@@ -209,7 +214,10 @@ func (h *Handler) worklist(w http.ResponseWriter, r *http.Request, caller guards
 		h.writeErr(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+	if items == nil {
+		items = []WorklistItem{}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items, "next_cursor": nil})
 }
 
 func (h *Handler) getReceipt(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {

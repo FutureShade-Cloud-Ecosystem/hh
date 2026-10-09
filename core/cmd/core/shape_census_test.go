@@ -121,7 +121,7 @@ var shapeCensusAllowlist = map[string]string{
 	"pricingListUOMConversions":   "answers a bare JSON array (internal/pricing/w4_handler.go, (*Handler).listConversions writes the h.svc.ListConversions slice directly) against the contract's PricingUOMConversionPage; the fix is the owning lane's",
 	"productList":                 "answers a bare JSON array (internal/product/handler.go, (*Handler).list writes the h.svc.List slice directly, totals in an X-Total-Count header); the handler source carries a comment calling the bare array load bearing for the POS grid and the export callers, so this entry is the contract and the handler disagreeing on purpose (the owning lane owns the resolution (a page envelope here, or a contract amendment)) against the contract's ProductPage",
 
-	// (2) items null (13): the map (or struct) is (or holds) a nil slice
+	// (2) items null (11): the map (or struct) is (or holds) a nil slice
 	// (it marshals as null) and carries no next_cursor key.
 	"complianceListCalendar":          "answers {\"items\":null} on the empty list (internal/compliance/handler.go, Handler.calendar writes map[string]any{\"items\": items} with no nil guard) against the contract's ComplianceDeadlinePage; the fix is the owning lane's",
 	"complianceListUpcoming":          "answers {\"items\":null} (internal/compliance/handler.go, Handler.upcoming, the same unguarded map pattern as its sibling) against the contract's ComplianceDeadlinePage; the fix is the owning lane's",
@@ -129,8 +129,6 @@ var shapeCensusAllowlist = map[string]string{
 	"lienListJobDocuments":            "answers {\"items\":null} (internal/lien/handler.go, Handler.listDocuments, unguarded items map) against the contract's LienDocumentPage; the fix is the owning lane's",
 	"lienListJobs":                    "answers {\"items\":null} (internal/lien/handler.go, Handler.listJobs, unguarded items map) against the contract's LienJobPage; the fix is the owning lane's",
 	"purchasingListBills":             "answers {\"items\":null} (internal/purchasing/handler.go, Handler.listBills, unguarded items map) against the contract's PurchasingBillPage; the fix is the owning lane's",
-	"purchasingListPOs":               "answers {\"items\":null} (internal/purchasing/handler.go, Handler.listPOs, unguarded items map) against the contract's PurchasingPOPage; the fix is the owning lane's",
-	"purchasingListReceivingWorklist": "answers {\"items\":null} (internal/purchasing/handler.go, Handler.worklist, unguarded items map) against the contract's PurchasingWorklistItemPage; the fix is the owning lane's",
 	"reportingListCommissionRules":    "answers {\"items\":null} (internal/reporting/handler.go, Handler.listRules, unguarded items map) against the contract's ReportingCommissionRulePage; the fix is the owning lane's",
 	"reportingListRuns":               "answers {\"items\":null} (internal/reporting/handler.go, Handler.listRuns, unguarded items map) against the contract's ReportingRunPage; the fix is the owning lane's",
 	"reportingListSavedViews":         "answers {\"items\":null} (internal/reporting/handler.go, Handler.listSavedViews, unguarded items map) against the contract's ReportingSavedViewPage; the fix is the owning lane's",
