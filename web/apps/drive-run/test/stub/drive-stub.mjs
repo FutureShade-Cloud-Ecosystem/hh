@@ -4,6 +4,12 @@
 // every payload below to the contract's field list, field by field.
 import { createServer } from "node:http";
 
+// The stub's clock. It reads the host's, unless a leg pins it: the dealer's day
+// the world is built on must be the day the pinned browser sees, at any wall
+// hour, so every time the stub reads goes through nowMs().
+let clockOffsetMs = 0;
+const nowMs = () => Date.now() + clockOffsetMs;
+
 const port = Number(process.env.DRIVE_STUB_PORT ?? 4949);
 
 // The real flows route lists every live role; the app offers only its own card.
@@ -28,7 +34,7 @@ const USERS = {
 // middle one base64url JSON carrying sub and exp. The signature is a stub.
 function mintToken(sub) {
   const part = (value) => Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
-  const issuedAtSeconds = Math.floor(Date.now() / 1000);
+  const issuedAtSeconds = Math.floor(nowMs() / 1000);
   const payload = { iss: "hh-demo-stub", sub, aud: "staff", iat: issuedAtSeconds, exp: issuedAtSeconds + 3600 };
   return `${part({ alg: "ES256", typ: "JWT" })}.${part(payload)}.c3R1Yi1zaWduYXR1cmUtYnl0ZXM`;
 }
@@ -67,7 +73,7 @@ const BRANCH_ID = "b0000000-0000-4000-9000-000000000001";
 const DRIVER_ID = "d1000000-0000-4000-9000-000000000001";
 const RUN_ID = "a1000000-0000-4000-9000-000000000005";
 
-function houseDay(now = new Date()) {
+function houseDay(now = new Date(nowMs())) {
   return new Intl.DateTimeFormat("en-CA", { timeZone: HOUSE_ZONE, year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
 }
 
@@ -93,7 +99,7 @@ let photoSeq;
 
 function buildWorld() {
   const day = houseDay();
-  const created = new Date().toISOString();
+  const created = new Date(nowMs()).toISOString();
   const stops = STOPS_SEED.map((seed) => ({
     id: `5a000000-0000-4000-9000-00000000000${seed.n}`,
     branch_id: BRANCH_ID,
@@ -205,6 +211,10 @@ async function handle(req, res) {
 
   // ---- the stub's own controls (never the core's) ----
   if (req.method === "POST" && path === "/_stub/reset") {
+    // An optional body {"now": <epoch ms>} pins the stub's clock to that instant (it then runs on).
+    const raw = (await readBody(req)).toString("utf8");
+    const asked = raw === "" ? {} : JSON.parse(raw);
+    clockOffsetMs = typeof asked.now === "number" ? asked.now - Date.now() : 0;
     reset();
     return json(res, { ok: true });
   }
@@ -295,7 +305,7 @@ function advance(res, stop, input) {
   }
   const reason = String(input.reason ?? "").trim();
   if (to === "FAILED" && reason === "") return refuse(res, 400, "a failed stop needs a reason");
-  const now = new Date().toISOString();
+  const now = new Date(nowMs()).toISOString();
   stop.status = to;
   if (to === "LOADED") stop.loaded_at = now;
   if (to === "EN_ROUTE") stop.en_route_at = now;
@@ -308,7 +318,7 @@ function capturePod(res, stop, input) {
   const name = String(input.received_by ?? "").trim();
   if (name === "") return refuse(res, 400, "type the full name of the person receiving this delivery");
   if (input.affirmed !== true) return refuse(res, 400, "the recipient must confirm the delivery before it can be signed");
-  const now = new Date().toISOString();
+  const now = new Date(nowMs()).toISOString();
   stop.status = "DELIVERED";
   stop.pod_signature_ref = `sig-${stop.stop_no}`;
   stop.pod_received_by = name;
@@ -337,7 +347,7 @@ function addPhoto(res, stop, contentType, caption, raw) {
     content_type: contentType.toLowerCase(),
     byte_size: raw.length,
     ...(caption.trim() ? { caption: caption.trim() } : {}),
-    captured_at: new Date().toISOString(),
+    captured_at: new Date(nowMs()).toISOString(),
   };
   world.photos.set(stop.id, [...(world.photos.get(stop.id) ?? []), meta]);
   stop.photo_count += 1;
@@ -367,7 +377,7 @@ function completeRun(res) {
     );
   }
   world.run.status = "COMPLETED";
-  world.run.completed_at = new Date().toISOString();
+  world.run.completed_at = new Date(nowMs()).toISOString();
   return json(res, world.run);
 }
 
