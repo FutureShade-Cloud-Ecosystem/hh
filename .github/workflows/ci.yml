@@ -169,7 +169,10 @@ jobs:
         # house zone is still on the dealer's previous evening), so a daytime run can never
         # again hide the UTC day class. The pin is a go build overlay that shifts the wall
         # clock only (scripts/evening-guard/prepare.sh); monotonic clocks, timers and deadlines
-        # are untouched. HH_EVENING_GUARD wakes the self proof legs in
+        # are untouched. prepare.sh also snapshots the active toolchain outside the module
+        # cache and hands back a wrapper go pinned to it, because a runner's active toolchain
+        # can live inside GOMODCACHE (GOTOOLCHAIN auto) and go refuses overlays that replace
+        # files beneath it. HH_EVENING_GUARD wakes the self proof legs in
         # internal/platform/houseday, which fail the step if the overlay stopped applying, so
         # the guard cannot silently guard nothing. The four packages are the date sensitive
         # ones, named with the reason in the PR body; the rest of the suite pins its own
@@ -181,7 +184,7 @@ jobs:
           shift_s="$(../scripts/evening-guard/shift.sh evening)"
           GOFLAGS="-overlay=$RUNNER_TEMP/evening-guard/overlay.json" \
             HH_CLOCK_SHIFT_SECONDS="$shift_s" HH_EVENING_GUARD=1 \
-            go test ./internal/platform/houseday ./internal/billing ./internal/pos ./internal/purchasing \
+            "$RUNNER_TEMP/evening-guard/go" test ./internal/platform/houseday ./internal/billing ./internal/pos ./internal/purchasing \
             -count=1 -p 1 -timeout 30m
       - name: Web packages (typecheck and Node 22 suite)
         working-directory: web
@@ -537,16 +540,18 @@ jobs:
             -c 'CREATE DATABASE integration_gate' \
             -c 'CREATE DATABASE integration_core_gate'
           # The gate databases are built under the same pinned clock the legs run under, so
-          # the seed's days sit inside the window too.
+          # the seed's days sit inside the window too. Every go command runs through the
+          # wrapper prepare.sh wrote (the toolchain snapshot pinned with GOTOOLCHAIN=local),
+          # because this step's overlay must not point inside the module cache.
           GOFLAGS="-overlay=$RUNNER_TEMP/evening-guard/overlay.json" HH_CLOCK_SHIFT_SECONDS="$shift_s" \
-            DATABASE_URL="$GUARD/integration_gate?sslmode=disable" go run ./cmd/core migrate
+            DATABASE_URL="$GUARD/integration_gate?sslmode=disable" "$RUNNER_TEMP/evening-guard/go" run ./cmd/core migrate
           GOFLAGS="-overlay=$RUNNER_TEMP/evening-guard/overlay.json" HH_CLOCK_SHIFT_SECONDS="$shift_s" \
-            DATABASE_URL="$GUARD/integration_gate?sslmode=disable" go run ./cmd/core seed
+            DATABASE_URL="$GUARD/integration_gate?sslmode=disable" "$RUNNER_TEMP/evening-guard/go" run ./cmd/core seed
           GOFLAGS="-overlay=$RUNNER_TEMP/evening-guard/overlay.json" HH_CLOCK_SHIFT_SECONDS="$shift_s" \
-            DATABASE_URL="$GUARD/integration_core_gate?sslmode=disable" go run ./cmd/core migrate
+            DATABASE_URL="$GUARD/integration_core_gate?sslmode=disable" "$RUNNER_TEMP/evening-guard/go" run ./cmd/core migrate
           # -timeout 30m as on every go test step in this file.
           GOFLAGS="-overlay=$RUNNER_TEMP/evening-guard/overlay.json" HH_CLOCK_SHIFT_SECONDS="$shift_s" HH_EVENING_GUARD=1 \
             DATABASE_URL="$GUARD/integration_gate?sslmode=disable" \
             HH_CORE_TEST_DATABASE_URL="$GUARD/integration_core_gate?sslmode=disable" \
-            go test -tags integration ./internal/platform/houseday ./internal/billing ./internal/pos ./internal/purchasing \
+            "$RUNNER_TEMP/evening-guard/go" test -tags integration ./internal/platform/houseday ./internal/billing ./internal/pos ./internal/purchasing \
             -count=1 -p 1 -timeout 30m
