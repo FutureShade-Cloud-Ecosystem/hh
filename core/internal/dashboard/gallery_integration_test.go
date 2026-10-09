@@ -127,11 +127,13 @@ func TestIntegration_TheRoleDefaultsSurvived0207WithEveryKeyIntact(t *testing.T)
 	ctx := context.Background()
 
 	var total int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM dashboard_profile_widgets`).Scan(&total); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM dashboard_profile_widgets WHERE profile NOT LIKE 'manager.%'`).Scan(&total); err != nil {
 		t.Fatal(err)
 	}
+	// The job shapes only: 0381's manager.<role> refinements are born from them and counted by
+	// their own gate (manager_home_profile_integration_test.go).
 	if total != 30 {
-		t.Fatalf("0201 seeds thirty role defaults and 0207 moves none of them; the table holds %d", total)
+		t.Fatalf("0201 seeds thirty role defaults and 0207 moves none of them; the job shapes hold %d", total)
 	}
 
 	repo := widgetRepo(t)
