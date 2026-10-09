@@ -106,19 +106,27 @@ const agingSelect = `
 	  FROM customers c
 	  JOIN invoices i ON i.customer_id = c.id AND i.status IN ('FINALIZED','PARTIALLY_PAID')
 	 WHERE ($3 = '' OR i.branch_id = $3::uuid)
+	   AND ($4::uuid[] IS NULL OR i.branch_id = ANY($4::uuid[]))
 	 GROUP BY c.id, c.name, c.account_no, c.home_branch_id, c.payment_terms_days, c.credit_limit_cents
 	HAVING COALESCE(SUM(i.balance_cents), 0) <> 0
 	 ORDER BY COALESCE(SUM(i.balance_cents), 0) DESC`
 
-// AgingRows returns one row per account carrying an open balance.
+// AgingRows returns one row per account carrying an open balance, across every branch: the sweep's
+// and the statement run's read. A request's read goes through AgingRowsIn with the caller's reach.
 func (r *Repository) AgingRows(ctx context.Context, asOf time.Time, bucketDays int, branchID string) ([]AgingRow, error) {
+	return r.AgingRowsIn(ctx, asOf, bucketDays, branchID, AllBranches)
+}
+
+// AgingRowsIn is AgingRows inside a branch reach: only the invoices of the reach are summed, so an
+// account that lives partly elsewhere ages for the reach alone.
+func (r *Repository) AgingRowsIn(ctx context.Context, asOf time.Time, bucketDays int, branchID string, reach BranchReach) ([]AgingRow, error) {
 	if r.pool == nil {
 		return nil, errNoDB
 	}
 	if bucketDays <= 0 {
 		bucketDays = 60
 	}
-	rows, err := r.pool.Query(ctx, agingSelect, asOf, bucketDays, branchID)
+	rows, err := r.pool.Query(ctx, agingSelect, asOf, bucketDays, branchID, reach.SQLArg())
 	if err != nil {
 		return nil, fmt.Errorf("billing: aging rows: %w", err)
 	}
@@ -198,8 +206,15 @@ func (r *Repository) ActiveHold(ctx context.Context, customerID string) (CreditH
 	return h, true, nil
 }
 
-// ListHolds returns holds filtered by status ("" = all), newest first.
+// ListHolds returns holds filtered by status ("" = all), newest first, across every branch.
 func (r *Repository) ListHolds(ctx context.Context, status string) ([]CreditHold, error) {
+	return r.ListHoldsIn(ctx, status, AllBranches)
+}
+
+// ListHoldsIn is ListHolds inside a branch reach. A hold is on an account, and the book is cut by
+// invoice, so a hold lists for a reach when the account has an open invoice in it: the same cut the
+// aging makes, so the two screens never disagree about whose account this is.
+func (r *Repository) ListHoldsIn(ctx context.Context, status string, reach BranchReach) ([]CreditHold, error) {
 	if r.pool == nil {
 		return nil, errNoDB
 	}
@@ -207,7 +222,12 @@ func (r *Repository) ListHolds(ctx context.Context, status string) ([]CreditHold
 		`SELECT `+holdColumns+` FROM credit_holds h
 		   LEFT JOIN customers c ON c.id = h.customer_id
 		  WHERE ($1 = '' OR h.status = $1)
-		  ORDER BY h.created_at DESC LIMIT 500`, status)
+		    AND ($2::uuid[] IS NULL OR EXISTS (
+		          SELECT 1 FROM invoices i
+		           WHERE i.customer_id = h.customer_id
+		             AND i.status IN ('FINALIZED','PARTIALLY_PAID')
+		             AND i.branch_id = ANY($2::uuid[])))
+		  ORDER BY h.created_at DESC LIMIT 500`, status, reach.SQLArg())
 	if err != nil {
 		return nil, fmt.Errorf("billing: list holds: %w", err)
 	}

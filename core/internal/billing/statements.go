@@ -35,6 +35,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
 // Statement run modes (0105 CHECK).
@@ -142,7 +143,8 @@ type StatementOutbox interface {
 // statementStore is the persistence the StatementService needs.
 type statementStore interface {
 	CreditPolicy(ctx context.Context, branchID string) (CreditPolicy, error)
-	AgingRows(ctx context.Context, asOf time.Time, bucketDays int, branchID string) ([]AgingRow, error)
+	AgingRowsIn(ctx context.Context, asOf time.Time, bucketDays int, branchID string, reach BranchReach) ([]AgingRow, error)
+	CustomerInReach(ctx context.Context, customerID string, reach BranchReach) (bool, error)
 	StatementLines(ctx context.Context, customerID string, asOf time.Time) ([]StatementLine, error)
 	BranchHeader(ctx context.Context, branchID string) (StatementHeader, error)
 	CreateRun(ctx context.Context, mode, branchID string, asOf time.Time, actorID string) (string, error)
@@ -223,11 +225,27 @@ func (s *StatementService) GenerateRun(ctx context.Context, mode, branchID strin
 		asOf = s.clock()
 	}
 
+	// The caller's branch reach (branch_reach.go). A caller who reaches one branch files its run under
+	// that branch, so the run can be read back by the same reach and no other.
+	reach, err := reachFromContext(ctx).narrow(branchID)
+	if err != nil {
+		return StatementRun{}, nil, err
+	}
+	if !reach.Global && branchID == "" {
+		switch len(reach.IDs) {
+		case 0:
+			return StatementRun{}, nil, ErrBranchForbidden
+		case 1:
+			branchID = reach.IDs[0]
+		default:
+			return StatementRun{}, nil, httpx.BadRequestf("name the branch this statement run is for")
+		}
+	}
 	pol, err := s.store.CreditPolicy(ctx, branchID)
 	if err != nil {
 		return StatementRun{}, nil, err
 	}
-	rows, err := s.store.AgingRows(ctx, asOf, pol.AgingBucketDays, branchID)
+	rows, err := s.store.AgingRowsIn(ctx, asOf, pol.AgingBucketDays, branchID, reach)
 	if err != nil {
 		return StatementRun{}, nil, err
 	}
@@ -339,13 +357,28 @@ func (s *StatementService) GenerateRun(ctx context.Context, mode, branchID strin
 	return run, statements, nil
 }
 
-// GetRun reads a completed run with its statements.
+// GetRun reads a completed run with its statements. A caller who does not reach every branch reads
+// only a run filed under a branch it reaches: a run of the whole book is not found for it.
 func (s *StatementService) GetRun(ctx context.Context, runID string) (StatementRun, []Statement, error) {
-	return s.store.GetRun(ctx, runID)
+	run, sts, err := s.store.GetRun(ctx, runID)
+	if err != nil {
+		return StatementRun{}, nil, err
+	}
+	if reach := reachFromContext(ctx); !reach.Global && (run.BranchID == "" || !reach.Allows(run.BranchID)) {
+		return StatementRun{}, nil, ErrNotFound
+	}
+	return run, sts, nil
 }
 
-// LatestStatement returns the most recent statement for an account (the portal's "your statement").
+// LatestStatement returns the most recent statement for an account (the portal's "your statement"),
+// for an account the caller's branch reach touches.
 func (s *StatementService) LatestStatement(ctx context.Context, customerID string) (Statement, bool, error) {
+	if reach := reachFromContext(ctx); !reach.Global {
+		in, err := s.store.CustomerInReach(ctx, customerID, reach)
+		if err != nil || !in {
+			return Statement{}, false, err
+		}
+	}
 	return s.store.LatestStatement(ctx, customerID)
 }
 

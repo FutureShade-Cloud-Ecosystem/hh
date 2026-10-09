@@ -118,7 +118,8 @@ func d510Manager() func(context.Context) (identity.StaffContext, bool) {
 
 func d510Frontline() func(context.Context) (identity.StaffContext, bool) {
 	return func(context.Context) (identity.StaffContext, bool) {
-		return identity.StaffContext{UserID: "", Tier: identity.TierFrontline, Scope: identity.ScopeBranch, Status: "ACTIVE"}, true
+		return identity.StaffContext{UserID: "", Tier: identity.TierFrontline, Scope: identity.ScopeBranch, Status: "ACTIVE",
+			Branches: map[string]bool{trentonBranch: true}}, true
 	}
 }
 
