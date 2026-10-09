@@ -150,6 +150,23 @@ func (r *Repository) UpsertBalanceDelta(ctx context.Context, tx pgx.Tx, productI
 	return err
 }
 
+// LockBalances takes the branch's existing balance rows of these products FOR UPDATE, sorted by product
+// then location, on the caller's transaction. A move that touches several products takes its row locks
+// in whatever order its lines name them, so two moves over crossed products can deadlock; a caller that
+// knows the whole set takes it here first, in the one order every such caller uses.
+func (r *Repository) LockBalances(ctx context.Context, tx pgx.Tx, branchID string, productIDs []string) error {
+	if len(productIDs) == 0 {
+		return nil
+	}
+	rows, err := r.q(tx).Query(ctx, `SELECT 1 FROM stock_balances WHERE branch_id = $1::uuid AND product_id = ANY($2::uuid[])
+ ORDER BY product_id, location_id FOR UPDATE`, branchID, productIDs)
+	if err != nil {
+		return err
+	}
+	rows.Close()
+	return rows.Err()
+}
+
 // LockBranchCost serializes the weighted-average read-modify-write on (product_id, branch_id) so concurrent
 // WAC mutators (PO receipt applyReceipt, landed-cost capitalize/restore) cannot lost-update the perpetual
 // subledger. It MUST be called inside the caller's tx, at the START of every WAC mutation path, BEFORE the
@@ -350,7 +367,7 @@ func (r *Repository) PendingFulfilments(ctx context.Context, branchID string) ([
 		return nil, errNoDB
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT o.id::text, ol.product_id::text, (ol.qty_base - ol.fulfilled_base) AS pending,
+		SELECT o.id::text, ol.product_id::text, (ol.qty_base - ol.fulfilled_base - ol.released_base) AS pending,
 		       CASE o.fulfillment WHEN 'DELIVERY' THEN 'DELIVERED' WHEN 'WILL_CALL' THEN 'COLLECT_LATER'
 		            ELSE o.fulfillment END
 		FROM orders o
@@ -358,7 +375,7 @@ func (r *Repository) PendingFulfilments(ctx context.Context, branchID string) ([
 		WHERE o.fulfillment IN ('DELIVERY','WILL_CALL')
 		  AND o.status NOT IN ('FULFILLED','CLOSED','CANCELLED')
 		  AND ol.product_id IS NOT NULL
-		  AND ol.qty_base > ol.fulfilled_base
+		  AND ol.qty_base > ol.fulfilled_base + ol.released_base
 		  AND ($1 = '' OR o.branch_id = $1::uuid)
 		ORDER BY o.created_at`, branchID)
 	if err != nil {
