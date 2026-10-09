@@ -523,12 +523,15 @@ jobs:
           target="$(date -u +%s)"
           target=$(( target - target % 86400 + 1800 ))
           pin="$(date -u -d "@$target" '+%Y-%m-%d %H:%M:%S')"
+          # The same digest pinned mirror the services above use (Docker Hub's anonymous rate
+          # limit refuses the runners), so the guard pulls what the jobs already pull; the
+          # faketime package is version pinned to the Alpine release this digest ships.
           docker run -d --name hh-evening-guard-pg -p 127.0.0.1:5601:5432 \
             -e POSTGRES_PASSWORD=postgres -e TZ=UTC \
             -e LD_PRELOAD=/usr/lib/faketime/libfaketime.so.1 \
             -e FAKETIME="@$pin" -e FAKETIME_NO_CACHE=1 \
-            postgres:16-alpine \
-            sh -c 'apk update >/dev/null && apk add --no-cache libfaketime >/dev/null && exec docker-entrypoint.sh postgres' >/dev/null
+            public.ecr.aws/docker/library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea \
+            sh -c 'apk update >/dev/null && apk add --no-cache "libfaketime=0.9.13-r0" >/dev/null && exec docker-entrypoint.sh postgres' >/dev/null
           shift_s="$(../scripts/evening-guard/shift.sh "$GUARD/postgres?sslmode=disable")"
           psql "$GUARD/postgres?sslmode=disable" -v ON_ERROR_STOP=1 \
             -c 'CREATE DATABASE integration_gate' \
