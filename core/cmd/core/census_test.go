@@ -56,9 +56,10 @@ func assertCensusAnnotated(t *testing.T, route apigen.Route) {
 		t.Fatalf("staff operation %s names unknown level %q", route.OperationID, route.Level)
 	}
 	// The named lists the gate reads (rolegate.go's listReaders): the
-	// pricing editors, the cost and margin list (D10, the pricing log) and the low margin report's
-	// readers (the floor lists held to the cost list).
-	if route.List != "" && route.List != roleconfig.SettingPricingEditors && route.List != roleconfig.SettingCostVisibility && route.List != authz.ListLowMarginReport {
+	// pricing editors, the cost and margin list (D10, the pricing log), the
+	// low margin report's readers (the floor lists held to the cost list)
+	// and the dispatch policy setters (X13).
+	if route.List != "" && route.List != roleconfig.SettingPricingEditors && route.List != roleconfig.SettingCostVisibility && route.List != roleconfig.SettingDispatchPolicySetters && route.List != authz.ListLowMarginReport {
 		t.Fatalf("staff operation %s names list %q, which no gate reader knows", route.OperationID, route.List)
 	}
 }
