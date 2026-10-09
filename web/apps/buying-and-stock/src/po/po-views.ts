@@ -14,11 +14,10 @@
 import { html, nothing, type TemplateResult } from "lit";
 import type {
   InventoryShortfallRow,
-  PurchasingIncomingLine,
   PurchasingPO,
   PurchasingPODetail,
 } from "@hardscapehouse/api-client";
-import { deliveryWord, draftOf, isPlaced, refusalWords, relativeDay, statusTone, statusWord } from "./po-logic.js";
+import { dateWords, deliveryWord, draftOf, isPlaced, refusalWords, relativeDay, statusTone, statusWord } from "./po-logic.js";
 import { formatMoney, formatQty } from "./po-money.js";
 
 export type Tab = "orders" | "incoming";
@@ -40,8 +39,10 @@ export interface DeskModel {
   readonly busy: boolean;
   readonly error: string;
   readonly notice: string;
-  /** The delivery the draft's segmented control holds. */
+  /** The delivery the draft's segmented control holds ("UNKNOWN" until a way is chosen). */
   readonly method: string;
+  /** The promised date as typed in the draft's field, YYYY-MM-DD or "". */
+  readonly expectedText: string;
   /** Branch names by id, and vendor codes by product id, as the core's reads gave them. */
   readonly branchNames: ReadonlyMap<string, string>;
   readonly vendorCodes: ReadonlyMap<string, string>;
@@ -68,15 +69,6 @@ function pill(status: string): TemplateResult {
 
 function dateOnly(stamp: string | undefined): string {
   return stamp === undefined || stamp === "" ? "" : stamp.slice(0, 10);
-}
-
-/** "Tuesday, 4 March 2031" for a saved YYYY-MM-DD, or "". */
-function dateWords(stamp: string | undefined): string {
-  const d = dateOnly(stamp);
-  const m = d.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (m === null) return "";
-  const at = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
-  return at.toLocaleDateString("en-CA", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
 }
 
 // ---- the way in --------------------------------------------------------------------------------
@@ -111,8 +103,9 @@ function tabs(model: DeskModel): TemplateResult {
   `;
   return html`
     <nav class="tabs" aria-label="Buying and Stock views">
-      ${tab("orders", "Purchase orders")} ${tab("incoming", "Incoming")}
+      ${tab("orders", "Purchase orders")}
       <span class="tag-later" data-later>Receiving <em>later</em></span>
+      ${tab("incoming", "Incoming")}
       <span class="tag-later" data-later>Vendors <em>later</em></span>
       <span class="tag-later" data-later>Vendor bills <em>later</em></span>
     </nav>
@@ -211,7 +204,7 @@ function worklistRow(row: InventoryShortfallRow, isPicked: boolean): TemplateRes
   const draft = draftOf(row);
   return html`
     <tr data-shortfall-row data-sku=${row.sku} data-hot=${hot ? "true" : nothing} aria-selected="${isPicked ? "true" : "false"}" class="${hot ? "hot" : ""}">
-      <td class="pick"><button type="button" class="box" role="checkbox" aria-checked="${isPicked ? "true" : "false"}" aria-label="Pick ${row.sku}" data-action="pick" data-product-id=${row.product_id} ?disabled=${draft !== null}></button></td>
+      <td class="pick"><button type="button" class="box" role="checkbox" aria-checked="${isPicked ? "true" : "false"}" aria-label="${draft === null ? `Pick ${row.sku}` : `Drafted, ${draft.no}`}" data-action="pick" data-product-id=${row.product_id} ?disabled=${draft !== null}></button></td>
       <td class="sku" data-label="SKU">${row.sku}</td>
       <td class="full" data-label="Product">${row.product_name}${draft === null
         ? nothing
@@ -240,7 +233,7 @@ function draftPanel(model: DeskModel, draft: DraftModel): TemplateResult {
   const row = draft.row;
   const lineCount = po.lines.length;
   const shipTo = model.branchNames.get(po.branch_id) ?? row?.branch_code ?? "Your branch";
-  const words = dateWords(po.expected_at);
+  const words = dateWords(model.expectedText, model.today);
   return html`
     <section class="panel" aria-label="New purchase order" data-draft>
       <div class="panel-head">
@@ -263,7 +256,7 @@ function draftPanel(model: DeskModel, draft: DraftModel): TemplateResult {
         <div class="field" role="group" aria-label="Delivery">
           <span class="label">Delivery</span>
           <div class="segs">
-            ${methodButton(model, "DELIVERY", "Vendor truck")} ${methodButton(model, "PICKUP", "Pickup")} ${methodButton(model, "UNKNOWN", "Not set")}
+            ${methodButton(model, "DELIVERY", "Vendor truck")} ${methodButton(model, "PICKUP", "Pickup")}
           </div>
         </div>
       </div>
@@ -403,14 +396,6 @@ function incomingRow(model: DeskModel, po: PurchasingPO): TemplateResult {
       <td class="num opt2">${po.line_count}</td>
     </tr>
   `;
-}
-
-/** What is on order for the product just ordered, as the core's incoming read answers it. */
-export function incomingWords(lines: readonly PurchasingIncomingLine[]): string {
-  if (lines.length === 0) return "";
-  return lines
-    .map((l) => `${formatQty(l.qty_outstanding_base, l.uom)} outstanding on ${l.po_no}, ${l.expected_at === "" ? "no promised date" : `expected ${l.expected_at.slice(0, 10)}`}`)
-    .join("; ");
 }
 
 // ---- the screens ---------------------------------------------------------------------------------------------

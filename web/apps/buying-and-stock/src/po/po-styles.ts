@@ -59,8 +59,12 @@ export const poStyles = css`
   td.good { color: var(--hh-state-good); font-weight: 700; }
   td.code { font-family: var(--hh-font-mono); white-space: nowrap; }
   td.sku { font-family: var(--hh-font-mono); font-weight: 700; white-space: nowrap; }
-  tr.hot td { background: color-mix(in srgb, var(--hh-accent) 26%, transparent); }
+  tr.hot td { background: color-mix(in srgb, var(--hh-accent) 22%, transparent); }
   tr.hot td.sku, tr.hot td.full { font-weight: 700; }
+  /* On the yellow wash the state colours fall under 4.5 to 1: the row's figures take the text colour, bold, and the sign and the words carry the meaning. */
+  tr.hot td.stop, tr.hot td.good { color: var(--hh-text); font-weight: 700; }
+  tr.hot .link-inline { color: var(--hh-text); }
+  tr.hot .status { color: var(--hh-text); }
   tr[aria-current="true"] td { background: var(--hh-row-alt); }
   .who { display: block; font-weight: 700; white-space: nowrap; }
   [data-expected] { white-space: nowrap; }
@@ -103,9 +107,9 @@ export const poStyles = css`
   .forms { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--hh-s-16); }
   .field { display: grid; gap: var(--hh-s-4); }
   .field .label { font-size: 14px; color: var(--hh-text-dim); font-weight: 600; }
-  .segs { display: flex; flex-wrap: nowrap; gap: var(--hh-s-4); padding: var(--hh-s-4); border: 1px solid var(--hh-control-line); border-radius: var(--hh-radius-pill); background: var(--hh-field); }
-  .seg { flex: 1 1 auto; min-height: 36px; padding: 0 var(--hh-s-8); white-space: nowrap; border-radius: var(--hh-radius-pill); background: transparent; color: var(--hh-text-dim); border: 1px solid transparent; }
-  .seg[aria-pressed="true"] { background: var(--hh-card); color: var(--hh-text); border-color: var(--hh-control-line); font-weight: 700; }
+  .segs { display: flex; flex-wrap: nowrap; gap: var(--hh-s-4); padding: var(--hh-s-4); border: 1px solid var(--hh-control-line); border-radius: var(--hh-radius-pill); background: var(--hh-row-alt); }
+  .seg { flex: 1 1 auto; min-height: 36px; padding: 0 var(--hh-s-8); white-space: nowrap; border-radius: var(--hh-radius-pill); background: transparent; color: var(--hh-text); border: 1px solid transparent; }
+  .seg[aria-pressed="true"] { background: var(--hh-text); color: var(--hh-page); font-weight: 700; }
   .seg:focus-visible { outline: 2px solid var(--hh-focus-ring); outline-offset: 2px; }
   .theme-btn { font: inherit; font-size: 13px; padding: 7px 12px; min-height: 0; border-radius: var(--hh-radius-pill); background: transparent; color: var(--hh-text); border: 1px solid var(--hh-control-line); cursor: pointer; }
   .theme-btn:focus-visible { outline: 2px solid var(--hh-focus-ring); outline-offset: 2px; }

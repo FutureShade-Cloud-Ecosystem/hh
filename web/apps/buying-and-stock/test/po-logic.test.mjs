@@ -5,6 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   deliveryWord,
+  dateWords,
   draftOf,
   landedWords,
   relativeDay,
@@ -70,7 +71,7 @@ test("a 403 names who may do the move; the server's own sentence is otherwise ke
   const wall = refusalWords("order", "Forbidden", 403);
   assert.equal(
     wall,
-    "Placing, editing and cancelling a purchase order is for the Procurement Manager, the General Manager and the super admin only. The Yard Manager receives goods only; other roles can read.",
+    "Drafting, placing, editing and cancelling a purchase order is for the Procurement Manager, the General Manager and the super admin only. The Yard Manager receives goods only; other roles can read.",
   );
   const bill = refusalWords("post-bill", "Forbidden", 403);
   assert.match(bill, /Payables and Receivables/);
@@ -117,4 +118,11 @@ test("what has landed reads as a count against what was ordered", () => {
   assert.equal(landedWords([{ qty_ordered_base: 4, qty_received_base: 1, uom: "pc" }, { qty_ordered_base: 6, qty_received_base: 5, uom: "pc" }]), "6 of 10 pc landed");
   assert.equal(landedWords([{ qty_ordered_base: 4, qty_received_base: 1, uom: "pc" }, { qty_ordered_base: 6, qty_received_base: 5, uom: "T" }]), "part landed");
   assert.equal(landedWords([]), "");
+});
+
+test("the promised date reads as words with its days from today", () => {
+  assert.equal(dateWords("2031-03-04", "2031-02-27"), "Tuesday 4 March 2031 (in 5 days)");
+  assert.equal(dateWords("2031-03-04", "2025-01-01"), "Tuesday 4 March 2031");
+  assert.equal(dateWords("2031-02-30", "2031-02-27"), "");
+  assert.equal(dateWords("", "2031-02-27"), "");
 });

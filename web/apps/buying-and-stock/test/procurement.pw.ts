@@ -6,6 +6,71 @@
 import type { Page } from "@playwright/test";
 import { test, expect, openHome, resetStub } from "./helpers.js";
 
+/**
+ * Every visible text node's contrast against the colour it really sits on (backgrounds composited up the
+ * tree, shadow roots crossed). Returns "text: ratio" for each under 4.5 (3 for large text). Disabled controls
+ * are exempt, as the standard has it.
+ */
+async function lowContrast(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 1;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+    const rgba = (css: string): [number, number, number, number] => {
+      ctx.clearRect(0, 0, 1, 1);
+      ctx.fillStyle = "#000";
+      ctx.fillStyle = css;
+      ctx.fillRect(0, 0, 1, 1);
+      const d = ctx.getImageData(0, 0, 1, 1).data;
+      return [d[0] ?? 0, d[1] ?? 0, d[2] ?? 0, (d[3] ?? 0) / 255];
+    };
+    const over = (top: number[], under: number[]): number[] => {
+      const a = top[3] ?? 1;
+      return [0, 1, 2].map((i) => (top[i] ?? 0) * a + (under[i] ?? 0) * (1 - a)).concat([1]);
+    };
+    const lum = (c: number[]): number => {
+      const f = (v: number): number => {
+        const x = v / 255;
+        return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+      };
+      return 0.2126 * f(c[0] ?? 0) + 0.7152 * f(c[1] ?? 0) + 0.0722 * f(c[2] ?? 0);
+    };
+    const parentOf = (e: Element): Element | null => e.parentElement ?? ((e.getRootNode() as ShadowRoot).host ?? null);
+    const backdrop = (e: Element): number[] => {
+      const chain: number[][] = [];
+      for (let n: Element | null = e; n !== null; n = parentOf(n)) chain.push(rgba(getComputedStyle(n).backgroundColor));
+      let base = [255, 255, 255, 1];
+      for (let i = chain.length - 1; i >= 0; i -= 1) base = over(chain[i] as number[], base);
+      return base;
+    };
+    const out: string[] = [];
+    const walk = (root: Document | ShadowRoot | Element): void => {
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+        const text = (node.textContent ?? "").trim();
+        const el = node.parentElement;
+        if (text === "" || el === null || el.closest("[disabled]") !== null) continue;
+        if (el.closest("style, script") !== null) continue;
+        const cs = getComputedStyle(el);
+        if (cs.visibility === "hidden" || cs.display === "none") continue;
+        const bg = backdrop(el);
+        const fg = over(rgba(cs.color), bg);
+        const l1 = lum(fg);
+        const l2 = lum(bg);
+        const ratio = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+        const size = parseFloat(cs.fontSize);
+        const large = size >= 24 || (size >= 18.66 && Number(cs.fontWeight) >= 700);
+        if (ratio < (large ? 3 : 4.5)) out.push(`${text.slice(0, 40)}: ${ratio.toFixed(2)}`);
+      }
+      root.querySelectorAll("*").forEach((n) => {
+        if (n.shadowRoot !== null) walk(n.shadowRoot);
+      });
+    };
+    walk(document);
+    return out;
+  });
+}
+
 const gapRow = (page: Page) => page.locator("[data-shortfall-row]", { hasText: "DBS-BRUS-DIM" });
 
 async function draftTheGap(page: Page): Promise<void> {
@@ -29,6 +94,38 @@ test("the header names the role as the reference does, and the theme control is 
   await expect(theme).toHaveText("Theme: Light");
   const box = await theme.boundingBox();
   expect(box?.height ?? 99).toBeLessThanOrEqual(40);
+});
+
+test("the header reads its sub line as the reference does, and Feedback opens the shared widget", async ({ page, request }) => {
+  await openHome(page, request);
+  await expect(page.locator("hos-app-header")).toContainText("a Hardscape House product");
+  await expect(page.locator("hos-app-header")).not.toContainText("Work shell");
+  await page.getByRole("button", { name: "Feedback" }).click();
+  await expect(page.getByTestId("feedback-panel")).toBeVisible();
+  await expect(page.locator("hh-feedback")).toHaveAttribute("screen", "Buying and Stock");
+});
+
+test("every text is 4.5 to 1 or better in both themes: home, the drafted K08 row, the draft, the placed notice", async ({ page, request }) => {
+  test.setTimeout(60_000);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openHome(page, request);
+  for (const theme of ["Theme: Light", "Theme: Brand"]) {
+    if (theme === "Theme: Brand") await page.getByRole("button", { name: "Theme: Light" }).click();
+    expect(await lowContrast(page), `${theme}, home`).toEqual([]);
+    await page.getByRole("button", { name: "Draft PO (1)" }).click();
+    await expect(page.locator("[data-draft]")).toBeVisible();
+    expect(await lowContrast(page), `${theme}, draft`).toEqual([]);
+    await page.getByRole("button", { name: "Save draft" }).click();
+    await expect(page.locator("[data-open-draft]")).toBeVisible();
+    expect(await lowContrast(page), `${theme}, drafted row`).toEqual([]);
+    await page.locator("[data-open-draft]").click();
+    await page.getByRole("button", { name: "Place order" }).click();
+    await expect(page.locator("[data-notice]")).toBeVisible();
+    expect(await lowContrast(page), `${theme}, placed`).toEqual([]);
+    await resetStub(request);
+    await page.reload();
+    await expect(page.locator("[data-shortfall-row]").first()).toBeVisible();
+  }
 });
 
 test("the card lands on the home and the K08 gap is the hot, picked row of the worklist", async ({ page, request }) => {
@@ -97,11 +194,14 @@ test("delivery is a three way control, and the choice is saved with the draft", 
   await openHome(page, request);
   await draftTheGap(page);
   const methods = page.locator("[data-method]");
-  await expect(methods).toHaveCount(3);
-  await expect(page.locator("[data-method='UNKNOWN']")).toHaveAttribute("aria-pressed", "true");
+  await expect(methods).toHaveCount(2);
+  // Nothing is lit until a way is chosen: the core's "not set" is no option to pick.
+  await expect(page.locator("[data-method][aria-pressed='true']")).toHaveCount(0);
   await page.locator("[data-method='PICKUP']").click();
   await expect(page.locator("[data-method='PICKUP']")).toHaveAttribute("aria-pressed", "true");
   await page.locator("[data-field='expected']").fill("2031-03-04");
+  // The date reads as words under the field as it is typed, before anything is saved.
+  await expect(page.locator("[data-date-words]")).toContainText("Tuesday 4 March 2031");
   await page.getByRole("button", { name: "Save draft" }).click();
   await expect(page.locator("[data-notice]")).toContainText("Draft PO-TRT-142 saved");
   await expect(page.locator("[data-draft]")).toHaveCount(0);
@@ -129,6 +229,7 @@ test("a draft does not cover the shortfall: the K08 row stays, reading drafted n
   expect(clipped, "worklist then register: pixels cut off").toEqual([0, 0]);
   // The row's own pick is closed: a second draft for the same gap is not offered.
   await expect(row.getByRole("checkbox")).toBeDisabled();
+  await expect(row.getByRole("checkbox")).toHaveAccessibleName("Drafted, PO-TRT-142");
   // The link opens the draft again.
   await row.locator("[data-open-draft]").click();
   await expect(page.locator("[data-draft]")).toContainText("PO-TRT-142");
@@ -141,8 +242,8 @@ test("a draft is placed and seen incoming, and only the placed order closes the 
   await page.getByRole("button", { name: "Place order" }).click();
   const notice = page.locator("[data-notice]");
   await expect(notice.locator("strong")).toContainText("Placed: PO-TRT-142 to Alcli (demo), 240 Brussels Dimensional, $2,016.00.");
-  await expect(notice).toContainText("shows under Incoming");
-  await expect(notice).toContainText("2031-03-04");
+  await expect(notice).toContainText("Moved to Ordered, promised 2031-03-04. It shows under Incoming. The yard team receives it in Yard Pick and Receive.");
+  await expect(notice).not.toContainText("the core reads");
   await expect(page.locator("[data-draft]")).toHaveCount(0);
   const register = page.locator("[data-po-row]", { hasText: "PO-TRT-142" });
   await expect(register).toContainText("Ordered");
@@ -156,6 +257,8 @@ test("a draft is placed and seen incoming, and only the placed order closes the 
 
 test("promised dates read as days from today, and a part received order reads how much landed", async ({ page, request }) => {
   await openHome(page, request);
+  // The tabs read in the reference's order, the ones not yet built dashed between them.
+  await expect(page.locator("nav.tabs")).toHaveText(/Purchase orders\s*Receiving later\s*Incoming\s*Vendors later\s*Vendor bills later/);
   await expect(page.locator("[data-incoming-row]", { hasText: "PO-TRT-141" })).toContainText("in 2 days");
   await expect(page.locator("[data-incoming-row]", { hasText: "PO-TRT-136" })).toContainText("in 4 days");
   await expect(page.locator("[data-po-row]", { hasText: "PO-TRT-67" })).toContainText("6 of 10 pc landed");
@@ -195,7 +298,7 @@ test("a role the gate walls out of ordering is refused in the ruled words, besid
   await request.post("/_stub/wall");
   await page.getByRole("button", { name: "Draft PO (1)" }).click();
   const error = page.locator("[data-worklist] [data-error]");
-  await expect(error).toContainText("Placing, editing and cancelling a purchase order is for the Procurement Manager, the General Manager and the super admin only.");
+  await expect(error).toContainText("Drafting, placing, editing and cancelling a purchase order is for the Procurement Manager, the General Manager and the super admin only.");
   await expect(error).toContainText("The Yard Manager receives goods only; other roles can read.");
   await expect(page.locator("[data-draft]")).toHaveCount(0);
 });

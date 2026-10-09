@@ -76,8 +76,6 @@ export class BuyingAndStockApp extends HHElement {
   // memory only: nothing here persists.
   #theme: "light" | "dark" = "light";
 
-  readonly #feedback = new HHFeedback();
-
   readonly #feedbackSender: FeedbackSender = async (request) => {
     const answer = await staffFeedback.feedbackCreateMultipart(this.#staffClient, {
       type: request.type,
@@ -100,7 +98,6 @@ export class BuyingAndStockApp extends HHElement {
     super();
     this.#demoAccount = new DemoAccount({ client: this.#demoClient });
     this.#auth = new AuthController({ account: this.#demoAccount, sessions: this.#sessions });
-    this.#feedback.send = this.#feedbackSender;
   }
 
   // The role label the header shows; set from the handoff or the mint.
@@ -117,6 +114,11 @@ export class BuyingAndStockApp extends HHElement {
       this.#onSignOut();
       return;
     }
+    if (action === "feedback") {
+      const widget = this.renderRoot.querySelector("hh-feedback");
+      if (widget instanceof HHFeedback) widget.show();
+      return;
+    }
     if (action === "theme") {
       this.#theme = this.#theme === "light" ? "dark" : "light";
       this.requestUpdate();
@@ -129,9 +131,16 @@ export class BuyingAndStockApp extends HHElement {
     }
   };
 
+  // The draft's date field: the words under it follow what is typed (the field itself is never bound).
+  readonly #onHostInput = (event: Event): void => {
+    const target = event.composedPath()[0];
+    if (target instanceof HTMLInputElement && target.getAttribute("data-field") === "expected") this.#po.expectedTyped(target.value);
+  };
+
   connectedCallback(): void {
     super.connectedCallback();
     this.addEventListener("click", this.#onHostClick);
+    this.addEventListener("input", this.#onHostInput);
     const handoff = readFrontDoorHandoff();
     if (handoff.kind === "ready") {
       const adopted = this.#auth.adopt({
@@ -156,6 +165,7 @@ export class BuyingAndStockApp extends HHElement {
 
   disconnectedCallback(): void {
     this.removeEventListener("click", this.#onHostClick);
+    this.removeEventListener("input", this.#onHostInput);
     super.disconnectedCallback();
   }
 
@@ -169,6 +179,8 @@ export class BuyingAndStockApp extends HHElement {
       header.roleLabel = this.#roleLabel;
       header.theme = this.#theme;
     }
+    const widget = this.renderRoot.querySelector("hh-feedback");
+    if (widget instanceof HHFeedback && widget.send !== this.#feedbackSender) widget.send = this.#feedbackSender;
     // A draft's starting field values: set once per draft, after the render that drew them.
     this.#po.seed((name, value) => {
       const field = this.#fieldElement(name);
@@ -218,15 +230,16 @@ export class BuyingAndStockApp extends HHElement {
   // theme a tap moves to.
   private renderThemeControl(): TemplateResult {
     const label = this.#theme === "light" ? "Theme: Light" : "Theme: Brand";
-    return html`<button slot="theme" type="button" class="theme-btn" data-action="theme">${label}</button>`;
+    return html`<button slot="theme" type="button" class="theme-btn" data-action="feedback" title="Send feedback about this screen">Feedback</button><button slot="theme" type="button" class="theme-btn" data-action="theme">${label}</button>`;
   }
 
   private renderSignedIn(): TemplateResult {
     return html`
-      <hos-app-header signed-in demo compact product-name="Yard" product-sub="Buying and Stock · HH Work shell">${this.renderThemeControl()}</hos-app-header>
+      <hos-app-header signed-in demo compact product-name="Yard">${this.renderThemeControl()}</hos-app-header>
       <main class="desk">
         ${this.#po.render()}
       </main>
+      <hh-feedback screen="Buying and Stock" trigger="external"></hh-feedback>
     `;
   }
 
@@ -234,7 +247,7 @@ export class BuyingAndStockApp extends HHElement {
     const session = this.#sessions.current;
     if (session !== null) return this.renderSignedIn();
     return html`
-      <hos-app-header demo compact product-name="Yard" product-sub="Buying and Stock · HH Work shell">${this.renderThemeControl()}</hos-app-header>
+      <hos-app-header demo compact product-name="Yard">${this.renderThemeControl()}</hos-app-header>
       <main class="desk">
         <h1>Buying and Stock</h1>
         <p class="dim">Purchase orders and the reorder worklist for the procurement manager. Demo data only.</p>

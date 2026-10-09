@@ -11,9 +11,9 @@
 import type { TemplateResult } from "lit";
 import type { InventoryShortfallRow, PurchasingPO, PurchasingPODetail, Result } from "@hardscapehouse/api-client";
 import { PoApi, type DeliveryMethod } from "./po-api.js";
-import { draftOf, incomingLines, landedWords, poRows, refusalWords, shortfallRows, validateExpectedDate } from "./po-logic.js";
+import { draftOf, landedWords, poRows, refusalWords, shortfallRows, validateExpectedDate } from "./po-logic.js";
 import { formatMoney, formatQty } from "./po-money.js";
-import { incomingWords, renderDesk, type DeskModel, type DraftModel, type Tab } from "./po-views.js";
+import { renderDesk, type DeskModel, type DraftModel, type Tab } from "./po-views.js";
 
 export interface DeskHost {
   /** Asks the root to repaint. */
@@ -43,6 +43,7 @@ export class PoDesk {
   // The delivery the draft's segmented control holds, the branch names, the vendor's codes and the
   // part received orders' landed words: reads the core answered, kept for the screen.
   #method = "UNKNOWN";
+  #expectedText = "";
   #branchNames: ReadonlyMap<string, string> = new Map();
   #vendorCodes: ReadonlyMap<string, string> = new Map();
   #landed: ReadonlyMap<string, string> = new Map();
@@ -124,6 +125,7 @@ export class PoDesk {
       const row = first === undefined ? null : (this.#shortfall.find((r) => r.product_id === first.product_id) ?? null);
       this.#draft = { po: detail.value, row };
       this.#method = detail.value.delivery_method ?? "UNKNOWN";
+      this.#expectedText = (detail.value.expected_at ?? "").slice(0, 10);
       this.#seeded = null;
     }
     this.#busy = false;
@@ -160,10 +162,13 @@ export class PoDesk {
       case "open-draft":
         void this.#openDraft(attr("data-po-id"));
         return true;
-      case "method":
-        this.#method = attr("data-method");
+      case "method": {
+        // Pressing the lit way again puts the order back to not set.
+        const chosen = attr("data-method");
+        this.#method = this.#method === chosen ? "UNKNOWN" : chosen;
         this.#host.repaint();
         return true;
+      }
       case "remove-line":
         void this.#removeLine(attr("data-line-id"));
         return true;
@@ -217,6 +222,7 @@ export class PoDesk {
     this.#picked = null;
     this.#seeded = null;
     this.#method = detail.value.delivery_method ?? "UNKNOWN";
+    this.#expectedText = (detail.value.expected_at ?? "").slice(0, 10);
     await this.#reload();
     // The row as the core now reads it: it carries the draft that does not cover it.
     this.#draft = { po: detail.value, row: this.#shortfall.find((r) => r.product_id === row.product_id) ?? row };
@@ -306,16 +312,9 @@ export class PoDesk {
     this.#draft = null;
     this.#placedId = po.id;
     await this.#reload();
-    // What is on order for the product just ordered, from the core's own incoming read.
-    const first = po.lines[0];
-    let onOrder = "";
-    if (first !== undefined) {
-      const lines = await this.#api.incomingFor(first.product_id);
-      if (lines.ok) onOrder = incomingWords(incomingLines(lines.value));
-    }
     const what = po.lines.map((l) => `${formatQty(l.qty_ordered_base, l.uom)} ${l.description}`).join(", ");
     const promised = ready.expected_at === undefined || ready.expected_at === "" ? "no promised date yet" : `promised ${ready.expected_at.slice(0, 10)}`;
-    this.#notice = `Placed: ${po.po_no} to ${po.vendor_name}, ${what}, ${formatMoney(po.subtotal_cents)}.\nMoved to Ordered, ${promised}. It shows under Incoming${onOrder === "" ? "" : `; the core reads ${onOrder}`}. The yard team receives it in Yard Pick and Receive.`;
+    this.#notice = `Placed: ${po.po_no} to ${po.vendor_name}, ${what}, ${formatMoney(po.subtotal_cents)}.\nMoved to Ordered, ${promised}. It shows under Incoming. The yard team receives it in Yard Pick and Receive.`;
     this.#busy = false;
     this.#host.repaint();
   }
@@ -335,6 +334,12 @@ export class PoDesk {
       this.#fail("order", cancelled);
     }
     this.#busy = false;
+    this.#host.repaint();
+  }
+
+  /** The draft's date field changed: the words under it follow what was typed. */
+  expectedTyped(text: string): void {
+    this.#expectedText = text;
     this.#host.repaint();
   }
 
@@ -364,6 +369,7 @@ export class PoDesk {
       error: this.#phase === "error" || this.#error !== "" ? this.#error : "",
       notice: this.#notice,
       method: this.#method,
+      expectedText: this.#expectedText,
       branchNames: this.#branchNames,
       vendorCodes: this.#vendorCodes,
       landed: this.#landed,

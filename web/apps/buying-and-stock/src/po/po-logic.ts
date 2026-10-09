@@ -98,12 +98,12 @@ export function validateExpectedDate(text: string): DateCheck {
 
 /**
  * What each walled move is, and who may do it. The order walls are the principal's ruling (FROM-PRINCIPAL 72):
- * placing, editing and cancelling a PO are the Procurement Manager's, the General Manager's and super admin's;
+ * drafting, placing, editing and cancelling a PO are the Procurement Manager's, the General Manager's and super admin's;
  * the Yard Manager receives only; the rest read. Posting a bill is Payables and Receivables' (row 457).
  */
 const WHO_MAY: Record<string, string> = {
   order:
-    "Placing, editing and cancelling a purchase order is for the Procurement Manager, the General Manager and the super admin only. The Yard Manager receives goods only; other roles can read.",
+    "Drafting, placing, editing and cancelling a purchase order is for the Procurement Manager, the General Manager and the super admin only. The Yard Manager receives goods only; other roles can read.",
   "post-bill":
     "Posting a vendor bill is for Payables and Receivables. The Procurement Manager can read the bills against its own orders and the three way match, but does not post them.",
 };
@@ -182,4 +182,18 @@ export function landedWords(lines: readonly { qty_ordered_base: number; qty_rece
   const unit = [...uoms][0] ?? "";
   const fmt = (n: number): string => n.toLocaleString("en-CA", { maximumFractionDigits: 3 });
   return `${fmt(received)} of ${fmt(ordered)} ${unit} landed`;
+}
+
+/** A promised day as the field's words: "Tuesday, 4 March 2031 (in 5 days)", "" when it is not a real date. */
+export function dateWords(date: string, today: string): string {
+  const check = validateExpectedDate(date);
+  if (!check.ok) return "";
+  const [y, m, d] = check.date.split("-").map(Number);
+  const at = new Date(Date.UTC(y ?? 0, (m ?? 1) - 1, d ?? 1));
+  // Written out by hand: a locale's idea of the comma differs between a browser and a test runner.
+  const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  const words = `${DAYS[at.getUTCDay()]} ${at.getUTCDate()} ${MONTHS[at.getUTCMonth()]} ${at.getUTCFullYear()}`;
+  const rel = relativeDay(check.date, today);
+  return rel === "" ? words : `${words} (${rel})`;
 }
