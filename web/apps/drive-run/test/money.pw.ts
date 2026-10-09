@@ -2,8 +2,7 @@
 // money fields on every read; the driver walks every screen and none of it may
 // show, and nothing the app sends may carry any. The clean path is held too:
 // the stub's own payloads (the core's shapes) are scanned for money words.
-import { test, expect } from "@playwright/test";
-import { deliverStop, driverHandoff, resetStub, stubLog, takeFirstStopEnRoute, useScenario } from "./helpers.js";
+import { test, expect, deliverStop, driverHandoff, resetStub, stubLog, takeFirstStopEnRoute, useScenario } from "./helpers.js";
 
 test.use({ viewport: { width: 390, height: 844 } });
 
