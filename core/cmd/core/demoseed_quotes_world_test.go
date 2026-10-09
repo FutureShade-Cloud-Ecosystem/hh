@@ -302,7 +302,7 @@ func TestDemoWorld_Quotes(t *testing.T) {
 	// 3. the second apply: now the logins resolve, so the quote world is added, and nothing else moves.
 	before := qwFingerprint(t, ctx, pool, qwOtherWorldTables)
 	proposed, created := qwApply(t)
-	const wantQuoteRows = 4 + 9 + 3 + 2 + 2 + 2 + 4 + 1 // quotes, lines, links, acceptances, audit rows, events, log rows, request
+	const wantQuoteRows = 4 + 9 + 3 + 2 + 2 + 2 + 4 + 1 + controllerWorldRows // quotes, lines, links, acceptances, audit rows, events, log rows, request, and the controller world the same apply adds
 	if created != wantQuoteRows {
 		t.Fatalf("the second apply created %d rows, want exactly the quote world's %d (proposed %d)", created, wantQuoteRows, proposed)
 	}
@@ -313,7 +313,7 @@ func TestDemoWorld_Quotes(t *testing.T) {
 		}
 	}
 	census := map[string]int{"quotes": 4, "quote_lines": 9, "quote_share_links": 3, "quote_acceptances": 2,
-		"quote_share_link_events": 2, "pricing_audit_log": 4, "permission_approval_requests": 1}
+		"quote_share_link_events": 2, "pricing_audit_log": 4, "permission_approval_requests": 1 + 2}
 	for table, add := range census {
 		if n := qwCount(t, ctx, pool, `SELECT count(*) FROM `+table); n != baseline[table]+add {
 			t.Errorf("%s holds %d rows, want the baseline %d plus the world's %d", table, n, baseline[table], add)
