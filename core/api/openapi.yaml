@@ -6289,12 +6289,13 @@ paths:
       tags:
         - staff-dispatch
       summary: Save the dispatch policy for a branch
-      description: Malformed values are refused in words before any database CHECK can fire; omitted knobs normalise to the column defaults rather than to zero.
+      description: "Malformed values are refused in words before any database CHECK can fire; omitted knobs normalise to the column defaults rather than to zero. Beside the level, the route names the configuration's dispatch_policy_setters list (X13): a role off the list is refused the write whatever its cells say, the pricing_editors precedent."
       x-role: requireManager
       x-access:
         surfaces:
           - dispatch-board
         level: manage
+        list: dispatch_policy_setters
       x-guards:
         - requireBranch
       parameters:

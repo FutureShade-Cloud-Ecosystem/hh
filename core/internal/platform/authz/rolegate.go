@@ -132,6 +132,11 @@ var listReaders = map[string]func(*roleconfig.Config) []string{
 	// the surface at work, so the default's answer is the route's old answer
 	// and a dealer's widening or narrowing is the list's to decide.
 	roleconfig.SettingShortageResolvers: func(c *roleconfig.Config) []string { return c.ShortageResolvers() },
+	// The dispatch policy write names its setters (X13): the decided default
+	// lists the logistics and branch managers, the dispatch board's own manage
+	// row, so the default's behaviour is the unlisted gate's; a dealer moving
+	// a cell without moving the list meets the wall.
+	roleconfig.SettingDispatchPolicySetters: func(c *roleconfig.Config) []string { return c.DispatchPolicySetters() },
 	// The low margin report names a list derived from the floor lists and the cost list together
 	// (roleconfig.LowMarginReportReaders): a role that clears or decides a floor, or sits above one,
 	// and may see cost. Not a stored setting, so the name is the route's own.

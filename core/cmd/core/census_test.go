@@ -58,9 +58,9 @@ func assertCensusAnnotated(t *testing.T, route apigen.Route) {
 	// The named lists the gate reads (rolegate.go's listReaders): the
 	// pricing editors, the cost and margin list (D10, the pricing log), the low
 	// margin report's readers (the floor lists held to the cost list), the shortage
-	// resolvers (X11, the yard's shortage resolve route), and the PO writers (the
-	// buying route's writer list).
-	if route.List != "" && route.List != roleconfig.SettingPricingEditors && route.List != roleconfig.SettingCostVisibility && route.List != authz.ListLowMarginReport && route.List != roleconfig.SettingShortageResolvers && route.List != authz.ListPOWriters {
+	// resolvers (X11, the yard's shortage resolve route), the PO writers (the
+	// buying route's writer list) and the dispatch policy setters (X13).
+	if route.List != "" && route.List != roleconfig.SettingPricingEditors && route.List != roleconfig.SettingCostVisibility && route.List != roleconfig.SettingDispatchPolicySetters && route.List != authz.ListLowMarginReport && route.List != roleconfig.SettingShortageResolvers && route.List != authz.ListPOWriters {
 		t.Fatalf("staff operation %s names list %q, which no gate reader knows", route.OperationID, route.List)
 	}
 }
