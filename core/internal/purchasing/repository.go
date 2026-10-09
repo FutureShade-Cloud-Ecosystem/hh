@@ -258,6 +258,33 @@ func (r *Repository) InsertPOLine(ctx context.Context, tx pgx.Tx, poID string, l
 	return id, nil
 }
 
+// UpdatePOLine corrects the quantity or the cost of one line on its draft, then stamps the header
+// seq exactly as the add and the remove do: the line set is the order's meaning, and a device's
+// pull must see the header move. A line that is not on this order is a 404 (errNotFound), never a
+// silent no-op that reads back as success.
+func (r *Repository) UpdatePOLine(ctx context.Context, tx pgx.Tx, poID, lineID string, in UpdateLineParams) error {
+	if r.pool == nil {
+		return errNoDB
+	}
+	tag, err := r.q(tx).Exec(ctx, `
+		UPDATE purchasing_po_lines SET
+			qty_ordered_base = COALESCE($3, qty_ordered_base),
+			unit_cost_cents = COALESCE($4, unit_cost_cents),
+			updated_at = now()
+		WHERE id = $1 AND po_id = $2`,
+		lineID, poID, in.QtyOrderedBase, in.UnitCostCents)
+	if err != nil {
+		return fmt.Errorf("purchasing: update po line: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return errNotFound
+	}
+	if err := bumpPOHeaderSeq(ctx, r.q(tx), poID); err != nil {
+		return err
+	}
+	return nil
+}
+
 // bumpPOHeaderSeq stamps the purchase_orders scope's seq on the PO's
 // header row (0213): a line change changes the order's meaning (its
 // line count, its totals), and a device's pull must see the header

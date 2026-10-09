@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { PurchasingAddLineRequest, PurchasingAttachLandedCostRequest, PurchasingBillDetail, PurchasingBillPage, PurchasingBillStatus, PurchasingCreateBillRequest, PurchasingCreatePORequest, PurchasingCreateVendorRequest, PurchasingIncomingLinePage, PurchasingMatchState, PurchasingPO, PurchasingPOCosts, PurchasingPODetail, PurchasingPOPage, PurchasingPOSend, PurchasingPOSendPage, PurchasingPOStatus, PurchasingPolicy, PurchasingPostBillRequest, PurchasingReceipt, PurchasingReceiveRequest, PurchasingSendPORequest, PurchasingSetDeliveryMethodRequest, PurchasingSetExpectedDateRequest, PurchasingSetPolicyRequest, PurchasingSetToleranceRequest, PurchasingTolerance, PurchasingTransitionRequest, PurchasingUpdateVendorRequest, PurchasingVendorContactResult, PurchasingVendorContactWrite, PurchasingVendorMaster, PurchasingVendorPage, PurchasingVendorSKU, PurchasingVendorSKUPage, PurchasingVendorSKUWrite, PurchasingWorklistItemPage } from "./types.js";
+import type { PurchasingAddLineRequest, PurchasingAttachLandedCostRequest, PurchasingBillDetail, PurchasingBillPage, PurchasingBillStatus, PurchasingCreateBillRequest, PurchasingCreatePORequest, PurchasingCreateVendorRequest, PurchasingIncomingLinePage, PurchasingMatchState, PurchasingPO, PurchasingPOCosts, PurchasingPODetail, PurchasingPOPage, PurchasingPOSend, PurchasingPOSendPage, PurchasingPOStatus, PurchasingPolicy, PurchasingPostBillRequest, PurchasingReceipt, PurchasingReceiveRequest, PurchasingSendPORequest, PurchasingSetDeliveryMethodRequest, PurchasingSetExpectedDateRequest, PurchasingSetPolicyRequest, PurchasingSetToleranceRequest, PurchasingTolerance, PurchasingTransitionRequest, PurchasingUpdateLineRequest, PurchasingUpdateVendorRequest, PurchasingVendorContactResult, PurchasingVendorContactWrite, PurchasingVendorMaster, PurchasingVendorPage, PurchasingVendorSKU, PurchasingVendorSKUPage, PurchasingVendorSKUWrite, PurchasingWorklistItemPage } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -254,6 +254,24 @@ export async function purchasingAddLine(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "purchasingAddLine",
+  });
+}
+
+export async function purchasingUpdateLine(
+  client: ApiClient,
+  id: string | number,
+  lineID: string | number,
+  body: PurchasingUpdateLineRequest,
+  call?: ApiCallOptions
+): Promise<Result<PurchasingPODetail>> {
+  return client.request<PurchasingPODetail>({
+    method: "PUT",
+    path: "/api/v1/purchasing/pos/{id}/lines/{lineID}",
+    pathParams: { id, lineID },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "purchasingUpdateLine",
   });
 }
 

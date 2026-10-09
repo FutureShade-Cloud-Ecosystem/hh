@@ -5682,6 +5682,10 @@ export type PurchasingAddLineRequest = {
   uom?: string;
   unit_cost_cents?: number;
 };
+export type PurchasingUpdateLineRequest = {
+  qty_ordered_base?: number;
+  unit_cost_cents?: number;
+};
 export type PurchasingSetExpectedDateRequest = {
   expected_at: string;
 };

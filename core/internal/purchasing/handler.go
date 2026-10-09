@@ -106,6 +106,21 @@ func (h *Handler) removeLine(w http.ResponseWriter, r *http.Request, caller guar
 	httpx.WriteJSON(w, http.StatusOK, po)
 }
 
+// setLine corrects the quantity or the cost of one line on a draft, the same PUT shape the other
+// correction routes carry (vendor_master.go, the expected date, the delivery method).
+func (h *Handler) setLine(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in UpdateLineParams
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	po, err := h.svc.UpdateLine(r.Context(), r.PathValue("id"), r.PathValue("lineID"), in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, po)
+}
+
 func (h *Handler) transition(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	var in TransitionRequest
 	if !decodeJSON(w, r, &in) {

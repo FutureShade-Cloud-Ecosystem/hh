@@ -6601,6 +6601,11 @@ type PurchasingAddLineRequest struct {
 	UnitCostCents  *int64  `json:"unit_cost_cents,omitempty"`
 }
 
+type PurchasingUpdateLineRequest struct {
+	QtyOrderedBase *float64 `json:"qty_ordered_base,omitempty"`
+	UnitCostCents  *int64   `json:"unit_cost_cents,omitempty"`
+}
+
 type PurchasingSetExpectedDateRequest struct {
 	ExpectedAt string `json:"expected_at"`
 }

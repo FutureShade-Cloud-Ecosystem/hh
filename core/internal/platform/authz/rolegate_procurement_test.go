@@ -31,7 +31,7 @@ func procurementAccess(t *testing.T, operationID string) RouteAccess {
 // holds that seat.
 func TestProcurementManager_TheBuyingWritesAreTheBuyersAlone(t *testing.T) {
 	f := newFixture(t)
-	for _, op := range []string{"purchasingCreateVendor", "purchasingUpdateVendor", "purchasingCreatePO", "purchasingTransitionPO", "inventoryCreatePOFromShortfall", "inventoryReorderPO"} {
+	for _, op := range []string{"purchasingCreateVendor", "purchasingUpdateVendor", "purchasingUpdateLine", "purchasingCreatePO", "purchasingTransitionPO", "inventoryCreatePOFromShortfall", "inventoryReorderPO"} {
 		access := procurementAccess(t, op)
 		if len(access.Surfaces) != 1 || access.Surfaces[0] != "buying-and-stock" || access.Level != roleconfig.LevelManage {
 			t.Fatalf("%s must name buying-and-stock at manage, got %+v", op, access)

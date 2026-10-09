@@ -228,6 +228,45 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
 
   /api/v1/purchasing/pos/{id}/lines/{lineID}:
+    put:
+      operationId: purchasingUpdateLine
+      tags: [staff-purchasing]
+      x-addition: "the draft line correction route of the roles roadmap's Buying and Stock core slice; no ERP source route"
+      summary: Correct the quantity or the cost of one line on a draft purchase order
+      description: >-
+        Each field is optional and absent means unchanged; the product is
+        not editable through this route. Lines may only be corrected
+        while the order is DRAFT, the same freeze the add and remove
+        routes carry.
+      x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: lineID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingUpdateLineRequest"
+      responses:
+        "200":
+          description: The purchase order after the correction
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingPODetail"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
     delete:
       operationId: purchasingRemoveLine
       tags: [staff-purchasing]
@@ -1851,6 +1890,16 @@ components:
         description: { type: string }
         qty_ordered_base: { type: number }
         uom: { type: string }
+        unit_cost_cents: { type: integer, format: int64 }
+
+    PurchasingUpdateLineRequest:
+      type: object
+      description: >-
+        The correction of one line already on a draft: the quantity or the
+        cost, each optional and absent meaning unchanged. A body naming
+        neither is refused. The product is not editable through this route.
+      properties:
+        qty_ordered_base: { type: number }
         unit_cost_cents: { type: integer, format: int64 }
 
     PurchasingSetExpectedDateRequest:

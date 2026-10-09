@@ -294,6 +294,13 @@ type AddLineParams struct {
 	UnitCostCents  int64   `json:"unit_cost_cents"`
 }
 
+// UpdateLineParams is the PUT .../lines/{lineID} body: the quantity or the cost of a line already
+// on the draft, each optional, absent meaning unchanged. The product is not editable through it.
+type UpdateLineParams struct {
+	QtyOrderedBase *float64 `json:"qty_ordered_base"`
+	UnitCostCents  *int64   `json:"unit_cost_cents"`
+}
+
 // SetExpectedDateRequest is the PUT /purchasing/pos/{id}/expected-date body, DIB-460's edit path.
 // An EMPTY expected_at clears the date: a withdrawn vendor promise leaves us with no date, and a
 // stale one left on the record is a screen that lies to the person planning around it.

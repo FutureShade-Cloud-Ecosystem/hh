@@ -794,6 +794,7 @@ export const SCHEMA_DESCRIPTORS = {
   "PurchasingPOCosts": {"k":"object","req":[],"props":{"subtotal_cents":{"k":"integer"},"subtotal_cad_cents":{"k":"integer"}}},
   "PurchasingCreatePORequest": {"k":"object","req":["vendor_id","branch_id"],"props":{"vendor_id":{"k":"string"},"branch_id":{"k":"string"},"expected_at":{"k":"string"},"notes":{"k":"string"},"lines":{"k":"array","of":{"k":"ref","name":"PurchasingAddLineRequest"}},"currency":{"k":"ref","name":"PurchasingCurrency"},"fx_rate":{"k":"number"}}},
   "PurchasingAddLineRequest": {"k":"object","req":["product_id","qty_ordered_base"],"props":{"product_id":{"k":"string"},"description":{"k":"string"},"qty_ordered_base":{"k":"number"},"uom":{"k":"string"},"unit_cost_cents":{"k":"integer"}}},
+  "PurchasingUpdateLineRequest": {"k":"object","req":[],"props":{"qty_ordered_base":{"k":"number"},"unit_cost_cents":{"k":"integer"}}},
   "PurchasingSetExpectedDateRequest": {"k":"object","req":["expected_at"],"props":{"expected_at":{"k":"string"}}},
   "PurchasingSetDeliveryMethodRequest": {"k":"object","req":["delivery_method"],"props":{"delivery_method":{"k":"lit","v":["PICKUP","DELIVERY","UNKNOWN"]}}},
   "PurchasingTransitionRequest": {"k":"object","req":["to"],"props":{"to":{"k":"lit","v":["ORDERED","CLOSED","CANCELLED"]}}},

@@ -355,6 +355,7 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("POST /api/v1/purchasing/pos", g.RequireManager(h.staff(h.createPO)))
 	r.Handle("GET /api/v1/purchasing/pos/{id}", g.RequireStaff(h.staff(h.getPO)))
 	r.Handle("POST /api/v1/purchasing/pos/{id}/lines", g.RequireManager(h.staff(h.addLine)))
+	r.Handle("PUT /api/v1/purchasing/pos/{id}/lines/{lineID}", g.RequireManager(h.staff(h.setLine)))
 	r.Handle("DELETE /api/v1/purchasing/pos/{id}/lines/{lineID}", g.RequireManager(h.staff(h.removeLine)))
 	r.Handle("POST /api/v1/purchasing/pos/{id}/transition", g.RequireManager(h.staff(h.transition)))
 	r.Handle("POST /api/v1/purchasing/pos/{id}/receive", g.RequireManager(h.staff(h.receive)))
