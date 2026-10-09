@@ -5,24 +5,58 @@
 // shared header takes the same shape). Every number on a screen is a count,
 // a line number or a quantity: there is no money field to bind.
 //
+// THE POSITION GATE'S SHAPE, and why the forms look the way they do. A
+// dependent package may bind text content, class, role, data- and aria-
+// attribute values, whole unquoted data- and aria- values, and ?disabled,
+// and nothing else. So no control here carries a bound value, a selected
+// option or label text inside a textarea: the root element mirrors every
+// field from input and change events and writes each field's value back in
+// its own updated() pass, the same shape HH Drive's proof of delivery uses.
+// The reason options are static literals because the core's short pick
+// reason list is a closed CHECK set ("add, never rename"), and the unit leg
+// holds the literals against reasonPhrase.
+//
 // References: the FB Design boards "HH: field apps" (the queue in light and
-// brand) and the original app's phone screens, drawn to HH's design system
-// under row 563 (take the existing and improve it).
+// brand, the pick with the skid stepper and the reason, the short pick sheet)
+// and the original app's phone screens, drawn to HH's design system under
+// row 563 (take the existing and improve it).
 import { html, nothing, type TemplateResult } from "lit";
 import type { DemoFlow } from "@hardscapehouse/api-client";
-import type { YardPick } from "./yard-api.js";
+import type { YardLine, YardPick, YardPickedLine, YardTask } from "./yard-api.js";
 import {
   STATUS_LABEL,
+  SHORT_REASONS,
+  actionLabel,
   ageLabel,
   isUnclaimed,
+  lineIsShort,
   mtoLabel,
   nextAction,
   orderHandle,
+  pickSummary,
   priorityWord,
+  qtyLabel,
+  qtyText,
+  reasonLabel,
   shortageSummary,
   statusTone,
   ticketIsFixture,
+  type PickAction,
 } from "./yard-logic.js";
+
+/** The status pill: colour never carries the meaning alone, the word is always there. */
+function statusPill(status: string): TemplateResult {
+  return html`<span class="status status-${statusTone(status)}" data-task-status>${STATUS_LABEL[status] ?? status}</span>`;
+}
+
+/** The short pick reasons as static options: the core's closed list, add never rename. */
+const REASON_OPTIONS = html`
+  <option value="CONDENSED_SKIDS">Skids condensed (CONDENSED_SKIDS)</option>
+  <option value="DAMAGED">Damaged (DAMAGED)</option>
+  <option value="NOT_IN_YARD">Not in the yard (NOT_IN_YARD)</option>
+  <option value="COUNT_CORRECTION">Count corrected (COUNT_CORRECTION)</option>
+  <option value="OTHER">Other (OTHER)</option>
+`;
 
 /** Messages the yard must see: a refusal in the server's words, or an outcome. */
 export function renderMessages(error: string, notice: string): TemplateResult | typeof nothing {
@@ -43,11 +77,6 @@ export interface QueueModel {
   readonly error: string;
   readonly notice: string;
   readonly moreBehind: boolean;
-}
-
-/** The status pill: colour never carries the meaning alone, the word is always there. */
-function statusPill(status: string): TemplateResult {
-  return html`<span class="status status-${statusTone(status)}" data-task-status>${STATUS_LABEL[status] ?? status}</span>`;
 }
 
 function pickCard(entry: YardPick, me: string, busy: boolean): TemplateResult {
@@ -130,6 +159,220 @@ export function renderQueue(model: QueueModel): TemplateResult {
   `;
 }
 
+// ---- one pick: the pull list, the record, the shortage sheet, the skids, the stage ----
+
+export interface PickModel {
+  readonly pick: YardPick;
+  /** The drafted quantities and reasons, one per ticket line, mirrored from the fields. */
+  readonly drafts: ReadonlyArray<{
+    order_line_no: number;
+    qty_picked: string;
+    short_reason: string;
+    short_note: string;
+  }>;
+  /** The line whose quantity editor is open, by line number; null when none. */
+  readonly editing: number | null;
+  readonly busy: boolean;
+  readonly error: string;
+  readonly notice: string;
+  readonly skids: number | null;
+}
+
+function draftFor(model: PickModel, lineNo: number): { order_line_no: number; qty_picked: string; short_reason: string; short_note: string } | null {
+  return model.drafts.find((d) => d.order_line_no === lineNo) ?? null;
+}
+
+/** The recorded pick indexed by the ticket's own line number. */
+function pickedByLine(picked: readonly YardPickedLine[]): Map<number, YardPickedLine> {
+  const out = new Map<number, YardPickedLine>();
+  for (const l of picked) out.set(l.order_line_no, l);
+  return out;
+}
+
+function lineRow(model: PickModel, line: YardLine, recorded: YardPickedLine | undefined): TemplateResult {
+  const draft = draftFor(model, line.line_no);
+  const pickedRaw = draft !== null ? draft.qty_picked : (recorded?.qty_picked ?? "");
+  const short = pickedRaw !== "" && lineIsShort(line.qty_ordered, pickedRaw);
+  const full = pickedRaw !== "" && !short;
+  const editing = model.editing === line.line_no;
+  const reason = draft !== null ? draft.short_reason : (recorded?.short_reason ?? "");
+  const note = draft !== null ? draft.short_note : (recorded?.short_note ?? "");
+  return html`
+    <li data-line data-line-no=${line.line_no}>
+      <button
+        type="button"
+        class="line-row"
+        data-action="edit-line"
+        data-line-no=${line.line_no}
+        aria-label=${`Line ${line.line_no}, ${line.description}`}
+        data-tap
+      >
+        <span class="line-check ${full ? "full" : short ? "short" : ""}" aria-hidden="true">${full ? "\u2713" : short ? "!" : ""}</span>
+        <span class="line-main">
+          <span class="line-desc">${line.description}</span>
+          <span class="line-sub">${line.sku !== "" ? `${line.sku} · ` : ""}${line.location !== "" ? line.location : "no bin on file"}</span>
+          ${reason !== "" ? html`<span class="line-sub">${reasonLabel(reason)}${note !== "" ? `: ${note}` : ""}</span>` : nothing}
+        </span>
+        <span class="line-qty" data-line-qty>
+          ${short ? html`<span class="picked-short">${qtyText(pickedRaw)}</span>` : html`${qtyText(pickedRaw)}`}
+          <span class="dim"> / ${qtyText(line.qty_ordered)} ${line.uom}</span>
+          ${line.qty_backordered !== ""
+            ? html`<span class="backordered"> · ${qtyLabel(line.qty_backordered, line.uom)} on backorder</span>`
+            : nothing}
+        </span>
+      </button>
+      ${editing ? renderQtyEditor(model, line, draft, recorded) : nothing}
+    </li>
+  `;
+}
+
+/**
+ * The quantity editor: big, one hand, gloves. The field's value is never
+ * bound (the position rules refuse it); the root mirrors what is typed and
+ * writes the value back on its own updated() pass, so a re-render that opens
+ * the reason select never eats a typed number.
+ */
+function renderQtyEditor(
+  model: PickModel,
+  line: YardLine,
+  draft: { order_line_no: number; qty_picked: string; short_reason: string; short_note: string } | null,
+  recorded: YardPickedLine | undefined,
+): TemplateResult {
+  const current = draft !== null ? draft.qty_picked : (recorded?.qty_picked ?? "");
+  const short = current !== "" && lineIsShort(line.qty_ordered, current);
+  return html`
+    <div class="qty-edit" data-qty-edit>
+      <div class="qty-row">
+        <button type="button" class="stepper" data-action="qty-step" data-line-no=${line.line_no} data-step="-1" ?disabled=${model.busy} data-tap aria-label="Take one off">-</button>
+        <input
+          class="qty-field"
+          type="text"
+          inputmode="decimal"
+          data-field="qty"
+          data-line-no=${line.line_no}
+          ?disabled=${model.busy}
+          aria-label=${`How many ${line.description} came off the shelf`}
+        />
+        <button type="button" class="stepper" data-action="qty-step" data-line-no=${line.line_no} data-step="1" ?disabled=${model.busy} data-tap aria-label="Add one on">+</button>
+      </div>
+      <div class="qty-quick">
+        <button type="button" class="stepper" data-action="qty-full" data-line-no=${line.line_no} ?disabled=${model.busy} data-tap>All ${qtyText(line.qty_ordered)}</button>
+        <button type="button" class="stepper" data-action="qty-none" data-line-no=${line.line_no} ?disabled=${model.busy} data-tap>None</button>
+        <button type="button" class="stepper" data-action="qty-done" data-line-no=${line.line_no} ?disabled=${model.busy} data-tap>Done</button>
+      </div>
+      ${short
+        ? html`
+            <span class="field-label">Why short (required)</span>
+            <select class="text-field" data-field="reason" data-line-no=${line.line_no} ?disabled=${model.busy} aria-label=${`Why line ${line.line_no} is short`}>
+              <option value="">Choose the reason</option>
+              ${REASON_OPTIONS}
+            </select>
+            ${(draft?.short_reason ?? "") === "OTHER"
+              ? html`
+                  <span class="field-label">Say what happened</span>
+                  <textarea class="text-field text-area" rows="2" data-field="short-note" data-line-no=${line.line_no} ?disabled=${model.busy} aria-label=${`What happened on line ${line.line_no}`}></textarea>
+                `
+              : nothing}
+          `
+        : nothing}
+    </div>
+  `;
+}
+
+function pullList(model: PickModel): TemplateResult {
+  const pick = model.pick;
+  if (pick.ticket === null) {
+    return html`
+      <section class="card" data-no-ticket>
+        <h3>Pull list</h3>
+        <p class="dim">The ticket for this pick did not come through. The task is still on the board: tell the yard lead, and pull from the paperwork.</p>
+      </section>
+    `;
+  }
+  const recorded = pickedByLine(pick.picked);
+  const summary = pickSummary(pick.picked);
+  return html`
+    <section class="card" data-pull-list>
+      <h3>Pull list · ${pick.ticket.lines.length} ${pick.ticket.lines.length === 1 ? "line" : "lines"}</h3>
+      ${summary !== "" ? html`<p class="dim" data-pick-summary>${summary}</p>` : nothing}
+      <ul class="lines">${pick.ticket.lines.map((l) => lineRow(model, l, recorded.get(l.line_no)))}</ul>
+    </section>
+  `;
+}
+
+function skidsCard(model: PickModel): TemplateResult {
+  return html`
+    <section class="card" data-skids>
+      <h3>Skids</h3>
+      <div class="skid-row">
+        <button type="button" class="stepper" data-action="skid-step" data-step="-1" ?disabled=${model.busy} data-tap aria-label="One skid fewer">-</button>
+        <span class="skid-count" data-skid-count>${model.skids === null ? "··" : String(model.skids)}</span>
+        <button type="button" class="stepper" data-action="skid-step" data-step="1" ?disabled=${model.busy} data-tap aria-label="One skid more">+</button>
+      </div>
+      <span class="field-label">Reason (required when you change it)</span>
+      <select class="text-field" data-field="skid-reason" ?disabled=${model.busy} aria-label="The reason for the skid count">
+        <option value="">Choose the reason</option>
+        ${REASON_OPTIONS}
+      </select>
+      <textarea class="text-field text-area" rows="2" data-field="skid-note" ?disabled=${model.busy} aria-label="Say what happened, when the reason is Other"></textarea>
+      <div class="actions">
+        <button type="button" class="btn btn-secondary big" data-action="save-skids" ?disabled=${model.busy} data-tap>Save skid count</button>
+      </div>
+    </section>
+  `;
+}
+
+/** One pick: the pull list on the left (tablet) and the skids, stage and shortages beside it. */
+export function renderPick(model: PickModel): TemplateResult {
+  const pick = model.pick;
+  const t: YardTask = pick.task;
+  const action: PickAction | null = nextAction(t.status);
+  const ticket = pick.ticket;
+  const recordable = t.status === "IN_PROGRESS" || t.status === "STAGED";
+  return html`
+    <button type="button" class="back" data-action="back" data-tap>Back to the queue</button>
+    <h1 data-pick-order>${orderHandle(ticket)}</h1>
+    ${renderMessages(model.error, model.notice)}
+    <section class="card">
+      <div class="detail-head">
+        <p class="detail-who">${ticket?.customer_name || "Customer"}</p>
+        ${statusPill(t.status)}
+      </div>
+      <div class="pick-facts">
+        ${ticket !== null && (ticket.fulfillment === "PICKUP" || ticket.fulfillment === "WILL_CALL")
+          ? html`<span class="pill">Customer pickup</span>`
+          : ticket !== null && ticket.fulfillment === "DELIVERY"
+            ? html`<span class="pill">Delivery</span>`
+            : nothing}
+        ${priorityWord(ticket?.priority || t.priority) !== "" ? html`<span class="pill pill-watch">${priorityWord(ticket?.priority || t.priority)}</span>` : nothing}
+        ${ticket !== null && mtoLabel(ticket.mto_class, ticket.fulfillment) !== "" ? html`<span>${mtoLabel(ticket.mto_class, ticket.fulfillment)}</span>` : nothing}
+      </div>
+      ${ticket?.held_from_picking === true
+        ? html`<p class="held" data-held>${ticket.hold_words || "This order waits: it cannot be picked yet."}</p>`
+        : nothing}
+      ${action !== null && action !== "stage"
+        ? html`<div class="actions">
+            <button type="button" class="btn btn-primary big" data-action=${action} data-task-id=${t.id} ?disabled=${model.busy} data-tap>${actionLabel(action)}</button>
+          </div>`
+        : nothing}
+    </section>
+    <div class="detail-grid">
+      <div>
+        ${pullList(model)}
+        ${recordable
+          ? html`<div class="actions" data-record-door>
+              <button type="button" class="btn btn-primary big" data-action="save-pick" ?disabled=${model.busy} data-tap>Save pick</button>
+              <button type="button" class="btn btn-secondary big btn-door" data-action="open-sheet" data-tap>Report a shortage</button>
+            </div>`
+          : nothing}
+      </div>
+      <div>
+        ${recordable ? skidsCard(model) : nothing}
+      </div>
+    </div>
+  `;
+}
+
 // ---- the way in ----
 
 export type EntryFlows =
@@ -174,3 +417,6 @@ export function renderEntry(view: EntryView): TemplateResult {
     ${body}
   `;
 }
+
+/** The short pick reason list this file's options carry, for the unit leg's source scan. */
+export const REASON_OPTION_CODES = SHORT_REASONS;

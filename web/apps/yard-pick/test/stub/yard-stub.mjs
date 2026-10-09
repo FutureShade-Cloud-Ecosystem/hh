@@ -182,7 +182,6 @@ let world;
 let scenario;
 let log;
 let shortageSeq;
-let repNotices;
 
 function buildWorld() {
   const now = Date.now();
@@ -250,9 +249,13 @@ function reset() {
   scenario = "";
   log = [];
   shortageSeq = 2;
-  repNotices = [];
 }
 reset();
+
+// The "poisoned" scenario is NOT the core's shape: it lays money fields on
+// every read the yard makes, to prove the app neither reads nor shows them
+// even if a server one day sent them. The clean shapes below are the core's.
+export const POISON = 987654;
 
 function ticketFor(task) {
   const base = { ...TICKETS[Object.keys(TICKETS).find((k) => TICKETS[k].order_id === task.order_id)] };
@@ -266,6 +269,11 @@ function ticketFor(task) {
     const back = pickedQty < ordered ? (Number((ordered - pickedQty).toFixed(4))).toFixed(4) : "";
     return back === "" ? { ...line } : { ...line, qty_backordered: back };
   });
+  if (scenario === "poisoned") {
+    base.avg_cost_cents = POISON;
+    base.gauge = { value_cents: POISON, unit_price: POISON };
+    base.lines = base.lines.map((l) => ({ ...l, unit_cost_cents: POISON, unit_price: POISON, margin: POISON }));
+  }
   return base;
 }
 
@@ -273,6 +281,7 @@ function taskOut(task) {
   const shortages = world.shortages.filter((s) => s.task_id === task.id);
   const open = shortages.filter((s) => s.resolved_at === "").length;
   const out = { ...task, open_shortages: open, total_shortages: shortages.length };
+  if (scenario === "poisoned") out.value_cents = POISON;
   return out;
 }
 
@@ -322,17 +331,6 @@ function reasonPhrase(code) {
   }[code] ?? code;
 }
 
-// The notice the order's rep receives, the core's own sentence shape
-// (yard_notice.go shortPickMessage): what was ordered, what was picked, what
-// is on backorder, the reason, and the order's money. The rep's money rides
-// the rep's channel; the yard's reads never carry it.
-function shortPickNotice(orderNo, line, ordered, picked, backordered, reason, note) {
-  let s = `Short pick on order ${orderNo}, line ${line.order_line_no} (${line.description}): ordered ${ordered} ${line.uom}, picked ${picked} ${line.uom}, ${backordered} ${line.uom} on backorder.`;
-  if (reason !== "") s += ` Reason: ${reasonPhrase(reason)}${note !== "" ? `, ${note}` : ""}.`;
-  s += ` The order total is now $1,234.56 (was $1,411.44).`;
-  return s;
-}
-
 // ---- the routes ---------------------------------------------------------
 
 async function handle(req, res) {
@@ -352,8 +350,6 @@ async function handle(req, res) {
   }
   if (req.method === "GET" && path === "/_stub/log") return json(res, log);
   if (req.method === "GET" && path === "/_stub/state") return json(res, { tasks: world.tasks.map(taskOut), shortages: world.shortages });
-  // The rep's API read, doubled: the notices the order's rep holds.
-  if (req.method === "GET" && path === "/_stub/rep-notices") return json(res, repNotices);
 
   // ---- the demo way in ----
   if (path === "/api/v1/demo/flows") return json(res, { flows: FLOWS });
@@ -428,6 +424,8 @@ async function handle(req, res) {
     if (!task) return notFound(res);
     const action = pickMatch[2] ?? "";
     if (req.method === "GET" && action === "") return json(res, entryOut(task));
+    if (req.method === "PUT" && action === "lines") return recordPick(res, task, body ?? {});
+    if (req.method === "PUT" && action === "skids") return recordSkids(res, task, body ?? {});
     return notFound(res);
   }
 
@@ -467,6 +465,137 @@ function moveTask(res, task, move) {
     task.claimed_at = new Date().toISOString();
   }
   return json(res, taskOut(task));
+}
+
+function parseQty(raw) {
+  const v = String(raw ?? "").trim();
+  if (v === "") return { error: null, empty: true };
+  const n = Number(v);
+  if (!Number.isFinite(n)) return { error: "a picked quantity must be a number" };
+  return { value: n, empty: false };
+}
+
+function recordPick(res, task, input) {
+  const ticket = ticketFor(task);
+  const lines = Array.isArray(input.lines) ? input.lines : [];
+  if (lines.length === 0) {
+    return refuse(res, 400, "say what was picked, an empty record is not the same as a pick of nothing");
+  }
+  const seen = new Set();
+  for (const l of lines) {
+    const lineNo = Number(l.order_line_no ?? 0);
+    if (!(lineNo > 0)) return refuse(res, 400, "every recorded line needs the ticket's own line number");
+    if (seen.has(lineNo)) return refuse(res, 400, `line ${lineNo} was sent twice, one number per line`);
+    seen.add(lineNo);
+    const qty = parseQty(l.qty_picked);
+    if (qty.empty === true) return refuse(res, 400, "say how many were picked, zero is an answer, blank is not");
+    if (qty.error) return refuse(res, 400, qty.error);
+    if (qty.value < 0) return refuse(res, 400, "a picked quantity cannot be negative");
+    if (qty.value > 1e12) return refuse(res, 400, "that picked quantity is implausibly large");
+    const ticketLine = ticket.lines.find((t) => t.line_no === lineNo);
+    const ordered = ticketLine === undefined ? NaN : Number(ticketLine.qty_ordered);
+    const reason = String(l.short_reason ?? "").trim();
+    const note = String(l.short_note ?? "").trim();
+    if (reason !== "" && !SHORT_REASONS.includes(reason)) {
+      return refuse(res, 400, `line ${lineNo}: "${reason}" is not a short pick reason (${SHORT_REASONS.join(", ")})`);
+    }
+    if (note.length > 400) return refuse(res, 400, `line ${lineNo}: the note is too long (max 400)`);
+    // With the order port wired the ORDER LINE decides: the stub holds the
+    // ticket to the same numbers the seeded order carries.
+    if (qty.value > ordered) {
+      return refuse(res, 400, `line ${lineNo}: that is more than was ordered, the yard cannot raise a quantity`);
+    }
+    if (qty.value < ordered) {
+      if (reason === "") return refuse(res, 400, `line ${lineNo} is short, give the reason (${SHORT_REASONS.join(", ")})`);
+      if (reason === "OTHER" && note === "") return refuse(res, 400, `line ${lineNo}: say what happened in the note when the reason is OTHER`);
+    }
+  }
+  // The record: the whole set in one call, replacing what was there.
+  const picked = lines.map((l) => {
+    const lineNo = Number(l.order_line_no);
+    const ticketLine = ticket.lines.find((t) => t.line_no === lineNo) ?? {};
+    const qtyPicked = Number(String(l.qty_picked).trim()).toFixed(4);
+    const ordered = Number(ticketLine.qty_ordered ?? 0);
+    const pickedQty = Number(qtyPicked);
+    const short = pickedQty < ordered;
+    return {
+      id: `2a000000-0000-4000-9000-${String(pickedSeq()).padStart(12, "0")}`,
+      task_id: task.id,
+      order_line_no: lineNo,
+      product_id: String(ticketLine.product_id ?? ""),
+      sku: String(ticketLine.sku ?? ""),
+      description: String(ticketLine.description ?? ""),
+      qty_ordered: ticketLine.qty_ordered ?? "0.0000",
+      qty_picked: qtyPicked,
+      uom: String(ticketLine.uom ?? "EA"),
+      picked_by: YARD_USER,
+      picked_at: new Date().toISOString(),
+      ...(short ? { short_reason: String(l.short_reason ?? "").trim() } : {}),
+      ...(short && String(l.short_note ?? "").trim() !== "" ? { short_note: String(l.short_note ?? "").trim() } : {}),
+    };
+  });
+  world.picked.set(task.id, picked);
+  task.updated_at = new Date().toISOString();
+  return json(res, { items: picked.map(pickedOut) });
+}
+
+let pickedCounter = 0;
+function pickedSeq() {
+  pickedCounter += 1;
+  return pickedCounter;
+}
+
+
+function recordSkids(res, task, input) {
+  if (input.skid_count === undefined || input.skid_count === null) {
+    return refuse(res, 400, "skid_count is required, zero is an answer");
+  }
+  const count = Number(input.skid_count);
+  if (!Number.isInteger(count) || count < 0) return refuse(res, 400, "a skid count cannot be negative");
+  if (count > 5000) return refuse(res, 400, "that skid count is implausibly large");
+  const reason = String(input.reason ?? "").trim();
+  const note = String(input.note ?? "").trim();
+  if (note.length > 400) return refuse(res, 400, "the note is too long (max 400)");
+  if (reason === "" || !SHORT_REASONS.includes(reason)) {
+    return refuse(res, 400, `give the reason for the skid count (${SHORT_REASONS.join(", ")})`);
+  }
+  if (reason === "OTHER" && note === "") return refuse(res, 400, "say what happened in the note when the reason is OTHER");
+  const ticket = ticketFor(task);
+  const before = world.skids.get(task.id) ?? null;
+  const after = count;
+  const changed = before !== after;
+  world.skids.set(task.id, after);
+  // The skid deposit is the office's money; it rides the core's answer (the
+  // contract declares it) and the app's projection drops it.
+  return json(res, {
+    skid_count: after,
+    previous_skid_count: before,
+    deposit_cents: changed ? 4500 * after : 4500 * (before ?? 0),
+    previous_deposit_cents: before === null ? 0 : 4500 * before,
+    changed,
+    order_no: ticket.order_no,
+  });
+}
+
+
+
+
+// stableRef: the stub's stand in for the core's shortRef (a stable 6-char
+// handle off the task id, the alphabet without I O 0 1).
+function stableRef(id) {
+  let hash = 2166136261;
+  for (let i = 0; i < id.length; i += 1) {
+    hash ^= id.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let out = "";
+  let n = hash >>> 0;
+  for (let i = 0; i < 6; i += 1) {
+    out += alphabet[n % alphabet.length];
+    n = Math.floor(n / alphabet.length);
+  }
+  return out;
 }
 
 const server = createServer((req, res) => {

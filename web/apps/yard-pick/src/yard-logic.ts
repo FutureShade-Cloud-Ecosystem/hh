@@ -8,12 +8,14 @@
 // f8f4973db317b92296ae8ec7e62a3f54f5dc82ab, read only:
 //   - the task lifecycle and its labels, nextAction, actionLabel, actionDone,
 //     statusTone, isOpen, queueOrder, ageLabel, qtyText, shortageSummary,
-//     ticketIsFixture, priorityWord, mtoLabel, orderHandle:
+//     ticketIsFixture, lineIsShort, validatePickQty, pickSummary,
+//     priorityWord, mtoLabel, ticketHandles, orderHandle:
 //     app/src/yard-logic.ts
 // HH's own, written against the core and not ported:
 //   - the task transition matrix mirrors core/internal/tasks/model.go
-//   - yardError mirrors the core's error envelope (httpx.CounterMessage
-//     strips the module prefix) and the tasks taxonomy's statuses
+//   - SHORT_REASONS and reasonPhrase mirror core/internal/tasks/yard_short.go
+//     and yard_notice.go (reasonPhrase is the core's own sentence form)
+//   - the skid rules mirror core/internal/tasks/yard_short.go (RecordSkids)
 // The words use no dashes: where the original wrote one, a comma, a colon or
 // a middle dot stands.
 
@@ -64,11 +66,19 @@ export function actionLabel(action: PickAction): string {
   return { claim: "Claim", start: "Start picking", stage: "Stage" }[action];
 }
 
-/** What the screen says after the move landed, one sentence per action. */
-export function actionDone(action: PickAction): string {
+/**
+ * What the screen says after the move landed. The stage sentence carries the
+ * parking spot and the short handle the counter reads out, the two facts the
+ * core's own staged event tells the counter.
+ */
+export function actionDone(action: PickAction, where?: { location?: string; ref?: string }): string {
   if (action === "claim") return "Claimed. It is yours to pull.";
   if (action === "start") return "Picking started.";
-  return "Staged.";
+  const at = (where?.location ?? "").trim();
+  const ref = (where?.ref ?? "").trim();
+  const spot = at !== "" ? ` at ${at}` : "";
+  const handle = ref !== "" ? `, ref ${ref}` : "";
+  return `Staged${spot}${handle}. The counter has been told it is ready.`;
 }
 
 /** Human label for a status chip. */
@@ -225,6 +235,147 @@ export function orderHandle(ticket: { order_no?: string; reference?: string; cus
   return "Order number not on file";
 }
 
+// ---- the short pick reason codes, the core's closed list (0369) ----
+
+export const SHORT_REASONS = ["CONDENSED_SKIDS", "DAMAGED", "NOT_IN_YARD", "COUNT_CORRECTION", "OTHER"] as const;
+export type ShortReason = (typeof SHORT_REASONS)[number];
+
+export function isShortReason(code: string): code is ShortReason {
+  return (SHORT_REASONS as readonly string[]).includes(code);
+}
+
+/** The reason's sentence form, the core's own (yard_notice.go). */
+export function reasonPhrase(code: string): string {
+  switch (code) {
+    case "CONDENSED_SKIDS":
+      return "Skids condensed";
+    case "DAMAGED":
+      return "Damaged";
+    case "NOT_IN_YARD":
+      return "Not in the yard";
+    case "COUNT_CORRECTION":
+      return "Count corrected";
+    case "OTHER":
+      return "Other";
+  }
+  return code;
+}
+
+/** The reason as a control shows it: the phrase, with the code beside it for the one who needs the exact word. */
+export function reasonLabel(code: string): string {
+  return `${reasonPhrase(code)} (${code})`;
+}
+
+// ---- recording what was pulled ----
+
+/** The ONE place the client decides what "short" means, mirroring PickedLine.Short() on the server. */
+export function lineIsShort(ordered: string, picked: string): boolean {
+  const o = Number(ordered);
+  const p = Number(picked);
+  if (!Number.isFinite(o) || !Number.isFinite(p)) return false;
+  return p < o;
+}
+
+/**
+ * The client's check on a typed picked quantity. It mirrors the server's
+ * parseNonNegativeQty exactly, including the part that looks like a bug and
+ * is not: zero is valid. "We went to pick it and there was none" is a real
+ * outcome; blank is not.
+ */
+export function validatePickQty(raw: string): string {
+  const v = (raw ?? "").trim();
+  if (!v) return "Say how many came off the shelf. Zero is an answer, blank is not.";
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "That is not a number.";
+  if (n < 0) return "A picked quantity cannot be less than nothing.";
+  if (n >= 1e7) return "That quantity is implausible. Check the number.";
+  return "";
+}
+
+/** A quantity string in the core's decimal form, or null when it is not one. */
+export function toQtyString(raw: string): string | null {
+  const v = (raw ?? "").trim();
+  if (v === "") return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return String(n);
+}
+
+/** What is short on a line: the ordered less the picked, as a decimal string; empty when nothing is short. */
+export function shortOf(ordered: string, picked: string): string {
+  const o = Number(ordered);
+  const p = Number(picked);
+  if (!Number.isFinite(o) || !Number.isFinite(p) || p >= o) return "";
+  const d = Number((o - p).toFixed(4));
+  return String(d);
+}
+
+export interface DraftLine {
+  order_line_no: number;
+  product_id: string;
+  sku: string;
+  description: string;
+  qty_ordered: string;
+  qty_picked: string;
+  uom: string;
+  short_reason: string;
+  short_note: string;
+}
+
+/**
+ * May the pick be recorded as drafted? Every line needs a number, a short
+ * line needs a reason from the closed list, and OTHER needs a note: the
+ * server's own rules (RecordPick, cleanShortReason), checked here so the
+ * picker hears it before the round trip.
+ */
+export function recordBlockedReason(lines: ReadonlyArray<{ qty_picked: string; qty_ordered: string; short_reason: string; short_note: string }>): string {
+  for (const l of lines) {
+    const qtyBad = validatePickQty(l.qty_picked);
+    if (qtyBad !== "") return qtyBad;
+    if (!lineIsShort(l.qty_ordered, l.qty_picked)) continue;
+    if (l.short_reason === "") return "A short line needs the reason. The counter has to tell the customer why.";
+    if (!isShortReason(l.short_reason)) return "That is not one of the short pick reasons.";
+    if (l.short_reason === "OTHER" && l.short_note.trim() === "") return "Say what happened in the note when the reason is Other.";
+  }
+  return "";
+}
+
+/** The one-line the ticket says about itself once a pick has been recorded: what was pulled, not what is missing. */
+export function pickSummary(picked: ReadonlyArray<{ qty_ordered: string; qty_picked: string; uom: string; description?: string }> | undefined): string {
+  const lines = picked ?? [];
+  if (lines.length === 0) return "";
+  const short = lines.filter((l) => lineIsShort(l.qty_ordered, l.qty_picked));
+  if (short.length === 0) return `All ${lines.length} line${lines.length === 1 ? "" : "s"} pulled in full.`;
+  const first = short[0];
+  const head = `${qtyText(first.qty_picked)} of ${qtyText(first.qty_ordered)} ${first.uom} pulled on ${first.description || "one line"}`;
+  const rest = short.length - 1;
+  return rest > 0 ? `${head}, and ${rest} other line${rest === 1 ? "" : "s"} came up short.` : `${head}.`;
+}
+
+// ---- skids ----
+
+/** The most skids one order can plausibly leave on (the core's maxSkids). */
+export const MAX_SKIDS = 5000;
+
+/** The client's check for a skid count change: a whole number, and a reason from the closed list. */
+export function skidBlockedReason(count: number | null, reason: string, note: string): string {
+  if (count === null || !Number.isInteger(count)) return "Say how many skids. Zero is an answer, blank is not.";
+  if (count < 0) return "A skid count cannot be negative.";
+  if (count > MAX_SKIDS) return "That skid count is implausibly large.";
+  if (reason === "") return "Give the reason for the skid count.";
+  if (!isShortReason(reason)) return "That is not one of the short pick reasons.";
+  if (reason === "OTHER" && note.trim() === "") return "Say what happened in the note when the reason is Other.";
+  return "";
+}
+
+/** The words the yard reads after a skid count change: the count the server holds, and whether it changed. */
+export function skidWords(answer: { skid_count: number; previous_skid_count: number | null; changed: boolean; order_no: string }): string {
+  const n = answer.skid_count;
+  const skids = `${n} skid${n === 1 ? "" : "s"}`;
+  if (!answer.changed) return `Still ${skids} on ${answer.order_no}. Nothing changed.`;
+  if (answer.previous_skid_count === null) return `${answer.order_no} now holds ${skids}.`;
+  return `${answer.order_no} changed from ${answer.previous_skid_count} to ${n} skids.`;
+}
 // ---- refusals ----
 
 /** The core's refusals arrive as "module: sentence" already stripped to the sentence by the envelope; the yard reads the sentence. */
@@ -234,12 +385,6 @@ export function plainSentence(msg: string | null | undefined): string {
   return m ? (m[2] ?? "").trim() : s;
 }
 
-/**
- * What the yard reads when a call fails. A refusal in the core's own words is
- * shown as it came (a capital goes on, a full stop closes it); a server fault
- * or no answer is never shown as it came. `fallback` is that sentence for the
- * call that failed.
- */
 export function yardError(
   error: string,
   status: number | undefined,

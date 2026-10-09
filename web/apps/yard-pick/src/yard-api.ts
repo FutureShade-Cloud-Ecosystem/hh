@@ -63,8 +63,6 @@ export interface YardTask {
   readonly total_shortages: number;
 }
 
-
-
 export interface YardShortage {
   readonly id: string;
   readonly task_id: string;
@@ -76,6 +74,7 @@ export interface YardShortage {
   readonly note: string;
   readonly reported_at: string;
   readonly resolved_at: string;
+  readonly resolved_by: string;
   readonly resolution: string;
 }
 
@@ -100,7 +99,26 @@ export interface YardPick {
   readonly picked: readonly YardPickedLine[];
 }
 
+/** The skid answer as the yard reads it: the count. The deposit figures stop at this door. */
+export interface YardSkidAnswer {
+  readonly skid_count: number;
+  readonly previous_skid_count: number | null;
+  readonly changed: boolean;
+  readonly order_no: string;
+}
 
+/** One line of a pick record the yard sends: the whole set in one call, the server's own rule. */
+export interface YardRecordLine {
+  readonly order_line_no: number;
+  readonly product_id: string;
+  readonly sku: string;
+  readonly description: string;
+  readonly qty_ordered: string;
+  readonly qty_picked: string;
+  readonly uom: string;
+  readonly short_reason: string;
+  readonly short_note: string;
+}
 
 type Bag = Record<string, unknown>;
 
@@ -145,40 +163,6 @@ export function toTicket(raw: unknown): YardTicket | null {
   };
 }
 
-export function toPickedLine(raw: unknown): YardPickedLine {
-  const r = bag(raw);
-  return {
-    id: text(r.id),
-    task_id: text(r.task_id),
-    order_line_no: num(r.order_line_no),
-    sku: text(r.sku),
-    description: text(r.description),
-    qty_ordered: text(r.qty_ordered),
-    qty_picked: text(r.qty_picked),
-    uom: text(r.uom),
-    short_reason: text(r.short_reason),
-    short_note: text(r.short_note),
-    picked_at: text(r.picked_at),
-  };
-}
-
-export function toShortage(raw: unknown): YardShortage {
-  const r = bag(raw);
-  return {
-    id: text(r.id),
-    task_id: text(r.task_id),
-    order_line_no: typeof r.order_line_no === "number" && Number.isFinite(r.order_line_no) ? r.order_line_no : null,
-    sku: text(r.sku),
-    description: text(r.description),
-    qty_short: text(r.qty_short),
-    uom: text(r.uom),
-    note: text(r.note),
-    reported_at: text(r.reported_at),
-    resolved_at: text(r.resolved_at),
-    resolution: text(r.resolution),
-  };
-}
-
 export function toTask(raw: unknown): YardTask {
   const r = bag(raw);
   return {
@@ -196,7 +180,40 @@ export function toTask(raw: unknown): YardTask {
   };
 }
 
+export function toShortage(raw: unknown): YardShortage {
+  const r = bag(raw);
+  return {
+    id: text(r.id),
+    task_id: text(r.task_id),
+    order_line_no: typeof r.order_line_no === "number" && Number.isFinite(r.order_line_no) ? r.order_line_no : null,
+    sku: text(r.sku),
+    description: text(r.description),
+    qty_short: text(r.qty_short),
+    uom: text(r.uom),
+    note: text(r.note),
+    reported_at: text(r.reported_at),
+    resolved_at: text(r.resolved_at),
+    resolved_by: text(r.resolved_by),
+    resolution: text(r.resolution),
+  };
+}
 
+export function toPickedLine(raw: unknown): YardPickedLine {
+  const r = bag(raw);
+  return {
+    id: text(r.id),
+    task_id: text(r.task_id),
+    order_line_no: num(r.order_line_no),
+    sku: text(r.sku),
+    description: text(r.description),
+    qty_ordered: text(r.qty_ordered),
+    qty_picked: text(r.qty_picked),
+    uom: text(r.uom),
+    short_reason: text(r.short_reason),
+    short_note: text(r.short_note),
+    picked_at: text(r.picked_at),
+  };
+}
 
 export function toPick(raw: unknown): YardPick {
   const r = bag(raw);
@@ -208,6 +225,16 @@ export function toPick(raw: unknown): YardPick {
   };
 }
 
+/** The skid answer keeps the count and drops the deposit figures: they never reach a screen. */
+export function toSkidAnswer(raw: unknown): YardSkidAnswer {
+  const r = bag(raw);
+  return {
+    skid_count: num(r.skid_count),
+    previous_skid_count: typeof r.previous_skid_count === "number" && Number.isFinite(r.previous_skid_count) ? r.previous_skid_count : null,
+    changed: r.changed === true,
+    order_no: text(r.order_no),
+  };
+}
 
 /** Every call the yard's screens make. */
 export class YardApi {
@@ -222,15 +249,68 @@ export class YardApi {
     const answer = await staffBranches.branchesList(this.#client);
     return answer.ok ? { ok: true, value: answer.value.map(toBranch) } : answer;
   }
+
   /** The yard board: one branch's pick tasks joined to their tickets and open shortages. */
   async queue(branchId: string, cursor = ""): Promise<Result<{ picks: YardPick[]; nextCursor: string }>> {
     const answer = await staffTasks.yardListPickQueue(this.#client, { branch_id: branchId, cursor: cursor === "" ? undefined : cursor, limit: 50 });
     if (!answer.ok) return answer;
     return { ok: true, value: { picks: answer.value.items.map(toPick), nextCursor: answer.value.next_cursor ?? "" } };
   }
+
+  /** One pick: the task, its ticket, its whole shortage history, and what was pulled. */
+  async pick(id: string): Promise<Result<YardPick>> {
+    const answer = await staffTasks.yardGetPick(this.#client, id);
+    return answer.ok ? { ok: true, value: toPick(answer.value) } : answer;
+  }
+
   /** Claim an unclaimed pick: it becomes the caller's own. */
   async claim(id: string): Promise<Result<YardTask>> {
     const answer = await staffTasks.tasksClaim(this.#client, id);
     return answer.ok ? { ok: true, value: toTask(answer.value) } : answer;
   }
+
+  /** Start picking a claimed pick: the record and stage doors open. */
+  async start(id: string): Promise<Result<YardTask>> {
+    const answer = await staffTasks.tasksAccept(this.#client, id);
+    return answer.ok ? { ok: true, value: toTask(answer.value) } : answer;
+  }
+
+  /** Record what was actually pulled, the whole set in one call. Zero is an answer, above the ordered number is refused. */
+  async recordLines(id: string, lines: readonly YardRecordLine[]): Promise<Result<YardPickedLine[]>> {
+    const answer = await staffTasks.yardRecordPick(this.#client, id, {
+      lines: lines.map((l) => ({
+        order_line_no: l.order_line_no,
+        product_id: l.product_id,
+        sku: l.sku,
+        description: l.description,
+        qty_ordered: l.qty_ordered,
+        qty_picked: l.qty_picked,
+        uom: l.uom,
+        ...(l.short_reason !== "" ? { short_reason: l.short_reason as "CONDENSED_SKIDS" | "DAMAGED" | "NOT_IN_YARD" | "COUNT_CORRECTION" | "OTHER" } : {}),
+        ...(l.short_note !== "" ? { short_note: l.short_note } : {}),
+      })),
+    });
+    return answer.ok ? { ok: true, value: answer.value.items.map(toPickedLine) } : answer;
+  }
+
+  /** Record or change the order's skid count, with a reason. */
+  async recordSkids(id: string, skidCount: number, reason: string, note: string): Promise<Result<YardSkidAnswer>> {
+    const answer = await staffTasks.yardRecordSkids(this.#client, id, {
+      skid_count: skidCount,
+      reason: reason as "CONDENSED_SKIDS" | "DAMAGED" | "NOT_IN_YARD" | "COUNT_CORRECTION" | "OTHER",
+      ...(note !== "" ? { note } : {}),
+    });
+    return answer.ok ? { ok: true, value: toSkidAnswer(answer.value) } : answer;
+  }
+
+  /** Park the pick: where the material sits, and the short handle the counter reads out. */
+  async stage(id: string, location: string, ref: string, note: string): Promise<Result<YardTask>> {
+    const answer = await staffTasks.yardStagePick(this.#client, id, {
+      location,
+      ...(ref !== "" ? { ref } : {}),
+      ...(note !== "" ? { note } : {}),
+    });
+    return answer.ok ? { ok: true, value: toTask(answer.value) } : answer;
+  }
+
 }
