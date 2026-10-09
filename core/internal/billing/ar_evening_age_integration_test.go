@@ -10,6 +10,9 @@ package billing
 import (
 	"context"
 	"testing"
+	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
 // An invoice due on the house day is CURRENT on the house day, whatever the UTC day says: the aging
@@ -75,5 +78,34 @@ func TestIntegrationEveningAge_StatementLinesFileAnEveningUnderTheHouseDay(t *te
 	}
 	if len(lines) != 1 {
 		t.Errorf("%d lines on the statement for %s, want the evening transaction", len(lines), houseDay)
+	}
+}
+
+// The tie-out balance counts an invoice only from its issue day on the dealer's calendar: an invoice
+// issue-dated the UTC day of the pinned instant is one day ahead of the house day at that hour, so
+// the 1100 balance must not carry it yet. The non-invoice arm stays on the raw instant (a payment or
+// NSF is an instant, not a day), so only the date arm moves.
+func TestIntegrationEveningAge_TieOutBalanceCutsTheIssueDateOnTheHouseDay(t *testing.T) {
+	pool := intPool(t)
+	repo := NewRepository(pool)
+	ctx := context.Background()
+	n := ns(t)
+	cust := seedCustomer(t, pool, n)
+
+	at := houseday.JustAfterUTCDayChange(time.Now())
+	utcDay := at.UTC().Format("2006-01-02")
+
+	base, err := repo.ARBalanceCents(ctx, at, "")
+	if err != nil {
+		t.Fatalf("baseline AR: %v", err)
+	}
+	seedInvoice(t, pool, cust, n, invSpec{no: "AR-EVE", status: "FINALIZED", issue: utcDay, total: 8000, balance: 8000, finalized: true})
+	got, err := repo.ARBalanceCents(ctx, at, "")
+	if err != nil {
+		t.Fatalf("AR after seeding: %v", err)
+	}
+	if delta := got - base; delta != 0 {
+		t.Fatalf("an invoice issue-dated %s, one UTC day ahead of the dealer's day at %s, moved the tie-out balance by %d; the issue date arm must cut on the house day",
+			utcDay, at.UTC().Format(time.RFC3339), delta)
 	}
 }
