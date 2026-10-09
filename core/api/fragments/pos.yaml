@@ -1476,7 +1476,7 @@ paths:
       x-role: requireManager
       x-access:
         surfaces: [money-desk]
-        level: manage
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -1510,7 +1510,7 @@ paths:
         reversed_by_nsf.
       x-role: requireStaff
       x-access:
-        surfaces: [counter-till]
+        surfaces: [counter-till, money-desk]
         level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -1537,7 +1537,7 @@ paths:
       description: The path key may be the invoice's id or the human invoice number.
       x-role: requireStaff
       x-access:
-        surfaces: [counter-till]
+        surfaces: [counter-till, money-desk]
         level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"

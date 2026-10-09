@@ -1,0 +1,198 @@
+//go:build demo
+
+package main
+
+// demoworld_ar_work_level_test.go: ruling 77 (a), proved through the real routes and the real role gate.
+//
+// Payables and Receivables holds the money desk at WORK. Roadmap 2.8 has it mark a payment bounced and
+// work the queue, run statements and send reminders, and read a payment's history, so those routes are
+// served at work (history and an invoice's payments also on the money desk surface at read); a payment
+// reverse stays at manage.
+//
+// Each route is walked four ways: the persona is let through; a selling role (the demo Sales login,
+// money desk read) and the yard manager (money desk read) are refused the work routes in the gate's
+// shared body; the history reads are refused a role with neither the counter nor the money desk (HR);
+// the reverse is refused the persona. Nothing here asserts a sum, only the gate's answer.
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"net/http"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/google/uuid"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customerquote"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
+)
+
+const (
+	wlYardManagerSubject = "hh-demo-worklevel-proof-yard-manager"
+	wlHRSubject          = "hh-demo-worklevel-proof-hr"
+)
+
+func TestDemoWorld_PayablesReceivablesWorkLevel(t *testing.T) {
+	dsn := os.Getenv(tillDemoDBEnvVar)
+	if dsn == "" {
+		t.Skip(tillDemoDBEnvVar + " is not set: the demo world proof needs its own throwaway local Postgres")
+	}
+	requireLocalDSN(t, dsn)
+	ctx := context.Background()
+
+	rawKey := make([]byte, 32)
+	if _, err := rand.Read(rawKey); err != nil {
+		t.Fatalf("generate vault key: %v", err)
+	}
+	pool, testDSN := qwFreshDB(t, ctx, dsn, "demoworld_worklevel")
+	t.Setenv("DATABASE_URL", testDSN)
+	t.Setenv("CORE_DATABASE_URL", testDSN)
+	t.Setenv("PAYMENT_VAULT_KEY", hex.EncodeToString(rawKey))
+	t.Setenv("APP_ENV", "dev")
+	if _, created := qwApply(t); created == 0 {
+		t.Fatal("the first apply created nothing on a fresh database")
+	}
+	now := qwClock
+	if _, err := demo.RunPopulate(ctx, demo.Options{Getenv: os.Getenv, Now: &now}); err != nil {
+		t.Fatalf("demo populate: %v", err)
+	}
+	if _, created := qwApply(t); created == 0 {
+		t.Fatal("the second apply created nothing, the rest of the world never landed")
+	}
+
+	var orgID string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM org WHERE slug = $1`, demoOrgSlug).Scan(&orgID); err != nil {
+		t.Fatalf("the demo org: %v", err)
+	}
+	for _, p := range []struct{ subject, role, email string }{
+		{wlYardManagerSubject, "yard_manager", "worklevel.proof.yard.manager@hh-demo.invalid"},
+		{wlHRSubject, "hr", "worklevel.proof.hr@hh-demo.invalid"},
+	} {
+		if _, err := pool.Exec(ctx, `
+			WITH u AS (
+			  INSERT INTO users (email, display_name, status, org_id, platform_user_id)
+			  VALUES ($4, $5, 'ACTIVE', $1, $2) RETURNING id)
+			INSERT INTO user_branch_grants (user_id, branch_id, org_id) SELECT id, $3, $1 FROM u`,
+			orgID, p.subject, trentonBranchID, p.email, p.role+" (work level proof)"); err != nil {
+			t.Fatalf("plant the %s login: %v", p.role, err)
+		}
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO staff_role_grant (platform_user_id, role_id, org_id, branch_id) VALUES ($1, $2, $3, $4)`,
+			p.subject, p.role, orgID, trentonBranchID); err != nil {
+			t.Fatalf("plant the %s grant: %v", p.role, err)
+		}
+	}
+
+	appwrite := newAppwriteFake(t)
+	for _, s := range []string{prPayRecSubject, qwSalesUserID, wlYardManagerSubject, wlHRSubject} {
+		appwrite.setTeam(s, "org:"+demoOrgSlug)
+	}
+	keys := testkit.NewKeys(t)
+	acceptKey := make([]byte, 32)
+	if _, err := rand.Read(acceptKey); err != nil {
+		t.Fatalf("generate acceptance key: %v", err)
+	}
+	env := &compEnv{
+		keys: keys, minter: &testkit.Minter{Keys: keys, Clock: testkit.NewClock()},
+		keySrv: testkit.NewKeyServer(t, keys), appwrite: appwrite, dsn: testDSN,
+	}
+	values := map[string]string{
+		"CORE_TOKEN_ISSUER": testkit.KitIssuer, "CORE_STAFF_AUDIENCE": testkit.KitStaffAud,
+		"CORE_TENANT_AUDIENCE": testkit.KitTenantAud, "CORE_JWKS_URL": env.keySrv.URL(),
+		"CORE_DATABASE_URL": testDSN, "CORE_APPWRITE_ENDPOINT": appwrite.server.URL,
+		"CORE_APPWRITE_PROJECT": "fx-appwrite-project", "CORE_APPWRITE_API_KEY": "fx-appwrite-key-placeholder",
+		customerquote.EnvKeyID: "fx-accept-sign-key", customerquote.EnvKey: hex.EncodeToString(acceptKey),
+	}
+	env.getenv = func(k string) string { return values[k] }
+	rec, _ := registeredSurface(t, env)
+	as := func(subject, who string) *tillClient {
+		return &tillClient{t: t, mux: rec.inner, token: env.minter.StaffToken(t, subject), who: who}
+	}
+	payRec := as(prPayRecSubject, "Payables and Receivables")
+	sales := as(qwSalesUserID, "Sales")
+	yardManager := as(wlYardManagerSubject, "Yard manager")
+	hr := as(wlHRSubject, "HR")
+
+	forbidden := func(name string, rsp demoResponse) {
+		t.Helper()
+		if rsp.status != http.StatusForbidden || strings.TrimSpace(string(rsp.body)) != strings.TrimSpace(string(authz.BodyForbidden)) {
+			t.Errorf("%s answered %d %q, want the gate's shared refusal %q", name, rsp.status, rsp.body, authz.BodyForbidden)
+		}
+	}
+
+	allowed := func(name string, rsp demoResponse, want ...int) {
+		t.Helper()
+		for _, w := range want {
+			if rsp.status == w {
+				return
+			}
+		}
+		t.Errorf("RED %s answered %d %q, want %v", name, rsp.status, rsp.body, want)
+	}
+
+	// A real payment to bounce: the persona records a cheque against a Kingston invoice (I06).
+	i06 := demoID("invoice:I06")
+	payRec.call("POST", "/api/v1/ar/register/invoices/"+i06+"/payments", map[string]any{
+		"method": "CHEQUE", "amount_cents": 10_000, "reference": "work level proof", "idempotency_key": uuid.NewString()}).ok(t, http.StatusOK)
+	var paymentID string
+	if err := pool.QueryRow(ctx, `
+		SELECT p.id::text FROM payments p JOIN payment_allocations a ON a.payment_id = p.id
+		 WHERE a.invoice_id = $1::uuid AND p.status = 'RECEIVED' AND p.method = 'CHEQUE' ORDER BY p.created_at DESC LIMIT 1`,
+		i06).Scan(&paymentID); err != nil {
+		t.Fatalf("the recorded cheque: %v", err)
+	}
+	c01 := demoID("customer:C01")
+	i08 := demoID("invoice:I08")
+
+	// 1. The work routes: refused for a selling role and the yard manager, with a payment id that
+	// need not exist (the gate answers before the handler).
+	other := uuid.NewString()
+	work := []struct {
+		name, method, path string
+		body               map[string]any
+	}{
+		{"mark bounced", "POST", "/api/v1/ar/payments/" + other + "/nsf", map[string]any{"reason": "returned"}},
+		{"statement run", "POST", "/api/v1/ar/statement-runs", map[string]any{"mode": "INTERIM", "customer_id": c01}},
+		{"register statements", "POST", "/api/v1/ar/register/statements", map[string]any{"invoice_ids": []string{i08}, "idempotency_key": uuid.NewString()}},
+		{"register reminders", "POST", "/api/v1/ar/register/reminders", map[string]any{"invoice_ids": []string{i08}, "tone": "FRIENDLY", "idempotency_key": uuid.NewString()}},
+		{"account reminder", "POST", "/api/v1/ar/reminders", map[string]any{"customer_id": c01, "channel": "EMAIL", "tone": "FRIENDLY", "idempotency_key": uuid.NewString()}},
+	}
+	for _, r := range work {
+		forbidden("a selling role on "+r.name, sales.call(r.method, r.path, r.body))
+		forbidden("the yard manager on "+r.name, yardManager.call(r.method, r.path, r.body))
+		forbidden("HR on "+r.name, hr.call(r.method, r.path, r.body))
+	}
+
+	// 2. The same routes for the persona: through the gate (the real payment is marked bounced, the
+	// run answers 201; the sender-bound routes answer something other than the gate's refusal).
+	allowed("the persona on mark bounced", payRec.call("POST", "/api/v1/ar/payments/"+paymentID+"/nsf", map[string]any{"reason": "returned"}), http.StatusOK)
+	allowed("the persona on the statement run", payRec.call("POST", "/api/v1/ar/statement-runs", work[1].body), http.StatusCreated)
+	for _, r := range work[2:] {
+		// The gate's refusal is its shared body; a route's own plan refusal (the base plan has no
+		// reminders) is a different 403 and proves the gate let the persona in.
+		if rsp := payRec.call(r.method, r.path, r.body); rsp.status == http.StatusForbidden &&
+			strings.TrimSpace(string(rsp.body)) == strings.TrimSpace(string(authz.BodyForbidden)) {
+			t.Errorf("RED the persona was refused by the gate on %s: %s", r.name, rsp.body)
+		}
+	}
+
+	// 3. The reads: served on the money desk at read. The persona reads both; the yard manager (money
+	// desk read, no counter) now does too; HR (neither surface) is refused.
+	hist := "/api/v1/ar/payments/" + paymentID + "/history"
+	invPays := "/api/v1/ar/invoices/" + i06 + "/payments"
+	allowed("the persona on the payment history", payRec.call("GET", hist, nil), http.StatusOK)
+	allowed("the persona on the invoice's payments", payRec.call("GET", invPays, nil), http.StatusOK)
+	if rsp := yardManager.call("GET", hist, nil); rsp.status == http.StatusForbidden &&
+		strings.TrimSpace(string(rsp.body)) == strings.TrimSpace(string(authz.BodyForbidden)) {
+		t.Errorf("RED a money desk reader was refused the payment history: %s", rsp.body)
+	}
+	forbidden("HR on the payment history", hr.call("GET", hist, nil))
+	forbidden("HR on the invoice's payments", hr.call("GET", invPays, nil))
+
+	// 4. The reverse stays at manage.
+	forbidden("the persona on payment reverse", payRec.call("POST", "/api/v1/ar/payments/"+paymentID+"/reverse", map[string]any{"reason": "x"}))
+}
