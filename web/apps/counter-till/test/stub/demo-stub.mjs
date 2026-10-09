@@ -69,12 +69,13 @@ import { createServer } from "node:http";
 
 const port = Number(process.env.CT_STUB_PORT ?? 4821);
 
-// The closed flow table: the two logins this release shows, with the labels
+// The closed flow table: the logins this release shows, with the labels
 // the cards carry and the role each minted account holds (the mint's role
 // label comes from this table, never from the roles table).
 const FLOWS = [
   { flow: "sales", role_code: "inside_sales", label: "Sales" },
   { flow: "sales-manager", role_code: "sales_manager", label: "Sales manager" },
+  { flow: "procurement-manager", role_code: "procurement_manager", label: "Procurement manager" },
 ];
 
 // The minted accounts, one per flow, shaped field for field like the staff
@@ -103,6 +104,15 @@ const USERS = {
     display_name: "Sales manager (demo)",
     role_code: "sales_manager",
     role_name: "Sales Manager",
+    tier: 2,
+    scope: "BRANCH",
+  },
+  "procurement-manager": {
+    user_id: "demo-account-procurement-manager",
+    email: "procurement-manager@demo.invalid",
+    display_name: "Procurement manager (demo)",
+    role_code: "procurement_manager",
+    role_name: "Procurement Manager",
     tier: 2,
     scope: "BRANCH",
   },
@@ -141,7 +151,11 @@ const BRANCHES = [
 
 // Each account's grant reaches one branch: the demo logins work the Trenton
 // counter. Kingston exists so a fence is observable, never reachable.
-const ACCOUNT_BRANCH = { "demo-account-sales": TRENTON_ID, "demo-account-sales-manager": TRENTON_ID };
+const ACCOUNT_BRANCH = {
+  "demo-account-sales": TRENTON_ID,
+  "demo-account-sales-manager": TRENTON_ID,
+  "demo-account-procurement-manager": TRENTON_ID,
+};
 
 // The counter catalogue. list_cents is the retail anchor; branch_cost_cents is
 // the weighted cost the margin glance reads, per branch. The edge restraint

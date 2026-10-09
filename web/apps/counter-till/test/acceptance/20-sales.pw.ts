@@ -45,7 +45,7 @@ async function readSale(page: Page, bearer: string, orderId: string) {
   return answer.body;
 }
 
-test("the way in: two cards, the eleven coming roles untapped, and the banner", async ({
+test("the way in: two cards, the ten coming roles untapped, and the banner", async ({
   page,
 }, testInfo) => {
   await page.goto("/");
