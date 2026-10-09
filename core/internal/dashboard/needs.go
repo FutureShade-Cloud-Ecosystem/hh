@@ -56,6 +56,10 @@ const (
 	NeedsDueToCommit   = "dispatch.due_to_commit"
 	NeedsParkedTickets = "pos.parked"
 	NeedsStalePicks    = "tasks.stale_picks"
+	// The yard manager's two own sources (0381): shortages the yard team raised and left open, and
+	// purchase orders that landed short and are still partial.
+	NeedsOpenShortages        = "tasks.open_shortages"
+	NeedsReceivingDifferences = "purchasing.receiving_differences"
 )
 
 // NeedsSourceMeta is one catalog entry: what the row SAYS and where it GOES. It carries nothing
@@ -121,6 +125,14 @@ var NeedsSourceCatalog = []NeedsSourceMeta{
 		Key: NeedsStalePicks, What: "Picks past their deadline", Module: "tasks",
 		Unit: "yard", Screen: "yard", View: "Picks · past deadline", Action: "Chase",
 	},
+	{
+		Key: NeedsOpenShortages, What: "Open shortages", Module: "tasks",
+		Unit: "yard", Screen: "yard", View: "Shortages · open", Action: "Resolve",
+	},
+	{
+		Key: NeedsReceivingDifferences, What: "Receipts that landed short", Module: "purchasing",
+		Unit: "yard", Screen: "yard", View: "Receiving · short", Action: "Settle",
+	},
 }
 
 // NeedsSourceByKey indexes the catalog. Built once at init; never mutated.
@@ -177,6 +189,27 @@ var DefaultNeedsSources = map[string][]NeedsPolicy{
 		{SourceKey: NeedsStalePicks, Position: 1, Visible: true, WarnAt: 1, StopAt: 5, StaleMins: 60},
 		{SourceKey: NeedsApprovals, Position: 2, Visible: true, WarnAt: 1, StopAt: 5, StaleMins: 240},
 	},
+}
+
+// yardManagerNeeds is the yard manager's own policy, the Go copy of 0381 §5. Stale picks keep the
+// yard shape's edges; the two new sources carry count edges only.
+var yardManagerNeeds = []NeedsPolicy{
+	{SourceKey: NeedsOpenShortages, Position: 0, Visible: true, WarnAt: 1, StopAt: 5},
+	{SourceKey: NeedsStalePicks, Position: 1, Visible: true, WarnAt: 1, StopAt: 5, StaleMins: 60},
+	{SourceKey: NeedsReceivingDifferences, Position: 2, Visible: true, WarnAt: 1, StopAt: 3},
+}
+
+// defaultNeedsFor is the fallback policy for one profile: a job shape serves its own row set from
+// DefaultNeedsSources, the yard manager its own, and every other manager refinement the rows of the
+// shape it was born from (0381 copies them, so the fallback and the table agree).
+func defaultNeedsFor(profile string) []NeedsPolicy {
+	if profile == ProfileManagerYard {
+		return yardManagerNeeds
+	}
+	if base, ok := ManagerBaseShape[profile]; ok {
+		return DefaultNeedsSources[base]
+	}
+	return DefaultNeedsSources[profile]
 }
 
 // -- the measurement seam ------------------------------------------------------------------------

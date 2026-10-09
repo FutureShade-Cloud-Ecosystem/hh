@@ -12,6 +12,8 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/dispatch"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/purchasing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tasks"
 )
 
 // needs_adapters.go, the NeedsSource adapters for the Home screen's Needs-you queue.
@@ -188,5 +190,35 @@ func w6bStalePicks(pool *pgxpool.Pool) dashboard.NeedsFunc {
 			return dashboard.NeedsMeasure{}, err
 		}
 		return dashboard.NeedsMeasure{Count: int(v.Number)}, nil
+	}
+}
+
+// -- tasks · shortages the yard raised and nobody has resolved ----------------------------------
+// The count is the tasks module's own (OpenShortageSummary), read through its service with the
+// caller's grants as the reach; this file holds no SQL for it.
+func w6bOpenShortages(svc *tasks.Service) dashboard.NeedsFunc {
+	return func(ctx context.Context, sc dashboard.Scope) (dashboard.NeedsMeasure, error) {
+		sum, err := svc.OpenShortageSummary(ctx, tasks.ShortageReach{Global: sc.AllBranches, BranchIDs: sc.BranchIDs})
+		if err != nil {
+			return dashboard.NeedsMeasure{}, err
+		}
+		return dashboard.NeedsMeasure{Count: sum.Count, Oldest: sum.Oldest}, nil
+	}
+}
+
+// -- purchasing · orders that landed short and are still partial --------------------------------
+// The purchasing module's own count (ReceivingDifferences), with the caller's grants as the reach.
+// A receiving difference is a purchase order received in part with a short line, aged by its
+// latest receipt; it leaves the queue on full receipt or close. HH refuses an over-receipt
+// (inventory/handler.go, 409) and records no damaged or rejected quantity, so a short partial is
+// the only difference HH holds today; price and bill variances belong to the money desk's three way
+// match. If receiving later records damaged quantities, they join this queue.
+func w6bReceivingDifferences(svc *purchasing.Service) dashboard.NeedsFunc {
+	return func(ctx context.Context, sc dashboard.Scope) (dashboard.NeedsMeasure, error) {
+		sum, err := svc.ReceivingDifferences(ctx, purchasing.BranchReach{Global: sc.AllBranches, BranchIDs: sc.BranchIDs})
+		if err != nil {
+			return dashboard.NeedsMeasure{}, err
+		}
+		return dashboard.NeedsMeasure{Count: sum.Count, Oldest: sum.Oldest}, nil
 	}
 }

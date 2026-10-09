@@ -1,16 +1,17 @@
 // Shared helpers for the Playwright legs: the front door's handoff, written
 // the way the front door writes it, and the stub's reset.
-import type { APIRequestContext } from "@playwright/test";
+import { expect, test as base, type APIRequestContext } from "@playwright/test";
 
 /** Runs in the page before any script: the front door's record, as the minted session. */
 export function driverHandoff(): void {
   const part = (value: unknown): string =>
     btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  const exp = Math.floor(Date.now() / 1000) + 3600;
+  // Generous on purpose: a leg may pin the page clock to an instant hours either side of the wall clock.
+  const exp = Math.floor(Date.now() / 1000) + 7 * 86_400;
   const token = `${part({ alg: "ES256", typ: "JWT" })}.${part({ sub: "de110000-0000-4000-9000-000000000003", exp })}.c2ln`;
   const record = {
     token,
-    tokenExpiresAtMs: Date.now() + 3_600_000,
+    tokenExpiresAtMs: Date.now() + 7 * 86_400_000,
     flow: "driver",
     roleLabel: "Driver",
     user: { userId: "de110000-0000-4000-9000-000000000003", email: "driver@hh-demo.invalid", name: "Driver (demo)" },
@@ -24,10 +25,27 @@ export function driverHandoff(): void {
   }
 }
 
+/**
+ * The instant every leg runs at unless it says otherwise: half past midnight
+ * UTC, which is the previous evening in the dealer's zone, the hour at which a
+ * UTC day and the dealer's day disagree. Built from the host's own date so no
+ * calendar literal is written here, and pinned in the page and in the stub
+ * alike, so a leg is red on wrong code at any wall hour.
+ */
+export function eveningInstant(): number {
+  const at = new Date();
+  at.setUTCHours(0, 30, 0, 0);
+  return at.getTime();
+}
+
+/** The instant the stub's clock is pinned to right now; resetStub carries it across resets. */
+let stubPinnedAt: number | null = null;
+
 /** Puts the stub's world back to the morning: three stops ready on one dispatched run. */
-export async function resetStub(request: APIRequestContext): Promise<void> {
+export async function resetStub(request: APIRequestContext, pinTo: number | null = stubPinnedAt): Promise<void> {
+  stubPinnedAt = pinTo;
   // The dev server proxies /_stub to the stub, so the app's own base URL reaches it.
-  const response = await request.post("/_stub/reset");
+  const response = await request.post("/_stub/reset", { data: pinTo === null ? {} : { now: pinTo } });
   if (!response.ok()) throw new Error(`stub reset failed: ${response.status()}`);
 }
 
@@ -106,3 +124,22 @@ export async function failStop(page: Page, n: number, reason: string): Promise<v
   await page.locator("[data-stop-status]").filter({ hasText: "Not delivered" }).waitFor();
   await page.getByRole("button", { name: "Back to my run" }).click();
 }
+
+/**
+ * Every leg is pinned: the page's clock and the stub's clock both stand at
+ * eveningInstant() before the leg starts, whatever the wall clock says. A leg
+ * that wants another instant pins its own on top (page.clock.setFixedTime and
+ * resetStub with a time).
+ */
+export const test = base.extend<{ pinned: void }>({
+  pinned: [
+    async ({ page, request }, use) => {
+      await page.clock.install({ time: eveningInstant() });
+      await resetStub(request, eveningInstant());
+      await use();
+    },
+    { auto: true },
+  ],
+});
+
+export { expect };
