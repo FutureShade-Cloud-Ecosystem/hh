@@ -9,18 +9,13 @@ import type { ReturnDraft } from "./draft.js";
 export type RefundMethod = "CASH" | "CARD" | "ACCOUNT_CREDIT";
 export const REFUND_METHODS: readonly RefundMethod[] = ["CASH", "CARD", "ACCOUNT_CREDIT"];
 
-/**
- * The house WALK-IN customer's id: the canonical row migration 0029 seeds in every database. The
- * customers search never lists it and no read hands the id out, so the Walk in sale entry names it
- * here (a request is on file for the server to accept the empty id the sale already uses).
- */
-export const WALK_IN_CUSTOMER_ID = "a1900000-0000-4000-9000-000000000001";
-
 /** The drawer at the note's branch, as the cash rail needs it. */
 export type DrawerState = { kind: "unknown" } | { kind: "open"; sessionId: string } | { kind: "closed" };
 
 export interface BuildNoteArgs {
   customerId: string;
+  /** A walk in sale's receipt or order number: sent with no customer id (the server reads an empty customer with a number as the walk in). */
+  walkInNumber?: string | null;
   key: string;
   draft: ReturnDraft;
   method: RefundMethod;
@@ -47,7 +42,7 @@ export function buildNoteInput(args: BuildNoteArgs): BuiltNote {
     ok: true,
     input: {
       idempotency_key: args.key,
-      customer_id: args.customerId,
+      ...(args.walkInNumber ? { number: args.walkInNumber } : { customer_id: args.customerId }),
       orders: noteOrders(args.draft),
       refund_method: args.method,
       reason: "",
@@ -180,9 +175,18 @@ export function noteOrders(draft: ReturnDraft): PosReturnAcrossInput["orders"] {
  * The preview's body: the same lines as the note, without a key, a rail or a drawer, and with a
  * disposition only once one is chosen. Null when nothing is picked.
  */
-export function buildPreviewInput(customerId: string, draft: ReturnDraft, method: RefundMethod | null = null): PosReturnPreviewInput | null {
+export function buildPreviewInput(
+  customerId: string,
+  draft: ReturnDraft,
+  method: RefundMethod | null = null,
+  walkInNumber: string | null = null,
+): PosReturnPreviewInput | null {
   if (draft.pickedLines().length === 0) return null;
-  return { customer_id: customerId, orders: noteOrders(draft), ...(method === null ? {} : { refund_method: method }) };
+  return {
+    ...(walkInNumber ? { number: walkInNumber } : { customer_id: customerId }),
+    orders: noteOrders(draft),
+    ...(method === null ? {} : { refund_method: method }),
+  };
 }
 
 /** One order's share of the credit, with the server's split when a rail was named. */

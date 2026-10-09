@@ -736,6 +736,33 @@ test("a walk in sale is found by its order number, with or without the hash, or 
   await expect(page.getByTestId("returns")).toHaveAttribute("data-step", "customer");
 });
 
+test("a walk in sale never names the walk in row: the read, the preview and the write send the number with no customer id", async ({ page }) => {
+  const reads: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/v1/pos/returns/customer-lines")) reads.push(request.url());
+  });
+  await findWalkIn(page, "CT-3001");
+  await expect(page.getByTestId("returns")).toHaveAttribute("data-step", "lines");
+  expect(reads).toHaveLength(1);
+  const query = new URL(reads[0]).searchParams;
+  expect(query.has("customer_id")).toBe(false);
+  expect(query.get("number")).toBe("CT-3001");
+  await lineOf(page, "CT-3001", WALL).getByRole("button", { name: "Return to stock" }).click();
+  await expect(page.getByTestId("returns-credit-total")).toBeVisible();
+  await page.getByRole("button", { name: "Continue to the refund" }).click();
+  await page.getByRole("button", { name: "Cash", exact: true }).click();
+  await page.getByRole("button", { name: "Record the credit note" }).click();
+  await expect(page.getByTestId("returns-done")).toContainText("Credit note recorded");
+  const state = (await stubState(page)) as unknown as {
+    previewBodies: Record<string, unknown>[];
+    lastNoteBody: Record<string, unknown>;
+  };
+  for (const body of [...state.previewBodies, state.lastNoteBody]) {
+    expect(body.number).toBe("CT-3001");
+    expect("customer_id" in body).toBe(false);
+  }
+});
+
 test("a walk in return goes to cash or card only: no account rail, no swap, and cash commits", async ({ page }) => {
   const before = await drawerExpectedCash(page);
   await findWalkIn(page, "CT-3001");

@@ -1119,6 +1119,16 @@ function refuse(status, error, extra = {}) {
   return { status, body: { error, ...extra } };
 }
 
+const NAME_THE_CUSTOMER = "pos: name the customer, or give the receipt or order number of a walk-in sale";
+
+// The customer a write or a preview is for: the named one, or, with an empty customer, the house walk in row
+// when a receipt or order number rides along. Null when neither is given.
+function effectiveCustomer(body) {
+  const named = typeof body.customer_id === "string" ? body.customer_id.trim() : "";
+  if (named !== "") return named;
+  return normalizeSaleRef(body.number ?? "") === "" ? null : WALK_IN_ID;
+}
+
 // A receipt or order number as the core reads it: an order number or an invoice number, with or without
 // the hash, or the bare digits a branch's numbers end in.
 function normalizeSaleRef(raw) {
@@ -1178,8 +1188,8 @@ function noteRefusal(caller, body, approver, commit = true, allowWalkIn = true) 
   }
   if (!Array.isArray(body.orders) || body.orders.length === 0) return refuse(400, "pos: a return note needs at least one order");
   if (commit && !["CASH", "CARD", "ACCOUNT_CREDIT"].includes(body.refund_method)) return refuse(400, "pos: refund_method must be CASH, CARD or ACCOUNT_CREDIT");
-  const customerId = typeof body.customer_id === "string" ? body.customer_id.trim() : "";
-  if (customerId === "") return refuse(400, "pos: customer_id is required");
+  const customerId = effectiveCustomer(body);
+  if (customerId === null) return refuse(400, NAME_THE_CUSTOMER);
   if (customerId === WALK_IN_ID && !allowWalkIn) {
     return refuse(422, "pos: a swap is rung for a customer's own account, not the WALK-IN house account; return the walk-in sale to the card it was paid on or in cash, and ring the new order apart");
   }
@@ -1296,7 +1306,7 @@ function previewNote(body, method = null) {
     }
     orders.push(entryOut);
   }
-  const out = { customer_id: body.customer_id.trim(), branch_id: branchId, subtotal_cents: subtotal, tax_cents: 0, total_cents: subtotal, orders };
+  const out = { customer_id: effectiveCustomer(body), branch_id: branchId, subtotal_cents: subtotal, tax_cents: 0, total_cents: subtotal, orders };
   if (method === "CASH" || method === "CARD") {
     out.rail_cents = railSum;
     out.invoice_offset_cents = offsetSum;
@@ -1353,7 +1363,7 @@ function commitNote(caller, body, approver, swap = null) {
     ...(swap === null ? {} : { swap_id: swap.swapId }),
     note_id: uuid(60000 + NOTE_SEQ),
     note_no: `CT-CN-${100 + NOTE_SEQ}`,
-    customer_id: body.customer_id,
+    customer_id: effectiveCustomer(body),
     branch_id: branchId,
     refund_method: body.refund_method,
     subtotal_cents: subtotal,
@@ -1743,10 +1753,15 @@ const server = createServer(async (request, response) => {
     }
     // The core's own order of refusals: customer_id first (400), then the house WALK-IN (422 in
     // words), then the branch wall (403 naming the branch). Orders answer newest first, bounded.
-    const customerId = (url.searchParams.get("customer_id") ?? "").trim();
+    // A named customer is that customer (the spelled out walk in id still works). An EMPTY customer with a
+    // number is the house walk in row, as the ring treats an empty customer; neither is a 400 in words.
+    let customerId = (url.searchParams.get("customer_id") ?? "").trim();
     if (customerId === "") {
-      respondJson(response, 400, { error: "pos: customer_id is required" });
-      return;
+      if (normalizeSaleRef(url.searchParams.get("number") ?? "") === "") {
+        respondJson(response, 400, { error: NAME_THE_CUSTOMER });
+        return;
+      }
+      customerId = WALK_IN_ID;
     }
     // Ruling A: the house WALK-IN row is answered only through a receipt or order number, never listed.
     const number = normalizeSaleRef(url.searchParams.get("number") ?? "");

@@ -33,7 +33,7 @@ import {
   type SwapDone,
   type SwapPreviewRead,
 } from "./swap.js";
-import { buildNoteInput, buildPreviewInput, railAvailable, readNote, readPreview, REFUND_METHODS, WALK_IN_CUSTOMER_ID, type CreditNote, type CreditPreview, type DrawerState, type RefundMethod } from "./note.js";
+import { buildNoteInput, buildPreviewInput, railAvailable, readNote, readPreview, REFUND_METHODS, type CreditNote, type CreditPreview, type DrawerState, type RefundMethod } from "./note.js";
 
 /** The stepper's four steps. */
 export type ReturnStep = "customer" | "lines" | "refund" | "done";
@@ -110,6 +110,8 @@ export class ReturnsFlow {
   walkInOpen = false;
   /** The receipt or order number typed for a walk in sale: the only way its lines are found. */
   walkInNumber = "";
+  /** The number the draft's walk in sale was found by; null for a named customer. It rides the preview and the write with no customer id. */
+  #walkInRef: string | null = null;
   /** True while the customer's lines are being read. */
   loading = false;
   /** The customer's orders newest first, as the server answered. */
@@ -195,7 +197,7 @@ export class ReturnsFlow {
 
   /** The customer on the draft is the house walk in account: cash or card only, no swap. */
   get isWalkIn(): boolean {
-    return this.customer?.id === WALK_IN_CUSTOMER_ID;
+    return this.#walkInRef !== null;
   }
 
   get visibleOrders(): CustomerOrder[] {
@@ -315,7 +317,7 @@ export class ReturnsFlow {
     this.loading = true;
     this.notice = null;
     this.#onChange();
-    const result = await staffPos.posCustomerReturnLines(this.#client, { customer_id: WALK_IN_CUSTOMER_ID, number });
+    const result = await staffPos.posCustomerReturnLines(this.#client, { number });
     if (seq !== this.#seq) return;
     this.loading = false;
     if (!result.ok) {
@@ -334,8 +336,12 @@ export class ReturnsFlow {
       this.#onChange();
       return;
     }
+    // The server names the house row in its answer; the till never spells that id, and sends the
+    // number with no customer id on every later call.
+    const answered = result.value as unknown as { customer_id?: unknown };
+    this.#walkInRef = number;
     this.customer = {
-      id: WALK_IN_CUSTOMER_ID,
+      id: typeof answered.customer_id === "string" ? answered.customer_id : "",
       name: "Walk in sale",
       account_no: "WALK-IN",
       customer_type: "RETAIL",
@@ -399,7 +405,7 @@ export class ReturnsFlow {
   async #refreshPreview(): Promise<void> {
     const seq = ++this.#previewSeq;
     const body =
-      this.customer === null ? null : buildPreviewInput(this.customer.id, this.draft, this.step === "refund" ? this.method : null);
+      this.customer === null ? null : buildPreviewInput(this.customer.id, this.draft, this.step === "refund" ? this.method : null, this.#walkInRef);
     if (body === null) {
       this.preview = null;
       this.previewing = false;
@@ -476,6 +482,7 @@ export class ReturnsFlow {
     if (this.#pendingKey === null) this.#pendingKey = crypto.randomUUID();
     const built = buildNoteInput({
       customerId: this.customer.id,
+      walkInNumber: this.#walkInRef,
       key: this.#pendingKey,
       draft: this.draft,
       method: this.method,
@@ -849,6 +856,7 @@ export class ReturnsFlow {
     this.matches = [];
     this.searched = false;
     this.customer = null;
+    this.#walkInRef = null;
     this.walkInOpen = false;
     this.walkInNumber = "";
     this.loading = false;

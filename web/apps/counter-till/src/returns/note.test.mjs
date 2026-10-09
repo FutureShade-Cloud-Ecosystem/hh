@@ -5,7 +5,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ReturnDraft } from "./draft.js";
 import { readCustomerLines } from "./lines.js";
-import { buildNoteInput, buildPreviewInput, readNote, readPreview, railAvailable, WALK_IN_CUSTOMER_ID } from "./note.js";
+import * as noteModule from "./note.js";
+import { buildNoteInput, buildPreviewInput, readNote, readPreview, railAvailable } from "./note.js";
 
 const uuid = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const line = (n, over = {}) => ({
@@ -212,6 +213,34 @@ test("the account rail is never offered for the walk in customer, and the others
   assert.equal(railAvailable(d, "ACCOUNT_CREDIT", { kind: "open", sessionId: uuid(55) }, false), true);
   assert.equal(railAvailable(d, "CASH", { kind: "open", sessionId: uuid(55) }, true), true);
   assert.equal(railAvailable(d, "CARD", { kind: "unknown" }, true), true);
-  assert.equal(typeof WALK_IN_CUSTOMER_ID, "string");
-  assert.match(WALK_IN_CUSTOMER_ID, /^[0-9a-f-]{36}$/);
+});
+
+// ---- a walk in without an id: an empty customer with the receipt or order number ----------------
+
+test("the till no longer names the walk in row's id: nothing in the module exports it", () => {
+  assert.equal(noteModule.WALK_IN_CUSTOMER_ID, undefined);
+});
+
+test("a walk in note sends the number and no customer id", () => {
+  const d = draftOf([order(16)]);
+  d.setQty(uuid(161), "1"); d.setDisposition(uuid(161), "RESTOCK");
+  const built = buildNoteInput({ customerId: uuid(1), key: KEY, draft: d, method: "CASH", drawerSessionId: uuid(55), walkInNumber: "CT-3001" });
+  assert.equal(built.ok, true);
+  assert.equal(built.input.number, "CT-3001");
+  assert.equal("customer_id" in built.input, false, "no customer id rides a walk in note");
+  const named = buildNoteInput({ customerId: uuid(1), key: KEY, draft: d, method: "CASH", drawerSessionId: uuid(55) });
+  assert.equal(named.input.customer_id, uuid(1));
+  assert.equal("number" in named.input, false, "a named customer sends no number");
+});
+
+test("a walk in preview sends the number and no customer id, and keeps the rail", () => {
+  const d = draftOf([order(16)]);
+  d.setQty(uuid(161), "1");
+  const body = buildPreviewInput("", d, "CASH", "CT-3001");
+  assert.equal(body.number, "CT-3001");
+  assert.equal("customer_id" in body, false);
+  assert.equal(body.refund_method, "CASH");
+  const named = buildPreviewInput(uuid(1), d, "CASH");
+  assert.equal(named.customer_id, uuid(1));
+  assert.equal("number" in named, false);
 });
