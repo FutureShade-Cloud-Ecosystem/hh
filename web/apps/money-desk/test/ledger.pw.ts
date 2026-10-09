@@ -32,6 +32,9 @@ test("the card lands on the approvals queue: the floor request, both parked jour
   await expect(rows.filter({ hasText: "Freight above the quote" })).toHaveCount(2);
   // The journals show the server's amounts; the controller's own request says so.
   await expect(page.locator(`[data-approval-id="${J1_REQUEST}"]`)).toContainText("$7,500.00");
+  // Each journal is named by its number, so two parked journals are told apart.
+  await expect(page.locator(`[data-approval-id="${J1_REQUEST}"]`)).toContainText("JE-0005");
+  await expect(page.locator(`[data-approval-id="${J2_REQUEST}"]`)).toContainText("JE-0006");
   await expect(page.locator(`[data-approval-id="${J2_REQUEST}"]`)).toContainText("Filed by you");
   await expect(page.locator(`[data-approval-id="${J1_REQUEST}"]`)).not.toContainText("Filed by you");
 });
@@ -41,7 +44,15 @@ test("it decides the floor request, and the answer says the approval is spent on
   await page.locator(`[data-approval-id="${FR1}"]`).click();
   const panel = page.locator("[data-decide-panel]");
   await expect(panel).toContainText("Decide: Below floor quote request");
-  await expect(panel.locator("[data-detail]")).toContainText("12 percent discount");
+  // In words with the figures as tiles: no line id, no "bps".
+  await expect(panel.locator("[data-detail]")).toContainText("a 12% discount asked");
+  await expect(panel.locator("[data-floor-tiles]")).toContainText("16.3%");
+  await expect(panel.locator("[data-floor-tiles]")).toContainText("20.0%");
+  await expect(panel).not.toContainText("bps");
+  await expect(panel).not.toContainText("62e4ad55");
+  await expect(panel.getByRole("radio", { name: /Approve as asked/ })).toHaveAttribute("aria-checked", "true");
+  await expect(panel.getByRole("radio", { name: /Decline/ })).toHaveAttribute("aria-checked", "false");
+  await expect(panel.locator("[data-choice-later]")).toContainText("later");
   await expect(panel).toContainText("One decision, one quote.");
   await panel.getByLabel("Note to the requester").fill("Approved once for this job.");
   await panel.getByRole("button", { name: "Decide" }).click();
@@ -59,6 +70,7 @@ test("it approves the parked journal, the journal posts, and the trial balance c
   await page.locator("[data-tab-id='approvals']").click();
   await page.locator(`[data-approval-id="${J1_REQUEST}"]`).click();
   const panel = page.locator("[data-decide-panel]");
+  await expect(panel).toContainText("Decide: journal JE-0005");
   await expect(panel).toContainText("Amount $7,500.00");
   await expect(panel.getByRole("table", { name: "Journal lines" })).toContainText("1300");
   await expect(panel.getByRole("table", { name: "Journal lines" })).toContainText("Prepaid Expenses");
@@ -95,6 +107,34 @@ test("it reads the trial balance in balance, with the server's totals", async ({
   await expect(trial.getByRole("table", { name: "Trial balance rows" })).toContainText("Cash");
   await expect(page.locator("[data-total-debit]")).toHaveText("$37,025.00");
   await expect(page.locator("[data-total-credit]")).toHaveText("$37,025.00");
+  // The branch is chosen from the route's own branch_id, and what the core does not draw yet says so.
+  await page.getByRole("button", { name: "Kingston", exact: true }).click();
+  await expect(page.locator("[data-trial]")).toContainText("No posted journals yet.");
+  await page.getByRole("button", { name: "All branches" }).click();
+  await expect(page.locator("[data-total-debit]")).toHaveText("$37,025.00");
+  await expect(page.locator("[data-later-trial]")).toContainText("tie out");
+  await expect(page.locator("[data-later-trial] .gl-later")).toHaveText("later");
+});
+
+test("the journal register keeps a journal number on one line and says what is later", async ({ page, request }) => {
+  await openApprovals(page, request);
+  await page.locator("[data-tab-id='journals']").click();
+  await expect(page.getByRole("button", { name: /^Pending 2$/ })).toBeVisible();
+  const link = page.getByRole("table", { name: "Journal register" }).getByRole("button", { name: "JE-0006" });
+  const box = await link.boundingBox();
+  expect(box === null ? 99 : box.height).toBeLessThan(40);
+  await link.click();
+  await expect(page.locator("[data-later-journal]")).toContainText("Void and Reverse");
+  await expect(page.locator("[data-later-journal] .gl-later")).toHaveText("later");
+});
+
+test("on a phone a chosen request brings its decision into view", async ({ page, request }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openApprovals(page, request);
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  await page.locator(`[data-approval-id="${FR1}"]`).click();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(300);
+  await expect(page.locator("[data-decide-panel]")).toBeInViewport();
 });
 
 test("a refused decision names who may decide it, never the bare gate word", async ({ page, request }) => {
@@ -107,6 +147,7 @@ test("a refused decision names who may decide it, never the bare gate word", asy
   const alert = page.locator("[data-error]");
   await expect(alert).toContainText("Financial Controller");
   await expect(alert).toContainText("General Manager");
+  await expect(alert).toContainText("Sign out and in again");
   await expect(alert).not.toContainText("Forbidden");
   // The request is still waiting.
   await expect(page.locator(`[data-approval-id="${FR1}"]`)).toHaveCount(1);

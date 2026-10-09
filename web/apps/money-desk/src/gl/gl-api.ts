@@ -66,8 +66,9 @@ export class GlApi {
     return { ok: true, value: answer.value.items };
   }
 
-  trialBalance(): Promise<Result<GlTrialBalanceResult>> {
-    return staffGl.glTrialBalance(this.#client);
+  /** The trial balance, for every branch or for one (the route takes branch_id). */
+  trialBalance(branchId = ""): Promise<Result<GlTrialBalanceResult>> {
+    return staffGl.glTrialBalance(this.#client, branchId === "" ? {} : { branch_id: branchId });
   }
 
   branches(): Promise<Result<Branch[]>> {

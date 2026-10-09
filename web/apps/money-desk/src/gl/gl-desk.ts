@@ -24,6 +24,8 @@ export interface GlHost {
   readonly field: (name: string) => string;
   /** The signed in caller's user id, for the four eyes rule. */
   readonly userId: () => string;
+  /** Brings the first element matching the selector into view in the desk's render root. */
+  readonly reveal: (selector: string) => void;
 }
 
 export class GlDesk {
@@ -40,6 +42,10 @@ export class GlDesk {
   // The parked journal behind a selected journal request, read for its lines.
   #approvalJournal: GlJournal | null = null;
   #trial: GlTrialBalanceResult | null = null;
+  #trialBranch = "";
+  // A selection asks the screen to bring its panel into view once it has rendered: on a phone the
+  // panel sits under the whole list and a press would otherwise change nothing the person can see.
+  #reveal = "";
   #branches: Branch[] = [];
   #busy = false;
   #error = "";
@@ -57,7 +63,7 @@ export class GlDesk {
     const [approvals, journals, trial, branches] = await Promise.all([
       this.#api.pendingApprovals(),
       this.#api.journals(),
-      this.#api.trialBalance(),
+      this.#api.trialBalance(this.#trialBranch),
       this.#api.branches(),
     ]);
     if (!approvals.ok) {
@@ -99,7 +105,11 @@ export class GlDesk {
         void this.load();
         return true;
       case "gl-select-approval":
+        this.#reveal = "[data-decide-panel]";
         void this.#selectApproval(control.getAttribute("data-id") ?? "");
+        return true;
+      case "gl-trial-branch":
+        void this.#chooseBranch(control.getAttribute("data-branch") ?? "");
         return true;
       case "gl-choice": {
         const choice = control.getAttribute("data-choice");
@@ -127,6 +137,7 @@ export class GlDesk {
         return true;
       }
       case "gl-select-journal":
+        this.#reveal = "[data-journal-panel]";
         this.#selectedJournal = control.getAttribute("data-id") ?? null;
         this.#error = "";
         this.#notice = "";
@@ -144,6 +155,27 @@ export class GlDesk {
       default:
         return false;
     }
+  }
+
+  async #chooseBranch(branchId: string): Promise<void> {
+    this.#trialBranch = branchId;
+    const trial = await this.#api.trialBalance(branchId);
+    if (this.#trialBranch !== branchId) return;
+    if (trial.ok) {
+      this.#trial = trial.value;
+      this.#error = "";
+    } else {
+      this.#error = refusalWords("trial", trial.error, trial.status ?? 0);
+    }
+    this.#host.repaint();
+  }
+
+  /** Called after each render: brings a just selected panel into view. */
+  afterRender(): void {
+    if (this.#reveal === "") return;
+    const selector = this.#reveal;
+    this.#reveal = "";
+    this.#host.reveal(selector);
   }
 
   async #selectApproval(id: string): Promise<void> {
@@ -204,6 +236,7 @@ export class GlDesk {
       journalFilter: this.#journalFilter,
       selectedJournal: this.#selectedJournal,
       trial: this.#trial,
+      trialBranch: this.#trialBranch,
       branches: this.#branches,
       busy: this.#busy,
       error: this.#error,

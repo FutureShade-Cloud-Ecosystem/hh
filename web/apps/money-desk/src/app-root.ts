@@ -76,6 +76,7 @@ export class MoneyDeskApp extends HHElement {
       repaint: () => this.requestUpdate(),
       field: (name) => this.renderRoot.querySelector<HTMLTextAreaElement>(`[data-field="${name}"]`)?.value ?? "",
       userId: () => this.#sessions.current?.user.userId ?? "",
+      reveal: (selector) => this.renderRoot.querySelector(selector)?.scrollIntoView({ block: "start", behavior: "smooth" }),
     });
   }
 
@@ -167,6 +168,7 @@ export class MoneyDeskApp extends HHElement {
   // set on the element here, after each render.
   protected override updated(changed: Map<PropertyKey, unknown>): void {
     super.updated(changed);
+    this.#gl.afterRender();
     const header = this.renderRoot.querySelector("hos-app-header") as (HTMLElement & { roleLabel: string; theme: string }) | null;
     if (header !== null) {
       header.roleLabel = this.#roleLabel;

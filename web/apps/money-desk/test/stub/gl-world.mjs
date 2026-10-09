@@ -154,10 +154,11 @@ export function createGlWorld() {
     world = fresh();
   };
 
-  const trialBalance = () => {
+  const trialBalance = (branch) => {
     const byCode = new Map();
     for (const j of world.journals) {
       if (j.status !== "POSTED") continue;
+      if (branch !== null && branch !== "" && j.branch_id !== branch) continue;
       for (const l of j.lines) {
         const row = byCode.get(l.account_code) ?? { debit: 0, credit: 0 };
         row.debit += l.debit_cents;
@@ -180,7 +181,14 @@ export function createGlWorld() {
     });
     const total_debit_cents = rows.reduce((n, r) => n + r.debit_cents, 0);
     const total_credit_cents = rows.reduce((n, r) => n + r.credit_cents, 0);
-    return { fiscal_year: FY, rows, total_debit_cents, total_credit_cents, balance_cents: total_debit_cents - total_credit_cents };
+    return {
+      fiscal_year: FY,
+      ...(branch ? { branch_id: branch } : {}),
+      rows,
+      total_debit_cents,
+      total_credit_cents,
+      balance_cents: total_debit_cents - total_credit_cents,
+    };
   };
 
   const branches = () => [
@@ -267,7 +275,7 @@ export function createGlWorld() {
       const j = world.journals.find((x) => x.id === one[1]);
       return j === undefined ? { status: 404, body: { error: "not found" } } : { status: 200, body: j };
     }
-    if (req.method === "GET" && path === "/api/v1/gl/trial-balance") return { status: 200, body: trialBalance() };
+    if (req.method === "GET" && path === "/api/v1/gl/trial-balance") return { status: 200, body: trialBalance(url.searchParams.get("branch_id")) };
     return null;
   }
 

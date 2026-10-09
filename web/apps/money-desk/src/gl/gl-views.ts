@@ -10,7 +10,7 @@
 // and trial balance screens.
 import { html, nothing, type TemplateResult } from "lit";
 import type { Branch, GlJournal, GlTrialBalanceResult, IdentityApproval } from "@hardscapehouse/api-client";
-import { approvalKind, approvalTitle, canDecide, detailWords, journalTone, journalWord } from "./gl-logic.js";
+import { approvalKind, approvalTitle, canDecide, detailWords, floorFigures, floorWords, journalTone, journalWord } from "./gl-logic.js";
 import { formatMoney } from "./gl-money.js";
 
 export type GlTab = "approvals" | "journals" | "trial";
@@ -28,6 +28,7 @@ export interface GlModel {
   readonly journalFilter: JournalFilter;
   readonly selectedJournal: string | null;
   readonly trial: GlTrialBalanceResult | null;
+  readonly trialBranch: string;
   readonly branches: readonly Branch[];
   readonly busy: boolean;
   readonly error: string;
@@ -57,6 +58,26 @@ function entryLabel(journal: GlJournal): string {
 function branchName(branches: readonly Branch[], id: string | undefined): string {
   if (id === undefined || id === "") return "";
   return branches.find((b) => b.id === id)?.name ?? "";
+}
+
+/** The journal a JE request is about, when the register holds it. */
+function journalOf(model: GlModel, row: IdentityApproval): GlJournal | undefined {
+  if (row.policy_type !== "JE_OVER_THRESHOLD" || row.subject_ref === undefined) return undefined;
+  return model.journals.find((j) => j.id === row.subject_ref);
+}
+
+/** What a request says it is about, in words: the floor request read out, a journal named by its number. */
+function aboutWords(model: GlModel, row: IdentityApproval): string {
+  const floor = floorWords(row.detail);
+  if (floor !== null) return floor;
+  const journal = journalOf(model, row);
+  if (journal !== undefined) return `${entryLabel(journal)} · ${journal.memo}`;
+  return detailWords(row.detail);
+}
+
+/** A feature the core serves that this increment does not draw yet, said in words. */
+function later(word: string): TemplateResult {
+  return html`<span class="gl-later">${word}</span>`;
 }
 
 function messages(model: GlModel): TemplateResult {
@@ -107,7 +128,7 @@ function queueRow(model: GlModel, row: IdentityApproval): TemplateResult {
       <button type="button" class="gl-row gl-kind-${kind.toLowerCase()}" data-action="gl-select-approval" data-id=${row.id} data-approval-id=${row.id} aria-current="${selected ? "true" : "false"}">
         <span class="gl-row-main">
           <span class="gl-row-title">${approvalTitle(row.policy_type)}</span>
-          <span class="gl-row-detail">${detailWords(row.detail)}</span>
+          <span class="gl-row-detail">${aboutWords(model, row)}</span>
           ${row.amount_cents !== undefined ? html`<span class="gl-row-detail">Amount <strong>${formatMoney(row.amount_cents)}</strong></span>` : nothing}
           ${own ? html`<span class="gl-row-own" data-own>Filed by you</span>` : nothing}
         </span>
@@ -149,7 +170,7 @@ function choiceCard(model: GlModel, id: "approve" | "decline", title: string, li
     `;
   }
   return html`
-    <button type="button" class="gl-choice" data-action="gl-choice" data-choice=${id} aria-pressed="${model.choice === id ? "true" : "false"}">
+    <button type="button" class="gl-choice" role="radio" data-action="gl-choice" data-choice=${id} aria-checked="${model.choice === id ? "true" : "false"}">
       <span class="gl-choice-title">${title}</span>
       <span class="gl-choice-line">${line}</span>
     </button>
@@ -164,6 +185,21 @@ function oneDecisionWords(row: IdentityApproval): TemplateResult {
     return html`<strong>Approving posts the journal.</strong> The post and your decision commit together, so the queue and the ledger never disagree.`;
   }
   return html`<strong>One decision.</strong> Your answer is final for this request.`;
+}
+
+function floorTiles(row: IdentityApproval): TemplateResult {
+  const f = floorFigures(row.detail);
+  if (f === null) return html`${nothing}`;
+  return html`
+    <dl class="gl-tiles" aria-label="The request's figures" data-floor-tiles>
+      <div><dt>Quote</dt><dd>${f.quote}</dd></div>
+      <div><dt>Line</dt><dd>${f.line}</dd></div>
+      <div><dt>Discount asked</dt><dd>${f.discount}</dd></div>
+      <div><dt>Margin asked</dt><dd class="gl-stop">${f.marginAsked}</dd></div>
+      <div><dt>Floor margin</dt><dd>${f.floorMargin}</dd></div>
+    </dl>
+    <p class="gl-dim">The prices behind them (asked, floor, list) are not on the request yet: ${later("later")}</p>
+  `;
 }
 
 function decidePanel(model: GlModel): TemplateResult {
@@ -188,18 +224,22 @@ function decidePanel(model: GlModel): TemplateResult {
   return html`
     <section class="gl-panel" aria-label="Decision" data-decide-panel>
       <div class="gl-panel-head">
-        <h2>Decide: ${approvalTitle(row.policy_type)}</h2>
+        <h2>Decide: ${journalOf(model, row) !== undefined ? html`journal ${entryLabel(journalOf(model, row) as GlJournal)}` : approvalTitle(row.policy_type)}</h2>
         <span class="gl-pill">${approvalKind(row.policy_type)}</span>
       </div>
       ${own
         ? html`<p class="gl-alert gl-alert-error" role="alert" data-own-notice><strong>You filed this request.</strong> Four eyes: the person who files a request never decides it. Another approver on the list decides it: the General Manager, or a Financial Controller who did not file it.</p>`
         : nothing}
-      <p class="gl-fact" data-detail>${detailWords(row.detail)}</p>
+      <p class="gl-fact" data-detail>${aboutWords(model, row)}</p>
+      ${floorTiles(row)}
       ${where !== "" ? html`<p class="gl-dim">Branch: ${where}</p>` : nothing}
       ${row.amount_cents !== undefined ? html`<p class="gl-figure">Amount <strong>${formatMoney(row.amount_cents)}</strong></p>` : nothing}
       ${isJournal ? journalLines(model.approvalJournal) : nothing}
-      <div class="gl-choices">
+      <div class="gl-choices" role="radiogroup" aria-label="Your decision">
         ${choiceCard(model, "approve", approveWord, approveLine, own)} ${choiceCard(model, "decline", "Decline", declineLine, own)}
+        ${row.policy_type === "MARGIN_BELOW_MINIMUM"
+          ? html`<div class="gl-choice gl-choice-held" data-choice-later><span class="gl-choice-title">Approve at a different price ${later("later")}</span><span class="gl-choice-line">The core takes approve or decline only today.</span></div>`
+          : nothing}
       </div>
       ${own
         ? nothing
@@ -257,9 +297,10 @@ function journalDetail(model: GlModel): TemplateResult {
         ${pending ? html`<dt>Why it waits</dt><dd>At or over the approval threshold (GL policy).</dd>` : nothing}
       </dl>
       ${journalLines(journal)}
+      <p class="gl-dim gl-later-line" data-later-journal>Void and Reverse are served by the core and are not in this increment: ${later("later")}</p>
       ${pending && request !== undefined
         ? html`
-            <div class="gl-actions">
+            <div class="gl-actions gl-actions-spaced">
               <button type="button" class="btn btn-primary" data-action="gl-approve-journal" data-id=${journal.id} ?disabled=${own || model.busy}>Approve</button>
             </div>
             <p class="gl-note">${own ? "You made this journal, so you cannot approve it. Another approver posts it." : "Approving posts it as filed. The maker cannot approve their own."}</p>
@@ -277,7 +318,7 @@ function journalsView(model: GlModel): TemplateResult {
         <div class="gl-panel-head">
           <h3>Journals</h3>
           <div class="gl-filters" role="group" aria-label="Filter journals">
-            ${FILTERS.map((f) => html`<button type="button" class="gl-filter" data-action="gl-filter" data-filter=${f.id} aria-pressed="${model.journalFilter === f.id ? "true" : "false"}">${f.word}</button>`)}
+            ${FILTERS.map((f) => html`<button type="button" class="gl-filter" data-action="gl-filter" data-filter=${f.id} aria-pressed="${model.journalFilter === f.id ? "true" : "false"}">${f.word}${f.id === "all" ? nothing : html` ${model.journals.filter((j) => filterMatches(f.id, j)).length}`}</button>`)}
           </div>
         </div>
         ${rows.length === 0
@@ -289,7 +330,7 @@ function journalsView(model: GlModel): TemplateResult {
                   <tbody>
                     ${rows.map(
                       (j) => html`<tr aria-current="${model.selectedJournal === j.id ? "true" : "false"}">
-                        <td><button type="button" class="gl-link" data-action="gl-select-journal" data-id=${j.id} data-journal-id=${j.id}>${entryLabel(j)}</button></td>
+                        <td class="gl-nowrap"><button type="button" class="gl-link" data-action="gl-select-journal" data-id=${j.id} data-journal-id=${j.id}>${entryLabel(j)}</button></td>
                         <td>${j.memo}<span class="gl-row-detail">${j.source === "MANUAL" ? "Manual" : j.source}</span></td>
                         <td>${pill(journalTone(j.derived_status), journalWord(j.derived_status))}</td>
                       </tr>`,
@@ -319,6 +360,10 @@ function trialView(model: GlModel): TemplateResult {
         <h3>Trial balance · fiscal year ${trial.fiscal_year}</h3>
         ${inBalance ? pill("good", "In balance") : pill("stop", `Out of balance by ${formatMoney(Math.abs(trial.balance_cents))}`)}
       </div>
+      <div class="gl-filters" role="group" aria-label="Branch">
+        <button type="button" class="gl-filter" data-action="gl-trial-branch" data-branch="" aria-pressed="${model.trialBranch === "" ? "true" : "false"}">All branches</button>
+        ${model.branches.map((b) => html`<button type="button" class="gl-filter" data-action="gl-trial-branch" data-branch=${b.id} aria-pressed="${model.trialBranch === b.id ? "true" : "false"}">${b.name}</button>`)}
+      </div>
       ${trial.rows.length === 0
         ? html`<div class="gl-empty"><strong>No posted journals yet.</strong><span class="gl-dim">The trial balance fills as journals post.</span></div>`
         : html`
@@ -340,6 +385,7 @@ function trialView(model: GlModel): TemplateResult {
               </table>
             </div>
           `}
+      <p class="gl-dim gl-later-line" data-later-trial>Period choice, the tie out against the receivables and payables ledgers, and the Excel download are served by the core and are not in this increment: ${later("later")}</p>
     </section>
   `;
 }

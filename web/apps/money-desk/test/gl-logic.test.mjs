@@ -6,7 +6,10 @@ import assert from "node:assert/strict";
 import { formatMoney, MONEY_PLACEHOLDER } from "../src/gl/gl-money.ts";
 import {
   approvalKind,
+  bpsWords,
   detailWords,
+  floorFigures,
+  floorWords,
   approvalTitle,
   canDecide,
   journalTone,
@@ -79,4 +82,18 @@ test("any other refusal keeps the core's own sentence, capitalised and ended", (
   assert.equal(refusalWords("decide", "invalid approval id", 400), "Invalid approval id.");
   assert.equal(refusalWords("trial", "no fiscal period for 2031-01", 422), "No fiscal period for 2031-01.");
   assert.equal(refusalWords("trial", "", 500), "The ledger did not answer. Reload to try again.");
+});
+
+test("a floor request reads in words: the quote, the line, the discount, the margins, no id and no bps", () => {
+  const sentence =
+    "quote DEMO-TRT-Q1 line 1 (62e4ad55-5a14-5945-80ee-866864a6c774): 12 percent discount, resulting margin 1630 bps against the 2000 bps floor";
+  assert.deepEqual(floorFigures(sentence), { quote: "DEMO-TRT-Q1", line: "1", discount: "12%", marginAsked: "16.3%", floorMargin: "20.0%" });
+  const words = floorWords(sentence);
+  assert.equal(words, "Quote DEMO-TRT-Q1, line 1: a 12% discount asked, margin 16.3% against the 20.0% floor.");
+  assert.ok(!words.includes("62e4ad55") && !words.includes("bps"));
+  assert.equal(floorFigures("Freight on DEMO-KGN-O01 is being raised"), null);
+  assert.equal(floorWords("something else"), null);
+  assert.equal(bpsWords("2000"), "20.0%");
+  assert.equal(bpsWords("95"), "0.9%");
+  assert.equal(bpsWords("-120"), "-1.2%");
 });

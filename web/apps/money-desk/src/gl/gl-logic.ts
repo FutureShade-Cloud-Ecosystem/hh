@@ -12,6 +12,40 @@ export function detailWords(detail: string): string {
   return detail.replace(/\((\d+) cents\)/g, (_all, digits: string) => `(${formatMoney(Number(digits))})`);
 }
 
+/** The six facts of a floor request that the core's own sentence carries, read out, never computed. */
+export interface FloorFigures {
+  readonly quote: string;
+  readonly line: string;
+  readonly discount: string;
+  readonly marginAsked: string;
+  readonly floorMargin: string;
+}
+
+// The sentence is quote/floor.go RequestFloorApproval's: the quote number, the line, the product id, the
+// asked discount, the resulting margin and the floor, the margins in basis points.
+const FLOOR_SENTENCE = /^quote (\S+) line (\d+) \([^)]*\): (\d+) percent discount, resulting margin (-?\d+) bps against the (\d+) bps floor$/;
+
+/** 1630 reads "16.3%": the digits of the basis points, a point put in, no sum. */
+export function bpsWords(bps: string): string {
+  const negative = bps.startsWith("-");
+  const digits = (negative ? bps.slice(1) : bps).padStart(3, "0");
+  return `${negative ? "-" : ""}${digits.slice(0, -2)}.${digits.slice(-2, -1)}%`;
+}
+
+/** Null when the sentence is not the floor request's, so the caller falls back to the core's own words. */
+export function floorFigures(detail: string): FloorFigures | null {
+  const m = FLOOR_SENTENCE.exec(detail.trim());
+  if (m === null) return null;
+  return { quote: m[1] ?? "", line: m[2] ?? "", discount: `${m[3]}%`, marginAsked: bpsWords(m[4] ?? ""), floorMargin: bpsWords(m[5] ?? "") };
+}
+
+/** The floor request as a person says it: the quote and line, the discount asked, the margins, no id and no "bps". */
+export function floorWords(detail: string): string | null {
+  const f = floorFigures(detail);
+  if (f === null) return null;
+  return `Quote ${f.quote}, line ${f.line}: a ${f.discount} discount asked, margin ${f.marginAsked} against the ${f.floorMargin} floor.`;
+}
+
 const KIND_WORD: Record<string, string> = {
   MARGIN_BELOW_MINIMUM: "Quote",
   JE_OVER_THRESHOLD: "Journal",
@@ -86,7 +120,7 @@ export function refusalWords(action: string, message: string, status: number): s
       return `You filed this request, so you cannot decide it. Another approver decides it: ${WHO_DECIDES}.`;
     }
     if (status === 403) {
-      return "Deciding a request is for the Financial Controller or the General Manager.";
+      return "Deciding a request is for the Financial Controller or the General Manager. Sign out and in again as one of them if this was not the role you meant.";
     }
     if (status === 409) return "Someone already decided this request. Reload to see it.";
   }
