@@ -45,7 +45,7 @@ for (const size of SIZES) {
       // The landing: the profile's widgets in the profile's order, the needs queue inside.
       await page.addInitScript(managerHandoff);
       await page.goto("/");
-      await expect(page.locator("[data-widget]")).toHaveCount(7);
+      await expect(page.locator("[data-widget]")).toHaveCount(8);
       await brandOn();
       await take("02", "landing");
 

@@ -39,6 +39,9 @@ test("the receiving difference definition is said in words, and only the differe
   await expect(cards.first().locator(".detail").first()).toContainText("1 line still short");
   // Cost, visible: the order's still-open value, the core's integer cents formatted for a person.
   await expect(cards.first().locator(".detail .amount")).toHaveText("$54.00");
+  // The expected date is words a person reads, never the wire's raw ISO day.
+  await expect(cards.first().locator(".detail").filter({ hasText: /^expected [A-Z][a-z]{2} \d{1,2}$/ })).toHaveCount(1);
+  await expect(cards.first().locator(".detail").filter({ hasText: "T00" })).toHaveCount(0);
   // The worklist's not-short orders are said as a count, not hidden and not listed as differences.
   await expect(page.locator(".count-line")).toContainText("1 purchase order on the dock landed everything ordered");
 });
@@ -70,6 +73,8 @@ test("the rows nothing measures carry their no-source sentence and no number", a
   await expect(unsourced.locator(".words")).toContainText("No source is wired for this row yet");
   await expect(unsourced.locator(".needs-count")).toHaveCount(0);
   await expect(unsourced.getByRole("button")).toHaveCount(0);
-  const tile = page.locator(".who-may").filter({ hasText: "Unread messages" });
+  const tile = page.locator("[data-widget='messages.unread']");
+  await expect(tile).toHaveCount(1);
   await expect(tile).toContainText("No measure is wired for this tile in the widget catalog yet");
+  await expect(tile.locator(".figure")).toHaveCount(0);
 });

@@ -24,11 +24,13 @@ test("the shortages view lists what the yard flagged, oldest facts first, at the
   const card = page.locator("[data-task]").first();
   await expect(card.locator(".order")).toHaveText("SO-TRT-1042");
   await expect(card.locator(".task-head .meta").first()).toHaveText("K. Villeneuve (demo)");
-  await expect(card.locator(".task-head .meta").filter({ hasText: "IN_PROGRESS" })).toHaveCount(1);
+  await expect(card.locator(".task-head .meta").filter({ hasText: "In progress" })).toHaveCount(1);
+  await expect(card.locator(".task-head .meta").filter({ hasText: "IN_PROGRESS" })).toHaveCount(0);
   const open = card.locator(".shortage[data-shortage]");
   await expect(open).toHaveCount(3);
   await expect(card.locator("[data-shortage] .line").first()).toHaveText("Granular A gravel");
-  await expect(card.locator("[data-shortage] .detail").first()).toContainText("short 4.0000 CYD");
+  await expect(card.locator("[data-shortage] .detail").first()).toContainText("short 4 CYD");
+  await expect(card.locator("[data-shortage] .detail").first()).not.toContainText("4.0000");
   await expect(page.locator("[data-test='resolver-words']")).toHaveText(
     "Shortages are resolved by the yard team and the yard manager.",
   );
@@ -44,6 +46,16 @@ test("a shortage resolves end to end and the count drops", async ({ page }) => {
 
   const first = page.locator(".shortage[data-shortage]").first();
   await first.getByRole("button", { name: "Resolve" }).click();
+  // The panel: the order and its product, the quantities as words, who
+  // reported it with their note quoted, and a consequence line per choice.
+  const panel = page.locator("[data-resolving='true']");
+  await expect(panel.getByRole("heading", { name: "Resolve shortage" })).toBeVisible();
+  await expect(panel.locator(".panel-line")).toHaveText("SO-TRT-1042 · Granular A gravel");
+  await expect(panel.locator(".panel-qty")).toHaveText("Ordered 12 CYD · Picked 8 CYD · Short 4 CYD");
+  await expect(panel.locator(".reported-note")).toHaveText("Only 8 yards left in the bin");
+  await expect(panel.locator(".reported-who")).toContainText("Reported by the yard team");
+  await expect(panel.getByText("The line is backordered and the order's rep is notified.")).toBeVisible();
+  await expect(panel.locator(".hm-note")).toContainText("The order's rep sees the short pick in House Messages");
   // The sheet: three stated resolutions, the confirm dead until one is picked.
   const confirm = page.locator("[data-action='confirm-resolve']");
   await expect(confirm).toBeDisabled();
@@ -77,14 +89,16 @@ test("the resolve is refused in the core's own words when the shortage is alread
   await expect(page.locator("[data-resolving='true']")).toHaveCount(0);
 });
 
-test("the list wall's Forbidden body becomes words naming who may resolve", async ({ request, page }) => {
+test("the list wall's Forbidden body becomes words naming who may resolve, inside the sheet that refused", async ({ request, page }) => {
   await useScenario(request, "refused-resolve");
   await openShortages(page);
   const first = page.locator(".shortage[data-shortage]").first();
   await first.getByRole("button", { name: "Resolve" }).click();
   await page.getByRole("button", { name: "Approve the short pick" }).click();
   await page.locator("[data-action='confirm-resolve']").click();
-  await expect(page.locator("[data-test='shortages-error']")).toHaveText(
+  // The refusal sits in the panel, above its buttons, at the sheet that refused.
+  const error = page.locator("[data-resolving='true'] [data-test='shortages-error']");
+  await expect(error).toHaveText(
     "You may not resolve this shortage. Shortages are resolved by the yard team and the yard manager.",
   );
   // The refusal left the shortage open and the sheet standing.

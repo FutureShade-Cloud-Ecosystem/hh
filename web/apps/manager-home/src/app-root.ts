@@ -36,6 +36,8 @@ import {
   SHORTAGE_RESOLVER_WORDS,
   approvalsRefusalWords,
   canResolve,
+  decideRefusalWords,
+  errorWords,
   resolutionText,
   resolveRefusalWords,
   type ViewKind,
@@ -101,7 +103,7 @@ export class ManagerHomeApp extends HHElement {
   #branch: BranchRef | null = null;
 
   // The landing's state.
-  #landing: LandingModel = { phase: "loading", profile: "", source: "", widgets: [], data: new Map(), needs: null, error: "" };
+  #landing: LandingModel = { phase: "loading", profile: "", source: "", roleLabel: "", widgets: [], data: new Map(), needs: null, error: "" };
 
   // The views' states.
   #shortages: ShortagesModel = {
@@ -306,7 +308,7 @@ export class ManagerHomeApp extends HHElement {
     this.#sessions.clear();
     this.#view = "home";
     this.#branch = null;
-    this.#landing = { phase: "loading", profile: "", source: "", widgets: [], data: new Map(), needs: null, error: "" };
+    this.#landing = { phase: "loading", profile: "", source: "", roleLabel: "", widgets: [], data: new Map(), needs: null, error: "" };
     this.#shortages = {
       phase: "loading", branchName: "", entries: [], resolving: null, error: "", notice: "",
       resolverWords: SHORTAGE_RESOLVER_WORDS,
@@ -333,7 +335,7 @@ export class ManagerHomeApp extends HHElement {
       this.#landing = {
         ...this.#landing,
         phase: "error",
-        error: `Your home did not load. ${failureError}`,
+        error: `Your home did not load. ${errorWords(failureError)}`,
       };
       this.requestUpdate();
       return;
@@ -350,6 +352,7 @@ export class ManagerHomeApp extends HHElement {
       phase: "ready",
       profile: widgets.value.profile,
       source: widgets.value.source,
+      roleLabel: this.#roleLabel,
       widgets: widgets.value.widgets,
       data,
       needs: needs.value,
@@ -395,7 +398,7 @@ export class ManagerHomeApp extends HHElement {
     if (result.ok) {
       this.#shortages = { ...this.#shortages, phase: "ready", entries: result.value, error: "" };
     } else {
-      this.#shortages = { ...this.#shortages, phase: "error", error: `The shortage list did not load. ${result.error}` };
+      this.#shortages = { ...this.#shortages, phase: "error", error: `The shortage list did not load. ${errorWords(result.error)}` };
     }
     this.requestUpdate();
   }
@@ -466,7 +469,7 @@ export class ManagerHomeApp extends HHElement {
       if (result.ok) {
         rows = result.value;
       } else {
-        error = `The receiving dock did not load. ${result.error}`;
+        error = `The receiving dock did not load. ${errorWords(result.error)}`;
       }
     }
     this.#receiving = {
@@ -494,7 +497,7 @@ export class ManagerHomeApp extends HHElement {
         ...this.#approvals,
         phase: refusal !== "" ? "refused" : "error",
         rows: [],
-        error: refusal !== "" ? "" : `The approvals list did not load. ${result.error}`,
+        error: refusal !== "" ? "" : `The approvals list did not load. ${errorWords(result.error)}`,
         refusal,
       };
     }
@@ -512,7 +515,11 @@ export class ManagerHomeApp extends HHElement {
     } else {
       this.#approvals = {
         ...this.#approvals,
-        error: result.status === 403 ? decideRefusal(result.error) : `The decision did not go through. ${result.error}`,
+        error: decideRefusalWords(
+          this.#approvals.rows.find((r) => r.id === id)?.policy_type ?? this.#approvals.kind,
+          result.error,
+          result.status,
+        ),
       };
     }
     this.#approvals = { ...this.#approvals, busyId: "" };
@@ -550,11 +557,6 @@ export class ManagerHomeApp extends HHElement {
       </main>
     `;
   }
-}
-
-/** A decide refusal is the core's words; the app adds who decides, plainly. */
-function decideRefusal(error: string): string {
-  return error !== "" ? `${error} Approvals are decided by the financial controller and the general manager.` : "";
 }
 
 defineElement("manager-home-app", ManagerHomeApp);

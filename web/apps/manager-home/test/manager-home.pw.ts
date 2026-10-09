@@ -22,11 +22,11 @@ test("the yard manager's card signs in and the header names the role", async ({ 
   await expect(page.getByTestId("header-word")).toHaveText("Yard manager");
 });
 
-test("the landing is the profile's widgets in the profile's order", async ({ page }) => {
+test("the landing is the profile's widgets in the profile's order, the unread tile beside them", async ({ page }) => {
   await page.addInitScript(managerHandoff);
   await page.goto("/");
   const widgets = page.locator("[data-widget]");
-  await expect(widgets).toHaveCount(7);
+  await expect(widgets).toHaveCount(8);
   const keys = await widgets.evaluateAll((nodes) => nodes.map((n) => n.getAttribute("data-widget")));
   expect(keys).toEqual([
     "hero.deliveries",
@@ -36,7 +36,50 @@ test("the landing is the profile's widgets in the profile's order", async ({ pag
     "picks.gauge",
     "orders.open",
     "warranty.open",
+    "messages.unread",
   ]);
+});
+
+test("the landing opens as the board draws it: the welcome line, the TODAY label, the page's own h1", async ({ page }) => {
+  await page.addInitScript(managerHandoff);
+  await page.goto("/");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Welcome back, yard manager.");
+  await expect(page.locator(".page-sub")).toHaveText("Your day at a glance.");
+  await expect(page.locator(".eyebrow")).toHaveText("Today");
+});
+
+test("the pick queue board draws a labelled bar per status, the count at the right", async ({ page }) => {
+  await page.addInitScript(managerHandoff);
+  await page.goto("/");
+  const board = page.locator("[data-widget='picks.board']");
+  await expect(board.locator(".bar-row")).toHaveCount(4);
+  const first = board.locator(".bar-row").first();
+  await expect(first.locator(".label")).toHaveText("Waiting");
+  await expect(first.locator(".track .fill")).toBeVisible();
+  await expect(first.locator(".value")).toHaveText("8");
+});
+
+test("the tiles this box does not serve say so at their foot, never a dead link", async ({ page }) => {
+  await page.addInitScript(managerHandoff);
+  await page.goto("/");
+  const hero = page.locator("[data-widget='hero.deliveries']");
+  await expect(hero.locator(".tile-foot")).toHaveText("not on this box yet");
+  await expect(hero.locator(".tile-foot")).toBeVisible();
+  await expect(page.locator("[data-widget='orders.open'] .tile-foot")).toHaveText("not on this box yet");
+  const footLinks = page.locator(".tile-foot a, .tile-foot button");
+  await expect(footLinks).toHaveCount(0);
+});
+
+test("the needs-you footer opens the queue, and the view links sit as small chips with chevrons", async ({ page }) => {
+  await page.addInitScript(managerHandoff);
+  await page.goto("/");
+  const foot = page.locator("[data-widget='needs.you'] .needs-foot");
+  await expect(foot.locator(".queue-link")).toContainText("Open the queue");
+  const links = page.locator(".view-link");
+  await expect(links).toHaveCount(3);
+  for (const label of ["Shortages · open", "Receiving · short", "Approvals"]) {
+    await expect(links.filter({ hasText: label })).toContainText("›");
+  }
 });
 
 test("the hero carries the day's count and its window word", async ({ page }) => {
@@ -62,18 +105,30 @@ test("the needs-you queue counts its rows, and the board row nothing measures is
   await expect(needs.locator("[data-unsourced='weights.pending'] .needs-count")).toHaveCount(0);
 });
 
-test("the board and the bars render the server's points, and the tile nothing measures is said plainly", async ({ page }) => {
+test("the needs rows sit as the board draws them: a severity bar, a bold title, the count lighter than it", async ({ page }) => {
   await page.addInitScript(managerHandoff);
   await page.goto("/");
-  const board = page.locator("[data-widget='picks.board']");
-  await expect(board.locator(".chip")).toHaveCount(4);
-  await expect(board.locator(".chip").first()).toContainText("Waiting");
-  await expect(board.locator(".chip").first()).toContainText("8");
+  const row = page.locator("[data-needs='tasks.open_shortages']");
+  await expect(row.locator(".sev")).toBeVisible();
+  const titleSize = await row.locator(".what").evaluate((n) => Number.parseFloat(getComputedStyle(n).fontSize));
+  const countSize = await row.locator(".needs-count").evaluate((n) => Number.parseFloat(getComputedStyle(n).fontSize));
+  expect(countSize).toBeLessThanOrEqual(titleSize);
+  const chip = row.locator(".row-chip");
+  await expect(chip).toContainText("Resolve");
+  await expect(chip).toContainText("›");
+});
+
+test("the bars render the server's points, and the tile nothing measures is a tile in the grid, never a number", async ({ page }) => {
+  await page.addInitScript(managerHandoff);
+  await page.goto("/");
   const bars = page.locator("[data-widget='deliveries.branch']");
   await expect(bars.locator(".bar-row")).toHaveCount(2);
   await expect(bars.locator(".bar-row .label").first()).toHaveText("Trenton");
   await expect(bars.locator(".bar-row .value").first()).toHaveText("10");
-  await expect(page.locator(".who-may").filter({ hasText: "Unread messages" })).toContainText("No measure is wired");
+  const unread = page.locator("[data-widget='messages.unread']");
+  await expect(unread.locator(".card-title")).toHaveText("Unread messages");
+  await expect(unread).toContainText("No measure is wired");
+  await expect(unread.locator(".figure")).toHaveCount(0);
 });
 
 test("an unmeasured card says which module is not connected, never a number", async ({ request, page }) => {
@@ -88,9 +143,10 @@ test("an unmeasured card says which module is not connected, never a number", as
 test("the sales manager's landing comes from the sales profile: the same code, different rows", async ({ page }) => {
   await page.goto("/");
   await page.locator("[data-flow='sales-manager']").click();
-  await expect(page.locator("[data-widget]")).toHaveCount(2);
+  await expect(page.locator("[data-widget]")).toHaveCount(3);
   await expect(page.locator("[data-widget='sales.today'] .figure")).toHaveText("$1,234.56");
   await expect(page.locator("[data-widget='needs.you'] [data-needs='approvals.waiting'] .needs-count")).toHaveText("1");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Welcome back, sales manager.");
 });
 
 test("the theme control flips the document between light and brand", async ({ page }) => {
@@ -126,7 +182,14 @@ test("a needs row whose surface is not on this box carries no link and says so",
   await page.goto("/");
   const stale = page.locator("[data-needs='tasks.stale_picks']");
   await expect(stale.locator("button")).toHaveCount(0);
-  await expect(stale.locator(".view-words").last()).toHaveText("not on this box yet");
+  await expect(stale.locator(".not-here")).toHaveText("not on this box yet");
+});
+
+test("the way in speaks for this app, never for the till", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Who is working today?" })).toBeVisible();
+  await expect(page.getByText("Tap a role to open their home:")).toBeVisible();
+  await expect(page.getByText("Who is at the counter?")).toHaveCount(0);
 });
 
 test("the landing never scrolls sideways at 390 px", async ({ page }) => {

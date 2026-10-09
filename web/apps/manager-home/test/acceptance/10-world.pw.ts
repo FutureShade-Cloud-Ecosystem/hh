@@ -12,7 +12,7 @@ test("the yard manager's card is the way in, and the landing is the profile's ro
   await expect(page.locator("hos-app-header")).toHaveAttribute("signed-in", "");
   await expect(page.getByTestId("header-word")).toHaveText("Yard manager");
   const widgets = page.locator("[data-widget]");
-  await expect(widgets).toHaveCount(7);
+  await expect(widgets).toHaveCount(8);
   const keys = await widgets.evaluateAll((nodes) => nodes.map((n) => n.getAttribute("data-widget")));
   expect(keys).toEqual([
     "hero.deliveries",
@@ -22,6 +22,7 @@ test("the yard manager's card is the way in, and the landing is the profile's ro
     "picks.gauge",
     "orders.open",
     "warranty.open",
+    "messages.unread",
   ]);
 });
 

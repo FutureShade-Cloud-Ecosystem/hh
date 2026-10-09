@@ -29,7 +29,7 @@ test("the five kinds of the closed vocabulary sit as tabs, the decided one first
   await expect(tabs).toHaveCount(5);
   const words = await tabs.evaluateAll((nodes) => nodes.map((n) => n.textContent?.trim()));
   expect(words).toEqual(["Margin", "Credit", "Cash on delivery", "Journal entry", "Freight above quote"]);
-  await expect(tabs.first()).toHaveAttribute("aria-pressed", "true");
+  await expect(tabs.first()).toHaveAttribute("aria-selected", "true");
 });
 
 test("a margin approval decides through the core's route and the queue empties", async ({ page }) => {
@@ -45,14 +45,16 @@ test("a margin approval decides through the core's route and the queue empties",
   await expect(page.locator("[data-widget='needs.you'] .needs-empty")).toContainText("Nothing is waiting on you right now.");
 });
 
-test("a kind the caller does not decide is the core's words plus who decides it", async ({ page }) => {
+test("a kind the caller does not decide is said in plain words naming who decides it, no enum on screen", async ({ page }) => {
   await page.goto("/");
   await page.locator("[data-flow='sales-manager']").click();
   await page.locator(".view-link", { hasText: "Approvals" }).click();
   await page.locator(".kind-tab", { hasText: "Credit" }).click();
   const refusal = page.locator("[data-test='approvals-refusal']");
-  await expect(refusal).toContainText("you do not decide CREDIT_LIMIT_EXCEEDED approvals");
-  await expect(refusal).toContainText("Credit approvals are decided by the financial controller and the general manager.");
+  await expect(refusal).toHaveText(
+    "You do not decide credit approvals. Credit approvals are decided by the financial controller and the general manager.",
+  );
+  await expect(refusal).not.toContainText("CREDIT_LIMIT_EXCEEDED");
   await expect(page.locator("[data-approval]")).toHaveCount(0);
 });
 

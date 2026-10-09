@@ -1,11 +1,16 @@
 // Manager Home's sheet. Token-only: no literal colours anywhere; light and
 // brand (the dark half) both come from the design system's tokens, and the
-// header's theme control flips the document root.
+// header's theme control flips the document root. Every ink is named: the
+// host sets the text colour, and every control that the browser would paint
+// in its own button ink sets its own, because an unset ink is black, and
+// black on the brand theme's navy is 1.42 to 1 (the round 1 review's P1-1).
 //
-// THE GRID. The bento is the twelve-column v3.5 grid at the desktop
-// breakpoint and six columns below it, on a 132px row unit, the spans the
-// server sends (span_cols, span_rows). The arithmetic that decides whether a
-// bento fits is the server's; this sheet only places what it is told.
+// THE LANDING'S PLACEMENT. The large tiles (size L) make the board's top
+// block on a twelve column grid: the hero and the pick queue stack on the
+// left, the needs-you card spans both rows on the right. Every other tile sits
+// on one strip below it, the board's row of five, the bars tile twice the
+// width of the figure tiles. The server sends the widgets, their order, shapes
+// and sizes; this sheet only places them.
 import { css } from "lit";
 
 export const homeStyles = css`
@@ -13,34 +18,78 @@ export const homeStyles = css`
     display: block;
     min-height: 100vh;
     background: var(--hh-page);
+    color: var(--hh-text);
   }
 
   main {
     max-width: 1280px;
     margin: 0 auto;
-    padding: var(--hh-s-8) var(--hh-s-4) var(--hh-s-16);
+    padding: var(--hh-s-24) var(--hh-s-16) var(--hh-s-64);
+  }
+
+  h1,
+  h2,
+  p {
+    margin: 0;
+  }
+
+  .chev {
+    margin-inline-start: var(--hh-s-8);
+  }
+  .back .chev {
+    margin-inline: 0 var(--hh-s-8);
+  }
+
+  /* -- the page's own head -------------------------------------------------------------- */
+
+  .page-head {
+    margin: 0 0 var(--hh-s-24);
+  }
+  .page-head h1,
+  .view-head h1,
+  .headline {
+    font-size: var(--hh-s-28);
+    font-weight: 650;
+    line-height: 1.15;
+  }
+  .page-sub {
+    font-size: var(--hh-s-16);
+    color: var(--hh-text-dim);
+    margin-top: var(--hh-s-4);
+  }
+  .eyebrow,
+  .nav-label {
+    font-size: var(--hh-s-12);
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--hh-text-dim);
+  }
+  .eyebrow {
+    margin: 0 0 var(--hh-s-8);
   }
 
   .view-head {
     display: flex;
-    align-items: baseline;
-    gap: var(--hh-s-4);
-    flex-wrap: wrap;
-    margin: 0 0 var(--hh-s-4);
-  }
-  .view-head h1 {
-    font-size: var(--hh-s-24);
-    font-weight: 600;
-    margin: 0;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--hh-s-8);
+    margin: 0 0 var(--hh-s-24);
   }
   .view-head .where {
+    font-size: var(--hh-s-16);
     color: var(--hh-text-dim);
-    font-size: var(--hh-s-12);
+  }
+  .view-head .back {
+    min-height: 36px;
+    padding: 0 var(--hh-s-16);
+    font-size: 14px;
+    border-radius: var(--hh-radius-pill);
   }
 
   .error-line,
   .notice-line {
-    margin: 0 0 var(--hh-s-4);
+    margin: 0 0 var(--hh-s-16);
     font-size: var(--hh-s-16);
   }
   .error-line {
@@ -50,239 +99,314 @@ export const homeStyles = css`
     color: var(--hh-text-dim);
   }
 
-  /* -- the bento grid ------------------------------------------------------------------ */
+  /* -- the way in ------------------------------------------------------------------------ */
+
+  .stage {
+    max-width: 680px;
+    margin: 0 auto;
+    padding: var(--hh-s-40) 0 var(--hh-s-64);
+  }
+  .stage .headline {
+    margin: 0 0 var(--hh-s-8);
+  }
+  .stage .intro {
+    color: var(--hh-text-dim);
+    font-size: var(--hh-s-16);
+    margin: 0 0 var(--hh-s-24);
+  }
+  .role-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: var(--hh-s-16);
+    margin: 0 0 var(--hh-s-24);
+  }
+  .role-card {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--hh-s-12);
+    min-height: 96px;
+    text-align: start;
+    padding: var(--hh-s-20);
+    background: var(--hh-card);
+    color: var(--hh-text);
+    border: 1px solid var(--hh-control-line);
+    border-radius: var(--hh-radius-card);
+    box-shadow: var(--hh-widget-shadow);
+  }
+  .role-card:hover:not(:disabled) {
+    border-color: var(--hh-accent-text);
+  }
+  .role-card .mark {
+    color: var(--hh-text-dim);
+    flex: none;
+  }
+  .role-card:hover:not(:disabled) .mark,
+  .role-card:focus-visible .mark {
+    color: var(--hh-accent-text);
+  }
+  .role-card .words {
+    display: grid;
+    gap: var(--hh-s-4);
+  }
+  .role-card .role {
+    font-size: var(--hh-s-16);
+    font-weight: 600;
+  }
+  .role-card .what {
+    font-size: 14px;
+    line-height: 1.4;
+    color: var(--hh-text-dim);
+    font-weight: 400;
+  }
+
+  /* -- the landing's grid ----------------------------------------------------------------- */
 
   .bento {
     display: grid;
     grid-template-columns: repeat(12, minmax(0, 1fr));
-    grid-auto-rows: 132px;
-    gap: var(--hh-s-4);
+    gap: var(--hh-s-16);
+    margin: 0 0 var(--hh-s-16);
+  }
+  .cell {
+    display: flex;
+    min-width: 0;
+  }
+  .cell.half {
+    grid-column: span 6;
+  }
+  .cell.full {
+    grid-column: span 12;
+  }
+  .cell.tall {
+    grid-row: span 2;
+  }
+  .cell > .card,
+  .tile > .card {
+    flex: 1;
+    min-width: 0;
   }
   @media (max-width: 900px) {
-    .bento {
-      grid-template-columns: repeat(6, minmax(0, 1fr));
+    .cell.half {
+      grid-column: span 12;
     }
-  }
-  @media (max-width: 560px) {
-    .bento {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      grid-auto-rows: auto;
-    }
-    .card {
-      grid-column: span 2 !important;
-      grid-row: auto !important;
-      min-height: 96px;
+    .cell.tall {
+      grid-row: auto;
     }
   }
 
-  /* The span classes, one per footprint in the closed vocabulary (the snap set the server
-     sends). Named classes, never a computed style: the position gate refuses a bound style
-     attribute, and the span arithmetic stays the server's. */
-  .s3 { grid-column: span 3; }
-  .s4 { grid-column: span 4; }
-  .s6 { grid-column: span 6; }
-  .s8 { grid-column: span 8; }
-  .s9 { grid-column: span 9; }
-  .s12 { grid-column: span 12; }
-  .r1 { grid-row: span 1; }
-  .r2 { grid-row: span 2; }
-  .r3 { grid-row: span 3; }
-  .s3 > .card, .s4 > .card, .s6 > .card, .s8 > .card, .s9 > .card, .s12 > .card,
-  .r1 > .card, .r2 > .card, .r3 > .card {
-    height: 100%;
+  .strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--hh-s-16);
+  }
+  .tile {
+    display: flex;
+    flex: 1 1 150px;
+    min-width: 0;
+  }
+  .tile.wide {
+    flex: 2 1 300px;
   }
 
   .card {
     position: relative;
     display: flex;
     flex-direction: column;
-    gap: var(--hh-s-2);
-    padding: var(--hh-s-4);
-    border: 1px solid var(--hh-line);
+    gap: var(--hh-s-8);
+    padding: var(--hh-s-20);
+    border: 1px solid var(--hh-hairline);
     border-radius: var(--hh-radius-card);
     background: var(--hh-card);
+    color: var(--hh-text);
+    box-shadow: var(--hh-widget-shadow);
     overflow: hidden;
   }
 
   .card-title {
     font-size: var(--hh-s-12);
     font-weight: 600;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--hh-text-dim);
-    margin: 0;
   }
   .card-sub {
-    font-size: var(--hh-s-12);
+    font-size: 14px;
     color: var(--hh-text-dim);
-    margin: 0;
+  }
+  .tile-foot {
+    margin-top: auto;
+    padding-top: var(--hh-s-8);
+    font-size: 14px;
+    color: var(--hh-text-dim);
   }
 
   .figure {
     font-size: var(--hh-s-40);
     font-weight: 650;
     line-height: 1.05;
-    margin: 0;
   }
   .figure.small {
-    font-size: var(--hh-s-28);
+    font-size: var(--hh-s-32);
   }
   .figure.none {
     font-size: var(--hh-s-24);
     color: var(--hh-text-dim);
   }
 
-  /* The hero: the profile's first stat, the day going out. Accent fill, the
-     figure large, the window word under it. */
+  /* The hero: the profile's first large stat, the day going out. Accent fill, the figure at
+     the top, the window word under it, its foot at the bottom. */
   .card.hero {
     background: var(--brand-fill);
     border-color: var(--brand-fill);
     color: var(--brand-fill-on);
-    justify-content: center;
+    min-height: 170px;
   }
   .card.hero .card-title,
-  .card.hero .card-sub {
+  .card.hero .card-sub,
+  .card.hero .tile-foot,
+  .card.hero .figure {
     color: var(--brand-fill-on);
   }
 
   /* -- the needs-you queue -------------------------------------------------------------- */
 
-  .needs-total {
-    font-size: var(--hh-s-12);
-    color: var(--hh-text-dim);
-    margin: 0;
-  }
   .needs-row {
+    position: relative;
     display: flex;
     align-items: center;
-    gap: var(--hh-s-4);
-    padding: var(--hh-s-2) 0;
-    border-top: 1px solid var(--hh-line);
-  }
-  .needs-row:first-of-type {
-    border-top: none;
+    gap: var(--hh-s-12);
+    padding: var(--hh-s-12) var(--hh-s-12) var(--hh-s-12) var(--hh-s-16);
+    border: 1px solid var(--hh-hairline);
+    border-radius: var(--hh-radius-control);
+    background: var(--hh-widget-raised);
+    overflow: hidden;
   }
   .sev {
-    width: 10px;
-    height: 10px;
-    min-width: 10px;
-    border-radius: 50%;
+    flex: none;
+    align-self: stretch;
+    width: 4px;
+    margin: calc(var(--hh-s-12) * -1) 0 calc(var(--hh-s-12) * -1) calc(var(--hh-s-16) * -1);
     background: var(--hh-text-dim);
   }
   .sev.good {
-    background: var(--hh-success);
+    background: var(--hh-state-good);
   }
   .sev.watch {
     background: var(--hh-state-watch);
   }
   .sev.stop {
-    background: var(--hh-danger);
+    background: var(--hh-state-stop);
   }
-  .needs-what {
+  .needs-body {
     flex: 1;
     min-width: 0;
     display: flex;
     flex-direction: column;
+    gap: var(--hh-s-2);
   }
-  .needs-what .what {
+  .needs-body .what {
     font-size: var(--hh-s-16);
-    margin: 0;
+    font-weight: 650;
+    color: var(--hh-text);
   }
-  .needs-what .view-words {
-    font-size: var(--hh-s-12);
+  .needs-body .view-words,
+  .needs-body .words,
+  .needs-meta {
+    font-size: 14px;
     color: var(--hh-text-dim);
-    margin: 0;
   }
   .needs-count {
-    font-size: var(--hh-s-24);
+    font-size: 14px;
     font-weight: 650;
-    margin: 0;
+    color: var(--hh-text);
   }
-  .needs-age {
-    font-size: var(--hh-s-12);
-    color: var(--hh-text-dim);
-    min-width: 3.5em;
-    text-align: right;
-  }
-  .needs-empty {
-    margin: 0;
-    color: var(--hh-text-dim);
-  }
-  .unsourced {
-    padding: var(--hh-s-2) 0;
-    border-top: 1px dashed var(--hh-line);
-  }
-  .unsourced .what {
-    font-size: var(--hh-s-16);
-    color: var(--hh-text-dim);
-    margin: 0 0 var(--hh-s-2);
-  }
-  .unsourced .words {
-    font-size: var(--hh-s-12);
-    color: var(--hh-text-dim);
-    margin: 0;
-  }
-
-  /* -- boards and bars ------------------------------------------------------------------ */
-
-  .chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--hh-s-2);
-    margin: 0;
-    padding: 0;
-  }
-  .chip {
+  .row-chip,
+  .view-link {
     display: inline-flex;
     align-items: center;
-    gap: var(--hh-s-2);
-    font-size: var(--hh-s-12);
-    padding: var(--hh-s-2) var(--hh-s-4);
+    flex: none;
+    min-height: 36px;
+    padding: 0 var(--hh-s-12);
     border-radius: var(--hh-radius-pill);
-    border: 1px solid var(--hh-line);
-    background: var(--hh-widget-raised);
+    border: 1px solid var(--hh-control-line);
+    background: transparent;
+    color: var(--hh-text);
+    font-size: 14px;
+    cursor: pointer;
   }
-  .chip .n {
-    font-weight: 650;
+  .row-chip:hover,
+  .view-link:hover {
+    border-color: var(--hh-accent-text);
   }
-  .chip.good {
-    border-color: var(--hh-success);
+  .not-here {
+    flex: none;
+    max-width: 7.5em;
+    text-align: end;
+    font-size: 14px;
+    color: var(--hh-text-dim);
   }
-  .chip.watch {
-    border-color: var(--hh-state-watch);
+  .needs-empty {
+    color: var(--hh-text-dim);
   }
-  .chip.stop {
-    border-color: var(--hh-danger);
+  .needs-row.unsourced {
+    border-style: dashed;
   }
+  .needs-foot {
+    margin-top: auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--hh-s-12);
+    flex-wrap: wrap;
+    padding-top: var(--hh-s-8);
+  }
+  .needs-total {
+    font-size: 14px;
+    color: var(--hh-text-dim);
+  }
+  .queue-link {
+    min-height: 36px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--hh-accent-text);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  /* -- bars ----------------------------------------------------------------------------- */
 
   .bars {
     display: flex;
     flex-direction: column;
-    gap: var(--hh-s-4);
+    gap: var(--hh-s-12);
     margin: 0;
     padding: 0;
     list-style: none;
   }
   .bar-row {
     display: grid;
-    grid-template-columns: minmax(6em, 1fr) 3fr auto;
+    grid-template-columns: minmax(5em, 1fr) 3fr auto;
     align-items: center;
-    gap: var(--hh-s-4);
+    column-gap: var(--hh-s-16);
+    row-gap: var(--hh-s-2);
   }
   .bar-row .label {
-    font-size: var(--hh-s-12);
-    color: var(--hh-text-dim);
+    font-size: 14px;
+    color: var(--hh-text);
   }
   .track {
-    height: 10px;
-    border-radius: 5px;
+    height: 8px;
+    border-radius: 4px;
     background: var(--hh-track);
     overflow: hidden;
   }
   .fill {
+    display: block;
     height: 100%;
-    border-radius: 5px;
-    background: var(--brand-fill);
+    border-radius: 4px;
+    background: var(--hh-success-fill);
   }
   /* The fill widths, quantized in steps of five percent: static classes the template can name,
      never a bound style attribute (the position gate refuses one). */
@@ -308,8 +432,9 @@ export const homeStyles = css`
   .w95 { width: 95%; }
   .w100 { width: 100%; }
   .bar-row .value {
-    font-size: var(--hh-s-12);
-    font-weight: 600;
+    font-size: 14px;
+    font-weight: 650;
+    color: var(--hh-text);
     white-space: nowrap;
   }
   .bar-row .share {
@@ -318,29 +443,20 @@ export const homeStyles = css`
     color: var(--hh-text-dim);
   }
 
-  /* -- the views' links ------------------------------------------------------------------------------ */
+  /* -- the views' links ------------------------------------------------------------------ */
 
-  /* The landing's own way into its three views. The needs rows link into them when their counts
-     are live, but a manager whose queue is empty still reaches the approvals surface: the links
-     are the floor, the rows are the highlight. */
+  /* The landing's own way into its three views: small chips with chevrons. The needs rows link
+     into them when their counts are live, but a manager whose queue is empty still reaches the
+     approvals surface: the links are the floor, the rows are the highlight. */
   .view-links {
     display: flex;
-    gap: var(--hh-s-4);
+    gap: var(--hh-s-8);
     flex-wrap: wrap;
-    margin: var(--hh-s-8) 0 0;
-    padding: 0;
+    align-items: center;
+    margin: var(--hh-s-24) 0 0;
   }
   .view-link {
-    min-height: 40px;
-    padding: 0 var(--hh-s-4);
-    border-radius: var(--hh-radius-pill);
-    border: 1px solid var(--hh-line);
     background: var(--hh-card);
-    font-size: var(--hh-s-16);
-    cursor: pointer;
-  }
-  .view-link:hover {
-    border-color: var(--brand-fill);
   }
 
   /* -- the views' lists ----------------------------------------------------------------- */
@@ -348,192 +464,267 @@ export const homeStyles = css`
   .sheet {
     display: flex;
     flex-direction: column;
-    gap: var(--hh-s-4);
+    gap: var(--hh-s-16);
   }
   .task-card,
   .list-card {
-    border: 1px solid var(--hh-line);
+    border: 1px solid var(--hh-hairline);
     border-radius: var(--hh-radius-card);
     background: var(--hh-card);
-    padding: var(--hh-s-4);
+    box-shadow: var(--hh-widget-shadow);
+    padding: var(--hh-s-20);
   }
   .task-head {
     display: flex;
-    gap: var(--hh-s-4);
+    gap: var(--hh-s-8) var(--hh-s-16);
     align-items: baseline;
     flex-wrap: wrap;
-    margin: 0 0 var(--hh-s-2);
+    margin: 0 0 var(--hh-s-8);
   }
   .task-head .order {
-    font-size: var(--hh-s-16);
+    font-size: var(--hh-s-20);
     font-weight: 650;
-    margin: 0;
   }
   .task-head .meta {
-    font-size: var(--hh-s-12);
+    font-size: 14px;
     color: var(--hh-text-dim);
   }
   .shortage {
     display: flex;
-    gap: var(--hh-s-4);
-    align-items: flex-start;
-    padding: var(--hh-s-4) 0;
-    border-top: 1px solid var(--hh-line);
+    gap: var(--hh-s-16);
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    padding: var(--hh-s-16) 0;
+    border-top: 1px solid var(--hh-hairline);
   }
   .shortage .body {
     flex: 1;
-    min-width: 0;
+    min-width: 12em;
   }
   .shortage .line {
     font-size: var(--hh-s-16);
     font-weight: 600;
-    margin: 0;
   }
   .shortage .detail {
-    font-size: var(--hh-s-12);
+    font-size: 14px;
     color: var(--hh-text-dim);
-    margin: var(--hh-s-2) 0 0;
+    margin-top: var(--hh-s-4);
   }
   .resolved-word {
-    font-size: var(--hh-s-12);
+    font-size: 14px;
     color: var(--hh-text-dim);
-    margin: var(--hh-s-2) 0 0;
+    margin-top: var(--hh-s-4);
   }
 
   .def-note {
-    font-size: var(--hh-s-12);
+    font-size: 14px;
     color: var(--hh-text-dim);
-    margin: 0 0 var(--hh-s-4);
+    margin: 0 0 var(--hh-s-16);
     max-width: 62ch;
   }
   .who-may {
-    font-size: var(--hh-s-12);
+    font-size: 14px;
     color: var(--hh-text-dim);
-    margin: var(--hh-s-4) 0 0;
+    margin: var(--hh-s-16) 0 0;
+    max-width: 62ch;
+  }
+  .refusal {
+    margin: 0 0 var(--hh-s-16);
+    padding: var(--hh-s-12) var(--hh-s-16);
+    border: 1px solid var(--hh-danger);
+    border-radius: var(--hh-radius-control);
+    background: var(--hh-card);
+    color: var(--hh-danger);
+    font-size: var(--hh-s-16);
     max-width: 62ch;
   }
 
-  /* -- the resolve sheet ----------------------------------------------------------------- */
+  /* -- the resolve panel ------------------------------------------------------------------ */
 
+  .shortage.resolve-panel {
+    display: block;
+    margin: var(--hh-s-8) 0;
+    padding: var(--hh-s-20);
+    border: 1px solid var(--hh-control-line);
+    border-radius: var(--hh-radius-card);
+    background: var(--hh-widget-raised);
+  }
+  .resolve-panel .body {
+    min-width: 0;
+  }
+  .panel-title {
+    font-size: var(--hh-s-20);
+    font-weight: 650;
+    margin-bottom: var(--hh-s-12);
+  }
+  .panel-line {
+    font-size: var(--hh-s-16);
+    font-weight: 650;
+  }
+  .panel-qty {
+    font-size: 14px;
+    color: var(--hh-text-dim);
+    margin-top: var(--hh-s-4);
+  }
+  .reported {
+    margin: var(--hh-s-16) 0;
+    padding: var(--hh-s-12) var(--hh-s-16);
+    border-radius: var(--hh-radius-control);
+    background: var(--hh-row-alt);
+  }
+  .reported-who {
+    font-size: var(--hh-s-12);
+    font-weight: 600;
+    color: var(--hh-text-dim);
+  }
+  .reported-note {
+    font-size: var(--hh-s-16);
+    margin-top: var(--hh-s-4);
+  }
   .choices {
     display: flex;
     flex-direction: column;
-    gap: var(--hh-s-2);
-    margin: 0 0 var(--hh-s-4);
-    padding: 0;
+    gap: var(--hh-s-8);
+    margin: 0 0 var(--hh-s-16);
   }
   .choice {
     display: flex;
     align-items: center;
-    gap: var(--hh-s-4);
-    text-align: left;
-    min-height: 48px;
-    padding: 0 var(--hh-s-4);
+    gap: var(--hh-s-12);
+    width: 100%;
+    text-align: start;
+    min-height: 64px;
+    padding: var(--hh-s-12) var(--hh-s-16);
     border-radius: var(--hh-radius-control);
-    border: 1px solid var(--hh-line);
+    border: 1px solid var(--hh-control-line);
     background: var(--hh-card);
+    color: var(--hh-text);
     font-size: var(--hh-s-16);
     cursor: pointer;
   }
   .choice .mark {
+    flex: none;
     width: 16px;
     height: 16px;
-    min-width: 16px;
     border-radius: 50%;
-    border: 2px solid var(--hh-line);
+    border: 2px solid var(--hh-control-line);
     background: transparent;
   }
   .choice[aria-pressed="true"] {
-    border-color: var(--brand-fill);
+    border-color: var(--hh-accent-text);
+    background: var(--brand-tint);
   }
   .choice[aria-pressed="true"] .mark {
-    border-color: var(--brand-fill);
-    background: var(--brand-fill);
-    box-shadow: inset 0 0 0 3px var(--hh-card);
+    border-color: var(--hh-accent-text);
+    background: var(--hh-accent-text);
+    box-shadow: inset 0 0 0 3px var(--brand-tint);
   }
   .choice .words {
     display: flex;
     flex-direction: column;
+    gap: var(--hh-s-2);
   }
-  .choice .words .sub {
-    font-size: var(--hh-s-12);
+  .choice .title {
+    font-weight: 600;
+    color: var(--hh-text);
+  }
+  .choice .sub {
+    font-size: 14px;
     color: var(--hh-text-dim);
+  }
+  .hm-note {
+    margin-top: var(--hh-s-16);
+    padding: var(--hh-s-12) var(--hh-s-16);
+    border-radius: var(--hh-radius-control);
+    background: var(--brand-tint);
+    color: var(--hh-text);
+    font-size: 14px;
   }
 
   .text-field {
     font-family: inherit;
     font-size: var(--hh-s-16);
-    padding: var(--hh-s-2) var(--hh-s-4);
+    padding: var(--hh-s-8) var(--hh-s-12);
     border-radius: var(--hh-radius-control);
-    border: 1px solid var(--hh-control-line, var(--hh-line));
+    border: 1px solid var(--hh-control-line);
     background: var(--hh-field);
-    color: inherit;
+    color: var(--hh-text);
     min-height: 44px;
   }
   .text-area {
     width: 100%;
+    box-sizing: border-box;
     min-height: 88px;
     resize: vertical;
+    margin: 0 0 var(--hh-s-16);
   }
 
   .row-actions {
     display: flex;
-    gap: var(--hh-s-4);
+    gap: var(--hh-s-12);
     flex-wrap: wrap;
-    margin: var(--hh-s-4) 0 0;
+  }
+
+  /* -- receiving ------------------------------------------------------------------------- */
+
+  .facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--hh-s-8) var(--hh-s-24);
+  }
+  .facts .detail {
+    font-size: var(--hh-s-16);
+    color: var(--hh-text);
   }
 
   /* -- approvals --------------------------------------------------------------------------- */
 
   .kind-tabs {
     display: flex;
-    gap: var(--hh-s-2);
+    gap: var(--hh-s-8);
     flex-wrap: wrap;
-    margin: 0 0 var(--hh-s-4);
-    padding: 0;
+    margin: 0 0 var(--hh-s-16);
   }
   .kind-tab {
-    min-height: 40px;
-    padding: 0 var(--hh-s-4);
+    min-height: 36px;
+    padding: 0 var(--hh-s-16);
     border-radius: var(--hh-radius-pill);
-    border: 1px solid var(--hh-line);
+    border: 1px solid var(--hh-control-line);
     background: var(--hh-card);
-    font-size: var(--hh-s-16);
+    color: var(--hh-text);
+    font-size: 14px;
     cursor: pointer;
   }
-  .kind-tab[aria-pressed="true"] {
+  .kind-tab[aria-selected="true"] {
     border-color: var(--brand-fill);
     background: var(--brand-fill);
     color: var(--brand-fill-on);
+    font-weight: 600;
   }
   .approval {
-    padding: var(--hh-s-4) 0;
-    border-top: 1px solid var(--hh-line);
+    padding: var(--hh-s-16) 0;
+    border-top: 1px solid var(--hh-hairline);
+  }
+  .approval:first-child {
+    border-top: none;
+    padding-top: 0;
   }
   .approval .detail {
     font-size: var(--hh-s-16);
-    margin: 0;
+    font-weight: 600;
   }
   .approval .meta {
-    font-size: var(--hh-s-12);
+    font-size: 14px;
     color: var(--hh-text-dim);
-    margin: var(--hh-s-2) 0 0;
+    margin: var(--hh-s-4) 0 var(--hh-s-12);
   }
-  .approval .amount {
+  .amount {
     font-weight: 650;
   }
 
   .count-line {
-    font-size: var(--hh-s-12);
+    font-size: 14px;
     color: var(--hh-text-dim);
-    margin: var(--hh-s-4) 0 0;
-  }
-
-  .btn-row-top {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: var(--hh-s-4);
-    margin: 0 0 var(--hh-s-4);
   }
 `;
