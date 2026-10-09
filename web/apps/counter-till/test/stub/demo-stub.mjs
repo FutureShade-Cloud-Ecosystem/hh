@@ -69,12 +69,15 @@ import { createServer } from "node:http";
 
 const port = Number(process.env.CT_STUB_PORT ?? 4821);
 
-// The closed flow table: the two logins this release shows, with the labels
-// the cards carry and the role each minted account holds (the mint's role
-// label comes from this table, never from the roles table).
+// The closed flow table: the two till logins plus the Logistics Manager the
+// demo box mints (the core's listing serves the whole table; this till offers
+// a card for the flows it has screens for), with the labels the cards carry
+// and the role each minted account holds (the mint's role label comes from
+// this table, never from the roles table).
 const FLOWS = [
   { flow: "sales", role_code: "inside_sales", label: "Sales" },
   { flow: "sales-manager", role_code: "sales_manager", label: "Sales manager" },
+  { flow: "dispatch", role_code: "logistics_manager", label: "Logistics Manager" },
 ];
 
 // The minted accounts, one per flow, shaped field for field like the staff
@@ -103,6 +106,15 @@ const USERS = {
     display_name: "Sales manager (demo)",
     role_code: "sales_manager",
     role_name: "Sales Manager",
+    tier: 2,
+    scope: "BRANCH",
+  },
+  dispatch: {
+    user_id: "demo-account-dispatch",
+    email: "dispatch@demo.invalid",
+    display_name: "Dispatch persona (demo)",
+    role_code: "logistics_manager",
+    role_name: "Logistics Manager",
     tier: 2,
     scope: "BRANCH",
   },

@@ -47,6 +47,14 @@ import { demoBanner, demoBannerStyles } from "./demo-banner.js";
 import { readPanesSwapped, writePanesSwapped } from "./pane-memory.js";
 import { THEME_LABEL, ThemeController, themeControlLabel, themeStatusText } from "./theme.js";
 import { entryStyles, renderEntry, type FlowsState } from "@hardscapehouse/pos-kit/src/ported/entry.js";
+
+// The flows this app offers a card for. The flow table is the box's whole
+// mint set (the Counter Till's pair plus the personas the roles roadmap
+// mints), and an app offers a card only for the roles whose screens live in
+// it, the front door's own live-role rule: a tappable card that led into a
+// refused surface would be a login to nothing. A flow outside the pair
+// still mints through the public route; it has no card on the till.
+const TILL_ENTRY_FLOWS = new Set(["sales", "sales-manager"]);
 import { ReturnsFlow } from "./returns/flow.js";
 import { OneTimeCredential } from "./returns/approval.js";
 import { RefundApprovalCapture } from "./returns/capture.js";
@@ -1023,13 +1031,28 @@ export class CounterTillApp extends HHElement {
     `;
   }
 
+  /**
+   * The flows state as the entry view renders it: the table filtered to the
+   * till's own pair (TILL_ENTRY_FLOWS). The unfiltered answer stays held for
+   * the label lookups and the pop-out, which name flows the cards need not
+   * offer; only the offering is the app's claim about whose screens live here.
+   */
+  #entryFlowsState(): FlowsState {
+    if (this.#flowsState.kind !== "ready") return this.#flowsState;
+    return {
+      kind: "ready",
+      flows: this.#flowsState.flows.filter((flow) => flow.flow !== undefined && TILL_ENTRY_FLOWS.has(flow.flow)),
+    };
+  }
+
   render(): TemplateResult {
     // The banner's rule is "only once the flows route has answered with
     // cards": an error answer and an empty answer alike are not the demo
-    // showing itself, so neither gets to look like one.
+    // showing itself, so neither gets to look like one. The cards are the
+    // till's own pair, not the box's whole table.
+    const entryFlows = this.#entryFlowsState();
     const demoPresent =
-      this.#surface === "terminal" ||
-      (this.#flowsState.kind === "ready" && this.#flowsState.flows.length > 0);
+      this.#surface === "terminal" || (entryFlows.kind === "ready" && entryFlows.flows.length > 0);
     return html`
       <p class="visually-hidden" role="status" aria-live="polite" data-testid="theme-status">${this.#themeStatus}</p>
       ${this.#surface === "terminal"
@@ -1100,7 +1123,7 @@ export class CounterTillApp extends HHElement {
               </div>
               ${this.#chromeMessage === null ? nothing : html`<p class="notice" role="status">${this.#chromeMessage}</p>`}
             `
-          : renderEntry({ flows: this.#flowsState, busy: this.#busy, message: this.#message })}
+          : renderEntry({ flows: entryFlows, busy: this.#busy, message: this.#message })}
       </main>
       <!-- The feedback widget: the shared panel, opened by the bar's Feedback
            button (trigger external: no floating pill, so nothing of the

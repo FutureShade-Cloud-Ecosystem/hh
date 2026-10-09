@@ -77,8 +77,8 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 		return string(raw)
 	}
 
-	// The flow listing: the closed table, two flows, the contract's three
-	// fields, the labels the entry page renders.
+	// The flow listing: the closed table, three flows, the contract's three
+	// fields, the labels the entry pages render.
 	flowsRsp := get("/api/v1/demo/flows", nil)
 	if flowsRsp.StatusCode != http.StatusOK {
 		t.Fatalf("GET /api/v1/demo/flows: status %d, want 200 (body: %s)", flowsRsp.StatusCode, body(flowsRsp))
@@ -93,12 +93,18 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 	if err := json.Unmarshal([]byte(body(flowsRsp)), &listing); err != nil {
 		t.Fatalf("the flows body does not decode: %v", err)
 	}
-	if len(listing.Flows) != 2 {
-		t.Fatalf("the listing carries %d flows, want the closed table's two", len(listing.Flows))
+	if len(listing.Flows) != 3 {
+		t.Fatalf("the listing carries %d flows, want the closed table's three", len(listing.Flows))
 	}
-	if listing.Flows[0].Flow != "sales" || listing.Flows[0].Label != "Sales" ||
-		listing.Flows[1].Flow != "sales-manager" || listing.Flows[1].Label != "Sales manager" {
-		t.Fatalf("the listing is %+v, want the flow table's pair with its own labels", listing.Flows)
+	for i, want := range []struct{ flow, role, label string }{
+		{"sales", "inside_sales", "Sales"},
+		{"sales-manager", "sales_manager", "Sales manager"},
+		{"dispatch", "logistics_manager", "Logistics Manager"},
+	} {
+		if listing.Flows[i].Flow != want.flow || listing.Flows[i].RoleCode != want.role ||
+			listing.Flows[i].Label != want.label {
+			t.Fatalf("listing row %d is %+v, want %q/%q/%q", i, listing.Flows[i], want.flow, want.role, want.label)
+		}
 	}
 
 	// The exit pair: mint the sales flow, read the till's policy with the

@@ -14,9 +14,14 @@
 //     and no others, and the demo database guard holds every ACTIVE user
 //     to the reserved domain.
 //
-// The table is closed: two flows, the pair the Counter Till cycle ships
-// (D49, DECISIONS.md). A new flow is an edit here, reviewed, never a
-// runtime input: the entry page may only ever offer what this file lists.
+// The table is closed: three flows, the pair the Counter Till cycle ships
+// (D49, DECISIONS.md) plus the Logistics Manager the roles roadmap's first
+// Dispatch increment signs in (the login migration 0200 plants and the
+// demo populate converges onto Kingston). The table is the box's whole
+// mint set, not any one page's offer: an entry page renders the flows of
+// the roles whose screens exist there and leaves the rest coming, so a row
+// here mints a login without offering a card for it. A new flow is an edit
+// here, reviewed, never a runtime input.
 package flows
 
 // OrgSlug is the one org a demo box holds and the only org the demo
@@ -67,13 +72,16 @@ type Account struct {
 	Role string
 }
 
-// accounts is the closed table. The platform user ids, the emails and
-// the display names are the populate's rows, reconciled against the
-// populate's pushed branch: the mint's token sub and the membership
-// source's answers must name the users rows the populate creates. The
-// agreement is by copy today (the populate holds its own copies of these
-// values); it becomes by construction when the populate imports this
-// table, a named stitch for the demo image's lane.
+// accounts is the closed table. The Counter Till pair's platform user
+// ids, emails and display names are the populate's rows, reconciled
+// against the populate's pushed branch: the mint's token sub and the
+// membership source's answers must name the users rows the populate
+// creates. The persona row names the login migration 0200 plants: the
+// same id the demoseed resolves by that email, and the display name the
+// populate's renames leave on it. The agreement is by copy today (the
+// populate holds its own copies of these values); it becomes by
+// construction when the populate imports this table, a named stitch for
+// the demo image's lane.
 var accounts = map[string]Account{
 	"sales": {
 		Flow:           "sales",
@@ -91,6 +99,14 @@ var accounts = map[string]Account{
 		Label:          "Sales manager",
 		Role:           "sales_manager",
 	},
+	"dispatch": {
+		Flow:           "dispatch",
+		PlatformUserID: "d0200000-0000-4000-9000-000000000001",
+		Email:          "dispatch.demo@dibbits.example",
+		DisplayName:    "Dispatch persona (demo)",
+		Label:          "Logistics Manager",
+		Role:           "logistics_manager",
+	},
 }
 
 // Get returns the account one flow name stands for. The second return is
@@ -102,11 +118,12 @@ func Get(flow string) (Account, bool) {
 }
 
 // All returns every account in the table, ordered by flow name so the
-// entry page and the populate see one stable order.
+// entry pages and the populate see one stable order.
 func All() []Account {
 	return []Account{
 		accounts["sales"],
 		accounts["sales-manager"],
+		accounts["dispatch"],
 	}
 }
 

@@ -76,15 +76,41 @@ const (
 	salesRoleCode   = "INSIDE_SALES"
 	managerRoleCode = "SALES_MANAGER"
 
+	// The dispatch persona migration 0200 plants, named by the same
+	// literals the flow table carries: the Logistics Manager's login. The
+	// row is the migration's, not this populate's (the id and email are
+	// fixed by 0200, and the demoseed resolves the persona by this email),
+	// so the populate verifies it, links its platform id through the same
+	// directory as the till's accounts, and converges its branch grants;
+	// it never creates it. The display name is the rename this file's
+	// plantedDisplayNames list leaves on the row.
+	dispatchUserID      = "d0200000-0000-4000-9000-000000000001"
+	dispatchEmail       = "dispatch.demo@dibbits.example"
+	dispatchRoleCode    = "LOGISTICS_MANAGER"
+
 	// Trenton, the till's branch (migration 0003's root branch; 0060
 	// cites the same id). Every grant the demo world carries points here.
 	trentonBranchID = "5d1b3f6e-0000-4000-9000-000000000001"
 
 	// Kingston, the seed's second branch (migration 0003's pair, the id
-	// the locations table carries). No demo login reaches it; only the
-	// dealer-name rename below touches its row.
+	// the locations table carries). The dispatch persona's own yard: the
+	// seeded dispatch world's busier branch, where its load board's two
+	// open delivery orders and the driver persona's crewed runs live.
 	kingstonBranchID = "5d1b3f6e-0000-4000-9000-000000000002"
 )
+
+// demoPersonas is the one branch each persona works on the demo box.
+// Migration 0200 grants every BRANCH location so a walkthrough can walk
+// both yards; the demo world narrows the persona to the branch its seeded
+// work sits at, so its login reaches its own branch and nothing more. The
+// dispatch persona's world is Kingston: the roadmap's first Dispatch
+// increment walks the load board there, and the seed's two open delivery
+// orders with requested dates and no stop (the increment's own material)
+// are Kingston's. The yard and driver personas are other lanes' increments
+// and keep 0200's shape until their lanes converge them.
+var demoPersonas = []struct{ userID, email, roleCode, branchID string }{
+	{dispatchUserID, dispatchEmail, dispatchRoleCode, kingstonBranchID},
+}
 
 // The invented card rail values. The merchant id names no real merchant
 // account, the credential is not a key to anything (the wired rail is the
@@ -196,6 +222,8 @@ type Report struct {
 	UsersCreated         int
 	UserRolesCreated     int
 	BranchGrantsCreated  int
+	PersonasConverged    int
+	PersonaGrantsRemoved int
 	DisplayNamesRenamed  int
 	DealerNamesReplaced  int
 	UsersDeactivated     int
@@ -208,10 +236,14 @@ type Report struct {
 }
 
 // staticDirectory is the populate's PlatformDirectory: it answers exactly
-// the two demo role accounts and nothing else. identity.Populate's linkage
+// the two demo role accounts this file creates and the dispatch persona
+// migration 0200 plants, and nothing else. identity.Populate's linkage
 // pass counts every other row as unmatched and leaves it unlinked, never
-// guessed, so the migration-planted rows keep no platform identity on the
-// demo box and derive no staff grants.
+// guessed, so the remaining migration-planted rows keep no platform
+// identity on the demo box and derive no staff grants. The persona's id
+// is its 0200 users row id, the same convention the till's accounts
+// follow (the platform id IS the row id), so the mint's subject names the
+// row the flow table carries.
 type staticDirectory map[string]string
 
 func (d staticDirectory) PlatformUserByEmail(_ context.Context, email string) (string, bool, error) {
@@ -302,6 +334,17 @@ func RunPopulate(ctx context.Context, opt Options) (Report, error) {
 		return report, err
 	}
 
+	// The dispatch persona: verified against 0200's plant, then converged
+	// onto the one branch it works, BEFORE the identity program derives
+	// grants, so the derived grant and the caller's branch reach are the
+	// converged world's.
+	converged, removed, err := convergePersonas(ctx, tx, now)
+	report.PersonasConverged = converged
+	report.PersonaGrantsRemoved = removed
+	if err != nil {
+		return report, err
+	}
+
 	// The migrations' planted rows: display names replaced, the two
 	// real-domain addresses moved to the reserved demo domain and their
 	// rows made inactive, every planted credential cleared, on the demo
@@ -333,13 +376,13 @@ func RunPopulate(ctx context.Context, opt Options) (Report, error) {
 	}
 
 	// The org, the org scope, the platform links for the two role accounts
-	// and the staff grants that derive from them, all through the identity
-	// program itself, so the demo world is provisioned exactly the way a
-	// real dealer's is.
+	// and the dispatch persona, and the staff grants that derive from them,
+	// all through the identity program itself, so the demo world is
+	// provisioned exactly the way a real dealer's is.
 	pop, err := identity.Populate(ctx, tx, identity.PopulateConfig{
 		OrgSlug:   demoOrgSlug,
 		OrgName:   demoOrgName,
-		Directory: staticDirectory{salesEmail: salesPlatformID, managerEmail: managerPlatformID},
+		Directory: staticDirectory{salesEmail: salesPlatformID, managerEmail: managerPlatformID, dispatchEmail: dispatchUserID},
 	})
 	if err != nil {
 		return report, fmt.Errorf("demo-populate: identity populate: %w", err)
@@ -465,6 +508,71 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 		}
 	}
 	return roles, grants, nil
+}
+
+// convergePersonas verifies each persona's planted row and narrows its
+// branch grants onto the one branch it works, on the demo database only.
+// The verify half refuses before any write: a persona the flow table mints
+// whose row or role is missing would be a login that reaches nothing, and
+// that is a refusal, not a world. The converge half tombstones every live
+// grant outside the persona's branch (0200 plants every BRANCH location)
+// and heals a tombstone at its own, each guarded so a re-run writes
+// nothing.
+func convergePersonas(ctx context.Context, tx pgx.Tx, now time.Time) (converged, removed int, err error) {
+	for _, p := range demoPersonas {
+		var status string
+		if err := tx.QueryRow(ctx,
+			`SELECT status FROM users WHERE id = $1::uuid`, p.userID).Scan(&status); err != nil {
+			return 0, 0, fmt.Errorf("demo-populate: persona %s: %w", p.email, err)
+		}
+		if status != "ACTIVE" {
+			return 0, 0, fmt.Errorf("demo-populate: refusing: the persona %s carries status %s, the demo world plants it ACTIVE", p.email, status)
+		}
+		var roles int
+		if err := tx.QueryRow(ctx, `
+			SELECT count(*) FROM user_roles ur
+			  JOIN roles r ON r.id = ur.role_id
+			 WHERE ur.user_id = $1::uuid AND r.code = $2 AND ur.deleted_at IS NULL`,
+			p.userID, p.roleCode).Scan(&roles); err != nil {
+			return 0, 0, fmt.Errorf("demo-populate: persona role verify: %w", err)
+		}
+		if roles == 0 {
+			return 0, 0, fmt.Errorf("demo-populate: refusing: the persona %s holds no live %s row, its login would reach nothing", p.email, p.roleCode)
+		}
+		tag, err := tx.Exec(ctx, `
+			UPDATE user_branch_grants SET deleted_at = $3
+			 WHERE user_id = $1::uuid AND deleted_at IS NULL AND branch_id <> $2::uuid`,
+			p.userID, p.branchID, now)
+		if err != nil {
+			return 0, 0, fmt.Errorf("demo-populate: persona branch grants: %w", err)
+		}
+		removed += int(tag.RowsAffected())
+		tag, err = tx.Exec(ctx, `
+			INSERT INTO user_branch_grants (user_id, branch_id)
+			SELECT $1::uuid, l.id FROM locations l WHERE l.id = $2::uuid
+			ON CONFLICT (user_id, branch_id) DO UPDATE SET deleted_at = NULL
+			WHERE user_branch_grants.deleted_at IS NOT NULL`,
+			p.userID, p.branchID)
+		if err != nil {
+			return 0, 0, fmt.Errorf("demo-populate: persona branch grant heal: %w", err)
+		}
+		if tag.RowsAffected() > 0 {
+			converged++
+		}
+		// The verify half, whatever this run wrote: exactly one live grant,
+		// at the persona's own branch.
+		var live, atOwn int
+		if err := tx.QueryRow(ctx, `
+			SELECT count(*), count(*) FILTER (WHERE branch_id = $2::uuid)
+			  FROM user_branch_grants WHERE user_id = $1::uuid AND deleted_at IS NULL`,
+			p.userID, p.branchID).Scan(&live, &atOwn); err != nil {
+			return 0, 0, fmt.Errorf("demo-populate: persona branch grant verify: %w", err)
+		}
+		if live != 1 || atOwn != 1 {
+			return 0, 0, fmt.Errorf("demo-populate: refusing: the persona %s holds %d live branch grant(s) (%d at its own), the demo world works one branch", p.email, live, atOwn)
+		}
+	}
+	return converged, removed, nil
 }
 
 // scrubPlantedUsers rewrites the planted rows on the demo database only:
@@ -655,6 +763,8 @@ func writeReport(out io.Writer, r Report) {
 	fmt.Fprintf(out, "  org              %s (inserted: %v)\n", demoOrgSlug, r.OrgInserted)
 	fmt.Fprintf(out, "  role accounts    %d created, %d role rows, %d branch grants at %s\n",
 		r.UsersCreated, r.UserRolesCreated, r.BranchGrantsCreated, trentonBranchID)
+	fmt.Fprintf(out, "  personas         %d converged, %d branch grants outside their own removed\n",
+		r.PersonasConverged, r.PersonaGrantsRemoved)
 	fmt.Fprintf(out, "  planted rows     %d display names replaced, %d deactivated, %d addresses moved to %s, %d planted credentials cleared\n",
 		r.DisplayNamesRenamed, r.UsersDeactivated, r.EmailsMoved, demoDomain, r.CredentialsCleared)
 	fmt.Fprintf(out, "  dealer names     %d replaced with the invented trading name\n", r.DealerNamesReplaced)
@@ -669,6 +779,7 @@ func writeReport(out io.Writer, r Report) {
 
 func (r Report) createdNothing() bool {
 	return r.UsersCreated == 0 && r.UserRolesCreated == 0 && r.BranchGrantsCreated == 0 &&
+		r.PersonasConverged == 0 && r.PersonaGrantsRemoved == 0 &&
 		r.DisplayNamesRenamed == 0 && r.DealerNamesReplaced == 0 &&
 		r.UsersDeactivated == 0 && r.EmailsMoved == 0 &&
 		r.CredentialsCleared == 0 &&

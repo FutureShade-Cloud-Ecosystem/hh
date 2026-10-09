@@ -702,6 +702,64 @@ func TestPlan_TheDriverPersonaOwnsAWalkableDay(t *testing.T) {
 	}
 }
 
+// TestPlan_TheLogisticsManagerOwnsLoadBoardMaterial. The roadmap's first Dispatch increment (2.4)
+// walks the Logistics Manager onto the load board and has it build a load from the open orders, so
+// the demo world owes that role OPEN DELIVERY ORDERS WITH REQUESTED DATES AND NO STOP at its own
+// branch: an order already on a stop is a load somebody else already built, and an order with no
+// requested date is a promise with no date to commit against. Two is the walk's minimum, one to
+// commit and one to leave on the board, and the requested dates sit inside the commit-prompt window
+// (today or tomorrow) so the board the persona lands on is due to commit the moment it signs in.
+//
+// The branch is Kingston, branch 0 by code order (resolveBranches): the seeded dispatch world's
+// busier yard, where the driver persona's own D1 and today's planned crewed run live, so the two
+// orders and the demo populate's convergence of the dispatch persona onto Kingston (PR 274's
+// pattern) name the same yard.
+func TestPlan_TheLogisticsManagerOwnsLoadBoardMaterial(t *testing.T) {
+	in := testInput(t)
+	rows, _, err := buildPlan(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	onAStop := map[string]bool{}
+	for _, r := range rows {
+		if r.table != "delivery_stops" {
+			continue
+		}
+		f := fieldMap(r)
+		if oid, _ := f["order_id"].(string); oid != "" {
+			onAStop[oid] = true
+		}
+	}
+	material := 0
+	for _, r := range rows {
+		if r.table != "orders" {
+			continue
+		}
+		f := fieldMap(r)
+		if f["branch_id"] != in.Branches[0].ID || f["status"] != "CONFIRMED" || f["fulfillment"] != "DELIVERY" {
+			continue
+		}
+		if onAStop[f["id"].(string)] {
+			continue
+		}
+		req, ok := f["requested_date"].(time.Time)
+		if !ok {
+			t.Fatalf("order %v carries no requested_date, the load board has no date to commit against", f["order_no"])
+		}
+		days := req.UTC().Format("2006-01-02")
+		today := in.Now.UTC().Format("2006-01-02")
+		tomorrow := in.Now.UTC().AddDate(0, 0, 1).Format("2006-01-02")
+		if days != today && days != tomorrow {
+			t.Errorf("open delivery order %v is requested for %s, outside the commit-prompt window (%s, %s)",
+				f["order_no"], days, today, tomorrow)
+		}
+		material++
+	}
+	if material < 2 {
+		t.Fatalf("the Kingston load board holds %d open delivery orders with requested dates and no stop, the increment's walk needs two", material)
+	}
+}
+
 // TestPlan_EveryClaimedTaskNamesWhoClaimedIt. 0073 gave tasks a claimed_at AND a claimed_by, and
 // this seed used to write only the first, nine tasks stamped "somebody took this" with nobody on
 // them. The predicate here is deliberately the same status-independent one build.go and migration

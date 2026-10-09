@@ -300,11 +300,11 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 		counts.UserBranchGrantsUnstampedOrg != 0 || counts.PortalUsersUnstampedTenant != 0 {
 		t.Errorf("the org scope did not stamp clean: %+v", counts)
 	}
-	if counts.UsersLinked != 2 || counts.UsersUnlinked != 10 {
-		t.Errorf("linked %d / unlinked %d users, want the 2 demo role accounts linked and the 10 planted rows unlinked", counts.UsersLinked, counts.UsersUnlinked)
+	if counts.UsersLinked != 3 || counts.UsersUnlinked != 9 {
+		t.Errorf("linked %d / unlinked %d users, want the 2 demo role accounts and the dispatch persona linked and the 9 planted rows unlinked", counts.UsersLinked, counts.UsersUnlinked)
 	}
-	if counts.StaffGrants != 2 || counts.StaffGrantsBranch != 2 || counts.StaffGrantsGlobal != 0 {
-		t.Errorf("staff grants %d (branch %d, global %d), want the two role accounts' Trenton grants only", counts.StaffGrants, counts.StaffGrantsBranch, counts.StaffGrantsGlobal)
+	if counts.StaffGrants != 3 || counts.StaffGrantsBranch != 3 || counts.StaffGrantsGlobal != 0 {
+		t.Errorf("staff grants %d (branch %d, global %d), want the three linked accounts' one-branch grants only", counts.StaffGrants, counts.StaffGrantsBranch, counts.StaffGrantsGlobal)
 	}
 	if counts.StaffGrantShapeViolations != 0 || counts.StaffGrantsUnlinked != 0 {
 		t.Errorf("grant shape or linkage defects: %+v", counts)
@@ -327,8 +327,24 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	}
 
 	// The two role accounts are exactly as the demo sign-in will resolve them.
-	assertRoleAccount(t, ctx, pool, salesUserID, salesEmail, salesDisplayName, "INSIDE_SALES")
-	assertRoleAccount(t, ctx, pool, managerUserID, managerEmail, managerDisplayName, "SALES_MANAGER")
+	assertRoleAccount(t, ctx, pool, salesUserID, salesEmail, salesDisplayName, "INSIDE_SALES", trentonBranchID)
+	assertRoleAccount(t, ctx, pool, managerUserID, managerEmail, managerDisplayName, "SALES_MANAGER", trentonBranchID)
+
+	// The dispatch persona: it holds its role, its platform link and exactly
+	// one live branch grant, at Kingston, its own yard. 0200 granted every
+	// branch; the populate converges the demo box onto the one branch the
+	// persona works, where the seed's load board material sits.
+	assertRoleAccount(t, ctx, pool, dispatchUserID, dispatchEmail, "Dispatch persona (demo)", "LOGISTICS_MANAGER", kingstonBranchID)
+	var live, atOwn int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*), count(*) FILTER (WHERE branch_id = $2::uuid)
+		  FROM user_branch_grants WHERE user_id = $1::uuid AND deleted_at IS NULL`,
+		dispatchUserID, kingstonBranchID).Scan(&live, &atOwn); err != nil {
+		t.Fatalf("dispatch persona branch grants: %v", err)
+	}
+	if live != 1 || atOwn != 1 {
+		t.Errorf("the dispatch persona holds %d live branch grant(s) (%d at its own), want exactly Kingston", live, atOwn)
+	}
 
 	// The real-domain planted rows are inactive, renamed, re-addressed on
 	// the reserved demo domain and carry no credential.
@@ -471,7 +487,7 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	}
 }
 
-func assertRoleAccount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID, email, display, roleCode string) {
+func assertRoleAccount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID, email, display, roleCode, branchID string) {
 	t.Helper()
 	var status string
 	var platformID *string
@@ -502,7 +518,7 @@ func assertRoleAccount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, us
 		t.Errorf("role account id %s carries email %q, want %q", userID, gotEmail, email)
 	}
 	// The grant resolves: one live staff_role_grant, the account's own role,
-	// in the demo org, branch-scoped to Trenton.
+	// in the demo org, branch-scoped to its one branch.
 	var gotRole string
 	var gotBranch *string
 	err := pool.QueryRow(ctx, `
@@ -514,8 +530,8 @@ func assertRoleAccount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, us
 	if err != nil {
 		t.Fatalf("role account %s resolves no staff grant: %v", email, err)
 	}
-	if gotRole != roleCode || gotBranch == nil || *gotBranch != trentonBranchID {
-		t.Errorf("role account %s resolves role %s at branch %v, want %s at %s", email, gotRole, gotBranch, roleCode, trentonBranchID)
+	if gotRole != roleCode || gotBranch == nil || *gotBranch != branchID {
+		t.Errorf("role account %s resolves role %s at branch %v, want %s at %s", email, gotRole, gotBranch, roleCode, branchID)
 	}
 }
 
