@@ -32,10 +32,16 @@ paths:
       description: >-
         The caller becomes the channel's owner. A replay with the same slug
         (or the slug derived from the same name) answers 200 with the
-        existing channel, never a duplicate room. A channel naming a branch
-        the caller does not reach is refused with 403; BRANCH, DM and
-        APPROVAL kinds are structural or system-provisioned and are refused
-        with 400.
+        existing channel, never a duplicate room, and only for a caller who
+        already holds a row in that room (the founder, a derived member):
+        a name or slug collision with any other room is refused with 409
+        and seats nobody, the branch wall reads the existing room's own
+        branch (403), and a room of another kind (a DM, an APPROVAL or
+        BRANCH room) is never answered here. Slugs in the system namespaces
+        (dm-, rep-, approvals-, chosen or derived) are refused with 400. A
+        channel naming a branch the caller does not reach is refused with
+        403; BRANCH, DM and APPROVAL kinds are structural or
+        system-provisioned and are refused with 400.
       x-role: requireStaff
       x-access:
         surfaces: [house-messages]
@@ -50,7 +56,7 @@ paths:
               $ref: "#/components/schemas/MessagingChannelCreate"
       responses:
         "200":
-          description: The channel already existed (the idempotent replay)
+          description: The channel already existed and the caller is already in it (the idempotent replay)
           content:
             application/json:
               schema:
@@ -65,6 +71,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
   /api/v1/messaging/dms:
     post:
@@ -74,8 +81,11 @@ paths:
       description: >-
         The pair's channel is found when it exists (whoever opened it,
         including a seeded pair) and created exactly once otherwise; a replay
-        answers 200 with the same room. Naming the caller's own id is 400; a
-        user who is not an active staffer is 404.
+        answers 200 with the same room. A direct message is reached only
+        through this route: its slug namespace is closed to caller founded
+        rooms, and a slug of the pair already held by a room of another kind
+        is refused with 409 rather than converged on. Naming the caller's
+        own id is 400; a user who is not an active staffer is 404.
       x-role: requireStaff
       x-access:
         surfaces: [house-messages]
@@ -105,6 +115,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
   /api/v1/messaging/channels/{id}/members:
     post:

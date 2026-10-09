@@ -45,6 +45,7 @@ type adminStore struct {
 	*fakeStore
 	createdChannels []Channel
 	dmChannels      map[string]Channel // sorted "a|b" pair -> channel
+	rooms           map[string]Channel // slug -> the room that holds it
 	addedMembers    []string           // "channelID|userID"
 	removedMembers  []string           // "channelID|userID"
 	derivedMembers  map[string]bool    // "channelID|userID" -> removal refuses
@@ -56,6 +57,7 @@ func newAdminStore() *adminStore {
 	return &adminStore{
 		fakeStore:      newFakeStore(),
 		dmChannels:     map[string]Channel{},
+		rooms:          map[string]Channel{},
 		derivedMembers: map[string]bool{},
 		activeUsers: map[string]bool{
 			rtCaller: true,
@@ -64,16 +66,25 @@ func newAdminStore() *adminStore {
 	}
 }
 
+// plantRoom seeds the double with a room the tests did not found through
+// the routes (a seeded room, a DM), the shape the repository would hold.
+func (f *adminStore) plantRoom(c Channel, memberIDs ...string) {
+	f.rooms[c.Slug] = c
+	f.exists[c.ID] = true
+	for _, id := range memberIDs {
+		f.setMember(c.ID, id)
+	}
+}
+
 func (f *adminStore) CreateChannel(_ context.Context, in CreateChannelInput, ownerID string) (Channel, bool, error) {
 	if in.Slug == "" {
 		in.Slug = sanitizeSlugPart(in.Name)
 	}
-	if id, ok := f.slugs[in.Slug]; ok {
-		for _, c := range f.createdChannels {
-			if c.ID == id {
-				return c, false, nil
-			}
-		}
+	// The convergence the repository's slug index carries: a slug that
+	// already holds a room answers that room (created false), and the
+	// double, like the repository, writes nothing on that arm.
+	if c, ok := f.rooms[in.Slug]; ok {
+		return c, false, nil
 	}
 	// A UUID id: the handler validates {id} at the boundary, so the double
 	// must mint what the repository would.
@@ -81,6 +92,7 @@ func (f *adminStore) CreateChannel(_ context.Context, in CreateChannelInput, own
 	c := Channel{ID: fmt.Sprintf("e1000000-0000-4000-9000-%012d", f.channelSeq), Kind: in.Kind,
 		BranchID: in.BranchID, Slug: in.Slug, Name: in.Name, Topic: in.Topic, Tier: TierStandard}
 	f.createdChannels = append(f.createdChannels, c)
+	f.rooms[in.Slug] = c
 	f.slugs[in.Slug] = c.ID
 	f.setMember(c.ID, ownerID)
 	return c, true, nil
@@ -100,8 +112,11 @@ func (f *adminStore) CreateDM(_ context.Context, aUserID, bUserID string) (Chann
 	if c, ok := f.dmChannels[dmPairKey(aUserID, bUserID)]; ok {
 		return c, false, nil
 	}
-	c := Channel{ID: "dm-" + dmPairKey(aUserID, bUserID), Kind: KindDM, Name: "DM", Tier: TierStandard}
+	c := Channel{ID: "dm-" + dmPairKey(aUserID, bUserID), Kind: KindDM, Name: "DM", Slug: dmPairSlug(aUserID, bUserID), Tier: TierStandard}
 	f.dmChannels[dmPairKey(aUserID, bUserID)] = c
+	if c.Slug != "" {
+		f.rooms[c.Slug] = c
+	}
 	f.setMember(c.ID, aUserID)
 	f.setMember(c.ID, bUserID)
 	return c, true, nil

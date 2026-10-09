@@ -762,6 +762,10 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.Error(w, http.StatusBadRequest, "kind must be one of TEAM, TOPIC")
 	case errors.Is(err, ErrChannelNameRequired):
 		httpx.Error(w, http.StatusBadRequest, "channel name is required")
+	case errors.Is(err, ErrReservedSlug):
+		httpx.Error(w, http.StatusBadRequest, "that slug prefix is reserved for system channels")
+	case errors.Is(err, ErrChannelSlugTaken):
+		httpx.Error(w, http.StatusConflict, "a channel with that name or slug already exists")
 	case errors.Is(err, ErrNotInBranch):
 		httpx.Error(w, http.StatusForbidden, "caller does not reach this branch")
 	case errors.Is(err, ErrBadDMTarget):

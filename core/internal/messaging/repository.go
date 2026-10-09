@@ -907,10 +907,14 @@ func (r *Repository) userActive(ctx context.Context, userID string) error {
 
 // CreateChannel inserts one caller-founded channel idempotently: the slug's
 // unique index is the convergence point, so a second founding of the same
-// room returns the existing row (created false). DO UPDATE (not DO NOTHING)
-// keeps RETURNING answering on both arms, and xmax = 0 is the insert marker.
-// The founder is seated as OWNER, EXPLICIT, so the derived prune never drops
-// them out of their own room.
+// room reports the existing row (created false). On the conflict arm
+// NOTHING is written: no seat (nobody is ever seated as owner of an
+// existing channel), and not even the updated_at touch the old DO UPDATE
+// arm made on a row the caller does not own. The room is reported as it
+// stands and the SERVICE runs the walls (kind, branch, membership) that
+// decide whether it is answered or refused; this method only converges.
+// The founder is seated as OWNER, EXPLICIT, on the fresh arm alone, so the
+// derived prune never drops them out of their own room.
 func (r *Repository) CreateChannel(ctx context.Context, in CreateChannelInput, ownerUserID string) (Channel, bool, error) {
 	if r.pool == nil {
 		return Channel{}, false, errNoDB
@@ -934,15 +938,29 @@ func (r *Repository) CreateChannel(ctx context.Context, in CreateChannelInput, o
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var c Channel
-	var created bool
-	if err := tx.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		INSERT INTO msg_channels (kind, branch_id, slug, name, topic, tier)
 		VALUES ($1, NULLIF($2,'')::uuid, $3, $4, $5, 'STANDARD')
-		ON CONFLICT (slug) DO UPDATE SET updated_at = now()
-		RETURNING `+channelCols+`, (xmax = 0)`,
+		ON CONFLICT (slug) DO NOTHING
+		RETURNING `+channelCols,
 		in.Kind, in.BranchID, in.Slug, in.Name, in.Topic).
 		Scan(&c.ID, &c.Kind, &c.BranchID, &c.Slug, &c.Name, &c.Topic, &c.Tier,
-			&c.IsArchived, &c.CreatedAt, &created); err != nil {
+			&c.IsArchived, &c.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// The slug already holds a room (a row returned by DO NOTHING is
+		// always a fresh insert, so no row means the conflict arm). Report
+		// the room as it stands; the walls live in the service.
+		existing, cerr := scanChannel(tx.QueryRow(ctx,
+			`SELECT `+channelCols+` FROM msg_channels WHERE slug = $1`, in.Slug))
+		if cerr != nil {
+			if errors.Is(cerr, pgx.ErrNoRows) {
+				return Channel{}, false, errNotFound // the conflicting row vanished mid-flight
+			}
+			return Channel{}, false, fmt.Errorf("load conflicting channel: %w", cerr)
+		}
+		return existing, false, nil
+	}
+	if err != nil {
 		return Channel{}, false, fmt.Errorf("create channel: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
@@ -954,7 +972,7 @@ func (r *Repository) CreateChannel(ctx context.Context, in CreateChannelInput, o
 	if err := tx.Commit(ctx); err != nil {
 		return Channel{}, false, err
 	}
-	return c, created, nil
+	return c, true, nil
 }
 
 // dmPairSlug is the STABLE, PAIR-UNIQUE handle for a direct message channel
@@ -972,7 +990,9 @@ func dmPairSlug(aUserID, bUserID string) string {
 // seeded one, whose slug is NULL) or creates it exactly once, seating both
 // parties EXPLICIT. The pre-lookup covers the seeded NULL-slug pairs; the
 // deterministic slug's unique index is the race backstop (two simultaneous
-// openings converge on one row).
+// openings converge on one row). The conflict arm never touches the row it
+// lands on (no updated_at write), refuses a slug squatted by a room of
+// another kind, and seats only the pair the slug itself names.
 func (r *Repository) CreateDM(ctx context.Context, aUserID, bUserID string) (Channel, bool, error) {
 	if r.pool == nil {
 		return Channel{}, false, errNoDB
@@ -1020,15 +1040,43 @@ func (r *Repository) CreateDM(ctx context.Context, aUserID, bUserID string) (Cha
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var c Channel
-	var created bool
-	if err := tx.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		INSERT INTO msg_channels (kind, slug, name, topic, tier)
 		VALUES ('DM', $1, $2, '', 'STANDARD')
-		ON CONFLICT (slug) DO UPDATE SET updated_at = now()
-		RETURNING `+channelCols+`, (xmax = 0)`,
+		ON CONFLICT (slug) DO NOTHING
+		RETURNING `+channelCols,
 		dmPairSlug(aUserID, bUserID), aName+", "+bName).
 		Scan(&c.ID, &c.Kind, &c.BranchID, &c.Slug, &c.Name, &c.Topic, &c.Tier,
-			&c.IsArchived, &c.CreatedAt, &created); err != nil {
+			&c.IsArchived, &c.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// The pair's slug already holds a row (only a committed row can
+		// hold it, so it is visible here). A room of another kind squatting
+		// the DM namespace is refused, never converged on; a DM row is the
+		// pair's own room and is answered with both parties reseated (the
+		// seat upsert cannot name anyone the slug does not).
+		existing, cerr := scanChannel(tx.QueryRow(ctx,
+			`SELECT `+channelCols+` FROM msg_channels WHERE slug = $1`, dmPairSlug(aUserID, bUserID)))
+		if cerr != nil {
+			if errors.Is(cerr, pgx.ErrNoRows) {
+				return Channel{}, false, errNotFound // the conflicting row vanished mid-flight
+			}
+			return Channel{}, false, fmt.Errorf("load pair dm by slug: %w", cerr)
+		}
+		if existing.Kind != KindDM {
+			return Channel{}, false, ErrChannelSlugTaken
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO msg_members (channel_id, user_id, role, source)
+			VALUES ($1, $2, 'OWNER', 'EXPLICIT'), ($1, $3, 'MEMBER', 'EXPLICIT')
+			ON CONFLICT (channel_id, user_id) DO NOTHING`, existing.ID, aUserID, bUserID); err != nil {
+			return Channel{}, false, fmt.Errorf("seat dm parties: %w", err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return Channel{}, false, err
+		}
+		return existing, false, nil
+	}
+	if err != nil {
 		return Channel{}, false, fmt.Errorf("create dm: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
@@ -1040,7 +1088,7 @@ func (r *Repository) CreateDM(ctx context.Context, aUserID, bUserID string) (Cha
 	if err := tx.Commit(ctx); err != nil {
 		return Channel{}, false, err
 	}
-	return c, created, nil
+	return c, true, nil
 }
 
 // AddChannelMember seats one staff member EXPLICIT in a channel

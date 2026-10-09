@@ -11,6 +11,7 @@ package messaging
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -96,6 +97,27 @@ func sanitizeSlugPart(s string) string {
 		out = out[:len(out)-1]
 	}
 	return string(out)
+}
+
+// reservedChannelSlugPrefixes are the system namespaces no caller founded
+// room may enter: the DM pair slugs (dm-<a>-<b>), the rep customer-message
+// channels (rep-...) and the approvals rail's per-approver channels
+// (approvals-...). A caller founded room that squatted one of them would
+// capture the next system provision that converges on the same slug, so a
+// slug arriving there (chosen or derived from the name) is refused before
+// the insert runs. The cost is honest: a room whose name happens to derive
+// into the namespace ("DM guidelines") is told to pick another name.
+var reservedChannelSlugPrefixes = []string{"dm-", "rep-", "approvals-"}
+
+// isReservedChannelSlug reports whether the slug lands in one of the system
+// namespaces reservedChannelSlugPrefixes names.
+func isReservedChannelSlug(slug string) bool {
+	for _, p := range reservedChannelSlugPrefixes {
+		if strings.HasPrefix(slug, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // Membership sources.

@@ -20,6 +20,7 @@ type fakeStore struct {
 	threads   map[string][]Message       // "channelID|rootID" -> replies (channel-bound, mirrors the SQL guard)
 	unread    map[string]UnreadCounts    // userID -> summary
 	slugs     map[string]string          // slug -> channelID
+	roomsBySlug map[string]Channel       // slug -> the room that holds it (the convergence the slug index carries)
 	yard      map[string]string          // branchID -> slug
 	syncErr   error
 	inserted  []Message       // messages posted via InsertMessage
@@ -46,19 +47,20 @@ type fakeStore struct {
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		members:  map[string]map[string]bool{},
-		exists:   map[string]bool{},
-		channels: map[string][]Channel{},
-		messages: map[string]MessagePage{},
-		threads:  map[string][]Message{},
-		unread:   map[string]UnreadCounts{},
-		slugs:    map[string]string{},
-		yard:     map[string]string{},
-		eventDup: map[string]bool{},
-		prefs:    map[string]NotificationPrefs{},
-		tiers:    map[string]string{},
-		acks:     map[string]Ack{},
-		unacked:  map[string][]Message{},
+		members:     map[string]map[string]bool{},
+		exists:      map[string]bool{},
+		channels:    map[string][]Channel{},
+		messages:    map[string]MessagePage{},
+		threads:     map[string][]Message{},
+		unread:      map[string]UnreadCounts{},
+		slugs:       map[string]string{},
+		roomsBySlug: map[string]Channel{},
+		yard:        map[string]string{},
+		eventDup:    map[string]bool{},
+		prefs:       map[string]NotificationPrefs{},
+		tiers:       map[string]string{},
+		acks:        map[string]Ack{},
+		unacked:     map[string][]Message{},
 	}
 }
 
@@ -237,14 +239,18 @@ func (f *fakeStore) CreateChannel(_ context.Context, in CreateChannelInput, owne
 	if in.Slug == "" {
 		in.Slug = sanitizeSlugPart(in.Name)
 	}
-	if id, ok := f.slugs[in.Slug]; ok {
-		_ = id
-		return Channel{ID: id, Kind: in.Kind, Slug: in.Slug, Name: in.Name}, false, nil
+	// The convergence the repository's slug index carries: the conflict arm
+	// answers the room as it stands (its own kind and branch) and writes
+	// nothing, no seat; only the fresh arm seats the founder.
+	if c, ok := f.roomsBySlug[in.Slug]; ok {
+		return c, false, nil
 	}
 	id := "ch-" + in.Slug
+	c := Channel{ID: id, Kind: in.Kind, BranchID: in.BranchID, Slug: in.Slug, Name: in.Name}
+	f.roomsBySlug[in.Slug] = c
 	f.slugs[in.Slug] = id
 	f.setMember(id, ownerID)
-	return Channel{ID: id, Kind: in.Kind, BranchID: in.BranchID, Slug: in.Slug, Name: in.Name}, true, nil
+	return c, true, nil
 }
 
 func (f *fakeStore) CreateDM(_ context.Context, aUserID, bUserID string) (Channel, bool, error) {
