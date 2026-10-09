@@ -541,7 +541,9 @@ async function handle(req, res) {
   }
 
   if (req.method === "GET" && path === "/api/v1/purchasing/receiving") {
-    return json(res, { items: world.receiving, next_cursor: null, limit: 50 });
+    // The empty dock: a branch where every order landed everything ordered.
+    const items = scenario === "no-differences" ? [] : world.receiving;
+    return json(res, { items, next_cursor: null, limit: 50 });
   }
 
   if (req.method === "GET" && path === "/api/v1/staff/approvals") {
