@@ -405,7 +405,15 @@ function yardNeeds() {
 }
 
 function needsFor(flow) {
-  if (flow !== "yard-manager") return world.needsByProfile["manager.sales"];
+  if (flow !== "yard-manager") {
+    // Recomputed per read, the way the core recounts: the approvals row is
+    // what is still pending for a caller who decides it.
+    const pending = world.approvals.filter((a) => a.status === "PENDING").length;
+    const rows = pending > 0 ? world.needsByProfile["manager.sales"].rows.map((row) => ({ ...row, count: pending })) : [];
+    const total = pending > 0 ? pending : 0;
+    const worst = pending > 0 ? "watch" : "good";
+    return { profile: "manager.sales", rows, total, worst };
+  }
   return yardNeeds();
 }
 
@@ -541,7 +549,12 @@ async function handle(req, res) {
     if (kind !== "") {
       const known = ["MARGIN_BELOW_MINIMUM", "CREDIT_LIMIT_EXCEEDED", "COD_CONSTRAINT", "JE_OVER_THRESHOLD", "FREIGHT_ABOVE_QUOTE"];
       if (!known.includes(kind)) return refuse(res, 400, "unknown approval kind");
-      if (!decidesMargin(flow)) return refuse(res, 403, `you do not decide ${kind} approvals`);
+      // The matrix's lists: only margin carries an in-branch arm (a sales
+      // manager clears a salesperson's floor in their own branch); every
+      // other kind is leadership's alone.
+      if (kind !== "MARGIN_BELOW_MINIMUM" || !decidesMargin(flow)) {
+        return refuse(res, 403, `you do not decide ${kind} approvals`);
+      }
     }
     const status = url.searchParams.get("status") ?? "";
     const items = world.approvals.filter(

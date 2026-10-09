@@ -318,6 +318,31 @@ export const homeStyles = css`
     color: var(--hh-text-dim);
   }
 
+  /* -- the views' links ------------------------------------------------------------------------------ */
+
+  /* The landing's own way into its three views. The needs rows link into them when their counts
+     are live, but a manager whose queue is empty still reaches the approvals surface: the links
+     are the floor, the rows are the highlight. */
+  .view-links {
+    display: flex;
+    gap: var(--hh-s-4);
+    flex-wrap: wrap;
+    margin: var(--hh-s-8) 0 0;
+    padding: 0;
+  }
+  .view-link {
+    min-height: 40px;
+    padding: 0 var(--hh-s-4);
+    border-radius: var(--hh-radius-pill);
+    border: 1px solid var(--hh-line);
+    background: var(--hh-card);
+    font-size: var(--hh-s-16);
+    cursor: pointer;
+  }
+  .view-link:hover {
+    border-color: var(--brand-fill);
+  }
+
   /* -- the views' lists ----------------------------------------------------------------- */
 
   .sheet {

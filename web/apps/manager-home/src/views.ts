@@ -63,6 +63,11 @@ export function renderLanding(model: LandingModel): TemplateResult {
     <div class="bento">
       ${model.widgets.filter((w) => w.visible).map((w, index) => renderWidget(w, model.data.get(w.widget_key), model.needs, index))}
     </div>
+    <nav class="view-links" aria-label="Views">
+      <button type="button" class="view-link" data-action="open-view" data-view="shortages">${VIEW_TITLE.shortages}</button>
+      <button type="button" class="view-link" data-action="open-view" data-view="receiving">${VIEW_TITLE.receiving}</button>
+      <button type="button" class="view-link" data-action="open-view" data-view="approvals">${VIEW_TITLE.approvals}</button>
+    </nav>
     ${UNSOURCED_TILES.length > 0
       ? html`${UNSOURCED_TILES.map((t) => html`<p class="who-may">${t.title}: ${t.words}</p>`)}`
       : nothing}
