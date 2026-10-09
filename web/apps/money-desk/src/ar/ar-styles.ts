@@ -33,7 +33,8 @@ export const arStyles = css`
   .dimrow td { color: var(--hh-text-dim); }
   .foot-row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--hh-s-8) var(--hh-s-16); margin-top: var(--hh-s-12); }
   .foot-row p { margin: 0; }
-  .callout { background: var(--hh-quote-tint); border: 1px solid var(--hh-state-watch); border-radius: var(--hh-radius-control); padding: var(--hh-s-12) var(--hh-s-16); margin: var(--hh-s-12) 0; }
+  .hint { color: var(--hh-state-stop); font-weight: 600; font-size: 13px; }
+  .callout { background: color-mix(in srgb, var(--hh-state-watch) 14%, var(--hh-card)); border: 1px solid var(--hh-state-watch); border-radius: var(--hh-radius-control); padding: var(--hh-s-12) var(--hh-s-16); margin: var(--hh-s-12) 0; }
   .ghost { height: 44px; margin-top: var(--hh-s-12); border-radius: var(--hh-radius-control); background: var(--hh-row-alt); }
   .held-form { border: 0; padding: 0; margin: var(--hh-s-12) 0; display: grid; gap: var(--hh-s-12); min-width: 0; }
   .blocks { margin: 0; padding-inline-start: var(--hh-s-20); color: var(--hh-text-dim); }

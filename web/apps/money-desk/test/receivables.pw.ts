@@ -115,7 +115,9 @@ test("a payment that cannot be posted is stopped in words, and the server's refu
   await page.getByRole("checkbox", { name: "Pay INV-1002" }).click();
   await page.locator("[data-field='receive-amount']").fill("960.01");
   await expect(page.locator("[data-preview-error]")).toHaveText("The payment is more than the selected invoices can take.");
-  await expect(page.locator("[data-applied]")).toHaveText("$0.00 of $0.00");
+  await expect(page.locator("[data-applied]")).toHaveText("Nothing to apply yet");
+  await page.locator("[data-field='receive-amount']").fill("abc");
+  await expect(page.locator("[data-amount-hint]")).toHaveText("Enter dollars and cents, such as $100.00.");
 });
 
 test("a paid invoice stays for context, dimmed, and takes nothing", async ({ page, request }) => {
@@ -123,6 +125,7 @@ test("a paid invoice stays for context, dimmed, and takes nothing", async ({ pag
   await openAccount(page, "Granite Edge Landscaping (demo)");
   const paid = page.locator("[data-invoice-row]", { hasText: "INV-1010" });
   await expect(paid).toBeVisible();
+  await expect(page.locator("[data-invoice-row]").last()).toContainText("INV-1010");
   await expect(paid).toContainText("paid");
   await expect(paid.getByRole("checkbox")).toHaveCount(0);
 });
@@ -261,7 +264,6 @@ test("the statement: none yet, run it, read the aging strip, send it; PDF reads 
   await page.getByRole("button", { name: "Run a statement" }).click();
   await expect(page.locator("[data-closing]")).toContainText("$623.00");
   await expect(page.locator("[data-statement]")).toContainText("As of today");
-  await expect(page.locator("[data-statement-limits]")).toContainText("does not carry the dealer's name");
   await expect(page.locator("[data-statement]")).toContainText("1 to 30");
   await page.getByRole("button", { name: "Send to the AP contact" }).click();
   await expect(page.locator("[data-notice]")).toContainText("Statement queued to the AP contact");

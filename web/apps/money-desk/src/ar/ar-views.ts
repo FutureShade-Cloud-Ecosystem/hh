@@ -30,7 +30,7 @@ import type {
 } from "@hardscapehouse/api-client";
 import type { ApplyAnswer } from "./ar-api.js";
 import { cardRange, cardTitle, holdKindWord, holdMarks, lineWords, relativeDay, rowMarks, type Mark } from "./ar-logic.js";
-import { formatMoney } from "./ar-money.js";
+import { formatMoney, parseAmountToCents } from "./ar-money.js";
 
 export type Tab = "receivables" | "statements" | "holds";
 export type RegisterFilter = "open" | "overdue" | "promised" | "disputed" | "paid";
@@ -231,7 +231,7 @@ function registerRowView(model: DeskModel, r: BillingRegisterRow): TemplateResul
       <td><span class="who">${r.invoice_no}</span><span class="dim small">${r.order_no ?? ""}</span></td>
       <td><span>${r.customer_name}</span><span class="dim small">${r.account_no}${terms}</span></td>
       <td>${branchName(model, r.branch_id)}</td>
-      <td class="${overdue ? "late" : ""}">${relativeDay(r.due_date, model.asOf)}</td>
+      <td class="nowrap ${overdue ? "late" : ""}">${relativeDay(r.due_date, model.asOf)}</td>
       <td><span class="marks">${rowMarks(r).map(markPill)}</span></td>
       <td class="num">${formatMoney(r.balance_cents)}</td>
       <td class="act">
@@ -445,7 +445,7 @@ function holdsPanel(model: DeskModel): TemplateResult {
     return html`
       <section class="panel side" aria-label="Place a hold" data-hold-panel>
         <div class="panel-head"><h2>Place a hold</h2><span class="later">later</span></div>
-        <p class="note" data-later-words>Placing a hold by hand is later: the core has no route for it yet. The sweep places the Aged AR, Over limit and Pay before release holds, and a returned payment places its own. The form below shows the shape it will take.</p>
+        <p class="note" data-later-words>Placing a hold by hand is later: the core has no route for it yet. The sweep places the Aged AR, Over limit and Pay before release holds, and a returned payment places its own.</p>
         <fieldset class="held-form" disabled>
           <label>Account<select><option>Pick an account</option></select></label>
           <label>Kind<input type="text" value="Manual" readonly /></label>
@@ -556,7 +556,7 @@ export function renderHolds(model: DeskModel): TemplateResult {
 function invoiceTable(model: DeskModel, account: AccountModel): TemplateResult {
   const paid = account.invoices.filter((r) => r.status === "PAID").sort((x, y) => y.due_date.localeCompare(x.due_date));
   const rows = account.invoices.filter((r) => account.showAll || r.status !== "PAID").concat(account.showAll ? [] : paid.slice(0, 1));
-  rows.sort((x, y) => y.days_overdue - x.days_overdue || x.due_date.localeCompare(y.due_date));
+  rows.sort((x, y) => Number(x.status === "PAID") - Number(y.status === "PAID") || y.days_overdue - x.days_overdue || x.due_date.localeCompare(y.due_date));
   const split = account.preview === null ? new Map<string, number>() : new Map(account.preview.lines.map((l) => [l.invoice_id, l.applied_cents]));
   const firstId = rows.find((r) => r.status !== "PAID")?.id ?? "";
   return html`
@@ -584,7 +584,7 @@ function invoiceTable(model: DeskModel, account: AccountModel): TemplateResult {
                   <td class="num">${formatMoney(r.total_cents)}</td>
                   <td class="num"><b>${formatMoney(r.balance_cents)}</b></td>
                   <td class="num">${paidRow ? nothing : html`<button type="button" class="pick" role="checkbox" aria-checked="${picked ? "true" : "false"}" aria-label="Pay ${r.invoice_no}" data-action="pick" data-invoice-id="${r.id}"></button>`}</td>
-                  <td class="num applied-cell" data-applied-cell>${paidRow ? formatMoney(0) : applied === undefined ? "" : formatMoney(applied)}</td>
+                  <td class="num applied-cell" data-applied-cell>${paidRow || applied === undefined ? "" : formatMoney(applied)}</td>
                 </tr>
               `;
             })}
@@ -613,8 +613,8 @@ function receivePanel(model: DeskModel, account: AccountModel): TemplateResult {
         ${answer === null ? nothing : html`<span class="pill ${answer.unapplied_cents === 0 ? "pill-good" : "pill-watch"}" data-unapplied>unapplied ${formatMoney(answer.unapplied_cents)}</span>`}
       </div>
       <div class="two">
-        <label>Amount<input type="text" inputmode="decimal" class="amount" data-field="receive-amount" autocomplete="off" placeholder="$0.00" /></label>
-        <label>Received at<span class="ro" data-ro="received-at"></span></label>
+        <label>Amount<input type="text" inputmode="decimal" class="amount" data-field="receive-amount" autocomplete="off" placeholder="$0.00" />${account.amountText.trim() !== "" && parseAmountToCents(account.amountText) === null ? html`<span class="hint" role="alert" data-amount-hint>Enter dollars and cents, such as $100.00.</span>` : nothing}</label>
+        <label>Received at, from the account<span class="ro" data-ro="received-at"></span></label>
       </div>
       <p class="label gap">Method</p>
       ${segmented("Method", [{ id: "CHEQUE", word: "Cheque" }, { id: "EFT", word: "EFT" }, { id: "CARD", word: "Card" }, { id: "CASH", word: "Cash" }], account.method, "method")}
@@ -633,7 +633,7 @@ function receivePanel(model: DeskModel, account: AccountModel): TemplateResult {
               <li class="dim"><span>Unapplied</span><span>${formatMoney(answer.unapplied_cents)}</span></li>
             `}
       </ul>
-      <p class="applied"><b>Applied</b><b data-applied>${answer === null ? formatMoney(0) : formatMoney(answer.applied_cents)} of ${answer === null ? formatMoney(0) : formatMoney(answer.amount_cents)}</b></p>
+      <p class="applied"><b>Applied</b><b data-applied>${answer === null ? "Nothing to apply yet" : `${formatMoney(answer.applied_cents)} of ${formatMoney(answer.amount_cents)}`}</b></p>
       <div class="actions">
         <button type="button" class="btn btn-primary" data-action="apply-payment" ?disabled=${model.busy}>Record payment</button>
         <button type="button" class="btn btn-secondary" data-action="clear-apply">Cancel</button>
@@ -742,7 +742,6 @@ function statementDoc(model: DeskModel, account: AccountModel): TemplateResult {
               </dl>
               ${s.days_90_plus_cents > 0 ? html`<p class="overdue-note"><b>${formatMoney(s.days_90_plus_cents)}</b> of this balance is more than 60 days past due. Please contact our office to arrange payment.</p>` : nothing}
               <p class="dim small">Statement generated ${relativeDay(s.created_at, model.asOf)}. Please contact the branch with any discrepancy.</p>
-              <p class="dim small" data-statement-limits>The statement read carries the account's aging and closing balance. It does not carry the dealer's name or address, a payments column or a running ledger, so none is drawn.</p>
             `}
     </section>
   `;
