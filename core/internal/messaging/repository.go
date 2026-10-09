@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -1234,13 +1235,13 @@ func (r *Repository) AddChannelMember(ctx context.Context, channelID, userID str
 	if err != nil {
 		return ChannelMember{}, fmt.Errorf("add channel member: %w", err)
 	}
-	// The fresh seat bumps the channel's feed seq in the same transaction:
-	// a device holding a cursor past the room's stamped seq (every device
-	// that synced before this seat) must see the room arrive through the
-	// channels feed, and the seat is the only change to the room. The
-	// read-back arm (an already-seated member) changed nothing and bumps
-	// nothing.
-	if err := r.bumpChannelSeq(ctx, channelID); err != nil {
+	// The fresh seat bumps the channel's feed seq INSIDE the seat's own
+	// transaction: a device holding a cursor past the room's stamped seq
+	// (every device that synced before this seat) must see the room arrive
+	// through the channels feed, and the bump commits with the seat or not
+	// at all. The read-back arm (an already-seated member) changed nothing
+	// and bumps nothing.
+	if err := r.bumpChannelSeq(ctx, tx, channelID); err != nil {
 		return ChannelMember{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -1286,7 +1287,10 @@ func (r *Repository) RemoveChannelMember(ctx context.Context, channelID, userID 
 		// is the room's last OWNER.
 		return ErrLastOwner
 	}
-	if err := r.bumpChannelSeq(ctx, channelID); err != nil {
+	// The remove side has no transaction of its own: the delete has
+	// already committed on the pool when this runs, so the bump follows it
+	// on the same connection, after the fact it announces.
+	if err := r.bumpChannelSeq(ctx, r.pool, channelID); err != nil {
 		return err
 	}
 	return nil
@@ -1759,10 +1763,20 @@ func (r *Repository) syncPrefsWrite(ctx context.Context, p NotificationPrefs, ke
 	return id, seq, nil
 }
 
+// dbExecer is the least both the pool and an open transaction satisfy, so
+// a feed bump can run inside the write it belongs to.
+type dbExecer interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}
+
 // bumpChannelSeq draws a fresh channels-feed seq for one room, the tell a
-// membership change owes every device that caches the room.
-func (r *Repository) bumpChannelSeq(ctx context.Context, channelID string) error {
-	if _, err := r.pool.Exec(ctx,
+// membership change owes every device that caches the room. The querier is
+// the caller's: the add passes its OPEN TRANSACTION, so the bump commits
+// with the seat (a seat rolled back leaves the seq unmoved; a bump that
+// committed alone would let a device advance past a seat that never
+// landed, the very miss the bump exists to fix).
+func (r *Repository) bumpChannelSeq(ctx context.Context, q dbExecer, channelID string) error {
+	if _, err := q.Exec(ctx,
 		`UPDATE msg_channels SET seq = nextval(pg_get_serial_sequence('msg_channels', 'seq'))
 		 WHERE id = $1`, channelID); err != nil {
 		return fmt.Errorf("bump channel seq: %w", err)
