@@ -42,8 +42,9 @@ import { baseStyles } from './primitives.js';
 /** The word the centre zone carries when nobody is signed in. */
 const DEFAULT_WORD = 'Pick a role';
 
-/** The brand lockup's accessible name: the whole lockup is one image. */
-const BRAND_LABEL = 'HH Yard, a Hardscape House product';
+/** The lockup's defaults: today's words, so an app that names nothing is unchanged. */
+const DEFAULT_PRODUCT = 'Yard';
+const DEFAULT_SUB = 'a Hardscape House product';
 
 const styles = css`
   header {
@@ -158,6 +159,57 @@ const styles = css`
       justify-self: center;
     }
   }
+  /* The compact layout is opt in (the compact attribute) and narrow only: an
+     app that does not ask keeps the stacked header above, byte for byte. The
+     mark and name sit left with the role line right on one row, the controls
+     take a row of their own at a tap size (44 px, the sheet's own button
+     floor), and the demo strip closes the stack. */
+  @media (max-width: 480px) {
+    :host([compact]) header {
+      display: flex;
+      flex-wrap: wrap;
+      justify-items: initial;
+      gap: var(--hh-s-8);
+      padding: var(--hh-s-8) var(--hh-s-16);
+    }
+    :host([compact]) .brand-sub {
+      display: block;
+    }
+    :host([compact]) .demo-banner-cell {
+      display: contents;
+    }
+    :host([compact]) .brand {
+      order: 1;
+    }
+    :host([compact]) .who {
+      order: 2;
+      margin-left: auto;
+      font-size: 14px;
+    }
+    :host([compact]) .controls {
+      order: 3;
+      flex: 1 0 100%;
+      justify-self: stretch;
+    }
+    :host([compact]) .controls > button,
+    :host([compact]) .controls slot[name='theme'] > * {
+      flex: 1 1 auto;
+    }
+    :host([compact]) .controls button {
+      min-height: 44px;
+      padding: 0 var(--hh-s-8);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    :host([compact]) .demo-banner {
+      order: 4;
+      flex: 1 0 100%;
+      padding: var(--hh-s-2) var(--hh-s-8);
+    }
+    :host([compact]) .demo-banner .copy {
+      font-size: 11px;
+    }
+  }
   .controls button {
     min-height: 0;
     padding: 7px 12px;
@@ -206,6 +258,9 @@ export class HosAppHeader extends HHElement {
     signedIn: { type: Boolean, attribute: 'signed-in' },
     demo: { type: Boolean },
     theme: {},
+    productName: { attribute: 'product-name' },
+    productSub: { attribute: 'product-sub' },
+    compact: { type: Boolean, reflect: true },
   };
 
   /** The centred role name; the default word when empty or unsigned. */
@@ -216,6 +271,12 @@ export class HosAppHeader extends HHElement {
   declare demo: boolean;
   /** 'light' or 'dark'; applied to the document root, '' leaves it alone. */
   declare theme: string;
+  /** The accent word of the lockup, after "HH"; empty keeps today's "Yard". */
+  declare productName: string;
+  /** The line under it; empty keeps today's house line. */
+  declare productSub: string;
+  /** The compact narrow layout, opt in. */
+  declare compact: boolean;
 
   constructor() {
     super();
@@ -223,6 +284,9 @@ export class HosAppHeader extends HHElement {
     this.signedIn = false;
     this.demo = false;
     this.theme = '';
+    this.productName = '';
+    this.productSub = '';
+    this.compact = false;
   }
 
   /** Whether light DOM children claim the theme slot by name. */
@@ -268,6 +332,8 @@ export class HosAppHeader extends HHElement {
   render(): Template {
     const signedIn = this.signedIn === true;
     const word = signedIn && this.roleLabel !== '' ? this.roleLabel : DEFAULT_WORD;
+    const product = this.productName !== '' ? this.productName : DEFAULT_PRODUCT;
+    const sub = this.productSub !== '' ? this.productSub : DEFAULT_SUB;
     // The separator sits BETWEEN the buttons and the slotted controls: with
     // no buttons (unsigned) there is nothing to separate, with no slotted
     // content there is nothing to divide; it renders only when both halves
@@ -280,11 +346,11 @@ export class HosAppHeader extends HHElement {
     return html`
       <header>
         <div class="demo-banner-cell">
-          <div class="brand" role="img" aria-label=${BRAND_LABEL}>
+          <div class="brand" role="img" aria-label=${`HH ${product}, ${sub}`}>
             <span class="brand-mark" aria-hidden="true">HH</span>
             <span class="brand-names">
-              <span class="brand-product">HH <span class="accent">Yard</span></span>
-              <span class="brand-sub">a Hardscape House product</span>
+              <span class="brand-product">HH <span class="accent">${product}</span></span>
+              <span class="brand-sub">${sub}</span>
             </span>
           </div>
           ${this.demo

@@ -157,7 +157,12 @@ jobs:
         # (no gate variables in CI, zero secrets in the workflow); -p 1
         # serializes packages so locally set gate variables cannot race
         # two packages' fixture cleanups on one scratch database.
-        run: go test ./... -count=1 -p 1
+        # -timeout 30m is explicit: Go's default is ten minutes a
+        # package, and the slowest packages sit close under that limit
+        # (the integration tag's cmd/core measured 470 to 711 seconds on
+        # HQ). The default ok lines print every package's elapsed time
+        # and stay in the log, so growth shows before it bites.
+        run: go test ./... -count=1 -p 1 -timeout 30m
       - name: Web packages (typecheck and Node 22 suite)
         working-directory: web
         # setup-node pins Node 22, whose type stripping of the packages' .ts
@@ -224,7 +229,13 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16-alpine
+        # The official image, pulled through Amazon ECR Public's mirror of
+        # the Docker official images so the hosted runners do not hit
+        # Docker Hub's anonymous pull rate limit (PRs 290 and 291 failed at
+        # "Initialize containers" with toomanyrequests before any code ran).
+        # Same Postgres major and same alpine variant as the source image
+        # (16.15 on alpine 3.24); the index digest matches docker.io's.
+        image: public.ecr.aws/docker/library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: till_base
@@ -276,7 +287,11 @@ jobs:
           # their legs skip politely without the variable, the posture they
           # held before this job existed, and till_b4_gate stays migrated
           # above for the lane that adapts the fixture.
-        run: go test ./... -count=1 -p 1
+        # -timeout 30m as on every go test step here: Go's default is
+        # ten minutes a package and the slowest packages sit close under
+        # it; the default ok lines keep every package's elapsed time in
+        # this log.
+        run: go test ./... -count=1 -p 1 -timeout 30m
       # The demo world proofs (TestDemoWorld_Quotes, TestDemoWorld_CounterTill)
       # gate on their own throwaway Postgres: a database made fresh here for
       # the next step alone and shared with no other leg. The proofs build
@@ -292,12 +307,18 @@ jobs:
           DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5599/till_base?sslmode=disable
           HH_CORE_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5599/till_core_gate?sslmode=disable
           HH_TILL_DEMO_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5599/hh_demo_world_proof?sslmode=disable
-        run: go test -tags demo ./... -count=1 -p 1
+        # -timeout 30m as on every go test step here: Go's default is
+        # ten minutes a package and the slowest packages sit close under
+        # it; the default ok lines keep every package's elapsed time in
+        # this log.
+        run: go test -tags demo ./... -count=1 -p 1 -timeout 30m
       # The step above runs quiet, so a skipped world proof would hide in it.
       # This one runs the two proofs alone, verbosely, and fails unless both
       # PASS and neither SKIPs, so the log shows them passing. It reuses the
       # fresh database from the step before the suite: the proofs build and
       # drop their own databases beside it, so a second run does not collide.
+      # The -timeout 30m matches the suite steps, and -v's ok line keeps
+      # this package's elapsed time in the log this step already tees.
       - name: Demo world proofs, verbose, and not skipped
         working-directory: core
         env:
@@ -306,7 +327,7 @@ jobs:
           HH_TILL_DEMO_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5599/hh_demo_world_proof?sslmode=disable
         run: |
           set -euo pipefail
-          go test -tags demo ./cmd/core -run 'TestDemoWorld_(Quotes|CounterTill)$' -count=1 -v 2>&1 | tee "$RUNNER_TEMP/demo-world-proofs.txt"
+          go test -tags demo ./cmd/core -run 'TestDemoWorld_(Quotes|CounterTill)$' -count=1 -v -timeout 30m 2>&1 | tee "$RUNNER_TEMP/demo-world-proofs.txt"
           if grep -q -e '--- SKIP' "$RUNNER_TEMP/demo-world-proofs.txt"; then
             echo "a demo world proof was skipped" >&2
             exit 1
@@ -351,7 +372,13 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16-alpine
+        # The official image, pulled through Amazon ECR Public's mirror of
+        # the Docker official images so the hosted runners do not hit
+        # Docker Hub's anonymous pull rate limit (PRs 290 and 291 failed at
+        # "Initialize containers" with toomanyrequests before any code ran).
+        # Same Postgres major and same alpine variant as the source image
+        # (16.15 on alpine 3.24); the index digest matches docker.io's.
+        image: public.ecr.aws/docker/library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
         env:
           POSTGRES_PASSWORD: postgres
         ports:
@@ -430,5 +457,12 @@ jobs:
           # it: the module packages share the gate database, and
           # serialized packages cannot race one another's fixture
           # cleanups.
-          go test -tags integration -p 1 -count=1 \
+          # The timeout is explicit because Go's default is ten minutes
+          # a package and this tag's slowest package, cmd/core,
+          # measured 470 to 711 seconds on HQ, close enough under the
+          # limit that ordinary growth would read as a hang. 30m holds
+          # the whole suite clear of it, and the default ok lines print
+          # every package's elapsed time, so growth shows in this log
+          # before it bites.
+          go test -tags integration -p 1 -count=1 -timeout 30m \
             $(go list ./... | grep -Ev "/$red")
