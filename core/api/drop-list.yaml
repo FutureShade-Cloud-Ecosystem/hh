@@ -114,3 +114,7 @@ additions:
     reason: "HH-LOAD-1 load doors: the contact upsert under its customer by legacy key, behind the load doors deployment switch; no ERP source route."
   - route: "PUT /api/v1/load/jobs"
     reason: "HH-LOAD-1 load doors: the job upsert as a project record under its customer by legacy key, behind the load doors deployment switch; no ERP source route."
+  - route: "PUT /api/v1/dispatch/trucks/{id}"
+    reason: "The truck registry update, the fields the create takes plus active or not (the roles roadmap's Dispatch core): the ERP registered trucks but never edited one; no ERP source route."
+  - route: "PUT /api/v1/dispatch/drivers/{id}"
+    reason: "The driver registry update, the truck update's twin (the login link included): the ERP registered drivers but never edited one; no ERP source route."

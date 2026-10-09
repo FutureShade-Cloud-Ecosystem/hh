@@ -5248,6 +5248,51 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/dispatch/trucks/{id}:
+    put:
+      operationId: dispatchUpdateTruck
+      tags:
+        - staff-dispatch
+      summary: Update a truck's registry facts, including active or not
+      description: "An absolute PUT of the row the caller read: the fields the create takes plus is_active. The same body twice leaves the same row, so a retry is never a conflict; only a different code colliding with another truck at the branch answers 409. A branch_id naming another yard is refused in words, a truck's runs and crew hang off the yard it lives at. Branch-walled on the row's own branch."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - dispatch-board
+        level: manage
+      x-guards:
+        - requireBranch
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchTruck"
+      responses:
+        "200":
+          description: The stored truck
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchTruck"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/dispatch/drivers:
     get:
       operationId: dispatchListDrivers
@@ -5321,6 +5366,49 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/dispatch/drivers/{id}:
+    put:
+      operationId: dispatchUpdateDriver
+      tags:
+        - staff-dispatch
+      summary: Update a driver's registry facts, including active or not
+      description: "An absolute PUT of the row the caller read: the fields the create takes (including the login link user_id) plus is_active. Idempotent under an identical retry; a branch_id naming another yard is refused in words, the truck update's own rule. Branch-walled on the row's own branch."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - dispatch-board
+        level: manage
+      x-guards:
+        - requireBranch
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchDriver"
+      responses:
+        "200":
+          description: The stored driver
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchDriver"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/dispatch/board:
     get:
       operationId: dispatchGetBoard
