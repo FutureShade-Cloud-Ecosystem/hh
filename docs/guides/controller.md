@@ -1,10 +1,6 @@
 # Financial Controller: the testers' brief
 
-The Money Desk's controller side. The full brief lives in the part 1 page, the testers' walk:
-
-[Money Desk (controller): the testers' brief](/home/colton/Desktop/FBHQ/hh-sup/tester-pages/money-desk-gl/testers.html)
-
-That page is the source for every figure, every name, every wall, every "later" tab. It is the JV team's walk for the controller role on this build.
+The Money Desk's controller side. The full brief lives in the part 1 page, the testers' walk, on the demo box at the Money Desk app's "Testers' brief" link. The page's title is "Money Desk (controller): the testers' brief" and it opens from the Money Desk app's own "Testers' brief" link (the same convention the Counter Till carries: a `public/testers.html` served at the app's prefix, in the till's case `/till/testers.html`).
 
 ## One line, in the desk's own words
 
@@ -27,7 +23,7 @@ The role reads the approvals queue (margin, journal, freight, credit and COD exc
 - The walls: the role's reach, the GM is the second decider, the branch fence is held by the read.
 - Known issues: the world is dated, the restart signs out, the refused decision names who may, the bare array refuses, beyond reads are walled.
 
-Read the part 1 page in full; every claim on it is backed by the demo seed, the app's own logic, or the demoworld controller test.
+Read the part 1 page in full on the demo box; every claim on it is backed by the demo seed, the app's own logic, or the demoworld controller test.
 
 ## What is "later"
 

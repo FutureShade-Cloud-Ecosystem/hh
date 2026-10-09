@@ -1,10 +1,6 @@
 # Payables and Receivables: the testers' brief
 
-The Money Desk's receivables side. The full brief lives in the part 1 page, the testers' walk:
-
-[Money Desk (receivables): the testers' brief](/home/colton/Desktop/FBHQ/hh-sup/tester-pages/money-desk-ar/testers.html)
-
-That page is the source for every figure, every name, every wall, every "later" tab. It is the JV team's walk for the receivables role on this build.
+The Money Desk's receivables side. The full brief lives in the part 1 page, the testers' walk, on the demo box at the Money Desk app's "Testers' brief" link. The page's title is "Money Desk (receivables): the testers' brief" and it opens from the Money Desk app's own "Testers' brief" link (the same convention the Counter Till carries: a `public/testers.html` served at the app's prefix, in the till's case `/till/testers.html`).
 
 ## One line, in the desk's own words
 
@@ -20,7 +16,7 @@ The role works the dealer's AR aging across the seeded book, works the one bounc
 - Credit holds and the walls: the seed plants no credit hold; the lift and override are refused in the matrix's own words; the journal is refused; the Payables tab is later.
 - Known issues: the world is dated, the restart signs out, the PDF is later, beyond reads are walled.
 
-Read the part 1 page in full; every claim on it is backed by the demo seed, the app's own logic, or the acceptance leg on the lane.
+Read the part 1 page in full on the demo box; every claim on it is backed by the demo seed, the app's own logic, or the acceptance leg on the lane.
 
 ## What is "later"
 

@@ -1,10 +1,6 @@
 # Procurement Manager: the testers' brief
 
-The Buying and Stock board. The full brief lives in the part 1 page, the testers' walk:
-
-[Buying and Stock: the testers' brief](/home/colton/Desktop/FBHQ/hh-sup/tester-pages/buying-and-stock/testers.html)
-
-That page is the source for every figure, every name, every wall, every "later" tab. It is the JV team's walk for the procurement manager role on this build.
+The Buying and Stock board. The full brief lives in the part 1 page, the testers' walk, on the demo box at the Buying and Stock app's "Testers' brief" link. The page's title is "Buying and Stock: the testers' brief" and it opens from the Buying and Stock app's own "Testers' brief" link (the same convention the Counter Till carries: a `public/testers.html` served at the app's prefix, in the till's case `/till/testers.html`).
 
 ## One line, in the desk's own words
 
@@ -22,7 +18,7 @@ The role reads the open purchase orders, the incoming list, and the reorder work
 - The walls: the order wall names who may place, edit, cancel; the Yard Manager's reach; the bill wall names who may post.
 - Known issues: the world is dated, the restart signs out, the phone fits, beyond reads are walled.
 
-Read the part 1 page in full; every claim on it is backed by the demo seed, the app's own logic, or the demoseed procurement plan test on the lane.
+Read the part 1 page in full on the demo box; every claim on it is backed by the demo seed, the app's own logic, or the demoseed procurement plan test on the lane.
 
 ## What is "later"
 
