@@ -7,8 +7,8 @@
 //
 // The brand theme is the design system's dark half; light is this app's
 // default, one tap on the header's theme control moves between them.
-import { test, expect, type Page } from "@playwright/test";
-import { TINY_PNG, driverHandoff, resetStub, useScenario } from "./helpers.js";
+import type { Page } from "@playwright/test";
+import { test, expect, TINY_PNG, driverHandoff, resetStub, useScenario } from "./helpers.js";
 import { join } from "node:path";
 
 const dir = process.env.DRIVE_SHOT_DIR ?? "";

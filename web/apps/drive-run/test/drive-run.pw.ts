@@ -1,8 +1,7 @@
 // HH Drive, sub item 1: the shell. The app boots in demo mode against the
 // stub, the driver's card is the way in, and the front door's handoff lands
 // the driver signed in with no second picker. Phone first: 390 px wide.
-import { test, expect } from "@playwright/test";
-import { driverHandoff, resetStub } from "./helpers.js";
+import { test, expect, driverHandoff, resetStub } from "./helpers.js";
 
 test.use({ viewport: { width: 390, height: 844 } });
 
