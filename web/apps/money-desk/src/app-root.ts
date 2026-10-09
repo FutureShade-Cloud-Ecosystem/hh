@@ -59,17 +59,38 @@ export class MoneyDeskApp extends HHElement {
 
   // The receivables slice (src/ar): its state, its loads, its presses. The
   // fields it reads are looked up in this element's own shadow root.
+  // Who is signed in, as the front door's handoff or the demo mint named them.
+  #roleCode = "";
+  #userName = "";
+
   #ar = this.#newDesk();
 
   #newDesk(): ArDesk {
-    return new ArDesk(new ArApi(this.#staffClient), {
-      repaint: () => this.requestUpdate(),
-      field: (name, holdId) => {
-        const scope = holdId === undefined ? "" : `[data-hold-id="${holdId}"]`;
-        const found = this.renderRoot.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-field="${name}"]${scope}`);
-        return found?.value ?? "";
+    return new ArDesk(
+      new ArApi(this.#staffClient),
+      {
+        repaint: () => this.requestUpdate(),
+        field: (name, key) => {
+          const scope = key === undefined ? "" : `[data-key="${key}"]`;
+          const found = this.renderRoot.querySelector<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(`[data-field="${name}"]${scope}`);
+          return found?.value ?? "";
+        },
+        setField: (name, value, key) => {
+          const scope = key === undefined ? "" : `[data-key="${key}"]`;
+          const found = this.renderRoot.querySelector<HTMLInputElement>(`[data-field="${name}"]${scope}`);
+          if (found !== null && found.value !== value) found.value = value;
+        },
+        download: (text, filename) => {
+          const url = URL.createObjectURL(new Blob([text], { type: "text/csv" }));
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = filename;
+          link.click();
+          URL.revokeObjectURL(url);
+        },
       },
-    });
+      { roleCode: this.#roleCode, userName: this.#userName },
+    );
   }
 
   // The theme: light by default, brand (the dark half) one tap away. Held in
@@ -129,9 +150,16 @@ export class MoneyDeskApp extends HHElement {
     }
   };
 
+  readonly #onInput = (event: Event): void => {
+    const target = event.target;
+    if (target instanceof Element && target.hasAttribute("data-field")) this.#ar.input(target);
+  };
+
   connectedCallback(): void {
     super.connectedCallback();
     this.addEventListener("click", this.#onHostClick);
+    // input does not leave this element's own shadow root, so the listener sits on the root itself.
+    this.renderRoot.addEventListener("input", this.#onInput);
     const handoff = readFrontDoorHandoff();
     if (handoff.kind === "ready") {
       const adopted = this.#auth.adopt({
@@ -145,7 +173,10 @@ export class MoneyDeskApp extends HHElement {
       });
       if (adopted) {
         this.#roleLabel = handoff.session.roleName;
+        this.#roleCode = handoff.session.roleCode;
+        this.#userName = handoff.session.user.name;
         clearFrontDoorHandoff();
+        this.#ar = this.#newDesk();
         void this.#ar.load();
       }
       this.requestUpdate();
@@ -156,6 +187,7 @@ export class MoneyDeskApp extends HHElement {
 
   disconnectedCallback(): void {
     this.removeEventListener("click", this.#onHostClick);
+    this.renderRoot.removeEventListener("input", this.#onInput);
     super.disconnectedCallback();
   }
 
@@ -164,6 +196,7 @@ export class MoneyDeskApp extends HHElement {
   // set on the element here, after each render.
   protected override updated(changed: Map<PropertyKey, unknown>): void {
     super.updated(changed);
+    this.#ar.afterRender();
     const header = this.renderRoot.querySelector("hos-app-header") as (HTMLElement & { roleLabel: string; theme: string }) | null;
     if (header !== null) {
       header.roleLabel = this.#roleLabel;
@@ -191,6 +224,9 @@ export class MoneyDeskApp extends HHElement {
       const adopted = this.#auth.adopt(result.value);
       if (adopted) {
         this.#roleLabel = result.value.identity.roleName;
+        this.#roleCode = result.value.identity.roleName.toLowerCase().replace(/ /g, "_");
+        this.#userName = this.#sessions.current?.user.name ?? "";
+        this.#ar = this.#newDesk();
         void this.#ar.load();
         this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
       } else {
@@ -212,13 +248,13 @@ export class MoneyDeskApp extends HHElement {
   // The theme control rides the header's named slot; its word names the
   // theme a tap moves to.
   private renderThemeControl(): TemplateResult {
-    const label = this.#theme === "light" ? "Brand theme" : "Light theme";
+    const label = this.#theme === "light" ? "Theme: Light" : "Theme: Brand";
     return html`<button slot="theme" type="button" class="btn btn-secondary" data-action="theme">${label}</button>`;
   }
 
   private renderSignedIn(): TemplateResult {
     return html`
-      <hos-app-header signed-in demo compact product-name="Money Desk" product-sub="Receivables · HH Work shell">${this.renderThemeControl()}</hos-app-header>
+      <hos-app-header signed-in demo product-name="Money Desk">${this.renderThemeControl()}</hos-app-header>
       <main class="desk">
         ${this.#ar.render()}
       </main>
@@ -229,7 +265,7 @@ export class MoneyDeskApp extends HHElement {
     const session = this.#sessions.current;
     if (session !== null) return this.renderSignedIn();
     return html`
-      <hos-app-header demo compact product-name="Money Desk" product-sub="Receivables · HH Work shell">${this.renderThemeControl()}</hos-app-header>
+      <hos-app-header demo product-name="Money Desk">${this.renderThemeControl()}</hos-app-header>
       <main class="desk">
         <h1>Money Desk</h1>
         <p class="dim">Receivables for the whole company: the aging, payments, promises and the bounced queue. Demo data only.</p>

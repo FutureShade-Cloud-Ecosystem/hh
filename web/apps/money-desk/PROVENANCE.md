@@ -19,6 +19,11 @@ role app template's shell. The same facts sit in the header of each file below.
 | `parseAmountToCents` | the Counter Till, `web/apps/counter-till/src/money.ts` | `src/ar/ar-money.ts` | Same parse, same refusals |
 | Visual references | `verification/ar-landing/`, `walkthrough-w3b/` | the screens | Rebuilt to HH's design system, light and brand; no FB Design board for Money Desk existed when this was built |
 
+Round 2 rebuilt every AR screen against the Money Desk references (`hh-sup/design-refs/money-desk/`,
+receivables-home, account-open-invoices, credit-hold), which now come first; the original app's screens are second. New in
+that round: the register with its status pills, Needs you, the apply column and payment panel, the statement document, the
+holds table with the controller's lift (the references' words, the core's routes), and the `later` tags.
+
 Not ported on purpose: auto credit hold settings, the paper path and reminders
 (Base tier extras, not this role's first increment), the pop out and duplicate
 windows.

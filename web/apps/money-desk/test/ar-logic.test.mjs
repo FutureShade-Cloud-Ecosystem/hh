@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { formatMoney, parseAmountToCents, centsToField } from "../src/ar/ar-money.ts";
-import { cardRange, cardTitle, refusalWords, statusTone, statusWord, validatePayment, validatePromise } from "../src/ar/ar-logic.ts";
+import { allocateOldestFirst, canLiftHolds, cardRange, cardTitle, holdKindWord, holdMarks, refusalWords, relativeDay, rowMarks, statusTone, statusWord, validatePayment, validatePromise } from "../src/ar/ar-logic.ts";
 
 test("an amount typed is read through the decimal string and never a float", () => {
   assert.equal(parseAmountToCents("19.68"), 1968);
@@ -80,4 +80,53 @@ test("a promise needs an amount, a date, and who promised it", () => {
   assert.equal(validatePromise({ ...good, date: "" }).words, "Pick the date the customer promised to pay by.");
   assert.equal(validatePromise({ ...good, by: "" }).words, "Enter who made the promise.");
   assert.equal(validatePromise({ ...good, amountText: "960.01" }).words, "That is more than the invoice balance of $960.00.");
+});
+
+test("a day reads as a count from the server's own day, never a calendar literal", () => {
+  assert.equal(relativeDay("2030-06-01", "2030-06-30"), "29 days ago");
+  assert.equal(relativeDay("2030-06-29", "2030-06-30"), "1 day ago");
+  assert.equal(relativeDay("2030-06-30", "2030-06-30"), "today");
+  assert.equal(relativeDay("2030-07-01", "2030-06-30"), "in 1 day");
+  assert.equal(relativeDay("2030-07-12", "2030-06-30"), "in 12 days");
+});
+
+test("a register row's marks: the day count is the status word, a promise or a dispute rides as a second mark", () => {
+  const base = { status: "OVERDUE", days_overdue: 122, disputed: false };
+  assert.deepEqual(rowMarks(base), [{ word: "122d overdue", tone: "stop", dashed: false }]);
+  assert.deepEqual(rowMarks({ ...base, promised_date: "2030-01-01" }), [
+    { word: "122d overdue", tone: "stop", dashed: false },
+    { word: "promise open", tone: "watch", dashed: true },
+  ]);
+  assert.deepEqual(rowMarks({ ...base, status: "DISPUTED", disputed: true }), [
+    { word: "122d overdue", tone: "stop", dashed: false },
+    { word: "disputed", tone: "info", dashed: false },
+  ]);
+  assert.deepEqual(rowMarks({ status: "DUE_SOON", days_overdue: 0, disputed: false }), [{ word: "due soon", tone: "watch", dashed: false }]);
+  assert.deepEqual(rowMarks({ status: "OPEN", days_overdue: 0, disputed: false }), [{ word: "open", tone: "plain", dashed: false }]);
+  assert.deepEqual(rowMarks({ status: "PAID", days_overdue: 0, disputed: false }), [{ word: "paid", tone: "good", dashed: false }]);
+});
+
+test("the oldest invoice is filled first, to the cent, and what is left over stays unapplied", () => {
+  assert.deepEqual(allocateOldestFirst([1425000, 1322400, 0], 2000000), [1425000, 575000, 0]);
+  assert.deepEqual(allocateOldestFirst([100, 200], 50), [50, 0]);
+  assert.deepEqual(allocateOldestFirst([100, 200], 1000), [100, 200]);
+  assert.deepEqual(allocateOldestFirst([100], 0), [0]);
+});
+
+test("a hold reads as the references draw it: Aged AR and auto, Returned payment, Over limit and override in force", () => {
+  assert.equal(holdKindWord("AR_AGING"), "Aged AR");
+  assert.equal(holdKindWord("NSF"), "Returned payment");
+  assert.equal(holdKindWord("CREDIT_LIMIT"), "Over limit");
+  assert.equal(holdKindWord("COD"), "Pay before release");
+  assert.equal(holdKindWord("MANUAL"), "Manual");
+  const now = Date.parse("2030-06-30T12:00:00Z");
+  assert.deepEqual(holdMarks({ auto_placed: true, override_until: null }, now), ["auto"]);
+  assert.deepEqual(holdMarks({ auto_placed: false, override_until: "2030-07-02T00:00:00Z" }, now), ["override in force"]);
+  assert.deepEqual(holdMarks({ auto_placed: false, override_until: "2030-06-01T00:00:00Z" }, now), []);
+});
+
+test("lifting and overriding a hold are the controller's and the general manager's, never payables and receivables", () => {
+  assert.equal(canLiftHolds("financial_controller"), true);
+  assert.equal(canLiftHolds("general_manager"), true);
+  assert.equal(canLiftHolds("payables_receivables"), false);
 });

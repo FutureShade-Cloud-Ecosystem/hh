@@ -11,6 +11,7 @@
 // this role; it is wired so the refusal is the server's, not the app's).
 import {
   staffBilling,
+  staffBranches,
   staffTill,
   type ApiClient,
   type BillingAgingPage,
@@ -21,7 +22,13 @@ import {
   type BillingReceiptResult,
   type BillingRegisterPage,
   type BillingStatement,
+  type Branch,
+  type BillingEvaluationResult,
+  type BillingHoldOverrideResult,
+  type BillingReminderResult,
+  type BillingRegisterSelectionResult,
   type BillingStatementBatch,
+  type BillingStatementRunResult,
   type Result,
   type TillBouncedPaymentPage,
   type TillInvoicePayments,
@@ -67,8 +74,48 @@ export class ArApi {
     return staffTill.tillListBouncedPayments(this.#client);
   }
 
-  holds(status: "ACTIVE" | "RELEASED"): Promise<Result<BillingCreditHoldPage>> {
-    return staffBilling.billingListHolds(this.#client, { status });
+  /** Active holds, or every hold when no status is named. */
+  holds(status?: "ACTIVE" | "RELEASED"): Promise<Result<BillingCreditHoldPage>> {
+    return staffBilling.billingListHolds(this.#client, status === undefined ? {} : { status });
+  }
+
+  branches(): Promise<Result<Branch[]>> {
+    return staffBranches.branchesList(this.#client);
+  }
+
+  /** The register in one view; chip PAID with no filter reads every invoice, paid ones too. */
+  register(opts: { chip?: "OVERDUE" | "DISPUTED" | "PAID"; customerId?: string } = {}): Promise<Result<BillingRegisterPage>> {
+    return staffBilling.billingListRegister(this.#client, {
+      limit: 200,
+      ...(opts.chip === undefined ? {} : { chip: opts.chip }),
+      ...(opts.customerId === undefined ? {} : { customer_id: opts.customerId }),
+    });
+  }
+
+  /** The server's count and balance for a set of invoices: the app adds no money. */
+  selection(invoiceIds: readonly string[]): Promise<Result<BillingRegisterSelectionResult>> {
+    return staffBilling.billingRegisterSelection(this.#client, { invoice_ids: [...invoiceIds] });
+  }
+
+  remind(invoiceIds: readonly string[], key: string): Promise<Result<BillingReminderResult>> {
+    return staffBilling.billingSendRegisterReminders(this.#client, { invoice_ids: [...invoiceIds], tone: "FRIENDLY", idempotency_key: key });
+  }
+
+  /** A statement run: one account (interim) or every account (month end). */
+  statementRun(customerId: string | null): Promise<Result<BillingStatementRunResult>> {
+    return staffBilling.billingCreateStatementRun(this.#client, customerId === null ? { mode: "MASS" } : { mode: "INTERIM", customer_id: customerId });
+  }
+
+  exportRegister(): Promise<Result<string>> {
+    return staffBilling.billingExportRegister(this.#client, {});
+  }
+
+  overrideHold(holdId: string, reason: string): Promise<Result<BillingHoldOverrideResult>> {
+    return staffBilling.billingOverrideHold(this.#client, holdId, { reason });
+  }
+
+  sweep(): Promise<Result<BillingEvaluationResult>> {
+    return staffBilling.billingRunCreditSweep(this.#client);
   }
 
   statement(customerId: string): Promise<Result<BillingStatement>> {

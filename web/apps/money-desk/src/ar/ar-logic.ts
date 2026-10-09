@@ -46,7 +46,7 @@ export function statusWord(status: string): string {
   return STATUS_WORD[status] ?? status;
 }
 
-export type Tone = "good" | "watch" | "stop" | "plain";
+export type Tone = "good" | "watch" | "stop" | "plain" | "info";
 
 /** The pill's tone; the word is always beside it, so colour never carries the meaning alone. */
 export function statusTone(status: string): Tone {
@@ -57,11 +57,11 @@ export function statusTone(status: string): Tone {
 }
 
 export const HOLD_KIND_WORD: Record<string, string> = {
-  NSF: "Bounced payment",
-  AR_AGING: "Aged balance",
-  CREDIT_LIMIT: "Over the limit",
+  NSF: "Returned payment",
+  AR_AGING: "Aged AR",
+  CREDIT_LIMIT: "Over limit",
   COD: "Pay before release",
-  MANUAL: "Placed by hand",
+  MANUAL: "Manual",
 };
 
 export function holdKindWord(kind: string): string {
@@ -128,3 +128,69 @@ export function validatePromise(input: { amountText: string; date: string; by: s
 }
 
 export { centsToField };
+
+// ---- days, marks and holds as the Money Desk references draw them -----------------------------
+
+const DAY_MS = 86_400_000;
+
+function dayNumber(date: string): number {
+  return Math.floor(Date.parse(`${date.slice(0, 10)}T00:00:00Z`) / DAY_MS);
+}
+
+/** A calendar date as a count from the server's own day: "122 days ago", "in 12 days", "today". */
+export function relativeDay(date: string, asOf: string): string {
+  const gap = dayNumber(asOf) - dayNumber(date);
+  if (gap === 0) return "today";
+  const n = Math.abs(gap);
+  const unit = n === 1 ? "day" : "days";
+  return gap > 0 ? `${n} ${unit} ago` : `in ${n} ${unit}`;
+}
+
+export interface Mark {
+  readonly word: string;
+  readonly tone: Tone;
+  /** A dashed outline: a second mark that rides the row (a promise), never a status of its own. */
+  readonly dashed: boolean;
+}
+
+/**
+ * The marks a register row carries. The first is the status with the day count as its word; a
+ * promise or a dispute rides the row as a second mark, never a colour alone.
+ */
+export function rowMarks(row: { status: string; days_overdue: number; disputed: boolean; promised_date?: string | null | undefined }): Mark[] {
+  const marks: Mark[] = [];
+  const overdue = row.days_overdue > 0 && row.status !== "PAID";
+  if (overdue) marks.push({ word: `${row.days_overdue}d overdue`, tone: "stop", dashed: false });
+  else if (row.status === "DISPUTED") marks.push({ word: "disputed", tone: "info", dashed: false });
+  else marks.push({ word: statusWord(row.status).toLowerCase(), tone: statusTone(row.status), dashed: false });
+  if (typeof row.promised_date === "string" && row.promised_date !== "") marks.push({ word: "promise open", tone: "watch", dashed: true });
+  if (row.disputed && (overdue || row.status !== "DISPUTED")) marks.push({ word: "disputed", tone: "info", dashed: false });
+  return marks;
+}
+
+/**
+ * Fills the apply column oldest first: each invoice takes what it can of what is left, whole cents,
+ * and what no invoice can take stays unapplied. Bookkeeping over the server's own balances; every
+ * post is still the server's to accept or refuse.
+ */
+export function allocateOldestFirst(balances: readonly number[], amountCents: number): number[] {
+  let left = amountCents;
+  return balances.map((balance) => {
+    const take = Math.min(Math.max(balance, 0), left);
+    left -= take;
+    return take;
+  });
+}
+
+/** The small tags beside a hold's kind: auto when the sweep placed it, override in force while one runs. */
+export function holdMarks(hold: { auto_placed: boolean; override_until?: string | null | undefined }, nowMs: number): string[] {
+  const marks: string[] = [];
+  if (hold.auto_placed) marks.push("auto");
+  if (typeof hold.override_until === "string" && Date.parse(hold.override_until) > nowMs) marks.push("override in force");
+  return marks;
+}
+
+/** Roles that may lift or override a hold (the matrix: Money Desk at Administer and Manage, row 345). */
+export function canLiftHolds(roleCode: string): boolean {
+  return roleCode === "financial_controller" || roleCode === "general_manager";
+}

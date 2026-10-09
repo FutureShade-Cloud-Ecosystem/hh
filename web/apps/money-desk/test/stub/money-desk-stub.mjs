@@ -13,7 +13,16 @@ import { createServer } from "node:http";
 const port = Number(process.env.ROLE_STUB_PORT ?? 4959);
 
 const BRANCH = "b0000000-0000-4000-8000-000000000001";
-const FLOWS = [{ flow: "payables-receivables", role_code: "payables_receivables", label: "Payables and Receivables" }];
+const FLOWS = [
+  { flow: "payables-receivables", role_code: "payables_receivables", label: "Payables and Receivables" },
+  { flow: "financial-controller", role_code: "financial_controller", label: "Financial Controller" },
+];
+
+const BRANCHES = [
+  { id: "b0000000-0000-4000-8000-000000000001", code: "TRT", name: "Trenton (demo)", address: { line1: "1 Demo Road", city: "Trenton", province: "ON", postal: "K0K 0K0", country: "CA" }, is_default: true, is_system_default: false, is_active: true },
+  { id: "b0000000-0000-4000-8000-000000000002", code: "KGN", name: "Kingston (demo)", address: { line1: "2 Demo Road", city: "Kingston", province: "ON", postal: "K0K 0K0", country: "CA" }, is_default: false, is_system_default: false, is_active: true },
+];
+const branchOf = (n) => (n <= 3 ? BRANCHES[0].id : BRANCHES[1].id);
 
 const USERS = {
   "payables-receivables": {
@@ -25,7 +34,27 @@ const USERS = {
     tier: 2,
     scope: "GLOBAL",
   },
+  "financial-controller": {
+    user_id: "de110000-0000-4000-9000-000000000008",
+    email: "financial.controller@hh-demo.invalid",
+    display_name: "Financial Controller (demo)",
+    role_code: "financial_controller",
+    role_name: "Financial Controller",
+    tier: 1,
+    scope: "GLOBAL",
+  },
 };
+
+// The controller's id rides the token's sub; the walled moves read it from there.
+function isController(req) {
+  const token = (req.headers.authorization ?? "").replace(/^Bearer /, "");
+  try {
+    const payload = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8"));
+    return payload.sub === USERS["financial-controller"].user_id;
+  } catch {
+    return false;
+  }
+}
 
 // A token with the shape the app reads an expiry from: three parts, the
 // middle one base64url JSON carrying sub and exp. The signature is a stub.
@@ -51,11 +80,11 @@ const NOW_ISO = () => new Date().toISOString();
 // ---- the world ---------------------------------------------------------------------------------
 
 const ACCOUNTS = [
-  { n: 1, name: "Granite Edge Landscaping", no: "GE-100", terms: 30, limit: 5_000_000 },
-  { n: 2, name: "Oakline Builders", no: "OB-200", terms: 30, limit: 3_000_000 },
-  { n: 3, name: "Riverstone Paving", no: "RP-300", terms: 45, limit: 2_500_000 },
-  { n: 4, name: "Summit Patio Co", no: "SP-400", terms: 30, limit: 1_500_000 },
-  { n: 5, name: "Cedar Ridge Contractors", no: "CR-500", terms: 30, limit: 4_000_000 },
+  { n: 1, name: "Granite Edge Landscaping (demo)", no: "GE-100", terms: 30, limit: 5_000_000 },
+  { n: 2, name: "Oakline Builders (demo)", no: "OB-200", terms: 30, limit: 3_000_000 },
+  { n: 3, name: "Riverstone Paving (demo)", no: "RP-300", terms: 45, limit: 2_500_000 },
+  { n: 4, name: "Summit Patio Co (demo)", no: "SP-400", terms: 30, limit: 1_500_000 },
+  { n: 5, name: "Cedar Ridge Contractors (demo)", no: "CR-500", terms: 30, limit: 4_000_000 },
 ];
 
 // One row per invoice: account, how many days past due (negative is not yet due), the total.
@@ -69,6 +98,7 @@ const INVOICES = [
   { n: 7, acct: 4, late: 5, total: 62_300 },
   { n: 8, acct: 5, late: -20, total: 301_000 },
   { n: 9, acct: 5, late: 33, total: 74_900 },
+  { n: 10, acct: 1, late: 171, total: 231_640, paid: true },
 ];
 
 const NSF_FEE = 3500;
@@ -83,8 +113,9 @@ function reset() {
       acct: i.acct,
       late: i.late,
       total_cents: i.total,
-      balance_cents: i.total,
+      balance_cents: i.paid === true ? 0 : i.total,
       promise: null,
+      disputed: i.n === 4,
       payments: [],
     })),
     payments: [],
@@ -92,6 +123,15 @@ function reset() {
     statements: new Map(),
     keys: new Map(),
     counter: 0,
+  };
+  world.invoices[0].promise = {
+    id: uuid("f", 1),
+    promised_cents: 100_000,
+    promised_date: dayOffset(7),
+    status: "OPEN",
+    promised_by: "Accounts payable",
+    note: "Cheque is being cut",
+    taken_at: NOW_ISO(),
   };
   // One payment already bounced: it reopened the second invoice of the first account.
   const bounced = {
@@ -107,25 +147,35 @@ function reset() {
     allocations: [{ invoice_n: 2, amount_cents: 96_000 }],
   };
   world.payments.push(bounced);
-  world.holds.push({
-    id: uuid("d", 1),
-    customer_id: uuid("e", 1),
+  const hold = (n, cust, kind, auto, reason, daysAgo, extra = {}) => ({
+    id: uuid("d", n),
+    customer_id: custId(cust),
     status: "ACTIVE",
-    hold_kind: "NSF",
-    auto_placed: true,
-    reason: "Payment PAY-0001 came back from the bank",
-    created_at: NOW_ISO(),
+    hold_kind: kind,
+    auto_placed: auto,
+    reason,
+    created_at: new Date(Date.now() - daysAgo * 86_400_000).toISOString(),
+    ...extra,
   });
+  world.holds.push(
+    hold(1, 1, "NSF", true, "Payment PAY-0001 came back from the bank", 2),
+    hold(2, 2, "AR_AGING", true, "Receivables are more than 90 days past due", 6),
+    hold(3, 5, "CREDIT_LIMIT", false, "Balance is over the credit limit; override until the deposit clears", 1, {
+      override_until: new Date(Date.now() + 5 * 86_400_000).toISOString(),
+      override_reason: "Deposit is coming",
+    }),
+  );
 }
-reset();
 
 const acct = (n) => ACCOUNTS.find((a) => a.n === n);
 const custId = (n) => uuid("e", n);
 const acctOfCust = (id) => ACCOUNTS.find((a) => custId(a.n) === id);
 const invById = (id) => world.invoices.find((i) => i.id === id);
+reset();
 
 function statusOf(inv) {
   if (inv.balance_cents === 0) return "PAID";
+  if (inv.disputed === true) return "DISPUTED";
   const held = world.holds.some((h) => h.status === "ACTIVE" && h.customer_id === custId(inv.acct));
   if (inv.late > 0) return "OVERDUE";
   if (held) return "CREDIT_HOLD";
@@ -154,7 +204,8 @@ function registerRow(inv) {
     customer_id: custId(a.n),
     customer_name: a.name,
     account_no: a.no,
-    branch_id: BRANCH,
+    branch_id: branchOf(a.n),
+    order_no: `SO-${2000 + invNumber(inv)}`,
     issue_date: dayOffset(-inv.late - a.terms),
     due_date: dayOffset(-inv.late),
     total_cents: inv.total_cents,
@@ -163,7 +214,7 @@ function registerRow(inv) {
     status: statusOf(inv),
     days_overdue: Math.max(inv.late, 0),
     account_status: accountStatus(a.n),
-    disputed: false,
+    disputed: inv.disputed === true,
     account: position(a.n),
   };
   if (inv.promise !== null) {
@@ -190,7 +241,7 @@ function agingRows() {
       customer_id: custId(a.n),
       customer_name: a.name,
       account_no: a.no,
-      branch_id: BRANCH,
+      branch_id: branchOf(a.n),
       payment_terms_days: a.terms,
       credit_limit_cents: a.limit,
       ...row,
@@ -256,7 +307,17 @@ function landing() {
     },
     cards,
     escalation_queue: queue,
-    paper_path: [],
+    paper_path: [
+      {
+        flag_id: uuid("6", 1),
+        customer_id: custId(4),
+        customer_name: acct(4).name,
+        account_no: acct(4).no,
+        delivered_sends: 3,
+        window_days: 45,
+        raised_at: NOW_ISO(),
+      },
+    ],
     capabilities: {},
   };
 }
@@ -276,7 +337,7 @@ function detail(inv) {
     days_overdue: row.days_overdue,
     issue_date: row.issue_date,
     due_date: row.due_date,
-    branch_id: BRANCH,
+    branch_id: branchOf(a.n),
     customer: {
       customer_id: custId(a.n),
       name: a.name,
@@ -309,6 +370,17 @@ function detail(inv) {
     as_of: dayOffset(0),
   };
   if (inv.promise !== null) out.promise = inv.promise;
+  if (inv.disputed === true) {
+    out.dispute = {
+      id: uuid("7", inv.n ?? 1),
+      status: "OPEN",
+      reason: "SHORT_DELIVERY",
+      note: "Two pallets were short on the drop",
+      amount_cents: 20_000,
+      raised_at: NOW_ISO(),
+    };
+  }
+  out.order_no = `SO-${2000 + invNumber(inv)}`;
   return out;
 }
 
@@ -422,6 +494,7 @@ async function handle(req, res) {
     if (!account) return refuse(res, 404, "not found");
     return send(res, 200, { token: mintToken(account.user_id), user: account, flow: body.flow });
   }
+  if (method === "GET" && path === "/api/v1/branches") return send(res, 200, BRANCHES);
   if (!path.startsWith("/api/v1/ar/")) return refuse(res, 404, "not found");
   if ((req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");
 
@@ -565,9 +638,87 @@ async function handle(req, res) {
 
   if (method === "GET" && path === "/api/v1/ar/holds") return send(res, 200, holdsPage(q.get("status") ?? ""));
 
-  // The release is an administrator's: this role is refused with the gate's shared body.
-  m = path.match(/^\/api\/v1\/ar\/holds\/([^/]+)\/ar-release$/);
-  if (m && method === "POST") return send(res, 403, { error: "Forbidden" });
+  // The release, the override and the sweep are an administrator's: any other role is refused
+  // with the gate's shared body.
+  m = path.match(/^\/api\/v1\/ar\/holds\/([^/]+)\/(ar-release|override)$/);
+  if (m && method === "POST") {
+    if (!isController(req)) return send(res, 403, { error: "Forbidden" });
+    const body = await readBody(req);
+    const hold = world.holds.find((h) => h.id === m[1]);
+    if (!hold) return refuse(res, 404, "not found");
+    if (m[2] === "ar-release") {
+      hold.status = "RELEASED";
+      return send(res, 200, { ok: true });
+    }
+    hold.override_until = new Date(Date.now() + (body?.hours ?? 24) * 3_600_000).toISOString();
+    hold.override_reason = String(body?.reason ?? "");
+    return send(res, 200, { ok: true, override_until: hold.override_until, reason: hold.override_reason });
+  }
+  if (method === "POST" && path === "/api/v1/ar/credit-sweep") {
+    if (!isController(req)) return send(res, 403, { error: "Forbidden" });
+    return send(res, 200, { evaluated: ACCOUNTS.length, placed: 0, would_hold: 0, dry_run: false });
+  }
+
+  if (method === "POST" && path === "/api/v1/ar/register/selection") {
+    const body = await readBody(req);
+    const picked = (body?.invoice_ids ?? []).map(invById).filter(Boolean);
+    return send(res, 200, { count: picked.length, balance_cents: picked.reduce((t, i) => t + i.balance_cents, 0) });
+  }
+
+  if (method === "POST" && path === "/api/v1/ar/register/reminders") {
+    const body = await readBody(req);
+    if (!Array.isArray(body?.invoice_ids) || body.invoice_ids.length === 0) return refuse(res, 400, "choose at least one invoice to chase");
+    return send(res, 200, { sent: body.invoice_ids.length, replayed: 0, tone: body.tone });
+  }
+
+  if (method === "POST" && path === "/api/v1/ar/statement-runs") {
+    const body = await readBody(req);
+    const targets = body?.customer_id ? ACCOUNTS.filter((a) => custId(a.n) === body.customer_id) : ACCOUNTS;
+    const statements = [];
+    for (const a of targets) {
+      const row = agingRows().find((r) => r.customer_id === custId(a.n));
+      if (!row) continue;
+      world.counter += 1;
+      const st = {
+        id: uuid("8", world.counter),
+        run_id: uuid("9", world.counter),
+        customer_id: custId(a.n),
+        customer_name: a.name,
+        as_of_date: dayOffset(0),
+        current_cents: row.current_cents,
+        days_30_cents: row.days_30_cents,
+        days_60_cents: row.days_60_cents,
+        days_90_plus_cents: row.days_90_plus_cents,
+        closing_balance_cents: row.total_cents,
+        delivery_status: "QUEUED",
+        created_at: NOW_ISO(),
+      };
+      world.statements.set(custId(a.n), st);
+      statements.push(st);
+    }
+    return send(res, 200, {
+      run: {
+        id: uuid("9", 999),
+        mode: body?.mode ?? "MASS",
+        as_of_date: dayOffset(0),
+        status: "COMPLETED",
+        generated_count: statements.length,
+        queued_count: statements.length,
+        created_at: NOW_ISO(),
+        notices_enabled: true,
+        notice_queued_count: statements.length,
+        notice_suppressed_count: 0,
+        notice_accounting_recorded: true,
+      },
+      statements,
+    });
+  }
+
+  if (method === "GET" && path === "/api/v1/ar/register/export") {
+    const rows = world.invoices.filter((i) => i.balance_cents > 0).map((i) => `${i.invoice_no},${acct(i.acct).name},${i.balance_cents}`);
+    res.writeHead(200, { "Content-Type": "text/csv" });
+    return res.end(`Invoice,Customer,Balance\n${rows.join("\n")}\n`);
+  }
 
   m = path.match(/^\/api\/v1\/ar\/customers\/([^/]+)\/statement$/);
   if (m && method === "GET") {

@@ -201,7 +201,7 @@ test("the payment refusals are the core's sentences, in the core's order", async
 test("a promise to pay, and the refusals the core words", async () => {
   await reset();
   const register = await call("GET", "/api/v1/ar/register");
-  const inv = register.json.items[0];
+  const inv = register.json.items.find((r) => r.promised_date === undefined && !r.disputed);
   const path = `/api/v1/ar/register/invoices/${inv.id}/promise`;
   const good = { promised_cents: 5000, promised_date: later(7), promised_by: "Accounts payable", note: "Cheque in the mail", idempotency_key: "p-1" };
   refused(await call("POST", path, { ...good, idempotency_key: "" }), 400, "recording a promise needs an idempotency key");
@@ -248,7 +248,7 @@ test("credit holds read, and the release is refused with the gate's shared body"
   const list = await call("GET", "/api/v1/ar/holds?status=ACTIVE");
   assert.equal(list.status, 200);
   holds("BillingCreditHoldPage", list.json);
-  assert.equal(list.json.items.length, 1);
+  assert.equal(list.json.items.length, 3);
   const release = await call("POST", `/api/v1/ar/holds/${list.json.items[0].id}/ar-release`, { reason: "paid" });
   assert.equal(release.status, 403);
   holds("Error", release.json);
@@ -270,4 +270,60 @@ test("a statement is run for an account and read back", async () => {
   assert.equal(got.status, 200);
   holds("BillingStatement", got.json);
   assert.equal(got.json.closing_balance_cents, account.total_cents);
+});
+
+const asController = async (method, path, body) => {
+  const part = (v) => Buffer.from(JSON.stringify(v)).toString("base64url");
+  const token = `${part({ alg: "ES256" })}.${part({ sub: "de110000-0000-4000-9000-000000000008" })}.c2ln`;
+  const res = await fetch(`${base}${path}`, { method, headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+  return { status: res.status, json: await res.json() };
+};
+
+test("the controller lifts or overrides a hold and runs the sweep; every other role is refused with the shared body", async () => {
+  await reset();
+  const list = await call("GET", "/api/v1/ar/holds");
+  const [first, second] = list.json.items;
+  for (const path of [`/api/v1/ar/holds/${first.id}/override`, "/api/v1/ar/credit-sweep"]) {
+    const refusedRes = await call("POST", path, { reason: "x" });
+    assert.equal(refusedRes.status, 403);
+    assert.equal(refusedRes.json.error, "Forbidden");
+  }
+  const over = await asController("POST", `/api/v1/ar/holds/${first.id}/override`, { reason: "Deposit is coming" });
+  assert.equal(over.status, 200);
+  holds("BillingHoldOverrideResult", over.json);
+  const lifted = await asController("POST", `/api/v1/ar/holds/${second.id}/ar-release`, { reason: "Paid" });
+  assert.equal(lifted.status, 200);
+  const active = await call("GET", "/api/v1/ar/holds?status=ACTIVE");
+  assert.equal(active.json.items.length, 2);
+  const sweep = await asController("POST", "/api/v1/ar/credit-sweep");
+  holds("BillingEvaluationResult", sweep.json);
+  const everyHold = await call("GET", "/api/v1/ar/holds");
+  holds("BillingCreditHoldPage", everyHold.json);
+});
+
+test("branches, the register selection, reminders, statement runs, the export and the landing's paper path", async () => {
+  await reset();
+  const branches = await call("GET", "/api/v1/branches");
+  assert.equal(branches.status, 200);
+  holds("Branch", branches.json[0]);
+  const register = await call("GET", "/api/v1/ar/register");
+  const ids = register.json.items.slice(0, 2).map((r) => r.id);
+  const selection = await call("POST", "/api/v1/ar/register/selection", { invoice_ids: ids });
+  holds("BillingRegisterSelectionResult", selection.json);
+  assert.equal(selection.json.count, 2);
+  const remind = await call("POST", "/api/v1/ar/register/reminders", { invoice_ids: ids, tone: "FRIENDLY", idempotency_key: "r-1" });
+  holds("BillingReminderResult", remind.json);
+  refused(await call("POST", "/api/v1/ar/register/reminders", { invoice_ids: [], tone: "FRIENDLY", idempotency_key: "r-2" }), 400, "choose at least one invoice to chase");
+  const run = await call("POST", "/api/v1/ar/statement-runs", { mode: "MASS" });
+  holds("BillingStatementRunResult", run.json);
+  assert.equal(run.json.run.generated_count, 5);
+  const csv = await fetch(`${base}/api/v1/ar/register/export`, { headers: { Authorization: "Bearer x" } });
+  assert.equal(csv.status, 200);
+  assert.ok((await csv.text()).startsWith("Invoice,"));
+  const landing = await call("GET", "/api/v1/ar/landing");
+  assert.equal(landing.json.paper_path.length, 1);
+  const disputed = register.json.items.find((r) => r.disputed);
+  const one = await call("GET", `/api/v1/ar/register/invoices/${disputed.id}`);
+  holds("BillingInvoiceDetail", one.json);
+  assert.equal(one.json.dispute.status, "OPEN");
 });

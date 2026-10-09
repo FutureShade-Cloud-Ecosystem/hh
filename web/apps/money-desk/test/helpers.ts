@@ -5,20 +5,22 @@ import { expect, test as base, type APIRequestContext, type Page } from "@playwr
 export { expect };
 
 /** Runs in the page before any script: the front door's record, as the minted session. */
-export function receivablesHandoff(): void {
+export function receivablesHandoff(who?: "controller"): void {
   const part = (value: unknown): string =>
     btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   const exp = Math.floor(Date.now() / 1000) + 7 * 86_400;
-  const token = `${part({ alg: "ES256", typ: "JWT" })}.${part({ sub: "de110000-0000-4000-9000-000000000007", exp })}.c2ln`;
+  const c = who === "controller";
+  const id = c ? "de110000-0000-4000-9000-000000000008" : "de110000-0000-4000-9000-000000000007";
+  const token = `${part({ alg: "ES256", typ: "JWT" })}.${part({ sub: id, exp })}.c2ln`;
   const record = {
     token,
     tokenExpiresAtMs: Date.now() + 7 * 86_400_000,
-    flow: "payables-receivables",
-    roleLabel: "Payables and Receivables",
-    user: { userId: "de110000-0000-4000-9000-000000000007", email: "payables.receivables@hh-demo.invalid", name: "Payables and Receivables (demo)" },
-    roleCode: "payables_receivables",
-    roleName: "Payables and Receivables",
-    tier: 2,
+    flow: c ? "financial-controller" : "payables-receivables",
+    roleLabel: c ? "Financial Controller" : "Payables and Receivables",
+    user: { userId: id, email: c ? "financial.controller@hh-demo.invalid" : "payables.receivables@hh-demo.invalid", name: c ? "Financial Controller (demo)" : "Payables and Receivables (demo)" },
+    roleCode: c ? "financial_controller" : "payables_receivables",
+    roleName: c ? "Financial Controller" : "Payables and Receivables",
+    tier: c ? 1 : 2,
     scope: "GLOBAL",
   };
   if (window.sessionStorage.getItem("hh-demo.front-door.session.v1") === null) {
@@ -33,9 +35,9 @@ export async function resetStub(request: APIRequestContext): Promise<void> {
 }
 
 /** Signs in through the front door's handoff and lands on the receivables desk. */
-export async function openDesk(page: Page, request: APIRequestContext): Promise<void> {
+export async function openDesk(page: Page, request: APIRequestContext, who?: "controller"): Promise<void> {
   await resetStub(request);
-  await page.addInitScript(receivablesHandoff);
+  await page.addInitScript(receivablesHandoff, who);
   await page.goto("/");
   await expect(page.locator("[data-card]")).toHaveCount(4);
 }
