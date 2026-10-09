@@ -46,6 +46,21 @@ var (
 	// namespaces (dm-, rep-, approvals-); a room founded there would capture
 	// a later system provision that converges on the same slug.
 	ErrReservedSlug = errors.New("messaging: that slug prefix is reserved for system channels")
+	// ErrMembershipFixed: a DM's membership is its two parties and an
+	// APPROVAL channel's is its owner; neither is hand-manageable, a
+	// conflict with what the room IS rather than a permission failure.
+	ErrMembershipFixed = errors.New("messaging: this channel's membership is fixed by the system")
+	// ErrNotChannelOwner: membership management belongs to the room's owner
+	// and to the roles the role matrix gives Admin on house-messages (the
+	// general manager); a plain member holds no such pen.
+	ErrNotChannelOwner = errors.New("messaging: only the channel's owner or a house messages admin may manage members")
+	// ErrTargetNotInBranch: on a room whose membership the branch model
+	// derives (auto_scope BRANCH), a target who reaches neither the room's
+	// branch nor every branch cannot be seated in it.
+	ErrTargetNotInBranch = errors.New("messaging: that staff member does not reach this branch")
+	// ErrLastOwner: a removal may never drop a channel's last OWNER row; a
+	// room without an owner is nobody's to manage.
+	ErrLastOwner = errors.New("messaging: a channel keeps its owner")
 )
 
 // CreateChannelInput is one caller-founded channel. Slug is optional; an
@@ -142,23 +157,83 @@ func (s *Service) CreateDM(ctx context.Context, c Caller, otherUserID string) (C
 	return s.repo.CreateDM(ctx, c.UserID, otherUserID)
 }
 
-// AddMember seats one staff member in a channel the caller belongs to
-// (assertMember, the module's existing wall). An already-seated member is a
-// no-op; the row is EXPLICIT so the derived-membership prune never drops it.
+// AddMember seats one staff member in a channel. The walls, in order:
+//
+//   - assertMember, the module's existing channel-scoping wall, always
+//     first: a caller who is not in the room manages nothing in it, which
+//     is also what keeps anyone from seating themselves into a room they
+//     hold no row in (an owner adding themselves is the no-op it reads as);
+//   - the kind rule: a DM's membership is its two parties and an APPROVAL
+//     channel's is its owner, neither is hand-manageable (409);
+//   - the manager rule: the room's OWNER row, or a role the matrix gives
+//     Admin on house-messages (the general manager), and nobody else;
+//   - the branch rule: on a room whose membership the branch model derives
+//     (auto_scope BRANCH, the yard and house queue rooms), a target the
+//     model would not derive in (no grant for the room's branch, not
+//     GLOBAL) is refused.
+//
+// An already-seated member is a no-op that answers the row as it stands: a
+// DERIVED row is never rewritten to EXPLICIT (a rewritten row would become
+// hand-removable, contradicting the DERIVED removal refusal).
 func (s *Service) AddMember(ctx context.Context, c Caller, channelID, userID string) (ChannelMember, error) {
 	if err := s.assertMember(ctx, c, channelID); err != nil {
 		return ChannelMember{}, err
 	}
+	facts, err := s.repo.channelFacts(ctx, channelID)
+	if err != nil {
+		return ChannelMember{}, err
+	}
+	if facts.Kind == KindDM || facts.Kind == KindApproval {
+		return ChannelMember{}, ErrMembershipFixed
+	}
+	if err := s.assertMembershipManager(ctx, c, channelID); err != nil {
+		return ChannelMember{}, err
+	}
+	if facts.AutoScope == "BRANCH" && facts.BranchID != "" {
+		reaches, err := s.repo.userReachesBranch(ctx, userID, facts.BranchID)
+		if err != nil {
+			return ChannelMember{}, err
+		}
+		if !reaches {
+			return ChannelMember{}, ErrTargetNotInBranch
+		}
+	}
 	return s.repo.AddChannelMember(ctx, channelID, userID)
 }
 
-// RemoveMember drops one EXPLICIT member row from a channel the caller
-// belongs to. A DERIVED row is refused: it belongs to the role and branch
-// model and would be re-derived on the next membership sync, so removing it
-// by hand would be a lie the next sync exposes.
+// RemoveMember drops one EXPLICIT member row. The walls are AddMember's
+// (member, kind, manager); the branch-model target wall is add-only because
+// a removal cannot seat anyone. Below them the repository keeps its own
+// refusals: a DERIVED row belongs to the role and branch model (409), and a
+// removal never drops the room's last OWNER row (409).
 func (s *Service) RemoveMember(ctx context.Context, c Caller, channelID, userID string) error {
 	if err := s.assertMember(ctx, c, channelID); err != nil {
 		return err
 	}
+	facts, err := s.repo.channelFacts(ctx, channelID)
+	if err != nil {
+		return err
+	}
+	if facts.Kind == KindDM || facts.Kind == KindApproval {
+		return ErrMembershipFixed
+	}
+	if err := s.assertMembershipManager(ctx, c, channelID); err != nil {
+		return err
+	}
 	return s.repo.RemoveChannelMember(ctx, channelID, userID)
+}
+
+// assertMembershipManager is the manager wall: the caller must hold the
+// room's OWNER row, or carry a role the role matrix gives Admin on
+// house-messages. assertMember has already run, so the caller's row exists
+// and its role is readable.
+func (s *Service) assertMembershipManager(ctx context.Context, c Caller, channelID string) error {
+	role, err := s.repo.memberRole(ctx, channelID, c.UserID)
+	if err != nil {
+		return err
+	}
+	if role == "OWNER" || houseMessagesAdmin(c) {
+		return nil
+	}
+	return ErrNotChannelOwner
 }

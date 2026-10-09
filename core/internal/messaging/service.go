@@ -54,6 +54,11 @@ type store interface {
 	CreateDM(ctx context.Context, aUserID, bUserID string) (Channel, bool, error)
 	AddChannelMember(ctx context.Context, channelID, userID string) (ChannelMember, error)
 	RemoveChannelMember(ctx context.Context, channelID, userID string) error
+	// The membership walls' reads: the room's kind/branch/auto_scope, the
+	// caller's row role, and the add-target's branch reach.
+	channelFacts(ctx context.Context, channelID string) (channelFactsRow, error)
+	memberRole(ctx context.Context, channelID, userID string) (string, error)
+	userReachesBranch(ctx context.Context, userID, branchID string) (bool, error)
 }
 
 // Service holds the messaging business rules. It depends only on the store seam (its own tables +

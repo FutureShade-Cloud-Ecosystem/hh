@@ -32,6 +32,7 @@ import (
 const (
 	rtCaller   = "d7000000-0000-4000-9000-0000000000aa"
 	rtBobby    = "d7000000-0000-4000-9000-0000000000bb"
+	rtDana     = "d7000000-0000-4000-9000-0000000000cc"
 	rtUnknown  = "d7000000-0000-4000-9000-0000000000ff"
 	rtKingston = "5d1b3f6e-0000-4000-9000-000000000002"
 	rtYardTrt  = "a5000000-0000-4000-9000-000000000001"
@@ -68,11 +69,19 @@ func newAdminStore() *adminStore {
 
 // plantRoom seeds the double with a room the tests did not found through
 // the routes (a seeded room, a DM), the shape the repository would hold.
+// The first member named takes the room's OWNER row.
 func (f *adminStore) plantRoom(c Channel, memberIDs ...string) {
 	f.rooms[c.Slug] = c
 	f.exists[c.ID] = true
-	for _, id := range memberIDs {
+	f.facts[c.ID] = channelFactsRow{Kind: c.Kind, BranchID: c.BranchID}
+	for i, id := range memberIDs {
 		f.setMember(c.ID, id)
+		f.memberSources[c.ID+"|"+id] = SourceExplicit
+		if i == 0 {
+			f.memberRoles[c.ID+"|"+id] = "OWNER"
+		} else {
+			f.memberRoles[c.ID+"|"+id] = "MEMBER"
+		}
 	}
 }
 
@@ -95,6 +104,9 @@ func (f *adminStore) CreateChannel(_ context.Context, in CreateChannelInput, own
 	f.rooms[in.Slug] = c
 	f.slugs[in.Slug] = c.ID
 	f.setMember(c.ID, ownerID)
+	f.memberRoles[c.ID+"|"+ownerID] = "OWNER"
+	f.memberSources[c.ID+"|"+ownerID] = SourceExplicit
+	f.facts[c.ID] = channelFactsRow{Kind: in.Kind, BranchID: in.BranchID}
 	return c, true, nil
 }
 
@@ -112,19 +124,33 @@ func (f *adminStore) CreateDM(_ context.Context, aUserID, bUserID string) (Chann
 	if c, ok := f.dmChannels[dmPairKey(aUserID, bUserID)]; ok {
 		return c, false, nil
 	}
-	c := Channel{ID: "dm-" + dmPairKey(aUserID, bUserID), Kind: KindDM, Name: "DM", Slug: dmPairSlug(aUserID, bUserID), Tier: TierStandard}
+	// A UUID id: the handler validates {id} at the boundary, so the double
+	// must mint what the repository would.
+	f.channelSeq++
+	c := Channel{ID: fmt.Sprintf("e3000000-0000-4000-9000-%012d", f.channelSeq), Kind: KindDM,
+		Name: "DM", Slug: dmPairSlug(aUserID, bUserID), Tier: TierStandard}
 	f.dmChannels[dmPairKey(aUserID, bUserID)] = c
 	if c.Slug != "" {
 		f.rooms[c.Slug] = c
 	}
 	f.setMember(c.ID, aUserID)
 	f.setMember(c.ID, bUserID)
+	f.memberRoles[c.ID+"|"+aUserID] = "OWNER"
+	f.memberRoles[c.ID+"|"+bUserID] = "MEMBER"
+	f.memberSources[c.ID+"|"+aUserID] = SourceExplicit
+	f.memberSources[c.ID+"|"+bUserID] = SourceExplicit
+	f.facts[c.ID] = channelFactsRow{Kind: KindDM}
 	return c, true, nil
 }
 
 func (f *adminStore) AddChannelMember(_ context.Context, channelID, userID string) (ChannelMember, error) {
 	f.addedMembers = append(f.addedMembers, channelID+"|"+userID)
 	f.setMember(channelID, userID)
+	if src, ok := f.memberSources[channelID+"|"+userID]; ok {
+		return ChannelMember{ChannelID: channelID, UserID: userID, Role: f.memberRoles[channelID+"|"+userID], Source: src}, nil
+	}
+	f.memberSources[channelID+"|"+userID] = SourceExplicit
+	f.memberRoles[channelID+"|"+userID] = "MEMBER"
 	return ChannelMember{ChannelID: channelID, UserID: userID, Role: "MEMBER", Source: SourceExplicit}, nil
 }
 
@@ -132,8 +158,23 @@ func (f *adminStore) RemoveChannelMember(_ context.Context, channelID, userID st
 	if f.derivedMembers[channelID+"|"+userID] {
 		return ErrDerivedMember
 	}
+	// The last-owner guard the repository's delete predicate holds: an
+	// OWNER row that is the room's only one survives every removal.
+	if f.memberRoles[channelID+"|"+userID] == "OWNER" {
+		owners := 0
+		for uid := range f.members[channelID] {
+			if f.memberRoles[channelID+"|"+uid] == "OWNER" {
+				owners++
+			}
+		}
+		if owners <= 1 {
+			return ErrLastOwner
+		}
+	}
 	f.removedMembers = append(f.removedMembers, channelID+"|"+userID)
 	delete(f.members[channelID], userID)
+	delete(f.memberRoles, channelID+"|"+userID)
+	delete(f.memberSources, channelID+"|"+userID)
 	return nil
 }
 
@@ -142,11 +183,21 @@ func (f *adminStore) RemoveChannelMember(_ context.Context, channelID, userID st
 // frontline caller holding Trenton: every role works House Messages, the
 // general manager administers it, the roleconfig document says so).
 func newAdminRoutes(t *testing.T, fs *adminStore) (*http.ServeMux, string) {
+	return newAdminRoutesAs(t, fs, rtCaller, identity.StaffAuthority{
+		RoleID: "inside_sales", Tier: identity.TierFrontline, Scope: identity.ScopeBranch,
+	})
+}
+
+// newAdminRoutesAs is newAdminRoutes with the linked caller and the authority
+// the guards resolve chosen by the test: the membership walls read the
+// caller's role, so the legs need the general manager's authority as easily
+// as the frontline caller's.
+func newAdminRoutesAs(t *testing.T, fs *adminStore, linkedUser string, authority identity.StaffAuthority) (*http.ServeMux, string) {
 	t.Helper()
 	sg := testkit.NewStaffGuards(t)
-	sg.SetAuthority(identity.StaffAuthority{RoleID: "inside_sales", Tier: identity.TierFrontline, Scope: identity.ScopeBranch})
+	sg.SetAuthority(authority)
 	h := NewHandler(&Service{repo: fs}, nil).
-		WithUserLinker(func(_ context.Context, _ string) (string, bool) { return rtCaller, true })
+		WithUserLinker(func(_ context.Context, _ string) (string, bool) { return linkedUser, true })
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux, sg.Guards)
 	return mux, sg.Bearer(t)
@@ -293,11 +344,12 @@ func TestRoute_Membership_Refuses_NonMember(t *testing.T) {
 }
 
 // Removing a DERIVED member is a conflict with the role and branch model that
-// owns that membership, not a permission failure.
+// owns that membership, not a permission failure. The caller holds the room's
+// OWNER row (the membership walls' pen), so the conflict is what answers.
 func TestRoute_RemoveMember_Refuses_Derived_Member(t *testing.T) {
 	fs := newAdminStore()
-	fs.setMember(rtYardTrt, rtCaller)
-	fs.setMember(rtYardTrt, rtBobby)
+	fs.plantRoom(Channel{ID: rtYardTrt, Kind: KindBranch, Slug: "yard-trenton", Name: "#yard-trenton",
+		BranchID: "5d1b3f6e-0000-4000-9000-000000000001", Tier: TierStandard}, rtCaller, rtBobby)
 	fs.derivedMembers[rtYardTrt+"|"+rtBobby] = true
 	mux, bearer := newAdminRoutes(t, fs)
 	rec := adminDo(t, mux, bearer, http.MethodDelete, "/api/v1/messaging/channels/"+rtYardTrt+"/members/"+rtBobby, nil)

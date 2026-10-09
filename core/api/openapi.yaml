@@ -11846,7 +11846,7 @@ paths:
       tags:
         - staff-messaging
       summary: Seat one staffer in a channel the caller belongs to
-      description: "The row is explicit and idempotent: an already-seated member changes nothing. A caller who is not a member of the channel is refused with 403 (the module's channel-scoping wall); a user who is not an active staffer is 404 or 403."
+      description: "The row is explicit and idempotent: an already-seated member answers the row as it stands, and a DERIVED row is never rewritten. A caller who is not a member of the channel is refused with 403 (the module's channel-scoping wall, which also keeps anyone from seating themselves into a room they hold no row in); a direct message or approvals channel has fixed membership and refuses with 409; managing members belongs to the room's owner and to the roles the role matrix gives Admin on house-messages (the general manager), everyone else is 403; and on a room whose membership the branch model derives, a target who reaches neither the room's branch nor every branch is 403. A user who is not an active staffer is 404 or 403."
       x-role: requireStaff
       x-access:
         surfaces:
@@ -11876,13 +11876,15 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/messaging/channels/{id}/members/{userID}:
     delete:
       operationId: messagingRemoveChannelMember
       tags:
         - staff-messaging
       summary: Drop one explicit member row from a channel the caller belongs to
-      description: A DERIVED member row is the role and branch model's and is refused with 409 (the next membership sync would re-derive it); only explicit rows are hand-removable.
+      description: A DERIVED member row is the role and branch model's and is refused with 409 (the next membership sync would re-derive it); only explicit rows are hand-removable. A direct message or approvals channel has fixed membership and refuses with 409; managing members belongs to the room's owner and to the roles the role matrix gives Admin on house-messages (the general manager), everyone else is 403; and a removal never drops the room's last OWNER row (409, a channel keeps its owner).
       x-role: requireStaff
       x-access:
         surfaces:

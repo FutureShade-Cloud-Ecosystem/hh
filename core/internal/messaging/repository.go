@@ -1091,10 +1091,83 @@ func (r *Repository) CreateDM(ctx context.Context, aUserID, bUserID string) (Cha
 	return c, true, nil
 }
 
+// channelFactsRow is the membership walls' read of one room: its kind
+// (DM and APPROVAL rooms have fixed membership), its branch and its
+// auto_scope (a BRANCH-scoped room's membership belongs to the branch
+// model, so a target it would not derive in is refused).
+type channelFactsRow struct {
+	Kind      string
+	BranchID  string
+	AutoScope string
+}
+
+// channelFacts reads one room's kind, branch and auto_scope. An unknown
+// room is not-found (the member wall has usually answered before this
+// runs, but the read stands on its own).
+func (r *Repository) channelFacts(ctx context.Context, channelID string) (channelFactsRow, error) {
+	if r.pool == nil {
+		return channelFactsRow{}, errNoDB
+	}
+	var f channelFactsRow
+	err := r.pool.QueryRow(ctx, `
+		SELECT kind, COALESCE(branch_id::text,''), COALESCE(auto_scope,'')
+		FROM msg_channels WHERE id = $1`, channelID).
+		Scan(&f.Kind, &f.BranchID, &f.AutoScope)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return channelFactsRow{}, errNotFound
+	}
+	if err != nil {
+		return channelFactsRow{}, fmt.Errorf("channel facts: %w", err)
+	}
+	return f, nil
+}
+
+// memberRole reads one member row's role (the manager wall: the room's
+// OWNER manages it). An absent row reads as an empty role; the member wall
+// has already refused a caller with no row by the time this runs.
+func (r *Repository) memberRole(ctx context.Context, channelID, userID string) (string, error) {
+	if r.pool == nil {
+		return "", errNoDB
+	}
+	var role string
+	err := r.pool.QueryRow(ctx,
+		`SELECT role FROM msg_members WHERE channel_id = $1 AND user_id = $2`,
+		channelID, userID).Scan(&role)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("member role: %w", err)
+	}
+	return role, nil
+}
+
+// userReachesBranch reports whether one user reaches a branch: granted it,
+// or GLOBAL-scoped through any role (the same facts SyncMembership's
+// qualify predicate reads, mirroring StaffContext.CanAccessBranch). It is
+// the add-target wall on rooms the branch model derives membership for.
+func (r *Repository) userReachesBranch(ctx context.Context, userID, branchID string) (bool, error) {
+	if r.pool == nil {
+		return false, errNoDB
+	}
+	var reaches bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM user_branch_grants g WHERE g.user_id = $1 AND g.branch_id = $2)
+		    OR EXISTS(SELECT 1 FROM user_roles ur JOIN roles ro ON ro.id = ur.role_id
+		              WHERE ur.user_id = $1 AND ro.scope = 'GLOBAL')`,
+		userID, branchID).Scan(&reaches)
+	if err != nil {
+		return false, fmt.Errorf("user reaches branch: %w", err)
+	}
+	return reaches, nil
+}
+
 // AddChannelMember seats one staff member EXPLICIT in a channel
-// (idempotent; an already-seated member changes nothing, whatever the
-// existing row's source). The unknown-user and inactive-user refusals run
-// before anything is written.
+// (idempotent). An already-seated member answers the row AS IT STANDS: the
+// insert's conflict arm writes nothing, so a DERIVED row is never
+// rewritten to EXPLICIT (a rewritten row would become hand-removable,
+// contradicting the DERIVED removal refusal). The unknown-user and
+// inactive-user refusals run before anything is written.
 func (r *Repository) AddChannelMember(ctx context.Context, channelID, userID string) (ChannelMember, error) {
 	if r.pool == nil {
 		return ChannelMember{}, errNoDB
@@ -1102,26 +1175,51 @@ func (r *Repository) AddChannelMember(ctx context.Context, channelID, userID str
 	if err := r.userActive(ctx, userID); err != nil {
 		return ChannelMember{}, err
 	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return ChannelMember{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 	var m ChannelMember
-	if err := r.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		INSERT INTO msg_members (channel_id, user_id, role, source)
 		VALUES ($1, $2, 'MEMBER', 'EXPLICIT')
-		ON CONFLICT (channel_id, user_id) DO UPDATE SET source = 'EXPLICIT'
+		ON CONFLICT (channel_id, user_id) DO NOTHING
 		RETURNING channel_id::text, user_id::text, role, source, joined_at`,
 		channelID, userID).
-		Scan(&m.ChannelID, &m.UserID, &m.Role, &m.Source, &m.JoinedAt); err != nil {
+		Scan(&m.ChannelID, &m.UserID, &m.Role, &m.Source, &m.JoinedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Already seated (and the fresh arm of a live caller is the only
+		// other way to reach this point with no row): answer the row as it
+		// stands, whatever its source.
+		err = tx.QueryRow(ctx, `
+			SELECT channel_id::text, user_id::text, role, source, joined_at
+			FROM msg_members WHERE channel_id = $1 AND user_id = $2`,
+			channelID, userID).
+			Scan(&m.ChannelID, &m.UserID, &m.Role, &m.Source, &m.JoinedAt)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ChannelMember{}, errNotFound // no such channel
 		}
+		if err != nil {
+			return ChannelMember{}, fmt.Errorf("read seated member: %w", err)
+		}
+		return m, nil
+	}
+	if err != nil {
 		return ChannelMember{}, fmt.Errorf("add channel member: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ChannelMember{}, err
 	}
 	return m, nil
 }
 
 // RemoveChannelMember drops one member row. A DERIVED row is refused
 // (ErrDerivedMember): the role and branch model re-derives it on the next
-// sync, so a hand removal would be undone and lie in between. An absent row
-// is not-found.
+// sync, so a hand removal would be undone and lie in between. A removal
+// never drops the room's last OWNER row (ErrLastOwner): the delete's own
+// predicate holds the owner count, so two concurrent removals cannot both
+// pass it. An absent row is not-found.
 func (r *Repository) RemoveChannelMember(ctx context.Context, channelID, userID string) error {
 	if r.pool == nil {
 		return errNoDB
@@ -1138,10 +1236,20 @@ func (r *Repository) RemoveChannelMember(ctx context.Context, channelID, userID 
 	if source == SourceDerived {
 		return ErrDerivedMember
 	}
-	if _, err := r.pool.Exec(ctx,
-		`DELETE FROM msg_members WHERE channel_id = $1 AND user_id = $2 AND source = 'EXPLICIT'`,
-		channelID, userID); err != nil {
+	ct, err := r.pool.Exec(ctx, `
+		DELETE FROM msg_members m
+		WHERE m.channel_id = $1 AND m.user_id = $2 AND m.source = 'EXPLICIT'
+		  AND (m.role <> 'OWNER'
+		       OR (SELECT count(*) FROM msg_members o
+		           WHERE o.channel_id = $1 AND o.role = 'OWNER') > 1)`,
+		channelID, userID)
+	if err != nil {
 		return fmt.Errorf("remove channel member: %w", err)
+	}
+	if ct.RowsAffected() == 0 {
+		// The row is EXPLICIT (read above) and survived the predicate: it
+		// is the room's last OWNER.
+		return ErrLastOwner
 	}
 	if err := r.bumpChannelSeq(ctx, channelID); err != nil {
 		return err

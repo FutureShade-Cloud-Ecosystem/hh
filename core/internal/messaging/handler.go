@@ -766,6 +766,14 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.Error(w, http.StatusBadRequest, "that slug prefix is reserved for system channels")
 	case errors.Is(err, ErrChannelSlugTaken):
 		httpx.Error(w, http.StatusConflict, "a channel with that name or slug already exists")
+	case errors.Is(err, ErrMembershipFixed):
+		httpx.Error(w, http.StatusConflict, "this channel's membership is fixed (a direct message's two parties, an approvals channel's owner)")
+	case errors.Is(err, ErrNotChannelOwner):
+		httpx.Error(w, http.StatusForbidden, "only the channel's owner or a house messages admin may manage members")
+	case errors.Is(err, ErrTargetNotInBranch):
+		httpx.Error(w, http.StatusForbidden, "that staff member does not reach this branch")
+	case errors.Is(err, ErrLastOwner):
+		httpx.Error(w, http.StatusConflict, "a channel must keep its owner")
 	case errors.Is(err, ErrNotInBranch):
 		httpx.Error(w, http.StatusForbidden, "caller does not reach this branch")
 	case errors.Is(err, ErrBadDMTarget):
