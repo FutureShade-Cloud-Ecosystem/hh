@@ -289,10 +289,6 @@ func (r *Repository) SetDefaultMethod(ctx context.Context, customerID, methodID 
 func (r *Repository) lockApplyInvoicesTx(ctx context.Context, tx pgx.Tx, in ApplyRequest) ([]applyInvoiceRow, error) {
 	ids := append([]string(nil), in.InvoiceIDs...)
 	sort.Strings(ids)
-	reach := map[string]bool{}
-	for _, b := range in.BranchIDs {
-		reach[b] = true
-	}
 	global := in.BranchIDs == nil
 	rows := make([]applyInvoiceRow, 0, len(ids))
 	for _, id := range ids {
@@ -312,7 +308,7 @@ func (r *Repository) lockApplyInvoicesTx(ctx context.Context, tx pgx.Tx, in Appl
 		if row.CustomerID != in.CustomerID {
 			return nil, NoSuchInvoiceError{InvoiceID: id}
 		}
-		if !global && !reach[row.BranchID] {
+		if !global && !branchInReach(in.BranchIDs, row.BranchID) {
 			return nil, NoSuchInvoiceError{InvoiceID: id}
 		}
 		if row.Status != "FINALIZED" && row.Status != "PARTIALLY_PAID" {
@@ -324,12 +320,26 @@ func (r *Repository) lockApplyInvoicesTx(ctx context.Context, tx pgx.Tx, in Appl
 	return rows, nil
 }
 
+// branchInReach answers whether a branch is in a scoped caller's reach list.
+func branchInReach(reach []string, branchID string) bool {
+	for _, b := range reach {
+		if b == branchID {
+			return true
+		}
+	}
+	return false
+}
+
 // replayAnswer rebuilds the split answer for a key that already posted: the stored payment with
 // its stored allocations, and each invoice's balance read live so the desk sees what the ledger
 // says now, not what it said when the cheque first landed. The balances are the invoice's current
 // ones (a later payment may have moved them since); the outcome words read the invoice's live
 // status.
-func (r *Repository) replayAnswer(ctx context.Context, p Payment) (ApplyAnswer, error) {
+//
+// The key is not a bearer of the answer (the till's replayIfAllowed rule, PR 277): a replay is
+// judged like a first attempt. An allocated invoice outside the caller's branch reach answers as
+// not found, and a key that recorded a payment for another account is refused in words.
+func (r *Repository) replayAnswer(ctx context.Context, p Payment, in ApplyRequest) (ApplyAnswer, error) {
 	ans := ApplyAnswer{
 		PaymentID: p.ID, PaymentNo: p.PaymentNo, AmountCents: p.AmountCents,
 		AppliedCents: 0, Replayed: true,
@@ -358,7 +368,13 @@ func (r *Repository) replayAnswer(ctx context.Context, p Payment) (ApplyAnswer, 
 		if err != nil {
 			return ApplyAnswer{}, fmt.Errorf("apply: replay read invoice %q: %w", id, err)
 		}
+		if in.BranchIDs != nil && !branchInReach(in.BranchIDs, row.BranchID) {
+			return ApplyAnswer{}, NoSuchInvoiceError{InvoiceID: id}
+		}
 		rows = append(rows, row)
+	}
+	if p.CustomerID != in.CustomerID {
+		return ApplyAnswer{}, httpx.BadRequestf("that idempotency key already recorded a payment for another account; use a new key")
 	}
 	// The zero amount walk answers the rows in the allocation's own oldest first order with their
 	// live balances; each line is then patched with what THIS payment put on it.

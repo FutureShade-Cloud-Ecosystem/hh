@@ -129,7 +129,7 @@ func (r *Repository) ApplyReceived(ctx context.Context, in ApplyRequest) (ApplyA
 		if p, ok, err := r.receiptByKey(ctx, in.IdempotencyKey); err != nil {
 			return ApplyAnswer{}, err
 		} else if ok {
-			return r.replayAnswer(ctx, p)
+			return r.replayAnswer(ctx, p, in)
 		}
 	}
 
@@ -189,7 +189,7 @@ func (r *Repository) ApplyReceived(ctx context.Context, in ApplyRequest) (ApplyA
 		if existing, ok, readErr := r.receiptByKey(ctx, in.IdempotencyKey); readErr != nil {
 			return ApplyAnswer{}, readErr
 		} else if ok {
-			return r.replayAnswer(ctx, existing)
+			return r.replayAnswer(ctx, existing, in)
 		}
 		return ApplyAnswer{}, fmt.Errorf("payments: apply key %q was claimed and then vanished", in.IdempotencyKey)
 	}
