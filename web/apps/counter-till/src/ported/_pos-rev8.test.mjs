@@ -247,13 +247,13 @@ test('FLOOR (5): Walk-in / Account wear UNDERLINE tabs; the picker offers add-ne
 
 // ── FLOOR: fulfilment icon tiles (item 6) ───────────────────────────────────────────────────────
 
-test('FLOOR (6): all four fulfilment options are ICON tiles: inline currentColor SVGs, 2×2 grid', () => {
-  const fulfil = terminalSrc.slice(
-    terminalSrc.indexOf('<div class="fulfil"'),
-    terminalSrc.indexOf("COD${this.codEnabled === false"),
-  );
+test('FLOOR (6): all three fulfilment options are ICON tiles: inline currentColor SVGs', () => {
+  const start = terminalSrc.indexOf('<div class="fulfil"');
+  assert.ok(start >= 0, 'the fulfilment row stands in the terminal');
+  // The tiles hold no nested div, so the first closing div after the opener closes the row.
+  const fulfil = terminalSrc.slice(start, terminalSrc.indexOf('</div>', start));
   const icons = fulfil.match(/<svg[^>]*stroke="currentColor"/g) ?? [];
-  assert.ok(icons.length >= 4, `every fulfilment tile carries an inline icon (found ${icons.length})`);
+  assert.equal(icons.length, 3, `each of the three fulfilment tiles carries an inline icon (found ${icons.length})`);
 
  // THE 2×2 WAS RETIRED ON 20 SEP, on the commander's ruling, and this line is the record of what
  // that did and did not change. Measured first: the fulfilment label plus this group was 158px of
@@ -262,7 +262,7 @@ test('FLOOR (6): all four fulfilment options are ICON tiles: inline currentColor
  // (DIB-551 settled where it lives, locked with the client), so it got shorter instead: icon
  // BESIDE label, one row, about 40px.
  //
- // What this floor protected is unchanged and still asserted above: four options, as TILES, with
+ // What this floor protected is unchanged and still asserted above: three options, as TILES, with
  // inline currentColor art, never a select. What replaced the literal is a stronger claim than the
  // one it made: a grid that answers the 1106px column and a 280px panel with the same rule, and a
  // tile that is still a real target under a thumb.
