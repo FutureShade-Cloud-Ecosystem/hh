@@ -1,0 +1,79 @@
+//go:build integration
+
+// ar_evening_age_integration_test.go, the SQL reads of the AR family in the house evening window
+// (the unit twin is ar_evening_age_test.go). Pinned at houseday.JustAfterUTCDayChange, so each leg
+// is red on a read that follows the UTC day at any wall clock hour.
+//
+// Run: DATABASE_URL=... go test -tags integration ./internal/billing/... -run EveningAge -count=1
+package billing
+
+import (
+	"context"
+	"testing"
+)
+
+// An invoice due on the house day is CURRENT on the house day, whatever the UTC day says: the aging
+// the credit desk and the month end statements read cuts its date parameter from the clock's house day.
+func TestIntegrationEveningAge_AgingRowsReadTheClockOnTheHouseDay(t *testing.T) {
+	rig := newHH195Rig(t)
+	cust := rig.customer(t, "AG")
+	rig.doc(t, cust, "INV-AG", "INVOICE", "FINALIZED", 5000, 0)
+
+	rows, err := NewRepository(rig.pool).AgingRows(context.Background(), rig.clock, 60, "")
+	if err != nil {
+		t.Fatalf("aging rows: %v", err)
+	}
+	got, ok := findRow(rows, cust)
+	if !ok {
+		t.Fatalf("customer missing from the aging")
+	}
+	if got.CurrentCents != 5000 || got.Days30Cents != 0 {
+		t.Errorf("invoice due on the house day: current %d, 1-30 %d; want 5000, 0 (it is not late yet)",
+			got.CurrentCents, got.Days30Cents)
+	}
+}
+
+// The register's overdue test reads the same date parameter.
+func TestIntegrationEveningAge_RegisterCountsReadTheClockOnTheHouseDay(t *testing.T) {
+	rig := newHH195Rig(t)
+	cust := rig.customer(t, "RG")
+	rig.doc(t, cust, "INV-RG", "INVOICE", "FINALIZED", 5000, 0)
+
+	counts, err := NewRepository(rig.pool).RegisterCountsFor(context.Background(), rig.clock, 0, RegisterFilter{CustomerID: cust})
+	if err != nil {
+		t.Fatalf("register counts: %v", err)
+	}
+	if counts.Overdue != 0 {
+		t.Errorf("overdue = %d, want 0: the invoice is due on the house day", counts.Overdue)
+	}
+}
+
+// A statement cut for the house day carries a transaction rung that house evening, though its
+// instant is already the next UTC day.
+func TestIntegrationEveningAge_StatementLinesFileAnEveningUnderTheHouseDay(t *testing.T) {
+	rig := newHH195Rig(t)
+	cust := rig.customer(t, "ST")
+	evening := rig.clock // the house evening of rig's day, already the next UTC day
+	if _, err := rig.pool.Exec(context.Background(),
+		`INSERT INTO customer_transactions (customer_id, txn_type, amount_cents, balance_after,
+		                                    source_type, source_ref_id, branch_id, occurred_at, created_at)
+		 VALUES ($1::uuid,'INVOICE',700,700,'invoice',gen_random_uuid(),$2::uuid,$3,$3)`,
+		cust, rig.branchID, evening); err != nil {
+		t.Fatalf("seed transaction: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = rig.pool.Exec(context.Background(), `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, cust)
+	})
+	houseDay := houseClock(evening).Format("2006-01-02")
+	asOf, err := parseAsOf(houseDay)
+	if err != nil {
+		t.Fatalf("as_of: %v", err)
+	}
+	lines, err := NewRepository(rig.pool).StatementLines(context.Background(), cust, asOf)
+	if err != nil {
+		t.Fatalf("statement lines: %v", err)
+	}
+	if len(lines) != 1 {
+		t.Errorf("%d lines on the statement for %s, want the evening transaction", len(lines), houseDay)
+	}
+}
