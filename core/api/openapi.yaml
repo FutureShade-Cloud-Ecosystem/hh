@@ -7360,7 +7360,7 @@ paths:
       tags:
         - staff-gl
       summary: Approve and post a parked DRAFT (the checker half of maker-checker)
-      description: "Four-eyes: the approver must differ from the journal's creator; a creator attempting to approve their own journal is refused as forbidden. Approving a journal that is no longer DRAFT conflicts."
+      description: "Four-eyes: the approver must differ from the journal's creator; a creator attempting to approve their own journal is refused as forbidden. Approving a journal that is no longer DRAFT conflicts. A journal that has a JE_OVER_THRESHOLD request still PENDING on the approvals queue is not approved here: it conflicts with \"gl: this journal has a pending approval request; decide it from the approvals queue, which posts it\", because deciding that request is the one way to approve it (the decision posts the journal and stamps the request in one transaction). A journal with no pending request is approved by this route as before."
       x-role: requireManager
       x-access:
         surfaces:
