@@ -41,7 +41,7 @@ for (const size of SIZES) {
 
       await request.post("/_stub/reset");
       await page.goto("/");
-      await expect(page.locator("[data-flow]")).toHaveCount(3);
+      await expect(page.locator("[data-flow]")).toHaveCount(2);
       await brandOn();
       await take("01", "way-in");
 
@@ -74,7 +74,7 @@ for (const size of SIZES) {
       await page.locator("[data-tab-id='trial']").click();
       await expect(page.locator("[data-trial]")).toContainText("In balance");
       await take("08", "trial-balance");
-      await page.getByRole("button", { name: "Kingston", exact: true }).click();
+      await page.getByRole("button", { name: /^Kingston/ }).click();
       await expect(page.locator("[data-trial]")).toContainText("No posted journals yet.");
       await take("08b", "trial-balance-one-branch");
 

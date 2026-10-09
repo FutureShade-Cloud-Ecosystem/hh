@@ -10,7 +10,7 @@ export function controllerHandoff(): void {
   const part = (value: unknown): string =>
     btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   const exp = Math.floor(Date.now() / 1000) + 7 * 86_400;
-  const id = "de110000-0000-4000-9000-0000000000c1";
+  const id = "de110000-0000-4000-9000-000000000008";
   const token = `${part({ alg: "ES256", typ: "JWT" })}.${part({ sub: id, exp })}.c2ln`;
   const record = {
     token,

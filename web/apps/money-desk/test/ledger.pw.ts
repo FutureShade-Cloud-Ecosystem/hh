@@ -15,10 +15,14 @@ test("the demo way in offers the controller's card and lands on the approvals qu
   await request.post("/_stub/reset");
   await page.goto("/");
   await expect(page.locator("hos-app-header")).toBeVisible();
-  await expect(page.locator("[data-flow]")).toHaveCount(3);
+  await expect(page.locator("[data-flow]")).toHaveCount(2);
   await page.locator("[data-flow='financial-controller']").click();
   await expect(page.locator("hos-app-header")).toBeVisible();
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Approvals");
+  // The controller also holds the receivables desk: one tap, and the other slice is whole.
+  await page.getByRole("button", { name: "Receivables", exact: true }).click();
+  await expect(page.locator("[data-card]")).toHaveCount(4);
+  await page.getByRole("button", { name: "Approvals and ledger" }).click();
   await expect(page.locator("[data-approval-id]")).toHaveCount(5);
 });
 
@@ -108,7 +112,7 @@ test("it reads the trial balance in balance, with the server's totals", async ({
   await expect(page.locator("[data-total-debit]")).toHaveText("$37,025.00");
   await expect(page.locator("[data-total-credit]")).toHaveText("$37,025.00");
   // The branch is chosen from the route's own branch_id, and what the core does not draw yet says so.
-  await page.getByRole("button", { name: "Kingston", exact: true }).click();
+  await page.getByRole("button", { name: /^Kingston/ }).click();
   await expect(page.locator("[data-trial]")).toContainText("No posted journals yet.");
   await page.getByRole("button", { name: "All branches" }).click();
   await expect(page.locator("[data-total-debit]")).toHaveText("$37,025.00");

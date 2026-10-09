@@ -11,11 +11,13 @@
 // itself, and two freight raises. The controller decides all but its own.
 
 export const IDS = {
-  controller: "de110000-0000-4000-9000-0000000000c1",
+  // The controller's stub id is the receivables stub's (the one stub serves both slices); the core's own
+  // account is de110000-0000-4000-9000-0000000000c1.
+  controller: "de110000-0000-4000-9000-000000000008",
   sales: "de110000-0000-4000-9000-000000000001",
   manager: "de110000-0000-4000-9000-000000000002",
-  trenton: "5d1b3f6e-0000-4000-9000-000000000001",
-  kingston: "5d1b3f6e-0000-4000-9000-000000000002",
+  trenton: "b0000000-0000-4000-8000-000000000001",
+  kingston: "b0000000-0000-4000-8000-000000000002",
   fr1: "2f6a1c00-0000-4000-9000-0000000000f1",
   j1Request: "2f6a1c00-0000-4000-9000-0000000000a1",
   j2Request: "2f6a1c00-0000-4000-9000-0000000000a2",

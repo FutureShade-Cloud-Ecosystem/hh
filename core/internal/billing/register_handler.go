@@ -411,6 +411,8 @@ func (h *RegisterHandler) writeErr(w http.ResponseWriter, r *http.Request, err e
 	switch {
 	case errors.Is(err, ErrNotFound):
 		httpx.Error(w, http.StatusNotFound, "no such invoice")
+	case errors.Is(err, ErrBranchForbidden):
+		httpx.Error(w, http.StatusForbidden, BranchForbiddenWords)
 	case errors.As(err, &sd):
 		// Item 9 delta review P2-C: a credit memo against a deposit document is
 		// refused in words, with the stable code a client can switch on beside

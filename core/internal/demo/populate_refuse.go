@@ -53,12 +53,13 @@ func refuseForeignOrg(ctx context.Context, tx pgx.Tx) error {
 // planted id the database minted itself) or one of the two role accounts
 // this populate creates. The set is pinned in code, never queried.
 func refuseForeignUser(ctx context.Context, tx pgx.Tx) error {
-	plantedIDs := make(map[string]bool, len(plantedUserIDs)+2)
+	plantedIDs := make(map[string]bool, len(plantedUserIDs)+3)
 	for _, id := range plantedUserIDs {
 		plantedIDs[strings.ToLower(id)] = true
 	}
 	plantedIDs[strings.ToLower(salesUserID)] = true
 	plantedIDs[strings.ToLower(managerUserID)] = true
+	plantedIDs[strings.ToLower(payRecUserID)] = true
 	plantedEmails := make(map[string]bool, len(plantedUserEmails))
 	for _, e := range plantedUserEmails {
 		plantedEmails[strings.ToLower(e)] = true

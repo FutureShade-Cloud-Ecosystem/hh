@@ -112,7 +112,7 @@ func (r *ARLandingRepository) UpsertARLandingPolicy(ctx context.Context, p ARLan
 // OpenInvoices projects the unpaid book. Same status set as the aging query next door
 // (FINALIZED / PARTIALLY_PAID) so the landing and the register can never disagree about which
 // invoices are open, two definitions of "open" is two totals and one very long meeting.
-func (r *ARLandingRepository) OpenInvoices(ctx context.Context, asOf time.Time, branchID string) ([]OpenInvoice, error) {
+func (r *ARLandingRepository) OpenInvoices(ctx context.Context, asOf time.Time, branchID string, reach BranchReach) ([]OpenInvoice, error) {
 	if r.pool == nil {
 		return nil, errNoDB
 	}
@@ -123,7 +123,8 @@ func (r *ARLandingRepository) OpenInvoices(ctx context.Context, asOf time.Time, 
 		  JOIN customers c ON c.id = i.customer_id
 		 WHERE i.status IN ('FINALIZED','PARTIALLY_PAID')
 		   AND i.balance_cents <> 0
-		   AND ($1 = '' OR i.branch_id = $1::uuid)`, branchID)
+		   AND ($1 = '' OR i.branch_id = $1::uuid)
+		   AND ($2::uuid[] IS NULL OR i.branch_id = ANY($2::uuid[]))`, branchID, reach.SQLArg())
 	if err != nil {
 		return nil, fmt.Errorf("billing: open invoices: %w", err)
 	}
@@ -211,8 +212,9 @@ func (r *ARLandingRepository) EngagementFor(ctx context.Context, customerIDs []s
 }
 
 // OpenPaperPathFlags lists the flags waiting for a decision, oldest first, a queue nobody works
-// from the bottom of.
-func (r *ARLandingRepository) OpenPaperPathFlags(ctx context.Context) ([]PaperPathEntry, error) {
+// from the bottom of. A flag is on an account, so it lists for a reach when the account has an open
+// invoice in it, the cut the landing's own queue makes.
+func (r *ARLandingRepository) OpenPaperPathFlags(ctx context.Context, reach BranchReach) ([]PaperPathEntry, error) {
 	if r.pool == nil {
 		return nil, errNoDB
 	}
@@ -222,7 +224,13 @@ func (r *ARLandingRepository) OpenPaperPathFlags(ctx context.Context) ([]PaperPa
 		  FROM ar_paper_path_flags f
 		  JOIN customers c ON c.id = f.customer_id
 		 WHERE f.status = 'OPEN'
-		 ORDER BY f.raised_at`)
+		   AND ($1::uuid[] IS NULL OR EXISTS (
+		         SELECT 1 FROM invoices i
+		          WHERE i.customer_id = f.customer_id
+		            AND i.status IN ('FINALIZED','PARTIALLY_PAID')
+		            AND i.balance_cents <> 0
+		            AND i.branch_id = ANY($1::uuid[])))
+		 ORDER BY f.raised_at`, reach.SQLArg())
 	if err != nil {
 		return nil, fmt.Errorf("billing: paper path flags: %w", err)
 	}

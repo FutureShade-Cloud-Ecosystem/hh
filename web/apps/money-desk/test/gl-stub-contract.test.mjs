@@ -44,7 +44,7 @@ async function freePort() {
 before(async () => {
   const port = await freePort();
   base = `http://127.0.0.1:${port}`;
-  child = spawn(process.execPath, [join(appDir, "test", "stub", "role-stub.mjs")], {
+  child = spawn(process.execPath, [join(appDir, "test", "stub", "money-desk-stub.mjs")], {
     env: { ROLE_STUB_PORT: String(port) },
     stdio: "ignore",
   });
