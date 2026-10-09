@@ -19,7 +19,7 @@ included, catch what they miss.
 DATABASE_URL=postgres://postgres:postgres@127.0.0.1:<port>/till_base?sslmode=disable \
 HH_CORE_TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:<port>/till_core_gate?sslmode=disable \
 HH_B3_TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:<port>/till_b3_gate?sslmode=disable \
-go test ./... -count=1 -p 1
+go test ./... -count=1 -p 1 -timeout 30m
 ```
 
 The ports come from the local CI service; the `postgres:postgres` user and
@@ -32,13 +32,13 @@ are the same.
 ## CI's whole integration package list, in `go list` order
 
 The integration tag suite is the second gate. CI runs the same
-`go test -tags integration -p 1 -count=1` against `go list ./...`, with one
+`go test -tags integration -p 1 -count=1 -timeout 30m` against `go list ./...`, with one
 exclusion, on one migrated and seeded database. The exclusion is the single
 line CI carries; a package rejoins the run when its lane lands the fix and
 drops its line here.
 
 ```bash
-go test -tags integration -p 1 -count=1 $(go list ./... | grep -Ev "/internal/(dispatch)$")
+go test -tags integration -p 1 -count=1 -timeout 30m $(go list ./... | grep -Ev "/internal/(dispatch)$")
 ```
 
 The two scratch databases are `integration_gate` (migrated and seeded; the
@@ -64,7 +64,7 @@ The integration gate runs against the module database:
 ```bash
 DATABASE_URL=postgres://postgres:postgres@127.0.0.1:<port>/integration_gate?sslmode=disable \
 HH_CORE_TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:<port>/integration_core_gate?sslmode=disable \
-go test -tags integration -p 1 -count=1 $(go list ./... | grep -Ev "/internal/(dispatch)$")
+go test -tags integration -p 1 -count=1 -timeout 30m $(go list ./... | grep -Ev "/internal/(dispatch)$")
 ```
 
 ## The contract step, twice byte identical
@@ -224,11 +224,19 @@ grep -rn "<old words>" web core
 The grep is the receipt: every line it returns is a place the new
 wording must reach before the change leaves.
 
-## The pre-push hook refuses unsigned ones
+## The sign-off is the reader's own loop; the relay holds back an unsigned box branch
 
-The repository's pre-push hook refuses a push that does not carry
-`Signed-off-by` on every commit. A branch that fails the hook cannot be
-pushed; the loop above is the worktree's read of the same gate.
+The repository does not ship a pre-push hook: a reader's clone carries no
+hook, and the push goes straight through. The gate above (the loop over
+`origin/main..HEAD`) is the reader's own receipt; a branch whose loop
+prints a `MISSING` line is not signed off even for run locally.
+
+The HH supervisor's local clone carries a pre-push hook that does the same
+check, and it also reads `push-hold.txt` for branches the supervisor is
+holding back. The HQ relay holds back a box branch whose push attempt
+arrived with an unsigned commit, and the hook returns a non-zero exit so
+the push lands only when every commit carries `Signed-off-by`. The relay
+is not in the repository either; a reader's clone never sees it.
 
 ## What the brief leaves out, named once
 
@@ -248,7 +256,7 @@ cd core && go build ./... && go vet ./...
 DATABASE_URL=postgres://postgres:postgres@127.0.0.1:<port>/till_base?sslmode=disable \
 HH_CORE_TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:<port>/till_core_gate?sslmode=disable \
 HH_B3_TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:<port>/till_b3_gate?sslmode=disable \
-go test ./... -count=1 -p 1
+go test ./... -count=1 -p 1 -timeout 30m
 
 # 3. The contract step, twice byte identical, then CI's contract tools
 npm --prefix core/api/tools ci
@@ -261,7 +269,7 @@ node core/api/tools/statemap.mjs
 node core/api/tools/d8-isolation.mjs
 
 # 4. The integration tag suite on one migrated and seeded database
-go test -tags integration -p 1 -count=1 $(go list ./... | grep -Ev "/internal/(dispatch)$")
+go test -tags integration -p 1 -count=1 -timeout 30m $(go list ./... | grep -Ev "/internal/(dispatch)$")
 
 # 5. The web loop, folder by folder
 for dir in packages/*/ apps/*/; do
