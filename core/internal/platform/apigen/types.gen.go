@@ -4584,8 +4584,8 @@ type TaskRecordSkidsRequest struct {
 type TaskRecordSkidsResult struct {
 	SkidCount            int32  `json:"skid_count"`
 	PreviousSkidCount    *int32 `json:"previous_skid_count"`
-	DepositCents         int64  `json:"deposit_cents"`
-	PreviousDepositCents int64  `json:"previous_deposit_cents"`
+	DepositCents         *int64 `json:"deposit_cents,omitempty"`
+	PreviousDepositCents *int64 `json:"previous_deposit_cents,omitempty"`
 	Changed              bool   `json:"changed"`
 	OrderNo              string `json:"order_no"`
 }

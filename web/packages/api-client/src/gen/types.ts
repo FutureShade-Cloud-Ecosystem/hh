@@ -3900,8 +3900,8 @@ export type TaskRecordSkidsRequest = {
 export type TaskRecordSkidsResult = {
   skid_count: number;
   previous_skid_count: number | null;
-  deposit_cents: number;
-  previous_deposit_cents: number;
+  deposit_cents?: number;
+  previous_deposit_cents?: number;
   changed: boolean;
   order_no: string;
 };

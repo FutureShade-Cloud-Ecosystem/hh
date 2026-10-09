@@ -256,10 +256,12 @@ type recordSkidsRequest struct {
 }
 
 type recordSkidsResponse struct {
-	SkidCount            int    `json:"skid_count"`
-	PreviousSkidCount    *int   `json:"previous_skid_count"`
-	DepositCents         int64  `json:"deposit_cents"`
-	PreviousDepositCents int64  `json:"previous_deposit_cents"`
+	SkidCount         int  `json:"skid_count"`
+	PreviousSkidCount *int `json:"previous_skid_count"`
+	// The deposit pair rides only for a caller the cost rule allows (cost_gate.go); a pointer, so
+	// a listed caller's zero deposit is an answer and a refused caller's is byte-absent.
+	DepositCents         *int64 `json:"deposit_cents,omitempty"`
+	PreviousDepositCents *int64 `json:"previous_deposit_cents,omitempty"`
 	Changed              bool   `json:"changed"`
 	OrderNo              string `json:"order_no"`
 }
@@ -287,8 +289,11 @@ func (h *Handler) recordSkids(w http.ResponseWriter, r *http.Request, caller gua
 		return
 	}
 	out := recordSkidsResponse{
-		SkidCount: res.CountAfter, PreviousSkidCount: res.CountBefore, DepositCents: res.DepositAfterCents,
-		PreviousDepositCents: res.DepositBeforeCents, Changed: res.Changed, OrderNo: res.Order.OrderNo,
+		SkidCount: res.CountAfter, PreviousSkidCount: res.CountBefore, Changed: res.Changed, OrderNo: res.Order.OrderNo,
+	}
+	if h.moneyAllowed(r) {
+		after, before := res.DepositAfterCents, res.DepositBeforeCents
+		out.DepositCents, out.PreviousDepositCents = &after, &before
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
