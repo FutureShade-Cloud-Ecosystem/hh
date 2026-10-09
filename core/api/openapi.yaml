@@ -10552,12 +10552,14 @@ paths:
       tags:
         - staff-inventory
       summary: Draft a purchase order from selected shortfall lines
-      description: The selection must share one preferred vendor; a line with none is refused. When the purchasing seam is unbound the answer is 503 with the draft carried alongside the error, so the surface can show what would have been ordered.
+      description: "The selection must share one preferred vendor; a line with none is refused. When the purchasing seam is unbound the answer is 503 with the draft carried alongside the error, so the surface can show what would have been ordered. Walled to the po_writers list: the Procurement Manager, the General Manager and the super admin; every other role is refused with the shared forbidden body."
       x-role: requireManager
       x-access:
         surfaces:
           - buying-and-stock
-        level: manage
+        level: read
+        list: po_writers
+        reason: "The po_writers list is the wall, not the level: the General Manager reads the buying surface and may still write an order, which a manage level cannot say without admitting every manage seat on the surface."
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -10591,12 +10593,14 @@ paths:
       tags:
         - staff-inventory
       summary: Draft a purchase order for one product from its replenishment line
-      description: qty_base of zero means use the replenishment suggestion. Always a DRAFT, never an ordered PO. The same 503-with-draft posture as shortfall/create-po applies when purchasing is unbound.
+      description: "qty_base of zero means use the replenishment suggestion. Always a DRAFT, never an ordered PO. The same 503-with-draft posture as shortfall/create-po applies when purchasing is unbound. Walled to the po_writers list: the Procurement Manager, the General Manager and the super admin; every other role is refused with the shared forbidden body."
       x-role: requireManager
       x-access:
         surfaces:
           - buying-and-stock
-        level: manage
+        level: read
+        list: po_writers
+        reason: "The po_writers list is the wall, not the level: the General Manager reads the buying surface and may still write an order, which a manage level cannot say without admitting every manage seat on the surface."
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -18716,12 +18720,14 @@ paths:
       tags:
         - staff-purchasing
       summary: Create a draft purchase order
-      description: The PO number is minted server-side and is never accepted from a caller. A USD document requires a positive fx_rate; an omitted currency means CAD at a rate of 1.
+      description: "The PO number is minted server-side and is never accepted from a caller. A USD document requires a positive fx_rate; an omitted currency means CAD at a rate of 1. Walled to the po_writers list: the Procurement Manager, the General Manager and the super admin; every other role is refused with the shared forbidden body."
       x-role: requireManager
       x-access:
         surfaces:
           - buying-and-stock
-        level: manage
+        level: read
+        list: po_writers
+        reason: "The po_writers list is the wall, not the level: the General Manager reads the buying surface and may still write an order, which a manage level cannot say without admitting every manage seat on the surface."
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -18778,12 +18784,14 @@ paths:
       tags:
         - staff-purchasing
       summary: Add a line to a draft purchase order
-      description: "Lines may only be edited while the order is DRAFT: once a PO is ORDERED its line set is frozen, because a purchase order is a contract and editing one after placement is how a three-way match is quietly defeated."
+      description: "Lines may only be edited while the order is DRAFT: once a PO is ORDERED its line set is frozen, because a purchase order is a contract and editing one after placement is how a three-way match is quietly defeated. Walled to the po_writers list: the Procurement Manager, the General Manager and the super admin; every other role is refused with the shared forbidden body."
       x-role: requireManager
       x-access:
         surfaces:
           - buying-and-stock
-        level: manage
+        level: read
+        list: po_writers
+        reason: "The po_writers list is the wall, not the level: the General Manager reads the buying surface and may still write an order, which a manage level cannot say without admitting every manage seat on the surface."
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -18817,12 +18825,14 @@ paths:
         - staff-purchasing
       x-addition: the draft line correction route of the roles roadmap's Buying and Stock core slice; no ERP source route
       summary: Correct the quantity or the cost of one line on a draft purchase order
-      description: Each field is optional and absent means unchanged; the product is not editable through this route. Lines may only be corrected while the order is DRAFT, the same freeze the add and remove routes carry.
+      description: "Each field is optional and absent means unchanged; the product is not editable through this route. Lines may only be corrected while the order is DRAFT, the same freeze the add and remove routes carry. Walled to the po_writers list: the Procurement Manager, the General Manager and the super admin; every other role is refused with the shared forbidden body."
       x-role: requireManager
       x-access:
         surfaces:
           - buying-and-stock
-        level: manage
+        level: read
+        list: po_writers
+        reason: "The po_writers list is the wall, not the level: the General Manager reads the buying surface and may still write an order, which a manage level cannot say without admitting every manage seat on the surface."
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -18860,11 +18870,14 @@ paths:
       tags:
         - staff-purchasing
       summary: Remove a line from a draft purchase order
+      description: "Walled to the po_writers list: the Procurement Manager, the General Manager and the super admin; every other role is refused with the shared forbidden body."
       x-role: requireManager
       x-access:
         surfaces:
           - buying-and-stock
-        level: manage
+        level: read
+        list: po_writers
+        reason: "The po_writers list is the wall, not the level: the General Manager reads the buying surface and may still write an order, which a manage level cannot say without admitting every manage seat on the surface."
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -18895,12 +18908,14 @@ paths:
       tags:
         - staff-purchasing
       summary: Move a purchase order along its lifecycle
-      description: Operator-driven moves only (place, close, cancel). The receipt-driven moves to PARTIAL and RECEIVED are computed from what landed and are never requested here.
+      description: "Operator-driven moves only (place, close, cancel). The receipt-driven moves to PARTIAL and RECEIVED are computed from what landed and are never requested here. Walled to the po_writers list: the Procurement Manager, the General Manager and the super admin; every other role is refused with the shared forbidden body."
       x-role: requireManager
       x-access:
         surfaces:
           - buying-and-stock
-        level: manage
+        level: read
+        list: po_writers
+        reason: "The po_writers list is the wall, not the level: the General Manager reads the buying surface and may still write an order, which a manage level cannot say without admitting every manage seat on the surface."
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -18972,12 +18987,14 @@ paths:
       tags:
         - staff-purchasing
       summary: Set or clear the promised receiving date on a purchase order
-      description: "An empty expected_at clears the date: a withdrawn vendor promise leaves no date, and a stale one left on the record is a screen that lies to the person planning around it. Refused on a RECEIVED, CLOSED or CANCELLED order."
+      description: "An empty expected_at clears the date: a withdrawn vendor promise leaves no date, and a stale one left on the record is a screen that lies to the person planning around it. Refused on a RECEIVED, CLOSED or CANCELLED order. Walled to the po_writers list: the Procurement Manager, the General Manager and the super admin; every other role is refused with the shared forbidden body."
       x-role: requireManager
       x-access:
         surfaces:
           - buying-and-stock
-        level: manage
+        level: read
+        list: po_writers
+        reason: "The po_writers list is the wall, not the level: the General Manager reads the buying surface and may still write an order, which a manage level cannot say without admitting every manage seat on the surface."
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -19010,12 +19027,14 @@ paths:
       tags:
         - staff-purchasing
       summary: Record or correct how a purchase order's goods reach the yard
-      description: "Sets the arrival the purchase order carries, readable on GET /api/v1/purchasing/pos/{id}. delivery_method is required: on a correction an empty value is a malformed request, not an unrecord, and sending UNKNOWN is how an arrival is unrecorded. Refused on a RECEIVED, CLOSED or CANCELLED order, the same finished statuses the expected-date route refuses. Core's receiving worklist does not render the column yet; the DIB-573 read half is unported."
+      description: "Sets the arrival the purchase order carries, readable on GET /api/v1/purchasing/pos/{id}. delivery_method is required: on a correction an empty value is a malformed request, not an unrecord, and sending UNKNOWN is how an arrival is unrecorded. Refused on a RECEIVED, CLOSED or CANCELLED order, the same finished statuses the expected-date route refuses. Core's receiving worklist does not render the column yet; the DIB-573 read half is unported. Walled to the po_writers list: the Procurement Manager, the General Manager and the super admin; every other role is refused with the shared forbidden body."
       x-role: requireManager
       x-access:
         surfaces:
           - buying-and-stock
-        level: manage
+        level: read
+        list: po_writers
+        reason: "The po_writers list is the wall, not the level: the General Manager reads the buying surface and may still write an order, which a manage level cannot say without admitting every manage seat on the surface."
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -19161,12 +19180,14 @@ paths:
       tags:
         - staff-purchasing
       summary: Send a purchase order to the vendor's ordering desk
-      description: "The send goes to exactly one recipient: the tagged ordering contact, or a deliberate, confirmed fallback to the vendor record address. A DRAFT order is not sendable. The response is the send record even when no transport delivered anything: status and detail carry the outcome, a failed send of a well-formed request is still a 200. An idempotency_key replays to the first send rather than sending twice."
+      description: "The send goes to exactly one recipient: the tagged ordering contact, or a deliberate, confirmed fallback to the vendor record address. A DRAFT order is not sendable. The response is the send record even when no transport delivered anything: status and detail carry the outcome, a failed send of a well-formed request is still a 200. An idempotency_key replays to the first send rather than sending twice. Walled to the po_writers list: the Procurement Manager, the General Manager and the super admin; every other role is refused with the shared forbidden body."
       x-role: requireManager
       x-access:
         surfaces:
           - buying-and-stock
-        level: manage
+        level: read
+        list: po_writers
+        reason: "The po_writers list is the wall, not the level: the General Manager reads the buying surface and may still write an order, which a manage level cannot say without admitting every manage seat on the surface."
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"

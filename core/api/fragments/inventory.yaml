@@ -823,10 +823,18 @@ paths:
         refused. When the purchasing seam is unbound the answer is 503 with
         the draft carried alongside the error, so the surface can show what
         would have been ordered.
+        Walled to the po_writers list: the Procurement Manager, the General
+        Manager and the super admin; every other role is refused with the
+        shared forbidden body.
       x-role: requireManager
       x-access:
         surfaces: [buying-and-stock]
-        level: manage
+        level: read
+        list: po_writers
+        reason: >-
+          The po_writers list is the wall, not the level: the General Manager reads the buying
+          surface and may still write an order, which a manage level cannot say without
+          admitting every manage seat on the surface.
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -859,10 +867,18 @@ paths:
         qty_base of zero means use the replenishment suggestion. Always a
         DRAFT, never an ordered PO. The same 503-with-draft posture as
         shortfall/create-po applies when purchasing is unbound.
+        Walled to the po_writers list: the Procurement Manager, the General
+        Manager and the super admin; every other role is refused with the
+        shared forbidden body.
       x-role: requireManager
       x-access:
         surfaces: [buying-and-stock]
-        level: manage
+        level: read
+        list: po_writers
+        reason: >-
+          The po_writers list is the wall, not the level: the General Manager reads the buying
+          surface and may still write an order, which a manage level cannot say without
+          admitting every manage seat on the surface.
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:

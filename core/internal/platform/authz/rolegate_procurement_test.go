@@ -9,6 +9,7 @@ package authz
 // adds to.
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/apigen"
@@ -26,12 +27,11 @@ func procurementAccess(t *testing.T, operationID string) RouteAccess {
 	return RouteAccess{}
 }
 
-// TestProcurementManager_TheBuyingWritesAreTheBuyersAlone: the vendor master pair (vendor_master.go)
-// and the PO write doors name buying-and-stock at manage, and exactly one role in the catalogue
-// holds that seat.
-func TestProcurementManager_TheBuyingWritesAreTheBuyersAlone(t *testing.T) {
+// TestProcurementManager_TheVendorMasterIsTheBuyersAlone: the vendor master pair names
+// buying-and-stock at manage, and exactly one role in the catalogue holds that seat.
+func TestProcurementManager_TheVendorMasterIsTheBuyersAlone(t *testing.T) {
 	f := newFixture(t)
-	for _, op := range []string{"purchasingCreateVendor", "purchasingUpdateVendor", "purchasingUpdateLine", "purchasingCreatePO", "purchasingTransitionPO", "inventoryCreatePOFromShortfall", "inventoryReorderPO"} {
+	for _, op := range []string{"purchasingCreateVendor", "purchasingUpdateVendor"} {
 		access := procurementAccess(t, op)
 		if len(access.Surfaces) != 1 || access.Surfaces[0] != "buying-and-stock" || access.Level != roleconfig.LevelManage {
 			t.Fatalf("%s must name buying-and-stock at manage, got %+v", op, access)
@@ -48,6 +48,91 @@ func TestProcurementManager_TheBuyingWritesAreTheBuyersAlone(t *testing.T) {
 				t.Errorf("%s: %s must be refused at the gate, got %d reached=%v", op, role, code, reached)
 			}
 		}
+	}
+}
+
+// poWriteOps is every operation that creates, edits, places, cancels or sends a purchase order, or
+// drafts one from the shortfall: the writes the principal's ruling (row 1303) walls to a role list.
+var poWriteOps = []string{
+	"purchasingCreatePO", "purchasingAddLine", "purchasingUpdateLine", "purchasingRemoveLine",
+	"purchasingTransitionPO", "purchasingSetExpectedDate", "purchasingSetDeliveryMethod", "purchasingSendPO",
+	"inventoryCreatePOFromShortfall", "inventoryReorderPO",
+}
+
+// poWriters is written out longhand, not derived: the Procurement Manager, the General Manager and
+// the super admin. The yard manager keeps receiving only; every other role reads.
+var poWriters = map[string]bool{"procurement_manager": true, "general_manager": true, "super_admin": true}
+
+// TestPurchaseOrderWrites_AreWalledToTheListedRoles: each listed role reaches the handler, and each
+// other role, the other manager roles and the other platform roles among them, is refused at the
+// gate with the shared body and the handler unreached. Red first per role, per route.
+func TestPurchaseOrderWrites_AreWalledToTheListedRoles(t *testing.T) {
+	f := newFixture(t)
+	roles := append(roleconfig.Roles(), PlatformRoleSuperAdmin, PlatformRoleDealerAdmin, PlatformRoleFBOperator)
+	for _, op := range poWriteOps {
+		access := procurementAccess(t, op)
+		if len(access.Surfaces) != 1 || access.Surfaces[0] != "buying-and-stock" || access.List != "po_writers" {
+			t.Fatalf("%s must name buying-and-stock beside the po_writers list, got %+v", op, access)
+		}
+		for _, role := range roles {
+			code, reached := runGatedAs(t, f, access, role)
+			if poWriters[role] {
+				if code != 200 || !reached {
+					t.Errorf("%s: %s is on the list and must reach the handler, got %d reached=%v", op, role, code, reached)
+				}
+				continue
+			}
+			if code != 403 || reached {
+				t.Errorf("%s: %s is off the list and must be refused at the gate, got %d reached=%v", op, role, code, reached)
+			}
+		}
+	}
+}
+
+// TestPurchaseOrderWrites_TheYardManagerKeepsReceiving: the wall is on the order, not on the dock.
+// The yard manager receives against a PO and reads the worklist, as the matrix gives them.
+func TestPurchaseOrderWrites_TheYardManagerKeepsReceiving(t *testing.T) {
+	f := newFixture(t)
+	for _, op := range []string{"purchasingReceivePO", "purchasingListReceivingWorklist", "purchasingListPOs", "purchasingGetPO"} {
+		access := procurementAccess(t, op)
+		if access.List != "" {
+			t.Fatalf("%s carries the list %q, the wall belongs on the order writes alone", op, access.List)
+		}
+		code, reached := runGatedAs(t, f, access, "yard_manager")
+		if code != 200 || !reached {
+			t.Errorf("%s: the yard manager must reach it, got %d reached=%v", op, code, reached)
+		}
+	}
+}
+
+// TestPurchaseOrderWrites_TheCensusPinsTheList: a new write route under the purchase order paths
+// without the list fails the build. Every non-read operation under /api/v1/purchasing/pos, bar the
+// receive door the yard walks through, and the two drafting routes of the shortfall, carries the
+// list; a route added later that forgets it lands here.
+func TestPurchaseOrderWrites_TheCensusPinsTheList(t *testing.T) {
+	named := map[string]bool{}
+	for _, op := range poWriteOps {
+		named[op] = true
+	}
+	// The one write the yard is meant to reach, receiving stock against an order.
+	exempt := map[string]bool{"purchasingReceivePO": true}
+	seen := 0
+	for _, r := range apigen.Routes {
+		underOrders := strings.HasPrefix(r.Path, "/api/v1/purchasing/pos")
+		drafting := r.Path == "/api/v1/inventory/shortfall/create-po" || r.Path == "/api/v1/inventory/reorder-po"
+		if r.Method == "GET" || !(underOrders || drafting) || exempt[r.OperationID] {
+			continue
+		}
+		seen++
+		if r.List != "po_writers" {
+			t.Errorf("%s %s (%s) writes a purchase order and must carry the po_writers list, has %q", r.Method, r.Path, r.OperationID, r.List)
+		}
+		if !named[r.OperationID] {
+			t.Errorf("%s is a purchase order write the longhand list in this file does not name; add it, and its per role legs run with it", r.OperationID)
+		}
+	}
+	if seen != len(poWriteOps) {
+		t.Errorf("the census holds %d purchase order write routes, this file names %d", seen, len(poWriteOps))
 	}
 }
 
